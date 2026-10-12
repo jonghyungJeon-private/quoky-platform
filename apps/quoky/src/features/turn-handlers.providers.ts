@@ -3,6 +3,7 @@ import {
   CONVERSATION_TURN_HANDLERS,
   TURN_HANDLER_STAGES,
   createHelpIntentTurnHandler,
+  withMergedMailDriveHelp,
   type ConnectorWriteFlow,
   type ConversationTurnHandler,
 } from '@quoky/core';
@@ -73,8 +74,8 @@ export const turnHandlersProvider: Provider = {
       ...memory,
       ...calendar,
       ...modelSelection,
-      ...(mail ?? []),
-      ...(drive ?? []),
+      // With both on, one compact help line instead of two keeps the full registry within the D6 bound of 14.
+      ...withMergedMailDriveHelp([...(mail ?? []), ...(drive ?? [])]),
     ];
     registered.push(
       createHelpIntentTurnHandler({

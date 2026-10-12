@@ -31,10 +31,19 @@ import type { MessageBody, MessageContent, MessageLengthUnit, MessageMarkup, Mes
  *   `snake_case`). Nothing is touched inside a link destination `](…)`, an autolink `<…>`, or a whitespace-delimited
  *   token shaped like a URL, a path (`/`, `\`, `.ext`) or an identifier with an internal `_`.
  * - Code spans: the backtick runs are removed and the content is kept literally (no emphasis inside).
- * Not translated (shown as written): links `[text](url)`, block quotes, backslash escapes, tables, indented code.
+ * - Links `[text](url)` become `text (url)` ONLY when the destination is `http://` or `https://` (no whitespace, no
+ *   `<>`, balanced parentheses) and neither the text nor the destination holds an untrusted span. The URL is left as
+ *   plain text, so Telegram autolinks it itself and shows where it goes; no link entity is ever sent. `[url](url)` with
+ *   the same text collapses to `url`. Other schemes, titles (`[t](u "x")`), images (`![a](u)`), reference links and
+ *   anything inside a code span stay as written.
+ * - Block quotes: a leading `> ` (nested `> > `) becomes `│ ` (U+2502 and a space), and a lone `>` line becomes `│`. It
+ *   is the same length, it needs no closing mark (“…” would, and a multi-line quote would need one per line or none), and
+ *   it reads as a quote bar on every Telegram client. A `>` that is not at the start of a line is never touched.
+ * Not translated (shown as written): backslash escapes, tables, indented code, other link forms (above).
  *
- * The translation never makes a text longer (`•` is one UTF-16 unit, like `-`), so a Core budget or the 4096 bound that
- * held before it still holds after it, and the adapter's lossless chunker then splits the translated text.
+ * The translation never makes a text longer (`•` is one UTF-16 unit, like `-`; `│ ` replaces `> `; a link rewrite drops
+ * the `[` and one character of `](`, so it is one unit SHORTER), so a Core budget or the 4096 bound that held before it
+ * still holds after it, and the adapter's lossless chunker then splits the translated text.
  */
 
 /** A piece of rendered text: Quoky copy (translatable) or an opaque span (never translated). */
@@ -202,6 +211,8 @@ const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const HEADING = /^ {0,3}#{1,6}(?:[ \t]+|$)/;
 const HEADING_CLOSE = /[ \t]+#+[ \t]*$/;
 const BULLET = /^([ \t]*)[-*+][ \t]+/;
+const QUOTE = /^( {0,3})((?:> )+|>$)/;
+const HTTP_URL_HEAD = /^https?:\/\/[^\s<>]/i;
 
 function lineText(line: readonly TelegramSegment[]): string {
   return concat(line);
@@ -427,7 +438,70 @@ function markGuarded(units: readonly Unit[], code: readonly boolean[]): boolean[
   return guarded;
 }
 
-/** Inline translation of one line: code spans, then emphasis. Atoms are emitted unchanged. */
+/**
+ * `[text](url)` with an http(s) destination: drop the `[`, turn `]` into a space and keep `(url)`, so Telegram shows
+ * `text (url)` and autolinks the URL itself. `[u](u)` (the text IS the URL) keeps just `u`. Only plain copy units
+ * outside code spans take part; a span anywhere in the text or the destination, a title, an image, or a destination
+ * that is not a plain http(s) URL leaves the whole thing as written. Each rewrite removes one unit, never adds one.
+ */
+function markLinks(units: readonly Unit[], removed: boolean[], replaced: (string | undefined)[], code: readonly boolean[]): void {
+  const plain = (k: number): boolean => units[k]?.atom === false && !code[k];
+  let k = 0;
+  while (k < units.length) {
+    if (!plain(k) || units[k]?.text !== '[' || (k > 0 && plain(k - 1) && units[k - 1]?.text === '!')) {
+      k += 1;
+      continue;
+    }
+    // The text: up to the first `]`, no nested `[`, no span.
+    let close = -1;
+    for (let m = k + 1; m < units.length; m += 1) {
+      const unit = units[m] as Unit;
+      if (unit.atom || code[m] || unit.text === '[') break;
+      if (unit.text === ']') {
+        close = m;
+        break;
+      }
+    }
+    if (close < k + 2 || !plain(close + 1) || units[close + 1]?.text !== '(') {
+      k += 1;
+      continue;
+    }
+    // The destination: balanced parentheses, no whitespace, no `<>`, no span, an http(s) URL.
+    let depth = 0;
+    let end = -1;
+    for (let m = close + 1; m < units.length; m += 1) {
+      const unit = units[m] as Unit;
+      if (unit.atom || code[m] || WHITESPACE.test(unit.text) || unit.text === '<' || unit.text === '>') break;
+      if (unit.text === '(') depth += 1;
+      else if (unit.text === ')') {
+        depth -= 1;
+        if (depth === 0) {
+          end = m;
+          break;
+        }
+      }
+    }
+    let url = '';
+    for (let m = close + 2; m < end; m += 1) url += (units[m] as Unit).text;
+    if (end < 0 || !HTTP_URL_HEAD.test(url)) {
+      k += 1;
+      continue;
+    }
+    let label = '';
+    for (let m = k + 1; m < close; m += 1) label += (units[m] as Unit).text;
+    if (label === url) {
+      // The text is the URL itself: keep it once.
+      for (let m = k; m <= close + 1; m += 1) removed[m] = true;
+      removed[end] = true;
+    } else {
+      removed[k] = true;
+      replaced[close] = ' ';
+    }
+    k = end + 1;
+  }
+}
+
+/** Inline translation of one line: code spans, then emphasis, then links. Atoms are emitted unchanged. */
 function translateInline(line: readonly TelegramSegment[]): string {
   const units: Unit[] = [];
   for (const segment of line) {
@@ -444,9 +518,11 @@ function translateInline(line: readonly TelegramSegment[]): string {
     if (isGuarded) removed[index] = false;
   });
   markEmphasis(units, removed, code, guarded);
+  const replaced: (string | undefined)[] = units.map(() => undefined);
+  markLinks(units, removed, replaced, code);
   let out = '';
   units.forEach((unit, index) => {
-    if (!removed[index]) out += unit.text;
+    if (!removed[index]) out += replaced[index] ?? unit.text;
   });
   return out;
 }
@@ -465,6 +541,8 @@ function translateLine(line: TelegramSegment[]): string {
       }
     } else if (BULLET.test(first.text)) {
       line = [copy(first.text.replace(BULLET, '$1• ')), ...line.slice(1)];
+    } else if (QUOTE.test(first.text) && (line.length === 1 || first.text.includes('> '))) {
+      line = [copy(first.text.replace(QUOTE, (_all, indent: string, marks: string) => indent + marks.replace(/>/g, '│'))), ...line.slice(1)];
     }
   }
   return translateInline(line);

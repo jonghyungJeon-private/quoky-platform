@@ -18360,6 +18360,16 @@ level:
   write payloads; some `response-composer.ts` paths still interpolate, for example file paths) may lose a `*` or `_`
   pair from that value. In plain mode this is only a fidelity issue, never markup. Moving those values into spans is a
   Core follow-up.
+- **Resolved (v4 residual polish): links and block quotes.** `[text](url)` becomes `text (url)` when the destination is a
+  plain `http(s)` URL (no whitespace, no `<>`, balanced parentheses, no untrusted span in the text or destination), so
+  Telegram autolinks the URL and the real destination is visible; `[u](u)` collapses to `u`. Other schemes, titles,
+  images, reference links, and links with a backtick in the destination stay as written. A leading `> ` (nested
+  `> > `, a lone `>`) becomes `│ ` (U+2502): same length, no closing mark, one bar per line for a multi-line quote
+  (`“…”` would need a closing mark and breaks on multi-line quotes). Only Quoky copy and model-reply text is
+  translated: untrusted spans stay byte-identical, URL/path tokens are preserved, the evaluator mismatch still
+  falls back to Core's text. The "never longer" guarantee is UNCHANGED: a link rewrite is one unit shorter (the `[`
+  goes, `](` becomes ` (`) and `│ ` replaces `> `, so the chunking guarantee needed no change; the chunking test now
+  also carries links and quotes. Backslash escapes, tables and indented code are still shown as written.
 - **The panel's counters** are per process. They are not persisted and they reset at a restart.
 - **Carried from TG-1.** The future storage ADR that keys sessions by `(platform, conversation)`.
 
@@ -19471,6 +19481,14 @@ Independent Chief Architect review before GML-1 merges.
   - `이 메일` means "the single entry of the last list". Replying to a listed message, or using the platform's reply
     reference, is not supported.
   - The list ↔ id mapping lives in memory, so it is lost on restart and the owner lists again.
+  - **Resolved (v4 residual polish).** The last listing is now also persisted, with no migration, in
+    `Session.metadata['quoky.lastListing'].byActor[actorId].<mail|drive> = { source, ids, at }`, written field-scoped
+    through `SessionManager.updateMetadataEntry` (same mechanism as `quoky.providerSelection`). Only the displayed
+    opaque ids are stored, never a subject, sender, name or snippet. The 30-minute TTL is checked on read, mail and
+    Drive have separate slots, and a slot whose `source` differs is ignored, so `N번 메일` never resolves a Drive id.
+    The in-memory map stays as a cache; a persisted record wins only when strictly newer (after a restart the cache is
+    empty). A Drive list restored after a restart has ids only: the adapter re-checks the file kind at export time. A
+    failed write is logged and never fails the turn. No new DI token (the handlers take `SessionManager`).
   - Body text sent for a summary is an accepted egress (ADR-0118 Consequences). The owner chooses the chat tier.
   - `QUOKY_GMAIL_TOKEN_FILE` reuses the calendar's OAuth client variable names, as ADR-0118 D1 requires: one client.
   - A charset that Node's `TextDecoder` does not know falls back to UTF-8.
@@ -19491,6 +19509,7 @@ Independent Chief Architect review before GML-1 merges.
     including the Jira and Slack write lines, the contributed lines can exceed the ADR-0096 D6 bound of 14. The
     existing bound then drops the last line. Raising the bound is left to INT-3 and DOC-E, so that the unconfigured
     help stays byte-identical.
+  - **Resolved (v4 residual polish).** See the DRV-1 note: mail and Drive share one merged help line when both are on.
 
 ### ADR-0118 implementation note — DRV-1 Google Drive read connector (2026-10-12)
 
@@ -19638,7 +19657,17 @@ Independent Chief Architect review before GML-1 merges.
     the file as their object, so `진행 상황을 공유했어요` in meeting notes is allowed.
   - **Help-line bound.** With Gmail and Drive both on, two lines are contributed. The ADR-0096 D6 bound of 14 may then
     drop the last line when every other optional feature is on (the GML-1 residual; left to INT-3 and DOC-E).
+  - **Resolved (v4 residual polish).** The bound stays 14 x 120 (raising it needs a Product Owner amendment, as in the
+    2026-10-07 amendment). With Gmail and Drive both registered, `withMergedMailDriveHelp` (the turn-handler aggregator)
+    shows ONE compact line, `- 메일·드라이브(읽기 전용, DM에서만): "안 읽은 메일", "최근 문서", "1번 메일 요약해줘",
+    "1번 문서 요약해줘"`, carried by the mail handler (the Drive handler then contributes none; the handlers themselves
+    are unchanged). With only one of them, or neither, the help is byte-identical. Every quoted phrase still routes. With
+    every optional feature on that was still 15 lines, so the Jira and Slack write lines are one combined line when
+    both writers are on (all commands and execution phrases quoted, both help-intent anchors kept). INT-3 pins: with
+    every optional feature on, every contributed line is present and the reply fits the 2000-character budget.
   - The list ↔ id mapping is in memory and is lost on restart.
+  - **Resolved (v4 residual polish).** See the GML-1 note: the Drive list is persisted the same way, under the `drive` slot, with no migration, in
+    (ids only; kind re-checked by the adapter at export time).
   - The OAuth token response is read with `response.json()` (unbounded, pinned to the OAuth host), as in GML-1.
 - **Live QA (Strict, owner).** Enable the Google Drive API in `quoky-personal-510806`; run `calendar-auth --drive`; set
   `QUOKY_DRIVE_TOKEN_FILE`; one read probe (`최근 문서` in the DM). Then about 15 phrasings:

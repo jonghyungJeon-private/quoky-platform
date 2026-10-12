@@ -606,6 +606,15 @@ describe('INT-3 — mail and Drive are DM-only, summary only on request, inert o
     expect(full.fetchesTo(GMAIL).some((record) => record.url.includes('format=full'))).toBe(false);
   });
 
+  it('the real composition persists the displayed listing ids on the session (numbers survive a restart)', async () => {
+    await full.turn(discordDm, '안 읽은 메일');
+    const session = await full.storage.sessions.findActiveByContext(discordDm.channelId);
+    const persisted = JSON.stringify(session?.metadata?.['quoky.lastListing'] ?? null);
+    expect(persisted).toContain('"mail"');
+    // Ids only: no subject or sender text is persisted.
+    expect(persisted).not.toContain('분기 보고서');
+  });
+
   it('a summary happens only on an explicit request: one body read and one summarization call', async () => {
     await full.turn(discordDm, '안 읽은 메일');
     const providerBefore = full.providerLog.length;
@@ -863,6 +872,38 @@ describe('INT-3 — learning examples egress (ADR-0116)', () => {
     const body = await requestBody('lrn-remote', { QUOKY_LEARNING_EXAMPLES_ENABLED: 'true', QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED: 'true' });
     expect(exampleCount(body)).toBeGreaterThan(0);
     expect(exampleCount(body)).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('INT-3 — help with every optional feature on (ADR-0096 D6, v4 residual polish)', () => {
+  it('no contributed line is dropped and the reply fits the message budget', async () => {
+    const world = await startWorld({
+      name: 'help-all-on',
+      telegram: true,
+      tokenFiles: true,
+      env: {
+        QUOKY_CALENDAR_WRITE_ENABLED: 'true',
+        QUOKY_JIRA_BASE_URL: 'https://example.invalid',
+        QUOKY_JIRA_EMAIL: 'int3@example.invalid',
+        QUOKY_JIRA_TOKEN: 'int3-jira-placeholder',
+        QUOKY_CONNECTOR_WRITES_ENABLED: 'true',
+        QUOKY_CONNECTOR_WRITE_JIRA_PROJECTS: 'PROJ',
+        QUOKY_CONNECTOR_WRITE_SLACK_TOKEN: `${'xox'}${'b-'}int3-placeholder`,
+        QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS: 'dev:C0DEVCHAN1',
+      },
+    });
+    const runtime = world.app.get(world.core.ConversationRuntime) as unknown as { contributedHelpLines: readonly string[] };
+    const contributed = runtime.contributedHelpLines;
+    // Gmail, Drive, calendar writes and the Jira and Slack write lines are all registered.
+    expect(contributed.some((line) => line.includes('메일·드라이브'))).toBe(true);
+    expect(contributed.some((line) => line.includes('Jira 쓰기'))).toBe(true);
+    expect(contributed.some((line) => line.includes('Slack 게시'))).toBe(true);
+    expect(contributed.length).toBeLessThanOrEqual(world.core.MAX_CONTRIBUTED_HELP_LINES);
+    const help = await world.turn(discordDm, '도움말');
+    const lines = help.text.split('\n');
+    for (const line of contributed) expect(lines, line).toContain(line);
+    expect(help.text.length).toBeLessThanOrEqual(2000);
+    expect(world.blockedFetches).toEqual([]);
   });
 });
 

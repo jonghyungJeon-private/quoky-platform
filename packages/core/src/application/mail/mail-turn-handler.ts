@@ -17,6 +17,8 @@ import type { Id, IsoTimestamp, MessageBody } from '../../domain';
 import { isDirectConversation, outboundMessage } from '../message-rendering';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { localDateOf, zonedToUtcIso } from '../reminders/zoned-time';
+import { persistListing, readPersistedListing } from '../last-listing';
+import type { SessionManager } from '../session-manager';
 import { buildUntrustedDocumentReadout } from '../untrusted-document-readout';
 import { parseMailQuestion, type MailLanguage, type MailQuestion, type MailSummaryTarget } from './mail-question';
 import {
@@ -67,6 +69,11 @@ export interface MailTurnHandlerDeps {
   readonly timeoutMs?: number;
   /** The source label and reconnect step the composition root supplies (review P3-6); neutral copy when absent. */
   readonly copy?: MailSourceCopy;
+  /**
+   * Persists the last listing's displayed ids in `Session.metadata` (no migration) so "N번 메일 요약해줘" survives a
+   * restart; the persisted record wins over the in-memory cache. Absent = in-memory only.
+   */
+  readonly sessions?: Pick<SessionManager, 'updateMetadataEntry'>;
 }
 
 class MailReadTimeout extends Error {
@@ -157,7 +164,9 @@ export class MailTurnHandler implements ConversationTurnHandler {
     }
     const messages = result.messages.slice(0, MAIL_LISTING_MAX_ENTRIES);
     this.log('info', 'mail.turn_handler.listed', { shown: messages.length, matched: result.matched });
-    this.rememberListing(ctx, messages.map((message) => message.id));
+    const shownIds = messages.map((message) => message.id);
+    this.rememberListing(ctx, shownIds);
+    await this.persistShown(ctx, shownIds);
     const body = renderMailListing(filter, { ...result, messages }, {
       timeZone: this.deps.timeZone,
       now: ctx.now,
@@ -225,8 +234,27 @@ export class MailTurnHandler implements ConversationTurnHandler {
     }
   }
 
-  /** This (session, actor)'s last list within the TTL, or `undefined`. */
+  /** Best-effort: a failed write leaves the in-memory cache as the only copy (never fails the turn). */
+  private async persistShown(ctx: TurnHandlerContext, messageIds: readonly string[]): Promise<void> {
+    if (this.deps.sessions === undefined) return;
+    try {
+      await persistListing(this.deps.sessions, ctx.session.id, ctx.actor.id, 'mail', messageIds, ctx.now);
+    } catch {
+      this.log('warn', 'mail.turn_handler.listing_persist_failed', {});
+    }
+  }
+
+  /** This (session, actor)'s last list within the TTL (the newer of the persisted record and the cache), or `undefined`. */
   private currentListing(ctx: TurnHandlerContext): RecentListing | undefined {
+    const cached = this.cachedListing(ctx);
+    const persisted = readPersistedListing(ctx.session, ctx.actor.id, 'mail', ctx.now);
+    if (persisted !== undefined && (cached === undefined || Date.parse(persisted.at) > Date.parse(cached.at))) {
+      return { at: persisted.at, sessionId: ctx.session.id, actorId: ctx.actor.id, messageIds: persisted.ids };
+    }
+    return cached;
+  }
+
+  private cachedListing(ctx: TurnHandlerContext): RecentListing | undefined {
     const key = listingKey(ctx.session.id, ctx.actor.id);
     const listing = this.recentListings.get(key);
     if (!listing || listing.sessionId !== ctx.session.id || listing.actorId !== ctx.actor.id) return undefined;

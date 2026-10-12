@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — v4 residual polish (2026-10-12)
+
+No migration, no new DI token; `ConversationRuntimeDeps` stays 35.
+
+- **Mail and Drive list numbers survive a restart.** The last listing's displayed ids are persisted in
+  `Session.metadata['quoky.lastListing']` (per Actor, a `mail` and a `drive` slot, 30-minute TTL checked on read; ids
+  only, never subjects or names). `1번 메일 요약해줘` works after a restart; a Drive list never resolves a mail number.
+- **Help keeps every capability line with everything on.** With Gmail and Drive both configured, their two help lines are
+  one compact line; with Jira and Slack writes both on, their two lines are one. The ADR-0096 D6 bound stays 14 x 120;
+  the unconfigured help is byte-identical. An INT-3 test pins that every contributed line is present within the budget.
+- **Telegram plain text shows links and quotes (TG-3 residual).** In Quoky copy and model replies, `[text](url)` becomes
+  `text (url)` for http(s) URLs only (Telegram autolinks the URL) and a leading `> ` becomes `│ `. Untrusted spans stay
+  byte-identical; the output is still never longer than the input and chunking stays lossless.
+
 ## Unreleased — Personal v4 closure: INT-3 acceptance and DOC-E (2026-10-12)
 
 Every v4 track is merged (#152-#172). This entry adds a test and documentation only; no runtime behaviour changes. Schema

@@ -563,11 +563,12 @@ describe('Personal v3 acceptance — composition in the maximum v3 configuration
     const contributed = (harness.runtime as unknown as { contributedHelpLines: readonly string[] }).contributedHelpLines;
     const registered = EXPECTED_REGISTRY.flatMap(([id]) => harness.handlers.find((h) => h.id === id)?.helpLines ?? []);
     const flowLines = harness.flow?.helpLines ?? [];
-    expect(flowLines).toHaveLength(2); // the Jira line and the Slack line (calendar writes change the calendar line)
+    expect(flowLines).toHaveLength(1); // the one combined Jira + Slack line (calendar writes change the calendar line)
     expect(contributed).toEqual([...registered, ...flowLines]);
-    // The ratchet value: the maximum v3 configuration fills the amended budget exactly. The runtime model switch added
-    // its one line and kept the total at 14 by merging the two feedback lines into one (ADR-0092 amendment).
-    expect(contributed).toHaveLength(14);
+    // The ratchet value: the maximum v3 configuration (no Gmail or Drive) leaves one line of the amended budget free for
+    // the merged mail and Drive line. The runtime model switch added its one line and kept the total at 14 by merging the
+    // two feedback lines into one (ADR-0092 amendment); the Jira and Slack write lines are now one combined line.
+    expect(contributed).toHaveLength(13);
     expect(contributed.length).toBeLessThanOrEqual(MAX_CONTRIBUTED_HELP_LINES);
     for (const line of contributed) {
       expect(Array.from(line).length, line).toBeLessThanOrEqual(MAX_CONTRIBUTED_HELP_LINE_CHARS);

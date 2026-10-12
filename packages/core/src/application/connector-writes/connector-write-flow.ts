@@ -756,6 +756,14 @@ const CONNECTOR_WRITE_HELP_LINES: Readonly<Record<'issue' | 'channel', string>> 
   channel: '- Slack 게시: "#채널에 게시: 내용" 또는 "#채널에 내용이라고 올려줘" → "승인" → "Slack 게시 실행"',
 };
 
+/**
+ * With both the Jira and the Slack write on, one compact line carries both (ADR-0096 D6 stays 14 x 120: with Gmail and
+ * Drive also on, two separate lines would push a capability line past the bound). Every command and its execution
+ * phrase stays quoted; both topic anchors ("Jira 쓰기", "Slack 게시") are present for the help-intent topic answers.
+ */
+const CONNECTOR_WRITE_COMBINED_HELP_LINE =
+  '- Jira 쓰기·Slack 게시(승인 후): "KEY-1에 댓글: 내용"→"댓글 실행", "KEY-1 진행 중으로 바꿔줘"→"상태 변경 실행", "#채널에 게시: 내용"→"Slack 게시 실행"';
+
 class ReadTimeout extends Error {}
 
 export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
@@ -766,8 +774,14 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
   constructor(private readonly deps: ConnectorWriteFlowDeps) {
     this.sessionLock = deps.sessionLock ?? SESSION_WRITE_LOCK;
     const lines: string[] = [];
-    if (deps.writers.issueComments || deps.writers.issueTransitions) lines.push(CONNECTOR_WRITE_HELP_LINES.issue);
-    if (deps.writers.channelMessages) lines.push(CONNECTOR_WRITE_HELP_LINES.channel);
+    const issue = Boolean(deps.writers.issueComments || deps.writers.issueTransitions);
+    const channel = Boolean(deps.writers.channelMessages);
+    if (issue && channel && deps.writers.issueComments && deps.writers.issueTransitions) {
+      lines.push(CONNECTOR_WRITE_COMBINED_HELP_LINE);
+    } else {
+      if (issue) lines.push(CONNECTOR_WRITE_HELP_LINES.issue);
+      if (channel) lines.push(CONNECTOR_WRITE_HELP_LINES.channel);
+    }
     this.helpLines = Object.freeze(lines);
   }
 

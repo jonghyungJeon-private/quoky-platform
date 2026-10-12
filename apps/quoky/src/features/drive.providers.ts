@@ -2,6 +2,7 @@ import type { Provider } from '@nestjs/common';
 import { GDRIVE_SOURCE_LABEL, GDriveTokenFileError, GoogleDriveReader, readGDriveTokenFile } from '@quoky/connector-gdrive';
 import {
   DRIVE_READER,
+  SessionManager,
   createDriveTurnHandler,
   type ConversationTurnHandler,
   type DriveReader,
@@ -101,10 +102,11 @@ export function createDriveProviders(options: DriveCompositionOptions): Provider
     { provide: DRIVE_READER, useValue: reader },
     {
       provide: DRIVE_TURN_HANDLERS,
-      useFactory: (driveReader: DriveReader): readonly ConversationTurnHandler[] => [
-        createDriveTurnHandler({ reader: driveReader, timeZone, logger, copy: GDRIVE_DRIVE_COPY }),
+      // The session manager is optional: without it a listing's numbers live only in memory (no persistence).
+      useFactory: (driveReader: DriveReader, sessions?: SessionManager): readonly ConversationTurnHandler[] => [
+        createDriveTurnHandler({ reader: driveReader, timeZone, logger, copy: GDRIVE_DRIVE_COPY, ...(sessions !== undefined ? { sessions } : {}) }),
       ],
-      inject: [DRIVE_READER],
+      inject: [DRIVE_READER, { token: SessionManager, optional: true }],
     },
   ];
 }

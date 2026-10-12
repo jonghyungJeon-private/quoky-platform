@@ -49,8 +49,8 @@ describe('TG-3 CommonMark → Telegram plain text: the translations', () => {
       '_draft_.ts',
       'https://x/**y**',
       'www.e.test/_a_/b',
-      '[file](https://e.test/_draft_/x)',
-      '[file](https://e.test/**x**/y)',
+      'file (https://e.test/_draft_/x)',
+      'file (https://e.test/**x**/y)',
       '<https://e.test/_a_/b>',
       'C:\\dir\\_x_\\*y*.ts',
       '파일 `src/_x_/y.ts` 수정',
@@ -62,7 +62,7 @@ describe('TG-3 CommonMark → Telegram plain text: the translations', () => {
     for (const exact of ['[file](https://e.test/`draft`/x)', '<https://e.test/`a`/b>', 'https://e.test/`a`/b 확인']) {
       expect(t(exact)).toBe(exact);
     }
-    expect(t('[**굵게**](https://e.test/_a_/b)')).toBe('[**굵게**](https://e.test/_a_/b)');
+    expect(t('[**굵게**](https://e.test/_a_/b)')).toBe('**굵게** (https://e.test/_a_/b)');
     expect(t('**굵게** `a.ts` _draft_.ts')).toBe('굵게 a.ts _draft_.ts');
   });
 
@@ -82,12 +82,11 @@ describe('TG-3 CommonMark → Telegram plain text: the translations', () => {
     expect(t('짝 없는 ` 백틱')).toBe('짝 없는 ` 백틱');
   });
 
-  it('headings become plain lines; bullets become •; ordered lists, quotes and breaks stay', () => {
+  it('headings become plain lines; bullets become •; ordered lists and breaks stay', () => {
     expect(t('# 제목\n## 부제 ##\n###### 작은 제목\n####### 일곱 개')).toBe('제목\n부제\n작은 제목\n####### 일곱 개');
     expect(t('#해시태그는 제목이 아님')).toBe('#해시태그는 제목이 아님');
     expect(t('- 하나\n* 둘\n+ 셋\n  - 안쪽')).toBe('• 하나\n• 둘\n• 셋\n  • 안쪽');
     expect(t('1. 첫째\n2. 둘째')).toBe('1. 첫째\n2. 둘째');
-    expect(t('> 인용')).toBe('> 인용');
     expect(t('위\n---\n***\n아래')).toBe('위\n---\n***\n아래');
   });
 
@@ -125,6 +124,73 @@ describe('TG-3 CommonMark → Telegram plain text: the translations', () => {
       warning: '⚠️ 범위 밖 경로',
       footer: '적용하려면 적용',
     });
+  });
+});
+
+describe('TG-3 follow-up: http(s) links and block quotes (v4 residual polish)', () => {
+  it('[text](url) becomes "text (url)" for http(s) only; the URL stays plain text for Telegram to autolink', () => {
+    expect(t('[문서](https://e.test/a?b=1&c=2#d)')).toBe('문서 (https://e.test/a?b=1&c=2#d)');
+    expect(t('자세히는 [여기](http://e.test/x) 와 [저기](HTTPS://E.TEST/y) 를 봐요')).toBe('자세히는 여기 (http://e.test/x) 와 저기 (HTTPS://E.TEST/y) 를 봐요');
+    expect(t('[위키](https://e.test/a_(b))')).toBe('위키 (https://e.test/a_(b))');
+    expect(t('[https://e.test/x](https://e.test/x)')).toBe('https://e.test/x');
+    expect(t('- [하나](https://e.test/1)\n- [둘](https://e.test/2)')).toBe('• 하나 (https://e.test/1)\n• 둘 (https://e.test/2)');
+  });
+
+  it('other schemes, titles, images, reference links, spaces and code spans stay as written', () => {
+    for (const same of [
+      '[x](javascript:alert(1))',
+      '[x](ftp://e.test/a)',
+      '[x](mailto:a@e.test)',
+      '[x](/relative/path)',
+      '[x](https://e.test/a "title")',
+      '[x](https://e.test/a b)',
+      '[x](<https://e.test/a>)',
+      '![img](https://e.test/a.png)',
+      '[ref][1]',
+      '[](https://e.test/a)',
+      '[x](https://e.test/a',
+      '[a [b]](https://e.test/a)',
+      // A backtick inside the destination makes part of it a code span: not a plain URL, so left as written.
+      '[file](https://e.test/`draft`/x)',
+    ]) {
+      expect(t(same), same).toBe(same);
+    }
+    // A code span keeps its content literally (the backticks go, as before).
+    expect(t('`[x](https://e.test/a)`')).toBe('[x](https://e.test/a)');
+  });
+
+  it('a link with an untrusted span in its text or destination is left alone; spans are byte-identical', () => {
+    const hostile = '[**x**](https://evil.test/`a`)';
+    const content = messageContent('[', untrustedText(hostile), '](https://e.test/a) · [ok](https://e.test/b) · [', untrustedText('t'), '](https://e.test/c) · [t](https://e.test/', untrustedText('d'), ')');
+    const rendered = renderTelegramContent(content);
+    expect(rendered).toContain(`[${hostile}](https://e.test/a)`);
+    expect(rendered).toContain('ok (https://e.test/b)');
+    expect(rendered).toContain('[t](https://e.test/c)');
+    expect(rendered).toContain('[t](https://e.test/d)');
+    // The untrusted span itself is never rewritten, even when it is a complete link.
+    expect(renderTelegramContent(messageContent(untrustedText('[x](https://e.test/a)'), ' 끝'))).toBe('[x](https://e.test/a) 끝');
+    expect(renderTelegramContent(messageContent('> ', untrustedText('> 인용 [x](https://e.test/a)')))).toBe('│ > 인용 [x](https://e.test/a)');
+  });
+
+  it('a model reply may carry links and quotes: the visible URL replaces a hidden destination', () => {
+    const reply = renderOutboundForTelegram({ text: '> 요약\n> 두 번째 줄\n\n출처: [공식 문서](https://e.test/docs) 와 [그림](javascript:x)', format: 'model-reply' } as never);
+    expect(reply).toBe('│ 요약\n│ 두 번째 줄\n\n출처: 공식 문서 (https://e.test/docs) 와 [그림](javascript:x)');
+  });
+
+  it('a leading "> " becomes "│ " (nested too, a lone > as │); a > elsewhere, or inside a fence, is untouched', () => {
+    expect(t('> 인용')).toBe('│ 인용');
+    expect(t('> > 중첩')).toBe('│ │ 중첩');
+    expect(t('  > 들여쓴 인용')).toBe('  │ 들여쓴 인용');
+    expect(t('>\n> 둘째')).toBe('│\n│ 둘째');
+    for (const same of ['a > b', '2 > 1', '-> 화살표', '>붙여 쓴 것', '    > 코드 들여쓰기', '값 => 다음']) expect(t(same), same).toBe(same);
+    expect(t('```\n> 코드 안\n```')).toBe('> 코드 안');
+    expect(t('> **굵게** [링크](https://e.test/a)')).toBe('│ 굵게 링크 (https://e.test/a)'.replace('링크 (', '링크 ('));
+  });
+
+  it('the translation is never longer than the input, link and quote rewrites included', () => {
+    for (const text of ['[a](https://e.test/x)', '> [a](https://e.test/x)', '[https://e.test](https://e.test)', '> > x\n[y](http://z.test)', '[a](https://e.test/x)'.repeat(50)]) {
+      expect(t(text).length, text).toBeLessThanOrEqual(text.length);
+    }
   });
 });
 
@@ -178,7 +244,7 @@ function prng(seed: number): () => number {
   };
 }
 
-const PIECES = ['**', '*', '_', '`', '```', '\n', '# ', '- ', ' ', '가나', 'abc', '😀', '<b>', '~~~', '…', '\n```\n', 'x_y', '  '];
+const PIECES = ['**', '*', '_', '`', '```', '\n', '# ', '- ', ' ', '가나', 'abc', '😀', '<b>', '~~~', '…', '\n```\n', 'x_y', '  ', '> ', '[a](https://e.test/x)', '[', '](https://e.test/', ')'];
 
 function randomText(next: () => number): string {
   let text = '';
@@ -233,8 +299,9 @@ describe("TG-3 translator plumbing: the segment evaluator is Core's, and transla
       expect(translated.length, `tree ${i}`).toBeLessThanOrEqual(rendered.length);
       // Every untrusted span's text survives somewhere in the output exactly (it is never edited).
       for (const segment of segments) if (segment.span) expect(translated, `tree ${i}`).toContain(segment.text);
-      // No URL-shaped or path-shaped token of the copy is ever changed.
+      // No URL-shaped or path-shaped token of the copy is ever changed (except a `[text](http…)` link, rewritten on purpose).
       for (const token of rendered.split(/\s+/)) {
+        if (/\]\(https?:\/\//i.test(token)) continue;
         if (/:\/\/|^www\.|[/\\]|\.[A-Za-z0-9]+$|^[A-Za-z0-9.-]*_[A-Za-z0-9_.-]*$/.test(token) && !/[`*]/.test(token.replace(/^[`*]+|[`*]+$/g, ''))) {
           expect(translated, `tree ${i} token ${token}`).toContain(token.replace(/^[`*]+|[`*]+$/g, ''));
         }
@@ -271,12 +338,15 @@ describe("TG-3 translator plumbing: the segment evaluator is Core's, and transla
 });
 
 describe('TG-3 chunking after translation stays lossless (ADR-0114 D7)', () => {
-  const reply = Array.from({ length: 400 }, (_, i) => `## 절 ${i}\n**굵게 ${i}** 그리고 \`코드 ${i}\`\n- 항목 ${i}\n\`\`\`\n코드 줄 ${i} **그대로**\n\`\`\``).join('\n');
+  const reply = Array.from({ length: 400 }, (_, i) => `## 절 ${i}\n**굵게 ${i}** 그리고 \`코드 ${i}\` [문서 ${i}](https://e.test/d/${i})\n> 인용 ${i}\n- 항목 ${i}\n\`\`\`\n코드 줄 ${i} **그대로** > [그대로](https://e.test/${i})\n\`\`\``).join('\n');
 
   it('the translated text is split into ≤4096 chunks that join back to exactly the translated text', async () => {
     const translated = renderOutboundForTelegram({ text: reply, format: 'model-reply' } as never);
     expect(translated.length).toBeLessThan(reply.length);
-    expect(translated).toContain('코드 줄 7 **그대로**');
+    expect(translated).toContain('코드 줄 7 **그대로** > [그대로](https://e.test/7)');
+    expect(translated).toContain('**굵게 7**'.replace(/\*/g, '') + ' 그리고');
+    expect(translated).toContain('문서 7 (https://e.test/d/7)');
+    expect(translated).toContain('│ 인용 7');
     expect(translated).not.toContain('```');
     const chunks = chunkTelegramText(translated);
     expect(chunks.length).toBeGreaterThan(1);

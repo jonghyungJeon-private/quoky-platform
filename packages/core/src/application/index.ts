@@ -2,6 +2,7 @@ export * from './risk-policy';
 export * from './ai-failure';
 export * from './actor-manager';
 export * from './session-manager';
+export * from './last-listing';
 export * from './project-manager';
 export * from './project-analyzer';
 export * from './ai-provider-manager';
@@ -187,5 +188,6 @@ export * from './document-summary-claim-guard';
 export * from './mail';
 // ADR-0118 Drive read (DRV-1): the Drive sub-barrel (the readout, neutralizer and claim guard are shared with mail).
 export * from './drive';
+export * from './mail-drive-help';
 // ADR-0115 D8 (PRV-3): normalising the per-run Usage value object (TaskRun.usage).
 export * from './provider-usage-record';
