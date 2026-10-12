@@ -285,7 +285,7 @@ function stripPairedMarker(line: string, marker: '**' | '__'): string {
  * spoiler or subtext marker), or `''` for none. Bounded patterns only.
  */
 function lineMarkupPrefix(line: string): string {
-  const match = /^[ \t]{0,8}(?:>{1,3}|`{3,}|~{3,}|#{1,6}[ \t]|[-*+][ \t]|\d{1,9}[.)][ \t]|\||\|\||-#[ \t])/u.exec(line);
+  const match = /^[ \t]*(?:>{1,3}|`{3,}|~{3,}|#{1,6}[ \t]|[-*+][ \t]|\d{1,9}[.)][ \t]|\||\|\||-#[ \t])/u.exec(line);
   return match ? match[0].trim() : '';
 }
 
@@ -327,7 +327,11 @@ export function documentSummaryReplyBody(summaryText: string, footer: MessageBod
   // character can join two fragments into a link (`evil**.**com`, `[x]**(**https://evil)`), so the LAST step is
   // always the neutralizer — a link can never come out of this function. The first pass keeps masked links from being
   // half-eaten by the stripper; neutralizing an already neutralized text is a no-op.
-  const text = neutralizeLinks(stripMarkdownEmphasis(neutralizeLinks(summaryText, 'display')), 'display').trim();
+  // Codex delta P2 (round 4): only leading blank LINES and trailing whitespace are trimmed. Removing a first line's
+  // indentation could turn it into markup (`         1. item` → `1. item`), so indentation is kept.
+  const text = neutralizeLinks(stripMarkdownEmphasis(neutralizeLinks(summaryText, 'display')), 'display')
+    .replace(/^(?:[ \t]*\n)+/u, '')
+    .trimEnd();
   return messageBody(
     clipMessage(untrustedText(text, 'markup'), DOCUMENT_SUMMARY_REPLY_MAX_CHARS, 'code-points', { after: messageBody('\n\n', footer) }),
   );

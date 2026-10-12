@@ -334,3 +334,12 @@ describe('Codex delta P2 round 3: stripping never joins inline markup', () => {
     }
   });
 });
+
+describe('Codex delta P2 round 4: indentation of any depth cannot hide an exposed prefix', () => {
+  it('nine or more leading spaces before **1.** keep the line literal, and the reply never starts a list', () => {
+    const raw = `${' '.repeat(9)}**1.** item`;
+    expect(stripMarkdownEmphasis(raw)).toBe(raw);
+    const rendered = renderMessageContent(documentSummaryReplyBody(raw, '(f)'), PLAIN_TEXT_MARKUP);
+    expect(rendered.split('\n')[0]).not.toMatch(/^\s*\d{1,9}[.)][ \t]/u);
+  });
+});
