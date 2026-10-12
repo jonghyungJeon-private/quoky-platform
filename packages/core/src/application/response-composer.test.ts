@@ -10,6 +10,7 @@ import {
 } from '../domain';
 import { MAX_CONTRIBUTED_HELP_LINE_CHARS, MAX_CONTRIBUTED_HELP_LINES, ResponseComposer } from './response-composer';
 import type { CodeChangePreview, CodeDiffPreview, PatchSetPreview, TestResultDetail } from './response-composer';
+import { isAcceptedExecutionPhrase, type ExecutionGate } from './execution-command-guard';
 import { ProviderGatewayTerminalStatus } from './provider-routing-gateway';
 import { RoutingFailureCode } from './runtime-response-validation-contracts';
 import { PLAIN_TEXT_MARKUP, outboundBody, renderMessageContent } from './message-rendering';
@@ -2108,5 +2109,25 @@ describe('ResponseComposer — connector writes (ADR-0112, CWR-2)', () => {
     expect(renderMessageContent(outboundBody(repeat), { ...PLAIN_TEXT_MARKUP, link: (url) => `«link:${url}»` })).toContain(
       '링크: «link:https://example.atlassian.net/browse/P-1»',
     );
+  });
+});
+
+describe('post-approval execute hints are accepted execution phrases (v4 QA follow-up)', () => {
+  const hintOf = (text: string): string => /"([^"]+)"(?:이라고|라고)/u.exec(text)?.[1] ?? '';
+
+  it.each<[ExecutionGate, string]>([
+    ['commit', composer.composeCommitApprovalRecorded(CTX).text],
+    ['push', composer.composePushApprovalRecorded(CTX).text],
+    ['prCreate', composer.composePrApprovalRecorded(CTX).text],
+    ['merge', composer.composeMergeApprovalRecorded(CTX).text],
+    ['remoteCleanup', composer.composeRemoteBranchCleanupRecorded(CTX).text],
+  ])('%s: the hint names a phrase the grammar executes', (gate, text) => {
+    const phrase = hintOf(text);
+    expect(phrase, text).not.toBe('');
+    expect(isAcceptedExecutionPhrase(gate, phrase)).toBe(true);
+  });
+
+  it('the merge hint is the exact one-line form', () => {
+    expect(composer.composeMergeApprovalRecorded(CTX).text).toContain('실제로 머지하려면 "머지 실행"이라고 알려 주세요.');
   });
 });

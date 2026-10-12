@@ -105,7 +105,7 @@ export const EXECUTION_PHRASES: Readonly<Record<ExecutionGate, readonly string[]
     'open a pull request', 'create a PR', 'create PR', 'create pull request', 'create a pull request', 'create merge request',
   ],
   merge: [
-    '머지해줘', '머지 실행', '머지 실행해줘', 'PR 머지해줘', '이 PR 머지해줘', '승인된 PR 머지해줘', '실제 머지해줘', '실제로 머지해줘',
+    '머지 실행', '머지해줘', '머지 실행해줘', 'PR 머지해줘', '이 PR 머지해줘', '승인된 PR 머지해줘', '실제 머지해줘', '실제로 머지해줘',
     'merge this PR', 'merge the PR', 'merge approved PR', 'merge the approved PR', 'merge now', 'execute merge',
     'execute approved merge',
   ],

@@ -599,13 +599,13 @@ and states are in `docs/lifecycle-state-machine.md`. Approvals are decided with 
 | Apply the preview | "적용해줘" | `AWAITING_APPROVAL` → (승인) → `APPROVED` → `PATCH_READY` → `WORKSPACE_APPLIED` |
 | (validation) | "테스트 돌려줘" / "타입체크 해줘" (optional; point-in-time) | stays `WORKSPACE_APPLIED` |
 | Commit approval | "커밋 승인해줘" | `COMMIT_APPROVAL_PENDING` → (승인) → `COMMIT_APPROVED` |
-| Commit execute | "커밋해줘" | `GIT_COMMITTED` |
+| Commit execute | "커밋 실행" | `GIT_COMMITTED` |
 | Push approval | "푸시 승인해줘" | `PUSH_APPROVAL_PENDING` → (승인) → `PUSH_APPROVED` |
-| Push execute | "푸시해줘" | `GIT_PUSHED` |
+| Push execute | "푸시 실행" | `GIT_PUSHED` |
 | PR approval | "PR 만들 수 있게 승인해줘" | `PR_APPROVAL_PENDING` → (승인) → `PR_APPROVED` |
-| PR create execute | "PR 만들어줘" | `PR_CREATED` |
+| PR create execute | "PR 생성 실행" | `PR_CREATED` |
 | Merge approval | "머지 승인해줘" | `MERGE_APPROVAL_PENDING` → (승인) → `MERGE_APPROVED` |
-| Merge execute | "머지해줘" | `PR_MERGED` |
+| Merge execute | "머지 실행" | `PR_MERGED` |
 | Local main sync | "main 동기화해줘" | `MAIN_SYNCED` |
 | Local branch cleanup | "로컬 브랜치 정리해줘" | `BRANCH_CLEANED` |
 | Remote cleanup approval | "원격 브랜치 삭제해줘" | `REMOTE_BRANCH_CLEANUP_PENDING` → (승인) → `REMOTE_BRANCH_CLEANUP_APPROVED` |
@@ -626,8 +626,8 @@ operator prompts · expected state transitions · expected artifacts · manual c
 - **Purpose:** diff → apply approval → apply → (validation) → commit approval/exec → push approval/exec → PR
   approval/exec.
 - **Preconditions:** §3 checklist passed; clean checkout on a fresh test branch.
-- **Operator prompts:** "바꿔줘" (change request) → "적용해줘" → "승인" → "커밋 승인해줘" → "승인" → "커밋해줘" →
-  "푸시 승인해줘" → "승인" → "푸시해줘" → "PR 만들 수 있게 승인해줘" → "승인" → "PR 만들어줘".
+- **Operator prompts:** "바꿔줘" (change request) → "적용해줘" → "승인" → "커밋 승인해줘" → "승인" → "커밋 실행" →
+  "푸시 승인해줘" → "승인" → "푸시 실행" → "PR 만들 수 있게 승인해줘" → "승인" → "PR 생성 실행".
 - **Expected transitions:** `ELIGIBLE → AWAITING_APPROVAL → APPROVED → PATCH_READY → WORKSPACE_APPLIED →
   COMMIT_APPROVAL_PENDING → COMMIT_APPROVED → GIT_COMMITTED → PUSH_APPROVAL_PENDING → PUSH_APPROVED → GIT_PUSHED →
   PR_APPROVAL_PENDING → PR_APPROVED → PR_CREATED`.
@@ -641,7 +641,7 @@ operator prompts · expected state transitions · expected artifacts · manual c
 - **Purpose:** merge approval + merge execution.
 - **Preconditions:** A reached `PR_CREATED`; the PR is mergeable in the sandbox (else this becomes a valid Scenario-E
   Blocked test).
-- **Operator prompts:** "머지 승인해줘" → "승인" → "머지해줘".
+- **Operator prompts:** "머지 승인해줘" → "승인" → "머지 실행".
 - **Expected transitions:** `PR_CREATED → MERGE_APPROVAL_PENDING → MERGE_APPROVED → PR_MERGED`.
 - **Expected artifacts:** a merge commit hash; PR shows merged.
 - **Manual checks:** PR merged on GitHub at the approved head SHA; reply says merged but **not** deployed/released.
@@ -675,7 +675,7 @@ operator prompts · expected state transitions · expected artifacts · manual c
 
 ### Scenario E — blocked preflight path
 - **Purpose:** a known pre-mutation failure is reported **Blocked** ("did not happen") and is safe.
-- **Preconditions:** induce a safe pre-mutation failure — e.g. "머지해줘" on a non-mergeable PR (branch protection /
+- **Preconditions:** induce a safe pre-mutation failure — e.g. "머지 실행" on a non-mergeable PR (branch protection /
   failing required check), or an execute phrase in the wrong state.
 - **Operator prompts:** the relevant execute phrase.
 - **Expected transitions:** state unchanged; reply is Blocked wording ("…하지 않았어요" + safe reason).

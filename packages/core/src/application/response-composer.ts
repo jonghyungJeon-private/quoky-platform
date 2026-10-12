@@ -2691,7 +2691,8 @@ export class ResponseComposer {
   composeMergeApprovalRecorded(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: 'PR 머지 승인이 기록됐어요.\n아직 머지는 하지 않았어요. 배포/릴리즈도 하지 않았어요. (실제 머지는 이후 단계에서 진행돼요)',
+      text: 'PR 머지 승인이 기록됐어요.\n아직 머지는 하지 않았어요. 배포/릴리즈도 하지 않았어요. (실제 머지는 이후 단계에서 진행돼요)\n' +
+        `실제로 머지하려면 "${documentedExecutionPhrase('merge')}"이라고 알려 주세요.`,
     };
   }
 
@@ -2970,7 +2971,9 @@ export class ResponseComposer {
   composeRemoteBranchCleanupRecorded(context: ConversationContext): OutboundMessage {
     return {
       context,
-      text: '원격 브랜치 정리 승인이 기록됐어요.\n아직 아무것도 삭제하지 않았어요. 실제 원격 브랜치 삭제는 이후 실행 단계에서 진행돼요. 배포/릴리즈/태그도 하지 않았어요.',
+      text:
+        '원격 브랜치 정리 승인이 기록됐어요.\n아직 아무것도 삭제하지 않았어요. 실제 원격 브랜치 삭제는 이후 실행 단계에서 진행돼요. 배포/릴리즈/태그도 하지 않았어요.\n' +
+        `실제로 삭제하려면 "${documentedExecutionPhrase('remoteCleanup')}"라고 알려 주세요.`,
     };
   }
 
