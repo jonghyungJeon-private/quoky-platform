@@ -5,7 +5,40 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
-### PRV-3 provider usage ledger and monthly DM — implemented on branch, not merged (2026-10-12)
+### Personal v4 — closed (INT-3 and DOC-E, 2026-10-12)
+
+Every v4 track is merged (#153-#172). Schema stays v15, `ConversationRuntimeDeps` stays 35. The per-track sections below
+were written on their branches, so where one says "not run yet" or "Pending", this section and
+`docs/uat/personal-v4-qa-record.md` (session 1, 2026-10-12) are authoritative. Offline integration acceptance:
+`apps/quoky/src/personal-v4-acceptance.test.ts` (the real `AppModule` with a fake `fetch`, calendar and Discord).
+
+**Live on the owner's service (verified in the QA record):**
+
+- **Telegram** (private chat with the owner): text, an image with a caption, a 👍 reaction recorded as feedback, the same
+  owner Actor as Discord (a Discord to-do is visible), a reminder delivered on Telegram. `message_reaction` is delivered
+  in private bot chats. `OPS_*` notices stay on Discord.
+- **Gmail and Drive, read-only, DM-only:** unread and today's mail, a mail summary, recent documents, a Sheet summary,
+  the read-only refusal, the DM-only refusal in a channel. Two live defects were fixed (#171 HTTP 204 as an empty list,
+  #172 literal Markdown markers in summaries).
+- **Morning brief with the calendar section** (daily at 08:00, 10/9-10/12) and **pre-meeting reminders** that follow a
+  moved event (delivered once at the new time, nothing at the stale one).
+- **`QUOKY_BRIEF_JIRA_ENABLED=true`** and **`QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true`** are set.
+- **CODE-9 merge UAT** passed once on the sandbox repository (PR #3, merge `5c11cad`); the merge flag is back to `false`.
+- Earlier (2026-10-08): the UNC-1 network-fault test (#155); DET-2 and TBL-1 live checks.
+
+**Configured but off, or not exercised live (Pending):**
+
+- **OpenAI (PRV-1) and Gemini (PRV-2):** implemented and offline-tested; no API key on the service, so nothing was run
+  live and nothing is selectable. With a key but no owner selection they cause no egress (pinned by INT-3).
+- **PRV-3 usage ledger:** records run by run; the monthly DM first fires in November and has not been seen live.
+- **Jira section of the brief:** on, but first checked at the next morning's brief.
+- **LRN-5 remote examples:** the flag is on, but no remote provider is selected, so no example has left the host; the
+  live round trip is Pending.
+- **TG-3 Telegram ops panel:** not looked at in a browser.
+- **Merge** (`QUOKY_GIT_MERGE_ENABLED`) is `false`.
+- Notion (undecided), SUB-3 continuation and the Stage 2A re-validation stay parked.
+
+### PRV-3 provider usage ledger and monthly DM — merged (#170) (2026-10-12)
 
 ADR-0115 D8, on top of PRV-1 and PRV-2. **No migration: usage is the typed `TaskRun.usage` value object (ADR-0010) in
 the run's JSON `data`** (schema stays v15; ARCHITECTURE.md §4 `Usage` is now `[NOW]`).
@@ -26,7 +59,7 @@ the run's JSON `data`** (schema stays v15; ARCHITECTURE.md §4 `Usage` is now `[
 - **Validation.** Offline only. Chief Architect re-review: APPROVE WITH NITS (nits applied); the Codex delta P1
   (resend after a failed outcome write) is fixed with the in-flight rule. Not run yet: a live check of one real DM.
 
-### DRV-1 Google Drive read connector — implemented on branch, not merged (2026-10-12)
+### DRV-1 Google Drive read connector — merged (#169, fix #171) (2026-10-12)
 
 ADR-0118 D1–D8 for Drive, on top of GML-1 (#165). New pieces:
 
@@ -47,7 +80,7 @@ and the golden fixtures.
   - the Strict gates: owner consent with `calendar-auth --drive`, the first read probe and about 15 live phrasings;
   - the Chief Architect review (mandatory: a new egress).
 
-### TG-3 Telegram notifications and operations — implemented on branch, not merged (2026-10-12)
+### TG-3 Telegram notifications and operations — merged (#167) (2026-10-12)
 
 ADR-0114 D7, D11 and D12 on top of TG-1 (#161) and TG-2 (#164), on `claude/v4-w4-tg3-ops`:
 
@@ -74,7 +107,7 @@ run yet:
 - the Strict first live session: the panel, and the rendering on a real client;
 - the Chief Architect review.
 
-### BRF-2 pre-meeting reminders — implemented on branch, not merged (2026-10-12)
+### BRF-2 pre-meeting reminders — merged (#166, test fix #168) (2026-10-12)
 
 ADR-0117 D5/D6. `회의 10분 전에 알려줘` (also `다음 회의 …`, `3시 회의 …`, `<제목> 회의 …`, English) creates one
 reminder before one calendar event, resolved through the existing `CALENDAR_READER`.
@@ -97,7 +130,7 @@ reminder before one calendar event, resolved through the existing `CALENDAR_READ
 - **Validation.** Offline only; the golden routing corpus gains route-408..419. The Strict gate is not run: one
   pre-meeting reminder on a test event on the owner's service.
 
-### GML-1 Gmail read connector — implemented on branch, not merged (2026-10-08)
+### GML-1 Gmail read connector — merged (#165, fix #171) (2026-10-08)
 
 ADR-0118 D1–D8, Gmail only (DRV-1 is next). New pieces:
 
@@ -122,7 +155,7 @@ and the Discord golden fixture.
     (empty inbox, long thread, non-Korean mail, an injection test mail, an OTP mail, a phishing mail);
   - the Chief Architect re-review.
 
-### TG-2 Telegram attachments, reactions and approvals — implemented on branch, not merged (2026-10-08)
+### TG-2 Telegram attachments, reactions and approvals — merged (#164) (2026-10-08)
 
 ADR-0114 D8–D10 on top of TG-1 (#161):
 
@@ -144,7 +177,7 @@ Strict first live session (including the reaction check) and the Chief Architect
 
 ### TG-1 Telegram text conversations — merged (#161) (2026-10-08)
 
-### PRV-2 Gemini API provider — implemented on branch, not merged (2026-10-08)
+### PRV-2 Gemini API provider — merged (#163) (2026-10-08)
 
 ADR-0115 D4: the new `packages/ai-gemini-api` serves the chat tier (`gemini-api`) and image understanding
 (`gemini-vision-api`), both `REMOTE`. It calls `generateContent` at the pinned `https://generativelanguage.googleapis.com`
@@ -163,7 +196,7 @@ No migration, no port, no Core change (the credential guard already had the `AIz
 Not run yet: the Strict gates (the owner's Gemini API key, the `.env.local` edit, the first live call). Chief Architect
 review is pending.
 
-### TG-1 Telegram text conversations — implemented on branch, review fixes applied, not merged (2026-10-08)
+### TG-1 Telegram text conversations — branch notes before the merge (#161) (2026-10-08)
 
 ADR-0114: the new `packages/adapter-telegram` lets the owner chat with Quoky in a Telegram private chat as the same
 owner Actor as on Discord. It is off unless `QUOKY_TELEGRAM_ENABLED=true`; with it off, `PLATFORM_ADAPTER` is the Discord
@@ -199,7 +232,7 @@ addressed on the branch:
 - the Strict gates: BotFather bot creation, the `.env.local` edit, the first live session;
 - TG-2 (attachments, reactions; now on its own branch, above) and TG-3 (the ops panel, CommonMark on Telegram).
 
-### BRF-1 morning brief with today's calendar — implemented on branch, not merged (2026-10-08)
+### BRF-1 morning brief with today's calendar — merged (#160) (2026-10-08)
 
 ADR-0117 D1–D4: with a calendar configured, the daily brief (`매일 오전 8시에 브리핑 알려줘`) starts with `오늘 일정`, read
 through the existing `CALENDAR_READER`. It lists at most 10 events with `외 N건` and shows titles and times only. A
@@ -208,7 +241,7 @@ failure shows "불러오지 못했어요" and is never shown as an empty day; wi
 DM-only. No migration, no new DI token, no port change (`ConversationRuntimeDeps` 35). Offline validation only; the
 Strict gate (one live brief on the owner's service) is not run.
 
-### PLT-0 platform-neutral rendering — implemented (2026-10-08)
+### PLT-0 platform-neutral rendering — merged (#158) (2026-10-08)
 
 Core no longer writes Discord markup. Replies carry platform-neutral content (`OutboundMessage.content`,
 `OwnerNotification.content`):
@@ -223,7 +256,7 @@ one intended fix: the work-surface lookup line now escapes connector titles (DEC
 PASS; Chief Architect review APPROVE WITH NITS, nits addressed. Prerequisite for TG-1. No migration, no new DI token,
 no dependency change.
 
-### PRV-1 OpenAI API provider — implemented on branch, not merged (2026-10-08)
+### PRV-1 OpenAI API provider — merged (#157) (2026-10-08)
 
 ADR-0115: new `packages/ai-openai-api` (Responses API at the pinned `https://api.openai.com`, `node:fetch`, no tool
 definitions, `store: false`) serves the chat tier (`openai-api`) and image understanding (`openai-vision-api`), both
@@ -234,7 +267,7 @@ held in a redacting holder and never logged. No migration, no port, no Core logi
 Offline validation only (fake fetch); Strict gates (the owner's API key, the `.env.local` edit, the first live call)
 not run.
 
-### LRN-5 learning-example egress — implemented on branch, not merged (2026-10-08)
+### LRN-5 learning-example egress — merged (#156, consent #159) (2026-10-08)
 
 ADR-0116: with `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true` (default `false`) and `QUOKY_LEARNING_EXAMPLES_ENABLED=true`,
 curated examples (≤2 per GENERAL_CHAT turn) also reach a `REMOTE` chat provider that is the owner's explicit selection
@@ -245,7 +278,7 @@ the owner's service (`QUOKY_OLLAMA_ENABLED=false`, selector unset) `QUOKY_CHAT_P
 default is needed for examples to reach Claude. Strict gates (flag change, live round trip) not run; Chief Architect
 review pending.
 
-### CODE-8 multi-repository allowlist — implemented on branch, not merged (2026-10-08)
+### CODE-8 multi-repository allowlist — merged (#152) (2026-10-08)
 
 ADR-0109: `QUOKY_GITHUB_REPOS` (≤10 `owner/repo`, validated at startup; the legacy owner/repo pair is an allowlist of
 one; both forms is a startup error). Each registered project's repository is derived from its workspace `origin` fetch

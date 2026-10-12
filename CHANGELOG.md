@@ -5,6 +5,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Personal v4 closure: INT-3 acceptance and DOC-E (2026-10-12)
+
+Every v4 track is merged (#152-#172). This entry adds a test and documentation only; no runtime behaviour changes. Schema
+stays v15; `ConversationRuntimeDeps` stays 35.
+
+- **INT-3 (`apps/quoky/src/personal-v4-acceptance.test.ts`).** The real `AppModule`, booted once per configuration, with
+  a scripted global `fetch` (Telegram Bot API, Google OAuth, Gmail, Drive, OpenAI; anything else throws and is counted),
+  a fake calendar and a recorded Discord child. It pins: one owner Actor across Telegram and Discord; a reminder
+  delivered on the platform that created it; `OPS_*` notices on Discord; mail and Drive listings DM-only on both
+  platforms, summaries only on an explicit request, injection mail and docs causing no action, and no handler and no
+  egress when the token files are absent; OpenAI and Gemini configured but unselected causing zero fetch calls with
+  provider calls identical to a host without them; code, review, planning, project-analysis, test and policy
+  capabilities staying on Claude when OpenAI is selected; the reported usage on `TaskRun.usage`; the brief's calendar
+  section; an event-relative reminder following a moved event and firing once; and the learning-example egress rule
+  (flag off: a byte-identical prompt, flag on with an owner-selected remote provider: at most 2 examples).
+- **Golden corpora.** No case added: the routing corpora run on the v2 harness, which has no Google connector, and the
+  v4 routes are pinned by INT-3 and the handler tests. `baseline.v1.json` already equals the corpus sizes (419 routing, 155
+  action-shaped), so no ratchet moved.
+- **Docs.** New `docs/uat/personal-v4-qa-record.md` (live QA session 1, 2026-10-12, with its Pending list); a v4 closure
+  summary in `CURRENT_STATE.md` and merged status on the per-track sections; v4 status in `ROADMAP.md`; the quickstart
+  gains the daily brief (calendar and Jira sections), `QUOKY_BRIEF_JIRA_ENABLED`, `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED`,
+  the summary marker stripping and the settled Telegram reaction behaviour; the operator guide gains the v4 settings and the
+  live Telegram status; `.env.example` lists `QUOKY_BRIEF_JIRA_ENABLED`.
+- **Still Pending (not run live):** OpenAI and Gemini (no API keys), the first monthly usage DM (November), the Jira
+  section of the brief, a remote learning-example round trip, and the Telegram ops panel visual check. The TG-2 reaction
+  spike is settled: `message_reaction` is delivered in private bot chats (live 2026-10-12).
+
 ## Unreleased — v4 live QA follow-ups (2026-10-12)
 
 - **Document summaries (Gmail, Drive).** The reply is still an untrusted `markup` span, but Core now strips paired `**x**`
