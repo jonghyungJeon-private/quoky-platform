@@ -1,7 +1,8 @@
-import type { GitBranchResult, GitStatus, RepositoryInfo } from '../../domain';
+import type { GitBranchResult, GitStatus, MessageBody, RepositoryInfo } from '../../domain';
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
 import { isGitTopicOnlyMention } from '../git-request-shape';
 import { isNegated, unnegatedMatch } from '../intent-negation';
+import { messageContent, outboundMessage, untrustedText } from '../message-rendering';
 import { MAX_OWNER_BRANCH_NAME_LENGTH, isCreatableOwnerBranch, isProtectedBranch } from './branch-name-policy';
 
 /**
@@ -233,7 +234,10 @@ export type GitBranchRefusalReason =
 const NOTHING_CHANGED = '브랜치는 바꾸지 않았어요.';
 const LOCAL_ONLY = '원격에는 아무것도 보내지 않았어요.';
 
-const REFUSAL_TEXT: Readonly<Record<GitBranchRefusalReason, (name: string) => string>> = {
+/** A branch name in running copy is an untrusted span (PLT-1); inside an inline code span it is already protected. */
+const branchSpan = (name: string) => untrustedText(name, 'markup');
+
+const REFUSAL_TEXT: Readonly<Record<GitBranchRefusalReason, (name: string) => MessageBody>> = {
   'invalid-name': () =>
     `브랜치 이름은 영문, 숫자와 . _ / - 만 쓸 수 있고 ${MAX_OWNER_BRANCH_NAME_LENGTH}자 이하여야 해요. 예: "브랜치 만들어줘 feature/my-work"\n${NOTHING_CHANGED}`,
   'protected-name': () => `main/master 이름은 만들거나 전환 대상으로 쓰지 않아요. 작업용 이름(예: feature/…)을 알려 주세요.\n${NOTHING_CHANGED}`,
@@ -243,9 +247,14 @@ const REFUSAL_TEXT: Readonly<Record<GitBranchRefusalReason, (name: string) => st
     `패치가 준비됐거나 적용된 변경이 있어서 브랜치를 전환하지 않아요. 변경을 이어서 쓰려면 "브랜치 만들어줘 feature/x"로 새 브랜치를 만들 수 있어요.\n${NOTHING_CHANGED}`,
   'dirty-tree': () =>
     `커밋하지 않은 변경이 있어서 전환하지 않았어요. 변경을 커밋하거나 정리한 뒤 다시 요청해 주세요.\n${NOTHING_CHANGED}`,
-  'branch-exists': (name) => `\`${name}\` 브랜치가 이미 있어요. 전환하려면 "${name} 브랜치로 전환해줘"라고 요청해 주세요.\n${NOTHING_CHANGED}`,
+  'branch-exists': (name) =>
+    messageContent(`\`${name}\` 브랜치가 이미 있어요. 전환하려면 "`, branchSpan(name), ` 브랜치로 전환해줘"라고 요청해 주세요.\n${NOTHING_CHANGED}`),
   'branch-missing': (name) =>
-    `\`${name}\` 브랜치를 찾지 못했어요. 새로 만들려면 "브랜치 만들어줘 ${name}"라고 요청해 주세요. (로컬 브랜치만 전환해요)\n${NOTHING_CHANGED}`,
+    messageContent(
+      `\`${name}\` 브랜치를 찾지 못했어요. 새로 만들려면 "브랜치 만들어줘 `,
+      branchSpan(name),
+      `"라고 요청해 주세요. (로컬 브랜치만 전환해요)\n${NOTHING_CHANGED}`,
+    ),
   'already-current': (name) => `이미 \`${name}\` 브랜치에 있어요. 아무것도 바꾸지 않았어요.`,
   'detached-head': () => `지금은 특정 브랜치가 아니라 분리된 HEAD 상태라서 브랜치를 만들거나 바꾸지 않아요.\n${NOTHING_CHANGED}`,
   'unborn-repository': () => `아직 커밋이 하나도 없는 저장소라서 브랜치를 만들 수 없어요.\n${NOTHING_CHANGED}`,
@@ -258,11 +267,23 @@ function shortSha(sha: string): string {
 }
 
 export const gitBranchReplies = {
-  refused: (reason: GitBranchRefusalReason, name: string): string => REFUSAL_TEXT[reason](name),
-  created: (from: string, result: GitBranchResult): string =>
-    `새 브랜치를 만들고 전환했어요: \`${result.branch}\`\n${from} → ${result.branch} (HEAD ${shortSha(result.headSha)})\n파일 변경은 건드리지 않았어요. ${LOCAL_ONLY} 커밋·푸시도 하지 않았어요.`,
-  switched: (from: string, result: GitBranchResult): string =>
-    `브랜치를 전환했어요: \`${result.branch}\`\n${from} → ${result.branch} (HEAD ${shortSha(result.headSha)})\n파일 변경은 건드리지 않았어요. ${LOCAL_ONLY}`,
+  refused: (reason: GitBranchRefusalReason, name: string): MessageBody => REFUSAL_TEXT[reason](name),
+  created: (from: string, result: GitBranchResult): MessageBody =>
+    messageContent(
+      `새 브랜치를 만들고 전환했어요: \`${result.branch}\`\n`,
+      branchSpan(from),
+      ' → ',
+      branchSpan(result.branch),
+      ` (HEAD ${shortSha(result.headSha)})\n파일 변경은 건드리지 않았어요. ${LOCAL_ONLY} 커밋·푸시도 하지 않았어요.`,
+    ),
+  switched: (from: string, result: GitBranchResult): MessageBody =>
+    messageContent(
+      `브랜치를 전환했어요: \`${result.branch}\`\n`,
+      branchSpan(from),
+      ' → ',
+      branchSpan(result.branch),
+      ` (HEAD ${shortSha(result.headSha)})\n파일 변경은 건드리지 않았어요. ${LOCAL_ONLY}`,
+    ),
   unsupported: (): string =>
     '브랜치는 만들기("브랜치 만들어줘 feature/x")와 전환("feature/x 브랜치로 전환해줘")만 지원해요. 삭제·이름 변경·강제 변경·리셋·리베이스·병합·푸시·태그·업스트림 설정은 하지 않았어요.\n' +
     NOTHING_CHANGED,
@@ -318,8 +339,8 @@ export class GitBranchTurnHandler implements ConversationTurnHandler {
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     const command = detectGitBranchCommand(ctx.message.text);
-    const reply = (text: string, status?: 'FAILED'): TurnHandlerReply => ({
-      reply: { context: ctx.message.context, text },
+    const reply = (body: MessageBody, status?: 'FAILED'): TurnHandlerReply => ({
+      reply: outboundMessage(ctx.message.context, body),
       ...(status ? { status } : {}),
     });
     if (!command) {

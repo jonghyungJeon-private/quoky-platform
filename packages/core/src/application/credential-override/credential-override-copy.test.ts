@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { MessageBody } from '../../domain';
+import { plainTextOf } from '../message-rendering';
 import type { CredentialOverrideInvalidationReason } from './credential-override';
 import {
   credentialOverrideAlreadyUsed,
@@ -13,18 +15,20 @@ import {
 } from './credential-override-copy';
 
 const PATH = 'src/auth/user.ts';
+/** The plain text of copy that names a path as an untrusted span (PLT-1). */
+const plain = (body: MessageBody): string => plainTextOf(body);
 const EMOJI = /\p{Extended_Pictographic}/u;
 const REASONS: CredentialOverrideInvalidationReason[] = [
   'reset', 'denied', 'expired', 'project-changed', 'changed', 'superseded', 'inconsistent',
 ];
 
 const allCopy = (): string[] => [
-  credentialOverridePrompt(PATH, 12),
+  plain(credentialOverridePrompt(PATH, 12)),
   credentialOverrideHardRefusalLine(),
-  credentialOverrideReprompt(PATH, 60_000),
-  credentialOverrideDenied(PATH),
-  credentialOverrideContentChanged(PATH),
-  credentialOverrideSentNotice([PATH]),
+  plain(credentialOverrideReprompt(PATH, 60_000)),
+  plain(credentialOverrideDenied(PATH)),
+  plain(credentialOverrideContentChanged(PATH)),
+  plain(credentialOverrideSentNotice([PATH])),
   credentialOverrideNoPending(),
   credentialOverrideAlreadyUsed(),
   ...REASONS.map((r) => credentialOverrideInvalidated(r)),
@@ -32,7 +36,7 @@ const allCopy = (): string[] => [
 
 describe('credential-override copy (ADR-0097 D3/D7)', () => {
   it('the warning names file and line and states every consequence', () => {
-    const text = credentialOverridePrompt(PATH, 12);
+    const text = plain(credentialOverridePrompt(PATH, 12));
     expect(text).toContain(PATH);
     expect(text).toContain('12번째 줄');
     expect(text).toContain('"그래도 보내줘"');
@@ -48,23 +52,23 @@ describe('credential-override copy (ADR-0097 D3/D7)', () => {
   });
 
   it('the re-prompt says 승인 does not send and shows the remaining minutes (rounded up, never 0)', () => {
-    const text = credentialOverrideReprompt(PATH, 20 * 60_000);
+    const text = plain(credentialOverrideReprompt(PATH, 20 * 60_000));
     expect(text).toContain(PATH);
     expect(text).toContain('"승인"');
     expect(text).toContain('보내지 않아요');
     expect(text).toContain('"그래도 보내줘"');
     expect(text).toContain('약 20분');
-    expect(credentialOverrideReprompt(PATH, 1)).toContain('약 1분');
-    expect(credentialOverrideReprompt(PATH, 0)).toContain('약 1분');
-    expect(credentialOverrideReprompt(PATH, 61_000)).toContain('약 2분');
+    expect(plain(credentialOverrideReprompt(PATH, 1))).toContain('약 1분');
+    expect(plain(credentialOverrideReprompt(PATH, 0))).toContain('약 1분');
+    expect(plain(credentialOverrideReprompt(PATH, 61_000))).toContain('약 2분');
   });
 
   it('denial, content change and every invalidation say nothing was sent and the file was not modified', () => {
-    expect(credentialOverrideDenied(PATH)).toContain(PATH);
-    expect(credentialOverrideDenied(PATH)).toContain('보내지 않았');
-    expect(credentialOverrideDenied(PATH)).toContain('수정되지 않았어요');
-    expect(credentialOverrideContentChanged(PATH)).toContain(PATH);
-    expect(credentialOverrideContentChanged(PATH)).toContain('다시 요청해 주세요');
+    expect(plain(credentialOverrideDenied(PATH))).toContain(PATH);
+    expect(plain(credentialOverrideDenied(PATH))).toContain('보내지 않았');
+    expect(plain(credentialOverrideDenied(PATH))).toContain('수정되지 않았어요');
+    expect(plain(credentialOverrideContentChanged(PATH))).toContain(PATH);
+    expect(plain(credentialOverrideContentChanged(PATH))).toContain('다시 요청해 주세요');
     for (const reason of REASONS) {
       const text = credentialOverrideInvalidated(reason);
       expect(text).toContain('아무 파일도 AI에게 보내지 않았어요');
@@ -74,7 +78,7 @@ describe('credential-override copy (ADR-0097 D3/D7)', () => {
   });
 
   it('the sent notice lists the paths and says the send was one time only', () => {
-    const text = credentialOverrideSentNotice(['src/a.ts', 'src/b.ts']);
+    const text = plain(credentialOverrideSentNotice(['src/a.ts', 'src/b.ts']));
     expect(text).toContain('src/a.ts, src/b.ts');
     expect(text).toContain('이번 한 번만');
   });
