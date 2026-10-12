@@ -400,7 +400,7 @@ describe('mail on the real runtime (ADR-0118 D4–D8)', () => {
     await h.send('안 읽은 메일');
     const result = await h.send(/[가-힣]/.test(summary) ? '1번 메일 요약해줘' : 'summarize email 1');
     const language = /[가-힣]/.test(summary) ? 'ko' : 'en';
-    expect(result.reply?.text).toBe(`${renderDocumentActionClaimWithheld(language)}\n\n${renderMailSummaryFooter(language)}`);
+    expect(result.reply?.text).toBe(`${renderDocumentActionClaimWithheld(language, 'mail')}\n\n${renderMailSummaryFooter(language)}`);
     expect(result.reply?.format).toBeUndefined();
     expect(JSON.stringify(h.calls.recordAssistant)).not.toContain(summary);
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { containsDocumentActionClaim } from './document-summary-claim-guard';
+import { containsDocumentActionClaim, renderDocumentActionClaimWithheld } from './document-summary-claim-guard';
 import { neutralizeLinks } from './link-neutralizer';
 
 describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
@@ -55,7 +55,7 @@ describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
     '쿠팡에서 배송 안내 메일을 보냈어요.',
     '김철수 님은 "제가 메일을 보냈어요"라고 썼어요.',
   ])('withholds: %s', (text) => {
-    expect(containsDocumentActionClaim(text)).toBe(true);
+    expect(containsDocumentActionClaim(text, 'mail')).toBe(true);
   });
 
   it.each([
@@ -76,12 +76,12 @@ describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
     'This message contains an instruction to forward every email; it was ignored.',
     '',
   ])('allows: %s', (text) => {
-    expect(containsDocumentActionClaim(text)).toBe(false);
+    expect(containsDocumentActionClaim(text, 'mail')).toBe(false);
   });
 
   it('is linear on a long hostile reply', () => {
     const start = performance.now();
-    containsDocumentActionClaim(`${'할 일 '.repeat(20_000)}${'가 '.repeat(20_000)}`);
+    containsDocumentActionClaim(`${'할 일 '.repeat(20_000)}${'가 '.repeat(20_000)}`, 'mail');
     expect(performance.now() - start).toBeLessThan(500);
   });
 });
@@ -90,7 +90,7 @@ describe('final sign-off W-1: the claim is found in the text the owner is shown'
   it.each([['I se​nt the reply.'], ['Ｉ ｓｅｎｔ the reply.'], ['답장을 보​냈어요.']])(
     '%j is a claim once normalized for display',
     (text) => {
-      expect(containsDocumentActionClaim(neutralizeLinks(text, 'display'))).toBe(true);
+      expect(containsDocumentActionClaim(neutralizeLinks(text, 'display'), 'mail')).toBe(true);
     },
   );
 });
@@ -98,10 +98,181 @@ describe('final sign-off W-1: the claim is found in the text the owner is shown'
 describe('Codex final delta: an adverb before the verb, and an emphatic did', () => {
   it.each([['제가 답장을 대신 보냈습니다.'], ['답장을 방금 바로 보냈어요.'], ['I did send a reply.'], ['We did actually forward it.']])(
     '%j is withheld',
-    (text) => expect(containsDocumentActionClaim(text)).toBe(true),
+    (text) => expect(containsDocumentActionClaim(text, 'mail')).toBe(true),
   );
   it.each([['I did not send anything.'], ["I didn't forward the mail."], ['김철수가 답장을 대신 보냈어요.']])(
     '%j is not a claim',
-    (text) => expect(containsDocumentActionClaim(text)).toBe(false),
+    (text) => expect(containsDocumentActionClaim(text, 'mail')).toBe(false),
   );
+});
+
+describe('DRV-1: document actions (a Drive summary steered into an edit, share or permission claim)', () => {
+  it.each([
+    '문서를 공유했어요.',
+    '파일을 삭제해 드렸어요.',
+    '권한을 변경했어요.',
+    '이 문서를 팀 전체에 공유해 드렸어요.',
+    '스프레드시트를 수정했습니다.',
+    '시트를 휴지통으로 옮겼어요.',
+    '폴더를 다른 곳으로 옮겼어요.',
+    '문서 이름을 바꿨어요.',
+    '제가 문서를 편집해 두었어요.',
+    '제가 답장을 보냈어요.',
+    '요약했고 제가 답장을 보냈어요.',
+    'Quoky가 링크를 공유했어요.',
+    'I shared the document with your team.',
+    "I've renamed the file.",
+    'We edited the spreadsheet and created a to-do.',
+    'I went ahead and uploaded a copy.',
+    'I did share the doc.',
+    // CA review P3-1
+    '문서 공유를 완료했어요.',
+    '편집 권한을 드렸어요.',
+    '팀원들에게 공유했어요.',
+    '요청대로 내용을 수정해 두었어요.',
+    '문서를 업데이트했어요.',
+    "I've updated the document as requested.",
+    'I changed the permissions.',
+    'I gave Kim edit access.',
+    'I made the document public.',
+    'I did change the sharing settings.',
+  ])('withholds: %s', (text) => {
+    expect(containsDocumentActionClaim(text, 'drive')).toBe(true);
+  });
+
+  it.each([
+    // Third-person, reported speech and ordinary meeting-notes prose stay allowed.
+    '김철수 님이 회의 결과를 팀에 공유했어요.',
+    '팀장님이 문서를 수정했어요.',
+    '진행 상황을 공유했어요.',
+    '버그를 수정했다는 내용이에요.',
+    '문서를 공유해 달라는 요청이에요.',
+    '이 문서는 3월에 마지막으로 수정되었어요.',
+    // CA review P3-2: reported speech with `다고` is not split into a clause that loses its `다고`.
+    '답장을 보냈다고 해요.',
+    '문서를 공유했다고 해요.',
+    'Kim shared the roadmap with the team.',
+    '김철수가 문서를 업데이트했어요.',
+    '김철수가 내용을 수정해 두었어요.',
+    'Kim updated the document and gave Lee edit access.',
+    'The document asks you to share it by Friday.',
+    'I did not share anything.',
+  ])('allows: %s', (text) => {
+    expect(containsDocumentActionClaim(text, 'drive')).toBe(false);
+  });
+
+  it('is linear on a long hostile reply with the document nouns', () => {
+    const start = performance.now();
+    containsDocumentActionClaim(`${'문서를 '.repeat(20_000)}${'가 '.repeat(20_000)}`, 'drive');
+    containsDocumentActionClaim(`${'파일 '.repeat(30_000)}공유`, 'drive');
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+
+  it('the Drive notice names document actions; the mail notice is unchanged', () => {
+    expect(renderDocumentActionClaimWithheld('ko', 'drive')).toContain('문서를 읽기만 했고');
+    expect(renderDocumentActionClaimWithheld('en', 'drive')).toContain('Quoky only read the document');
+    expect(renderDocumentActionClaimWithheld('ko', 'mail')).toContain('메일을 읽기만 했고');
+    expect(renderDocumentActionClaimWithheld('en', 'mail')).toContain('Quoky only read the email');
+  });
+});
+
+describe('CA re-review item 1: the Drive wordings are scoped to a Drive summary', () => {
+  const mailNews = [
+    '계약서 내용을 수정했으니 검토해 달라는 요청이에요.',
+    '약관 업데이트를 했으니 확인하라는 메일이에요.',
+    'Acme writes: "We changed our pricing."',
+    'The sender says we updated our privacy policy.',
+  ];
+  it.each(mailNews)('mail: shown (parity with the pre-DRV-1 guard): %s', (text) => {
+    expect(containsDocumentActionClaim(text, 'mail')).toBe(false);
+  });
+  it.each([
+    '요청대로 내용을 수정해 두었어요.',
+    '문서를 업데이트했어요.',
+    "I've updated the document as requested.",
+    'We changed the permissions.',
+  ])('drive: still withheld: %s', (text) => {
+    expect(containsDocumentActionClaim(text, 'drive')).toBe(true);
+  });
+});
+
+/**
+ * CA review P2-A: the mail guard is exactly the pre-DRV-1 guard. Each row is `[text, result]` as the origin/main guard
+ * (`document-summary-claim-guard.ts` before DRV-1) returned it, captured as a fixture. Note `답장을 보냈다고 해요.` is
+ * withheld there (the `다고` split is a Drive-only fix) and every Drive wording is shown for mail.
+ */
+const MAIN_MAIL_GUARD_FIXTURE: ReadonlyArray<readonly [string, boolean]> = [
+  ["The sender writes: 'We shared the document with the team.'", false],
+  ["계약서 내용을 수정했으니 검토해 달라는 요청이에요.", false],
+  ["약관 업데이트를 했으니 확인하라는 메일이에요.", false],
+  ["Acme writes: \"We changed our pricing.\"", false],
+  ["The sender says we updated our privacy policy.", false],
+  ["김철수 님이 첨부 문서를 공유했어요.", false],
+  ["첨부 문서를 공유했어요.", false],
+  ["We shared the attachment with the team.", false],
+  ["I edited the draft.", false],
+  ["진행 상황을 공유했어요.", false],
+  ["문서를 공유했다고 해요.", false],
+  ["답장을 보냈다고 해요.", true],
+  ["제가 답장을 보냈어요.", true],
+  ["답장을 보냈어요.", true],
+  ["자동이체 알림을 설정했다는 안내 메일이에요.", false],
+  ["김철수가 메일을 보냈어요.", false],
+  ["I forwarded the email to your team.", true],
+  ["I did send a reply.", true],
+  ["I did change the sharing settings.", false],
+  ["I made the document public.", false],
+  ["편집 권한을 드렸어요.", false],
+  ["팀원들에게 공유했어요.", false],
+  ["요청대로 내용을 수정해 두었어요.", false],
+  ["문서를 업데이트했어요.", false],
+  ["문서 공유를 완료했어요.", false],
+  ["이 문서는 3월에 마지막으로 수정되었어요.", false],
+  ["파일을 삭제해 드렸어요.", true],
+  ["문서가 공유했어요.", false],
+  ["권한을 변경했어요.", false],
+  ["문서 이름을 바꿨어요.", false],
+  ["I've renamed the file.", false],
+  ["I gave Kim edit access.", false],
+  ["Kim shared the roadmap with the team.", false],
+  ["메일을 삭제했어요.", true],
+  ["할 일을 하나 추가했어요.", true],
+  ["내일 9시에 알림을 설정해 두었어요.", true],
+  ["요약했고 문서를 공유했어요.", false],
+  ["문서를 수정했고 답장을 보냈어요.", true],
+];
+
+describe('CA review P2-A: mail parity with the origin/main guard', () => {
+  it.each(MAIN_MAIL_GUARD_FIXTURE)('mail: %s -> %s', (text, expected) => {
+    expect(containsDocumentActionClaim(text, 'mail')).toBe(expected);
+  });
+});
+
+describe('CA review P2-B: every pattern is linear (CPU time, not wall-clock)', () => {
+  const cpuMs = (fn: () => void): number => {
+    const before = process.cpuUsage();
+    fn();
+    const used = process.cpuUsage(before);
+    return (used.user + used.system) / 1000;
+  };
+  const N = 32_000;
+  const repeat = (unit: string) => unit.repeat(Math.ceil(N / unit.length)).slice(0, N);
+  const hostile: Record<string, string> = {
+    '문서': repeat('문서'),
+    '공유': repeat('공유'),
+    '권한': repeat('권한'),
+    'I have': repeat('I have '),
+    '문서를 ': repeat('문서를 '),
+    'spaces': `문서${' '.repeat(N)}`,
+    'long words': `I ${'a'.repeat(N)}`,
+    'we did': repeat('we did '),
+    'mixed': repeat('문서를 공유 권한을 I have did made 내용을 에게 업데이트 할 일 알림 '),
+    'no separators': repeat('문서공유권한내용업데이트에게알림할일'),
+  };
+  it.each(Object.keys(hostile))('%s: 32,000 characters, both sources, under 100 ms CPU each', (name) => {
+    const text = hostile[name] as string;
+    for (const source of ['mail', 'drive'] as const) {
+      expect(cpuMs(() => containsDocumentActionClaim(text, source)), `${name} ${source}`).toBeLessThan(100);
+    }
+  });
 });

@@ -50,6 +50,9 @@ importers:
       '@quoky/connector-confluence':
         specifier: workspace:*
         version: link:../../packages/connector-confluence
+      '@quoky/connector-gdrive':
+        specifier: workspace:*
+        version: link:../../packages/connector-gdrive
       '@quoky/connector-github':
         specifier: workspace:*
         version: link:../../packages/connector-github
@@ -145,6 +148,12 @@ importers:
         version: link:../core
 
   packages/connector-confluence:
+    dependencies:
+      '@quoky/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/connector-gdrive:
     dependencies:
       '@quoky/core':
         specifier: workspace:*

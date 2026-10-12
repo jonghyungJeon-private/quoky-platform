@@ -5,6 +5,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — DRV-1 Google Drive read connector (2026-10-12)
+
+Personal v4 track DRV-1 (ADR-0118 D1–D8; implementation note in DECISIONS.md), on top of GML-1. No migration;
+`ConversationRuntimeDeps` stays 35. New: the `DriveReader` port and the `DRIVE_READER` token; the GML-1 untrusted readout
+gains the source `drive`. No third-party dependency (`node:fetch` only). Drive is off unless `QUOKY_DRIVE_TOKEN_FILE` is
+set; with it off, every reply is unchanged.
+
+- **New `packages/connector-gdrive`** (`GoogleDriveReader`). Scope `drive.readonly` only, checked at the code exchange and
+  at every refresh. A broader grant is refused.
+  - **Requests.** GET to the pinned `www.googleapis.com/drive/v3/files`, `files/{id}` and `files/{id}/export` only,
+    through one guarded request function.
+  - **Text only.** Google Docs export as `text/plain`, Google Sheets as `text/csv`; nothing else is ever read
+    (no file is downloaded, so an uploaded text file is listed but never summarized). The text is cut at 256 KiB while it streams; a non-text body is refused.
+  - **Bounds.** 10 s per request, no redirects, a 10-entry page (512 KiB cap), an ids-only count page of at most 100
+    (64 KiB), metadata 64 KiB. Trashed files and folders are not listed.
+  - **Token.** Its own mode-600 token file; a calendar or Gmail token file is refused.
+  - **Read-only check.** A source scan proves no upload, edit, copy, move, trash, delete, share or permission call, no
+    other export type and no second request site exists.
+- **Drive handler** (`pre-classify` order 145, after mail and before the calendar). Registered only with Drive
+  configured.
+  - **Phrasings.** `최근 문서`, `최근 파일`, `드라이브에서 <이름> 찾아줘`, `N번 문서 요약해줘` and English forms
+    (`recent documents`, `find <name> in my drive`, `summarize document 1`). Searches always name the drive, so no mail,
+    calendar, Confluence, code or golden-corpus phrasing is claimed. A car trip (`드라이브 코스`) or a local disk
+    (`D 드라이브`) is not Drive.
+  - **Listings** are deterministic, with no model call: name, kind and modified time; at most 10 entries, then `…외 N건`.
+    Names are untrusted spans with links replaced by `[링크]` and credential-shaped names hidden.
+  - **DM-only**, could-not-read failures, a fixed read-only refusal for write requests, and fixed history notes, as for
+    mail.
+- **Summaries only on request**, through the GML-1 path (not duplicated): the full-text credential guard before and
+  after the clip, link neutralization, runtime re-validation, a self-contained prompt with no tools, the claim and
+  credential guards on the reply, a fixed footer, no stored artifacts. Presentations, PDFs and other files are never
+  read. The claim guard now also withholds document actions ("문서를 공유했어요", "I renamed the file").
+- **Consent helper.** `calendar-auth.js --drive` requests `drive.readonly` only and writes a new token file; one grant
+  set per run. `.env.example` and the quickstart document `QUOKY_DRIVE_TOKEN_FILE`, consent and revocation (the shared
+  client revokes calendar, Gmail and Drive together).
+- **Validation.** Offline only, with a fake `fetch`; the Drive API was never called. Not run yet: the Strict gates
+  (owner consent, the first read probe and the live session) and the Chief Architect review.
+
 ## Unreleased — TG-3 Telegram notifications and operations (2026-10-12)
 
 Personal v4 track TG-3 (ADR-0114 D7, D11 and D12; implementation note in DECISIONS.md). No migration, port, DI token or

@@ -26,6 +26,7 @@
     { "path": "../../packages/connector-jira" },
     { "path": "../../packages/connector-slack" },
     { "path": "../../packages/connector-calendar-google" },
-    { "path": "../../packages/connector-gmail" }
+    { "path": "../../packages/connector-gmail" },
+    { "path": "../../packages/connector-gdrive" }
   ]
 }
