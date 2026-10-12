@@ -30,6 +30,9 @@ function neutralize(text: string, guard: UntrustedTextGuard): string {
     case 'markup':
       // Formatting, `@everyone`/`@here`/`<@id>` mentions, `<#id>` channels and `<url>` / masked links.
       return text.replace(DISCORD_MARKDOWN, '\\$&').replace(/@/g, `@${ZWSP}`).replace(/</g, `<${ZWSP}`);
+    case 'path':
+      // Markdown characters, the broadcast mentions and every `<` (mention, channel and link syntax); a plain `@` stays.
+      return text.replace(DISCORD_MARKDOWN, '\\$&').replace(/@(?=everyone|here)/gi, `@${ZWSP}`).replace(/</g, `<${ZWSP}`);
     case 'mentions':
       // Only what could notify someone: the broadcast mentions and raw user/role mention syntax.
       return text.replace(/@(?=everyone|here)/gi, `@${ZWSP}`).replace(/<@/g, `<${ZWSP}@`);

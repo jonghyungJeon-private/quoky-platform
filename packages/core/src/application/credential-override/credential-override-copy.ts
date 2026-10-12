@@ -16,10 +16,10 @@ const NOT_MODIFIED = '파일은 수정되지 않았어요.';
 const FRESH_REQUEST = '보내려면 처음부터 다시 요청해 주세요.';
 const SEND_LINE = `보내려면 "${CREDENTIAL_OVERRIDE_SEND_PHRASE}"라고만 보내 주세요. 그만두려면 "취소" 또는 "새 대화"라고 보내 주세요.`;
 
-/** Remaining time rounded up to whole minutes, never 0 (the ADR-0093 reminder convention). */
 /** A path (or paths) named in copy: untrusted spans, never plain text. */
-const pathSpan = (path: string) => untrustedText(path, 'markup');
+const pathSpan = (path: string) => untrustedText(path, 'path');
 
+/** Remaining time rounded up to whole minutes, never 0 (the ADR-0093 reminder convention). */
 const minutesOf = (remainingMs: number): number => Math.max(1, Math.ceil(remainingMs / 60_000));
 
 /** The warning raised with a CRITICAL override request: names file and line, states every consequence. */
@@ -64,8 +64,11 @@ export function credentialOverrideContentChanged(path: string): MessageBody {
 /** Prefixed to a successful preview that used granted content (`composeWithNotice`). */
 export function credentialOverrideSentNotice(paths: readonly string[]): MessageBody {
   const parts = paths.flatMap((path, index) => (index > 0 ? [', ', pathSpan(path)] : [pathSpan(path)]));
-  return joinBody([messageContent('확인한 파일 내용을 이번 한 번만 AI에게 보냈어요: ', ...parts)]);
+  return joinBody([messageContent(CREDENTIAL_OVERRIDE_SENT_NOTICE_LEAD, ...parts)]);
 }
+
+/** The words before the paths of {@link credentialOverrideSentNotice} (the structured preview header reuses them). */
+export const CREDENTIAL_OVERRIDE_SENT_NOTICE_LEAD = '확인한 파일 내용을 이번 한 번만 AI에게 보냈어요: ';
 
 /** A send phrase arrived while nothing is pending (QA-018 pattern): nothing was sent. */
 export function credentialOverrideNoPending(): string {

@@ -23,6 +23,12 @@ export type UntrustedTextGuard =
   | 'markup'
   /** Only syntax that could notify someone is neutralized; formatting characters are kept as they are. */
   | 'mentions'
+  /**
+   * A file path, branch or repository name: formatting characters are neutralized and so is whatever could notify
+   * someone or form a link (`@everyone`, `<@id>`, `<url>`), but a plain `@` is kept, so `packages/@org/x.ts` copied back
+   * from the chat still resolves (PLT-1 review P3-d).
+   */
+  | 'path'
   /** Every `@` handle is neutralized and nothing else. */
   | 'handles';
 

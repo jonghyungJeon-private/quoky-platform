@@ -235,7 +235,7 @@ const NOTHING_CHANGED = '브랜치는 바꾸지 않았어요.';
 const LOCAL_ONLY = '원격에는 아무것도 보내지 않았어요.';
 
 /** A branch name in running copy is an untrusted span (PLT-1); inside an inline code span it is already protected. */
-const branchSpan = (name: string) => untrustedText(name, 'markup');
+const branchSpan = (name: string) => untrustedText(name, 'path');
 
 const REFUSAL_TEXT: Readonly<Record<GitBranchRefusalReason, (name: string) => MessageBody>> = {
   'invalid-name': () =>

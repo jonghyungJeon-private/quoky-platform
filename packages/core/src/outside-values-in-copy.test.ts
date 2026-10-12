@@ -15,9 +15,10 @@ import { describe, expect, it } from 'vitest';
  * - it recognizes an outside value by its name (`path`, `branch`, `owner`, `repo`, `commitMessage`, ...), so a value
  *   under another name is not caught: the targeted tests in `application/response-composer-spans.test.ts` pin every
  *   converted reply instead;
- * - a template tagged `copy` is the span-aware form and is fine; so is a value wrapped in an inline code span
- *   (a backtick on each side), which is verbatim on every platform. Anything else flagged here is either converted to a
- *   span or listed in {@link ALLOWED} with the reason.
+ * - a `copy` template is the span-aware form, but it accepts plain strings too, so its `${}` values are checked the same
+ *   way: an outside-value name must be wrapped in `outside(`, `outsideList(`, `repositoryPart(`, `urlPart(`,
+ *   `renderFileList(` or `untrustedText(` (a bare name, even of an already-built span, is flagged and renamed). A value wrapped in an inline code span (a backtick on each side) is verbatim on every platform.
+ *   Anything else flagged here is either converted to a span or listed in {@link ALLOWED} with the reason.
  */
 
 const SRC = __dirname;
@@ -61,13 +62,15 @@ function findOutsideValuesInPlainCopy(source: string): Finding[] {
     if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
     for (const template of line.matchAll(/`((?:[^`\\]|\\.)*)`/g)) {
       const start = template.index ?? 0;
-      // `copy` is the span-aware tag; `outside(` and `untrustedText(` build the span from the template (verbatim).
-      if (/\b(?:copy|outside\(|untrustedText\()$/.test(line.slice(0, start))) continue;
+      // `outside(` and `untrustedText(` build the span from the template (verbatim).
+      if (/\b(?:outside\(|untrustedText\()$/.test(line.slice(0, start))) continue;
       const body = template[1] as string;
       for (const expression of body.matchAll(/\$\{([^{}]*)\}/g)) {
         // A count (`paths.length - shown.length`) is a number, not the value.
         const text = (expression[1] as string).replace(/[A-Za-z0-9_.]*\.length/g, '0');
         if (!OUTSIDE_NAME.test(text)) continue;
+        // The span-building helpers: what they return is already an untrusted span.
+        if (/\b(?:outside|outsideList|repositoryPart|urlPart|renderFileList|untrustedText)\(/.test(text)) continue;
         const at = expression.index ?? 0;
         // An inline code span: an escaped backtick right before the expression and right after it.
         if (body.slice(0, at).endsWith('\\`') && body.slice(at + expression[0].length).startsWith('\\`')) continue;
@@ -118,6 +121,7 @@ describe('Core replies keep outside values out of plain copy (PLT-1)', () => {
       'const line = `커밋 메시지: ${input.commitMessage}`;',
       '`- 저장소: ${input.owner.slice(0, 80)}/${input.repo.slice(0, 80)}`',
     ];
+    legacy.push('const line = copy`대상: ${input.branch}`;', 'copy`대상 파일: ${files}`');
     for (const line of legacy) {
       expect(findOutsideValuesInPlainCopy(line).length, line).toBeGreaterThan(0);
     }
@@ -125,7 +129,8 @@ describe('Core replies keep outside values out of plain copy (PLT-1)', () => {
 
   it('the span-aware forms pass: a `copy` template, and a value inside an inline code span', () => {
     const fine = [
-      'return copy`파일을 수정했어요: ${files}\\n`;',
+      'return copy`파일을 수정했어요: ${outsideList(files)}\\n`;',
+      'return copy`파일: ${renderFileList(files, newFiles)}\\n`;',
       'return `\\`${shown}\\``;',
       'const note = `새 브랜치를 만들고 전환했어요: \\`${result.branch}\\``;',
       'const count = `외 ${omitted}개`;',

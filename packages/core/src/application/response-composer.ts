@@ -31,6 +31,7 @@ import {
   credentialOverrideNoPending,
   credentialOverridePrompt,
   credentialOverrideReprompt,
+  CREDENTIAL_OVERRIDE_SENT_NOTICE_LEAD,
   credentialOverrideSentNotice,
 } from './credential-override/credential-override-copy';
 import type { CredentialOverrideInvalidationReason } from './credential-override/credential-override';
@@ -464,13 +465,25 @@ function clampBodyToMessageBudget(body: MessagePart): MessageBody {
 }
 
 /**
+ * The head clipped to the message budget with the fixed tail (the validation line and read-only disclaimers, the patch
+ * footer, ...) kept whole: the tail is measured as rendered by the platform, so an escaped path in the head can only
+ * shorten the head (the cut lands in the path list or diff), never the mandatory wording (PLT-1 review P2-1). A body
+ * that fits is exactly the head, a newline and the tail.
+ */
+function clampKeepingTail(head: MessagePart, tail: MessagePart): MessageBody {
+  return messageBody(clipMessage(head, MAX_MESSAGE_CHARS, 'utf16', { after: messageContent('\n', tail) }));
+}
+
+/**
  * PLT-1: an outside value (a file path, branch, repository, commit message or URL) written into Quoky copy is an
  * untrusted span, never a plain string node. Each platform adapter neutralizes it its own way (one escapes the markup
  * and mentions, a plain-text one passes it through verbatim), so a `_draft_.ts` path keeps its underscores. A value inside an inline
- * code span (`` `path` ``) is already protected by the span and stays a plain string.
+ * code span (`` `path` ``) is already protected by the span and stays a plain string. Paths, branches and repositories use
+ * the `path` guard (a plain `@` stays, so the name still resolves when copied back); a commit message is free text and
+ * uses `markup`.
  */
 function outside(value: string): UntrustedTextNode {
-  return untrustedText(value, 'markup');
+  return untrustedText(value, 'path');
 }
 
 /** Outside values joined by `separator`, each its own untrusted span. */
@@ -528,6 +541,24 @@ function renderOutOfScopeWarning(paths: string[]): MessageContent | undefined {
   const shown = paths.slice(0, MAX_OUT_OF_SCOPE_WARNING_PATHS);
   const suffix = paths.length > shown.length ? ` 외 ${paths.length - shown.length}개` : '';
   return copy`참고: ${outsideList(shown)}${suffix}에도 변경을 제안했지만, 확인된 대상 파일이 아니라서 보여드리지 않았어요.`;
+}
+
+/**
+ * Paths for the structured preview artifact (`PreviewArtifact.header` / `.warning` are plain strings both adapters send as
+ * given or translate): each one inline code, backticks and control characters stripped, so it is literal on every
+ * platform and a path such as `[x](https://evil.example)` or `*secret*` can neither mask a link nor lose its markers
+ * (PLT-1 review P2-2).
+ */
+function codeSpanList(paths: readonly string[]): string {
+  return paths.map((path) => `\`${sanitizeTypedPath(path)}\``).join(', ');
+}
+
+/** {@link renderOutOfScopeWarning} as the plain string of the structured preview artifact (paths as inline code). */
+function renderOutOfScopeWarningArtifact(paths: string[]): string | undefined {
+  if (!paths.length) return undefined;
+  const shown = paths.slice(0, MAX_OUT_OF_SCOPE_WARNING_PATHS);
+  const suffix = paths.length > shown.length ? ` 외 ${paths.length - shown.length}개` : '';
+  return `참고: ${codeSpanList(shown)}${suffix}에도 변경을 제안했지만, 확인된 대상 파일이 아니라서 보여드리지 않았어요.`;
 }
 
 /** Clamp one file's unified diff to a bounded number of lines, then chars (Unified Diff Preview,
@@ -641,8 +672,7 @@ function assembleBoundedBody(header: MessagePart, footerLines: MessagePart[], bl
 
   const lines: MessagePart[] = [header, ...kept];
   if (omitted > 0) lines.push(`(길이 제한으로 파일 ${omitted}개의 diff는 생략했어요.)`);
-  lines.push(...footerLines);
-  return clampBodyToMessageBudget(joinBody(lines));
+  return clampKeepingTail(joinBody(lines), joinBody(footerLines));
 }
 
 /**
@@ -1453,10 +1483,10 @@ export class ResponseComposer {
     targetPaths: readonly string[],
     dispatch: 'not-sent' | 'uncertain',
   ): OutboundMessage {
-    const paths = outsideList(targetPaths);
+    const pathList = outsideList(targetPaths);
     const lead = dispatch === 'not-sent'
-      ? copy`코드 변경 제안을 만들지 못했어요. 파일 내용은 AI에게 보내지 않았어요: ${paths}`
-      : copy`AI 전송 중 오류가 나서 내용이 전달됐는지 확인할 수 없어요: ${paths}`;
+      ? copy`코드 변경 제안을 만들지 못했어요. 파일 내용은 AI에게 보내지 않았어요: ${pathList}`
+      : copy`AI 전송 중 오류가 나서 내용이 전달됐는지 확인할 수 없어요: ${pathList}`;
     const outcome = dispatch === 'not-sent'
       ? '파일은 수정되지 않았어요.'
       : '코드 변경 제안은 만들어지지 않았어요. 파일은 수정되지 않았어요.';
@@ -1555,15 +1585,17 @@ export class ResponseComposer {
     // F5-E (Sprint 4c-Follow-up-5): one stable, secret-safe correlation id for the whole delivery
     // lifecycle. `newId()` is a fresh non-content id (never a diff hash), filesystem-safe for the filename.
     const previewId = newId();
-    // The structured preview carries plain strings by contract (its adapter delivers them as given); only the fallback
-    // `text` / `content` body carries the untrusted path spans.
+    // The structured preview carries plain strings by contract (its adapter delivers them as given or translated), so its
+    // outside paths are inline code spans (literal on both platforms); the fallback `text` / `content` carries spans.
     return outboundMessage(context, body, {
       preview: {
         previewId,
-        header: plainTextOf(header),
+        header: sent.length
+          ? `${CREDENTIAL_OVERRIDE_SENT_NOTICE_LEAD}${codeSpanList(sent)}\n\n${DIFF_PREVIEW_HEADER}`
+          : DIFF_PREVIEW_HEADER,
         // F5 (Sprint 4c-Follow-up-5): carry the out-of-scope safety warning INTO the artifact so a
         // preview-aware adapter (which delivers `preview`, not `text`) still surfaces it. Absent → clean.
-        ...(warning ? { warning: plainTextOf(warning) } : {}),
+        ...(warning ? { warning: renderOutOfScopeWarningArtifact(preview.outOfScopeWarnings) as string } : {}),
         footer,
         files,
         canonicalDiff: buildCanonicalDiff(files),
@@ -1852,9 +1884,7 @@ export class ResponseComposer {
   composeGitStatusPreview(context: ConversationContext, input: { status: GitStatus; validation: ValidationContext }): OutboundMessage {
     return outboundMessage(
       context,
-      clampBodyToMessageBudget(
-        joinBody([renderChangedFiles(input.status), renderValidationContext(input.validation), ...GIT_READONLY_DISCLAIMER]),
-      ),
+      clampKeepingTail(renderChangedFiles(input.status), joinBody([renderValidationContext(input.validation), ...GIT_READONLY_DISCLAIMER])),
     );
   }
 
@@ -1872,18 +1902,21 @@ export class ResponseComposer {
     // The mandatory "frame" (branch + notes + validation + read-only disclaimers) must always survive; size
     // the diff block so the whole message fits MAX_MESSAGE_CHARS and the final clamp never eats the frame.
     const DIFF_SLOT = ' DIFF ';
-    const frameLines: MessagePart[] = [
+    const headLines: MessagePart[] = [
       copy`브랜치: ${input.status.branch ? outside(input.status.branch) : '(unknown)'}`,
       DIFF_SLOT,
       'diff는 추적 중인 파일 변경만 포함해요. untracked 파일은 상태 목록에만 표시돼요.',
       untrackedLine,
-      renderValidationContext(input.validation),
-      ...GIT_READONLY_DISCLAIMER,
     ];
-    const frameLen = plainLength(joinBody(frameLines)) - DIFF_SLOT.length;
+    const tailLines: MessagePart[] = [renderValidationContext(input.validation), ...GIT_READONLY_DISCLAIMER];
+    const frameLen = plainLength(joinBody([...headLines, ...tailLines])) - DIFF_SLOT.length;
     const diffBudget = MAX_MESSAGE_CHARS - frameLen - 60; // 60: fences + truncation label margin
     const diffBlock = renderDiffBlock(input.diff, diffBudget);
-    return outboundMessage(context, clampBodyToMessageBudget(joinBody(frameLines.map((l) => (l === DIFF_SLOT ? diffBlock : l)))));
+    // The validation line and the read-only disclaimers are the fixed tail (kept whole); an overflow cuts the path list.
+    return outboundMessage(
+      context,
+      clampKeepingTail(joinBody(headLines.map((l) => (l === DIFF_SLOT ? diffBlock : l))), joinBody(tailLines)),
+    );
   }
 
   /**
@@ -1939,14 +1972,14 @@ export class ResponseComposer {
     input: { candidateFiles: string[]; commitMessage: string; validation: ValidationContext; newFiles?: readonly string[] },
   ): OutboundMessage {
     // ADR-0099 D3: new files are marked "(새 파일)" — the commit will `git add` exactly those.
-    const files = renderFileList(input.candidateFiles, input.newFiles);
+    const fileList = renderFileList(input.candidateFiles, input.newFiles);
     return outboundMessage(
       context,
       clampBodyToMessageBudget(
         joinBody([
           '커밋 승인을 요청했어요.',
-          copy`대상 파일: ${files}`,
-          copy`커밋 메시지: ${outside(input.commitMessage)}`,
+          copy`대상 파일: ${fileList}`,
+          copy`커밋 메시지: ${untrustedText(input.commitMessage, 'markup')}`,
           renderValidationContext(input.validation),
           '승인해도 이번 단계에서는 실제 git add/commit/push는 수행하지 않아요.',
           '실제 커밋 실행은 다음 단계에서 진행돼요. 진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
@@ -2067,10 +2100,10 @@ export class ResponseComposer {
     input: { commitHash: string; files: string[]; newFiles?: readonly string[] },
   ): OutboundMessage {
     const shortHash = input.commitHash.slice(0, 7);
-    const files: MessagePart = input.files.length ? renderFileList(input.files, input.newFiles) : '(없음)';
+    const fileList: MessagePart = input.files.length ? renderFileList(input.files, input.newFiles) : '(없음)';
     return outboundMessage(
       context,
-      clampBodyToMessageBudget(joinBody([`커밋했어요: ${shortHash}`, copy`대상 파일: ${files}`, 'git push는 하지 않았어요.'])),
+      clampBodyToMessageBudget(joinBody([`커밋했어요: ${shortHash}`, copy`대상 파일: ${fileList}`, 'git push는 하지 않았어요.'])),
     );
   }
 
@@ -3032,13 +3065,13 @@ export class ResponseComposer {
     context: ConversationContext,
     input: { owner: string; repo: string; prNumber: number; prUrl: string; branch: string; expectedHeadCommit: string },
   ): OutboundMessage {
-    const branch = outside(input.branch.slice(0, MAX_GIT_REF_DISPLAY));
+    const branchName = outside(input.branch.slice(0, MAX_GIT_REF_DISPLAY));
     return outboundMessage(
       context,
       clampBodyToMessageBudget(
         joinBody([
           '원격 브랜치 정리(삭제) 승인을 요청했어요.',
-          copy`대상: ${repositoryPart(input)} #${input.prNumber} 원격 브랜치 '${branch}' (예상 커밋 ${input.expectedHeadCommit.slice(0, 7)})`,
+          copy`대상: ${repositoryPart(input)} #${input.prNumber} 원격 브랜치 '${branchName}' (예상 커밋 ${input.expectedHeadCommit.slice(0, 7)})`,
           copy`- PR: ${urlPart(input.prUrl.slice(0, MAX_PR_URL_DISPLAY))}`,
           '아직 아무것도 삭제하지 않았어요. 이 승인은 권한만 기록해요 — 실제 삭제는 이후 별도 실행 단계에서 진행돼요.',
           '승인 시점에 원격 브랜치가 존재하는지·커밋이 그대로인지·PR이 여전히 병합 상태인지·삭제가 안전한지는 이 승인으로 보장하지 않아요 (실행 시 확인해요).',

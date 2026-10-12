@@ -191,3 +191,4 @@ export * from './drive';
 export * from './mail-drive-help';
 // ADR-0115 D8 (PRV-3): normalising the per-run Usage value object (TaskRun.usage).
 export * from './provider-usage-record';
+export * from './plt1-corpus';
