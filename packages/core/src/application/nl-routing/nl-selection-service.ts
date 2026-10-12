@@ -1,4 +1,4 @@
-import { Capability, type Actor, type IsoTimestamp, type Session } from '../../domain';
+import { Capability, type Actor, type InboundQuotedRange, type IsoTimestamp, type Session } from '../../domain';
 import type { AiProvider } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
@@ -56,6 +56,8 @@ export type NlSelectionRoute = 'chat' | 'personal-data';
 export interface NlSelectionTurn {
   readonly text: string;
   readonly attachmentCount: number;
+  /** Ranges of `text` the platform marked as quoted (removed before the call, never grounding). */
+  readonly quotedRanges?: readonly InboundQuotedRange[];
   readonly session: Pick<Session, 'id' | 'metadata'>;
   readonly actor: Actor;
   readonly now: IsoTimestamp;
@@ -355,7 +357,7 @@ export class NlSelectionService {
 
   /** D3 input preparation plus the pre-egress credential guard over the complete outgoing request. */
   private prepare(turn: NlSelectionTurn, last: LastSelection | undefined): PreparedSelectionInput | { readonly skip: NlSelectionSkipReason } {
-    const prepared = prepareSelectionInput(turn.text, turn.attachmentCount);
+    const prepared = prepareSelectionInput(turn.text, turn.attachmentCount, turn.quotedRanges ?? []);
     if ('skip' in prepared) return prepared;
     const previousStrings = last === undefined ? [] : Object.values(last.args).filter((value): value is string => typeof value === 'string');
     if ([prepared.text, ...previousStrings].some((value) => containsCredentialMaterial(value))) return { skip: 'credential' };

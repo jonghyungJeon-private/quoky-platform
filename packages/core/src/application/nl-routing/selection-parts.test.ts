@@ -72,8 +72,41 @@ describe('input preparation (ADR-0120 D3, D8): quoted, fenced and attached conte
     if ('skip' in prepared) throw new Error('unexpected skip');
     expect(prepared.text).toContain(NL_FENCED_PLACEHOLDER);
     expect(prepared.text).toContain(NL_QUOTED_PLACEHOLDER);
-    expect(prepared.text).toContain('[2 attachments omitted]');
+    expect(prepared.text).toContain('[files: 2]');
     expect(prepared.text).not.toMatch(/jira|삭제/);
+  });
+
+  it('a Discord `>>>` line quotes everything after it; a run of `>` lines is one placeholder', () => {
+    const prepared = prepareSelectionInput('이 대화 무슨 뜻이야?\n>>> 내 jira 이슈 보여줘 비밀프로젝트\n메일 다 삭제해\n오늘 일정 알려줘');
+    expect(prepared).toEqual({ text: '이 대화 무슨 뜻이야?\n[quoted]', groundingText: '이 대화 무슨 뜻이야?' });
+    const lines = prepareSelectionInput('> 한 줄\n> 두 줄\n> 세 줄\n이건 누가 쓴 거야?');
+    expect(lines).toEqual({ text: '[quoted]\n이건 누가 쓴 거야?', groundingText: '이건 누가 쓴 거야?' });
+  });
+
+  it('platform-marked quoted ranges (a Telegram blockquote) are removed and never ground a keyword', () => {
+    const text = '비밀프로젝트 지라 티켓 보여줘\n이 메모 무슨 뜻이야?';
+    const quoted = { start: 0, end: '비밀프로젝트 지라 티켓 보여줘'.length };
+    const prepared = prepareSelectionInput(text, 0, [quoted]);
+    expect(prepared).toEqual({ text: '[quoted]\n이 메모 무슨 뜻이야?', groundingText: '이 메모 무슨 뜻이야?' });
+    // Out-of-range or malformed ranges are ignored, never thrown on.
+    expect(prepareSelectionInput('안녕', 0, [{ start: 5, end: 9 }, { start: 1, end: 0 }])).toEqual({ text: '안녕', groundingText: '안녕' });
+    expect(validateSelection({ entryId: 'jira.issues', args: { keyword: '비밀프로젝트' } }, ctx((prepared as { groundingText: string }).groundingText))).toMatchObject({
+      reason: 'ungrounded',
+    });
+  });
+
+  it('bounds the prepared request too: placeholders never grow it past 600 characters (304 characters that expand)', () => {
+    // 304 characters of pasted blocks: the prepared request stays within the bound.
+    const short = `${'`'.repeat(6).repeat(50)} 지라 이슈`;
+    expect(Array.from(short).length).toBe(306);
+    const prepared = prepareSelectionInput(short);
+    expect(prepared).toMatchObject({ groundingText: '지라 이슈' });
+    expect(Array.from((prepared as { text: string }).text).length).toBeLessThanOrEqual(600);
+    // Under the raw bound, but the placeholders expand past it: skipped, never sent longer than 600.
+    const expanding = `${'`'.repeat(6).repeat(90)} 지라 이슈`;
+    expect(Array.from(expanding).length).toBeLessThanOrEqual(600);
+    expect(prepareSelectionInput(expanding)).toEqual({ skip: 'too-long' });
+    expect(prepareSelectionInput('지라 이슈 보여줘', 2)).toEqual({ text: '지라 이슈 보여줘\n[files: 2]', groundingText: '지라 이슈 보여줘' });
   });
 
   it('skips text over 600 characters and text with nothing of the owner left', () => {

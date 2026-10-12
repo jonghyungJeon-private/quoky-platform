@@ -609,6 +609,17 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     expect(h.adapter.status()).toMatchObject({ polling: false, admittedChatCount: 1 });
   });
 
+  it('ADR-0120 D8: hands a blockquote over as a neutral quoted range of the inbound text', async () => {
+    const quoted = textUpdate(61, '내 지라 이슈 보여줘\n이거 무슨 뜻이야?');
+    (quoted.message as Record<string, unknown>).entities = [{ type: 'blockquote', offset: 0, length: '내 지라 이슈 보여줘'.length }];
+    const fake = new FakeTelegram().queue('getUpdates', okReply([])).queue('getUpdates', okReply([quoted]));
+    const h = harness(fake);
+    await h.adapter.start();
+    await until(() => h.received.length === 1);
+    expect(h.received[0]).toMatchObject({ text: '내 지라 이슈 보여줘\n이거 무슨 뜻이야?', quotedRanges: [{ start: 0, end: 11 }] });
+    await h.adapter.stop();
+  });
+
   it('drops non-owner, group, channel, edited and other updates with no handler call, no send and no content log', async () => {
     const edited = { update_id: 54, edited_message: (textUpdate(54, '비밀 편집') as { message: unknown }).message };
     const fake = new FakeTelegram().queue('getUpdates', okReply([

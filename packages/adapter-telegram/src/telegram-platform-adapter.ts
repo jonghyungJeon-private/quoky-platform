@@ -1036,6 +1036,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       id: message.messageId,
       context,
       text: message.text,
+      // ADR-0120 D8: blockquotes are quoted words; Core never treats them as the owner's request.
+      ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
       ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       receivedAt: now(),
     };

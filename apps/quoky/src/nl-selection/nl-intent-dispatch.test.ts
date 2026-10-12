@@ -548,10 +548,34 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     const prompt = call!.prompt.slice(call!.prompt.lastIndexOf('<<<'));
     expect(prompt).not.toContain('비밀프로젝트');
     expect(prompt).not.toContain('금요일까지');
-    expect(prompt).toContain('[quoted text omitted]');
+    expect(prompt).toContain('[quoted]');
     expect(selected.length).toBe(start.selected);
     expect(result.reply.text).toContain('Jira 이슈 조회');
     expect(connectorQueries.length).toBe(start.connectors);
+
+    // A Telegram blockquote (a platform quoted range) and a Discord `>>>` quote are removed the same way.
+    for (const [text, quotedRanges] of [
+      ['비밀프로젝트 건은 금요일까지 마무리\n위에 인용한 메모 해석 좀', [{ start: 0, end: '비밀프로젝트 건은 금요일까지 마무리'.length }]],
+      ['아래 인용 메모 해석 좀\n>>> 비밀프로젝트 건은 금요일까지 마무리\n다들 확인', undefined],
+    ] as const) {
+      selectorAnswer = answer('jira.issues', { keyword: '비밀프로젝트' });
+      start = marks();
+      seq += 1;
+      const quotedTurn = await runtime.handle({
+        id: `nl1-${seq}`,
+        context: context(),
+        text,
+        ...(quotedRanges !== undefined ? { quotedRanges } : {}),
+        receivedAt: new Date().toISOString(),
+      });
+      const quotedCall = requests.slice(start.requests).find((request) => request.capability === SELECTION);
+      expect(quotedCall, JSON.stringify({ text, claims: claims.slice(start.claims), intent: intents.slice(start.intents).at(-1), order: order.slice(start.order), reply: quotedTurn.reply.text })).toBeDefined();
+      const ownerBlock = quotedCall!.prompt.slice(quotedCall!.prompt.lastIndexOf('<<<'));
+      expect(ownerBlock).not.toContain('비밀프로젝트');
+      expect(ownerBlock).toContain('[quoted]');
+      expect(selected.length).toBe(start.selected);
+      expect(quotedTurn.reply.text).toContain('Jira 이슈 조회');
+    }
 
     selectorAnswer = answer('jira.create', { summary: 'x' });
     start = marks();

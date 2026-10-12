@@ -3130,6 +3130,7 @@ export class ConversationRuntime {
       ...(chatProviderId !== undefined ? { chatProviderId } : {}),
       text: message.text,
       attachmentCount: message.attachments?.length ?? 0,
+      ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
       session,
       actor,
       now: this.clock(),
