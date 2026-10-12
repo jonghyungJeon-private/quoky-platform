@@ -100,7 +100,7 @@ export type InboundAttachment = InboundTextAttachment | InboundImageAttachment |
 
 /** A normalized inbound message from any PlatformAdapter. */
 /**
- * A range of `InboundMessage.text` the platform itself marked as quoted (ADR-0120 D8), e.g. a Telegram blockquote:
+ * A range of `InboundMessage.text` the platform itself marked as quoted (ADR-0120 D8), e.g. a blockquote entity:
  * `[start, end)` in UTF-16 code units of `text`. Quoted text is someone else's (or earlier) words, never the owner's
  * request. Platform-neutral; markup quotes inside the text (`> …`) need no range.
  */

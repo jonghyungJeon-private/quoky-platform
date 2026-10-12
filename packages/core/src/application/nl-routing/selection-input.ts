@@ -4,8 +4,8 @@ import type { InboundQuotedRange } from '../../domain';
  * Selection input preparation (ADR-0120 D3 input, D8). The owner's text is the only content sent to the selector, and
  * only after Core removed what the owner did not write as a request:
  *
- *  - ranges the platform marked as quoted (`InboundMessage.quotedRanges`, e.g. a Telegram blockquote) become `[quoted]`;
- *  - a line starting with `>>>` quotes the rest of the message (the Discord multi-line quote): everything from it on
+ *  - ranges the platform marked as quoted (`InboundMessage.quotedRanges`, e.g. a platform blockquote) become `[quoted]`;
+ *  - a line starting with `>>>` quotes the rest of the message (the multi-line quote markup): everything from it on
  *    becomes `[quoted]`;
  *  - runs of `> …` quoted lines become one `[quoted]`; fenced blocks (```…```) become `[code]`;
  *  - attachments are never read here; their count becomes one `[files: N]` line.
