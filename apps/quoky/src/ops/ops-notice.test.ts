@@ -256,4 +256,3 @@ describe('PRV-3 owner text delivery (ADR-0115 D8)', () => {
     expect(await notices.notify('BACKUP_FAILED')).toBe('SENT');
   });
 });
-

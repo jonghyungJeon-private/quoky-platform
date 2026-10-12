@@ -792,4 +792,3 @@ describe('PRV-3 provider usage panel (ADR-0115 D8, ADR-0113 D5)', () => {
     expect(without.replace(TELEGRAM_SECTION, '')).toBe(readFileSync(DASHBOARD_GOLDEN, 'utf8'));
   });
 });
-

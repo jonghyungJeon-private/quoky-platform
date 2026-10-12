@@ -416,4 +416,3 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
     expect(() => runtime({ recentStarts: 0 }, { QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD: 'lots' })).toThrow();
   });
 });
-
