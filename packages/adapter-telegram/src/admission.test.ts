@@ -17,6 +17,24 @@ describe('Telegram admission (ADR-0114 D2): owner private chats only, drop by de
     });
   });
 
+  it('ADR-0120 D8: marks blockquote entities of the text (or caption) as quoted ranges, clamped; other entities are ignored', () => {
+    const text = '비밀프로젝트 지라 티켓 보여줘\n이 메모 무슨 뜻이야?';
+    const quote = '비밀프로젝트 지라 티켓 보여줘'.length;
+    const update = textUpdate(9, text, { date: NOW });
+    (update.message as Record<string, unknown>).entities = [
+      { type: 'blockquote', offset: 0, length: quote },
+      { type: 'bold', offset: 0, length: 3 },
+      { type: 'expandable_blockquote', offset: quote + 1, length: 999 },
+      { type: 'blockquote', offset: -1, length: 2 },
+      { type: 'blockquote', offset: 'x', length: 2 },
+    ];
+    expect(admit(update)).toMatchObject({
+      kind: 'admitted',
+      message: { text, quotedRanges: [{ start: 0, end: quote }, { start: quote + 1, end: text.length }] },
+    });
+    expect(admit(textUpdate(10, '안녕', { date: NOW }))).toMatchObject({ kind: 'admitted', message: expect.not.objectContaining({ quotedRanges: expect.anything() }) });
+  });
+
   it.each([
     ['a non-owner in a private chat', textUpdate(1, 'hi', { from: STRANGER_ID, date: NOW }), 'not-owner'],
     ['a bot sender with an owner id', textUpdate(1, 'hi', { isBot: true, date: NOW }), 'not-owner'],

@@ -65,7 +65,7 @@ import {
   mentionsConnectorWriteExecutionStep,
 } from './connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
-import { outboundMessage, withOutboundBody } from './message-rendering';
+import { messageBody, outboundBody, outboundMessage, withOutboundBody } from './message-rendering';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance, isPendingCancelUtterance } from './approval-decision';
 import {
   ApprovalDecisionService,
@@ -85,10 +85,15 @@ import {
 } from './conversation-commands';
 import {
   NON_ABSOLUTE_REGISTRATION_KIND,
+  POLICY_SENSITIVE_CHAT_KIND,
   detectProjectRegistration,
   externalActionRequestOf,
   type IntentClassifyContext,
 } from './intent-classifier';
+import type { NlCatalogEntry } from './nl-routing/catalog';
+import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './nl-routing/honest-chat';
+import { languageOf, type NlSelectionService } from './nl-routing/nl-selection-service';
+import type { PendingQuestion } from './nl-routing/selection-state';
 import { codeGenerationDispatchOfError } from './code-generation-manager';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '../domain';
@@ -1041,7 +1046,18 @@ export interface ConversationRuntimeDeps {
    * reply and no write can ever run.
    */
   readonly connectorWriteFlow?: ConnectorWriteFlow;
+  /**
+   * Natural-language capability selection (ADR-0120 D6 Phase A; amends ADR-0032: baseline 35 → 36). OPTIONAL: absent,
+   * or mode `off`, keeps every turn byte-identical. The runtime only dispatches and presents: the catalog call,
+   * validation, the clarification state, `lastSelection` and the interpretation preferences belong to the service.
+   */
+  readonly nlSelection?: Pick<NlSelectionService, 'mode' | 'decide'> & Partial<Pick<NlSelectionService, 'takePending'>>;
   readonly logger: Logger;
+}
+
+/** ADR-0120 D9: what the chat turn after a `none` (or unavailable) selection carries — the configured entries. */
+interface NlChatFacts {
+  readonly entries: readonly NlCatalogEntry[];
 }
 
 /**
@@ -1750,6 +1766,8 @@ export class ConversationRuntime {
   private readonly turnHandlersByStage: Readonly<Record<TurnHandlerStage, readonly ConversationTurnHandler[]>>;
   /** The handlers' contributed help lines in registry order (ADR-0096 D6); bounded by the composer. */
   private readonly contributedHelpLines: readonly string[];
+  /** The registry in dispatch order: the ADR-0120 catalog is read from it on each selection turn. */
+  private readonly turnHandlerRegistry: readonly ConversationTurnHandler[];
   /**
    * ADR-0113 D7 (OPS-2b): the one approval decision path, shared with the local operations UI. Built from collaborators
    * this runtime already holds (no deps key); the composition root reaches it through the runtime instance.
@@ -1782,6 +1800,7 @@ export class ConversationRuntime {
       { clock: this.clock },
     );
     const registry = ConversationRuntime.orderTurnHandlers(deps.turnHandlers ?? []);
+    this.turnHandlerRegistry = registry;
     this.turnHandlersByStage = {
       control: registry.filter((h) => h.stage === 'control'),
       'post-anchor': registry.filter((h) => h.stage === 'post-anchor'),
@@ -2232,6 +2251,9 @@ export class ConversationRuntime {
     // ADR-0113 D7: the activity touch runs under the shared session write lock, field-scoped on the live row, so this
     // turn's snapshot never overwrites an operations-UI decision's re-anchor; the turn continues on the touched copy.
     session = (await this.deps.sessions.touch(session)) ?? session;
+    // ADR-0120 D7: an open selection question ends with this owner turn whatever route answers it; selection below gets
+    // the question only when the turn reaches it (`active` only; nothing is written when there is none).
+    const nlPending = this.deps.nlSelection?.takePending ? await this.deps.nlSelection.takePending(session, actor.id, this.clock()) : undefined;
 
     // (0-) ADR-0112 (CWR-2) lazy expiry, like ADR-0093's for a pending approval: an approved connector-write grant never
     // executed, or a numbered choice never answered, within the lifetime is closed here, before any lookup, and the
@@ -3016,13 +3038,136 @@ export class ConversationRuntime {
       return this.handleExecutionIntent(message, session, actor, intent);
     }
 
+    // (C2) ADR-0120 D6 Phase A: natural-language selection, only on a turn every earlier route (the pre-classify
+    // grammars, the B0b status answer and the classifier above) left for chat — `GENERAL_CHAT`, or `POLICY_SENSITIVE_CHAT`
+    // for the personal-data reason alone — and never while an approval is pending. Absent or `off`: nothing runs here.
+    let nlFacts: NlChatFacts | undefined;
+    if (this.deps.nlSelection !== undefined && this.deps.nlSelection.mode !== 'off' && !lookup.pending) {
+      const route = ConversationRuntime.nlSelectionRoute(intent);
+      if (route !== undefined) {
+        try {
+          const selected = await this.handleNlSelection(message, session, actor, applyAnchor, userMemory.id, route, intent, nlPending);
+          if (selected.kind === 'responded') return selected.result;
+          nlFacts = selected.facts;
+        } catch (err) {
+          return this.failReadOnlyTurn(message, session, err);
+        }
+      }
+    }
+
     // Every remaining route (work surface, project registration, analysis, chat) never reaches a workspace,
     // git or command mutator, so an infrastructure failure renders the confirmed-not-applied wording instead
     // of the backstop's "변경 적용 여부를 확인할 수 없어요".
     try {
-      return await this.handleNonExecutionTurn(message, session, actor, intent, userMemory.id);
+      return await this.handleNonExecutionTurn(message, session, actor, intent, userMemory.id, nlFacts);
     } catch (err) {
       return this.failReadOnlyTurn(message, session, err);
+    }
+  }
+
+  /** ADR-0120 D6: the Phase A routes selection may run on, or `undefined`. */
+  private static nlSelectionRoute(intent: Intent): 'chat' | 'personal-data' | undefined {
+    if (intent.capability === Capability.GENERAL_CHAT && intent.type === IntentType.CHAT) return 'chat';
+    if (
+      intent.capability === Capability.POLICY_SENSITIVE_CHAT &&
+      intent.raw?.kind === POLICY_SENSITIVE_CHAT_KIND &&
+      intent.raw.reason === 'personal-data'
+    ) {
+      return 'personal-data';
+    }
+    return undefined;
+  }
+
+  /**
+   * ADR-0120 D6/D8: the id of the provider this chat turn would reach — the same resolution the chat path makes (the
+   * turn's capability with the session's selection context). `undefined` when it cannot be known (the routed Stage 2A
+   * seam decides GENERAL_CHAT itself, or nothing resolves); selection is then skipped. Read as opaque data.
+   */
+  private async nlChatProviderId(intent: Intent, session: Session, actor: Actor): Promise<string | undefined> {
+    if (intent.capability === Capability.GENERAL_CHAT && this.deps.runtimeProviderRouting) return undefined;
+    try {
+      const context = { sessionId: session.id, actorId: actor.id };
+      const provider = this.deps.router.resolve
+        ? (await this.deps.router.resolve(intent.capability, context)).provider
+        : await this.deps.router.select(intent.capability, context);
+      // The provider family, so a model variant (`claude-cli:opus`) still counts as its base provider for egress.
+      return provider.family ?? provider.id;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The catalog entries the registered handlers contribute right now, each with its owning handler (first wins). */
+  private nlCatalog(): Map<string, { readonly entry: NlCatalogEntry; readonly handler: ConversationTurnHandler }> {
+    const owned = new Map<string, { readonly entry: NlCatalogEntry; readonly handler: ConversationTurnHandler }>();
+    for (const handler of this.turnHandlerRegistry) {
+      if (typeof handler.handleSelected !== 'function') continue;
+      let entries: readonly NlCatalogEntry[];
+      try {
+        entries = handler.catalog ?? [];
+      } catch {
+        continue;
+      }
+      for (const entry of entries) if (!owned.has(entry.id)) owned.set(entry.id, { entry, handler });
+    }
+    return owned;
+  }
+
+  /**
+   * ADR-0120 D6/D7/D9: ask the selection service for a decision and present it. An executable read goes to the owning
+   * handler's `handleSelected` and is answered like that handler's own reply, with the basis line first; a question is
+   * answered as is; `none` and an unavailable selector continue to honest chat with the configured-sources fact.
+   */
+  private async handleNlSelection(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    applyAnchor: ApplyPreviewAnchor | null,
+    userMemoryId: Id,
+    route: 'chat' | 'personal-data',
+    intent: Intent,
+    nlPending?: PendingQuestion | null,
+  ): Promise<{ readonly kind: 'responded'; readonly result: TurnResult } | { readonly kind: 'continue'; readonly facts?: NlChatFacts }> {
+    const nl = this.deps.nlSelection as Pick<NlSelectionService, 'mode' | 'decide'>;
+    const catalog = this.nlCatalog();
+    const entries = [...catalog.values()].map((owned) => owned.entry);
+    const chatProviderId = await this.nlChatProviderId(intent, session, actor);
+    const decision = await nl.decide({
+      ...(chatProviderId !== undefined ? { chatProviderId } : {}),
+      ...(nlPending !== undefined ? { pending: nlPending } : {}),
+      text: message.text,
+      attachmentCount: message.attachments?.length ?? 0,
+      ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
+      session,
+      actor,
+      now: this.clock(),
+      entries,
+      route,
+    });
+    const honest = nl.mode === 'active' && entries.length > 0 ? { entries } : undefined;
+    switch (decision.kind) {
+      case 'skip':
+        return { kind: 'continue' };
+      case 'none':
+      case 'unavailable':
+        return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+      case 'ask':
+        this.deps.logger.info('nl selection asked', { sessionId: session.id });
+        return { kind: 'responded', result: await this.respondComposed(message, session, outboundMessage(message.context, decision.text)) };
+      case 'execute': {
+        const owner = catalog.get(decision.command.entryId);
+        const serve = owner?.handler.handleSelected;
+        if (owner === undefined || serve === undefined) return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+        const outcome = await serve.call(owner.handler, decision.command, this.turnHandlerContext(message, session, actor, applyAnchor));
+        if (outcome === null) return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+        this.deps.logger.info('nl selection dispatched', { handlerId: owner.handler.id, entryId: decision.command.entryId, sessionId: session.id });
+        const result = await this.respondTurnHandler(message, session, actor, userMemoryId, outcome);
+        if (decision.basis === undefined) return { kind: 'responded', result };
+        return {
+          kind: 'responded',
+          result: { ...result, reply: withOutboundBody(result.reply, messageBody(decision.basis, '\n', outboundBody(result.reply))) },
+        };
+      }
     }
   }
 
@@ -3033,6 +3178,7 @@ export class ConversationRuntime {
     actor: Actor,
     intent: Intent,
     userMemoryId: Id,
+    nlFacts?: NlChatFacts,
   ): Promise<TurnResult> {
     if (intent.type === IntentType.LOOKUP && intent.raw?.kind === 'personal-work-surface') {
       const surface = await this.deps.workSurface.forActor(actor);
@@ -3079,7 +3225,9 @@ export class ConversationRuntime {
     }
 
     // (F) Work path — a chat/analysis Task (existing single-capability flow, relocated).
-    return this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout);
+    return nlFacts === undefined
+      ? this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout)
+      : this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout, nlFacts);
   }
 
   /** Exact, provider-free activation grammar. Pending governance flows have already run before this is called. */
@@ -7589,6 +7737,7 @@ export class ConversationRuntime {
     intent: Intent,
     excludeMemoryId: Id,
     readout: ProjectReadout | ExternalWorkReadout | UntrustedDocumentReadout | undefined,
+    nlFacts?: NlChatFacts,
   ): Promise<TurnResult> {
     let task = await this.deps.tasks.createTask(intent, message.context, {
       requestText: message.text,
@@ -7653,7 +7802,14 @@ export class ConversationRuntime {
         }
       }
 
-      const promptSpec = this.deps.promptComposer.compose(task, bundle, readout);
+      // ADR-0120 D9: after a `none` selection the chat prompt carries one more authoritative Core fact (the configured
+      // sources and their commands); without it the call is exactly as before.
+      const sourcesFact = nlFacts === undefined ? undefined : renderConfiguredSourcesFact(nlFacts.entries, this.contributedHelpLines);
+      const nlComposition = sourcesFact === undefined ? undefined : { additionalCurrentFacts: [sourcesFact] };
+      const promptSpec =
+        nlComposition === undefined
+          ? this.deps.promptComposer.compose(task, bundle, readout)
+          : this.deps.promptComposer.compose(task, bundle, readout, nlComposition);
       const renderOptions = {
         capability,
         ...(workspace ? { workspace } : {}),
@@ -7693,7 +7849,7 @@ export class ConversationRuntime {
           providerId = routed.acceptedProviderId;
           // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
           const withheld = this.withheldAttachmentReply(bundle, message, routed.output.text, routed.output.artifacts, task.id);
-          const guard = withheld ? null : this.guardChatReply(capability, routed.output.text, task.description, task.id);
+          const guard = withheld ? null : this.guardChatReply(capability, routed.output.text, task.description, task.id, nlFacts);
           const replyText = withheld?.text ?? guard?.text ?? routed.output.text;
           const artifacts: Artifact[] = withheld ? [] : routed.output.artifacts.map((artifact) => ({ ...artifact }));
           const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, artifacts);
@@ -7751,6 +7907,7 @@ export class ConversationRuntime {
       const composition = {
         executionLocality: executionLocalityOf(provider),
         ...('source' in resolved ? { selectionSource: resolved.source } : {}),
+        ...(nlComposition ?? {}),
       };
       const curatedExampleCount = curatedExamplesForPrompt(task, bundle, readout, composition).length;
       const executionRequest =
@@ -7772,7 +7929,7 @@ export class ConversationRuntime {
         : this.withheldAttachmentReply(bundle, message, executed.text, executed.artifacts ?? [], task.id);
       const chatGuard = withheld
         ? null
-        : this.guardChatReply(documentSummary ? Capability.GENERAL_CHAT : capability, executed.text, task.description, task.id);
+        : this.guardChatReply(documentSummary ? Capability.GENERAL_CHAT : capability, executed.text, task.description, task.id, nlFacts);
       // Review P2-3: a document summary also gets the mail-action post-guard ("답장을 보냈어요", "I forwarded the email").
       const guard =
         documentSummary &&
@@ -7862,6 +8019,7 @@ export class ConversationRuntime {
     text: string,
     currentUserMessage: string,
     taskId?: Id,
+    nlFacts?: NlChatFacts,
   ): { readonly text: string; readonly guarded: boolean } {
     if (
       capability !== Capability.GENERAL_CHAT &&
@@ -7871,7 +8029,14 @@ export class ConversationRuntime {
       return { text, guarded: false };
     }
     const guarded = guardInternalActionClaims(text, currentUserMessage, generalChatReplyPolicy(currentUserMessage));
-    if (!guarded.guarded) return { text, guarded: false };
+    if (!guarded.guarded) {
+      // ADR-0120 D9: after a `none` selection, a false "cannot access <configured source>" is replaced by its command.
+      if (nlFacts === undefined) return { text, guarded: false };
+      const incapable = guardFalseIncapabilityClaims(text, nlFacts.entries, languageOf(currentUserMessage), this.contributedHelpLines);
+      if (!incapable.guarded) return { text, guarded: false };
+      this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
+      return { text: incapable.text, guarded: true };
+    }
     this.deps.logger.info('internal action claim replaced', {
       capability,
       domain: guarded.domain,

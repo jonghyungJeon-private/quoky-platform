@@ -11,7 +11,8 @@ import {
   type ConnectorQuery,
   type ConnectorResult,
   type Metadata,
-  type PersonalWorkFilter,
+  type ParsedPersonalWorkParams,
+  type PersonalWorkWindowField,
 } from '@quoky/core';
 
 const DESCRIPTION_LIMIT = 500;
@@ -28,6 +29,8 @@ export interface JiraConnectorConfig {
   fetchImpl?: typeof fetch;
   /** Per-request timeout in milliseconds (default 10000). */
   timeoutMs?: number;
+  /** Injectable clock (epoch ms) for the relative window boundaries; default `Date.now`. */
+  now?: () => number;
 }
 
 export type JiraConnectorHttpErrorKind =
@@ -86,6 +89,7 @@ export class JiraConnectorProvider implements ConnectorProvider {
   private readonly apiToken: string;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly now: () => number;
 
   constructor(config: JiraConnectorConfig) {
     const host = requireNonEmpty(config?.host, 'host');
@@ -97,6 +101,7 @@ export class JiraConnectorProvider implements ConnectorProvider {
     this.apiToken = apiToken;
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'jira connector');
+    this.now = config.now ?? Date.now;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -108,9 +113,10 @@ export class JiraConnectorProvider implements ConnectorProvider {
     if (input?.query !== ConnectorQueryName.PERSONAL_WORK) {
       throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported query');
     }
-    const { actorExternalId, filter, limit } = parsePersonalWorkParams(input.params, 'jira connector');
+    const parsed = parsePersonalWorkParams(input.params, 'jira connector');
+    const { limit } = parsed;
     const url = new URL('/rest/api/3/search/jql', this.baseUrl);
-    url.searchParams.set('jql', personalWorkJql(actorExternalId, filter));
+    url.searchParams.set('jql', personalWorkJql(parsed, this.now()));
     url.searchParams.set('fields', SEARCH_FIELDS);
     url.searchParams.set('maxResults', String(limit));
 
@@ -199,11 +205,51 @@ export class JiraConnectorProvider implements ConnectorProvider {
  * `resolution = Unresolved AND statusCategory != Done`: some workflows move an issue to a done-category status
  * (e.g. "완료"/"취소") without setting a resolution, and those must not appear as open items (live QA, 50 of 193).
  */
-function personalWorkJql(identity: string, filter: PersonalWorkFilter): string {
-  const base = `assignee = "${identity.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" AND resolution = Unresolved AND statusCategory != Done`;
+function personalWorkJql(params: ParsedPersonalWorkParams, nowMs: number): string {
+  const { actorExternalId: identity, filter, window, role, status } = params;
+  const literal = jqlString(identity);
+  // ADR-0120 D13: without window/role/status this is byte-identical to the ADR-0100 query.
+  const who = role === 'reporter' ? `reporter = ${literal}` : role === 'either' ? `(assignee = ${literal} OR reporter = ${literal})` : `assignee = ${literal}`;
+  const open = status === 'all' ? '' : ' AND resolution = Unresolved AND statusCategory != Done';
+  const base = `${who}${open}`;
+  if (window !== undefined) {
+    if (filter !== 'all') throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: a window needs the all filter');
+    const field = JQL_WINDOW_FIELD[window.field];
+    const order = window.field === 'due' ? 'duedate ASC' : `${field} DESC`;
+    // JQL reads a date literal in the Jira user's profile time zone, which need not be QUOKY_TIMEZONE. A timestamp field
+    // (created, updated) is therefore bounded by minutes relative to now, which no zone shifts. The due date is a
+    // calendar date without a zone: the owner's local dates are exact for it.
+    const [from, to] =
+      window.field !== 'due' && window.fromInstant !== undefined && window.toInstant !== undefined
+        ? [relativeMinutes(window.fromInstant, nowMs, 'from'), relativeMinutes(window.toInstant, nowMs, 'to')]
+        : [window.from, window.to];
+    return `${base} AND ${field} >= ${jqlString(from)} AND ${field} < ${jqlString(to)} ORDER BY ${order}`;
+  }
   if (filter === 'all') return `${base} ORDER BY updated DESC`;
   if (filter === 'due-this-week') return `${base} AND duedate <= endOfWeek() ORDER BY duedate ASC`;
   throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported personal-work filter');
+}
+
+/**
+ * A JQL relative date ("-1440m", "30m") for `instant` seen from `nowMs`. Rounded so the window never shrinks: a lower
+ * bound moves at most one minute earlier, an upper bound at most one minute later.
+ */
+function relativeMinutes(instant: string, nowMs: number, bound: 'from' | 'to'): string {
+  const deltaMinutes = (Date.parse(instant) - nowMs) / 60_000;
+  const minutes = bound === 'from' ? Math.floor(deltaMinutes) : Math.ceil(deltaMinutes);
+  return minutes < 0 ? `-${-minutes}m` : `${minutes}m`;
+}
+
+/** The closed window fields as JQL field names (Core never sends JQL). */
+const JQL_WINDOW_FIELD: Readonly<Record<PersonalWorkWindowField, string>> = {
+  created: 'created',
+  updated: 'updated',
+  due: 'duedate',
+};
+
+/** A quoted, escaped JQL string literal. */
+function jqlString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 function projectKey(issueKey: string, project: unknown): string | undefined {

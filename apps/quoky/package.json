@@ -7,7 +7,8 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -b",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "nl-eval": "node dist/tools/nl-intent-eval-cli.js"
   },
   "dependencies": {
     "@quoky/core": "workspace:*",

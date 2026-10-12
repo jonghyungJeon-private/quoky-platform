@@ -98,11 +98,23 @@ export interface InboundUnsupportedAttachment extends InboundAttachmentBase {
 /** One attachment of an admitted inbound message (ADR-0111 D1). Platform-neutral: no platform type crosses. */
 export type InboundAttachment = InboundTextAttachment | InboundImageAttachment | InboundUnsupportedAttachment;
 
+/**
+ * A range of `InboundMessage.text` the platform itself marked as quoted (ADR-0120 D8), e.g. a blockquote entity:
+ * `[start, end)` in UTF-16 code units of `text`. Quoted text is someone else's (or earlier) words, never the owner's
+ * request. Platform-neutral; markup quotes inside the text (`> …`) need no range.
+ */
+export interface InboundQuotedRange {
+  readonly start: number;
+  readonly end: number;
+}
+
 /** A normalized inbound message from any PlatformAdapter. */
 export interface InboundMessage {
   id: Id;
   context: ConversationContext;
   text: string;
+  /** Optional, additive (ADR-0120 D8): ranges of `text` the platform marked as quoted. Absent when there are none. */
+  quotedRanges?: readonly InboundQuotedRange[];
   /**
    * ADR-0111 D1 (optional, additive): attachments of a message that already passed the adapter's admission gate,
    * after bounded intake. Absent when the message had none.

@@ -1,3 +1,5 @@
+import { nlFlagArg, nlStringArg, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import type {
   ConversationTurnHandler,
   TurnHandlerContext,
@@ -145,6 +147,28 @@ export class MailTurnHandler implements ConversationTurnHandler {
       return this.list(ctx, { unread: question.unread, today: question.today, ...(question.from !== undefined ? { from: question.from } : {}) }, language);
     }
     return this.summarize(ctx, question.target, language);
+  }
+
+  /** ADR-0120 D1: `mail.list`, offered whenever this handler is registered (Gmail is configured). */
+  readonly catalog: readonly NlCatalogEntry[] = Object.freeze([nlWave1Entry('mail.list')]);
+
+  /**
+   * A validated `mail.list` selection (ADR-0120 interfaces): the same bounded listing as "안 읽은 메일" / "오늘 온 메일" /
+   * "<보낸 사람> 메일", DM-only like every mail reply (ADR-0118 D5), no model.
+   */
+  async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
+    if (selected.entryId !== 'mail.list') return null;
+    const language: MailLanguage = selected.language;
+    if (!isDirectConversation(ctx.message.context)) {
+      this.log('info', 'mail.turn_handler.dm_only', { kind: 'list' });
+      return this.reply(ctx, renderMailDmOnly(language), 'RESPONDED', language, 'not-read');
+    }
+    const from = nlStringArg(selected.args, 'from');
+    return this.list(
+      ctx,
+      { unread: nlFlagArg(selected.args, 'unread'), today: nlFlagArg(selected.args, 'today'), ...(from !== undefined ? { from } : {}) },
+      language,
+    );
   }
 
   private async list(ctx: TurnHandlerContext, filter: MailListingFilter, language: MailLanguage): Promise<TurnHandlerReply> {

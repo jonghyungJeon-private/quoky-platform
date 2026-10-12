@@ -1,5 +1,7 @@
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
 import { outboundMessage } from '../message-rendering';
+import { nlStringArg, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { renderHelpText } from '../response-composer';
 import {
   composeHelpIntentReply,
@@ -11,6 +13,15 @@ import {
 } from './help-intent';
 
 export const HELP_INTENT_TURN_HANDLER_ID = 'help-intent';
+
+/**
+ * ADR-0120 `help.topic`: topics only selection names (the grammar's index stays frozen, ADR-0120 D10). A topic answers
+ * with the contributed lines that carry its anchor, like every index topic.
+ */
+const SELECTION_ONLY_TOPICS: readonly HelpIntentTopic[] = Object.freeze([
+  Object.freeze({ id: 'mail', keywords: Object.freeze([]), anchors: Object.freeze(['메일']) }),
+  Object.freeze({ id: 'drive', keywords: Object.freeze([]), anchors: Object.freeze(['드라이브', 'Drive']) }),
+]);
 /** ADR-0104 D4 (amends ADR-0096 D5): `pre-classify`, after work lookups (300), before the intent classifier. */
 export const HELP_INTENT_TURN_HANDLER_ORDER = 400;
 
@@ -47,7 +58,31 @@ export class HelpIntentTurnHandler implements ConversationTurnHandler {
   readonly order = HELP_INTENT_TURN_HANDLER_ORDER;
   readonly helpLines = HELP_INTENT_HELP_LINES;
 
+  /** ADR-0120 D1: `help.topic`, always offered (Quoky's own help). */
+  readonly catalog: readonly NlCatalogEntry[] = Object.freeze([nlWave1Entry('help.topic')]);
+
   constructor(private readonly deps: HelpIntentTurnHandlerDeps) {}
+
+  /**
+   * A validated `help.topic` selection (ADR-0120 interfaces): the topic's contributed help lines (the same filtered
+   * subset a how-to question gets), or the full help text for `all` or a topic with no contributed line.
+   */
+  async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
+    if (selected.entryId !== 'help.topic') return null;
+    const all = typeof this.deps.helpLines === 'function' ? this.deps.helpLines() : this.deps.helpLines;
+    const topic = nlStringArg(selected.args, 'topic') ?? 'all';
+    const topics = [...(this.deps.topics ?? HELP_INTENT_TOPICS), ...SELECTION_ONLY_TOPICS];
+    const lines =
+      topic === 'all'
+        ? []
+        : selectHelpLines({ topicIds: [topic], language: selected.language }, all, { topics, exclude: HELP_INTENT_HELP_LINES });
+    if (lines.length === 0) {
+      return { reply: outboundMessage(ctx.message.context, renderHelpText(all), { replyToMessageId: ctx.message.id }) };
+    }
+    return {
+      reply: { context: ctx.message.context, text: composeHelpIntentReply(selected.language, lines), replyToMessageId: ctx.message.id },
+    };
+  }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     try {

@@ -12,3 +12,4 @@ export * from './external-work-readout';
 export * from './work-chat-renderer';
 export * from './work-chat-service';
 export * from './work-chat-turn-handler';
+export * from './work-chat-selection';

@@ -25,6 +25,7 @@ import {
 import type { ExternalWorkReadout } from './external-work-readout';
 import {
   WORK_CHAT_SEARCH_TEXT_MAX_LENGTH,
+  WORK_CHAT_SOURCES,
   WORK_CHAT_SOURCE_QUERIES,
 } from './work-chat-command';
 import type {
@@ -62,8 +63,17 @@ import { parseReminderMessage } from '../reminders/reminder-grammar';
 
 /** What the runtime presents for one work-chat command (ADR-0100 D8/D10). */
 export type WorkChatOutcome =
-  /** `text` is the plain rendering; `content` is present when the reply carries platform-rendered spans (PLT-0). */
-  | { readonly kind: 'reply'; readonly text: string; readonly content?: MessageContent }
+  /**
+   * `text` is the plain rendering; `content` is present when the reply carries platform-rendered spans (PLT-0).
+   * `listed` (a connector lookup's deterministic list only): how many items the list shows and whether it was cut, so a
+   * count answer (ADR-0120) never re-parses the text.
+   */
+  | {
+      readonly kind: 'reply';
+      readonly text: string;
+      readonly content?: MessageContent;
+      readonly listed?: { readonly count: number; readonly truncated: boolean };
+    }
   /** The command did not apply (e.g. a completion hint that names no single open to-do): the turn falls through. */
   | { readonly kind: 'none' }
   | {
@@ -82,6 +92,8 @@ export type WorkChatOutcome =
 export interface WorkDesk {
   forActor(actor: Actor): Promise<WorkSurface>;
   handle(command: WorkChatCommand, actor: Actor): Promise<WorkChatOutcome>;
+  /** The work sources with a registered read-only connector (ADR-0120 D1: only those are offered to selection). */
+  configuredSources?(): readonly WorkChatSource[];
 }
 
 export interface WorkChatServiceDeps {
@@ -229,6 +241,11 @@ export class WorkChatService implements WorkDesk {
     return this.deps.workSurface.forActor(actor);
   }
 
+  configuredSources(): readonly WorkChatSource[] {
+    const registered = new Set(this.deps.connectors.list().map((connector) => connector.source));
+    return WORK_CHAT_SOURCES.filter((source) => registered.has(source));
+  }
+
   async handle(command: WorkChatCommand, actor: Actor): Promise<WorkChatOutcome> {
     if (command.kind === 'todo.hint') return this.completionHint(command, actor);
     if (command.kind === 'todo.status') return this.statusAnswer(command, actor);
@@ -247,7 +264,7 @@ export class WorkChatService implements WorkDesk {
         case 'todo.link':
           return reply(await this.linkTodo(command.target, command.refs, actor));
         case 'lookup':
-          return await this.lookup(command.source, command.query, command.text, actor);
+          return await this.lookup(command.source, command.query, command.text, actor, command);
         case 'external-write-unsupported':
         // ADR-0112 D5: the turn handler hands an exact write request to the runtime's write flow; reaching the desk
         // (no handler in between) still answers with the fixed refusal — the desk never writes.
@@ -395,6 +412,7 @@ export class WorkChatService implements WorkDesk {
     query: WorkChatLookupQuery,
     rawText: string | undefined,
     actor: Actor,
+    options: Pick<Extract<WorkChatCommand, { kind: 'lookup' }>, 'personalWork' | 'limit' | 'listOnly'> = {},
   ): Promise<WorkChatOutcome> {
     const supported = WORK_CHAT_SOURCE_QUERIES[source];
     if (!supported.includes(query)) return reply(renderLookupUnsupported(source, query, supported));
@@ -424,9 +442,18 @@ export class WorkChatService implements WorkDesk {
         .filter(Boolean)
         .sort()[0];
       if (!identity) return reply(renderLookupFailure(source, 'IDENTITY_MISSING'));
+      // ADR-0120 D13: the optional window/role/status reach the named query only when selection set them.
+      const personalWork = options.personalWork;
       namedQuery = {
         query: ConnectorQueryName.PERSONAL_WORK,
-        params: { actorExternalId: identity, filter: PERSONAL_WORK_FILTER[query], limit: CONNECTOR_QUERY_MAX_LIMIT },
+        params: {
+          actorExternalId: identity,
+          filter: PERSONAL_WORK_FILTER[query],
+          limit: CONNECTOR_QUERY_MAX_LIMIT,
+          ...(personalWork?.window !== undefined ? { window: { ...personalWork.window } } : {}),
+          ...(personalWork?.role !== undefined ? { role: personalWork.role } : {}),
+          ...(personalWork?.status !== undefined ? { status: personalWork.status } : {}),
+        },
       };
     }
 
@@ -447,20 +474,25 @@ export class WorkChatService implements WorkDesk {
       const needle = (searchText as string).toLowerCase();
       items = items.filter((item) => [item.title ?? '', item.summary ?? ''].join('\n').toLowerCase().includes(needle));
     }
-    const built = buildExternalWorkReadout({
+    // ADR-0120 D4: a selected "N개만" shows at most N items (the list says it was cut).
+    const limited = options.limit !== undefined && items.length > options.limit;
+    if (options.limit !== undefined) items = items.slice(0, options.limit);
+    const builtFull = buildExternalWorkReadout({
       source,
       query,
       ...(searchText !== undefined ? { text: searchText } : {}),
       items,
     });
+    const built = limited ? { ...builtFull, truncated: true } : builtFull;
     // The connector returns a bounded page of the owner's items: when it was full, a filtered list may be incomplete.
     const readout = keywordFilter && fetched >= CONNECTOR_QUERY_MAX_LIMIT ? { ...built, truncated: true } : built;
     const fallbackText = renderExternalWorkList(readout);
-    if (this.summaryEnabled && readout.items.length > 0) {
+    if (this.summaryEnabled && readout.items.length > 0 && options.listOnly !== true) {
       const summaryReadout = fitExternalWorkReadoutToPrompt(readout);
       return { kind: 'summarize', readout: summaryReadout, fallbackText, footer: renderExternalWorkFooter(summaryReadout) };
     }
-    return reply(fallbackText);
+    const listed: WorkChatOutcome = { ...messageFields(fallbackText), kind: 'reply', listed: { count: readout.items.length, truncated: readout.truncated } };
+    return listed;
   }
 }
 

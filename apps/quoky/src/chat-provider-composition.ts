@@ -61,7 +61,11 @@ export function composeChatProviders(
 
   const present = options.cliPresent ?? (() => false);
   const persisted = options.persistedChat?.provider;
-  const claude = new ClaudeCliProvider(ai.claudeBin, { model: ai.claudeModel });
+  // ADR-0120 D2: the same Claude CLI provider serves INTENT_SELECTION with its own (Haiku-class) model.
+  const claude = new ClaudeCliProvider(ai.claudeBin, {
+    model: ai.claudeModel,
+    ...(ai.intentSelectionModel !== undefined ? { intentSelectionModel: ai.intentSelectionModel } : {}),
+  });
   const wantsOllama =
     chat.provider === 'ollama' || persisted === 'ollama' || (ai.ollamaModelConfigured === true && present(ai.ollamaBin));
   const wantsCodex = chat.provider === 'codex' || persisted === 'codex' || present(ai.codexBin);

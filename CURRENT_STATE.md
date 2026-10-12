@@ -5,6 +5,27 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### v5 NL-1 natural-language capability selection — on branch `claude/v5-nl1-selection` (2026-10-12)
+
+ADR-0120 (ratified 2026-10-12, Phase A `active` in NL-1). No migration; `ConversationRuntimeDeps` 35 → 36
+(`nlSelection?`). `QUOKY_NL_INTENT_MODE` defaults to `off` (byte-identical); `QUOKY_NL_INTENT_MODEL` defaults to `haiku`.
+
+- **Core.** `application/nl-routing/`: the closed wave-1 catalog (11 READ entries), `NlSelectionService` (one bounded
+  `INTENT_SELECTION` call with the pre-egress credential guard, strict output parsing, D4 validation, one numbered
+  clarification, `quoky.lastSelection` and `quoky.nlPending` in `Session.metadata`, the `jira.created-scope` preference
+  in `Actor.metadata` with a 30-day TTL and a basis line), honest chat (a configured-sources fact and a
+  false-incapability guard). One runtime dispatch point after the classifier for chat-bound turns.
+- **Handlers.** `handleSelected` on work chat, calendar, mail, Drive, reminders (with the new on-demand `brief.today`) and
+  help-intent. Jira `personal-work` gains window/role/status (D13).
+- **App.** `features/nl-selection.providers.ts`, `nl-selection/nl-selection-config.ts`; the Claude CLI serves
+  `INTENT_SELECTION` with the selection model (pinned to Claude).
+- **Validation.** Offline: the nl-routing unit suites, the corpus test (`golden/nl-intent.v1.json`, 501 cases), and the
+  AppModule dispatch test over every case. Strict evaluation on 2026-10-12 (`haiku`, prompt `nl-select.v9`, 501 cases,
+  3 runs, concurrency 6, plan digest `2eda67d4…`): 98.9%, 98.9% and 99.7% exact hits; 0 wrong captures in each run;
+  lowest entry 91.2% (mail); latency p50 2.9 s, p95 3.5–3.7 s, max 6.2 s, 7–18 of 501 calls over the 4 s runtime
+  bound. Gate passed in all three runs.
+- **Not run yet.** The service `.env.local` flag edit, the live UAT on Telegram and Discord, the Chief Architect review.
+
 ### Personal v4 — closed (INT-3 and DOC-E, 2026-10-12)
 
 Every v4 track is merged (#153-#172). Schema stays v15, `ConversationRuntimeDeps` stays 35. The per-track sections below

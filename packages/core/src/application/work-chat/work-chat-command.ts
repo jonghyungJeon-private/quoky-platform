@@ -1,6 +1,7 @@
 import { IntentType, ResourceRef } from '../../domain';
 import type { Intent } from '../../domain';
 import { CONNECTOR_SEARCH_TEXT_MAX_LENGTH } from '../../ports';
+import type { PersonalWorkRole, PersonalWorkStatus, PersonalWorkWindowField } from '../../ports/connector-query';
 import { unnegatedMatch } from '../intent-negation';
 import type { ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
 
@@ -47,6 +48,19 @@ export const WORK_CHAT_SOURCE_QUERIES: Readonly<Record<WorkChatSource, readonly 
   confluence: ['search'],
 };
 
+/** The ADR-0120 D13 options of a Jira `personal-work` lookup (local dates resolved by Core, `to` exclusive). */
+export interface WorkChatPersonalWorkOptions {
+  readonly window?: {
+    readonly field: PersonalWorkWindowField;
+    readonly from: string;
+    readonly to: string;
+    readonly fromInstant?: string;
+    readonly toInstant?: string;
+  };
+  readonly role?: PersonalWorkRole;
+  readonly status?: PersonalWorkStatus;
+}
+
 /** Search text bound (same as the connector port); longer text is a usage hint, never truncated silently. */
 export const WORK_CHAT_SEARCH_TEXT_MAX_LENGTH = CONNECTOR_SEARCH_TEXT_MAX_LENGTH;
 
@@ -85,6 +99,15 @@ export type WorkChatCommand =
       readonly query: WorkChatLookupQuery;
       /** Present for `search`, and for a Jira `my-items` keyword filter: 1..100 characters, whitespace collapsed. */
       readonly text?: string;
+      /**
+       * ADR-0120 D13 (selection only; the grammar never sets it): the Jira `personal-work` window, role and status, sent
+       * as the named query's optional params. Absent: exactly the ADR-0100 query.
+       */
+      readonly personalWork?: WorkChatPersonalWorkOptions;
+      /** ADR-0120 D4 (selection only): show at most this many items (1..10). */
+      readonly limit?: number;
+      /** ADR-0120 (selection only, a count question): answer with the deterministic list, never a summary. */
+      readonly listOnly?: true;
     }
   | { readonly kind: 'external-write-unsupported'; readonly source: WorkChatSource }
   /**

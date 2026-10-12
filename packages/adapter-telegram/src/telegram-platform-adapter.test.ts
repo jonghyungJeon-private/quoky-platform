@@ -14,6 +14,8 @@ import {
   UNSUPPORTED_MESSAGE_NOTICE,
 } from './telegram-platform-adapter';
 import type { TelegramAdapterOptions } from './telegram-platform-adapter';
+import { mergeAlbum } from './telegram-platform-adapter';
+import type { AdmittedTelegramMessage } from './admission';
 import {
   FAKE_BOT_ID,
   FAKE_TOKEN,
@@ -607,6 +609,17 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     const confirm = fake.callsTo('getUpdates').at(-1);
     expect(confirm?.params).toEqual({ offset: 44, limit: 1, timeout: 0 });
     expect(h.adapter.status()).toMatchObject({ polling: false, admittedChatCount: 1 });
+  });
+
+  it('ADR-0120 D8: hands a blockquote over as a neutral quoted range of the inbound text', async () => {
+    const quoted = textUpdate(61, '내 지라 이슈 보여줘\n이거 무슨 뜻이야?');
+    (quoted.message as Record<string, unknown>).entities = [{ type: 'blockquote', offset: 0, length: '내 지라 이슈 보여줘'.length }];
+    const fake = new FakeTelegram().queue('getUpdates', okReply([])).queue('getUpdates', okReply([quoted]));
+    const h = harness(fake);
+    await h.adapter.start();
+    await until(() => h.received.length === 1);
+    expect(h.received[0]).toMatchObject({ text: '내 지라 이슈 보여줘\n이거 무슨 뜻이야?', quotedRanges: [{ start: 0, end: 11 }] });
+    await h.adapter.stop();
   });
 
   it('drops non-owner, group, channel, edited and other updates with no handler call, no send and no content log', async () => {
@@ -1252,5 +1265,34 @@ describe('Telegram token handling: never in logs, errors, inspect or JSON', () =
     ].join('\n');
     expect(observable).not.toContain(FAKE_TOKEN_SECRET);
     expect(startError).toMatchObject({ code: TelegramStartupErrorCode.TELEGRAM_IDENTITY_MISMATCH });
+  });
+});
+
+describe('mergeAlbum quoted ranges (ADR-0120 D8)', () => {
+  const part = (messageId: string, text: string, quotedRanges?: readonly { start: number; end: number }[]): AdmittedTelegramMessage => ({
+    updateId: 1,
+    chatId: '1',
+    userId: '1',
+    messageId,
+    text,
+    date: 0,
+    ...(quotedRanges !== undefined ? { quotedRanges } : {}),
+  });
+
+  it('shifts each part\'s ranges by its offset in the joined text, so a blockquote in a later caption stays excluded', () => {
+    const merged = mergeAlbum([part('a', 'first caption'), part('b', '   '), part('c', 'second quoted tail', [{ start: 7, end: 18 }]), part('d', 'x', [{ start: 0, end: 1 }])]);
+    expect(merged.text).toBe('first caption\nsecond quoted tail\nx');
+    expect(merged.quotedRanges).toEqual([
+      { start: 14 + 7, end: 14 + 18 },
+      { start: 33, end: 34 },
+    ]);
+    const [range] = merged.quotedRanges as { start: number; end: number }[];
+    expect(merged.text.slice(range?.start, range?.end)).toBe('quoted tail');
+  });
+
+  it('keeps a single-part album untouched and omits ranges when no part has any', () => {
+    const only = part('a', 'solo', [{ start: 0, end: 2 }]);
+    expect(mergeAlbum([only])).toBe(only);
+    expect(mergeAlbum([part('a', 'one'), part('b', 'two')]).quotedRanges).toBeUndefined();
   });
 });

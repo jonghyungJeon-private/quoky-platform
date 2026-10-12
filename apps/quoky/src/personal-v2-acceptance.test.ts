@@ -638,15 +638,15 @@ describe('Personal v2 acceptance — composition (ADR-0096 D2/D5/D7, ADR-0097)',
       artifacts: true, composer: true, workSurface: true, intentResolver: true, orchestrator: true, approvals: true,
       approvalFlow: true, scopeClarificationFlow: true, applyPreviewFlow: true, codeGeneration: true, patch: true,
       codeProposals: true, workspaceWrite: true, git: true, repositoryHosting: true, turnHandlers: true,
-      credentialOverrideFlow: true, connectorWriteFlow: true, logger: true,
+      credentialOverrideFlow: true, connectorWriteFlow: true, nlSelection: true, logger: true,
     };
     const composed = Object.keys((harness.runtime as unknown as { deps: ConversationRuntimeDeps }).deps).sort();
     expect(composed).toEqual(Object.keys(typeKeys).sort());
-    expect(composed).toHaveLength(36);
+    expect(composed).toHaveLength(37);
     // The accepted ADR-0032 M3 / ADR-0096 / ADR-0097 / ADR-0112 baseline (32 → 33 → 34 → 35) counts the
     // dispatch-boundary deps. `runtimeProviderRouting` is the optional offline Stage 2A routing seam (added before the
     // 32 baseline was taken) that the baseline has never counted (conversation-runtime.test.ts asserts 35 without it).
-    expect(composed.filter((key) => key !== 'runtimeProviderRouting')).toHaveLength(35);
+    expect(composed.filter((key) => key !== 'runtimeProviderRouting')).toHaveLength(36);
     expect(composed).toEqual(expect.arrayContaining(['turnHandlers', 'credentialOverrideFlow', 'connectorWriteFlow']));
     // No feature smuggled a dependency in beside `turnHandlers` (ADR-0096 D2: no reminders/feedback/work deps).
     expect(composed.some((key) => /remind|feedback|work(?:Chat|Desk|Summary)|branch/i.test(key))).toBe(false);

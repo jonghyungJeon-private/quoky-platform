@@ -34,6 +34,8 @@ export const CLAUDE_PINNED_CAPABILITIES: readonly Capability[] = Object.freeze([
   Capability.PROJECT_ANALYSIS,
   Capability.TEST_EXECUTION,
   Capability.POLICY_SENSITIVE_CHAT,
+  // ADR-0120 D2: natural-language selection stays on Claude; the owner's chat-tier choice never applies to it.
+  Capability.INTENT_SELECTION,
 ]);
 
 /** The Claude models a choice may name (the alias style `QUOKY_CLAUDE_MODEL` accepts). */

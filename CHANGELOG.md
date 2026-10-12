@@ -5,6 +5,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — v5 NL-1 natural-language capability selection, Phase A (ADR-0120, 2026-10-12)
+
+No migration, no new port or DI token. `ConversationRuntimeDeps` 35 → 36 (`nlSelection?`, ADR-0120 D14).
+`QUOKY_NL_INTENT_MODE` defaults to `off`: every reply is unchanged until it is set.
+
+- **Natural phrasings reach the read capabilities.** With `QUOKY_NL_INTENT_MODE=active`, a message that every earlier
+  route left for chat ("오늘 jira 이슈 등록된거 브리핑해줘", "오늘 나한테 할당된 jira 이슈가 있을텐데 ?") goes through one
+  bounded selection call over a closed catalog of eleven reads (Jira, GitHub, Slack, Confluence, calendar, mail,
+  Drive, to-dos, reminders, today's brief, help). Core validates the answer (closed ids and values, Core-resolved time,
+  keywords grounded in the owner's own words, the credential guard) and the owning handler answers with its existing
+  command. The model never executes anything and never sees an item, mail or event text.
+- **One question instead of a guess.** An ambiguous or invalid answer becomes one numbered question (`1` or `지라`
+  answers it). "등록된 이슈" asks once whose issues are meant and keeps the answer for 30 days per owner (both
+  platforms); every answer starts with its basis line (`기준: 내가 담당·보고자 / 오늘 생성`) and "아니 담당만" changes it.
+  Follow-ups such as "그 중에 위클리카만" refine the previous selection for 30 minutes.
+- **Jira windows, roles and status (D13).** The Jira lookup can ask for issues created, updated or due in a period, as
+  assignee, reporter or either, open or all; counts ("몇 개야") and "N개만" are answered from the list.
+- **On-demand brief.** "오늘 브리핑해줘" sends the morning brief now (model-free, DM only).
+- **Honest chat.** When nothing matches, the chat prompt names the configured sources and their commands and Quoky's
+  own command lines, so a write request ("할 일 추가해줘 …") is answered with the exact command to send (nothing is
+  prefilled or run), and a reply claiming Quoky cannot access a configured source is replaced by the command offer.
+- **Review fixes (CA and Codex).** Selection runs only when this turn's chat would reach the same provider (a local or
+  another remote chat choice makes no call); Telegram blockquotes and Discord `>>>` quotes are removed; the prepared
+  input is bounded after its placeholders; a guessed role never answers or overwrites the preference; clarification
+  answers are resolved strictly ("첫 번째 말고 두 번째", "둘 다 아니야"); an open question ends with the next turn; the
+  honest-chat guard keeps write suggestions; Jira created/updated windows ignore the Jira profile time zone;
+  `brief.today` needs reminders on. Re-evaluated under the runtime's 4 s bound (prompt `nl-select.v12`, 3 runs): 99.2%,
+  98.4%, 98.1%; 0 wrong captures; 5–9 of 501 calls over 4 s (misses); p95 3.6 s; gate passed in each run.
+- **Safety.** Writes are never selected; selection runs only after the classifier, never with a pending approval, never
+  on a credential-shaped message (no call is made), and quoted, fenced or attached content is removed before the call.
+  `shadow` mode logs only entry ids, the route, the agree flag and latency.
+- **Tooling.** `pnpm eval:nl` evaluates the real prompt with the local Claude CLI (Strict: an approved plan digest per
+  run). Corpus: `packages/core/src/application/golden/nl-intent.v1.json` (501 cases). Strict evaluation on 2026-10-12
+  (`haiku`, prompt `nl-select.v9`, 501 cases, 3 runs, concurrency 6, plan digest `2eda67d4…`): 98.9%, 98.9% and 99.7%
+  exact hits; 0 wrong captures in each run; lowest entry 91.2% (mail); latency p50 2.9 s, p95 3.5–3.7 s, max 6.2 s,
+  7–18 of 501 calls over the 4 s runtime bound. Gate passed in all three runs.
+
 ## Unreleased — Jira listing routing (live UAT, 2026-10-12)
 
 No migration, no new DI token, no new connector query or host.

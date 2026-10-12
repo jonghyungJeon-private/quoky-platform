@@ -92,6 +92,57 @@ describe('JiraConnectorProvider', () => {
     expect(url.searchParams.get('maxResults')).toBe('5');
   });
 
+  it('ADR-0120 D13: renders the window, role and status as escaped JQL; defaults reproduce the ADR-0100 query', async () => {
+    const fake = fakeFetch(200, { issues: [] });
+    const jira = provider(fake.fetchImpl);
+    await jira.query(personalWork('account-123', { window: { field: 'created', from: '2026-10-12', to: '2026-10-13' }, role: 'either' }));
+    await jira.query(personalWork('account-123', { window: { field: 'due', from: '2026-10-12', to: '2026-10-19' }, role: 'reporter', status: 'all' }));
+    await jira.query(personalWork('account-123', { window: { field: 'updated', from: '2026-10-05', to: '2026-10-12' } }));
+    await jira.query(personalWork('account-123', { role: 'assignee', status: 'open' }));
+    const jql = fake.calls.map((call) => new URL(call.url).searchParams.get('jql'));
+    expect(jql).toEqual([
+      '(assignee = "account-123" OR reporter = "account-123") AND resolution = Unresolved AND statusCategory != Done AND created >= "2026-10-12" AND created < "2026-10-13" ORDER BY created DESC',
+      'reporter = "account-123" AND duedate >= "2026-10-12" AND duedate < "2026-10-19" ORDER BY duedate ASC',
+      'assignee = "account-123" AND resolution = Unresolved AND statusCategory != Done AND updated >= "2026-10-05" AND updated < "2026-10-12" ORDER BY updated DESC',
+      'assignee = "account-123" AND resolution = Unresolved AND statusCategory != Done ORDER BY updated DESC',
+    ]);
+  });
+
+  it('ADR-0120 P3: bounds created/updated by minutes relative to now, so the Jira profile time zone cannot shift the window', async () => {
+    const fake = fakeFetch(200, { issues: [] });
+    // Now: 2026-10-12 12:00 in Asia/Seoul (03:00Z). "Today" in Seoul is [2026-10-11T15:00Z, 2026-10-12T15:00Z).
+    const jira = provider(fake.fetchImpl, { now: () => Date.parse('2026-10-12T03:00:00.000Z') });
+    const today = { field: 'created', from: '2026-10-12', to: '2026-10-13', fromInstant: '2026-10-11T15:00:00.000Z', toInstant: '2026-10-12T15:00:00.000Z' };
+    await jira.query(personalWork('account-123', { window: today }));
+    await jira.query(personalWork('account-123', { window: { ...today, field: 'updated', fromInstant: '2026-10-11T15:00:30.000Z' } }));
+    // A due date has no zone: the owner's local dates are used as they are.
+    await jira.query(personalWork('account-123', { window: { ...today, field: 'due' } }));
+    const jql = fake.calls.map((call) => new URL(call.url).searchParams.get('jql'));
+    expect(jql[0]).toBe(
+      'assignee = "account-123" AND resolution = Unresolved AND statusCategory != Done AND created >= "-720m" AND created < "720m" ORDER BY created DESC',
+    );
+    // Rounded so the window never shrinks: the lower bound one minute earlier at most.
+    expect(jql[1]).toContain('updated >= "-720m" AND updated < "720m"');
+    expect(jql[2]).toContain('duedate >= "2026-10-12" AND duedate < "2026-10-13"');
+  });
+
+  it('ADR-0120 D13: refuses a window outside the closed set, a reversed or over-31-day window, and a window with the due filter, before any request', async () => {
+    const fake = fakeFetch(200, { issues: [] });
+    const jira = provider(fake.fetchImpl);
+    for (const extra of [
+      { window: { field: 'resolved', from: '2026-10-12', to: '2026-10-13' } },
+      { window: { field: 'created', from: '2026-10-13', to: '2026-10-12' } },
+      { window: { field: 'created', from: '2026-08-01', to: '2026-10-13' } },
+      { window: { field: 'created', from: '2026-10-12" OR project = SECRET', to: '2026-10-13' } },
+      { window: { field: 'created', from: '2026-10-12', to: '2026-10-13' }, filter: 'due-this-week' },
+      { role: 'watcher' },
+      { status: 'done' },
+    ]) {
+      await expect(jira.query(personalWork('account-123', extra))).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+    }
+    expect(fake.calls).toHaveLength(0);
+  });
+
   it('clamps an oversized limit to 20 and rejects a non-positive limit before any request', async () => {
     const fake = fakeFetch(200, { issues: [] });
     await provider(fake.fetchImpl).query(personalWork('account-123', { limit: 500 }));

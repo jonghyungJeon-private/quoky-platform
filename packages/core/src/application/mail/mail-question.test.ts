@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { MAIL_HELP_LINES } from './mail-turn-handler';
 import { parseMailQuestion } from './mail-question';
 
+/** ADR-0120 D12: the natural-language selection corpus holds mail and Drive phrasings by design (not a routing corpus). */
+const NL_SELECTION_CORPORA = new Set(['nl-intent.v1.json']);
+
 describe('mail grammar (ADR-0118 D4/D6/D7)', () => {
   it.each([
     ['안 읽은 메일', { unread: true, today: false }],
@@ -161,7 +164,7 @@ describe('mail grammar (ADR-0118 D4/D6/D7)', () => {
   it('claims no golden corpus phrase except the mailbox questions that switch with Gmail configured (QUAL-7 style)', () => {
     const dir = new URL('../golden/', import.meta.url);
     const claimed: string[] = [];
-    for (const file of readdirSync(dir).filter((name) => name.endsWith('.v1.json') && name !== 'baseline.v1.json')) {
+    for (const file of readdirSync(dir).filter((name) => name.endsWith('.v1.json') && name !== 'baseline.v1.json' && !NL_SELECTION_CORPORA.has(name))) {
       const suite = JSON.parse(readFileSync(new URL(file, dir), 'utf8')) as { cases: Array<{ id: string; text?: string; userText?: string }> };
       for (const golden of suite.cases) {
         for (const text of [golden.text, golden.userText]) {

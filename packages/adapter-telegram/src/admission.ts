@@ -74,6 +74,11 @@ export interface AdmittedTelegramMessage {
   readonly attachments?: readonly TelegramAttachmentSource[];
   /** The album (`media_group_id`) the message belongs to; its parts are taken in as one turn. */
   readonly mediaGroupId?: string;
+  /**
+   * ADR-0120 D8: the `blockquote` / `expandable_blockquote` entities of the text (or caption) as `[start, end)` UTF-16
+   * ranges of `text` — quoted words, never the owner's request. Absent when there are none.
+   */
+  readonly quotedRanges?: readonly { readonly start: number; readonly end: number }[];
 }
 
 /** An owner's 👍/👎 change on a message in their own private chat (TG-2). */
@@ -229,6 +234,7 @@ export function admitTelegramUpdate(
   if (id === undefined || typeof date !== 'number' || !Number.isFinite(date)) return drop('malformed');
   if (nowSeconds - date > MAX_UPDATE_AGE_SECONDS) return ownerDrop('stale', userId);
   const mediaGroupId = attachments.length > 0 ? mediaGroupIdOf(record.media_group_id) : undefined;
+  const quotedRanges = quotedRangesOf(stringOf(record.text) !== undefined ? record.entities : record.caption_entities, (text ?? '').length);
   return {
     kind: 'admitted',
     message: {
@@ -240,8 +246,33 @@ export function admitTelegramUpdate(
       date,
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(mediaGroupId !== undefined ? { mediaGroupId } : {}),
+      ...(quotedRanges.length > 0 ? { quotedRanges } : {}),
     },
   };
+}
+
+/** At most this many quoted ranges are kept per message (a malformed or hostile entity list is cut, never thrown on). */
+const MAX_QUOTED_RANGES = 32;
+
+/**
+ * The blockquote entities of a Telegram message as `[start, end)` ranges (Bot API `MessageEntity`: UTF-16 `offset` and
+ * `length`), clamped to the text. Anything malformed is skipped.
+ */
+function quotedRangesOf(entities: unknown, textLength: number): { start: number; end: number }[] {
+  if (!Array.isArray(entities)) return [];
+  const ranges: { start: number; end: number }[] = [];
+  for (const entity of entities.slice(0, 256)) {
+    if (typeof entity !== 'object' || entity === null) continue;
+    const { type, offset, length } = entity as { type?: unknown; offset?: unknown; length?: unknown };
+    if (type !== 'blockquote' && type !== 'expandable_blockquote') continue;
+    if (!Number.isInteger(offset) || !Number.isInteger(length)) continue;
+    const start = offset as number;
+    const end = Math.min(start + (length as number), textLength);
+    if (start < 0 || start >= textLength || end <= start) continue;
+    ranges.push({ start, end });
+    if (ranges.length >= MAX_QUOTED_RANGES) break;
+  }
+  return ranges;
 }
 
 /**

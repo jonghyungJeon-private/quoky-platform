@@ -116,6 +116,12 @@ export function executionLocalityOf(provider: Pick<AiProvider, 'executionLocalit
 export interface AiProvider {
   /** Stable id for audit/logging only, e.g. "claude-cli". */
   readonly id: string;
+  /**
+   * Optional neutral provider-family key shared by every model variant of one provider (the base id before the variant
+   * suffix, e.g. `claude-cli` for `claude-cli:opus`). Absent means the family is `id`. Core compares families only for
+   * equality and never branches on their value.
+   */
+  readonly family?: string;
   /** Capabilities this provider serves, with selection priorities. */
   readonly capabilities: readonly AiCapabilityDescriptor[];
   /**

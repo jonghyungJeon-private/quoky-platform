@@ -148,4 +148,11 @@ describe('ProviderCatalog choices', () => {
     expect((await view.execute({ capability: Capability.GENERAL_CHAT, prompt: 'x' })).text).toBe('ok');
     expect(view.executionLocality).toBeUndefined();
   });
+
+  it('a chat-tier model variant keeps its base provider as its family (claude-cli:opus -> claude-cli)', () => {
+    const inner = { id: 'inner', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: 'ok' }) };
+    expect(chatTierView(inner, 'claude-cli:opus').family).toBe('claude-cli');
+    expect(chatTierView(inner, 'ollama-cli:granite3.3:8b').family).toBe('ollama-cli');
+    expect(chatTierView(inner, 'codex-cli').family).toBe('codex-cli');
+  });
 });

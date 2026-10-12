@@ -4,6 +4,10 @@ import type {
   TurnHandlerReply,
 } from '../../ports/conversation-turn-handler.port';
 import type { Logger } from '../../ports/logger.port';
+import { isDirectConversation, outboundMessage } from '../message-rendering';
+import type { NlCatalogEntry, NlSelectedCommand } from '../nl-routing/catalog';
+import { nlWave1Entry } from '../nl-routing/wave1-entries';
+import type { OnDemandBrief } from './on-demand-brief';
 import type { ReminderConversationService } from './reminder-conversation-service';
 import type { ReminderReplyComposer } from './reminder-reply-composer';
 
@@ -29,6 +33,16 @@ export const REMINDER_TURN_HANDLER_ID = 'reminders';
 export const REMINDER_EVENT_HISTORY_NOTE = '[알림 응답 — 캘린더 일정 내용은 대화 기록에 남기지 않아요.]';
 export const REMINDER_TURN_HANDLER_ORDER = 200;
 
+/** ADR-0120 / ADR-0117 D5: SHORT_TERM history keeps this instead of an on-demand brief (it may carry event titles). */
+export const ON_DEMAND_BRIEF_HISTORY_NOTE = '[오늘의 브리핑 응답 — 브리핑 내용은 대화 기록에 남기지 않아요.]';
+
+/** ADR-0117 D4 (amended by ADR-0120): the on-demand brief is answered only in the owner's DM. */
+export function renderBriefDmOnly(language: 'ko' | 'en'): string {
+  return language === 'en'
+    ? "Today's brief is shown only in a direct message. Send me \"today's brief\" in a DM."
+    : '오늘의 브리핑은 DM에서만 보여 드려요. 저에게 DM으로 "오늘 브리핑해줘"라고 보내 주세요.';
+}
+
 /** Help lines while reminders are on (ADR-0096 D6; each well under the composer's 120-char bound). */
 export const REMINDER_HELP_LINES: readonly string[] = [
   '- "30분 뒤에 스트레칭 알려줘", "내일 오전 9시에 회의 준비 알려줘", "매일 오전 8시에 오늘 할 일 알려줘": 알림을 만들어요.',
@@ -41,12 +55,14 @@ export const REMINDER_DISABLED_HELP_LINES: readonly string[] = [
 ];
 
 export interface ReminderTurnHandlerDeps {
-  readonly conversation: Pick<ReminderConversationService, 'handleTurn'>;
+  readonly conversation: Pick<ReminderConversationService, 'handleTurn'> & Partial<Pick<ReminderConversationService, 'listReply'>>;
   /** Fallback copy if the service ever throws (it is documented never to). */
   readonly composer: Pick<ReminderReplyComposer, 'storageFailure'>;
   /** `QUOKY_REMINDERS_ENABLED`; selects the help lines only (the service owns the disabled reply). */
   readonly enabled: boolean;
   readonly logger: Logger;
+  /** ADR-0120 `brief.today`: the on-demand brief; absent = the entry is not offered. */
+  readonly brief?: Pick<OnDemandBrief, 'compose'>;
 }
 
 export class ReminderTurnHandler implements ConversationTurnHandler {
@@ -57,6 +73,43 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
 
   constructor(private readonly deps: ReminderTurnHandlerDeps) {
     this.helpLines = deps.enabled ? REMINDER_HELP_LINES : REMINDER_DISABLED_HELP_LINES;
+  }
+
+  /**
+   * ADR-0120 D1: `reminder.list` while reminders are on, and `brief.today` when the on-demand brief is wired. A getter,
+   * read on every selection turn.
+   */
+  get catalog(): readonly NlCatalogEntry[] {
+    return [
+      ...(this.deps.enabled && this.deps.conversation.listReply !== undefined ? [nlWave1Entry('reminder.list')] : []),
+      // The brief rides on the reminder store: with reminders off it is not offered (and never answered).
+      ...(this.deps.enabled && this.deps.brief !== undefined ? [nlWave1Entry('brief.today')] : []),
+    ];
+  }
+
+  /** A validated selection (ADR-0120 interfaces): the existing reminder LIST, or the model-free on-demand brief (DM only). */
+  async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
+    const base = { context: ctx.message.context, actorId: ctx.actor.id, messageId: ctx.message.id, now: ctx.now };
+    if (selected.entryId === 'reminder.list') {
+      return this.deps.conversation.listReply === undefined ? null : { reply: await this.deps.conversation.listReply(base) };
+    }
+    if (selected.entryId !== 'brief.today' || this.deps.brief === undefined || !this.deps.enabled) return null;
+    if (!isDirectConversation(ctx.message.context)) {
+      return { reply: outboundMessage(ctx.message.context, renderBriefDmOnly(selected.language), { replyToMessageId: ctx.message.id }) };
+    }
+    try {
+      const body = await this.deps.brief.compose(ctx.actor.id, ctx.now);
+      return {
+        reply: outboundMessage(ctx.message.context, body, { replyToMessageId: ctx.message.id }),
+        history: { assistant: ON_DEMAND_BRIEF_HISTORY_NOTE },
+      };
+    } catch (error) {
+      this.deps.logger.error('reminder.turn_handler.brief_failed', { errorName: error instanceof Error ? error.name : 'unknown' });
+      return {
+        reply: outboundMessage(ctx.message.context, this.deps.composer.storageFailure(), { replyToMessageId: ctx.message.id }),
+        status: 'FAILED',
+      };
+    }
   }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {

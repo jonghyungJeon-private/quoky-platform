@@ -531,14 +531,14 @@ describe('Personal v3 acceptance — composition in the maximum v3 configuration
       artifacts: true, composer: true, workSurface: true, intentResolver: true, orchestrator: true, approvals: true,
       approvalFlow: true, scopeClarificationFlow: true, applyPreviewFlow: true, codeGeneration: true, patch: true,
       codeProposals: true, workspaceWrite: true, git: true, repositoryHosting: true, turnHandlers: true,
-      credentialOverrideFlow: true, connectorWriteFlow: true, logger: true,
+      credentialOverrideFlow: true, connectorWriteFlow: true, nlSelection: true, logger: true,
     };
     const deps = (harness.runtime as unknown as { deps: ConversationRuntimeDeps }).deps;
     const composed = Object.keys(deps).sort();
     expect(composed).toEqual(Object.keys(typeKeys).sort());
     // ADR-0112 D5 moved the baseline 34 → 35 (CWR-2); SUB-3 and OPS-2b added none (ADR-0113 D8). The optional offline
     // Stage 2A routing seam `runtimeProviderRouting` has never been counted.
-    expect(composed.filter((key) => key !== 'runtimeProviderRouting')).toHaveLength(35);
+    expect(composed.filter((key) => key !== 'runtimeProviderRouting')).toHaveLength(36);
     expect(composed.some((key) => /remind|feedback|work(?:Chat|Desk|Summary)|branch|calendar|opsUi|approvalDecision/i.test(key))).toBe(false);
     expect(harness.flow).not.toBeNull();
     expect(deps.connectorWriteFlow).toBe(harness.flow);

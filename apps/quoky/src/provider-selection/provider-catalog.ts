@@ -82,6 +82,8 @@ const CHAT_TIER = new Set(CHAT_TIER_CAPABILITIES);
 export function chatTierView(inner: AiProvider, id: string): AiProvider {
   return {
     id,
+    // A model variant (`claude-cli:opus`) belongs to the family of its base provider (`claude-cli`).
+    family: inner.family ?? id.split(':')[0] ?? id,
     capabilities: inner.capabilities.filter((descriptor) => CHAT_TIER.has(descriptor.capability)),
     ...(inner.executionLocality !== undefined ? { executionLocality: inner.executionLocality } : {}),
     isAvailable: () => inner.isAvailable(),
@@ -127,7 +129,11 @@ export class ProviderCatalog {
       ...(input.persistedChat ? { persistedChat: input.persistedChat } : {}),
     });
     this.factories = {
-      claudeVariant: (model) => new ClaudeCliProvider(ai.claudeBin, { model }),
+      claudeVariant: (model) =>
+        new ClaudeCliProvider(ai.claudeBin, {
+          model,
+          ...(ai.intentSelectionModel !== undefined ? { intentSelectionModel: ai.intentSelectionModel } : {}),
+        }),
       ollamaVariant: (model) => new OllamaCliProvider({ bin: ai.ollamaBin, model }),
       claudeVision: (model) => new ClaudeCliVisionProvider({ bin: ai.claudeBin, model }),
       codexVision: (model) =>

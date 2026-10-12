@@ -8,6 +8,7 @@ import {
   REMINDER_REPOSITORY,
   STORAGE_PROVIDER,
   EventReminderCalendar,
+  OnDemandBrief,
   ReminderConversationService,
   ReminderDispatchService,
   ReminderReplyComposer,
@@ -234,10 +235,45 @@ export function createRemindersProviders(
         config: ReminderConfig,
         conversation: ReminderConversationService,
         composer: ReminderReplyComposer,
-      ): readonly ConversationTurnHandler[] => [
-        new ReminderTurnHandler({ conversation, composer, enabled: config.enabled, logger }),
+        storage: StorageProvider,
+        repository: ReminderRepository,
+        calendar: CalendarReader | undefined,
+        connectors: readonly ConnectorProvider[] | undefined,
+      ): readonly ConversationTurnHandler[] => {
+        const seam = storage as StorageProvider & ReminderStorageSeam;
+        // ADR-0120 `brief.today`: the same model-free brief as the scheduled one, over the same read-only sources.
+        const briefSources = createBriefSources({
+          calendar,
+          connectors,
+          briefJiraEnabled: config.briefJiraEnabled === true,
+          storage: storage as StorageProvider & BriefActorStorageSeam,
+          logger,
+        });
+        const brief = new OnDemandBrief({
+          repository,
+          composer,
+          timeZone: config.timeZone,
+          ...(briefSources !== undefined ? { briefSources } : {}),
+          workItems: {
+            listByActor: (actorId) => {
+              const workItems = seam.workItems;
+              if (workItems === undefined) return Promise.reject(new ReminderStorageUnavailableError());
+              return workItems.listByActor(actorId);
+            },
+          },
+          logger,
+        });
+        return [new ReminderTurnHandler({ conversation, composer, enabled: config.enabled, logger, brief })];
+      },
+      inject: [
+        REMINDER_FEATURE_CONFIG,
+        ReminderConversationService,
+        ReminderReplyComposer,
+        STORAGE_PROVIDER,
+        REMINDER_REPOSITORY,
+        { token: CALENDAR_READER, optional: true },
+        { token: CONNECTOR_PROVIDERS, optional: true },
       ],
-      inject: [REMINDER_FEATURE_CONFIG, ReminderConversationService, ReminderReplyComposer],
     },
   ];
 }
