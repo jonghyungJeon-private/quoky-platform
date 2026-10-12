@@ -2299,11 +2299,8 @@
       "text": "구글 드라이브 최근 문서 뭐 있어?",
       "expect": {
         "entryId": "drive.files",
-        "args": {
-          "kind": "document"
-        }
-      },
-      "note": "the owner names the file type (ADR-0120 follow-up)"
+        "args": {}
+      }
     },
     {
       "id": "drive-004",
@@ -2341,8 +2338,7 @@
         "args": {
           "kind": "document"
         }
-      },
-      "note": "the owner names the file type (ADR-0120 follow-up)"
+      }
     },
     {
       "id": "drive-008",
@@ -2569,11 +2565,9 @@
       "expect": {
         "entryId": "drive.files",
         "args": {
-          "name": "proposal",
-          "kind": "document"
+          "name": "proposal"
         }
-      },
-      "note": "the owner names the file type (ADR-0120 follow-up)"
+      }
     },
     {
       "id": "todo-001",

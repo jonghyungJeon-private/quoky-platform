@@ -127,6 +127,7 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
     expect(buildGDriveQuery(undefined, 'pdf')).toBe("trashed = false and mimeType = 'application/pdf'");
     expect(buildGDriveQuery(undefined, 'folder')).toBe("trashed = false and mimeType = 'application/vnd.google-apps.folder'");
     expect(buildGDriveQuery('기획서', 'pdf')).toBe("trashed = false and mimeType = 'application/pdf' and name contains '기획서'");
+    for (const inherited of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) expect(() => buildGDriveQuery(undefined, inherited as never), inherited).toThrow();
     expect(() => buildGDriveQuery(undefined, "x' or name contains 'a" as never)).toThrow();
   });
 

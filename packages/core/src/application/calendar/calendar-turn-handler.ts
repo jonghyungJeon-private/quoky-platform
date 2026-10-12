@@ -153,11 +153,13 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
     const nowMs = Date.parse(ctx.now);
     const from = remaining && nowMs > Date.parse(window.from) ? ctx.now : window.from;
     let events: readonly CalendarEvent[];
+    let pageFull = false;
     try {
       events =
         remaining && nowMs >= Date.parse(window.to)
           ? []
           : await this.readWithTimeout({ from, to: window.to, limit: CALENDAR_EVENTS_MAX_LIMIT });
+      pageFull = events.length >= CALENDAR_EVENTS_MAX_LIMIT;
       if (remaining) events = events.filter((event) => !hasFinished(event, nowMs));
       // ADR-0120 follow-up: a grounded title keyword narrows the fetched events here, on the title only, case-insensitively.
       // Titles never reach the model (ADR-0110 D4); the filter runs after the read and the remaining filter.
@@ -179,7 +181,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       limit: CALENDAR_EVENTS_MAX_LIMIT,
       writesEnabled: this.deps.writesEnabled === true,
       ...(remaining ? { remaining: true } : {}),
-      ...(keyword !== undefined ? { keyword } : {}),
+      ...(keyword !== undefined ? { keyword, ...(pageFull ? { partial: true } : {}) } : {}),
     };
     const reply = renderCalendarEvents(window, events, renderOptions);
     this.rememberListing(ctx.session.id, ctx.actor.id, {

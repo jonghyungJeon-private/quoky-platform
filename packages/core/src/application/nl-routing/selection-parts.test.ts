@@ -222,9 +222,15 @@ describe('deterministic validation (ADR-0120 D4)', () => {
     const kind = (value: string, text: string) => validateSelection({ entryId: 'drive.files', args: { kind: value } }, ctx(text));
     expect(kind('spreadsheet', '드라이브 파일 최근 거')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'kind' });
     expect(kind('spreadsheet', '구글 드라이브에 스프레드시트 최근 거')).toMatchObject({ ok: true, value: { args: { kind: 'spreadsheet' } } });
-    for (const [value, text] of [['spreadsheet', '드라이브 엑셀'], ['spreadsheet', 'drive sheet'], ['document', '드라이브 독스'], ['presentation', '드라이브 슬라이드'], ['presentation', '드라이브 ppt'], ['pdf', '드라이브 PDF'], ['folder', '드라이브 폴더']] as const) {
+    for (const [value, text] of [['spreadsheet', '드라이브 엑셀'], ['spreadsheet', 'drive sheet'], ['document', '드라이브 독스'], ['document', '구글 문서 최근 거'], ['document', 'google docs on drive'], ['presentation', '드라이브 슬라이드'], ['presentation', '드라이브 ppt'], ['pdf', '드라이브 PDF'], ['folder', '드라이브 폴더']] as const) {
       expect(kind(value, text), text).toMatchObject({ ok: true });
     }
+    // a plain 문서 is not a type; docker is not docs (word boundary); sheets/PDFs plural still ground
+    for (const text of ['기획 문서 찾아줘', '드라이브 최근 문서', 'docker 이미지 문서', 'drive docker files', 'documents on drive']) {
+      expect(kind('document', text), text).toMatchObject({ ok: false, reason: 'ungrounded' });
+    }
+    expect(kind('spreadsheet', 'recent sheets on drive')).toMatchObject({ ok: true });
+    expect(kind('spreadsheet', 'drive datasheet')).toMatchObject({ ok: false });
     expect(kind('pdf', '그 중에 최근 거')).toMatchObject({ ok: false });
     expect(validateSelection({ entryId: 'drive.files', args: { kind: 'pdf' } }, ctx('그 중에 최근 거', { previousArgs: { kind: 'pdf' } }))).toMatchObject({ ok: true });
     expect(kind('executable', '드라이브 exe')).toMatchObject({ reason: 'invalid-arg', arg: 'kind' });

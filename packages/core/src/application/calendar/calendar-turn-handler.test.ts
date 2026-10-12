@@ -282,4 +282,15 @@ describe('CalendarTurnHandler.handleSelected — title keyword (ADR-0120 follow-
     const miss = await handler.handleSelected?.({ ...selected({ keyword: '면접' }), range: resolveNlRange('upcoming', NOW, SEOUL) }, ctx('다음 면접 언제야?'));
     expect((miss as { reply: { text: string } }).reply.text).toContain('"면접"');
   });
+
+  it('a keyword over a full page is partial: an empty result says it could not check everything, a hit is flagged too', async () => {
+    const page = (title: string): CalendarEvent[] => Array.from({ length: 50 }, (_, i) => ({ ...REVIEW, id: `p-${i}`, title: `${title} ${i}` }));
+    const miss = await createCalendarTurnHandler({ reader: fakeReader(async () => page('리뷰')).reader, timeZone: SEOUL }).handleSelected?.(selected({ keyword: '스크럼' }), ctx('오늘 스크럼 있어?'));
+    expect((miss as { reply: { text: string } }).reply.text).toContain('"스크럼" 포함 일정이 없어요 (전체를 확인하진 못했어요)');
+    const hit = await createCalendarTurnHandler({ reader: fakeReader(async () => [...page('리뷰'), SCRUM]).reader, timeZone: SEOUL }).handleSelected?.(selected({ keyword: 'scrum' }), ctx('오늘 scrum'));
+    expect((hit as { reply: { text: string } }).reply.text).toContain('전체를 확인하진 못했어요');
+    // a short page is complete: no partial note
+    const complete = await createCalendarTurnHandler({ reader: fakeReader(async () => [REVIEW]).reader, timeZone: SEOUL }).handleSelected?.(selected({ keyword: '스크럼' }), ctx('오늘 스크럼 있어?'));
+    expect((complete as { reply: { text: string } }).reply.text).not.toContain('전체를 확인하진');
+  });
 });

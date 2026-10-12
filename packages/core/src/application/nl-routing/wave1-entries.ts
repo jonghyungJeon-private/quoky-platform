@@ -207,7 +207,8 @@ const mailList: NlCatalogEntry = {
 /** Words that show the owner named a Drive file type: a `kind` value counts only when one is in the owner's own text. */
 export const DRIVE_KIND_WORDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   spreadsheet: ['스프레드시트', '스프레드 시트', '시트', '엑셀', 'sheet', 'spreadsheet', 'excel'],
-  document: ['문서', '독스', 'doc', 'document'],
+  // A plain 문서/document is not a type (it also names uploaded Word/HWP/PDF files): only the Google Docs wording counts.
+  document: ['구글 문서', '구글문서', '독스', 'google doc', 'google docs', 'docs'],
   presentation: ['슬라이드', '프레젠테이션', '피티', 'ppt', 'slide', 'presentation'],
   pdf: ['pdf'],
   folder: ['폴더', 'folder'],
@@ -233,7 +234,7 @@ const driveFiles: NlCatalogEntry = {
   },
   args: [
     { name: 'name', kind: 'keyword', description: 'A word of the file name the owner wants, copied verbatim (e.g. 기획서). Omit for recent files.' },
-    { name: 'kind', kind: 'enum', values: ['spreadsheet', 'document', 'presentation', 'pdf', 'folder'], valueGrounding: DRIVE_KIND_WORDS, description: 'Only when the owner names the file type: spreadsheet (스프레드시트/시트/엑셀), document (문서/독스), presentation (슬라이드/프레젠테이션/ppt), pdf, folder (폴더). Never guess it; the type word is not part of `name`.' },
+    { name: 'kind', kind: 'enum', values: ['spreadsheet', 'document', 'presentation', 'pdf', 'folder'], valueGrounding: DRIVE_KIND_WORDS, description: 'Only when the owner names the file type: spreadsheet (스프레드시트/시트/엑셀), document (only 구글 문서/독스/google docs; a plain 문서 is NOT a type), presentation (슬라이드/프레젠테이션/ppt), pdf, folder (폴더). Never guess it; the type word is not part of `name`.' },
     COUNT,
   ],
   usage: { ko: '"최근 드라이브 파일"', en: '"최근 드라이브 파일"' },

@@ -116,9 +116,9 @@ describe('JiraConnectorProvider', () => {
     await jira.query(personalWork('a"b', { role: 'reporter', status: 'in-progress' }));
     const jql = fake.calls.map((call) => new URL(call.url).searchParams.get('jql'));
     expect(jql).toEqual([
-      'assignee = "account-123" AND statusCategory = "In Progress" ORDER BY updated DESC',
-      '(assignee = "account-123" OR reporter = "account-123") AND statusCategory = "In Progress" AND updated >= "2026-10-05" AND updated < "2026-10-12" ORDER BY updated DESC',
-      'reporter = "a\\"b" AND statusCategory = "In Progress" ORDER BY updated DESC',
+      'assignee = "account-123" AND statusCategory = indeterminate ORDER BY updated DESC',
+      '(assignee = "account-123" OR reporter = "account-123") AND statusCategory = indeterminate AND updated >= "2026-10-05" AND updated < "2026-10-12" ORDER BY updated DESC',
+      'reporter = "a\\"b" AND statusCategory = indeterminate ORDER BY updated DESC',
     ]);
   });
 

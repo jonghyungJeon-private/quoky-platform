@@ -110,7 +110,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     if (typeof value !== 'string') continue;
     if (spec.kind === 'enum' && spec.valueGrounding?.[value] !== undefined) {
       const text = normalizeForMatch(ctx.groundingText);
-      const stated = (spec.valueGrounding[value] ?? []).some((word) => text.includes(normalizeForMatch(word)));
+      const stated = (spec.valueGrounding[value] ?? []).some((word) => groundingWordIn(text, normalizeForMatch(word)));
       if (!stated && ctx.previousArgs?.[spec.name] !== value) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
     }
     if (spec.kind === 'keyword') {
@@ -180,4 +180,14 @@ function checkArg(spec: NlArgSpec, value: NlArgValue): NlArgValue | undefined {
       return keyword;
     }
   }
+}
+
+/**
+ * A grounding word in normalized text. A word made of ASCII letters and digits only must start a word and may end it or
+ * take a plural `s` ("docs" is not in "docker", "sheet" is in "sheets"); a Korean word is a plain substring.
+ */
+function groundingWordIn(text: string, word: string): boolean {
+  if (!/^[a-z0-9][a-z0-9 -]*$/.test(word)) return text.includes(word);
+  const escaped = word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  return new RegExp(`(?<![a-z0-9])${escaped}s?(?![a-z0-9])`).test(text);
 }

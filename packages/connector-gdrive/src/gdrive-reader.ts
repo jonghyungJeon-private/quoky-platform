@@ -131,7 +131,7 @@ const GDRIVE_LISTING_MIME: Readonly<Record<DriveListingKind, string>> = Object.f
  */
 export function buildGDriveQuery(name?: string, kind?: DriveListingKind): string {
   // `kind` is a closed neutral value mapped to a fixed vendor type here; no owner text reaches the type clause.
-  const wanted = kind === undefined ? undefined : GDRIVE_LISTING_MIME[kind];
+  const wanted = kind === undefined || !Object.hasOwn(GDRIVE_LISTING_MIME, kind) ? undefined : GDRIVE_LISTING_MIME[kind];
   if (kind !== undefined && wanted === undefined) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'gdrive: unsupported file kind');
   const terms = ['trashed = false', wanted === undefined ? `mimeType != '${GOOGLE_FOLDER}'` : `mimeType = '${wanted}'`];
   if (name !== undefined) {

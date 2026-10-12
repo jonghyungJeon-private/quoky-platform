@@ -11,7 +11,7 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  */
 
 /** Bumped whenever the instruction text changes (the eval plan digest binds it). */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v15';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v16';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -113,7 +113,7 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   Jira status: in-progress ONLY when the owner says 진행/진행중/진행 중/in progress/working on ("진행중인 이슈"); never',
     '   guess it. Calendar keyword: a word of the event title the owner narrows to ("스크럼만", "스크럼 일정"); the period',
     '   words (오늘, 이번 주) and the generic words (일정, 회의, 미팅) are never the keyword.',
-    '   Drive kind: ONLY when the owner names the file type (스프레드시트/시트/엑셀, 문서/독스, 슬라이드/ppt, pdf, 폴더);',
+    '   Drive kind: ONLY when the owner names the file type (스프레드시트/시트/엑셀, 구글 문서/독스 only (plain 문서 is not a type), 슬라이드/ppt, pdf, 폴더);',
     '   the type word is then `kind`, not part of `name`. Do not use `keyword` on the calendar for "busy/free" questions.',
     '   A message that is only a source name ("지라", "메일", "일정", "드라이브") selects that source\'s default listing with',
     '   args {}; a bare "슬랙" or "컨플루언스" has no keyword, so answer NEEDS_CLARIFICATION with that entry.',
