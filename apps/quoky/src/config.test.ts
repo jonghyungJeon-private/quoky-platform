@@ -526,6 +526,25 @@ describe('loadConfig — Discord channel ids (ADR-0091)', () => {
   });
 });
 
+describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
+  it('defaults to off with the haiku selection model, and accepts exactly off, shadow or active', () => {
+    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku' });
+    expect(loadConfig(env({})).ai.intentSelectionModel).toBe('haiku');
+    for (const mode of ['off', 'shadow', 'active'] as const) {
+      expect(loadConfig(env({ QUOKY_NL_INTENT_MODE: mode })).nlSelection.mode).toBe(mode);
+    }
+    expect(loadConfig(env({ QUOKY_NL_INTENT_MODEL: 'claude-haiku-4-5' })).ai.intentSelectionModel).toBe('claude-haiku-4-5');
+  });
+
+  it.each(['', 'ON', 'Active', 'true', 'phase-c', ' active'])('rejects a non-exact mode %j without echoing it', (value) => {
+    expect(() => loadConfig(env({ QUOKY_NL_INTENT_MODE: value }))).toThrow(/^NL_INTENT_MODE_INVALID$/);
+  });
+
+  it.each(['', '--model', 'haiku model', 'x'.repeat(200)])('rejects a malformed selection model %j', (value) => {
+    expect(() => loadConfig(env({ QUOKY_NL_INTENT_MODEL: value }))).toThrow(/^NL_INTENT_MODEL_INVALID$/);
+  });
+});
+
 describe('loadConfig — Ollama registration flag (ADR-0092)', () => {
   it('defaults to enabled (opt-out) and accepts exact true/false', () => {
     expect(loadConfig(env({})).ai.ollamaEnabled).toBe(true);

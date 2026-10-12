@@ -12,6 +12,8 @@ import type { ProviderRoutingMode } from './provider-routing/provider-routing-ac
 import { ContinuationReceiverActivationError, ContinuationReceiverActivationErrorCode, parseContinuationReceiverMode } from './continuation/continuation-receiver-activation';
 import type { ContinuationReceiverMode } from './continuation/continuation-receiver-activation';
 import { parseReminderConfig, ReminderConfigErrorCode } from './reminders/reminder-config';
+import { NlSelectionConfigErrorCode, parseNlSelectionConfig } from './nl-selection/nl-selection-config';
+import type { NlSelectionConfig } from './nl-selection/nl-selection-config';
 import { MAX_GITHUB_REPOSITORIES, parseRepositoryEntry } from './repository-allowlist';
 import type { ReminderConfig } from './reminders/reminder-config';
 import { parseTelegramConfig, TelegramConfigErrorCode } from './telegram/telegram-config';
@@ -83,6 +85,8 @@ export interface QuokyConfig {
     openai?: OpenAiApiConfig;
     /** The Gemini API provider (ADR-0115 D3/D4/D6, PRV-2); see {@link parseGeminiConfig}. Same rules as `openai`. */
     gemini?: GeminiApiConfig;
+    /** ADR-0120 D2: the Claude CLI model of an `INTENT_SELECTION` call (`QUOKY_NL_INTENT_MODEL`); absent = the adapter default. */
+    intentSelectionModel?: string;
   };
   /**
    * Image understanding provider selection (ADR-0111 D4/D5 and its 2026-10-07 amendment A1/A2). Exactly one provider is
@@ -104,6 +108,11 @@ export interface QuokyConfig {
   work: { summaryEnabled: boolean };
   /** `QUOKY_REMINDERS_ENABLED`, `QUOKY_REMINDERS_CHANNEL_DELIVERY`, `QUOKY_TIMEZONE` (ADR-0101; reminders default on per ADR-0102 D9, channel delivery default off). */
   reminders: ReminderConfig;
+  /**
+   * ADR-0120 natural-language selection: `QUOKY_NL_INTENT_MODE` (`off` | `shadow` | `active`, default `off`) and
+   * `QUOKY_NL_INTENT_MODEL` (the Claude CLI selection model, default `haiku`). See `nl-selection/nl-selection-config.ts`.
+   */
+  nlSelection: NlSelectionConfig;
   /**
    * Opt-in local embedding recall (ADR-0098 D8). `model` is a bounded token and never a cloud-served model.
    * `timeoutMs` bounds one embedding call; `maxNewPerTurn` is fixed at 4.
@@ -292,6 +301,7 @@ export const QuokyConfigErrorCode = {
   MEMORY_ARCHIVE_DAYS_INVALID: 'MEMORY_ARCHIVE_DAYS_INVALID',
   ...ReminderConfigErrorCode,
   ...TelegramConfigErrorCode,
+  ...NlSelectionConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
   DISCORD_EXPECTED_BOT_ID_INVALID: 'DISCORD_EXPECTED_BOT_ID_INVALID',
   DISCORD_EXPECTED_BOT_ID_REQUIRED: 'DISCORD_EXPECTED_BOT_ID_REQUIRED',
@@ -554,6 +564,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const gemini = parseGeminiConfig(env, { chat: chat.provider === 'gemini', image: imageUnderstanding.provider === 'gemini' });
   // ADR-0114 D13: off unless QUOKY_TELEGRAM_ENABLED=true; every owner must map to a Discord owner (D3).
   const telegram = parseTelegramConfig(env, ownerIds);
+  const nlSelection = parseNlSelectionConfig(env);
 
   return {
     discord: {
@@ -581,6 +592,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       chat,
       ...(openai !== undefined ? { openai } : {}),
       ...(gemini !== undefined ? { gemini } : {}),
+      intentSelectionModel: nlSelection.model,
     },
     imageUnderstanding,
     imageUnderstandingOptions: parseImageUnderstandingOptions(env, claudeModel),
@@ -593,6 +605,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       ),
     },
     reminders,
+    nlSelection,
     embedding: {
       enabled: parseExactBoolean(env.QUOKY_EMBEDDING_ENABLED, false, QuokyConfigErrorCode.EMBEDDING_ENABLED_INVALID),
       model: parseEmbeddingModel(env.QUOKY_EMBEDDING_MODEL),

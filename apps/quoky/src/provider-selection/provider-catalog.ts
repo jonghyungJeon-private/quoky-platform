@@ -127,7 +127,11 @@ export class ProviderCatalog {
       ...(input.persistedChat ? { persistedChat: input.persistedChat } : {}),
     });
     this.factories = {
-      claudeVariant: (model) => new ClaudeCliProvider(ai.claudeBin, { model }),
+      claudeVariant: (model) =>
+        new ClaudeCliProvider(ai.claudeBin, {
+          model,
+          ...(ai.intentSelectionModel !== undefined ? { intentSelectionModel: ai.intentSelectionModel } : {}),
+        }),
       ollamaVariant: (model) => new OllamaCliProvider({ bin: ai.ollamaBin, model }),
       claudeVision: (model) => new ClaudeCliVisionProvider({ bin: ai.claudeBin, model }),
       codexVision: (model) =>

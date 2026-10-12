@@ -111,6 +111,9 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     'QUOKY_CONNECTOR_WRITE_SLACK_TOKEN must differ from QUOKY_SLACK_TOKEN: Slack writes use a separate bot token.',
   [QuokyConfigErrorCode.MEMORY_ARCHIVE_DAYS_INVALID]:
     'QUOKY_MEMORY_ARCHIVE_DAYS must be unset or a whole number of days from 0 to 365 (0 = forgotten memories are deleted at once, no archive).',
+  [QuokyConfigErrorCode.NL_INTENT_MODE_INVALID]: 'QUOKY_NL_INTENT_MODE must be unset, "off", "shadow", or "active".',
+  [QuokyConfigErrorCode.NL_INTENT_MODEL_INVALID]:
+    'QUOKY_NL_INTENT_MODEL must be unset or a Claude model alias or name such as "haiku".',
   [QuokyConfigErrorCode.REMINDERS_ENABLED_INVALID]: 'QUOKY_REMINDERS_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.REMINDERS_CHANNEL_DELIVERY_INVALID]:
     'QUOKY_REMINDERS_CHANNEL_DELIVERY must be unset, "true", or "false".',

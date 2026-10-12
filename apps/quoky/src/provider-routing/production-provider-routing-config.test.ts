@@ -299,7 +299,8 @@ describe('Stage 2B Slice 5B-1 production Provider routing configuration', () => 
     expect(appModule).toContain('const providerCatalog = new ProviderCatalog({');
     expect(appModule).toContain('useFactory: (): AiProvider[] => providerCatalog.providers');
     expect(appModule).toContain('new CapabilityRouter(manager, selection)');
-    expect(chatComposition).toContain('new ClaudeCliProvider(ai.claudeBin, { model: ai.claudeModel })');
+    // ADR-0120 D2: the same Claude provider also carries the configured selection model (adapter configuration).
+    expect(chatComposition).toContain('new ClaudeCliProvider(ai.claudeBin, {\n    model: ai.claudeModel,');
     expect(chatComposition).toContain('new OllamaCliProvider({ bin: ai.ollamaBin, model: ai.ollamaModel })');
     expect(chatComposition).toContain('new CodexCliProvider(ai.codexBin, ');
     expect(chatComposition).not.toMatch(/\.execute\s*\(/);

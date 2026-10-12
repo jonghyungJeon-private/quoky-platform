@@ -69,6 +69,7 @@ import type {
   ContinuationBindingRepository,
   ConversationTurnHandler,
   ConnectorWriteFlow,
+  NlSelectionService,
   AiProvider,
   CommandRunner,
   ConnectorProvider,
@@ -132,6 +133,7 @@ import { CONNECTOR_WRITE_FLOW, createConnectorWriteComposition } from './feature
 import { createDriveProviders } from './features/drive.providers';
 import { createMailProviders } from './features/mail.providers';
 import { createMemoryProviders } from './features/memory.providers';
+import { NL_SELECTION, createNlSelectionProviders } from './features/nl-selection.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { workChatProviders } from './features/work-chat.providers';
@@ -650,6 +652,7 @@ const application: Provider[] = [
       turnHandlers: readonly ConversationTurnHandler[],
       connectorWriteFlow: ConnectorWriteFlow | null,
       providerSelection: ProviderSelectionService,
+      nlSelection: NlSelectionService | undefined,
     ) => {
       // ADR-0032: production ApprovalFlow — stateless, derived from existing aggregates
       // (Session.activeTaskId → Task.planId → approvals.findByExecutionPlan → PENDING); anchors the
@@ -728,6 +731,8 @@ const application: Provider[] = [
         // ADR-0112 D5 (deps baseline 34 → 35): connector writes behind exact-payload one-time CRITICAL approvals;
         // `undefined` when no writer is built (every write request keeps its fixed "writes are off" reply).
         connectorWriteFlow: connectorWriteFlow ?? undefined,
+        // ADR-0120 D14 (deps baseline 35 → 36): natural-language selection; mode `off` (the default) runs nothing.
+        nlSelection,
         logger: coreLogger,
       }, {
         gitRemoteEnabled: config.git.remoteEnabled,
@@ -765,6 +770,7 @@ const application: Provider[] = [
       CONVERSATION_TURN_HANDLERS,
       CONNECTOR_WRITE_FLOW,
       ProviderSelectionService,
+      { token: NL_SELECTION, optional: true },
     ],
   },
   // Thin platform-entry facade (ADR-0032): delegates to ConversationRuntime, then delivers.
@@ -815,6 +821,8 @@ const features: Provider[] = [
   ...connectorWrites.providers,
   // ADR-0092 amendment (runtime switching): the effective selection service and the owner's model command (pre-classify 70).
   ...createProviderSelectionProviders({ config, catalog: providerCatalog, store: providerSelectionStore }),
+  // ADR-0120: natural-language capability selection over the turn handlers' catalog (QUOKY_NL_INTENT_MODE, default off).
+  ...createNlSelectionProviders(() => ({ nlSelection: config.nlSelection, timeZone: config.reminders.timeZone })),
   turnHandlersProvider,
 ];
 
