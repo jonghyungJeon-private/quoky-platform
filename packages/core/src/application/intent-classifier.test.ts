@@ -782,8 +782,9 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
   });
 
   // QA-V2-005 review round 1: the personal-data patterns must stay linear on long lists of time slots. A super-linear
-  // (backtracking) pattern is slow on every run; a loaded machine only slows some runs, so the bound is checked on the
-  // fastest of several runs (after a warm-up) instead of on a single wall-clock sample.
+  // (backtracking) pattern is slow on every run. The bound is measured in this process's CPU time (process.cpuUsage),
+  // not wall-clock time: a loaded machine preempts the process and inflates wall-clock samples (reproduced under
+  // CPU contention) but does not add CPU time. The fastest of several runs after a warm-up is still used.
   it.each([
     '월요일 오전 9시 화요일 오후 2시 수요일 오후 3시 목요일 오전 10시 금요일 오후 4시 일요일 오후 1시 중에 언제가 좋을까',
     '오후 3시 '.repeat(10) + 'ㅋ',
@@ -797,9 +798,10 @@ describe('IntentClassifier — policy-sensitive chat routing (ADR-0098 amendment
     expect(detectPolicySensitiveChat(text)).toBeUndefined(); // warm-up (and the functional assertion)
     let fastest = Number.POSITIVE_INFINITY;
     for (let run = 0; run < 5; run += 1) {
-      const started = performance.now();
+      const started = process.cpuUsage();
       detectPolicySensitiveChat(text);
-      fastest = Math.min(fastest, performance.now() - started);
+      const used = process.cpuUsage(started);
+      fastest = Math.min(fastest, (used.user + used.system) / 1000);
     }
     expect(fastest).toBeLessThan(250);
   });
