@@ -19390,8 +19390,8 @@ Independent Chief Architect review before GML-1 merges.
     (adapters do not import each other), mirroring `connector-gmail`.
   - Core touched outside `application/drive/`: the readout's source list, prompt header (`DRIVE DOCUMENT`) and history
     noun; the claim guard (document actions, a source-aware notice); one runtime line passing `readout.source` to that
-    notice; and one developer-rule sentence of the document-summary prompt (now also names the drive, sharing and
-    editing). Nothing else in the runtime changed.
+    notice; and one developer-rule sentence of the document-summary prompt (per source since the CA review: the drive wording names
+    the drive, sharing and editing; the mail wording is the pre-DRV-1 text). Nothing else in the runtime changed.
 - **Port (D2).** Exactly three methods, no write method:
   - `searchByName(name, limit ≤ 10)` and `recentFiles(limit ≤ 10)` return at most 10 `{ id, name, kind, modifiedAt }`,
     plus `matched` (counted up to 100) and `matchedIsLowerBound`;
@@ -19495,7 +19495,11 @@ Independent Chief Architect review before GML-1 merges.
   readout and the owner-text grammar (≤ 300 characters, bounded repetition only) are timed on hostile inputs (4 MiB of
   continuation bytes or NUL, 2 MB names of spaces, `<` or `a.`, 256 KiB of commas or domain-shaped labels).
 - **Unconfigured.** With `QUOKY_DRIVE_TOKEN_FILE` unset, `createDriveProviders` binds an empty list and no
-  `DRIVE_READER`. The routing corpus, the golden fixtures and every other test pass unchanged.
+  `DRIVE_READER`. The routing corpus, the golden fixtures and every other test pass unchanged. **What does change in a
+  Gmail-only setup (CA review P3-4):** the mail summary prompt is byte-identical to before DRV-1 (the developer rule is
+  source-dependent). The wider claim lexicon remains (the document-action patterns are not source-scoped), so a mail
+  summary that says it shared or edited a document, or updated or changed something, is withheld; that fails safe.
+  Nothing else differs: no Drive handler, no Drive help line, no token read.
 - **Pre-review fixes (independent code review, 2026-10-12), one commit each.**
   - **P2-1:** the shared config resolver took `QUOKY_GMAIL_TOKEN_FILE` as a default, so a Gmail-only setup read (and
     refused) the Gmail token file as Drive's. Each grant now resolves from its own variable only
@@ -19564,6 +19568,9 @@ Independent Chief Architect review before GML-1 merges.
     problem; `cannotDownloadFile`, `cannotExportFile`, `cannotDownloadAbusiveFile` and `fileNotDownloadable` are
     `UNSUPPORTED_QUERY` ("cannot be read as text"). `insufficientPermissions` and `ACCESS_TOKEN_SCOPE_INSUFFICIENT` stay
     `INSUFFICIENT_SCOPE`.
+  - **P3-4 (Gmail-only delta):** the "only read" developer rule of the summary prompt is now per source
+    (`DOCUMENT_ONLY_READ_RULE`); the mail wording is the pre-DRV-1 sentence, the drive wording names the drive and
+    sharing. Pinned by a prompt-composer test.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 

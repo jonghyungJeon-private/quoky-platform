@@ -22,6 +22,7 @@ import {
   buildExternalWorkReadout,
   renderExternalWorkReadoutForPrompt,
 } from './work-chat/external-work-readout';
+import { buildUntrustedDocumentReadout, type UntrustedDocumentSource } from './untrusted-document-readout';
 import { Capability, IntentType, RiskLevel, TaskStatus } from '../domain';
 import type { ContextBundle, CuratedExampleEntry, Task } from '../domain';
 
@@ -1817,5 +1818,23 @@ describe('PromptComposer — files attached to the current User message (ADR-011
   it('also reaches a non-chat capability served from the same bundle (e.g. SUMMARIZATION)', () => {
     const spec = new PromptComposer().compose(mkTask(Capability.SUMMARIZATION), withFiles([file('app-error.log', LOG)]));
     expect(spec.context).toContain('PaymentGatewayTimeout');
+  });
+});
+
+describe('PromptComposer — document summary "only read" rule is source-dependent (CA review P3-4)', () => {
+  const composer = new PromptComposer();
+  const developerFor = (source: UntrustedDocumentSource) => {
+    const built = buildUntrustedDocumentReadout({ source, title: 'T', author: 'A', date: '2026-10-08T00:12:00.000Z', body: 'hello' });
+    if (!built.ok) throw new Error('expected a readout');
+    return composer.compose(mkTask(Capability.SUMMARIZATION, { requestText: '요약해줘' }), emptyBundle(), built.readout).developer;
+  };
+
+  it('a mail prompt keeps the pre-DRV-1 wording (no drive, no sharing); a drive prompt names the drive and sharing', () => {
+    expect(developerFor('mail')).toContain(
+      'The item was only read: never say that anything was sent, replied to, forwarded, deleted, archived, labelled, ' +
+        'moved, created, scheduled or changed, in the mailbox or anywhere else.',
+    );
+    expect(developerFor('mail')).not.toMatch(/\bdrive\b|shared|edited/);
+    expect(developerFor('drive')).toContain('scheduled, shared, edited or changed, in the mailbox, the drive or anywhere else.');
   });
 });
