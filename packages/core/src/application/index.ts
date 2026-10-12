@@ -2,6 +2,7 @@ export * from './risk-policy';
 export * from './ai-failure';
 export * from './actor-manager';
 export * from './session-manager';
+export * from './last-listing';
 export * from './project-manager';
 export * from './project-analyzer';
 export * from './ai-provider-manager';

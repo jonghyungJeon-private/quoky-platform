@@ -17,6 +17,8 @@ import {
 import type { Id, IsoTimestamp, MessageBody } from '../../domain';
 import { isDirectConversation, outboundMessage } from '../message-rendering';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
+import { persistListing, readPersistedListing } from '../last-listing';
+import type { SessionManager } from '../session-manager';
 import { buildUntrustedDocumentReadout } from '../untrusted-document-readout';
 import { parseDriveQuestion, type DriveLanguage, type DriveQuestion, type DriveSummaryTarget } from './drive-question';
 import {
@@ -69,6 +71,8 @@ export interface DriveTurnHandlerDeps {
   readonly timeoutMs?: number;
   /** The source label and reconnect step the composition root supplies; neutral copy when absent. */
   readonly copy?: DriveSourceCopy;
+  /** Persists the last listing's displayed ids in `Session.metadata` (see the mail handler); absent = in-memory only. */
+  readonly sessions?: Pick<SessionManager, 'updateMetadataEntry'>;
 }
 
 class DriveReadTimeout extends Error {
@@ -82,8 +86,11 @@ interface RecentListing {
   readonly at: IsoTimestamp;
   readonly sessionId: Id;
   readonly actorId: Id;
-  /** The ids and kinds of the entries shown, in list order (never their names). */
-  readonly files: ReadonlyArray<{ readonly id: string; readonly kind: DriveFileKind }>;
+  /**
+   * The ids (and, in memory only, the kinds) of the entries shown, in list order (never their names). A record restored
+   * after a restart has ids only: the adapter re-checks the kind at export time.
+   */
+  readonly files: ReadonlyArray<{ readonly id: string; readonly kind?: DriveFileKind }>;
 }
 
 /**
@@ -161,6 +168,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
     const files = result.files.slice(0, DRIVE_LISTING_MAX_ENTRIES);
     this.log('info', 'drive.turn_handler.listed', { kind: filter.kind, shown: files.length, matched: result.matched });
     this.rememberListing(ctx, files.map((file) => ({ id: file.id, kind: file.kind })));
+    await this.persistShown(ctx, files.map((file) => file.id));
     const body = renderDriveListing(filter, { ...result, files }, {
       timeZone: this.deps.timeZone,
       now: ctx.now,
@@ -188,7 +196,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
     if (file === undefined) {
       return this.reply(ctx, renderDriveSummaryOutOfRange(index, files.length, language), 'RESPONDED', language, 'not-read');
     }
-    if (!isDriveTextExportable(file.kind)) {
+    if (file.kind !== undefined && !isDriveTextExportable(file.kind)) {
       this.log('info', 'drive.turn_handler.not_text', { kind: file.kind });
       return this.reply(ctx, renderDriveSummaryNotText(file.kind, language), 'RESPONDED', language, 'not-read');
     }
@@ -237,8 +245,27 @@ export class DriveTurnHandler implements ConversationTurnHandler {
     }
   }
 
-  /** This (session, actor)'s last Drive list within the TTL, or `undefined`. */
+  /** Best-effort: a failed write leaves the in-memory cache as the only copy (never fails the turn). */
+  private async persistShown(ctx: TurnHandlerContext, fileIds: readonly string[]): Promise<void> {
+    if (this.deps.sessions === undefined) return;
+    try {
+      await persistListing(this.deps.sessions, ctx.session.id, ctx.actor.id, 'drive', fileIds, ctx.now);
+    } catch {
+      this.log('warn', 'drive.turn_handler.listing_persist_failed', {});
+    }
+  }
+
+  /** This (session, actor)'s last Drive list within the TTL (the newer of the persisted record and the cache), or `undefined`. */
   private currentListing(ctx: TurnHandlerContext): RecentListing | undefined {
+    const cached = this.cachedListing(ctx);
+    const persisted = readPersistedListing(ctx.session, ctx.actor.id, 'drive', ctx.now);
+    if (persisted !== undefined && (cached === undefined || Date.parse(persisted.at) > Date.parse(cached.at))) {
+      return { at: persisted.at, sessionId: ctx.session.id, actorId: ctx.actor.id, files: persisted.ids.map((id) => ({ id })) };
+    }
+    return cached;
+  }
+
+  private cachedListing(ctx: TurnHandlerContext): RecentListing | undefined {
     const key = listingKey(ctx.session.id, ctx.actor.id);
     const listing = this.recentListings.get(key);
     if (!listing || listing.sessionId !== ctx.session.id || listing.actorId !== ctx.actor.id) return undefined;

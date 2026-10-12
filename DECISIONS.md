@@ -19471,6 +19471,14 @@ Independent Chief Architect review before GML-1 merges.
   - `이 메일` means "the single entry of the last list". Replying to a listed message, or using the platform's reply
     reference, is not supported.
   - The list ↔ id mapping lives in memory, so it is lost on restart and the owner lists again.
+  - **Resolved (v4 residual polish).** The last listing is now also persisted, with no migration, in
+    `Session.metadata['quoky.lastListing'].byActor[actorId].<mail|drive> = { source, ids, at }`, written field-scoped
+    through `SessionManager.updateMetadataEntry` (same mechanism as `quoky.providerSelection`). Only the displayed
+    opaque ids are stored, never a subject, sender, name or snippet. The 30-minute TTL is checked on read, mail and
+    Drive have separate slots, and a slot whose `source` differs is ignored, so `N번 메일` never resolves a Drive id.
+    The in-memory map stays as a cache; a persisted record wins only when strictly newer (after a restart the cache is
+    empty). A Drive list restored after a restart has ids only: the adapter re-checks the file kind at export time. A
+    failed write is logged and never fails the turn. No new DI token (the handlers take `SessionManager`).
   - Body text sent for a summary is an accepted egress (ADR-0118 Consequences). The owner chooses the chat tier.
   - `QUOKY_GMAIL_TOKEN_FILE` reuses the calendar's OAuth client variable names, as ADR-0118 D1 requires: one client.
   - A charset that Node's `TextDecoder` does not know falls back to UTF-8.
@@ -19639,6 +19647,8 @@ Independent Chief Architect review before GML-1 merges.
   - **Help-line bound.** With Gmail and Drive both on, two lines are contributed. The ADR-0096 D6 bound of 14 may then
     drop the last line when every other optional feature is on (the GML-1 residual; left to INT-3 and DOC-E).
   - The list ↔ id mapping is in memory and is lost on restart.
+  - **Resolved (v4 residual polish).** See the GML-1 note: the Drive list is persisted the same way, under the `drive` slot, with no migration, in
+    (ids only; kind re-checked by the adapter at export time).
   - The OAuth token response is read with `response.json()` (unbounded, pinned to the OAuth host), as in GML-1.
 - **Live QA (Strict, owner).** Enable the Google Drive API in `quoky-personal-510806`; run `calendar-auth --drive`; set
   `QUOKY_DRIVE_TOKEN_FILE`; one read probe (`최근 문서` in the DM). Then about 15 phrasings:
