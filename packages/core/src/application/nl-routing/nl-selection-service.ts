@@ -62,9 +62,24 @@ export interface NlSelectionTurn {
   /** The entries the registered handlers contribute this turn (configured sources only). */
   readonly entries: readonly NlCatalogEntry[];
   readonly route: NlSelectionRoute;
+  /**
+   * ADR-0120 D6/D8 (no new egress): the id of the provider the router resolves for this turn's chat capability and
+   * session — the provider the message would reach anyway. Selection runs only when the router resolves
+   * `INTENT_SELECTION` to that same provider id; otherwise (a local or another remote chat provider, or unknown) it is
+   * skipped with no call. Compared as opaque data, never as a name.
+   */
+  readonly chatProviderId?: string;
 }
 
-export type NlSelectionSkipReason = 'off' | 'shadow' | 'no-catalog' | 'too-long' | 'empty' | 'credential';
+export type NlSelectionSkipReason =
+  | 'off'
+  | 'shadow'
+  | 'no-catalog'
+  | 'too-long'
+  | 'empty'
+  | 'credential'
+  | 'chat-provider-differs'
+  | 'chat-provider-unknown';
 
 export type NlSelectionDecision =
   /** Continue the turn exactly as without selection. */
@@ -101,6 +116,8 @@ interface CacheEntry {
 
 type SelectOutcome =
   | { readonly kind: 'output'; readonly output: NlSelectionOutput; readonly latencyMs: number; readonly cached: boolean }
+  /** D6/D8: the selector is not the provider this turn's chat would reach; nothing was sent. */
+  | { readonly kind: 'egress-refused'; readonly reason: 'chat-provider-differs' | 'chat-provider-unknown' }
   | { readonly kind: 'unavailable'; readonly cause: 'no-provider' | 'timeout' | 'failed' | 'malformed'; readonly latencyMs: number };
 
 class SelectionTimeout extends Error {
@@ -157,6 +174,10 @@ export class NlSelectionService {
       return { kind: 'skip', reason: prepared.skip };
     }
     const selected = await this.select(turn, prepared, last);
+    if (selected.kind === 'egress-refused') {
+      this.log('info', 'nl_selection.skipped', { reason: selected.reason, route: turn.route });
+      return { kind: 'skip', reason: selected.reason };
+    }
     if (selected.kind === 'unavailable') {
       this.log('info', 'nl_selection.decided', { outcome: 'unavailable', cause: selected.cause, route: turn.route, latencyMs: selected.latencyMs });
       return { kind: 'unavailable' };
@@ -304,6 +325,10 @@ export class NlSelectionService {
       return;
     }
     const selected = await this.select(turn, prepared, last);
+    if (selected.kind === 'egress-refused') {
+      this.log('info', 'nl_selection.shadow', { outcome: 'skipped', reason: selected.reason, grammarId: turn.route });
+      return;
+    }
     if (selected.kind === 'unavailable') {
       this.log('info', 'nl_selection.shadow', { outcome: 'unavailable', cause: selected.cause, grammarId: turn.route, latencyMs: selected.latencyMs });
       return;
@@ -341,6 +366,16 @@ export class NlSelectionService {
     const clock = this.deps.elapsed ?? Date.now;
     const started = clock();
     const previous = last === undefined ? undefined : { entryId: last.entryId, args: last.args };
+    // D6/D8 first, before the cache: the request may only go where this turn's chat would have gone.
+    if (turn.chatProviderId === undefined) return { kind: 'egress-refused', reason: 'chat-provider-unknown' };
+    let provider: AiProvider;
+    try {
+      // No session context: the owner's chat-tier choice does not apply to this capability (D2).
+      provider = await this.deps.router.select(Capability.INTENT_SELECTION);
+    } catch {
+      return { kind: 'unavailable', cause: 'no-provider', latencyMs: Math.max(0, clock() - started) };
+    }
+    if (provider.id !== turn.chatProviderId) return { kind: 'egress-refused', reason: 'chat-provider-differs' };
     const cacheKey = JSON.stringify([
       turn.actor.id,
       normalizeForMatch(prepared.text),
@@ -352,13 +387,6 @@ export class NlSelectionService {
       return { kind: 'output', output: hit.output, latencyMs: Math.max(0, clock() - started), cached: true };
     }
     if (hit !== undefined) this.cache.delete(cacheKey);
-    let provider: AiProvider;
-    try {
-      // No session context: the owner's chat-tier choice does not apply to this capability (D2).
-      provider = await this.deps.router.select(Capability.INTENT_SELECTION);
-    } catch {
-      return { kind: 'unavailable', cause: 'no-provider', latencyMs: Math.max(0, clock() - started) };
-    }
     const timeoutMs = this.deps.timeoutMs ?? NL_SELECTION_TIMEOUT_MS;
     const prompt = buildSelectionPrompt({ entries: turn.entries, text: prepared.text, ...(previous !== undefined ? { previous } : {}) });
     let rawText: string;

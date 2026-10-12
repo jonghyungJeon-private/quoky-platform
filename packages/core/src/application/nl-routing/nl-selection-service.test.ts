@@ -30,7 +30,10 @@ interface Harness {
   logs: Array<{ level: string; event: string; fields?: LogFields }>;
   session: Session;
   actor: () => Actor;
-  decide(text: string, opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; attachments?: number }): Promise<NlSelectionDecision>;
+  decide(
+    text: string,
+    opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; attachments?: number; chatProviderId?: string | null },
+  ): Promise<NlSelectionDecision>;
   script: string[];
 }
 
@@ -119,6 +122,7 @@ function harness(options: {
         now: opts.now ?? T0,
         entries: opts.entries ?? ALL,
         route: 'chat',
+        ...(opts.chatProviderId === null ? {} : { chatProviderId: opts.chatProviderId ?? 'scripted-selector' }),
       }),
   } as Harness;
 }
@@ -161,8 +165,24 @@ describe('NlSelectionService — modes and the D3 call contract', () => {
       now: at(1000),
       entries: ALL,
       route: 'chat',
+      chatProviderId: 'scripted-selector',
     });
     expect(withPrevious.calls).toHaveLength(0);
+  });
+
+  it('D6/D8: no new egress — a chat turn served by another provider (local or remote) or an unknown one makes no call', async () => {
+    const h = harness({ script: [out('jira.issues'), out('jira.issues')] });
+    expect(await h.decide('내 지라 이슈', { chatProviderId: 'local-chat-model' })).toEqual({ kind: 'skip', reason: 'chat-provider-differs' });
+    expect(await h.decide('내 지라 이슈', { chatProviderId: 'other-remote-chat' })).toEqual({ kind: 'skip', reason: 'chat-provider-differs' });
+    expect(await h.decide('내 지라 이슈', { chatProviderId: null })).toEqual({ kind: 'skip', reason: 'chat-provider-unknown' });
+    expect(h.calls).toHaveLength(0);
+    expect(h.logs.filter((log) => log.event === 'nl_selection.skipped').map((log) => log.fields?.reason)).toEqual([
+      'chat-provider-differs',
+      'chat-provider-differs',
+      'chat-provider-unknown',
+    ]);
+    expect(await h.decide('내 지라 이슈', { chatProviderId: 'scripted-selector' })).toMatchObject({ kind: 'execute' });
+    expect(h.calls).toHaveLength(1);
   });
 
   it('skips text over 600 characters without a call', async () => {
@@ -330,6 +350,7 @@ describe('NlSelectionService — the interpretation preference (D7: ask once, 30
       now: T0,
       entries: ALL,
       route: 'chat',
+      chatProviderId: 'scripted-selector',
     }).then((decision) => expect(decision.kind).toBe('ask'));
   });
 
@@ -355,7 +376,7 @@ describe('NlSelectionService — the interpretation preference (D7: ask once, 30
   it('keeps other Actor metadata untouched when it writes the preference (re-read, one key replaced)', async () => {
     const h = harness({ script: [created] });
     const actor = h.actor();
-    await h.service.decide({ text: '오늘 등록된 지라 이슈', attachmentCount: 0, session: h.session, actor, now: T0, entries: ALL, route: 'chat' });
+    await h.service.decide({ text: '오늘 등록된 지라 이슈', attachmentCount: 0, session: h.session, actor, now: T0, entries: ALL, route: 'chat', chatProviderId: 'scripted-selector' });
     // Another writer added a key between the turn's snapshot and the answer.
     await (h.service as unknown as { deps: { actors: { save(a: Actor): Promise<Actor> } } }).deps.actors.save({ ...actor, metadata: { other: 1 } });
     await h.decide('1', { now: at(1000) });

@@ -3042,7 +3042,7 @@ export class ConversationRuntime {
       const route = ConversationRuntime.nlSelectionRoute(intent);
       if (route !== undefined) {
         try {
-          const selected = await this.handleNlSelection(message, session, actor, applyAnchor, userMemory.id, route);
+          const selected = await this.handleNlSelection(message, session, actor, applyAnchor, userMemory.id, route, intent);
           if (selected.kind === 'responded') return selected.result;
           nlFacts = selected.facts;
         } catch (err) {
@@ -3074,6 +3074,24 @@ export class ConversationRuntime {
     return undefined;
   }
 
+  /**
+   * ADR-0120 D6/D8: the id of the provider this chat turn would reach — the same resolution the chat path makes (the
+   * turn's capability with the session's selection context). `undefined` when it cannot be known (the routed Stage 2A
+   * seam decides GENERAL_CHAT itself, or nothing resolves); selection is then skipped. Read as opaque data.
+   */
+  private async nlChatProviderId(intent: Intent, session: Session, actor: Actor): Promise<string | undefined> {
+    if (intent.capability === Capability.GENERAL_CHAT && this.deps.runtimeProviderRouting) return undefined;
+    try {
+      const context = { sessionId: session.id, actorId: actor.id };
+      const provider = this.deps.router.resolve
+        ? (await this.deps.router.resolve(intent.capability, context)).provider
+        : await this.deps.router.select(intent.capability, context);
+      return provider.id;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The catalog entries the registered handlers contribute right now, each with its owning handler (first wins). */
   private nlCatalog(): Map<string, { readonly entry: NlCatalogEntry; readonly handler: ConversationTurnHandler }> {
     const owned = new Map<string, { readonly entry: NlCatalogEntry; readonly handler: ConversationTurnHandler }>();
@@ -3102,11 +3120,14 @@ export class ConversationRuntime {
     applyAnchor: ApplyPreviewAnchor | null,
     userMemoryId: Id,
     route: 'chat' | 'personal-data',
+    intent: Intent,
   ): Promise<{ readonly kind: 'responded'; readonly result: TurnResult } | { readonly kind: 'continue'; readonly facts?: NlChatFacts }> {
     const nl = this.deps.nlSelection as Pick<NlSelectionService, 'mode' | 'decide'>;
     const catalog = this.nlCatalog();
     const entries = [...catalog.values()].map((owned) => owned.entry);
+    const chatProviderId = await this.nlChatProviderId(intent, session, actor);
     const decision = await nl.decide({
+      ...(chatProviderId !== undefined ? { chatProviderId } : {}),
       text: message.text,
       attachmentCount: message.attachments?.length ?? 0,
       session,

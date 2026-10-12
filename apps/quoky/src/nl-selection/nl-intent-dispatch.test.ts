@@ -453,6 +453,51 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(requests.slice(start.requests).filter((request) => request.capability !== SELECTION)).toHaveLength(0);
   });
 
+  it('D6/D8 no new egress: selection runs only when the chat turn resolves to the selector\'s own provider', async () => {
+    const deps = (runtime as unknown as { deps: { router: Record<string, unknown> } }).deps;
+    const original = deps.router;
+    const chatTurn = async (chatProviderId: string | null, text: string) => {
+      const otherChat = {
+        id: chatProviderId ?? 'none',
+        capabilities: [{ capability: 'GENERAL_CHAT', priority: 1 }],
+        isAvailable: async () => true,
+        execute: async (request: AiRequest) => {
+          requests.push(request);
+          order.push(`provider:${request.capability}`);
+          return { text: CHAT_REPLY, artifacts: [] };
+        },
+      } as unknown as AiProvider;
+      const real = original as unknown as { resolve(capability: string, context?: unknown): Promise<{ provider: AiProvider }> };
+      deps.router = {
+        ...original,
+        select: async (capability: string, context?: unknown) =>
+          chatProviderId !== null && capability === 'GENERAL_CHAT' ? otherChat : (await real.resolve(capability, context)).provider,
+        resolve: async (capability: string, context?: unknown) =>
+          chatProviderId !== null && capability === 'GENERAL_CHAT' ? { provider: otherChat, source: 'OWNER_SELECTED' } : real.resolve(capability, context),
+        isStillEligible: () => true,
+      };
+      try {
+        const start = marks();
+        await send(text);
+        return order.slice(start.order).filter((step) => step === 'select').length;
+      } finally {
+        deps.router = original;
+      }
+    };
+    selectorAnswer = answer('jira.issues');
+    // A local chat model (the owner switched with 모델 변경) or another remote provider: the text never goes to the selector.
+    expect(await chatTurn('ollama-local-chat', '지라 쪽 내 건들 좀 훑어볼래')).toBe(0);
+    expect(await chatTurn('other-remote-chat', '지라 쪽 내 건들 좀 훑어볼래 2')).toBe(0);
+    // The same provider (the default composition: chat and selection both resolve to the Claude CLI instance) calls once.
+    expect(await chatTurn(null, '지라 쪽 내 건들 좀 훑어볼래 3')).toBe(1);
+    // The personal-data route is pinned to the same provider by resolution, so it may select as well.
+    selectorAnswer = none;
+    const start = marks();
+    await send('내 통장 잔액 얼마야?');
+    expect(intents.at(-1)?.capability).toBe('POLICY_SENSITIVE_CHAT');
+    expect(order.slice(start.order).filter((step) => step === 'select')).toHaveLength(1);
+  });
+
   it('Class A precedence: anchored commands and writes never reach the selector', async () => {
     selectorAnswer = answer('todo.list');
     for (const text of ['할 일 추가: 보고서 제출', '기억해: 나는 커피를 좋아해', '30분 뒤에 스트레칭 알려줘', '모델 변경: claude', '알림 목록']) {
@@ -572,7 +617,8 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
 
   function app(): { selector: AiProvider } {
     const selector = {
-      id: 'shadow-selector',
+      // The same id as the chat provider of this composition (D6/D8: the selector must be the chat turn's own provider).
+      id: 'claude-cli',
       capabilities: [{ capability: SELECTION, priority: 1 }],
       isAvailable: async () => true,
       execute: async (request: AiRequest) => {
