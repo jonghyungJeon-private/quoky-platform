@@ -88,6 +88,31 @@ describe('SqliteTaskRunRepository optional metadata compatibility', () => {
     await store.close();
   });
 
+  it('PRV-3: a visitor that throws releases the iterator, so the same connection still saves and reads', async () => {
+    const store = await freshStore();
+    const usage = { label: 'codex', reported: true, totalTokens: 5 };
+    for (const id of ['x1', 'x2', 'x3']) {
+      await store.taskRuns.save({ ...runOf(id), taskId: `task-${id}`, finishedAt: '2026-10-05T00:00:00.000Z', usage });
+    }
+    let visits = 0;
+    await expect(
+      store.taskRuns.forEachUsageFinishedBetween('2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', () => {
+        visits += 1;
+        throw new Error('visitor failed');
+      }),
+    ).rejects.toThrow('visitor failed');
+    expect(visits).toBe(1);
+    // An iterator left open would make this connection busy: the write and the read below would throw.
+    await store.taskRuns.save({ ...runOf('after'), taskId: 'task-after', finishedAt: '2026-10-06T00:00:00.000Z', usage });
+    expect((await store.taskRuns.get('after'))?.usage).toEqual(usage);
+    let count = 0;
+    await store.taskRuns.forEachUsageFinishedBetween('2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', () => {
+      count += 1;
+    });
+    expect(count).toBe(4);
+    await store.close();
+  });
+
   it('PRV-3: forEachUsageFinishedBetween streams many runs one at a time and the visitor sees each once', async () => {
     const store = await freshStore();
     const n = 2_000;
