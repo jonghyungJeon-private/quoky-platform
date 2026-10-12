@@ -274,9 +274,20 @@ export function stripMarkdownEmphasis(text: string): string {
   return text
     .split('\n')
     .map((raw) => {
-      let line = raw.replace(/^([ \t]*)#{1,6}[ \t]+/u, '$1');
-      line = line.replace(/^([ \t]*)[-*][ \t]+/u, '$1• ');
-      return stripPairedMarker(stripPairedMarker(line, '**'), '__');
+      // Codex delta P2: removing a paired marker can expose a new line prefix (`**#** Heading` → `# Heading`,
+      // `**-** Item` → `- Item`), which the `markup` guard leaves unescaped. So the prefix rules run again after the
+      // emphasis pass, until the line is stable (each round only shortens the line; bounded to 4 rounds).
+      let line = raw;
+      for (let round = 0; round < 4; round += 1) {
+        const next = stripPairedMarker(
+          stripPairedMarker(line.replace(/^([ \t]*)#{1,6}[ \t]+/u, '$1').replace(/^([ \t]*)[-*][ \t]+/u, '$1• '), '**'),
+          '__',
+        );
+        if (next === line) break;
+        line = next;
+      }
+      // A prefix still exposed after the last round (pathological nesting) is neutralized rather than rendered.
+      return line.replace(/^([ \t]*)#{1,6}[ \t]+/u, '$1').replace(/^([ \t]*)[-*][ \t]+/u, '$1• ');
     })
     .join('\n');
 }

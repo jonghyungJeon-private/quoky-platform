@@ -265,3 +265,23 @@ describe('DRV-1: the same readout for a Drive document (one shared path, no dupl
     expect(build(`배포 토큰: ${SECRET}`, { source: 'drive' })).toEqual({ ok: false, refusal: 'CREDENTIAL_SHAPED' });
   });
 });
+
+describe('Codex delta P2: a line prefix exposed by stripping is neutralized too', () => {
+  it.each([
+    ['**#** Heading', 'Heading'],
+    ['**-** Item', '• Item'],
+    ['**##** Deep', 'Deep'],
+    ['****#**** x', 'x'],
+    ['__-__ y', '• y'],
+  ])('%j → %j', (input, expected) => {
+    expect(stripMarkdownEmphasis(input)).toBe(expected);
+  });
+
+  it('no line of the result starts with a heading or list marker', () => {
+    for (const input of ['**#** a\n**-** b\n**#** **-** c', '**#**#** z']) {
+      for (const line of stripMarkdownEmphasis(input).split('\n')) {
+        expect(line).not.toMatch(/^[ \t]*(?:#{1,6}|[-*])[ \t]/u);
+      }
+    }
+  });
+});
