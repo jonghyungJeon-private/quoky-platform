@@ -255,6 +255,24 @@ export class ReminderConversationService {
     }
   }
 
+  /**
+   * The reminder list as a typed entry (ADR-0120: a `reminder.list` selection maps to the existing LIST, ADR-0101 D2
+   * amended narrowly). Same copy as "알림 목록"; the disabled copy while reminders are off. Never throws.
+   */
+  async listReply(input: Omit<ReminderTurnInput, 'text'>): Promise<OutboundMessage> {
+    const turn: ReminderTurnInput = { ...input, text: '' };
+    if (!this.deps.enabled) return this.reply(turn, this.deps.composer.disabled());
+    try {
+      return this.reply(turn, this.deps.composer.list(await this.deps.repository.listActiveByActor(input.actorId), input.now));
+    } catch (error) {
+      this.deps.logger.error('reminder.conversation.failed', {
+        operation: 'LIST',
+        errorName: error instanceof Error ? error.name : 'unknown',
+      });
+      return this.reply(turn, this.deps.composer.storageFailure());
+    }
+  }
+
   private reply(input: ReminderTurnInput, body: MessageBody): OutboundMessage {
     return outboundMessage(input.context, body, { replyToMessageId: input.messageId });
   }

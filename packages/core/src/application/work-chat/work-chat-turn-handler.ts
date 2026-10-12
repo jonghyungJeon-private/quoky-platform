@@ -7,7 +7,10 @@ import type {
 import type { MessageBody } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
 import { containsCredentialMaterial } from '../credential-guard';
-import { clipMessage, messageBody, outboundBody, outboundMessage, plainTextOf } from '../message-rendering';
+import { clipMessage, messageBody, outboundBody, outboundMessage, plainTextOf, withOutboundBody } from '../message-rendering';
+import type { NlCatalogEntry, NlSelectedCommand } from '../nl-routing/catalog';
+import { nlWave1Entry } from '../nl-routing/wave1-entries';
+import { WORK_CHAT_SOURCE_ENTRY, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
 import {
   EXTERNAL_WORK_EXCERPT_MAX_CHARS,
   EXTERNAL_WORK_FIELD_MAX_CHARS,
@@ -71,7 +74,7 @@ export const WORK_CHAT_LOOKUP_TURN_HELP_LINES: readonly string[] = Object.freeze
 export const WORK_SUMMARY_REPLY_MAX_CHARS = 1900;
 
 export interface WorkChatTurnHandlerDeps {
-  readonly desk: Pick<WorkDesk, 'handle'>;
+  readonly desk: Pick<WorkDesk, 'handle' | 'configuredSources'>;
   readonly mode: WorkChatMode;
   /**
    * `QUOKY_WORK_SUMMARY_ENABLED` (owner decision ADR-0100 #2). The desk already honours it; the handler re-checks it
@@ -95,14 +98,47 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     this.helpLines = mutation ? WORK_CHAT_TODO_TURN_HELP_LINES : WORK_CHAT_LOOKUP_TURN_HELP_LINES;
   }
 
+  /**
+   * ADR-0120 D1: the lookup handler offers the entries of the configured work sources plus `todo.list`; the mutation
+   * handler offers none (writes are never selected, D5). A getter, read on every selection turn.
+   */
+  get catalog(): readonly NlCatalogEntry[] {
+    if (this.deps.mode !== 'lookup') return [];
+    const configured = this.deps.desk.configuredSources?.() ?? [];
+    return [...configured.map((source) => nlWave1Entry(WORK_CHAT_SOURCE_ENTRY[source])), nlWave1Entry('todo.list')];
+  }
+
+  /**
+   * A validated selection mapped to the existing typed lookup or to-do list command (ADR-0120 interfaces), answered like
+   * `handle` answers it. A count question gets the deterministic list with a count line first (never a summary).
+   */
+  async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
+    if (this.deps.mode !== 'lookup') return null;
+    const command = workChatCommandForSelection(selected);
+    if (command === null) return null;
+    const { outcome, listed } = await this.run(command, ctx);
+    if (command.kind !== 'lookup' || command.listOnly !== true || listed === undefined || outcome === null) return outcome;
+    if (outcome.kind !== undefined && outcome.kind !== 'reply') return outcome;
+    const count = renderWorkChatCount(command.source, listed, selected.language);
+    return { ...outcome, reply: withOutboundBody(outcome.reply, messageBody(count, '\n', outboundBody(outcome.reply))) };
+  }
+
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
     const command = detectWorkChatCommand(ctx.message.text);
     if (!command || workChatCommandMode(command) !== this.deps.mode) return null;
+    return (await this.run(command, ctx)).outcome;
+  }
+
+  /** One command through the desk; `listed` is a deterministic lookup list's item count (for a count answer). */
+  private async run(
+    command: WorkChatCommand,
+    ctx: TurnHandlerContext,
+  ): Promise<{ readonly outcome: TurnHandlerOutcome | null; readonly listed?: { readonly count: number; readonly truncated: boolean } }> {
     // ADR-0112 D5 (CWR-2): an exact Jira comment / transition or Slack post request is handed to the runtime's
     // connector-write flow (this handler creates no approval and makes no write). `fallbackText` is the fixed refusal
     // the runtime replies with while writes are off.
     if (command.kind === 'connector-write') {
-      return { kind: 'write-draft', draft: command.draft, fallbackText: renderExternalWriteRefusal(command.source) };
+      return { outcome: { kind: 'write-draft', draft: command.draft, fallbackText: renderExternalWriteRefusal(command.source) } };
     }
     let outcome: WorkChatOutcome;
     try {
@@ -115,14 +151,17 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
         errorName: error instanceof Error ? error.name : 'unknown',
       });
       // A hint-only command is not a mutation request: on failure the turn simply falls through.
-      if (command.kind === 'todo.hint' || command.kind === 'todo.status') return null;
-      return { reply: { context: ctx.message.context, text: backstopText(command) }, status: 'FAILED' };
+      if (command.kind === 'todo.hint' || command.kind === 'todo.status') return { outcome: null };
+      return { outcome: { reply: { context: ctx.message.context, text: backstopText(command) }, status: 'FAILED' } };
     }
-    if (outcome.kind === 'none') return null;
-    if (outcome.kind === 'reply') return { reply: outboundMessage(ctx.message.context, outboundBody(outcome)) };
+    if (outcome.kind === 'none') return { outcome: null };
+    if (outcome.kind === 'reply') {
+      const reply = { reply: outboundMessage(ctx.message.context, outboundBody(outcome)) };
+      return outcome.listed === undefined ? { outcome: reply } : { outcome: reply, listed: outcome.listed };
+    }
     // Only lookups summarise, and only with summaries enabled; anything else gets the deterministic list.
     if (!this.deps.summaryEnabled || this.deps.mode !== 'lookup') {
-      return { reply: outboundMessage(ctx.message.context, outcome.fallbackText) };
+      return { outcome: { reply: outboundMessage(ctx.message.context, outcome.fallbackText) } };
     }
     const summarize: TurnHandlerSummarizeReply = {
       kind: 'summarize',
@@ -130,7 +169,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
       fallbackText: outcome.fallbackText,
       footer: outcome.footer,
     };
-    return summarize;
+    return { outcome: summarize };
   }
 }
 

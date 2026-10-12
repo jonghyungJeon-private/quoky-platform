@@ -20,3 +20,5 @@ export * from './daily-brief-sources';
 // BRF-2 (ADR-0117 D5/D6): event-relative (pre-meeting) reminders — the grammar and the calendar resolution / re-check.
 export * from './event-reminder-grammar';
 export * from './event-reminder-calendar';
+// ADR-0120: the on-demand `brief.today` over the same model-free brief composition.
+export * from './on-demand-brief';

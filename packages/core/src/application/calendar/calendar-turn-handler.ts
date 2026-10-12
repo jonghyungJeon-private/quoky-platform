@@ -12,7 +12,10 @@ import { outboundMessage } from '../message-rendering';
 import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
 import type { CalendarRecentListing, ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
-import { parseCalendarQuestion, placeCalendarSpan, type CalendarLanguage } from './calendar-question';
+import { parseCalendarQuestion, placeCalendarSpan, type CalendarLanguage, type CalendarWindow } from './calendar-question';
+import { nlFlagArg, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
+import type { NlResolvedRange } from '../nl-routing/symbolic-time';
+import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { parseCalendarWriteRequest } from './calendar-write-request';
 import {
   calendarListedEventIds,
@@ -127,10 +130,26 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
 
     const window = placeCalendarSpan(question.span, ctx.now, this.deps.timeZone);
     if (window === undefined) return this.reply(ctx, renderCalendarInvalidDate(language), 'RESPONDED', language);
+    return this.answer(ctx, window, question.remaining === true, language);
+  }
 
+  /** ADR-0120 D1: `calendar.events`, offered whenever this handler is registered (a reader is configured, D5). */
+  readonly catalog: readonly NlCatalogEntry[] = Object.freeze([nlWave1Entry('calendar.events')]);
+
+  /**
+   * A validated `calendar.events` selection (ADR-0120 interfaces): the Core-resolved range (at most 31 days, or the
+   * next-event lookahead) read and rendered exactly like a schedule question — no provider, history note only.
+   */
+  async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
+    if (selected.entryId !== 'calendar.events' || selected.range === undefined) return null;
+    return this.answer(ctx, calendarWindowOfRange(selected.range, ctx.now, this.deps.timeZone), nlFlagArg(selected.args, 'remaining'), selected.language);
+  }
+
+  /** Read `window` once and answer with the deterministic list (shared by the grammar and selection). */
+  private async answer(ctx: TurnHandlerContext, window: CalendarWindow, remainingOnly: boolean, language: CalendarLanguage): Promise<TurnHandlerReply> {
     // "남은 일정" (Codex P2 on 5594c16): read from now, and drop any timed event that already ended, in case a reader
     // returns the whole day anyway; a span that is already over reads nothing.
-    const remaining = question.remaining === true;
+    const remaining = remainingOnly;
     const nowMs = Date.parse(ctx.now);
     const from = remaining && nowMs > Date.parse(window.from) ? ctx.now : window.from;
     let events: readonly CalendarEvent[];
@@ -143,10 +162,10 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
     } catch (error) {
       const failure: CalendarReadFailure =
         error instanceof CalendarReadTimeout ? 'TIMEOUT' : isConnectorQueryError(error) ? error.reason : 'UNAVAILABLE';
-      this.log('warn', 'calendar.turn_handler.read_failed', { span: question.span.kind, reason: failure });
+      this.log('warn', 'calendar.turn_handler.read_failed', { span: window.span.kind, reason: failure });
       return this.reply(ctx, renderCalendarReadFailure(failure, language), 'FAILED', language);
     }
-    this.log('info', 'calendar.turn_handler.answered', { span: question.span.kind, events: events.length });
+    this.log('info', 'calendar.turn_handler.answered', { span: window.span.kind, events: events.length });
     const renderOptions = {
       timeZone: this.deps.timeZone,
       now: ctx.now,
@@ -243,4 +262,29 @@ function hasFinished(event: CalendarEvent, nowMs: number): boolean {
   if (event.allDay) return false;
   const endMs = Date.parse(event.end);
   return Number.isFinite(endMs) && endMs <= nowMs;
+}
+
+/**
+ * The calendar window of a Core-resolved selection range (ADR-0120 D4): the named spans keep their labels ("오늘",
+ * "이번 주", "다음 일정"); any other range is its own date span.
+ */
+export function calendarWindowOfRange(range: NlResolvedRange, now: string, timeZone: string): CalendarWindow {
+  const named =
+    range.upcoming === true
+      ? placeCalendarSpan({ kind: 'next' }, now, timeZone)
+      : range.dayOffset !== undefined
+        ? placeCalendarSpan({ kind: 'day', offset: range.dayOffset }, now, timeZone)
+        : range.symbol === 'this-week' || range.symbol === 'next-week'
+          ? placeCalendarSpan({ kind: 'week', which: range.symbol === 'next-week' ? 'next' : 'this' }, now, timeZone)
+          : range.symbol === 'this-weekend' || range.symbol === 'next-weekend'
+            ? placeCalendarSpan({ kind: 'weekend', which: range.symbol === 'next-weekend' ? 'next' : 'this' }, now, timeZone)
+            : undefined;
+  if (named !== undefined) return named;
+  return {
+    span: { kind: 'date', month: range.startDate.month, day: range.startDate.day },
+    from: range.from,
+    to: range.to,
+    startDate: range.startDate,
+    days: range.days,
+  };
 }

@@ -1,3 +1,5 @@
+import { nlStringArg, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import type {
   ConversationTurnHandler,
   TurnHandlerContext,
@@ -150,6 +152,24 @@ export class DriveTurnHandler implements ConversationTurnHandler {
     if (question.kind === 'recent') return this.list(ctx, { kind: 'recent' }, language);
     if (question.kind === 'search') return this.list(ctx, { kind: 'search', name: question.name }, language);
     return this.summarize(ctx, question.target, language);
+  }
+
+  /** ADR-0120 D1: `drive.files`, offered whenever this handler is registered (Drive is configured). */
+  readonly catalog: readonly NlCatalogEntry[] = Object.freeze([nlWave1Entry('drive.files')]);
+
+  /**
+   * A validated `drive.files` selection (ADR-0120 interfaces): the same bounded recent-files or name-search listing,
+   * DM-only like every Drive reply (ADR-0118 D5), no model.
+   */
+  async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
+    if (selected.entryId !== 'drive.files') return null;
+    const language: DriveLanguage = selected.language;
+    if (!isDirectConversation(ctx.message.context)) {
+      this.log('info', 'drive.turn_handler.dm_only', { kind: 'list' });
+      return this.reply(ctx, renderDriveDmOnly(language), 'RESPONDED', language, 'not-read');
+    }
+    const name = nlStringArg(selected.args, 'name');
+    return this.list(ctx, name === undefined ? { kind: 'recent' } : { kind: 'search', name }, language);
   }
 
   private async list(ctx: TurnHandlerContext, filter: DriveListingFilter, language: DriveLanguage): Promise<TurnHandlerReply> {
