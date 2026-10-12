@@ -316,7 +316,7 @@ assume section 7 is answered. A "no" drops the task without blocking the rest. M
 | 1 | PLT-1 | PLT | `core/application/response-composer.ts`, `core/application/message-rendering.ts`, `adapter-discord` golden fixture additions | sonnet (opus review) | polish PR merged |
 | 2 | BRF-3 | BRF | `core/application/reminders/daily-brief.ts`, `daily-brief-sources.ts` (+tests), `app/reminders/brief-sources.ts`, `reminder-config.ts`, `.env.example` | sonnet | ADR-0117 amendment |
 | 2 | STO-1 | STO | `storage-sqlite/src/migrations.ts`, `storage-sqlite/src/index.ts` (session and run queries), `core/ports/storage-provider.port.ts`, `core/application/session-manager.ts` (+tests) | opus | ADR-0119 |
-| 2 | GOV-7 | NL | `DECISIONS.md` (ADR-0120, Proposed; its ratification record once the owner answers), `ROADMAP.md`, this plan | opus | owner answers 20-23 |
+| 2 | GOV-7 | NL | `DECISIONS.md` (ADR-0120 and its ratification record, 2026-10-12), `ROADMAP.md`, this plan | opus | owner answers 20-23 |
 | 2 | NL-1 | NL | a new `core/application/nl-routing/*`, `core/ports/conversation-turn-handler.port.ts` (two optional members), `core/domain/enums.ts` (`INTENT_SELECTION`), `core/application/conversation-runtime.ts` (one dispatch point, one deps key), the catalog and `handleSelected` of `work-chat/*`, `calendar/*`, `mail/*`, `drive/*`, `help-intent/*` and `reminders/reminder-turn-handler.ts`, `core/ports/connector-query.ts` and `connector-jira` (D13), `intent-classifier.ts` and `chat-policy/*` and `prompt-composer.ts` (honest chat), `packages/ai-cli` (advertising the capability), `app/features/nl-intent.providers.ts` (new), `.env.example`, `golden/nl-intent.v1.json` (+tests) | opus (design, review), sonnet (handlers, tests) | ADR-0120 ratified; after BRF-3 (shared `reminders/*` and `.env.example`) |
 | 3 | GML-2 | CON | `core/application/mail/*`, `core/ports` mail port (additive), `core/domain/messaging.ts` (inbound reply field), `adapter-discord` and `adapter-telegram` inbound mapping, `connector-gmail/src/gmail-mail-reader.ts`, `app/features/mail.providers.ts`, golden corpora | opus | polish PR, ADR-0118 amendment, NL-1 merged (it owns `mail/*` in W2) |
 | 3 | DRV-2 + DRV-2b | CON | `core/application/drive/*`, `connector-gdrive/src/gdrive-reader.ts`, a new `connector-gdrive/src/sheets-reader.ts` (+ source scan), `app/features/drive.providers.ts` | opus (new host) | GML-2 merged first (same wave, sequential), polish PR, Sheets API enabled (Strict) |
@@ -366,7 +366,7 @@ is expected to add one; a task that needs one says so in its ADR first.
   target.
 - **ADR gate.** A track's first code merge waits for its ADR or amendment to be ratified. GOV-6 appended ADR-0119 and the
   ADR-0117/ADR-0118 amendments, Ratified on 2026-10-12 with the owner's answers. HARD-1, PLT-1 and the docs tasks need implementation notes
-  only. GOV-7 appended ADR-0120 as **Proposed**; NL-1's first code merge waits for the owner's ratification, and NL-2
+  only. GOV-7 appended ADR-0120, which the owner ratified on 2026-10-12 (ratification record in `DECISIONS.md`); NL-2 waits
   for its own gates (ADR-0120 D6, D10, D12). A stalled ADR stalls only its own track.
 - **Chief Architect review (independent, mandatory before merge):** STO-1 (a Core storage port and a migration), GML-2
   (a port widening and a larger injection surface), DRV-2 and DRV-2b (a corpus widening and a new pinned host), BRF-3 (hostile text in a scheduled DM),
@@ -415,8 +415,8 @@ is expected to add one; a task that needs one says so in its ADR first.
 The Product Owner answered in the orchestrator chat on 2026-10-12 ("응 확정할게 진행하자"). Every question takes its
 recommended default, except where the last column says otherwise. The answers are recorded in the v5 ratification
 record in `DECISIONS.md`. Decisions 20-23 were asked later the same day, after the natural-language routing audit, and
-answered in the orchestrator chat on 2026-10-12; they are the owner answers 1-4 quoted in ADR-0120 (Proposed), which
-records them until its own ratification record is appended.
+answered in the orchestrator chat on 2026-10-12; they are the owner answers 1-4 quoted in ADR-0120, ratified on
+2026-10-12 (its ratification record follows the ADR in `DECISIONS.md`).
 
 | # | Question | Recommended default | Reason | Owner answer (2026-10-12) |
 |---|---|---|---|---|
