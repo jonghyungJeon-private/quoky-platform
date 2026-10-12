@@ -18672,10 +18672,17 @@ the schema version stays 15, and no owner-side migration step is required.
   `NotificationSinkOutcome` (or `{status: 'NO_OWNER'}`). `SENT` and `UNCERTAIN` settle the month (an `UNCERTAIN` is
   never resent, so a Discord timeout no longer means a DM every hour). A non-retryable `NOT_SENT` (`TEXT_TOO_LONG`, …)
   settles it as given up. Only a retryable `NOT_SENT` and `NO_OWNER` are tried again, at the next hourly evaluation.
-  Each kind has at most 3 attempts per month, persisted as `monthlyAttempts` / `thresholdAttempts` (`{month, count}`)
-  and written **before** the send, so a crash mid-send still counts and the cap holds across restarts; if that record
-  cannot be written, nothing is sent (fail closed, as D7). A retryable outcome on the third attempt settles the month as
-  given up. `deliverOwnerText` refuses a text above `REMINDER_LIMITS.maxDeliveredTextChars` with
+  Each kind has at most 3 attempts per month, persisted as `monthlyAttempts` / `thresholdAttempts` and written
+  **before** the send; if that record cannot be written, nothing is sent (fail closed, as D7). A retryable outcome on
+  the third attempt settles the month as given up.
+- **In-flight rule (Codex delta P1; aligned with the ADR-0101 reminder rule).** The pre-send record is
+  `{month, count, inFlight: true}`; the outcome write replaces it with `{month, count, outcome, retryable?}` (`outcome`
+  is `SENT`, `UNCERTAIN`, `NOT_SENT` with the sink's `retryable` flag, or `NO_OWNER`) and, unless a retry is allowed,
+  settles the month in the same write. An attempt still `inFlight` on load (sent, maybe sent, or never handed over, with
+  no recorded outcome) is taken as `UNCERTAIN`: that kind is done for the month and never resent, as ADR-0101 treats a
+  reminder a restart finds mid-delivery. A retry follows only an explicitly recorded retryable `NOT_SENT` or
+  `NO_OWNER`; a record without such an outcome is never retried. The 3-attempt cap stays as the second bound. This
+  closes the case where a failed outcome write after `SENT` or `UNCERTAIN` led a restart to send the notice again. `deliverOwnerText` refuses a text above `REMINDER_LIMITS.maxDeliveredTextChars` with
   `NOT_SENT{TEXT_TOO_LONG, retryable: false}` before the sink.
 - **P2-a, state after a failed write.** Once this process has written the state, it reads its in-memory copy only; the
   file is read only before the first write. A stale file after a failed write (ENOSPC) can no longer cause a second
@@ -18698,13 +18705,15 @@ the schema version stays 15, and no owner-side migration step is required.
   label list and ever shorter lists of the top labels by total tokens with a closing `- 외 K개`; the last candidate (no
   label line) always fits.
 - **Residuals.**
-  - A crash after `SENT` and before the settling write leaves the attempt counted but the month unsettled, so the DM can
-    be sent again after the restart, at most up to the 3-attempt cap.
+  - At most once over at least once: a crash (or a failed outcome write) between the in-flight record and the outcome
+    write settles that kind for the month as `UNCERTAIN`, including when the crash came before the send, so that
+    month's DM may never be delivered. Accepted fail-closed behaviour, the same as the reminders (ADR-0101).
   - A run that fails after the provider call (a later guard, persistence or transition error) records no usage, so
     tokens the provider billed for it are not counted.
   - The query is still a full scan of `task_runs` (the JSON filter has no index): about 1 to 2 ms of CPU per 1,000 runs
     (measured locally: 20,000 runs in about 38 ms), on each hourly evaluation and each ops-UI page load. An index needs migration v16 and an amendment to D8 first.
-  - `NO_OWNER` uses an attempt like a retryable `NOT_SENT`; without an owner for three evaluations the month is given up.
+  - Owner decision, kept as is: `NO_OWNER` uses an attempt like a retryable `NOT_SENT`, so without an owner for three
+    evaluations (about three hours) that kind is given up for the month.
 
 ## ADR-0116 — Learning-example egress: curated examples may reach a cloud chat provider the owner explicitly selected, behind `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=false`, never when Claude is reached only as the fallback. Amends ADR-0107 D5/D6 and ARCHITECTURE.md §5.14.
 

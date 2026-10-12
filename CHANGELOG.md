@@ -25,8 +25,9 @@ additive: `AiExecutionResult.usage` (type only), `TaskRun.usage?` and the read-o
   `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD` (known total tokens per month; malformed = startup error
   `PROVIDER_USAGE_THRESHOLD_INVALID`), one DM when a month first reaches it. Owner DM only, totals only, always one
   delivered message (top labels, then "외 K개"). `SENT` and `UNCERTAIN` settle the month; only a retryable `NOT_SENT`
-  and `NO_OWNER` are retried, at most 3 attempts per kind per month, counted before each send in
-  `ops/provider-usage-notices.json`. Quoky never switches, disables or re-ranks a provider from usage.
+  and `NO_OWNER` are retried, at most 3 attempts per kind per month, each recorded in flight before the send in
+  `ops/provider-usage-notices.json`; an attempt a restart finds still in flight counts as `UNCERTAIN` and is never
+  resent (as ADR-0101 reminders). Quoky never switches, disables or re-ranks a provider from usage.
 
 ## Unreleased — DRV-1 Google Drive read connector (2026-10-12)
 

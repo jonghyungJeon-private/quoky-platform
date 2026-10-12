@@ -19,11 +19,12 @@ the run's JSON `data`** (schema stays v15; ARCHITECTURE.md §4 `Usage` is now `[
 - **Notices.** One owner DM per month with the previous month's totals, and one when the optional
   `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD` (known total tokens per calendar month) is first reached. `SENT` and
   `UNCERTAIN` settle the month; only a retryable `NOT_SENT` and `NO_OWNER` are retried, at most 3 attempts per kind per
-  month (`ops/provider-usage-notices.json`, recorded before each send). Each DM fits one delivered message. No provider
+  month (`ops/provider-usage-notices.json`, recorded in flight before each send; an attempt a restart finds in flight
+  is `UNCERTAIN` and never resent). Each DM fits one delivered message. No provider
   is ever switched, disabled or re-ranked.
 - **Unchanged.** `ConversationRuntimeDeps` stays 35; the Core change is optional type fields and one read query.
-- **Validation.** Offline only. The Chief Architect review returned CHANGES REQUIRED (one P1) and Codex found P2s; the
-  review fixes are on the branch and await re-review. Not run yet: a live check of one real DM.
+- **Validation.** Offline only. Chief Architect re-review: APPROVE WITH NITS (nits applied); the Codex delta P1
+  (resend after a failed outcome write) is fixed with the in-flight rule. Not run yet: a live check of one real DM.
 
 ### DRV-1 Google Drive read connector — implemented on branch, not merged (2026-10-12)
 
