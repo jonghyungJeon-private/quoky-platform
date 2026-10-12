@@ -99,4 +99,12 @@ describe('Drive listing on the real platform markups', () => {
     expect(listing.reply.text).toContain('링크');
     expect(listing.reply.text).toContain('(이름 숨김)');
   });
+
+  it('an owner-typed credential in the name query is not echoed (CA re-review)', async () => {
+    const secret = ['gh', 'p_', 'A'.repeat(36)].join('');
+    const handler = createDriveTurnHandler({ reader: reader([file(1)]), timeZone: 'Asia/Seoul' });
+    const listing = await handler.handle(ctx(`드라이브에서 ${secret} 찾아줘`));
+    if (listing === null || !('reply' in listing)) throw new Error('expected a reply');
+    expect(listing.reply.text).not.toContain('ghp_');
+  });
 });

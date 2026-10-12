@@ -1,8 +1,7 @@
 import type { IsoTimestamp, MessageBody } from '../../domain';
 import type { ConnectorQueryErrorReason } from '../../ports/connector-query';
 import type { MailMessageSummary, MailSearchResult } from '../../ports/mail-reader.port';
-import { containsCredentialMaterial } from '../credential-guard';
-import { neutralizeLinks } from '../link-neutralizer';
+import { clip, guardedClippedSpan } from '../guarded-clip';
 import { joinBody, messageBody, takeLines, untrustedText, type MessagePart } from '../message-rendering';
 import { addLocalDays, compareLocalDates, localDateOf, toZonedDateTime } from '../reminders/zoned-time';
 import type { UntrustedDocumentRefusal } from '../untrusted-document-readout';
@@ -79,37 +78,12 @@ function hintOf(copy: MailSourceCopy | undefined, language: MailLanguage): strin
 
 const MONTH_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
 
-function clip(text: string, maxChars: number): string {
-  const chars = Array.from(text.replace(/\s+/g, ' ').trim());
-  return chars.length <= maxChars ? chars.join('') : `${chars.slice(0, maxChars - 1).join('')}…`;
-}
-
-/** One guarded untrusted field: clipped, or the placeholder when credential-shaped (checked on the full value). */
 /**
- * One guarded untrusted field: the placeholder when credential-shaped (checked on the full value), else its links
- * replaced by the shared neutralizer (re-review item 2: a subject `https://evil.co/x 확인` or a snippet `www.evil.co`
- * would otherwise be clickable, embedded and crawled), then clipped.
+ * One guarded untrusted field (re-review item 2, final sign-off W-1, CA review P2-1): see `guardedClippedSpan` — the
+ * credential check on the full, normalized and clipped text, links replaced, then clipped.
  */
 function guardedField(value: string, maxChars: number, placeholder: string): MessagePart {
-  if (value.trim().length > 0 && containsCredentialMaterial(value)) return placeholder;
-  const shown = neutralizeLinks(value, 'display');
-  // Final sign-off W-1: the credential check also runs on the normalized text that is actually shown.
-  if (shown.trim().length > 0 && containsCredentialMaterial(shown)) return placeholder;
-  return clippedGuard(shown, maxChars, placeholder);
-}
-
-/**
- * Clip, then guard the clipped text again (CA review P2-1): a cut can create a link (`evil.com1 x` -> `evil.com`) or a
- * credential shape (`AKIA...z` -> `AKIA...`) that neither whole-value check saw.
- */
-function clippedGuard(shown: string, maxChars: number, placeholder: string): MessagePart {
-  const cut = clip(shown, maxChars);
-  // `shown` is NFKC-normalized (no `…` in it), so a trailing `…` is the clip marker; it is kept out of the re-check
-  // because NFKC would turn it into `...`.
-  const marker = cut.endsWith('…') ? '…' : '';
-  const body = neutralizeLinks(marker === '' ? cut : cut.slice(0, -1), 'display');
-  if (body.trim().length > 0 && containsCredentialMaterial(body)) return placeholder;
-  return untrustedText(`${body}${marker}`);
+  return guardedClippedSpan(value, maxChars, placeholder);
 }
 
 function senderOf(message: MailMessageSummary, language: MailLanguage): MessagePart {
@@ -166,7 +140,7 @@ function entryLine(index: number, message: MailMessageSummary, filter: MailListi
 
 /** The quoted owner-typed sender of a `from` listing (still an untrusted span: it is echoed into chat). */
 function senderQuery(from: string): MessagePart {
-  return clippedGuard(neutralizeLinks(from, 'display'), MAIL_SENDER_QUERY_DISPLAY_MAX_CHARS, '(…)');
+  return guardedClippedSpan(from, MAIL_SENDER_QUERY_DISPLAY_MAX_CHARS, '(…)');
 }
 
 function countText(result: MailSearchResult, language: MailLanguage): string {

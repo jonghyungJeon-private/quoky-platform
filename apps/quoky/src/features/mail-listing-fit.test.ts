@@ -136,4 +136,18 @@ describe('mail listing links (re-review item 2)', () => {
     }
     expect(listing.reply.text).toContain('(제목 숨김)');
   });
+
+  it('an owner-typed credential in the sender query is not echoed (CA re-review)', async () => {
+    const secret = ['gh', 'p_', 'A'.repeat(36)].join('');
+    const reader: MailReader = {
+      source: 'mail',
+      readOnly: true,
+      search: async () => ({ messages: [], matched: 0, matchedIsLowerBound: false }),
+      getMessage: async () => {
+        throw new Error('not used');
+      },
+    };
+    const listing = await createMailTurnHandler({ reader, timeZone: 'Asia/Seoul' }).handle(ctx(`${secret}에게서 온 메일 찾아줘`));
+    if (listing !== null && 'reply' in listing) expect(listing.reply.text).not.toContain('ghp_');
+  });
 });

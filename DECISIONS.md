@@ -19587,6 +19587,10 @@ Independent Chief Architect review before GML-1 merges.
     (`먹을`, `읽을`, `찾을`), so `가을` and `노을` are names and the `마을` special case is gone; the one-syllable `ㄹ`
     nouns `일 글 설 말 물 술 별 달 길 불 칼 쌀` and `역할` are names; `-ㄹ만한` (`볼만한`, `갈만한`, `먹을만한`) is adnominal;
     `대체` and `대체재` join the product words. `역할 분담표`, `가을 운동회`, `설 연휴 계획`, `일 정리`, `글 모음` search.
+  - **CA re-review 3b (query echoes, shared helper):** `guardedClippedSpan` / `clip` live in one module
+    (`application/guarded-clip.ts`, next to the link neutralizer) and serve Drive names, mail fields and both query
+    echoes. The credential check runs on the full value first, so an owner-typed `ghp_…` in a name or sender query is
+    replaced by `(…)` (tests in the two listing-fit files).
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 

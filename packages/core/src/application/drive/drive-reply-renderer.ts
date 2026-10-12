@@ -1,8 +1,7 @@
 import type { IsoTimestamp, MessageBody } from '../../domain';
 import type { ConnectorQueryErrorReason } from '../../ports/connector-query';
 import type { DriveFileKind, DriveFileSummary, DriveListResult } from '../../ports/drive-reader.port';
-import { containsCredentialMaterial } from '../credential-guard';
-import { neutralizeLinks } from '../link-neutralizer';
+import { clip, guardedClippedSpan } from '../guarded-clip';
 import { mailDateLabel } from '../mail/mail-reply-renderer';
 import { joinBody, messageBody, takeLines, untrustedText, type MessagePart } from '../message-rendering';
 import type { UntrustedDocumentRefusal } from '../untrusted-document-readout';
@@ -60,11 +59,6 @@ export interface DriveRenderOptions {
   readonly copy?: DriveSourceCopy;
 }
 
-function clip(text: string, maxChars: number): string {
-  const chars = Array.from(text.replace(/\s+/g, ' ').trim());
-  return chars.length <= maxChars ? chars.join('') : `${chars.slice(0, maxChars - 1).join('')}…`;
-}
-
 function labelOf(copy: DriveSourceCopy | undefined, language: DriveLanguage): string {
   const label = (copy ?? DEFAULT_DRIVE_SOURCE_COPY).label[language].replace(/\s+/g, ' ').trim();
   return clip(label.length > 0 ? label : DEFAULT_DRIVE_SOURCE_COPY.label[language], 20);
@@ -96,24 +90,7 @@ export function driveKindLabel(kind: DriveFileKind, language: DriveLanguage): st
 function nameOf(file: DriveFileSummary, language: DriveLanguage): MessagePart {
   if (file.name.trim().length === 0) return language === 'en' ? '(untitled)' : '(이름 없음)';
   const placeholder = language === 'en' ? '(name hidden)' : '(이름 숨김)';
-  if (containsCredentialMaterial(file.name)) return placeholder;
-  const shown = neutralizeLinks(file.name, 'display');
-  if (shown.trim().length > 0 && containsCredentialMaterial(shown)) return placeholder;
-  return clippedGuard(shown, DRIVE_NAME_DISPLAY_MAX_CHARS, placeholder);
-}
-
-/**
- * Clip, then guard the clipped text again (CA review P2-1): a cut can create a link (`evil.com1 x` -> `evil.com`) or a
- * credential shape (`AKIA...z` -> `AKIA...`) that neither whole-value check saw.
- */
-function clippedGuard(shown: string, maxChars: number, placeholder: string): MessagePart {
-  const cut = clip(shown, maxChars);
-  // `shown` is NFKC-normalized (no `…` in it), so a trailing `…` is the clip marker; it is kept out of the re-check
-  // because NFKC would turn it into `...`.
-  const marker = cut.endsWith('…') ? '…' : '';
-  const body = neutralizeLinks(marker === '' ? cut : cut.slice(0, -1), 'display');
-  if (body.trim().length > 0 && containsCredentialMaterial(body)) return placeholder;
-  return untrustedText(`${body}${marker}`);
+  return guardedClippedSpan(file.name, DRIVE_NAME_DISPLAY_MAX_CHARS, placeholder);
 }
 
 function entryLine(index: number, file: DriveFileSummary, options: DriveRenderOptions): MessageBody {
@@ -126,7 +103,7 @@ function entryLine(index: number, file: DriveFileSummary, options: DriveRenderOp
 
 /** The quoted owner-typed name of a search (still an untrusted span: it is echoed into chat). */
 function nameQuery(name: string): MessagePart {
-  return clippedGuard(neutralizeLinks(name, 'display'), DRIVE_NAME_QUERY_DISPLAY_MAX_CHARS, '(…)');
+  return guardedClippedSpan(name, DRIVE_NAME_QUERY_DISPLAY_MAX_CHARS, '(…)');
 }
 
 function countText(result: DriveListResult, language: DriveLanguage): string {
