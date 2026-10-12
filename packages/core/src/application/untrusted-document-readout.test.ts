@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, IntentType, RiskLevel, TaskStatus, type Task } from '../domain';
 import { clipHeadAndTail } from './attachment-context';
+import { containsLink } from './link-neutralizer';
 import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
 import { PLAIN_TEXT_MARKUP, renderMessageContent } from './message-rendering';
 import { PromptComposer } from './prompt-composer';
@@ -12,6 +13,7 @@ import {
   isSummarizableDocumentReadout,
   renderUntrustedDocumentForPrompt,
   renderUntrustedDocumentHistoryNote,
+  stripMarkdownEmphasis,
   type UntrustedDocumentReadout,
 } from './untrusted-document-readout';
 
@@ -135,6 +137,48 @@ describe('untrusted document readout (ADR-0118 D7 under the ADR-0111 D3 rules)',
     const reply = documentSummaryReplyBody('[확인](https://evil.example/login) 하라는 메일이에요. https://evil.example', '(footer)');
     expect(renderMessageContent(reply, PLAIN_TEXT_MARKUP)).toBe('[확인]([링크]) 하라는 메일이에요. [링크]\n\n(footer)');
     expect(JSON.stringify(reply)).toContain('"kind":"untrusted","text":"[확인]([링크]) 하라는 메일이에요. [링크]","guard":"markup"');
+  });
+
+  describe('document summary: emphasis and heading markers are stripped (never creating a link)', () => {
+    const render = (text: string) => renderMessageContent(documentSummaryReplyBody(text, ''), PLAIN_TEXT_MARKUP).trimEnd();
+
+    it('paired ** and __ become plain text; headings and list markers are converted', () => {
+      expect(render('**요약:** 내용')).toBe('요약: 내용');
+      expect(render('__중요__ 항목')).toBe('중요 항목');
+      expect(render('## 제목\n### 소제목 둘')).toBe('제목\n소제목 둘');
+      expect(render('- 하나\n* 둘\n  - 셋')).toBe('• 하나\n• 둘\n  • 셋');
+      expect(render('# 제목\n- **굵게** 항목')).toBe('제목\n• 굵게 항목');
+    });
+
+    it('a lone * (2 * 3), snake__case__name and an unpaired ** are kept', () => {
+      expect(render('2 * 3 = 6')).toBe('2 * 3 = 6');
+      expect(render('snake__case__name')).toBe('snake__case__name');
+      expect(render('**짝 없음')).toBe('**짝 없음');
+      expect(render('a ** b ** c')).toBe('a ** b ** c');
+    });
+
+    it('a masked link stays neutralized, and stripping can never join a link', () => {
+      expect(render('[x](https://evil.example)')).toBe('[x]([링크])');
+      expect(containsLink(render('evil__.__com'), 'display')).toBe(false); // intra-word __ is not emphasis; kept, not a link
+      for (const text of ['evil**.**com', '[x]**(**https://evil.example)', 'ht**tps://**evil.example', 'www**.**evil**.**com']) {
+        const out = render(text);
+        expect(containsLink(out, 'display'), `${text} -> ${out}`).toBe(false);
+        expect(out).not.toMatch(/evil/);
+      }
+    });
+
+    it('the span stays untrusted with the markup guard, and the stripper never lengthens the text', () => {
+      expect(JSON.stringify(documentSummaryReplyBody('**a**', '(f)'))).toContain('"kind":"untrusted","text":"a","guard":"markup"');
+      for (const text of ['**a** __b__ # c', '# h\n- x\n* y', '******', '**', '__**x**__', '#### t', '-', '- ', '*\t', '* **a**']) {
+        expect(Array.from(stripMarkdownEmphasis(text)).length, text).toBeLessThanOrEqual(Array.from(text).length);
+      }
+    });
+
+    it('is linear on a pathological line', () => {
+      const started = Date.now();
+      stripMarkdownEmphasis('**a '.repeat(50_000));
+      expect(Date.now() - started).toBeLessThan(1_000);
+    });
   });
 
   it('re-review item 4: the reply budget is its own constant, equal to the work-summary bound, with no import of the work-chat handler', async () => {
