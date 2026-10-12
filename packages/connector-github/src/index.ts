@@ -96,7 +96,11 @@ export class GitHubConnectorProvider implements ConnectorProvider {
     if (input?.query !== ConnectorQueryName.PERSONAL_WORK) {
       throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'github connector: unsupported query');
     }
-    const { actorExternalId, filter, limit } = parsePersonalWorkParams(input.params, 'github connector');
+    const { actorExternalId, filter, limit, window, role, status } = parsePersonalWorkParams(input.params, 'github connector');
+    // ADR-0120 D13 adds window/role/status for Jira only; GitHub keeps its ADR-0100 queries and refuses the rest.
+    if (window !== undefined || role !== 'assignee' || status !== 'open') {
+      throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'github connector: unsupported personal-work option');
+    }
     const q = personalWorkSearch(githubQualifier(actorExternalId), filter);
     const token = await this.currentToken();
     const headers = {

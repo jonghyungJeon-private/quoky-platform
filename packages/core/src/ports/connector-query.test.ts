@@ -88,16 +88,52 @@ describe('limit and timeout resolution', () => {
 
 describe('parsePersonalWorkParams', () => {
   it('applies defaults and trims the identity', () => {
+    // ADR-0120 D13: role and status default to the ADR-0100 query (assignee, open); no window unless given.
     expect(parsePersonalWorkParams({ actorExternalId: ' octocat ' })).toEqual({
       actorExternalId: 'octocat',
       filter: 'all',
       limit: 20,
+      role: 'assignee',
+      status: 'open',
     });
     expect(parsePersonalWorkParams({ actorExternalId: 'a', filter: 'review-requested', limit: 3 })).toEqual({
       actorExternalId: 'a',
       filter: 'review-requested',
       limit: 3,
+      role: 'assignee',
+      status: 'open',
     });
+  });
+
+  it('accepts the ADR-0120 D13 window, role and status and rejects anything outside the closed sets', () => {
+    expect(
+      parsePersonalWorkParams({
+        actorExternalId: 'a',
+        window: { field: 'created', from: '2026-10-12', to: '2026-10-13' },
+        role: 'either',
+        status: 'all',
+      }),
+    ).toEqual({
+      actorExternalId: 'a',
+      filter: 'all',
+      limit: 20,
+      window: { field: 'created', from: '2026-10-12', to: '2026-10-13' },
+      role: 'either',
+      status: 'all',
+    });
+    for (const bad of [
+      { role: 'watcher' },
+      { status: 'closed' },
+      { window: { field: 'resolved', from: '2026-10-12', to: '2026-10-13' } },
+      { window: { field: 'created', from: '2026-10-13', to: '2026-10-12' } },
+      { window: { field: 'created', from: '2026-10-12', to: '2026-10-12' } },
+      { window: { field: 'created', from: '2026-02-30', to: '2026-03-02' } },
+      { window: { field: 'created', from: '2026-09-01', to: '2026-10-13' } },
+      { window: { field: 'created', from: '2026-10-12) OR project = X', to: '2026-10-13' } },
+      { window: 'today' },
+    ]) {
+      expect(() => parsePersonalWorkParams({ actorExternalId: 'a', ...bad })).toThrow(/personal-work/);
+    }
   });
 
   it.each([

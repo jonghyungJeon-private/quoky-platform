@@ -113,6 +113,21 @@ describe('GitHubConnectorProvider', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('ADR-0120 D13: refuses the Jira-only window, role and status options before any request', async () => {
+    const fetchImpl = vi.fn();
+    const provider = patProvider(fetchImpl);
+    for (const extra of [
+      { window: { field: 'created', from: '2026-10-12', to: '2026-10-13' } },
+      { role: 'reporter' },
+      { status: 'all' },
+    ]) {
+      await expect(provider.query({ query: 'personal-work', params: { actorExternalId: 'octocat', ...extra } })).rejects.toMatchObject({
+        reason: 'UNSUPPORTED_QUERY',
+      });
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('rejects unsupported names, filters and missing identity without network access', async () => {
     const fetchImpl = vi.fn();
     const provider = patProvider(fetchImpl);

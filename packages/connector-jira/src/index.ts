@@ -11,7 +11,8 @@ import {
   type ConnectorQuery,
   type ConnectorResult,
   type Metadata,
-  type PersonalWorkFilter,
+  type ParsedPersonalWorkParams,
+  type PersonalWorkWindowField,
 } from '@quoky/core';
 
 const DESCRIPTION_LIMIT = 500;
@@ -108,9 +109,10 @@ export class JiraConnectorProvider implements ConnectorProvider {
     if (input?.query !== ConnectorQueryName.PERSONAL_WORK) {
       throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported query');
     }
-    const { actorExternalId, filter, limit } = parsePersonalWorkParams(input.params, 'jira connector');
+    const parsed = parsePersonalWorkParams(input.params, 'jira connector');
+    const { limit } = parsed;
     const url = new URL('/rest/api/3/search/jql', this.baseUrl);
-    url.searchParams.set('jql', personalWorkJql(actorExternalId, filter));
+    url.searchParams.set('jql', personalWorkJql(parsed));
     url.searchParams.set('fields', SEARCH_FIELDS);
     url.searchParams.set('maxResults', String(limit));
 
@@ -199,11 +201,34 @@ export class JiraConnectorProvider implements ConnectorProvider {
  * `resolution = Unresolved AND statusCategory != Done`: some workflows move an issue to a done-category status
  * (e.g. "완료"/"취소") without setting a resolution, and those must not appear as open items (live QA, 50 of 193).
  */
-function personalWorkJql(identity: string, filter: PersonalWorkFilter): string {
-  const base = `assignee = "${identity.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" AND resolution = Unresolved AND statusCategory != Done`;
+function personalWorkJql(params: ParsedPersonalWorkParams): string {
+  const { actorExternalId: identity, filter, window, role, status } = params;
+  const literal = jqlString(identity);
+  // ADR-0120 D13: without window/role/status this is byte-identical to the ADR-0100 query.
+  const who = role === 'reporter' ? `reporter = ${literal}` : role === 'either' ? `(assignee = ${literal} OR reporter = ${literal})` : `assignee = ${literal}`;
+  const open = status === 'all' ? '' : ' AND resolution = Unresolved AND statusCategory != Done';
+  const base = `${who}${open}`;
+  if (window !== undefined) {
+    if (filter !== 'all') throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: a window needs the all filter');
+    const field = JQL_WINDOW_FIELD[window.field];
+    const order = window.field === 'due' ? 'duedate ASC' : `${field} DESC`;
+    return `${base} AND ${field} >= ${jqlString(window.from)} AND ${field} < ${jqlString(window.to)} ORDER BY ${order}`;
+  }
   if (filter === 'all') return `${base} ORDER BY updated DESC`;
   if (filter === 'due-this-week') return `${base} AND duedate <= endOfWeek() ORDER BY duedate ASC`;
   throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported personal-work filter');
+}
+
+/** The closed window fields as JQL field names (Core never sends JQL). */
+const JQL_WINDOW_FIELD: Readonly<Record<PersonalWorkWindowField, string>> = {
+  created: 'created',
+  updated: 'updated',
+  due: 'duedate',
+};
+
+/** A quoted, escaped JQL string literal. */
+function jqlString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 function projectKey(issueKey: string, project: unknown): string | undefined {

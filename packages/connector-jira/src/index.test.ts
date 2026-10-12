@@ -92,6 +92,39 @@ describe('JiraConnectorProvider', () => {
     expect(url.searchParams.get('maxResults')).toBe('5');
   });
 
+  it('ADR-0120 D13: renders the window, role and status as escaped JQL; defaults reproduce the ADR-0100 query', async () => {
+    const fake = fakeFetch(200, { issues: [] });
+    const jira = provider(fake.fetchImpl);
+    await jira.query(personalWork('account-123', { window: { field: 'created', from: '2026-10-12', to: '2026-10-13' }, role: 'either' }));
+    await jira.query(personalWork('account-123', { window: { field: 'due', from: '2026-10-12', to: '2026-10-19' }, role: 'reporter', status: 'all' }));
+    await jira.query(personalWork('account-123', { window: { field: 'updated', from: '2026-10-05', to: '2026-10-12' } }));
+    await jira.query(personalWork('account-123', { role: 'assignee', status: 'open' }));
+    const jql = fake.calls.map((call) => new URL(call.url).searchParams.get('jql'));
+    expect(jql).toEqual([
+      '(assignee = "account-123" OR reporter = "account-123") AND resolution = Unresolved AND statusCategory != Done AND created >= "2026-10-12" AND created < "2026-10-13" ORDER BY created DESC',
+      'reporter = "account-123" AND duedate >= "2026-10-12" AND duedate < "2026-10-19" ORDER BY duedate ASC',
+      'assignee = "account-123" AND resolution = Unresolved AND statusCategory != Done AND updated >= "2026-10-05" AND updated < "2026-10-12" ORDER BY updated DESC',
+      'assignee = "account-123" AND resolution = Unresolved AND statusCategory != Done ORDER BY updated DESC',
+    ]);
+  });
+
+  it('ADR-0120 D13: refuses a window outside the closed set, a reversed or over-31-day window, and a window with the due filter, before any request', async () => {
+    const fake = fakeFetch(200, { issues: [] });
+    const jira = provider(fake.fetchImpl);
+    for (const extra of [
+      { window: { field: 'resolved', from: '2026-10-12', to: '2026-10-13' } },
+      { window: { field: 'created', from: '2026-10-13', to: '2026-10-12' } },
+      { window: { field: 'created', from: '2026-08-01', to: '2026-10-13' } },
+      { window: { field: 'created', from: '2026-10-12" OR project = SECRET', to: '2026-10-13' } },
+      { window: { field: 'created', from: '2026-10-12', to: '2026-10-13' }, filter: 'due-this-week' },
+      { role: 'watcher' },
+      { status: 'done' },
+    ]) {
+      await expect(jira.query(personalWork('account-123', extra))).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+    }
+    expect(fake.calls).toHaveLength(0);
+  });
+
   it('clamps an oversized limit to 20 and rejects a non-positive limit before any request', async () => {
     const fake = fakeFetch(200, { issues: [] });
     await provider(fake.fetchImpl).query(personalWork('account-123', { limit: 500 }));

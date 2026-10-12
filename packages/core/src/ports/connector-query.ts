@@ -18,6 +18,28 @@ export type ConnectorQueryName = (typeof ConnectorQueryName)[keyof typeof Connec
 export const PERSONAL_WORK_FILTERS = ['all', 'due-this-week', 'review-requested'] as const;
 export type PersonalWorkFilter = (typeof PERSONAL_WORK_FILTERS)[number];
 
+/**
+ * ADR-0120 D13 (an additive ADR-0100 D7 amendment): the optional window, role and status of `personal-work`. Without
+ * them the query is exactly the ADR-0100 one (assignee, unresolved, not done). The window dates are local calendar
+ * dates Core resolved with its clock and `QUOKY_TIMEZONE`; the adapter renders and escapes the vendor query.
+ */
+export const PERSONAL_WORK_WINDOW_FIELDS = ['created', 'updated', 'due'] as const;
+export type PersonalWorkWindowField = (typeof PERSONAL_WORK_WINDOW_FIELDS)[number];
+export const PERSONAL_WORK_ROLES = ['assignee', 'reporter', 'either'] as const;
+export type PersonalWorkRole = (typeof PERSONAL_WORK_ROLES)[number];
+export const PERSONAL_WORK_STATUSES = ['open', 'all'] as const;
+export type PersonalWorkStatus = (typeof PERSONAL_WORK_STATUSES)[number];
+
+/** `field` between the local dates `from` (inclusive) and `to` (exclusive), both `YYYY-MM-DD`, at most 31 days. */
+export interface PersonalWorkWindow {
+  field: PersonalWorkWindowField;
+  from: string;
+  to: string;
+}
+
+/** The longest window a `personal-work` query accepts (ADR-0120 D4 step 3). */
+export const PERSONAL_WORK_WINDOW_MAX_DAYS = 31;
+
 /** `ConnectorQuery.params` for the `personal-work` named query. */
 export interface PersonalWorkQueryParams {
   actorExternalId: string;
@@ -25,6 +47,12 @@ export interface PersonalWorkQueryParams {
   filter?: PersonalWorkFilter;
   /** Defaults to CONNECTOR_QUERY_DEFAULT_LIMIT; values above CONNECTOR_QUERY_MAX_LIMIT are clamped. */
   limit?: number;
+  /** ADR-0120 D13. Absent: no date condition. */
+  window?: PersonalWorkWindow;
+  /** ADR-0120 D13. Defaults to `assignee`. */
+  role?: PersonalWorkRole;
+  /** ADR-0120 D13. Defaults to `open`. */
+  status?: PersonalWorkStatus;
 }
 
 /** `ConnectorQuery.params` for the `search` named query. */
@@ -109,6 +137,10 @@ export interface ParsedPersonalWorkParams {
   actorExternalId: string;
   filter: PersonalWorkFilter;
   limit: number;
+  /** Present only when the caller set it (ADR-0120 D13). */
+  window?: PersonalWorkWindow;
+  role: PersonalWorkRole;
+  status: PersonalWorkStatus;
 }
 
 /** Validates `personal-work` params. Failures are `ConnectorQueryError('UNSUPPORTED_QUERY')` with value-free messages. */
@@ -125,7 +157,53 @@ export function parsePersonalWorkParams(params: Metadata | undefined, source = '
   if (typeof filter !== 'string' || !(PERSONAL_WORK_FILTERS as readonly string[]).includes(filter)) {
     throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported personal-work filter`);
   }
-  return { actorExternalId, filter: filter as PersonalWorkFilter, limit: resolveConnectorQueryLimit(params?.limit, source) };
+  const role = params?.role ?? 'assignee';
+  if (typeof role !== 'string' || !(PERSONAL_WORK_ROLES as readonly string[]).includes(role)) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported personal-work role`);
+  }
+  const status = params?.status ?? 'open';
+  if (typeof status !== 'string' || !(PERSONAL_WORK_STATUSES as readonly string[]).includes(status)) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported personal-work status`);
+  }
+  const window = params?.window === undefined ? undefined : parsePersonalWorkWindow(params.window, source);
+  return {
+    actorExternalId,
+    filter: filter as PersonalWorkFilter,
+    limit: resolveConnectorQueryLimit(params?.limit, source),
+    ...(window !== undefined ? { window } : {}),
+    role: role as PersonalWorkRole,
+    status: status as PersonalWorkStatus,
+  };
+}
+
+const LOCAL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function localDateMs(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = LOCAL_DATE.exec(value);
+  if (!match) return undefined;
+  const ms = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  // Rejects dates that roll over ("2026-02-30").
+  return new Date(ms).toISOString().slice(0, 10) === value ? ms : undefined;
+}
+
+/** A closed field and two real local dates, `from < to`, at most 31 days apart. */
+function parsePersonalWorkWindow(value: unknown, source: string): PersonalWorkWindow {
+  const record = typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const field = record.field;
+  const from = localDateMs(record.from);
+  const to = localDateMs(record.to);
+  if (
+    typeof field !== 'string' ||
+    !(PERSONAL_WORK_WINDOW_FIELDS as readonly string[]).includes(field) ||
+    from === undefined ||
+    to === undefined ||
+    to <= from ||
+    to - from > PERSONAL_WORK_WINDOW_MAX_DAYS * 86_400_000
+  ) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported personal-work window`);
+  }
+  return { field: field as PersonalWorkWindowField, from: record.from as string, to: record.to as string };
 }
 
 export interface ParsedSearchParams {
