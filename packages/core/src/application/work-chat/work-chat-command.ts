@@ -83,7 +83,7 @@ export type WorkChatCommand =
       readonly kind: 'lookup';
       readonly source: WorkChatSource;
       readonly query: WorkChatLookupQuery;
-      /** Present only for `search`: 1..100 characters, whitespace collapsed. */
+      /** Present for `search`, and for a Jira `my-items` keyword filter: 1..100 characters, whitespace collapsed. */
       readonly text?: string;
     }
   | { readonly kind: 'external-write-unsupported'; readonly source: WorkChatSource }
@@ -420,24 +420,52 @@ function cleanSearchText(raw: string): string {
   return raw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().replace(QUOTE_EDGES, '').trim();
 }
 
-function searchCommand(sourceToken: string, rawText: string): WorkChatCommand | null {
+/** An issue key or a link: a single-issue request, never a keyword filter. */
+const ISSUE_KEY_OR_URL = /\b[A-Za-z][A-Za-z0-9_]{0,63}-[1-9]\d{0,8}\b|https?:\/\/\S+/i;
+/** A `<label>:` prefix, quoted text or several lines: pasted content, not a command. */
+const CONTENT_SHAPED = /[\r\n]|[:：`]/;
+/**
+ * Quote marks are allowed only as one short quoted keyword (`'위클리카'`, `“위클리카”`, `「위클리카」`): exactly one pair, at
+ * most 30 characters (code points) inside, no inner quote. Longer or repeated quoted text is pasted content.
+ */
+const QUOTE_CLASS = '"\'“”‘’「」『』';
+const ANY_QUOTE = new RegExp(`[${QUOTE_CLASS}]`, 'u');
+const ONE_SHORT_QUOTED = new RegExp(`^[^${QUOTE_CLASS}]*[${QUOTE_CLASS}][^${QUOTE_CLASS}]{1,30}[${QUOTE_CLASS}][^${QUOTE_CLASS}]*$`, 'u');
+function namesIssueOrIsContent(text: string): boolean {
+  if (ISSUE_KEY_OR_URL.test(text) || CONTENT_SHAPED.test(text)) return true;
+  return ANY_QUOTE.test(text) && !ONE_SHORT_QUOTED.test(text);
+}
+
+/** `위클리카 이슈` -> `위클리카`: the trailing item noun (and a `관련` before it) is not part of the keyword. */
+const TRAILING_ITEM_NOUN = /\s*(?:(?:관련(?:된|한)?|관한)\s*)?(?:이슈|티켓|\bissues?\b|\btickets?\b)(?:들)?\s*$/i;
+function stripItemNoun(text: string): string {
+  return text.replace(TRAILING_ITEM_NOUN, '').trim();
+}
+
+function searchCommand(sourceToken: string, rawText: string, whole: string): WorkChatCommand | null {
   const source = sourceOf(sourceToken);
   if (!source) return null;
   const text = cleanSearchText(rawText);
   if (text.length === 0) return { kind: 'usage', topic: 'search' };
   if (Array.from(text).length > WORK_CHAT_SEARCH_TEXT_MAX_LENGTH) return { kind: 'usage', topic: 'search-too-long' };
+  // Jira has no text search (named queries only): a keyword narrows the owner's own items instead. A message that
+  // names an issue key or link, or is labelled/quoted/multi-line content, keeps its old routing.
+  if (source === 'jira' && !namesIssueOrIsContent(whole)) {
+    const keyword = cleanSearchText(stripItemNoun(text));
+    return keyword ? { kind: 'lookup', source, query: 'my-items', text: keyword } : { kind: 'lookup', source, query: 'my-items' };
+  }
   return { kind: 'lookup', source, query: 'search', text };
 }
 
 function detectSearch(text: string): WorkChatCommand | null {
   const sourceFirst = unnegatedExec(text, SEARCH_KO_SOURCE_FIRST);
-  if (sourceFirst) return searchCommand(sourceFirst[1] as string, sourceFirst[2] as string);
+  if (sourceFirst) return searchCommand(sourceFirst[1] as string, sourceFirst[2] as string, text);
   const textFirst = unnegatedExec(text, SEARCH_KO_TEXT_FIRST);
-  if (textFirst) return searchCommand(textFirst[2] as string, textFirst[1] as string);
+  if (textFirst) return searchCommand(textFirst[2] as string, textFirst[1] as string, text);
   const enSourceFirst = unnegatedExec(text, SEARCH_EN_SOURCE_FIRST);
-  if (enSourceFirst) return searchCommand(enSourceFirst[1] as string, enSourceFirst[2] as string);
+  if (enSourceFirst) return searchCommand(enSourceFirst[1] as string, enSourceFirst[2] as string, text);
   const enTextFirst = unnegatedExec(text, SEARCH_EN_TEXT_FIRST);
-  if (enTextFirst) return searchCommand(enTextFirst[2] as string, enTextFirst[1] as string);
+  if (enTextFirst) return searchCommand(enTextFirst[2] as string, enTextFirst[1] as string, text);
   return null;
 }
 
@@ -583,8 +611,50 @@ function isNear(text: string, phrase: RegExp, verb: RegExp): boolean {
   );
 }
 
+// -- unqualified and keyword-scoped Jira listings --------------------------------------------------------------------
+
+/**
+ * In a personal assistant the owner's assigned items are the only Jira listing there is, so `jira 이슈 보여줘` needs no
+ * owner marker. Whole-message grammars only (a bare listing or a keyword before/after the Jira item noun), so a longer
+ * sentence that merely mentions Jira is never claimed; write requests are claimed earlier by `detectExternalWrite`.
+ */
+const JIRA_ITEMS_KO = '(?:jira|지라)\\s*(?:의|에서|에\\s*있는)?\\s*(?:이슈|티켓|작업|업무)(?:들|\\s*(?:목록|리스트))?';
+const JIRA_ITEMS_EN = '(?:jira\\s+(?:issues?|tickets?)(?:\\s+list)?)';
+const JIRA_LIST_TAIL_KO =
+  '(?:\\s*(?:을|를|좀))?(?:\\s*(?:보여\\s*(?:줘요?|줄래요?|주세요)|알려\\s*(?:줘요?|줄래요?|주세요)|보기|확인(?:\\s*해\\s*줘)?|조회(?:\\s*해\\s*줘)?|뭐야|뭐\\s*있어|있어)\\s*)?';
+const JIRA_LIST_KO = new RegExp(`^${JIRA_ITEMS_KO}${JIRA_LIST_TAIL_KO}${END}`, 'i');
+const JIRA_LIST_EN = new RegExp(
+  `^(?:please\\s+)?(?:(?:show|list|display|get)\\s+(?:me\\s+)?(?:all\\s+)?)?(?:the\\s+)?${JIRA_ITEMS_EN}${END}`,
+  'i',
+);
+const JIRA_KEYWORD_KO = new RegExp(
+  `^(.+?)\\s*(?:관련(?:된|한)?|관한|에\\s*대한)\\s*${JIRA_ITEMS_KO}${JIRA_LIST_TAIL_KO}${END}`,
+  'i',
+);
+/** A keyword that is only a follow-up particle or filler is not a keyword. */
+const EMPTY_KEYWORD = /^(?:내|나의|제|저의|그|이|저)$/;
+
+function detectJiraListing(text: string): WorkChatCommand | null {
+  if (namesIssueOrIsContent(text)) return null;
+  if (JIRA_LIST_KO.test(text) || JIRA_LIST_EN.test(text)) {
+    return { kind: 'lookup', source: 'jira', query: 'my-items' };
+  }
+  const keyword = JIRA_KEYWORD_KO.exec(text)?.[1];
+  if (keyword !== undefined) {
+    const cleaned = cleanSearchText(keyword);
+    if (cleaned.length === 0 || EMPTY_KEYWORD.test(cleaned)) return null;
+    if (Array.from(cleaned).length > WORK_CHAT_SEARCH_TEXT_MAX_LENGTH) return { kind: 'usage', topic: 'search-too-long' };
+    return { kind: 'lookup', source: 'jira', query: 'my-items', text: cleaned };
+  }
+  return null;
+}
+
 function detectLookup(text: string): WorkChatCommand | null {
   if (isDevOrExplainMessage(text)) return null;
+  if (!isNegatedMessage(text)) {
+    const jiraListing = detectJiraListing(text);
+    if (jiraListing) return jiraListing;
+  }
   const sources = detectSources(text);
   const hasRequestVerb = unnegatedMatch(text, [REQUEST_VERB]);
 

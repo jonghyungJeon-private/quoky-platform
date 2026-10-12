@@ -400,7 +400,9 @@ export class WorkChatService implements WorkDesk {
     if (!supported.includes(query)) return reply(renderLookupUnsupported(source, query, supported));
 
     let searchText: string | undefined;
-    if (query === 'search') {
+    // A keyword on `my-items` filters the owner's own items locally; it is validated like a search text.
+    const keywordFilter = query === 'my-items' && rawText !== undefined;
+    if (query === 'search' || keywordFilter) {
       // eslint-disable-next-line no-control-regex
       searchText = (rawText ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
       if (searchText.length === 0) return reply(renderWorkChatUsage('search'));
@@ -439,12 +441,20 @@ export class WorkChatService implements WorkDesk {
     }
     if (result === 'UNAVAILABLE') return reply(renderLookupFailure(source, 'UNAVAILABLE'));
 
-    const readout = buildExternalWorkReadout({
+    let items = Array.isArray(result.items) ? result.items : [];
+    const fetched = items.length;
+    if (keywordFilter) {
+      const needle = (searchText as string).toLowerCase();
+      items = items.filter((item) => `${item.title ?? ''}\n${item.summary ?? ''}`.toLowerCase().includes(needle));
+    }
+    const built = buildExternalWorkReadout({
       source,
       query,
       ...(searchText !== undefined ? { text: searchText } : {}),
-      items: Array.isArray(result.items) ? result.items : [],
+      items,
     });
+    // The connector returns a bounded page of the owner's items: when it was full, a filtered list may be incomplete.
+    const readout = keywordFilter && fetched >= CONNECTOR_QUERY_MAX_LIMIT ? { ...built, truncated: true } : built;
     const fallbackText = renderExternalWorkList(readout);
     if (this.summaryEnabled && readout.items.length > 0) {
       const summaryReadout = fitExternalWorkReadoutToPrompt(readout);

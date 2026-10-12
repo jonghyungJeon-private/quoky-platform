@@ -267,6 +267,13 @@ describe('PromptComposer (ADR-0063 precedence contract)', () => {
     expect(transcript).toContain('[Turn 1] Assistant:');
   });
 
+  it('tells GENERAL_CHAT that connector lookups go through commands, without claiming connection state', () => {
+    const spec = composer.compose(mkTask(Capability.GENERAL_CHAT), emptyBundle());
+    const text = JSON.stringify(spec);
+    expect(text).toContain('instead of claiming whether a connection exists');
+    expect(text).toContain('내 jira 이슈 보여줘');
+  });
+
   it('renders one Task-derived canonical facts body twice for GENERAL_CHAT', () => {
     const task = mkTask(Capability.GENERAL_CHAT, {
       platform: 'matrix',
@@ -902,7 +909,7 @@ describe('PromptComposer (ADR-0063 precedence contract)', () => {
     expect(authorityRules).toContain(
       'Current authoritative facts supplied by Core override contradictory or stale transcript for external current state.',
     );
-    expect(authorityRules.split('\n')).toHaveLength(15);
+    expect(authorityRules.split('\n')).toHaveLength(16);
     expect(authorityRules.split(CONVERSATION_CONTINUITY_AND_STATUS_RULE)).toHaveLength(2);
     expect(authorityRules).not.toMatch(/\b(?:Atlas|Scenario E)\b/i);
   });

@@ -399,6 +399,49 @@ describe('connector lookups', () => {
     expect(jira.availabilityChecks).toBe(1);
   });
 
+  it('filters the owner items by a Jira keyword locally and says so, with no extra connector query', async () => {
+    const jira = new FakeConnector('jira', {
+      items: [...jiraItems, { id: 'QAI-3844', title: '위클리카 정비 일정' }, { id: 'QAI-7', title: '기타', summary: '위클리카 메모' }],
+    });
+    const { say } = harness([jira]);
+    const outcome = await say('위클리카 관련 jira 이슈 보여줘');
+    expect(outcome.kind).toBe('summarize');
+    if (outcome.kind !== 'summarize') return;
+    expect(outcome.readout.request).toEqual({ source: 'jira', query: 'my-items', text: '위클리카' });
+    expect(outcome.readout.items.map((item) => item.ref)).toEqual(['jira:QAI-3844', 'jira:QAI-7']);
+    expect(plain(outcome.fallbackText)).toContain('Jira 내 항목 중 "위클리카" 포함');
+    expect(jira.queries).toEqual([
+      { query: 'personal-work', params: { actorExternalId: 'jira-owner', filter: 'all', limit: 20 } },
+    ]);
+  });
+
+  it('states an empty keyword result as a successful lookup over the owner items', async () => {
+    const jira = new FakeConnector('jira', { items: jiraItems });
+    const { say } = harness([jira]);
+    const outcome = await say('jira에서 위클리카 이슈 찾아줘');
+    expect(outcome.kind).toBe('reply');
+    if (outcome.kind !== 'reply') return;
+    expect(textOf(outcome)).toContain('내 항목 중 "위클리카" 포함 결과가 없어요');
+  });
+
+  it('discloses a partial check when a full page has no keyword match', async () => {
+    const full = Array.from({ length: 20 }, (_v, index) => ({ id: `PROJ-${index + 1}`, title: `항목 ${index + 1}` }));
+    const { say } = harness([new FakeConnector('jira', { items: full })]);
+    const outcome = await say('위클리카 관련 jira 이슈 보여줘');
+    expect(outcome.kind).toBe('reply');
+    expect(textOf(outcome)).toContain('내 항목 최근 20건 중 "위클리카" 포함 항목이 없어요 (전체를 확인하진 못했어요)');
+  });
+
+  it('routes the unqualified listing to the same my-items query as the owner form', async () => {
+    const jira = new FakeConnector('jira', { items: jiraItems });
+    const { say } = harness([jira]);
+    const outcome = await say('jira 이슈 보여줄래');
+    expect(outcome.kind).toBe('summarize');
+    expect(jira.queries).toEqual([
+      { query: 'personal-work', params: { actorExternalId: 'jira-owner', filter: 'all', limit: 20 } },
+    ]);
+  });
+
   it('maps each lookup kind to its named query', async () => {
     const jira = new FakeConnector('jira', { items: jiraItems });
     const github = new FakeConnector('github', { items: [{ id: 'o/r#1', title: 'PR' }] });
@@ -530,7 +573,6 @@ describe('connector lookups', () => {
     const jira = new FakeConnector('jira', { items: jiraItems });
     const slack = new FakeConnector('slack', { items: jiraItems });
     const { say } = harness([jira, slack]);
-    expect(textOf(await say('Jira에서 로그인 검색'))).toContain('"검색" 조회를 지원하지 않아요');
     const slackMine: WorkChatCommand = { kind: 'lookup', source: 'slack', query: 'my-items' };
     const { service } = harness([slack]);
     expect(textOf(await service.handle(slackMine, owner))).toContain('지원하지 않아요');

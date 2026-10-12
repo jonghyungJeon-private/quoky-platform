@@ -231,7 +231,8 @@ describe('connector lookups', () => {
     ['"배포 가이드"를 컨플루언스에서 검색해줘', { kind: 'lookup', source: 'confluence', query: 'search', text: '배포 가이드' }],
     ['search Slack for deploy window', { kind: 'lookup', source: 'slack', query: 'search', text: 'deploy window' }],
     ['find onboarding in Confluence', { kind: 'lookup', source: 'confluence', query: 'search', text: 'onboarding' }],
-    ['Jira에서 로그인 검색', { kind: 'lookup', source: 'jira', query: 'search', text: '로그인' }],
+    // Jira has no text search: a keyword narrows the owner's own items.
+    ['Jira에서 로그인 검색', { kind: 'lookup', source: 'jira', query: 'my-items', text: '로그인' }],
     ['Slack에서 검색해줘', { kind: 'usage', topic: 'search' }],
   ] satisfies Array<[string, WorkChatCommand]>)('%s', (text, expected) => {
     expect(detectWorkChatCommand(text)).toEqual(expected);
@@ -306,6 +307,91 @@ describe('connector lookups', () => {
     'add a test for the connector-github package',
   ])('leaves code and file work to the code path: %s', (text) => {
     expect(detectWorkChatCommand(text), text).toBeNull();
+  });
+});
+
+describe('unqualified and keyword-scoped Jira listings (live UAT)', () => {
+  const mine = { kind: 'lookup', source: 'jira', query: 'my-items' };
+
+  it.each([
+    'jira 이슈 보여줄래',
+    'jira 이슈 보여줘',
+    'Jira 이슈 보여줄래요?',
+    '지라 이슈 목록',
+    'jira 티켓 알려줘',
+    '지라 이슈들 보여주세요',
+    'jira issues',
+    'show jira issues',
+    'show my jira issues',
+    'list the Jira tickets',
+  ])('claims the bare listing as the owner items: %j', (text) => {
+    expect(detectWorkChatCommand(text)).toEqual(mine);
+  });
+
+  it.each([
+    ['위클리카 관련 jira 이슈 보여줘', '위클리카'],
+    ['위클리카 관련 지라 티켓 알려줘', '위클리카'],
+    ['jira에서 위클리카 이슈 찾아줘', '위클리카'],
+    ['지라에서 위클리카 관련 이슈 검색해줘', '위클리카'],
+    ['위클리카 이슈를 jira에서 찾아줘', '위클리카'],
+  ])('scopes a keyword to the owner items: %j', (text, keyword) => {
+    expect(detectWorkChatCommand(text)).toEqual({ ...mine, text: keyword });
+  });
+
+  it('answers a keyword that is too long with the usage hint, never a lookup', () => {
+    expect(detectWorkChatCommand(`${'가'.repeat(101)} 관련 jira 이슈 보여줘`)).toEqual({ kind: 'usage', topic: 'search-too-long' });
+  });
+
+  it.each([`'위클리카'`, '"위클리카"', '‘위클리카’', '“위클리카”', '「위클리카」', '『위클리카』'])(
+    'uses a short quoted keyword bare in both forms: %s',
+    (quoted) => {
+      const expected = { ...mine, text: '위클리카' };
+      expect(detectWorkChatCommand(`${quoted} 관련 jira 이슈 보여줘`)).toEqual(expected);
+      expect(detectWorkChatCommand(`jira에서 ${quoted} 이슈 찾아줘`)).toEqual(expected);
+    },
+  );
+
+  it('measures the quoted keyword in code points, not UTF-16 units', () => {
+    const emoji = '🚗'.repeat(16);
+    expect(detectWorkChatCommand(`'${emoji}' 관련 jira 이슈 보여줘`)).toEqual({ ...mine, text: emoji });
+    expect(detectWorkChatCommand(`'${'🚗'.repeat(31)}' 관련 jira 이슈 보여줘`)).toBeNull();
+  });
+
+  it('does not claim a long, repeated or labelled quoted passage', () => {
+    const long = `'${'가나다라 '.repeat(10).trim()}'`;
+    expect(detectWorkChatCommand(`${long} 관련 jira 이슈 보여줘`)).toBeNull();
+    expect(detectWorkChatCommand(`jira에서 ${long} 이슈 찾아줘`)).not.toEqual(expect.objectContaining({ query: 'my-items' }));
+    expect(detectWorkChatCommand(`'a' 'b' 관련 jira 이슈 보여줘`)).toBeNull();
+    expect(detectWorkChatCommand(`메모: '위클리카' 관련 jira 이슈 보여줘`)).toBeNull();
+  });
+
+  it('keeps a message that names an issue key or link out of the keyword filter', () => {
+    expect(detectWorkChatCommand('jira에서 PROJ-1 이슈 찾아줘')).toEqual({ kind: 'lookup', source: 'jira', query: 'search', text: 'PROJ-1 이슈' });
+    expect(detectWorkChatCommand('jira에서 https://acme.atlassian.net/browse/PROJ-1 이슈 찾아줘')).not.toEqual(
+      expect.objectContaining({ query: 'my-items' }),
+    );
+    expect(detectWorkChatCommand('PROJ-1 관련 jira 이슈 보여줘')).toBeNull();
+  });
+
+  it.each([
+    '회의 메모: 위클리카 관련 jira 이슈 보여줘',
+    '메모：jira 이슈 보여줘',
+    '"위클리카 관련 jira 이슈 보여줘"',
+    '위클리카 관련\njira 이슈 보여줘',
+    '회의 메모: jira에서 위클리카 이슈 찾아줘',
+  ])('does not claim labelled, quoted or multi-line content: %j', (text) => {
+    expect(detectWorkChatCommand(text)).not.toEqual(expect.objectContaining({ query: 'my-items' }));
+  });
+
+  it('keeps writes, single-issue lookups, other sources and pasted content out of the listing', () => {
+    expect(detectWorkChatCommand('jira 이슈 만들어줘')).toEqual({ kind: 'external-write-unsupported', source: 'jira' });
+    expect(detectWorkChatCommand('jira 이슈에 댓글 달아줘')).toEqual({ kind: 'external-write-unsupported', source: 'jira' });
+    expect(detectWorkChatCommand('jira 이슈 보여주지 마')).toBeNull();
+    expect(detectWorkChatCommand('GitHub 이슈 보여줘')).toBeNull();
+    expect(detectWorkChatCommand('PROJ-1 이슈 보여줘')).toBeNull();
+    expect(detectWorkChatCommand('https://acme.atlassian.net/browse/PROJ-1 이슈 보여줘')).toBeNull();
+    expect(detectWorkChatCommand('어제 회의에서 jira 이슈 보여줘 라는 얘기가 나왔는데 우리는 지라 이슈 정리를 먼저 하기로 했어')).toBeNull();
+    expect(detectWorkChatCommand(`${'회의 메모 '.repeat(60)}\njira 이슈 보여줘`)).toBeNull();
   });
 });
 

@@ -1,5 +1,6 @@
 import { WorkItemStatus } from '../../domain';
 import type { MessageBody, ResourceRef, UntrustedTextNode, WorkItem } from '../../domain';
+import { CONNECTOR_QUERY_MAX_LIMIT } from '../../ports';
 import type { ConnectorQueryErrorReason } from '../../ports';
 import { fitLines, joinMessage, messageBody, messageContent, messageLink, untrustedText } from '../message-rendering';
 import type { MessagePart } from '../message-rendering';
@@ -353,10 +354,20 @@ function dueText(dueDate: string): string {
 export function renderExternalWorkList(readout: ExternalWorkReadout): MessageBody {
   const { source, query, text } = readout.request;
   const label = sourceLabel(source);
-  const subject = query === 'search' && text ? messageContent(`${QUERY_LABEL[query]} "`, display(text, 60), '"') : QUERY_LABEL[query];
+  const subject =
+    query === 'search' && text
+      ? messageContent(`${QUERY_LABEL[query]} "`, display(text, 60), '"')
+      : query === 'my-items' && text
+        ? messageContent(`${QUERY_LABEL[query]} 중 "`, display(text, 60), '" 포함')
+        : QUERY_LABEL[query];
   const lines: Array<{ text: MessagePart; droppable?: boolean }> = [];
 
-  if (readout.items.length === 0) {
+  if (readout.items.length === 0 && readout.truncated && query === 'my-items' && text) {
+    // A filter over a full page that matched nothing: the owner may have more items than were checked.
+    lines.push({
+      text: messageContent(`${label} 내 항목 최근 ${CONNECTOR_QUERY_MAX_LIMIT}건 중 "`, display(text, 60), '" 포함 항목이 없어요 (전체를 확인하진 못했어요).'),
+    });
+  } else if (readout.items.length === 0) {
     lines.push({ text: messageContent(`${label} `, subject, ' 결과가 없어요.') });
   } else {
     lines.push({ text: messageContent(`**${label} `, subject, `** (${readout.items.length}건${readout.truncated ? ', 일부만 표시' : ''})`) });
