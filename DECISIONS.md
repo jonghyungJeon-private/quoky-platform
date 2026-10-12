@@ -19576,6 +19576,12 @@ Independent Chief Architect review before GML-1 merges.
     typecheck until it has its own notice.
   - **Test nits:** the 256 KiB cut test now uses a counting `ReadableStream` and asserts the remainder is cancelled
     unread; the Drive token-file test title says `drive.readonly`.
+  - **CA re-review 1 (claim guard per source):** `containsDocumentActionClaim(text, source)`. The P3-1 wordings
+    (`업데이트했`, `공유를 완료했`, `권한…드렸`, `내용…수정했`, `에게…공유했`, English `updated|changed|granted|gave|revised|fixed`,
+    `did update|change|grant|give`, `made … public`) apply to a Drive summary only, so mail summaries keep the pre-DRV-1
+    behaviour (`약관 업데이트를 했으니 확인하라는 메일이에요`, `Acme writes: "We changed our pricing."` are shown). The earlier DRV-1
+    document-action patterns stay shared (P3-6). The P3-2 `(?<!다)고` clause split also stays shared: it only lets
+    reported speech through for mail too, which is the documented intent.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 

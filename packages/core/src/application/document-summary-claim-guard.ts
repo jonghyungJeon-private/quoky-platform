@@ -53,7 +53,13 @@ const KO_CLAIMS: readonly RegExp[] = [
   /(?:문서|파일|시트|스프레드시트|폴더|드라이브|링크|권한|공유\s?설정)(?:을|를|은|는|도|들을)?\s*(?:\S+\s+){0,2}?(?:공유|편집|수정|삭제|이동|복사|업로드|변경|부여|휴지통으로\s?이동)\s?(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
   /(?:문서|파일|시트|스프레드시트|폴더)(?:을|를|은|는|도|들을)?\s*(?:모두\s*|다\s*|전부\s*)?(?:\S+\s+){0,2}?(?:지웠|옮겼|고쳤|바꿨|올렸)/u,
   /(?:이름|제목|권한)(?:을|를)?\s*(?:\S+\s+){0,2}?(?:바꿨|변경했|바꿔\s?드렸|변경해\s?드렸)/u,
-  // CA review P3-1: the update, the completed share, a permission given, the content edited, a share to people.
+];
+
+/**
+ * Drive-only Korean claims (CA re-review item 1): wordings that are ordinary in a mail about someone else's change
+ * (`약관 업데이트를 했으니 확인하라는 메일이에요`), so they apply to a Drive summary only.
+ */
+const KO_DRIVE_CLAIMS: readonly RegExp[] = [
   /업데이트(?:를)?\s*(?:했|해\s?드렸|해\s?두었)/u,
   /공유를\s*완료했/u,
   /권한(?:을|를)?\s*(?:\S+\s+){0,2}?(?:드렸|줬|주었)/u,
@@ -73,7 +79,13 @@ const EN_CLAIM = new RegExp(
     '(?:(?:have|has|had|just|already|also|now|then|successfully|went|go|gone|ahead|and|quickly|immediately|actually|' +
     'promptly|simply|kindly)\\s+){0,6}' +
     '(?:sent|forwarded|replied|responded|deleted|removed|archived|trashed|labell?ed|marked|moved|created|added|' +
-    'scheduled|set\\s+up|set|booked|drafted|shared|unshared|edited|modified|renamed|uploaded|copied|updated|changed|granted|gave|revised|fixed)\\b',
+    'scheduled|set\\s+up|set|booked|drafted|shared|unshared|edited|modified|renamed|uploaded|copied)\\b',
+  'i',
+);
+
+/** Drive-only English verbs (CA re-review item 1): `The sender says we updated our privacy policy` is a mail's own news. */
+const EN_DRIVE_CLAIM = new RegExp(
+  EN_CLAIM.source.replace('|copied)', '|copied|updated|changed|granted|gave|revised|fixed)'),
   'i',
 );
 
@@ -83,7 +95,10 @@ const EN_CLAIM = new RegExp(
  * every summary, which states that nothing was sent or changed, is the guarantee.
  */
 const EN_DID_CLAIM =
-  /\b(?:I|we|Quoky)\s+(?:[a-z]+\s+){0,3}?did\s+(?!not\b|n['’]t\b)(?:[a-z]+\s+){0,2}?(?:send|forward|reply|respond|delete|remove|archive|trash|label|mark|move|create|add|schedule|set\s+up|book|draft|share|unshare|edit|modify|rename|upload|copy|update|change|grant|give)\b/i;
+  /\b(?:I|we|Quoky)\s+(?:[a-z]+\s+){0,3}?did\s+(?!not\b|n['’]t\b)(?:[a-z]+\s+){0,2}?(?:send|forward|reply|respond|delete|remove|archive|trash|label|mark|move|create|add|schedule|set\s+up|book|draft|share|unshare|edit|modify|rename|upload|copy)\b/i;
+
+const EN_DID_DRIVE_CLAIM =
+  /\b(?:I|we|Quoky)\s+(?:[a-z]+\s+){0,3}?did\s+(?!not\b|n['’]t\b)(?:[a-z]+\s+){0,2}?(?:update|change|grant|give)\b/i;
 
 /** CA review P3-1: `I made the document public` (a visibility or access change). */
 const EN_MADE_CLAIM =
@@ -119,8 +134,8 @@ function exemptBySubject(clause: string, claimAt: number): boolean {
  */
 const KO_REPORTED = /^\S*?(?:다는|다고|단\s|대요|다며)/u;
 
-function koreanClaim(clause: string): boolean {
-  for (const pattern of KO_CLAIMS) {
+function koreanClaim(clause: string, source: UntrustedDocumentSource): boolean {
+  for (const pattern of source === 'drive' ? [...KO_CLAIMS, ...KO_DRIVE_CLAIMS] : KO_CLAIMS) {
     const match = pattern.exec(clause);
     if (match === null) continue;
     if (KO_REPORTED.test(clause.slice(match.index + match[0].length))) continue;
@@ -131,10 +146,12 @@ function koreanClaim(clause: string): boolean {
 }
 
 /** Whether a document-summary reply claims that Quoky performed a mail or Quoky-domain action. */
-export function containsDocumentActionClaim(text: string): boolean {
+export function containsDocumentActionClaim(text: string, source: UntrustedDocumentSource): boolean {
   if (typeof text !== 'string' || text.length === 0) return false;
-  if (EN_CLAIM.test(text) || EN_DID_CLAIM.test(text) || EN_MADE_CLAIM.test(text)) return true;
-  return clauses(text).some((clause) => koreanClaim(clause));
+  if (EN_CLAIM.test(text) || EN_DID_CLAIM.test(text)) return true;
+  // The Drive wordings are active for a Drive summary only: a mail's own news ("we changed our pricing") is not a claim.
+  if (source === 'drive' && (EN_DRIVE_CLAIM.test(text) || EN_DID_DRIVE_CLAIM.test(text) || EN_MADE_CLAIM.test(text))) return true;
+  return clauses(text).some((clause) => koreanClaim(clause, source));
 }
 
 /** The fixed notice per source (CA review P3-5): a new source fails typecheck until it has its own notice. */

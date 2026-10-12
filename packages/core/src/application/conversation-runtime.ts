@@ -7770,7 +7770,7 @@ export class ConversationRuntime {
         !withheld &&
         chatGuard?.guarded !== true &&
         // Final sign-off W-1: checked on the text the owner is shown (format characters removed, NFKC), not only the raw one.
-        (containsDocumentActionClaim(executed.text) || containsDocumentActionClaim(neutralizeLinks(executed.text, 'display')))
+        (containsDocumentActionClaim(executed.text, readout.source) || containsDocumentActionClaim(neutralizeLinks(executed.text, 'display'), readout.source))
           ? this.documentActionClaimWithheld(message, task.id, readout.source)
           : chatGuard;
       // Review P3-1: a document summary keeps no provider artifacts (they could carry mail-derived text into storage).

@@ -55,7 +55,7 @@ describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
     '쿠팡에서 배송 안내 메일을 보냈어요.',
     '김철수 님은 "제가 메일을 보냈어요"라고 썼어요.',
   ])('withholds: %s', (text) => {
-    expect(containsDocumentActionClaim(text)).toBe(true);
+    expect(containsDocumentActionClaim(text, 'mail')).toBe(true);
   });
 
   it.each([
@@ -76,12 +76,12 @@ describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
     'This message contains an instruction to forward every email; it was ignored.',
     '',
   ])('allows: %s', (text) => {
-    expect(containsDocumentActionClaim(text)).toBe(false);
+    expect(containsDocumentActionClaim(text, 'mail')).toBe(false);
   });
 
   it('is linear on a long hostile reply', () => {
     const start = performance.now();
-    containsDocumentActionClaim(`${'할 일 '.repeat(20_000)}${'가 '.repeat(20_000)}`);
+    containsDocumentActionClaim(`${'할 일 '.repeat(20_000)}${'가 '.repeat(20_000)}`, 'mail');
     expect(performance.now() - start).toBeLessThan(500);
   });
 });
@@ -90,7 +90,7 @@ describe('final sign-off W-1: the claim is found in the text the owner is shown'
   it.each([['I se​nt the reply.'], ['Ｉ ｓｅｎｔ the reply.'], ['답장을 보​냈어요.']])(
     '%j is a claim once normalized for display',
     (text) => {
-      expect(containsDocumentActionClaim(neutralizeLinks(text, 'display'))).toBe(true);
+      expect(containsDocumentActionClaim(neutralizeLinks(text, 'display'), 'mail')).toBe(true);
     },
   );
 });
@@ -98,11 +98,11 @@ describe('final sign-off W-1: the claim is found in the text the owner is shown'
 describe('Codex final delta: an adverb before the verb, and an emphatic did', () => {
   it.each([['제가 답장을 대신 보냈습니다.'], ['답장을 방금 바로 보냈어요.'], ['I did send a reply.'], ['We did actually forward it.']])(
     '%j is withheld',
-    (text) => expect(containsDocumentActionClaim(text)).toBe(true),
+    (text) => expect(containsDocumentActionClaim(text, 'mail')).toBe(true),
   );
   it.each([['I did not send anything.'], ["I didn't forward the mail."], ['김철수가 답장을 대신 보냈어요.']])(
     '%j is not a claim',
-    (text) => expect(containsDocumentActionClaim(text)).toBe(false),
+    (text) => expect(containsDocumentActionClaim(text, 'mail')).toBe(false),
   );
 });
 
@@ -137,7 +137,7 @@ describe('DRV-1: document actions (a Drive summary steered into an edit, share o
     'I made the document public.',
     'I did change the sharing settings.',
   ])('withholds: %s', (text) => {
-    expect(containsDocumentActionClaim(text)).toBe(true);
+    expect(containsDocumentActionClaim(text, 'drive')).toBe(true);
   });
 
   it.each([
@@ -158,13 +158,13 @@ describe('DRV-1: document actions (a Drive summary steered into an edit, share o
     'The document asks you to share it by Friday.',
     'I did not share anything.',
   ])('allows: %s', (text) => {
-    expect(containsDocumentActionClaim(text)).toBe(false);
+    expect(containsDocumentActionClaim(text, 'drive')).toBe(false);
   });
 
   it('is linear on a long hostile reply with the document nouns', () => {
     const start = performance.now();
-    containsDocumentActionClaim(`${'문서를 '.repeat(20_000)}${'가 '.repeat(20_000)}`);
-    containsDocumentActionClaim(`${'파일 '.repeat(30_000)}공유`);
+    containsDocumentActionClaim(`${'문서를 '.repeat(20_000)}${'가 '.repeat(20_000)}`, 'drive');
+    containsDocumentActionClaim(`${'파일 '.repeat(30_000)}공유`, 'drive');
     expect(performance.now() - start).toBeLessThan(500);
   });
 
@@ -178,10 +178,34 @@ describe('DRV-1: document actions (a Drive summary steered into an edit, share o
 
 describe('DRV-1 review P3-6: the document-action patterns also apply to mail summaries (fail-safe, not source-scoped)', () => {
   it.each(['첨부 문서를 공유했어요.', 'We shared the attachment with the team.', 'I edited the draft.'])('withheld for mail too: %s', (text) => {
-    expect(containsDocumentActionClaim(text)).toBe(true);
+    expect(containsDocumentActionClaim(text, 'mail')).toBe(true);
   });
   it.each(['김철수 님이 첨부 문서를 공유했어요.', 'Kim shared the attachment with the team.', '진행 상황을 공유했어요.'])(
     'a third-person or object-less mail summary is still allowed: %s',
-    (text) => expect(containsDocumentActionClaim(text)).toBe(false),
+    (text) => expect(containsDocumentActionClaim(text, 'mail')).toBe(false),
   );
+});
+
+describe('CA re-review item 1: the Drive wordings are scoped to a Drive summary', () => {
+  const mailNews = [
+    '계약서 내용을 수정했으니 검토해 달라는 요청이에요.',
+    '약관 업데이트를 했으니 확인하라는 메일이에요.',
+    'Acme writes: "We changed our pricing."',
+    'The sender says we updated our privacy policy.',
+  ];
+  it.each(mailNews)('mail: shown (parity with the pre-DRV-1 guard): %s', (text) => {
+    expect(containsDocumentActionClaim(text, 'mail')).toBe(false);
+  });
+  it.each([
+    '요청대로 내용을 수정해 두었어요.',
+    '문서를 업데이트했어요.',
+    "I've updated the document as requested.",
+    'We changed the permissions.',
+  ])('drive: still withheld: %s', (text) => {
+    expect(containsDocumentActionClaim(text, 'drive')).toBe(true);
+  });
+  it('the reported-speech split fix is shared: a mail says someone sent it', () => {
+    expect(containsDocumentActionClaim('답장을 보냈다고 해요.', 'mail')).toBe(false);
+    expect(containsDocumentActionClaim('제가 답장을 보냈어요.', 'mail')).toBe(true);
+  });
 });
