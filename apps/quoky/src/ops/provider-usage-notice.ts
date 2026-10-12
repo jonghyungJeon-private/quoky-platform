@@ -1,7 +1,7 @@
 import { now as sharedClock } from '@quoky/core';
 import type { IsoTimestamp, Logger, NotificationSinkOutcome } from '@quoky/core';
 import type { BackupJobTimers } from './backup-job';
-import { formatTokens, previousMonthKey } from './provider-usage';
+import { formatTokenField, formatTokens, previousMonthKey } from './provider-usage';
 import type { MonthKey, MonthlyUsage, ProviderUsageLedger } from './provider-usage';
 import type { OpsNoticeLedgerStore } from './ops-notice';
 
@@ -10,7 +10,7 @@ import type { OpsNoticeLedgerStore } from './ops-notice';
  * (`QUOKY_TIMEZONE`).
  *
  * - `MONTHLY`: once, the PREVIOUS month's totals per selection label. Nothing is sent when that month has no usage.
- * - `THRESHOLD`: once in a month, when the month's total tokens (all labels together) first reach
+ * - `THRESHOLD`: once in a month, when the month's known total tokens (all labels together) first reach
  *   `QUOKY_PROVIDER_USAGE_MONTHLY_THRESHOLD` (units: TOTAL TOKENS per calendar month). Unset = never.
  *
  * Both go through the owner-only OPS notice path (`deliver`, the primary platform's DM) and carry token totals and run
@@ -90,18 +90,19 @@ function isRetryable(outcome: UsageNoticeDelivery): boolean {
 
 function labelLines(usage: MonthlyUsage): string {
   return usage.labels
-    .map((l) => {
-      const unknown = l.unknownRuns > 0 ? `, 토큰 미보고 ${l.unknownRuns}회` : '';
-      return `- ${l.label}: ${l.runs}회, 입력 ${formatTokens(l.inputTokens)} · 출력 ${formatTokens(l.outputTokens)} · 합계 ${formatTokens(l.totalTokens)} 토큰${unknown}`;
-    })
+    .map(
+      (l) =>
+        `- ${l.label}: ${l.runs}회, 입력 ${formatTokenField(l.inputTokens, l.runs)} · 출력 ${formatTokenField(l.outputTokens, l.runs)} · ` +
+        `합계 ${formatTokenField(l.totalTokens, l.runs, ' 토큰')}`,
+    )
     .join('\n');
 }
 
-const FOOTER = '토큰 수만 보여드려요. 공급자는 자동으로 바꾸지 않아요. 자세한 내용은 운영 화면에서 확인해 주세요.';
+const FOOTER = '토큰 수는 공급자가 알려준 것만 더하고, 알려주지 않은 값은 "미보고"로 표시해요. 공급자는 자동으로 바꾸지 않아요. 자세한 내용은 운영 화면에서 확인해 주세요.';
 
 export function monthlyUsageNoticeText(usage: MonthlyUsage): string {
   return (
-    `[Quoky 사용량 알림] ${usage.month} 공급자별 사용량이에요. 합계 ${formatTokens(usage.totalTokens)} 토큰 (${usage.runs}회).\n` +
+    `[Quoky 사용량 알림] ${usage.month} 공급자별 사용량이에요. ${usage.runs}회 실행, 합계 ${formatTokenField(usage.totalTokens, usage.runs, ' 토큰')}.\n` +
     `${labelLines(usage)}\n${FOOTER}`
   );
 }
@@ -109,7 +110,7 @@ export function monthlyUsageNoticeText(usage: MonthlyUsage): string {
 export function thresholdUsageNoticeText(usage: MonthlyUsage, threshold: number): string {
   return (
     `[Quoky 사용량 알림] ${usage.month} 사용량이 설정한 월 기준(${formatTokens(threshold)} 토큰)에 도달했어요. ` +
-    `지금까지 합계 ${formatTokens(usage.totalTokens)} 토큰 (${usage.runs}회).\n${labelLines(usage)}\n${FOOTER}`
+    `지금까지 ${usage.runs}회 실행, 합계 ${formatTokenField(usage.totalTokens, usage.runs, ' 토큰')}.\n${labelLines(usage)}\n${FOOTER}`
   );
 }
 
@@ -241,7 +242,7 @@ export class ProviderUsageNoticeJob {
     const threshold = this.deps.monthlyThreshold;
     if (threshold !== undefined && this.readState().thresholdSentIn !== month) {
       const usage = await this.deps.ledger.monthly(month);
-      if (usage.totalTokens >= threshold) await this.attempt('PROVIDER_USAGE_THRESHOLD', month, thresholdUsageNoticeText(usage, threshold));
+      if (usage.totalTokens.sum >= threshold) await this.attempt('PROVIDER_USAGE_THRESHOLD', month, thresholdUsageNoticeText(usage, threshold));
     }
   }
 

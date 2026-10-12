@@ -77,13 +77,23 @@ describe('PRV-3 usage ledger (ADR-0115 D8): monthly totals read from TaskRun.usa
     await addRun(s, '2026-10-10T00:00:00.000Z', { label: 'gemini:g', inputTokens: 7, outputTokens: 3, cachedInputTokens: 2, reasoningTokens: 1 });
     const seoul = new ProviderUsageLedger(s.taskRuns, KST);
     const sept = await seoul.monthly('2026-09');
-    expect(sept).toMatchObject({ month: '2026-09', runs: 1, totalTokens: 150 });
+    expect(sept).toMatchObject({ month: '2026-09', runs: 1, unknownRuns: 0, totalTokens: { sum: 150, reportedRuns: 1 } });
+    const none = { sum: 0, reportedRuns: 0 };
     expect(sept.labels).toEqual([
-      { label: 'openai:gpt-5', runs: 1, unknownRuns: 0, inputTokens: 100, cachedInputTokens: 0, outputTokens: 50, reasoningTokens: 0, totalTokens: 150 },
+      {
+        label: 'openai:gpt-5',
+        runs: 1,
+        unknownRuns: 0,
+        inputTokens: { sum: 100, reportedRuns: 1 },
+        cachedInputTokens: none,
+        outputTokens: { sum: 50, reportedRuns: 1 },
+        reasoningTokens: none,
+        totalTokens: { sum: 150, reportedRuns: 1 },
+      },
     ]);
     const oct = await seoul.monthly('2026-10');
-    expect(oct.totalTokens).toBe(30);
-    expect(oct.labels.map((l) => [l.label, l.totalTokens])).toEqual([
+    expect(oct.totalTokens.sum).toBe(30);
+    expect(oct.labels.map((l) => [l.label, l.totalTokens.sum])).toEqual([
       ['openai:gpt-5', 20],
       ['gemini:g', 10],
     ]);
@@ -99,16 +109,57 @@ describe('PRV-3 usage ledger (ADR-0115 D8): monthly totals read from TaskRun.usa
     await addRun(s, '2026-09-11T00:00:00.000Z', { label: 'claude:sonnet' });
     await addRun(s, '2026-09-12T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
     const sept = await new ProviderUsageLedger(s.taskRuns, KST).monthly('2026-09');
-    expect(sept.labels.find((l) => l.label === 'claude:sonnet')).toMatchObject({ runs: 2, unknownRuns: 2, totalTokens: 0 });
-    expect(sept.totalTokens).toBe(10);
+    expect(sept.labels.find((l) => l.label === 'claude:sonnet')).toMatchObject({ runs: 2, unknownRuns: 2, totalTokens: { sum: 0, reportedRuns: 0 } });
+    expect(sept.totalTokens).toEqual({ sum: 10, reportedRuns: 1 });
+    expect(sept.unknownRuns).toBe(2);
     await s.close();
+  });
+
+  it('tracks each field separately: an input-only, an output-only and a fully unknown run are never read as 0', async () => {
+    const s = await store();
+    await addRun(s, '2026-09-10T00:00:00.000Z', { label: 'codex', inputTokens: 1200 });
+    await addRun(s, '2026-09-11T00:00:00.000Z', { label: 'codex', outputTokens: 80 });
+    await addRun(s, '2026-09-12T00:00:00.000Z', { label: 'codex' });
+    const sept = await new ProviderUsageLedger(s.taskRuns, KST).monthly('2026-09');
+    expect(sept.labels).toEqual([
+      {
+        label: 'codex',
+        runs: 3,
+        unknownRuns: 3, // no run has a provider total, and none reported both input and output
+        inputTokens: { sum: 1200, reportedRuns: 1 },
+        cachedInputTokens: { sum: 0, reportedRuns: 0 },
+        outputTokens: { sum: 80, reportedRuns: 1 },
+        reasoningTokens: { sum: 0, reportedRuns: 0 },
+        totalTokens: { sum: 0, reportedRuns: 0 },
+      },
+    ]);
+    const text = monthlyUsageNoticeText(sept);
+    expect(text).toContain('- codex: 3회, 입력 1,200 (1/3회 보고) · 출력 80 (1/3회 보고) · 합계 미보고');
+    expect(text).toContain('3회 실행, 합계 미보고.');
+    expect(text).not.toMatch(/합계 0|출력 0|입력 0/);
+
+    // Input only: output and total are "미보고", and the run is unknown.
+    const inputOnly = await store();
+    await addRun(inputOnly, '2026-09-10T00:00:00.000Z', { label: 'openai:gpt-5', inputTokens: 500 });
+    const one = await new ProviderUsageLedger(inputOnly.taskRuns, KST).monthly('2026-09');
+    expect(one).toMatchObject({ runs: 1, unknownRuns: 1, totalTokens: { sum: 0, reportedRuns: 0 } });
+    expect(monthlyUsageNoticeText(one)).toContain('- openai:gpt-5: 1회, 입력 500 · 출력 미보고 · 합계 미보고');
+    // Output only, the same.
+    const outputOnly = await store();
+    await addRun(outputOnly, '2026-09-10T00:00:00.000Z', { label: 'openai:gpt-5', outputTokens: 70 });
+    const out = await new ProviderUsageLedger(outputOnly.taskRuns, KST).monthly('2026-09');
+    expect(monthlyUsageNoticeText(out)).toContain('- openai:gpt-5: 1회, 입력 미보고 · 출력 70 · 합계 미보고');
+    expect(thresholdUsageNoticeText(out, 10)).toContain('1회 실행, 합계 미보고.');
+    await s.close();
+    await inputOnly.close();
+    await outputOnly.close();
   });
 
   it('ignores runs without a usage record (their metadata is untouched) and an empty month is empty', async () => {
     const s = await store();
     await addRun(s, '2026-09-10T00:00:00.000Z', undefined, { promptSha256: 'x' });
     const sept = await new ProviderUsageLedger(s.taskRuns, KST).monthly('2026-09');
-    expect(sept).toEqual({ month: '2026-09', labels: [], totalTokens: 0, runs: 0 });
+    expect(sept).toEqual({ month: '2026-09', labels: [], totalTokens: { sum: 0, reportedRuns: 0 }, runs: 0, unknownRuns: 0 });
     await s.close();
   });
 });
@@ -173,8 +224,8 @@ describe('PRV-3 monthly usage DM (ADR-0115 D8)', () => {
     expect(kind).toBe('PROVIDER_USAGE_MONTHLY');
     expect(text).toContain('2026-09');
     expect(text).toContain('openai:gpt-5: 1회, 입력 1,000 · 출력 500 · 합계 1,500 토큰');
-    expect(text).toContain('claude:sonnet: 1회');
-    expect(text).toContain('토큰 미보고 1회');
+    expect(text).toContain('claude:sonnet: 1회, 입력 미보고 · 출력 미보고 · 합계 미보고');
+    expect(text).toContain('2회 실행, 합계 1,500 토큰 (1/2회 보고).');
     expect(text).not.toContain('gemini:g');
     expect(text).not.toContain('999');
     expect(text).not.toContain('4,242');
@@ -195,7 +246,7 @@ describe('PRV-3 monthly usage DM (ADR-0115 D8)', () => {
     await h.job().checkOnce();
     expect(h.sent).toHaveLength(2);
     expect(h.sent[1]?.text).toContain('2026-10');
-    expect(h.sent[1]?.text).toContain('합계 10 토큰');
+    expect(h.sent[1]?.text).toContain('1회 실행, 합계 10 토큰.');
     await h.s.close();
   });
 
@@ -427,22 +478,33 @@ describe('PRV-3 threshold DM (ADR-0115 D8)', () => {
 });
 
 describe('PRV-3 notice text and state file', () => {
+  const none = { sum: 0, reportedRuns: 0 };
   const usage = {
     month: '2026-09',
     runs: 3,
-    totalTokens: 1650,
+    unknownRuns: 1,
+    totalTokens: { sum: 1650, reportedRuns: 2 },
     labels: [
-      { label: 'openai:gpt-5', runs: 2, unknownRuns: 0, inputTokens: 1000, cachedInputTokens: 0, outputTokens: 650, reasoningTokens: 0, totalTokens: 1650 },
-      { label: 'claude:sonnet', runs: 1, unknownRuns: 1, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningTokens: 0, totalTokens: 0 },
+      {
+        label: 'openai:gpt-5',
+        runs: 2,
+        unknownRuns: 0,
+        inputTokens: { sum: 1000, reportedRuns: 2 },
+        cachedInputTokens: none,
+        outputTokens: { sum: 650, reportedRuns: 2 },
+        reasoningTokens: none,
+        totalTokens: { sum: 1650, reportedRuns: 2 },
+      },
+      { label: 'claude:sonnet', runs: 1, unknownRuns: 1, inputTokens: none, cachedInputTokens: none, outputTokens: none, reasoningTokens: none, totalTokens: none },
     ],
   };
 
-  it('carries totals only', () => {
+  it('carries totals only, and a count nobody reported reads "미보고", never 0', () => {
     expect(monthlyUsageNoticeText(usage)).toBe(
-      '[Quoky 사용량 알림] 2026-09 공급자별 사용량이에요. 합계 1,650 토큰 (3회).\n' +
+      '[Quoky 사용량 알림] 2026-09 공급자별 사용량이에요. 3회 실행, 합계 1,650 토큰 (2/3회 보고).\n' +
         '- openai:gpt-5: 2회, 입력 1,000 · 출력 650 · 합계 1,650 토큰\n' +
-        '- claude:sonnet: 1회, 입력 0 · 출력 0 · 합계 0 토큰, 토큰 미보고 1회\n' +
-        '토큰 수만 보여드려요. 공급자는 자동으로 바꾸지 않아요. 자세한 내용은 운영 화면에서 확인해 주세요.',
+        '- claude:sonnet: 1회, 입력 미보고 · 출력 미보고 · 합계 미보고\n' +
+        '토큰 수는 공급자가 알려준 것만 더하고, 알려주지 않은 값은 "미보고"로 표시해요. 공급자는 자동으로 바꾸지 않아요. 자세한 내용은 운영 화면에서 확인해 주세요.',
     );
     expect(thresholdUsageNoticeText(usage, 1000)).toContain('설정한 월 기준(1,000 토큰)에 도달했어요');
   });

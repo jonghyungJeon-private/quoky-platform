@@ -136,15 +136,23 @@ export interface OpsTelegramStatus {
  * ADR-0115 D8 (PRV-3): the provider usage panel's data, seen structurally: the current and the previous calendar month
  * (`QUOKY_TIMEZONE`) per selection label. Token and run counts only; no content.
  */
+export interface OpsProviderUsageCount {
+  /** Sum of the reported values. */
+  readonly sum: number;
+  /** How many runs reported this count (0 = nobody: shown as "미보고", never 0). */
+  readonly reportedRuns: number;
+}
+
 export interface OpsProviderUsageMonth {
   readonly month: string;
   readonly labels: readonly {
     readonly label: string;
     readonly runs: number;
+    /** Runs whose total cannot be known. */
     readonly unknownRuns: number;
-    readonly inputTokens: number;
-    readonly outputTokens: number;
-    readonly totalTokens: number;
+    readonly inputTokens: OpsProviderUsageCount;
+    readonly outputTokens: OpsProviderUsageCount;
+    readonly totalTokens: OpsProviderUsageCount;
   }[];
 }
 
@@ -627,7 +635,7 @@ export class OpsSnapshotBuilder {
 
   /**
    * ADR-0115 D8 (PRV-3): monthly token totals per selection label, current and previous month. Counts only (never a
-   * prompt, reply, key or provider text); a provider that reported no count shows as "미보고" runs, never an estimate.
+   * prompt, reply, key or provider text); a count no run reported shows as "미보고", never 0 or an estimate.
    * Returns undefined (no panel) without a source or without any usage.
    */
   private async providerUsagePanel(): Promise<OpsPanelView | undefined> {
@@ -644,9 +652,9 @@ export class OpsSnapshotBuilder {
         m.month,
         l.label,
         usageCount(l.runs),
-        usageCount(l.inputTokens),
-        usageCount(l.outputTokens),
-        usageCount(l.totalTokens),
+        usageField(l.inputTokens, l.runs),
+        usageField(l.outputTokens, l.runs),
+        usageField(l.totalTokens, l.runs),
         usageCount(l.unknownRuns),
       ]),
     );
@@ -657,13 +665,14 @@ export class OpsSnapshotBuilder {
       state: 'OK',
       fields: [],
       table: {
-        columns: ['월', '공급자', '실행', '입력 토큰', '출력 토큰', '합계 토큰', '미보고 실행'],
+        columns: ['월', '공급자', '실행', '입력 토큰', '출력 토큰', '합계 토큰', '합계 미보고 실행'],
         rows,
         emptyText: '기록된 사용량이 없어요.',
       },
       notes: [
         '토큰 수와 실행 횟수만 표시해요. 월은 QUOKY_TIMEZONE 기준 달력 월이에요.',
-        '공급자가 토큰 수를 알려주지 않은 실행은 "미보고 실행"으로만 세고 추정하지 않아요. 공급자를 자동으로 바꾸거나 끄지 않아요.',
+        '공급자가 알려준 토큰 수만 더하고 추정하지 않아요. 아무 실행도 알려주지 않은 값은 "미보고", 일부 실행만 알려준 값은 (보고한 실행/전체 실행)으로 표시해요.',
+        '"합계 미보고 실행"은 합계를 알 수 없는 실행 수예요. 공급자를 자동으로 바꾸거나 끄지 않아요.',
       ],
     };
   }
@@ -682,8 +691,21 @@ export class OpsSnapshotBuilder {
   }
 }
 
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
 function usageCount(value: unknown): string {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : OPS_UNKNOWN;
+  return isCount(value) ? String(value) : OPS_UNKNOWN;
+}
+
+/** One token count: "미보고" when no run reported it, never 0; `sum (reported/runs회 보고)` when only some runs did. */
+function usageField(value: unknown, runs: unknown): string {
+  if (typeof value !== 'object' || value === null || !isCount(runs)) return OPS_UNKNOWN;
+  const { sum, reportedRuns } = value as Record<string, unknown>;
+  if (!isCount(sum) || !isCount(reportedRuns) || reportedRuns > runs) return OPS_UNKNOWN;
+  if (reportedRuns === 0) return '미보고';
+  return reportedRuns < runs ? `${sum} (${reportedRuns}/${runs}회 보고)` : String(sum);
 }
 
 /** A halt or reason code as the adapter defines them; anything else is shown as `unknown` (never echoed). */

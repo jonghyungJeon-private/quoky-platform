@@ -724,15 +724,17 @@ describe('TG-3 Telegram panel (ADR-0114 D12, ADR-0113 D5)', () => {
 });
 
 describe('PRV-3 provider usage panel (ADR-0115 D8, ADR-0113 D5)', () => {
+  const c = (sum: number, reportedRuns: number) => ({ sum, reportedRuns });
   const months = [
     {
       month: '2026-10',
       labels: [
-        { label: 'openai:gpt-5', runs: 3, unknownRuns: 0, inputTokens: 1200, outputTokens: 300, totalTokens: 1500 },
-        { label: 'claude:sonnet', runs: 2, unknownRuns: 2, inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        { label: 'openai:gpt-5', runs: 3, unknownRuns: 0, inputTokens: c(1200, 3), outputTokens: c(300, 3), totalTokens: c(1500, 3) },
+        { label: 'claude:sonnet', runs: 2, unknownRuns: 2, inputTokens: c(0, 0), outputTokens: c(0, 0), totalTokens: c(0, 0) },
+        { label: 'codex', runs: 3, unknownRuns: 2, inputTokens: c(900, 2), outputTokens: c(40, 1), totalTokens: c(500, 1) },
       ],
     },
-    { month: '2026-09', labels: [{ label: 'gemini:g', runs: 1, unknownRuns: 0, inputTokens: 10, outputTokens: 5, totalTokens: 15 }] },
+    { month: '2026-09', labels: [{ label: 'gemini:g', runs: 1, unknownRuns: 0, inputTokens: c(10, 1), outputTokens: c(5, 1), totalTokens: c(15, 1) }] },
   ];
 
   it('shows the counts per month and label, appended after every other panel', async () => {
@@ -740,16 +742,19 @@ describe('PRV-3 provider usage panel (ADR-0115 D8, ADR-0113 D5)', () => {
     expect(view.panels.at(-1)?.id).toBe('provider-usage');
     const panel = panelOf(view, 'provider-usage');
     expect(panel.state).toBe('OK');
-    expect(panel.table?.columns).toEqual(['월', '공급자', '실행', '입력 토큰', '출력 토큰', '합계 토큰', '미보고 실행']);
+    expect(panel.table?.columns).toEqual(['월', '공급자', '실행', '입력 토큰', '출력 토큰', '합계 토큰', '합계 미보고 실행']);
     expect(panel.table?.rows).toEqual([
       ['2026-10', 'openai:gpt-5', '3', '1200', '300', '1500', '0'],
-      ['2026-10', 'claude:sonnet', '2', '0', '0', '0', '2'],
+      // Nobody reported a count: "미보고", never 0.
+      ['2026-10', 'claude:sonnet', '2', '미보고', '미보고', '미보고', '2'],
+      // Partly reported: the sum and how many runs it covers.
+      ['2026-10', 'codex', '3', '900 (2/3회 보고)', '40 (1/3회 보고)', '500 (1/3회 보고)', '2'],
       ['2026-09', 'gemini:g', '1', '10', '5', '15', '0'],
     ]);
   });
 
   it('escapes every cell in the rendered page and carries counts only', async () => {
-    const hostile = [{ month: '2026-10', labels: [{ label: '<script>alert(1)</script>', runs: 1, unknownRuns: 0, inputTokens: 1, outputTokens: 1, totalTokens: 2 }] }];
+    const hostile = [{ month: '2026-10', labels: [{ label: '<script>alert(1)</script>', runs: 1, unknownRuns: 0, inputTokens: c(1, 1), outputTokens: c(1, 1), totalTokens: c(2, 1) }] }];
     const view = await new OpsSnapshotBuilder(fixture({ providerUsage: async () => hostile })).build();
     const page = renderDashboard(view, 'csrf-token');
     expect(page).not.toContain('<script>alert(1)</script>');
@@ -759,7 +764,7 @@ describe('PRV-3 provider usage panel (ADR-0115 D8, ADR-0113 D5)', () => {
   });
 
   it('shows a malformed count as unknown, never the raw value', async () => {
-    const bad = [{ month: '2026-10', labels: [{ label: 'x', runs: 1, unknownRuns: 0, inputTokens: -1 as number, outputTokens: Number.NaN, totalTokens: 1.5 }] }];
+    const bad = [{ month: '2026-10', labels: [{ label: 'x', runs: 1, unknownRuns: 0, inputTokens: c(-1, 1), outputTokens: c(Number.NaN, 1), totalTokens: c(1, 2) }] }];
     const view = await new OpsSnapshotBuilder(fixture({ providerUsage: async () => bad })).build();
     expect(panelOf(view, 'provider-usage').table?.rows[0]).toEqual(['2026-10', 'x', '1', OPS_UNKNOWN, OPS_UNKNOWN, OPS_UNKNOWN, '0']);
   });
