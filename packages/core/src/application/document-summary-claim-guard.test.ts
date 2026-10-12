@@ -117,6 +117,8 @@ describe('DRV-1: document actions (a Drive summary steered into an edit, share o
     '폴더를 다른 곳으로 옮겼어요.',
     '문서 이름을 바꿨어요.',
     '제가 문서를 편집해 두었어요.',
+    '제가 답장을 보냈어요.',
+    '요약했고 제가 답장을 보냈어요.',
     'Quoky가 링크를 공유했어요.',
     'I shared the document with your team.',
     "I've renamed the file.",
@@ -146,6 +148,9 @@ describe('DRV-1: document actions (a Drive summary steered into an edit, share o
     '버그를 수정했다는 내용이에요.',
     '문서를 공유해 달라는 요청이에요.',
     '이 문서는 3월에 마지막으로 수정되었어요.',
+    // CA review P3-2: reported speech with `다고` is not split into a clause that loses its `다고`.
+    '답장을 보냈다고 해요.',
+    '문서를 공유했다고 해요.',
     'Kim shared the roadmap with the team.',
     '김철수가 문서를 업데이트했어요.',
     '김철수가 내용을 수정해 두었어요.',

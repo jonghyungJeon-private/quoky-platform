@@ -19558,6 +19558,8 @@ Independent Chief Architect review before GML-1 merges.
     `편집 권한을 드렸어요|줬어요`, `내용을 수정해 두었어요`, `팀원들에게 공유했어요` and, in English, `updated`, `changed`,
     `granted`, `gave`, `revised`, `fixed`, `did update|change|grant|give` and `I made the document public`. A
     third-person subject still exempts (`김철수가 문서를 업데이트했어요`). Still best-effort; the footer is the guarantee.
+  - **P3-2 (reported speech):** the clause splitter no longer breaks at the `고` of `다고`, so `답장을 보냈다고 해요` and
+    `문서를 공유했다고 해요` read as reported speech and pass; `제가 답장을 보냈어요` is still withheld.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 

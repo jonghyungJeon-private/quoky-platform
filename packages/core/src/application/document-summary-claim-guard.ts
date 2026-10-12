@@ -89,7 +89,7 @@ const EN_MADE_CLAIM =
 
 /** Sentences and clauses: split on sentence ends, line breaks and Korean clause connectors. */
 function clauses(text: string): string[] {
-  return text.split(/[.!?。\n]+|(?:하고|했고|고)\s/u).map((clause) => clause.trim()).filter((clause) => clause.length > 0);
+  return text.split(/[.!?。\n]+|(?:하고|했고|(?<!다)고)\s/u).map((clause) => clause.trim()).filter((clause) => clause.length > 0);
 }
 
 /**
