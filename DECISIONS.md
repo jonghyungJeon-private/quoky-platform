@@ -20724,3 +20724,34 @@ The second round fixed seven findings:
 Chief Architect final: PASS. Codex final: one P2, the English reporter grounding, which is fixed.
 
 Residual for NL-2 (optional hardening): `family` is free-form on the port, so equal families are not yet checked for equal execution locality. In today's wiring each vendor has a fixed id prefix, so no local and remote mix is possible. NL-2 should also require `executionLocalityOf(chat) === executionLocalityOf(selector)`.
+
+#### Live UAT follow-up addendum (2026-10-12, inside the ratified NL-1 scope)
+
+Telegram and Discord live UAT found gaps in how the ratified D1/D13 entries read an owner's words. No new entry, no new
+risk class, no new egress; every addition is an optional arg of an existing READ entry.
+
+- **`jira.issues` `status` gains `in-progress`** (`open | all | in-progress`). The Jira adapter renders it as
+  `statusCategory = "In Progress"` (a closed literal; the allowlist and escaping are unchanged; `open` and `all` are
+  byte-identical). Basis: `기준: 내가 담당 / 진행 중`. It is a refinement after a listing too.
+- **Value grounding for enums** (`NlArgSpec.valueGrounding`): a listed enum value counts only when one of its words is in
+  the owner's own non-quoted text or the value carries over from `lastSelection`, as roles do. `in-progress` needs
+  진행 / in progress / working on; the Drive `kind` values need their type words (below). A guessed value is refused.
+- **`calendar.events` `keyword`** (optional, grounded like every keyword, also from `lastSelection`). The handler filters
+  the fetched events locally, on the title only, case-insensitively; titles never go to the model (ADR-0110 D4). An empty
+  result names the keyword. Basis: `기준: 오늘 일정 / "스크럼" 포함`.
+- **`drive.files` `kind`** (`spreadsheet | document | presentation | pdf | folder`), grounded in 스프레드시트/시트/엑셀,
+  문서/독스, 슬라이드/프레젠테이션/ppt, pdf, 폴더. The `DriveReader` port takes an optional neutral `DriveListingKind` on
+  `recentFiles` and `searchByName`; the adapter maps it to a fixed type clause in its own query (no owner text reaches
+  it, the default query is unchanged, the port stays read-only). Folders are listed only when asked. Corpus cases
+  drive-003, drive-007 and drive-030 now expect `kind: document` because the owner names the type.
+- **Prompt `nl-select.v15`:** a bare source word selects that source's default listing (Slack and Confluence, which need
+  a keyword, get the clarification); a count follow-up is the previous entry plus `count`, and with no previous selection
+  the selector answers NEEDS_CLARIFICATION so the owner gets the numbered entry question, not chat prose; "하루 요약" and
+  "한눈에" style phrasings select `brief.today`. No regex phrase was added anywhere (NL intent rule).
+- **Corpus:** `nl-intent.v1.json` grew with in-progress, calendar keyword, Drive kind, brief, bare-source and count
+  cases, plus negatives (writes, how-tos, definitions, no-previous count).
+- **Evaluation (strict, `haiku`, prompt `nl-select.v15`, 570 cases, 1 run, concurrency 4, plan digest `d21fa49b…`):** 96.0% exact
+  hits (406/423), 0 wrong captures, lowest entry 91.4% (help.topic); 13 of 570 calls hit the 4 s bound (counted as misses);
+  p50 3.0 s, p95 3.8 s. Gate passed. All new in-progress, calendar keyword, Drive kind, brief, bare-source and count cases
+  hit; the clarifications are the intended bare-Slack/Confluence and no-previous count questions. Two earlier runs the same
+  day (v13: 96.7% but reminder 89.7% on timeouts; v14: 96.0%, three Drive `kind` expectation changes) are in `data/eval/`.
