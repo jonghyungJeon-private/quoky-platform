@@ -445,7 +445,7 @@ export class WorkChatService implements WorkDesk {
     const fetched = items.length;
     if (keywordFilter) {
       const needle = (searchText as string).toLowerCase();
-      items = items.filter((item) => `${item.title ?? ''}\n${item.summary ?? ''}`.toLowerCase().includes(needle));
+      items = items.filter((item) => [item.title ?? '', item.summary ?? ''].join('\n').toLowerCase().includes(needle));
     }
     const built = buildExternalWorkReadout({
       source,
