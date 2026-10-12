@@ -282,6 +282,57 @@ describe('PRV-3 monthly usage DM (ADR-0115 D8)', () => {
     await h.s.close();
   });
 
+  it('a failed state write never causes a second send in the process, though the file still holds the stale record', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    let writes = 0;
+    let disk: string | undefined;
+    const flaky: OpsNoticeLedgerStore = {
+      read: () => disk,
+      write: (content) => {
+        writes += 1;
+        if (writes === 2) throw new Error('ENOSPC'); // the settling write after SENT fails; disk keeps the attempt record
+        disk = content;
+      },
+    };
+    const job = new ProviderUsageNoticeJob({
+      ledger: new ProviderUsageLedger(h.s.taskRuns, KST),
+      deliver: async (kind, text) => {
+        h.sent.push({ kind, text });
+        return SENT;
+      },
+      state: flaky,
+      logger: new RecordingLogger(),
+      clock: () => h.clock.iso,
+    });
+    await job.checkOnce();
+    expect(JSON.parse(disk as string)).toEqual({ version: 1, monthlyAttempts: { month: '2026-09', count: 1 } }); // stale: not settled
+    await job.checkOnce();
+    await job.checkOnce();
+    expect(h.sent).toHaveLength(1);
+    await h.s.close();
+  });
+
+  it('an unreadable state file skips the evaluation (nothing sent) instead of reading as empty', async () => {
+    const h = await harness();
+    await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });
+    const logger = new RecordingLogger();
+    const job = new ProviderUsageNoticeJob({
+      ledger: new ProviderUsageLedger(h.s.taskRuns, KST),
+      deliver: async (kind, text) => {
+        h.sent.push({ kind, text });
+        return SENT;
+      },
+      state: { read: () => { throw new Error('EACCES'); }, write: () => undefined },
+      logger,
+      clock: () => h.clock.iso,
+    });
+    await job.checkOnce();
+    expect(h.sent).toEqual([]);
+    expect(logger.lines.some((l) => l.message === 'provider_usage.notice.failed')).toBe(true);
+    await h.s.close();
+  });
+
   it('sends nothing when the attempt record cannot be written (fail closed: the bound must hold across restarts)', async () => {
     const h = await harness();
     await addRun(h.s, '2026-09-15T00:00:00.000Z', { label: 'codex', inputTokens: 5, outputTokens: 5 });

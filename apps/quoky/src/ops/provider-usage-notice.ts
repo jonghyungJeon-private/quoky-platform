@@ -175,12 +175,14 @@ export class ProviderUsageNoticeJob {
     this.timer = handle;
   }
 
+  /**
+   * The in-memory copy whenever this process has one (it is always the latest: a failed file write leaves stale
+   * content on disk, which must never cause a second notice); the file only before the first write of this process.
+   * A file that cannot be read throws, so the evaluation is skipped and logged (fail closed) rather than read as empty.
+   */
   private readState(): UsageNoticeState {
-    try {
-      return parseUsageNoticeState(this.deps.state ? this.deps.state.read() : this.memory);
-    } catch {
-      return parseUsageNoticeState(this.memory);
-    }
+    if (this.memory !== undefined || this.deps.state === undefined) return parseUsageNoticeState(this.memory);
+    return parseUsageNoticeState(this.deps.state.read());
   }
 
   private writeState(state: UsageNoticeState): void {
