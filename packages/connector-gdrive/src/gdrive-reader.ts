@@ -371,7 +371,8 @@ async function readBounded(response: Response, maxBytes: number): Promise<{ read
 /**
  * Drive API errors: 400 → `UNSUPPORTED_QUERY`, 401 → `UNAUTHORIZED` (auth expired), 404 → `NOT_FOUND`, 429 →
  * `RATE_LIMITED`, 5xx → `UNAVAILABLE`. A 403 is read for its fixed `reason` token only: rate and quota reasons →
- * `RATE_LIMITED`, insufficient permissions or scope → `INSUFFICIENT_SCOPE` (consent needed), an export over Google's
+ * `RATE_LIMITED`, `insufficientFilePermissions` → `NOT_FOUND`, a file that cannot be downloaded or exported → `UNSUPPORTED_QUERY`,
+ * insufficient permissions or scope → `INSUFFICIENT_SCOPE` (consent needed), an export over Google's
  * own size limit → `INVALID_RESPONSE`, anything else (an administrator policy, a disabled API) → `FORBIDDEN`.
  */
 async function driveErrorReason(response: Response): Promise<ConnectorQueryErrorReason> {
@@ -393,7 +394,13 @@ async function driveErrorReason(response: Response): Promise<ConnectorQueryError
   if (reasons.some((reason) => /^(?:rateLimitExceeded|userRateLimitExceeded|quotaExceeded|RATE_LIMIT_EXCEEDED)$/.test(reason))) {
     return 'RATE_LIMITED';
   }
-  if (reasons.some((reason) => /^(?:insufficientPermissions|insufficientFilePermissions|ACCESS_TOKEN_SCOPE_INSUFFICIENT)$/.test(reason))) {
+  // CA review P3-3: no access to ONE file is "not found" (the grant itself is fine), and a file Drive will not
+  // download or export is "cannot be read as text", not a consent problem.
+  if (reasons.includes('insufficientFilePermissions')) return 'NOT_FOUND';
+  if (reasons.some((reason) => /^(?:cannotDownloadFile|cannotExportFile|cannotDownloadAbusiveFile|fileNotDownloadable)$/.test(reason))) {
+    return 'UNSUPPORTED_QUERY';
+  }
+  if (reasons.some((reason) => /^(?:insufficientPermissions|ACCESS_TOKEN_SCOPE_INSUFFICIENT)$/.test(reason))) {
     return 'INSUFFICIENT_SCOPE';
   }
   if (reasons.includes('exportSizeLimitExceeded')) return 'INVALID_RESPONSE';

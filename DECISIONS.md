@@ -19560,6 +19560,10 @@ Independent Chief Architect review before GML-1 merges.
     third-person subject still exempts (`김철수가 문서를 업데이트했어요`). Still best-effort; the footer is the guarantee.
   - **P3-2 (reported speech):** the clause splitter no longer breaks at the `고` of `다고`, so `답장을 보냈다고 해요` and
     `문서를 공유했다고 해요` read as reported speech and pass; `제가 답장을 보냈어요` is still withheld.
+  - **P3-3 (403 mapping):** `insufficientFilePermissions` (no access to that one file) is `NOT_FOUND`, not a consent
+    problem; `cannotDownloadFile`, `cannotExportFile`, `cannotDownloadAbusiveFile` and `fileNotDownloadable` are
+    `UNSUPPORTED_QUERY` ("cannot be read as text"). `insufficientPermissions` and `ACCESS_TOKEN_SCOPE_INSUFFICIENT` stay
+    `INSUFFICIENT_SCOPE`.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 
