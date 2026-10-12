@@ -47,9 +47,11 @@ function bounded(text: string, max: number): string {
  * "가져올 수 없어요") is a true statement about a read-only Quoky and is never replaced.
  */
 const KO_INCAPABLE =
-  /(?:접근|연결|연동|조회|확인|열람|읽(?:을|어|지)|볼\s*수)[^.!?\n]{0,14}?(?:수\s*(?:가\s*)?없|못\s*(?:해|하|합|했|드려|드립)|불가|권한이\s*없|되어\s*있지\s*않|돼\s*있지\s*않|안\s*되어|지원하지\s*않|기능이\s*없)/u;
+  /(?:접근|연결|연동|조회|확인|열람|읽(?:을|어|지)|볼(?=\s*수))[^.!?\n]{0,14}?(?:수\s*(?:가\s*)?없|못\s*(?:해|하|합|했|드려|드립)|불가|권한이\s*없|되어\s*있지\s*않|돼\s*있지\s*않|안\s*되어|지원하지\s*않|기능이\s*없)/u;
 const EN_INCAPABLE =
   /\b(?:can(?:no|['’])t|cannot|unable to|not able to|don['’]t have|do not have|have no|no)\s+(?:direct\s+|any\s+)?(?:access|connect|connection|see|read|view|check|look|integration)/iu;
+
+const HELP_INDEX = /^(?:도움말|help)(?:[\s:：]|$)/iu;
 
 /** The quoted command examples of the help lines and the entries' usage (`"할 일 추가: 내용"` → `할 일 추가: 내용`, and its head). */
 function quotedCommandsOf(lines: readonly string[]): string[] {
@@ -83,7 +85,8 @@ export function guardFalseIncapabilityClaims(
 ): FalseIncapabilityGuardResult {
   if (typeof text !== 'string' || text.trim() === '') return { text, guarded: false };
   // A reply that hands the owner one of Quoky's own commands is already the right answer (D5): never replaced.
-  const commands = quotedCommandsOf([...helpLines, ...entries.map((entry) => entry.usage.ko)]);
+  // The help index ("도움말", "help") is a deflection, not an action command: naming it does not make a denial true.
+  const commands = quotedCommandsOf([...helpLines, ...entries.map((entry) => entry.usage.ko)]).filter((command) => !HELP_INDEX.test(command));
   if (commands.some((command) => text.includes(command))) return { text, guarded: false };
   const hit = new Map<string, NlCatalogEntry>();
   for (const sentence of text.split(/(?<=[.!?。])\s+|\n+/u)) {

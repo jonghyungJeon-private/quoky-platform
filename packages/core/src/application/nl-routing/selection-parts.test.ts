@@ -289,6 +289,22 @@ describe('honest chat (ADR-0120 D9)', () => {
     expect(guardFalseIncapabilityClaims('메일을 읽을 수 없어요.', configuredWithMail, 'ko', help).guarded).toBe(true);
   });
 
+  it('guards the help-index deflection and every read-incapability phrasing, but keeps an action-command offer', () => {
+    const help = ['- 도움말: "도움말"', '- 도움말: "help"', '- 메일 보내기: "메일 보내기: 받는사람 내용"'];
+    const withMail = [...configured, NL_WAVE1_ENTRIES['mail.list']];
+    for (const reply of [
+      'Jira에 접근할 수 없어요. 도움말을 확인해 주세요.',
+      '지라 이슈를 볼 수 없어요.',
+      'Jira에 접근할 수 없어요.',
+      '지라 이슈를 조회할 수 없어요.',
+      '지라가 연결되어 있지 않아요.',
+    ]) {
+      expect(guardFalseIncapabilityClaims(reply, withMail, 'ko', help).guarded, reply).toBe(true);
+    }
+    const kept = '메일을 직접 보낼 수 없어요. "메일 보내기:" 명령을 보내 주세요.';
+    expect(guardFalseIncapabilityClaims(kept, withMail, 'ko', help)).toEqual({ text: kept, guarded: false });
+  });
+
   it('leaves true statements and unconfigured sources alone', () => {
     for (const reply of ['노션에는 접근할 수 없어요.', 'Jira는 이슈 추적 도구예요.', '메일에는 접근할 수 없어요.', '']) {
       expect(guardFalseIncapabilityClaims(reply, configured, 'ko').guarded).toBe(false);
