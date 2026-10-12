@@ -20710,3 +20710,17 @@ Decisions:
   98.1% exact hits, 0 wrong captures in each run, lowest entry 93.8% (GitHub, run 2); 5, 5 and 9 of 501 calls hit the
   4 s bound (counted as misses); latency p50 2.9 s, p95 3.57–3.64 s. Gate passed in all three runs; D3's 4 s bound is
   kept (p95 is under it; raising it to 6 s would recover the ~1–2% timeouts but is not needed for the gate).
+
+#### Second review round and residuals (2026-10-12)
+
+The second round fixed seven findings:
+
+- The guard again catches help-index deflections, and `볼 수 없` is guarded.
+- The reporter role is grounded on `보고자`/`보고한`/`내가 보고` and `I reported`/`reported by me`.
+- Pending answers resolve on quote-stripped text and keep the original turn's grounding. The owner's quote-stripped words, at most 1000 characters, are held for 5 minutes in session metadata; they are local and never sent.
+- The provider comparison uses the optional `AiProvider.family`, so `claude-cli:opus` chat still runs selection.
+- Telegram album parts keep their quoted ranges.
+
+Chief Architect final: PASS. Codex final: one P2, the English reporter grounding, which is fixed.
+
+Residual for NL-2 (optional hardening): `family` is free-form on the port, so equal families are not yet checked for equal execution locality. In today's wiring each vendor has a fixed id prefix, so no local and remote mix is possible. NL-2 should also require `executionLocalityOf(chat) === executionLocalityOf(selector)`.
