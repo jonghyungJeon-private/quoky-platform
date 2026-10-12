@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, IntentType, RiskLevel, TaskStatus, type Task } from '../domain';
 import { clipHeadAndTail } from './attachment-context';
+import { containsLink } from './link-neutralizer';
 import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
 import { PLAIN_TEXT_MARKUP, renderMessageContent } from './message-rendering';
 import { PromptComposer } from './prompt-composer';
@@ -12,6 +13,7 @@ import {
   isSummarizableDocumentReadout,
   renderUntrustedDocumentForPrompt,
   renderUntrustedDocumentHistoryNote,
+  stripMarkdownEmphasis,
   type UntrustedDocumentReadout,
 } from './untrusted-document-readout';
 
@@ -137,6 +139,48 @@ describe('untrusted document readout (ADR-0118 D7 under the ADR-0111 D3 rules)',
     expect(JSON.stringify(reply)).toContain('"kind":"untrusted","text":"[확인]([링크]) 하라는 메일이에요. [링크]","guard":"markup"');
   });
 
+  describe('document summary: emphasis and heading markers are stripped (never creating a link)', () => {
+    const render = (text: string) => renderMessageContent(documentSummaryReplyBody(text, ''), PLAIN_TEXT_MARKUP).trimEnd();
+
+    it('paired ** and __ become plain text; headings and list markers are converted', () => {
+      expect(render('**요약:** 내용')).toBe('요약: 내용');
+      expect(render('__중요__ 항목')).toBe('중요 항목');
+      expect(render('## 제목\n### 소제목 둘')).toBe('제목\n소제목 둘');
+      expect(render('- 하나\n* 둘\n  - 셋')).toBe('• 하나\n• 둘\n  • 셋');
+      expect(render('# 제목\n- **굵게** 항목')).toBe('제목\n• 굵게 항목');
+    });
+
+    it('a lone * (2 * 3), snake__case__name and an unpaired ** are kept', () => {
+      expect(render('2 * 3 = 6')).toBe('2 * 3 = 6');
+      expect(render('snake__case__name')).toBe('snake__case__name');
+      expect(render('**짝 없음')).toBe('**짝 없음');
+      expect(render('a ** b ** c')).toBe('a ** b ** c');
+    });
+
+    it('a masked link stays neutralized, and stripping can never join a link', () => {
+      expect(render('[x](https://evil.example)')).toBe('[x]([링크])');
+      expect(containsLink(render('evil__.__com'), 'display')).toBe(false); // intra-word __ is not emphasis; kept, not a link
+      for (const text of ['evil**.**com', '[x]**(**https://evil.example)', 'ht**tps://**evil.example', 'www**.**evil**.**com']) {
+        const out = render(text);
+        expect(containsLink(out, 'display'), `${text} -> ${out}`).toBe(false);
+        expect(out).not.toMatch(/evil/);
+      }
+    });
+
+    it('the span stays untrusted with the markup guard, and the stripper never lengthens the text', () => {
+      expect(JSON.stringify(documentSummaryReplyBody('**a**', '(f)'))).toContain('"kind":"untrusted","text":"a","guard":"markup"');
+      for (const text of ['**a** __b__ # c', '# h\n- x\n* y', '******', '**', '__**x**__', '#### t', '-', '- ', '*\t', '* **a**']) {
+        expect(Array.from(stripMarkdownEmphasis(text)).length, text).toBeLessThanOrEqual(Array.from(text).length);
+      }
+    });
+
+    it('is linear on a pathological line', () => {
+      const started = Date.now();
+      stripMarkdownEmphasis('**a '.repeat(50_000));
+      expect(Date.now() - started).toBeLessThan(1_000);
+    });
+  });
+
   it('re-review item 4: the reply budget is its own constant, equal to the work-summary bound, with no import of the work-chat handler', async () => {
     const { readFileSync } = await import('node:fs');
     const source = readFileSync(new URL('./untrusted-document-readout.ts', import.meta.url), 'utf8');
@@ -219,5 +263,83 @@ describe('DRV-1: the same readout for a Drive document (one shared path, no dupl
     expect(isSummarizableDocumentReadout({ ...result.readout, source: 'notes' })).toBe(false);
     // A credential in a Drive title or text refuses the item the same way.
     expect(build(`배포 토큰: ${SECRET}`, { source: 'drive' })).toEqual({ ok: false, refusal: 'CREDENTIAL_SHAPED' });
+  });
+});
+
+describe('Codex delta P2: a line prefix is never exposed by stripping (a pair around markup stays literal)', () => {
+  it.each([
+    ['**#** Heading', '**#** Heading'],
+    ['**-** Item', '• Item'],
+    ['**##** Deep', '**##** Deep'],
+    ['****#**** x', '****#**** x'],
+    ['__-__ y', '• y'],
+  ])('%j → %j', (input, expected) => {
+    expect(stripMarkdownEmphasis(input)).toBe(expected);
+  });
+
+  it('no line of the result starts with a heading or list marker', () => {
+    for (const input of ['**#** a\n**-** b\n**#** **-** c', '**#**#** z']) {
+      for (const line of stripMarkdownEmphasis(input).split('\n')) {
+        expect(line).not.toMatch(/^[ \t]*(?:#{1,6}|[-*])[ \t]/u);
+      }
+    }
+  });
+});
+
+describe('Codex delta P2 round 2: stripping never creates any line-start markup', () => {
+  it.each([['**>** Quote'], ['**```** Code'], ['**1.** Item'], ['**+** plus'], ['**|** pipe'], ['**~~~** fence'], ['**-#** sub']])(
+    '%j keeps its literal markers',
+    (input) => {
+      expect(stripMarkdownEmphasis(input)).toBe(input);
+    },
+  );
+
+  it('provider lines that already start with markup are unchanged in kind, and plain emphasis is still stripped', () => {
+    expect(stripMarkdownEmphasis('> **인용** 문장')).toBe('> 인용 문장');
+    expect(stripMarkdownEmphasis('1. **첫째** 항목')).toBe('1. 첫째 항목');
+    expect(stripMarkdownEmphasis('**요약:** 내용')).toBe('요약: 내용');
+  });
+});
+
+describe('Codex delta P2 round 3: stripping never joins inline markup', () => {
+  it.each([
+    ['prefix |**|secret|**|'],
+    ['<**@**123>'],
+    ['~**~**strike~~'],
+    ['`**`**code`'],
+    ['[**x**](https://e.test)'],
+    ['@**everyone**'],
+    ['**[링크]**'],
+  ])('%j keeps its markers', (input) => {
+    expect(stripMarkdownEmphasis(input)).toBe(input);
+  });
+
+  it('ordinary emphasis between plain characters is still stripped', () => {
+    expect(stripMarkdownEmphasis('결론: **중요한 내용**입니다')).toBe('결론: 중요한 내용입니다');
+    expect(stripMarkdownEmphasis('**요약:** 계약서 검토 요청')).toBe('요약: 계약서 검토 요청');
+  });
+
+  it('a seeded fuzz never produces a new markup pair that the raw line did not contain', () => {
+    const alphabet = ['*', '*', '|', '~', '`', '<', '>', '@', '#', '-', 'a', ' ', '1', '.', '_', '[', ']', '(', ')'];
+    let seed = 7;
+    const rand = (n: number): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    const pairs = ['||', '~~', '``', '<@', '](', '__'];
+    for (let i = 0; i < 3000; i += 1) {
+      const raw = Array.from({ length: 4 + rand(14) }, () => alphabet[rand(alphabet.length)]).join('');
+      const out = stripMarkdownEmphasis(raw);
+      for (const pair of pairs) {
+        const count = (s: string): number => s.split(pair).length - 1;
+        expect(count(out), `${JSON.stringify(raw)} → ${JSON.stringify(out)} (${pair})`).toBeLessThanOrEqual(count(raw));
+      }
+    }
+  });
+});
+
+describe('Codex delta P2 round 4: indentation of any depth cannot hide an exposed prefix', () => {
+  it('nine or more leading spaces before **1.** keep the line literal, and the reply never starts a list', () => {
+    const raw = `${' '.repeat(9)}**1.** item`;
+    expect(stripMarkdownEmphasis(raw)).toBe(raw);
+    const rendered = renderMessageContent(documentSummaryReplyBody(raw, '(f)'), PLAIN_TEXT_MARKUP);
+    expect(rendered.split('\n')[0]).not.toMatch(/^\s*\d{1,9}[.)][ \t]/u);
   });
 });

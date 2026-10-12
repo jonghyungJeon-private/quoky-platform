@@ -234,6 +234,88 @@ export function renderUntrustedDocumentHistoryNote(source: UntrustedDocumentSour
     : `[요청한 ${noun.ko} 1건을 요약해 보여 드림 — 요약 내용은 대화 기록에 남기지 않아요.]`;
 }
 
+/** Pair `marker` tokens on one line in a single linear pass and drop the paired ones (CommonMark flanking, simplified). */
+/** Characters that take part in chat-platform or CommonMark markup, mentions or escapes. */
+const STRIP_UNSAFE = /[|~`*_>#+[\]()<!\\@]/u;
+const isUnsafe = (ch: string | undefined): boolean => ch !== undefined && STRIP_UNSAFE.test(ch);
+
+function stripPairedMarker(line: string, marker: '**' | '__'): string {
+  const isSpace = (ch: string | undefined): boolean => ch === undefined || /\s/u.test(ch);
+  const isWord = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
+  const underscore = marker === '__';
+  const tokens: number[] = [];
+  for (let at = line.indexOf(marker); at !== -1; at = line.indexOf(marker, at + 2)) tokens.push(at);
+  let open = -1;
+  const drop = new Set<number>();
+  for (const at of tokens) {
+    const before = at > 0 ? line[at - 1] : undefined;
+    const after = line[at + 2];
+    if (open === -1) {
+      if (!isSpace(after) && after !== marker[0] && !(underscore && isWord(before))) open = at;
+    } else if (!isSpace(before) && !(underscore && isWord(after))) {
+      // Codex delta P2 (round 3): a pair is removed only when neither its content nor the characters right outside it
+      // hold a markup character — removing `**` between two non-markup characters can never join markup
+      // (`|**|x|**|` → `||x||` spoiler, `<**@**id>`, `~**~**`). Any other pair stays literal; stripping is cosmetic.
+      const inner = line.slice(open + 2, at);
+      const outsideBefore = open > 0 ? line[open - 1] : undefined;
+      const outsideAfter = line[at + 2];
+      if (!STRIP_UNSAFE.test(inner) && !isUnsafe(outsideBefore) && !isUnsafe(outsideAfter)) drop.add(open).add(at);
+      open = -1;
+    }
+  }
+  if (drop.size === 0) return line;
+  let out = '';
+  let from = 0;
+  for (const at of [...drop].sort((a, b) => a - b)) {
+    out += line.slice(from, at);
+    from = at + 2;
+  }
+  return out + line.slice(from);
+}
+
+/**
+ * Deterministically remove CommonMark emphasis and heading markers from a provider summary, because the reply is an
+ * untrusted `markup` span that a chat platform would show literally: paired `**x**` and `__x__` become `x`, a leading
+ * `#{1,6} ` is dropped, a leading `- ` / `* ` list marker becomes `• `. A lone `*` (`2 * 3`) stays. Never longer than
+ * the input. It can JOIN text into a link, so a caller must neutralize links AFTER it (see
+ * {@link documentSummaryReplyBody}).
+ */
+/**
+ * The line-start markup a line begins with (block quote, fence, heading, ordered or unordered list item, table pipe,
+ * spoiler or subtext marker), or `''` for none. Bounded patterns only.
+ */
+function lineMarkupPrefix(line: string): string {
+  const match = /^[ \t]*(?:>{1,3}|`{3,}|~{3,}|#{1,6}[ \t]|[-*+][ \t]|\d{1,9}[.)][ \t]|\||\|\||-#[ \t])/u.exec(line);
+  return match ? match[0].trim() : '';
+}
+
+export function stripMarkdownEmphasis(text: string): string {
+  return text
+    .split('\n')
+    .map((raw) => {
+      // Codex delta P2: removing a paired marker can expose a new line prefix (`**#** Heading` → `# Heading`,
+      // `**-** Item` → `- Item`), which the `markup` guard leaves unescaped. So the prefix rules run again after the
+      // emphasis pass, until the line is stable (each round only shortens the line; bounded to 4 rounds).
+      let line = raw;
+      for (let round = 0; round < 4; round += 1) {
+        const next = stripPairedMarker(
+          stripPairedMarker(line.replace(/^([ \t]*)#{1,6}[ \t]+/u, '$1').replace(/^([ \t]*)[-*][ \t]+/u, '$1• '), '**'),
+          '__',
+        );
+        if (next === line) break;
+        line = next;
+      }
+      // A prefix still exposed after the last round (pathological nesting) is neutralized rather than rendered.
+      line = line.replace(/^([ \t]*)#{1,6}[ \t]+/u, '$1').replace(/^([ \t]*)[-*][ \t]+/u, '$1• ');
+      // Codex delta P2 (round 2): fail safe for every other line-start markup. If stripping left the line starting with
+      // markup the provider's own line did not start with (`**>** q` → `> q`, `**```** c` → ```` ``` c ````,
+      // `**1.** i` → `1. i`), the stripped form is discarded and the line is shown as the provider wrote it (literal
+      // `**`): stripping is cosmetic and must never create markup.
+      return lineMarkupPrefix(line) !== lineMarkupPrefix(raw) && lineMarkupPrefix(line) !== '' ? raw : line;
+    })
+    .join('\n');
+}
+
 /**
  * Review P2-4: the reply body of a document summary. The provider's text is an `untrusted` span with the `markup`
  * guard — a masked link (`[text](url)`) or any other markup it echoes from a hostile mail is shown as text, never as a
@@ -241,7 +323,15 @@ export function renderUntrustedDocumentHistoryNote(source: UntrustedDocumentSour
  * (no `format: 'model-reply'`, so no adapter Markdown adaptation applies). Bounded like a work summary.
  */
 export function documentSummaryReplyBody(summaryText: string, footer: MessageBody): MessageBody {
-  const text = neutralizeLinks(summaryText, 'display').trim();
+  // Strip emphasis/heading markers (the `markup` guard would show them literally), then neutralize AGAIN: removing a
+  // character can join two fragments into a link (`evil**.**com`, `[x]**(**https://evil)`), so the LAST step is
+  // always the neutralizer — a link can never come out of this function. The first pass keeps masked links from being
+  // half-eaten by the stripper; neutralizing an already neutralized text is a no-op.
+  // Codex delta P2 (round 4): only leading blank LINES and trailing whitespace are trimmed. Removing a first line's
+  // indentation could turn it into markup (`         1. item` → `1. item`), so indentation is kept.
+  const text = neutralizeLinks(stripMarkdownEmphasis(neutralizeLinks(summaryText, 'display')), 'display')
+    .replace(/^(?:[ \t]*\n)+/u, '')
+    .trimEnd();
   return messageBody(
     clipMessage(untrustedText(text, 'markup'), DOCUMENT_SUMMARY_REPLY_MAX_CHARS, 'code-points', { after: messageBody('\n\n', footer) }),
   );

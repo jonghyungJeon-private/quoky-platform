@@ -344,6 +344,20 @@ describe('GitManager.deleteMergedLocalBranch (CAP-002, ADR-0059 — post-merge l
     expect(del).not.toHaveBeenCalled();
   });
 
+  it('each guard reports its own reason code', async () => {
+    const reasonOf = async (p: GitProvider, over: Record<string, unknown> = {}) =>
+      runCleanup(p, over).then(
+        () => 'resolved',
+        (e: unknown) => (e instanceof BranchCleanupBlockedError ? e.reason : 'other'),
+      );
+    expect(await reasonOf(cleanupProvider(), { branch: 'main' })).toBe('TARGET_IS_MAIN');
+    expect(await reasonOf(cleanupProvider(), { branch: 'bad branch' })).toBe('UNSAFE_NAME');
+    expect(await reasonOf(cleanupProvider({ async isAncestor() { return false; } }))).toBe('NOT_MERGED');
+    expect(await reasonOf(cleanupProvider({ async info() { return { branch: TARGET } as never; } }))).toBe('CHECKED_OUT');
+    expect(await reasonOf(cleanupProvider({ async status() { return { hasUnmergedPaths: true } as never; } }))).toBe('UNMERGED_PATHS');
+    expect(await reasonOf(cleanupProvider(), { expectedMainCommit: 'a'.repeat(40) })).toBe('MAIN_MOVED');
+  });
+
   it('phase-aware: provider Blocked → Blocked; Unverified → Unverified; unknown → Unverified (CA 12/13)', async () => {
     const blocked = cleanupProvider({ async deleteMergedLocalBranch() { throw new BranchCleanupBlockedError('moved'); } });
     await expect(runCleanup(blocked)).rejects.toBeInstanceOf(BranchCleanupBlockedError);

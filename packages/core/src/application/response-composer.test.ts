@@ -10,6 +10,8 @@ import {
 } from '../domain';
 import { MAX_CONTRIBUTED_HELP_LINE_CHARS, MAX_CONTRIBUTED_HELP_LINES, ResponseComposer } from './response-composer';
 import type { CodeChangePreview, CodeDiffPreview, PatchSetPreview, TestResultDetail } from './response-composer';
+import { isAcceptedExecutionPhrase, type ExecutionGate } from './execution-command-guard';
+import { BranchCleanupBlockedError, type BranchCleanupBlockReason } from './git-manager';
 import { ProviderGatewayTerminalStatus } from './provider-routing-gateway';
 import { RoutingFailureCode } from './runtime-response-validation-contracts';
 import { PLAIN_TEXT_MARKUP, outboundBody, renderMessageContent } from './message-rendering';
@@ -2108,5 +2110,52 @@ describe('ResponseComposer — connector writes (ADR-0112, CWR-2)', () => {
     expect(renderMessageContent(outboundBody(repeat), { ...PLAIN_TEXT_MARKUP, link: (url) => `«link:${url}»` })).toContain(
       '링크: «link:https://example.atlassian.net/browse/P-1»',
     );
+  });
+});
+
+describe('post-approval execute hints are accepted execution phrases (v4 QA follow-up)', () => {
+  const hintOf = (text: string): string => /"([^"]+)"(?:이라고|라고)/u.exec(text)?.[1] ?? '';
+
+  it.each<[ExecutionGate, string]>([
+    ['commit', composer.composeCommitApprovalRecorded(CTX).text],
+    ['push', composer.composePushApprovalRecorded(CTX).text],
+    ['prCreate', composer.composePrApprovalRecorded(CTX).text],
+    ['merge', composer.composeMergeApprovalRecorded(CTX).text],
+    ['remoteCleanup', composer.composeRemoteBranchCleanupRecorded(CTX).text],
+  ])('%s: the hint names a phrase the grammar executes', (gate, text) => {
+    const phrase = hintOf(text);
+    expect(phrase, text).not.toBe('');
+    expect(isAcceptedExecutionPhrase(gate, phrase)).toBe(true);
+  });
+
+  it('the merge hint is the exact one-line form', () => {
+    expect(composer.composeMergeApprovalRecorded(CTX).text).toContain('실제로 머지하려면 "머지 실행"이라고 알려 주세요.');
+  });
+});
+
+describe('ResponseComposer.composeBranchCleanupBlocked names the specific reason', () => {
+  const expected: Record<BranchCleanupBlockReason, string> = {
+    CHECKED_OUT: '현재 체크아웃된 브랜치라 삭제하지 않았어요. 다른 브랜치(예: main)로 바꾼 뒤 다시 요청해 주세요.',
+    NOT_MERGED: '아직 main에 병합되지 않은 브랜치',
+    TARGET_IS_MAIN: 'main 브랜치는 삭제하지 않아요.',
+    UNSAFE_NAME: '브랜치 이름이 안전한 형식이 아니라',
+    MAIN_MOVED: '로컬 main이 동기화한 시점과 달라져서',
+    BRANCH_MOVED: '브랜치가 확인한 시점과 달라졌거나 이미 없어서',
+    UNMERGED_PATHS: '해결되지 않은 병합 충돌',
+  };
+
+  it.each(Object.entries(expected) as [BranchCleanupBlockReason, string][])('%s', (reason, sentence) => {
+    const text = composer.composeBranchCleanupBlocked(CTX, reason).text;
+    expect(text).toContain(sentence);
+    expect(text).toContain('브랜치를 삭제하지 않았어요.');
+    expect(text).toContain('원격 브랜치·배포·릴리즈도 하지 않았어요');
+    // only that reason: the old catch-all list is not shown
+    expect(text).not.toContain('이거나, 아직 병합되지 않았거나');
+  });
+
+  it('an unknown reason keeps the generic wording; the error carries its reason', () => {
+    expect(composer.composeBranchCleanupBlocked(CTX).text).toContain('현재 체크아웃 중이거나');
+    expect(new BranchCleanupBlockedError('x', 'CHECKED_OUT').reason).toBe('CHECKED_OUT');
+    expect(new BranchCleanupBlockedError('x').reason).toBeUndefined();
   });
 });

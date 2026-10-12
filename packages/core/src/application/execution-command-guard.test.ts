@@ -83,7 +83,7 @@ describe('execution allow-list (orchestrator decision after the Codex wave-8 rev
       ['commit', '커밋 실행'],
       ['push', '푸시 실행'],
       ['prCreate', 'PR 생성 실행'],
-      ['merge', '머지해줘'],
+      ['merge', '머지 실행'],
       ['mainSync', 'main 동기화해줘'],
       ['localCleanup', '브랜치 정리해줘'],
       ['remoteCleanup', '원격 브랜치 삭제 실행해줘'],

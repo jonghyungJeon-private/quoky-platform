@@ -38,6 +38,16 @@ export class GitMainSyncUnverifiedError extends Error {
   }
 }
 
+/** Why a local branch cleanup was blocked before any delete (a closed set; each has one fixed reply sentence). */
+export type BranchCleanupBlockReason =
+  | 'TARGET_IS_MAIN'
+  | 'UNSAFE_NAME'
+  | 'CHECKED_OUT'
+  | 'NOT_MERGED'
+  | 'MAIN_MOVED'
+  | 'BRANCH_MOVED'
+  | 'UNMERGED_PATHS';
+
 /**
  * A post-merge LOCAL branch cleanup failed **before the branch ref-delete was attempted** (invalid input, dirty/
  * mid-op tree, branch is main / checked out / unsafe / not merged, local main moved, or the branch moved vs the
@@ -45,8 +55,11 @@ export class GitMainSyncUnverifiedError extends Error {
  * (CAP-002, ADR-0059, Sprint 3i — mirrors GitMainSyncBlockedError).
  */
 export class BranchCleanupBlockedError extends Error {
-  constructor(message: string) {
+  /** The guard that fired, when known (the composer maps it to one fixed sentence; never git output). */
+  readonly reason: BranchCleanupBlockReason | undefined;
+  constructor(message: string, reason?: BranchCleanupBlockReason) {
     super(message);
+    this.reason = reason;
     this.name = 'BranchCleanupBlockedError';
   }
 }
@@ -372,8 +385,8 @@ export class GitManager {
     const { rootPath, branch, expectedMainCommit } = input;
     // ── 1. Defensive validation. All → Blocked (no read, no delete). ────────────────────────────────────────
     if (!rootPath.trim()) throw new BranchCleanupBlockedError('git branch cleanup requires a rootPath');
-    if (!isSafePushBranch(branch)) throw new BranchCleanupBlockedError('git branch cleanup rejects an unsafe branch');
-    if (branch === 'main') throw new BranchCleanupBlockedError('git branch cleanup never deletes main');
+    if (!isSafePushBranch(branch)) throw new BranchCleanupBlockedError('git branch cleanup rejects an unsafe branch', 'UNSAFE_NAME');
+    if (branch === 'main') throw new BranchCleanupBlockedError('git branch cleanup never deletes main', 'TARGET_IS_MAIN');
     if (!/^[0-9a-f]{7,40}$/i.test(expectedMainCommit)) throw new BranchCleanupBlockedError('git branch cleanup rejects an invalid expected main commit');
 
     // ── 2. Local repository safety. ─────────────────────────────────────────────────────────────────────────
@@ -388,8 +401,8 @@ export class GitManager {
     } catch {
       throw new BranchCleanupBlockedError('git branch cleanup: could not read local repository state');
     }
-    if (status.hasUnmergedPaths) throw new BranchCleanupBlockedError('git branch cleanup: unmerged paths present');
-    if (info.branch === branch) throw new BranchCleanupBlockedError('git branch cleanup: target branch is currently checked out');
+    if (status.hasUnmergedPaths) throw new BranchCleanupBlockedError('git branch cleanup: unmerged paths present', 'UNMERGED_PATHS');
+    if (info.branch === branch) throw new BranchCleanupBlockedError('git branch cleanup: target branch is currently checked out', 'CHECKED_OUT');
 
     // ── 3. Local main must still equal the synchronized commit (CA change 4). ──────────────────────────────
     let localMain: { commitHash: string } | null;
@@ -400,7 +413,7 @@ export class GitManager {
     }
     if (!localMain) throw new BranchCleanupBlockedError('git branch cleanup: local main does not exist');
     if (localMain.commitHash !== expectedMainCommit) {
-      throw new BranchCleanupBlockedError('git branch cleanup: local main moved since sync; not deleted');
+      throw new BranchCleanupBlockedError('git branch cleanup: local main moved since sync; not deleted', 'MAIN_MOVED');
     }
 
     // ── 4. Target branch: absent → idempotent success; else record the CAS base. ───────────────────────────
@@ -420,7 +433,7 @@ export class GitManager {
     } catch {
       throw new BranchCleanupBlockedError('git branch cleanup: could not determine merge status; not deleted');
     }
-    if (!merged) throw new BranchCleanupBlockedError('git branch cleanup: target branch is not merged into main; not deleted');
+    if (!merged) throw new BranchCleanupBlockedError('git branch cleanup: target branch is not merged into main; not deleted', 'NOT_MERGED');
 
     // ── 6. SINGLE CAS delete. Phase-aware: Blocked → Blocked; Unverified/other → Unverified. ───────────────
     let result: GitBranchCleanupResult;
