@@ -8,7 +8,7 @@
 - **Natural-language routing (GOV-7, 2026-10-12).** After the live Telegram QA misses and the routing audit
   (`docs/plans/nl-intent-audit-2026-10-12.md`), the owner answered four more questions (section 7, decisions 20-23;
   design input `docs/plans/nl-intent-design-2026-10-12.md`). GOV-7 appended ADR-0120 (natural-language capability
-  selection) as **Proposed**; it awaits the owner's ratification. NL-1 joins wave 2, GML-2 moves to wave 3, and NL-2
+  selection); the owner ratified it the same day. NL-1 joins wave 2, GML-2 moves to wave 3, and NL-2
   waits for the NL-1 shadow data (section 4).
 - **Date:** 2026-10-12
 - **Base:** `main` at `a965590` (PR #173 merged, v4 closed). SQLite schema v15. `ConversationRuntimeDeps` baseline 35.
