@@ -19582,6 +19582,7 @@ Independent Chief Architect review before GML-1 merges.
     behaviour (`약관 업데이트를 했으니 확인하라는 메일이에요`, `Acme writes: "We changed our pricing."` are shown). The earlier DRV-1
     document-action patterns stay shared (P3-6). The P3-2 `(?<!다)고` clause split also stays shared: it only lets
     reported speech through for mail too, which is the documented intent.
+  - **CA re-review 2 (stale docs):** the changelog, current state and quickstart now say Google Docs and Sheets only.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 

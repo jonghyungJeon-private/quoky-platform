@@ -10,7 +10,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 ADR-0118 D1–D8 for Drive, on top of GML-1 (#165). New pieces:
 
 - `packages/connector-gdrive`: `drive.readonly` only; pinned GET endpoints; text export of Docs (`text/plain`) and Sheets
-  (`text/csv`) and plain text files only, cut at 256 KiB; and a source scan that proves the client cannot write or share;
+  (`text/csv`) only (no file is downloaded; an uploaded text file is listed, never read), cut at 256 KiB; and a source scan that proves the client cannot write or share;
 - the Core `DriveReader` port and `DRIVE_READER` token;
 - a `pre-classify` order-145 Drive handler, after mail and before the calendar.
 

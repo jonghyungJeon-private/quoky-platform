@@ -16,8 +16,8 @@ set; with it off, every reply is unchanged.
   at every refresh. A broader grant is refused.
   - **Requests.** GET to the pinned `www.googleapis.com/drive/v3/files`, `files/{id}` and `files/{id}/export` only,
     through one guarded request function.
-  - **Text only.** Google Docs export as `text/plain`, Google Sheets as `text/csv`, and plain text files download as
-    text; nothing else is ever read. The text is cut at 256 KiB while it streams; a non-text body is refused.
+  - **Text only.** Google Docs export as `text/plain`, Google Sheets as `text/csv`; nothing else is ever read
+    (no file is downloaded, so an uploaded text file is listed but never summarized). The text is cut at 256 KiB while it streams; a non-text body is refused.
   - **Bounds.** 10 s per request, no redirects, a 10-entry page (512 KiB cap), an ids-only count page of at most 100
     (64 KiB), metadata 64 KiB. Trashed files and folders are not listed.
   - **Token.** Its own mode-600 token file; a calendar or Gmail token file is refused.
