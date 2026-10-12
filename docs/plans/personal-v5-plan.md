@@ -21,16 +21,16 @@ means recorded in `docs/uat/personal-v4-qa-record.md`; everything else is offlin
 
 | State | Items (source: QA record session 1 of 2026-10-12, `CURRENT_STATE.md` "Personal v4 — closed") |
 |---|---|
-| **Live on the owner's service** | Telegram private chat: text, an image with a caption, a 👍 reaction recorded as feedback, the shared owner Actor, a reminder delivered on Telegram (T1-T7). Gmail and Drive read-only, DM-only (G1-G8; #171 and #172 fixed the live defects). Daily brief with the calendar section (10/9-10/12) and a pre-meeting reminder that followed a moved event (B1, B2). CODE-9 merge once on the sandbox repository (C1-C4). Earlier: UNC-1 network fault (#155), DET-2 and TBL-1 (2026-10-08) |
+| **Live on the owner's service** | Telegram private chat: text, an image with a caption, a 👍 reaction recorded as feedback, the shared owner Actor, a reminder delivered on Telegram (T1-T7). Gmail and Drive read-only, DM-only (G1-G8; #171 and #172 fixed the live defects). Daily brief with the calendar section (10/9-10/12) and a pre-meeting reminder that followed a moved event (B1, B2). CODE-9 merge once on the sandbox repository (C1-C4). The PRV-3 threshold DM: sent once, not resent after a restart (U1-U3, 2026-10-12). Earlier (2026-10-08): UNC-1 network fault (#155), DET-2 and TBL-1, and the CODE-8 App installation narrowed to `quoky-uat-sandbox`, confirmed by the CODE-9 run through the App |
 | **Offline acceptance only (INT-3)** | `OPS_*` notices and the ops-UI decision result for a Telegram-held approval reach the Discord owner; Gmail/Drive DM-only on both platforms; injection mail or documents cause no action; configured-but-unselected OpenAI/Gemini make no call; `TaskRun.usage` records reported counts |
-| **Configured but off** | OpenAI (PRV-1) and Gemini (PRV-2): no API key on the service. `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true` with no remote provider selected. `QUOKY_GIT_MERGE_ENABLED=false` |
-| **Pending (not run, not claimed)** | PRV-1/PRV-2 live; PRV-3 monthly DM (first fires in November); the Jira section of the brief (on since 2026-10-12, first seen at the next brief); LRN-5 remote round trip; TG-3 ops-panel visual check; the live re-run of the G9 marker-stripping fix (QA record G9) |
+| **Configured but off** | OpenAI (PRV-1) and Gemini (PRV-2): no API key on the service. `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true` (the owner delegated the decision, 2026-10-12) with no remote provider selected. `QUOKY_GIT_MERGE_ENABLED=false` |
+| **Pending (not run, not claimed)** | PRV-1/PRV-2 live; PRV-3 monthly DM (first fires on 11/1; same delivery path and state machine as the verified threshold DM); a CODE-8 run on a second allowlisted repository; the Jira section of the brief (on since 2026-10-12, first seen at the next brief); LRN-5 remote round trip; TG-3 ops-panel visual check; the live re-run of the G9 marker-stripping fix (QA record G9) |
 
-**Owner deferrals (owner instruction for this plan, 2026-10-12):** the OpenAI and Gemini API keys and Notion stay
-deferred until the owner asks for them again. PRV-1/PRV-2 live and the LRN-5 round trip therefore stay Pending, and
+**Owner deferrals (owner's chat with the orchestrator, 2026-10-12):** "OpenAI / Gemini API Key는 필요시에 내가
+재요청할게. Notion 도 마찬가지야." The keys and Notion stay deferred until the owner asks for them again. PRV-1/PRV-2 live and the LRN-5 round trip therefore stay Pending, and
 Notion stays the unscheduled P3 candidate of v4 decision 20.
 
-**In progress elsewhere (v4 polish PR, another branch):** three small residuals: listing numbers that survive a
+**In progress elsewhere (v4 polish PR, branch `claude/v4-residual-polish`):** three small residuals: listing numbers that survive a
 restart (the in-memory list ↔ id mapping of GML-1 and DRV-1), the help-line bound (ADR-0096 D6 bound of 14 with Gmail
 and Drive on), and Telegram links and block quotes (TG-3 "translation scope"). v5 does not own those files until that PR
 merges (section 4, hot-file lane).
@@ -78,11 +78,11 @@ means a re-entry condition.
 | C1 | TG-3 Telegram ops panel, visual check | QA record Pending | **Fix:** LIVE-2 |
 | C2 | Jira section of the brief | QA record Pending | **Fix:** LIVE-2 observes the next brief |
 | C3 | G9 marker stripping, live re-run | QA record G9 | **Fix:** LIVE-2 (one `N번 문서 요약해줘`) |
-| C4 | PRV-3 monthly usage DM | QA record Pending | **Fix:** LIVE-2 observes the first November DM; no action needed to trigger it |
+| C4 | PRV-3 monthly usage DM | QA record Pending; the threshold DM on the same path passed live (U1-U3) | **Fix:** LIVE-2 observes the 11/1 DM; no action needed to trigger it |
 | C5 | PRV-1/PRV-2 live, LRN-5 remote round trip | QA record Pending | **Park** until the owner re-requests the keys (section 1.1) |
-| C6 | CODE-8 Strict gates: App installation narrowed to "Only select repositories", a sandbox run on a second allowlisted repository | `CURRENT_STATE.md` CODE-8 ("not been run"); no QA record entry | **Fix:** LIVE-2 verifies the installation setting read-only and records it. The second-repository run only with CODE-10 |
+| C6 | CODE-8 run on a second allowlisted repository. (The App narrowing to `quoky-uat-sandbox` was done on 2026-10-08 and confirmed by the CODE-9 run.) | `CURRENT_STATE.md` CODE-8, QA record Pending | **Park** with CODE-10: run it only when a second real repository is registered (decision 19) |
 | C7 | `OPS_*` and ops-UI decision-result routing for a Telegram-held approval | INT-3 only | **Accept** the offline proof; record a live observation if a notice occurs naturally |
-| C8 | Chief Architect review of LRN-5 | `CURRENT_STATE.md` LRN-5 says "pending"; no later record found | **Fix:** DOC-F confirms whether it ran and records it, or runs it (the egress rule is live-configured) |
+| C8 | Chief Architect review of LRN-5 | Done: APPROVE WITH NITS, 6 nits fixed in `7374160`, Codex PASS, merged as #156 (PR body); `CURRENT_STATE.md` corrected | **Closed.** Only the live round trip stays Pending (C5) |
 | R1 | Session lookup ignores the platform: `findActiveByContext(channelId, threadId)`. Discord and Telegram ids are disjoint in practice only | ADR-0114 TG-1 residual (CA P3-7), carried by TG-3 | **Fix (P2):** STO-1, storage ADR-0119, migration v16 |
 | R2 | Usage ledger query is a full scan of `task_runs` (about 38 ms per 20,000 runs locally) on each hourly evaluation and ops-UI load | ADR-0115 PRV-3 residual | **Fix only inside STO-1** (same v16); on its own, accept: the cost is negligible at personal scale |
 | R3 | The claim guard is best-effort lexical; the fixed footer is the guarantee | ADR-0118 GML-1 and DRV-1 residuals | **Accept.** Add wordings as live QA finds them |
@@ -118,9 +118,8 @@ says otherwise; AI HTTP APIs serve only the chat and image tiers (ADR-0115).
 - **Goal.** Close every v4 Pending item that needs no deferred key, and align the docs and the ship pipeline with v5.
 - **Scope.**
   - **LIVE-2** (no code, Strict, owner-attended where noted): C1 panel visual (ego-browser on the loopback ops UI); C2
-    read the next morning's brief; C3 one Drive summary; C4 observe the November DM; C6 read the GitHub App installation
-    setting. Each defect becomes an ordinary follow-up PR in the owning package.
-  - **DOC-F** (docs only): a v5 section in a new `docs/uat/personal-v5-qa-record.md`; C8 recorded; R10 noted in the QA
+    read the next morning's brief; C3 one Drive summary; C4 observe the 11/1 monthly DM. Each defect becomes an ordinary follow-up PR in the owning package.
+  - **DOC-F** (docs only): a v5 section in a new `docs/uat/personal-v5-qa-record.md`; R10 noted in the QA
     conventions; the local `quoky-ship` skill text updated from "v4 waves" and `personal-v4-plan.md` to the v5 terms
     once decision 1 is answered.
 - **ADR.** None.
@@ -128,7 +127,7 @@ says otherwise; AI HTTP APIs serve only the chat and image tiers (ADR-0115).
   must not claim a result before the session that produced it.
 - **Estimate.** DOC-F S. LIVE-2 one attended session of under an hour, plus two passive observations.
 - **Dependencies.** The v4 polish PR merged first, so C3 runs on the final summary path.
-- **AC.** C1-C4, C6 and C8 are PASS, FAIL with a follow-up, or "accepted by the owner" in the v5 QA record.
+- **AC.** C1-C4 are PASS, FAIL with a follow-up, or "accepted by the owner" in the v5 QA record.
 
 ### HARD — Bounded OAuth token reads (P1)
 
@@ -243,11 +242,13 @@ The owner works in Google Workspace (v4 plan CON; calendar and mail live). Each 
 
 ### Parked or recommended for dropping (P3)
 
+The parked items stay parked; the orchestrator recommends keeping them parked (2026-10-12).
+
 | Item | Recommendation | Reason | Re-entry condition |
 |---|---|---|---|
 | COST-1 price table on the usage ledger | **Drop for now** | No metered provider is configured; Claude and Codex run on subscriptions, which cost nothing per token (ADR-0115 PRV-3 residual) | The owner adds an OpenAI or Gemini key |
-| PRV-1/PRV-2 live, LRN-5 round trip | **Park** | Owner deferral (section 1.1) | The owner re-requests the keys |
-| Notion connector | **Park** | v4 decision 20 undecided; owner deferral | The owner asks for it; then a new ADR |
+| PRV-1/PRV-2 live, LRN-5 round trip | **Park** | Owner deferral, 2026-10-12 (section 1.1) | The owner re-requests the keys |
+| Notion connector | **Park** | v4 decision 20 undecided; owner deferral, 2026-10-12 ("Notion 도 마찬가지야") | The owner asks for it; then a new ADR |
 | SUB-3 continuation, Stage 2A re-validation | **Keep parked** | No concrete background-job need appeared in v4; the brief and reminders cover "report back later" (ADR-0103 note) | The ADR-0103 note's condition, unchanged |
 | LLM-3 MLX, LRN-4 fine-tuning | **Keep closed** | Chat still runs on Claude | The ADR-0105/0107 notes, unchanged |
 | ADR-0108 D4 model-proposed PR text | **Keep parked** | The deterministic text passed live | The owner asks |
@@ -263,7 +264,7 @@ assume section 7 is answered. A "no" drops the task without blocking the rest. M
 | Wave | Task | Track | Owned files (summary) | Model | Deps |
 |---|---|---|---|---|---|
 | 0 | (v4 polish PR) | — | (other branch) `core/application/mail/*`, `core/application/drive/*`, help lines, `adapter-telegram` formatting | — | — |
-| 0 | LIVE-2 | LIVE | No code. Strict observations C1-C4, C6 | haiku (log reading), owner-attended | polish PR merged (C3 only) |
+| 0 | LIVE-2 | LIVE | No code. Strict observations C1-C4 | haiku (log reading), owner-attended | polish PR merged (C3 only) |
 | 0 | DOC-F | LIVE | `docs/uat/personal-v5-qa-record.md` (new), `CURRENT_STATE.md`, the local `.claude/skills/quoky-ship/SKILL.md` (untracked) | sonnet | decision 1 |
 | 1 | GOV-6 | GOV | `DECISIONS.md` (ADR-0119, the ADR-0117 and ADR-0118 amendments, the v5 ratification record), `ROADMAP.md`, this plan | opus | owner answers |
 | 1 | HARD-1 | HARD | `connector-gmail/src/oauth.ts`, `connector-gdrive/src/oauth.ts`, `connector-calendar-google/src/oauth.ts` (+tests) | sonnet | — |
@@ -352,7 +353,7 @@ in its ADR first.
 |---|---|---|---|
 | 1 | Renew the standing approval for v5 waves: automatic Push/PR/Merge, deploy to the service and a smoke check after offline validation, independent review and Codex PASS; Strict items still confirmed per target? | **Renew on the v4 terms, with deploy and smoke named explicitly** | It worked across v4 (#152-#173). The recorded v4 decision names Push/PR/Merge only, while the ship skill also deploys |
 | 2 | Is v5 a depth-and-hardening release with no new platform, vendor or connector? | **Yes** | The owner's daily surfaces are all live; the remaining gaps are depth and recorded residuals |
-| 3 | Keep the OpenAI/Gemini keys and Notion deferred until you ask again, with their live checks Pending? | **Yes** (your instruction) | Nothing in v5 depends on them |
+| 3 | Keep the OpenAI/Gemini keys and Notion deferred until you ask again, with their live checks Pending? | **Yes** (your chat statement of 2026-10-12) | Nothing in v5 depends on them |
 | 4 | STO-1: fix the session platform key and add the usage index in one migration v16, applied on the service DB after a verified backup? | **Yes, as P2, in one migration**; if no, accept both as permanent residuals | Each migration costs a Strict apply, so bundling both is cheaper. Neither causes a visible problem today |
 | 5 | HARD-1: bound the OAuth token reads in all three Google connectors? | **Yes** | Small, no behaviour change, closes a security-hygiene residual |
 | 6 | BRF-3: add an opt-in unread-mail section (count plus up to 3 sender/subject lines, no body) to the morning brief? | **Yes, off by default**; you turn it on | Mail is live and used; the brief already runs daily |
@@ -368,4 +369,4 @@ in its ADR first.
 | 16 | Accept residuals R3, R4, R8, R9, R12, R14, R16, R18, R19 and keep R20 as documented? | **Accept all** | Each is by design or has no user-visible effect; R8 is already your decision |
 | 17 | Let Drive read uploaded text files (an ADR-0118 D2 amendment with a binary sniff)? | **No** | Docs and Sheets cover the recorded use; a new egress path for little gain |
 | 18 | "Memory improvements" (ROADMAP "Future"): plan it now? | **No track** until you name a concrete problem | No QA record shows a memory defect |
-| 19 | LIVE-2 C6: may the orchestrator read the GitHub App installation setting in the browser to confirm the CODE-8 narrowing? | **Yes, read-only** | The narrowing was approved on 2026-10-08 but is not recorded as done |
+| 19 | CODE-8 on a second allowlisted repository (C6): keep it Pending until a second real repository is registered? | **Yes, park with CODE-10** | The narrowed installation is confirmed on the sandbox; a second repository is not in daily use |

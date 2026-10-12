@@ -166,12 +166,12 @@ recorded in `docs/uat/personal-v4-qa-record.md`; everything else is offline-test
 | PLT-0 platform-neutral rendering; DET-2 to-do/reminder status phrases; TBL-1 tables (ADR-0111 amendment) | DONE; DET-2 and TBL-1 live-checked 2026-10-08 |
 | TG-1/2/3 Telegram (ADR-0114): text, attachments, reactions, approvals, notices, ops panel | DONE and live-verified for text, an image with a caption, reactions (`message_reaction` is delivered in private chats), the shared owner Actor and a Telegram-delivered reminder. **Pending:** the ops-panel visual check |
 | PRV-1 OpenAI API, PRV-2 Gemini API (ADR-0115; chat tier and images only) | DONE offline; **Pending live:** no API key on the service. Configured but unselected providers make no call (INT-3) |
-| PRV-3 usage ledger and monthly DM (ADR-0115 D8) | DONE offline; records per run. **Pending live:** the monthly DM first fires in November |
+| PRV-3 usage ledger and monthly DM (ADR-0115 D8) | DONE; records per run. The threshold DM was verified live on 2026-10-12 (sent once, not resent after a restart). **Pending live:** the monthly DM, which uses the same delivery path and first fires on 11/1 |
 | LRN-5 learning-example egress (ADR-0116) | DONE offline; `QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true` is set, but no remote provider is selected. **Pending live:** the round trip |
 | BRF-1 brief with the calendar, BRF-2 pre-meeting reminders (ADR-0117) | DONE and live-verified (daily brief 10/9-10/12; a moved event rescheduled its reminder and fired once). **Pending:** the Jira section (`QUOKY_BRIEF_JIRA_ENABLED=true`, first seen at the next brief) |
 | GML-1 Gmail, DRV-1 Drive read (ADR-0118) | DONE and live-verified (read-only, DM-only); defects found live were fixed in #171 and #172 |
 | UNC-1 network-fault test | DONE live (2026-10-08, #155) |
-| CODE-8 multi-repository allowlist (ADR-0109 amendment) | DONE (#152) |
+| CODE-8 multi-repository allowlist (ADR-0109 amendment) | DONE (#152); the App installation narrowed to the sandbox repository on 2026-10-08 and confirmed by the CODE-9 run. **Pending live:** a run on a second allowlisted repository |
 | CODE-9 merge enablement | DONE once on the sandbox repository (PR #3, merge `5c11cad`); the release default `QUOKY_GIT_MERGE_ENABLED=false` is restored |
 | SUB-3 continuation, Stage 2A re-validation, Notion | Parked / undecided (unchanged) |
 

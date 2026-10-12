@@ -24,6 +24,12 @@ were written on their branches, so where one says "not run yet" or "Pending", th
   moved event (delivered once at the new time, nothing at the stale one).
 - **`QUOKY_BRIEF_JIRA_ENABLED=true`** and **`QUOKY_LEARNING_EXAMPLES_REMOTE_ENABLED=true`** are set.
 - **CODE-9 merge UAT** passed once on the sandbox repository (PR #3, merge `5c11cad`); the merge flag is back to `false`.
+- **PRV-3 threshold DM** (2026-10-12): with a temporary threshold of 1 token and one Codex turn (10,468 tokens
+  reported), the threshold DM arrived once in the owner DM; a second restart sent nothing (`thresholdSentIn: 2026-10`).
+  The threshold setting was then removed and the conversation model restored to Claude.
+- **CODE-8 App narrowing** (2026-10-08): the GitHub App installation is "Only select repositories" =
+  `jonghyungJeon-private/quoky-uat-sandbox`; the CODE-9 run above (push, PR, merge, branch deletion through the App)
+  confirms the narrowed installation works.
 - Earlier (2026-10-08): the UNC-1 network-fault test (#155); DET-2 and TBL-1 live checks.
 
 **Covered by offline acceptance tests (INT-3), not live-verified:** `OPS_*` notices and the ops-UI decision result for a
@@ -35,10 +41,12 @@ review and policy capabilities stay on Claude; `TaskRun.usage` records reported 
 
 - **OpenAI (PRV-1) and Gemini (PRV-2):** implemented and offline-tested; no API key on the service, so nothing was run
   live and nothing is selectable. With a key but no owner selection they cause no egress (pinned by INT-3).
-- **PRV-3 usage ledger:** records run by run; the monthly DM first fires in November and has not been seen live.
+- **PRV-3 monthly DM:** first fires on 11/1. It uses the same delivery path and state machine as the threshold DM,
+  which was verified live (above).
 - **Jira section of the brief:** on, but first checked at the next morning's brief.
-- **LRN-5 remote examples:** the flag is on, but no remote provider is selected, so no example has left the host; the
-  live round trip is Pending.
+- **LRN-5 remote examples:** the flag is on (owner delegated the decision, 2026-10-12), but no remote provider is
+  selected, so no example has left the host; the live round trip is Pending.
+- **CODE-8 second allowlisted repository:** the sandbox run on a second repository is Pending.
 - **TG-3 Telegram ops panel:** not looked at in a browser.
 - **Merge** (`QUOKY_GIT_MERGE_ENABLED`) is `false`.
 - Notion (undecided), SUB-3 continuation and the Stage 2A re-validation stay parked.
@@ -280,8 +288,9 @@ curated examples (≤2 per GENERAL_CHAT turn) also reach a `REMOTE` chat provide
 selection-time Claude fallback. The router reports the selection source with the resolved provider; the rule reads only
 locality and source. No migration, no port, no deps change (`ConversationRuntimeDeps` 35). Offline validation only; on
 the owner's service (`QUOKY_OLLAMA_ENABLED=false`, selector unset) `QUOKY_CHAT_PROVIDER=claude` or a `/providers`
-default is needed for examples to reach Claude. Strict gates (flag change, live round trip) not run; Chief Architect
-review pending.
+default is needed for examples to reach Claude. Chief Architect review: APPROVE WITH NITS; all 6 nits fixed in
+`7374160`, then Codex PASS on the full diff and the delta (#156 PR body). The flag is now on on the service (owner
+delegated the decision, 2026-10-12); the live round trip is Pending.
 
 ### CODE-8 multi-repository allowlist — merged (#152) (2026-10-08)
 
@@ -291,9 +300,11 @@ and push URLs (HTTPS github.com only, sanitized git env) on every remote step an
 PR, status, merge, main sync and cleanup are refused before any token mint. Every App token stays down-scoped to the one
 resolved repository. Remote git commands run against the validated canonical URL in every auth mode, and a push or PR
 approved for one repository refuses with `TARGET_CHANGED` when the project now resolves to another. No migration, no
-port, no deps change (`ConversationRuntimeDeps` 35). Offline validation only; the
-strict gates (switching the App installation to "Only select repositories", a sandbox Live UAT on a second allowlisted
-repository) have not been run.
+port, no deps change (`ConversationRuntimeDeps` 35). Strict gates: the App installation was switched to "Only select
+repositories" = `jonghyungJeon-private/quoky-uat-sandbox` on 2026-10-08 through the browser, with owner approval (the
+owner completed GitHub's sudo confirmation); GitHub lookups through Quoky still worked afterwards, and the CODE-9 run of
+2026-10-12 (push, PR, merge, branch deletion through the App) confirms the narrowed installation. Still Pending: a
+sandbox Live UAT on a second allowlisted repository.
 
 ### Personal v3 follow-ups — merged through #148, live QA sessions 3 and 4 (2026-10-08)
 
