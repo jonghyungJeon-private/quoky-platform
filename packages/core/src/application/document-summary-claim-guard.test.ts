@@ -176,16 +176,6 @@ describe('DRV-1: document actions (a Drive summary steered into an edit, share o
   });
 });
 
-describe('DRV-1 review P3-6: the document-action patterns also apply to mail summaries (fail-safe, not source-scoped)', () => {
-  it.each(['첨부 문서를 공유했어요.', 'We shared the attachment with the team.', 'I edited the draft.'])('withheld for mail too: %s', (text) => {
-    expect(containsDocumentActionClaim(text, 'mail')).toBe(true);
-  });
-  it.each(['김철수 님이 첨부 문서를 공유했어요.', 'Kim shared the attachment with the team.', '진행 상황을 공유했어요.'])(
-    'a third-person or object-less mail summary is still allowed: %s',
-    (text) => expect(containsDocumentActionClaim(text, 'mail')).toBe(false),
-  );
-});
-
 describe('CA re-review item 1: the Drive wordings are scoped to a Drive summary', () => {
   const mailNews = [
     '계약서 내용을 수정했으니 검토해 달라는 요청이에요.',
@@ -204,8 +194,57 @@ describe('CA re-review item 1: the Drive wordings are scoped to a Drive summary'
   ])('drive: still withheld: %s', (text) => {
     expect(containsDocumentActionClaim(text, 'drive')).toBe(true);
   });
-  it('the reported-speech split fix is shared: a mail says someone sent it', () => {
-    expect(containsDocumentActionClaim('답장을 보냈다고 해요.', 'mail')).toBe(false);
-    expect(containsDocumentActionClaim('제가 답장을 보냈어요.', 'mail')).toBe(true);
+});
+
+/**
+ * CA review P2-A: the mail guard is exactly the pre-DRV-1 guard. Each row is `[text, result]` as the origin/main guard
+ * (`document-summary-claim-guard.ts` before DRV-1) returned it, captured as a fixture. Note `답장을 보냈다고 해요.` is
+ * withheld there (the `다고` split is a Drive-only fix) and every Drive wording is shown for mail.
+ */
+const MAIN_MAIL_GUARD_FIXTURE: ReadonlyArray<readonly [string, boolean]> = [
+  ["The sender writes: 'We shared the document with the team.'", false],
+  ["계약서 내용을 수정했으니 검토해 달라는 요청이에요.", false],
+  ["약관 업데이트를 했으니 확인하라는 메일이에요.", false],
+  ["Acme writes: \"We changed our pricing.\"", false],
+  ["The sender says we updated our privacy policy.", false],
+  ["김철수 님이 첨부 문서를 공유했어요.", false],
+  ["첨부 문서를 공유했어요.", false],
+  ["We shared the attachment with the team.", false],
+  ["I edited the draft.", false],
+  ["진행 상황을 공유했어요.", false],
+  ["문서를 공유했다고 해요.", false],
+  ["답장을 보냈다고 해요.", true],
+  ["제가 답장을 보냈어요.", true],
+  ["답장을 보냈어요.", true],
+  ["자동이체 알림을 설정했다는 안내 메일이에요.", false],
+  ["김철수가 메일을 보냈어요.", false],
+  ["I forwarded the email to your team.", true],
+  ["I did send a reply.", true],
+  ["I did change the sharing settings.", false],
+  ["I made the document public.", false],
+  ["편집 권한을 드렸어요.", false],
+  ["팀원들에게 공유했어요.", false],
+  ["요청대로 내용을 수정해 두었어요.", false],
+  ["문서를 업데이트했어요.", false],
+  ["문서 공유를 완료했어요.", false],
+  ["이 문서는 3월에 마지막으로 수정되었어요.", false],
+  ["파일을 삭제해 드렸어요.", true],
+  ["문서가 공유했어요.", false],
+  ["권한을 변경했어요.", false],
+  ["문서 이름을 바꿨어요.", false],
+  ["I've renamed the file.", false],
+  ["I gave Kim edit access.", false],
+  ["Kim shared the roadmap with the team.", false],
+  ["메일을 삭제했어요.", true],
+  ["할 일을 하나 추가했어요.", true],
+  ["내일 9시에 알림을 설정해 두었어요.", true],
+  ["요약했고 문서를 공유했어요.", false],
+  ["문서를 수정했고 답장을 보냈어요.", true],
+];
+
+describe('CA review P2-A: mail parity with the origin/main guard', () => {
+  it.each(MAIN_MAIL_GUARD_FIXTURE)('mail: %s -> %s', (text, expected) => {
+    expect(containsDocumentActionClaim(text, 'mail')).toBe(expected);
   });
 });
+

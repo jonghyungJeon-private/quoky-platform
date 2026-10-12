@@ -33,9 +33,9 @@ const KO_NOT_A_SUBJECT = new Set([
   '같', '많', '깊', '높', '길', '넓', '일찍', '빨', '쉽', '굳', '끝', '깨끗', '틈틈', '번번', '곳곳', '일일',
   '내용', '요청', '문의', '연락', '메일', '이메일', '답장', '회신', '일정', '회의', '자료', '시간', '날짜', '마감', '확인',
   '필요', '문제', '이유', '결과', '변경', '처리', '진행', '준비', '정리', '요약', '알림', '안내', '공지', '첨부', '파일',
-  // DRV-1: document nouns.
-  '문서', '시트', '폴더', '드라이브', '링크', '권한', '제목', '이름',
 ]);
+/** DRV-1: document nouns, extra non-subjects for a Drive summary only (a mail summary matches the pre-DRV-1 guard). */
+const KO_DRIVE_NOT_A_SUBJECT = new Set(['문서', '시트', '폴더', '드라이브', '링크', '권한', '제목', '이름']);
 
 /** Korean claims of a mail action or of a created to-do / reminder / calendar entry (past or completed tense). */
 const KO_CLAIMS: readonly RegExp[] = [
@@ -48,11 +48,6 @@ const KO_CLAIMS: readonly RegExp[] = [
   /할\s?일(?:을|를|로|에|도)?\s*(?:\S+\s+){0,3}?(?:추가|등록|생성)(?:했|해\s?드렸|해\s?두었|하였)|할\s?일(?:을|를)?\s*만들었/u,
   /(?:알림|리마인더)(?:을|를|도)?\s*(?:\S+\s+){0,3}?(?:설정|등록|추가)(?:했|해\s?드렸|해\s?두었|하였)|(?:알림|리마인더)(?:을|를)?\s*맞춰/u,
   /(?:일정|이벤트|약속|회의)(?:을|를|도)?\s*(?:\S+\s+){0,3}?(?:추가|등록)(?:했|해\s?드렸|해\s?두었|하였)|캘린더에\s*(?:추가|등록)(?:했|해\s?드렸|해\s?두었)/u,
-  // DRV-1: a document action with the file, folder, link or permission as its object (`문서를 공유했어요`, `파일을 삭제해
-  // 드렸어요`, `권한을 변경했어요`). Narrow on purpose: `진행 상황을 공유했어요` in a meeting-notes summary is not a claim.
-  /(?:문서|파일|시트|스프레드시트|폴더|드라이브|링크|권한|공유\s?설정)(?:을|를|은|는|도|들을)?\s*(?:\S+\s+){0,2}?(?:공유|편집|수정|삭제|이동|복사|업로드|변경|부여|휴지통으로\s?이동)\s?(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
-  /(?:문서|파일|시트|스프레드시트|폴더)(?:을|를|은|는|도|들을)?\s*(?:모두\s*|다\s*|전부\s*)?(?:\S+\s+){0,2}?(?:지웠|옮겼|고쳤|바꿨|올렸)/u,
-  /(?:이름|제목|권한)(?:을|를)?\s*(?:\S+\s+){0,2}?(?:바꿨|변경했|바꿔\s?드렸|변경해\s?드렸)/u,
 ];
 
 /**
@@ -60,6 +55,11 @@ const KO_CLAIMS: readonly RegExp[] = [
  * (`약관 업데이트를 했으니 확인하라는 메일이에요`), so they apply to a Drive summary only.
  */
 const KO_DRIVE_CLAIMS: readonly RegExp[] = [
+  // DRV-1: a document action with the file, folder, link or permission as its object (`문서를 공유했어요`, `파일을 삭제해
+  // 드렸어요`, `권한을 변경했어요`). Narrow on purpose: `진행 상황을 공유했어요` in a meeting-notes summary is not a claim.
+  /(?:문서|파일|시트|스프레드시트|폴더|드라이브|링크|권한|공유\s?설정)(?:을|를|은|는|도|들을)?\s*(?:\S+\s+){0,2}?(?:공유|편집|수정|삭제|이동|복사|업로드|변경|부여|휴지통으로\s?이동)\s?(?:했|해\s?드렸|해\s?두었|해\s?놓았|완료했|하였)/u,
+  /(?:문서|파일|시트|스프레드시트|폴더)(?:을|를|은|는|도|들을)?\s*(?:모두\s*|다\s*|전부\s*)?(?:\S+\s+){0,2}?(?:지웠|옮겼|고쳤|바꿨|올렸)/u,
+  /(?:이름|제목|권한)(?:을|를)?\s*(?:\S+\s+){0,2}?(?:바꿨|변경했|바꿔\s?드렸|변경해\s?드렸)/u,
   /업데이트(?:를)?\s*(?:했|해\s?드렸|해\s?두었)/u,
   /공유를\s*완료했/u,
   /권한(?:을|를)?\s*(?:\S+\s+){0,2}?(?:드렸|줬|주었)/u,
@@ -74,19 +74,24 @@ const KO_SUBJECT = /(?:^|\s)([^\s]{1,20}?)(?:께서|님이|이|가)(?=\s)/gu;
  * English claims with a first-person or Quoky subject. Contractions take a straight or a curly apostrophe, and up to
  * six filler words may stand before the verb (`I went ahead and sent`, `I've just forwarded`).
  */
-const EN_CLAIM = new RegExp(
-  "\\b(?:I(?:['’](?:ve|d))?|we(?:['’]ve)?|Quoky)\\s+" +
-    '(?:(?:have|has|had|just|already|also|now|then|successfully|went|go|gone|ahead|and|quickly|immediately|actually|' +
-    'promptly|simply|kindly)\\s+){0,6}' +
-    '(?:sent|forwarded|replied|responded|deleted|removed|archived|trashed|labell?ed|marked|moved|created|added|' +
-    'scheduled|set\\s+up|set|booked|drafted|shared|unshared|edited|modified|renamed|uploaded|copied)\\b',
-  'i',
-);
+const enClaim = (verbs: string): RegExp =>
+  new RegExp(
+    "\\b(?:I(?:['’](?:ve|d))?|we(?:['’]ve)?|Quoky)\\s+" +
+      '(?:(?:have|has|had|just|already|also|now|then|successfully|went|go|gone|ahead|and|quickly|immediately|actually|' +
+      `promptly|simply|kindly)\\s+){0,6}(?:${verbs})\\b`,
+    'i',
+  );
+const EN_MAIL_VERBS =
+  'sent|forwarded|replied|responded|deleted|removed|archived|trashed|labell?ed|marked|moved|created|added|' +
+  'scheduled|set\\s+up|set|booked|drafted';
+const EN_CLAIM = enClaim(EN_MAIL_VERBS);
 
-/** Drive-only English verbs (CA re-review item 1): `The sender says we updated our privacy policy` is a mail's own news. */
-const EN_DRIVE_CLAIM = new RegExp(
-  EN_CLAIM.source.replace('|copied)', '|copied|updated|changed|granted|gave|revised|fixed)'),
-  'i',
+/**
+ * Drive-only English verbs (the pre-DRV-1 mail guard is untouched): the document actions, and `updated`, `changed`,
+ * `granted`, `gave`, `revised`, `fixed` (`The sender says we updated our privacy policy` is a mail's own news).
+ */
+const EN_DRIVE_CLAIM = enClaim(
+  `${EN_MAIL_VERBS}|shared|unshared|edited|modified|renamed|uploaded|copied|updated|changed|granted|gave|revised|fixed`,
 );
 
 /**
@@ -94,19 +99,24 @@ const EN_DRIVE_CLAIM = new RegExp(
  * is a denial, not a claim. The guard stays best-effort (a paraphrase can always evade a lexicon): the fixed footer of
  * every summary, which states that nothing was sent or changed, is the guarantee.
  */
-const EN_DID_CLAIM =
-  /\b(?:I|we|Quoky)\s+(?:[a-z]+\s+){0,3}?did\s+(?!not\b|n['’]t\b)(?:[a-z]+\s+){0,2}?(?:send|forward|reply|respond|delete|remove|archive|trash|label|mark|move|create|add|schedule|set\s+up|book|draft|share|unshare|edit|modify|rename|upload|copy)\b/i;
+const enDidClaim = (verbs: string): RegExp =>
+  new RegExp(
+    `\\b(?:I|we|Quoky)\\s+(?:[a-z]{1,20}\\s+){0,3}?did\\s+(?!not\\b|n['’]t\\b)(?:[a-z]{1,20}\\s+){0,2}?(?:${verbs})\\b`,
+    'i',
+  );
+const EN_DID_MAIL_VERBS = 'send|forward|reply|respond|delete|remove|archive|trash|label|mark|move|create|add|schedule|set\\s+up|book|draft';
+const EN_DID_CLAIM = enDidClaim(EN_DID_MAIL_VERBS);
+const EN_DID_DRIVE_CLAIM = enDidClaim(`${EN_DID_MAIL_VERBS}|share|unshare|edit|modify|rename|upload|copy|update|change|grant|give`);
 
-const EN_DID_DRIVE_CLAIM =
-  /\b(?:I|we|Quoky)\s+(?:[a-z]+\s+){0,3}?did\s+(?!not\b|n['’]t\b)(?:[a-z]+\s+){0,2}?(?:update|change|grant|give)\b/i;
-
-/** CA review P3-1: `I made the document public` (a visibility or access change). */
+/** Drive only: `I made the document public` (a visibility or access change). */
 const EN_MADE_CLAIM =
   /\b(?:I|we|Quoky)\s+(?:[a-z]+\s+){0,3}?made\s+(?:[a-z]+\s+){0,3}?(?:public|private|editable|viewable|shareable)\b/i;
 
 /** Sentences and clauses: split on sentence ends, line breaks and Korean clause connectors. */
-function clauses(text: string): string[] {
-  return text.split(/[.!?。\n]+|(?:하고|했고|(?<!다)고)\s/u).map((clause) => clause.trim()).filter((clause) => clause.length > 0);
+function clauses(text: string, source: UntrustedDocumentSource): string[] {
+  // A mail summary splits exactly as before DRV-1; a Drive summary keeps `다고` (reported speech) in one clause.
+  const split = source === 'drive' ? /[.!?。\n]+|(?:하고|했고|(?<!다)고)\s/u : /[.!?。\n]+|(?:하고|했고|고)\s/u;
+  return text.split(split).map((clause) => clause.trim()).filter((clause) => clause.length > 0);
 }
 
 /**
@@ -116,12 +126,12 @@ function clauses(text: string): string[] {
  * subject nearest the verb while Quoky is still the actor. A subject after the claim, an adverb or a generic noun never
  * exempts.
  */
-function exemptBySubject(clause: string, claimAt: number): boolean {
+function exemptBySubject(clause: string, claimAt: number, source: UntrustedDocumentSource): boolean {
   let nearest: string | undefined;
   for (const match of clause.slice(0, claimAt).matchAll(KO_SUBJECT)) {
     // An opening quote or bracket is not part of the subject (`"제가 …"` is still the first person).
     const word = (match[1] ?? '').replace(/^["'“”‘’「『(\[<]+/u, '').toLowerCase();
-    if (word.length === 0 || KO_NOT_A_SUBJECT.has(word)) continue;
+    if (word.length === 0 || KO_NOT_A_SUBJECT.has(word) || (source === 'drive' && KO_DRIVE_NOT_A_SUBJECT.has(word))) continue;
     if (KO_STAND_INS.has(word)) return false;
     nearest = word;
   }
@@ -139,7 +149,7 @@ function koreanClaim(clause: string, source: UntrustedDocumentSource): boolean {
     const match = pattern.exec(clause);
     if (match === null) continue;
     if (KO_REPORTED.test(clause.slice(match.index + match[0].length))) continue;
-    if (exemptBySubject(clause, match.index)) continue;
+    if (exemptBySubject(clause, match.index, source)) continue;
     return true;
   }
   return false;
@@ -151,7 +161,7 @@ export function containsDocumentActionClaim(text: string, source: UntrustedDocum
   if (EN_CLAIM.test(text) || EN_DID_CLAIM.test(text)) return true;
   // The Drive wordings are active for a Drive summary only: a mail's own news ("we changed our pricing") is not a claim.
   if (source === 'drive' && (EN_DRIVE_CLAIM.test(text) || EN_DID_DRIVE_CLAIM.test(text) || EN_MADE_CLAIM.test(text))) return true;
-  return clauses(text).some((clause) => koreanClaim(clause, source));
+  return clauses(text, source).some((clause) => koreanClaim(clause, source));
 }
 
 /** The fixed notice per source (CA review P3-5): a new source fails typecheck until it has its own notice. */

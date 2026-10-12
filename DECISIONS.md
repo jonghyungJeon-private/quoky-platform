@@ -19510,8 +19510,8 @@ Independent Chief Architect review before GML-1 merges.
   - **P2-3 / P3-1:** English needs `my drive` or `google drive` (`the drive` is a disk or a car); an English local disk
     (`usb`, `external`, `D drive`, …) is never Drive; `summarize this file` needs the drive word.
   - **P3-4 / P3-5:** doc-comment fixes; every unread error body (401, 404, 429) is cancelled.
-  - **P3-6:** the new document-action claim patterns are not source-scoped, so they also withhold a first-person mail
-    summary (`첨부 문서를 공유했어요`). This fails safe; mail regression tests pin both the withheld and the allowed cases.
+  - **P3-6 (superseded by Codex P2-A):** the document-action claim patterns were first shared with mail (fail-safe);
+    they are now Drive-only and the mail guard equals the pre-DRV-1 guard.
 - **Residuals.**
   - **Shared files.** Listings include files shared with the owner (the default corpus), so a stranger can place a hostile
     name or text in them. That is the threat model above; the owner's own Shared Drives are not searched.
@@ -19594,6 +19594,13 @@ Independent Chief Architect review before GML-1 merges.
   - **CA re-review 3c (copy):** the summary reply for an uploaded text file says "업로드한 텍스트 파일은 읽지 않아요. 구글
     문서·스프레드시트만 요약할 수 있어요." (English: "Uploaded text files are not read … Only Google Docs and Sheets can be
     summarized."); other kinds say Google Docs and Sheets only.
+  - **Codex P2-A (mail parity):** every pattern DRV-1 added to the claim guard is now Drive-only: the document-action
+    patterns (`문서를 공유했어요`, `파일을 삭제해 드렸어요`, `권한을 변경했어요`, `문서 이름을 바꿨어요`), the English
+    `shared|unshared|edited|modified|renamed|uploaded|copied` and the document nouns that are not subjects, besides the
+    CA re-review 1 set. The `다고` clause split is Drive-only too. The mail guard therefore answers exactly as on
+    `origin/main` (a fixture of 38 phrases captured from the old guard pins it, including `The sender writes: 'We shared
+    the document with the team.'`). This supersedes the P3-6 "also applies to mail" residual and the CA re-review 1
+    sentence that the split stays shared.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 
