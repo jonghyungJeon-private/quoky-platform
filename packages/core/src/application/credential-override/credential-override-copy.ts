@@ -1,10 +1,14 @@
+import type { MessageBody } from '../../domain';
 import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
+import { joinBody, messageContent, untrustedText } from '../message-rendering';
 import { CREDENTIAL_OVERRIDE_SEND_PHRASE, type CredentialOverrideInvalidationReason } from './credential-override';
 
 /**
  * User copy for the credential-guard override (ADR-0097 D3/D7). Pure functions returning Korean, emoji-free
- * strings. They take a user-supplied path and a line number only — never file content or the matched text — so
- * no value can reach a reply. `ResponseComposer` wraps them (OVR-4) and applies the message budget.
+ * copy. They take a user-supplied path and a line number only — never file content or the matched text — so
+ * no value can reach a reply. A path is an untrusted span (PLT-1: the platform neutralizes it, Telegram keeps it
+ * verbatim), so the functions that name a path return a body; the rest stay plain strings. `ResponseComposer` wraps
+ * them (OVR-4) and applies the message budget.
  */
 
 const TTL_MINUTES = Math.round(PENDING_APPROVAL_TTL_MS / 60_000);
@@ -12,19 +16,22 @@ const NOT_MODIFIED = '파일은 수정되지 않았어요.';
 const FRESH_REQUEST = '보내려면 처음부터 다시 요청해 주세요.';
 const SEND_LINE = `보내려면 "${CREDENTIAL_OVERRIDE_SEND_PHRASE}"라고만 보내 주세요. 그만두려면 "취소" 또는 "새 대화"라고 보내 주세요.`;
 
+/** A path (or paths) named in copy: untrusted spans, never plain text. */
+const pathSpan = (path: string) => untrustedText(path, 'path');
+
 /** Remaining time rounded up to whole minutes, never 0 (the ADR-0093 reminder convention). */
 const minutesOf = (remainingMs: number): number => Math.max(1, Math.ceil(remainingMs / 60_000));
 
 /** The warning raised with a CRITICAL override request: names file and line, states every consequence. */
-export function credentialOverridePrompt(path: string, line: number): string {
-  return [
-    `이 파일의 ${line}번째 줄에 비밀 키나 비밀번호로 보이는 값이 있어서 AI에게 보내기 전에 멈췄어요: ${path}`,
+export function credentialOverridePrompt(path: string, line: number): MessageBody {
+  return joinBody([
+    messageContent(`이 파일의 ${line}번째 줄에 비밀 키나 비밀번호로 보이는 값이 있어서 AI에게 보내기 전에 멈췄어요: `, pathSpan(path)),
     '그래도 보내면 이 파일 전체 내용이 외부 AI 서비스로 한 번 전송되고, 보낸 내용은 되돌릴 수 없어요.',
     '변경 미리보기(diff)에 그 줄이 그대로 보일 수 있고, AI가 만든 제안은 이 컴퓨터에 저장돼요.',
     '이번 한 번만 적용돼요. 같은 파일을 다음에 요청하면 다시 확인해요.',
     SEND_LINE,
     `${TTL_MINUTES}분 안에 답하지 않으면 자동으로 취소돼요. ${NOT_MODIFIED}`,
-  ].join('\n');
+  ]);
 }
 
 /** Appended to a credential refusal that can never be overridden (token/private-key shapes, ADR-0097 D6). */
@@ -33,31 +40,35 @@ export function credentialOverrideHardRefusalLine(): string {
 }
 
 /** Any non-decision message while an override is pending; `승인` and similar words never send. */
-export function credentialOverrideReprompt(path: string, remainingMs: number): string {
-  return [
-    `AI에게 보낼지 확인을 기다리는 파일이 있어요: ${path}`,
+export function credentialOverrideReprompt(path: string, remainingMs: number): MessageBody {
+  return joinBody([
+    messageContent('AI에게 보낼지 확인을 기다리는 파일이 있어요: ', pathSpan(path)),
     `"승인", "좋아", "ok"로는 보내지 않아요. ${SEND_LINE}`,
     `남은 시간: 약 ${minutesOf(remainingMs)}분 (지나면 자동으로 취소돼요)`,
-  ].join('\n');
+  ]);
 }
 
 /** The owner refused (or cancelled) the override: nothing was sent and the request ended. */
-export function credentialOverrideDenied(path: string): string {
-  return `이 파일은 AI에게 보내지 않았고, 코드 변경 요청을 멈췄어요: ${path}\n${NOT_MODIFIED}`;
+export function credentialOverrideDenied(path: string): MessageBody {
+  return joinBody([messageContent('이 파일은 AI에게 보내지 않았고, 코드 변경 요청을 멈췄어요: ', pathSpan(path)), NOT_MODIFIED]);
 }
 
 /** The target's content or classification changed since the override was raised: nothing was sent. */
-export function credentialOverrideContentChanged(path: string): string {
-  return [
-    `확인을 요청한 뒤 파일 내용이 바뀌어서 AI에게 보내지 않았어요: ${path}`,
+export function credentialOverrideContentChanged(path: string): MessageBody {
+  return joinBody([
+    messageContent('확인을 요청한 뒤 파일 내용이 바뀌어서 AI에게 보내지 않았어요: ', pathSpan(path)),
     `${FRESH_REQUEST} ${NOT_MODIFIED}`,
-  ].join('\n');
+  ]);
 }
 
 /** Prefixed to a successful preview that used granted content (`composeWithNotice`). */
-export function credentialOverrideSentNotice(paths: readonly string[]): string {
-  return `확인한 파일 내용을 이번 한 번만 AI에게 보냈어요: ${paths.join(', ')}`;
+export function credentialOverrideSentNotice(paths: readonly string[]): MessageBody {
+  const parts = paths.flatMap((path, index) => (index > 0 ? [', ', pathSpan(path)] : [pathSpan(path)]));
+  return joinBody([messageContent(CREDENTIAL_OVERRIDE_SENT_NOTICE_LEAD, ...parts)]);
 }
+
+/** The words before the paths of {@link credentialOverrideSentNotice} (the structured preview header reuses them). */
+export const CREDENTIAL_OVERRIDE_SENT_NOTICE_LEAD = '확인한 파일 내용을 이번 한 번만 AI에게 보냈어요: ';
 
 /** A send phrase arrived while nothing is pending (QA-018 pattern): nothing was sent. */
 export function credentialOverrideNoPending(): string {

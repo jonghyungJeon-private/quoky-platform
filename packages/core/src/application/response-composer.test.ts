@@ -2018,7 +2018,8 @@ describe('ResponseComposer — credential-guard override copy (ADR-0097)', () =>
     expect(plain.text).not.toContain(notice);
     expect(granted.text.startsWith(`${notice}\n\n`)).toBe(true);
     expect(granted.text.endsWith(plain.text.split('\n').slice(-1)[0]!)).toBe(true);
-    expect(granted.preview?.header).toBe(`${notice}\n\n${plain.preview?.header}`);
+    // The structured preview header names the path as inline code (PLT-1 review P2-2).
+    expect(granted.preview?.header).toBe(`${notice.replace(PATH, `\`${PATH}\``)}\n\n${plain.preview?.header}`);
     expect(granted.preview?.canonicalDiff).toBe(plain.preview?.canonicalDiff);
     expect(composer.composeCodeDiffPreview(CTX, preview, {}).text).toBe(plain.text);
   });

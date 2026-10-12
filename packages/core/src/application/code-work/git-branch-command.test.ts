@@ -9,9 +9,22 @@ import {
   GitBranchTurnHandler,
   detectGitBranchCommand,
   detectGitBranchDeleteRequest,
-  gitBranchReplies,
+  gitBranchReplies as spanReplies,
   type GitBranchTurnHandlerGit,
 } from './git-branch-command';
+import { plainTextOf } from '../message-rendering';
+
+/** The plain text of each reply: a branch name in running copy is an untrusted span (PLT-1), and a reply's `text` is its plain rendering. */
+const gitBranchReplies = {
+  refused: (...args: Parameters<typeof spanReplies.refused>): string => plainTextOf(spanReplies.refused(...args)),
+  created: (...args: Parameters<typeof spanReplies.created>): string => plainTextOf(spanReplies.created(...args)),
+  switched: (...args: Parameters<typeof spanReplies.switched>): string => plainTextOf(spanReplies.switched(...args)),
+  unsupported: spanReplies.unsupported,
+  deleteUnsupported: spanReplies.deleteUnsupported,
+  usage: spanReplies.usage,
+  noProject: spanReplies.noProject,
+  failed: spanReplies.failed,
+};
 
 const create = (name: string) => ({ kind: 'create', name });
 const switchTo = (name: string) => ({ kind: 'switch', name });

@@ -491,7 +491,8 @@ describe('ConversationRuntime credential override — decisions (ADR-0097 D3/D5)
     expect(h.generated[0]!.contextFiles).toEqual([{ path: 'src/user.ts', content: USER_TS }]);
     const notice = composer.composeCredentialOverrideSentNotice(CTX, ['src/user.ts']).text;
     expect(result.reply.text.startsWith(notice)).toBe(true);
-    expect(result.reply.preview?.header.startsWith(notice)).toBe(true);
+    // The structured preview header names the path as inline code (PLT-1 review P2-2).
+    expect(result.reply.preview?.header.startsWith(notice.replace('src/user.ts', '`src/user.ts`'))).toBe(true);
 
     const critical = h.store.critical()[0]!;
     expect(critical.status).toBe(ApprovalStatus.APPROVED);

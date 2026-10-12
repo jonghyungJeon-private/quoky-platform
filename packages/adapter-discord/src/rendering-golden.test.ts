@@ -25,9 +25,12 @@ import {
   connectorWriteSent,
   connectorWriteUncertain,
   feedbackRequestExcerpt,
+  PLT1_VARIANTS,
   memoryBody,
   memoryPreview,
   placeCalendarSpan,
+  plt1OverflowReplies,
+  plt1Replies,
   renderCalendarEvents,
   renderConnectorWriteDuplicateRisk,
   renderConnectorWriteOpsApprovedNotice,
@@ -81,7 +84,8 @@ import { renderDiscordContent, renderOutboundForDiscord } from './rendering';
  * carries untrusted spans, links or conversation references, with adversarial markup, and lists sized to cross each
  * budget (work-chat 1,800, calendar 1,900, footer 1,000, summary 1,900, message 1,900). The fixture was captured from
  * the renderers BEFORE Core stopped emitting Discord markup; Discord output must stay byte-identical, so the fixture
- * is never regenerated to make this test pass. `QUOKY_UPDATE_RENDER_GOLDEN=1` writes it (for a new, reviewed corpus).
+ * is never regenerated to make this test pass. The `plt1.*` cases were added by PLT-1 (outside values in untrusted spans):
+ * where the old copy did not escape a value, their expected text records the intended new output. `QUOKY_UPDATE_RENDER_GOLDEN=1` writes it (for a new, reviewed corpus).
  */
 
 const FIXTURE = join(__dirname, '__golden__', 'discord-rendering.v1.json');
@@ -571,6 +575,9 @@ async function corpus(): Promise<Record<string, string>> {
   add('approval.reference', composer.composeApprovalConfirmationReference(preview, 'K7Q2'));
   add('model-reply.table', { context: DM, text: '| a | b |\n|---|---|\n| 1 | 2 |', format: 'model-reply' });
   await extraCases(add as never);
+  // PLT-1: the converted code-work replies, with ordinary and hostile values (added after the PLT-0 corpus; see DECISIONS).
+  for (const variant of PLT1_VARIANTS) for (const [id, reply] of plt1Replies(composer, variant)) add(id, reply);
+  for (const [id, reply] of plt1OverflowReplies(composer)) add(id, reply);
   return out;
 }
 
@@ -585,5 +592,38 @@ describe('Discord rendering goldens (PLT-0)', () => {
     const expected = JSON.parse(readFileSync(FIXTURE, 'utf8')) as Record<string, string>;
     expect(Object.keys(actual).sort()).toEqual(Object.keys(expected).sort());
     for (const [id, text] of Object.entries(expected)) expect(actual[id], id).toBe(text);
+  });
+});
+
+describe('PLT-1 review fixes on Discord', () => {
+  it('P2-1: the fixed tail of a bounded reply survives the 1,900-character clip; the cut lands in the paths or the diff', () => {
+    for (const [id, reply] of plt1OverflowReplies(composer)) {
+      const text = renderOutboundForDiscord(reply);
+      const lastLine = (value: string): string => value.trimEnd().split('\n').pop() as string;
+      expect(text.length, id).toBeLessThanOrEqual(1900);
+      expect(lastLine(text), id).toBe(lastLine(reply.text));
+    }
+    // The repro: 30 snake_case untracked paths make the escaped text longer than the plain text.
+    const gitDiff = (plt1OverflowReplies(composer).find(([id]) => id === 'plt1.overflow.git.diff') as [string, OutboundMessage])[1];
+    const discordText = renderOutboundForDiscord(gitDiff);
+    expect(gitDiff.text.length).toBeLessThan(1900);
+    expect(discordText).toContain('명령 실행도 하지 않았어요.');
+    expect(discordText).toContain('최근 검증 기록');
+    expect(discordText).toContain('…\n최근 검증 기록');
+  });
+
+  it('P2-2: the structured preview artifact names outside paths as inline code (literal on Discord, which sends it as given)', () => {
+    const hostile = ['[확인](https://evil.example)', '*secret*/_x_.ts', 'a`b.ts'];
+    const reply = composer.composeCodeDiffPreview(
+      DM,
+      {
+        changes: [{ path: 'src/a.ts', kind: 'update', unified: '--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n', binary: false }],
+        outOfScopeWarnings: hostile,
+      },
+      { credentialOverrideSentPaths: hostile },
+    );
+    const preview = reply.preview as NonNullable<OutboundMessage['preview']>;
+    expect(preview.warning).toBe('참고: `[확인](https://evil.example)`, `*secret*/_x_.ts`, `ab.ts`에도 변경을 제안했지만, 확인된 대상 파일이 아니라서 보여드리지 않았어요.');
+    expect(preview.header.startsWith('확인한 파일 내용을 이번 한 번만 AI에게 보냈어요: `[확인](https://evil.example)`, `*secret*/_x_.ts`, `ab.ts`\n\n')).toBe(true);
   });
 });

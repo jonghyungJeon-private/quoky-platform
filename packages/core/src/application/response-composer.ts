@@ -1,4 +1,5 @@
 import { RiskLevel } from '../domain';
+import type { MessageContent, UntrustedTextNode } from '../domain';
 import type { BranchCleanupBlockReason } from './git-manager';
 import type {
   MessageBody,
@@ -30,6 +31,7 @@ import {
   credentialOverrideNoPending,
   credentialOverridePrompt,
   credentialOverrideReprompt,
+  CREDENTIAL_OVERRIDE_SENT_NOTICE_LEAD,
   credentialOverrideSentNotice,
 } from './credential-override/credential-override-copy';
 import type { CredentialOverrideInvalidationReason } from './credential-override/credential-override';
@@ -64,6 +66,7 @@ import {
   messageLink,
   outboundBody,
   outboundMessage,
+  plainTextOf,
   platformNote,
   untrustedText,
   withOutboundBody,
@@ -438,11 +441,17 @@ function sanitizeTypedPath(typedPath: string): string {
 }
 
 /** A bounded, comma-joined file list with new files marked "(새 파일)" (ADR-0099 D3) and a "외 N개" suffix. */
-function renderFileList(files: readonly string[], newFiles: readonly string[] = [], max: number = MAX_GIT_CHANGED_FILES): string {
+function renderFileList(files: readonly string[], newFiles: readonly string[] = [], max: number = MAX_GIT_CHANGED_FILES): MessageContent {
   const isNew = new Set(newFiles);
-  const shown = files.slice(0, max).map((f) => (isNew.has(f) ? `${f} (새 파일)` : f));
+  const shown = files.slice(0, max);
   const omitted = files.length - shown.length;
-  return `${shown.join(', ')}${omitted > 0 ? ` 외 ${omitted}개` : ''}`;
+  const parts: MessagePart[] = [];
+  shown.forEach((file, index) => {
+    if (index > 0) parts.push(', ');
+    parts.push(outside(file), isNew.has(file) ? ' (새 파일)' : '');
+  });
+  if (omitted > 0) parts.push(` 외 ${omitted}개`);
+  return messageContent(...parts);
 }
 
 /** Defensive final-length guard (CA review, required change #6) — belt-and-suspenders over the excerpt cap. */
@@ -456,6 +465,67 @@ function clampBodyToMessageBudget(body: MessagePart): MessageBody {
 }
 
 /**
+ * The head clipped to the message budget with the fixed tail (the validation line and read-only disclaimers, the patch
+ * footer, ...) kept whole: the tail is measured as rendered by the platform, so an escaped path in the head can only
+ * shorten the head (the cut lands in the path list or diff), never the mandatory wording (PLT-1 review P2-1). A body
+ * that fits is exactly the head, a newline and the tail.
+ */
+function clampKeepingTail(head: MessagePart, tail: MessagePart): MessageBody {
+  return messageBody(clipMessage(head, MAX_MESSAGE_CHARS, 'utf16', { after: messageContent('\n', tail) }));
+}
+
+/**
+ * PLT-1: an outside value (a file path, branch, repository, commit message or URL) written into Quoky copy is an
+ * untrusted span, never a plain string node. Each platform adapter neutralizes it its own way (one escapes the markup
+ * and mentions, a plain-text one passes it through verbatim), so a `_draft_.ts` path keeps its underscores. A value inside an inline
+ * code span (`` `path` ``) is already protected by the span and stays a plain string. Paths, branches and repositories use
+ * the `path` guard (a plain `@` stays, so the name still resolves when copied back); a commit message is free text and
+ * uses `markup`.
+ */
+function outside(value: string): UntrustedTextNode {
+  return untrustedText(value, 'path');
+}
+
+/** Outside values joined by `separator`, each its own untrusted span. */
+function outsideList(values: readonly string[], separator = ', '): MessageContent {
+  const parts: MessagePart[] = [];
+  values.forEach((value, index) => {
+    if (index > 0) parts.push(separator);
+    parts.push(outside(value));
+  });
+  return messageContent(...parts);
+}
+
+/**
+ * A hosting URL (a pull request link): an untrusted span under the `mentions` guard. The platform keeps a URL a URL (no
+ * markup escaping inside it, so an embed or an autolink still works) and neutralizes only what could notify someone.
+ */
+function urlPart(url: string): UntrustedTextNode {
+  return untrustedText(url, 'mentions');
+}
+
+/** A template tag for Quoky copy with outside values: `copy` text ${outside(path)} text`; numbers are written as digits. */
+function copy(strings: TemplateStringsArray, ...values: ReadonlyArray<MessagePart | number>): MessageContent {
+  const parts: MessagePart[] = [];
+  strings.forEach((text, index) => {
+    parts.push(text);
+    const value = values[index];
+    if (value !== undefined) parts.push(typeof value === 'number' ? String(value) : value);
+  });
+  return messageContent(...parts);
+}
+
+/** `owner/repo`, bounded, as one untrusted span. */
+function repositoryPart(input: { readonly owner: string; readonly repo: string }): UntrustedTextNode {
+  return outside(`${input.owner.slice(0, MAX_GIT_REF_DISPLAY)}/${input.repo.slice(0, MAX_GIT_REF_DISPLAY)}`);
+}
+
+/** The plain length of a part: what the message budget bounds before a platform adds its own escaping. */
+function plainLength(part: MessagePart): number {
+  return plainTextOf(messageBody(part)).length;
+}
+
+/**
  * A fence guaranteed longer than any backtick run already inside `excerpt` (AI Code Generation
  * Preview, ADR-0038 — CA Round 1) — untrusted AI content can never break the surrounding message's
  * Markdown structure.
@@ -466,11 +536,29 @@ function fenceFor(excerpt: string): string {
 }
 
 /** Bounded, comma-joined out-of-scope path list with a "외 N개" suffix when truncated (ADR-0038). */
-function renderOutOfScopeWarning(paths: string[]): string | undefined {
+function renderOutOfScopeWarning(paths: string[]): MessageContent | undefined {
   if (!paths.length) return undefined;
   const shown = paths.slice(0, MAX_OUT_OF_SCOPE_WARNING_PATHS);
   const suffix = paths.length > shown.length ? ` 외 ${paths.length - shown.length}개` : '';
-  return `참고: ${shown.join(', ')}${suffix}에도 변경을 제안했지만, 확인된 대상 파일이 아니라서 보여드리지 않았어요.`;
+  return copy`참고: ${outsideList(shown)}${suffix}에도 변경을 제안했지만, 확인된 대상 파일이 아니라서 보여드리지 않았어요.`;
+}
+
+/**
+ * Paths for the structured preview artifact (`PreviewArtifact.header` / `.warning` are plain strings both adapters send as
+ * given or translate): each one inline code, backticks and control characters stripped, so it is literal on every
+ * platform and a path such as `[x](https://evil.example)` or `*secret*` can neither mask a link nor lose its markers
+ * (PLT-1 review P2-2).
+ */
+function codeSpanList(paths: readonly string[]): string {
+  return paths.map((path) => `\`${sanitizeTypedPath(path)}\``).join(', ');
+}
+
+/** {@link renderOutOfScopeWarning} as the plain string of the structured preview artifact (paths as inline code). */
+function renderOutOfScopeWarningArtifact(paths: string[]): string | undefined {
+  if (!paths.length) return undefined;
+  const shown = paths.slice(0, MAX_OUT_OF_SCOPE_WARNING_PATHS);
+  const suffix = paths.length > shown.length ? ` 외 ${paths.length - shown.length}개` : '';
+  return `참고: ${codeSpanList(shown)}${suffix}에도 변경을 제안했지만, 확인된 대상 파일이 아니라서 보여드리지 않았어요.`;
 }
 
 /** Clamp one file's unified diff to a bounded number of lines, then chars (Unified Diff Preview,
@@ -498,18 +586,23 @@ const MAX_DIFF_FIT_ROUNDS = 8;
  * ~120 chars; past that a block may be dropped with the explicit "N개 생략" notice (path labels are never
  * shortened, and the lossless structured preview still carries every full diff).
  */
-function fitDiffBlocks(header: string, footerLines: string[], count: number, render: (i: number, maxChars: number) => string): string[] {
-  const renderAll = (maxChars: number): string[] => Array.from({ length: count }, (_, i) => render(i, maxChars));
+function fitDiffBlocks(
+  header: MessagePart,
+  footerLines: MessagePart[],
+  count: number,
+  render: (i: number, maxChars: number) => MessageBody,
+): MessageBody[] {
+  const renderAll = (maxChars: number): MessageBody[] => Array.from({ length: count }, (_, i) => render(i, maxChars));
   let maxChars = MAX_DIFF_CHARS_PER_FILE;
   let blocks = renderAll(maxChars);
   if (count <= 1) return blocks;
   const bodyBudget = diffBodyBudget(header, footerLines);
   for (let round = 0; round < MAX_DIFF_FIT_ROUNDS && maxChars > MIN_DIFF_CHARS_PER_FILE_SHARE; round++) {
     // +1 per block for the joining newline.
-    const used = blocks.reduce((n, b) => n + b.length + 1, 0);
+    const used = blocks.reduce((n, b) => n + plainLength(b) + 1, 0);
     if (used <= bodyBudget) break;
     // Shrink from the longest block actually rendered (a line-capped diff may be far below maxChars).
-    const longest = Math.max(...blocks.map((b) => b.length));
+    const longest = Math.max(...blocks.map((b) => plainLength(b)));
     const next = Math.min(maxChars, longest) - Math.ceil((used - bodyBudget) / count);
     maxChars = Math.max(MIN_DIFF_CHARS_PER_FILE_SHARE, next);
     blocks = renderAll(maxChars);
@@ -518,9 +611,8 @@ function fitDiffBlocks(header: string, footerLines: string[], count: number, ren
 }
 
 /** The body budget left for file blocks once the header, footer and omitted-notice are reserved. */
-function diffBodyBudget(header: string, footerLines: string[]): number {
-  const footer = footerLines.join('\n');
-  const reserved = header.length + footer.length + MAX_OMITTED_NOTICE_CHARS + DIFF_BUDGET_MARGIN_CHARS;
+function diffBodyBudget(header: MessagePart, footerLines: MessagePart[]): number {
+  const reserved = plainLength(header) + plainLength(joinBody(footerLines)) + MAX_OMITTED_NOTICE_CHARS + DIFF_BUDGET_MARGIN_CHARS;
   return Math.max(0, MAX_MESSAGE_CHARS - reserved);
 }
 
@@ -529,30 +621,30 @@ function diffBodyBudget(header: string, footerLines: string[]): number {
  * say plainly that a diff could not be displayed — never phrased as if one was shown — and repeat that
  * the file was not modified (CA Round 1 Required Change #4).
  */
-function renderDiffChange(c: CodeDiffPreview['changes'][number], maxChars: number = MAX_DIFF_CHARS_PER_FILE): string {
-  if (c.binary) return `- ${c.path}: 바이너리 파일이라 diff를 표시할 수 없어요. (파일은 수정되지 않았어요)`;
+function renderDiffChange(c: CodeDiffPreview['changes'][number], maxChars: number = MAX_DIFF_CHARS_PER_FILE): MessageBody {
+  if (c.binary) return messageBody(copy`- ${outside(c.path)}: 바이너리 파일이라 diff를 표시할 수 없어요. (파일은 수정되지 않았어요)`);
   if (!c.unified.trim()) {
-    return `- ${c.path}: 내용이 너무 커서 diff를 표시할 수 없어요. (파일은 수정되지 않았어요)`;
+    return messageBody(copy`- ${outside(c.path)}: 내용이 너무 커서 diff를 표시할 수 없어요. (파일은 수정되지 않았어요)`);
   }
   const { text, truncated } = clampDiffText(c.unified, maxChars);
   const fence = fenceFor(text);
   // F3-A (Sprint 4c-Follow-up-3): an 'add' is an explicit new-file preview — every line is an addition,
   // rendered against empty content. Same bounded, backtick-safe rendering as update/delete.
-  const label = c.kind === 'delete' ? `${c.path} (삭제 제안)` : c.kind === 'add' ? `${c.path} (새 파일)` : c.path;
+  const suffix = c.kind === 'delete' ? ' (삭제 제안)' : c.kind === 'add' ? ' (새 파일)' : '';
   const note = truncated ? '\n(diff가 길어서 일부만 보여드렸어요.)' : '';
-  return `- ${label}\n${fence}diff\n${text}\n${fence}${note}`;
+  return messageBody(copy`- ${outside(c.path)}${suffix}\n${fence}diff\n${text}\n${fence}${note}`);
 }
 
 /** Render one PatchSet operation's block (Sprint 2t, ADR-0041). Operations only ever carry a real
  *  unified diff here — binary/empty/delete are rejected before PatchSet generation, and an `add` is an
  *  anchored new-file target (ADR-0099 D1) — so this reuses the same bounded, backtick-safe rendering as
  *  {@link renderDiffChange}. */
-function renderPatchOperation(op: PatchSetPreview['operations'][number], maxChars: number = MAX_DIFF_CHARS_PER_FILE): string {
+function renderPatchOperation(op: PatchSetPreview['operations'][number], maxChars: number = MAX_DIFF_CHARS_PER_FILE): MessageBody {
   const { text, truncated } = clampDiffText(op.unified, maxChars);
   const fence = fenceFor(text);
-  const label = op.kind === 'delete' ? `${op.path} (삭제)` : op.kind === 'add' ? `${op.path} (새 파일)` : op.path;
+  const suffix = op.kind === 'delete' ? ' (삭제)' : op.kind === 'add' ? ' (새 파일)' : '';
   const note = truncated ? '\n(diff가 길어서 일부만 보여드렸어요.)' : '';
-  return `- ${label}\n${fence}diff\n${text}\n${fence}${note}`;
+  return messageBody(copy`- ${outside(op.path)}${suffix}\n${fence}diff\n${text}\n${fence}${note}`);
 }
 
 /**
@@ -562,25 +654,25 @@ function renderPatchOperation(op: PatchSetPreview['operations'][number], maxChar
  * "N개 생략" notice — so the mandatory safety wording always survives. The trailing clampToMessageBudget
  * is a defensive backstop, not the primary guarantee.
  */
-function assembleBoundedBody(header: string, footerLines: string[], blocks: string[]): string {
+function assembleBoundedBody(header: MessagePart, footerLines: MessagePart[], blocks: MessageBody[]): MessageBody {
   const bodyBudget = diffBodyBudget(header, footerLines);
 
-  const kept: string[] = [];
+  const kept: MessageBody[] = [];
   let used = 0;
   let omitted = 0;
   for (const block of blocks) {
-    if (used + block.length > bodyBudget) {
+    const length = plainLength(block);
+    if (used + length > bodyBudget) {
       omitted++;
       continue;
     }
-    used += block.length;
+    used += length;
     kept.push(block);
   }
 
-  const lines = [header, ...kept];
+  const lines: MessagePart[] = [header, ...kept];
   if (omitted > 0) lines.push(`(길이 제한으로 파일 ${omitted}개의 diff는 생략했어요.)`);
-  lines.push(...footerLines);
-  return clampToMessageBudget(lines.join('\n'));
+  return clampKeepingTail(joinBody(lines), joinBody(footerLines));
 }
 
 /**
@@ -659,10 +751,10 @@ function renderValidationContext(v: ValidationContext): string {
 }
 
 /** Bounded, labeled changed-files block from a GitStatus (Sprint 2w). */
-function renderChangedFiles(status: GitStatus): string {
-  const label = (kind: string, paths: string[]): string[] =>
-    paths.length ? [`${kind} (${paths.length}):`, ...paths.map((p) => `  ${p}`)] : [];
-  const all = [
+function renderChangedFiles(status: GitStatus): MessageBody {
+  const label = (kind: string, paths: string[]): MessagePart[] =>
+    paths.length ? [`${kind} (${paths.length}):`, ...paths.map((p) => copy`  ${outside(p)}`)] : [];
+  const all: MessagePart[] = [
     ...label('staged', status.staged),
     ...label('unstaged', status.unstaged),
     ...label('untracked', status.untracked),
@@ -670,9 +762,9 @@ function renderChangedFiles(status: GitStatus): string {
   if (all.length === 0) return '현재 Git 기준 변경 파일이 없어요.';
   const shown = all.slice(0, MAX_GIT_CHANGED_FILES);
   const dropped = all.length - shown.length;
-  const lines = [`브랜치: ${status.branch || '(unknown)'}`, ...shown];
+  const lines: MessagePart[] = [copy`브랜치: ${status.branch ? outside(status.branch) : '(unknown)'}`, ...shown];
   if (dropped > 0) lines.push(`… 외 ${dropped}개 항목은 생략했어요.`);
-  return lines.join('\n');
+  return joinBody(lines);
 }
 
 /** Bounded, labeled unified-diff block (Sprint 2w). Splits by file header, keeps ≤5 files and ≤`maxChars`
@@ -883,29 +975,27 @@ export class ResponseComposer {
     sentFilePaths: string[] = [],
     newFilePaths: readonly string[] = [],
   ): OutboundMessage {
-    const shown = sentFilePaths.slice(0, 3).join(', ');
+    const shown = outsideList(sentFilePaths.slice(0, 3));
     const more = sentFilePaths.length > 3 ? ` 외 ${sentFilePaths.length - 3}개` : '';
     // Disclosure: existing target files' content goes to the AI provider for the preview (best-effort credential guard).
-    const disclosure = sentFilePaths.length
-      ? `승인하면 지정한 파일(${shown}${more})의 현재 내용이 미리보기 생성을 위해 AI에게 전달돼요. ` +
-        '비밀번호·키가 들어 있는 파일은 보내지 않도록 확인하지만, 모든 경우를 걸러내지는 못해요.\n'
+    const disclosure: MessagePart = sentFilePaths.length
+      ? copy`승인하면 지정한 파일(${shown}${more})의 현재 내용이 미리보기 생성을 위해 AI에게 전달돼요. 비밀번호·키가 들어 있는 파일은 보내지 않도록 확인하지만, 모든 경우를 걸러내지는 못해요.\n`
       : '';
     // ADR-0099 D1: in a multi-file set, name the paths that will be CREATED, so a typo of an existing file the
     // owner meant to update is visible before "승인" (create wording applies to every missing path named).
-    const creates =
+    const creates: MessagePart =
       newFilePaths.length && sentFilePaths.length + newFilePaths.length > 1
-        ? `새로 만들 파일: ${renderFileList(newFilePaths, [], MAX_CHANGE_SET_FILES)} ` +
-          '(기존 파일을 고치려던 거라면 "거절"하고 경로를 확인해 다시 요청해 주세요.)\n'
+        ? copy`새로 만들 파일: ${renderFileList(newFilePaths, [], MAX_CHANGE_SET_FILES)} (기존 파일을 고치려던 거라면 "거절"하고 경로를 확인해 다시 요청해 주세요.)\n`
         : '';
-    return {
+    return outboundMessage(
       context,
-      text:
-        '이 작업은 코드 변경으로 이어질 수 있어 승인이 필요해요.\n' +
-        '이번 단계에서는 실제 파일을 수정하지 않고 계획/승인까지만 진행해요.\n' +
-        creates +
-        disclosure +
+      messageBody(
+        '이 작업은 코드 변경으로 이어질 수 있어 승인이 필요해요.\n' + '이번 단계에서는 실제 파일을 수정하지 않고 계획/승인까지만 진행해요.\n',
+        creates,
+        disclosure,
         APPROVAL_DECISION_LINE,
-    };
+      ),
+    );
   }
 
   /**
@@ -1154,12 +1244,12 @@ export class ResponseComposer {
    * a reset / project change WHILE the provider ran (the proposal was never shown).
    */
   composeCodePreviewDiscarded(context: ConversationContext, credentialOverrideSentPaths: readonly string[] = []): OutboundMessage {
-    const lines = ['코드 변경 미리보기를 취소했어요. 적용하지 않았고 파일은 수정되지 않았어요.'];
+    const lines: MessagePart[] = ['코드 변경 미리보기를 취소했어요. 적용하지 않았고 파일은 수정되지 않았어요.'];
     if (credentialOverrideSentPaths.length) {
       lines.push(credentialOverrideSentNotice(credentialOverrideSentPaths), '이미 AI에게 보낸 내용은 되돌릴 수 없어요.');
     }
     lines.push('다시 필요하면 파일 경로와 함께 새로 요청해 주세요.');
-    return { context, text: clampToMessageBudget(lines.join('\n')) };
+    return outboundMessage(context, clampBodyToMessageBudget(joinBody(lines)));
   }
 
   /**
@@ -1182,13 +1272,13 @@ export class ResponseComposer {
    * guaranteed safe against backticks already present in the (untrusted) excerpt.
    */
   composeCodeGenerationPreview(context: ConversationContext, preview: CodeChangePreview): OutboundMessage {
-    const lines = [
+    const lines: MessagePart[] = [
       '코드 변경 제안이 준비됐어요. 아직 실제로 적용되지 않았어요. 파일은 수정되지 않았어요.',
-      ...preview.changes.map((c) => {
-        if (c.kind === 'delete') return `- ${c.path} (삭제 제안 — 아직 적용되지 않음)`;
+      ...preview.changes.map((c): MessagePart => {
+        if (c.kind === 'delete') return copy`- ${outside(c.path)} (삭제 제안 — 아직 적용되지 않음)`;
         const excerpt = (c.excerpt ?? '').slice(0, MAX_PREVIEW_EXCERPT_CHARS);
         const fence = fenceFor(excerpt);
-        return `- ${c.path}\n${fence}\n${excerpt}\n${fence}`;
+        return copy`- ${outside(c.path)}\n${fence}\n${excerpt}\n${fence}`;
       }),
     ];
     const warning = renderOutOfScopeWarning(preview.outOfScopeWarnings);
@@ -1198,7 +1288,7 @@ export class ResponseComposer {
     // lives in isApplyCapablePreview (unified diff previews) and is not approximated here.
     const only = preview.changes.length === 1 ? preview.changes[0] : undefined;
     lines.push(only?.kind === 'update' ? DIFF_PREVIEW_APPLY_FOOTER : DIFF_PREVIEW_FOOTER);
-    return { context, text: clampToMessageBudget(lines.join('\n')) };
+    return outboundMessage(context, clampBodyToMessageBudget(joinBody(lines)));
   }
 
   /** AI Code Generation failed to produce a usable proposal (ADR-0038). CA-specified wording verbatim. */
@@ -1212,16 +1302,16 @@ export class ResponseComposer {
    * secret out; never echoes any content.
    */
   composeCodeGenerationPreviewCredentialRefused(context: ConversationContext, targetPath: string): OutboundMessage {
-    return {
+    return outboundMessage(
       context,
-      text: clampToMessageBudget(
-        [
-          `이 파일에는 비밀 키나 비밀번호로 보이는 내용이 있어서 AI에게 보내지 않았어요: ${targetPath}`,
+      clampBodyToMessageBudget(
+        joinBody([
+          copy`이 파일에는 비밀 키나 비밀번호로 보이는 내용이 있어서 AI에게 보내지 않았어요: ${outside(targetPath)}`,
           '민감한 값은 환경 변수나 비밀 저장소로 옮긴 뒤 다시 요청해 주세요.',
           '파일은 수정되지 않았어요.',
-        ].join('\n'),
+        ]),
       ),
-    };
+    );
   }
 
   // ADR-0112 / ADR-0110 amendment connector-write copy (CWR-2): thin delegates over `connector-write-copy`. The preview,
@@ -1331,28 +1421,28 @@ export class ResponseComposer {
 
   /** The warning raised with the CRITICAL override request: names file and line and every consequence. */
   composeCredentialOverridePrompt(context: ConversationContext, targetPath: string, line: number): OutboundMessage {
-    return { context, text: clampToMessageBudget(credentialOverridePrompt(targetPath, line)) };
+    return outboundMessage(context, clampBodyToMessageBudget(credentialOverridePrompt(targetPath, line)));
   }
 
   /** A token/private-key refusal that can never be overridden: the credential refusal plus the hard line. */
   composeCredentialOverrideHardRefused(context: ConversationContext, targetPath: string): OutboundMessage {
-    const refused = this.composeCodeGenerationPreviewCredentialRefused(context, targetPath).text;
-    return { context, text: clampToMessageBudget(`${refused}\n${credentialOverrideHardRefusalLine()}`) };
+    const refused = outboundBody(this.composeCodeGenerationPreviewCredentialRefused(context, targetPath));
+    return outboundMessage(context, clampBodyToMessageBudget(messageBody(refused, `\n${credentialOverrideHardRefusalLine()}`)));
   }
 
   /** Any non-decision message (including "승인") while an override is pending; nothing is sent. */
   composeCredentialOverrideReprompt(context: ConversationContext, targetPath: string, remainingMs: number): OutboundMessage {
-    return { context, text: clampToMessageBudget(credentialOverrideReprompt(targetPath, remainingMs)) };
+    return outboundMessage(context, clampBodyToMessageBudget(credentialOverrideReprompt(targetPath, remainingMs)));
   }
 
   /** The owner refused or cancelled the override: nothing was sent and the request ended. */
   composeCredentialOverrideDenied(context: ConversationContext, targetPath: string): OutboundMessage {
-    return { context, text: clampToMessageBudget(credentialOverrideDenied(targetPath)) };
+    return outboundMessage(context, clampBodyToMessageBudget(credentialOverrideDenied(targetPath)));
   }
 
   /** A target's content changed since the override was raised: nothing was sent. */
   composeCredentialOverrideContentChanged(context: ConversationContext, targetPath: string): OutboundMessage {
-    return { context, text: clampToMessageBudget(credentialOverrideContentChanged(targetPath)) };
+    return outboundMessage(context, clampBodyToMessageBudget(credentialOverrideContentChanged(targetPath)));
   }
 
   /**
@@ -1360,7 +1450,7 @@ export class ResponseComposer {
    * (`composeCodeDiffPreview` `credentialOverrideSentPaths`), so preview-aware delivery keeps it.
    */
   composeCredentialOverrideSentNotice(context: ConversationContext, targetPaths: readonly string[]): OutboundMessage {
-    return { context, text: clampToMessageBudget(credentialOverrideSentNotice(targetPaths)) };
+    return outboundMessage(context, clampBodyToMessageBudget(credentialOverrideSentNotice(targetPaths)));
   }
 
   /**
@@ -1369,16 +1459,16 @@ export class ResponseComposer {
    * fresh request and a fresh override are needed. Nothing was modified.
    */
   composeCredentialOverrideSentNoProposal(context: ConversationContext, targetPaths: readonly string[]): OutboundMessage {
-    return {
+    return outboundMessage(
       context,
-      text: clampToMessageBudget(
-        [
+      clampBodyToMessageBudget(
+        joinBody([
           credentialOverrideSentNotice(targetPaths),
           '하지만 코드 변경 제안은 만들어지지 않았어요. 파일은 수정되지 않았어요.',
           CREDENTIAL_OVERRIDE_USED_UP,
-        ].join('\n'),
+        ]),
       ),
-    };
+    );
   }
 
   /**
@@ -1393,14 +1483,14 @@ export class ResponseComposer {
     targetPaths: readonly string[],
     dispatch: 'not-sent' | 'uncertain',
   ): OutboundMessage {
-    const paths = targetPaths.join(', ');
+    const pathList = outsideList(targetPaths);
     const lead = dispatch === 'not-sent'
-      ? `코드 변경 제안을 만들지 못했어요. 파일 내용은 AI에게 보내지 않았어요: ${paths}`
-      : `AI 전송 중 오류가 나서 내용이 전달됐는지 확인할 수 없어요: ${paths}`;
+      ? copy`코드 변경 제안을 만들지 못했어요. 파일 내용은 AI에게 보내지 않았어요: ${pathList}`
+      : copy`AI 전송 중 오류가 나서 내용이 전달됐는지 확인할 수 없어요: ${pathList}`;
     const outcome = dispatch === 'not-sent'
       ? '파일은 수정되지 않았어요.'
       : '코드 변경 제안은 만들어지지 않았어요. 파일은 수정되지 않았어요.';
-    return { context, text: clampToMessageBudget([lead, outcome, CREDENTIAL_OVERRIDE_USED_UP].join('\n')) };
+    return outboundMessage(context, clampBodyToMessageBudget(joinBody([lead, outcome, CREDENTIAL_OVERRIDE_USED_UP])));
   }
 
   /**
@@ -1409,16 +1499,16 @@ export class ResponseComposer {
    * proposal was discarded (not shown, not kept), nothing was modified, and a fresh request + override are needed.
    */
   composeCredentialOverrideSentThenCancelled(context: ConversationContext, targetPaths: readonly string[]): OutboundMessage {
-    return {
+    return outboundMessage(
       context,
-      text: clampToMessageBudget(
-        [
+      clampBodyToMessageBudget(
+        joinBody([
           credentialOverrideSentNotice(targetPaths),
           '그런데 그사이 대화가 초기화됐거나 프로젝트·요청이 바뀌어서 이 코드 변경 요청은 취소됐어요. 받은 제안은 보여 주지도 저장하지도 않았고, 파일은 수정되지 않았어요.',
           CREDENTIAL_OVERRIDE_USED_UP,
-        ].join('\n'),
+        ]),
       ),
-    };
+    );
   }
 
   /** A send phrase with nothing pending (QA-018 pattern): nothing was sent. */
@@ -1446,10 +1536,10 @@ export class ResponseComposer {
    * presented as a successful proposal.
    */
   composeCodeGenerationPreviewNoValidChange(context: ConversationContext, outOfScopeWarnings: string[]): OutboundMessage {
-    const lines = ['AI가 제안한 변경이 확인된 대상 파일과 일치하지 않아 보여드릴 수 없어요.', '파일은 수정되지 않았어요.'];
+    const lines: MessagePart[] = ['AI가 제안한 변경이 확인된 대상 파일과 일치하지 않아 보여드릴 수 없어요.', '파일은 수정되지 않았어요.'];
     const warning = renderOutOfScopeWarning(outOfScopeWarnings);
     if (warning) lines.push(warning);
-    return { context, text: clampToMessageBudget(lines.join('\n')) };
+    return outboundMessage(context, clampBodyToMessageBudget(joinBody(lines)));
   }
 
   /**
@@ -1474,16 +1564,16 @@ export class ResponseComposer {
     // ADR-0097 D7: a preview built from override-granted content leads with the one-time-send notice. It is part
     // of the header, so it is budgeted with the safety wording and reaches preview-aware (lossless) delivery too.
     const sent = options.credentialOverrideSentPaths ?? [];
-    const header = sent.length ? `${credentialOverrideSentNotice(sent)}\n\n${DIFF_PREVIEW_HEADER}` : DIFF_PREVIEW_HEADER;
+    const header: MessageBody = sent.length ? messageBody(credentialOverrideSentNotice(sent), '\n\n', DIFF_PREVIEW_HEADER) : DIFF_PREVIEW_HEADER;
     const warning = renderOutOfScopeWarning(preview.outOfScopeWarnings);
     // Footer Minimal Fix: an apply-capable single existing-file `update` truthfully advertises apply;
     // every other shape gets the "this shape cannot be applied" footer (accurate — the update-only gate rejects it).
     const footer = isApplyCapablePreview(preview) ? DIFF_PREVIEW_APPLY_FOOTER : DIFF_PREVIEW_FOOTER;
-    const footerLines = [...(warning ? [warning] : []), footer];
+    const footerLines: MessagePart[] = [...(warning ? [warning] : []), footer];
     const blocks = fitDiffBlocks(header, footerLines, preview.changes.length, (i, maxChars) =>
       renderDiffChange(preview.changes[i]!, maxChars),
     );
-    const text = assembleBoundedBody(header, footerLines, blocks);
+    const body = assembleBoundedBody(header, footerLines, blocks);
     // F5-A (Sprint 4c-Follow-up-5): also attach a COMPLETE structured preview (full canonical diff, never
     // clamped). A preview-aware adapter delivers this losslessly (multipart or `.diff` attachment) so the
     // final result is never content-dropped; `text` above is a bounded fallback for preview-unaware
@@ -1491,25 +1581,27 @@ export class ResponseComposer {
     const files: PreviewFile[] = preview.changes
       .filter((c) => !c.binary && c.unified.trim().length > 0)
       .map((c) => ({ path: c.path, changeKind: c.kind, unifiedDiff: c.unified }));
-    if (files.length === 0) return { context, text };
+    if (files.length === 0) return outboundMessage(context, body);
     // F5-E (Sprint 4c-Follow-up-5): one stable, secret-safe correlation id for the whole delivery
     // lifecycle. `newId()` is a fresh non-content id (never a diff hash), filesystem-safe for the filename.
     const previewId = newId();
-    return {
-      context,
-      text,
+    // The structured preview carries plain strings by contract (its adapter delivers them as given or translated), so its
+    // outside paths are inline code spans (literal on both platforms); the fallback `text` / `content` carries spans.
+    return outboundMessage(context, body, {
       preview: {
         previewId,
-        header,
+        header: sent.length
+          ? `${CREDENTIAL_OVERRIDE_SENT_NOTICE_LEAD}${codeSpanList(sent)}\n\n${DIFF_PREVIEW_HEADER}`
+          : DIFF_PREVIEW_HEADER,
         // F5 (Sprint 4c-Follow-up-5): carry the out-of-scope safety warning INTO the artifact so a
         // preview-aware adapter (which delivers `preview`, not `text`) still surfaces it. Absent → clean.
-        ...(warning ? { warning } : {}),
+        ...(warning ? { warning: renderOutOfScopeWarningArtifact(preview.outOfScopeWarnings) as string } : {}),
         footer,
         files,
         canonicalDiff: buildCanonicalDiff(files),
         attachmentFilename: `quoky-preview-${previewId}.diff`,
       },
-    };
+    });
   }
 
   /**
@@ -1519,14 +1611,10 @@ export class ResponseComposer {
    * name all three decision words (not just 승인/취소).
    */
   composeApplyApprovalRequested(context: ConversationContext, targetFiles: string[]): OutboundMessage {
-    return {
+    return outboundMessage(
       context,
-      text:
-        `AI가 준비한 코드 변경을 실제 파일(${targetFiles.join(', ')})에 적용하려면 별도 승인이 필요해요.\n` +
-        '이 승인은 미리보기 생성이 아니라 실제 파일 수정을 위한 것이에요. 아직 파일은 수정되지 않았어요.\n' +
-        '실제 적용 시에는 최신 파일 내용으로 다시 확인해요.\n' +
-        '진행하려면 "승인", 거절하려면 "거절", 그만두려면 "취소"라고 답해 주세요.',
-    };
+      copy`AI가 준비한 코드 변경을 실제 파일(${outsideList(targetFiles)})에 적용하려면 별도 승인이 필요해요.\n이 승인은 미리보기 생성이 아니라 실제 파일 수정을 위한 것이에요. 아직 파일은 수정되지 않았어요.\n실제 적용 시에는 최신 파일 내용으로 다시 확인해요.\n진행하려면 "승인", 거절하려면 "거절", 그만두려면 "취소"라고 답해 주세요.`,
+    );
   }
 
   /**
@@ -1562,7 +1650,7 @@ export class ResponseComposer {
     const blocks = fitDiffBlocks(PATCH_PREVIEW_HEADER, [PATCH_PREVIEW_FOOTER], preview.operations.length, (i, maxChars) =>
       renderPatchOperation(preview.operations[i]!, maxChars),
     );
-    return { context, text: assembleBoundedBody(PATCH_PREVIEW_HEADER, [PATCH_PREVIEW_FOOTER], blocks) };
+    return outboundMessage(context, assembleBoundedBody(PATCH_PREVIEW_HEADER, [PATCH_PREVIEW_FOOTER], blocks));
   }
 
   /**
@@ -1608,17 +1696,19 @@ export class ResponseComposer {
    */
   composeWorkspaceApplied(context: ConversationContext, targetFiles: string[], newFiles: readonly string[] = []): OutboundMessage {
     // ADR-0099 D3: a created file is marked; with no new file the text is unchanged.
-    const isNew = new Set(newFiles);
-    const files = targetFiles.map((f) => (isNew.has(f) ? `${f} (새 파일)` : f)).join(', ');
-    return {
+    const files = renderFileList(targetFiles, newFiles, targetFiles.length);
+    return outboundMessage(
       context,
-      text:
-        `파일을 수정했어요: ${files}\n` +
-        'git 명령은 실행하지 않았어요. 커밋/푸시는 하지 않았어요.\n' +
-        '작업 트리에는 방금 적용한 파일 변경이 남아 있을 수 있어요.\n' +
-        '테스트도 실행하지 않았어요.\n' +
-        WORKSPACE_APPLIED_NEXT_LINE,
-    };
+      messageBody(
+        '파일을 수정했어요: ',
+        files,
+        '\n' +
+          'git 명령은 실행하지 않았어요. 커밋/푸시는 하지 않았어요.\n' +
+          '작업 트리에는 방금 적용한 파일 변경이 남아 있을 수 있어요.\n' +
+          '테스트도 실행하지 않았어요.\n' +
+          WORKSPACE_APPLIED_NEXT_LINE,
+      ),
+    );
   }
 
   /**
@@ -1649,15 +1739,15 @@ export class ResponseComposer {
    * restored and every created file removed, so nothing changed. The patch is still ready; no git/test ran.
    */
   composeWorkspaceApplyRolledBack(context: ConversationContext, files: readonly string[]): OutboundMessage {
-    return {
+    return outboundMessage(
       context,
-      text: clampToMessageBudget(
-        [
-          `변경 묶음을 파일에 적용하지 못해서 되돌렸어요. 바뀐 파일은 없어요: ${renderFileList(files)}`,
+      clampBodyToMessageBudget(
+        joinBody([
+          copy`변경 묶음을 파일에 적용하지 못해서 되돌렸어요. 바뀐 파일은 없어요: ${renderFileList(files)}`,
           '파일 내용이 바뀌었거나 지원하지 않는 변경일 수 있어요. git 명령이나 테스트는 실행하지 않았어요.',
-        ].join('\n'),
+        ]),
       ),
-    };
+    );
   }
 
   /**
@@ -1666,16 +1756,16 @@ export class ResponseComposer {
    * claims nothing changed and never claims it applied.
    */
   composeWorkspaceApplyPartiallyApplied(context: ConversationContext, files: readonly string[]): OutboundMessage {
-    return {
+    return outboundMessage(
       context,
-      text: clampToMessageBudget(
-        [
+      clampBodyToMessageBudget(
+        joinBody([
           '변경 묶음을 적용하던 중 문제가 생겼고, 일부 파일에는 변경이 적용됐을 수 있어요.',
-          `확인할 파일: ${renderFileList(files)}`,
+          copy`확인할 파일: ${renderFileList(files)}`,
           '파일 상태를 직접 확인해 주세요. git 명령이나 테스트는 실행하지 않았어요.',
-        ].join('\n'),
+        ]),
       ),
-    };
+    );
   }
 
   /**
@@ -1792,14 +1882,10 @@ export class ResponseComposer {
    * Forbidden: 커밋 준비 완료 / push 가능 / 배포 가능 / 검증 완료 / committed / pushed / deployed.
    */
   composeGitStatusPreview(context: ConversationContext, input: { status: GitStatus; validation: ValidationContext }): OutboundMessage {
-    const text = clampToMessageBudget(
-      [
-        renderChangedFiles(input.status),
-        renderValidationContext(input.validation),
-        ...GIT_READONLY_DISCLAIMER,
-      ].join('\n'),
+    return outboundMessage(
+      context,
+      clampKeepingTail(renderChangedFiles(input.status), joinBody([renderValidationContext(input.validation), ...GIT_READONLY_DISCLAIMER])),
     );
-    return { context, text };
   }
 
   /**
@@ -1810,25 +1896,27 @@ export class ResponseComposer {
    */
   composeGitDiffPreview(context: ConversationContext, input: { status: GitStatus; diff: GitDiff; validation: ValidationContext }): OutboundMessage {
     const untracked = input.status.untracked;
-    const untrackedLine = untracked.length
-      ? `untracked 파일 (${untracked.length}): ${untracked.slice(0, MAX_GIT_CHANGED_FILES).join(', ')}${untracked.length > MAX_GIT_CHANGED_FILES ? ' 외 …' : ''}`
+    const untrackedLine: MessagePart = untracked.length
+      ? copy`untracked 파일 (${untracked.length}): ${outsideList(untracked.slice(0, MAX_GIT_CHANGED_FILES))}${untracked.length > MAX_GIT_CHANGED_FILES ? ' 외 …' : ''}`
       : 'untracked 파일은 없어요.';
     // The mandatory "frame" (branch + notes + validation + read-only disclaimers) must always survive; size
     // the diff block so the whole message fits MAX_MESSAGE_CHARS and the final clamp never eats the frame.
     const DIFF_SLOT = ' DIFF ';
-    const frameLines = [
-      `브랜치: ${input.status.branch || '(unknown)'}`,
+    const headLines: MessagePart[] = [
+      copy`브랜치: ${input.status.branch ? outside(input.status.branch) : '(unknown)'}`,
       DIFF_SLOT,
       'diff는 추적 중인 파일 변경만 포함해요. untracked 파일은 상태 목록에만 표시돼요.',
       untrackedLine,
-      renderValidationContext(input.validation),
-      ...GIT_READONLY_DISCLAIMER,
     ];
-    const frameLen = frameLines.join('\n').length - DIFF_SLOT.length;
+    const tailLines: MessagePart[] = [renderValidationContext(input.validation), ...GIT_READONLY_DISCLAIMER];
+    const frameLen = plainLength(joinBody([...headLines, ...tailLines])) - DIFF_SLOT.length;
     const diffBudget = MAX_MESSAGE_CHARS - frameLen - 60; // 60: fences + truncation label margin
     const diffBlock = renderDiffBlock(input.diff, diffBudget);
-    const text = clampToMessageBudget(frameLines.map((l) => (l === DIFF_SLOT ? diffBlock : l)).join('\n'));
-    return { context, text };
+    // The validation line and the read-only disclaimers are the fixed tail (kept whole); an overflow cuts the path list.
+    return outboundMessage(
+      context,
+      clampKeepingTail(joinBody(headLines.map((l) => (l === DIFF_SLOT ? diffBlock : l))), joinBody(tailLines)),
+    );
   }
 
   /**
@@ -1884,18 +1972,20 @@ export class ResponseComposer {
     input: { candidateFiles: string[]; commitMessage: string; validation: ValidationContext; newFiles?: readonly string[] },
   ): OutboundMessage {
     // ADR-0099 D3: new files are marked "(새 파일)" — the commit will `git add` exactly those.
-    const files = renderFileList(input.candidateFiles, input.newFiles);
-    const text = clampToMessageBudget(
-      [
-        '커밋 승인을 요청했어요.',
-        `대상 파일: ${files}`,
-        `커밋 메시지: ${input.commitMessage}`,
-        renderValidationContext(input.validation),
-        '승인해도 이번 단계에서는 실제 git add/commit/push는 수행하지 않아요.',
-        '실제 커밋 실행은 다음 단계에서 진행돼요. 진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
-      ].join('\n'),
+    const fileList = renderFileList(input.candidateFiles, input.newFiles);
+    return outboundMessage(
+      context,
+      clampBodyToMessageBudget(
+        joinBody([
+          '커밋 승인을 요청했어요.',
+          copy`대상 파일: ${fileList}`,
+          copy`커밋 메시지: ${untrustedText(input.commitMessage, 'markup')}`,
+          renderValidationContext(input.validation),
+          '승인해도 이번 단계에서는 실제 git add/commit/push는 수행하지 않아요.',
+          '실제 커밋 실행은 다음 단계에서 진행돼요. 진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
+        ]),
+      ),
     );
-    return { context, text };
   }
 
   /**
@@ -1948,13 +2038,11 @@ export class ResponseComposer {
   composeCommitOutOfScopeChanges(context: ConversationContext, outOfScope: string[]): OutboundMessage {
     const shown = outOfScope.slice(0, MAX_COMMIT_OUT_OF_SCOPE_SHOWN);
     const omitted = outOfScope.length - shown.length;
-    const list = shown.length ? `${shown.join(', ')}${omitted > 0 ? ` 외 ${omitted}개` : ''}` : '(없음)';
-    return {
+    const list: MessagePart = shown.length ? messageContent(outsideList(shown), omitted > 0 ? ` 외 ${omitted}개` : '') : '(없음)';
+    return outboundMessage(
       context,
-      text:
-        `적용 대상 밖의(또는 안전하지 않은) 변경이 있어서 커밋 승인을 만들지 않았어요: ${list}\n` +
-        '적용한 파일만 커밋할 수 있도록 먼저 정리가 필요해요. git 명령은 실행하지 않았어요.',
-    };
+      copy`적용 대상 밖의(또는 안전하지 않은) 변경이 있어서 커밋 승인을 만들지 않았어요: ${list}\n적용한 파일만 커밋할 수 있도록 먼저 정리가 필요해요. git 명령은 실행하지 않았어요.`,
+    );
   }
 
   /** User-provided commit message failed validation (ADR-0045, CA #8) — ask again; no approval. */
@@ -2012,11 +2100,11 @@ export class ResponseComposer {
     input: { commitHash: string; files: string[]; newFiles?: readonly string[] },
   ): OutboundMessage {
     const shortHash = input.commitHash.slice(0, 7);
-    const files = input.files.length ? renderFileList(input.files, input.newFiles) : '(없음)';
-    const text = clampToMessageBudget(
-      [`커밋했어요: ${shortHash}`, `대상 파일: ${files}`, 'git push는 하지 않았어요.'].join('\n'),
+    const fileList: MessagePart = input.files.length ? renderFileList(input.files, input.newFiles) : '(없음)';
+    return outboundMessage(
+      context,
+      clampBodyToMessageBudget(joinBody([`커밋했어요: ${shortHash}`, copy`대상 파일: ${fileList}`, 'git push는 하지 않았어요.'])),
     );
-    return { context, text };
   }
 
   /**
@@ -2095,25 +2183,26 @@ export class ResponseComposer {
     },
   ): OutboundMessage {
     const shortHash = input.commitHash.slice(0, 7);
-    const remote = input.remote.slice(0, MAX_GIT_REF_DISPLAY);
-    const branch = input.branch.slice(0, MAX_GIT_REF_DISPLAY);
-    const target = input.newRemoteBranch
+    const remoteBranch = outside(`${input.remote.slice(0, MAX_GIT_REF_DISPLAY)}/${input.branch.slice(0, MAX_GIT_REF_DISPLAY)}`);
+    const target: MessagePart[] = input.newRemoteBranch
       ? [
-          `대상: ${remote}/${branch} (원격에 아직 없는 브랜치 — push하면 원격에 새 브랜치로 만들어져요)`,
+          copy`대상: ${remoteBranch} (원격에 아직 없는 브랜치 — push하면 원격에 새 브랜치로 만들어져요)`,
           '강제 push는 하지 않고, 로컬 업스트림(추적 브랜치)도 설정하지 않아요.',
         ]
-      : [`대상: ${remote}/${branch} (원격보다 ${input.ahead}개 앞섬)`];
-    const text = clampToMessageBudget(
-      [
-        'push 승인을 요청했어요.',
-        `커밋: ${shortHash}`,
-        ...target,
-        '승인해도 이번 단계에서는 실제 git push를 하지 않아요.',
-        '승인은 현재 확인한 Git 상태 기준이에요. 실제 push 실행 전에는 다시 확인이 필요해요.',
-        '진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
-      ].join('\n'),
+      : [copy`대상: ${remoteBranch} (원격보다 ${input.ahead}개 앞섬)`];
+    return outboundMessage(
+      context,
+      clampBodyToMessageBudget(
+        joinBody([
+          'push 승인을 요청했어요.',
+          `커밋: ${shortHash}`,
+          ...target,
+          '승인해도 이번 단계에서는 실제 git push를 하지 않아요.',
+          '승인은 현재 확인한 Git 상태 기준이에요. 실제 push 실행 전에는 다시 확인이 필요해요.',
+          '진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
+        ]),
+      ),
     );
-    return { context, text };
   }
 
   /** Push approval RECORDED after "승인" (Sprint 2z) — records permission only; never says pushed. */
@@ -2271,17 +2360,15 @@ export class ResponseComposer {
     },
   ): OutboundMessage {
     const shortHash = input.commitHash.slice(0, 7);
-    const remote = input.remote.slice(0, MAX_GIT_REF_DISPLAY);
-    const branch = input.branch.slice(0, MAX_GIT_REF_DISPLAY);
-    const lines = input.newRemoteBranch
+    const remoteBranch = outside(`${input.remote.slice(0, MAX_GIT_REF_DISPLAY)}/${input.branch.slice(0, MAX_GIT_REF_DISPLAY)}`);
+    const lines: MessagePart[] = input.newRemoteBranch
       ? [
-          `원격에 새 브랜치로 push했어요: ${shortHash} → ${remote}/${branch}`,
+          copy`원격에 새 브랜치로 push했어요: ${shortHash} → ${remoteBranch}`,
           '강제 push는 하지 않았고, 로컬 업스트림(추적 브랜치)도 설정하지 않았어요.',
           'PR 생성과 배포는 하지 않았어요. PR이 필요하면 "PR 만들어줘"라고 알려 주세요.',
         ]
-      : [`원격에 push했어요: ${shortHash} → ${remote}/${branch}`, 'PR 생성과 배포는 하지 않았어요.'];
-    const text = clampToMessageBudget(lines.join('\n'));
-    return { context, text };
+      : [copy`원격에 push했어요: ${shortHash} → ${remoteBranch}`, 'PR 생성과 배포는 하지 않았어요.'];
+    return outboundMessage(context, clampBodyToMessageBudget(joinBody(lines)));
   }
 
   /**
@@ -2340,9 +2427,11 @@ export class ResponseComposer {
     input: { commitHash?: string; remote?: string; branch?: string },
   ): OutboundMessage {
     const shown = input.commitHash ? input.commitHash.slice(0, 7) : '(hash 미상)';
-    const target =
-      input.remote && input.branch ? ` → ${input.remote.slice(0, MAX_GIT_REF_DISPLAY)}/${input.branch.slice(0, MAX_GIT_REF_DISPLAY)}` : '';
-    return { context, text: `이미 push했어요: ${shown}${target}. 다시 push하지 않았어요.` };
+    const target: MessagePart =
+      input.remote && input.branch
+        ? messageContent(' → ', outside(`${input.remote.slice(0, MAX_GIT_REF_DISPLAY)}/${input.branch.slice(0, MAX_GIT_REF_DISPLAY)}`))
+        : '';
+    return outboundMessage(context, copy`이미 push했어요: ${shown}${target}. 다시 push하지 않았어요.`);
   }
 
   /**
@@ -2372,13 +2461,14 @@ export class ResponseComposer {
     input: { pushedCommitHash: string; headBranch: string; baseBranch: string; title: string; body: string },
   ): OutboundMessage {
     const shortHash = input.pushedCommitHash.slice(0, 7);
-    const head = input.headBranch.slice(0, MAX_GIT_REF_DISPLAY);
-    const base = input.baseBranch.slice(0, MAX_GIT_REF_DISPLAY);
+    const head = outside(input.headBranch.slice(0, MAX_GIT_REF_DISPLAY));
+    const base = outside(input.baseBranch.slice(0, MAX_GIT_REF_DISPLAY));
     const titleFence = fenceFor(input.title);
     const bodyFence = fenceFor(input.body);
-    const text = [
+    // The title and body stay inside their own fences (a fence is verbatim on every platform); only the branches are spans.
+    const lines: MessagePart[] = [
       'PR 생성 승인을 요청했어요.',
-      `대상: ${head} → ${base} (커밋 ${shortHash})`,
+      copy`대상: ${head} → ${base} (커밋 ${shortHash})`,
       '승인하면 아래 제목과 본문을 그대로 사용해요.',
       '제목:',
       titleFence,
@@ -2391,8 +2481,8 @@ export class ResponseComposer {
       '승인해도 이번 단계에서는 실제 PR을 만들지 않아요.',
       '지금 기록된 push 정보를 기준으로 한 승인이에요. 실제 PR 생성은 이후 단계에서 진행돼요.',
       '진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
-    ].join('\n');
-    return { context, text };
+    ];
+    return outboundMessage(context, joinBody(lines));
   }
 
   /**
@@ -2486,19 +2576,21 @@ export class ResponseComposer {
     context: ConversationContext,
     input: { owner: string; repo: string; headBranch: string; baseBranch: string; commitHash: string; prNumber: number; prUrl: string },
   ): OutboundMessage {
-    const head = input.headBranch.slice(0, MAX_GIT_REF_DISPLAY);
-    const base = input.baseBranch.slice(0, MAX_GIT_REF_DISPLAY);
-    const text = clampToMessageBudget(
-      [
-        'PR을 만들었어요.',
-        `- 저장소: ${input.owner.slice(0, MAX_GIT_REF_DISPLAY)}/${input.repo.slice(0, MAX_GIT_REF_DISPLAY)}`,
-        `- 브랜치: ${head} → ${base}`,
-        `- 커밋: ${input.commitHash.slice(0, 7)}`,
-        `- PR: ${input.prUrl.slice(0, MAX_PR_URL_DISPLAY)}`,
-        '아직 머지/배포/릴리즈는 하지 않았어요.',
-      ].join('\n'),
+    const head = outside(input.headBranch.slice(0, MAX_GIT_REF_DISPLAY));
+    const base = outside(input.baseBranch.slice(0, MAX_GIT_REF_DISPLAY));
+    return outboundMessage(
+      context,
+      clampBodyToMessageBudget(
+        joinBody([
+          'PR을 만들었어요.',
+          copy`- 저장소: ${repositoryPart(input)}`,
+          copy`- 브랜치: ${head} → ${base}`,
+          `- 커밋: ${input.commitHash.slice(0, 7)}`,
+          copy`- PR: ${urlPart(input.prUrl.slice(0, MAX_PR_URL_DISPLAY))}`,
+          '아직 머지/배포/릴리즈는 하지 않았어요.',
+        ]),
+      ),
     );
-    return { context, text };
   }
 
   /** An existing open PR was connected instead of creating a new one (Sprint 3d-D, Q9) — never says "newly created". */
@@ -2506,19 +2598,21 @@ export class ResponseComposer {
     context: ConversationContext,
     input: { owner: string; repo: string; headBranch: string; baseBranch: string; commitHash: string; prNumber: number; prUrl: string },
   ): OutboundMessage {
-    const head = input.headBranch.slice(0, MAX_GIT_REF_DISPLAY);
-    const base = input.baseBranch.slice(0, MAX_GIT_REF_DISPLAY);
-    const text = clampToMessageBudget(
-      [
-        '기존에 열려 있던 PR을 연결했어요.',
-        `- 저장소: ${input.owner.slice(0, MAX_GIT_REF_DISPLAY)}/${input.repo.slice(0, MAX_GIT_REF_DISPLAY)}`,
-        `- 브랜치: ${head} → ${base}`,
-        `- 커밋: ${input.commitHash.slice(0, 7)}`,
-        `- PR: ${input.prUrl.slice(0, MAX_PR_URL_DISPLAY)}`,
-        '새 PR을 만들지는 않았어요. 머지/배포/릴리즈도 하지 않았어요.',
-      ].join('\n'),
+    const head = outside(input.headBranch.slice(0, MAX_GIT_REF_DISPLAY));
+    const base = outside(input.baseBranch.slice(0, MAX_GIT_REF_DISPLAY));
+    return outboundMessage(
+      context,
+      clampBodyToMessageBudget(
+        joinBody([
+          '기존에 열려 있던 PR을 연결했어요.',
+          copy`- 저장소: ${repositoryPart(input)}`,
+          copy`- 브랜치: ${head} → ${base}`,
+          `- 커밋: ${input.commitHash.slice(0, 7)}`,
+          copy`- PR: ${urlPart(input.prUrl.slice(0, MAX_PR_URL_DISPLAY))}`,
+          '새 PR을 만들지는 않았어요. 머지/배포/릴리즈도 하지 않았어요.',
+        ]),
+      ),
     );
-    return { context, text };
   }
 
   /** Repository identity or GitHub token is not configured (Sprint 3d-D) — safe not-configured; NO PR attempt. */
@@ -2593,10 +2687,10 @@ export class ResponseComposer {
 
   /** A PR create/open phrase while already PR_CREATED (Sprint 3d-D) — already created; returns the PR URL. */
   composePrAlreadyCreated(context: ConversationContext, input: { prNumber: number; prUrl: string }): OutboundMessage {
-    return {
+    return outboundMessage(
       context,
-      text: `이미 PR을 만들었어요: #${input.prNumber} ${input.prUrl.slice(0, MAX_PR_URL_DISPLAY)}\n새 PR을 만들지 않았어요. 머지/배포/릴리즈는 하지 않았어요.`,
-    };
+      copy`이미 PR을 만들었어요: #${input.prNumber} ${urlPart(input.prUrl.slice(0, MAX_PR_URL_DISPLAY))}\n새 PR을 만들지 않았어요. 머지/배포/릴리즈는 하지 않았어요.`,
+    );
   }
 
   /** A deploy/merge/release/companion phrase while PR_CREATED (Sprint 3d-D) — unsupported future step. */
@@ -2619,8 +2713,8 @@ export class ResponseComposer {
     preview: PullRequestStatusPreview,
     opts: { mergeApproved?: boolean } = {},
   ): OutboundMessage {
-    const head = preview.headBranch.slice(0, MAX_GIT_REF_DISPLAY);
-    const base = preview.baseBranch.slice(0, MAX_GIT_REF_DISPLAY);
+    const head = outside(preview.headBranch.slice(0, MAX_GIT_REF_DISPLAY));
+    const base = outside(preview.baseBranch.slice(0, MAX_GIT_REF_DISPLAY));
     const stateKo =
       preview.state === 'open' ? '열림' : preview.state === 'closed' ? '닫힘(provider 보고)' : preview.state === 'merged' ? '머지됨(provider 보고)' : '알 수 없음';
     const c = preview.checks;
@@ -2630,11 +2724,11 @@ export class ResponseComposer {
         : c.totalCount === 0
         ? '- 체크: 현재 표시할 체크 결과가 없거나 확인되지 않았어요'
         : `- 체크: 성공 ${c.successCount} / 실패 ${c.failureCount} / 대기 ${c.pendingCount} (총 ${c.totalCount}) — 제공자 보고 기준이라 일부 체크는 반영되지 않을 수 있어요`;
-    const lines = [
+    const lines: MessagePart[] = [
       '현재 조회 기준으로 PR 상태를 확인했어요. (지금 이 시점 조회 결과이며, 계속 바뀔 수 있어요)',
-      `- PR: #${preview.ref.pullRequestNumber} ${preview.ref.pullRequestUrl.slice(0, MAX_PR_URL_DISPLAY)}`,
+      copy`- PR: #${preview.ref.pullRequestNumber} ${urlPart(preview.ref.pullRequestUrl.slice(0, MAX_PR_URL_DISPLAY))}`,
       `- 상태: ${stateKo}${preview.isDraft ? ' (draft)' : ''}`,
-      `- 브랜치: ${head} → ${base}`,
+      copy`- 브랜치: ${head} → ${base}`,
       `- 커밋: ${preview.headCommitHash.slice(0, 7)}`,
     ];
     if (preview.state === 'open' && preview.mergeability !== undefined) {
@@ -2650,7 +2744,7 @@ export class ResponseComposer {
     // (Sprint 3f) when reached from MERGE_APPROVED, remind that the merge approval is still recorded and no
     // merge happened — the status preview does not consume/clear the approval.
     if (opts.mergeApproved) lines.push('머지 승인은 기록되어 있지만, 아직 머지는 하지 않았어요.');
-    return { context, text: clampToMessageBudget(lines.join('\n')) };
+    return outboundMessage(context, clampBodyToMessageBudget(joinBody(lines)));
   }
 
   // ── Sprint 3f (ADR-0056): explicit PR merge APPROVAL — permission record only, never merged/deployed/released. ──
@@ -2686,18 +2780,20 @@ export class ResponseComposer {
     context: ConversationContext,
     input: { owner: string; repo: string; prNumber: number; prUrl: string; headBranch: string; baseBranch: string; commitHash: string },
   ): OutboundMessage {
-    const head = input.headBranch.slice(0, MAX_GIT_REF_DISPLAY);
-    const base = input.baseBranch.slice(0, MAX_GIT_REF_DISPLAY);
-    const text = clampToMessageBudget(
-      [
-        'PR 머지 승인을 요청했어요.',
-        `대상: ${input.owner.slice(0, MAX_GIT_REF_DISPLAY)}/${input.repo.slice(0, MAX_GIT_REF_DISPLAY)} #${input.prNumber} (${head} → ${base}, 커밋 ${input.commitHash.slice(0, 7)})`,
-        `- PR: ${input.prUrl.slice(0, MAX_PR_URL_DISPLAY)}`,
-        '아직 머지는 하지 않았어요. 승인하면 이후 별도 단계에서 머지를 실행할 수 있어요. 배포/릴리즈도 하지 않았어요.',
-        '진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
-      ].join('\n'),
+    const head = outside(input.headBranch.slice(0, MAX_GIT_REF_DISPLAY));
+    const base = outside(input.baseBranch.slice(0, MAX_GIT_REF_DISPLAY));
+    return outboundMessage(
+      context,
+      clampBodyToMessageBudget(
+        joinBody([
+          'PR 머지 승인을 요청했어요.',
+          copy`대상: ${repositoryPart(input)} #${input.prNumber} (${head} → ${base}, 커밋 ${input.commitHash.slice(0, 7)})`,
+          copy`- PR: ${urlPart(input.prUrl.slice(0, MAX_PR_URL_DISPLAY))}`,
+          '아직 머지는 하지 않았어요. 승인하면 이후 별도 단계에서 머지를 실행할 수 있어요. 배포/릴리즈도 하지 않았어요.',
+          '진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
+        ]),
+      ),
     );
-    return { context, text };
   }
 
   /** Merge approval RECORDED after "승인" (Sprint 3f) — permission only; never says merged. */
@@ -2782,15 +2878,15 @@ export class ResponseComposer {
     context: ConversationContext,
     input: { owner: string; repo: string; prNumber: number; prUrl: string; mergedHeadSha: string; mergeCommitHash?: string },
   ): OutboundMessage {
-    const lines = [
+    const lines: MessagePart[] = [
       'PR을 머지했어요.',
-      `대상: ${input.owner.slice(0, MAX_GIT_REF_DISPLAY)}/${input.repo.slice(0, MAX_GIT_REF_DISPLAY)} #${input.prNumber}`,
-      `- PR: ${input.prUrl.slice(0, MAX_PR_URL_DISPLAY)}`,
+      copy`대상: ${repositoryPart(input)} #${input.prNumber}`,
+      copy`- PR: ${urlPart(input.prUrl.slice(0, MAX_PR_URL_DISPLAY))}`,
       `- 머지된 헤드 커밋: ${input.mergedHeadSha.slice(0, 7)}`,
     ];
     if (input.mergeCommitHash) lines.push(`- 머지 커밋: ${input.mergeCommitHash.slice(0, 7)} (provider 보고)`);
     lines.push('머지했다는 것이 배포/릴리즈를 뜻하지는 않아요. 배포/릴리즈는 하지 않았어요. 로컬 main 동기화나 브랜치 삭제도 하지 않았어요.');
-    return { context, text: clampToMessageBudget(lines.join('\n')) };
+    return outboundMessage(context, clampBodyToMessageBudget(joinBody(lines)));
   }
 
   /** Merge outcome UNVERIFIED (Sprint 3g) — the mutating call was attempted but could not be completed/verified.
@@ -2816,15 +2912,17 @@ export class ResponseComposer {
     context: ConversationContext,
     input: { owner: string; repo: string; prNumber: number; prUrl: string },
   ): OutboundMessage {
-    const text = clampToMessageBudget(
-      [
-        '이 PR은 이미 머지되어 있어요. (새로 머지하지 않았어요)',
-        `대상: ${input.owner.slice(0, MAX_GIT_REF_DISPLAY)}/${input.repo.slice(0, MAX_GIT_REF_DISPLAY)} #${input.prNumber}`,
-        `- PR: ${input.prUrl.slice(0, MAX_PR_URL_DISPLAY)}`,
-        '머지되어 있다는 것이 배포/릴리즈를 뜻하지는 않아요. 배포/릴리즈는 하지 않았어요.',
-      ].join('\n'),
+    return outboundMessage(
+      context,
+      clampBodyToMessageBudget(
+        joinBody([
+          '이 PR은 이미 머지되어 있어요. (새로 머지하지 않았어요)',
+          copy`대상: ${repositoryPart(input)} #${input.prNumber}`,
+          copy`- PR: ${urlPart(input.prUrl.slice(0, MAX_PR_URL_DISPLAY))}`,
+          '머지되어 있다는 것이 배포/릴리즈를 뜻하지는 않아요. 배포/릴리즈는 하지 않았어요.',
+        ]),
+      ),
     );
-    return { context, text };
   }
 
   /** A deploy/release/reviewer/label/assignee/other companion phrase at MERGE_APPROVED or PR_MERGED (Sprint 3g)
@@ -2904,22 +3002,22 @@ export class ResponseComposer {
     context: ConversationContext,
     input: { cleanedBranch: string; cleanedLocalBranch: boolean; alreadyAbsent: boolean },
   ): OutboundMessage {
-    const name = input.cleanedBranch.slice(0, MAX_GIT_REF_DISPLAY);
-    const text = input.alreadyAbsent
-      ? clampToMessageBudget(
-          [
-            `로컬 브랜치 '${name}'은 이미 없어요.`,
+    const name = outside(input.cleanedBranch.slice(0, MAX_GIT_REF_DISPLAY));
+    const body = input.alreadyAbsent
+      ? clampBodyToMessageBudget(
+          joinBody([
+            copy`로컬 브랜치 '${name}'은 이미 없어요.`,
             '이번엔 삭제한 브랜치가 없어요. 원격 브랜치는 삭제하지 않았어요. main은 변경하지 않았어요.',
             '배포/릴리즈/태그도 하지 않았어요.',
-          ].join('\n'),
+          ]),
         )
-      : clampToMessageBudget(
-          [
-            `로컬 브랜치 '${name}'을 삭제했어요 (이미 main에 병합된 브랜치예요).`,
+      : clampBodyToMessageBudget(
+          joinBody([
+            copy`로컬 브랜치 '${name}'을 삭제했어요 (이미 main에 병합된 브랜치예요).`,
             '원격 브랜치와 main은 건드리지 않았어요. 배포/릴리즈/태그도 하지 않았어요.',
-          ].join('\n'),
+          ]),
         );
-    return { context, text };
+    return outboundMessage(context, body);
   }
 
   /** A KNOWN pre-delete block (target is main / unsafe name / not merged / checked out / main moved / context
@@ -2967,18 +3065,20 @@ export class ResponseComposer {
     context: ConversationContext,
     input: { owner: string; repo: string; prNumber: number; prUrl: string; branch: string; expectedHeadCommit: string },
   ): OutboundMessage {
-    const branch = input.branch.slice(0, MAX_GIT_REF_DISPLAY);
-    const text = clampToMessageBudget(
-      [
-        '원격 브랜치 정리(삭제) 승인을 요청했어요.',
-        `대상: ${input.owner.slice(0, MAX_GIT_REF_DISPLAY)}/${input.repo.slice(0, MAX_GIT_REF_DISPLAY)} #${input.prNumber} 원격 브랜치 '${branch}' (예상 커밋 ${input.expectedHeadCommit.slice(0, 7)})`,
-        `- PR: ${input.prUrl.slice(0, MAX_PR_URL_DISPLAY)}`,
-        '아직 아무것도 삭제하지 않았어요. 이 승인은 권한만 기록해요 — 실제 삭제는 이후 별도 실행 단계에서 진행돼요.',
-        '승인 시점에 원격 브랜치가 존재하는지·커밋이 그대로인지·PR이 여전히 병합 상태인지·삭제가 안전한지는 이 승인으로 보장하지 않아요 (실행 시 확인해요).',
-        '진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
-      ].join('\n'),
+    const branchName = outside(input.branch.slice(0, MAX_GIT_REF_DISPLAY));
+    return outboundMessage(
+      context,
+      clampBodyToMessageBudget(
+        joinBody([
+          '원격 브랜치 정리(삭제) 승인을 요청했어요.',
+          copy`대상: ${repositoryPart(input)} #${input.prNumber} 원격 브랜치 '${branchName}' (예상 커밋 ${input.expectedHeadCommit.slice(0, 7)})`,
+          copy`- PR: ${urlPart(input.prUrl.slice(0, MAX_PR_URL_DISPLAY))}`,
+          '아직 아무것도 삭제하지 않았어요. 이 승인은 권한만 기록해요 — 실제 삭제는 이후 별도 실행 단계에서 진행돼요.',
+          '승인 시점에 원격 브랜치가 존재하는지·커밋이 그대로인지·PR이 여전히 병합 상태인지·삭제가 안전한지는 이 승인으로 보장하지 않아요 (실행 시 확인해요).',
+          '진행하려면 "승인", 원치 않으면 "거절"이라고 알려 주세요.',
+        ]),
+      ),
     );
-    return { context, text };
   }
 
   /** Remote-branch-cleanup approval RECORDED after "승인" (Sprint 3j-A) — permission only; never says deleted. */
@@ -3050,22 +3150,22 @@ export class ResponseComposer {
     context: ConversationContext,
     input: { branch: string; cleanedRemoteBranch: boolean; alreadyAbsent: boolean },
   ): OutboundMessage {
-    const name = input.branch.slice(0, MAX_GIT_REF_DISPLAY);
-    const text = input.alreadyAbsent
-      ? clampToMessageBudget(
-          [
-            `원격 브랜치 '${name}'은 이미 없어요.`,
+    const name = outside(input.branch.slice(0, MAX_GIT_REF_DISPLAY));
+    const body = input.alreadyAbsent
+      ? clampBodyToMessageBudget(
+          joinBody([
+            copy`원격 브랜치 '${name}'은 이미 없어요.`,
             '이번엔 삭제한 원격 브랜치가 없어요. 로컬 브랜치·main은 변경하지 않았어요.',
             '배포/릴리즈/태그도 하지 않았어요.',
-          ].join('\n'),
+          ]),
         )
-      : clampToMessageBudget(
-          [
-            `원격 브랜치 '${name}'을 삭제했어요 (병합 완료된 PR의 브랜치예요).`,
+      : clampBodyToMessageBudget(
+          joinBody([
+            copy`원격 브랜치 '${name}'을 삭제했어요 (병합 완료된 PR의 브랜치예요).`,
             '로컬 브랜치·main은 건드리지 않았어요. 배포/릴리즈/태그도 하지 않았어요.',
-          ].join('\n'),
+          ]),
         );
-    return { context, text };
+    return outboundMessage(context, body);
   }
 
   /** A KNOWN pre-DELETE block (approval/preflight invalid, PR not merged, remote SHA moved, …) — definitively NOT
@@ -3089,11 +3189,11 @@ export class ResponseComposer {
   /** A remote cleanup / execute phrase at terminal REMOTE_BRANCH_CLEANED (Sprint 3j-B) — already cleaned; nothing
    *  newly deleted. No second DELETE. */
   composeRemoteBranchAlreadyCleaned(context: ConversationContext, input: { branch: string }): OutboundMessage {
-    const name = input.branch.slice(0, MAX_GIT_REF_DISPLAY);
-    return {
+    const name = outside(input.branch.slice(0, MAX_GIT_REF_DISPLAY));
+    return outboundMessage(
       context,
-      text: `원격 브랜치 '${name}'는 이미 정리됐어요.\n이번엔 새로 삭제한 게 없어요. 로컬 브랜치·main은 변경하지 않았어요. 배포/릴리즈/태그도 하지 않았어요.`,
-    };
+      copy`원격 브랜치 '${name}'는 이미 정리됐어요.\n이번엔 새로 삭제한 게 없어요. 로컬 브랜치·main은 변경하지 않았어요. 배포/릴리즈/태그도 하지 않았어요.`,
+    );
   }
 }
 

@@ -103,3 +103,11 @@ describe('Discord markup of the morning brief calendar section (ADR-0117 D1, BRF
     expect(brief(undefined)).not.toContain('오늘 일정');
   });
 });
+
+describe('Discord path guard (PLT-1 review P3-d)', () => {
+  it('escapes Markdown, broadcast mentions and `<`, but keeps a plain @ so a path still resolves when copied back', () => {
+    const zw = '​';
+    expect(DISCORD_MARKUP.untrusted('packages/@org/_x_/*y*.ts', 'path')).toBe('packages/@org/\\_x\\_/\\*y\\*.ts');
+    expect(DISCORD_MARKUP.untrusted('a/@everyone/@HERE <@123> <#4>', 'path')).toBe(`a/@${zw}everyone/@${zw}HERE <${zw}@123\\> <${zw}#4\\>`);
+  });
+});
