@@ -94,10 +94,12 @@ Wave-1 entries (all reads): `jira.issues`, `github.items`, `slack.search`, `conf
 
 ### Ordering
 
-control → approval anchors → Class A exact commands → pre-classify grammars → B0b → **[new] selection** → classifier and chat.
+control → approval anchors → Class A exact commands → pre-classify grammars → B0b → classifier → **[new] selection** (only for GENERAL_CHAT and the personal-data reason of POLICY_SENSITIVE_CHAT) → chat.
+
+> Superseded detail: an earlier draft placed selection before the classifier. ADR-0120 D6 (classifier first, Phase A) is authoritative; this order follows it so the classifier's Class A exclusions (code work, project registration, run tests) are never bypassed.
 
 - **Class A** (anchored commands, kept): `할 일 추가:`, `기억해:`, write commands, `N번 메일 요약`, `모델 변경:`, reminders, memory/learning, code work, project registration, and the injection/language checks of `POLICY_SENSITIVE_CHAT`.
-- **Phase A:** the model runs only on messages that would otherwise fall through to chat. These already go to Claude chat, so no new class of egress is added.
+- **Phase A:** the model runs only on messages that would otherwise fall through to chat. Before the call, the complete outgoing request passes the chat path's credential guard; a credential-shaped value skips selection. These already go to Claude chat, so no new class of egress is added.
 - **Phase C** (after shadow data): the model runs before the Class B grammars, and those become the fallback for when the provider is down.
 
 ### Budget

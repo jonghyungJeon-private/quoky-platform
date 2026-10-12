@@ -20336,6 +20336,10 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
 3. **D3 — Selector I/O contract: one call, a timeout, no retry.**
    - **Input:** the owner's text with quoted lines, fenced blocks and attachments replaced by placeholders (text over 600
      characters skips selection), the catalog of D1, and the previous selection as structure only (entry id and args).
+   - **Pre-egress guard:** before any call, the complete outgoing request (the prepared owner text and the previous
+     selection's args) passes the same credential guard the chat path uses. A credential-shaped value skips selection
+     entirely (no call is made) and the turn continues on the existing path, so no credential leaves the host through
+     selection. D4's guard on returned arguments stays as a second check.
    - **Output:** one JSON object of at most 2 KB with unknown keys rejected:
      `{ entryId | none, args, ambiguity: CLEAR | NEEDS_CLARIFICATION, alternatives (at most 2) }`. A confidence number,
      if returned, is logged only and never decides anything.
