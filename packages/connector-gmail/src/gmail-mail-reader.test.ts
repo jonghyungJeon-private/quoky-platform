@@ -187,6 +187,11 @@ describe('GmailMailReader (ADR-0118 D2/D3)', () => {
     expect(message.sender).toEqual({ name: '山田', address: 'yamada@example.jp' });
   });
 
+  it('live QA 2026-10-12: a 204 No Content list (no match under a partial-response field mask) is an empty result', async () => {
+    const { reader } = harness(() => new Response(null, { status: 204 }));
+    expect(await reader.search({ receivedAfter: '2026-10-12T00:00:00.000Z' })).toEqual({ messages: [], matched: 0, matchedIsLowerBound: false });
+  });
+
   it('refuses a response over its size bound without keeping it', async () => {
     const declared = harness(() => new Response('{}', { status: 200, headers: { 'content-length': String(GMAIL_FULL_MAX_BYTES + 1) } }));
     expect(await failure(declared.reader.getMessage('m1'))).toMatchObject({ reason: 'INVALID_RESPONSE', name: 'GmailResponseTooLargeError' });

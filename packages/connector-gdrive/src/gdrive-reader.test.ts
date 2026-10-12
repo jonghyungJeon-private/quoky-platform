@@ -204,6 +204,13 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
     expect((await failure(reader.exportText('d1'))).reason).toBe('INVALID_RESPONSE');
   });
 
+  it('a 204 No Content list (no match under a partial-response field mask) is an empty result', async () => {
+    const { reader } = harness(() => new Response(null, { status: 204 }));
+    const result = await reader.searchByName('없는 파일');
+    expect(result.files).toEqual([]);
+    expect(result.matched).toBe(0);
+  });
+
   it('refuses a JSON response over its size bound without keeping it', async () => {
     const { reader } = harness(() => new Response(`{"files":[${'{"id":"a"},'.repeat(60_000)}{"id":"b"}]}`, { status: 200 }));
     const error = await failure(reader.recentFiles());

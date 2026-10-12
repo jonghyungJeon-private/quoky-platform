@@ -250,6 +250,12 @@ export class GoogleDriveReader implements DriveReader {
   /** One guarded JSON read, bounded at `maxBytes` (a larger response is refused). */
   private async readJson(url: URL, maxBytes: number): Promise<Record<string, unknown>> {
     const response = await this.authorized(url);
+    // A partial response (`fields=…`) whose selected fields are all absent — an empty list — is sent by Google as
+    // 204 No Content with no body: that is an empty object, not a malformed response.
+    if (response.status === 204) {
+      await discardBody(response);
+      return {};
+    }
     const bytes = await readBounded(response, maxBytes);
     if (bytes.overflow) throw new GDriveResponseTooLargeError('drive');
     let payload: unknown;

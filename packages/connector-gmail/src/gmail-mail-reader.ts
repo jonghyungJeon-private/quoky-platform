@@ -203,6 +203,12 @@ export class GmailMailReader implements MailReader {
     if (!response.ok) {
       throw new GmailHttpError(await gmailErrorReason(response), 'gmail', response.status);
     }
+    // Live QA 2026-10-12: a partial response (`fields=messages(id),nextPageToken`) for a search with no match is sent
+    // as 204 No Content with no body — an empty object (no messages), not a malformed response.
+    if (response.status === 204) {
+      await discardBody(response);
+      return {};
+    }
     const payload = await readBoundedJson(response, maxBytes);
     if (!isRecord(payload)) throw new GmailResponseError('gmail');
     return payload;
