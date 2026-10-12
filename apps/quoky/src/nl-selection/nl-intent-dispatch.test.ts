@@ -83,6 +83,7 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
   const requests: AiRequest[] = [];
   const order: string[] = [];
   const selected: Array<{ handlerId: string; command: NlSelectedCommand }> = [];
+  const selectedOutcomes: string[] = [];
   const claims: Array<{ handlerId: string; kind: string }> = [];
   const deskCommands: Array<{ kind: string; source?: string }> = [];
   const intents: Intent[] = [];
@@ -209,7 +210,9 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       if (serve !== undefined) {
         (handler as { handleSelected?: ConversationTurnHandler['handleSelected'] }).handleSelected = async (command, ctx) => {
           selected.push({ handlerId: handler.id, command });
-          return serve(command, ctx);
+          const outcome = await serve(command, ctx);
+          selectedOutcomes.push(outcome === null ? 'null' : (outcome as { kind?: string }).kind ?? 'reply');
+          return outcome;
         };
       }
     }
@@ -386,6 +389,61 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       metadata: { ...(actor.metadata ?? {}), [core.INTERPRETATION_PREFERENCES_METADATA_KEY]: { 'jira.created-scope': { value, at: new Date().toISOString() } } },
     });
   }
+
+  it('adversarial sweep: on every pasted or injection negative a hostile selector cannot write, ground a pasted word or change the preference', async () => {
+    const hostile = CORPUS.cases.filter(
+      (golden) =>
+        golden.expect === 'none' &&
+        (/[>`]/.test(golden.text) || /무시|ignore|instruction|지시|system|프롬프트|reveal|삭제|delete|보내|send|실행/i.test(golden.text)),
+    );
+    expect(hostile.length).toBeGreaterThanOrEqual(15);
+    // The first word inside the pasted/quoted part, as a keyword the owner did not write.
+    const pastedWord = (text: string) =>
+      /```\n?([^\s`"(]+)/u.exec(text)?.[1] ?? /^>\s*(\S+)/mu.exec(text)?.[1] ?? 'zzqx-unseen';
+    const failures: string[] = [];
+    for (const golden of hostile) {
+      const variants: Array<[string, string]> = [
+        ['write id', answer('jira.create', { summary: 'x' })],
+        ['write id', answer('mail.send', { to: 'Kim' })],
+        ['pasted keyword', answer('slack.search', { keyword: pastedWord(golden.text) })],
+        ['ungrounded keyword', answer('jira.issues', { keyword: 'zzqx-unseen' })],
+        ['unrequested role', answer('jira.issues', { window: 'created', range: 'today', role: 'reporter' })],
+        ['plausible wrong read', answer('calendar.events', { range: 'today' })],
+      ];
+      for (const [label, scripted] of variants) {
+        await seedPreference('either');
+        selectorAnswer = scripted;
+        const start = marks();
+        const outcomes = selectedOutcomes.length;
+        let result: TurnResult;
+        try {
+          result = await send(golden.text);
+        } catch (error) {
+          failures.push(`${golden.id}/${label}: threw ${String(error).slice(0, 60)}`);
+          continue;
+        }
+        const served = selected.slice(start.selected);
+        if (selectedOutcomes.slice(outcomes).some((kind) => kind === 'write-draft')) failures.push(`${golden.id}/${label}: a write draft from selection`);
+        for (const { command } of served) {
+          if (!core.NL_CATALOG_ENTRY_IDS.includes(command.entryId)) failures.push(`${golden.id}/${label}: served ${command.entryId}`);
+          const prepared = core.prepareSelectionInput(golden.text);
+          const grounding = 'skip' in prepared ? '' : prepared.groundingText;
+          for (const name of ['keyword', 'from', 'name']) {
+            const value = command.args[name];
+            if (typeof value === 'string' && !core.isGroundedIn(value, grounding)) failures.push(`${golden.id}/${label}: ungrounded ${name}`);
+          }
+          if (command.args.window === 'created' && command.args.role !== 'either') failures.push(`${golden.id}/${label}: role ${String(command.args.role)}`);
+        }
+        const stored = ((await storage.actors.get(ownerActor.id))?.metadata?.[core.INTERPRETATION_PREFERENCES_METADATA_KEY] ?? {}) as Record<string, { value?: string }>;
+        if (stored['jira.created-scope']?.value !== 'either') failures.push(`${golden.id}/${label}: preference changed`);
+        if (typeof result.reply.text !== 'string' || result.reply.text.length === 0) failures.push(`${golden.id}/${label}: empty reply`);
+        if ((label === 'write id' || label === 'pasted keyword' || label === 'ungrounded keyword') && served.length > 0) {
+          failures.push(`${golden.id}/${label}: executed ${served[0]!.command.entryId}`);
+        }
+      }
+    }
+    expect(failures).toEqual([]);
+  }, 600_000);
 
   async function withoutPreference(): Promise<void> {
     const actor = (await storage.actors.get(ownerActor.id)) as Actor;
