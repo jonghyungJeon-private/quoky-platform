@@ -342,6 +342,23 @@ describe('unqualified and keyword-scoped Jira listings (live UAT)', () => {
     expect(detectWorkChatCommand(`${'가'.repeat(101)} 관련 jira 이슈 보여줘`)).toEqual({ kind: 'usage', topic: 'search-too-long' });
   });
 
+  it.each([`'위클리카'`, '"위클리카"', '‘위클리카’', '“위클리카”', '「위클리카」', '『위클리카』'])(
+    'uses a short quoted keyword bare in both forms: %s',
+    (quoted) => {
+      const expected = { ...mine, text: '위클리카' };
+      expect(detectWorkChatCommand(`${quoted} 관련 jira 이슈 보여줘`)).toEqual(expected);
+      expect(detectWorkChatCommand(`jira에서 ${quoted} 이슈 찾아줘`)).toEqual(expected);
+    },
+  );
+
+  it('does not claim a long, repeated or labelled quoted passage', () => {
+    const long = `'${'가나다라 '.repeat(10).trim()}'`;
+    expect(detectWorkChatCommand(`${long} 관련 jira 이슈 보여줘`)).toBeNull();
+    expect(detectWorkChatCommand(`jira에서 ${long} 이슈 찾아줘`)).not.toEqual(expect.objectContaining({ query: 'my-items' }));
+    expect(detectWorkChatCommand(`'a' 'b' 관련 jira 이슈 보여줘`)).toBeNull();
+    expect(detectWorkChatCommand(`메모: '위클리카' 관련 jira 이슈 보여줘`)).toBeNull();
+  });
+
   it('keeps a message that names an issue key or link out of the keyword filter', () => {
     expect(detectWorkChatCommand('jira에서 PROJ-1 이슈 찾아줘')).toEqual({ kind: 'lookup', source: 'jira', query: 'search', text: 'PROJ-1 이슈' });
     expect(detectWorkChatCommand('jira에서 https://acme.atlassian.net/browse/PROJ-1 이슈 찾아줘')).not.toEqual(

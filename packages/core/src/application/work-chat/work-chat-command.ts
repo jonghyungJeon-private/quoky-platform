@@ -423,9 +423,17 @@ function cleanSearchText(raw: string): string {
 /** An issue key or a link: a single-issue request, never a keyword filter. */
 const ISSUE_KEY_OR_URL = /\b[A-Za-z][A-Za-z0-9_]{0,63}-[1-9]\d{0,8}\b|https?:\/\/\S+/i;
 /** A `<label>:` prefix, quoted text or several lines: pasted content, not a command. */
-const CONTENT_SHAPED = /[\r\n]|[:：]|["“”「」『』`]/;
+const CONTENT_SHAPED = /[\r\n]|[:：`]/;
+/**
+ * Quote marks are allowed only as one short quoted keyword (`'위클리카'`, `“위클리카”`, `「위클리카」`): exactly one pair, at
+ * most 30 characters inside, no inner quote. Longer or repeated quoted text is pasted content.
+ */
+const QUOTE_CLASS = '"\'“”‘’「」『』';
+const ANY_QUOTE = new RegExp(`[${QUOTE_CLASS}]`);
+const ONE_SHORT_QUOTED = new RegExp(`^[^${QUOTE_CLASS}]*[${QUOTE_CLASS}][^${QUOTE_CLASS}]{1,30}[${QUOTE_CLASS}][^${QUOTE_CLASS}]*$`);
 function namesIssueOrIsContent(text: string): boolean {
-  return ISSUE_KEY_OR_URL.test(text) || CONTENT_SHAPED.test(text);
+  if (ISSUE_KEY_OR_URL.test(text) || CONTENT_SHAPED.test(text)) return true;
+  return ANY_QUOTE.test(text) && !ONE_SHORT_QUOTED.test(text);
 }
 
 /** `위클리카 이슈` -> `위클리카`: the trailing item noun (and a `관련` before it) is not part of the keyword. */
@@ -443,7 +451,7 @@ function searchCommand(sourceToken: string, rawText: string, whole: string): Wor
   // Jira has no text search (named queries only): a keyword narrows the owner's own items instead. A message that
   // names an issue key or link, or is labelled/quoted/multi-line content, keeps its old routing.
   if (source === 'jira' && !namesIssueOrIsContent(whole)) {
-    const keyword = stripItemNoun(text);
+    const keyword = cleanSearchText(stripItemNoun(text));
     return keyword ? { kind: 'lookup', source, query: 'my-items', text: keyword } : { kind: 'lookup', source, query: 'my-items' };
   }
   return { kind: 'lookup', source, query: 'search', text };
