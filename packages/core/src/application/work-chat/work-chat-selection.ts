@@ -81,6 +81,9 @@ function jiraOptions(selected: NlSelectedCommand): WorkChatPersonalWorkOptions |
           field: field as PersonalWorkWindowField,
           from: isoDateOf(range.startDate),
           to: isoDateOf(addLocalDays(range.startDate, range.days)),
+          // The same boundaries as instants (QUOKY_TIMEZONE midnights), for timestamp fields read in another zone.
+          fromInstant: range.from,
+          toInstant: range.to,
         }
       : undefined;
   const options: WorkChatPersonalWorkOptions = {

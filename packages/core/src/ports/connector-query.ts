@@ -30,11 +30,17 @@ export type PersonalWorkRole = (typeof PERSONAL_WORK_ROLES)[number];
 export const PERSONAL_WORK_STATUSES = ['open', 'all'] as const;
 export type PersonalWorkStatus = (typeof PERSONAL_WORK_STATUSES)[number];
 
-/** `field` between the local dates `from` (inclusive) and `to` (exclusive), both `YYYY-MM-DD`, at most 31 days. */
+/**
+ * `field` between the local dates `from` (inclusive) and `to` (exclusive), both `YYYY-MM-DD` in the owner's zone, at
+ * most 31 days. `fromInstant` / `toInstant` (optional, both or neither) are the same boundaries as ISO instants, so an
+ * adapter whose service reads dates in another zone (a Jira profile time zone) can place timestamp fields exactly.
+ */
 export interface PersonalWorkWindow {
   field: PersonalWorkWindowField;
   from: string;
   to: string;
+  fromInstant?: string;
+  toInstant?: string;
 }
 
 /** The longest window a `personal-work` query accepts (ADR-0120 D4 step 3). */
@@ -203,7 +209,30 @@ function parsePersonalWorkWindow(value: unknown, source: string): PersonalWorkWi
   ) {
     throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported personal-work window`);
   }
-  return { field: field as PersonalWorkWindowField, from: record.from as string, to: record.to as string };
+  const fromInstant = record.fromInstant;
+  const toInstant = record.toInstant;
+  if (fromInstant === undefined && toInstant === undefined) {
+    return { field: field as PersonalWorkWindowField, from: record.from as string, to: record.to as string };
+  }
+  const fromMs = instantMs(fromInstant);
+  const toMs = instantMs(toInstant);
+  // The instants must bound (almost) the same span as the dates: a DST day is 23 or 25 hours, a zone offset ±14 h.
+  if (fromMs === undefined || toMs === undefined || toMs <= fromMs || toMs - fromMs > (PERSONAL_WORK_WINDOW_MAX_DAYS * 24 + 2) * 3_600_000) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported personal-work window`);
+  }
+  return {
+    field: field as PersonalWorkWindowField,
+    from: record.from as string,
+    to: record.to as string,
+    fromInstant: new Date(fromMs).toISOString(),
+    toInstant: new Date(toMs).toISOString(),
+  };
+}
+
+function instantMs(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z$/.test(value)) return undefined;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : undefined;
 }
 
 export interface ParsedSearchParams {

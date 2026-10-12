@@ -121,6 +121,21 @@ describe('parsePersonalWorkParams', () => {
       role: 'either',
       status: 'all',
     });
+    expect(
+      parsePersonalWorkParams({
+        actorExternalId: 'a',
+        window: { field: 'created', from: '2026-10-12', to: '2026-10-13', fromInstant: '2026-10-11T15:00:00.000Z', toInstant: '2026-10-12T15:00:00.000Z' },
+      }).window,
+    ).toEqual({ field: 'created', from: '2026-10-12', to: '2026-10-13', fromInstant: '2026-10-11T15:00:00.000Z', toInstant: '2026-10-12T15:00:00.000Z' });
+    for (const instants of [
+      { fromInstant: '2026-10-11T15:00:00.000Z' },
+      { fromInstant: '2026-10-12T15:00:00.000Z', toInstant: '2026-10-11T15:00:00.000Z' },
+      { fromInstant: '2026-08-01T00:00:00.000Z', toInstant: '2026-10-12T15:00:00.000Z' },
+      { fromInstant: 'yesterday', toInstant: '2026-10-12T15:00:00.000Z' },
+      { fromInstant: '2026-10-11T15:00:00+09:00', toInstant: '2026-10-12T15:00:00.000Z' },
+    ]) {
+      expect(() => parsePersonalWorkParams({ actorExternalId: 'a', window: { field: 'created', from: '2026-10-12', to: '2026-10-13', ...instants } })).toThrow(/window/);
+    }
     for (const bad of [
       { role: 'watcher' },
       { status: 'closed' },

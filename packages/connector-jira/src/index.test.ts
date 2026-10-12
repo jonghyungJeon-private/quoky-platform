@@ -108,6 +108,24 @@ describe('JiraConnectorProvider', () => {
     ]);
   });
 
+  it('ADR-0120 P3: bounds created/updated by minutes relative to now, so the Jira profile time zone cannot shift the window', async () => {
+    const fake = fakeFetch(200, { issues: [] });
+    // Now: 2026-10-12 12:00 in Asia/Seoul (03:00Z). "Today" in Seoul is [2026-10-11T15:00Z, 2026-10-12T15:00Z).
+    const jira = provider(fake.fetchImpl, { now: () => Date.parse('2026-10-12T03:00:00.000Z') });
+    const today = { field: 'created', from: '2026-10-12', to: '2026-10-13', fromInstant: '2026-10-11T15:00:00.000Z', toInstant: '2026-10-12T15:00:00.000Z' };
+    await jira.query(personalWork('account-123', { window: today }));
+    await jira.query(personalWork('account-123', { window: { ...today, field: 'updated', fromInstant: '2026-10-11T15:00:30.000Z' } }));
+    // A due date has no zone: the owner's local dates are used as they are.
+    await jira.query(personalWork('account-123', { window: { ...today, field: 'due' } }));
+    const jql = fake.calls.map((call) => new URL(call.url).searchParams.get('jql'));
+    expect(jql[0]).toBe(
+      'assignee = "account-123" AND resolution = Unresolved AND statusCategory != Done AND created >= "-720m" AND created < "720m" ORDER BY created DESC',
+    );
+    // Rounded so the window never shrinks: the lower bound one minute earlier at most.
+    expect(jql[1]).toContain('updated >= "-720m" AND updated < "720m"');
+    expect(jql[2]).toContain('duedate >= "2026-10-12" AND duedate < "2026-10-13"');
+  });
+
   it('ADR-0120 D13: refuses a window outside the closed set, a reversed or over-31-day window, and a window with the due filter, before any request', async () => {
     const fake = fakeFetch(200, { issues: [] });
     const jira = provider(fake.fetchImpl);

@@ -50,7 +50,13 @@ export const WORK_CHAT_SOURCE_QUERIES: Readonly<Record<WorkChatSource, readonly 
 
 /** The ADR-0120 D13 options of a Jira `personal-work` lookup (local dates resolved by Core, `to` exclusive). */
 export interface WorkChatPersonalWorkOptions {
-  readonly window?: { readonly field: PersonalWorkWindowField; readonly from: string; readonly to: string };
+  readonly window?: {
+    readonly field: PersonalWorkWindowField;
+    readonly from: string;
+    readonly to: string;
+    readonly fromInstant?: string;
+    readonly toInstant?: string;
+  };
   readonly role?: PersonalWorkRole;
   readonly status?: PersonalWorkStatus;
 }
