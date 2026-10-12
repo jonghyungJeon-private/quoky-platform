@@ -11,7 +11,7 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  */
 
 /** Bumped whenever the instruction text changes (the eval plan digest binds it). */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v12';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v16';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -42,9 +42,18 @@ const EXAMPLES: readonly PromptExample[] = [
   { text: '지라에서 결제 들어간 내 티켓 3개만', output: '{"entryId":"jira.issues","args":{"keyword":"결제","limit":3},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   { text: '이번 주 금요일까지인 이슈들 알려줄래', output: '{"entryId":"jira.issues","args":{"window":"due","range":"this-week"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   { text: '정산 건만 추려줘', previous: '{"entryId":"jira.issues","args":{"window":"updated","range":"last-week","status":"all"}}', output: '{"entryId":"jira.issues","args":{"window":"updated","range":"last-week","status":"all","keyword":"정산"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
+  { text: '지금 하고 있는 지라 일만 보여줘', output: '{"entryId":"jira.issues","args":{"status":"in-progress"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
+  { text: '그 중에 스프린트 건만', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-week","keyword":"스프린트"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '내일 면접 일정 있나', output: '{"entryId":"calendar.events","args":{"range":"tomorrow","keyword":"면접"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '구글 드라이브에서 엑셀 파일만 최근 순으로', output: '{"entryId":"drive.files","args":{"kind":"spreadsheet"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['drive.files'] },
+  { text: '드라이브 폴더 뭐 있어?', output: '{"entryId":"drive.files","args":{"kind":"folder"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['drive.files'] },
+  { text: '하루 일정 할 일 싹 정리', output: '{"entryId":"brief.today","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['brief.today'] },
+  { text: '메일함', output: '{"entryId":"mail.list","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
+  { text: '몇 건이야?', previous: '{"entryId":"mail.list","args":{"unread":true}}', output: '{"entryId":"mail.list","args":{"unread":true,"count":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
   { text: '지라 티켓 하나 새로 만들어줘', output: none, needs: [] },
   { text: '슬랙에서 장애 대응 얘기 나온 거 있나', output: '{"entryId":"slack.search","args":{"keyword":"장애 대응"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['slack.search'] },
   { text: '슬랙 검색 기능이 원래 이렇게 느려?', output: none, needs: [] },
+  { text: '내일 미팅 있나?', output: '{"entryId":"calendar.events","args":{"range":"tomorrow"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '다음 미팅이 몇 시더라', output: '{"entryId":"calendar.events","args":{"range":"upcoming"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '목요일 오후에 회의 하나 넣어줘', output: none, needs: [] },
   { text: '이 대표님이 보낸 메일 와 있어?', output: '{"entryId":"mail.list","args":{"from":"이 대표님"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
@@ -101,9 +110,19 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   `upcoming` is for the calendar\'s next event only; for Jira "마감 다가오는/임박한" use window due, next-7-days.',
     '   Jira window: ONLY when the owner says when issues were created (등록/생성/새로 올라온), updated (업데이트/수정/변경)',
     '   or are due (마감/기한/due). 할당된/배정된/내 담당 is the role, and a time word with it ("어제 배정된") sets nothing.',
+    '   Jira status: in-progress ONLY when the owner says 진행/진행중/진행 중/in progress/working on ("진행중인 이슈"); never',
+    '   guess it. Calendar keyword: a word of the event title the owner narrows to ("스크럼만", "스크럼 일정"); the period',
+    '   words (오늘, 이번 주) and the generic words (일정, 회의, 미팅) are never the keyword.',
+    '   Drive kind: ONLY when the owner names the file type (스프레드시트/시트/엑셀, 구글 문서/독스 only (plain 문서 is not a type), 슬라이드/ppt, pdf, 폴더);',
+    '   the type word is then `kind`, not part of `name`. Do not use `keyword` on the calendar for "busy/free" questions.',
+    '   A message that is only a source name ("지라", "메일", "일정", "드라이브") selects that source\'s default listing with',
+    '   args {}; a bare "슬랙" or "컨플루언스" has no keyword, so answer NEEDS_CLARIFICATION with that entry.',
     '   Time: use only the range symbols below; never write a timestamp or a year the owner did not write.',
     '6. Follow-ups: when a previous selection is given and the message narrows or corrects it ("그 중에 X만", "아니 보고자만",',
     '   "내일은?"), return the same entryId with the previous args plus only the change the message states.',
+    '   A count follow-up ("그거 몇 개야", "how many is that") with a previous selection is the same entry and args plus',
+    '   count true. With Previous selection none it refers to nothing: NEEDS_CLARIFICATION, entryId jira.issues, args {"count":true},',
+    '   alternatives [{"entryId":"calendar.events","args":{"count":true}}] (the owner is then asked which list).',
     '7. ambiguity is NEEDS_CLARIFICATION only when two entries fit equally well; list them in alternatives (at most 2).',
     '   Otherwise CLEAR with "alternatives": [].',
     '',

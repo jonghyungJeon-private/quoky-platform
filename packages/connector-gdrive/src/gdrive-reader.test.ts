@@ -120,6 +120,17 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
     expect(() => buildGDriveQuery(`'"\\`)).toThrow();
   });
 
+  it('ADR-0120 follow-up: a file kind is a closed type clause; the default query is unchanged and a kind carries no owner text', () => {
+    expect(buildGDriveQuery(undefined, 'spreadsheet')).toBe("trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet'");
+    expect(buildGDriveQuery(undefined, 'document')).toBe("trashed = false and mimeType = 'application/vnd.google-apps.document'");
+    expect(buildGDriveQuery(undefined, 'presentation')).toBe("trashed = false and mimeType = 'application/vnd.google-apps.presentation'");
+    expect(buildGDriveQuery(undefined, 'pdf')).toBe("trashed = false and mimeType = 'application/pdf'");
+    expect(buildGDriveQuery(undefined, 'folder')).toBe("trashed = false and mimeType = 'application/vnd.google-apps.folder'");
+    expect(buildGDriveQuery('기획서', 'pdf')).toBe("trashed = false and mimeType = 'application/pdf' and name contains '기획서'");
+    for (const inherited of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) expect(() => buildGDriveQuery(undefined, inherited as never), inherited).toThrow();
+    expect(() => buildGDriveQuery(undefined, "x' or name contains 'a" as never)).toThrow();
+  });
+
   it('an empty drive is an empty result (a partial response omits files)', async () => {
     const { reader, calls } = harness(() => json({}));
     expect(await reader.recentFiles()).toEqual({ files: [], matched: 0, matchedIsLowerBound: false });

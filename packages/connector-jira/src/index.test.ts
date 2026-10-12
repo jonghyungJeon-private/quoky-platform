@@ -108,6 +108,20 @@ describe('JiraConnectorProvider', () => {
     ]);
   });
 
+  it('ADR-0120 follow-up: in-progress renders the status category literal, keeps the role and window, and escapes the identity', async () => {
+    const fake = fakeFetch(200, { issues: [] });
+    const jira = provider(fake.fetchImpl);
+    await jira.query(personalWork('account-123', { status: 'in-progress' }));
+    await jira.query(personalWork('account-123', { role: 'either', status: 'in-progress', window: { field: 'updated', from: '2026-10-05', to: '2026-10-12' } }));
+    await jira.query(personalWork('a"b', { role: 'reporter', status: 'in-progress' }));
+    const jql = fake.calls.map((call) => new URL(call.url).searchParams.get('jql'));
+    expect(jql).toEqual([
+      'assignee = "account-123" AND statusCategory = indeterminate ORDER BY updated DESC',
+      '(assignee = "account-123" OR reporter = "account-123") AND statusCategory = indeterminate AND updated >= "2026-10-05" AND updated < "2026-10-12" ORDER BY updated DESC',
+      'reporter = "a\\"b" AND statusCategory = indeterminate ORDER BY updated DESC',
+    ]);
+  });
+
   it('ADR-0120 P3: bounds created/updated by minutes relative to now, so the Jira profile time zone cannot shift the window', async () => {
     const fake = fakeFetch(200, { issues: [] });
     // Now: 2026-10-12 12:00 in Asia/Seoul (03:00Z). "Today" in Seoul is [2026-10-11T15:00Z, 2026-10-12T15:00Z).

@@ -399,6 +399,41 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(h.calls[1]!.prompt).toContain('Previous selection: {"entryId":"jira.issues","args":{"role":"either","window":"created","range":"today"}}');
   });
 
+  it('refines a Jira listing to in-progress ("그 중에 진행중인거만") and a calendar listing by a title keyword, keeping the range', async () => {
+    const jira = harness({ script: [out('jira.issues', {}), out('jira.issues', { status: 'in-progress' }), out('jira.issues', { status: 'in-progress' })] });
+    await jira.decide('내 지라 이슈 보여줘');
+    expect(await jira.decide('그 중에 진행중인거만', { now: at(60_000) })).toMatchObject({
+      kind: 'execute',
+      command: { args: { status: 'in-progress' } },
+      basis: '기준: 내가 담당 / 진행 중',
+    });
+    // a model guess without the owner saying it is refused (grounding), and the status carries over once stated
+    expect(await jira.decide('그 중에 하나만', { now: at(120_000) })).toMatchObject({ kind: 'execute', command: { args: { status: 'in-progress' } } });
+    const guessed = harness({ script: [out('jira.issues', { status: 'in-progress' })] });
+    expect((await guessed.decide('내 지라 이슈 보여줘')).kind).not.toBe('execute');
+
+    const calendar = harness({ script: [out('calendar.events', { range: 'this-week' }), out('calendar.events', { range: 'this-week', keyword: '스크럼' })] });
+    await calendar.decide('이번 주 일정 알려줘');
+    expect(await calendar.decide('그 중에 스크럼만', { now: at(60_000) })).toMatchObject({
+      kind: 'execute',
+      command: { entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼' } },
+      basis: expect.stringContaining('"스크럼" 포함'),
+    });
+  });
+
+  it('a count follow-up with no previous selection asks the numbered entry question, and the picked entry counts', async () => {
+    const ask = JSON.stringify({
+      entryId: 'jira.issues',
+      args: { count: true },
+      ambiguity: 'NEEDS_CLARIFICATION',
+      alternatives: [{ entryId: 'calendar.events', args: { count: true } }],
+    });
+    const h = harness({ script: [ask] });
+    const asked = await h.decide('그거 몇 개야');
+    expect(asked).toMatchObject({ kind: 'ask', text: expect.stringMatching(/^어떤 걸 찾으세요\?\n1\. Jira 이슈 조회/) });
+    expect(await h.decide('2', { now: at(1000) })).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { count: true } } });
+  });
+
   it('lastSelection lives 30 minutes and is per actor', async () => {
     const h = harness({ script: [out('jira.issues', { window: 'created', range: 'today', role: 'either' }), NONE] });
     await h.decide('오늘 등록된 지라 이슈 다');

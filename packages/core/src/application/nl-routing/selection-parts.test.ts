@@ -205,6 +205,58 @@ describe('deterministic validation (ADR-0120 D4)', () => {
     expect(validateSelection({ entryId: 'slack.search', args: { keyword: secret } }, ctx(`슬랙에서 ${secret} 검색`))).toMatchObject({ reason: 'credential' });
   });
 
+  it('grounds the Jira in-progress status like a role: the owner says it or it carries over, a guess is refused', () => {
+    const inProgress = { entryId: 'jira.issues', args: { status: 'in-progress' } } as const;
+    expect(validateSelection(inProgress, ctx('내 지라 이슈'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'status' });
+    for (const text of ['진행중인 이슈만 보여줄래', '지금 진행 중인 지라 티켓', 'jira issues in progress', 'what am I working on in jira', '진행하고 있는 일']) {
+      expect(validateSelection(inProgress, ctx(text)), text).toMatchObject({ ok: true, value: { args: { status: 'in-progress' } } });
+    }
+    expect(validateSelection(inProgress, ctx('그 중에 결제만', { previousArgs: { status: 'in-progress' } }))).toMatchObject({ ok: true });
+    expect(validateSelection(inProgress, ctx('그 중에 결제만', { previousArgs: { status: 'all' } }))).toMatchObject({ reason: 'ungrounded' });
+    // the other values stay ungrounded-free, and an unknown value is still invalid
+    expect(validateSelection({ entryId: 'jira.issues', args: { status: 'all' } }, ctx('내 지라 이슈'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'jira.issues', args: { status: 'blocked' } }, ctx('진행'))).toMatchObject({ reason: 'invalid-arg', arg: 'status' });
+  });
+
+  it('grounds the Drive kind in the owner words (스프레드시트/시트/엑셀, 독스, 슬라이드, pdf, 폴더) and never guesses it', () => {
+    const kind = (value: string, text: string) => validateSelection({ entryId: 'drive.files', args: { kind: value } }, ctx(text));
+    expect(kind('spreadsheet', '드라이브 파일 최근 거')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'kind' });
+    expect(kind('spreadsheet', '구글 드라이브에 스프레드시트 최근 거')).toMatchObject({ ok: true, value: { args: { kind: 'spreadsheet' } } });
+    for (const [value, text] of [['spreadsheet', '드라이브 엑셀'], ['spreadsheet', 'drive sheet'], ['document', '드라이브 독스'], ['document', '구글 문서 최근 거'], ['document', 'google docs on drive'], ['presentation', '드라이브 슬라이드'], ['presentation', '드라이브 ppt'], ['pdf', '드라이브 PDF'], ['folder', '드라이브 폴더']] as const) {
+      expect(kind(value, text), text).toMatchObject({ ok: true });
+    }
+    // a plain 문서 is not a type; docker is not docs (word boundary); sheets/PDFs plural still ground
+    for (const text of ['기획 문서 찾아줘', '드라이브 최근 문서', 'docker 이미지 문서', 'drive docker files', 'documents on drive']) {
+      expect(kind('document', text), text).toMatchObject({ ok: false, reason: 'ungrounded' });
+    }
+    expect(kind('spreadsheet', 'recent sheets on drive')).toMatchObject({ ok: true });
+    expect(kind('spreadsheet', 'drive datasheet')).toMatchObject({ ok: false });
+    expect(kind('pdf', '그 중에 최근 거')).toMatchObject({ ok: false });
+    expect(validateSelection({ entryId: 'drive.files', args: { kind: 'pdf' } }, ctx('그 중에 최근 거', { previousArgs: { kind: 'pdf' } }))).toMatchObject({ ok: true });
+    expect(kind('executable', '드라이브 exe')).toMatchObject({ reason: 'invalid-arg', arg: 'kind' });
+    const ok = kind('spreadsheet', '드라이브 시트');
+    if (ok.ok) expect(ok.value.entry.describe?.(ok.value.args, undefined, 'ko')).toBe('최근 스프레드시트');
+  });
+
+  it('describes the Jira in-progress basis and the calendar keyword basis', () => {
+    const jira = NL_WAVE1_ENTRIES['jira.issues'];
+    expect(jira.describe?.({ status: 'in-progress' }, undefined, 'ko')).toBe('내가 담당 / 진행 중');
+    expect(jira.describe?.({ status: 'in-progress' }, undefined, 'en')).toBe('assigned to me / in progress');
+    const calendar = validateSelection({ entryId: 'calendar.events', args: { keyword: '스크럼' } }, ctx('오늘 스크럼 있어?'));
+    expect(calendar).toMatchObject({ ok: true, value: { args: { keyword: '스크럼' } } });
+    if (!calendar.ok) return;
+    expect(calendar.value.entry.describe?.(calendar.value.args, calendar.value.range, 'ko')).toBe('오늘 일정 / "스크럼" 포함');
+  });
+
+  it('grounds the calendar keyword in the owner text or the previous selection, and never in titles', () => {
+    expect(validateSelection({ entryId: 'calendar.events', args: { keyword: '스크럼' } }, ctx('이번 주 일정'))).toMatchObject({ reason: 'ungrounded', arg: 'keyword' });
+    expect(validateSelection({ entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼' } }, ctx('그 중에 스크럼만', { previousArgs: { range: 'this-week' } }))).toMatchObject({
+      ok: true,
+      value: { args: { range: 'this-week', keyword: '스크럼' } },
+    });
+    expect(validateSelection({ entryId: 'calendar.events', args: { keyword: '스크럼' } }, ctx('그것만', { previousArgs: { keyword: '스크럼' } }))).toMatchObject({ ok: true });
+  });
+
   it('normalizes the Jira period (a period word without a date field is dropped; a field gets its natural window)', () => {
     expect(validateSelection({ entryId: 'jira.issues', args: { range: 'today', role: 'assignee' } }, ctx(''))).toMatchObject({ ok: true, value: { args: {} } });
     expect(validateSelection({ entryId: 'jira.issues', args: { window: 'due' } }, ctx(''))).toMatchObject({ value: { args: { window: 'due', range: 'this-week' } } });

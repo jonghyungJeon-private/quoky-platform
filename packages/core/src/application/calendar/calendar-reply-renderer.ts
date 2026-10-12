@@ -221,6 +221,16 @@ export interface CalendarRenderOptions {
   readonly writesEnabled?: boolean;
   /** The question asked for the events that have not finished yet ("남은 일정"): the header says so. */
   readonly remaining?: boolean;
+  /** The events were narrowed to this title keyword (NL selection): an empty answer says so. */
+  readonly keyword?: string;
+  /** The keyword filter ran over a full (possibly truncated) page: the answer is partial and says so. */
+  readonly partial?: boolean;
+}
+
+function partialNote(language: CalendarLanguage): string {
+  return language === 'en'
+    ? '(I could only check the first page of events, so this may be incomplete.)'
+    : '(전체를 확인하진 못했어요. 불러온 일정 안에서만 찾았어요.)';
 }
 
 function placedInWindow(window: CalendarWindow, events: readonly CalendarEvent[], timeZone: string): PlacedEvent[] {
@@ -293,10 +303,13 @@ export function renderCalendarEvents(
   const placed = placedInWindow(window, events, timeZone);
   const period = periodLabel(window, language);
   const truncatedAt = events.length >= options.limit ? options.limit : undefined;
-  const tail = footer(timeZone, language, truncatedAt, options.writesEnabled === true);
+  const baseTail = footer(timeZone, language, truncatedAt, options.writesEnabled === true);
+  const tail = options.keyword !== undefined && options.partial === true ? joinBody([partialNote(language), baseTail]) : baseTail;
   const remaining = options.remaining === true;
   if (placed.length === 0) {
-    const none = remaining
+    const none = options.keyword !== undefined
+      ? language === 'en' ? `${period}: no events with "${options.keyword}" in the title${options.partial === true ? ' among those I checked (I could not check them all)' : ''}.` : `${period}: 불러온 일정 중 "${options.keyword}" 포함 일정이 없어요${options.partial === true ? ' (전체를 확인하진 못했어요)' : ''}.`
+      : remaining
       ? language === 'en' ? `${period}: nothing left on your calendar.` : `${period}: 남은 일정이 없어요.`
       : language === 'en' ? `${period}: nothing on your calendar.` : `${period}: 캘린더에 일정이 없어요.`;
     return joinBody([none, tail]);
@@ -334,8 +347,14 @@ export function renderCalendarEvents(
 function renderNextEvent(window: CalendarWindow, events: readonly CalendarEvent[], options: CalendarRenderOptions): MessageBody {
   const { timeZone, language } = options;
   const next = nextEventOf(events, options);
-  const tail = footer(timeZone, language, undefined, options.writesEnabled === true);
+  const baseTail = footer(timeZone, language, undefined, options.writesEnabled === true);
+  const tail = options.keyword !== undefined && options.partial === true ? joinBody([partialNote(language), baseTail]) : baseTail;
   if (next === undefined) {
+    if (options.keyword !== undefined) {
+      return language === 'en'
+        ? joinBody([`No upcoming events with "${options.keyword}" in the title in the next ${window.days} days${options.partial === true ? ' among those I checked' : ''}.`, tail])
+        : joinBody([`앞으로 ${window.days}일 안에 "${options.keyword}" 포함 예정 일정이 없어요${options.partial === true ? ' (전체를 확인하진 못했어요)' : ''}.`, tail]);
+    }
     return language === 'en'
       ? joinBody([`Nothing upcoming on your calendar in the next ${window.days} days.`, tail])
       : joinBody([`앞으로 ${window.days}일 안에 예정된 일정이 없어요.`, tail]);

@@ -50,6 +50,11 @@ export interface NlArgSpec {
   /** `range` only: whether `upcoming` (from now to the lookahead end) is accepted; every other symbol always is. */
   readonly allowUpcoming?: boolean;
   readonly required?: boolean;
+  /**
+   * `enum` only: words that show the owner asked for a value (a value listed here counts only when one of its words is in
+   * the owner's own text or the value carries over from the previous selection; a value not listed needs none).
+   */
+  readonly valueGrounding?: Readonly<Record<string, readonly string[]>>;
   /** The value the entry uses when the argument is absent; canonical args omit an argument equal to it. */
   readonly default?: string | boolean;
   /** One provider-facing line (English, bounded). */

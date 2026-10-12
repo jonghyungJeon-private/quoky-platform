@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — v5 NL-1 live UAT follow-up (ADR-0120, 2026-10-12)
+
+- **Jira "진행중인 이슈만"** works: `status: in-progress` renders `statusCategory = "In Progress"` and is also a refinement
+  after a listing ("그 중에 진행중인거만").
+- **Calendar "그 중에 스크럼만" / "이번 주 스크럼 일정"** filters the fetched events on the title locally; titles never go
+  to the model; an empty result says so.
+- **Drive file type** ("드라이브에 스프레드시트 최근 거"): optional `kind` (spreadsheet, document, presentation, pdf, folder).
+- A value of a status/type argument counts only when the owner said it (enum value grounding). Prompt `nl-select.v15`:
+  "오늘 할 거 한눈에", a bare source word, and "그거 몇 개야" (with or without a previous list).
+
 ## Unreleased — v5 NL-1 natural-language capability selection, Phase A (ADR-0120, 2026-10-12)
 
 No migration, no new port or DI token. `ConversationRuntimeDeps` 35 → 36 (`nlSelection?`, ADR-0120 D14).

@@ -35,6 +35,9 @@ export const JIRA_CREATED_SCOPE: NlAmbiguityKey = Object.freeze({
   openWhen: (args: NlArgs) => args.window === 'created',
 });
 
+/** Words that show the owner asked for in-progress issues (ADR-0120 follow-up): a status value is grounded like a role. */
+export const JIRA_IN_PROGRESS_WORDS: readonly string[] = ['진행', 'in progress', 'in-progress', 'working on'];
+
 const JIRA_ROLE_LABEL: Readonly<Record<string, { ko: string; en: string }>> = {
   assignee: { ko: '내가 담당', en: 'assigned to me' },
   reporter: { ko: '내가 보고자', en: 'reported by me' },
@@ -64,7 +67,7 @@ const jiraIssues: NlCatalogEntry = {
     { name: 'role', kind: 'enum', values: ['assignee', 'reporter', 'either'], default: 'assignee', description: 'Set ONLY when the owner names it: assigned to me (나한테 할당된/배정된, 내 담당) = assignee; I reported/created/made (내가 만든/올린/보고한) = reporter; either ONLY when the owner says both (둘 다, 담당이든 보고든). Never guess it. 할당된/배정된 is this role, never a window.' },
     { name: 'window', kind: 'enum', values: ['created', 'updated', 'due'], description: 'Which date the period applies to: created (등록된/생성된/새로 올라온), updated (업데이트된/수정된/변경된), due (마감/기한). Omit when no such event word is used.' },
     { name: 'range', kind: 'range', description: 'The period of `window`. Omit unless `window` is set.' },
-    { name: 'status', kind: 'enum', values: ['open', 'all'], default: 'open', description: 'all only when the owner includes finished/closed issues (완료된 것도, 전체, all); default open.' },
+    { name: 'status', kind: 'enum', values: ['open', 'all', 'in-progress'], default: 'open', valueGrounding: { 'in-progress': JIRA_IN_PROGRESS_WORDS }, description: 'all only when the owner includes finished/closed issues (완료된 것도, 전체, all); in-progress only when the owner asks for issues being worked on (진행중인, 진행 중, in progress, working on); default open.' },
     { name: 'keyword', kind: 'keyword', description: 'A topic word the owner wants the issues narrowed to, copied verbatim (e.g. 위클리카).' },
     COUNT,
     SEARCH_LIMIT,
@@ -85,7 +88,12 @@ const jiraIssues: NlCatalogEntry = {
     const window = typeof args.window === 'string' ? JIRA_WINDOW_LABEL[args.window] : undefined;
     const period = rangePart(range, language) ?? '';
     const when = window === undefined ? undefined : (language === 'en' ? `${window.en} ${period}` : `${period} ${window.ko}`).trim();
-    const status = args.status === 'all' ? (language === 'en' ? 'including done' : '완료 포함') : window === undefined ? (language === 'en' ? 'open' : '미해결') : undefined;
+    const status =
+      args.status === 'in-progress'
+        ? (language === 'en' ? 'in progress' : '진행 중')
+        : args.status === 'all'
+          ? (language === 'en' ? 'including done' : '완료 포함')
+          : window === undefined ? (language === 'en' ? 'open' : '미해결') : undefined;
     const keyword = typeof args.keyword === 'string' ? (language === 'en' ? `matching ${quoted(args.keyword)}` : `${quoted(args.keyword)} 포함`) : undefined;
     return joinBasis([role?.[language], when, status, keyword]);
   },
@@ -155,14 +163,16 @@ const calendarEvents: NlCatalogEntry = {
   args: [
     { name: 'range', kind: 'range', default: 'today', allowUpcoming: true, description: 'The period; upcoming for "the next meeting/event" (다음 회의 언제). Default today.' },
     { name: 'remaining', kind: 'flag', default: false, description: 'true only for events still left (남은 일정, remaining).' },
+    { name: 'keyword', kind: 'keyword', description: 'A word of the event title the owner wants the events narrowed to ("스크럼만", "스크럼 일정"), copied verbatim; omit for all events.' },
     COUNT,
   ],
   usage: { ko: '"오늘 일정"', en: '"오늘 일정"' },
   sourceNames: ['google calendar', 'calendar', '캘린더', '구글 캘린더'],
   describe(args: NlArgs, range: NlResolvedRange | undefined, language): string | undefined {
     const period = rangePart(range, language) ?? (language === 'en' ? 'today' : '오늘');
-    if (language === 'en') return `${period}${args.remaining === true ? ', remaining' : ''} events`;
-    return `${period} ${args.remaining === true ? '남은 일정' : '일정'}`;
+    const keyword = typeof args.keyword === 'string' ? (language === 'en' ? `title contains ${quoted(args.keyword)}` : `${quoted(args.keyword)} 포함`) : undefined;
+    if (language === 'en') return joinBasis([`${period}${args.remaining === true ? ', remaining' : ''} events`, keyword]);
+    return joinBasis([`${period} ${args.remaining === true ? '남은 일정' : '일정'}`, keyword]);
   },
 };
 
@@ -194,6 +204,24 @@ const mailList: NlCatalogEntry = {
   },
 };
 
+/** Words that show the owner named a Drive file type: a `kind` value counts only when one is in the owner's own text. */
+export const DRIVE_KIND_WORDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  spreadsheet: ['스프레드시트', '스프레드 시트', '시트', '엑셀', 'sheet', 'spreadsheet', 'excel'],
+  // A plain 문서/document is not a type (it also names uploaded Word/HWP/PDF files): only the Google Docs wording counts.
+  document: ['구글 문서', '구글문서', '독스', 'google doc', 'google docs', 'docs'],
+  presentation: ['슬라이드', '프레젠테이션', '피티', 'ppt', 'slide', 'presentation'],
+  pdf: ['pdf'],
+  folder: ['폴더', 'folder'],
+});
+
+const DRIVE_KIND_LABEL: Readonly<Record<string, { ko: string; en: string }>> = {
+  spreadsheet: { ko: '스프레드시트', en: 'spreadsheets' },
+  document: { ko: '문서', en: 'documents' },
+  presentation: { ko: '프레젠테이션', en: 'presentations' },
+  pdf: { ko: 'PDF', en: 'PDFs' },
+  folder: { ko: '폴더', en: 'folders' },
+};
+
 const driveFiles: NlCatalogEntry = {
   id: 'drive.files',
   risk: 'READ',
@@ -206,12 +234,18 @@ const driveFiles: NlCatalogEntry = {
   },
   args: [
     { name: 'name', kind: 'keyword', description: 'A word of the file name the owner wants, copied verbatim (e.g. 기획서). Omit for recent files.' },
+    { name: 'kind', kind: 'enum', values: ['spreadsheet', 'document', 'presentation', 'pdf', 'folder'], valueGrounding: DRIVE_KIND_WORDS, description: 'Only when the owner names the file type: spreadsheet (스프레드시트/시트/엑셀), document (only 구글 문서/독스/google docs; a plain 문서 is NOT a type), presentation (슬라이드/프레젠테이션/ppt), pdf, folder (폴더). Never guess it; the type word is not part of `name`.' },
     COUNT,
   ],
   usage: { ko: '"최근 드라이브 파일"', en: '"최근 드라이브 파일"' },
   sourceNames: ['google drive', 'drive', '구글 드라이브', '드라이브'],
   describe(args: NlArgs, _range, language): string | undefined {
-    if (typeof args.name === 'string') return language === 'en' ? `file names with ${quoted(args.name)}` : `파일 이름에 ${quoted(args.name)}`;
+    const kind = typeof args.kind === 'string' ? DRIVE_KIND_LABEL[args.kind] : undefined;
+    if (typeof args.name === 'string') {
+      const base = language === 'en' ? `${kind?.en ?? 'file'} names with ${quoted(args.name)}` : `${kind?.ko ?? '파일'} 이름에 ${quoted(args.name)}`;
+      return base;
+    }
+    if (kind !== undefined) return language === 'en' ? `recent ${kind.en}` : `최근 ${kind.ko}`;
     return language === 'en' ? 'recent files' : '최근 파일';
   },
 };
@@ -251,8 +285,8 @@ const briefToday: NlCatalogEntry = {
   label: { ko: '오늘의 브리핑', en: "Today's brief" },
   aliases: ['브리핑', '오늘 브리핑', 'brief', 'briefing'],
   description: {
-    en: "Today's overall brief right now: today's schedule, reminders and to-dos together (a morning or daily briefing). Not for one source only.",
-    ko: '지금 오늘의 종합 브리핑(일정·알림·할 일을 한 번에). 한 소스만 묻는 경우는 아님.',
+    en: "Today's overall brief right now: today's schedule, reminders and to-dos together (a morning or daily briefing, a day summary, an at-a-glance view of the day). Not for one source only.",
+    ko: '지금 오늘의 종합 브리핑(일정·알림·할 일을 한 번에, 하루 요약, 하루를 한눈에 보기). 한 소스만 묻는 경우는 아님.',
   },
   args: [],
   usage: { ko: '"오늘 브리핑해줘"', en: '"오늘 브리핑해줘"' },

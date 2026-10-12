@@ -67,12 +67,12 @@ function fakeReader(options: {
   const reader: DriveReader = {
     source: 'drive',
     readOnly: true,
-    searchByName: async (name, limit) => {
-      calls.push(`search:${name}:${limit}`);
+    searchByName: async (name, limit, kind) => {
+      calls.push(`search:${name}:${limit}${kind !== undefined ? `:${kind}` : ''}`);
       return list();
     },
-    recentFiles: async (limit) => {
-      calls.push(`recent:${limit}`);
+    recentFiles: async (limit, kind) => {
+      calls.push(`recent:${limit}${kind !== undefined ? `:${kind}` : ''}`);
       return list();
     },
     exportText: async (id) => {
@@ -413,5 +413,35 @@ describe('Drive turn handler (ADR-0118 D4–D8, DRV-1)', () => {
     await handler.handle(ctx('1번 문서 요약해줘'));
     const logged = JSON.stringify([log.info.mock.calls, log.warn.mock.calls]);
     for (const fragment of ['회의록', '김철수', '금요일']) expect(logged).not.toContain(fragment);
+  });
+});
+
+describe('Drive turn handler — file kind (ADR-0120 follow-up)', () => {
+  const selected = (args: Record<string, string>) => ({ entryId: 'drive.files' as const, args, language: 'ko' as const });
+
+  it('passes the kind to the reader and says it in the header', async () => {
+    const { reader, calls } = fakeReader({
+      list: async () => ({ files: [file('f1', { name: '예산', kind: 'spreadsheet' })], matched: 1, matchedIsLowerBound: false }),
+    });
+    const outcome = await createDriveTurnHandler({ reader, timeZone: SEOUL }).handleSelected?.(selected({ kind: 'spreadsheet' }), ctx('드라이브에 스프레드시트 최근 거'));
+    expect(calls).toEqual(['recent:10:spreadsheet']);
+    expect(textOf(outcome as TurnHandlerOutcome)).toContain('최근 수정한 스프레드시트: 1건');
+  });
+
+  it('combines a name and a kind, and an empty kind listing says so', async () => {
+    const { reader, calls } = fakeReader({ list: async () => ({ files: [], matched: 0, matchedIsLowerBound: false }) });
+    const outcome = await createDriveTurnHandler({ reader, timeZone: SEOUL }).handleSelected?.(selected({ name: '기획서', kind: 'pdf' }), ctx('드라이브 pdf 기획서'));
+    expect(calls).toEqual(['search:기획서:10:pdf']);
+    expect(textOf(outcome as TurnHandlerOutcome)).toContain('PDF를 찾지 못했어요');
+    const none = await createDriveTurnHandler({ reader, timeZone: SEOUL }).handleSelected?.(selected({ kind: 'folder' }), ctx('드라이브 폴더'));
+    expect(textOf(none as TurnHandlerOutcome)).toContain('최근 수정한 폴더가 없어요');
+  });
+
+  it('without a kind the reader call is unchanged, and a kind outside the closed set is ignored', async () => {
+    const { reader, calls } = fakeReader();
+    const handler = createDriveTurnHandler({ reader, timeZone: SEOUL });
+    await handler.handleSelected?.(selected({}), ctx('최근 드라이브 파일'));
+    await handler.handleSelected?.(selected({ kind: 'executable' }), ctx('최근 드라이브 파일'));
+    expect(calls).toEqual(['recent:10', 'recent:10']);
   });
 });

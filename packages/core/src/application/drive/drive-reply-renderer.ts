@@ -1,6 +1,6 @@
 import type { IsoTimestamp, MessageBody } from '../../domain';
 import type { ConnectorQueryErrorReason } from '../../ports/connector-query';
-import type { DriveFileKind, DriveFileSummary, DriveListResult } from '../../ports/drive-reader.port';
+import type { DriveFileKind, DriveFileSummary, DriveListingKind, DriveListResult } from '../../ports/drive-reader.port';
 import { clip, guardedClippedSpan } from '../guarded-clip';
 import { mailDateLabel } from '../mail/mail-reply-renderer';
 import { joinBody, messageBody, takeLines, untrustedText, type MessagePart } from '../message-rendering';
@@ -35,7 +35,13 @@ export const DRIVE_NAME_QUERY_DISPLAY_MAX_CHARS = 20;
 export type DriveReadFailure = ConnectorQueryErrorReason | 'TIMEOUT';
 
 /** What a listing asked for: the recent files, or a name search. */
-export type DriveListingFilter = { readonly kind: 'recent' } | { readonly kind: 'search'; readonly name: string };
+export type DriveListingFilter = (
+  | { readonly kind: 'recent' }
+  | { readonly kind: 'search'; readonly name: string }
+) & {
+  /** ADR-0120 follow-up: the listing was narrowed to this file kind. */
+  readonly fileKind?: DriveListingKind;
+};
 
 /**
  * The source-specific words of the copy, supplied by the composition root from the adapter (the GML-1 review P3-6
@@ -114,6 +120,11 @@ function countText(result: DriveListResult, language: DriveLanguage): string {
 
 function header(filter: DriveListingFilter, result: DriveListResult, options: DriveRenderOptions): MessageBody {
   const count = countText(result, options.language);
+  if (filter.fileKind !== undefined) {
+    const kind = driveKindLabel(filter.fileKind, options.language);
+    if (filter.kind === 'recent') return options.language === 'en' ? `Recently modified ${kind}: ${count}` : `최근 수정한 ${kind}: ${count}`;
+    return options.language === 'en' ? messageBody(`${kind} named "`, nameQuery(filter.name), `": ${count}`) : messageBody('"', nameQuery(filter.name), `" 이름의 ${kind}: ${count}`);
+  }
   if (options.language === 'en') {
     return filter.kind === 'recent'
       ? `Recently modified files: ${count}`
@@ -123,6 +134,11 @@ function header(filter: DriveListingFilter, result: DriveListResult, options: Dr
 }
 
 function emptyAnswer(filter: DriveListingFilter, language: DriveLanguage): MessageBody {
+  if (filter.fileKind !== undefined) {
+    const kind = driveKindLabel(filter.fileKind, language);
+    if (filter.kind === 'recent') return language === 'en' ? `No recently modified ${kind}.` : `최근 수정한 ${kind}가 없어요.`;
+    return language === 'en' ? messageBody(`No ${kind} named "`, nameQuery(filter.name), '".') : messageBody('"', nameQuery(filter.name), `" 이름이 들어간 ${kind}를 찾지 못했어요.`);
+  }
   if (language === 'en') {
     return filter.kind === 'recent' ? 'No recently modified files.' : messageBody('No file named "', nameQuery(filter.name), '".');
   }
