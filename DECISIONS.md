@@ -19574,6 +19574,8 @@ Independent Chief Architect review before GML-1 merges.
   - **P3-5 (withheld-notice typing):** `renderDocumentActionClaimWithheld(language, source)` takes an
     `UntrustedDocumentSource` with no default and reads a `Record<UntrustedDocumentSource, …>`, so a new source fails
     typecheck until it has its own notice.
+  - **Test nits:** the 256 KiB cut test now uses a counting `ReadableStream` and asserts the remainder is cancelled
+    unread; the Drive token-file test title says `drive.readonly`.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 

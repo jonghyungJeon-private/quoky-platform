@@ -91,7 +91,7 @@ describe('Drive OAuth (ADR-0118 D3, DRV-1): drive.readonly and nothing else', ()
 });
 
 describe('Drive token file (ADR-0118 D3, the ADR-0110 D2 pattern): one grant set, mode 600', () => {
-  it('writes a NEW mode-600 file recording gmail.readonly and reads the refresh token back', () => {
+  it('writes a NEW mode-600 file recording drive.readonly and reads the refresh token back', () => {
     const path = join(dir, 'drive.json');
     writeGDriveTokenFile(path, REFRESH);
     expect(statSync(path).mode & 0o777).toBe(0o600);

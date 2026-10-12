@@ -164,9 +164,33 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
   });
 
   it('the exported text is cut at 256 KiB while it streams (never a split code point) and marked truncated', async () => {
-    const big = new TextEncoder().encode(`${'a'.repeat(DRIVE_TEXT_MAX_BYTES - 1)}가${'나'.repeat(100_000)}`);
-    const { reader } = harness((url) => (url.pathname.endsWith('/export') ? text(big) : json(meta('d1'))));
+    // A counting stream: 64 chunks of 16 KiB (1 MiB) that records how many it was asked for and whether it was cancelled.
+    const head = new TextEncoder().encode(`${'a'.repeat(DRIVE_TEXT_MAX_BYTES - 1)}가`);
+    const chunk = new TextEncoder().encode('나'.repeat(5000));
+    const totalChunks = 64;
+    let pulled = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (pulled === 0) controller.enqueue(head);
+          else controller.enqueue(chunk);
+          pulled += 1;
+          if (pulled >= totalChunks) controller.close();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const { reader } = harness((url) =>
+      url.pathname.endsWith('/export') ? new Response(stream, { status: 200, headers: { 'Content-Type': 'text/plain' } }) : json(meta('d1')),
+    );
     const doc = await reader.exportText('d1');
+    // The remainder is cancelled unread: the stream was not pulled to its end.
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThan(totalChunks);
     expect(doc.textTruncated).toBe(true);
     expect(Buffer.byteLength(doc.text, 'utf8')).toBeLessThanOrEqual(DRIVE_TEXT_MAX_BYTES);
     expect(doc.text.endsWith('a')).toBe(true);
