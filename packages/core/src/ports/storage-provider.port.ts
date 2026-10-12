@@ -107,10 +107,17 @@ export interface TaskRunRepository extends Repository<TaskRun> {
   delete(id: Id): Promise<void>;
   listByTask(taskId: Id): Promise<TaskRun[]>;
   /**
-   * ADR-0115 D8 (PRV-3), additive and read-only: the runs that carry a `usage` record and finished in
-   * `[fromInclusive, toExclusive)` (ISO instants). No schema change: the filter reads the existing JSON.
+   * ADR-0115 D8 (PRV-3), additive and read-only: calls `visit` once per run that carries a `usage` record and finished
+   * in `[fromInclusive, toExclusive)` (ISO instants), with that stored value and the run's `finishedAt`. Only those two
+   * values are read (never the whole run), one row at a time, so a caller that folds them keeps memory bounded by
+   * what it aggregates, not by the number of runs. `visit` is synchronous and must not use the repository; the value
+   * is untrusted stored JSON (normalise it with `readRunUsage`). No schema change: the filter reads the existing JSON.
    */
-  listWithUsageFinishedBetween(fromInclusive: IsoTimestamp, toExclusive: IsoTimestamp): Promise<TaskRun[]>;
+  forEachUsageFinishedBetween(
+    fromInclusive: IsoTimestamp,
+    toExclusive: IsoTimestamp,
+    visit: (usage: unknown, finishedAt: IsoTimestamp) => void,
+  ): Promise<void>;
 }
 
 /** R3-A terminal merge request. terminalStatus is restricted to the two terminal outcomes. */

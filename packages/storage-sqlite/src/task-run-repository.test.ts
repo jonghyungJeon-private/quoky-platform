@@ -61,9 +61,14 @@ describe('SqliteTaskRunRepository optional metadata compatibility', () => {
     await store.close();
   });
 
-  it('PRV-3: listWithUsageFinishedBetween reads TaskRun.usage in [from, to) with no schema change', async () => {
+  it('PRV-3: forEachUsageFinishedBetween visits TaskRun.usage in [from, to) with no schema change', async () => {
     const store = await freshStore();
     const usage = { label: 'codex', reported: true, totalTokens: 5 };
+    const visit = async (from: string, to: string) => {
+      const seen: Array<[unknown, string]> = [];
+      await store.taskRuns.forEachUsageFinishedBetween(from, to, (u, finishedAt) => seen.push([u, finishedAt]));
+      return seen;
+    };
     const at = (id: string, finishedAt: string, extra: Partial<TaskRun> = {}): TaskRun => ({ ...runOf(id), taskId: `task-${id}`, finishedAt, ...extra });
     await store.taskRuns.save(at('before', '2026-09-30T14:59:59.999Z', { usage }));
     await store.taskRuns.save(at('first', '2026-09-30T15:00:00.000Z', { usage }));
@@ -73,9 +78,30 @@ describe('SqliteTaskRunRepository optional metadata compatibility', () => {
     // A provider-owned `metadata.usage` is not the Usage value object and is never read as one.
     await store.taskRuns.save(at('metadata-only', '2026-10-05T00:00:00.000Z', { metadata: { usage } }));
     await store.taskRuns.save(at('bare', '2026-10-05T00:00:00.000Z'));
-    const runs = await store.taskRuns.listWithUsageFinishedBetween('2026-09-30T15:00:00.000Z', '2026-10-31T15:00:00.000Z');
-    expect(runs.map((r) => r.id)).toEqual(['first', 'last']);
+    const seen = await visit('2026-09-30T15:00:00.000Z', '2026-10-31T15:00:00.000Z');
+    // Only the usage value and the timestamp reach the visitor, never the whole run.
+    expect(seen.sort((a, b) => a[1].localeCompare(b[1]))).toEqual([
+      [usage, '2026-09-30T15:00:00.000Z'],
+      [usage, '2026-10-31T14:59:59.999Z'],
+    ]);
     expect((await store.taskRuns.get('first'))?.usage).toEqual(usage);
+    await store.close();
+  });
+
+  it('PRV-3: forEachUsageFinishedBetween streams many runs one at a time and the visitor sees each once', async () => {
+    const store = await freshStore();
+    const n = 2_000;
+    for (let i = 0; i < n; i += 1) {
+      const finishedAt = new Date(Date.UTC(2026, 9, 1) + i * 1000).toISOString();
+      await store.taskRuns.save({ ...runOf(`bulk-${i}`), taskId: `task-bulk-${i}`, finishedAt, usage: { label: i % 2 === 0 ? 'a' : 'b', reported: true, totalTokens: 1 } });
+    }
+    let count = 0;
+    let sum = 0;
+    await store.taskRuns.forEachUsageFinishedBetween('2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', (u) => {
+      count += 1;
+      sum += (u as { totalTokens: number }).totalTokens;
+    });
+    expect([count, sum]).toEqual([n, n]);
     await store.close();
   });
 

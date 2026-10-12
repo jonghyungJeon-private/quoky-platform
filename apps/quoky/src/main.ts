@@ -112,7 +112,7 @@ async function bootstrap(): Promise<void> {
     // ADR-0106 amendment D2: expired memory-archive entries are deleted at start and daily, independent of backups.
     memoryArchivePurge: (now) => memoryCommands.purgeExpiredArchive(now),
     // ADR-0115 D8 (PRV-3): the monthly provider usage DM and the optional threshold DM read TaskRun.usage; nothing is written.
-    providerUsageSource: { listWithUsageFinishedBetween: (from, to) => storage.taskRuns.listWithUsageFinishedBetween(from, to) },
+    providerUsageSource: { forEachUsageFinishedBetween: (from, to, visit) => storage.taskRuns.forEachUsageFinishedBetween(from, to, visit) },
   });
 
   // ADR-0114 (TG-1): a Telegram halt (conflict, rejected token, identity mismatch) sends one OPS_NOTICE to the Discord

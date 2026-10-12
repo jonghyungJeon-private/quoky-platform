@@ -367,8 +367,9 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
       timers,
       ledger,
       providerUsageSource: {
-        listWithUsageFinishedBetween: async (from, to) =>
-          runs.filter((r) => r.finishedAt >= from && r.finishedAt < to).map((r) => ({ finishedAt: r.finishedAt, usage: r.usage }) as never),
+        forEachUsageFinishedBetween: async (from, to, visit) => {
+          for (const r of runs) if (r.finishedAt >= from && r.finishedAt < to) visit(r.usage, r.finishedAt);
+        },
       },
       providerUsageState: { read: () => stateContent, write: (c) => { stateContent = c; } },
     });
@@ -399,8 +400,9 @@ describe('createOpsRuntime (ADR-0102 D6/D7 composition)', () => {
       timers,
       ledger,
       providerUsageSource: {
-        listWithUsageFinishedBetween: async (from, to) =>
-          runs.filter((r) => r.finishedAt >= from && r.finishedAt < to).map((r) => ({ finishedAt: r.finishedAt, usage: r.usage }) as never),
+        forEachUsageFinishedBetween: async (from, to, visit) => {
+          for (const r of runs) if (r.finishedAt >= from && r.finishedAt < to) visit(r.usage, r.finishedAt);
+        },
       },
       providerUsageState: { read: () => stateContent, write: (c) => { stateContent = c; } },
     });

@@ -4,7 +4,7 @@ import type { IsoTimestamp, RunUsageRecord, TaskRunRepository } from '@quoky/cor
 /**
  * ADR-0115 D8 (PRV-3): the provider usage ledger, READ side. There is no ledger table and no migration: each finished
  * run already carries its normalised `Usage` value object in `TaskRun.usage` (core `runUsageRecord`), and the monthly totals
- * are computed here by reading those runs back through the additive read-only `listWithUsageFinishedBetween` query.
+ * are computed here by folding the stored records through the additive read-only `forEachUsageFinishedBetween` query.
  *
  * Boundaries are calendar months in `QUOKY_TIMEZONE`. Totals are counts only (tokens and runs per selection label).
  * Every count is tracked per field as the sum of what was reported plus how many runs reported it: a field no run
@@ -105,7 +105,7 @@ export class UsageFold {
 }
 
 /** The only repository seam the ledger reads. */
-export type ProviderUsageSource = Pick<TaskRunRepository, 'listWithUsageFinishedBetween'>;
+export type ProviderUsageSource = Pick<TaskRunRepository, 'forEachUsageFinishedBetween'>;
 
 export function monthKeyOf(instant: IsoTimestamp | number, timeZone: string): MonthKey {
   const { year, month } = localDateOf(instant, timeZone);
@@ -138,16 +138,17 @@ export class ProviderUsageLedger {
     return monthKeyOf(instant, this.timeZone);
   }
 
+  /** One streaming fold over the month's usage records: memory grows with the labels, not with the runs. */
   async monthly(month: MonthKey): Promise<MonthlyUsage> {
-    const runs = await this.source.listWithUsageFinishedBetween(
+    const fold = new UsageFold();
+    await this.source.forEachUsageFinishedBetween(
       monthStartIso(month, this.timeZone),
       monthStartIso(nextMonthKey(month), this.timeZone),
+      (raw) => {
+        const usage = readRunUsage(raw);
+        if (usage !== undefined) fold.add(usage);
+      },
     );
-    const fold = new UsageFold();
-    for (const run of runs) {
-      const usage = readRunUsage(run.usage);
-      if (usage !== undefined) fold.add(usage);
-    }
     return fold.result(month);
   }
 }

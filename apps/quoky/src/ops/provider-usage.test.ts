@@ -523,14 +523,13 @@ describe('PRV-3: the ledger has no write path to provider selection (ADR-0115 D8
   it('runs end to end touching nothing but the one read-only query', async () => {
     const touched: string[] = [];
     const real: ProviderUsageSource = {
-      listWithUsageFinishedBetween: async () => {
-        touched.push('listWithUsageFinishedBetween');
-        return [];
+      forEachUsageFinishedBetween: async () => {
+        touched.push('forEachUsageFinishedBetween');
       },
     };
     const guarded = new Proxy(real, {
       get(target, prop, receiver) {
-        if (prop !== 'listWithUsageFinishedBetween') throw new Error(`unexpected access: ${String(prop)}`);
+        if (prop !== 'forEachUsageFinishedBetween') throw new Error(`unexpected access: ${String(prop)}`);
         return Reflect.get(target, prop, receiver);
       },
     });
@@ -542,7 +541,7 @@ describe('PRV-3: the ledger has no write path to provider selection (ADR-0115 D8
       clock: () => '2026-10-12T00:00:00.000Z',
     });
     await job.checkOnce();
-    expect(new Set(touched)).toEqual(new Set(['listWithUsageFinishedBetween']));
+    expect(new Set(touched)).toEqual(new Set(['forEachUsageFinishedBetween']));
   });
 
   it('its modules import no provider selection, registration, routing or provider package', () => {
