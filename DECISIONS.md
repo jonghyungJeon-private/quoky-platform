@@ -20271,10 +20271,8 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
 
 ## ADR-0120 — Natural-language capability selection: a closed capability catalog contributed by the turn handlers, one bounded `INTENT_SELECTION` call through the existing `CapabilityRouter` on messages bound for chat, deterministic validation and execution, reads only in wave 1, shadow before active. Amends ADR-0032 (M3 amendment, deps 35→36), ADR-0096 D1/D3/D4/D5, ADR-0098 D1/D7, the ADR-0098 amendment D1 (QUAL-7), ADR-0100 D1/D2/D7, ADR-0101 D2 (narrowly), ADR-0104 D1/D2/D4, ADR-0110 D3, ADR-0117 D3/D4 and ADR-0118 D4/D8.
 
-- **Status:** **Proposed (awaiting owner ratification).** This record grants no implementation, activation or
-  execution authority. No NL-1 code merges before the Product Owner ratifies it; ratification is the owner's alone and
-  will be recorded in a ratification record appended below this entry. Ratification would authorize no Strict action
-  by itself.
+- **Status:** **Ratified by the Product Owner on 2026-10-12**, with one change to the V1/V2 split (Phase A active mode
+  moves into NL-1). See "ADR-0120 ratification record" below this entry. Originally drafted as Proposed.
 - **Date:** 2026-10-12
 - **Amends:** the clauses listed in "Amended clauses" below. Their ADR text is not edited (this file is append-only).
   **Reaffirms unchanged:** ADR-0063, ADR-0091, ADR-0092 amendment D3, ADR-0107 D6, ADR-0110 D4, the ADR-0110
@@ -20574,3 +20572,32 @@ owner yes first). Independent Chief Architect review before NL-1 merges.
 corpus and offline suite. `[LATER]` (NL-2, gated on shadow data) active mode, Class B as fallback, the wave-2 gaps (mail
 ranges and subject keyword, Drive modified-since, calendar title keyword, Jira free-text search, GitHub filters) and
 grammar retirement. NL-initiated writes need their own amendment.
+
+### ADR-0120 ratification record (2026-10-12)
+
+The Product Owner ratified ADR-0120 in the orchestrator chat on 2026-10-12. The basis, verbatim:
+
+- Owner answers 1–4 (recorded in D2, D5, D7 and the v5 plan, decisions 20–23).
+- "오늘 너가 할일은 해당 작업 진행 완료 후, 테스트까지 정상적으로 완수하는거야. 최대한 다양한 질문으로 엣지 케이스까지 다
+  확인해서 진행해. 그리고 결과 보고만 discord던, telegram 이던 전달만 해둬"
+- "확정본도 나한테 전달하려면 동일하게 전달하고"
+
+Decisions:
+
+1. ADR-0120 is ratified as written, with the D3 pre-egress credential guard added after review.
+2. The D6 Class A / Class B split and the D10 freeze are approved.
+3. The D7 wave-1 storage in `Actor.metadata` with a 30-day TTL is approved. The basis line is shown in every answer.
+4. **Change to V1/V2:** **Phase A active mode** moves into NL-1, because the owner wants natural-language requests to
+   work and be tested end to end today. In Phase A, selection acts only on messages that would otherwise reach chat
+   (D6). `QUOKY_NL_INTENT_MODE=active` therefore means Phase A. `shadow` remains available.
+   - Phase C (selection before the Class B grammars), grammar-hit shadowing, and grammar retirement stay in NL-2. Each
+     needs the owner's separate yes.
+5. Strict actions authorized for 2026-10-12 by the instruction above:
+   - Adding `QUOKY_NL_INTENT_MODE=active` (and the selection-model key) to the service `.env.local`, with a backup first.
+   - Running the D12 model-in-the-loop evaluation on the agent-drafted corpus. The owner delegated corpus approval for
+     this run ("최대한 다양한 질문으로 엣지 케이스까지"). The corpus remains open to the owner's later review.
+   - An attended-by-proxy live UAT of read-only queries on Telegram and Discord in the owner's DM.
+
+   Not authorized: NL-initiated writes, external writes outside the existing approval flows, turning on the merge
+   flag, and Phase C.
+6. The ratified copy and the final test report are sent to the owner in Discord `#new_chatting`.
