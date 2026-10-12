@@ -187,9 +187,14 @@ export class NlSelectionService {
     if (pending !== undefined) {
       // Any reply ends the question: an answer resolves it, anything else is a new request.
       if (turn.pending === undefined) await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => undefined);
-      // A bare "1" has no language of its own: the answer keeps the question's.
-      const answered = await this.answerPending(pending, turn, /\p{L}/u.test(turn.text) ? language : pending.language);
-      if (answered !== undefined) return answered;
+      // An answer is the owner's own words: quoted text (a range or a `>` line) is stripped first, and a turn with
+      // nothing left is not an answer.
+      const answerInput = prepareSelectionInput(turn.text, 0, turn.quotedRanges ?? []);
+      if (!('skip' in answerInput)) {
+        // A bare "1" has no language of its own: the answer keeps the question's.
+        const answered = await this.answerPending(pending, turn, answerInput.groundingText, /\p{L}/u.test(answerInput.groundingText) ? language : pending.language);
+        if (answered !== undefined) return answered;
+      }
     }
     const last = readLastSelection(turn.session, turn.actor.id, turn.now);
     const prepared = this.prepare(turn, last);
@@ -248,7 +253,7 @@ export class NlSelectionService {
     }
     const stored = options.map((option): StoredSelection => ({ entryId: option.entry.id, args: option.args }));
     await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
-      pendingQuestionRecord(turn.actor.id, { kind: 'entry', at: turn.now, language, options: stored }),
+      pendingQuestionRecord(turn.actor.id, { kind: 'entry', at: turn.now, language, options: stored, groundingText: prepared.groundingText }),
     );
     return { kind: 'ask', text: renderEntryQuestion(options, language) };
   }
@@ -333,14 +338,14 @@ export class NlSelectionService {
    * A reply to the open numbered question (D7), resolved strictly (`resolveChoice`): a pick completes it, a cancel closes
    * it with a fixed note, an unclear answer asks the same question again, anything else is `undefined` (routed normally).
    */
-  private async answerPending(pending: PendingQuestion, turn: NlSelectionTurn, language: 'ko' | 'en'): Promise<NlSelectionDecision | undefined> {
+  private async answerPending(pending: PendingQuestion, turn: NlSelectionTurn, answerText: string, language: 'ko' | 'en'): Promise<NlSelectionDecision | undefined> {
     const offered = offeredMap(turn.entries);
     if (pending.kind === 'entry') {
       const labels = pending.options.map((option) => {
         const entry = offered.get(option.entryId);
         return entry === undefined ? [] : [entry.label.ko, entry.label.en, ...entry.aliases];
       });
-      const resolved = resolveChoice(turn.text, labels);
+      const resolved = resolveChoice(answerText, labels);
       if (resolved.kind === 'none') return undefined;
       if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
       const validated = pending.options.map((option) => validateSelection(option, this.validationContext(turn, '', option.args)));
@@ -352,7 +357,7 @@ export class NlSelectionService {
       }
       const picked = validated[resolved.index];
       if (picked === undefined || !picked.ok) return undefined;
-      return this.complete(picked.value, turn, readLastSelection(turn.session, turn.actor.id, turn.now), language, '');
+      return this.complete(picked.value, turn, readLastSelection(turn.session, turn.actor.id, turn.now), language, pending.groundingText ?? '');
     }
     const entry = offered.get(pending.selection.entryId);
     const key = entry?.ambiguity?.find((candidate) => candidate.key === pending.key);
@@ -361,7 +366,7 @@ export class NlSelectionService {
       const known = key.values.find((candidate) => candidate.value === value);
       return known === undefined ? [] : [known.label.ko, known.label.en, ...known.aliases];
     });
-    const resolved = resolveChoice(turn.text, labels);
+    const resolved = resolveChoice(answerText, labels);
     if (resolved.kind === 'none') return undefined;
     if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
     if (resolved.kind === 'unclear') {

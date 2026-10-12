@@ -32,7 +32,7 @@ interface Harness {
   actor: () => Actor;
   decide(
     text: string,
-    opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; attachments?: number; chatProviderId?: string | null },
+    opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; attachments?: number; chatProviderId?: string | null; quotedRanges?: readonly { start: number; end: number }[] },
   ): Promise<NlSelectionDecision>;
   script: string[];
 }
@@ -122,6 +122,7 @@ function harness(options: {
         now: opts.now ?? T0,
         entries: opts.entries ?? ALL,
         route: 'chat',
+        ...(opts.quotedRanges !== undefined ? { quotedRanges: opts.quotedRanges } : {}),
         ...(opts.chatProviderId === null ? {} : { chatProviderId: opts.chatProviderId ?? 'scripted-selector' }),
       }),
   } as Harness;
@@ -281,6 +282,33 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(resolveChoice('다음 주 일정', [['담당'], ['보고'], ['둘 다', '다']])).toEqual({ kind: 'none' });
     expect(resolveChoice('담당만', [['담당'], ['보고'], ['둘 다', '다']])).toEqual({ kind: 'pick', index: 0 });
     expect(resolveChoice('둘 다요', [['담당'], ['보고'], ['둘 다', '다']])).toEqual({ kind: 'pick', index: 2 });
+  });
+
+  it('a quoted "1" is not an answer: neither a platform range nor a > line resolves the open question', async () => {
+    const ask = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'github.items', args: {} }] });
+    const h = harness({ script: [ask] });
+    await h.decide('내 이슈');
+    expect(await h.decide('1', { now: at(1000), quotedRanges: [{ start: 0, end: 1 }] })).toEqual({ kind: 'skip', reason: 'empty' });
+    expect(h.calls).toHaveLength(1);
+    const again = harness({ script: [ask] });
+    await again.decide('내 이슈');
+    expect(await again.decide('> 1', { now: at(1000) })).toEqual({ kind: 'skip', reason: 'empty' });
+    expect(again.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+  });
+
+  it('picking a clarification option keeps the explicit role the original turn named', async () => {
+    const ask = JSON.stringify({
+      entryId: 'jira.issues',
+      args: { window: 'created', range: 'today', role: 'reporter' },
+      ambiguity: 'NEEDS_CLARIFICATION',
+      alternatives: [{ entryId: 'github.items', args: {} }],
+    });
+    const h = harness({ script: [ask] });
+    expect(await h.decide('내가 보고한 이슈 중 오늘 등록된 거')).toMatchObject({ kind: 'ask' });
+    expect(await h.decide('지라', { now: at(1000) })).toMatchObject({
+      kind: 'execute',
+      command: { entryId: 'jira.issues', args: { window: 'created', role: 'reporter' } },
+    });
   });
 
   it('a negated answer, a cancel and an unclear answer are handled end to end without a second call', async () => {

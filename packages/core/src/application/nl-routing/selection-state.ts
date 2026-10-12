@@ -27,6 +27,7 @@ export const INTERPRETATION_PREFERENCES_MAX_KEYS = 16;
 
 const MAX_ARGS = 12;
 const MAX_STRING = 200;
+const MAX_GROUNDING = 1000;
 
 export interface StoredSelection {
   readonly entryId: NlCatalogEntryId;
@@ -45,6 +46,8 @@ export type PendingQuestion =
       readonly language: 'ko' | 'en';
       /** The numbered options, in order (validated selections). */
       readonly options: readonly StoredSelection[];
+      /** The original turn's quote-stripped grounding text (bounded), so the picked option keeps an explicit role. */
+      readonly groundingText?: string;
     }
   | {
       readonly kind: 'preference';
@@ -108,7 +111,8 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
   if (record.kind === 'entry' && Array.isArray(record.options)) {
     const options = record.options.map(selectionOf);
     if (options.length === 0 || options.length > 4 || options.some((option) => option === undefined)) return undefined;
-    return { kind: 'entry', at, language, options: options as StoredSelection[] };
+    const groundingText = typeof record.groundingText === 'string' && record.groundingText.length <= MAX_GROUNDING ? record.groundingText : undefined;
+    return { kind: 'entry', at, language, options: options as StoredSelection[], ...(groundingText !== undefined ? { groundingText } : {}) };
   }
   if (record.kind === 'preference' && typeof record.key === 'string' && Array.isArray(record.values)) {
     const values = record.values.filter((value): value is string => typeof value === 'string' && value.length <= 40);
@@ -127,6 +131,7 @@ export function pendingQuestionRecord(actorId: Id, question: PendingQuestion): M
         at: question.at,
         language: question.language,
         options: question.options.map((option) => ({ entryId: option.entryId, args: { ...option.args } })),
+        ...(question.groundingText !== undefined ? { groundingText: question.groundingText.slice(0, MAX_GROUNDING) } : {}),
       }
     : {
         actorId,
