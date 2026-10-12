@@ -19591,6 +19591,9 @@ Independent Chief Architect review before GML-1 merges.
     (`application/guarded-clip.ts`, next to the link neutralizer) and serve Drive names, mail fields and both query
     echoes. The credential check runs on the full value first, so an owner-typed `ghp_…` in a name or sender query is
     replaced by `(…)` (tests in the two listing-fit files).
+  - **CA re-review 3c (copy):** the summary reply for an uploaded text file says "업로드한 텍스트 파일은 읽지 않아요. 구글
+    문서·스프레드시트만 요약할 수 있어요." (English: "Uploaded text files are not read … Only Google Docs and Sheets can be
+    summarized."); other kinds say Google Docs and Sheets only.
 
 ## ADR-0109 amendment — Bind the approved repository to execution: an additive optional `approvedRepository` parameter on the `GitProvider` port; the App installation narrowed to the test repositories (2026-10-08)
 

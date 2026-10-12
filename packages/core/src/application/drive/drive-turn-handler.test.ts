@@ -286,7 +286,8 @@ describe('Drive turn handler (ADR-0118 D4–D8, DRV-1)', () => {
       const outcome = await handler.handle(ctx('1번 문서 요약해줘'));
       expect(outcome !== null && 'reply' in outcome).toBe(true);
       expect(textOf(outcome)).toBe(renderDriveSummaryNotText('text', 'ko'));
-      expect(textOf(outcome)).toContain('텍스트로 읽을 수 없어서');
+      expect(textOf(outcome)).toContain('업로드한 텍스트 파일은 읽지 않아요');
+      expect(renderDriveSummaryNotText('text', 'en')).toContain('Uploaded text files are not read');
       expect(exports).toEqual([]);
     });
 

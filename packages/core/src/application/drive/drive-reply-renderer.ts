@@ -271,6 +271,11 @@ export function renderDriveSummaryOutOfRange(index: number, count: number, langu
 /** The listed file has no text export (a presentation, a PDF, a folder, another kind): nothing was read. */
 export function renderDriveSummaryNotText(kind: DriveFileKind, language: DriveLanguage): string {
   const label = driveKindLabel(kind, language);
+  if (kind === 'text') {
+    return language === 'en'
+      ? 'Uploaded text files are not read, so I did not read or summarize that one. Only Google Docs and Sheets can be summarized.'
+      : '업로드한 텍스트 파일은 읽지 않아요. 구글 문서·스프레드시트만 요약할 수 있어요.';
+  }
   return language === 'en'
     ? `That file is a ${label}, which has no text export, so I did not read or summarize it. Google Docs and Sheets can be summarized.`
     : `그 파일은 ${label} 형식이라 텍스트로 읽을 수 없어서 읽거나 요약하지 않았어요. 구글 문서·스프레드시트만 요약할 수 있어요.`;
