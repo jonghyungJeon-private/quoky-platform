@@ -124,7 +124,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
   }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
-    const command = detectWorkChatCommand(ctx.message.text);
+    const command = detectWorkChatCommand(ctx.message.text, { yieldToSelection: ctx.grammarYield === true });
     if (!command || workChatCommandMode(command) !== this.deps.mode) return null;
     const { outcome } = await this.run(command, ctx);
     // ADR-0120 follow-up: a listing this grammar answered is also its catalog selection (a failure shows no listing).

@@ -5,6 +5,9 @@
  *
  * - `QUOKY_NL_INTENT_MODE`: exactly `off`, `shadow` or `active`; default `off` (every turn byte-identical). `active` is
  *   Phase A (ratification record, decision 4): selection acts only on turns that would otherwise reach chat.
+ * - `QUOKY_NL_GRAMMAR_YIELD` (ADR-0120 amendment A2): exactly `off` or `on`; default `off`. `on` lets a Class B listing
+ *   grammar decline a message with a qualifier it cannot express, so selection (mode `active` only) can bind it. It sends
+ *   messages the host answers today to the selector, so it is its own flag.
  * - `QUOKY_NL_INTENT_MODEL`: the Claude CLI `--model` of a selection call (an alias such as `haiku`, or a full model name);
  *   default `haiku`. Adapter configuration only: Core never sees it.
  */
@@ -13,6 +16,8 @@ export type NlIntentModeConfig = 'off' | 'shadow' | 'active';
 export interface NlSelectionConfig {
   readonly mode: NlIntentModeConfig;
   readonly model: string;
+  /** `QUOKY_NL_GRAMMAR_YIELD=on` (amendment A2). */
+  readonly grammarYield: boolean;
 }
 
 export const DEFAULT_NL_INTENT_MODEL = 'haiku';
@@ -20,6 +25,7 @@ export const DEFAULT_NL_INTENT_MODEL = 'haiku';
 export const NlSelectionConfigErrorCode = {
   NL_INTENT_MODE_INVALID: 'NL_INTENT_MODE_INVALID',
   NL_INTENT_MODEL_INVALID: 'NL_INTENT_MODEL_INVALID',
+  NL_GRAMMAR_YIELD_INVALID: 'NL_GRAMMAR_YIELD_INVALID',
 } as const;
 export type NlSelectionConfigErrorCode = (typeof NlSelectionConfigErrorCode)[keyof typeof NlSelectionConfigErrorCode];
 
@@ -43,5 +49,9 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
   if (rawModel !== undefined && !CLAUDE_MODEL_SHAPE.test(rawModel)) {
     throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_INTENT_MODEL_INVALID);
   }
-  return { mode: (rawMode as NlIntentModeConfig | undefined) ?? 'off', model: rawModel ?? DEFAULT_NL_INTENT_MODEL };
+  const rawYield = env.QUOKY_NL_GRAMMAR_YIELD;
+  if (rawYield !== undefined && rawYield !== 'off' && rawYield !== 'on') {
+    throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_GRAMMAR_YIELD_INVALID);
+  }
+  return { mode: (rawMode as NlIntentModeConfig | undefined) ?? 'off', model: rawModel ?? DEFAULT_NL_INTENT_MODEL, grammarYield: rawYield === 'on' };
 }

@@ -45,6 +45,7 @@ export function createNlSelectionProviders(
         const config = resolveConfig();
         return new NlSelectionService({
           mode: config.nlSelection.mode,
+          grammarYield: config.nlSelection.grammarYield,
           router,
           sessions,
           actors: {

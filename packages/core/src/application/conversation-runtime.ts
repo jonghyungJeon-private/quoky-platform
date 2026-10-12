@@ -1052,7 +1052,7 @@ export interface ConversationRuntimeDeps {
    * validation, the clarification state, `lastSelection` and the interpretation preferences belong to the service.
    */
   readonly nlSelection?: Pick<NlSelectionService, 'mode' | 'decide'> &
-    Partial<Pick<NlSelectionService, 'takePending' | 'recordGrammarSelection' | 'clearLastSelection'>>;
+    Partial<Pick<NlSelectionService, 'takePending' | 'recordGrammarSelection' | 'clearLastSelection' | 'yieldsToSelection' | 'grammarYieldEnabled'>>;
   readonly logger: Logger;
 }
 
@@ -2229,6 +2229,8 @@ export class ConversationRuntime {
       await this.settleNlLastSelection(message);
       return result;
     } catch (err) {
+      // An error turn ends the follow-up window too: whatever was recorded this turn no longer describes a shown listing.
+      await this.settleNlLastSelection(message, true).catch(() => undefined);
       const safe = toSafeError(err);
       this.deps.logger.error('inbound handling failed', {
         errorName: err instanceof Error ? err.name : typeof err,
@@ -2302,6 +2304,15 @@ export class ConversationRuntime {
         await this.deps.credentialOverrideFlow?.clear(session); // a pointer left on a consumed set: release it
       }
       session = { ...session, activeTaskId: undefined };
+    }
+    // ADR-0120 amendment A2: a Class B listing grammar may decline only when selection would run for this turn.
+    if (
+      this.deps.nlSelection?.yieldsToSelection !== undefined &&
+      this.deps.nlSelection.grammarYieldEnabled?.() === true &&
+      !lookup.pending &&
+      (await this.deps.nlSelection.yieldsToSelection(await this.nlChatProviderId({ capability: Capability.GENERAL_CHAT } as Intent, session, actor)))
+    ) {
+      this.nlYield.add(message);
     }
     if (control) {
       return this.handleControlTurn(message, session, actor, control, expiryNotice ? null : lookup.pending, expiryNotice);
@@ -3072,6 +3083,9 @@ export class ConversationRuntime {
     }
   }
 
+  /** Turns (by message object) for which the Class B listing grammars may yield to selection (amendment A2). */
+  private readonly nlYield = new WeakSet<InboundMessage>();
+
   /** Per turn (by message object): a previous `lastSelection` exists and this turn has not yet replaced it. */
   private readonly nlTurns = new WeakMap<InboundMessage, { sessionId: Id; keep: boolean }>();
 
@@ -3080,9 +3094,9 @@ export class ConversationRuntime {
    * handler's grammar listing) is cleared — a turn answered by chat, help, an approval, a write preview or a clarification
    * question has no catalog equivalent, so a later "그 중에 …" must not bind to an older, unrelated listing.
    */
-  private async settleNlLastSelection(message: InboundMessage): Promise<void> {
+  private async settleNlLastSelection(message: InboundMessage, failed = false): Promise<void> {
     const turn = this.nlTurns.get(message);
-    if (turn === undefined || turn.keep) return;
+    if (turn === undefined || (turn.keep && !failed)) return;
     this.nlTurns.delete(message);
     await this.deps.nlSelection?.clearLastSelection?.({ id: turn.sessionId });
   }
@@ -3187,13 +3201,16 @@ export class ConversationRuntime {
         const owner = catalog.get(decision.command.entryId);
         const serve = owner?.handler.handleSelected;
         if (owner === undefined || serve === undefined) return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+        // The service already wrote this selection as `lastSelection`; it stays only when the handler shows the listing.
+        this.nlTurns.set(message, { sessionId: session.id, keep: false });
         const outcome = await serve.call(owner.handler, decision.command, this.turnHandlerContext(message, session, actor, applyAnchor));
-        if (outcome === null) {
-          // The service already wrote this selection as `lastSelection`, but chat answers the turn: no listing was shown.
+        if (outcome === null) return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+        // A failed read shows no listing: a later "그 중에 …" must not refine it.
+        if (outcome.kind !== 'summarize' && outcome.kind !== 'write-draft' && outcome.status === 'FAILED') {
           this.nlTurns.set(message, { sessionId: session.id, keep: false });
-          return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+        } else {
+          this.keepNlLastSelection(message, session);
         }
-        this.keepNlLastSelection(message, session);
         this.deps.logger.info('nl selection dispatched', { handlerId: owner.handler.id, entryId: decision.command.entryId, sessionId: session.id });
         const result = await this.respondTurnHandler(message, session, actor, userMemoryId, outcome);
         if (decision.basis === undefined) return { kind: 'responded', result };
@@ -3430,6 +3447,7 @@ export class ConversationRuntime {
     actor: Actor,
     anchor: ApplyPreviewAnchor | null,
   ): TurnHandlerContext {
+    const sourceMessage = message;
     const applyAnchor: TurnHandlerAnchorSnapshot | null = anchor
       ? frozenPlainSnapshot({
           status: anchor.status,
@@ -3449,6 +3467,7 @@ export class ConversationRuntime {
       actor: frozenPlainSnapshot(actor),
       now: this.clock(),
       applyAnchor,
+      ...(this.nlYield.has(sourceMessage) ? { grammarYield: true } : {}),
       resolveActiveWorkspace: () => this.resolveActiveWorkspaceForHandler(sessionId, activeProjectId),
     });
   }

@@ -180,16 +180,16 @@ export function isCalendarWriteRequest(text: string): boolean {
  * Parse one owner message. Returns `null` for anything that is not a calendar question or calendar write request (the
  * message falls through unchanged). Never throws for any input string.
  */
-export function parseCalendarQuestion(text: string): CalendarQuestion | null {
+export function parseCalendarQuestion(text: string, options: { readonly yieldToSelection?: boolean } = {}): CalendarQuestion | null {
   const message = normalize(text);
   if (message.length === 0 || Array.from(message).length > CALENDAR_QUESTION_MAX_CHARS) return null;
   if (HOW_TO.test(message)) return null;
   const language = languageOf(message);
   if (isCalendarWriteRequest(message)) return { kind: 'write-refused', language };
   if (!(BARE_KO.test(message) || BARE_EN.test(message) || isPersonalScheduleQuestion(message))) return null;
-  // ADR-0120 follow-up 2: a schedule question carrying a qualifier this grammar cannot express (a title word, a period or a
+  // ADR-0120 amendment A2 (only when the caller says selection would run): a schedule question carrying a qualifier this grammar cannot express (a title word, a period or a
   // time of day it has no span for) is not answered with the whole span; it falls through to natural-language selection.
-  if (leavesUnexpressedContent(message, CALENDAR_EXPRESSED)) return null;
+  if (options.yieldToSelection === true && leavesUnexpressedContent(message, CALENDAR_EXPRESSED)) return null;
   const span = extractSpan(message);
   return REMAINING.test(message) && span.kind !== 'next'
     ? { kind: 'events', span, language, remaining: true }

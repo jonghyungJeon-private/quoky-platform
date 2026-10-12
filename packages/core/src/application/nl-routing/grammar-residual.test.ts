@@ -18,6 +18,24 @@ describe('unexpressedContentWords', () => {
     }
   });
 
+  it('treats ordinary polite, honorific and interrogative endings as grammar, not content (suffix morphology, no phrase list)', () => {
+    for (const text of [
+      '내일 일정 알려주실래요?',
+      '오늘 일정이 있습니까?',
+      '이번 주 일정 보여주시겠어요',
+      '내일 일정 확인해 주세요',
+      '내일 일정 알려드릴까요',
+      '내일 일정 알려주시겠습니까',
+      '오늘 회의 몇 시입니까',
+      '오늘 일정 어떻게 되나요',
+      '내일 일정 뭐예요',
+    ]) {
+      expect(unexpressedContentWords(text, CALENDAR_EXPRESSED), text).toEqual([]);
+    }
+    // A real qualifier is still content next to a polite ending.
+    expect(unexpressedContentWords('이번 주 정기회의 일정 알려주실래요?', CALENDAR_EXPRESSED)).toEqual(['정기']);
+  });
+
   it('adds no phrase: with an empty vocabulary every non-grammatical word counts, and function words never do', () => {
     expect(unexpressedContentWords('보여줘 좀 있어요', [])).toEqual([]);
     expect(unexpressedContentWords('weekly standup', [])).toEqual(['weekly', 'standup']);

@@ -10,9 +10,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **"그 중에 …" binds to the listing you just saw.** A listing answered by a deterministic grammar (calendar, Jira, GitHub,
   Slack, Confluence, to-dos, mail, Drive) is remembered as the previous selection; a turn with no such equivalent (chat,
   help, an approval, a write preview) forgets it.
-- **Listing grammars no longer swallow qualifiers.** "이번 주 정기회의 일정 있어?" and "내일 스크럼 몇 시야" are no
-  longer answered with the whole period; the calendar and work-lookup grammars decline when a word they cannot express
-  is left, and natural-language selection applies the keyword.
+- **Listing grammars can stop swallowing qualifiers (opt-in, ADR-0120 amendment A2, proposed).** With
+  `QUOKY_NL_GRAMMAR_YIELD=on` (default `off`) and `QUOKY_NL_INTENT_MODE=active`, "이번 주 정기회의 일정 있어?" is no
+  longer answered with the whole week: the calendar and work-lookup grammars decline when a word they cannot express is
+  left, and natural-language selection applies the keyword. Off, every reply is unchanged.
 
 ## Unreleased — v5 NL-1 live UAT follow-up (ADR-0120, 2026-10-12)
 

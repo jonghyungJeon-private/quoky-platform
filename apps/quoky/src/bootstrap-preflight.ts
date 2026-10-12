@@ -114,6 +114,7 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.NL_INTENT_MODE_INVALID]: 'QUOKY_NL_INTENT_MODE must be unset, "off", "shadow", or "active".',
   [QuokyConfigErrorCode.NL_INTENT_MODEL_INVALID]:
     'QUOKY_NL_INTENT_MODEL must be unset or a Claude model alias or name such as "haiku".',
+  [QuokyConfigErrorCode.NL_GRAMMAR_YIELD_INVALID]: 'QUOKY_NL_GRAMMAR_YIELD must be unset, "off", or "on".',
   [QuokyConfigErrorCode.REMINDERS_ENABLED_INVALID]: 'QUOKY_REMINDERS_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.REMINDERS_CHANNEL_DELIVERY_INVALID]:
     'QUOKY_REMINDERS_CHANNEL_DELIVERY must be unset, "true", or "false".',

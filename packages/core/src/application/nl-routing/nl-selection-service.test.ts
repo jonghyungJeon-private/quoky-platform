@@ -146,6 +146,19 @@ describe('NlSelectionService — grammar listings and lastSelection (ADR-0120 fo
     expect(h.calls[1]?.prompt.split('\n').filter((line) => line.startsWith('Previous selection:')).at(-1)).toBe('Previous selection: none');
   });
 
+  it('amendment A2: grammars may yield only with the flag on, in active, and when the chat turn would reach the selector provider', async () => {
+    const withFlag = (mode: NlIntentMode, grammarYield: boolean) => {
+      const h = harness({ mode });
+      return new NlSelectionService({ ...(h.service as unknown as { deps: ConstructorParameters<typeof NlSelectionService>[0] }).deps, mode, grammarYield });
+    };
+    expect(await withFlag('active', true).yieldsToSelection('scripted-selector')).toBe(true);
+    expect(await withFlag('active', false).yieldsToSelection('scripted-selector')).toBe(false);
+    expect(await withFlag('shadow', true).yieldsToSelection('scripted-selector')).toBe(false);
+    expect(await withFlag('off', true).yieldsToSelection('scripted-selector')).toBe(false);
+    expect(await withFlag('active', true).yieldsToSelection('another-provider')).toBe(false);
+    expect(await withFlag('active', true).yieldsToSelection(undefined)).toBe(false);
+  });
+
   it('ignores a selection that is not a closed entry with bounded plain args, and writes nothing outside active', async () => {
     const h = harness();
     expect(await h.service.recordGrammarSelection({ id: 'sess-1' }, 'owner', { entryId: 'jira.write' as never, args: {} }, T0)).toBe(false);

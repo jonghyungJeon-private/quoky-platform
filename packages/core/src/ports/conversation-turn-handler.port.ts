@@ -53,6 +53,12 @@ export interface TurnHandlerContext {
   /** The runtime's shared clock reading for this turn. */
   readonly now: IsoTimestamp;
   readonly applyAnchor: TurnHandlerAnchorSnapshot | null;
+  /**
+   * ADR-0120 amendment A2: true only when `QUOKY_NL_GRAMMAR_YIELD=on`, selection is `active` and would run for this turn
+   * (same provider family, no pending approval). A Class B listing grammar may then decline a message with a qualifier it
+   * cannot express. Absent or false: every grammar behaves exactly as before.
+   */
+  readonly grammarYield?: boolean;
   /** The active project's workspace, opened lazily on request; `null` when there is none or it cannot open. */
   resolveActiveWorkspace(): Promise<WorkspaceRef | null>;
 }

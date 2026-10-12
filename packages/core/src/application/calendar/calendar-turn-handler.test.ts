@@ -105,16 +105,22 @@ describe('calendar turn handler (ADR-0110 D3–D6)', () => {
     expect(await selection('금요일 일정')).toEqual({ entryId: 'calendar.events', args: { range: '2026-10-09' } });
   });
 
-  it('declines a schedule question that carries a qualifier the grammar cannot express (ADR-0120 follow-up 2)', async () => {
+  it('declines a schedule question with an inexpressible qualifier only when the runtime says selection would run (ADR-0120 amendment A2)', async () => {
     const { reader, calls } = fakeReader(async () => [MEETING]);
     const handler = createCalendarTurnHandler({ reader, timeZone: SEOUL });
-    for (const text of ['이번 주 정기회의 일정 있어?', '내일 스크럼 몇 시야', '오늘 위클리카 관련 일정', '이번 주 회의 중에 오후 거만', '이번 달 일정 보여줘']) {
-      expect(await handler.handle(ctx(text)), text).toBeNull();
+    const yielding = (text: string): TurnHandlerContext => ({ ...ctx(text), grammarYield: true });
+    // The grammar answers this on main (the whole week, ignoring "정기회의"); flag off it still does, byte for byte.
+    expect(await handler.handle(yielding('이번 주 정기회의 일정 있어?'))).toBeNull();
+    expect(await handler.handle(ctx('이번 주 정기회의 일정 있어?'))).toMatchObject({ status: 'RESPONDED', nlSelection: { entryId: 'calendar.events', args: { range: 'this-week' } } });
+    // The grammar never claimed these: the same with or without the yield.
+    for (const text of ['내일 스크럼 몇 시야', '오늘 위클리카 관련 일정', '이번 주 회의 중에 오후 거만', '이번 달 일정 보여줘', '스크럼 일정']) {
+      expect(await handler.handle(yielding(text)), text).toBeNull();
+      expect(await handler.handle(ctx(text)), `${text} (off)`).toBeNull();
     }
-    expect(calls).toEqual([]);
-    // No leftover qualifier: the grammar answers exactly as before.
+    expect(calls.length).toBe(1);
+    // No leftover qualifier: the grammar answers exactly as before even when it may yield.
     for (const text of ['이번 주 일정 있어?', '내일 오후 일정 알려줘', '내일 9시에 뭐 있어?', '나 내일 바빠?']) {
-      expect(await handler.handle(ctx(text)), text).not.toBeNull();
+      expect(await handler.handle(yielding(text)), text).toEqual(await handler.handle(ctx(text)));
     }
   });
 

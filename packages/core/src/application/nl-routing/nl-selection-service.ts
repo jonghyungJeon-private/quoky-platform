@@ -105,6 +105,8 @@ export interface NlSelectionServiceDeps {
   readonly mode: NlIntentMode;
   readonly router: { select(capability: Capability, context?: ProviderSelectionContext): Promise<AiProvider> };
   /** Field-scoped `Session.metadata` writes (`lastSelection`, the pending question). */
+  /** ADR-0120 amendment A2 (`QUOKY_NL_GRAMMAR_YIELD=on`): Class B listing grammars may yield to selection. Default off. */
+  readonly grammarYield?: boolean;
   readonly sessions: Pick<SessionManager, 'updateMetadataEntry'>;
   /** The Actor repository (`StorageProvider.actors`), for the D7 preferences: re-read, replace one key, save. */
   readonly actors: { get(id: string): Promise<Actor | null>; save(actor: Actor): Promise<Actor> };
@@ -178,6 +180,26 @@ export class NlSelectionService {
       this.log('warn', 'nl_selection.session_write_failed', { key: NL_PENDING_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
     }
     return question;
+  }
+
+  /**
+   * ADR-0120 amendment A2: whether a Class B listing grammar may decline a message it cannot express in full — only with
+   * the yield flag on, in `active`, and when selection would run for this turn (the selector is the provider this turn's
+   * chat would reach, D6/D8). Never throws.
+   */
+  /** Cheap pre-check (no router call): the flag is on and the mode is `active`. */
+  grammarYieldEnabled(): boolean {
+    return this.mode === 'active' && this.deps.grammarYield === true;
+  }
+
+  async yieldsToSelection(chatProviderId: string | undefined): Promise<boolean> {
+    if (this.mode !== 'active' || this.deps.grammarYield !== true || chatProviderId === undefined) return false;
+    try {
+      const provider = await this.deps.router.select(Capability.INTENT_SELECTION);
+      return (provider.family ?? provider.id) === chatProviderId;
+    } catch {
+      return false;
+    }
   }
 
   /**

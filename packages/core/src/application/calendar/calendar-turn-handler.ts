@@ -109,7 +109,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
     let question: ReturnType<typeof parseCalendarQuestion>;
     try {
       if (parseReminderMessage(text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
-      question = parseCalendarQuestion(text);
+      question = parseCalendarQuestion(text, { yieldToSelection: ctx.grammarYield === true });
     } catch {
       return null;
     }
