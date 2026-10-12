@@ -1,8 +1,8 @@
-import { now as sharedClock } from '@quoky/core';
+import { REMINDER_LIMITS, firstFit, messageContent, now as sharedClock, plainTextOf } from '@quoky/core';
 import type { IsoTimestamp, Logger, NotificationSinkOutcome } from '@quoky/core';
 import type { BackupJobTimers } from './backup-job';
 import { formatTokenField, formatTokens, previousMonthKey } from './provider-usage';
-import type { MonthKey, MonthlyUsage, ProviderUsageLedger } from './provider-usage';
+import type { LabelUsage, MonthKey, MonthlyUsage, ProviderUsageLedger } from './provider-usage';
 import type { OpsNoticeLedgerStore } from './ops-notice';
 
 /**
@@ -88,29 +88,42 @@ function isRetryable(outcome: UsageNoticeDelivery): boolean {
   return outcome.status === 'NO_OWNER' || (outcome.status === 'NOT_SENT' && outcome.retryable);
 }
 
-function labelLines(usage: MonthlyUsage): string {
-  return usage.labels
-    .map(
-      (l) =>
-        `- ${l.label}: ${l.runs}회, 입력 ${formatTokenField(l.inputTokens, l.runs)} · 출력 ${formatTokenField(l.outputTokens, l.runs)} · ` +
-        `합계 ${formatTokenField(l.totalTokens, l.runs, ' 토큰')}`,
-    )
-    .join('\n');
+function labelLine(l: LabelUsage): string {
+  return (
+    `- ${l.label}: ${l.runs}회, 입력 ${formatTokenField(l.inputTokens, l.runs)} · 출력 ${formatTokenField(l.outputTokens, l.runs)} · ` +
+    `합계 ${formatTokenField(l.totalTokens, l.runs, ' 토큰')}`
+  );
 }
 
 const FOOTER = '토큰 수는 공급자가 알려준 것만 더하고, 알려주지 않은 값은 "미보고"로 표시해요. 공급자는 자동으로 바꾸지 않아요. 자세한 내용은 운영 화면에서 확인해 주세요.';
 
+/**
+ * The notice inside one delivered message (`REMINDER_LIMITS.maxDeliveredTextChars`, code points), as the daily brief
+ * does it: every label when that fits, else the top labels by total tokens (the ledger's order) and `- 외 K개` for the
+ * rest. The last candidate (no label line at all) is the header, one "외" line and the footer, which always fits.
+ */
+function boundedNotice(header: string, usage: MonthlyUsage): string {
+  const lines = usage.labels.map(labelLine);
+  const candidates: string[] = [];
+  for (let shown = lines.length; shown >= 0; shown -= 1) {
+    const hidden = lines.length - shown;
+    candidates.push([header, ...lines.slice(0, shown), ...(hidden > 0 ? [`- 외 ${hidden}개`] : []), FOOTER].join('\n'));
+  }
+  return plainTextOf(messageContent(firstFit(candidates, REMINDER_LIMITS.maxDeliveredTextChars, 'code-points')));
+}
+
 export function monthlyUsageNoticeText(usage: MonthlyUsage): string {
-  return (
-    `[Quoky 사용량 알림] ${usage.month} 공급자별 사용량이에요. ${usage.runs}회 실행, 합계 ${formatTokenField(usage.totalTokens, usage.runs, ' 토큰')}.\n` +
-    `${labelLines(usage)}\n${FOOTER}`
+  return boundedNotice(
+    `[Quoky 사용량 알림] ${usage.month} 공급자별 사용량이에요. ${usage.runs}회 실행, 합계 ${formatTokenField(usage.totalTokens, usage.runs, ' 토큰')}.`,
+    usage,
   );
 }
 
 export function thresholdUsageNoticeText(usage: MonthlyUsage, threshold: number): string {
-  return (
+  return boundedNotice(
     `[Quoky 사용량 알림] ${usage.month} 사용량이 설정한 월 기준(${formatTokens(threshold)} 토큰)에 도달했어요. ` +
-    `지금까지 ${usage.runs}회 실행, 합계 ${formatTokenField(usage.totalTokens, usage.runs, ' 토큰')}.\n${labelLines(usage)}\n${FOOTER}`
+      `지금까지 ${usage.runs}회 실행, 합계 ${formatTokenField(usage.totalTokens, usage.runs, ' 토큰')}.`,
+    usage,
   );
 }
 

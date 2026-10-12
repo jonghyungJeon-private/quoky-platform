@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Capability, TaskRunStatus, runUsageRecord } from '@quoky/core';
+import { Capability, REMINDER_LIMITS, TaskRunStatus, runUsageRecord } from '@quoky/core';
 import type { AiUsage, LogFields, Logger, TaskRun } from '@quoky/core';
 import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import { ProviderUsageLedger, monthKeyOf, monthStartIso, previousMonthKey } from './provider-usage';
@@ -507,6 +507,36 @@ describe('PRV-3 notice text and state file', () => {
         '토큰 수는 공급자가 알려준 것만 더하고, 알려주지 않은 값은 "미보고"로 표시해요. 공급자는 자동으로 바꾸지 않아요. 자세한 내용은 운영 화면에서 확인해 주세요.',
     );
     expect(thresholdUsageNoticeText(usage, 1000)).toContain('설정한 월 기준(1,000 토큰)에 도달했어요');
+  });
+
+  it('always fits one delivered message: 50 labels show the top ones by total tokens, then "외 K개"', () => {
+    const labels = Array.from({ length: 50 }, (_, i) => {
+      const total = (50 - i) * 1_000_000;
+      const count = { sum: total, reportedRuns: 7 };
+      return {
+        label: `openai:${'m'.repeat(100)}-${String(i).padStart(2, '0')}`,
+        runs: 7,
+        unknownRuns: 0,
+        inputTokens: count,
+        cachedInputTokens: count,
+        outputTokens: count,
+        reasoningTokens: count,
+        totalTokens: count,
+      };
+    });
+    const many = { month: '2026-09', runs: 350, unknownRuns: 0, totalTokens: { sum: 1_275_000_000, reportedRuns: 350 }, labels };
+    for (const text of [monthlyUsageNoticeText(many), thresholdUsageNoticeText(many, 1_000_000)]) {
+      expect(Array.from(text).length).toBeLessThanOrEqual(REMINDER_LIMITS.maxDeliveredTextChars);
+      const shown = labels.filter((l) => text.includes(`- ${l.label}:`)).length;
+      expect(shown).toBeGreaterThan(0);
+      expect(shown).toBeLessThan(50);
+      // The shown labels are the largest ones, in order, and the rest is counted.
+      expect(labels.slice(0, shown).every((l) => text.includes(`- ${l.label}:`))).toBe(true);
+      expect(text).toContain(`\n- 외 ${50 - shown}개\n`);
+      expect(text.endsWith('운영 화면에서 확인해 주세요.')).toBe(true);
+    }
+    // When everything fits nothing is hidden.
+    expect(monthlyUsageNoticeText({ ...many, labels: labels.slice(0, 2) })).not.toContain('외 ');
   });
 
   it('parses a corrupt or foreign state file as empty', () => {
