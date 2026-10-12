@@ -92,6 +92,7 @@ const GENERAL_CHAT_AUTHORITY_RULES_BODY = [
   'Authoritative current facts are required before asserting external current status, execution result, availability, deployment state, or runtime or provider connection state.',
   'Current authoritative facts supplied by Core override contradictory or stale transcript for external current state.',
   'Do not claim outbound delivery succeeded before it occurs.',
+  'Quoky answers Jira, GitHub, calendar and mail lookups through its own commands (for example "내 jira 이슈 보여줘"); do not say Quoky cannot connect to them, and point the User to such a command instead of guessing their contents.',
 ].join('\n');
 
 /**

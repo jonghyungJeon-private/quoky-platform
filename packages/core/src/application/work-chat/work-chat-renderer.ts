@@ -353,7 +353,12 @@ function dueText(dueDate: string): string {
 export function renderExternalWorkList(readout: ExternalWorkReadout): MessageBody {
   const { source, query, text } = readout.request;
   const label = sourceLabel(source);
-  const subject = query === 'search' && text ? messageContent(`${QUERY_LABEL[query]} "`, display(text, 60), '"') : QUERY_LABEL[query];
+  const subject =
+    query === 'search' && text
+      ? messageContent(`${QUERY_LABEL[query]} "`, display(text, 60), '"')
+      : query === 'my-items' && text
+        ? messageContent(`${QUERY_LABEL[query]} 중 "`, display(text, 60), '" 포함')
+        : QUERY_LABEL[query];
   const lines: Array<{ text: MessagePart; droppable?: boolean }> = [];
 
   if (readout.items.length === 0) {

@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Jira listing routing (live UAT, 2026-10-12)
+
+No migration, no new DI token, no new connector query or host.
+
+- **An unqualified Jira listing is the owner's listing.** `jira 이슈 보여줄래`, `지라 이슈 목록`, `jira 티켓 알려줘` and
+  `jira issues` previously needed an owner marker (`내`/`my`) and fell through to chat, whose model wrongly said it
+  could not reach Jira. In a personal assistant the owner's assigned items are the only Jira listing, so these
+  whole-message forms now run the same `my-items` lookup as `내 jira 이슈 보여줘`. Writes, single-issue keys and URLs,
+  GitHub and longer text that merely mentions Jira keep their routing.
+- **Keyword-scoped Jira requests filter the owner's items.** `위클리카 관련 jira 이슈 보여줘` and
+  `jira에서 위클리카 이슈 찾아줘` (Jira has no text search, so the latter no longer ends in "not supported") fetch the
+  same `personal-work` page and keep items whose title or description contains the keyword; the reply header reads
+  `Jira 내 항목 중 "위클리카" 포함`. A full 20-item page is marked partial. A bare follow-up such as `위클리카 관련해서`
+  is left to chat (work chat keeps no listing context).
+- **Chat no longer claims it cannot connect.** The general-chat authority rules say Jira, GitHub, calendar and mail
+  lookups are answered through commands such as `내 jira 이슈 보여줘`.
+
 ## Unreleased — v5 HARD-1 bounded OAuth token reads (2026-10-12)
 
 - **The three Google connectors read the OAuth token response bounded.** The token endpoint's reply (code exchange and
