@@ -42,10 +42,28 @@ function bounded(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+/**
+ * An access / connect / read / view verb followed by an incapability. Only reading verbs: a write verb ("보낼 수 없어요",
+ * "가져올 수 없어요") is a true statement about a read-only Quoky and is never replaced.
+ */
 const KO_INCAPABLE =
-  /(?:접근|연결|연동|조회|확인|열람|읽|볼|보|가져올|가져오|불러올|불러오)[^.!?\n]{0,14}?(?:수\s*(?:가\s*)?없|못\s*(?:해|하|합|했|드려|드립)|불가|권한이\s*없|되어\s*있지\s*않|돼\s*있지\s*않|안\s*되어|지원하지\s*않|기능이\s*없)/u;
+  /(?:접근|연결|연동|조회|확인|열람|읽(?:을|어|지)|볼\s*수)[^.!?\n]{0,14}?(?:수\s*(?:가\s*)?없|못\s*(?:해|하|합|했|드려|드립)|불가|권한이\s*없|되어\s*있지\s*않|돼\s*있지\s*않|안\s*되어|지원하지\s*않|기능이\s*없)/u;
 const EN_INCAPABLE =
   /\b(?:can(?:no|['’])t|cannot|unable to|not able to|don['’]t have|do not have|have no|no)\s+(?:direct\s+|any\s+)?(?:access|connect|connection|see|read|view|check|look|integration)/iu;
+
+/** The quoted command examples of the help lines and the entries' usage (`"할 일 추가: 내용"` → `할 일 추가: 내용`, and its head). */
+function quotedCommandsOf(lines: readonly string[]): string[] {
+  const commands = new Set<string>();
+  for (const line of lines) {
+    for (const match of line.matchAll(/"([^"\n]{2,80})"/gu)) {
+      const command = (match[1] as string).trim();
+      commands.add(command);
+      const head = /^([^:：]{2,40}[:：])/u.exec(command)?.[1];
+      if (head !== undefined) commands.add(head);
+    }
+  }
+  return [...commands];
+}
 
 export interface FalseIncapabilityGuardResult {
   readonly text: string;
@@ -61,8 +79,12 @@ export function guardFalseIncapabilityClaims(
   text: string,
   entries: readonly NlCatalogEntry[],
   language: 'ko' | 'en',
+  helpLines: readonly string[] = [],
 ): FalseIncapabilityGuardResult {
   if (typeof text !== 'string' || text.trim() === '') return { text, guarded: false };
+  // A reply that hands the owner one of Quoky's own commands is already the right answer (D5): never replaced.
+  const commands = quotedCommandsOf([...helpLines, ...entries.map((entry) => entry.usage.ko)]);
+  if (commands.some((command) => text.includes(command))) return { text, guarded: false };
   const hit = new Map<string, NlCatalogEntry>();
   for (const sentence of text.split(/(?<=[.!?。])\s+|\n+/u)) {
     if (!KO_INCAPABLE.test(sentence) && !EN_INCAPABLE.test(sentence)) continue;

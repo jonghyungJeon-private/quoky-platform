@@ -274,6 +274,21 @@ describe('honest chat (ADR-0120 D9)', () => {
     expect(guarded.text).toMatch(/내 Jira 이슈 보여줘|오늘 일정/);
   });
 
+  it('never erases a correct write answer: write verbs are not access claims, and a reply naming a command is kept', () => {
+    const configuredWithMail = [...configured, NL_WAVE1_ENTRIES['mail.list']];
+    const help = ['- 메일 보내기: "메일 보내기: 받는사람 내용"', '- 할 일: "할 일 추가: 내용"'];
+    for (const reply of [
+      '메일을 직접 보낼 수 없어요. "메일 보내기:" 명령을 보내 주세요.',
+      '지라 이슈를 가져올 수 없어요.',
+      '캘린더에 일정을 만들 수는 없어요. "할 일 추가: 회의 준비"처럼 보내 주세요.',
+      '저는 Jira에 접근할 수 없어요. 대신 "내 Jira 이슈 보여줘"라고 보내 주세요.',
+    ]) {
+      expect(guardFalseIncapabilityClaims(reply, configuredWithMail, 'ko', help), reply).toEqual({ text: reply, guarded: false });
+    }
+    // Still a false claim without a command: replaced.
+    expect(guardFalseIncapabilityClaims('메일을 읽을 수 없어요.', configuredWithMail, 'ko', help).guarded).toBe(true);
+  });
+
   it('leaves true statements and unconfigured sources alone', () => {
     for (const reply of ['노션에는 접근할 수 없어요.', 'Jira는 이슈 추적 도구예요.', '메일에는 접근할 수 없어요.', '']) {
       expect(guardFalseIncapabilityClaims(reply, configured, 'ko').guarded).toBe(false);

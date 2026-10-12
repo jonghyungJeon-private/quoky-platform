@@ -8025,7 +8025,7 @@ export class ConversationRuntime {
     if (!guarded.guarded) {
       // ADR-0120 D9: after a `none` selection, a false "cannot access <configured source>" is replaced by its command.
       if (nlFacts === undefined) return { text, guarded: false };
-      const incapable = guardFalseIncapabilityClaims(text, nlFacts.entries, languageOf(currentUserMessage));
+      const incapable = guardFalseIncapabilityClaims(text, nlFacts.entries, languageOf(currentUserMessage), this.contributedHelpLines);
       if (!incapable.guarded) return { text, guarded: false };
       this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
       return { text: incapable.text, guarded: true };
