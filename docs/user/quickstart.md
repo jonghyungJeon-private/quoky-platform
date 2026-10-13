@@ -16,7 +16,7 @@
 
 | 항목 | 요구 사항 |
 |---|---|
-| Node.js | **>= 18.18** |
+| Node.js | **>= 22.12** |
 | pnpm | **10** (저장소는 `pnpm@10.32.1`을 선언) |
 | 네이티브 빌드 도구 | `better-sqlite3`를 빌드할 수 있어야 함 (macOS: `xcode-select --install`, Linux: `build-essential`과 `python3`) |
 | Discord 계정 | 봇을 만들 수 있는 계정과 봇을 초대할 서버 (또는 봇과의 DM) |
