@@ -20968,7 +20968,7 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
      - **child processes** (`claude -p`, `ollama`, `git`).
 
      In-process hooks cannot block them. A process-wide guarantee needs an OS-level control: a macOS `pf` anchor, a
-     LuLu or Little Snitch rule, or a restricted user or `sandbox-exec` profile. That control is an explicit S0 owner
+     LuLu or Little Snitch rule, or a `sandbox-exec` network profile (a restricted user counts only when combined with a `pf` rule for that user). That control is an explicit S0 owner
      and security-team decision (design Q10). Until it is made, the claimed guarantee covers Quoky's own Node HTTP
      paths only.
    - The flag is `QUOKY_EGRESS_GUARD=observe|enforce`: `observe` for 7 days, then `enforce`.
@@ -21101,7 +21101,7 @@ These are Q1–Q10 of the design §7. The defaults are:
 8. Apply latency steps L1–L3 and keep the ADR-0120 A3 bound (6 s).
 9. Share the self-check output with the security team.
 10. Decide in S0, with the security team, which OS-level egress control covers child processes: `pf`, LuLu or Little
-    Snitch, or a restricted user or sandbox.
+    Snitch, or a sandbox-exec network profile (a restricted user alone is not egress enforcement).
 
 ### V1 / V2
 
