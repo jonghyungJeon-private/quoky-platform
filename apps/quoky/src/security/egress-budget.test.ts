@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OWNER_TURN_RATE_FACTOR,
   BREAKER_BASE_MS,
   BREAKER_MAX_MS,
   EGRESS_BUDGETS,
@@ -39,16 +40,32 @@ describe('per-label budgets (design §5.3)', () => {
     expect(budgets.admit('jira', 'background').verdict.ok).toBe(true);
   });
 
-  it('an owner turn is never refused for request rate (still counted), but its typing indicators are capped', () => {
+  it('an owner turn is never refused on its delivery channels and typing; background typing stays capped', () => {
     const budgets = new EgressBudgets(clock().now);
-    for (let i = 0; i < 100; i += 1) expect(budgets.admit('telegram', 'owner-turn').verdict.ok).toBe(true);
-    for (let i = 0; i < 100; i += 1) expect(budgets.admit('jira', 'owner-turn').verdict.ok).toBe(true);
-    // The owner's traffic is counted: background traffic of the same label is now over the cap.
-    expect(budgets.admit('jira', 'background').verdict).toEqual({ ok: false, reason: 'rate-minute' });
-    for (let i = 0; i < 30; i += 1) expect(budgets.admit('telegram-typing', 'owner-turn').verdict.ok).toBe(true);
-    expect(budgets.admit('telegram-typing', 'owner-turn').verdict).toEqual({ ok: false, reason: 'rate-minute' });
-    for (let i = 0; i < 20; i += 1) budgets.admit('discord-typing', 'owner-turn');
-    expect(budgets.admit('discord-typing', 'owner-turn').verdict).toEqual({ ok: false, reason: 'rate-minute' });
+    for (const label of ['telegram', 'discord', 'telegram-typing', 'discord-typing', 'google-calendar']) {
+      for (let i = 0; i < 200; i += 1) expect(budgets.admit(label, 'owner-turn').verdict.ok, label).toBe(true);
+    }
+    // The owner's traffic is counted: background traffic of the same label is over the cap.
+    expect(budgets.admit('telegram', 'background').verdict).toEqual({ ok: false, reason: 'rate-minute' });
+    expect(budgets.admit('telegram-typing', 'background').verdict).toEqual({ ok: false, reason: 'rate-minute' });
+  });
+
+  it('on the other connectors an owner turn gets 3x the cap, not no cap', () => {
+    const c = clock();
+    const budgets = new EgressBudgets(c.now);
+    expect(OWNER_TURN_RATE_FACTOR).toBe(3);
+    for (const [label, perMinute] of [['jira', 20], ['slack', 20], ['google-drive', 20], ['gmail', 20], ['github', 20], ['slack-search', 10]] as const) {
+      for (let i = 0; i < perMinute * 3; i += 1) expect(budgets.admit(label, 'owner-turn').verdict.ok, label).toBe(true);
+      expect(budgets.admit(label, 'owner-turn').verdict, label).toEqual({ ok: false, reason: 'rate-minute' });
+      expect(budgets.admit(label, 'background').verdict, label).toEqual({ ok: false, reason: 'rate-minute' });
+    }
+    // The hourly cap scales too: 900 Jira requests in an hour, spread under the minute cap.
+    const hourly = new EgressBudgets(c.now);
+    for (let i = 0; i < 900; i += 1) {
+      expect(hourly.admit('jira', 'owner-turn').verdict.ok).toBe(true);
+      c.advance(3_000);
+    }
+    expect(hourly.admit('jira', 'owner-turn').verdict).toEqual({ ok: false, reason: 'rate-hour' });
   });
 
   it('§5.1 worst case: a reminder catch-up (40 sends/min, 80 calendar re-check reads/min) is never locked out', () => {

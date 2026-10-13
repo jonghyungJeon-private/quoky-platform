@@ -10,7 +10,7 @@ import { Agent, buildConnector, getGlobalDispatcher, request as undiciRequest } 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LogFields, Logger } from '@quoky/core';
 import { hasConnectionStageEvidence } from '../connector-write-transport';
-import { runWithCorrelation } from '../correlation-context';
+import { currentCorrelation, runWithCorrelation } from '../correlation-context';
 import { redactSecrets } from '../error-diagnostics';
 import { EgressBudgets } from './egress-budget';
 import {
@@ -524,6 +524,28 @@ describe('dispatcher hardening', () => {
     expect(answer.statusCode).toBe(302);
     expect(hits.map((hit) => hit.url)).toEqual(['/start']);
     expect(h.resolver.calls).toEqual([]);
+  });
+
+  it('enforce: an owner turn flooding Jira hits the 3x cap; an owner turn on Telegram is never refused', () => {
+    const guard = new EgressGuard({
+      mode: 'enforce',
+      inventory: { hosts: new Map([['acme.atlassian.net', 'jira'], ['api.telegram.org', 'telegram']]), localEndpoints: [] },
+      logger: recordingLogger(),
+      ledger: new MemoryLedger(),
+    });
+    const jira = new URL('https://acme.atlassian.net/rest/api/3/search/jql');
+    const telegram = new URL('https://api.telegram.org/bot1/sendMessage');
+    runWithCorrelation('owner-turn', () => {
+      for (let i = 0; i < 60; i += 1) {
+        expect(guard.admitRequest(jira, jira.pathname, currentCorrelation()).refusal).toBeUndefined();
+      }
+      const refused = guard.admitRequest(jira, jira.pathname, currentCorrelation()).refusal;
+      expect(refused).toMatchObject({ reason: 'budget-exceeded', detail: 'rate-minute' });
+      expect(refused?.message).toBe('egress refused: budget-exceeded (rate-minute)');
+      for (let i = 0; i < 300; i += 1) {
+        expect(guard.admitRequest(telegram, telegram.pathname, currentCorrelation()).refusal).toBeUndefined();
+      }
+    });
   });
 
   it('a request enforce refuses by name is not counted in the budget windows', async () => {

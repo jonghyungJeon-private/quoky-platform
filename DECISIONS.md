@@ -21181,27 +21181,32 @@ These are Q1–Q10 of the design §7. The defaults are:
    - **Mode.** `QUOKY_EGRESS_GUARD=observe` logs and never blocks. `enforce` refuses with `EgressRefusedError` (code
      `EGRESS_REFUSED`, message `egress refused: <reason>[ (<detail>)]`). The connector-write transport guard treats that
      code as no-send evidence (`NOT_SENT('UNAVAILABLE')`).
-5. **Budgets and backoff** (`security/egress-budget.ts`). These are exact sliding windows over the last 24 h. The
-   request-rate caps never apply to an `owner-turn` (replies, approvals, acks); they are still counted and recorded.
-   On the owner's delivery channels (`telegram`, `discord`) and the reminder re-check reads (`google-calendar`) they
-   do not apply to a `reminder` tick either, so the §5.1 worst case (≤ 40 sends/min and 80 calendar reads/min in a
-   catch-up, bounded upstream by `REMINDER_LIMITS.maxDeliveriesPerTick`) is never locked out. Typing indicators have
-   their own labels whose caps apply to everyone. A request `enforce` refuses (by name or by budget) is not counted,
-   so retries cannot keep a window full; in `observe` the request is really sent, so it is counted.
+5. **Budgets and backoff** (`security/egress-budget.ts`). These are exact sliding windows over the last 24 h, counting
+   every initiator's requests.
+   - **Owner turns.** On the owner's delivery channels (`telegram`, `discord` and their typing labels) and the calendar
+     re-check reads (`google-calendar`), the request-rate caps never refuse an `owner-turn` (replies, approvals, acks).
+     On every other label an owner turn gets `OWNER_TURN_RATE_FACTOR` = 3 × the cap (e.g. Jira 60/min and 900/h)
+     instead of no cap, so work started inside a turn (a later agent run included) stays bounded.
+   - **Reminder ticks.** On `telegram`, `discord` and `google-calendar` a `reminder` tick is exempt too, so the §5.1
+     worst case (≤ 40 sends/min and 80 calendar reads/min in a catch-up, bounded upstream by
+     `REMINDER_LIMITS.maxDeliveriesPerTick`) is never locked out.
+   - **Typing indicators** have their own labels; their caps apply outside an owner turn.
+   - **Refusals.** A request `enforce` refuses (by name or by budget) is not counted, so retries cannot keep a window
+     full; in `observe` the request is really sent, so it is counted.
 
-   | Label | Requests (exempt initiators) | Bytes |
+   | Label | Requests: background / owner turn (exempt initiators) | Bytes |
    |---|---|---|
-   | `telegram` (sends; not the poll, typing or files) | ≤ 30/min (owner-turn, reminder) | ≤ 50 MB/h |
-   | `telegram-typing` (`sendChatAction`) | ≤ 30/min (none) | ≤ 50 MB/h |
-   | `telegram-poll` | ≤ 60/min (owner-turn) | ≤ 50 MB/h |
-   | `telegram-file`, `discord-attachments` | ≤ 20/h (owner-turn) | ≤ 50 MB/h, ≤ 100 MB/day down |
-   | `discord` | ≤ 30/min (owner-turn, reminder) | ≤ 50 MB/h |
-   | `discord-typing` (`POST /channels/{id}/typing`) | ≤ 20/min (none) | ≤ 50 MB/h |
-   | `google-calendar` | ≤ 20/min, ≤ 300/h (owner-turn, reminder) | ≤ 50 MB/h |
-   | `google`, `google-drive`, `gmail`, `google-oauth`, `jira`, `confluence`, `slack`, `github`, `openai`, `gemini` | ≤ 20/min, ≤ 300/h (owner-turn) | ≤ 50 MB/h |
-   | `slack-search` | ≤ 10/min, ≤ 300/h (owner-turn) | ≤ 50 MB/h |
+   | `telegram` (sends; not the poll, typing or files) | ≤ 30/min / no cap (owner-turn, reminder) | ≤ 50 MB/h |
+   | `telegram-typing` (`sendChatAction`) | ≤ 30/min / no cap (owner-turn) | ≤ 50 MB/h |
+   | `telegram-poll` | ≤ 60/min / ≤ 180/min | ≤ 50 MB/h |
+   | `telegram-file`, `discord-attachments` | ≤ 20/h / ≤ 60/h | ≤ 50 MB/h, ≤ 100 MB/day down |
+   | `discord` | ≤ 30/min / no cap (owner-turn, reminder) | ≤ 50 MB/h |
+   | `discord-typing` (`POST /channels/{id}/typing`) | ≤ 20/min / no cap (owner-turn) | ≤ 50 MB/h |
+   | `google-calendar` | ≤ 20/min, ≤ 300/h / no cap (owner-turn, reminder) | ≤ 50 MB/h |
+   | `google`, `google-drive`, `gmail`, `google-oauth`, `jira`, `confluence`, `slack`, `github`, `openai`, `gemini` | ≤ 20/min, ≤ 300/h / ≤ 60/min, ≤ 900/h | ≤ 50 MB/h |
+   | `slack-search` | ≤ 10/min, ≤ 300/h / ≤ 30/min, ≤ 900/h | ≤ 50 MB/h |
    | `ollama-local` | — | ≤ 500 MB/h |
-   | `unlisted` and any other label | ≤ 20/min, ≤ 300/h (owner-turn) | ≤ 50 MB/h |
+   | `unlisted` and any other label | ≤ 20/min, ≤ 300/h / ≤ 60/min, ≤ 900/h | ≤ 50 MB/h |
    | All egress | — | ≤ 200 MB/day down and ≤ 20 MB/day up, an alert at 80% |
 
    - The all-egress volume cap refuses only traffic outside an owner turn.
@@ -21361,8 +21366,9 @@ a minute. The same finding is logged as `egress.guard` with the same fields.
 - Path template switched from a letters-only heuristic to the per-label prefix allow-list above.
 - Observe is behaviour-neutral: `hints: ADDRCONFIG`, every checked address handed to the socket's lookup with family
   and `all` honoured and order kept; a synchronous connector throw reaches the callback.
-- Budgets: owner turns rate-exempt, reminder sends and re-check reads rate-exempt on the owner's channels, typing on
-  its own labels, refused attempts not counted in `enforce`.
+- Budgets: owner turns rate-exempt only on the owner's delivery channels (with their typing labels) and
+  `google-calendar`, and 3 × the cap elsewhere (Chief Architect re-review); reminder sends and re-check reads
+  rate-exempt on the owner's channels; typing on its own labels; refused attempts not counted in `enforce`.
 - `maxRedirections` stripped in `dispatch`; DNS bounded at 10 s; the replacement `http(s)` agents keep the previous
   settings; `inbound` before the gate, `owner-turn` after; the ledger's default clock is the shared clock; the full
   IANA IPv6 special-purpose set; the root `undici` override; the `apps/quoky/package.json` description is unchanged
