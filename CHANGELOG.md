@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — fix: NL selection startup warm-up (ADR-0120 A3 follow-up, 2026-10-13)
+
+- The first one or two selections after a restart timed out at 6 s on a cold `claude -p` start. With `QUOKY_NL_INTENT_MODE` `shadow` or `active`, one background
+    warm-up call now runs about 5 s after startup (20 s bound, never blocks startup or a turn, nothing in `off`). Its prompt is a fixed constant with no owner,
+    session or connector content, it uses the same provider path and family check, and it logs only `nl_selection.warmup outcome latencyMs`. No periodic timer.
+
 ## Unreleased — fix: keep-alive reuse through the egress guard (ADR-0121 S0 follow-up, 2026-10-13)
 
 - The guarded dispatcher's Agent used undici's 4 s idle default, so each Telegram long poll opened a new TCP+TLS connection. Requests

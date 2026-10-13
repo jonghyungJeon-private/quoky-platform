@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 
 import {
   AiProviderManager,
+  CapabilityRouter,
   MemoryCommandService,
   NOTIFICATION_SINK,
   QuokyCore,
@@ -12,6 +13,7 @@ import {
   QUEUE_PROVIDER,
 } from '@quoky/core';
 import type {
+  NlSelectionService,
   NotificationSink,
   PlatformAdapter,
   QueueProvider,
@@ -35,6 +37,8 @@ import {
   reportProviderReadiness,
 } from './bootstrap-preflight';
 import { loadConfig, resolveEnvFilePath } from './config';
+import { NL_SELECTION } from './features/nl-selection.providers';
+import { scheduleNlWarmup } from './nl-selection/nl-warmup';
 import { ReminderTickDriver } from './reminders/reminder-tick-driver';
 import { ProviderSelectionService } from './provider-selection/provider-selection-service';
 import { assertPrivateEnvFile } from './ops/env-file-guard';
@@ -220,6 +224,8 @@ async function bootstrap(): Promise<void> {
   await reminderDriver.start();
   // ADR-0113 (OPS-1): the loopback-only, token-gated, read-only operations UI; off unless QUOKY_OPS_UI_ENABLED=true.
   const opsUi = await startOpsUi({ app, config, ops, instanceLockHeld: lockPath !== undefined, identityVerified: identity !== undefined });
+  // ADR-0120 A3 follow-up: one content-free background selection call a few seconds after start (shadow/active only).
+  const cancelNlWarmup = scheduleNlWarmup({ nlSelection: app.get<NlSelectionService>(NL_SELECTION), router: app.get(CapabilityRouter), logger: log });
 
   // ADR-0102 D8: launchd sends SIGTERM and allows ExitTimeOut (90 s) before SIGKILL, above the reminder stop bound
   // (REMINDER_TICK_STOP_TIMEOUT_MS, 65 s). A repeated signal while stopping is ignored.
@@ -228,6 +234,7 @@ async function bootstrap(): Promise<void> {
     if (stopping) return;
     stopping = true;
     haltRelease?.cancel();
+    cancelNlWarmup();
     // First: no reminder claim/complete may run while the platform and storage are closing. stop() waits for the
     // in-flight delivery + outcome write up to its hard bound; if that elapses, the reminder stays FIRING and the
     // next startup turns it into DELIVERY_UNCERTAIN (never resent).

@@ -49,6 +49,13 @@ export type NlIntentMode = 'off' | 'shadow' | 'active';
 export const NL_INTENT_MODES: readonly NlIntentMode[] = ['off', 'shadow', 'active'];
 
 export const NL_SELECTION_TIMEOUT_MS = 6_000;
+
+/** ADR-0120 A3 follow-up: the startup warm-up bound. It applies to the warm-up call only, never to an owner turn. */
+export const NL_WARMUP_TIMEOUT_MS = 20_000;
+/** The one fixed warm-up probe text. No owner, session or connector content ever enters a warm-up. */
+export const NL_WARMUP_PROBE_TEXT = 'warmup';
+
+export type NlWarmupOutcome = 'ok' | 'timeout' | 'error' | 'skipped';
 export const NL_SELECTION_CACHE_TTL_MS = 10 * 60_000;
 export const NL_SELECTION_CACHE_MAX_ENTRIES = 256;
 
@@ -146,6 +153,39 @@ export class NlSelectionService {
 
   constructor(private readonly deps: NlSelectionServiceDeps) {
     this.mode = deps.mode;
+  }
+
+  /**
+   * ADR-0120 A3 follow-up (startup warm-up): one content-free selection call so the first owner turn does not meet a cold
+   * `claude -p` start. The prompt is the fixed catalog-less probe (`NL_WARMUP_PROBE_TEXT`); the reply is discarded. Only in
+   * `shadow` or `active`; the same router path (`INTENT_SELECTION`) and, when `chatProviderId` is given, the same provider
+   * family check as a turn (D6/D8). Never throws, logs `nl_selection.warmup` with no content, and callers must not await it
+   * on a startup or turn path.
+   */
+  async warmUp(options: { readonly chatProviderId?: string; readonly signal?: AbortSignal } = {}): Promise<NlWarmupOutcome> {
+    if (this.mode === 'off') return 'skipped';
+    const clock = this.deps.elapsed ?? Date.now;
+    const started = clock();
+    let outcome: NlWarmupOutcome;
+    const signal = options.signal;
+    if (signal?.aborted) return 'skipped';
+    try {
+      const provider = await this.deps.router.select(Capability.INTENT_SELECTION);
+      if (options.chatProviderId !== undefined && (provider.family ?? provider.id) !== options.chatProviderId) return 'skipped';
+      // Cancelled while resolving the provider (shutdown): no call is started.
+      if (signal?.aborted) return 'skipped';
+      // The warm-up's own timer is unref'd so it never keeps the process alive; owner turns keep the plain timer.
+      await withTimeout(
+        provider.execute({ capability: Capability.INTENT_SELECTION, prompt: nlWarmupPrompt(), timeoutMs: NL_WARMUP_TIMEOUT_MS, ...(signal !== undefined ? { signal } : {}) }),
+        NL_WARMUP_TIMEOUT_MS,
+        true,
+      );
+      outcome = 'ok';
+    } catch (error) {
+      outcome = error instanceof SelectionTimeout ? 'timeout' : 'error';
+    }
+    this.log(outcome === 'ok' ? 'info' : 'warn', 'nl_selection.warmup', { outcome, latencyMs: Math.max(0, clock() - started) });
+    return outcome;
   }
 
   /** The decision for one Phase A turn. Never throws: an internal error is `unavailable`. */
@@ -609,10 +649,16 @@ function offeredMap(entries: readonly NlCatalogEntry[]): Map<string, NlCatalogEn
   return new Map(entries.map((entry) => [entry.id, entry] as const));
 }
 
-async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+/** The fixed, content-free warm-up prompt (a constant: the instruction text, no catalog entry, the probe word). */
+export function nlWarmupPrompt(): string {
+  return buildSelectionPrompt({ entries: [], text: NL_WARMUP_PROBE_TEXT });
+}
+
+async function withTimeout<T>(task: Promise<T>, timeoutMs: number, unref = false): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(new SelectionTimeout()), timeoutMs);
+    if (unref) timer.unref();
   });
   task.catch(() => undefined);
   try {

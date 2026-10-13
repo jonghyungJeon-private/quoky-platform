@@ -136,6 +136,7 @@ interface SpawnRecord {
 }
 
 interface StartConfig {
+  signal?: AbortSignal;
   stdin?: FakeStdin | null;
   spawnThrows?: Error;
   createThrows?: boolean;
@@ -254,6 +255,7 @@ function startRun(config: StartConfig = {}): StartedRun {
     cwd: config.cwd ?? '/neutral/cwd',
     input: config.input ?? 'the prompt',
     timeoutMs: config.timeoutMs ?? 5_000,
+    ...(config.signal ? { signal: config.signal } : {}),
     ...(config.env ? { env: config.env } : {}),
     ...(config.environmentProfile ? { environmentProfile: config.environmentProfile } : {}),
     ...(config.downloadMarkerPolicy ? { downloadMarkerPolicy: config.downloadMarkerPolicy } : {}),
@@ -1509,5 +1511,23 @@ describe('contained CLI runner: observation hook isolation', () => {
     const run = startRun();
     await successLifecycle(run);
     expect(Object.isFrozen(only(run))).toBe(true);
+  });
+});
+
+describe('contained CLI runner: abort signal (warm-up cancellation)', () => {
+  it('terminates the child (SIGTERM) when the signal aborts mid-run', async () => {
+    const controller = new AbortController();
+    const run = startRun({ signal: controller.signal });
+    controller.abort();
+    expect(run.child?.signals).toEqual(['SIGTERM']);
+    await closeWith(run, null);
+  });
+
+  it('never spawns when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const run = startRun({ signal: controller.signal });
+    await run.result;
+    expect(run.spawns).toHaveLength(0);
   });
 });
