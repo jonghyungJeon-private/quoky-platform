@@ -986,12 +986,10 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
       expect(phaseC.claims).toEqual([]);
     });
 
-    // KNOWN PRODUCT BUG (INT-4 finding, phrase-bound routing): with the selector answering `none` in Phase C, the
-    // classifier's regex `IntentClassifier.isPersonalWorkSurface` (intent-classifier.ts:903-905, `(할|해야 할) (일|작업) ...
-    // (보여|알려)`) still turns "할 일 관리하는 좋은 습관 알려줘" into a personal-work lookup that reads Jira and GitHub
-    // (served by conversation-runtime.ts:3421). The frozen surface clause is a deliberate fallback (see the dispatch test
-    // "the classifier's personal-work surface is a Class B route"), but it must not answer after an explicit `none`.
-    it.skip('BUG: Phase C with selector `none` must not run a personal-work lookup for advice about managing to-dos', async () => {
+    // Live UAT R9 (was the INT-4 known bug): with the selector answering `none` in Phase C, the classifier's regex surface
+    // clause (`IntentClassifier.isPersonalWorkSurface`) no longer answers: an explicit `none` wins. The surface stays the
+    // fallback only when the selector is unavailable (see the dispatch test "personal-work surface is a Class B route").
+    it('Phase C with selector `none` must not run a personal-work lookup for advice about managing to-dos', async () => {
       await withPhase('c', 'active', async () => {
         selectorAnswer = none;
         const turn = await turnOf('할 일 관리하는 좋은 습관 알려줘');
@@ -1017,6 +1015,118 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
   // -------------------------------------------------------------------------------------------------------------------
   // GML-2, DRV-2/2b, claim guard, Drive kind yield, BRF-3
   // -------------------------------------------------------------------------------------------------------------------
+
+  describe('live edge-case UAT (2026-10-14) - read-side gaps R1, R2, R6, R8, R9 end to end through the selector', () => {
+    const listCalls = (from: number) => fetches.slice(from).filter((record) => record.url.startsWith(`${GMAIL}gmail/v1/users/me/messages?`));
+    /** `YYYY-MM-DD` of today + `offset` days in the owner's zone (the harness runs on the real clock). */
+    const seoulDate = (offset: number): string => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date(Date.now() + offset * 86_400_000));
+    const timed = (id: string, title: string, startKst: string, endKst: string, day: string): import('@quoky/core').CalendarEvent => ({
+      id,
+      title,
+      start: `${day}T${startKst}:00+09:00`,
+      end: `${day}T${endKst}:00+09:00`,
+      allDay: false,
+      status: 'confirmed',
+      calendarName: 'primary',
+    });
+
+    it('R1: "어제 온 메일" sends an owner-zone after/before window to Gmail and the basis names the period; an empty period says so', async () => {
+      await withPhase('c', 'active', async () => {
+        selectorAnswer = answer('mail.list', { range: 'yesterday' });
+        const from = fetches.length;
+        const turn = await turnOf('어제 온 메일');
+        const q = new URL(listCalls(from)[0]?.url ?? 'http://none/').searchParams.get('q') ?? '';
+        const [, after, before] = /after:(\d+) before:(\d+)/u.exec(q) ?? [];
+        expect(Number(before) - Number(after)).toBe(86_400);
+        expect(turn.result.reply.text.split('\n')[0]).toBe('기준: 어제 받은 메일');
+        expect(turn.result.reply.text).toContain('어제 받은 메일: 2건');
+        listedMailIds = [];
+        try {
+          const empty = await turnOf('어제 온 메일');
+          expect(empty.result.reply.text).toContain('어제 받은 메일이 없어요');
+          expect(empty.result.reply.text).not.toContain('최근');
+        } finally {
+          listedMailIds = ['mail-1', 'mail-2'];
+        }
+      });
+    });
+
+    it('R6: "3번은 누가 보냈어?" with two listed mails says the list holds two, re-lists and reads nothing; "그거 요약해줘" (selector none) does not re-list', async () => {
+      await withPhase('c', 'active', async () => {
+        const ctx = context();
+        selectorAnswer = answer('mail.list', {});
+        await send('메일함', ctx);
+        selectorAnswer = answer('mail.list', { item: 3 });
+        const from = fetches.length;
+        const pick = await turnOf('3번은 누가 보냈어?', ctx);
+        expect(pick.result.reply.text).toContain('목록에 2건만 있어요');
+        expect(pick.result.reply.text).not.toContain('메일: 2건');
+        expect(fetches.slice(from).filter((record) => record.url.startsWith(GMAIL))).toEqual([]);
+        selectorAnswer = none;
+        const summary = await turnOf('그거 요약해줘', ctx);
+        expect(summary.fetches.filter((record) => record.url.startsWith(GMAIL))).toEqual([]);
+        expect(summary.result.reply.text).not.toContain('메일: 2건');
+      });
+    });
+
+    it('R2: "내일 오후에 시간 비어?" keeps only afternoon events and answers free when there are none; "오후만" works as a follow-up on the previous day', async () => {
+      await withPhase('c', 'active', async () => {
+        const day = seoulDate(1);
+        const saved = calendarEvents;
+        try {
+          calendarEvents = [
+            { ...timed('c-0', '종일 휴가', '00:00', '23:59', day), allDay: true, start: day, end: seoulDate(2) },
+            timed('c-1', '오전 스크럼', '09:30', '10:00', day),
+            timed('c-2', '오후 설계 회의', '14:00', '15:00', day),
+          ];
+          selectorAnswer = answer('calendar.events', { range: 'tomorrow', partOfDay: 'afternoon', availability: true });
+          const busy = await turnOf('내일 오후에 시간 비어?');
+          expect(busy.result.reply.text.split('\n')[0]).toBe('기준: 내일 오후 일정');
+          expect(busy.result.reply.text).toContain('오후 설계 회의');
+          expect(busy.result.reply.text).not.toContain('오전 스크럼');
+          expect(busy.result.reply.text).not.toContain('종일 휴가');
+          calendarEvents = [timed('c-1', '오전 스크럼', '09:30', '10:00', day)];
+          const free = await turnOf('내일 오후에 시간 비어?');
+          expect(free.result.reply.text).toContain('일정이 없어요 — 비어 있어요');
+          expect(free.result.reply.text).not.toContain('오전 스크럼');
+          // The follow-up modifier rides on lastSelection.
+          const ctx = context();
+          await setPrior(ctx, { entryId: 'calendar.events', args: { range: 'tomorrow' } });
+          calendarEvents = [timed('c-1', '오전 스크럼', '09:30', '10:00', day), timed('c-2', '오후 설계 회의', '14:00', '15:00', day)];
+          selectorAnswer = answer('calendar.events', { range: 'tomorrow', partOfDay: 'afternoon' });
+          const follow = await turnOf('오후만', ctx);
+          expect(follow.served.map((command) => command.args)).toEqual([{ range: 'tomorrow', partOfDay: 'afternoon' }]);
+          expect(follow.result.reply.text).toContain('오후 설계 회의');
+          expect(follow.result.reply.text).not.toContain('오전 스크럼');
+        } finally {
+          calendarEvents = saved;
+        }
+      });
+    });
+
+    it('R8: "제일 오래된 건 뭐야" keeps the previous status and sends the closed sort name to the connector', async () => {
+      await withPhase('c', 'active', async () => {
+        const ctx = context();
+        await setPrior(ctx, { entryId: 'jira.issues', args: { status: 'in-progress' } });
+        selectorAnswer = answer('jira.issues', { status: 'in-progress', sort: 'oldest' });
+        const turn = await turnOf('제일 오래된 건 뭐야', ctx);
+        expect(turn.connectors.map((entry) => entry.query.params)).toEqual([expect.objectContaining({ status: 'in-progress', sort: 'oldest' })]);
+        expect(JSON.stringify(turn.connectors)).not.toContain('오래된');
+        expect(turn.result.reply.text.split('\n')[0]).toContain('오래된 순');
+      });
+    });
+
+    it('R9: "캘린더는 보지 말고 할 일만 알려줘" with a selector that ran and said none is chat, not a Jira/GitHub dump', async () => {
+      await withPhase('c', 'active', async () => {
+        selectorAnswer = none;
+        const turn = await turnOf('캘린더는 보지 말고 할 일만 알려줘');
+        expect(turn.selects).toBe(1);
+        expect(turn.connectors).toEqual([]);
+        expect(turn.calendar).toEqual([]);
+        expect(turn.result.reply.text).toBe(CHAT_REPLY);
+      });
+    });
+  });
 
   describe('GML-2 - Gmail thread summaries and reply-to-pick', () => {
     afterEach(() => {

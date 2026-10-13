@@ -453,6 +453,7 @@ export class WorkChatService implements WorkDesk {
           ...(personalWork?.window !== undefined ? { window: { ...personalWork.window } } : {}),
           ...(personalWork?.role !== undefined ? { role: personalWork.role } : {}),
           ...(personalWork?.status !== undefined ? { status: personalWork.status } : {}),
+          ...(personalWork?.sort !== undefined ? { sort: personalWork.sort } : {}),
         },
       };
     }

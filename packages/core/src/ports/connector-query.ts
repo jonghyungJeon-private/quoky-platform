@@ -29,6 +29,12 @@ export const PERSONAL_WORK_ROLES = ['assignee', 'reporter', 'either'] as const;
 export type PersonalWorkRole = (typeof PERSONAL_WORK_ROLES)[number];
 export const PERSONAL_WORK_STATUSES = ['open', 'all', 'in-progress'] as const;
 export type PersonalWorkStatus = (typeof PERSONAL_WORK_STATUSES)[number];
+/**
+ * The closed sort orders of `personal-work` (an additive ADR-0100 D7 / ADR-0120 D13 amendment, live UAT R8): a name the
+ * adapter maps to a constant ORDER BY clause; owner text is never part of it. Absent: the adapter's own order.
+ */
+export const PERSONAL_WORK_SORTS = ['oldest', 'newest', 'recently-updated'] as const;
+export type PersonalWorkSort = (typeof PERSONAL_WORK_SORTS)[number];
 
 /**
  * `field` between the local dates `from` (inclusive) and `to` (exclusive), both `YYYY-MM-DD` in the owner's zone, at
@@ -59,6 +65,8 @@ export interface PersonalWorkQueryParams {
   role?: PersonalWorkRole;
   /** ADR-0120 D13. Defaults to `open`. */
   status?: PersonalWorkStatus;
+  /** Live UAT R8. Absent: the adapter's default order. */
+  sort?: PersonalWorkSort;
 }
 
 /** `ConnectorQuery.params` for the `search` named query. */
@@ -147,6 +155,8 @@ export interface ParsedPersonalWorkParams {
   window?: PersonalWorkWindow;
   role: PersonalWorkRole;
   status: PersonalWorkStatus;
+  /** Present only when the caller set it (live UAT R8). */
+  sort?: PersonalWorkSort;
 }
 
 /** Validates `personal-work` params. Failures are `ConnectorQueryError('UNSUPPORTED_QUERY')` with value-free messages. */
@@ -171,6 +181,10 @@ export function parsePersonalWorkParams(params: Metadata | undefined, source = '
   if (typeof status !== 'string' || !(PERSONAL_WORK_STATUSES as readonly string[]).includes(status)) {
     throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported personal-work status`);
   }
+  const sort = params?.sort;
+  if (sort !== undefined && (typeof sort !== 'string' || !(PERSONAL_WORK_SORTS as readonly string[]).includes(sort))) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported personal-work sort`);
+  }
   const window = params?.window === undefined ? undefined : parsePersonalWorkWindow(params.window, source);
   return {
     actorExternalId,
@@ -179,6 +193,7 @@ export function parsePersonalWorkParams(params: Metadata | undefined, source = '
     ...(window !== undefined ? { window } : {}),
     role: role as PersonalWorkRole,
     status: status as PersonalWorkStatus,
+    ...(sort !== undefined ? { sort: sort as PersonalWorkSort } : {}),
   };
 }
 

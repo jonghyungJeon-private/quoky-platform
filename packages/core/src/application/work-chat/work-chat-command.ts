@@ -1,7 +1,7 @@
 import { IntentType, ResourceRef } from '../../domain';
 import type { Intent } from '../../domain';
 import { CONNECTOR_SEARCH_TEXT_MAX_LENGTH } from '../../ports';
-import type { PersonalWorkRole, PersonalWorkStatus, PersonalWorkWindowField } from '../../ports/connector-query';
+import type { PersonalWorkRole, PersonalWorkSort, PersonalWorkStatus, PersonalWorkWindowField } from '../../ports/connector-query';
 import { unnegatedMatch } from '../intent-negation';
 import { leavesUnexpressedContent } from '../nl-routing/grammar-residual';
 import { jiraKeywordCarriesQualifier } from '../nl-routing/wave1-entries';
@@ -61,6 +61,7 @@ export interface WorkChatPersonalWorkOptions {
   };
   readonly role?: PersonalWorkRole;
   readonly status?: PersonalWorkStatus;
+  readonly sort?: PersonalWorkSort;
 }
 
 /** Search text bound (same as the connector port); longer text is a usage hint, never truncated silently. */

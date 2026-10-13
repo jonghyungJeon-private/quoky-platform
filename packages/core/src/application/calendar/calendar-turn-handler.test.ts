@@ -327,3 +327,109 @@ describe('CalendarTurnHandler.handleSelected — title keyword (ADR-0120 follow-
     expect((complete as { reply: { text: string } }).reply.text).not.toContain('전체를 확인하진');
   });
 });
+
+describe('CalendarTurnHandler.handleSelected — part of day, timed-only and availability (live UAT R2/R5)', () => {
+  // NOW is Tue 2026-10-06 10:00 Asia/Seoul; tomorrow is Wed 2026-10-07.
+  const timed = (id: string, title: string, startKst: string, endKst: string, day = '2026-10-07'): CalendarEvent => ({
+    ...MEETING,
+    id,
+    title,
+    start: `${day}T${startKst}:00+09:00`,
+    end: `${day}T${endKst}:00+09:00`,
+  });
+  const LEAVE: CalendarEvent = { ...MEETING, id: 'a-1', title: '[연차] 홍길동', start: '2026-10-07', end: '2026-10-08', allDay: true };
+  const SCRUM = timed('t-1', '아침 스크럼', '09:30', '10:00');
+  const STRADDLE = timed('t-2', '점심 걸친 회의', '11:30', '12:30');
+  const WEEKLY = timed('t-3', '주간 회의', '13:00', '14:00');
+  const LATE = timed('t-4', '저녁 모임', '19:00', '20:00');
+  const day = [LEAVE, SCRUM, STRADDLE, WEEKLY, LATE];
+  const selected = (args: Record<string, string | boolean>, range = 'tomorrow') => ({
+    entryId: 'calendar.events' as const,
+    args,
+    range: resolveNlRange(range, NOW, SEOUL),
+    language: 'ko' as const,
+  });
+  const textOf = (outcome: unknown) => (outcome as { reply: { text: string } }).reply.text;
+  const run = async (events: CalendarEvent[], args: Record<string, string | boolean>, range?: string) => {
+    const { reader } = fakeReader(async () => events);
+    return textOf(await createCalendarTurnHandler({ reader, timeZone: SEOUL }).handleSelected?.(selected(args, range), ctx('x')));
+  };
+
+  it('afternoon keeps the timed events that overlap 12:00-18:00, drops the morning one and the all-day entry, and says so', async () => {
+    const text = await run(day, { partOfDay: 'afternoon' });
+    expect(text).toContain('내일 오후 · 10월 7일(수): 일정 2개');
+    expect(text).toContain('주간 회의');
+    expect(text).toContain('점심 걸친 회의');
+    expect(text).not.toContain('아침 스크럼');
+    expect(text).not.toContain('저녁 모임');
+    expect(text).not.toContain('[연차]');
+    expect(text).toContain('종일 일정 1개');
+  });
+
+  it('morning and evening use their own hours', async () => {
+    const morning = await run(day, { partOfDay: 'morning' });
+    expect(morning).toContain('아침 스크럼');
+    expect(morning).toContain('점심 걸친 회의');
+    expect(morning).not.toContain('주간 회의');
+    const evening = await run(day, { partOfDay: 'evening' });
+    expect(evening).toContain('저녁 모임');
+    expect(evening).not.toContain('주간 회의');
+    expect(evening).toContain('내일 저녁');
+  });
+
+  it('a free/busy question over an empty afternoon answers that the owner is free; without it the plain empty answer', async () => {
+    const free = await run([LEAVE, SCRUM], { partOfDay: 'afternoon', availability: true });
+    expect(free).toContain('내일 오후 · 10월 7일(수): 일정이 없어요 — 비어 있어요.');
+    expect(free).not.toContain('아침 스크럼');
+    const plain = await run([LEAVE, SCRUM], { partOfDay: 'afternoon' });
+    expect(plain).toContain('내일 오후 · 10월 7일(수): 캘린더에 일정이 없어요.');
+    expect(plain).not.toContain('비어 있어요');
+  });
+
+  it('a free/busy question over a busy afternoon lists the events instead of saying free', async () => {
+    const busy = await run(day, { partOfDay: 'afternoon', availability: true });
+    expect(busy).toContain('주간 회의');
+    expect(busy).not.toContain('비어 있어요');
+  });
+
+  it('the part of day applies to every day of a multi-day period', async () => {
+    const thursday = timed('t-5', '목요일 오후 회의', '15:00', '16:00', '2026-10-08');
+    const thursdayMorning = timed('t-6', '목요일 오전 회의', '10:00', '11:00', '2026-10-08');
+    const text = await run([WEEKLY, thursday, thursdayMorning, SCRUM], { partOfDay: 'afternoon' }, 'this-week');
+    expect(text).toContain('이번 주 오후');
+    expect(text).toContain('주간 회의');
+    expect(text).toContain('목요일 오후 회의');
+    expect(text).not.toContain('목요일 오전 회의');
+    expect(text).not.toContain('아침 스크럼');
+  });
+
+  it('timed-only drops the all-day entries (leave, holidays) and counts them; an all-day-only day says no meetings', async () => {
+    const some = await run(day, { timedOnly: true });
+    expect(some).toContain('일정 4개');
+    expect(some).not.toContain('[연차]');
+    expect(some).toContain('종일 일정 1개');
+    const none = await run([LEAVE], { timedOnly: true });
+    expect(none).toContain('시간이 정해진 일정(회의)이 없어요');
+    expect(none).toContain('종일 일정 1개');
+  });
+
+  it('part of day and timed-only combine, and the next-event window ignores both', async () => {
+    const both = await run(day, { partOfDay: 'afternoon', timedOnly: true });
+    expect(both).toContain('내일 오후');
+    expect(both).toContain('주간 회의');
+    const { reader } = fakeReader(async () => [WEEKLY]);
+    const next = await createCalendarTurnHandler({ reader, timeZone: SEOUL }).handleSelected?.(
+      { ...selected({ partOfDay: 'morning' }, 'upcoming'), range: resolveNlRange('upcoming', NOW, SEOUL) },
+      ctx('다음 일정'),
+    );
+    expect(textOf(next)).toContain('주간 회의');
+  });
+
+  it('without a narrowing the answer is the unchanged whole-day list (all-day entries included)', async () => {
+    const all = await run(day, {});
+    expect(all).toContain('[연차]');
+    expect(all).toContain('아침 스크럼');
+    expect(all).toContain('일정 5개');
+    expect(all).not.toContain('종일 일정 1개');
+  });
+});

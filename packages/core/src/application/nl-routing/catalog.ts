@@ -55,6 +55,16 @@ export interface NlArgSpec {
    * the owner's own text or the value carries over from the previous selection; a value not listed needs none).
    */
   readonly valueGrounding?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * `flag` only: words that show the owner asked for the filter. A `true` counts only when one of them is in the owner's
+   * own text or the flag carries over from the previous selection (the flag twin of `valueGrounding`).
+   */
+  readonly flagGrounding?: readonly string[];
+  /**
+   * An argument kept only to read older stored selections: accepted, never shown to the selector, and rewritten by the
+   * entry's `normalize` into its replacement (e.g. `mail.list` `today` -> `range` `today`).
+   */
+  readonly deprecated?: boolean;
   /** The value the entry uses when the argument is absent; canonical args omit an argument equal to it. */
   readonly default?: string | boolean;
   /** One provider-facing line (English, bounded). */
@@ -115,6 +125,8 @@ export interface NlCatalogEntry {
    * (ADR-0120 D9) recognizes a false "cannot access" claim about the source by them. Absent for Quoky's own data.
    */
   readonly sourceNames?: readonly string[];
+  /** Rewrites a stored (`lastSelection`) args record of an older shape into the current one; pure, defaults untouched. */
+  migrateArgs?(args: NlArgs): NlArgs;
   /** Entry-specific normalization after the type checks (e.g. a Jira period without a date field). */
   normalize?(args: Record<string, NlArgValue>): void;
   /** The basis line text (without the `기준:` prefix) for these canonical args. */

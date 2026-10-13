@@ -41,6 +41,8 @@ export interface MailSearchQuery {
   readonly unreadOnly?: boolean;
   /** Only messages received at or after this instant (ISO-8601 with an explicit zone). */
   readonly receivedAfter?: IsoTimestamp;
+  /** Only messages received before this instant (ISO-8601 with an explicit zone): the end of a period such as yesterday. */
+  readonly receivedBefore?: IsoTimestamp;
   /** Only messages whose sender name or address matches this owner-typed text (1..100 characters). */
   readonly from?: string;
   /** Messages to return with metadata; defaults to MAIL_LISTING_MAX_ENTRIES and is clamped to it. */
@@ -127,6 +129,8 @@ export interface ParsedMailSearchQuery {
   readonly unreadOnly: boolean;
   readonly receivedAfter?: IsoTimestamp;
   readonly receivedAfterMs?: number;
+  readonly receivedBefore?: IsoTimestamp;
+  readonly receivedBeforeMs?: number;
   readonly from?: string;
   readonly limit: number;
 }
@@ -145,6 +149,17 @@ export function parseMailSearchQuery(query: MailSearchQuery | undefined, source 
     receivedAfterMs = ms;
     receivedAfter = new Date(ms).toISOString();
   }
+  let receivedBefore: IsoTimestamp | undefined;
+  let receivedBeforeMs: number | undefined;
+  if (query?.receivedBefore !== undefined) {
+    const ms = parseZonedInstant(query.receivedBefore);
+    if (ms === undefined) throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: receivedBefore must be a zoned instant`);
+    if (receivedAfterMs !== undefined && ms <= receivedAfterMs) {
+      throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: receivedBefore must be after receivedAfter`);
+    }
+    receivedBeforeMs = ms;
+    receivedBefore = new Date(ms).toISOString();
+  }
   let from: string | undefined;
   if (query?.from !== undefined) {
     const raw = typeof query.from === 'string' ? query.from : '';
@@ -161,6 +176,7 @@ export function parseMailSearchQuery(query: MailSearchQuery | undefined, source 
   return {
     unreadOnly,
     ...(receivedAfter !== undefined ? { receivedAfter, receivedAfterMs } : {}),
+    ...(receivedBefore !== undefined ? { receivedBefore, receivedBeforeMs } : {}),
     ...(from !== undefined ? { from } : {}),
     limit: resolveMailListingLimit(query?.limit, source),
   };

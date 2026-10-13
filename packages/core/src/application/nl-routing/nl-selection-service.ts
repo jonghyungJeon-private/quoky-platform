@@ -833,6 +833,8 @@ function validateWithRepair(candidate: NlSelectionCandidate, ctx: NlValidationCo
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const result = validateSelection(current, ctx);
     if (result.ok) return result;
+    // A time word in a keyword is never repaired by dropping it: the period it names would be lost silently.
+    if (result.reason === 'time-keyword') return result;
     const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);
     const spec = entry?.args.find((arg) => arg.name === result.arg);
     if (spec === undefined || spec.required === true || !(spec.name in current.args)) return result;

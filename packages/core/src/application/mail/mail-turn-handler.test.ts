@@ -3,6 +3,7 @@ import type { ConversationContext } from '../../domain';
 import { ConnectorQueryError } from '../../ports/connector-query';
 import type { TurnHandlerContext, TurnHandlerOutcome } from '../../ports/conversation-turn-handler.port';
 import type { MailMessage, MailMessageSummary, MailReader, MailSearchQuery, MailSearchResult } from '../../ports/mail-reader.port';
+import { resolveNlRange } from '../nl-routing/symbolic-time';
 import { PLAIN_TEXT_MARKUP, renderMessageContent } from '../message-rendering';
 import { isSummarizableDocumentReadout, type UntrustedDocumentReadout } from '../untrusted-document-readout';
 import {
@@ -100,7 +101,7 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
     const handler = createMailTurnHandler({ reader: fakeReader().reader, timeZone: SEOUL });
     const selection = async (text: string) => ((await handler.handle(ctx(text))) as { nlSelection?: unknown } | null)?.nlSelection;
     expect(await selection('안 읽은 메일')).toEqual({ entryId: 'mail.list', args: { unread: true } });
-    expect(await selection('오늘 온 메일')).toEqual({ entryId: 'mail.list', args: { today: true } });
+    expect(await selection('오늘 온 메일')).toEqual({ entryId: 'mail.list', args: { range: 'today' } });
     expect(await selection('김철수 메일 찾아줘')).toEqual({ entryId: 'mail.list', args: { from: '김철수' } });
     expect(await selection('메일 보내줘')).toBeUndefined();
     const failing = createMailTurnHandler({ reader: fakeReader({ search: async () => { throw new Error('down'); } }).reader, timeZone: SEOUL });
@@ -444,5 +445,93 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
       PLAIN_TEXT_MARKUP,
     );
     expect(text).toContain('\n…외 11건\n(메일 읽기 전용');
+  });
+});
+
+describe('mail turn handler — symbolic period and item picks (live UAT R1/R6)', () => {
+  // NOW is Thu 2026-10-08 10:00 Asia/Seoul; yesterday is Wed 2026-10-07.
+  const selected = (args: Record<string, string | number | boolean>, range?: string) => ({
+    entryId: 'mail.list' as const,
+    args,
+    ...(range !== undefined ? { range: resolveNlRange(range, NOW, SEOUL) } : {}),
+    language: 'ko' as const,
+  });
+
+  it('passes a symbolic period to the reader as the owner-zone [after, before) window and says the period in the answer', async () => {
+    const { reader, searches } = fakeReader();
+    const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
+    const text = textOf(await handler.handleSelected?.(selected({ range: 'yesterday' }, 'yesterday'), ctx('어제 온 메일')));
+    expect(searches).toEqual([{ receivedAfter: '2026-10-06T15:00:00.000Z', receivedBefore: '2026-10-07T15:00:00.000Z', limit: 10 }]);
+    expect(text).toContain('어제 받은 메일: 1건');
+  });
+
+  it('an empty period says nothing arrived in THAT period, never "recent mail"', async () => {
+    const { reader } = fakeReader({ search: async () => ({ messages: [], matched: 0, matchedIsLowerBound: false }) });
+    const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
+    const text = textOf(await handler.handleSelected?.(selected({ range: 'last-week' }, 'last-week'), ctx('지난주 메일')));
+    expect(text).toContain('지난주 받은 메일이 없어요');
+    expect(text).not.toContain('최근');
+  });
+
+  it('range today keeps the exact old query (after only), and the stored `today` flag still works', async () => {
+    const { reader, searches } = fakeReader();
+    const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
+    await handler.handleSelected?.(selected({ range: 'today' }, 'today'), ctx('오늘 온 메일'));
+    await handler.handleSelected?.(selected({ today: true }), ctx('오늘 온 메일'));
+    expect(searches).toEqual([
+      { receivedAfter: '2026-10-07T15:00:00.000Z', limit: 10 },
+      { receivedAfter: '2026-10-07T15:00:00.000Z', limit: 10 },
+    ]);
+  });
+
+  it('combines a period with unread and a sender', async () => {
+    const { reader, searches } = fakeReader();
+    const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
+    await handler.handleSelected?.(selected({ range: 'this-week', unread: true, from: '김철수' }, 'this-week'), ctx('이번 주 김철수 안 읽은 메일'));
+    expect(searches[0]).toMatchObject({ unreadOnly: true, from: '김철수', receivedAfter: '2026-10-04T15:00:00.000Z', receivedBefore: '2026-10-11T15:00:00.000Z' });
+  });
+
+  it('a pick past the end of the last list says how many it held, re-lists nothing and reads nothing', async () => {
+    const two = async () => ({ messages: [summary('m1'), summary('m2')], matched: 2, matchedIsLowerBound: false });
+    const { reader, searches, gets } = fakeReader({ search: two });
+    const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
+    await handler.handleSelected?.(selected({}), ctx('메일함'));
+    expect(searches).toHaveLength(1);
+    const outcome = await handler.handleSelected?.(selected({ item: 3 }), ctx('3번은 누가 보냈어?'));
+    expect(textOf(outcome)).toBe('목록에 2건만 있어요. 3번 메일은 없어요.');
+    expect(searches).toHaveLength(1);
+    expect(gets).toEqual([]);
+  });
+
+  it('a pick inside the list answers that one mail as a line (sender, subject, date) without its body or a re-list', async () => {
+    const two = async () => ({ messages: [summary('m1'), summary('m2', { sender: { name: '박영희', address: 'park@example.com' } })], matched: 2, matchedIsLowerBound: false });
+    const { reader, searches, gets } = fakeReader({
+      search: two,
+      get: async (id) => ({ ...summary(id, { sender: { name: '박영희', address: 'park@example.com' } }), bodyText: '비밀 본문', bodyTruncated: false }),
+    });
+    const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
+    await handler.handleSelected?.(selected({}), ctx('메일함'));
+    const text = textOf(await handler.handleSelected?.(selected({ item: 2 }), ctx('2번은 누가 보냈어?')));
+    expect(searches).toHaveLength(1);
+    expect(gets).toEqual(['m2']);
+    expect(text).toContain('2. 박영희');
+    expect(text).not.toContain('비밀 본문');
+    expect(text).not.toContain('메일: 2건');
+  });
+
+  it('a pick with no list on record asks for the list first instead of listing', async () => {
+    const { reader, searches } = fakeReader();
+    const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
+    const text = textOf(await handler.handleSelected?.(selected({ item: 1 }), ctx('1번은 누가 보냈어?')));
+    expect(searches).toEqual([]);
+    expect(text).toContain('목록');
+  });
+
+  it('a pick is DM-only like every mail answer', async () => {
+    const { reader, gets } = fakeReader();
+    const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
+    const text = textOf(await handler.handleSelected?.(selected({ item: 1 }), ctx('1번은 누가 보냈어?', DISCORD_CHANNEL)));
+    expect(text).toBe(renderMailDmOnly('ko'));
+    expect(gets).toEqual([]);
   });
 });

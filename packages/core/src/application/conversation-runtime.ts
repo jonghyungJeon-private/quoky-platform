@@ -86,6 +86,7 @@ import {
 import {
   NON_ABSOLUTE_REGISTRATION_KIND,
   POLICY_SENSITIVE_CHAT_KIND,
+  chatIntentOf,
   detectProjectRegistration,
   externalActionRequestOf,
   type IntentClassifyContext,
@@ -3069,6 +3070,9 @@ export class ConversationRuntime {
     } catch (err) {
       return this.failReadOnlyTurn(message, session, err); // nothing ran yet — provably no mutation
     }
+    // Live UAT R9: an explicit `none` of a selector that ran (at a Class B position above) wins over the classifier's frozen
+    // personal-work surface clause; only a skipped, failed or disabled selector leaves the surface as the fallback.
+    if (nlEarly?.declined === true && ConversationRuntime.nlWorkSurfaceRoute(intent) !== undefined) intent = chatIntentOf(message.text);
     this.deps.logger.info('intent classified', {
       capability: intent.capability,
       requiresWork: intent.requiresWork,
@@ -3095,6 +3099,13 @@ export class ConversationRuntime {
           const selected = await this.handleNlSelection(message, session, actor, applyAnchor, userMemory.id, route, intent, nlPending, grammar);
           if (selected.kind === 'responded') return selected.result;
           if (route !== 'work-surface') nlFacts = selected.facts;
+          else if (selected.declined === true) {
+            // Live UAT R9: the selector ran and answered `none`, so its decision wins over the frozen surface clause: the
+            // turn is chat (with the configured-sources fact), never a Jira / GitHub lookup. Only a skipped, failed or
+            // disabled selector leaves the surface as the fallback.
+            intent = chatIntentOf(message.text);
+            nlFacts = selected.facts;
+          }
         } catch (err) {
           return this.failReadOnlyTurn(message, session, err);
         }
@@ -3252,7 +3263,7 @@ export class ConversationRuntime {
             return { kind: 'responded', result: await this.failReadOnlyTurn(message, session, err) };
           }
           if (selected.kind === 'responded') return selected;
-          early = { ...(selected.facts !== undefined ? { facts: selected.facts } : {}) };
+          early = { ...(selected.facts !== undefined ? { facts: selected.facts } : {}), ...(selected.declined === true ? { declined: true as const } : {}) };
           if (!selected.fallback) return { kind: 'continue', early };
         }
       }
@@ -3351,7 +3362,7 @@ export class ConversationRuntime {
     grammar?: NlClassBProbe,
   ): Promise<
     | { readonly kind: 'responded'; readonly result: TurnResult }
-    | { readonly kind: 'continue'; readonly facts?: NlChatFacts; readonly fallback?: true }
+    | { readonly kind: 'continue'; readonly facts?: NlChatFacts; readonly fallback?: true; readonly declined?: true }
   > {
     const nl = this.deps.nlSelection as Pick<NlSelectionService, 'mode' | 'decide'>;
     const catalog = this.nlCatalog();
@@ -3376,7 +3387,7 @@ export class ConversationRuntime {
         // Phase C: the grammar is the fallback when selection did not run (shadow included: the grammar answers).
         return { kind: 'continue', ...(grammar !== undefined ? { fallback: true as const } : {}) };
       case 'none':
-        return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+        return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}), ...(nl.mode === 'active' ? { declined: true as const } : {}) };
       case 'unavailable':
         return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}), ...(grammar !== undefined ? { fallback: true as const } : {}) };
       case 'ask':
@@ -8576,4 +8587,6 @@ export class ConversationRuntime {
 /** ADR-0120 D6 Phase C: a selection already made at a Class B position this turn (the honest-chat fact it left, if any). */
 interface NlEarlySelection {
   readonly facts?: NlChatFacts;
+  /** The selector ran at a Class B position and answered `none` (live UAT R9): the frozen surface clause must not answer. */
+  readonly declined?: true;
 }

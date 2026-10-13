@@ -18,6 +18,21 @@ function reasonOf(fn: () => unknown): string | undefined {
   return undefined;
 }
 
+describe('MailReader port — receivedBefore (live UAT R1)', () => {
+  it('validates a period end as a zoned instant after the start and normalizes it to UTC', () => {
+    expect(parseMailSearchQuery({ receivedAfter: '2026-10-07T00:00:00+09:00', receivedBefore: '2026-10-08T00:00:00+09:00' })).toEqual({
+      unreadOnly: false,
+      receivedAfter: '2026-10-06T15:00:00.000Z',
+      receivedAfterMs: Date.parse('2026-10-06T15:00:00.000Z'),
+      receivedBefore: '2026-10-07T15:00:00.000Z',
+      receivedBeforeMs: Date.parse('2026-10-07T15:00:00.000Z'),
+      limit: MAIL_LISTING_MAX_ENTRIES,
+    });
+    expect(reasonOf(() => parseMailSearchQuery({ receivedBefore: '2026-10-08T00:00:00' }))).toBe('UNSUPPORTED_QUERY');
+    expect(reasonOf(() => parseMailSearchQuery({ receivedAfter: '2026-10-08T00:00:00Z', receivedBefore: '2026-10-07T00:00:00Z' }))).toBe('UNSUPPORTED_QUERY');
+  });
+});
+
 describe('MailReader port (ADR-0118 D2)', () => {
   it('validates and bounds a search: zoned instants only, a one-line sender of 1..100 characters, limit clamped to 10', () => {
     expect(parseMailSearchQuery({ unreadOnly: true })).toEqual({ unreadOnly: true, limit: MAIL_LISTING_MAX_ENTRIES });

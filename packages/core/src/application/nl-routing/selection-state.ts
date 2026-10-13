@@ -1,5 +1,7 @@
 import type { Actor, Id, IsoTimestamp, Metadata, Session } from '../../domain';
 import { isNlCatalogEntryId, type NlArgs, type NlArgValue, type NlCatalogEntryId } from './catalog';
+import { isTimeExpression } from './symbolic-time';
+import { nlWave1Entry } from './wave1-entries';
 
 /**
  * The content-free state of natural-language selection (ADR-0120 D7), all plain data, no migration:
@@ -100,7 +102,27 @@ export function readLastSelection(session: Pick<Session, 'metadata'>, actorId: I
   const record = recordOf(session.metadata?.[LAST_SELECTION_METADATA_KEY]);
   if (record.actorId !== actorId || !fresh(record.at, now, LAST_SELECTION_TTL_MS)) return undefined;
   const selection = selectionOf(record);
-  return selection === undefined ? undefined : { ...selection, at: record.at as IsoTimestamp };
+  return selection === undefined ? undefined : { ...migrateStoredSelection(selection), at: record.at as IsoTimestamp };
+}
+
+/**
+ * A stored selection of an older shape, read as the current one: the entry's own `migrateArgs` (e.g. `mail.list`
+ * `today` -> `range`), and a keyword that is only a time expression is dropped on an entry with a period ("목요일" stuck as
+ * a title keyword by an earlier turn must not follow the owner to the next period; live UAT R4). Real keywords stay.
+ */
+export function migrateStoredSelection(selection: StoredSelection): StoredSelection {
+  const entry = nlWave1Entry(selection.entryId);
+  let args = entry.migrateArgs?.(selection.args) ?? selection.args;
+  if (entry.args.some((spec) => spec.kind === 'range')) {
+    const kept: Record<string, NlArgValue> = {};
+    for (const [name, value] of Object.entries(args)) {
+      const spec = entry.args.find((candidate) => candidate.name === name);
+      if (spec?.kind === 'keyword' && typeof value === 'string' && isTimeExpression(value)) continue;
+      kept[name] = value;
+    }
+    args = kept;
+  }
+  return args === selection.args ? selection : { entryId: selection.entryId, args };
 }
 
 export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now: IsoTimestamp): Metadata {

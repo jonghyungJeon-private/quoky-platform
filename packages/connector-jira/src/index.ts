@@ -12,6 +12,7 @@ import {
   type ConnectorResult,
   type Metadata,
   type ParsedPersonalWorkParams,
+  type PersonalWorkSort,
   type PersonalWorkWindowField,
 } from '@quoky/core';
 
@@ -206,7 +207,7 @@ export class JiraConnectorProvider implements ConnectorProvider {
  * (e.g. "완료"/"취소") without setting a resolution, and those must not appear as open items (live QA, 50 of 193).
  */
 function personalWorkJql(params: ParsedPersonalWorkParams, nowMs: number): string {
-  const { actorExternalId: identity, filter, window, role, status } = params;
+  const { actorExternalId: identity, filter, window, role, status, sort } = params;
   const literal = jqlString(identity);
   // ADR-0120 D13: without window/role/status this is byte-identical to the ADR-0100 query.
   const who = role === 'reporter' ? `reporter = ${literal}` : role === 'either' ? `(assignee = ${literal} OR reporter = ${literal})` : `assignee = ${literal}`;
@@ -217,7 +218,7 @@ function personalWorkJql(params: ParsedPersonalWorkParams, nowMs: number): strin
   if (window !== undefined) {
     if (filter !== 'all') throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: a window needs the all filter');
     const field = JQL_WINDOW_FIELD[window.field];
-    const order = window.field === 'due' ? 'duedate ASC' : `${field} DESC`;
+    const order = sort !== undefined ? JQL_SORT_ORDER[sort] : window.field === 'due' ? 'duedate ASC' : `${field} DESC`;
     // JQL reads a date literal in the Jira user's profile time zone, which need not be QUOKY_TIMEZONE. A timestamp field
     // (created, updated) is therefore bounded by minutes relative to now, which no zone shifts. The due date is a
     // calendar date without a zone: the owner's local dates are exact for it.
@@ -227,8 +228,8 @@ function personalWorkJql(params: ParsedPersonalWorkParams, nowMs: number): strin
         : [window.from, window.to];
     return `${base} AND ${field} >= ${jqlString(from)} AND ${field} < ${jqlString(to)} ORDER BY ${order}`;
   }
-  if (filter === 'all') return `${base} ORDER BY updated DESC`;
-  if (filter === 'due-this-week') return `${base} AND duedate <= endOfWeek() ORDER BY duedate ASC`;
+  if (filter === 'all') return `${base} ORDER BY ${sort !== undefined ? JQL_SORT_ORDER[sort] : 'updated DESC'}`;
+  if (filter === 'due-this-week') return `${base} AND duedate <= endOfWeek() ORDER BY ${sort !== undefined ? JQL_SORT_ORDER[sort] : 'duedate ASC'}`;
   throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported personal-work filter');
 }
 
@@ -241,6 +242,13 @@ function relativeMinutes(instant: string, nowMs: number, bound: 'from' | 'to'): 
   const minutes = bound === 'from' ? Math.floor(deltaMinutes) : Math.ceil(deltaMinutes);
   return minutes < 0 ? `-${-minutes}m` : `${minutes}m`;
 }
+
+/** The closed sort names as constant ORDER BY clauses (live UAT R8): owner text is never interpolated into them. */
+const JQL_SORT_ORDER: Readonly<Record<PersonalWorkSort, string>> = {
+  oldest: 'created ASC',
+  newest: 'created DESC',
+  'recently-updated': 'updated DESC',
+};
 
 /** The closed window fields as JQL field names (Core never sends JQL). */
 const JQL_WINDOW_FIELD: Readonly<Record<PersonalWorkWindowField, string>> = {

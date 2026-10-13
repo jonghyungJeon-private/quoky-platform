@@ -165,9 +165,11 @@ export function assertGmailReadRequest(url: URL, method: string): void {
  */
 export function buildGmailSearchQuery(query: ParsedMailSearchQuery): string {
   const terms: string[] = [];
-  if (query.unreadOnly || query.receivedAfterMs !== undefined || query.from === undefined) terms.push('in:inbox');
+  if (query.unreadOnly || query.receivedAfterMs !== undefined || query.receivedBeforeMs !== undefined || query.from === undefined) terms.push('in:inbox');
   if (query.unreadOnly) terms.push('is:unread');
   if (query.receivedAfterMs !== undefined) terms.push(`after:${Math.floor(query.receivedAfterMs / 1000)}`);
+  // A period's end (live UAT R1): epoch seconds, so the owner's local midnight is exact in any zone.
+  if (query.receivedBeforeMs !== undefined) terms.push(`before:${Math.floor(query.receivedBeforeMs / 1000)}`);
   if (query.from !== undefined) {
     const phrase = query.from.replace(/["\\(){}[\]<>:]/g, ' ').replace(/\s+/g, ' ').trim();
     if (phrase.length === 0) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'gmail: the sender has no searchable text');

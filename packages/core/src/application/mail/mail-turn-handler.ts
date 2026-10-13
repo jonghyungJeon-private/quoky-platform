@@ -1,5 +1,6 @@
-import { nlFlagArg, nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlFlagArg, nlLimitArg, nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
+import { nlRangeLabel, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import type {
   ConversationTurnHandler,
   TurnHandlerContext,
@@ -43,6 +44,8 @@ import {
   renderMailDmOnly,
   renderMailHistoryNote,
   renderMailListing,
+  renderMailPickLine,
+  renderMailPickOutOfRange,
   renderMailReadFailure,
   renderMailReplyPickExpired,
   renderMailReplyPickOutOfRange,
@@ -231,18 +234,54 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       this.log('info', 'mail.turn_handler.dm_only', { kind: 'list' });
       return this.reply(ctx, renderMailDmOnly(language), 'RESPONDED', language, 'not-read');
     }
+    // Live UAT R6: a number the owner asks about is answered from the last list (or says the list is shorter); it never
+    // re-prints the list.
+    const item = nlLimitArg(selected.args, 'item');
+    if (item !== undefined) return this.pick(ctx, item, language);
     const from = nlStringArg(selected.args, 'from');
+    // Live UAT R1: a symbolic period; the older `today` flag (a stored selection) is the same period.
+    const range = selected.range;
+    const today = nlFlagArg(selected.args, 'today') || range?.symbol === 'today';
     return this.list(
       ctx,
-      { unread: nlFlagArg(selected.args, 'unread'), today: nlFlagArg(selected.args, 'today'), ...(from !== undefined ? { from } : {}) },
+      {
+        unread: nlFlagArg(selected.args, 'unread'),
+        today,
+        ...(range !== undefined && !today ? { period: { ko: nlRangeLabel(range, 'ko'), en: nlRangeLabel(range, 'en') } } : {}),
+        ...(from !== undefined ? { from } : {}),
+      },
       language,
+      range !== undefined && !today ? range : undefined,
     );
   }
 
-  private async list(ctx: TurnHandlerContext, filter: MailListingFilter, language: MailLanguage): Promise<TurnHandlerReply> {
+  /** Live UAT R6: "3번은 누가 보냈어?" — one line of the last list's Nth mail, or how many the list held. */
+  private async pick(ctx: TurnHandlerContext, index: number, language: MailLanguage): Promise<TurnHandlerReply> {
+    const ids = this.currentListing(ctx)?.ids ?? [];
+    const id = ids[index - 1];
+    if (id === undefined) {
+      this.log('info', 'mail.turn_handler.item_pick', { matched: ids.length === 0 ? 'no-listing' : 'out-of-range' });
+      return this.reply(ctx, renderMailPickOutOfRange(index, ids.length, language), 'RESPONDED', language, 'not-read');
+    }
+    let message: MailMessage;
+    try {
+      message = await this.withTimeout(this.deps.reader.getMessage(id));
+    } catch (error) {
+      const failure = failureOf(error);
+      this.log('warn', 'mail.turn_handler.read_failed', { kind: 'pick', reason: failure });
+      return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
+    }
+    this.log('info', 'mail.turn_handler.item_pick', { matched: 'listed' });
+    const line = renderMailPickLine(index, message, { timeZone: this.deps.timeZone, now: ctx.now, language });
+    return this.reply(ctx, line, 'RESPONDED', language, 'listed');
+  }
+
+  private async list(ctx: TurnHandlerContext, filter: MailListingFilter, language: MailLanguage, range?: NlResolvedRange): Promise<TurnHandlerReply> {
     const query: MailSearchQuery = {
       ...(filter.unread ? { unreadOnly: true } : {}),
       ...(filter.today ? { receivedAfter: startOfLocalDay(ctx.now, this.deps.timeZone) } : {}),
+      // A symbolic period other than today is placed by Core (the owner's zone); the adapter renders the vendor query.
+      ...(range !== undefined ? { receivedAfter: range.from, receivedBefore: range.to } : {}),
       ...(filter.from !== undefined ? { from: filter.from } : {}),
       limit: MAIL_LISTING_MAX_ENTRIES,
     };
@@ -531,6 +570,6 @@ export function createMailTurnHandler(deps: MailTurnHandlerDeps): MailTurnHandle
 function mailGrammarSelection(question: Extract<MailQuestion, { kind: 'list' }>): NlGrammarSelection {
   return {
     entryId: 'mail.list',
-    args: { ...(question.unread ? { unread: true } : {}), ...(question.today ? { today: true } : {}), ...(question.from !== undefined ? { from: question.from } : {}) },
+    args: { ...(question.unread ? { unread: true } : {}), ...(question.today ? { range: 'today' } : {}), ...(question.from !== undefined ? { from: question.from } : {}) },
   };
 }

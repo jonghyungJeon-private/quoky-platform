@@ -2339,14 +2339,14 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "grammar": "mail-question.list",
       "grammarAnswer": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       }
     },
@@ -2405,7 +2405,7 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       }
     },
@@ -2476,7 +2476,7 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       }
     },
@@ -2538,7 +2538,7 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true,
+          "range": "today",
           "from": "김부장님"
         }
       }
@@ -2549,7 +2549,7 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true,
+          "range": "today",
           "unread": true,
           "count": true
         }
@@ -2559,7 +2559,7 @@
         "entryId": "mail.list",
         "args": {
           "unread": true,
-          "today": true
+          "range": "today"
         }
       }
     },
@@ -2580,7 +2580,7 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       }
     },
@@ -2618,14 +2618,14 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "grammar": "mail-question.list",
       "grammarAnswer": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       }
     },
@@ -2635,13 +2635,13 @@
       "prior": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true,
+          "range": "today",
           "unread": true
         }
       }
@@ -2696,7 +2696,7 @@
         "entryId": "mail.list",
         "args": {
           "unread": true,
-          "today": true
+          "range": "today"
         }
       }
     },
@@ -2753,7 +2753,7 @@
         "entryId": "mail.list",
         "args": {
           "from": "Lee",
-          "today": true
+          "range": "today"
         }
       }
     },
@@ -2763,7 +2763,7 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       }
     },
@@ -4849,7 +4849,7 @@
       "prior": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "expect": "none",
@@ -4861,7 +4861,7 @@
       "prior": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "expect": "none",
@@ -5011,7 +5011,7 @@
       "prior": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "expect": "none",
@@ -7207,14 +7207,14 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "grammar": "mail-question.list",
       "grammarAnswer": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
@@ -7225,14 +7225,14 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "grammar": "mail-question.list",
       "grammarAnswer": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
@@ -7368,7 +7368,7 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true,
+          "range": "today",
           "count": true
         }
       },
@@ -7376,7 +7376,7 @@
       "grammarAnswer": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
@@ -8554,7 +8554,7 @@
       "expect": {
         "entryId": "mail.list",
         "args": {
-          "today": true
+          "range": "today"
         }
       },
       "note": "follow-up replaces the unread flag [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
@@ -8695,6 +8695,341 @@
       "text": "어제 본 영화 이야기 해줄까 오늘 일정 얘기는 말고",
       "expect": "none",
       "note": "explicitly not a calendar request [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r1-01",
+      "text": "어제 온 메일 보여줘",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "yesterday"
+        }
+      },
+      "note": "mail received yesterday [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r1-02",
+      "text": "지난주에 받은 메일 있어?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "last-week"
+        }
+      },
+      "note": "mail received last week [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r1-03",
+      "text": "이번 주에 안 읽은 메일 뭐 있지",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true,
+          "range": "this-week"
+        }
+      },
+      "note": "unread mail this week [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r1-04",
+      "text": "최근 7일 동안 받은 메일만",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "last-7-days"
+        }
+      },
+      "note": "mail, last 7 days [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r1-05",
+      "text": "어제 건 말고 오늘 온 것만",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "today"
+        }
+      },
+      "prior": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "yesterday"
+        }
+      },
+      "note": "follow-up replaces the period [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r6-06",
+      "text": "3번은 누가 보냈어?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "item": 3
+        }
+      },
+      "prior": {
+        "entryId": "mail.list",
+        "args": {}
+      },
+      "note": "asks about one listed mail by number; never a re-list [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r6-07",
+      "text": "그거 요약해줘",
+      "expect": "none",
+      "prior": {
+        "entryId": "mail.list",
+        "args": {}
+      },
+      "note": "summarizing a listed mail is not a list request [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r2-08",
+      "text": "내일 오후에 시간 비어?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow",
+          "partOfDay": "afternoon",
+          "availability": true
+        }
+      },
+      "note": "free/busy question about an afternoon [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r2-09",
+      "text": "다음 주 수요일 오후에 뭐 있어",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "next-wed",
+          "partOfDay": "afternoon"
+        }
+      },
+      "grammar": "calendar-question",
+      "grammarAnswer": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "2026-10-21"
+        }
+      },
+      "note": "weekday plus part of day [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r2-10",
+      "text": "오후만",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "day-after-tomorrow",
+          "partOfDay": "afternoon"
+        }
+      },
+      "prior": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "day-after-tomorrow"
+        }
+      },
+      "note": "follow-up modifier keeps the previous day [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r2-11",
+      "text": "내일 아침 일정 알려줘",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow",
+          "partOfDay": "morning"
+        }
+      },
+      "grammar": "calendar-question",
+      "grammarAnswer": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow"
+        }
+      },
+      "note": "morning events [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r2-12",
+      "text": "오늘 저녁에 약속 있나",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "partOfDay": "evening"
+        }
+      },
+      "grammar": "calendar-question",
+      "grammarAnswer": {
+        "entryId": "calendar.events",
+        "args": {}
+      },
+      "note": "evening events [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r3-13",
+      "text": "지난주 금요일에 무슨 일정 있었지",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "last-fri"
+        }
+      },
+      "note": "last week's Friday, not the whole week [UAT R3: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r3-14",
+      "text": "다다음 주 일정 알려줘",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "week-after-next"
+        }
+      },
+      "grammar": "calendar-question",
+      "grammarAnswer": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "next-week"
+        }
+      },
+      "note": "the week after next [UAT R3: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r3-15",
+      "text": "이번 달 말까지 일정 보여줘",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "rest-of-month"
+        }
+      },
+      "note": "today to the end of the month [UAT R3: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r4-16",
+      "text": "목요일 거는?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-thu"
+        }
+      },
+      "prior": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week"
+        }
+      },
+      "note": "a weekday follow-up is a period, never a title keyword [UAT R4: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r4-17",
+      "text": "아니 다다음 주",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "week-after-next"
+        }
+      },
+      "prior": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "next-week"
+        }
+      },
+      "note": "period correction keeps no time-word keyword [UAT R4: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r5-18",
+      "text": "그 중에 회의만",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week",
+          "timedOnly": true
+        }
+      },
+      "prior": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week"
+        }
+      },
+      "note": "meetings only: drops all-day entries [UAT R5: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r7-19",
+      "text": "슬랙에서 배포 얘기 나온 거 찾아줘",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "배포"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "grammarAnswer": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "배포 얘기 나온 거"
+        }
+      },
+      "note": "core search term without conversational filler [UAT R7: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r7-20",
+      "text": "컨플루언스에서 결제 관련 내용 찾아줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "결제"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "grammarAnswer": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "결제 관련 내용"
+        }
+      },
+      "note": "core search term without filler [UAT R7: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r8-21",
+      "text": "제일 오래된 건 뭐야",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "status": "in-progress",
+          "sort": "oldest"
+        }
+      },
+      "prior": {
+        "entryId": "jira.issues",
+        "args": {
+          "status": "in-progress"
+        }
+      },
+      "note": "order follow-up keeps the previous args [UAT R8: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r8-22",
+      "text": "최근에 업데이트된 순으로 보여줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "sort": "recently-updated"
+        }
+      },
+      "note": "recently updated first [UAT R8: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5r9-24",
+      "text": "일정 관리 잘하는 법 알려줘",
+      "expect": "none",
+      "note": "advice, not a calendar read [UAT R9: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
     }
   ]
 }

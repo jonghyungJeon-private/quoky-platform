@@ -12,6 +12,14 @@ describe('workChatCommandForSelection — Jira status (ADR-0120 follow-up)', () 
     });
   });
 
+  it('live UAT R8: carries the closed sort to the personal-work options and ignores a name outside the set', () => {
+    expect(workChatCommandForSelection({ entryId: 'jira.issues', args: { status: 'in-progress', sort: 'oldest' }, language: 'ko' })).toMatchObject({
+      personalWork: { status: 'in-progress', sort: 'oldest' },
+    });
+    expect(workChatCommandForSelection({ entryId: 'jira.issues', args: { sort: 'recently-updated' }, language: 'ko' })).toMatchObject({ personalWork: { sort: 'recently-updated' } });
+    expect(workChatCommandForSelection({ entryId: 'jira.issues', args: { sort: 'created ASC' }, language: 'ko' })).not.toHaveProperty('personalWork');
+  });
+
   it('keeps the default open status out of the options', () => {
     expect(workChatCommandForSelection({ entryId: 'jira.issues', args: {}, language: 'ko' })).not.toHaveProperty('personalWork');
   });
