@@ -318,7 +318,7 @@ async function compose(
 ): Promise<Composition> {
   const storage = new SqliteStorageProvider({ dbPath });
   const timers = new ManualTimers();
-  const reminderConfig: ReminderConfig = { enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul', briefJiraEnabled: false, ...config };
+  const reminderConfig: ReminderConfig = { enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul', briefJiraEnabled: false, briefMailEnabled: false, ...config };
   @Module({
     providers: [
       { provide: STORAGE_PROVIDER, useValue: storage },

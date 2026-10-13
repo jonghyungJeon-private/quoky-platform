@@ -5,6 +5,7 @@ import type { CalendarEvent, CalendarEventQuery, CalendarReader } from '../../po
 import type { ConnectorItem, ConnectorProvider, ConnectorQuery, ConnectorResult } from '../../ports/connector-provider.port';
 import { ConnectorQueryError } from '../../ports/connector-query';
 import type { LogFields, Logger } from '../../ports/logger.port';
+import type { MailMessageSummary, MailReader, MailSearchQuery, MailSearchResult } from '../../ports/mail-reader.port';
 import { DailyBriefSources } from './daily-brief-sources';
 
 const ZONE = 'Asia/Seoul';
@@ -162,6 +163,66 @@ describe('DailyBriefSources — assigned work (ADR-0117 D2)', () => {
     }).read(REQUEST);
     expect(readout).toEqual({ calendar: null, assignedWork: null });
     expect(Date.now() - started).toBeLessThan(2_000);
+  });
+});
+
+class FakeMail implements MailReader {
+  readonly source = 'mail';
+  readonly readOnly = true as const;
+  readonly searches: MailSearchQuery[] = [];
+  readonly gets: string[] = [];
+  constructor(private readonly behaviour: MailSearchResult | Error | 'hang' | 'malformed') {}
+  search(query: MailSearchQuery): Promise<MailSearchResult> {
+    this.searches.push(query);
+    if (this.behaviour === 'hang') return new Promise(() => undefined);
+    if (this.behaviour === 'malformed') return Promise.resolve({} as MailSearchResult);
+    if (this.behaviour instanceof Error) return Promise.reject(this.behaviour);
+    return Promise.resolve(this.behaviour);
+  }
+  getMessage(id: string): Promise<never> {
+    this.gets.push(id);
+    return Promise.reject(new Error('no body reads in the brief'));
+  }
+}
+
+const MAIL_MESSAGE: MailMessageSummary = {
+  id: 'm1',
+  sender: { name: 'Alice', address: 'alice@example.com' },
+  subject: 'Hello',
+  receivedAt: NOW,
+  snippet: 'snip',
+  unread: true,
+};
+
+describe('DailyBriefSources — mail (ADR-0117 BRF-3)', () => {
+  it('makes exactly one unread search of at most 3 messages and never reads a body', async () => {
+    const mail = new FakeMail({ messages: [MAIL_MESSAGE], matched: 40, matchedIsLowerBound: false });
+    const readout = await new DailyBriefSources({ mail }).read(REQUEST);
+    expect(mail.searches).toEqual([{ unreadOnly: true, limit: 3 }]);
+    expect(mail.gets).toEqual([]);
+    expect(readout).toEqual({ mail: { count: 40, lowerBound: false, messages: [MAIL_MESSAGE] } });
+  });
+
+  it('without a mail reader (the flag off), has no mail key', async () => {
+    expect(await new DailyBriefSources({ calendar: new FakeCalendar([]) }).read(REQUEST)).not.toHaveProperty('mail');
+  });
+
+  it('a failed read is null, logged with the failure class only (no sender or subject)', async () => {
+    const logger = new RecordingLogger();
+    const mail = new FakeMail(new ConnectorQueryError('RATE_LIMITED', 'gmail: rate limited'));
+    expect(await new DailyBriefSources({ mail, logger }).read(REQUEST)).toEqual({ mail: null });
+    expect(logger.lines.join('\n')).toContain('RATE_LIMITED');
+    const ok = new RecordingLogger();
+    await new DailyBriefSources({ mail: new FakeMail({ messages: [MAIL_MESSAGE], matched: 1, matchedIsLowerBound: false }), logger: ok }).read(REQUEST);
+    expect(ok.lines.join('\n')).not.toMatch(/Alice|Hello|alice@/);
+  });
+
+  it('a slow or malformed mailbox is null and does not hold the other sources', async () => {
+    const started = Date.now();
+    const slow = await new DailyBriefSources({ mail: new FakeMail('hang'), calendar: new FakeCalendar([]), mailTimeoutMs: 20 }).read(REQUEST);
+    expect(slow).toEqual({ calendar: { events: [], limit: 50 }, mail: null });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(await new DailyBriefSources({ mail: new FakeMail('malformed') }).read(REQUEST)).toEqual({ mail: null });
   });
 });
 

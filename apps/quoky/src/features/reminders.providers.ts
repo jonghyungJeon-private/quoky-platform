@@ -2,12 +2,14 @@ import type { Provider } from '@nestjs/common';
 import type { DiscordConfig } from '@quoky/adapter-discord';
 import {
   CALENDAR_READER,
+  MAIL_READER,
   CONNECTOR_PROVIDERS,
   NOTIFICATION_SINK,
   PLATFORM_ADAPTER,
   REMINDER_REPOSITORY,
   STORAGE_PROVIDER,
   EventReminderCalendar,
+  type MailReader,
   OnDemandBrief,
   ReminderConversationService,
   ReminderDispatchService,
@@ -178,12 +180,15 @@ export function createRemindersProviders(
         composer: ReminderReplyComposer,
         calendar: CalendarReader | undefined,
         connectors: readonly ConnectorProvider[] | undefined,
+        mail: MailReader | undefined,
       ) => {
         const seam = storage as StorageProvider & ReminderStorageSeam;
         const briefSources = createBriefSources({
           calendar,
           connectors,
           briefJiraEnabled: config.briefJiraEnabled === true,
+          briefMailEnabled: config.briefMailEnabled === true,
+          mail,
           // The live storage seam: `actors` is dereferenced at call time, after init() (QA-001).
           storage: storage as StorageProvider & BriefActorStorageSeam,
           logger,
@@ -215,6 +220,8 @@ export function createRemindersProviders(
         // ADR-0117: bound only when the calendar is configured / always bound in the app, optional for test modules.
         { token: CALENDAR_READER, optional: true },
         { token: CONNECTOR_PROVIDERS, optional: true },
+        // BRF-3: bound only when Gmail is configured; read only with QUOKY_BRIEF_MAIL_ENABLED=true.
+        { token: MAIL_READER, optional: true },
       ],
     },
     {
@@ -239,6 +246,7 @@ export function createRemindersProviders(
         repository: ReminderRepository,
         calendar: CalendarReader | undefined,
         connectors: readonly ConnectorProvider[] | undefined,
+        mail: MailReader | undefined,
       ): readonly ConversationTurnHandler[] => {
         const seam = storage as StorageProvider & ReminderStorageSeam;
         // ADR-0120 `brief.today`: the same model-free brief as the scheduled one, over the same read-only sources.
@@ -246,6 +254,8 @@ export function createRemindersProviders(
           calendar,
           connectors,
           briefJiraEnabled: config.briefJiraEnabled === true,
+          briefMailEnabled: config.briefMailEnabled === true,
+          mail,
           storage: storage as StorageProvider & BriefActorStorageSeam,
           logger,
         });
@@ -273,6 +283,8 @@ export function createRemindersProviders(
         REMINDER_REPOSITORY,
         { token: CALENDAR_READER, optional: true },
         { token: CONNECTOR_PROVIDERS, optional: true },
+        // BRF-3: bound only when Gmail is configured; read only with QUOKY_BRIEF_MAIL_ENABLED=true.
+        { token: MAIL_READER, optional: true },
       ],
     },
   ];

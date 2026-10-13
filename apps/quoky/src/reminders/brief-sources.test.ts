@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CalendarReader, ConnectorProvider } from '@quoky/core';
+import type { CalendarReader, ConnectorProvider, MailReader } from '@quoky/core';
 import { BRIEF_WORK_CONNECTOR_SOURCE, createBriefSources } from './brief-sources';
 
 const calendar: CalendarReader = { source: 'calendar', readOnly: true, listEvents: async () => [] };
@@ -39,5 +39,15 @@ describe('createBriefSources (ADR-0117 D1/D2, BRF-1)', () => {
     await expect(actors.get('a')).rejects.toThrow('actor storage is not initialized');
     storage.actors = { get: async () => null };
     await expect(actors.get('a')).resolves.toBeNull();
+  });
+
+  it('BRF-3: the mail reader is used only with QUOKY_BRIEF_MAIL_ENABLED=true and a bound reader', () => {
+    const mail: MailReader = { source: 'mail', readOnly: true, search: async () => ({ messages: [], matched: 0, matchedIsLowerBound: false }), getMessage: async () => { throw new Error('x'); } };
+    expect(createBriefSources({ briefJiraEnabled: false, mail, storage: {} })).toBeUndefined();
+    expect(createBriefSources({ briefJiraEnabled: false, briefMailEnabled: false, mail, storage: {} })).toBeUndefined();
+    expect(createBriefSources({ briefJiraEnabled: false, briefMailEnabled: true, mail: null, storage: {} })).toBeUndefined();
+    const sources = createBriefSources({ briefJiraEnabled: false, briefMailEnabled: true, mail, storage: {} });
+    expect(Object.keys(depsOf(sources))).toEqual(['mail']);
+    expect(depsOf(sources)['mail']).toBe(mail);
   });
 });

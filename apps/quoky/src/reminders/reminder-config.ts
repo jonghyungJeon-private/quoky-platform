@@ -24,6 +24,11 @@ export interface ReminderConfig {
    * configured, the daily brief adds the owner's assigned Jira items due or updated today (read-only, at most 5).
    */
   briefJiraEnabled: boolean;
+  /**
+   * `QUOKY_BRIEF_MAIL_ENABLED`, default false (ADR-0117 amendment, BRF-3). When true and Gmail is configured, the daily
+   * brief adds the unread count and at most 3 sender/subject lines (read-only, no body, no model, DM-only).
+   */
+  briefMailEnabled: boolean;
 }
 
 export const DEFAULT_REMINDER_TIME_ZONE = 'Asia/Seoul';
@@ -33,6 +38,7 @@ export const ReminderConfigErrorCode = {
   REMINDERS_CHANNEL_DELIVERY_INVALID: 'REMINDERS_CHANNEL_DELIVERY_INVALID',
   TIMEZONE_INVALID: 'TIMEZONE_INVALID',
   BRIEF_JIRA_ENABLED_INVALID: 'BRIEF_JIRA_ENABLED_INVALID',
+  BRIEF_MAIL_ENABLED_INVALID: 'BRIEF_MAIL_ENABLED_INVALID',
 } as const;
 export type ReminderConfigErrorCode = (typeof ReminderConfigErrorCode)[keyof typeof ReminderConfigErrorCode];
 
@@ -60,6 +66,8 @@ export function parseReminderConfig(env: NodeJS.ProcessEnv): ReminderConfig {
     timeZone: parseTimeZone(env.QUOKY_TIMEZONE),
     // ADR-0117 D2 (owner decision 21): the brief's Jira section is opt-in.
     briefJiraEnabled: parseBoolean(env.QUOKY_BRIEF_JIRA_ENABLED, false, ReminderConfigErrorCode.BRIEF_JIRA_ENABLED_INVALID),
+    // ADR-0117 amendment (BRF-3): the brief's unread-mail section is opt-in.
+    briefMailEnabled: parseBoolean(env.QUOKY_BRIEF_MAIL_ENABLED, false, ReminderConfigErrorCode.BRIEF_MAIL_ENABLED_INVALID),
   };
 }
 

@@ -9,8 +9,10 @@ import {
 } from '../../domain';
 import type { CalendarEvent } from '../../ports/calendar-reader.port';
 import type { ConnectorItem } from '../../ports/connector-provider.port';
+import type { MailMessageSummary } from '../../ports/mail-reader.port';
 import { calendarDayEventLines } from '../calendar/calendar-reply-renderer';
 import { containsCredentialMaterial } from '../credential-guard';
+import { senderOf, subjectOf } from '../mail/mail-reply-renderer';
 import { clipMessage, firstFit, joinBody, messageBody, takeLines, untrustedText } from '../message-rendering';
 import type { MessagePart } from '../message-rendering';
 import { localDateOf, toZonedDateTime, type LocalDate } from './zoned-time';
@@ -38,6 +40,19 @@ export interface DailyBriefCalendar {
   readonly limit: number;
 }
 
+/** Unread mail lines listed (ADR-0117 BRF-3: the count and at most 3 sender/subject lines). */
+export const DAILY_BRIEF_MAX_MAIL_ENTRIES = 3;
+
+/**
+ * The brief's unread-mail read (ADR-0117 BRF-3): the one unread search's count (`lowerBound`: it stopped at its bound)
+ * and its newest messages. Only sender and subject are ever shown; body, snippet and id are not.
+ */
+export interface DailyBriefMail {
+  readonly count: number;
+  readonly lowerBound: boolean;
+  readonly messages: readonly MailMessageSummary[];
+}
+
 const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'] as const;
 
 /** `null` marks a source that could not be read; the brief says so instead of pretending it is empty. */
@@ -61,6 +76,11 @@ export interface DailyBriefInput {
    * read. Otherwise the owner's assigned open items as read; only those due or updated today (in `timeZone`) are shown.
    */
   readonly assignedWork?: readonly ConnectorItem[] | null;
+  /**
+   * ADR-0117 BRF-3 (`QUOKY_BRIEF_MAIL_ENABLED`, default off). Omitted: the section is off and the brief is byte-identical.
+   * `null`: the mailbox could not be read, which the brief says (never "no mail").
+   */
+  readonly mail?: DailyBriefMail | null;
 }
 
 /** `오전 9:00` / `오후 3:30` (12-hour with a Korean meridiem marker). */
@@ -251,6 +271,18 @@ function assignedWorkSection(items: readonly ConnectorItem[] | null, input: Dail
   return listSection(`오늘 마감·업데이트된 담당 이슈 ${today.length}건`, today.map(workLine), DAILY_BRIEF_MAX_WORK_ENTRIES);
 }
 
+/**
+ * ADR-0117 BRF-3: "안 읽은 메일 N건" and at most 3 `- sender · subject` lines (the mail listing's guarded, untrusted,
+ * link-neutralized spans; no number, id, snippet or body), or the empty / unreadable note.
+ */
+function mailSection(mail: DailyBriefMail | null): BriefSection {
+  if (mail === null) return noticeSection('안 읽은 메일: 불러오지 못했어요.');
+  if (mail.count <= 0 && mail.messages.length === 0) return noticeSection('안 읽은 메일이 없어요.');
+  const count = Math.max(mail.count, mail.messages.length);
+  const lines = mail.messages.map((message): MessageBody => messageBody('- ', senderOf(message, 'ko'), ' · ', subjectOf(message, 'ko')));
+  return listSection(`안 읽은 메일 ${count}건${mail.lowerBound ? ' 이상' : ''}`, lines, DAILY_BRIEF_MAX_MAIL_ENTRIES);
+}
+
 /** What a section needs even when every one of its items is dropped: its blank separator, head and "외 N건" line. */
 function mandatoryChars(section: BriefSection): number {
   const head = section.head.reduce((sum, line) => sum + 1 + codePoints(line), 0);
@@ -319,5 +351,6 @@ export function composeDailyBrief(input: DailyBriefInput): MessageBody {
   if (input.calendar !== undefined) sections.push(calendarSection(input.calendar, input));
   sections.push(remindersSection(input), workItemsSection(input));
   if (input.assignedWork !== undefined) sections.push(assignedWorkSection(input.assignedWork, input));
+  if (input.mail !== undefined) sections.push(mailSection(input.mail));
   return boundedBrief(header, sections);
 }

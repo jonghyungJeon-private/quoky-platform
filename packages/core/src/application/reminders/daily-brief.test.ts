@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { REMINDER_LIMITS, ReminderStatus, WorkItemStatus, type Reminder, type WorkItem } from '../../domain';
 import type { CalendarEvent } from '../../ports/calendar-reader.port';
 import type { ConnectorItem } from '../../ports/connector-provider.port';
+import type { MailMessageSummary } from '../../ports/mail-reader.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import {
   DAILY_BRIEF_MAX_ENTRIES,
+  DAILY_BRIEF_MAX_MAIL_ENTRIES,
   DAILY_BRIEF_MAX_WORK_ENTRIES,
   composeDailyBrief as composeDailyBriefBody,
   dailyBriefWorkForToday,
@@ -483,4 +485,95 @@ describe('composeDailyBrief — the full brief is kept whenever it fits (BRF-1 r
     }
     expect([...seen].sort()).toEqual(['exactly at the budget', 'one over the budget']);
   }, 60_000);
+});
+
+describe('composeDailyBrief — unread mail section (ADR-0117 BRF-3, opt-in)', () => {
+  const base = { now: NOW, timeZone: ZONE, reminders: [] as Reminder[], workItems: [] as WorkItem[] };
+  const mail = (n: number, overrides: Partial<MailMessageSummary> = {}): MailMessageSummary => ({
+    id: `m${n}`,
+    sender: { name: `보낸이${n}`, address: `s${n}@example.com` },
+    subject: `제목${n}`,
+    receivedAt: '2026-10-01T22:00:00.000Z',
+    snippet: 'SNIPPET-MUST-NOT-APPEAR',
+    unread: true,
+    ...overrides,
+  });
+
+  it('flag off (mail omitted): byte-identical to the brief without the key', () => {
+    expect(composeDailyBrief({ ...base })).toBe(composeDailyBrief({ ...base, mail: undefined }));
+    expect(composeDailyBrief({ ...base })).not.toContain('메일');
+  });
+
+  it('2 unread: the count and both lines; no snippet, id or numbering', () => {
+    const text = composeDailyBrief({ ...base, mail: { count: 2, lowerBound: false, messages: [mail(1), mail(2)] } });
+    expect(text).toContain('\n안 읽은 메일 2건\n- 보낸이1 · 제목1\n- 보낸이2 · 제목2');
+    expect(text).not.toContain('SNIPPET');
+    expect(text).not.toContain('m1');
+    expect(text).not.toMatch(/\d+\. /);
+  });
+
+  it('40 unread: the count, at most 3 lines, "이상" when the count stopped at its bound', () => {
+    const messages = [1, 2, 3].map((n) => mail(n));
+    const text = composeDailyBrief({ ...base, mail: { count: 40, lowerBound: false, messages } });
+    expect(text).toContain('안 읽은 메일 40건');
+    expect(text.match(/^- 보낸이/gm)).toHaveLength(3);
+    const capped = composeDailyBrief({ ...base, mail: { count: 100, lowerBound: true, messages: [1, 2, 3, 4, 5].map((n) => mail(n)) } });
+    expect(capped).toContain('안 읽은 메일 100건 이상');
+    expect(capped.match(/^- 보낸이/gm)).toHaveLength(DAILY_BRIEF_MAX_MAIL_ENTRIES);
+  });
+
+  it('0 unread says so; an unreadable mailbox says it could not be read, never "no mail"', () => {
+    expect(composeDailyBrief({ ...base, mail: { count: 0, lowerBound: false, messages: [] } })).toContain('안 읽은 메일이 없어요.');
+    const failed = composeDailyBrief({ ...base, mail: null });
+    expect(failed).toContain('안 읽은 메일: 불러오지 못했어요.');
+    expect(failed).not.toContain('안 읽은 메일이 없어요');
+  });
+
+  it('a mail failure leaves every other section intact', () => {
+    const without = composeDailyBrief({ ...base, reminders: null });
+    const failed = composeDailyBrief({ ...base, reminders: null, mail: null });
+    expect(failed.startsWith(without)).toBe(true);
+  });
+
+  it('sender and subject are untrusted spans with neutralized links and a credential guard', () => {
+    const body = composeDailyBriefBody({
+      ...base,
+      mail: {
+        count: 3,
+        lowerBound: false,
+        messages: [
+          mail(1, { subject: '확인 https://evil.example/login 요망', sender: { name: '@everyone <@123>', address: '' } }),
+          mail(2, { subject: 'key sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }),
+          mail(3, { sender: { name: '', address: '' }, subject: '' }),
+        ],
+      },
+    });
+    const probed = renderMessageContent(body, { ...PLAIN_TEXT_MARKUP, untrusted: (text, guard) => `«${guard}:${text}»` });
+    expect(probed).not.toContain('https://evil.example');
+    expect(probed).toMatch(/- «[^»]*@everyone/);
+    expect(probed).toContain('(제목 숨김)');
+    expect(probed).toContain('- (보낸 사람 없음) · (제목 없음)');
+    expect(plainTextOf(body)).not.toContain('sk-ant');
+  });
+
+  it('keeps the brief inside one message: mail lines shrink before calendar and reminder lines', () => {
+    const long = (n: number) => mail(n, { subject: '가'.repeat(200), sender: { name: '나'.repeat(100), address: '' } });
+    const events: CalendarEvent[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `e${i}`,
+      title: `일정${i}`.padEnd(120, '가'),
+      start: `2026-10-02T0${i % 9}:00:00.000Z`,
+      end: `2026-10-02T0${i % 9}:30:00.000Z`,
+      allDay: false,
+      status: 'confirmed',
+      calendarName: 'primary',
+    }));
+    const text = composeDailyBrief({
+      ...base,
+      calendar: { events, limit: 50 },
+      mail: { count: 9, lowerBound: false, messages: [long(1), long(2), long(3)] },
+    });
+    expect(Array.from(text).length).toBeLessThanOrEqual(REMINDER_LIMITS.maxDeliveredTextChars);
+    expect(text).toContain('안 읽은 메일 9건');
+    expect(text).toContain('오늘 일정 10건');
+  });
 });
