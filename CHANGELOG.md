@@ -5,6 +5,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — DRV-2 Drive shared drives, DRV-2b every sheet of a spreadsheet (ADR-0118 amendment, 2026-10-13)
+
+- **Shared drives (DRV-2).** Drive search and `최근 문서` include the owner's shared drives (`corpora=allDrives`,
+  `includeItemsFromAllDrives`, `supportsAllDrives`; metadata reads with `supportsAllDrives`). The scope is still
+  `drive.readonly`, with at most 10 entries, DM-only, and no model call. Each parameter is accepted only with its one
+  value. `files.export` carries `mimeType` only, which is its one documented parameter (a recorded deviation from the
+  amendment text).
+- **Every sheet (DRV-2b).** A spreadsheet summary reads every grid sheet through the Sheets API v4
+  (`connector-gdrive/src/sheets-reader.ts`) under the same `drive.readonly` grant, so no new scope or consent is needed.
+  It makes two GETs: the sheet list (titles, indexes and types only), then one `values:batchGet` (`FORMATTED_VALUE`,
+  `ROWS`).
+  - **Bounds:** 20 sheets, A–Z, 40,000 cells, 1,000 characters per cell, and 256 KiB of text across sheets.
+  - **Core:** each sheet gets a JSON-quoted untrusted-title header and a fair share of the 3,000-character summary body.
+    The credential guard runs before and after the clip.
+- **Fallback.** If the Sheets API is disabled (403 `SERVICE_DISABLED` / `accessNotConfigured`), unavailable, refused
+  or too large, the summary uses the old first-sheet CSV with one note, for example "(첫 번째 시트만 읽었어요 · 모든 시트를
+  읽으려면 Google Sheets API가 필요해요)". Consent errors keep the consent reply.
+- **Egress (S0).** New allowlisted host `sheets.googleapis.com`, added only when Drive is configured. It has the budget
+  label `google-sheets` (connector caps) and the ledger template `/v4/spreadsheets/{id}[/values:batchGet]`, with a
+  closed method list. The self-check static host list includes it. No other host is added.
+- **Port.** `DriveDocument` gains optional `sections` and `firstSheetOnly` (additive, vendor-free). There is no
+  migration, token or deps change.
+- **CA review fixes.**
+  - The 256 KiB adapter budget is shared fairly between sheets, so a large first sheet no longer starves the rest, and
+    each cut sheet is marked `(partial)`.
+  - The credential guard runs on raw titles, cut cells and cut sheets before the cut (`credentialShaped` withholds the
+    item).
+  - A Sheets `INSUFFICIENT_SCOPE` falls back with the `not-permitted` note.
+  - Hidden sheets are skipped and counted in the footer ("숨김 시트 N개 제외").
+  - The single-sheet note is truthful.
+  - `incompleteSearch` marks partial shared-drive listings.
+
 ## Unreleased — S1: NL-2 Phase C, model-first selection (ADR-0120 D6, ADR-0121 S1, 2026-10-13)
 
 - **`QUOKY_NL_PHASE`** (`a` | `c`, exact, default `a`). `c` with `QUOKY_NL_INTENT_MODE=active` runs the natural-language

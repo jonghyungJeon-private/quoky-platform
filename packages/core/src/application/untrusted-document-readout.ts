@@ -63,7 +63,29 @@ export interface BuildUntrustedDocumentReadoutInput {
   readonly body: string;
   /** The source already cut the body (for example at the adapter's 256 KiB bound). */
   readonly sourceTruncated?: boolean;
+  /**
+   * DRV-2b: a spreadsheet read sheet by sheet. When present and non-empty it REPLACES `body`: every section gets a fixed
+   * header carrying its untrusted title JSON-quoted, and a fair share of the body budget, so a later sheet is never
+   * clipped away whole by the head-and-tail clip of one long first sheet. At most
+   * {@link UNTRUSTED_DOCUMENT_SECTIONS_MAX} are read; the rest are dropped and the readout is marked truncated.
+   */
+  readonly sections?: readonly UntrustedDocumentSection[];
 }
+
+/** One untrusted section of an item (a sheet of a spreadsheet): its title and its text. */
+export interface UntrustedDocumentSection {
+  readonly title: string;
+  readonly body: string;
+  /** The source already cut this section; its header says `(partial)`. */
+  readonly truncated?: boolean;
+}
+
+/** At most this many sections are read into one readout (the DRV-2b sheet bound). */
+export const UNTRUSTED_DOCUMENT_SECTIONS_MAX = 20;
+/** A section title is cut to this many code points in its header (the full title is still credential-guarded). */
+export const UNTRUSTED_DOCUMENT_SECTION_TITLE_MAX_CHARS = 60;
+/** The text of a section that has no values. */
+const EMPTY_SECTION_TEXT = '(empty)';
 
 /** Why an item cannot be summarized; nothing is sent in either case. */
 export type UntrustedDocumentRefusal = 'CREDENTIAL_SHAPED' | 'EMPTY';
@@ -123,7 +145,8 @@ function isCredentialShaped(text: string): boolean {
  * withheld, never redacted).
  */
 export function buildUntrustedDocumentReadout(input: BuildUntrustedDocumentReadoutInput): UntrustedDocumentBuildResult {
-  const body = neutralizeLinks(prepareBody(typeof input.body === 'string' ? input.body : ''), 'body');
+  const sections = preparedSections(input.sections);
+  const body = sections !== undefined ? sections.full : neutralizeLinks(prepareBody(typeof input.body === 'string' ? input.body : ''), 'body');
   if (body.length === 0) return { ok: false, refusal: 'EMPTY' };
   // Review P1: the guard runs on the FULL normalized fields before any clip — a clip could cut a credential's key
   // (`password:`) while keeping its value — and again below on the exact clipped payload.
@@ -132,7 +155,9 @@ export function buildUntrustedDocumentReadout(input: BuildUntrustedDocumentReado
   if ([body, fullTitle, fullAuthor].some((field) => field.length > 0 && isCredentialShaped(field))) {
     return { ok: false, refusal: 'CREDENTIAL_SHAPED' };
   }
-  const clipped = clipHeadAndTail(body, UNTRUSTED_DOCUMENT_BODY_MAX_CHARS);
+  // The full sectioned body was guarded above (every title and every sheet, before any clip); the clipped one is guarded
+  // again below with the rest of the readout.
+  const clipped = sections !== undefined ? clipSections(sections, UNTRUSTED_DOCUMENT_BODY_MAX_CHARS) : clipHeadAndTail(body, UNTRUSTED_DOCUMENT_BODY_MAX_CHARS);
   const dateMs = Date.parse(input.date);
   const readout: UntrustedDocumentReadout = {
     kind: UNTRUSTED_DOCUMENT_READOUT_KIND,
@@ -141,12 +166,91 @@ export function buildUntrustedDocumentReadout(input: BuildUntrustedDocumentReado
     author: oneLine(typeof input.author === 'string' ? input.author : '', UNTRUSTED_DOCUMENT_AUTHOR_MAX_CHARS),
     date: Number.isFinite(dateMs) ? new Date(dateMs).toISOString() : '',
     body: clipped.text,
-    truncated: clipped.truncated || input.sourceTruncated === true,
+    truncated: clipped.truncated || input.sourceTruncated === true || (sections?.dropped ?? false),
   };
   if (!isSummarizableDocumentReadout(readout)) {
     return { ok: false, refusal: 'CREDENTIAL_SHAPED' };
   }
   return { ok: true, readout };
+}
+
+interface PreparedSection {
+  /** `[Sheet i/n] "<title>"`: a fixed frame around the JSON-quoted, normalized, one-line, link-neutralized title. */
+  readonly header: string;
+  /** The prepared, link-neutralized section text; {@link EMPTY_SECTION_TEXT} when it has none. */
+  readonly body: string;
+  /** Whether the section had no text of its own. */
+  readonly empty: boolean;
+}
+
+interface PreparedSections {
+  readonly list: readonly PreparedSection[];
+  /** Every section, headers included, unclipped: what the credential guard reads first. */
+  readonly full: string;
+  /** More sections were given than {@link UNTRUSTED_DOCUMENT_SECTIONS_MAX}. */
+  readonly dropped: boolean;
+}
+
+/**
+ * DRV-2b: the sections normalized like a body. The full title is credential-guarded through the full body (the header
+ * carries it unclipped up to the one-line bound); the header shows at most
+ * {@link UNTRUSTED_DOCUMENT_SECTION_TITLE_MAX_CHARS} code points of it. `undefined` when there are no sections, or when
+ * every section is empty (then the item has no text: `EMPTY`).
+ */
+function preparedSections(sections: readonly UntrustedDocumentSection[] | undefined): PreparedSections | undefined {
+  if (!Array.isArray(sections) || sections.length === 0) return undefined;
+  const kept = sections.slice(0, UNTRUSTED_DOCUMENT_SECTIONS_MAX);
+  const total = kept.length;
+  const prepared = kept.map((section, index): PreparedSection & { readonly fullHeader: string } => {
+    const rawTitle = typeof section?.title === 'string' ? section.title : '';
+    const text = neutralizeLinks(prepareBody(typeof section?.body === 'string' ? section.body : ''), 'body');
+    const partial = section?.truncated === true ? ' (partial)' : '';
+    const frame = (title: string): string => `[Sheet ${index + 1}/${total}] ${JSON.stringify(title)}${partial}`;
+    return {
+      header: frame(oneLine(rawTitle, UNTRUSTED_DOCUMENT_SECTION_TITLE_MAX_CHARS)),
+      fullHeader: frame(neutralizeLinks(normalizeUntrustedText(rawTitle), 'display').replace(/\s+/g, ' ').trim()),
+      body: text.length > 0 ? text : EMPTY_SECTION_TEXT,
+      empty: text.length === 0,
+    };
+  });
+  if (prepared.every((section) => section.empty)) return { list: [], full: '', dropped: false };
+  return {
+    list: prepared.map(({ header, body, empty }) => ({ header, body, empty })),
+    full: prepared.map((section) => `${section.fullHeader}\n${section.body}`).join('\n\n'),
+    dropped: sections.length > UNTRUSTED_DOCUMENT_SECTIONS_MAX,
+  };
+}
+
+/**
+ * DRV-2b fair clip: every section keeps its header, and the body budget left after the headers and separators is shared
+ * between the sections (water-filling: a short section gives its unused share to the longer ones). Each longer section
+ * is clipped head and tail into its share. The joins are newlines, so a clip boundary never joins two fragments into a
+ * link or a credential; the result is guarded again by the caller. A rounding overrun falls back to one head-and-tail
+ * clip of the whole, so the bound always holds.
+ */
+function clipSections(sections: PreparedSections, max: number): { text: string; truncated: boolean } {
+  const list = sections.list;
+  const length = (value: string): number => Array.from(value).length;
+  const overhead = list.reduce((sum, section, index) => sum + length(section.header) + 1 + (index > 0 ? 2 : 0), 0);
+  let room = Math.max(0, max - overhead);
+  const shares = new Array<number>(list.length).fill(0);
+  const pending = list.map((section, index) => ({ index, need: length(section.body) })).sort((a, b) => a.need - b.need);
+  for (const [position, entry] of pending.entries()) {
+    const share = Math.floor(room / (pending.length - position));
+    const given = Math.min(entry.need, share);
+    shares[entry.index] = given;
+    room -= given;
+  }
+  let truncated = false;
+  const text = list
+    .map((section, index) => {
+      const clipped = clipHeadAndTail(section.body, shares[index] ?? 0);
+      if (clipped.truncated) truncated = true;
+      return `${section.header}\n${clipped.text}`;
+    })
+    .join('\n\n');
+  if (length(text) <= max) return { text, truncated };
+  return { text: clipHeadAndTail(text, max).text, truncated: true };
 }
 
 /** Whether `value` is an untrusted-document readout (vs. the ADR-0019 project or ADR-0100 external-work readouts). */

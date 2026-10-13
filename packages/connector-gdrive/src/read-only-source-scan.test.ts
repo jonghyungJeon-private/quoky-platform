@@ -15,7 +15,9 @@ const code = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\
 
 describe('connector-gdrive read-only source scan (ADR-0118 D3/D6)', () => {
   it('scans the whole package', () => {
-    expect(sources.map((source) => source.name).sort()).toEqual(['errors.ts', 'gdrive-reader.ts', 'index.ts', 'oauth.ts', 'text.ts', 'token-file.ts']);
+    expect(sources.map((source) => source.name).sort()).toEqual([
+      'errors.ts', 'gdrive-reader.ts', 'index.ts', 'oauth.ts', 'sheets-reader.ts', 'text.ts', 'token-file.ts',
+    ]);
   });
 
   it('names no Drive write endpoint, sharing call or upload', () => {
@@ -39,8 +41,15 @@ describe('connector-gdrive read-only source scan (ADR-0118 D3/D6)', () => {
       /addParents|removeParents/,
       /\btrashed\s*[:=]\s*true\b/,
       /\bpageToken\b/,
-      /supportsAllDrives|includeItemsFromAllDrives|corpora/,
       /acknowledgeAbuse/,
+      // DRV-2b: no Sheets write method, no grid data, no formula rendering, no developer metadata or sheet copy.
+      /batchUpdate/,
+      /values:(?:update|append|clear|batchUpdate|batchClear|batchUpdateByDataFilter|batchClearByDataFilter|batchGetByDataFilter)/,
+      /:append\b|:clear\b/,
+      /includeGridData/,
+      /['"`]FORMULA['"`]|UNFORMATTED_VALUE/,
+      /developerMetadata|copyTo|getByDataFilter/,
+      /spreadsheets\.readonly|auth\/spreadsheets/,
     ];
     for (const { name, text } of sources) {
       for (const pattern of forbidden) expect(code(text), `${name} ${pattern}`).not.toMatch(pattern);
@@ -79,8 +88,11 @@ describe('connector-gdrive read-only source scan (ADR-0118 D3/D6)', () => {
       'oauth.ts', // the token POST
     ]);
     const reader = code(sources.find((source) => source.name === 'gdrive-reader.ts')?.text ?? '');
-    // The GET site asserts the read-only allowlist before it sends.
-    expect(reader).toMatch(/assertGDriveReadRequest\(url, method\);\s*try \{\s*return await this\.fetchImpl\(url,/);
+    // The GET site asserts the read-only allowlist (Drive, or the DRV-2b Sheets read) before it sends.
+    expect(reader).toMatch(/assertGoogleReadRequest\(url, method\);\s*try \{\s*return await this\.fetchImpl\(url,/);
+    // The Sheets module builds and checks requests only: it holds no request site of its own.
+    const sheets = code(sources.find((source) => source.name === 'sheets-reader.ts')?.text ?? '');
+    expect(sheets).not.toMatch(/\bfetch(?:Impl)?\b/);
     expect(code(sources.map((source) => source.text).join('\n'))).not.toMatch(/\bfetch\(/);
   });
 
@@ -110,10 +122,24 @@ describe('connector-gdrive read-only source scan (ADR-0118 D3/D6)', () => {
     expect([...new Set(scopes)]).toEqual(['https://www.googleapis.com/auth/drive.readonly']);
   });
 
-  it('pins its egress to the Drive API and OAuth hosts', () => {
+  it('DRV-2: the shared-drive parameters are fixed values in one table, never a write or a broader corpus', () => {
+    const reader = code(sources.find((source) => source.name === 'gdrive-reader.ts')?.text ?? '');
+    expect(reader).toMatch(/corpora: 'allDrives',\s*includeItemsFromAllDrives: 'true',\s*supportsAllDrives: 'true',/);
+    expect(reader).not.toMatch(/corpora\s*[:=]\s*['"`](?:domain|drive|user)/);
+    expect(reader).not.toMatch(/driveId/);
+  });
+
+  it('DRV-2b: Sheets reads are values only, formatted, by rows; the two paths are pinned', () => {
+    const sheets = code(sources.find((source) => source.name === 'sheets-reader.ts')?.text ?? '');
+    expect(sheets).toMatch(/GSHEETS_VALUE_RENDER_OPTION = 'FORMATTED_VALUE'/);
+    expect(sheets).toMatch(/GSHEETS_MAJOR_DIMENSION = 'ROWS'/);
+    expect([...sheets.matchAll(/`\/v4\/spreadsheets\/\$\{encodeURIComponent\(id\)\}([^`]*)`/g)].map((match) => match[1])).toEqual(['', '/values:batchGet']);
+  });
+
+  it('pins its egress to the Drive API, Sheets API and OAuth hosts', () => {
     const hosts = new Set(
       sources.flatMap(({ text }) => [...code(text).matchAll(/['"`]\w+:\/\/([a-z0-9.-]+)/gi)].map((match) => match[1])),
     );
-    expect([...hosts].sort()).toEqual(['accounts.google.com', 'oauth2.googleapis.com', 'www.googleapis.com']);
+    expect([...hosts].sort()).toEqual(['accounts.google.com', 'oauth2.googleapis.com', 'sheets.googleapis.com', 'www.googleapis.com']);
   });
 });

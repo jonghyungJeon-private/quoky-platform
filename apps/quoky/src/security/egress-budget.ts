@@ -83,6 +83,8 @@ export const EGRESS_BUDGETS: Readonly<Record<string, LabelBudget>> = Object.free
   google: CONNECTOR,
   'google-calendar': { ...CONNECTOR, rateExempt: OWNER_DELIVERY_EXEMPT },
   'google-drive': CONNECTOR,
+  // DRV-2b: at most two reads per spreadsheet summary (the sheet list, one values read).
+  'google-sheets': CONNECTOR,
   gmail: CONNECTOR,
   'google-oauth': CONNECTOR,
   // Atlassian, Slack, GitHub (each): ≤ 20/min, ≤ 300/h; Slack search ≤ 10/min (an owner turn: 3× each).

@@ -13,6 +13,7 @@ import {
   type ConnectorQueryErrorReason,
   type DriveDocument,
   type DriveFileKind,
+  type DriveFirstSheetOnlyReason,
   type DriveListingKind,
   type DriveFileSummary,
   type DriveListResult,
@@ -24,13 +25,28 @@ import {
   GDriveRequestError,
   GDriveResponseError,
   GDriveResponseTooLargeError,
+  GDriveScopeError,
+  type GDriveEndpoint,
 } from './errors';
 import { refreshGDriveAccessToken, type GDriveAccessToken } from './oauth';
+import {
+  GSHEETS_API_ORIGIN,
+  GSHEETS_META_MAX_BYTES,
+  GSHEETS_VALUES_MAX_BYTES,
+  assertGSheetsReadRequest,
+  gsheetsMetaUrl,
+  gsheetsRowsPerSheet,
+  gsheetsValuesUrl,
+  parseGSheetTargets,
+  renderGSheetsValues,
+  type GSheetsText,
+} from './sheets-reader';
 import { decodeBoundedUtf8 } from './text';
 
 /**
- * Every Drive API call goes to this origin (ADR-0118 D2/D3: egress to www.googleapis.com and oauth2.googleapis.com
- * only). Pinned: the client never builds a URL from configuration or response data.
+ * Every Drive API call goes to this origin (ADR-0118 D2/D3: egress to www.googleapis.com and oauth2.googleapis.com,
+ * plus sheets.googleapis.com for the DRV-2b per-sheet read, `sheets-reader.ts`). Pinned: the client never builds a URL
+ * from configuration or response data.
  */
 export const GDRIVE_API_ORIGIN = 'https://www.googleapis.com';
 /** The source's display name for Core's neutral Drive copy (the GML-1 review P3-6 rule). */
@@ -41,9 +57,22 @@ const LIST_PATH = /^\/drive\/v3\/files$/;
 const GET_PATH = /^\/drive\/v3\/files\/[A-Za-z0-9_-]{1,128}$/;
 const EXPORT_PATH = /^\/drive\/v3\/files\/[A-Za-z0-9_-]{1,128}\/export$/;
 /** The only query parameters each read may carry. */
-const LIST_PARAMS: ReadonlySet<string> = new Set(['q', 'pageSize', 'orderBy', 'fields', 'spaces']);
-const GET_PARAMS: ReadonlySet<string> = new Set(['fields']);
+const LIST_PARAMS: ReadonlySet<string> = new Set([
+  'q', 'pageSize', 'orderBy', 'fields', 'spaces', 'corpora', 'includeItemsFromAllDrives', 'supportsAllDrives',
+]);
+const GET_PARAMS: ReadonlySet<string> = new Set(['fields', 'supportsAllDrives']);
 const EXPORT_PARAMS: ReadonlySet<string> = new Set(['mimeType']);
+/**
+ * DRV-2 (ADR-0118 amendment 2026-10-12 (b)): the shared-drive parameters, each with its ONE allowed value. A listing
+ * searches My Drive, files shared with the owner and the owner's shared drives; a metadata read supports a shared-drive
+ * file. `files.export` documents `mimeType` as its only parameter and exports a shared-drive file by id, so it carries
+ * none of these (see the implementation note).
+ */
+export const GDRIVE_ALL_DRIVES_PARAMS: Readonly<Record<string, string>> = Object.freeze({
+  corpora: 'allDrives',
+  includeItemsFromAllDrives: 'true',
+  supportsAllDrives: 'true',
+});
 
 /** The vendor types this adapter maps; Core only ever sees a {@link DriveFileKind}. */
 const GOOGLE_DOCUMENT = 'application/vnd.google-apps.document';
@@ -59,8 +88,8 @@ export const GDRIVE_EXPORT_TYPES: Readonly<Record<string, string>> = Object.free
 });
 
 /** Minimised partial responses: listing fields only; ids only for the count; no owner, sharing, link or size. */
-export const GDRIVE_LIST_FIELDS = 'files(id,name,mimeType,modifiedTime),nextPageToken';
-export const GDRIVE_COUNT_FIELDS = 'files(id),nextPageToken';
+export const GDRIVE_LIST_FIELDS = 'files(id,name,mimeType,modifiedTime),nextPageToken,incompleteSearch';
+export const GDRIVE_COUNT_FIELDS = 'files(id),nextPageToken,incompleteSearch';
 export const GDRIVE_GET_FIELDS = 'id,name,mimeType,modifiedTime,owners(displayName)';
 /** Response size bounds per call (bytes). A larger JSON response is refused and its body is not kept. */
 export const GDRIVE_LIST_MAX_BYTES = 512 * 1024;
@@ -85,8 +114,10 @@ export interface GoogleDriveReaderConfig {
  * Refuses any request outside the read-only allowlist BEFORE it is sent: the method must be GET and the origin the
  * pinned Drive API origin; then exactly one of
  *
- * - `files` (list) with `q`, `pageSize`, `orderBy`, `fields`, `spaces`;
- * - `files/{id}` (get) with `fields` only (never `alt`: no file is ever downloaded);
+ * - `files` (list) with `q`, `pageSize`, `orderBy`, `fields`, `spaces`, and the DRV-2 shared-drive parameters
+ *   `corpora=allDrives`, `includeItemsFromAllDrives=true`, `supportsAllDrives=true` (each only with that value; never
+ *   `driveId` or `pageToken`);
+ * - `files/{id}` (get) with `fields` and `supportsAllDrives=true` only (never `alt`: no file is ever downloaded);
  * - `files/{id}/export` with `mimeType` exactly `text/plain` or `text/csv`.
  *
  * There is no code path that sends anything else; this is the runtime half of the read-only guarantee (the source scan
@@ -98,6 +129,10 @@ export function assertGDriveReadRequest(url: URL, method: string): void {
   const keys = [...url.searchParams.keys()];
   const only = (allowed: ReadonlySet<string>) => {
     if (keys.some((key) => !allowed.has(key)) || new Set(keys).size !== keys.length) throw new GDriveEndpointNotAllowedError();
+    // A shared-drive parameter carries its one fixed value, never another (`corpora=domain`, `supportsAllDrives=false`).
+    for (const [key, value] of Object.entries(GDRIVE_ALL_DRIVES_PARAMS)) {
+      if (url.searchParams.has(key) && url.searchParams.get(key) !== value) throw new GDriveEndpointNotAllowedError();
+    }
   };
   if (LIST_PATH.test(url.pathname)) {
     only(LIST_PARAMS);
@@ -114,6 +149,18 @@ export function assertGDriveReadRequest(url: URL, method: string): void {
     return;
   }
   throw new GDriveEndpointNotAllowedError();
+}
+
+/**
+ * The request guard of the reader's single request site: a Sheets API request (DRV-2b) is checked by
+ * `assertGSheetsReadRequest`, every other request by {@link assertGDriveReadRequest}. Nothing reaches another origin.
+ */
+export function assertGoogleReadRequest(url: URL, method: string): void {
+  if (url.origin === GSHEETS_API_ORIGIN) {
+    assertGSheetsReadRequest(url, method);
+    return;
+  }
+  assertGDriveReadRequest(url, method);
 }
 
 const GDRIVE_LISTING_MIME: Readonly<Record<DriveListingKind, string>> = Object.freeze({
@@ -159,7 +206,9 @@ export function driveKindOf(mimeType: unknown): DriveFileKind {
  * `files.list` / `files.get` / `files.export` endpoints only, through one guarded request function; the grant must be
  * exactly `drive.readonly`; a timeout on every call, redirects refused, every JSON response size-bounded, the exported
  * text cut at {@link DRIVE_TEXT_MAX_BYTES} while it streams, result counts bounded (one page of at most 10 files, one
- * ids-only page of at most 100 for the count). Only Google Docs (as `text/plain`), Google Sheets (as `text/csv`) are ever
+ * ids-only page of at most 100 for the count). Listings cover the owner's shared drives (DRV-2). A spreadsheet is read
+ * sheet by sheet through the pinned Sheets API values read (DRV-2b), falling back to its first sheet as `text/csv` with
+ * a closed note when that read is not possible. Only Google Docs (as `text/plain`), Google Sheets (as values) are ever
  * read (an uploaded text file is listed, never downloaded); no other file content, no binary download. No upload, create, edit, copy, move,
  * rename, trash, delete, share or permission call exists. The access token lives in memory only; the refresh token,
  * client secret and access token are never logged and never appear in an error.
@@ -198,6 +247,7 @@ export class GoogleDriveReader implements DriveReader {
     if (!isValidDriveFileId(id)) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'gdrive: invalid file id');
     const meta = this.filesUrl(id);
     meta.searchParams.set('fields', GDRIVE_GET_FIELDS);
+    meta.searchParams.set('supportsAllDrives', GDRIVE_ALL_DRIVES_PARAMS.supportsAllDrives as string);
     const payload = await this.readJson(meta, GDRIVE_GET_MAX_BYTES);
     const summary = mapFile(payload, id);
     // The kind is re-checked here, from the vendor type: only a Google Doc or Sheet has a text export (D2).
@@ -205,17 +255,93 @@ export class GoogleDriveReader implements DriveReader {
     if (!isDriveTextExportable(summary.kind) || exportType === undefined) {
       throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'gdrive: the file has no text export');
     }
+    const owners = Array.isArray(payload.owners) ? payload.owners : [];
+    const owner = isRecord(owners[0]) ? owners[0].displayName : undefined;
+    const base = { ...summary, ownerName: boundDriveLine(owner, DRIVE_OWNER_NAME_MAX_LENGTH) };
+    // DRV-2b: a spreadsheet is read sheet by sheet; if that read is not possible, its first sheet as CSV, with a note.
+    let firstSheetOnly: DriveFirstSheetOnlyReason | undefined;
+    let hiddenSheetsSkipped = 0;
+    if (summary.kind === 'spreadsheet') {
+      const sheets = await this.readAllSheets(id);
+      if (sheets.ok) {
+        const { value } = sheets;
+        return {
+          ...base,
+          text: value.text,
+          textTruncated: value.truncated,
+          sections: value.sections,
+          ...(value.hidden > 0 ? { hiddenSheetsSkipped: value.hidden } : {}),
+          ...(value.credentialShaped ? { credentialShaped: true } : {}),
+        };
+      }
+      // CA re-review: the CSV fallback exports the first grid sheet; when that sheet is hidden it is never exported (a
+      // hidden sheet is never read), and the summary answers honestly that the spreadsheet could not be read now.
+      if (sheets.known?.firstGridHidden === true) {
+        throw new ConnectorQueryError('UNAVAILABLE', 'gdrive: the spreadsheet could not be read sheet by sheet');
+      }
+      // CA review suggestion: when the sheet list was read and shows exactly one visible sheet and no hidden one, the
+      // first sheet IS the whole spreadsheet, so no "first sheet only" note is shown.
+      if (!(sheets.known !== undefined && sheets.known.visible === 1 && sheets.known.hidden === 0)) firstSheetOnly = sheets.reason;
+      hiddenSheetsSkipped = sheets.known?.hidden ?? 0;
+    }
     const url = this.filesUrl(id, '/export');
     url.searchParams.set('mimeType', exportType);
     const body = await this.readText(url);
-    const owners = Array.isArray(payload.owners) ? payload.owners : [];
-    const owner = isRecord(owners[0]) ? owners[0].displayName : undefined;
     return {
-      ...summary,
-      ownerName: boundDriveLine(owner, DRIVE_OWNER_NAME_MAX_LENGTH),
+      ...base,
       text: body.text,
       textTruncated: body.truncated,
+      ...(firstSheetOnly !== undefined ? { firstSheetOnly } : {}),
+      ...(hiddenSheetsSkipped > 0 ? { hiddenSheetsSkipped } : {}),
     };
+  }
+
+  /**
+   * DRV-2b: every visible grid sheet through the Sheets API (two guarded GETs: the sheet list, then one bounded values
+   * read). A token problem (a refresh failure, a grant other than `drive.readonly`, an access token rejected after one
+   * refresh) is thrown as it is (the existing consent or reconnect reply). Anything else is a closed fallback reason and
+   * the caller reads the first sheet as CSV instead — never a crash:
+   *
+   * - `service-disabled`: 403 `SERVICE_DISABLED` / `accessNotConfigured`;
+   * - `not-permitted`: a Sheets `INSUFFICIENT_SCOPE` after `files.get` succeeded with the same token. Reconnecting
+   *   cannot fix it — ADR-0118 D3 forbids the spreadsheets scope — so it is not the consent reply (orchestrator decision
+   *   under the amendment, CA review 2026-10-13);
+   * - `too-large`: an answer over its size bound;
+   * - `unavailable`: anything else (another 403, a 404, 429 or 5xx, a refusal, a timeout, a transport or shape failure).
+   *
+   * `known` carries the sheet counts when the sheet list was read before the failure.
+   */
+  private async readAllSheets(
+    id: string,
+  ): Promise<
+    | { readonly ok: true; readonly value: GSheetsText & { readonly hidden: number } }
+    | {
+        readonly ok: false;
+        readonly reason: DriveFirstSheetOnlyReason;
+        readonly known?: { readonly visible: number; readonly hidden: number; readonly firstGridHidden: boolean };
+      }
+  > {
+    let known: { readonly visible: number; readonly hidden: number; readonly firstGridHidden: boolean } | undefined;
+    try {
+      const targets = parseGSheetTargets(await this.readJson(gsheetsMetaUrl(id), GSHEETS_META_MAX_BYTES, 'sheets'));
+      known = { visible: targets.sheets.length + (targets.dropped ? 1 : 0), hidden: targets.hidden, firstGridHidden: targets.firstGridHidden };
+      if (targets.sheets.length === 0) {
+        return { ok: true, value: { sections: [], text: '', truncated: targets.dropped, credentialShaped: false, hidden: targets.hidden } };
+      }
+      const rows = gsheetsRowsPerSheet(targets.sheets.length);
+      const values = await this.readJson(gsheetsValuesUrl(id, targets.sheets, rows), GSHEETS_VALUES_MAX_BYTES, 'sheets');
+      return { ok: true, value: { ...renderGSheetsValues(values, targets, rows), hidden: targets.hidden } };
+    } catch (error) {
+      const fallback = (reason: DriveFirstSheetOnlyReason) => ({ ok: false as const, reason, ...(known !== undefined ? { known } : {}) });
+      if (error instanceof GDriveScopeError) throw error;
+      if (error instanceof GDriveHttpError) {
+        if (error.endpoint === 'token' || error.reason === 'UNAUTHORIZED') throw error;
+        if (error.serviceDisabled) return fallback('service-disabled');
+        if (error.reason === 'INSUFFICIENT_SCOPE') return fallback('not-permitted');
+      }
+      if (error instanceof GDriveResponseTooLargeError) return fallback('too-large');
+      return fallback('unavailable');
+    }
   }
 
   /** One page of at most `limit` files, newest modified first; an ids-only page counts the rest when there is more. */
@@ -226,14 +352,18 @@ export class GoogleDriveReader implements DriveReader {
     url.searchParams.set('orderBy', 'modifiedTime desc');
     url.searchParams.set('spaces', 'drive');
     url.searchParams.set('fields', GDRIVE_LIST_FIELDS);
+    setAllDrives(url);
     const payload = await this.readJson(url, GDRIVE_LIST_MAX_BYTES);
+    // DRV-2 (CA review suggestion): with `corpora=allDrives` Google may answer from only part of the corpus.
+    if (payload.incompleteSearch !== undefined && typeof payload.incompleteSearch !== 'boolean') throw new GDriveResponseError('drive');
+    const incomplete = payload.incompleteSearch === true ? { incomplete: true } : {};
     const listed = payload.files === undefined ? [] : payload.files;
     if (!Array.isArray(listed) || listed.length > limit) throw new GDriveResponseError('drive');
     const files = listed.map((entry) => mapFile(isRecord(entry) ? entry : {}, isRecord(entry) ? entry.id : undefined));
     if (new Set(files.map((file) => file.id)).size !== files.length) throw new GDriveResponseError('drive');
     const next = payload.nextPageToken;
     if (next !== undefined && typeof next !== 'string') throw new GDriveResponseError('drive');
-    if (typeof next !== 'string' || next.length === 0) return { files, matched: files.length, matchedIsLowerBound: false };
+    if (typeof next !== 'string' || next.length === 0) return { files, matched: files.length, matchedIsLowerBound: false, ...incomplete };
 
     const count = this.filesUrl();
     count.searchParams.set('q', q);
@@ -241,16 +371,21 @@ export class GoogleDriveReader implements DriveReader {
     count.searchParams.set('orderBy', 'modifiedTime desc');
     count.searchParams.set('spaces', 'drive');
     count.searchParams.set('fields', GDRIVE_COUNT_FIELDS);
+    setAllDrives(count);
     const counted = await this.readJson(count, GDRIVE_COUNT_MAX_BYTES);
     const ids = counted.files === undefined ? [] : counted.files;
     if (!Array.isArray(ids) || ids.length > DRIVE_SEARCH_COUNT_MAX) throw new GDriveResponseError('drive');
     if (!ids.every((entry) => isRecord(entry) && isValidDriveFileId(entry.id))) throw new GDriveResponseError('drive');
     const more = counted.nextPageToken;
     if (more !== undefined && typeof more !== 'string') throw new GDriveResponseError('drive');
+    // Codex P2: the count is read across all drives too; an incomplete count is a lower bound, never an exact total.
+    if (counted.incompleteSearch !== undefined && typeof counted.incompleteSearch !== 'boolean') throw new GDriveResponseError('drive');
+    const countIncomplete = counted.incompleteSearch === true;
     return {
       files,
       matched: Math.max(files.length, ids.length),
-      matchedIsLowerBound: typeof more === 'string' && more.length > 0,
+      matchedIsLowerBound: (typeof more === 'string' && more.length > 0) || countIncomplete,
+      ...(countIncomplete ? { incomplete: true } : incomplete),
     };
   }
 
@@ -260,23 +395,23 @@ export class GoogleDriveReader implements DriveReader {
   }
 
   /** One guarded JSON read, bounded at `maxBytes` (a larger response is refused). */
-  private async readJson(url: URL, maxBytes: number): Promise<Record<string, unknown>> {
-    const response = await this.authorized(url);
+  private async readJson(url: URL, maxBytes: number, endpoint: GDriveEndpoint = 'drive'): Promise<Record<string, unknown>> {
+    const response = await this.authorized(url, endpoint);
     // A partial response (`fields=…`) whose selected fields are all absent — an empty list — is sent by Google as
     // 204 No Content with no body: that is an empty object, not a malformed response.
     if (response.status === 204) {
       await discardBody(response);
       return {};
     }
-    const bytes = await readBounded(response, maxBytes);
-    if (bytes.overflow) throw new GDriveResponseTooLargeError('drive');
+    const bytes = await readBounded(response, maxBytes, endpoint);
+    if (bytes.overflow) throw new GDriveResponseTooLargeError(endpoint);
     let payload: unknown;
     try {
       payload = JSON.parse(Buffer.from(bytes.data).toString('utf8')) as unknown;
     } catch {
-      throw new GDriveResponseError('drive');
+      throw new GDriveResponseError(endpoint);
     }
-    if (!isRecord(payload)) throw new GDriveResponseError('drive');
+    if (!isRecord(payload)) throw new GDriveResponseError(endpoint);
     return payload;
   }
 
@@ -298,21 +433,24 @@ export class GoogleDriveReader implements DriveReader {
   }
 
   /** A guarded GET with the cached access token; a 401 refreshes once and retries once; a failure is typed. */
-  private async authorized(url: URL): Promise<Response> {
-    let response = await this.get(url, await this.currentAccessToken());
+  private async authorized(url: URL, endpoint: GDriveEndpoint = 'drive'): Promise<Response> {
+    let response = await this.get(url, await this.currentAccessToken(), endpoint);
     if (response.status === 401) {
       await discardBody(response);
       this.accessToken = undefined;
-      response = await this.get(url, await this.currentAccessToken());
+      response = await this.get(url, await this.currentAccessToken(), endpoint);
     }
-    if (!response.ok) throw new GDriveHttpError(await driveErrorReason(response), 'drive', response.status);
+    if (!response.ok) {
+      const failure = await driveErrorReason(response);
+      throw new GDriveHttpError(failure.reason, endpoint, response.status, failure.serviceDisabled);
+    }
     return response;
   }
 
-  /** The ONLY function that sends a Drive API request. */
-  private async get(url: URL, accessToken: string): Promise<Response> {
+  /** The ONLY function that sends a Drive or Sheets API request. */
+  private async get(url: URL, accessToken: string, endpoint: GDriveEndpoint = 'drive'): Promise<Response> {
     const method = 'GET';
-    assertGDriveReadRequest(url, method);
+    assertGoogleReadRequest(url, method);
     try {
       return await this.fetchImpl(url, {
         method,
@@ -321,7 +459,7 @@ export class GoogleDriveReader implements DriveReader {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
-      throw new GDriveRequestError('drive');
+      throw new GDriveRequestError(endpoint);
     }
   }
 
@@ -357,10 +495,19 @@ function mapFile(payload: Record<string, unknown>, expectedId: unknown): DriveFi
   };
 }
 
+/** DRV-2: a listing covers the owner's shared drives too (each parameter's one allowed value). */
+function setAllDrives(url: URL): void {
+  for (const [key, value] of Object.entries(GDRIVE_ALL_DRIVES_PARAMS)) url.searchParams.set(key, value);
+}
+
 /** Read at most `maxBytes` of the body; the rest is cancelled and never read (`overflow` says there was more). */
-async function readBounded(response: Response, maxBytes: number): Promise<{ readonly data: Uint8Array; readonly overflow: boolean }> {
+async function readBounded(
+  response: Response,
+  maxBytes: number,
+  endpoint: GDriveEndpoint = 'drive',
+): Promise<{ readonly data: Uint8Array; readonly overflow: boolean }> {
   const body = response.body;
-  if (body === null) throw new GDriveResponseError('drive');
+  if (body === null) throw new GDriveResponseError(endpoint);
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -381,7 +528,7 @@ async function readBounded(response: Response, maxBytes: number): Promise<{ read
       total += value.byteLength;
     }
   } catch {
-    throw new GDriveRequestError('drive');
+    throw new GDriveRequestError(endpoint);
   }
   return { data: Buffer.concat(chunks, total), overflow };
 }
@@ -393,22 +540,23 @@ async function readBounded(response: Response, maxBytes: number): Promise<{ read
  * insufficient permissions or scope → `INSUFFICIENT_SCOPE` (consent needed), an export over Google's
  * own size limit → `INVALID_RESPONSE`, anything else (an administrator policy, a disabled API) → `FORBIDDEN`.
  */
-async function driveErrorReason(response: Response): Promise<ConnectorQueryErrorReason> {
+async function driveErrorReason(response: Response): Promise<{ readonly reason: ConnectorQueryErrorReason; readonly serviceDisabled: boolean }> {
   const status = response.status;
-  if (status === 400) {
-    await discardBody(response);
-    return 'UNSUPPORTED_QUERY';
-  }
-  // Review P3-5: every body this function does not read is cancelled, so no socket is held until GC.
-  if (status === 401 || status === 404 || status === 429) {
-    await discardBody(response);
-    return status === 401 ? 'UNAUTHORIZED' : status === 404 ? 'NOT_FOUND' : 'RATE_LIMITED';
-  }
   if (status !== 403) {
+    // Review P3-5: every body this function does not read is cancelled, so no socket is held until GC.
     await discardBody(response);
-    return 'UNAVAILABLE';
+    const reason: ConnectorQueryErrorReason =
+      status === 400 ? 'UNSUPPORTED_QUERY' : status === 401 ? 'UNAUTHORIZED' : status === 404 ? 'NOT_FOUND' : status === 429 ? 'RATE_LIMITED' : 'UNAVAILABLE';
+    return { reason, serviceDisabled: false };
   }
   const reasons = await readGoogleErrorReasons(response);
+  // DRV-2b: the API is not enabled for the Google Cloud project (new and legacy error formats).
+  const serviceDisabled = reasons.some((reason) => reason === 'SERVICE_DISABLED' || reason === 'accessNotConfigured');
+  return { reason: forbiddenReason(reasons), serviceDisabled };
+}
+
+/** The reason of a 403 from its fixed `reason` tokens. */
+function forbiddenReason(reasons: readonly string[]): ConnectorQueryErrorReason {
   if (reasons.some((reason) => /^(?:rateLimitExceeded|userRateLimitExceeded|quotaExceeded|RATE_LIMIT_EXCEEDED)$/.test(reason))) {
     return 'RATE_LIMITED';
   }

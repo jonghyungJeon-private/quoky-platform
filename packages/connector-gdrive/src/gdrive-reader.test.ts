@@ -87,7 +87,7 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
     expect(list.searchParams.get('q')).toBe("trashed = false and mimeType != 'application/vnd.google-apps.folder'");
     expect(list.searchParams.get('pageSize')).toBe('10');
     expect(list.searchParams.get('orderBy')).toBe('modifiedTime desc');
-    expect(list.searchParams.get('fields')).toBe('files(id,name,mimeType,modifiedTime),nextPageToken');
+    expect(list.searchParams.get('fields')).toBe('files(id,name,mimeType,modifiedTime),nextPageToken,incompleteSearch');
     expect(calls[0]?.method).toBe('POST');
     for (const call of calls.slice(1)) {
       expect(call.method).toBe('GET');
@@ -97,7 +97,7 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
 
   it('searchByName: escapes the owner-typed name into a name-contains literal; counts the rest with an ids-only page', async () => {
     const { reader, calls } = harness((url) => {
-      if (url.searchParams.get('fields') === 'files(id),nextPageToken') {
+      if (url.searchParams.get('fields') === 'files(id),nextPageToken,incompleteSearch') {
         return json({ files: Array.from({ length: 100 }, (_, index) => ({ id: `id${index}` })), nextPageToken: 'more' });
       }
       return json({ files: Array.from({ length: 10 }, (_, index) => meta(`f${index}`)), nextPageToken: 'next' });
@@ -293,7 +293,9 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
   it('the request guard allows only GET to the pinned list, get and text-export endpoints with read parameters', () => {
     const allowed = [
       '/drive/v3/files?q=x&pageSize=10&orderBy=modifiedTime+desc&fields=files(id)&spaces=drive',
+      '/drive/v3/files?q=x&spaces=drive&corpora=allDrives&includeItemsFromAllDrives=true&supportsAllDrives=true',
       '/drive/v3/files/abc?fields=id,name',
+      '/drive/v3/files/abc?fields=id,name&supportsAllDrives=true',
       '/drive/v3/files/abc/export?mimeType=text%2Fplain',
       '/drive/v3/files/abc/export?mimeType=text%2Fcsv',
     ];
@@ -319,7 +321,11 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
       ['/drive/v3/files/abc?alt=media&fields=id', 'GET'],
       ['/drive/v3/files?q=x&pageToken=t', 'GET'],
       ['/drive/v3/files?q=x&q=y', 'GET'],
-      ['/drive/v3/files?supportsAllDrives=true', 'GET'],
+      ['/drive/v3/files?supportsAllDrives=false', 'GET'],
+      ['/drive/v3/files?corpora=domain', 'GET'],
+      ['/drive/v3/files?corpora=drive&driveId=x', 'GET'],
+      ['/drive/v3/files?includeItemsFromAllDrives=1', 'GET'],
+      ['/drive/v3/files/abc/export?mimeType=text%2Fplain&supportsAllDrives=true', 'GET'],
       ['/drive/v2/files', 'GET'],
     ];
     for (const [path, method] of refused) {

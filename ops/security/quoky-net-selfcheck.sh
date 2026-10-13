@@ -25,7 +25,7 @@ SC_OPS_PORT="${QUOKY_OPS_UI_PORT:-47613}"
 # only when its address is also not one of these hosts' own forward-resolved addresses. Reverse DNS (PTR) names and
 # provider address ranges are never trusted.
 SC_ALLOWED_HOSTS="api.telegram.org gateway.discord.gg discord.com cdn.discordapp.com media.discordapp.net api.anthropic.com \
-www.googleapis.com gmail.googleapis.com oauth2.googleapis.com slack.com api.github.com github.com"
+www.googleapis.com gmail.googleapis.com oauth2.googleapis.com sheets.googleapis.com slack.com api.github.com github.com"
 # Guard findings in the ledger window that fail the check; other guard events are warnings.
 SC_FAIL_GUARD_EVENTS="new-destination denied-range budget-exceeded"
 

@@ -5,6 +5,33 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### v5 DRV-2 shared drives + DRV-2b every sheet — on branch `claude/v5-w3-drv2` (2026-10-13)
+
+This change implements the ratified ADR-0118 amendment of 2026-10-12, (b) and (c). It has no migration and no DI token,
+and `ConversationRuntimeDeps` is unchanged. `DriveDocument` gains the optional `sections` and `firstSheetOnly`. Details
+are in the DRV-2/DRV-2b implementation note under the ADR-0118 amendment in `DECISIONS.md`.
+
+- **Done (offline).**
+  - Drive listings include the owner's shared drives, with the parameters fixed by the guard.
+  - A spreadsheet summary reads every grid sheet through `sheets.googleapis.com` under `drive.readonly`. It is bounded
+    to 20 sheets, A–Z, 40,000 cells and 256 KiB. Each sheet has an untrusted title header and a fair share of the body.
+    The credential guard runs before and after the clip.
+  - If the Sheets API is disabled or fails, the summary falls back to the first-sheet CSV with an honest note.
+  - On the S0 side, the allowlist, the `google-sheets` budget label, the closed ledger template and the self-check host
+    list are updated.
+  - `pnpm build`, `typecheck` and `test` pass (437 files, 13,928 tests), and `git diff --check` is clean.
+- **Owner prerequisite done (2026-10-13).** The Sheets API is enabled in `quoky-personal-510806`. The orchestrator's
+  read-only probe got 200 for a Drive list with `supportsAllDrives` and 200 with 3 sheets for `spreadsheets.get`, using
+  the existing `drive.readonly` token. No new consent is needed.
+- **Not run (Strict).** Deploy restart; live session (a shared-drive document, a multi-sheet spreadsheet). Review before
+  merge (a new pinned host and a port field).
+- **Deviation recorded.** `files.export` does not carry `supportsAllDrives`. It is not a documented export parameter,
+  and an export works by id.
+- **Chief Architect review: CHANGES REQUIRED, now fixed.** The fixes are a fair 256 KiB share per sheet, the guard
+  before each adapter cut, the `not-permitted` fallback for a Sheets scope error (an orchestrator decision), hidden
+  sheets skipped and counted, a truthful single-sheet note, and `incompleteSearch` marking. See the review-fix bullet
+  in the DRV-2/DRV-2b note.
+
 ### v5 S1 NL-2 Phase C (model-first selection) — on branch `claude/v5-nl2-phase-c` (2026-10-13)
 
 ADR-0120 D6/D8/D10/D12 and ADR-0121 S1 (the owner ratified S1 and gave the D8 egress yes). `QUOKY_NL_PHASE` (`a` by

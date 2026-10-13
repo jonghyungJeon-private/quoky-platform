@@ -76,6 +76,8 @@ export function buildEgressInventory(source: EgressInventorySource): EgressInven
   if (source.telegram !== undefined) add('api.telegram.org', 'telegram');
   const googleCalendarOrDrive = source.calendar !== undefined || source.drive !== undefined;
   if (googleCalendarOrDrive) add('www.googleapis.com', 'google');
+  // DRV-2b (ADR-0118 amendment 2026-10-12 (c)): the per-sheet spreadsheet read of the Drive connector, same grant.
+  if (source.drive !== undefined) add('sheets.googleapis.com', 'google-sheets');
   if (source.gmail !== undefined) add('gmail.googleapis.com', 'gmail');
   if (googleCalendarOrDrive || source.gmail !== undefined) add('oauth2.googleapis.com', 'google-oauth');
   if (source.connectors.jira !== undefined) add(hostOf(source.connectors.jira.host), 'jira');
@@ -168,6 +170,7 @@ const PATH_PREFIXES: Readonly<Record<string, readonly string[]>> = {
   'discord-attachments': ['/attachments', '/ephemeral-attachments'],
   'google-calendar': ['/calendar/v3/calendars', '/calendar/v3/users/me/calendarList', '/calendar/v3/freeBusy'],
   'google-drive': ['/drive/v3/files', '/drive/v3/drives', '/drive/v3/about'],
+  'google-sheets': ['/v4/spreadsheets'],
   google: ['/calendar/v3', '/drive/v3'],
   gmail: [
     '/gmail/v1/users/me/messages', '/gmail/v1/users/me/threads', '/gmail/v1/users/me/labels', '/gmail/v1/users/me/profile',
@@ -211,6 +214,11 @@ export const SLACK_METHODS: ReadonlySet<string> = new Set([
   'chat.postMessage',
   'chat.getPermalink',
 ]);
+/**
+ * The Sheets API custom methods Quoky calls on a spreadsheet (`connector-gdrive/src/sheets-reader.ts`) — a closed list.
+ * In `/v4/spreadsheets/{id}/<method>` any other segment is written as `{method}`.
+ */
+export const GOOGLE_SHEETS_METHODS: ReadonlySet<string> = new Set(['values:batchGet']);
 /** The placeholder for a method segment outside the closed lists. */
 const METHOD_PLACEHOLDER = '{method}';
 const VERSION_SEGMENT = /^v[0-9]{1,2}(?:beta[0-9]?|alpha[0-9]?)?(?:\.[0-9]{1,2})?$/;
@@ -237,6 +245,7 @@ function matchPrefix(segments: readonly string[], prefix: string): string[] | un
  * later segment becomes `{id}` (at most 6; more are dropped). Two closed method lists are kept as well: the Telegram Bot
  * API method after the `bot<token>` segment (always `{id}`) and the Slack Web API method after `/api`; a method outside
  * those lists becomes `{method}`.
+ * The Sheets API method after `/v4/spreadsheets/{id}` is kept only from its closed list (`GOOGLE_SHEETS_METHODS`).
  * A file name, an e-mail address, a repository or owner name, a space key, a user name, a channel, issue or Drive id and
  * a webhook token therefore never reach the ledger, whether or not they consist of letters only. An unlisted host keeps
  * no segment at all. Example: `/bot<token>/getUpdates?offset=5` → `/{id}/getUpdates`.
@@ -253,7 +262,17 @@ export function pathTemplate(label: string, path: string): string {
     }
     return `/${segments.slice(0, MAX_ID_SEGMENTS).map(() => '{id}').join('/')}`;
   }
-  if (label === 'slack' || label === 'slack-search') {
+  if (label === 'google-sheets') {
+    const prefix = matchPrefix(segments, '/v4/spreadsheets');
+    if (prefix !== undefined) {
+      const method = segments[3];
+      if (segments.length === 3) return `/${[...prefix, '{id}'].join('/')}`;
+      if (segments.length === 4 && method !== undefined) {
+        return `/${[...prefix, '{id}', GOOGLE_SHEETS_METHODS.has(method) ? method : METHOD_PLACEHOLDER].join('/')}`;
+      }
+      kept = prefix;
+    }
+  } else if (label === 'slack' || label === 'slack-search') {
     const method = segments[1];
     if (segments[0] === 'api' && method !== undefined) {
       kept = ['api', SLACK_METHODS.has(method) ? method : METHOD_PLACEHOLDER];

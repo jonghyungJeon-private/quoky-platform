@@ -84,7 +84,12 @@ function findOutsideValuesInPlainCopy(source: string): Finding[] {
 /**
  * Plain templates that name an outside value on purpose. Keyed by `file:expression`; the reason is the review record.
  */
-const ALLOWED: Readonly<Record<string, string>> = {};
+const ALLOWED: Readonly<Record<string, string>> = {
+  'application/untrusted-document-readout.ts:JSON.stringify(title)':
+    'DRV-2b: the sheet header of a summary PROMPT readout, never chat reply copy. The untrusted sheet title is normalized, ' +
+    'one line, link-neutralized and JSON-quoted inside the readout body, which the prompt carries JSON-quoted again as ' +
+    'NON_AUTHORITATIVE_BACKGROUND (ADR-0118 D7, ADR-0111 D3)',
+};
 
 describe('Core replies keep outside values out of plain copy (PLT-1)', () => {
   const files = coreSources().filter((file) => {

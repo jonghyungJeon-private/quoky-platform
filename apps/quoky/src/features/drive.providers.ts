@@ -1,5 +1,5 @@
 import type { Provider } from '@nestjs/common';
-import { GDRIVE_SOURCE_LABEL, GDriveTokenFileError, GoogleDriveReader, readGDriveTokenFile } from '@quoky/connector-gdrive';
+import { GDRIVE_SOURCE_LABEL, GDriveTokenFileError, GSHEETS_SERVICE_LABEL, GoogleDriveReader, readGDriveTokenFile } from '@quoky/connector-gdrive';
 import {
   DRIVE_READER,
   SessionManager,
@@ -31,6 +31,11 @@ export const GDRIVE_DRIVE_COPY: DriveSourceCopy = Object.freeze({
   reconnectHint: Object.freeze({
     ko: '동의 도구(calendar-auth --drive)로 다시 연결해 주세요.',
     en: 'Reconnect with the consent helper (calendar-auth --drive).',
+  }),
+  // DRV-2b: the honest note when a spreadsheet was read as its first sheet only because the API is not enabled.
+  allSheetsHint: Object.freeze({
+    ko: `모든 시트를 읽으려면 ${GSHEETS_SERVICE_LABEL}가 필요해요`,
+    en: `reading every sheet needs the ${GSHEETS_SERVICE_LABEL} enabled`,
   }),
 });
 

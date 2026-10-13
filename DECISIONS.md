@@ -20247,6 +20247,153 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
 - **Strict gates:** enabling the Google Sheets API in the Google Cloud project `quoky-personal-510806` (owner-confirmed);
   the live sessions (a long thread, a reply pick after a restart, a shared-drive document, a multi-sheet spreadsheet).
 
+### ADR-0118 amendment implementation note — DRV-2 shared drives and DRV-2b every sheet (2026-10-13)
+
+- **Status:** Implemented under the ratified ADR-0118 amendment of 2026-10-12, decisions (b) and (c) (v5 plan wave 3,
+  decisions 8 and 9). Offline validation only. No migration, no new DI token, and `ConversationRuntimeDeps` is
+  unchanged. The `DriveReader` port gets two additive, optional, vendor-free fields on `DriveDocument`. The adapter
+  that leaves them unset behaves exactly as before.
+- **Scope verification (decision 8, D3 unchanged).** The Google Sheets API reference lists
+  `https://www.googleapis.com/auth/drive.readonly` among the accepted scopes of both `spreadsheets.get` and
+  `spreadsheets.values.batchGet` (re-checked 2026-10-13). The adapter still requests and accepts exactly
+  `drive.readonly` (`oauth.ts` `DRIVE_ALLOWED_SCOPES`; the source scan forbids any `spreadsheets` scope string). On
+  2026-10-13 the owner enabled the Sheets API in `quoky-personal-510806`, and the orchestrator ran a read-only live probe
+  that printed statuses and counts only. With the existing `drive.readonly` refresh token, a Drive list with
+  `supportsAllDrives` answered 200, and `GET sheets.googleapis.com/v4/spreadsheets/{id}?fields=…` answered 200 with 3
+  sheets. No new scope and no new consent are needed.
+- **DRV-2 (b), shared drives.** `GDRIVE_ALL_DRIVES_PARAMS` (`connector-gdrive/src/gdrive-reader.ts:71`) adds
+  `corpora=allDrives`, `includeItemsFromAllDrives=true` and `supportsAllDrives=true` to the listing and to its count call
+  (`setAllDrives`, `:311`). `files.get` carries `supportsAllDrives=true` (`:248`). The request guard accepts each of these
+  parameters only with its one value, so `corpora=domain`, `driveId`, `supportsAllDrives=false` and so on are refused.
+  Listings keep at most 10 entries, are DM-only, never call a model, and are formatted exactly as before. There is no
+  owned-only filter (decision 9).
+  - **Deviation:** `files.export` does **not** carry `supportsAllDrives`. The amendment text says "export with
+    `supportsAllDrives=true`", but the Drive v3 reference documents `mimeType` as the export's only parameter, and an
+    export addresses a shared-drive file by id. Adding an undocumented parameter risks a 400 on every export. The guard
+    keeps the export at `mimeType` only.
+- **DRV-2b (c), every sheet.** The new module `connector-gdrive/src/sheets-reader.ts` holds the pinned origin
+  `https://sheets.googleapis.com`, the guard `assertGSheetsReadRequest` (`:67`), the URL builders and the bounded
+  parsing. The reader keeps its single request site, now guarded by `assertGoogleReadRequest` (`gdrive-reader.ts:156`),
+  which dispatches on origin. For a spreadsheet, `exportText` calls `readAllSheets` (`:283`), which makes two GETs:
+  1. `GET /v4/spreadsheets/{id}?fields=sheets.properties(title,index,sheetType)`. The response carries titles,
+     indexes and types only, with no grid data, links or protected ranges.
+  2. `GET /v4/spreadsheets/{id}/values:batchGet` with one quoted, bounded A1 range per sheet,
+     `valueRenderOption=FORMATTED_VALUE` (what a cell shows, never its formula), `majorDimension=ROWS` and
+     `fields=valueRanges.values`.
+
+  The guard refuses `FORMULA`, `UNFORMATTED_VALUE`, `includeGridData`, `dateTimeRenderOption`, unquoted or open ranges,
+  columns past Z, more than 1,000 rows, more than 20 ranges, more than 40,000 cells, and every other path. That
+  includes `:batchUpdate`, `values:append`, `values:clear`, `values:batch*` writes and `developerMetadata`. The source
+  scan forbids the same names in code.
+  - **Bounds.** At most 20 grid sheets in sheet order; chart and data-source sheets are skipped. A1:Z per sheet, with a
+    row bound that keeps the whole read at or under 40,000 cells (`gsheetsRowsPerSheet`: 1,000 rows for one sheet, 76
+    for 20). Each cell is cut at 1,000 UTF-16 units. A cell whose value is not a string, number or boolean renders
+    empty. The whole text, titles and separators included, is cut at 256 KiB (`DRIVE_TEXT_MAX_BYTES`) on a code-point
+    boundary. The sheet list answer is bounded at 64 KiB and the values answer at 4 MiB. A row, column or sheet bound
+    that may have left something out marks the document truncated. Rendering is linear: no regex runs over a hostile
+    line.
+  - **Untrusted sheet titles.** A title reaches Google only inside a quoted A1 range with doubled apostrophes
+    (`gsheetsRange`, `:156`). A raw title over 256 units is skipped. Core receives the title as bounded one-line data
+    (`DriveDocumentSection.title`, ≤ 100).
+  - **Core, fair share and guard.** `buildUntrustedDocumentReadout` takes optional `sections`
+    (`untrusted-document-readout.ts`, `preparedSections` `:198`, `clipSections` `:228`). Each section gets a fixed
+    header, ``[Sheet i/n] "<title>"``, where the title is normalized, one line, link-neutralized and JSON-quoted, so a
+    title or cell cannot forge a header. The 3,000-code-point body budget is shared by water-filling: a short sheet
+    gives its unused share to the longer ones, and each longer sheet is clipped head and tail. One long first sheet
+    therefore never pushes the later sheets out of the summary. The credential guard runs on the full, unclipped
+    sectioned body (every title and every sheet) **before** the clip, and again on the clipped readout and the rendered
+    prompt **after** it (`isSummarizableDocumentReadout`). A match anywhere withholds the whole item. The readout shape
+    and prompt envelope are unchanged. The PLT-1 source scan lists the header template as allowed prompt data, with
+    the reason recorded.
+  - **Fallback (never a crash).** A consent or grant problem is re-thrown, and the existing consent reply answers it.
+    That covers a token error, `UNAUTHORIZED`, `INSUFFICIENT_SCOPE` and `GDriveScopeError`. Every other failure falls
+    back to the old first-sheet CSV export and sets a closed `DriveDocument.firstSheetOnly` reason:
+    - `service-disabled`: a 403 `SERVICE_DISABLED` (current error format) or `accessNotConfigured` (legacy format);
+    - `too-large`: a values answer over 4 MiB;
+    - `unavailable`: another 403, a 404, 429 or 5xx, a transport failure or timeout, an egress refusal, or a malformed
+      answer.
+
+    Core adds one honest line before the footer (`renderDriveFirstSheetOnlyNote`, `drive-reply-renderer.ts:338`). The
+    composition root supplies the vendor words through `DriveSourceCopy.allSheetsHint`: "(첫 번째 시트만 읽었어요 ·
+    모든 시트를 읽으려면 Google Sheets API가 필요해요)". If the export also fails, the existing typed failure reply
+    answers.
+  - **Unchanged.** Summaries happen only on the owner's explicit request. They are DM-only: in a channel or group nothing
+    is read, the Sheets API included. The summary turn has no tools and SHORT_TERM history keeps a fixed note. Routing
+    uses the owner's text only.
+- **S0 egress.** `sheets.googleapis.com` is allowlisted with the base label `google-sheets` only when Drive is configured
+  (`apps/quoky/src/security/egress-policy.ts:80`). Its budget is the connector budget, the same as `google-drive`
+  (`egress-budget.ts:87`): ≤ 20/min and ≤ 300/h, 3× in an owner turn, ≤ 50 MB/h, with the breaker. One summary uses at
+  most 2 requests. The ledger path template keeps `/v4/spreadsheets`, turns the spreadsheet id into `{id}`, and keeps
+  the method only from the closed list `GOOGLE_SHEETS_METHODS` = {`values:batchGet`} (`:221`). Any other method becomes
+  `{method}`. The self-check's static host list adds the exact host (`ops/security/quoky-net-selfcheck.sh:28`). No other
+  host is added.
+- **Tests.**
+  - `connector-gdrive/src/sheets-reader.test.ts`:
+    - shared-drive parameters;
+    - values-only reads and URLs;
+    - cell rendering and bounds (20 sheets, 40,000 cells, 256 KiB);
+    - hostile titles from the PLT-1 corpus and A1 syntax;
+    - chart-only and over-long titles;
+    - the fallback matrix, including both 403 formats;
+    - consent errors not hidden;
+    - the guard table.
+  - The updated read-only source scan covers the Sheets write names, `includeGridData`, `FORMULA`, the pinned paths, no
+    request site in the Sheets module, and the host list.
+  - `core/src/application/drive/drive-all-sheets.test.ts`:
+    - headers and order;
+    - fair share;
+    - the 20-section bound;
+    - the guard before and after the clip;
+    - hostile titles and cells (PLT-1 corpus, forged headers, bidi characters);
+    - all-empty;
+    - the three fallback notes;
+    - DM-only on a Discord channel and a Telegram group;
+    - no read on a listing.
+  - Egress allowlist, label, budget and path-template cases.
+  - The self-check host cases.
+  - The composition copy.
+- **Strict, not run.** The live session: a shared-drive document, a multi-sheet spreadsheet, and the first-sheet note if
+  the API is ever disabled again. This change also needs the deploy restart.
+- **Chief Architect review fixes (2026-10-13, CHANGES REQUIRED → fixed).** The review verified egress, range safety,
+  formulas and links, the shared-drive parameters, the fallbacks and the PLT-1 exemption as clean.
+  - **Major: fair byte budget in the adapter.** `renderGSheetsValues` renders every sheet first, then shares the 256
+    KiB left after the headers by the same water-filling Core uses for its body budget. Each sheet gets at least
+    `total/n`, and unused share goes to the longer sheets, so a large first sheet no longer starves the rest. In the
+    CA's reproduction (3 sheets × 512 rows × 10 cells of about 36 Korean characters), all three sheets now survive at
+    about 85 KiB each. A sheet that is cut is marked: `DriveDocumentSection.textTruncated`, and `(partial)` in its Core
+    header.
+  - **Minor: the guard runs before every adapter cut.** The adapter runs the credential guard (both detectors, which
+    `@quoky/core` exports) before each cut:
+    - on every raw sheet title;
+    - on every raw cell it cuts at 1,000 characters;
+    - on the full text of every sheet it cuts to its byte share.
+
+    A match sets the additive `DriveDocument.credentialShaped`, and the Drive handler withholds the whole item before
+    anything leaves the host. The withholding reply is the existing one. A test pins a token that straddles the
+    1,000-character cut.
+  - **Orchestrator decision under the amendment: a Sheets `INSUFFICIENT_SCOPE` falls back.** It arrives after
+    `files.get` succeeded with the same token, and reconnecting cannot fix it, because ADR-0118 D3 forbids the
+    spreadsheets scope. So it does not get the consent reply. It falls back to the first-sheet CSV with the new closed
+    reason `not-permitted`: "(첫 번째 시트만 읽었어요 · 이 연결로는 시트별로 읽을 수 없어요)". A token-endpoint failure, a
+    grant other than `drive.readonly`, and a 401 after one refresh still get the consent or reconnect reply.
+  - **Suggestions, all done.**
+    - The sheet-list mask adds `hidden`. Hidden sheets are never read, because they are an easy place to hide an
+      injection. Only their count is kept (`hiddenSheetsSkipped`), and the footer says "(숨김 시트 N개 제외)".
+    - The `unavailable` note no longer claims other sheets exist: "(… · 다른 시트가 있다면 지금은 읽지 못했어요)". When
+      the sheet list was read and shows exactly one visible sheet and no hidden one, there is no note at all.
+    - The listing reads `incompleteSearch` (in the field mask). A partial answer sets the additive
+      `DriveListResult.incomplete`, and the listing, including an empty answer, says "(일부 공유 드라이브는 검색하지 못해
+      목록이 빠졌을 수 있어요)".
+    - The `assertGDriveReadRequest` doc comment names the shared-drive parameters.
+  - **CA re-review (PASS), honesty fix.** `parseGSheetTargets` records whether the first grid sheet is hidden
+    (`firstGridHidden`). If it is, the reader never uses the CSV fallback, because that would export the hidden sheet.
+    It answers with the typed `UNAVAILABLE` failure instead, so the owner gets the existing "could not read" reply. A
+    hidden later sheet does not block the fallback, and the "(숨김 시트 N개 제외)" note stays accurate. This closes the
+    residual where a hidden first sheet could be exported.
+  - **Codex P2, an incomplete count.** The ids-only count call also requests `incompleteSearch`. When Google answers
+    `true`, the total is a lower bound (`matchedIsLowerBound`), and the listing shows "…외 N건 이상" with the
+    partial-search note, in the existing partial style. A non-boolean value is a malformed response.
+
 ## Personal v5 ratification record — ADR-0119 and the ADR-0117/ADR-0118 amendments (2026-10-12)
 
 - **Ratified by:** the Product Owner, in the orchestrator chat on 2026-10-12 ("응 확정할게 진행하자"), after a Korean
