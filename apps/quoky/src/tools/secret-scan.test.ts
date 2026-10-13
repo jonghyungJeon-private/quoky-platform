@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
+  applyReviewed,
   categorize,
   formatHit,
   gatingHits,
   historyByCommit,
   isCredentialShapedValue,
+  isValidGithubTokenShape,
+  loadReviewed,
   scanDiffStream,
   scanHistory,
   scanText,
@@ -77,7 +81,7 @@ describe('scanDiffStream', () => {
 });
 
 const key = ['pass', 'word'].join('');
-const issuedBody = ['gh', 'p_', 'q7ZkP2mX9vLdR4tYb8NcW3sHf6JeA1uKo5Gi'].join('');
+const issuedBody = ['xox', 'b-', 'q7ZkP2mX9vLdR4tYb8NcW3sHf6JeA1uKo5Gi'].join('');
 const realish = ['q7Zk', 'P2mX', '9vLd', 'R4tY', 'b8Nc'].join('');
 
 describe('credential-assignment precision', () => {
@@ -186,5 +190,65 @@ describe('git failures', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('GitHub token shape and the reviewed list', () => {
+  // Builds a token with a valid body length and a computed checksum, from fragments (no literal in the file).
+  function validToken(): string {
+    const body30 = 'Q7zKp2MxL9vDr4TyB8NcW3sHf6JeA1';
+    // Reuse the scanner's own checksum by brute force over the checksum alphabet is not possible; compute here.
+    const table = new Uint32Array(256).map((_, n) => {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      return c >>> 0;
+    });
+    let c = 0xffffffff;
+    for (const b of Buffer.from(body30)) c = (table[(c ^ b) & 0xff] as number) ^ (c >>> 8);
+    let n = (c ^ 0xffffffff) >>> 0;
+    const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+    let out = '';
+    for (let i = 0; i < 6; i++) {
+      out = alphabet[n % 62] + out;
+      n = Math.floor(n / 62);
+    }
+    return ['gh', 'p_'].join('') + body30 + out;
+  }
+
+  it('accepts a 36-character body with a valid checksum and rejects a wrong checksum or length', () => {
+    const good = validToken();
+    expect(isValidGithubTokenShape(good)).toBe(true);
+    expect(isValidGithubTokenShape(`${good.slice(0, -1)}${good.endsWith('A') ? 'B' : 'A'}`)).toBe(false);
+    expect(isValidGithubTokenShape(good.slice(0, -3))).toBe(false);
+  });
+
+  it('marks a GitHub-prefixed value with a bad checksum not-issued-shape and does not gate it', () => {
+    const fake = ['gh', 's_', 'q7ZkP2mX9vLdR4tYb8NcW3sHf6JeA1uKo5Gi'].join('');
+    const hits = scanText('x.test.ts', 'c'.repeat(40), `const t = '${fake}';\n`);
+    expect(hits[0]).toMatchObject({ notIssuedShape: true, issuedCandidate: false });
+    expect(gatingHits(hits)).toHaveLength(0);
+    expect(formatHit(hits[0]!)).toContain('not-issued-shape');
+  });
+
+  it('keeps a checksum-valid GitHub token as an issued candidate and gates on it', () => {
+    const hits = scanText('x.test.ts', 'c'.repeat(40), `const t = '${validToken()}';\n`);
+    expect(hits[0]).toMatchObject({ issuedCandidate: true, notIssuedShape: false });
+    expect(gatingHits(hits)).toHaveLength(1);
+  });
+
+  it('does not gate a hit whose fingerprint is in the reviewed list, and reports it as reviewed', () => {
+    const hits = scanText('src/a.ts', 'c'.repeat(40), `const t = '${validToken()}';\n`);
+    const reviewed = [{ fingerprint: hits[0]!.fingerprint, reason: 'r', reviewer: 'x', date: '2026-10-13' }];
+    const applied = applyReviewed(hits, reviewed);
+    expect(applied[0]?.reviewed).toBe(true);
+    expect(gatingHits(applied)).toHaveLength(0);
+    expect(formatHit(applied[0]!)).toContain('reviewed');
+    expect(applyReviewed(hits, [])[0]?.reviewed).toBe(false);
+  });
+
+  it('stores fingerprints only: the committed list loads and has no values', () => {
+    const entries = loadReviewed(fileURLToPath(new URL('../../../../', import.meta.url)));
+    expect(entries.length).toBeGreaterThan(0);
+    for (const e of entries) expect(e.fingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
 });

@@ -7,7 +7,8 @@
  * detector, never stored in a finding and never printed (the detector only reports which rule fired and a line).
  */
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { classifyCredentialFileContent, containsCredentialMaterial } from '@quoky/core';
 
@@ -19,6 +20,12 @@ export interface SecretScanHit {
   readonly category: HitCategory;
   /** A known provider prefix with a plausible length outside a placeholder: a key to rotate if it is in a non-test file. */
   readonly issuedCandidate: boolean;
+  /** SHA-256 of the random-looking provider-prefixed token on the line (never the value); empty when there is none. */
+  readonly fingerprint: string;
+  /** The token has a GitHub prefix but not a valid body length and CRC32/base62 checksum: it cannot be issued. */
+  readonly notIssuedShape: boolean;
+  /** The fingerprint is in the reviewed list: reported, does not gate. */
+  readonly reviewed: boolean;
   /** Commit sha for a history hit, or `WORKTREE` for the working tree. */
   readonly commit: string;
   /** 1-based line in the file at that commit; 0 when the finding spans lines and no single line is responsible. */
@@ -84,6 +91,46 @@ export function looksPatterned(token: string): boolean {
   );
 }
 
+const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(text: string): number {
+  let c = 0xffffffff;
+  for (const b of Buffer.from(text, 'utf8')) c = (CRC_TABLE[(c ^ b) & 0xff] ?? 0) ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * GitHub's token format: `ghp_|gho_|ghu_|ghs_|ghr_` + 30 random characters + a 6-character base62 CRC32 checksum of those
+ * 30, 36 characters in all. Anything else with such a prefix cannot have been issued by GitHub.
+ */
+export function isValidGithubTokenShape(token: string): boolean {
+  const m = /^gh[pousr]_([A-Za-z0-9]+)$/.exec(token);
+  const body = m?.[1];
+  if (!body || body.length !== 36) return false;
+  let n = crc32(body.slice(0, 30));
+  let out = '';
+  for (let i = 0; i < 6; i++) {
+    out = (BASE62[n % 62] ?? '0') + out;
+    n = Math.floor(n / 62);
+  }
+  return out === body.slice(30);
+}
+
+const GITHUB_PREFIX = /^gh[pousr]_/;
+
+export function tokenFingerprint(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
 const ISSUED_PREFIX = /^(sk-ant-|sk-proj-|github_pat_|gh[pousr]_|xox[bpsa]-|AKIA|ASIA|AIza|sk_live_)/;
 
 /**
@@ -134,7 +181,7 @@ export function scanText(
       // Precision: a hit counts only when a string literal near the key is credential-shaped by value.
       const near = [lines[index] ?? '', lines[index + 1] ?? ''];
       if (near.some((l) => assignedLiterals(l, category).some(isCredentialShapedValue))) {
-        hits.push({ file, category, issuedCandidate: false, commit, line: map(index), rule: finding.kind, masked: '[masked]' });
+        hits.push({ file, category, issuedCandidate: false, fingerprint: '', notIssuedShape: false, reviewed: false, commit, line: map(index), rule: finding.kind, masked: '[masked]' });
       }
     } else {
       // Locate the line with the same detector, one line at a time; a multi-line shape (private-key block) reports 0.
@@ -146,7 +193,7 @@ export function scanText(
         }
       }
       if (found < 0) {
-        hits.push({ file, category, issuedCandidate: false, commit, line: 0, rule: 'secret-token', masked: '[masked]' });
+        hits.push({ file, category, issuedCandidate: false, fingerprint: '', notIssuedShape: false, reviewed: false, commit, line: 0, rule: 'secret-token', masked: '[masked]' });
         break;
       }
       index = found;
@@ -154,10 +201,22 @@ export function scanText(
       const tokens = tokensOf(lineText);
       const candidates = tokens.filter((t) => containsCredentialMaterial(t));
       if (!(candidates.length > 0 && candidates.every(isPlaceholder))) {
-        const issuedCandidate = tokens.some(
+        const shaped = tokens.find(
           (t) => ISSUED_PREFIX.test(t) && t.length >= 24 && !isPlaceholder(t) && entropy(t) >= 3.5 && !looksPatterned(t),
         );
-        hits.push({ file, category, issuedCandidate, commit, line: map(index), rule: 'secret-token', masked: '[masked]' });
+        const notIssuedShape = shaped !== undefined && GITHUB_PREFIX.test(shaped) && !isValidGithubTokenShape(shaped);
+        hits.push({
+          file,
+          category,
+          issuedCandidate: shaped !== undefined && !notIssuedShape,
+          fingerprint: shaped === undefined ? '' : tokenFingerprint(shaped),
+          notIssuedShape,
+          reviewed: false,
+          commit,
+          line: map(index),
+          rule: 'secret-token',
+          masked: '[masked]',
+        });
       }
     }
     start = index + 1;
@@ -300,7 +359,13 @@ export async function scanHistory(cwd: string): Promise<HistoryScanResult> {
 
 /** One report line per hit: file, commit, line, rule, masked value. Never the value. */
 export function formatHit(hit: SecretScanHit): string {
-  const flag = hit.issuedCandidate ? '  ROTATE-CANDIDATE' : '';
+  const flag = hit.reviewed
+    ? '  reviewed'
+    : hit.issuedCandidate
+      ? '  ROTATE-CANDIDATE'
+      : hit.notIssuedShape
+        ? '  not-issued-shape'
+        : '';
   return `${hit.file}:${hit.line || '?'}  commit ${hit.commit.slice(0, 12)}  ${hit.rule}  ${hit.category}  ${hit.masked}${flag}`;
 }
 
@@ -309,7 +374,7 @@ export function formatHit(hit: SecretScanHit): string {
  * hit that looks like an issued provider key (known prefix, plausible length and entropy), test paths included.
  */
 export function gatingHits(hits: readonly SecretScanHit[]): SecretScanHit[] {
-  return hits.filter((h) => h.category !== 'test' || h.issuedCandidate);
+  return hits.filter((h) => !h.reviewed && (h.category !== 'test' || h.issuedCandidate));
 }
 
 export interface SummaryRow {
@@ -341,4 +406,34 @@ export function historyByCommit(hits: readonly SecretScanHit[], rule: SecretScan
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} x${n}`);
+}
+
+export interface ReviewedEntry {
+  readonly fingerprint: string;
+  readonly reason: string;
+  readonly reviewer: string;
+  readonly date: string;
+}
+
+export const REVIEWED_FILE = 'ops/security/secret-scan-reviewed.json';
+
+/** Loads the committed list of reviewed SHA-256 fingerprints (no values). A missing file is an empty list. */
+export function loadReviewed(cwd: string): ReviewedEntry[] {
+  const path = `${cwd}/${REVIEWED_FILE}`;
+  if (!existsSync(path)) return [];
+  const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  const entries = (parsed as { entries?: unknown }).entries;
+  if (!Array.isArray(entries)) throw new Error('secret-scan-reviewed.json: entries must be an array');
+  return entries.map((e: Partial<ReviewedEntry>) => {
+    if (!/^[0-9a-f]{64}$/.test(e.fingerprint ?? '') || !e.reason || !e.reviewer || !e.date) {
+      throw new Error('secret-scan-reviewed.json: each entry needs fingerprint (sha-256 hex), reason, reviewer, date');
+    }
+    return { fingerprint: e.fingerprint as string, reason: e.reason, reviewer: e.reviewer, date: e.date };
+  });
+}
+
+/** Marks hits whose fingerprint is in the reviewed list. */
+export function applyReviewed(hits: readonly SecretScanHit[], reviewed: readonly ReviewedEntry[]): SecretScanHit[] {
+  const known = new Set(reviewed.map((e) => e.fingerprint));
+  return hits.map((h) => (h.fingerprint !== '' && known.has(h.fingerprint) ? { ...h, reviewed: true } : h));
 }

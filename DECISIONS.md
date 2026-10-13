@@ -21129,6 +21129,8 @@ These are Q1–Q10 of the design §7. The defaults are:
 - **Open for the S0 gate:** Tailscale removal (owner); 7 days of ledger and the `observe` period (egress branch); the ledger path and JSON field names the self-check reads (`host`, `initiator`, `bytesUp`, `bytesDown`) must match the egress branch.
 
 - **S0-ops review fixes (2026-10-13, Chief Architect).** The scan now reports every hit per file (an early placeholder cannot hide a later secret), gates on issued-key candidates in test paths too, and fails (exit 2) when git fails. The self-check reads the ledger by kind (bytes over `request` only), fails on `new-destination`, `denied-range` and `budget-exceeded` guard findings in the window (filtered on `ts`), verifies live addresses through `connect` records (IP to host) instead of PTR names or provider ranges, treats an unmapped address as "unverified" (a warning, a failure only when also outside the exact-host static allowlist), handles IPv6, validates `--since` and emits valid JSON. `--expect-stopped` gives the incident runbook a pre-restart check.
+- **Rotation candidates verified (2026-10-13).** The 7 history-only candidates (3 commits, test files) were verified as fakes by the GitHub token shape check: four have body lengths other than 36, and the one 36-character `ghp_` value fails the CRC32/base62 checksum. 0 issued credentials. The scanner now applies that check (`not-issued-shape` does not gate) and honors `ops/security/secret-scan-reviewed.json`, a committed list of SHA-256 fingerprints with reason, reviewer and date (never values); a listed hit is reported as `reviewed` and does not gate.
+
 
 ## ADR-0121 S0 implementation note — security baseline, code half (2026-10-13)
 

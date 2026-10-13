@@ -4,9 +4,11 @@
  * A credential-assignment counts only for a credential-shaped string literal (not identifiers, env names, placeholders).
  */
 import {
+  applyReviewed,
   formatHit,
   gatingHits,
   historyByCommit,
+  loadReviewed,
   scanHistory,
   scanWorkingTree,
   summarize,
@@ -20,25 +22,27 @@ async function main(argv: readonly string[]): Promise<number> {
     return 2;
   }
   const cwd = process.cwd();
-  const hits: SecretScanHit[] = [];
+  const allHits: SecretScanHit[] = [];
   let files = 0;
   let commits = 0;
   let skipped = 0;
   if (!argv.includes('--no-tree')) {
     const tree = await scanWorkingTree(cwd);
-    hits.push(...tree.hits);
+    allHits.push(...tree.hits);
     files = tree.files;
     skipped += tree.skipped;
   }
   if (!argv.includes('--no-history')) {
     const history = await scanHistory(cwd);
-    hits.push(...history.hits);
+    allHits.push(...history.hits);
     commits = history.commits;
     skipped += history.skipped;
   }
+  const hits = applyReviewed(allHits, loadReviewed(cwd));
   const gating = gatingHits(hits);
-  const rotate = hits.filter((h) => h.issuedCandidate);
-  const totals = `${hits.length} hit(s), ${gating.length} gating (non-test or issued-key candidate)`;
+  const rotate = hits.filter((h) => h.issuedCandidate && !h.reviewed);
+  const reviewedCount = hits.filter((h) => h.reviewed).length;
+  const totals = `${hits.length} hit(s), ${gating.length} gating (non-test or issued-key candidate), ${reviewedCount} reviewed`;
   if (argv.includes('--json')) {
     process.stdout.write(
       `${JSON.stringify({ hits, summary: summarize(hits), files, commits, skipped, hitCount: hits.length, gatingCount: gating.length })}\n`,
