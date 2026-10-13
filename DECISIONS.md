@@ -20118,8 +20118,8 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   `ConsoleLogger('storage')`, which logs `storage.migration.applied version=16 … sessionsWithoutPlatform=<n>`: a
   number, never an id. This is internal to the adapter; Core is unchanged.
 - **Startup refusal.** `SCHEMA_VERSION_AHEAD` (a database newer than the build, ADR-0096 D10) was a generic exit 1, so
-  launchd relaunched it in a loop. It is now a configuration exit 78 (`ops/exit-codes.ts`), with a hint that names the
-  restore runbook (`bootstrap-preflight.ts`). The pre-v16 build still exits 1, which the runbook warns about.
+  launchd relaunched it in a loop. It is now a configuration exit 78 (`ops/exit-codes.ts`), with a self-contained restore hint
+  (`bootstrap-preflight.ts`; shipped first as the STO-1 pre-step). The pre-v16 build still exits 1, which the runbook warns about.
 - **Deviations from the ADR text.**
   1. The backfill also requires readable JSON and a text-typed platform: `(CASE WHEN json_valid(data) THEN
      json_type(data, '$.context.platform') END) = 'text'`. A single row of malformed JSON would otherwise abort the
