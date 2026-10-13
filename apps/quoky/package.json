@@ -2,7 +2,7 @@
   "name": "@quoky/app",
   "version": "0.1.0",
   "private": true,
-  "description": "Quoky composition root — wires ports to concrete providers and boots the platform.",
+  "description": "Quoky composition root \u2014 wires ports to concrete providers and boots the platform.",
   "type": "commonjs",
   "main": "dist/main.js",
   "scripts": {
@@ -37,6 +37,7 @@
     "@nestjs/core": "^10.4.4",
     "dotenv": "^16.4.5",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "undici": "6.24.1"
   }
 }

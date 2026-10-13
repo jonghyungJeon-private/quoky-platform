@@ -101,6 +101,9 @@ importers:
       rxjs:
         specifier: ^7.8.1
         version: 7.8.2
+      undici:
+        specifier: 6.24.1
+        version: 6.24.1
 
   packages/adapter-discord:
     dependencies:
