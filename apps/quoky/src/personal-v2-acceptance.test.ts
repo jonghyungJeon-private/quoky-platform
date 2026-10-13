@@ -248,8 +248,10 @@ function prepareMigratedDatabase(path: string): void {
     migrationSteps.push(runMigrations(raw, MIGRATIONS.slice(0, 14)));
     expect(tableNames(db)).toContain('learning_items');
     expect(tableNames(db)).not.toContain('connector_write_receipts');
-    migrationSteps.push(runMigrations(raw, MIGRATIONS));
+    migrationSteps.push(runMigrations(raw, MIGRATIONS.slice(0, 15)));
     expect(tableNames(db)).toContain('connector_write_receipts');
+    // ADR-0119 (STO-1): v16 adds the session platform key and the usage-ledger index.
+    migrationSteps.push(runMigrations(raw, MIGRATIONS));
   } finally {
     db.close();
   }
@@ -476,7 +478,7 @@ function actionShapedReplyLabel(reply: string | undefined, text: string): string
 async function seedPostPushAnchor(h: Harness, context: ConversationContext, status: ApplyPreviewAnchor['status']) {
   // Open the session deterministically first (the help reply never reaches a provider).
   await h.turn(context, '도움말');
-  const session = await h.storage.sessions.findActiveByContext(context.channelId, context.threadId);
+  const session = await h.storage.sessions.findActiveByContext(context.platform, context.channelId, context.threadId);
   if (!session) throw new Error('session was not opened');
   const projectId = `int1-project-${context.channelId}`;
   const withProject = await h.storage.sessions.save({ ...session, activeProjectId: projectId });
@@ -526,7 +528,7 @@ async function observeCase(golden: { text: string; ctx?: RoutingCtx }): Promise<
   }
   if (golden.ctx?.registeredProject) {
     await harness.turn(context, `이 프로젝트 등록해줘: ${sandboxRepo()}`);
-    const session = await harness.storage.sessions.findActiveByContext(context.channelId, context.threadId);
+    const session = await harness.storage.sessions.findActiveByContext(context.platform, context.channelId, context.threadId);
     if (!session?.activeProjectId) throw new Error('setup project was not registered');
   }
   for (const text of golden.ctx?.priorTurns ?? []) await harness.turn(context, text);
@@ -596,32 +598,33 @@ afterAll(async () => {
 
 
 describe('Personal v2 acceptance — migration lane (ADR-0096 D10)', () => {
-  it('the migration list is exactly 1..15, contiguous, and LATEST_SCHEMA_VERSION is 15 (v15: ADR-0112 write receipts)', () => {
-    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(Array.from({ length: 15 }, (_, i) => i + 1));
-    expect(LATEST_SCHEMA_VERSION).toBe(15);
+  it('the migration list is exactly 1..16, contiguous, and LATEST_SCHEMA_VERSION is 16 (v15: ADR-0112 write receipts; v16: ADR-0119)', () => {
+    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(Array.from({ length: 16 }, (_, i) => i + 1));
+    expect(LATEST_SCHEMA_VERSION).toBe(16);
   });
 
-  it('a temp DB was migrated 0 → 11, then 12 (feedback), 13 (reminders), 14 (learning) and 15 (write receipts), one version per step', () => {
+  it('a temp DB was migrated 0 → 11, then 12 (feedback), 13 (reminders), 14 (learning), 15 (write receipts) and 16 (session platform key), one version per step', () => {
     expect(migrationSteps).toEqual([
       { from: 0, to: 11, applied: Array.from({ length: 11 }, (_, i) => i + 1) },
       { from: 11, to: 12, applied: [12] },
       { from: 12, to: 13, applied: [13] },
       { from: 13, to: 14, applied: [14] },
       { from: 14, to: 15, applied: [15] },
+      { from: 15, to: 16, applied: [16] },
     ]);
   });
 
-  it('the production storage opened that DB without re-migrating, and it stays at 15 with every v12..v15 table', () => {
+  it('the production storage opened that DB without re-migrating, and it stays at 16 with every v12..v15 table', () => {
     const db = openRawDb(dbPath);
     try {
-      expect(Number(db.pragma('user_version', { simple: true }))).toBe(15);
+      expect(Number(db.pragma('user_version', { simple: true }))).toBe(16);
       expect(tableNames(db)).toEqual(expect.arrayContaining([
         'conversation_turns', 'feedback_signals', 'reminders', 'learning_items', 'connector_write_receipts',
       ]));
-      // A build that knows only up to 14 refuses the v15 DB (fail closed, never a downgrade).
+      // A build that knows only up to 15 refuses the v16 DB (fail closed, never a downgrade).
       type Db = Parameters<typeof runMigrations>[0];
-      expect(() => runMigrations(db as unknown as Db, MIGRATIONS.slice(0, 14))).toThrow('SCHEMA_VERSION_AHEAD');
-      expect(Number(db.pragma('user_version', { simple: true }))).toBe(15);
+      expect(() => runMigrations(db as unknown as Db, MIGRATIONS.slice(0, 15))).toThrow('SCHEMA_VERSION_AHEAD');
+      expect(Number(db.pragma('user_version', { simple: true }))).toBe(16);
     } finally {
       db.close();
     }
@@ -1007,7 +1010,7 @@ describe('Personal v3 wave 1 — live QA W1-L01 / W1-L03 with a registered proje
     expect(seen.text).toContain('"완료 처리: 번호"');
     expect(seen.text).not.toContain('수정할 파일 경로와 함께');
     // The registered project was really active for the case.
-    const session = await harness.storage.sessions.findActiveByContext(seen.context.channelId, seen.context.threadId);
+    const session = await harness.storage.sessions.findActiveByContext(seen.context.platform, seen.context.channelId, seen.context.threadId);
     expect(session?.activeProjectId).toBeTruthy();
   });
 
@@ -1284,7 +1287,7 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
     await harness.turn(owner, `기억해: ${oldText}`);
     await harness.turn(ownerElsewhere, `참고로 ${newText}`); // ordinary chat in another session quotes the text
     await harness.turn(other, `${newText} 나도 그래`); // the other user's turn in the owner's session
-    const session = await harness.storage.sessions.findActiveByContext(owner.channelId);
+    const session = await harness.storage.sessions.findActiveByContext(owner.platform, owner.channelId);
     if (!session) throw new Error('session was not opened');
     const ownerId = await actorIdOf(owner);
     const task = recallTask(owner, ownerId, session.id, '내가 좋아하는 커피가 뭐였지?');
@@ -1355,7 +1358,7 @@ describe('Personal v3 MEM-1 — memory management commands end to end (ADR-0106)
       stubReply = STUB_REPLY;
     }
     const ownerId = await actorIdOf(owner);
-    const session = await harness.storage.sessions.findActiveByContext(owner.channelId);
+    const session = await harness.storage.sessions.findActiveByContext(owner.platform, owner.channelId);
     if (!session) throw new Error('session was not opened');
     const task = recallTask(owner, ownerId, session.id, '내 차 무슨 색이었지?');
     // Precondition: the next context carries both the record (durable recall) and the paraphrase (transcript).

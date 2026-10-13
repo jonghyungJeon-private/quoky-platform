@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — STO-1 storage hardening, migration v16 (ADR-0119, 2026-10-13)
+
+- **Sessions are keyed by platform.** `SessionRepository.findActiveByContext(platform, channelId, threadId?)`: a Discord
+  and a Telegram conversation with equal channel ids now get separate sessions (ADR-0114 TG-1 residual). Core passes
+  `context.platform` through as opaque data.
+- **Migration v16** (additive, idempotent, one transaction):
+  - `sessions.platform`, backfilled from each session's stored `context.platform`. Rows without one stay `NULL` and are
+    counted in the `storage.migration.applied` log line;
+  - `idx_sessions_platform_context`;
+  - a partial expression index `idx_task_runs_usage_finished`, so the usage ledger reads its date range instead of
+    the whole `task_runs` table. The ledger output is unchanged.
+- **A database newer than the build** (`SCHEMA_VERSION_AHEAD`) is now a configuration exit 78 with a restore hint,
+  instead of a relaunch loop.
+- **Apply and rollback runbook:** `docs/ops/migration-v16-apply.md`. The apply on the service DB is Strict and has not
+  been run.
+
 ## Unreleased — fix: a database newer than the build is refused with exit 78 (ADR-0119 STO-1 pre-step, 2026-10-13)
 
 - `SCHEMA_VERSION_AHEAD` exited 1, so launchd relaunched the service in a loop after a rollback to an older build. It is now a configuration failure

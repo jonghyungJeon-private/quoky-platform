@@ -20096,6 +20096,77 @@ opening the v16 database fails with `SCHEMA_VERSION_AHEAD` and touches nothing.
 
 The backup, verify and scratch-copy check, and the v16 apply on the service DB; the deploy restart.
 
+## Personal v5 STO-1 implementation note — ADR-0119, migration v16 (2026-10-13)
+
+- **Status:** Implementation note under ADR-0119 (plan track STO-1, wave 2). Offline validation only. **The v16 apply
+  on the service DB has not been run.** It is the Strict step below and needs the owner's confirmation for that
+  target.
+- **Port (ADR-0119 D2, as decided).** `SessionRepository.findActiveByContext(platform, channelId, threadId?)`.
+  `SessionManager.openForContext` passes `context.platform` through as opaque data, and Core never branches on it. No
+  other port, DI token or `ConversationRuntimeDeps` key changes. Every in-memory fake repository in the tests now
+  matches on the platform too.
+- **Migration v16 (`packages/storage-sqlite/src/migrations.ts`, ADR-0119 D1).** It runs in the runner's
+  per-migration transaction. It adds `sessions.platform TEXT` only when `table_info` lacks it, backfills it from
+  `json_extract(data, '$.context.platform')` for rows still `NULL`, and creates `idx_sessions_platform_context
+  (platform, channel_id, thread_id, status)` and the partial expression index `idx_task_runs_usage_finished` on
+  `json_extract(data, '$.finishedAt') WHERE json_extract(data, '$.usage') IS NOT NULL`. It stamps `user_version` 16.
+  The SQLite `save` writes the column from `session.context.platform` on every insert and update. The two indexed
+  queries live in `packages/storage-sqlite/src/queries.ts` (package-internal), so the tests run `EXPLAIN QUERY PLAN`
+  on the exact SQL the repository runs. The usage query text is unchanged.
+- **Logged count (D1).** `Migration.up` may return log-safe numeric facts. `runMigrations` takes an optional
+  `onApplied` observer. `SqliteConfig` takes an optional `logger`, and the composition root passes
+  `ConsoleLogger('storage')`, which logs `storage.migration.applied version=16 … sessionsWithoutPlatform=<n>`: a
+  number, never an id. This is internal to the adapter; Core is unchanged.
+- **Startup refusal.** `SCHEMA_VERSION_AHEAD` (a database newer than the build, ADR-0096 D10) was a generic exit 1, so
+  launchd relaunched it in a loop. It is now a configuration exit 78 (`ops/exit-codes.ts`), with a self-contained restore hint
+  (`bootstrap-preflight.ts`; shipped first as the STO-1 pre-step). The pre-v16 build still exits 1, which the runbook warns about.
+- **Deviations from the ADR text.**
+  1. The backfill also requires readable JSON and a text-typed platform: `(CASE WHEN json_valid(data) THEN
+     json_type(data, '$.context.platform') END) = 'text'`. A single row of malformed JSON would otherwise abort the
+     whole migration. Such rows, and non-text values, stay `NULL` and are counted. This is stricter than the ADR's
+     "nothing is guessed", never looser.
+  2. The ADR-0088 guarded-start e2e asserted that `task_runs` had no partial index. It now asserts that the only partial
+     index is `idx_task_runs_usage_finished`, which the start path never reads.
+- **Tests.**
+  - `packages/storage-sqlite/src/migration-v16.test.ts` uses a realistic v15 fixture: Discord DM, channel and thread
+    sessions, a CLOSED session, a Telegram DM, a Discord/Telegram pair with equal channel ids, a session without a
+    platform, runs across three months with and without usage, and rows in every v12–v15 table. Each test migrates a
+    `VACUUM INTO` copy and compares it with the untouched original. The tests check that:
+    - every non-session row is identical, and sessions only gain the backfilled column;
+    - every active session is found again, and the equal-id pair splits by platform;
+    - the usage visits are identical;
+    - a second run and a re-run of the v16 step change nothing;
+    - a pre-existing column is tolerated, and malformed or non-text platforms stay `NULL`;
+    - an injected failure inside v16 rolls everything back to v15;
+    - a v15 build refuses the v16 DB with `SCHEMA_VERSION_AHEAD`, byte-unchanged;
+    - `EXPLAIN QUERY PLAN` shows both indexes.
+  - `session-repository.test.ts` covers the platform key and the column write on update.
+  - `apps/quoky/src/ops/provider-usage.test.ts`: the monthly ledgers and notice texts for four months are
+    byte-identical between the pre-v16 query on the v15 file and the same file after the v16 startup migration.
+  - `bootstrap-preflight.test.ts`: a real ahead DB maps to exit 78 with the hint.
+  - The v2 and v3 acceptance migration lanes step on to 16.
+- **Apply and rollback runbook (Strict, ADR-0119 D3/D4).** The full commands are in `docs/ops/migration-v16-apply.md`:
+  1. Record the running commit (`PREV`).
+  2. `quokyctl.sh backup --apply` (must print `user_version 15`), then `quokyctl.sh backup --verify <name>.db`.
+  3. Build the target commit in a separate detached worktree (never the live `quoky-service` checkout yet). The
+     service keeps running the old build.
+  4. Migrate a scratch copy of the verified backup with that worktree's `SqliteStorageProvider` (after a `json_valid`
+     check that must print 0). Only after this passes is the live checkout updated and built. The session, active
+     session and run counts and the per-label usage sums must `diff` identical, with `user_version` 16 and
+     `integrity_check` `ok`.
+  5. `quokyctl.sh restart --apply --repo <checkout>`. The service takes its own verified `pre-migration` copy and then
+     migrates in `storage.init()`.
+  6. Verify:
+     - the `storage.migration.applied version=16` log line, with the same `sessionsWithoutPlatform` as the rehearsal;
+     - `quokyctl.sh status`;
+     - a fresh `backup --apply` that prints `user_version 16`;
+     - one turn on each platform continues its existing session;
+     - the ops-UI usage panel totals are unchanged.
+  - **Rollback.** Stop the service. Verify and restore the newest user_version-15 copy (preferably the
+    `pre-migration` one) with its vector snapshot, using quickstart "복구 절차" steps 4–6. Redeploy `PREV`, then
+    `quokyctl.sh install --apply` with the live paths. Data written after that copy is lost; the owner is told before
+    the restart. Roll forward again by re-running steps 1–6.
+
 ### Implementation notes
 
 - STO-1 pre-step: refuse-newer shipped first (exit 78 `SCHEMA_VERSION_AHEAD`) so a rollback cannot crash-loop.

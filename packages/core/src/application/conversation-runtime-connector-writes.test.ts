@@ -211,8 +211,8 @@ function harness(opts: HarnessOptions = {}) {
       async get(id: string) {
         return sessions.get(id) ?? null;
       },
-      async findActiveByContext(channelId: string) {
-        return [...sessions.values()].find((s) => s.status === SessionStatus.ACTIVE && s.context.channelId === channelId) ?? null;
+      async findActiveByContext(platform: string, channelId: string) {
+        return [...sessions.values()].find((s) => s.status === SessionStatus.ACTIVE && s.context.platform === platform && s.context.channelId === channelId) ?? null;
       },
       async list() {
         return [...sessions.values()];

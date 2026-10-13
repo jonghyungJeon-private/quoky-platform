@@ -13,8 +13,21 @@ export interface Migration {
   readonly version: number;
   /** Short description for audit/logging. */
   readonly name: string;
-  /** Idempotent DDL that upgrades the schema to `version`. */
-  up(db: Db): void;
+  /**
+   * Idempotent DDL that upgrades the schema to `version`. It may return log-safe counts (numbers only, never ids or
+   * content) that the runner hands to its observer, e.g. v16's count of sessions left without a platform.
+   */
+  up(db: Db): void | MigrationFacts;
+}
+
+/** Log-safe numeric facts a migration reports (ADR-0119 D1: a number, no ids). */
+export type MigrationFacts = Readonly<Record<string, number>>;
+
+/** One applied migration, as reported to the optional `runMigrations` observer after its transaction committed. */
+export interface AppliedMigration {
+  readonly version: number;
+  readonly name: string;
+  readonly facts?: MigrationFacts;
 }
 
 /** True if `table` already has a column named `column`. */
@@ -350,6 +363,33 @@ export const MIGRATIONS: readonly Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS connector_write_receipts_status ON connector_write_receipts(status);`);
     },
   },
+  {
+    version: 16,
+    name: 'session platform key + usage ledger index (ADR-0119)',
+    up(db) {
+      // ADR-0119 D1: additive and idempotent (ADR-0096 D10), inside the runner's per-migration transaction.
+      // 1. The active-session lookup gains the platform: a nullable column, added only when it is missing.
+      if (!hasColumn(db, 'sessions', 'platform')) {
+        db.exec(`ALTER TABLE sessions ADD COLUMN platform TEXT;`);
+      }
+      // 2. Backfill from the platform every session already stores in its JSON context. Nothing is guessed: a row
+      //    whose JSON has no (text) platform keeps NULL, is never matched by the new lookup, and that conversation
+      //    simply starts a new session. Re-running touches only rows still NULL, which stay NULL. The CASE keeps a row
+      //    with unreadable JSON from aborting the migration (it stays NULL too).
+      db.exec(`UPDATE sessions SET platform = json_extract(data, '$.context.platform')
+        WHERE platform IS NULL
+          AND (CASE WHEN json_valid(data) THEN json_type(data, '$.context.platform') END) = 'text';`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_platform_context
+        ON sessions(platform, channel_id, thread_id, status);`);
+      // 3. ADR-0115 D8 amended: a partial expression index on exactly the expressions the usage query already uses,
+      //    so `forEachUsageFinishedBetween` reads its date range instead of the whole table. The query is unchanged.
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_task_runs_usage_finished
+        ON task_runs(json_extract(data, '$.finishedAt'))
+        WHERE json_extract(data, '$.usage') IS NOT NULL;`);
+      const missing = db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE platform IS NULL`).get() as { n: number };
+      return { sessionsWithoutPlatform: missing.n };
+    },
+  },
 ];
 
 /** The schema version this build targets (the highest migration version). */
@@ -376,11 +416,13 @@ export function assertContiguousMigrations(migrations: readonly Migration[]): vo
  * is above the latest known version (written by a newer build) is
  * `SCHEMA_VERSION_AHEAD` — nothing is applied and nothing is downgraded.
  *
- * Returns the version transition for logging/auditing.
+ * Returns the version transition for logging/auditing. `onApplied` is called after each migration's transaction
+ * committed, with its log-safe facts (numbers only).
  */
 export function runMigrations(
   db: Db,
   migrations: readonly Migration[] = MIGRATIONS,
+  onApplied?: (applied: AppliedMigration) => void,
 ): { from: number; to: number; applied: number[] } {
   assertContiguousMigrations(migrations);
   const latest = migrations.length;
@@ -389,12 +431,14 @@ export function runMigrations(
   const applied: number[] = [];
   for (const m of migrations) {
     if (m.version <= from) continue;
-    const run = db.transaction(() => {
-      m.up(db);
+    const run = db.transaction((): void | MigrationFacts => {
+      const facts = m.up(db);
       db.pragma(`user_version = ${m.version}`);
+      return facts;
     });
-    run();
+    const facts = run();
     applied.push(m.version);
+    onApplied?.({ version: m.version, name: m.name, ...(facts ? { facts } : {}) });
   }
   const to = Number(db.pragma('user_version', { simple: true })) || 0;
   return { from, to, applied };

@@ -310,7 +310,12 @@ const repositoryHosting = {
  * git-worktree workspace, Telegram platform) means changing ONLY these lines.
  */
 const infrastructure: Provider[] = [
-  { provide: STORAGE_PROVIDER, useFactory: () => new SqliteStorageProvider({ dbPath: config.storage.dbPath }) },
+  {
+    provide: STORAGE_PROVIDER,
+    // ADR-0119 D1: each migration applied at start is logged with its counts (numbers only, e.g. v16's sessions
+    // left without a platform).
+    useFactory: () => new SqliteStorageProvider({ dbPath: config.storage.dbPath, logger: new ConsoleLogger('storage') }),
+  },
   {
     provide: CONTINUATION_BINDING_REPOSITORY,
     // Storage repositories become available at init, after DI construction. Resolve at call time.

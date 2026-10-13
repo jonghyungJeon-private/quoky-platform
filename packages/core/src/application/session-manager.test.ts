@@ -20,10 +20,10 @@ function storageWithSessions() {
     async get(id: string) {
       return rows.get(id) ?? null;
     },
-    async findActiveByContext(channelId: string, threadId?: string) {
+    async findActiveByContext(platform: string, channelId: string, threadId?: string) {
       return (
         [...rows.values()].find(
-          (s) => s.status === SessionStatus.ACTIVE && s.context.channelId === channelId && s.context.threadId === threadId,
+          (s) => s.status === SessionStatus.ACTIVE && s.context.platform === platform && s.context.channelId === channelId && s.context.threadId === threadId,
         ) ?? null
       );
     },
@@ -39,6 +39,16 @@ describe('SessionManager', () => {
     const again = await manager.openForContext(CTX, 'actor-1');
     expect(again.id).toBe(first.id);
     expect(first.status).toBe(SessionStatus.ACTIVE);
+  });
+
+  it('ADR-0119 D2: equal channel ids on two platforms open two sessions; the platform is passed through as data', async () => {
+    const { storage } = storageWithSessions();
+    const manager = new SessionManager(storage);
+    const first = await manager.openForContext(CTX, 'actor-1');
+    const other = await manager.openForContext({ ...CTX, platform: 'other-platform' }, 'actor-1');
+    expect(other.id).not.toBe(first.id);
+    expect((await manager.openForContext(CTX, 'actor-1')).id).toBe(first.id);
+    expect((await manager.openForContext({ ...CTX, platform: 'other-platform' }, 'actor-1')).id).toBe(other.id);
   });
 
   it('close() saves the session as CLOSED through the existing repository, keeping its other fields', async () => {

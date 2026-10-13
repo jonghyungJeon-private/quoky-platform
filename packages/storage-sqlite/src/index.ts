@@ -2,7 +2,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
-import { runMigrations } from './migrations';
+import { MIGRATIONS, runMigrations } from './migrations';
+import { ACTIVE_SESSION_IN_THREAD_SQL, ACTIVE_SESSION_WITHOUT_THREAD_SQL, USAGE_FINISHED_BETWEEN_SQL } from './queries';
 import { SqliteContinuationBindingRepository } from './continuation-binding-repository';
 import { SqliteFeedbackRepository } from './feedback-repository';
 import { SqliteReminderRepository } from './reminder-repository';
@@ -47,6 +48,7 @@ import type {
   ExecutionReceiptRepository,
   Id,
   IsoTimestamp,
+  Logger,
   MemoryRecord,
   MemoryRepository,
   MemoryScope,
@@ -94,6 +96,11 @@ export interface SqliteConfig {
   /** Explicit bounded lock wait in milliseconds; defaults to DEFAULT_SQLITE_BUSY_TIMEOUT_MS.
    * Storage-owned: no Core policy, no Application retry, no rescheduling. */
   busyTimeoutMs?: number;
+  /**
+   * Optional startup log for the migration runner: one `storage.migration.applied` line per migration this start
+   * applied, with its log-safe counts (ADR-0119 D1: numbers, never ids). Absent = silent, as before.
+   */
+  logger?: Logger;
 }
 
 /** Adapter-owned driver translation. Core never inspects driver codes, classes or messages. */
@@ -232,13 +239,15 @@ class SqliteSessionRepository extends JsonRepository<Session> implements Session
   override async save(session: Session): Promise<Session> {
     const result = this.db
       .prepare(
-        `INSERT INTO sessions (id, channel_id, thread_id, status, data) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET channel_id = excluded.channel_id,
+        `INSERT INTO sessions (id, platform, channel_id, thread_id, status, data) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET platform = excluded.platform, channel_id = excluded.channel_id,
            thread_id = excluded.thread_id, status = excluded.status, data = excluded.data
          WHERE sessions.status <> 'CLOSED' OR excluded.status = 'CLOSED'`,
       )
       .run(
         session.id,
+        // ADR-0119 D2: the platform column mirrors the session's own context on every insert and update.
+        typeof session.context.platform === 'string' ? session.context.platform : null,
         session.context.channelId,
         session.context.threadId ?? null,
         session.status,
@@ -252,20 +261,15 @@ class SqliteSessionRepository extends JsonRepository<Session> implements Session
     return session;
   }
 
-  async findActiveByContext(channelId: string, threadId?: string): Promise<Session | null> {
-    const order = `ORDER BY json_extract(data, '$.lastActivityAt') DESC LIMIT 1`;
+  /**
+   * ADR-0119 D2: keyed by (platform, channel, thread) over `idx_sessions_platform_context` (schema v16). A row whose
+   * platform is NULL (its stored JSON had none) never matches, so that conversation opens a new session.
+   */
+  async findActiveByContext(platform: string, channelId: string, threadId?: string): Promise<Session | null> {
     const row = (
       threadId === undefined
-        ? this.db
-            .prepare(
-              `SELECT data FROM sessions WHERE channel_id = ? AND thread_id IS NULL AND status = 'ACTIVE' ${order}`,
-            )
-            .get(channelId)
-        : this.db
-            .prepare(
-              `SELECT data FROM sessions WHERE channel_id = ? AND thread_id = ? AND status = 'ACTIVE' ${order}`,
-            )
-            .get(channelId, threadId)
+        ? this.db.prepare(ACTIVE_SESSION_WITHOUT_THREAD_SQL).get(platform, channelId)
+        : this.db.prepare(ACTIVE_SESSION_IN_THREAD_SQL).get(platform, channelId, threadId)
     ) as Row | undefined;
     return row ? (JSON.parse(row.data) as Session) : null;
   }
@@ -647,14 +651,11 @@ class SqliteTaskRunRepository extends JsonRepository<TaskRun> implements TaskRun
     visit: (usage: unknown, finishedAt: IsoTimestamp) => void,
   ): Promise<void> {
     // Only the usage JSON and the timestamp are extracted, one row at a time (`iterate`), with no ORDER BY (a sort would
-    // hold every row): memory is O(1) per row. It is still a full scan of task_runs (no index; one would need migration
-    // v16 and an ADR-0115 D8 amendment), about 1 to 2 ms of CPU per 1,000 runs.
+    // hold every row): memory is O(1) per row. ADR-0119 (amending ADR-0115 D8): schema v16's partial expression index
+    // `idx_task_runs_usage_finished` covers exactly these expressions, so the query reads its date range, not the
+    // table. The SQL (`queries.ts`) must keep matching the index expressions and its WHERE term.
     const rows = this.db
-      .prepare(
-        `SELECT json_extract(data, '$.usage') AS usage, json_extract(data, '$.finishedAt') AS finishedAt FROM task_runs
-          WHERE json_extract(data, '$.usage') IS NOT NULL
-            AND json_extract(data, '$.finishedAt') >= ? AND json_extract(data, '$.finishedAt') < ?`,
-      )
+      .prepare(USAGE_FINISHED_BETWEEN_SQL)
       .iterate(fromInclusive, toExclusive) as IterableIterator<{ usage: unknown; finishedAt: unknown }>;
     for (const row of rows) {
       if (typeof row.usage !== 'string' || typeof row.finishedAt !== 'string') continue;
@@ -1202,7 +1203,13 @@ export class SqliteStorageProvider implements StorageProvider {
     // baseline and is stamped forward; no behavior or table change. A non-contiguous migration list or a
     // database ahead of this build fails startup (ADR-0096 D10); the connection is closed before rethrowing.
     try {
-      runMigrations(db);
+      runMigrations(db, MIGRATIONS, (applied) =>
+        this.config.logger?.info('storage.migration.applied', {
+          version: applied.version,
+          name: applied.name,
+          ...applied.facts,
+        }),
+      );
     } catch (err) {
       db.close();
       throw err;

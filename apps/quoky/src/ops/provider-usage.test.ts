@@ -5,7 +5,12 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Capability, REMINDER_LIMITS, TaskRunStatus, runUsageRecord } from '@quoky/core';
 import type { AiUsage, LogFields, Logger, TaskRun } from '@quoky/core';
+import { createRequire } from 'node:module';
 import { SqliteStorageProvider } from '@quoky/storage-sqlite';
+// Test-only, cross-package source imports (precedent: personal-v3-acceptance.test.ts): the v15 migration list and the
+// exact usage SQL, to read a v15 database as the build before ADR-0119 did.
+import { MIGRATIONS, runMigrations } from '../../../../packages/storage-sqlite/src/migrations';
+import { USAGE_FINISHED_BETWEEN_SQL } from '../../../../packages/storage-sqlite/src/queries';
 import { ProviderUsageLedger, monthKeyOf, monthStartIso, previousMonthKey } from './provider-usage';
 import type { ProviderUsageSource } from './provider-usage';
 import {
@@ -672,6 +677,72 @@ describe('PRV-3: the ledger has no write path to provider selection (ADR-0115 D8
       expect(imports, file).not.toMatch(/provider-selection|provider-routing|AiProviderManager|ProviderSelect|@quoky\/ai-/);
       const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
       expect(code, file).not.toMatch(/setDefault|setChat|setImage|registerProvider|\.register\(|rank|setSelection|switchProvider|disableProvider/i);
+    }
+  });
+});
+
+describe('ADR-0119 (STO-1): the usage panel totals are byte-identical across migration v16', () => {
+  interface RawDb {
+    prepare(sql: string): { run(...params: unknown[]): unknown; all(...params: unknown[]): unknown[] };
+    close(): void;
+  }
+  const openRaw = (file: string): RawDb => {
+    const requireFromStorage = createRequire(path.join(__dirname, '../../../../packages/storage-sqlite/package.json'));
+    const Database = requireFromStorage('better-sqlite3') as new (f: string) => RawDb;
+    return new Database(file);
+  };
+
+  it('a v15 database read by the pre-v16 query and the same file after the v16 startup migration give identical monthly ledgers', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'quoky-usage-v16-'));
+    dirs.push(dir);
+    const dbPath = path.join(dir, 'q.db');
+    const raw = openRaw(dbPath);
+    runMigrations(raw as unknown as Parameters<typeof runMigrations>[0], MIGRATIONS.slice(0, 15));
+    const usages: Array<[string, AiUsage | undefined]> = [
+      ['2026-08-31T14:59:59.999Z', { label: 'openai:gpt-5', inputTokens: 100, outputTokens: 50 }],
+      ['2026-08-31T15:00:00.000Z', { label: 'openai:gpt-5', inputTokens: 10, outputTokens: 5, totalTokens: 20 }],
+      ['2026-09-10T00:00:00.000Z', { label: 'gemini:g', inputTokens: 7, outputTokens: 3, cachedInputTokens: 2, reasoningTokens: 1 }],
+      ['2026-09-11T00:00:00.000Z', { label: 'claude-cli' }],
+      ['2026-09-12T00:00:00.000Z', undefined],
+      ['2026-09-30T14:59:59.999Z', { label: 'openai:gpt-5', inputTokens: 1, outputTokens: 1 }],
+      ['2026-09-30T15:00:00.000Z', { label: 'gemini:g', totalTokens: 4 }],
+      ['2026-10-05T00:00:00.000Z', { label: 'openai:gpt-5', inputTokens: 2_000, outputTokens: 300 }],
+    ];
+    usages.forEach(([finishedAt, usage], i) => {
+      const record = runUsageRecord(usage);
+      const run = {
+        id: `run-${i}`, taskId: `task-${i}`, attempt: 1, status: TaskRunStatus.SUCCEEDED, capability: Capability.GENERAL_CHAT,
+        artifactIds: [], startedAt: finishedAt, finishedAt, metadata: { model: 'm' }, ...(record ? { usage: record } : {}),
+      };
+      raw.prepare('INSERT INTO task_runs (id, task_id, data) VALUES (?, ?, ?)').run(run.id, run.taskId, JSON.stringify(run));
+    });
+    const legacySource: ProviderUsageSource = {
+      async forEachUsageFinishedBetween(from, to, visit) {
+        for (const row of raw.prepare(USAGE_FINISHED_BETWEEN_SQL).all(from, to) as Array<{ usage: string; finishedAt: string }>) {
+          visit(JSON.parse(row.usage), row.finishedAt);
+        }
+      },
+    };
+    const months = ['2026-08', '2026-09', '2026-10', '2026-11'];
+    const panel = async (ledger: ProviderUsageLedger) => {
+      const out: string[] = [];
+      for (const month of months) {
+        const usage = await ledger.monthly(month);
+        out.push(JSON.stringify(usage), monthlyUsageNoticeText(usage));
+      }
+      return out;
+    };
+    const before = await panel(new ProviderUsageLedger(legacySource, KST));
+    raw.close();
+
+    const s = new SqliteStorageProvider({ dbPath });
+    await s.init();
+    try {
+      const after = await panel(new ProviderUsageLedger(s.taskRuns, KST));
+      expect(after).toEqual(before);
+      expect(JSON.parse(before[2] as string)).toMatchObject({ month: '2026-09', runs: 4 });
+    } finally {
+      await s.close();
     }
   });
 });
