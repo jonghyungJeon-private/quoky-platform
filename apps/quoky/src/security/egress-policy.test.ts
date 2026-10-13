@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { EgressConfigErrorCode, parseEgressConfig } from './egress-config';
 import { TELEGRAM_METHODS } from '@quoky/adapter-telegram';
-import { SLACK_METHODS, buildEgressInventory, checkDestination, labelFor, pathTemplate } from './egress-policy';
+import { GOOGLE_SHEETS_METHODS, SLACK_METHODS, buildEgressInventory, checkDestination, labelFor, pathTemplate } from './egress-policy';
+import { EGRESS_BUDGETS } from './egress-budget';
 import type { EgressInventorySource } from './egress-policy';
 
 const MINIMAL: EgressInventorySource = {
@@ -37,6 +38,7 @@ describe('egress inventory (design §5.1): derived from configuration only', () 
       'media.discordapp.net': 'discord-attachments',
       'api.telegram.org': 'telegram',
       'www.googleapis.com': 'google',
+      'sheets.googleapis.com': 'google-sheets',
       'gmail.googleapis.com': 'gmail',
       'oauth2.googleapis.com': 'google-oauth',
       'acme.atlassian.net': 'jira',
@@ -91,6 +93,15 @@ describe('ledger path template (design §5.4): an allow-list of fixed prefixes, 
     ['gmail', '/gmail/v1/users/me/messages/18c2f0a9b1d2e3f4', '/gmail/v1/users/me/messages/{id}'],
     ['google-drive', '/drive/v3/files/1AbCdEfGhIjKlMnOpQrStUvWxYz_0123/export', '/drive/v3/files/{id}/{id}'],
     ['google-drive', '/drive/v3/files/budget/export', '/drive/v3/files/{id}/{id}'],
+    // DRV-2b: the spreadsheet id never survives; only the closed Sheets method list is kept.
+    ['google-sheets', '/v4/spreadsheets/1AbCdEfGh_ij-KL?fields=sheets.properties(title)', '/v4/spreadsheets/{id}'],
+    ['google-sheets', "/v4/spreadsheets/budget/values:batchGet?ranges='Salaries'!A1:Z10", '/v4/spreadsheets/{id}/values:batchGet'],
+    ['google-sheets', '/v4/spreadsheets/budget:batchUpdate', '/v4/spreadsheets/{id}'],
+    ['google-sheets', '/v4/spreadsheets/budget/values:append', '/v4/spreadsheets/{id}/{method}'],
+    ['google-sheets', '/v4/spreadsheets/budget/Salaries', '/v4/spreadsheets/{id}/{method}'],
+    ['google-sheets', '/v4/spreadsheets/budget/values/Salaries!A1', '/v4/spreadsheets/{id}/{id}/{id}'],
+    ['google-sheets', '/v4/spreadsheets', '/v4/spreadsheets'],
+    ['google-sheets', '/v3/feeds/payroll', '/{id}/{id}/{id}'],
     ['discord', '/api/v10/channels/123456789012345678/messages', '/api/v10/channels/{id}/{id}'],
     ['discord', '/api/v10/users/alice', '/api/v10/users/{id}'],
     ['discord', '/api/v10/gateway/bot', '/api/v10/gateway/bot'],
@@ -153,6 +164,19 @@ describe('ledger path template (design §5.4): an allow-list of fixed prefixes, 
     for (const method of ['auth.test', 'private.customerSecret', 'users.info', 'search.messages.extra', 'a.b']) {
       expect(pathTemplate('slack', `/api/${method}`), method).toBe('/api/{method}');
     }
+  });
+
+  it('DRV-2b: sheets.googleapis.com is allowlisted only with Drive configured, with its own budget label', () => {
+    const driveOnly = buildEgressInventory({ ...MINIMAL, drive: {} });
+    expect(driveOnly.hosts.get('sheets.googleapis.com')).toBe('google-sheets');
+    expect(buildEgressInventory({ ...MINIMAL, calendar: {} }).hosts.has('sheets.googleapis.com')).toBe(false);
+    expect(buildEgressInventory({ ...MINIMAL, gmail: {} }).hosts.has('sheets.googleapis.com')).toBe(false);
+    expect(labelFor(driveOnly, 'sheets.googleapis.com', 443, '/v4/spreadsheets/x/values:batchGet')).toBe('google-sheets');
+    expect(labelFor(driveOnly, 'SHEETS.googleapis.com', 443, '/v4/spreadsheets/x')).toBe('google-sheets');
+    expect(checkDestination(driveOnly, { protocol: 'https:', host: 'sheets.googleapis.com', port: 443 })).toEqual([]);
+    expect(checkDestination(driveOnly, { protocol: 'https:', host: 'evil.sheets.googleapis.com', port: 443 })).toEqual(['new-destination']);
+    expect(EGRESS_BUDGETS['google-sheets']).toEqual(EGRESS_BUDGETS['google-drive']);
+    expect([...GOOGLE_SHEETS_METHODS]).toEqual(['values:batchGet']);
   });
 
   it('at most six {id} segments follow the prefix', () => {

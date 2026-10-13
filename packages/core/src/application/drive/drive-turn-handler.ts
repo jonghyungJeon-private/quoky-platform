@@ -10,9 +10,12 @@ import type {
 import type { LogFields, Logger } from '../../ports/logger.port';
 import { isConnectorQueryError } from '../../ports/connector-query';
 import {
+  DRIVE_FIRST_SHEET_ONLY_REASONS,
   DRIVE_LISTING_KINDS,
   DRIVE_LISTING_MAX_ENTRIES,
+  DRIVE_SHEETS_MAX,
   isDriveTextExportable,
+  type DriveFirstSheetOnlyReason,
   type DriveDocument,
   type DriveFileKind,
   type DriveListingKind,
@@ -266,17 +269,26 @@ export class DriveTurnHandler implements ConversationTurnHandler {
       date: document.modifiedAt,
       body: document.text,
       sourceTruncated: document.textTruncated,
+      // DRV-2b: a spreadsheet read sheet by sheet; every title and cell is untrusted readout like the body.
+      ...(Array.isArray(document.sections) && document.sections.length > 0
+        ? { sections: document.sections.map((section) => ({ title: section.title, body: section.text })) }
+        : {}),
     });
     if (!built.ok) {
       this.log('info', 'drive.turn_handler.summary_refused', { refusal: built.refusal });
       return this.reply(ctx, renderDriveSummaryRefused(built.refusal, language), 'RESPONDED', language, 'not-summarized');
     }
-    this.log('info', 'drive.turn_handler.summarize', { truncated: built.readout.truncated });
+    const firstSheetOnly = isFirstSheetOnlyReason(document.firstSheetOnly) ? document.firstSheetOnly : undefined;
+    this.log('info', 'drive.turn_handler.summarize', {
+      truncated: built.readout.truncated,
+      sections: Array.isArray(document.sections) ? Math.min(document.sections.length, DRIVE_SHEETS_MAX) : 0,
+      ...(firstSheetOnly !== undefined ? { firstSheetOnly } : {}),
+    });
     return {
       kind: 'summarize',
       readout: built.readout,
       fallbackText: renderDriveSummaryUnavailable(language),
-      footer: renderDriveSummaryFooter(language),
+      footer: renderDriveSummaryFooter(language, firstSheetOnly, this.deps.copy),
     };
   }
 
@@ -370,4 +382,9 @@ function listingKey(sessionId: Id, actorId: Id): string {
 /** Factory for the composition root (ADR-0096 D7). */
 export function createDriveTurnHandler(deps: DriveTurnHandlerDeps): DriveTurnHandler {
   return new DriveTurnHandler(deps);
+}
+
+/** A closed reason only: an adapter value outside the list adds no note. */
+function isFirstSheetOnlyReason(value: unknown): value is DriveFirstSheetOnlyReason {
+  return typeof value === 'string' && (DRIVE_FIRST_SHEET_ONLY_REASONS as readonly string[]).includes(value);
 }

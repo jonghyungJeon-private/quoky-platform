@@ -293,7 +293,9 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
   it('the request guard allows only GET to the pinned list, get and text-export endpoints with read parameters', () => {
     const allowed = [
       '/drive/v3/files?q=x&pageSize=10&orderBy=modifiedTime+desc&fields=files(id)&spaces=drive',
+      '/drive/v3/files?q=x&spaces=drive&corpora=allDrives&includeItemsFromAllDrives=true&supportsAllDrives=true',
       '/drive/v3/files/abc?fields=id,name',
+      '/drive/v3/files/abc?fields=id,name&supportsAllDrives=true',
       '/drive/v3/files/abc/export?mimeType=text%2Fplain',
       '/drive/v3/files/abc/export?mimeType=text%2Fcsv',
     ];
@@ -319,7 +321,11 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
       ['/drive/v3/files/abc?alt=media&fields=id', 'GET'],
       ['/drive/v3/files?q=x&pageToken=t', 'GET'],
       ['/drive/v3/files?q=x&q=y', 'GET'],
-      ['/drive/v3/files?supportsAllDrives=true', 'GET'],
+      ['/drive/v3/files?supportsAllDrives=false', 'GET'],
+      ['/drive/v3/files?corpora=domain', 'GET'],
+      ['/drive/v3/files?corpora=drive&driveId=x', 'GET'],
+      ['/drive/v3/files?includeItemsFromAllDrives=1', 'GET'],
+      ['/drive/v3/files/abc/export?mimeType=text%2Fplain&supportsAllDrives=true', 'GET'],
       ['/drive/v2/files', 'GET'],
     ];
     for (const [path, method] of refused) {

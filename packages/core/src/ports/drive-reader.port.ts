@@ -35,6 +35,13 @@ export const DRIVE_RAW_LINE_MAX_UNITS = 2_000;
 export const DRIVE_TEXT_MAX_BYTES = 256 * 1024;
 /** File ids are opaque printable tokens. */
 export const DRIVE_FILE_ID_MAX_LENGTH = 128;
+/**
+ * DRV-2b (ADR-0118 amendment 2026-10-12 (c)): a spreadsheet summary reads at most this many sheets; their text together
+ * (titles included) stays inside {@link DRIVE_TEXT_MAX_BYTES}.
+ */
+export const DRIVE_SHEETS_MAX = 20;
+/** A sheet title is untrusted single-line text, bounded like a file name but shorter. */
+export const DRIVE_SHEET_TITLE_MAX_LENGTH = 100;
 
 /**
  * What a file is, mapped by the adapter from its vendor type (Core never sees the vendor type). Only the
@@ -72,14 +79,40 @@ export interface DriveListResult {
   readonly matchedIsLowerBound: boolean;
 }
 
+/**
+ * One sheet of a spreadsheet read sheet by sheet (DRV-2b). Both fields are untrusted readout: a sheet title is chosen by
+ * whoever edits the spreadsheet, so it is data, never a heading Core trusts.
+ */
+export interface DriveDocumentSection {
+  /** The sheet title, one line, at most DRIVE_SHEET_TITLE_MAX_LENGTH code points, '' when it has none. */
+  readonly title: string;
+  /** The sheet's values as text (one line per row). */
+  readonly text: string;
+}
+
+/**
+ * DRV-2b fallback (closed, vendor-free): a spreadsheet whose sheets could not be read one by one was read as its first
+ * sheet only. `service-disabled`: the adapter's per-sheet read is not enabled for the account; `unavailable`: that read
+ * failed or was refused; `too-large`: its answer was over the adapter's size bound.
+ */
+export const DRIVE_FIRST_SHEET_ONLY_REASONS = ['service-disabled', 'unavailable', 'too-large'] as const;
+export type DriveFirstSheetOnlyReason = (typeof DRIVE_FIRST_SHEET_ONLY_REASONS)[number];
+
 /** One file with its bounded exported text, read only for an explicit summary request (ADR-0118 D7). */
 export interface DriveDocument extends DriveFileSummary {
   /** The owner's display name, one line, '' when unknown. */
   readonly ownerName: string;
-  /** The plain-text export, at most DRIVE_TEXT_MAX_BYTES of UTF-8. */
+  /** The plain-text export, at most DRIVE_TEXT_MAX_BYTES of UTF-8. With `sections`, their joined text. */
   readonly text: string;
-  /** True when the text was longer than the bound and was cut. */
+  /** True when the text was longer than the bound and was cut (with `sections`: a sheet, a row, a column or a cell was left out). */
   readonly textTruncated: boolean;
+  /**
+   * DRV-2b, additive: a spreadsheet read sheet by sheet — at most DRIVE_SHEETS_MAX sections, in sheet order, whose text
+   * together stays inside DRIVE_TEXT_MAX_BYTES. Absent for a document, and for a spreadsheet read as its first sheet.
+   */
+  readonly sections?: readonly DriveDocumentSection[];
+  /** DRV-2b, additive: set only when a spreadsheet was read as its first sheet only because the per-sheet read failed. */
+  readonly firstSheetOnly?: DriveFirstSheetOnlyReason;
 }
 
 export interface DriveReader {
@@ -90,7 +123,10 @@ export interface DriveReader {
   searchByName(name: string, limit?: number, kind?: DriveListingKind): Promise<DriveListResult>;
   /** The most recently modified files (not folders, not trashed), newest first. With `kind`: only that kind (`folder` lists folders). */
   recentFiles(limit?: number, kind?: DriveListingKind): Promise<DriveListResult>;
-  /** The bounded text export of one file a listing returned. `UNSUPPORTED_QUERY` when its kind has no text export. */
+  /**
+   * The bounded text export of one file a listing returned. `UNSUPPORTED_QUERY` when its kind has no text export. A
+   * spreadsheet may come back sheet by sheet (`sections`, DRV-2b).
+   */
   exportText(id: string): Promise<DriveDocument>;
 }
 

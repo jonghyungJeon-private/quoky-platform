@@ -1,6 +1,6 @@
 import type { IsoTimestamp, MessageBody } from '../../domain';
 import type { ConnectorQueryErrorReason } from '../../ports/connector-query';
-import type { DriveFileKind, DriveFileSummary, DriveListingKind, DriveListResult } from '../../ports/drive-reader.port';
+import type { DriveFileKind, DriveFileSummary, DriveFirstSheetOnlyReason, DriveListingKind, DriveListResult } from '../../ports/drive-reader.port';
 import { clip, guardedClippedSpan } from '../guarded-clip';
 import { mailDateLabel } from '../mail/mail-reply-renderer';
 import { joinBody, messageBody, takeLines, untrustedText, type MessagePart } from '../message-rendering';
@@ -52,6 +52,11 @@ export interface DriveSourceCopy {
   readonly label: { readonly ko: string; readonly en: string };
   /** The owner's reconnect step, appended to the auth-expired and needs-consent notes. */
   readonly reconnectHint?: { readonly ko: string; readonly en: string };
+  /**
+   * DRV-2b: what the owner can do when a spreadsheet was read as its first sheet only because the adapter's per-sheet
+   * read is not enabled for the account (`firstSheetOnly: 'service-disabled'`), for example the service to turn on.
+   */
+  readonly allSheetsHint?: { readonly ko: string; readonly en: string };
 }
 
 /** The neutral copy used when the composition root supplies none. */
@@ -316,11 +321,31 @@ export function renderDriveSummaryUnavailable(language: DriveLanguage): string {
     : '지금은 문서를 요약하지 못했어요. 잠시 후 다시 시도해 주세요.';
 }
 
-/** The deterministic disclosure appended to a successful summary. */
-export function renderDriveSummaryFooter(language: DriveLanguage): string {
-  return language === 'en'
-    ? "(This document's text was sent to the chat model to summarize it · the drive was only read; nothing was changed or shared)"
-    : '(문서 1건의 텍스트를 대화 모델에 보내 요약했어요 · 드라이브는 읽기만 했고 아무것도 바꾸거나 공유하지 않았어요)';
+/**
+ * The deterministic disclosure appended to a successful summary. DRV-2b: when a spreadsheet was read as its first sheet
+ * only, one honest line says so first (with the composition root's hint when the per-sheet read is not enabled).
+ */
+export function renderDriveSummaryFooter(language: DriveLanguage, firstSheetOnly?: DriveFirstSheetOnlyReason, copy?: DriveSourceCopy): string {
+  const disclosure =
+    language === 'en'
+      ? "(This document's text was sent to the chat model to summarize it · the drive was only read; nothing was changed or shared)"
+      : '(문서 1건의 텍스트를 대화 모델에 보내 요약했어요 · 드라이브는 읽기만 했고 아무것도 바꾸거나 공유하지 않았어요)';
+  const note = firstSheetOnly === undefined ? undefined : renderDriveFirstSheetOnlyNote(firstSheetOnly, language, copy);
+  return note === undefined ? disclosure : `${note}\n${disclosure}`;
+}
+
+/** DRV-2b: the one line that says only the first sheet of a spreadsheet was read, and why (a closed reason). */
+export function renderDriveFirstSheetOnlyNote(reason: DriveFirstSheetOnlyReason, language: DriveLanguage, copy?: DriveSourceCopy): string {
+  const en = language === 'en';
+  if (reason === 'service-disabled') {
+    const hint = copy?.allSheetsHint?.[language]?.replace(/\s+/g, ' ').trim();
+    const tail = hint ? clip(hint, 80) : en ? 'reading every sheet is not enabled yet' : '모든 시트 읽기가 아직 켜져 있지 않아요';
+    return en ? `(Only the first sheet was read · ${tail})` : `(첫 번째 시트만 읽었어요 · ${tail})`;
+  }
+  if (reason === 'too-large') {
+    return en ? '(Only the first sheet was read · the sheets were too large to read together)' : '(첫 번째 시트만 읽었어요 · 시트 내용이 너무 커서 한 번에 읽지 못했어요)';
+  }
+  return en ? '(Only the first sheet was read · the other sheets could not be read just now)' : '(첫 번째 시트만 읽었어요 · 다른 시트는 지금 읽지 못했어요)';
 }
 
 /** What a Drive reply did, for its history note: listed files, read nothing, or read but showed nothing. */

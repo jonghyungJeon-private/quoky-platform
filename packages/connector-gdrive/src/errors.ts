@@ -11,15 +11,20 @@ import { ConnectorQueryError, type ConnectorQueryErrorReason } from '@quoky/core
  * - `RATE_LIMITED`, `UNAVAILABLE` (transport, timeout, 5xx), `INVALID_RESPONSE` (shape or size), `NOT_FOUND`.
  */
 
-/** Which Google endpoint failed: the OAuth token endpoint or the Drive API. */
-export type GDriveEndpoint = 'token' | 'drive';
+/** Which Google endpoint failed: the OAuth token endpoint, the Drive API or the Sheets API (DRV-2b). */
+export type GDriveEndpoint = 'token' | 'drive' | 'sheets';
 
-/** A sanitized HTTP failure from either endpoint. */
+/** A sanitized HTTP failure from any endpoint. */
 export class GDriveHttpError extends ConnectorQueryError {
   constructor(
     reason: ConnectorQueryErrorReason,
     readonly endpoint: GDriveEndpoint,
     readonly status: number,
+    /**
+     * DRV-2b: Google answered that the API is not enabled for the project (403 `SERVICE_DISABLED` /
+     * `accessNotConfigured`). Read from the fixed `reason` tokens only.
+     */
+    readonly serviceDisabled = false,
   ) {
     super(reason, `gdrive: ${endpoint} request failed (${reason.toLowerCase()})`);
     this.name = 'GDriveHttpError';

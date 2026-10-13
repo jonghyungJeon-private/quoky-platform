@@ -23,7 +23,7 @@ import {
   REMINDER_TURN_HANDLERS,
   WORK_CHAT_TURN_HANDLERS,
 } from './feature-tokens';
-import { DRIVE_TURN_HANDLERS, createDriveProviders, createDriveReader } from './drive.providers';
+import { DRIVE_TURN_HANDLERS, GDRIVE_DRIVE_COPY, createDriveProviders, createDriveReader } from './drive.providers';
 import { createMailProviders } from './mail.providers';
 import { MEMORY_TURN_HANDLERS } from './memory.providers';
 import { MODEL_SELECTION_TURN_HANDLERS } from './provider-selection.providers';
@@ -237,5 +237,15 @@ describe('Drive feature composition (ADR-0096 D7)', () => {
     for (const forbidden of ['AI_PROVIDERS', 'PROVIDER_SELECTOR', 'AiProviderManager', 'ConversationRuntime', 'Writer', 'CONNECTOR_WRITE']) {
       expect(source).not.toContain(forbidden);
     }
+  });
+});
+
+describe('DRV-2b composition copy', () => {
+  it('names the service the owner enables to read every sheet (Core holds no vendor name)', () => {
+    expect(GDRIVE_DRIVE_COPY.allSheetsHint).toEqual({
+      ko: '모든 시트를 읽으려면 Google Sheets API가 필요해요',
+      en: 'reading every sheet needs the Google Sheets API enabled',
+    });
+    expect(Object.isFrozen(GDRIVE_DRIVE_COPY.allSheetsHint)).toBe(true);
   });
 });

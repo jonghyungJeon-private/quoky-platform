@@ -57,6 +57,8 @@ no cidr-bad-ip sc_ip_in_cidr 999.1.1.1 10.0.0.0/8
 ok host-exact sc_host_allowed api.telegram.org
 ok host-exact2 sc_host_allowed gateway.discord.gg
 ok host-trailing-dot sc_host_allowed gmail.googleapis.com.
+ok host-sheets sc_host_allowed sheets.googleapis.com
+no host-sheets-subdomain sc_host_allowed evil.sheets.googleapis.com
 no host-subdomain-not-trusted sc_host_allowed evil.api.telegram.org
 no host-suffix-trick sc_host_allowed notdiscord.com
 no host-other sc_host_allowed tracker.example.net
