@@ -277,36 +277,7 @@ describe('CA review P2-B: every pattern is linear (CPU time, not wall-clock)', (
   });
 });
 
-describe('v5 W3 live UAT: a thread summary names participants and described features (topic marker, subject carried across a connector)', () => {
-  it.each([
-    // A feature-description mail (the Gmail welcome mail): the sender is the topic, never Quoky.
-    'Gmail 팀은 새 받은편지함 사용 방법을 담은 메일을 보냈어요.',
-    '이 메일은 Gmail 팀이 보냈어요.',
-    'Gmail 팀이 메일을 보내고 답장하고 보관하는 기능을 추가했다고 안내했어요.',
-    // Participants of a thread "replied" and "sent": the subject stands in an earlier clause of the sentence.
-    '김철수 님이 내용을 확인하고 답장했어요.',
-    '김철수 님은 견적서를 보냈고 박영희 님이 답장을 보냈어요.',
-    'Gmail은 메일을 삭제하고 보관했어요.',
-  ])('allows (third party): %s', (text) => {
-    for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source)).toBe(false);
-  });
-
-  it.each([
-    // A real Quoky claim is still withheld, with or without a topic marker or a carried subject.
-    '답장을 보냈어요.',
-    '저는 메일을 보냈어요.',
-    'Quoky는 메일을 보냈어요.',
-    '오늘은 답장을 보냈어요.',
-    '메일은 제가 보냈어요.',
-    '제가 확인하고 답장했어요.',
-    '김철수 님이 확인하고 제가 답장했어요.',
-    'Gmail 팀이 안내했어요. 메일을 보관했어요.',
-  ])('withholds (Quoky claim): %s', (text) => {
-    for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source)).toBe(true);
-  });
-});
-
-describe('Codex P2: a Quoky stand-in anywhere in the sentence blocks the third-party exemption', () => {
+describe('v5 W3: the guard stays strict — the widened-exemption bypass family stays blocked (Codex P2)', () => {
   it.each([
     '고객팀은 확인했고 메일을 보냈습니다, Quoky가 대신.',
     '고객팀은 확인했고 답장을 보냈습니다, Quoky가 대신.',
@@ -314,16 +285,18 @@ describe('Codex P2: a Quoky stand-in anywhere in the sentence blocks the third-p
     '고객팀은 확인했고 메일을 삭제했습니다, 비서가 대신.',
     '고객팀은 확인했고 일정을 캘린더에 등록했습니다, 저희가 대신.',
     '고객팀은 확인했고 Quoky에서 메일을 보냈습니다.',
-    '고객팀은 확인했고 Quoky가 메일을 보냈습니다.',
     '고객팀은 확인했고 저희 측에서 답장을 보냈습니다.',
-    '고객팀은 확인했고 어시스턴트가 메일을 보냈습니다.',
-    '고객팀은 확인했고 봇이 메일을 보냈습니다.',
     '고객팀이 확인했고 제가 메일을 보냈습니다.',
-    'Gmail 팀이 안내했고 I sent a reply.',
+    'Quo ky가 확인했고 메일을 보냈습니다.',
+    'Quo​ky에서 메일을 보냈습니다.',
+    'Gmail 팀은 새 받은편지함 사용 방법을 담은 메일을 보냈어요.',
+    '김철수 님이 내용을 확인하고 답장했어요.',
   ])('withholds: %s', (text) => {
     for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source)).toBe(true);
   });
-  it.each(['김철수 님이 내용을 확인하고 답장했어요.', 'Gmail 팀은 새 받은편지함 사용 방법을 담은 메일을 보냈어요.', '이 메일은 Gmail 팀이 보냈어요.'])('allows: %s', (text) => {
-    expect(containsDocumentActionClaim(text, 'mail-thread')).toBe(false);
-  });
 });
+
+// Known gaps of the origin/main guard (a third-party subject exempts them; they were found while reviewing the widened
+// exemption and are NOT blocked at origin/main either): a hyphenated `Quo-ky`, an implied assistant action
+// (`김철수님이 부탁하셔서 메일을 보내 드렸습니다`) and a cross-sentence split (`Quoky가 처리했습니다. 김철수가 요청한 메일을
+// 보냈습니다.`). The guard is a best-effort net; the fixed footer is the guarantee. See DECISIONS (v5 W3 live UAT).

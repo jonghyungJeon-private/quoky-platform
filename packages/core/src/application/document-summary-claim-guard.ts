@@ -32,7 +32,7 @@ const KO_STAND_INS = new Set([
 const KO_NOT_A_SUBJECT = new Set([
   '같', '많', '깊', '높', '길', '넓', '일찍', '빨', '쉽', '굳', '끝', '깨끗', '틈틈', '번번', '곳곳', '일일',
   '내용', '요청', '문의', '연락', '메일', '이메일', '답장', '회신', '일정', '회의', '자료', '시간', '날짜', '마감', '확인',
-  '오늘', '내일', '어제', '지금', '방금', '이미', '먼저', '현재', '이번', '필요', '문제', '이유', '결과', '변경', '처리', '진행', '준비', '정리', '요약', '알림', '안내', '공지', '첨부', '파일',
+  '필요', '문제', '이유', '결과', '변경', '처리', '진행', '준비', '정리', '요약', '알림', '안내', '공지', '첨부', '파일',
 ]);
 /** DRV-1: document nouns, extra non-subjects for a Drive summary only (a mail summary matches the pre-DRV-1 guard). */
 const KO_DRIVE_NOT_A_SUBJECT = new Set(['문서', '시트', '폴더', '드라이브', '링크', '권한', '제목', '이름']);
@@ -68,7 +68,7 @@ const KO_DRIVE_CLAIMS: readonly RegExp[] = [
 ];
 
 /** A subject-marked word in a Korean clause: `김철수가`, `팀장님이`, `제가` (only `이/가/께서/님이` count). */
-const KO_SUBJECT = /(?:^|\s)([^\s]{1,20}?)(?:께서|님이|님은|이|가|은|는)(?=\s)/gu;
+const KO_SUBJECT = /(?:^|\s)([^\s]{1,20}?)(?:께서|님이|이|가)(?=\s)/gu;
 
 /**
  * English claims with a first-person or Quoky subject. Contractions take a straight or a curly apostrophe, and up to
@@ -112,72 +112,27 @@ const EN_DID_DRIVE_CLAIM = enDidClaim(`${EN_DID_MAIL_VERBS}|share|unshare|edit|m
 const EN_MADE_CLAIM =
   /\b(?:I|we|Quoky)\s+(?:[a-z]{1,20}\s+){0,3}?made\s+(?:[a-z]{1,20}\s+){0,3}?(?:public|private|editable|viewable|shareable)\b/i;
 
-/** A clause and the sentence text before it: the subject of a Korean clause may stand in an earlier clause of the same sentence. */
-interface Clause {
-  readonly text: string;
-  /** The sentence text up to the start of this clause (earlier clauses, connectors included). */
-  readonly before: string;
-  /** The whole sentence the clause belongs to. */
-  readonly sentence: string;
-}
-
 /** Sentences and clauses: split on sentence ends, line breaks and Korean clause connectors. */
-function clauses(text: string, source: UntrustedDocumentSource): Clause[] {
+function clauses(text: string, source: UntrustedDocumentSource): string[] {
   // A mail summary splits exactly as before DRV-1; a Drive summary keeps `다고` (reported speech) in one clause.
-  const connector = source === 'drive' ? /(?:하고|했고|(?<!다)고)\s/gu : /(?:하고|했고|고)\s/gu;
-  const out: Clause[] = [];
-  for (const sentence of text.split(/[.!?。\n]+/u)) {
-    let start = 0;
-    const pieces: Array<[number, number]> = [];
-    for (const match of sentence.matchAll(connector)) {
-      pieces.push([start, match.index ?? 0]);
-      start = (match.index ?? 0) + match[0].length;
-    }
-    pieces.push([start, sentence.length]);
-    for (const [from, to] of pieces) {
-      const piece = sentence.slice(from, to);
-      const trimmed = piece.trim();
-      if (trimmed.length > 0) out.push({ text: trimmed, before: sentence.slice(0, from + (piece.length - piece.trimStart().length)), sentence });
-    }
-  }
-  return out;
+  const split = source === 'drive' ? /[.!?。\n]+|(?:하고|했고|(?<!다)고)\s/u : /[.!?。\n]+|(?:하고|했고|고)\s/u;
+  return text.split(split).map((clause) => clause.trim()).filter((clause) => clause.length > 0);
 }
 
 /**
- * A Quoky stand-in anywhere in the sentence, with any case marker or none (`Quoky가`, `Quoky에서`, `비서는`, `저희가`,
- * `Quoky가 대신`), before or after the verb: such a sentence is never exempt. English `I`, `we`, `Quoky`, `the assistant`.
+ * Whether the claim at `claimAt` is exempt: the NEAREST real subject BEFORE it names someone other than Quoky
+ * (`김철수가 메일을 보냈어요`). Fail closed (sign-off item 3): if ANY Quoky stand-in is a subject before the claim in the
+ * same clause, the claim is never exempt — a relative clause (`제가 김철수가 요청한 답장을 보냈어요`) puts a third-person
+ * subject nearest the verb while Quoky is still the actor. A subject after the claim, an adverb or a generic noun never
+ * exempts.
  */
-const KO_STAND_IN_WORDS = [...KO_STAND_INS].filter((word) => /[^\x00-\x7f]/u.test(word) || word === 'quoky' || word === 'ai').join('|');
-const STAND_IN_ANYWHERE = new RegExp(
-  `(?:^|[\\s("'“‘「『,])(?:${KO_STAND_IN_WORDS})(?:가|이|는|은|를|을|에서|에게|에|께서|께|로|으로|대신|측|의|도|만|와|과|랑)?(?=[\\s,)"'”’」』]|$)` +
-    "|\\b(?:I|we|Quoky|the assistant|assistant|the bot)\\b",
-  'iu',
-);
-
-/**
- * Topic-marked words (`Gmail 팀은`, `김철수 님은`) name the actor too, but only a word shaped like a person or an
- * organisation counts (Latin letters or digits, or a trailing 님/씨/팀/사/측): `라벨은` or `오늘은` never exempts a claim.
- */
-const KO_ACTOR_SHAPE = /[a-z0-9]|(?:님|씨|팀|사|측)$/u;
-
-/**
- * Whether the claim is exempt: the NEAREST real subject BEFORE the end of the claim's wording (and in the same sentence,
- * so `김철수 님이 확인하고 답장했어요` keeps its subject across the connector) names someone other than Quoky
- * (`김철수가 메일을 보냈어요`, `메일은 김철수가 보냈어요`). Fail closed (sign-off item 3): if ANY Quoky stand-in is a
- * subject before the claim in the same sentence, the claim is never exempt — a relative clause
- * (`제가 김철수가 요청한 답장을 보냈어요`) puts a third-person subject nearest the verb while Quoky is still the actor.
- * A subject after the claim, an adverb or a generic noun never exempts.
- */
-function exemptBySubject(prefix: string, sentence: string, source: UntrustedDocumentSource): boolean {
-  if (STAND_IN_ANYWHERE.test(sentence)) return false;
+function exemptBySubject(clause: string, claimAt: number, source: UntrustedDocumentSource): boolean {
   let nearest: string | undefined;
-  for (const match of prefix.matchAll(KO_SUBJECT)) {
+  for (const match of clause.slice(0, claimAt).matchAll(KO_SUBJECT)) {
     // An opening quote or bracket is not part of the subject (`"제가 …"` is still the first person).
     const word = (match[1] ?? '').replace(/^["'“”‘’「『(\[<]+/u, '').toLowerCase();
     if (word.length === 0 || KO_NOT_A_SUBJECT.has(word) || (source === 'drive' && KO_DRIVE_NOT_A_SUBJECT.has(word))) continue;
     if (KO_STAND_INS.has(word)) return false;
-    // A topic marker (`은/는`) exempts only a word shaped like an actor; a stand-in under it was caught above.
-    if (/[은는]$/u.test(match[0].trim()) && !KO_ACTOR_SHAPE.test(word)) continue;
     nearest = word;
   }
   return nearest !== undefined;
@@ -189,12 +144,12 @@ function exemptBySubject(prefix: string, sentence: string, source: UntrustedDocu
  */
 const KO_REPORTED = /^\S{0,20}?(?:다는|다고|단\s|대요|다며)/u;
 
-function koreanClaim({ text: clause, before, sentence }: Clause, source: UntrustedDocumentSource): boolean {
+function koreanClaim(clause: string, source: UntrustedDocumentSource): boolean {
   for (const pattern of source === 'drive' ? [...KO_CLAIMS, ...KO_DRIVE_CLAIMS] : KO_CLAIMS) {
     const match = pattern.exec(clause);
     if (match === null) continue;
     if (KO_REPORTED.test(clause.slice(match.index + match[0].length))) continue;
-    if (exemptBySubject(before + clause.slice(0, match.index + match[0].length) + ' ', sentence, source)) continue;
+    if (exemptBySubject(clause, match.index, source)) continue;
     return true;
   }
   return false;
