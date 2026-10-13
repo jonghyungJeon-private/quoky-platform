@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives.",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12.",
   "cases": [
     {
       "id": "jira-001",
@@ -8268,6 +8268,433 @@
         }
       },
       "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-001",
+      "text": "지라이슈 오늘 올라온거 알려줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "window": "created",
+          "range": "today"
+        }
+      },
+      "note": "spacing error 지라이슈 [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-002",
+      "text": "jira 티켓 뭐있어",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "grammarAnswer": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "note": "English-Korean mix, casual [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-003",
+      "text": "이슈 진행중인 것만 보여줘 jira",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "status": "in-progress"
+        }
+      },
+      "note": "word order: source last [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-004",
+      "text": "지라에 내가 만든거 어제 업데이트된 것좀",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "role": "reporter",
+          "window": "updated",
+          "range": "yesterday"
+        }
+      },
+      "note": "role + window + symbolic day in one casual phrase [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-005",
+      "text": "오늘 뭐 해야 되더라",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "note": "indirect ask for the to-do list [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-006",
+      "text": "내일 일정 머있냐",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow"
+        }
+      },
+      "note": "banmal and a typo [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-007",
+      "text": "스케줄 좀 읊어줘 이번주",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week"
+        }
+      },
+      "note": "period after the verb [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-008",
+      "text": "what's on my calendar this week",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week"
+        }
+      },
+      "grammar": "calendar-question",
+      "grammarAnswer": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week"
+        }
+      },
+      "note": "English [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-009",
+      "text": "안읽은메일 있음?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true
+        }
+      },
+      "note": "no spaces, clipped question [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-010",
+      "text": "김과장 메일 온거 있나",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "from": "김과장"
+        }
+      },
+      "note": "sender without honorific [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-011",
+      "text": "any unread email from Kim?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true,
+          "from": "Kim"
+        }
+      },
+      "note": "English, two args [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-012",
+      "text": "구글 시트 최근꺼 보여줘",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "kind": "spreadsheet"
+        }
+      },
+      "note": "kind word, no drive word [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-013",
+      "text": "드라이브에 기획서 pdf 있어?",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "name": "기획서",
+          "kind": "pdf"
+        }
+      },
+      "note": "name and kind [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-014",
+      "text": "슬랙에서 장애 얘기 찾아봐",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "장애"
+        }
+      },
+      "note": "imperative banmal [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-015",
+      "text": "컨플루언스 온보딩 가이드 검색",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "온보딩 가이드"
+        }
+      },
+      "note": "noun-final request [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-016",
+      "text": "깃헙 리뷰 요청 온거 있나",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "note": "colloquial 깃헙 [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-017",
+      "text": "github에 내가 올린 PR 뭐 있지",
+      "expect": {
+        "entryId": "github.items",
+        "args": {}
+      },
+      "note": "English, default query [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-018",
+      "text": "알림 뭐 걸어놨더라",
+      "expect": {
+        "entryId": "reminder.list",
+        "args": {}
+      },
+      "note": "indirect ask for reminders [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-019",
+      "text": "아침 브리핑 부탁",
+      "expect": {
+        "entryId": "brief.today",
+        "args": {}
+      },
+      "note": "noun-final request [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-020",
+      "text": "일정이랑 안 읽은 메일 같이 한 번에 알려줘",
+      "expect": {
+        "entryId": "brief.today",
+        "args": {}
+      },
+      "note": "compound request across two sources: the single cross-source entry, never two reads [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-021",
+      "text": "쿼키 뭘 할 수 있는지 알려줘",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {}
+      },
+      "grammar": "help-intent",
+      "grammarAnswer": {
+        "entryId": "help.topic",
+        "args": {}
+      },
+      "note": "capability question [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-022",
+      "text": "그중에 로그인만",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "window": "created",
+          "range": "today",
+          "role": "either",
+          "keyword": "로그인"
+        }
+      },
+      "note": "follow-up without spacing [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "prior": {
+        "entryId": "jira.issues",
+        "args": {
+          "window": "created",
+          "range": "today",
+          "role": "either"
+        }
+      }
+    },
+    {
+      "id": "v5int4-023",
+      "text": "스크럼만 남겨줘",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week",
+          "keyword": "스크럼"
+        }
+      },
+      "note": "narrowing follow-up, no 그 중에 [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "prior": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week"
+        }
+      }
+    },
+    {
+      "id": "v5int4-024",
+      "text": "그럼 읽은 거 말고 오늘 온 것만",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "today": true
+        }
+      },
+      "note": "follow-up replaces the unread flag [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "prior": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true
+        }
+      }
+    },
+    {
+      "id": "v5int4-025",
+      "text": "엑셀 파일만 보여줘",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "kind": "spreadsheet"
+        }
+      },
+      "note": "kind follow-up with a synonym [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "prior": {
+        "entryId": "drive.files",
+        "args": {}
+      }
+    },
+    {
+      "id": "v5int4-026",
+      "text": "아 아니 다음주로",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "next-week"
+        }
+      },
+      "note": "correction follow-up [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "prior": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week"
+        }
+      }
+    },
+    {
+      "id": "v5int4-027",
+      "text": "그럼 리뷰 요청만",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "note": "follow-up switches the query [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "prior": {
+        "entryId": "github.items",
+        "args": {}
+      }
+    },
+    {
+      "id": "v5int4-028",
+      "text": "지라라는 이름 어디서 왔어?",
+      "expect": "none",
+      "note": "chit-chat that names a capability word: no lookup [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-029",
+      "text": "투두 앱 갈아탈까 고민인데 뭐가 나아?",
+      "expect": "none",
+      "note": "advice about to-dos, not the owner's list [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-030",
+      "text": "일정 관리 앱 하나 추천해줘",
+      "expect": "none",
+      "note": "product recommendation, not the owner's calendar [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-031",
+      "text": "메일 쓸 때 인사말 어떻게 시작하는 게 좋아?",
+      "expect": "none",
+      "note": "writing advice, not mail access [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-032",
+      "text": "슬랙이랑 디스코드 차이가 뭐야",
+      "expect": "none",
+      "note": "comparison question [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-033",
+      "text": "구글 드라이브 용량 늘리는 법 알려줘",
+      "expect": "none",
+      "note": "how-to about the product itself [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-034",
+      "text": "깃허브 가입하는 방법 알려줘",
+      "expect": "none",
+      "note": "how-to about the service [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-035",
+      "text": "confluence가 뭐하는 툴이야?",
+      "expect": "none",
+      "note": "definition question [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-036",
+      "text": "알림 소리 끄는 법 알려줘 아이폰에서",
+      "expect": "none",
+      "note": "phone setting, not Quoky reminders [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-037",
+      "text": "이슈 트래킹 도입하면 뭐가 좋아?",
+      "expect": "none",
+      "note": "general question [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-038",
+      "text": "tell me a joke about jira",
+      "expect": "none",
+      "note": "English chit-chat naming a source [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-039",
+      "text": "how do I write a good email subject line?",
+      "expect": "none",
+      "note": "English writing advice [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-040",
+      "text": "스프린트 회의 진행 팁 좀",
+      "expect": "none",
+      "note": "meeting advice, not the calendar [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "v5int4-041",
+      "text": "어제 본 영화 이야기 해줄까 오늘 일정 얘기는 말고",
+      "expect": "none",
+      "note": "explicitly not a calendar request [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
     }
   ]
 }

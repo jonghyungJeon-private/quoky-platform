@@ -230,11 +230,11 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
     expect(scoreSelectorSide(corpus, records, NOW)).toEqual({ positives: 3, exact: 2, entry: 2, userVisible: 2, wrongCaptures: 0 });
   });
 
-  it('the committed corpus: every grammar-tagged case records the grammar answer (241), and the grammar side is reproducible', () => {
+  it('the committed corpus: every grammar-tagged case records the grammar answer (244), and the grammar side is reproducible', () => {
     const { corpus: real } = loadCorpus();
     const tagged = real.cases.filter((golden) => golden.grammar !== undefined);
-    expect(tagged).toHaveLength(241);
+    expect(tagged).toHaveLength(244);
     expect(tagged.every((golden) => golden.grammarAnswer !== undefined)).toBe(true);
-    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 240, exact: 202, entry: 237, userVisible: 224, wrongCaptures: 1 });
+    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 243, exact: 205, entry: 240, userVisible: 227, wrongCaptures: 1 });
   });
 });
