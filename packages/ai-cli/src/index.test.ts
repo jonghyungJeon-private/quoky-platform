@@ -69,7 +69,8 @@ describe('ClaudeCliProvider', () => {
     expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'low', '--tools', '']);
     expect(calls[0]?.opts.input).toContain('do the thing');
     expect(calls[0]?.opts.cwd).toBeTruthy();
-    expect(calls[0]?.opts.env).toBeUndefined();
+    // ADR-0121 S0 L1: exactly the non-essential-traffic switch, nothing else.
+    expect(calls[0]?.opts.env).toEqual({ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' });
     expect(res.text).toBe('hi there');
     expect(res.artifacts?.[0]?.kind).toBe(ArtifactKind.MARKDOWN_REPORT);
   });
@@ -276,7 +277,7 @@ describe('ClaudeCliProvider', () => {
       };
     };
     expect(await new ClaudeCliProvider('claude', { runner }).isAvailable()).toBe(true);
-    expect(calls[0]?.env).toBeUndefined();
+    expect(calls[0]?.env).toEqual({ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' });
   });
 });
 
@@ -1327,7 +1328,7 @@ function containedProbe(
 }
 
 describe('Provider regression through the contained runner', () => {
-  it('Claude keeps its executable/args/stdin/cwd contract and passes NO caller env', async () => {
+  it('Claude keeps its executable/args/stdin/cwd contract and passes only the L1 caller env', async () => {
     const probe = containedProbe('  hi there  ');
     const res = await new ClaudeCliProvider('claude', { runner: probe.runner }).execute({
       capability: Capability.GENERAL_CHAT,
@@ -1350,8 +1351,9 @@ describe('Provider regression through the contained runner', () => {
       prompt: PROMPT,
     });
     const env = (probe.spawns[0]?.options.env ?? {}) as Record<string, string>;
-    // Claude passes no `options.env`, so the child gets the inherited allow-list + TMPDIR only.
-    expect(Object.keys(env).sort()).toEqual(['HOME', 'LANG', 'PATH', 'TMPDIR']);
+    // Claude passes only the ADR-0121 S0 L1 switch, so the child gets the inherited allow-list + TMPDIR + that switch.
+    expect(Object.keys(env).sort()).toEqual(['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'HOME', 'LANG', 'PATH', 'TMPDIR']);
+    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
     expect(env.HOME).toBe('/Users/tester'); // OAuth / global config still reachable
     expect(env.PATH).toBe('/usr/bin:/bin');
     expect(env.TMPDIR).toBe(FAKE_TEMP_DIR);

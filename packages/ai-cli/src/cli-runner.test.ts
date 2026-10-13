@@ -328,12 +328,15 @@ describe('contained CLI runner: parent environment isolation', () => {
   });
 
   it('accepts the allow-listed caller environment names', async () => {
-    const run = startRun({ env: { NO_COLOR: '1', CLICOLOR: '0', CLICOLOR_FORCE: '0' } });
+    const run = startRun({
+      env: { NO_COLOR: '1', CLICOLOR: '0', CLICOLOR_FORCE: '0', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
+    });
     await closeWith(run);
     const env = childEnvOf(run);
     expect(env.NO_COLOR).toBe('1');
     expect(env.CLICOLOR).toBe('0');
     expect(env.CLICOLOR_FORCE).toBe('0');
+    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
     expect(Object.keys(env).sort()).toEqual(
       [...INHERITED_ENV_ALLOWLIST, 'TMPDIR', ...CALLER_ENV_ALLOWLIST].sort(),
     );
@@ -495,9 +498,11 @@ describe('contained CLI runner: embedding environment contract (ADR-0098 D8)', (
     const embeddingEnv = childEnvOf(embeddingRun);
     const chatEnv = childEnvOf(chatRun);
 
+    // Ollama passes the colour controls only; the Claude-only L1 switch (ADR-0121 S0) never reaches an Ollama child.
     expect(Object.keys(embeddingEnv).sort()).toEqual(
-      [...INHERITED_ENV_ALLOWLIST, 'TMPDIR', ...CALLER_ENV_ALLOWLIST].sort(),
+      [...INHERITED_ENV_ALLOWLIST, 'TMPDIR', 'NO_COLOR', 'CLICOLOR', 'CLICOLOR_FORCE'].sort(),
     );
+    expect(embeddingEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined();
     const { TMPDIR: embeddingTmp, ...embeddingRest } = embeddingEnv;
     const { TMPDIR: chatTmp, ...chatRest } = chatEnv;
     expect(embeddingRest).toEqual(chatRest);
@@ -525,8 +530,10 @@ describe('contained CLI runner: embedding environment contract (ADR-0098 D8)', (
     expect(buildChildEnvironment(PARENT_WITH_SECRETS, '/tmp/owned', env).ok).toBe(false);
   });
 
-  it('keeps the caller allowlist at the chat colour variables only', () => {
-    expect([...CALLER_ENV_ALLOWLIST]).toEqual(['NO_COLOR', 'CLICOLOR', 'CLICOLOR_FORCE']);
+  it('keeps the caller allowlist at the chat colour variables plus the Claude L1 traffic switch only', () => {
+    expect([...CALLER_ENV_ALLOWLIST]).toEqual([
+      'NO_COLOR', 'CLICOLOR', 'CLICOLOR_FORCE', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+    ]);
     expect([...INHERITED_ENV_ALLOWLIST]).toEqual(['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'LC_CTYPE']);
   });
 });
