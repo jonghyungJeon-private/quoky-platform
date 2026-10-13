@@ -1,6 +1,7 @@
 import { DEFAULT_NOTIFICATION_RESOLVE_TIMEOUT_MS, DEFAULT_NOTIFICATION_SEND_TIMEOUT_MS } from '@quoky/adapter-discord';
 import { now as sharedClock } from '@quoky/core';
 import type { IsoTimestamp, Logger, ReminderDispatchOptions, ReminderDispatchService } from '@quoky/core';
+import { runWithCorrelation } from '../correlation-context';
 
 /**
  * Composition-root reminder tick (ADR-0101 D6, PRO-5).
@@ -152,7 +153,8 @@ export class ReminderTickDriver {
       this.arm(this.periodMs);
       return;
     }
-    void this.track(this.tick()).then(() => this.arm(this.periodMs));
+    // ADR-0121 S0: one correlation context per tick (initiator `reminder`) for its log lines and ledger records.
+    void this.track(runWithCorrelation('reminder', () => this.tick())).then(() => this.arm(this.periodMs));
   }
 
   private async recover(): Promise<void> {

@@ -10,7 +10,7 @@ import type {
   Artifact,
 } from '@quoky/core';
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
-import { defaultCliRunner } from './cli-runner';
+import { CLAUDE_CHILD_ENV, defaultCliRunner } from './cli-runner';
 import type { CliRunner } from './cli-runner';
 import { sanitizeTerminalOutput } from './output-sanitizer';
 import { MAX_VISION_IMAGES, MAX_VISION_IMAGE_BYTES, readVisionImageFile, scrubImagePaths } from './vision-image-file';
@@ -189,6 +189,7 @@ export class ClaudeCliVisionProvider extends BaseCliAiProvider {
         cwd: tmpdir(),
         input: '',
         timeoutMs: CLAUDE_VISION_PROBE_TIMEOUT_MS,
+        env: CLAUDE_CHILD_ENV,
       });
     } catch {
       return false;
@@ -226,7 +227,7 @@ export class ClaudeCliVisionProvider extends BaseCliAiProvider {
     const promptSha256 = createHash('sha256').update(Buffer.from(request.prompt, 'utf8')).digest('hex');
     const args = this.buildArgs();
 
-    const result = await this.runner(this.bin, args, { cwd: tmpdir(), input, timeoutMs });
+    const result = await this.runner(this.bin, args, { cwd: tmpdir(), input, timeoutMs, env: CLAUDE_CHILD_ENV });
 
     // Every failure message is a FIXED reason plus bounded codes, never CLI text: stderr, stdout and a stream-json
     // error `result` may echo the stdin payload (the image base64) or the prompt, and the message is persisted by Core

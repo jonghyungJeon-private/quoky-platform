@@ -117,6 +117,13 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.NL_GRAMMAR_YIELD_INVALID]: 'QUOKY_NL_GRAMMAR_YIELD must be unset, "off", or "on".',
   [QuokyConfigErrorCode.NL_INTENT_TIMEOUT_INVALID]:
     'QUOKY_NL_INTENT_TIMEOUT_MS must be unset or a whole number of milliseconds from 2000 to 8000.',
+  // ADR-0121 S0 egress guard and traffic ledger. Names and shapes only, never a value.
+  [QuokyConfigErrorCode.EGRESS_GUARD_INVALID]:
+    'QUOKY_EGRESS_GUARD must be unset (observe), "off", "observe", or "enforce" (exactly, lowercase).',
+  [QuokyConfigErrorCode.EGRESS_LEDGER_MAX_FILE_MB_INVALID]:
+    'QUOKY_EGRESS_LEDGER_MAX_FILE_MB must be unset or a whole number of megabytes from 1 to 256.',
+  [QuokyConfigErrorCode.EGRESS_LEDGER_RETENTION_DAYS_INVALID]:
+    'QUOKY_EGRESS_LEDGER_RETENTION_DAYS must be unset or a whole number of days from 1 to 365.',
   [QuokyConfigErrorCode.REMINDERS_ENABLED_INVALID]: 'QUOKY_REMINDERS_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.REMINDERS_CHANNEL_DELIVERY_INVALID]:
     'QUOKY_REMINDERS_CHANNEL_DELIVERY must be unset, "true", or "false".',

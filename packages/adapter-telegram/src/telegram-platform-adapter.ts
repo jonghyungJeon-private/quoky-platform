@@ -81,7 +81,7 @@ export interface TelegramAdapterOptions {
   readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** Wall clock in milliseconds (staleness bound). */
   readonly nowMs?: () => number;
-  /** The server-side long-poll wait in seconds (default 25). */
+  /** The server-side long-poll wait in seconds (default {@link DEFAULT_POLL_TIMEOUT_SECONDS}, 50). */
   readonly pollTimeoutSeconds?: number;
   readonly backoff?: { readonly initialMs: number; readonly maxMs: number };
   /** Bound of each startup identity call (`getMe`, the probe); default {@link STARTUP_CALL_TIMEOUT_MS}. */
@@ -133,9 +133,14 @@ export interface TelegramAdapterStatus {
   readonly droppedUpdates: Readonly<Record<TelegramDropReason, number>>;
 }
 
-const DEFAULT_POLL_TIMEOUT_SECONDS = 25;
+/**
+ * ADR-0121 S0 (design §5.3): the server-side long-poll wait, 25 → 50 s. An idle bot now makes ≈72 polls an hour
+ * instead of ≈144 (still one open connection), which halves the idle request rate the security team asked about.
+ * Telegram allows up to 50 s comfortably; the HTTP bound below adds {@link POLL_HTTP_HEADROOM_MS}.
+ */
+export const DEFAULT_POLL_TIMEOUT_SECONDS = 50;
 /** The HTTP bound of a long poll: the server-side wait plus headroom. */
-const POLL_HTTP_HEADROOM_MS = 10_000;
+export const POLL_HTTP_HEADROOM_MS = 10_000;
 const POLL_LIMIT = 100;
 /** 100 updates of 4096 characters each fit well inside this. */
 const POLL_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;

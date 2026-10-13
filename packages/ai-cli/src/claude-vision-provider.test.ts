@@ -117,6 +117,7 @@ describe('ClaudeCliVisionProvider — readiness (CLI present AND logged in)', ()
     expect(calls[0]?.args).toEqual(['auth', 'status', '--json']);
     expect(calls[0]?.opts.timeoutMs).toBe(10_000);
     expect(calls[0]?.opts.input).toBe('');
+    expect(calls[0]?.opts.env).toEqual({ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' });
   });
 
   it.each([
@@ -182,6 +183,8 @@ describe('ClaudeCliVisionProvider — execute', () => {
     expect(call.args).toEqual(provider.buildArgs());
     expect(call.opts.cwd).toBe(tmpdir());
     expect(call.opts.timeoutMs).toBe(DEFAULT_CLAUDE_VISION_TIMEOUT_MS);
+    // ADR-0121 S0 L1: the vision child gets the non-essential-traffic switch and nothing else.
+    expect(call.opts.env).toEqual({ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' });
     const argv = call.args.join(' ');
     for (const path of [png, jpg, webp, dir]) expect(argv).not.toContain(path);
     for (const bytes of [PNG, JPEG, WEBP]) expect(argv).not.toContain(bytes.toString('base64'));

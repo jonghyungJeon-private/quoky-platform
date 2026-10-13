@@ -90,11 +90,26 @@ export const INHERITED_ENV_ALLOWLIST = ['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL'
 
 /**
  * The only names a Provider adapter may add through `CliRunOptions.env`. Minimised
- * to what the in-tree adapters actually require today: Ollama's colour controls
- * (Claude passes no environment at all). `TMPDIR` is intentionally absent — it is
- * runner-owned and must not be overridable by a caller.
+ * to what the in-tree adapters actually require today: Ollama's colour controls and
+ * Claude's {@link CLAUDE_CHILD_ENV} switch (ADR-0121 S0, design §2.9 L1). `TMPDIR` is
+ * intentionally absent — it is runner-owned and must not be overridable by a caller.
  */
-export const CALLER_ENV_ALLOWLIST = ['NO_COLOR', 'CLICOLOR', 'CLICOLOR_FORCE'] as const;
+export const CALLER_ENV_ALLOWLIST = [
+  'NO_COLOR',
+  'CLICOLOR',
+  'CLICOLOR_FORCE',
+  'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+] as const;
+
+/**
+ * ADR-0121 S0 L1 (design §2.9): the ONE variable every Claude CLI child receives besides the inherited allow-list.
+ * `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` is the documented Claude Code setting that turns off telemetry, error
+ * reporting, auto-update and the bug command, so a `claude -p` spawn contacts fewer hosts (MSIT ④). It carries no
+ * secret and forwards nothing from the parent environment.
+ */
+export const CLAUDE_CHILD_ENV: Readonly<Record<string, string>> = Object.freeze({
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+});
 const VALIDATION_ENV_ALLOWLIST = new Set([
   'NO_COLOR', 'CLICOLOR', 'CLICOLOR_FORCE', 'OLLAMA_HOST', 'OLLAMA_NO_CLOUD',
 ]);

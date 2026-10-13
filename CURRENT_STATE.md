@@ -5,6 +5,26 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### v5 S0 security baseline, code half — on branch `claude/v5-s0-egress` (2026-10-13)
+
+ADR-0121 stays **Proposed**; the owner approved S0 only ("보안 기반(S0)부터 진행"). No agent code, no migration, no new port;
+`ConversationRuntimeDeps` stays 36. Ledger contract and deviations: the ADR-0121 S0 implementation note in `DECISIONS.md`.
+
+- **Done (code).**
+  - L1: `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` for Claude CLI children.
+  - The Telegram poll waits 50 s.
+  - ISO-8601-with-offset timestamps and turn `cid` on log lines.
+  - `apps/quoky/src/security/`: the egress guard (default `observe`), budgets with backoff, and the traffic ledger at
+    `<data dir>/audit/egress-YYYY-MM-DD.jsonl` with the 5 min / 24 h summarizer.
+- **Parallel (other branch).** `claude/v5-s0-ops`: the self-check script, the secret scan and the runbooks.
+- **Owner decisions.** OS-level egress control for child processes: not now (child processes are not enforced). Token
+  rotation: later. Tailscale: removed by the owner manually.
+- **Not run yet.**
+  - The independent reviews (Chief Architect, Codex, `/security-review`).
+  - The service restart that applies this build (Strict).
+  - Seven days of observe ledger, then the owner's yes for `enforce`.
+  - Owner: the host Node 18 → 22 LTS upgrade (Node 18's bundled undici still serves the `fetch` layer).
+
 ### v5 NL-1 natural-language capability selection — on branch `claude/v5-nl1-selection` (2026-10-12)
 
 ADR-0120 (ratified 2026-10-12, Phase A `active` in NL-1). No migration; `ConversationRuntimeDeps` 35 → 36

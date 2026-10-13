@@ -19,7 +19,7 @@ import type {
   Artifact,
 } from '@quoky/core';
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
-import { defaultCliRunner, maskSecrets } from './cli-runner';
+import { CLAUDE_CHILD_ENV, defaultCliRunner, maskSecrets } from './cli-runner';
 import type { CliRunner } from './cli-runner';
 import { classifyClaudeCliFailure, validatedClaudeModel } from './claude-vision-provider';
 import {
@@ -43,7 +43,7 @@ export { BaseCliAiProvider };
  * dependency.
  */
 export { sanitizeGeneralChatText, sanitizeTerminalOutput, stripInternalMetadataEnvelope };
-export { defaultCliRunner, maskSecrets } from './cli-runner';
+export { CLAUDE_CHILD_ENV, defaultCliRunner, maskSecrets } from './cli-runner';
 export type { CliRunner, CliRunOptions, CliRunResult } from './cli-runner';
 export {
   DEFAULT_OLLAMA_EMBEDDING_MODEL,
@@ -458,6 +458,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
         cwd: tmpdir(),
         input: '',
         timeoutMs: 10_000,
+        env: CLAUDE_CHILD_ENV,
       });
     } catch {
       return false;
@@ -474,7 +475,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     const cwd = request.workspace?.rootPath ?? tmpdir();
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
 
-    const result = await this.runner(this.bin, this.buildArgs(request), { cwd, input, timeoutMs });
+    // ADR-0121 S0 L1: the child gets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 and nothing else beyond the allow-list.
+    const result = await this.runner(this.bin, this.buildArgs(request), { cwd, input, timeoutMs, env: CLAUDE_CHILD_ENV });
 
     // Classified failure taxonomy (ADR-0015). stderr is masked before it leaves.
     if (result.timedOut) {

@@ -21118,3 +21118,282 @@ These are Q1–Q10 of the design §7. The defaults are:
   - `QUOKY_NL_INTENT_TIMEOUT_MS` (an integer from 2000 to 8000) can override it.
   - A slow or failed selection now takes at most 2 s longer before the turn falls back. Normal turns are unchanged.
 - **Follow-up:** reducing the latency itself (a warm process, a smaller prompt) belongs to the ADR-0121 design.
+
+## ADR-0121 S0 implementation note — security baseline, code half (2026-10-13)
+
+- **Authority.** On 2026-10-13 the owner approved starting with S0 only: "보안 기반(S0)부터 진행". ADR-0121 itself stays
+  **Proposed**; this note records S0 code only. There is no agent code, no ARCHITECTURE.md §8 change, no migration, no new
+  port or DI token, and `ConversationRuntimeDeps` stays 36. Everything below is composition-root (`apps/quoky`) or adapter
+  code; Core is unchanged.
+- **Owner decisions for S0 (2026-10-13):**
+  - An OS-level egress control for child processes (design Q10): **not now**. In-process enforcement covers Quoky's own
+    Node HTTP paths only. `claude -p`, `ollama` and `git` are reduced (L1) and left to the self-check.
+  - Token rotation (design Q5): later.
+  - Tailscale (design Q6): the owner removes it manually.
+- **Out of this half.** The self-check script, the repository secret scan and the runbooks are on the parallel branch
+  `claude/v5-s0-ops` (`ops/security/`, `docs/ops/`). The self-check reads the ledger described below.
+
+### What was implemented
+
+1. **L1 (design §2.9).** Every Claude CLI child (chat, `INTENT_SELECTION`, vision and both readiness probes) receives
+   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and nothing else beyond the inherited allow-list
+   (`packages/ai-cli/src/cli-runner.ts:110` `CLAUDE_CHILD_ENV`; the name is added to `CALLER_ENV_ALLOWLIST`). Ollama and
+   Codex children are unchanged.
+2. **Telegram long poll 25 → 50 s** (`packages/adapter-telegram/src/telegram-platform-adapter.ts:141`). The HTTP bound
+   is 60 s (wait + 10 s headroom). That is ≈72 polls an hour when idle instead of ≈144.
+3. **Log timestamps and correlation ids (MSIT ⑤-2).** `ConsoleLogger` (`apps/quoky/src/console-logger.ts`) prefixes
+   every line with host-local ISO-8601 time and its numeric offset, for example `2026-10-13T09:35:12.345+09:00`. Inside an
+   owner turn or a reminder tick it appends `cid=<16 hex>` (`apps/quoky/src/correlation-context.ts`, AsyncLocalStorage).
+   `main.ts` opens an `inbound` context per admitted message and per approval decision, and switches the same `cid` to
+   `owner-turn` only once the startup identity gate has opened (`continueAs`); the reminder tick driver opens a
+   `reminder` context per tick. The whole line still passes `redactSecrets`.
+4. **Egress guard** (`apps/quoky/src/security/egress-guard.ts`). It is installed by `security/egress-wiring.ts` from
+   `main.ts:92`, before the application module is evaluated.
+   - **Dispatcher.** `GuardedDispatcher` is undici's process-global dispatcher. Node's `fetch` and discord.js REST use it
+     (see the open owner item on Node 18 below for what that does and does not replace). Per request, and per redirect
+     hop (each hop is a new dispatch, so it is re-checked), it runs the name checks: https only, no IP literal, and the
+     host must be on the allowlist. Plain http is allowed only for the exact `127.0.0.1:11434` Ollama endpoint, and only
+     when Ollama is enabled. Each request also passes the budget. `maxRedirections` is stripped, so the dispatcher
+     never follows a redirect itself (a caller that follows one does so with a new, checked dispatch).
+   - **Connector** (`EgressGuard.connect`). It resolves the host once (`dns.lookup` with `hints: ADDRCONFIG`, all
+     addresses, resolver order, bounded at 10 s like the connect timeout; a timeout is `EAI_AGAIN`) and checks every
+     address with `ip-ranges.ts` `classifyAddress`. It then calls undici's connector with the ORIGINAL name, so SNI,
+     certificate verification and `Host` keep it, but that connector's `lookup` (`EgressGuard.pinnedLookup`) answers
+     only from the checked list held for the connect. The answer honours the requested `family` (0, 4, 6) and `all`
+     and keeps the order, so multi-address fallback and Happy Eyeballs still work. The list is released when the
+     connect ends, and the pinned lookup never resolves on its own, so a rebinding answer can never reach the socket.
+     In `observe` every resolved address is handed on, so observe connects exactly as Node would. Every failure,
+     including a synchronous throw of `tls.connect`, reaches the callback once (no unhandled rejection).
+   - **Deny ranges.** IPv4: every non-globally-reachable entry of the IANA special-purpose registry plus multicast:
+     0/8, 10/8, 100.64/10, 127/8, 169.254/16 (169.254.169.254 is named `metadata`), 172.16/12, 192.0.0/24, 192.0.2/24,
+     192.88.99/24, 192.168/16, 198.18/15, 198.51.100/24, 203.0.113/24, 224/4 and 240/4. IPv6: every entry of the IANA
+     IPv6 special-purpose registry not marked globally reachable — `::/128`, `::1/128`, `::ffff:0:0/96`, `::/96`,
+     `64:ff9b:1::/48`, `100::/64`, `100:0:0:1::/64`, `2001::/23` (including Teredo, ORCHID, `2001:2::/48`
+     benchmarking), `2001:db8::/32`, `2002::/16`, `3fff::/20`, `5f00::/16`, `fc00::/7`, `fe80::/10` — plus `fec0::/10`,
+     `ff00::/8` and everything outside `2000::/3`. IPv4-mapped, IPv4-compatible, NAT64 (64:ff9b::/96) and 6to4 addresses
+     are named by their embedded IPv4; the mapped, compatible and 6to4 forms are refused even with a public embedded
+     address. NAT64 64:ff9b::/96 (globally reachable) follows its embedded address.
+   - **http/https agents.** `http.globalAgent` and `https.globalAgent` are replaced with agents that keep the previous
+     agents' settings explicitly (keep-alive, socket limits, options) and apply the same name check and a lookup that
+     answers the checked list with `family` and `all` honoured.
+   - **Unguarded undici.** A request made by another undici dispatcher is observed on `undici:request:create` and logged
+     as `unguarded-request` when its host is off-list.
+   - **Mode.** `QUOKY_EGRESS_GUARD=observe` logs and never blocks. `enforce` refuses with `EgressRefusedError` (code
+     `EGRESS_REFUSED`, message `egress refused: <reason>[ (<detail>)]`). The connector-write transport guard treats that
+     code as no-send evidence (`NOT_SENT('UNAVAILABLE')`).
+5. **Budgets and backoff** (`security/egress-budget.ts`). These are exact sliding windows over the last 24 h, counting
+   every initiator's requests.
+   - **Owner turns.** On the owner's delivery channels (`telegram`, `discord` and their typing labels) and the calendar
+     re-check reads (`google-calendar`), the request-rate caps never refuse an `owner-turn` (replies, approvals, acks).
+     On every other label an owner turn gets `OWNER_TURN_RATE_FACTOR` = 3 × the cap (e.g. Jira 60/min and 900/h)
+     instead of no cap, so work started inside a turn (a later agent run included) stays bounded.
+   - **Reminder ticks.** On `telegram`, `discord` and `google-calendar` a `reminder` tick is exempt too, so the §5.1
+     worst case (≤ 40 sends/min and 80 calendar reads/min in a catch-up, bounded upstream by
+     `REMINDER_LIMITS.maxDeliveriesPerTick`) is never locked out.
+   - **Typing indicators** have their own labels; their caps apply outside an owner turn.
+   - **Refusals.** A request `enforce` refuses (by name or by budget) is not counted, so retries cannot keep a window
+     full; in `observe` the request is really sent, so it is counted.
+
+   | Label | Requests: background / owner turn (exempt initiators) | Bytes |
+   |---|---|---|
+   | `telegram` (sends; not the poll, typing or files) | ≤ 30/min / no cap (owner-turn, reminder) | ≤ 50 MB/h |
+   | `telegram-typing` (`sendChatAction`) | ≤ 30/min / no cap (owner-turn) | ≤ 50 MB/h |
+   | `telegram-poll` | ≤ 60/min / ≤ 180/min | ≤ 50 MB/h |
+   | `telegram-file`, `discord-attachments` | ≤ 20/h / ≤ 60/h | ≤ 50 MB/h, ≤ 100 MB/day down |
+   | `discord` | ≤ 30/min / no cap (owner-turn, reminder) | ≤ 50 MB/h |
+   | `discord-typing` (`POST /channels/{id}/typing`) | ≤ 20/min / no cap (owner-turn) | ≤ 50 MB/h |
+   | `google-calendar` | ≤ 20/min, ≤ 300/h / no cap (owner-turn, reminder) | ≤ 50 MB/h |
+   | `google`, `google-drive`, `gmail`, `google-oauth`, `jira`, `confluence`, `slack`, `github`, `openai`, `gemini` | ≤ 20/min, ≤ 300/h / ≤ 60/min, ≤ 900/h | ≤ 50 MB/h |
+   | `slack-search` | ≤ 10/min, ≤ 300/h / ≤ 30/min, ≤ 900/h | ≤ 50 MB/h |
+   | `ollama-local` | — | ≤ 500 MB/h |
+   | `unlisted` and any other label | ≤ 20/min, ≤ 300/h / ≤ 60/min, ≤ 900/h | ≤ 50 MB/h |
+   | All egress | — | ≤ 200 MB/day down and ≤ 20 MB/day up, an alert at 80% |
+
+   - The all-egress volume cap refuses only traffic outside an owner turn.
+   - **Backoff.** On the labels marked `breaker` (Google, Atlassian, Slack, GitHub, OpenAI, Gemini), 3 consecutive 429 or
+     5xx answers open a breaker. It stays open for 5 min, doubling on each re-open with no success in between, capped at
+     60 min. A longer `Retry-After` is honoured up to the cap, and a success resets it. Telegram and Discord keep their
+     own backoff.
+   - **Breach.** `observe` logs a breach; `enforce` refuses it (`budget-exceeded (<reason>)` or `backoff`).
+6. **Traffic ledger and summarizer** (`security/traffic-ledger.ts`). The ledger format is given below.
+   - `summarizeTraffic(records, nowMs)` totals each host over 5 min and 24 h: requests, bytes up and down, small
+     requests, small requests outside an owner turn, and refusals.
+   - It flags `repeatedSmall` at ≥ 20 requests under 2 KB to one host in 5 min outside an owner turn.
+   - The live `SmallRequestBurstDetector` emits a `repeated-small` guard event once per host per 5 min.
+7. **Configuration** (`apps/quoky/src/config.ts` → `security/egress-config.ts`; hints in `bootstrap-preflight.ts`).
+   Every key defaults to observe or off.
+
+   | Key | Values | Default | Startup error |
+   |---|---|---|---|
+   | `QUOKY_EGRESS_GUARD` | `off` \| `observe` \| `enforce` | `observe` | `EGRESS_GUARD_INVALID` |
+   | `QUOKY_EGRESS_LEDGER_MAX_FILE_MB` | integer 1–256 | 16 | `EGRESS_LEDGER_MAX_FILE_MB_INVALID` |
+   | `QUOKY_EGRESS_LEDGER_RETENTION_DAYS` | integer 1–365 | 90 | `EGRESS_LEDGER_RETENTION_DAYS_INVALID` |
+
+   `off` installs nothing: no dispatcher, no agents, no ledger, no budgets.
+
+### Ledger file contract (read by the self-check)
+
+**Location**
+
+- Directory: `<data dir>/audit/`, where `<data dir>` is the directory of the resolved `QUOKY_DB_PATH` (default
+  `data/chunsik.db` → `data/audit/`). An in-memory database writes no file ledger.
+- File name: `egress-YYYY-MM-DD.jsonl`, where the date is the host-local date.
+- Parts: when a file reaches `QUOKY_EGRESS_LEDGER_MAX_FILE_MB`, writing continues in `egress-YYYY-MM-DD.1.jsonl`, then
+  `.2` and `.3`, so there are at most 4 parts a day. After the last part fills, the rest of that day's records are
+  dropped, and one `egress.ledger.cap_reached` warning is logged.
+- A restart appends to the last part; nothing is ever rewritten or truncated.
+- Retention: files whose date is older than the retention are deleted at start and at each day change.
+- Modes: directory 0700, files 0600.
+
+**Line format**
+
+- Each line is one JSON object, UTF-8, ending in `\n`. `v` is `1`.
+- Every record has these common fields:
+
+  | Field | Value |
+  |---|---|
+  | `v` | `1` |
+  | `kind` | `request`, `connect` or `guard` |
+  | `ts` | host-local ISO-8601 with milliseconds and a numeric offset, e.g. `2026-10-13T09:35:12.345+09:00` |
+  | `cid` | 16 lowercase hex characters, or `null` outside a turn or tick |
+  | `initiator` | `owner-turn`, `inbound` (admitted, before the startup identity gate), `reminder` or `background` |
+  | `host` | lowercase host name, or the IP literal |
+  | `label` | one of the budget labels above, or `unlisted` |
+
+**`kind: "request"`** is one finished or refused HTTP request through the dispatcher.
+
+| Field | Value |
+|---|---|
+| `method` | upper-case HTTP method |
+| `path` | the path template, built from an allow-list: the query and fragment are dropped; the longest fixed prefix of the label is kept (for example `/api/v10/channels`, `/rest/api/3/search`, `/drive/v3/files`, `/repos`, `/wiki/rest/api/space`); every later segment becomes `{id}` (at most 6, more are dropped). Only two closed method lists are kept beyond a prefix: the Telegram Bot API methods of `adapter-telegram/src/bot-api.ts` `TELEGRAM_METHODS` after the `bot<token>` segment (`/{id}/getUpdates`), and the Slack Web API methods Quoky calls (`search.messages`, `conversations.info`, `conversations.history`, `conversations.list`, `conversations.replies`, `chat.postMessage`, `chat.getPermalink`) after `/api` (`/api/search.messages`); any other method is written as `{method}` (`/api/{method}`, `/{id}/{method}`). An unlisted host keeps no segment (`/{id}/…`). File names, repository and owner names, space keys, user names, channel, issue and Drive ids and webhook tokens never appear, letters only or not |
+| `status` | the HTTP status, or `null` |
+| `statusClass` | `1xx` … `5xx`, or `none` |
+| `bytesUp` | request body bytes |
+| `bytesDown` | response body wire bytes |
+| `latencyMs` | integer milliseconds |
+| `outcome` | `ok` (answered, any status), `error` (no answer) or `refused` (blocked in enforce) |
+| `mode` | `observe` or `enforce` |
+
+**`kind: "connect"`** is one new connection.
+
+| Field | Value |
+|---|---|
+| `ip` | the socket's remote address once connected (one of the checked addresses), or `null` when refused |
+| `port` | integer; `0` from the http/https agents |
+| `outcome` | `pinned` or `refused` |
+
+Use these records to map a socket's remote IP to its host name.
+
+**`kind: "guard"`** is one finding.
+
+| Field | Value |
+|---|---|
+| `event` | `new-destination`, `denied-range`, `ip-literal`, `insecure-scheme`, `budget-exceeded`, `backoff-open`, `volume-alert`, `repeated-small` or `unguarded-request` |
+| `detail` | a fixed code (see below) |
+| `mode` | `observe` or `enforce` |
+| `action` | `observed`, or `blocked` when enforce refused the request |
+
+The `detail` code by event:
+
+- `denied-range`: the deny category, one of `unspecified`, `loopback`, `private`, `link-local`, `metadata`, `cgnat`,
+  `ula`, `multicast`, `documentation`, `benchmark`, `reserved` or `invalid`.
+- `budget-exceeded`: the refusal reason, one of `rate-minute`, `rate-hour`, `volume-hour`, `volume-day`,
+  `global-volume-down` or `global-volume-up`.
+- `backoff-open`: either `open-<seconds>s` or `backoff`.
+- `volume-alert`: `down-80pct` or `up-80pct`.
+- `repeated-small`: `short-window`.
+- `unguarded-request`: `foreign-dispatcher`.
+- Otherwise the event name repeated.
+
+A finding with the same event, host, label and detail is written at most once an hour, and a budget finding at most once
+a minute. The same finding is logged as `egress.guard` with the same fields.
+
+**Never written:** headers, tokens, query strings, bodies, full URLs or error messages.
+
+**Example lines**
+
+```json
+{"v":1,"ts":"2026-10-13T09:35:12.345+09:00","cid":null,"initiator":"background","host":"api.telegram.org","label":"telegram-poll","kind":"connect","ip":"149.154.167.220","port":443,"outcome":"pinned"}
+{"v":1,"ts":"2026-10-13T09:36:02.401+09:00","cid":null,"initiator":"background","host":"api.telegram.org","label":"telegram-poll","kind":"request","method":"POST","path":"/{id}/getUpdates","status":200,"statusClass":"2xx","bytesUp":96,"bytesDown":23,"latencyMs":50012,"outcome":"ok","mode":"observe"}
+```
+
+### Deviations from the design, and why
+
+- **Redirects are re-checked per hop, not refused globally.** Adding `redirect: 'error'` to every call (design §5.2
+  step 3) would change library behaviour, for example GitHub 301s. Every hop is a new dispatch through the same name,
+  allowlist, budget and pinned-address checks, which is the design's own fallback. The Jira, Confluence, Slack and
+  GitHub readers are unchanged.
+- **Sliding windows instead of token buckets.** They are stricter (no burst above the cap in any window) and exact to
+  test.
+- **The per-label byte budget is derived.** The design gives only the daily all-egress budget, so one label is capped at
+  50 MB/h, a quarter of the daily download budget.
+- **Telegram polls are budgeted separately.** The design's "sends ≤ 30/min" is applied to `telegram`. `telegram-poll`
+  (one open poll) gets 60/min.
+- **Not implemented.** These are outside an in-process HTTP guard, or later stages:
+  - the Anthropic spawn budget (≤ 2 per message, ≤ 60/h);
+  - the 1 min / 1 h / 7 d ledger windows (this half has 5 min and 24 h, as asked);
+  - owner-DM alerts on a new host or a breach (they are log lines and ledger guard events).
+- **Unguarded paths are observed only.** The `http`/`https` agent path records connect records and findings, but no
+  request records or byte counts, and nothing in-process uses it today. The discord.js gateway websocket (`ws` with its
+  own `createConnection`) and raw sockets are not covered. A `net` diagnostics-channel observer was not added because
+  Node 18 publishes `net.client.socket` only for plain `net.connect`, not for TLS.
+- **New direct dependency.** `undici` 6.24.1 is pinned exactly in `apps/quoky`. It was already in the lockfile through
+  discord.js; the guard needs its `Agent`, `Dispatcher` and `buildConnector`. A root `pnpm.overrides` entry lifts every
+  transitive copy to 6.24.1 (at or above the fixes for CVE-2025-22150 and CVE-2025-47279); `@discordjs/rest`'s 6.19.8
+  is gone from the lockfile.
+- **IPv6 2001::/23 is refused whole.** The registry marks a few anycast sub-blocks globally reachable (PCP, TURN,
+  DNS-SD, AMT, AS112, ORCHIDv2, drone remote ID); Quoky never connects to them, so stricter costs nothing.
+- **Reminder ticks are rate-exempt on the owner's channels.** The design caps "sends ≤ 30/min"; a reminder catch-up can
+  reach 40/min, so `reminder` sends (and their calendar re-check reads) are exempt, bounded upstream by the reminder
+  service. Background sends on those channels (ops notices) stay capped.
+
+### Open owner item — Node 18 → 22 LTS (host change)
+
+- **What the guard replaces.** Node 18.20.5 bundles undici 5.28.4 (`process.versions.undici`). Global `fetch` calls the
+  process-global dispatcher, so with the guard installed every global `fetch` request's TRANSPORT — connection, TLS,
+  HTTP/1 framing and parsing — runs in the app's undici 6.24.1 (verified: the installation test sends a global `fetch`
+  through the guard). That covers CVE-2025-47279 (client-side certificate-error memory leak, fixed in 6.21.2).
+- **What it does not replace.** The `fetch` layer itself — `Request`/`Response`, redirect following, body encoding and
+  decompression, and `FormData` multipart serialization — stays in the bundled 5.28.4. CVE-2025-22150 (predictable
+  multipart boundary, fixed in 5.28.5 / 6.21.1) lives in that layer, and Telegram `sendDocument` posts `FormData`
+  through global `fetch`. With `QUOKY_EGRESS_GUARD=off` nothing of the transport is replaced either.
+- **Owner action.** Upgrade the host runtime from Node 18 (end of life) to Node 22 LTS, which bundles a fixed undici,
+  then rebuild and restart the service. That is a host change (`.nvmrc`, the launchd plist's node path) and a Strict
+  restart; it was not done here, and the plist was not touched.
+
+### Review fixes (Chief Architect and Codex, 2026-10-13)
+
+- Path template switched from a letters-only heuristic to the per-label prefix allow-list above; the Slack and
+  Telegram method segments are closed lists, anything else is `{method}` (Codex delta, 2026-10-13).
+- Observe is behaviour-neutral: `hints: ADDRCONFIG`, every checked address handed to the socket's lookup with family
+  and `all` honoured and order kept; a synchronous connector throw reaches the callback.
+- Budgets: owner turns rate-exempt only on the owner's delivery channels (with their typing labels) and
+  `google-calendar`, and 3 × the cap elsewhere (Chief Architect re-review); reminder sends and re-check reads
+  rate-exempt on the owner's channels; typing on its own labels; refused attempts not counted in `enforce`.
+- `maxRedirections` stripped in `dispatch`; DNS bounded at 10 s; the replacement `http(s)` agents keep the previous
+  settings; `inbound` before the gate, `owner-turn` after; the ledger's default clock is the shared clock; the full
+  IANA IPv6 special-purpose set; the root `undici` override; the `apps/quoky/package.json` description is unchanged
+  again.
+
+### Verification (2026-10-13, Node 18.20.5)
+
+- `pnpm build`, `pnpm typecheck` and `pnpm test` all passed: 429 files and 13,713 tests.
+- New suites:
+  - `security/ip-ranges.test.ts`: every range, with IPv4-mapped, compatible, NAT64 and 6to4 forms.
+  - `security/egress-policy.test.ts`: the inventory, labels, name checks, path template and configuration.
+  - `security/egress-budget.test.ts`: caps, the global volume, and the exponential breaker with `Retry-After`.
+  - `security/traffic-ledger.test.ts`: file, modes, rotation, cap, retention, the summarizer and the detector.
+  - `security/egress-guard.test.ts`: deny ranges before connecting, rebinding, pinning with SNI and `Host` kept,
+    observe versus enforce, redirect hops, budgets and backoff through real `fetch`, the write-transport classification,
+    ledger redaction with fragment-built token fixtures, and the global install and uninstall.
+  - `security/egress-wiring.test.ts`.
+  - `console-logger.test.ts`.
+  - The reminder tick correlation test.
+- No runtime was started, and no Live UAT or network action was run.
+
+### Residuals and next steps
+
+- **R1 stands.** The child processes `claude -p`, `ollama` and `git` are not enforced in-process, and the owner has
+  deferred the OS-level control.
+- **Rollout.** The default is `observe`. Flipping to `enforce` after 7 clean ledger days (design Q4) is a separate owner
+  yes, and so is any runtime restart that applies this build.

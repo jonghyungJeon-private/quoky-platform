@@ -5,6 +5,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — v5 S0 security baseline, code half (ADR-0121 S0, 2026-10-13)
+
+No migration, no new port or DI token; `ConversationRuntimeDeps` stays 36. ADR-0121 stays Proposed (S0 only, approved by
+the owner on 2026-10-13). Details and the ledger contract: the ADR-0121 S0 implementation note in `DECISIONS.md`.
+
+- **Claude CLI children send no non-essential traffic (L1).** Every `claude -p` spawn gets
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`: no telemetry, error reporting, auto-update or bug command. Nothing else
+  from the parent environment is forwarded.
+- **Telegram polls half as often.** The long-poll wait is 50 s instead of 25 s: about 72 requests an hour when idle.
+- **Log lines carry time and a turn id.** Every line starts with host-local ISO-8601 time with its offset, and lines
+  inside an owner turn or a reminder tick end with a content-free `cid=`.
+- **Egress guard, observe by default (`QUOKY_EGRESS_GUARD=off|observe|enforce`).**
+  - **Allowlist.** It is derived from the connectors configured here.
+  - **Address check.** A connection-bound DNS check refuses private, loopback, metadata, CGNAT, ULA and IPv4-mapped
+    addresses. The checked IP is pinned (SNI and `Host` keep the name), and every redirect hop is re-checked.
+  - **Budgets.** Per-connector request and volume budgets, with an exponential backoff on 429/5xx.
+  - **Ledger.** A content-free traffic ledger at `<data dir>/audit/egress-YYYY-MM-DD.jsonl` records host, label,
+    method, path template, status, bytes and latency. It never holds headers, tokens, queries or bodies. Rotation and
+    the size cap are set by `QUOKY_EGRESS_LEDGER_MAX_FILE_MB` (default 16), retention by
+    `QUOKY_EGRESS_LEDGER_RETENTION_DAYS` (default 90).
+  - **Modes.** `observe` only logs; `enforce` refuses with `EGRESS_REFUSED`.
+  - **Not covered.** Child processes (`claude -p`, `ollama`, `git`).
+- **Dependency.** `undici` 6.24.1 is now a direct, exactly pinned dependency of the app, and a root `pnpm.overrides` entry
+  lifts every transitive copy (discord.js REST's 6.19.8) to it. Node 18's own bundled undici still serves the `fetch`
+  layer, so a Node 22 LTS upgrade is an open owner item (see the DECISIONS note).
+
 ## Unreleased — v5 NL-1 selection timeout (ADR-0120 amendment A3, 2026-10-13)
 
 - **Natural-language intent selection waits 6 s, not 4 s (ADR-0120 A3).** The default per-call bound is now 6000 ms, still one

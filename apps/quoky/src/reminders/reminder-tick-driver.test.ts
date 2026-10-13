@@ -6,6 +6,8 @@ import {
   ReminderTickDriver,
   type ReminderTickTimers,
 } from './reminder-tick-driver';
+import { currentCorrelation } from '../correlation-context';
+import type { CorrelationContext } from '../correlation-context';
 
 const T0 = Date.parse('2026-10-02T03:00:00.000Z');
 
@@ -236,6 +238,30 @@ describe('ReminderTickDriver lifecycle', () => {
     expect(logger.entries).toContainEqual({
       level: 'error', message: 'reminder.tick.recover_failed', fields: { errorName: 'Error' },
     });
+    await driver.stop();
+  });
+
+  it('ADR-0121 S0: each tick runs in its own `reminder` correlation context (log lines and ledger records share it)', async () => {
+    const timers = new ManualTimers();
+    const seen: Array<CorrelationContext | undefined> = [];
+    const driver = new ReminderTickDriver({
+      enabled: true,
+      logger: new RecordingLogger(),
+      clock: timers.now,
+      timers,
+      dispatch: {
+        async recoverInterrupted() { return emptyRecovery; },
+        async dispatchDue() { await Promise.resolve(); seen.push(currentCorrelation()); return emptyDispatch; },
+      },
+    });
+    expect(await driver.start()).toBe(true);
+    await fireTick(timers, driver);
+    await fireTick(timers, driver);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.initiator).toBe('reminder');
+    expect(seen[0]?.cid).toMatch(/^[0-9a-f]{16}$/);
+    expect(seen[1]?.cid).not.toBe(seen[0]?.cid);
+    expect(currentCorrelation()).toBeUndefined();
     await driver.stop();
   });
 

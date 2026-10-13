@@ -23,8 +23,9 @@ import {
  *    proxy's origin and is not a request to the target. An event whose origin cannot be read poisons every open
  *    window. Concurrent requests to the same origin poison each other (accepted: it fails safe).
  * 2. **Connection-stage evidence** on the thrown error: the very object undici published on
- *    `undici:client:connectError` (matched by identity), a name-resolution code (`ENOTFOUND`, `EAI_AGAIN`), or a refused
- *    proxy tunnel ("Proxy response (NNN) !== 200 when HTTP Tunneling").
+ *    `undici:client:connectError` (matched by identity), a name-resolution code (`ENOTFOUND`, `EAI_AGAIN`), the egress
+ *    guard's `enforce` refusal (`EGRESS_REFUSED`, ADR-0121 S0), or a refused proxy tunnel ("Proxy response (NNN) !== 200
+ *    when HTTP Tunneling").
  *
  * Everything else is `UNCERTAIN('TRANSPORT')`. NOT_SENT therefore means: no request bytes were observed on any
  * connection to the target during this write, and the failure happened while connecting.
@@ -37,6 +38,11 @@ const SEND_CHANNELS = ['undici:client:sendHeaders', 'undici:request:bodySent'] a
 const NAME_RESOLUTION_CODES: ReadonlySet<string> = new Set(['ENOTFOUND', 'EAI_AGAIN']);
 /** undici's refused-tunnel message (`ProxyAgent` / `EnvHttpProxyAgent`): the CONNECT was answered with a non-200. */
 const PROXY_TUNNEL_REFUSED = /^Proxy response (?:\(\d{3}\) )?!== 200 when HTTP Tunneling$/;
+/**
+ * ADR-0121 S0: the egress guard's `enforce` refusal (`security/egress-guard.ts` `EGRESS_REFUSED_CODE`). It is raised
+ * before any byte is written (a name/budget refusal before dispatch, or a deny-range refusal while connecting).
+ */
+const EGRESS_REFUSED_CODE = 'EGRESS_REFUSED';
 /** How deep the `cause` chain is followed (fetch wraps the transport error once or twice). */
 const MAX_CAUSE_DEPTH = 5;
 
@@ -77,7 +83,7 @@ export function hasConnectionStageEvidence(error: unknown): boolean {
   for (let depth = 0; depth < MAX_CAUSE_DEPTH && isObject(current); depth += 1) {
     if (connectStageErrors.has(current)) return true;
     const code = current.code;
-    if (typeof code === 'string' && NAME_RESOLUTION_CODES.has(code)) return true;
+    if (typeof code === 'string' && (NAME_RESOLUTION_CODES.has(code) || code === EGRESS_REFUSED_CODE)) return true;
     const message = current.message;
     if (typeof message === 'string' && PROXY_TUNNEL_REFUSED.test(message)) return true;
     current = current.cause;

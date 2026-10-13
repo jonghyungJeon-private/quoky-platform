@@ -14,6 +14,8 @@ import type { ContinuationReceiverMode } from './continuation/continuation-recei
 import { parseReminderConfig, ReminderConfigErrorCode } from './reminders/reminder-config';
 import { NlSelectionConfigErrorCode, parseNlSelectionConfig } from './nl-selection/nl-selection-config';
 import type { NlSelectionConfig } from './nl-selection/nl-selection-config';
+import { EgressConfigErrorCode, parseEgressConfig } from './security/egress-config';
+import type { EgressGuardConfig } from './security/egress-config';
 import { MAX_GITHUB_REPOSITORIES, parseRepositoryEntry } from './repository-allowlist';
 import type { ReminderConfig } from './reminders/reminder-config';
 import { parseTelegramConfig, TelegramConfigErrorCode } from './telegram/telegram-config';
@@ -113,6 +115,12 @@ export interface QuokyConfig {
    * `QUOKY_NL_INTENT_MODEL` (the Claude CLI selection model, default `haiku`). See `nl-selection/nl-selection-config.ts`.
    */
   nlSelection: NlSelectionConfig;
+  /**
+   * ADR-0121 S0 egress guard: `QUOKY_EGRESS_GUARD` (`off` | `observe` | `enforce`, default `observe`) and the traffic
+   * ledger bounds `QUOKY_EGRESS_LEDGER_MAX_FILE_MB` (1–256, default 16) and `QUOKY_EGRESS_LEDGER_RETENTION_DAYS` (1–365,
+   * default 90). See `security/egress-config.ts`. Consumed only by the composition root (`security/egress-wiring.ts`).
+   */
+  egress: EgressGuardConfig;
   /**
    * Opt-in local embedding recall (ADR-0098 D8). `model` is a bounded token and never a cloud-served model.
    * `timeoutMs` bounds one embedding call; `maxNewPerTurn` is fixed at 4.
@@ -302,6 +310,7 @@ export const QuokyConfigErrorCode = {
   ...ReminderConfigErrorCode,
   ...TelegramConfigErrorCode,
   ...NlSelectionConfigErrorCode,
+  ...EgressConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
   DISCORD_EXPECTED_BOT_ID_INVALID: 'DISCORD_EXPECTED_BOT_ID_INVALID',
   DISCORD_EXPECTED_BOT_ID_REQUIRED: 'DISCORD_EXPECTED_BOT_ID_REQUIRED',
@@ -565,6 +574,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   // ADR-0114 D13: off unless QUOKY_TELEGRAM_ENABLED=true; every owner must map to a Discord owner (D3).
   const telegram = parseTelegramConfig(env, ownerIds);
   const nlSelection = parseNlSelectionConfig(env);
+  const egress = parseEgressConfig(env);
 
   return {
     discord: {
@@ -606,6 +616,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     },
     reminders,
     nlSelection,
+    egress,
     embedding: {
       enabled: parseExactBoolean(env.QUOKY_EMBEDDING_ENABLED, false, QuokyConfigErrorCode.EMBEDDING_ENABLED_INVALID),
       model: parseEmbeddingModel(env.QUOKY_EMBEDDING_MODEL),
