@@ -76,7 +76,13 @@ export interface MailSearchResult {
   readonly matchedIsLowerBound: boolean;
 }
 
-/** One message with its bounded plain-text body, read only for an explicit summary request (ADR-0118 D7). */
+/**
+ * One message with its bounded plain-text body, read only for an explicit summary request (ADR-0118 D7).
+ *
+ * GML-2 review rule: the credential guard is trusted only on complete text. A reader that cannot hand over a body it
+ * (or Core) could check whole — its extraction was cut before any guard saw all of it — returns `bodyText: ''` with
+ * `bodyTruncated: true`, and Core answers that the body was withheld; it never sends a pre-guard cut.
+ */
 export interface MailMessage extends MailMessageSummary {
   /** The plain-text body (an HTML-only body is reduced to its text), at most MAIL_BODY_MAX_BYTES of UTF-8. */
   readonly bodyText: string;

@@ -115,6 +115,17 @@ function isCredentialShapedBody(text: string): boolean {
   const normalized = normalizeUntrustedText(text);
   return [text, normalized].some((value) => containsCredentialMaterial(value) || containsCredentialFileContent(value));
 }
+
+/**
+ * Codex review P1 (orchestrator rule): the credential guard is trusted only on COMPLETE text. A body whose extraction was
+ * cut at any stage before the guard could read it whole (the MIME decode cap, an oversized message read as metadata) is
+ * withheld, exactly like a guard match: `withheld` with no text. Otherwise the whole decoded body is guarded, and only a
+ * clean body is returned (any later cut happens after the guard has seen all of it).
+ */
+function guardedBody(extracted: { readonly text: string; readonly truncated: boolean }): { readonly text: string; readonly withheld: boolean } {
+  if (extracted.truncated || isCredentialShapedBody(extracted.text)) return { text: '', withheld: true };
+  return { text: extracted.text, withheld: false };
+}
 /** A thread holding more messages than this is refused as malformed (Gmail caps threads well below it). */
 const GMAIL_THREAD_MESSAGES_HARD_MAX = 500;
 /** An access token is refreshed this long before Google says it expires. */
@@ -228,9 +239,12 @@ export class GmailMailReader implements MailReader {
     url.searchParams.set('fields', GMAIL_FULL_FIELDS);
     const payload = await this.getJson(url, GMAIL_FULL_MAX_BYTES);
     const summary = mapSummary(payload, id);
-    const extracted = extractBodyText(payload.payload);
-    const body = truncateUtf8(extracted.text, MAIL_BODY_MAX_BYTES);
-    return { ...summary, bodyText: body.text, bodyTruncated: body.truncated || extracted.truncated };
+    // A body cut before the guard could read it whole, or a credential-shaped one, is withheld (empty and marked cut);
+    // Core then answers that it was not summarized. A clean body is cut to the port bound only after the guard.
+    const guarded = guardedBody(extractBodyText(payload.payload));
+    if (guarded.withheld) return { ...summary, bodyText: '', bodyTruncated: true };
+    const body = truncateUtf8(guarded.text, MAIL_BODY_MAX_BYTES);
+    return { ...summary, bodyText: body.text, bodyTruncated: body.truncated };
   }
 
   /**
@@ -271,10 +285,11 @@ export class GmailMailReader implements MailReader {
     const messages = kept.map((entry, index) => {
       // Codex review P1: the guard reads the RAW body first; a credential-shaped body is withheld whole (as a single
       // mail summary is), and only then is quoted history dropped and the byte budget shared. Core guards again after.
-      if (isCredentialShapedBody(entry.text)) return { ...entry.summary, bodyText: '', bodyTruncated: true };
-      const body = truncateUtf8(stripQuotedMailHistory(entry.text), Math.floor(bytesLeft / (kept.length - index)));
+      const guarded = guardedBody(entry);
+      if (guarded.withheld) return { ...entry.summary, bodyText: '', bodyTruncated: true };
+      const body = truncateUtf8(stripQuotedMailHistory(guarded.text), Math.floor(bytesLeft / (kept.length - index)));
       bytesLeft -= Buffer.byteLength(body.text, 'utf8');
-      return { ...entry.summary, bodyText: body.text, bodyTruncated: body.truncated || entry.truncated };
+      return { ...entry.summary, bodyText: body.text, bodyTruncated: body.truncated };
     });
     return { messages, totalMessages: all.length };
   }

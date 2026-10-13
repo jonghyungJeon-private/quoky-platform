@@ -38,7 +38,15 @@ export interface MailThreadReadoutResult {
   readonly shown: number;
   /** How many messages the thread holds. */
   readonly total: number;
+  /**
+   * How many shown messages had their body withheld (GML-2 review rule: the guard is trusted only on complete text): a
+   * body the reader could not hand over whole (empty and marked cut), or one larger than its share here.
+   */
+  readonly withheld: number;
 }
+
+/** What a withheld body reads as in the readout (Core-authored, inside the untrusted body; no mail text). */
+export const MAIL_THREAD_WITHHELD_BODY_NOTE = '(body withheld: it could not be checked whole for secrets, so it is not summarized)';
 
 /** A Core header line: `[2/5] 김철수 · 2026-10-08 00:12Z`. */
 const HEADER_SENDER_MAX_CHARS = 30;
@@ -162,28 +170,34 @@ export function buildMailThreadReadout(thread: MailThread): MailThreadReadoutRes
   const messages = boundedMessages(all);
   const total = Math.max(all.length, Number.isInteger(thread?.totalMessages) ? thread.totalMessages : 0);
   const shown = messages.length;
-  if (shown === 0) return { result: { ok: false, refusal: 'EMPTY' }, shown, total };
+  if (shown === 0) return { result: { ok: false, refusal: 'EMPTY' }, shown, total, withheld: 0 };
 
   // The byte bound across the thread, whatever the reader did: each body may use at most its share of what is left.
   let bytesLeft = MAIL_THREAD_TEXT_MAX_BYTES;
   let sourceTruncated = shown < total;
   const prepared: string[] = [];
+  const withheldAt = new Set<number>();
   for (const [index, message] of messages.entries()) {
     const share = Math.floor(bytesLeft / (shown - index));
-    const cut = cutUtf8(typeof message.bodyText === 'string' ? message.bodyText : '', share);
-    bytesLeft -= Buffer.byteLength(cut.text, 'utf8');
+    const raw = typeof message.bodyText === 'string' ? message.bodyText : '';
+    const cut = cutUtf8(raw, share);
     if (cut.cut || message.bodyTruncated) sourceTruncated = true;
-    const body = neutralizeLinks(prepareUntrustedBody(cut.text), 'body');
+    // The guard is trusted only on complete text: a body Core would have to cut before guarding it, or one the reader
+    // marks cut with no text (withheld upstream), is withheld here — never a pre-guard cut.
+    const withheld = cut.cut || (raw.trim().length === 0 && message.bodyTruncated === true);
+    if (withheld) withheldAt.add(index);
+    bytesLeft -= withheld ? 0 : Buffer.byteLength(raw, 'utf8');
+    const body = withheld ? '' : neutralizeLinks(prepareUntrustedBody(raw), 'body');
     // Review P1 rule (GML-1), per message: the guard reads every FULL normalized field before any clip.
     const subject = normalizeUntrustedText(typeof message.subject === 'string' ? message.subject : '');
     const name = normalizeUntrustedText(typeof message.sender?.name === 'string' ? message.sender.name : '');
     const address = normalizeUntrustedText(typeof message.sender?.address === 'string' ? message.sender.address : '');
     if ([body, subject, name, address].some((field) => field.length > 0 && isCredentialShaped(field))) {
-      return { result: { ok: false, refusal: 'CREDENTIAL_SHAPED' }, shown, total };
+      return { result: { ok: false, refusal: 'CREDENTIAL_SHAPED' }, shown, total, withheld: withheldAt.size };
     }
     prepared.push(withoutHeaderImitations(stripQuotedMailHistory(body)));
   }
-  if (prepared.every((body) => body.length === 0)) return { result: { ok: false, refusal: 'EMPTY' }, shown, total };
+  if (prepared.every((body) => body.length === 0)) return { result: { ok: false, refusal: 'EMPTY' }, shown, total, withheld: withheldAt.size };
 
   const headers = messages.map((message, index) => {
     const date = dateLabel(message.receivedAt);
@@ -196,6 +210,7 @@ export function buildMailThreadReadout(thread: MailThread): MailThreadReadoutRes
     const clipped = clipHeadAndTail(body, Math.max(shares[index] ?? 0, MIN_MESSAGE_SHARE));
     if (clipped.truncated) sourceTruncated = true;
     const text = withoutHeaderImitations(clipped.text);
+    if (withheldAt.has(index)) return `${headers[index]}\n${MAIL_THREAD_WITHHELD_BODY_NOTE}`;
     return `${headers[index]}\n${text.length > 0 ? text : '(no text)'}`;
   });
 
@@ -210,5 +225,5 @@ export function buildMailThreadReadout(thread: MailThread): MailThreadReadoutRes
     body: parts.join('\n\n'),
     sourceTruncated,
   });
-  return { result, shown, total };
+  return { result, shown, total, withheld: withheldAt.size };
 }

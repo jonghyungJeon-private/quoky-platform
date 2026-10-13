@@ -27,6 +27,8 @@ import {
   renderMailThreadNotSupported,
   renderMailThreadRefused,
   renderMailThreadSummaryFooter,
+  renderMailThreadWithheld,
+  renderMailSummaryWithheld,
 } from './mail-reply-renderer';
 
 // GML-2 (ADR-0118 amendment of 2026-10-12): reply-to-pick and thread summaries on the mail handler, over a shared
@@ -384,6 +386,33 @@ describe('GML-2 thread summaries', () => {
     await twoListings(handler, rows, DISCORD_DM, 'r-a', 'r-b');
     expect(textOf(await handler.handle(ctxOf(rows, { id: 'in-1', text: '이 스레드 요약해줘' }, DISCORD_DM)))).toBe(renderMailThreadNotSupported('ko'));
     expect(r.gets).toEqual([]);
+  });
+
+  it('the guard is trusted only on complete text: a withheld body (empty, marked cut) is never summarized or called empty', async () => {
+    const { rows, manager } = store();
+    const r = reader({
+      get: async (id) => ({ ...summary(id), bodyText: '', bodyTruncated: true }),
+      thread: async (id) => ({
+        messages: [
+          { ...summary(`${id}-a`), bodyText: '첫 메일', bodyTruncated: false },
+          { ...summary(id), bodyText: '', bodyTruncated: true },
+        ],
+        totalMessages: 2,
+      }),
+    });
+    const handler = createMailTurnHandler({ reader: r.mail, timeZone: 'Asia/Seoul', sessions: manager });
+    await twoListings(handler, rows, DISCORD_DM, 'r-a', 'r-b');
+    expect(textOf(await handler.handle(ctxOf(rows, { id: 'in-1', text: '이 메일 요약해줘' }, DISCORD_DM)))).toBe(renderMailSummaryWithheld('ko'));
+    const thread = await handler.handle(ctxOf(rows, { id: 'in-2', text: '이 스레드 요약해줘' }, DISCORD_DM));
+    if (thread?.kind !== 'summarize') throw new Error('expected a summarize outcome');
+    expect(renderMessageContent(thread.footer, PLAIN_TEXT_MARKUP)).toBe(renderMailThreadSummaryFooter(2, 2, 'ko', 1));
+    expect(renderMailThreadSummaryFooter(2, 2, 'ko', 1)).toContain('1통은 본문이 너무 길어 안전하게 요약하지 않았어요');
+
+    const allWithheld = reader({ thread: async (id) => ({ messages: [{ ...summary(id), bodyText: '', bodyTruncated: true }], totalMessages: 1 }) });
+    const other = store();
+    const h2 = createMailTurnHandler({ reader: allWithheld.mail, timeZone: 'Asia/Seoul', sessions: other.manager });
+    await twoListings(h2, other.rows, DISCORD_DM, 'r-a', 'r-b');
+    expect(textOf(await h2.handle(ctxOf(other.rows, { id: 'in-1', text: '이 스레드 요약해줘' }, DISCORD_DM)))).toBe(renderMailThreadWithheld('ko'));
   });
 
   it('a credential-shaped message withholds the whole thread; a failed thread read is the honest failure note', async () => {

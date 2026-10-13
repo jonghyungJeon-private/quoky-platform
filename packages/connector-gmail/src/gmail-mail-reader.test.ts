@@ -9,6 +9,7 @@ import {
   assertGmailReadRequest,
   buildGmailSearchQuery,
 } from './gmail-mail-reader';
+import { MAX_RAW_BODY_BYTES } from './mime';
 import { GMAIL_OAUTH_TOKEN_URL, GMAIL_READONLY_SCOPE } from './oauth';
 
 // Fixture credentials: placeholders, not token-shaped. NEVER a real Gmail call: every request goes to the fake fetch.
@@ -317,7 +318,7 @@ describe('GmailMailReader (ADR-0118 D2/D3)', () => {
     const ids = Array.from({ length: 40 }, (_, index) => `m${index + 1}`);
     // Each reply quotes the whole history: the body grows with depth (the quadratic case the whole-thread read failed on).
     const bodyOf = (_id: string, index: number) =>
-      [`답장 ${index + 1}: ${'내용 '.repeat(200)}`, '', 'On Thu, Oct 8, 2026 Kim wrote:', ...Array.from({ length: index }, (__, k) => `> 이전 ${k} ${'인용 '.repeat(2000)}`)].join('\n');
+      [`답장 ${index + 1}: ${'내용 '.repeat(200)}`, '', 'On Thu, Oct 8, 2026 Kim wrote:', ...Array.from({ length: index }, (__, k) => `> 이전 ${k} ${'인용 '.repeat(1500)}`)].join('\n');
     const { reader, calls } = harness(threadApi(ids, bodyOf, { threadId: 'long' }));
     const thread = await reader.getThread('m40');
     expect(thread.totalMessages).toBe(40);
@@ -357,6 +358,30 @@ describe('GmailMailReader (ADR-0118 D2/D3)', () => {
       ['m1', '첫 메일', false],
       ['m2', '', true],
     ]);
+  });
+
+  it('Codex review P1 (MIME cap): a declaration past the 512 KiB decode cap with the bare value early is withheld, in a thread and a single mail', async () => {
+    const value = ['Hy4', 'tT9', 'qW1', 'eR6', 'uI2', 'oP5'].join('');
+    // The bare value near the start, then filler past the MIME decode cap, then the quoted declaration.
+    const body = [`값 다시 보냅니다 ${value}`, 'z'.repeat(MAX_RAW_BODY_BYTES), 'On Thu, Oct 8, 2026 Kim wrote:', `> password: ${value}`].join('\n');
+    const { reader } = harness(threadApi(['m1', 'm2'], (id) => (id === 'm1' ? '첫 메일' : body)));
+    const thread = await reader.getThread('m2');
+    expect(JSON.stringify(thread)).not.toContain(value);
+    expect(thread.messages.find((entry) => entry.id === 'm2')).toMatchObject({ bodyText: '', bodyTruncated: true, subject: 'Re: 계약' });
+    expect(thread.messages.find((entry) => entry.id === 'm1')?.bodyText).toBe('첫 메일');
+
+    const single = harness(() => json({ ...metadata('m9'), payload: { mimeType: 'text/plain', body: { data: b64(body) } } }));
+    const message = await single.reader.getMessage('m9');
+    expect(JSON.stringify(message)).not.toContain(value);
+    expect(message).toMatchObject({ bodyText: '', bodyTruncated: true });
+    // A single mail with a quoted declaration under the cap: the raw-body guard still withholds it.
+    const quoted = harness(() => json({ ...metadata('m8'), payload: { mimeType: 'text/plain', body: { data: b64(`다시: ${value}\n\n> password: ${value}`) } } }));
+    expect(await quoted.reader.getMessage('m8')).toMatchObject({ bodyText: '', bodyTruncated: true });
+    // A long but complete, clean body is guarded whole, then cut to the port bound (not withheld).
+    const long = harness(() => json({ ...metadata('m7'), payload: { mimeType: 'text/plain', body: { data: b64('가'.repeat(100_000)) } } }));
+    const cut = await long.reader.getMessage('m7');
+    expect(cut.bodyTruncated).toBe(true);
+    expect(cut.bodyText.length).toBeGreaterThan(0);
   });
 
   it('Codex review P2: every kept message oversized still sends at most 22 Gmail GETs, and the read stops partial', async () => {

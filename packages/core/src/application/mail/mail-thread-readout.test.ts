@@ -9,7 +9,7 @@ import {
   renderUntrustedDocumentForPrompt,
   type UntrustedDocumentReadout,
 } from '../untrusted-document-readout';
-import { buildMailThreadReadout } from './mail-thread-readout';
+import { MAIL_THREAD_WITHHELD_BODY_NOTE, buildMailThreadReadout } from './mail-thread-readout';
 
 // GML-2 (ADR-0118 amendment of 2026-10-12): one thread, bounded and guarded like one mail.
 
@@ -72,14 +72,23 @@ describe('buildMailThreadReadout', () => {
     expect(readout.body).not.toContain('메시지 2 시작');
   });
 
-  it('a reader that exceeds 256 KiB of body text is cut here too; a short message keeps its whole text beside a long one', () => {
-    const long = '가'.repeat(MAIL_THREAD_TEXT_MAX_BYTES);
+  it('the guard is trusted only on complete text: a body over its share is withheld here, never cut before the guard', () => {
+    const value = ['Jk8', 'mN3', 'bV5', 'cX7', 'zA1', 'sD4'].join('');
+    // The bare value early, the declaration at the end: a pre-guard cut would keep the value and drop the declaration.
+    const long = `${value} ${'가'.repeat(MAIL_THREAD_TEXT_MAX_BYTES)} password: ${value}`;
     const built = buildMailThreadReadout(thread([message(1, '짧은 첫 메일입니다.'), message(2, long), message(3, '짧은 마지막 답장.')]));
     const readout = readoutOf(built);
+    expect(built.withheld).toBe(1);
     expect(readout.truncated).toBe(true);
+    expect(readout.body).not.toContain(value);
+    expect(readout.body).toContain(`[2/3] 보낸이2 (example[.]com) · 2026-10-08 00:02Z\n${MAIL_THREAD_WITHHELD_BODY_NOTE}`);
     expect(readout.body).toContain('짧은 첫 메일입니다.');
     expect(readout.body).toContain('짧은 마지막 답장.');
-    expect(readout.body).toContain('characters omitted');
+    // A body the reader withheld (empty, marked cut) reads as the same note; all withheld is EMPTY with the count.
+    const upstream = buildMailThreadReadout(thread([message(1, '본문'), message(2, '', { bodyTruncated: true })]));
+    expect(upstream.withheld).toBe(1);
+    expect(readoutOf(upstream).body).toContain(MAIL_THREAD_WITHHELD_BODY_NOTE);
+    expect(buildMailThreadReadout(thread([message(1, '', { bodyTruncated: true })]))).toMatchObject({ result: { ok: false, refusal: 'EMPTY' }, withheld: 1 });
   });
 
   it('the credential guard runs on every full message BEFORE the clip: a secret the clip would drop still withholds the thread', () => {

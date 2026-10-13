@@ -330,6 +330,23 @@ export function renderMailSummaryRefused(refusal: UntrustedDocumentRefusal, lang
     : '그 메일에 비밀값처럼 보이는 내용이 있어 요약하지 않았어요. 본문은 어디로도 보내지 않았어요.';
 }
 
+/**
+ * GML-2 review rule: the body could not be checked whole for secrets (cut before the guard, or credential-shaped), so it
+ * was withheld; nothing was sent.
+ */
+export function renderMailSummaryWithheld(language: MailLanguage): string {
+  return language === 'en'
+    ? 'That email is too long to check safely as a whole, or looks like it contains a secret, so I did not summarize it. Its body was not sent anywhere.'
+    : '그 메일은 본문이 너무 길어 전체를 안전하게 확인할 수 없거나 비밀값처럼 보이는 내용이 있어 요약하지 않았어요. 본문은 어디로도 보내지 않았어요.';
+}
+
+/** GML-2 review rule: every message of the thread had its body withheld; nothing was sent. */
+export function renderMailThreadWithheld(language: MailLanguage): string {
+  return language === 'en'
+    ? 'The emails in that thread are too long to check safely as a whole, or look like they contain a secret, so I did not summarize it. Nothing was sent anywhere.'
+    : '그 스레드의 메일 본문이 너무 길어 안전하게 확인할 수 없거나 비밀값처럼 보여 요약하지 않았어요. 본문은 어디로도 보내지 않았어요.';
+}
+
 /** The reply when the summary could not be produced (no ready provider, a provider failure). */
 export function renderMailSummaryUnavailable(language: MailLanguage): string {
   return language === 'en'
@@ -431,12 +448,14 @@ export function renderMailThreadSummaryUnavailable(language: MailLanguage): stri
 }
 
 /** The deterministic disclosure appended to a successful thread summary (how many messages were read and sent). */
-export function renderMailThreadSummaryFooter(shown: number, total: number, language: MailLanguage): string {
+export function renderMailThreadSummaryFooter(shown: number, total: number, language: MailLanguage, withheld = 0): string {
   const partial = total > shown;
   if (language === 'en') {
     const read = partial ? `the first and the latest ${shown - 1} of its ${total} emails` : `its ${shown} email${shown === 1 ? '' : 's'}`;
-    return `(One thread — ${read} — was sent to the chat model to summarize it · the mailbox was only read; nothing was sent or changed)`;
+    const skipped = withheld > 0 ? ` · ${withheld} body${withheld === 1 ? ' was' : 'ies were'} too long to check safely and not summarized` : '';
+    return `(One thread — ${read} — was sent to the chat model to summarize it${skipped} · the mailbox was only read; nothing was sent or changed)`;
   }
   const read = partial ? `${total}통 중 첫 메일과 최근 ${shown - 1}통` : `메일 ${shown}통`;
-  return `(스레드 1개의 ${read} 본문을 대화 모델에 보내 요약했어요 · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았어요)`;
+  const skipped = withheld > 0 ? ` · ${withheld}통은 본문이 너무 길어 안전하게 요약하지 않았어요` : '';
+  return `(스레드 1개의 ${read} 본문을 대화 모델에 보내 요약했어요${skipped} · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았어요)`;
 }

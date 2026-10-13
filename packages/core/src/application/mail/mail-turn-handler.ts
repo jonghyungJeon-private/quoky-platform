@@ -50,6 +50,8 @@ import {
   renderMailReplyPickWhich,
   renderMailThreadNotSupported,
   renderMailThreadRefused,
+  renderMailThreadWithheld,
+  renderMailSummaryWithheld,
   renderMailThreadSummaryFooter,
   renderMailThreadSummaryUnavailable,
   renderMailSummaryFooter,
@@ -320,6 +322,12 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       this.log('warn', 'mail.turn_handler.read_failed', { kind: 'summarize', reason: failure });
       return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
     }
+    // GML-2 review rule: a body the reader could not hand over whole (empty and marked cut) was withheld before any guard
+    // could read it; it is never summarized (and never called "empty").
+    if (message.bodyText.trim().length === 0 && message.bodyTruncated) {
+      this.log('info', 'mail.turn_handler.summary_refused', { refusal: 'WITHHELD' });
+      return this.reply(ctx, renderMailSummaryWithheld(language), 'RESPONDED', language, 'not-summarized');
+    }
     const built = buildUntrustedDocumentReadout({
       source: 'mail',
       title: message.subject,
@@ -360,17 +368,18 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       this.log('warn', 'mail.turn_handler.read_failed', { kind: 'thread', reason: failure });
       return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
     }
-    const { result, shown, total } = buildMailThreadReadout(thread);
+    const { result, shown, total, withheld } = buildMailThreadReadout(thread);
     if (!result.ok) {
-      this.log('info', 'mail.turn_handler.summary_refused', { kind: 'thread', refusal: result.refusal });
-      return this.reply(ctx, renderMailThreadRefused(result.refusal, language), 'RESPONDED', language, 'not-summarized');
+      this.log('info', 'mail.turn_handler.summary_refused', { kind: 'thread', refusal: result.refusal, withheld });
+      const text = result.refusal === 'EMPTY' && withheld > 0 ? renderMailThreadWithheld(language) : renderMailThreadRefused(result.refusal, language);
+      return this.reply(ctx, text, 'RESPONDED', language, 'not-summarized');
     }
     this.log('info', 'mail.turn_handler.summarize', { kind: 'thread', shown, total, truncated: result.readout.truncated });
     return {
       kind: 'summarize',
       readout: result.readout,
       fallbackText: renderMailThreadSummaryUnavailable(language),
-      footer: renderMailThreadSummaryFooter(shown, total, language),
+      footer: renderMailThreadSummaryFooter(shown, total, language, withheld),
     };
   }
 
