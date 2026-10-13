@@ -92,7 +92,7 @@ fixed; the implementations are not.
 | `Plan` / `PlanStep` | **Intra-task** decomposition | `[NOW]` |
 | `Workflow` | **Inter-task** orchestration (≠ Plan) | `[LATER]` (field not reserved — YAGNI per ADR-0013; JSON storage makes late-add free) |
 | `Capability` | The routing key from need → provider | `[NOW]` |
-| `AgentProfile` | Immutable persona configuration: id, displayName, role, purpose, instructions (ADR-0079) | `[NOW]` (runtime `[LATER]`) |
+| `AgentProfile` | Immutable persona configuration: id, displayName, role, purpose, instructions (ADR-0079) | `[NOW]` (the bounded read-agent runtime behind it is `[NOW]` per §8 and ADR-0121; general profile-driven routing `[LATER]`) |
 | `MemoryRecord` (6 types) | Source-of-truth memory | `[NOW]` |
 | `ContextBundle` | Assembled, budgeted context for one run | `[NOW]` |
 | `PromptSpec` | Layered, provider-agnostic prompt | `[NOW]` |
@@ -257,8 +257,9 @@ fixed; the implementations are not.
    model never adds a capability; adding a skill might.
 2. Risk is a function of capability + concrete operation (see Workspace Rules).
 3. Routing order: **Intent → Capability → (AgentProfile) → Provider.** Capability
-   is the routing key. The current `AgentProfile` is configuration-only (ADR-0079);
-   integration above capability/provider routing remains `[LATER]`.
+   is the routing key. `AgentProfile` is configuration (ADR-0079); the bounded plan-then-execute
+   read agent of §8 (ADR-0121) runs behind one profile `[NOW]`, while general profile-driven routing
+   above capability/provider routing remains `[LATER]`.
 
 ---
 
