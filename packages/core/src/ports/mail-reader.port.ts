@@ -3,8 +3,8 @@ import { ConnectorQueryError } from './connector-query';
 
 /**
  * Mail read port (ADR-0118 D2, GML-1). Narrow and read-only, following the `CalendarReader` precedent (ADR-0110 D1):
- * one bounded search and one bounded get. No send, reply, draft, label, archive, delete or any other write method
- * exists, and none may be added to this port (ADR-0118 D6). Domain types only: no vendor type, query language, token or
+ * one bounded search, one bounded get and (GML-2, additive) one bounded thread read. No send, reply, draft, label,
+ * archive, delete or any other write method exists, and none may be added to this port (ADR-0118 D6). Domain types only: no vendor type, query language, token or
  * URL crosses it. Failures are `ConnectorQueryError` with the ADR-0100 reasons (value-free messages):
  *
  * - `UNAUTHORIZED` — the grant expired or was revoked (re-run the consent helper);
@@ -84,6 +84,23 @@ export interface MailMessage extends MailMessageSummary {
   readonly bodyTruncated: boolean;
 }
 
+/** A thread read returns at most this many messages (ADR-0118 amendment of 2026-10-12, GML-2). */
+export const MAIL_THREAD_MAX_MESSAGES = 20;
+/** The bodies of one thread read total at most this many UTF-8 bytes, before Core's head-and-tail clip (GML-2). */
+export const MAIL_THREAD_TEXT_MAX_BYTES = 256 * 1024;
+
+/**
+ * One mail thread, read only for an explicit thread-summary request (ADR-0118 amendment, GML-2). `messages` is in
+ * conversation order (oldest first), at most {@link MAIL_THREAD_MAX_MESSAGES}: when the thread is longer the adapter keeps
+ * the first message and the latest ones, and `totalMessages` says how many the thread holds. The bodies together are at
+ * most {@link MAIL_THREAD_TEXT_MAX_BYTES}; a body cut to fit has `bodyTruncated`. Every text field is untrusted readout.
+ */
+export interface MailThread {
+  readonly messages: readonly MailMessage[];
+  /** How many messages the thread holds (at least `messages.length`). */
+  readonly totalMessages: number;
+}
+
 export interface MailReader {
   /** A neutral source label for audit and replies (for example `mail`); never branched on by Core. */
   readonly source: string;
@@ -92,6 +109,12 @@ export interface MailReader {
   search(query: MailSearchQuery): Promise<MailSearchResult>;
   /** One message by the id a search returned. Throws `ConnectorQueryError` (`NOT_FOUND` when it no longer exists). */
   getMessage(id: string): Promise<MailMessage>;
+  /**
+   * Optional, additive (ADR-0118 amendment, GML-2): the thread of the message a search returned, bounded as
+   * {@link MailThread} says. Throws `ConnectorQueryError` (`NOT_FOUND` when the message no longer exists). A reader
+   * without it answers thread requests with an honest "not available" note.
+   */
+  getThread?(messageId: string): Promise<MailThread>;
 }
 
 export interface ParsedMailSearchQuery {
