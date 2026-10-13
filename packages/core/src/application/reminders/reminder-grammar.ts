@@ -764,14 +764,18 @@ function hasBatchim(ch: string): boolean {
 function stripKoQuotative(body: string): string | undefined {
   // `…시라고` is an honorific imperative only after another word ("물 마시라고"); a lone "택시라고" is the quoted noun.
   const imperative = /^(.*?)(하|시)라고$/su.exec(body);
-  if (imperative && imperative[1] !== undefined && (imperative[2] === '하' || /\s/u.test(imperative[1]))) return `${imperative[1]}${imperative[2]}기`;
+  // A lone clause ("마시라고") has no word before it: only a closed set of common honorific verb stems counts as a verb there;
+  // any other "<noun>시라고" ("택시라고") is the quoted noun (ambiguous without a lexicon; the noun reading errs less).
+  const standaloneStem = imperative !== null && /^(?:마|가|오|보|드|주무|하|계)$/u.test(imperative[1] ?? '') && imperative[2] === '시';
+  if (imperative && imperative[1] !== undefined && (imperative[2] === '하' || /\s/u.test(imperative[1]) || standaloneStem)) return `${imperative[1]}${imperative[2]}기`;
   const eu = /^(.*?)([가-힣])으라고$/su.exec(body);
   if (eu && hasBatchim(eu[2] as string)) return `${eu[1]}${eu[2]}기`;
   // A one-syllable word before 라고 with no final consonant is an imperative stem ("일찍 자라고", "우유 사라고", "빨리
   // 가라고"): one-syllable nouns of that shape are rare in a reminder, while a longer vowel-ending word ("택시라고",
   // "회의라고") is far more often the quoted noun, so only the one-syllable form is read as a verb (fewer errors overall).
   const bare = /^(.*?(?:^|\s))([가-힣])라고$/su.exec(body);
-  if (bare && !hasBatchim(bare[2] as string) && bare[1] !== undefined && bare[1].trim().length > 0) return `${bare[1]}${bare[2]}기`;
+  // Also when the clause is just the stem ("자라고" -> "자기"); a standalone "택시라고" has two syllables and stays a noun.
+  if (bare && !hasBatchim(bare[2] as string) && bare[1] !== undefined) return `${bare[1]}${bare[2]}기`;
   const noun = body.replace(/\s?(?:이라고|라고)$/, '');
   if (noun !== body) return noun;
   const declarative = /^(.*[가-힣])다고$/su.exec(body);

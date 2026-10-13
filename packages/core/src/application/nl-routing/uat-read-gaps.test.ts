@@ -251,3 +251,12 @@ describe('review fixes: time-word scope, numeric dates, DST, transient item, fut
     expect(resolveNlRange('rest-of-month', now, NY)).toMatchObject({ from: '2026-10-29T04:00:00.000Z', to: '2026-11-01T04:00:00.000Z', days: 3 });
   });
 });
+
+describe('review delta: transient args are stripped when a stored selection is read', () => {
+  it('drops item but keeps the rest', () => {
+    expect(migrateStoredSelection({ entryId: 'mail.list', args: { unread: true, item: 2 } })).toEqual({ entryId: 'mail.list', args: { unread: true } });
+    const session = { metadata: { 'quoky.lastSelection': lastSelectionRecord('a-1', { entryId: 'mail.list', args: { item: 3, range: 'today' } }, NOW) } };
+    expect(readLastSelection(session, 'a-1', NOW)).toMatchObject({ args: { range: 'today' } });
+    expect(readLastSelection(session, 'a-1', NOW)?.args).not.toHaveProperty('item');
+  });
+});

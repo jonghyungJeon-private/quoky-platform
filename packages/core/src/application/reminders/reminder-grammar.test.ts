@@ -1007,6 +1007,10 @@ describe('reminder grammar — status questions answered with LIST (ADR-0104 D3,
 describe('quotative reminder titles — one-syllable imperative stems (review P2)', () => {
   it.each([
     ['내일 9시에 일찍 자라고 알려줘', '일찍 자기'],
+    ['내일 9시에 자라고 알려줘', '자기'],
+    ['내일 9시에 마시라고 알려줘', '마시기'],
+    ['내일 9시에 물 마시라고 알려줘', '물 마시기'],
+    ['내일 9시에 약 먹으라고 알려줘', '약 먹기'],
     ['내일 9시에 우유 사라고 알려줘', '우유 사기'],
     ['내일 9시에 빨리 가라고 알려줘', '빨리 가기'],
     // multi-syllable vowel-ending words stay quoted nouns (fewer errors than reading them as verb stems)

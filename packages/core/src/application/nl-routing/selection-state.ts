@@ -114,6 +114,10 @@ export function readLastSelection(session: Pick<Session, 'metadata'>, actorId: I
 export function migrateStoredSelection(selection: StoredSelection): StoredSelection {
   const entry = nlWave1Entry(selection.entryId);
   let args = entry.migrateArgs?.(selection.args) ?? selection.args;
+  // A transient arg (a pick of one listed item) is never a follow-up's base, whatever wrote the record.
+  if (entry.args.some((spec) => spec.transient === true && spec.name in args)) {
+    args = Object.fromEntries(Object.entries(args).filter(([name]) => entry.args.find((spec) => spec.name === name)?.transient !== true));
+  }
   if (entry.args.some((spec) => spec.kind === 'range')) {
     const kept: Record<string, NlArgValue> = {};
     for (const [name, value] of Object.entries(args)) {
