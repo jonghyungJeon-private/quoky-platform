@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Node 22 LTS runtime (ADR-0121 S0 owner item, 2026-10-13)
+
+- **Runtime moves from Node 18 (end-of-life) to Node 22 LTS.** `.nvmrc` is `22.22.1` and `engines.node` is `>=22.12`. The owner approved this on 2026-10-13. It closes the CVE-2025-22150 exposure that remained through Node 18's bundled undici (FormData). The full suite passes on 22.22.1. The service plist is reinstalled with `--node` pointing at Node 22, and `better-sqlite3` is rebuilt for the new ABI.
+
 ## Unreleased — v5 S0 security baseline, ops half (ADR-0121, 2026-10-13)
 
 - **One-command network self-check.** `ops/security/quoky-net-selfcheck.sh [--json] [--since 24h]` reports the Quoky process tree,

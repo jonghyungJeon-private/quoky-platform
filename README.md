@@ -173,7 +173,7 @@ memory improvements and later networked infrastructure for Team/Hosted editions.
 
 ## Development
 
-The workspace declares Node **≥18.18** and **pnpm 10.32.1**. From the repository root:
+The workspace declares Node **≥22.12** (22 LTS; Node 18 is end-of-life) and **pnpm 10.32.1**. From the repository root:
 
 ```sh
 pnpm install --frozen-lockfile
