@@ -39,7 +39,8 @@ import { validateSelection, type NlValidatedSelection, type NlValidationContext,
  * - `active`: the decision is acted on — an executable read, one numbered question, or honest chat.
  *
  * One call per message at most, through the `CapabilityRouter` for `Capability.INTENT_SELECTION` with no session context
- * (the owner's chat-tier choice does not apply, D2); a 4 s bound and no retry (D3). Before any call the complete request
+ * (the owner's chat-tier choice does not apply, D2); a 6 s default bound (ADR-0120 amendment A3, configurable via
+ * `QUOKY_NL_INTENT_TIMEOUT_MS`) and no retry (D3). Before any call the complete request
  * — the prepared text and the previous selection's args — passes the credential guard; a credential-shaped value skips
  * selection with no call (D3 pre-egress guard). The cache is in memory only: per actor, 10 minutes, 256 entries.
  */
@@ -47,7 +48,7 @@ import { validateSelection, type NlValidatedSelection, type NlValidationContext,
 export type NlIntentMode = 'off' | 'shadow' | 'active';
 export const NL_INTENT_MODES: readonly NlIntentMode[] = ['off', 'shadow', 'active'];
 
-export const NL_SELECTION_TIMEOUT_MS = 4_000;
+export const NL_SELECTION_TIMEOUT_MS = 6_000;
 export const NL_SELECTION_CACHE_TTL_MS = 10 * 60_000;
 export const NL_SELECTION_CACHE_MAX_ENTRIES = 256;
 
@@ -113,7 +114,7 @@ export interface NlSelectionServiceDeps {
   /** `QUOKY_TIMEZONE`. */
   readonly timeZone: string;
   readonly logger: Logger;
-  /** Tests only; production uses {@link NL_SELECTION_TIMEOUT_MS}. */
+  /** Set from config (`QUOKY_NL_INTENT_TIMEOUT_MS`, default {@link NL_SELECTION_TIMEOUT_MS}); tests also override it. */
   readonly timeoutMs?: number;
   /** Tests only: monotonic milliseconds for latency (default `Date.now`). */
   readonly elapsed?: () => number;

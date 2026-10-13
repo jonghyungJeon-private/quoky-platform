@@ -20804,3 +20804,13 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
 - **R5 change:** with the selector down, a declined message now gets honest chat with the configured-sources fact instead of the grammar's answer for the wrong span or the unfiltered day. This trades an always-available (but sometimes wrong) host answer for a correct one when the selector is up.
 - **Side effect:** messages the calendar grammar answered with the default span because it had no symbol for them ("이번 달 일정", "지난주에 무슨 회의", "10월 1일부터 7일까지 일정") are exposed as qualifiers too and go to selection (`this-month`, `last-week`, a date range). A clock time or an attached time-of-day word stays expressed, so those hits are unchanged.
 - **Evaluation (prompt v16, 579 cases, flag on, mode active, Haiku, 1 run):** 96.3% (416/432), 0 wrong, 13 calls over the 4 s bound, gate passed (an earlier run: 97.2%). The selector call does not depend on the flag; the offline dispatch sweep runs with the flag off and on.
+
+### ADR-0120 amendment A3 — selection timeout 4 s → 6 s, configurable (2026-10-13)
+
+- **Status:** Accepted by the owner on 2026-10-13. The owner asked "그럼 의도 판단 4초 제한 자체도 변경해줘야하지 않을까 싶은데?" in reply to the live finding that a selection timed out at 4.0 s. The orchestrator recommended 6 s, and the owner agreed.
+- **Evidence:** the evaluations (Haiku, 579 cases) measured p50 2.9 s, p95 3.6 s and max 6.2 s. Between 13 and 18 of about 430–500 calls per run timed out at 4 s and counted as misses. The main cost is the `claude -p` process spawn.
+- **Amends D3:**
+  - The default bound is now 6 s, still with one call and no retry.
+  - `QUOKY_NL_INTENT_TIMEOUT_MS` (an integer from 2000 to 8000) can override it.
+  - A slow or failed selection now takes at most 2 s longer before the turn falls back. Normal turns are unchanged.
+- **Follow-up:** reducing the latency itself (a warm process, a smaller prompt) belongs to the ADR-0121 design.
