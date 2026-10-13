@@ -9,7 +9,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 - **Thread summaries.** `이 스레드 요약해줘`, `N번 메일 스레드 요약해줘`, `summarize this thread` and `summarize email thread N`
   summarize the thread of a listed mail. The thread is read with the optional `MailReader.getThread` (Gmail: `messages.get`
-  minimal, then `threads.get`; `gmail.readonly`, no new host): at most 20 messages and 256 KiB of text. The readout is a new
+  minimal, `threads.get` ids only, then only the kept messages; `gmail.readonly`, no new host): at most 20 messages and
+  256 KiB of text. The readout is a new
   `mail-thread` source (prompt label `EMAIL THREAD`). Each message is credential-guarded before the clip, and the whole
   readout again after it. Quoted history is dropped and the 3,000-character budget is shared fairly under `[i/n]` headers.
   No tools are offered, the claim guard runs, and a fixed footer says how many messages were read. DM-only.
@@ -18,7 +19,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - The adapters fill the new optional `InboundMessage.replyTo`. `QuokyCore` tells the mail handler the listing reply's
     delivery-receipt ids through the new application hook `TurnDeliveryObserver`, and the handler stores them in
     `Session.metadata['quoky.lastListing']` (no migration).
-  - A reply works for 24 h. After that it gets "that list expired" for 7 days. A reply to anything else picks nothing.
+  - A reply works for 24 h (8 live listings per Actor). An aged-out or evicted listing becomes a tombstone (64 per Actor,
+    7 days) whose reply gets "that list expired". A reply to anything else picks nothing.
 - **Unchanged.** Listing format and footer, help and usage lines, the NL catalog and every golden corpus. Mail and Drive
   summary prompts are byte-identical. The DM-only rule stands, and there is no send, label or write path.
 
