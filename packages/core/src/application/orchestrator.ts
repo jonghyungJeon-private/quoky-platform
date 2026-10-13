@@ -97,6 +97,8 @@ export class QuokyCore {
       return;
     }
     const delivered = await this.deps.platform.sendMessage(result.reply);
+    // CA review P3: the delivery instant is read right after the send, before any observer runs.
+    const deliveredAt = this.clock();
     const receipt = receiptOf(delivered);
     if (receipt !== undefined && receipt.platformMessageIds.length > 0) {
       await this.observeDelivery(message, result, receipt);
@@ -111,7 +113,7 @@ export class QuokyCore {
       },
       ...(receipt ? { receipt: { platformMessageIds: [...receipt.platformMessageIds] } } : {}),
       startedAt,
-      deliveredAt: this.clock(),
+      deliveredAt,
     });
   }
 
@@ -140,7 +142,8 @@ export class QuokyCore {
     for (const observer of this.deps.deliveryObservers ?? []) {
       try {
         await observer.observeDelivery({
-          message,
+          messageId: message.id,
+          context: message.context,
           sessionId: result.sessionId,
           status: result.status,
           platformMessageIds: [...receipt.platformMessageIds],

@@ -25,8 +25,9 @@ import {
  *   starting with `>` and everything after a reply header (`On … wrote:`, `…님이 작성:`, `-----Original Message-----`)
  *   are dropped from a message, unless that would leave it empty.
  * - **A fair head-and-tail clip.** The 3,000-code-point body budget is shared so every shown message keeps its start
- *   and end (short messages give their unused share to long ones), each under a fixed `[i/n] sender · date` line. A
- *   line in a body that imitates that header is rewritten, so only Core writes one.
+ *   and end (short messages give their unused share to long ones), each under a fixed `[i/n] sender (domain) · date`
+ *   line. Anything in a body that imitates the `[i/n]` marker is rewritten before and after the clip, so only Core
+ *   writes one.
  * - **Credential guard after the clip.** The builder guards the composed body again, then the clipped body and the exact
  *   prompt text.
  */
@@ -43,8 +44,16 @@ export interface MailThreadReadoutResult {
 const HEADER_SENDER_MAX_CHARS = 30;
 /** No message's share is smaller than this many code points (a 20-message thread still shows each one's gist). */
 const MIN_MESSAGE_SHARE = 60;
-/** A body line that imitates the Core header (`[3/5] …`) — rewritten to `(3/5) …`. */
-const HEADER_IMITATION = /^(\s*)\[(\d{1,3})\s*\/\s*(\d{1,3})\]/gmu;
+/**
+ * Anything in a body that imitates the Core header marker (`[3/5]`, anywhere on a line) — rewritten to `(3/5)`, before
+ * and again after the clip, so only Core writes one. (NFKC already folded full-width brackets and digits.)
+ */
+const HEADER_IMITATION = /\[(\s*\d{1,3}\s*)\/(\s*\d{1,3}\s*)\]/gu;
+const HEADER_DOMAIN_MAX_CHARS = 60;
+
+function withoutHeaderImitations(text: string): string {
+  return text.replace(HEADER_IMITATION, '($1/$2)');
+}
 /** A reply header is one short line. */
 const QUOTE_HEADER_MAX_CHARS = 300;
 /** Reply headers after which the rest of a message is quoted history (bounded, single-line patterns). */
@@ -80,8 +89,11 @@ function boundedMessages(messages: readonly MailMessage[]): readonly MailMessage
   return [messages[0] as MailMessage, ...messages.slice(messages.length - (MAIL_THREAD_MAX_MESSAGES - 1))];
 }
 
-/** The reply's own words: quoted lines and the history after a reply header removed (kept whole if nothing is left). */
-function ownWords(body: string): string {
+/**
+ * The reply's own words: quoted lines and the history after a reply header removed (kept whole if nothing is left).
+ * Exported for the mail adapter, which strips before it splits the thread's byte budget (CA review P3).
+ */
+export function stripQuotedMailHistory(body: string): string {
   const lines = body.split('\n');
   const kept: string[] = [];
   for (const line of lines) {
@@ -103,7 +115,23 @@ function oneLine(value: string, max: number): string {
 
 function senderLabel(message: MailMessage): string {
   const name = oneLine(message.sender.name, HEADER_SENDER_MAX_CHARS);
-  return name.length > 0 ? name : oneLine(message.sender.address, HEADER_SENDER_MAX_CHARS);
+  if (name.length > 0) return name;
+  const address = typeof message.sender.address === 'string' ? message.sender.address : '';
+  const at = address.lastIndexOf('@');
+  return oneLine(at > 0 ? address.slice(0, at) : address, HEADER_SENDER_MAX_CHARS);
+}
+
+/**
+ * CA review P3: the sender's address domain, defanged (`example[.]com`, which no link neutralizer rewrites), so a display
+ * name that imitates someone ("대표이사" from a stranger's domain) is visible in every header. `''` when there is none.
+ */
+function senderDomain(message: MailMessage): string {
+  const address = typeof message.sender.address === 'string' ? normalizeUntrustedText(message.sender.address) : '';
+  const at = address.lastIndexOf('@');
+  if (at < 0) return '';
+  const domain = address.slice(at + 1).toLowerCase().replace(/[^a-z0-9.-]/gu, '').replace(/^[.-]+|[.-]+$/gu, '');
+  if (domain.length === 0 || !domain.includes('.')) return '';
+  return domain.slice(0, HEADER_DOMAIN_MAX_CHARS).replace(/\./gu, '[.]');
 }
 
 function dateLabel(receivedAt: string): string {
@@ -153,20 +181,22 @@ export function buildMailThreadReadout(thread: MailThread): MailThreadReadoutRes
     if ([body, subject, name, address].some((field) => field.length > 0 && isCredentialShaped(field))) {
       return { result: { ok: false, refusal: 'CREDENTIAL_SHAPED' }, shown, total };
     }
-    prepared.push(ownWords(body).replace(HEADER_IMITATION, '$1($2/$3)'));
+    prepared.push(withoutHeaderImitations(stripQuotedMailHistory(body)));
   }
   if (prepared.every((body) => body.length === 0)) return { result: { ok: false, refusal: 'EMPTY' }, shown, total };
 
   const headers = messages.map((message, index) => {
     const date = dateLabel(message.receivedAt);
-    return `[${index + 1}/${shown}] ${senderLabel(message)}${date.length > 0 ? ` · ${date}` : ''}`;
+    const domain = senderDomain(message);
+    return `[${index + 1}/${shown}] ${senderLabel(message)}${domain.length > 0 ? ` (${domain})` : ''}${date.length > 0 ? ` · ${date}` : ''}`;
   });
   const frame = headers.reduce((sum, header) => sum + Array.from(header).length + 3, 0);
   const shares = fairShares(prepared.map((body) => Array.from(body).length), UNTRUSTED_DOCUMENT_BODY_MAX_CHARS - frame);
   const parts = prepared.map((body, index) => {
     const clipped = clipHeadAndTail(body, Math.max(shares[index] ?? 0, MIN_MESSAGE_SHARE));
     if (clipped.truncated) sourceTruncated = true;
-    return `${headers[index]}\n${clipped.text.length > 0 ? clipped.text : '(no text)'}`;
+    const text = withoutHeaderImitations(clipped.text);
+    return `${headers[index]}\n${text.length > 0 ? text : '(no text)'}`;
   });
 
   const first = messages.find((message) => typeof message.subject === 'string' && message.subject.trim().length > 0);

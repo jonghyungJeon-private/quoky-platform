@@ -5,10 +5,11 @@ import type { SessionManager } from './session-manager';
  * The last mail / Drive listing of one (Session, Actor), persisted so "N번 메일 요약해줘" survives a restart (GML-1 /
  * DRV-1 residual). No migration: it lives in the existing `Session.metadata` JSON beside the model selection:
  *
- *   metadata['quoky.lastListing'] = { byActor: { [actorId]: { mail?: Entry, drive?: Entry, replied?: Replied[] } } }
- *   Entry   = { source: 'mail' | 'drive', ids: string[] (displayed ids only, list order), at: ISO timestamp,
- *               requestId?: string, replyIds?: string[] }
- *   Replied = { source, ids, at, replyIds }   (an earlier listing the owner may still reply to; `ids` is [] once expired)
+ *   metadata['quoky.lastListing'] = { byActor: { [actorId]: { mail?: Entry, drive?: Entry, replied?: Entry[],
+ *                                                              expired?: Tombstone[] } } }
+ *   Entry     = { source: 'mail' | 'drive', ids: string[] (displayed ids only, list order), at: ISO timestamp,
+ *                 requestId?: string, replyIds?: string[] }
+ *   Tombstone = { source, at, replyIds }   (a listing that can no longer be picked from: no ids)
  *
  * Only the opaque provider ids of the DISPLAYED entries are stored; never a subject, sender, name or snippet. Each
  * source has its own slot and an entry whose `source` differs from the slot is ignored, so `N번 메일` never resolves a
@@ -18,9 +19,11 @@ import type { SessionManager } from './session-manager';
  * it (`requestId`) and, once delivered, the platform ids of its reply (`replyIds`, the ADR-0098 D3 delivery receipt).
  * A platform reply whose opaque `replyTo.messageId` equals one of those ids picks from THAT listing. Core only compares
  * the ids; it never parses them. A newer listing moves the replied-to one into `replied` (at most
- * {@link LISTING_REPLIED_MAX} per Actor), where its ids stay for {@link LISTING_REPLY_TTL_MS} — a reply names its
- * listing, so it is not ambiguous after the 30-minute "last list" window — and then only the reply ids remain until
- * {@link LISTING_REPLY_TOMBSTONE_MS}, so a late reply is told the list expired instead of picking from another list.
+ * {@link LISTING_REPLIED_MAX} live listings per Actor), where its ids stay for {@link LISTING_REPLY_TTL_MS} — a reply
+ * names its listing, so it is not ambiguous after the 30-minute "last list" window. A listing that ages out of that
+ * window OR is evicted by the live cap becomes a tombstone in `expired` (reply ids only, a separate cap of
+ * {@link LISTING_TOMBSTONES_MAX}, kept until {@link LISTING_REPLY_TOMBSTONE_MS}), so a late reply is told the list
+ * expired instead of picking from another list.
  */
 export const LAST_LISTING_METADATA_KEY = 'quoky.lastListing';
 /** A summary may refer to a list shown at most this long ago. */
@@ -31,8 +34,10 @@ export const LAST_LISTING_MAX_ACTORS = 64;
 export const LISTING_REPLY_TTL_MS = 24 * 60 * 60_000;
 /** GML-2: after that, the reply ids alone are kept this long so a late reply is answered "expired". */
 export const LISTING_REPLY_TOMBSTONE_MS = 7 * 24 * 60 * 60_000;
-/** GML-2: at most this many earlier, replied-to listings are kept per Actor (the oldest is dropped first). */
+/** GML-2: at most this many earlier, replied-to listings keep their ids per Actor (the oldest becomes a tombstone). */
 export const LISTING_REPLIED_MAX = 8;
+/** GML-2: at most this many tombstones (reply ids only) are kept per Actor, apart from the live listings. */
+export const LISTING_TOMBSTONES_MAX = 64;
 const MAX_IDS = 50;
 const MAX_ID_CHARS = 512;
 /** A long reply may be several platform messages (chunks); each is one id. */
@@ -62,9 +67,17 @@ interface Entry {
   readonly replyIds?: readonly string[];
 }
 
+/** A listing that can no longer be picked from: only which replies it had (GML-2). */
+interface Tombstone {
+  readonly source: ListingSource;
+  readonly at: IsoTimestamp;
+  readonly replyIds: readonly string[];
+}
+
 interface ActorState {
   readonly slots: Partial<Record<ListingSource, Entry>>;
   readonly replied: readonly Entry[];
+  readonly expired: readonly Tombstone[];
 }
 
 function recordOf(value: unknown): Record<string, unknown> {
@@ -106,39 +119,72 @@ function fresh(at: IsoTimestamp, now: IsoTimestamp): boolean {
   return Number.isFinite(age) && age >= 0 && age < LAST_LISTING_TTL_MS;
 }
 
-/** A replied-to entry as it should be kept at `now`: ids within the reply TTL, a tombstone after it, dropped later. */
-function agedReplied(entry: Entry, now: IsoTimestamp): Entry | undefined {
-  if (entry.replyIds === undefined) return undefined;
-  const age = ageOf(entry.at, now);
-  if (!Number.isFinite(age) || age < 0 || age >= LISTING_REPLY_TOMBSTONE_MS) return undefined;
-  return age < LISTING_REPLY_TTL_MS ? entry : { ...entry, ids: [] };
+function tombstoneOf(raw: unknown, source?: ListingSource): Tombstone | undefined {
+  const record = recordOf(raw);
+  const actual = record.source;
+  if (actual !== 'mail' && actual !== 'drive') return undefined;
+  if (source !== undefined && actual !== source) return undefined;
+  if (typeof record.at !== 'string' || !Number.isFinite(Date.parse(record.at))) return undefined;
+  const replyIds = boundedIds(record.replyIds, MAX_REPLY_IDS, MAX_REPLY_ID_CHARS);
+  return replyIds !== undefined && replyIds.length > 0 ? { source: actual, at: record.at as IsoTimestamp, replyIds } : undefined;
 }
 
-/** One Actor's state at `now`: fresh slots; an expired slot that was replied to moves into `replied`. */
+function byAge<T extends { readonly at: IsoTimestamp }>(entries: readonly T[]): T[] {
+  return [...entries].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
+/**
+ * The replied-to listings and tombstones as they should be kept at `now`: a listing with ids within the reply TTL stays
+ * live (the newest {@link LISTING_REPLIED_MAX}); one that aged out, or that the live cap evicts, becomes a tombstone; a
+ * tombstone stays until {@link LISTING_REPLY_TOMBSTONE_MS} (the newest {@link LISTING_TOMBSTONES_MAX}).
+ */
+function settle(
+  candidates: readonly Entry[],
+  tombstones: readonly Tombstone[],
+  now: IsoTimestamp,
+): { readonly replied: Entry[]; readonly expired: Tombstone[] } {
+  const live: Entry[] = [];
+  const dead: Tombstone[] = [...tombstones];
+  for (const entry of candidates) {
+    if (entry.replyIds === undefined) continue;
+    const age = ageOf(entry.at, now);
+    if (!Number.isFinite(age) || age < 0) continue;
+    if (age < LISTING_REPLY_TTL_MS && entry.ids.length > 0) live.push(entry);
+    else dead.push({ source: entry.source, at: entry.at, replyIds: entry.replyIds });
+  }
+  const ordered = byAge(live);
+  const evicted = ordered.slice(0, Math.max(0, ordered.length - LISTING_REPLIED_MAX));
+  for (const entry of evicted) dead.push({ source: entry.source, at: entry.at, replyIds: entry.replyIds ?? [] });
+  const expired = byAge(
+    dead.filter((tombstone) => {
+      const age = ageOf(tombstone.at, now);
+      return tombstone.replyIds.length > 0 && Number.isFinite(age) && age >= 0 && age < LISTING_REPLY_TOMBSTONE_MS;
+    }),
+  ).slice(-LISTING_TOMBSTONES_MAX);
+  return { replied: ordered.slice(ordered.length - Math.min(ordered.length, LISTING_REPLIED_MAX)), expired };
+}
+
+/** One Actor's state at `now`: fresh slots; an expired slot that was replied to moves into `replied` (or `expired`). */
 function actorStateOf(raw: unknown, now: IsoTimestamp): ActorState {
   const record = recordOf(raw);
   const slots: Partial<Record<ListingSource, Entry>> = {};
-  const replied: Entry[] = [];
-  const earlier = Array.isArray(record.replied) ? record.replied.slice(-LISTING_REPLIED_MAX * 2) : [];
-  for (const item of earlier) {
+  const candidates: Entry[] = [];
+  const tombstones: Tombstone[] = [];
+  for (const item of Array.isArray(record.replied) ? record.replied.slice(-LISTING_REPLIED_MAX * 2) : []) {
     const entry = entryOf(item, undefined, true);
-    const kept = entry !== undefined ? agedReplied(entry, now) : undefined;
-    if (kept !== undefined) replied.push(kept);
+    if (entry !== undefined) candidates.push(entry);
+  }
+  for (const item of Array.isArray(record.expired) ? record.expired.slice(-LISTING_TOMBSTONES_MAX * 2) : []) {
+    const tombstone = tombstoneOf(item);
+    if (tombstone !== undefined) tombstones.push(tombstone);
   }
   for (const slot of SLOTS) {
     const entry = entryOf(record[slot], slot);
     if (entry === undefined) continue;
     if (fresh(entry.at, now)) slots[slot] = entry;
-    else {
-      const kept = agedReplied(entry, now);
-      if (kept !== undefined) replied.push(kept);
-    }
+    else candidates.push(entry);
   }
-  return { slots, replied: newestReplied(replied) };
-}
-
-function newestReplied(entries: readonly Entry[]): Entry[] {
-  return [...entries].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).slice(-LISTING_REPLIED_MAX);
+  return { slots, ...settle(candidates, tombstones, now) };
 }
 
 function serializeEntry(entry: Entry): Record<string, unknown> {
@@ -158,6 +204,9 @@ function serializeActor(state: ActorState): Record<string, unknown> | undefined 
     if (entry !== undefined) out[slot] = serializeEntry(entry);
   }
   if (state.replied.length > 0) out.replied = state.replied.map(serializeEntry);
+  if (state.expired.length > 0) {
+    out.expired = state.expired.map((tombstone) => ({ source: tombstone.source, at: tombstone.at, replyIds: [...tombstone.replyIds] }));
+  }
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -210,7 +259,7 @@ export function withListing(
       const request = requestId !== undefined && requestId.length > 0 && requestId.length <= MAX_REPLY_ID_CHARS ? requestId : undefined;
       slots[source] = { source, ids: ids.slice(0, MAX_IDS), at: now, ...(request !== undefined ? { requestId: request } : {}) };
     }
-    return { slots, replied: newestReplied(replied) };
+    return { slots, ...settle(replied, own.expired, now) };
   });
 }
 
@@ -268,11 +317,21 @@ export function findListingByReply(
   const hit = candidates
     .filter((entry) => entry.replyIds?.includes(replyMessageId) === true)
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
-  if (hit === undefined) return undefined;
-  const age = ageOf(hit.at, now);
-  if (!Number.isFinite(age) || age < 0 || age >= LISTING_REPLY_TOMBSTONE_MS) return undefined;
-  if (age >= LISTING_REPLY_TTL_MS || hit.ids.length === 0) return { kind: 'expired' };
-  return { kind: 'listing', listing: { at: hit.at, ids: [...hit.ids] } };
+  if (hit !== undefined) {
+    const age = ageOf(hit.at, now);
+    if (Number.isFinite(age) && age >= 0 && age < LISTING_REPLY_TTL_MS && hit.ids.length > 0) {
+      return { kind: 'listing', listing: { at: hit.at, ids: [...hit.ids] } };
+    }
+    // A listing that aged out but was not yet settled into a tombstone (no write since): still never another list.
+    if (Number.isFinite(age) && age >= 0 && age < LISTING_REPLY_TOMBSTONE_MS) return { kind: 'expired' };
+  }
+  for (const item of Array.isArray(record.expired) ? record.expired.slice(-LISTING_TOMBSTONES_MAX * 2) : []) {
+    const tombstone = tombstoneOf(item, source);
+    if (tombstone === undefined || !tombstone.replyIds.includes(replyMessageId)) continue;
+    const age = ageOf(tombstone.at, now);
+    if (Number.isFinite(age) && age >= 0 && age < LISTING_REPLY_TOMBSTONE_MS) return { kind: 'expired' };
+  }
+  return undefined;
 }
 
 /** The persisted listing of this source for this Actor within the TTL, from the session snapshot; else `undefined`. */

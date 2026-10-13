@@ -147,7 +147,7 @@ const DOCUMENT_ONLY_READ_RULE: Readonly<Record<UntrustedDocumentSource, string>>
 
 /**
  * What to summarize, per source. Mail and Drive keep their pre-GML-2 wording byte for byte; a thread (GML-2) is read as
- * a conversation of several messages, each under a fixed `[i/n] sender · date` header line written by Core.
+ * a conversation of several messages, each under a fixed `[i/n] sender (domain) · date` header line written by Core.
  */
 const DOCUMENT_SUMMARY_TASK_RULE: Readonly<Record<UntrustedDocumentSource, string>> = {
   mail:
@@ -160,9 +160,10 @@ const DOCUMENT_SUMMARY_TASK_RULE: Readonly<Record<UntrustedDocumentSource, strin
     'dates, amounts, links or attachments.',
   'mail-thread':
     'Summarize the single email thread in the background resource for the current User request: what it is about, ' +
-    'who said what in order (each message starts with a "[i/n] sender · date" line), where it stands now, and any ' +
-    'decisions, open questions, dates, deadlines or requests. Use only what the messages say; never invent senders, ' +
-    'dates, amounts, links or attachments.',
+    'who said what in order (each message starts with a "[i/n] sender (domain) · date" line), where it stands now, ' +
+    'and any decisions, open questions, dates, deadlines or requests. Always name the sender as the subject of each ' +
+    "action (for example '김철수 님이 회의를 제안했어요' or 'Kim proposed a meeting'). Use only what the messages say; never " +
+    'invent senders, dates, amounts, links or attachments.',
 };
 
 const documentSummaryDeveloperRules = (source: UntrustedDocumentSource): readonly string[] => Object.freeze([

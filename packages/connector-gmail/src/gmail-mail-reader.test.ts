@@ -273,52 +273,82 @@ describe('GmailMailReader (ADR-0118 D2/D3)', () => {
     expect(() => assertGmailReadRequest(new URL('https://evil.example/gmail/v1/users/me/messages'), 'GET')).toThrow(GmailEndpointNotAllowedError);
   });
 
-  it('GML-2 getThread: messages.get (minimal) for the thread id, then threads.get (full); mapped in order', async () => {
-    const message = (id: string, body: string, minutes: number) => ({
-      ...metadata(id),
-      internalDate: String(Date.parse('2026-10-08T00:00:00.000Z') + minutes * 60_000),
-      payload: { mimeType: 'text/plain', headers: [{ name: 'From', value: `Kim <${id}@example.com>` }, { name: 'Subject', value: 'Re: 계약' }], body: { data: b64(body) } },
-    });
-    const { reader, calls } = harness((url) => {
-      if (url.pathname === '/gmail/v1/users/me/messages/m2') return json({ id: 'm2', threadId: 't9' });
-      if (url.pathname === '/gmail/v1/users/me/threads/t9') return json({ id: 't9', messages: [message('m1', '첫 메일', 0), message('m2', '답장', 5)] });
-      return json({}, 404);
-    });
+  /** A thread fixture: `messages/{id}` minimal → thread id; `threads/{t}` → ids only; `messages/{id}` full → the message. */
+  function threadApi(ids: readonly string[], bodyOf: (id: string, index: number) => string, options: { threadId?: string; huge?: ReadonlySet<string> } = {}) {
+    const threadId = options.threadId ?? 't9';
+    return (url: URL) => {
+      const id = url.pathname.split('/').pop() as string;
+      if (url.pathname.startsWith('/gmail/v1/users/me/threads/')) return json({ id: threadId, messages: ids.map((entry) => ({ id: entry })) });
+      if (url.searchParams.get('format') === 'minimal') return json({ id, threadId });
+      const index = ids.indexOf(id);
+      const record = {
+        ...metadata(id),
+        internalDate: String(Date.parse('2026-10-08T00:00:00.000Z') + index * 60_000),
+        payload: {
+          mimeType: 'text/plain',
+          headers: [{ name: 'From', value: `Kim <${id}@example.com>` }, { name: 'Subject', value: 'Re: 계약' }],
+          body: { data: b64(options.huge?.has(id) === true ? 'x'.repeat(1_100_000) : bodyOf(id, index)) },
+        },
+      };
+      return url.searchParams.get('format') === 'metadata' ? json(metadata(id)) : json(record);
+    };
+  }
+
+  it('GML-2 getThread: the thread id, the thread\'s ids only, then each kept message in full; mapped in order', async () => {
+    const { reader, calls } = harness(threadApi(['m1', 'm2'], (id) => (id === 'm1' ? '첫 메일' : '답장\n\nOn Thu, Oct 8, 2026 Kim <m1@example.com> wrote:\n> 첫 메일')));
     const thread = await reader.getThread('m2');
     expect(thread.totalMessages).toBe(2);
     expect(thread.messages.map((entry) => [entry.id, entry.bodyText, entry.sender.address])).toEqual([
       ['m1', '첫 메일', 'm1@example.com'],
-      ['m2', '답장', 'm2@example.com'],
+      ['m2', '답장', 'm2@example.com'], // quoted history stripped in the adapter
     ]);
     const api = calls.filter((call) => !call.url.startsWith('https://oauth2'));
-    expect(api.map((call) => [call.method, new URL(call.url).pathname])).toEqual([
-      ['GET', '/gmail/v1/users/me/messages/m2'],
-      ['GET', '/gmail/v1/users/me/threads/t9'],
+    expect(api.map((call) => [call.method, new URL(call.url).pathname, new URL(call.url).searchParams.get('format')])).toEqual([
+      ['GET', '/gmail/v1/users/me/messages/m2', 'minimal'],
+      ['GET', '/gmail/v1/users/me/threads/t9', 'minimal'],
+      ['GET', '/gmail/v1/users/me/messages/m1', 'full'],
+      ['GET', '/gmail/v1/users/me/messages/m2', 'full'],
     ]);
-    expect(new URL(api[0]?.url as string).searchParams.get('format')).toBe('minimal');
-    expect(new URL(api[0]?.url as string).searchParams.get('fields')).toBe('id,threadId');
-    expect(new URL(api[1]?.url as string).searchParams.get('format')).toBe('full');
+    expect(new URL(api[1]?.url as string).searchParams.get('fields')).toBe('id,messages(id)');
   });
 
-  it('GML-2 getThread bounds: at most 20 messages (the first and the latest), 256 KiB of body text across them', async () => {
-    const ids = Array.from({ length: 30 }, (_, index) => `m${index + 1}`);
-    const { reader } = harness((url) => {
-      if (url.pathname === '/gmail/v1/users/me/messages/m30') return json({ id: 'm30', threadId: 'big' });
-      return json({ id: 'big', messages: ids.map((id) => ({ ...metadata(id), payload: { mimeType: 'text/plain', body: { data: b64('가'.repeat(30_000)) } } })) });
-    });
-    const thread = await reader.getThread('m30');
-    expect(thread.totalMessages).toBe(30);
-    expect(thread.messages.map((entry) => entry.id)).toEqual(['m1', ...ids.slice(11)]);
+  it('GML-2 getThread: a 40-message thread that re-quotes every earlier message summarizes (first + latest 19, bounded)', async () => {
+    const ids = Array.from({ length: 40 }, (_, index) => `m${index + 1}`);
+    // Each reply quotes the whole history: the body grows with depth (the quadratic case the whole-thread read failed on).
+    const bodyOf = (_id: string, index: number) =>
+      [`답장 ${index + 1}: ${'내용 '.repeat(200)}`, '', 'On Thu, Oct 8, 2026 Kim wrote:', ...Array.from({ length: index }, (__, k) => `> 이전 ${k} ${'인용 '.repeat(2000)}`)].join('\n');
+    const { reader, calls } = harness(threadApi(ids, bodyOf, { threadId: 'long' }));
+    const thread = await reader.getThread('m40');
+    expect(thread.totalMessages).toBe(40);
+    expect(thread.messages.map((entry) => entry.id)).toEqual(['m1', ...ids.slice(21)]);
+    expect(thread.messages.every((entry) => entry.bodyText.startsWith('답장') && !entry.bodyText.includes('> 이전'))).toBe(true);
     const bytes = thread.messages.reduce((sum, entry) => sum + Buffer.byteLength(entry.bodyText, 'utf8'), 0);
     expect(bytes).toBeLessThanOrEqual(256 * 1024);
-    expect(thread.messages.every((entry) => entry.bodyText.length > 0)).toBe(true);
-    expect(thread.messages.some((entry) => entry.bodyTruncated)).toBe(true);
+    // Only the kept messages were read in full: 2 lookups + 20 messages.
+    expect(calls.filter((call) => !call.url.startsWith('https://oauth2'))).toHaveLength(22);
+  });
+
+  it('GML-2 getThread: a message over its 1 MiB bound is shown without a body (cut); a deleted one is skipped', async () => {
+    const { reader } = harness(threadApi(['m1', 'm2', 'm3'], () => '본문', { huge: new Set(['m2']) }));
+    const thread = await reader.getThread('m3');
+    expect(thread.messages.map((entry) => [entry.id, entry.bodyText, entry.bodyTruncated])).toEqual([
+      ['m1', '본문', false],
+      ['m2', '', true],
+      ['m3', '본문', false],
+    ]);
+    const gone = harness((url) => {
+      if (url.pathname.startsWith('/gmail/v1/users/me/threads/')) return json({ id: 't1', messages: [{ id: 'm1' }, { id: 'm2' }] });
+      if (url.searchParams.get('format') === 'minimal') return json({ id: 'm2', threadId: 't1' });
+      if (url.pathname.endsWith('/m1')) return json({ error: { code: 404 } }, 404);
+      return json({ ...metadata('m2'), payload: { mimeType: 'text/plain', body: { data: b64('남은 메일') } } });
+    });
+    expect((await gone.reader.getThread('m2')).messages.map((entry) => entry.id)).toEqual(['m2']);
   });
 
   it('GML-2 getThread failures are typed and value-free: a gone message, a mismatched or malformed thread, an invalid id', async () => {
     const gone = harness(() => json({ error: { code: 404 } }, 404));
     expect(await failure(gone.reader.getThread('m1'))).toMatchObject({ reason: 'NOT_FOUND' });
-    const mismatch = harness((url) => (url.pathname.includes('/messages/') ? json({ id: 'm1', threadId: 't1' }) : json({ id: 'other', messages: [metadata('m1')] })));
+    const mismatch = harness((url) => (url.pathname.includes('/messages/') ? json({ id: 'm1', threadId: 't1' }) : json({ id: 'other', messages: [{ id: 'm1' }] })));
     expect(await failure(mismatch.reader.getThread('m1'))).toMatchObject({ reason: 'INVALID_RESPONSE' });
     const badThreadId = harness(() => json({ id: 'm1', threadId: '../labels' }));
     expect(await failure(badThreadId.reader.getThread('m1'))).toMatchObject({ reason: 'INVALID_RESPONSE' });

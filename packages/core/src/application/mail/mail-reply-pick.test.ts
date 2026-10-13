@@ -5,7 +5,13 @@ import type { StorageProvider } from '../../ports';
 import { ConnectorQueryError } from '../../ports/connector-query';
 import type { TurnHandlerContext, TurnHandlerOutcome } from '../../ports/conversation-turn-handler.port';
 import type { MailMessage, MailMessageSummary, MailReader, MailThread } from '../../ports/mail-reader.port';
-import { LAST_LISTING_METADATA_KEY, LISTING_REPLY_TOMBSTONE_MS, LISTING_REPLY_TTL_MS } from '../last-listing';
+import {
+  LAST_LISTING_METADATA_KEY,
+  LISTING_REPLIED_MAX,
+  LISTING_REPLY_TOMBSTONE_MS,
+  LISTING_REPLY_TTL_MS,
+  LISTING_TOMBSTONES_MAX,
+} from '../last-listing';
 import { PLAIN_TEXT_MARKUP, renderMessageContent } from '../message-rendering';
 import { SessionManager } from '../session-manager';
 import { isSummarizableDocumentReadout } from '../untrusted-document-readout';
@@ -133,7 +139,7 @@ async function twoListings(
   for (const [id, receipt] of [['in-a', receiptA], ['in-b', receiptB]] as const) {
     const ctx = ctxOf(rows, { id, text: '안 읽은 메일' }, context);
     expect((await handler.handle(ctx))?.kind ?? 'reply').toBe('reply');
-    await handler.observeDelivery({ message: ctx.message, sessionId: 's-1', status: 'RESPONDED', platformMessageIds: [receipt] });
+    await handler.observeDelivery({ messageId: ctx.message.id, context: ctx.message.context, sessionId: 's-1', status: 'RESPONDED', platformMessageIds: [receipt] });
   }
 }
 
@@ -197,11 +203,11 @@ describe('GML-2 reply-to-pick', () => {
     expect(await handler.handle(ctxOf(rows, { id: 'in-3', text: '요약해줘', replyTo: 'r-a-but-not' }, DISCORD_DM))).toBeNull();
     // A receipt for a turn that was not a listing, a failed turn or another session binds nothing.
     const chat = ctxOf(rows, { id: 'in-chat', text: '고마워' }, DISCORD_DM);
-    await handler.observeDelivery({ message: chat.message, sessionId: 's-1', status: 'RESPONDED', platformMessageIds: ['r-chat'] });
+    await handler.observeDelivery({ messageId: chat.message.id, context: chat.message.context, sessionId: 's-1', status: 'RESPONDED', platformMessageIds: ['r-chat'] });
     expect(await handler.handle(ctxOf(rows, { id: 'in-4', text: '2번 요약해줘', replyTo: 'r-chat' }, DISCORD_DM))).toBeNull();
     const failedList = ctxOf(rows, { id: 'in-fail', text: '안 읽은 메일' }, DISCORD_DM);
     await handler.handle(failedList);
-    await handler.observeDelivery({ message: failedList.message, sessionId: 's-1', status: 'FAILED', platformMessageIds: ['r-fail'] });
+    await handler.observeDelivery({ messageId: failedList.message.id, context: failedList.message.context, sessionId: 's-1', status: 'FAILED', platformMessageIds: ['r-fail'] });
     expect(await handler.handle(ctxOf(rows, { id: 'in-5', text: '1번 요약해줘', replyTo: 'r-fail' }, DISCORD_DM))).toBeNull();
   });
 
@@ -247,6 +253,60 @@ describe('GML-2 reply-to-pick', () => {
     expect(
       textOf(await restarted.handle(ctxOf(rows, { id: 'in-6', text: '1번 메일 요약해줘', replyTo: 'r-a', now: at(LISTING_REPLY_TOMBSTONE_MS + 60_000) }, DISCORD_DM))),
     ).toBe(renderMailSummaryNeedsListing('ko'));
+  });
+
+  it('CA review P2: with 9+ listings an evicted list becomes a tombstone — its reply is "expired", never another list', async () => {
+    const { rows, manager } = store();
+    const r = reader();
+    const handler = createMailTurnHandler({ reader: r.mail, timeZone: 'Asia/Seoul', sessions: manager });
+    for (let n = 0; n < 10; n += 1) {
+      const ctx = ctxOf(rows, { id: `in-${n}`, text: '안 읽은 메일', now: at(n * 60_000) }, DISCORD_DM);
+      await handler.handle(ctx);
+      await handler.observeDelivery({ messageId: ctx.message.id, context: ctx.message.context, sessionId: 's-1', status: 'RESPONDED', platformMessageIds: [`r-${n}`] });
+    }
+    const later = at(11 * 60_000);
+    const stored = rows.get('s-1')?.metadata?.[LAST_LISTING_METADATA_KEY] as { byActor: Record<string, { replied: unknown[]; expired: Array<{ replyIds: string[] }> }> };
+    expect(stored.byActor['a-1']?.replied).toHaveLength(LISTING_REPLIED_MAX);
+    expect(stored.byActor['a-1']?.expired.map((tombstone) => tombstone.replyIds)).toEqual([['r-0']]);
+    expect(JSON.stringify(stored.byActor['a-1']?.expired)).not.toContain('gm-');
+    // The evicted first listing (gm-1, gm-2): "2번" would be out of range on every later list, "1번" would be gm-3 — neither.
+    for (const [id, text] of [['in-a', '1번 메일 요약해줘'], ['in-b', '2번 요약해줘'], ['in-c', '이 메일 요약해줘']] as const) {
+      expect(textOf(await handler.handle(ctxOf(rows, { id, text, replyTo: 'r-0', now: later }, DISCORD_DM))), text).toBe(renderMailReplyPickExpired('ko'));
+    }
+    // The same after a restart (persisted record only).
+    const restarted = createMailTurnHandler({ reader: r.mail, timeZone: 'Asia/Seoul', sessions: manager });
+    expect(textOf(await restarted.handle(ctxOf(rows, { id: 'in-d', text: '1번 메일 요약해줘', replyTo: 'r-0', now: later }, DISCORD_DM)))).toBe(
+      renderMailReplyPickExpired('ko'),
+    );
+    expect(r.gets).toEqual([]);
+    // The oldest still-live listing is picked normally.
+    expect((await restarted.handle(ctxOf(rows, { id: 'in-e', text: '1번 메일 요약해줘', replyTo: 'r-1', now: later }, DISCORD_DM)))?.kind).toBe('summarize');
+  });
+
+  it('tombstones have their own cap: many listings keep 8 live lists and at most 64 tombstones', async () => {
+    const { rows, manager } = store();
+    const handler = createMailTurnHandler({ reader: reader().mail, timeZone: 'Asia/Seoul', sessions: manager });
+    for (let n = 0; n < 80; n += 1) {
+      const ctx = ctxOf(rows, { id: `in-${n}`, text: '안 읽은 메일', now: at(n * 1000) }, DISCORD_DM);
+      await handler.handle(ctx);
+      await handler.observeDelivery({ messageId: ctx.message.id, context: ctx.message.context, sessionId: 's-1', status: 'RESPONDED', platformMessageIds: [`r-${n}`] });
+    }
+    const own = (rows.get('s-1')?.metadata?.[LAST_LISTING_METADATA_KEY] as { byActor: Record<string, { replied: unknown[]; expired: unknown[] }> }).byActor['a-1'];
+    expect(own?.replied).toHaveLength(LISTING_REPLIED_MAX);
+    expect(own?.expired).toHaveLength(LISTING_TOMBSTONES_MAX);
+    const now = at(81 * 1000);
+    expect(textOf(await handler.handle(ctxOf(rows, { id: 'in-x', text: '1번 요약해줘', replyTo: 'r-7', now }, DISCORD_DM)))).toBe(renderMailReplyPickExpired('ko'));
+  });
+
+  it('CA review P3: in a DM, a noun-less thread request with no listing and no reply is left to chat', async () => {
+    const { rows, manager } = store();
+    const r = reader();
+    const handler = createMailTurnHandler({ reader: r.mail, timeZone: 'Asia/Seoul', sessions: manager });
+    expect(await handler.handle(ctxOf(rows, { id: 'in-1', text: '이 스레드 요약해줘' }, DISCORD_DM))).toBeNull();
+    expect(await handler.handle(ctxOf(rows, { id: 'in-2', text: '3번 스레드 요약' }, DISCORD_DM))).toBeNull();
+    // Naming the mail keeps the honest "list first" note.
+    expect(textOf(await handler.handle(ctxOf(rows, { id: 'in-3', text: '이 메일 스레드 요약해줘' }, DISCORD_DM)))).toBe(renderMailSummaryNeedsListing('ko'));
+    expect([r.gets, r.threads]).toEqual([[], []]);
   });
 
   it('stale ids: a picked mail deleted since the listing is the honest "no longer exists" note (FAILED)', async () => {

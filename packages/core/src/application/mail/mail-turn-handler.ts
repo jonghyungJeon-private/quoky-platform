@@ -270,7 +270,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     ctx: TurnHandlerContext,
     question: Extract<MailQuestion, { kind: 'summarize' }>,
     picked: ListingReplyMatch | undefined,
-  ): Promise<TurnHandlerReply | TurnHandlerSummarizeReply> {
+  ): Promise<TurnHandlerReply | TurnHandlerSummarizeReply | null> {
     const { target, language } = question;
     if (picked?.kind === 'expired') {
       this.log('info', 'mail.turn_handler.reply_pick', { matched: 'expired' });
@@ -279,7 +279,12 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     const viaReply = picked?.kind === 'listing';
     if (viaReply) this.log('info', 'mail.turn_handler.reply_pick', { matched: 'listing' });
     const ids = picked?.kind === 'listing' ? picked.listing.ids : (this.currentListing(ctx)?.ids ?? []);
-    if (ids.length === 0) return this.reply(ctx, renderMailSummaryNeedsListing(language), 'RESPONDED', language, 'not-read');
+    if (ids.length === 0) {
+      // CA review P3: words that name no mail (`이 스레드 요약해줘`, `3번 스레드 요약`) with no listing and no reply are not
+      // about mail at all: chat answers them.
+      if (question.unnamed === true && picked === undefined) return null;
+      return this.reply(ctx, renderMailSummaryNeedsListing(language), 'RESPONDED', language, 'not-read');
+    }
     let index: number;
     if (target.kind === 'this') {
       if (ids.length !== 1) {
@@ -367,7 +372,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
    */
   async observeDelivery(turn: DeliveredTurn): Promise<void> {
     try {
-      const key = receiptKey(turn.message);
+      const key = receiptKey(turn.messageId, turn.context);
       const pending = this.pendingReceipts.get(key);
       if (pending === undefined) return;
       this.pendingReceipts.delete(key);
@@ -390,7 +395,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       const age = now - Date.parse(pending.at);
       if (!Number.isFinite(age) || age < 0 || age >= MAIL_PENDING_RECEIPT_TTL_MS) this.pendingReceipts.delete(key);
     }
-    const key = receiptKey(ctx.message);
+    const key = receiptKey(ctx.message.id, ctx.message.context);
     this.pendingReceipts.delete(key);
     this.pendingReceipts.set(key, { sessionId: ctx.session.id, actorId: ctx.actor.id, requestId: ctx.message.id, at: ctx.now });
     while (this.pendingReceipts.size > MAIL_PENDING_RECEIPTS_MAX) {
@@ -490,8 +495,8 @@ function startOfLocalDay(now: IsoTimestamp, timeZone: string): IsoTimestamp {
 }
 
 /** GML-2: one inbound message (platform message ids are unique only per conversation). */
-function receiptKey(message: { readonly id: Id; readonly context: { readonly platform: string; readonly channelId: string } }): string {
-  return JSON.stringify([message.context.platform, message.context.channelId, message.id]);
+function receiptKey(messageId: Id, context: { readonly platform: string; readonly channelId: string }): string {
+  return JSON.stringify([context.platform, context.channelId, messageId]);
 }
 
 /** Factory for the composition root (ADR-0096 D7). */

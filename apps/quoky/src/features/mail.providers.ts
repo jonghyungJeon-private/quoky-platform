@@ -2,12 +2,14 @@ import type { Provider } from '@nestjs/common';
 import { GMAIL_SOURCE_LABEL, GmailMailReader, GmailTokenFileError, readGmailTokenFile } from '@quoky/connector-gmail';
 import {
   MAIL_READER,
+  MailTurnHandler,
   SessionManager,
   createMailTurnHandler,
   type ConversationTurnHandler,
   type Logger,
   type MailReader,
   type MailSourceCopy,
+  type TurnDeliveryObserver,
 } from '@quoky/core';
 import type { QuokyConfig } from '../config';
 import { ConsoleLogger } from '../console-logger';
@@ -38,6 +40,11 @@ export const GMAIL_MAIL_COPY: MailSourceCopy = Object.freeze({
 
 /** App-local token for this feature's handler list (the wave-1 `feature-tokens.ts` is not edited after wave 1). */
 export const MAIL_TURN_HANDLERS = Symbol('MailTurnHandlers');
+/**
+ * GML-2 (ADR-0118 amendment): the delivery observers this feature registers with `QuokyCore` — the same mail handler
+ * instance as in {@link MAIL_TURN_HANDLERS} (it binds listing replies to their receipt ids), or none without Gmail.
+ */
+export const MAIL_DELIVERY_OBSERVERS = Symbol('MailDeliveryObservers');
 
 /** Fixed, value-free reasons logged when a configured Gmail is not registered. */
 export const MailReaderNotRegisteredReason = {
@@ -97,7 +104,10 @@ export function createMailProviders(options: MailCompositionOptions): Provider[]
   const logger = options.logger ?? new ConsoleLogger('mail');
   const reader = options.reader ?? createMailReader(options.gmail, logger);
   if (reader === undefined) {
-    return [{ provide: MAIL_TURN_HANDLERS, useValue: [] as readonly ConversationTurnHandler[] }];
+    return [
+      { provide: MAIL_TURN_HANDLERS, useValue: [] as readonly ConversationTurnHandler[] },
+      { provide: MAIL_DELIVERY_OBSERVERS, useValue: [] as readonly TurnDeliveryObserver[] },
+    ];
   }
   const timeZone = options.gmail?.timeZone ?? options.timeZone;
   return [
@@ -109,6 +119,12 @@ export function createMailProviders(options: MailCompositionOptions): Provider[]
         createMailTurnHandler({ reader: mailReader, timeZone, logger, copy: GMAIL_MAIL_COPY, ...(sessions !== undefined ? { sessions } : {}) }),
       ],
       inject: [MAIL_READER, { token: SessionManager, optional: true }],
+    },
+    {
+      provide: MAIL_DELIVERY_OBSERVERS,
+      useFactory: (handlers: readonly ConversationTurnHandler[]): readonly TurnDeliveryObserver[] =>
+        handlers.filter((handler): handler is MailTurnHandler => handler instanceof MailTurnHandler),
+      inject: [MAIL_TURN_HANDLERS],
     },
   ];
 }

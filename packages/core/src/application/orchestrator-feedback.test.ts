@@ -242,7 +242,25 @@ describe('QuokyCore delivery observers (ADR-0118 amendment, GML-2)', () => {
     });
     await core.handleInboundMessage(messageOf('안 읽은 메일'));
     expect(events.order).toEqual(['send', 'observe', 'record']);
-    expect(seen).toEqual([{ message: messageOf('안 읽은 메일'), sessionId: 'sess-1', status: 'RESPONDED', platformMessageIds: ['out-1', 'out-2'] }]);
+    // Only what an observer needs: the inbound id and context, never its text.
+    expect(seen).toEqual([{ messageId: 'in-1', context: CTX, sessionId: 'sess-1', status: 'RESPONDED', platformMessageIds: ['out-1', 'out-2'] }]);
+    expect(JSON.stringify(seen)).not.toContain('안 읽은 메일');
+  });
+
+  it('CA review P3: deliveredAt is read right after the send, before a slow observer runs', async () => {
+    const events: Events = { order: [], logs: [] };
+    const platform = platformReturning(events, async () => ({ platformMessageIds: ['out-1'] }));
+    const { feedback, turns } = recorderOf(events);
+    const core = new QuokyCore({
+      runtime: runtimeOf(async () => workResult()),
+      platform,
+      logger: loggerOf(events),
+      feedback,
+      clock: clockFrom('2026-10-02T10:00:00.000Z', '2026-10-02T10:00:01.000Z', '2026-10-02T10:00:09.000Z'),
+      deliveryObservers: [{ observeDelivery: async () => { events.order.push('observe'); } }],
+    });
+    await core.handleInboundMessage(messageOf('x'));
+    expect(turns[0]?.deliveredAt).toBe('2026-10-02T10:00:01.000Z');
   });
 
   it('is not called without a receipt; a throwing observer never alters delivery, the next observer or the record', async () => {

@@ -9,6 +9,7 @@ import {
   MAIL_THREAD_MAX_MESSAGES,
   MAIL_THREAD_TEXT_MAX_BYTES,
   boundMailLine,
+  stripQuotedMailHistory,
   isValidMailMessageId,
   parseMailSearchQuery,
   resolveConnectorQueryTimeoutMs,
@@ -60,14 +61,22 @@ export const GMAIL_METADATA_FIELDS = 'id,labelIds,snippet,internalDate,payload/h
 export const GMAIL_FULL_FIELDS = 'id,labelIds,snippet,internalDate,payload';
 /** GML-2: the thread id of a listed message (`format=minimal`), then the thread's messages with their payloads. */
 export const GMAIL_THREAD_ID_FIELDS = 'id,threadId';
-export const GMAIL_THREAD_FIELDS = 'id,messages(id,labelIds,snippet,internalDate,payload)';
+/** CA review P3: the thread is listed with ids only; the kept messages are then read one by one (never the whole thread). */
+export const GMAIL_THREAD_FIELDS = 'id,messages(id)';
 /** Response size bounds per call (bytes). A larger response is refused and its body is not kept. */
 export const GMAIL_LIST_MAX_BYTES = 64 * 1024;
 export const GMAIL_METADATA_MAX_BYTES = 64 * 1024;
 export const GMAIL_FULL_MAX_BYTES = 4 * 1024 * 1024;
 export const GMAIL_THREAD_ID_MAX_BYTES = 4 * 1024;
-/** A thread's full payloads (HTML parts included) for at most a few dozen messages; a larger one is refused. */
-export const GMAIL_THREAD_MAX_BYTES = 8 * 1024 * 1024;
+/** The id-only thread listing (at most a few hundred ids). */
+export const GMAIL_THREAD_MAX_BYTES = 64 * 1024;
+/**
+ * One kept message of a thread, read in full. A message over this bound is shown with its metadata and no body (and
+ * marked cut) instead of failing the thread: a long thread re-quotes every earlier message, so bodies grow with depth.
+ */
+export const GMAIL_THREAD_MESSAGE_MAX_BYTES = 1024 * 1024;
+/** Kept messages are read at most this many at a time. */
+const GMAIL_THREAD_READ_CONCURRENCY = 4;
 /** A thread holding more messages than this is refused as malformed (Gmail caps threads well below it). */
 const GMAIL_THREAD_MESSAGES_HARD_MAX = 500;
 /** An access token is refreshed this long before Google says it expires. */
@@ -187,9 +196,11 @@ export class GmailMailReader implements MailReader {
   }
 
   /**
-   * GML-2: the thread of a listed message, two guarded GETs (`messages.get` with `format=minimal` for its thread id, then
-   * `threads.get` with `format=full`), bounded to {@link MAIL_THREAD_MAX_MESSAGES} messages (the first and the latest)
-   * and {@link MAIL_THREAD_TEXT_MAX_BYTES} of body text across them, each body cut to its share of what is left.
+   * GML-2: the thread of a listed message: `messages.get` (`format=minimal`) for its thread id, `threads.get`
+   * (`format=minimal`, ids only), then `messages.get` (`format=full`) for the kept messages only — at most
+   * {@link MAIL_THREAD_MAX_MESSAGES} (the first and the latest), each bounded, at most 4 at a time. Quoted history is
+   * dropped and {@link MAIL_THREAD_TEXT_MAX_BYTES} of body text is shared across them, each cut to its share of what is
+   * left. Never the whole thread's payloads in one response (CA review P3: a long thread re-quotes quadratically).
    */
   async getThread(messageId: string): Promise<MailThread> {
     if (!isValidMailMessageId(messageId)) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'gmail: invalid message id');
@@ -200,26 +211,47 @@ export class GmailMailReader implements MailReader {
     if (located.id !== messageId || !isValidMailMessageId(located.threadId)) throw new GmailResponseError('gmail');
 
     const url = new URL(`${GMAIL_THREADS_PATH}/${encodeURIComponent(located.threadId)}`, GMAIL_API_ORIGIN);
-    url.searchParams.set('format', 'full');
+    url.searchParams.set('format', 'minimal');
     url.searchParams.set('fields', GMAIL_THREAD_FIELDS);
     const payload = await this.getJson(url, GMAIL_THREAD_MAX_BYTES);
     const listed = payload.messages;
     if (payload.id !== located.threadId || !Array.isArray(listed) || listed.length === 0 || listed.length > GMAIL_THREAD_MESSAGES_HARD_MAX) {
       throw new GmailResponseError('gmail');
     }
-    const records = listed.map((entry) => (isRecord(entry) && isValidMailMessageId(entry.id) ? entry : undefined));
-    if (records.some((entry) => entry === undefined)) throw new GmailResponseError('gmail');
-    const all = records as Array<Record<string, unknown> & { id: string }>;
-    const kept = all.length <= MAIL_THREAD_MAX_MESSAGES ? all : [all[0] as Record<string, unknown> & { id: string }, ...all.slice(all.length - (MAIL_THREAD_MAX_MESSAGES - 1))];
+    const all = listed.map((entry) => (isRecord(entry) ? entry.id : undefined));
+    if (!all.every(isValidMailMessageId) || new Set(all).size !== all.length) throw new GmailResponseError('gmail');
+    const keptIds = all.length <= MAIL_THREAD_MAX_MESSAGES ? all : [all[0] as string, ...all.slice(all.length - (MAIL_THREAD_MAX_MESSAGES - 1))];
+    const read = await mapBounded(keptIds, GMAIL_THREAD_READ_CONCURRENCY, (id) => this.readThreadMessage(id));
+    const kept = read.filter((entry): entry is { summary: MailMessageSummary; text: string; truncated: boolean } => entry !== undefined);
+    if (kept.length === 0) throw new GmailHttpError('NOT_FOUND', 'gmail', 404);
     let bytesLeft = MAIL_THREAD_TEXT_MAX_BYTES;
-    const messages = kept.map((record, index) => {
-      const summary = mapSummary(record, record.id);
-      const extracted = extractBodyText(record.payload);
-      const body = truncateUtf8(extracted.text, Math.floor(bytesLeft / (kept.length - index)));
+    const messages = kept.map((entry, index) => {
+      // Quoted history is dropped before the byte budget is shared, so the budget carries each message's own words.
+      const body = truncateUtf8(stripQuotedMailHistory(entry.text), Math.floor(bytesLeft / (kept.length - index)));
       bytesLeft -= Buffer.byteLength(body.text, 'utf8');
-      return { ...summary, bodyText: body.text, bodyTruncated: body.truncated || extracted.truncated };
+      return { ...entry.summary, bodyText: body.text, bodyTruncated: body.truncated || entry.truncated };
     });
     return { messages, totalMessages: all.length };
+  }
+
+  /**
+   * One kept thread message in full, bounded by {@link GMAIL_THREAD_MESSAGE_MAX_BYTES}. Over the bound: its metadata with
+   * no body, marked cut. Deleted since the listing (404): skipped. Any other failure fails the thread read.
+   */
+  private async readThreadMessage(id: string): Promise<{ summary: MailMessageSummary; text: string; truncated: boolean } | undefined> {
+    const url = this.messagesUrl(id);
+    url.searchParams.set('format', 'full');
+    url.searchParams.set('fields', GMAIL_FULL_FIELDS);
+    try {
+      const payload = await this.getJson(url, GMAIL_THREAD_MESSAGE_MAX_BYTES);
+      const extracted = extractBodyText(payload.payload);
+      return { summary: mapSummary(payload, id), text: extracted.text, truncated: extracted.truncated };
+    } catch (error) {
+      if (error instanceof GmailHttpError && error.reason === 'NOT_FOUND') return undefined;
+      if (!(error instanceof GmailResponseTooLargeError)) throw error;
+    }
+    const summary = await this.readSummary(id);
+    return summary === undefined ? undefined : { summary, text: '', truncated: true };
   }
 
   /** Metadata for one listed id; a message deleted since the search (404) is skipped. */
@@ -320,6 +352,21 @@ function mapSummary(payload: Record<string, unknown>, expectedId: string): MailM
     ),
     unread: labels.includes('UNREAD'),
   };
+}
+
+/** `work` over `items` with at most `limit` running at once; results in input order. */
+async function mapBounded<T, R>(items: readonly T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await work(items[index] as T);
+    }
+  });
+  await Promise.all(lanes);
+  return results;
 }
 
 /** Read at most `maxBytes` of the body as JSON; a longer body is cancelled and refused. */

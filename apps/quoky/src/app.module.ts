@@ -64,11 +64,11 @@ import {
   RiskPolicy,
   RepositoryIdentityResolver,
   RepositoryHostingManager,
-  isTurnDeliveryObserver,
 } from '@quoky/core';
 import type {
   ContinuationBindingRepository,
   ConversationTurnHandler,
+  TurnDeliveryObserver,
   ConnectorWriteFlow,
   NlSelectionService,
   AiProvider,
@@ -132,7 +132,7 @@ import { createFeedbackProviders } from './features/feedback.providers';
 import { createCalendarProviders } from './features/calendar.providers';
 import { CONNECTOR_WRITE_FLOW, createConnectorWriteComposition } from './features/connector-writes.providers';
 import { createDriveProviders } from './features/drive.providers';
-import { createMailProviders } from './features/mail.providers';
+import { MAIL_DELIVERY_OBSERVERS, createMailProviders } from './features/mail.providers';
 import { createMemoryProviders } from './features/memory.providers';
 import { NL_SELECTION, createNlSelectionProviders } from './features/nl-selection.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
@@ -788,11 +788,10 @@ const application: Provider[] = [
       runtime: ConversationRuntime,
       platform: PlatformAdapter,
       feedback: FeedbackRecorder,
-      turnHandlers: readonly ConversationTurnHandler[] = [],
+      deliveryObservers: readonly TurnDeliveryObserver[] = [],
     ) => {
-      // ADR-0118 amendment (GML-2): a handler that binds its replies to their delivery receipts (the mail listing) is
-      // told after delivery. Today only the mail handler, and only when Gmail is configured.
-      const deliveryObservers = turnHandlers.filter(isTurnDeliveryObserver);
+      // ADR-0118 amendment (GML-2): observers registered explicitly by their feature (today: the mail handler, only when
+      // Gmail is configured) are told the delivery receipt of each reply.
       const core = new QuokyCore({ runtime, platform, logger: coreLogger, feedback, ...(deliveryObservers.length > 0 ? { deliveryObservers } : {}) });
       platform.onFeedback?.((signal) =>
         core.handleFeedbackSignal(signal).catch((err: unknown) =>
@@ -803,7 +802,7 @@ const application: Provider[] = [
       );
       return core;
     },
-    inject: [ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder, { token: CONVERSATION_TURN_HANDLERS, optional: true }],
+    inject: [ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder, { token: MAIL_DELIVERY_OBSERVERS, optional: true }],
   },
 ];
 
