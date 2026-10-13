@@ -7,6 +7,8 @@ import { TELEGRAM_METHODS } from './bot-api';
 import { TelegramBotToken } from './bot-token';
 import { TELEGRAM_MESSAGE_LIMIT } from './delivery';
 import {
+  DEFAULT_POLL_TIMEOUT_SECONDS,
+  POLL_HTTP_HEADROOM_MS,
   STARTUP_CALL_TIMEOUT_MS,
   TelegramPlatformAdapter,
   TelegramStartupError,
@@ -103,9 +105,24 @@ describe('Telegram startup identity check (ADR-0114 D5) and the 409 probe', () =
     await until(() => h.fake.callsTo('getUpdates').length >= 2);
     const [probe, poll] = h.fake.callsTo('getUpdates');
     expect(probe?.params).toEqual({ limit: 1, timeout: 0 });
-    expect(poll?.params).toMatchObject({ limit: 100, timeout: 25, allowed_updates: ['message', 'message_reaction'] });
+    expect(poll?.params).toMatchObject({ limit: 100, timeout: 50, allowed_updates: ['message', 'message_reaction'] });
     expect(poll?.params.offset).toBeUndefined();
     expect(h.adapter.status()).toMatchObject({ identityVerified: true, polling: true, admittedChatCount: 0 });
+    await h.adapter.stop();
+  });
+
+  it('ADR-0121 S0: the long poll waits 50 s server-side (≈72 polls/h idle) and its HTTP bound stays above that wait', () => {
+    expect(DEFAULT_POLL_TIMEOUT_SECONDS).toBe(50);
+    // The client-side abort must never fire before Telegram answers an empty long poll.
+    expect(DEFAULT_POLL_TIMEOUT_SECONDS * 1000 + POLL_HTTP_HEADROOM_MS).toBe(60_000);
+    expect(Math.round(3600 / DEFAULT_POLL_TIMEOUT_SECONDS)).toBe(72);
+  });
+
+  it('an explicit pollTimeoutSeconds option still overrides the default wait', async () => {
+    const h = harness(new FakeTelegram(), { pollTimeoutSeconds: 5 });
+    await h.adapter.start();
+    await until(() => h.fake.callsTo('getUpdates').length >= 2);
+    expect(h.fake.callsTo('getUpdates')[1]?.params).toMatchObject({ timeout: 5 });
     await h.adapter.stop();
   });
 
