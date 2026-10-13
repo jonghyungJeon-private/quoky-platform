@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Personal v5 integration acceptance, INT-4 (2026-10-14)
+
+- **Acceptance test.** `apps/quoky/src/personal-v5-acceptance.test.ts` runs the real `AppModule` offline over every merged v5
+  capability (HARD-1, PLT-1, ADR-0120 selection incl. A2/A3 and `c-shadow`, S0 egress guard and ledger, BRF-3, STO-1 v16,
+  DRV-2/2b, GML-2, the strict claim guard, the Drive kind yield) and adds a paraphrase block that proves routing is not
+  phrase-bound (many wordings, one fake model that only knows the catalog id).
+- **Golden corpus.** 41 new cases in `nl-intent.v1.json` (typos, mixed language, compound asks, follow-ups with a prior
+  selection, capability-word negatives), pending the owner's batch approval. `baseline.v1.json` is unchanged (it does not
+  cover this corpus).
+- **Finding.** In Phase C, a selector `none` does not stop the classifier's `personal-work-surface` regex from answering
+  `할 일 관리하는 좋은 습관 알려줘` with a lookup; recorded as a skipped test, not fixed.
+
 ## Unreleased — v5 W3 live UAT fixes (2026-10-13)
 
 - **Thread-summary prompt.** A thread summary no longer narrates mail actions with past-tense action verbs (the strict claim guard withheld a legitimate Gmail welcome-mail summary). The guard is unchanged; the thread task rule now asks for `<sender>의 메일: <summary>` or noun phrases. Mail and Drive prompts unchanged.
