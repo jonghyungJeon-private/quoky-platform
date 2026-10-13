@@ -20148,8 +20148,10 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
 - **Apply and rollback runbook (Strict, ADR-0119 D3/D4).** The full commands are in `docs/ops/migration-v16-apply.md`:
   1. Record the running commit (`PREV`).
   2. `quokyctl.sh backup --apply` (must print `user_version 15`), then `quokyctl.sh backup --verify <name>.db`.
-  3. Build `origin/main` in the `quoky-service` checkout. The service keeps running the old build.
-  4. Migrate a scratch copy of the verified backup with the new build's `SqliteStorageProvider`. The session, active
+  3. Build the target commit in a separate detached worktree (never the live `quoky-service` checkout yet). The
+     service keeps running the old build.
+  4. Migrate a scratch copy of the verified backup with that worktree's `SqliteStorageProvider` (after a `json_valid`
+     check that must print 0). Only after this passes is the live checkout updated and built. The session, active
      session and run counts and the per-label usage sums must `diff` identical, with `user_version` 16 and
      `integrity_check` `ok`.
   5. `quokyctl.sh restart --apply --repo <checkout>`. The service takes its own verified `pre-migration` copy and then

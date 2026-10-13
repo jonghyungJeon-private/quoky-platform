@@ -73,6 +73,7 @@ SELECT 'usage', json_extract(data, '\$.usage.label'), COUNT(*), TOTAL(json_extra
   TOTAL(json_extract(data, '\$.usage.outputTokens')), TOTAL(json_extract(data, '\$.usage.totalTokens'))
   FROM task_runs WHERE json_extract(data, '\$.usage') IS NOT NULL GROUP BY 2 ORDER BY 2;"
 sqlite3 "$S" 'PRAGMA user_version;'                 # -> 15
+sqlite3 "$S" "SELECT COUNT(*) FROM task_runs WHERE json_valid(data) = 0;"   # must print 0 (see the index-build note below); stop if not
 sqlite3 "$S" "$Q" > "${S%.db}.before.txt"
 node -e 'const { SqliteStorageProvider } = require("./packages/storage-sqlite/dist/index.js");
 const log = (m, f) => console.log(m, JSON.stringify(f ?? {}));
@@ -90,11 +91,8 @@ rm -rf "$(dirname "$S")"
 **The `idx_task_runs_usage_finished` build evaluates `json_extract` on every `task_runs` row.** One malformed `data`
 value makes `json_extract` raise "malformed JSON" and aborts the whole v16 transaction (the migration is rolled back
 and the start fails). The rehearsal catches this: the migration step above exits 1 with `malformed JSON`. Run this check
-on the scratch copy first (before the migration) so the cause is named. It must print `0`:
-
-```bash
-sqlite3 "$S" "SELECT COUNT(*) FROM task_runs WHERE json_valid(data) = 0;"   # run before the node -e; must be 0
-```
+on the scratch copy first (before the migration) so the cause is named. The rehearsal block above already runs it
+right after the `PRAGMA user_version` line, before any JSON query and before the migration; it must print `0`.
 
 If it is not 0, or the rehearsal fails for any reason, stop: do not continue to step 5, and tell the owner.
 
@@ -161,8 +159,15 @@ bash "$D/ops/launchd/quokyctl.sh" uninstall --apply --repo "$D"
 #    loss window); otherwise the step-2 manual copy ($N). Verify it first.
 R=quoky-<UTC>-pre-migration                                       # or R=$N
 bash "$D/ops/launchd/quokyctl.sh" backup --verify "$R.db" || exit 1   # must say user_version 15
-# c. Restore it with its vector snapshot: docs/user/quickstart.md "복구 절차", steps 4-6 (move quoky.db, -wal, -shm and
-#    vectors/ aside into before-restore/, copy "$B/$R.db" to quoky.db with mode 600, copy "$B/$R.vectors").
+# c. Restore it with its vector snapshot. Here the data directory is $DATA and the copy name is $R (the quickstart's
+#    "복구 절차" uses $D for the data directory and $N for the name; do not mix them with this runbook's $D checkout).
+B="$DATA/backups"
+[ -f "$B/$R.db" ] && [ ! -L "$B/$R.db" ] && [ -d "$B/$R.vectors" ] || exit 1
+mkdir -p "$DATA/before-restore" && chmod 700 "$DATA/before-restore"
+mv "$DATA/quoky.db" "$DATA/quoky.db-wal" "$DATA/quoky.db-shm" "$DATA/vectors" "$DATA/before-restore/" 2>/dev/null
+cp -P "$B/$R.db" "$DATA/quoky.db" && chmod 600 "$DATA/quoky.db"
+cp -R "$B/$R.vectors" "$DATA/vectors" && chmod 700 "$DATA/vectors"
+sqlite3 "$DATA/quoky.db" 'PRAGMA user_version; PRAGMA integrity_check;'   # -> 15, ok
 # d. Deploy the pre-v16 build recorded in step 1.
 cd "$D" && git checkout -q --detach "$PREV" && pnpm install --frozen-lockfile && pnpm build
 # e. Reinstall and start it with the live service's exact values: the Node 22 binary and the env file path from step 1
