@@ -23,6 +23,7 @@ import { DEFAULT_IDENTITY_READY_TIMEOUT_MS, DISCORD_NOTIFICATION_PLATFORM } from
 
 import { ConsoleLogger } from './console-logger';
 import { runWithCorrelation } from './correlation-context';
+import { startEgressGuard } from './security/egress-wiring';
 import { loadLocalEnvironment } from './env-loader';
 import { serializeError } from './error-diagnostics';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
@@ -86,6 +87,9 @@ async function bootstrap(): Promise<void> {
     const lock = acquireInstanceLock(lockPath);
     process.once('exit', () => lock.release());
   }
+  // ADR-0121 S0: the egress guard (observe by default) is installed before the application module is evaluated, so
+  // every in-process connection goes through it. Child processes are outside it (see security/egress-guard.ts).
+  startEgressGuard(config, recordOpsUiErrors(new ConsoleLogger('egress'), 'egress'));
   const { AppModule } = await import('./app.module');
 
   const app = await NestFactory.createApplicationContext(AppModule, {

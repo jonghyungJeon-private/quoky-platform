@@ -526,6 +526,17 @@ describe('loadConfig — Discord channel ids (ADR-0091)', () => {
   });
 });
 
+describe('loadConfig — egress guard (ADR-0121 S0)', () => {
+  it('defaults to observe with the ledger bounds, and refuses a non-exact mode with a startup code', () => {
+    expect(loadConfig(env({})).egress).toEqual({ mode: 'observe', ledgerMaxFileBytes: 16 * 1024 * 1024, ledgerRetentionDays: 90 });
+    expect(loadConfig(env({ QUOKY_EGRESS_GUARD: 'off' })).egress.mode).toBe('off');
+    expect(loadConfig(env({ QUOKY_EGRESS_GUARD: 'enforce' })).egress.mode).toBe('enforce');
+    expect(() => loadConfig(env({ QUOKY_EGRESS_GUARD: 'block' }))).toThrow(/^EGRESS_GUARD_INVALID$/);
+    expect(() => loadConfig(env({ QUOKY_EGRESS_LEDGER_MAX_FILE_MB: '0' }))).toThrow(/^EGRESS_LEDGER_MAX_FILE_MB_INVALID$/);
+    expect(() => loadConfig(env({ QUOKY_EGRESS_LEDGER_RETENTION_DAYS: '0' }))).toThrow(/^EGRESS_LEDGER_RETENTION_DAYS_INVALID$/);
+  });
+});
+
 describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
   it('defaults to off with the haiku selection model, and accepts exactly off, shadow or active', () => {
     expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, timeoutMs: 6000 });
