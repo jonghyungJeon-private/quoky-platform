@@ -23,6 +23,7 @@ ADR-0121 stays **Proposed**; the owner approved S0 only ("보안 기반(S0)부�
   - The independent reviews (Chief Architect, Codex, `/security-review`).
   - The service restart that applies this build (Strict).
   - Seven days of observe ledger, then the owner's yes for `enforce`.
+  - Owner: the host Node 18 → 22 LTS upgrade (Node 18's bundled undici still serves the `fetch` layer).
 
 ### v5 NL-1 natural-language capability selection — on branch `claude/v5-nl1-selection` (2026-10-12)
 

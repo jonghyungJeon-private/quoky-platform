@@ -27,7 +27,9 @@ the owner on 2026-10-13). Details and the ledger contract: the ADR-0121 S0 imple
     `QUOKY_EGRESS_LEDGER_RETENTION_DAYS` (default 90).
   - **Modes.** `observe` only logs; `enforce` refuses with `EGRESS_REFUSED`.
   - **Not covered.** Child processes (`claude -p`, `ollama`, `git`).
-- **Dependency.** `undici` 6.24.1 is now a direct, exactly pinned dependency of the app (already in the lockfile).
+- **Dependency.** `undici` 6.24.1 is now a direct, exactly pinned dependency of the app, and a root `pnpm.overrides` entry
+  lifts every transitive copy (discord.js REST's 6.19.8) to it. Node 18's own bundled undici still serves the `fetch`
+  layer, so a Node 22 LTS upgrade is an open owner item (see the DECISIONS note).
 
 ## Unreleased — v5 NL-1 selection timeout (ADR-0120 amendment A3, 2026-10-13)
 
