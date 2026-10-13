@@ -209,4 +209,4 @@ Reserve a seam **only when expensive to retrofit.** Most of these already map on
 - Not a Discord bot framework — Discord is one adapter.
 - No AI HTTP API beyond the opt-in chat- and image-tier adapters of ADR-0115 (CLI otherwise). No Postgres/Redis. No
   multi-tenancy.
-- No slash-command UX. No autonomous agent loops, no dynamic plugin loading, no Workflow engine.
+- No slash-command UX. No autonomous agent loops beyond the bounded plan-then-execute agent of ADR-0121, no dynamic plugin loading, no Workflow engine.

@@ -1,8 +1,6 @@
 # ARCHITECTURE.md amendment draft: bounded agent with information-flow control (ADR-0121)
 
-- **Status:** **Proposed — draft text only.** `ARCHITECTURE.md` is **not** edited by this change. When the Product
-  Owner ratifies ADR-0121, a separate docs change applies the text below verbatim and records the ratification. Until
-  then, ARCHITECTURE.md §8.1 ("v1 has no agent runtime") remains in force and no agent runtime code may merge.
+- **Status:** **APPLIED (2026-10-13)** to `ARCHITECTURE.md`, `AGENTS.md` and `ROADMAP.md` on the owner's ratification of ADR-0121 (record in `DECISIONS.md`).
 - **Date:** 2026-10-13
 - **Source:** ADR-0121 (`DECISIONS.md`); design and threat model in `docs/plans/agent-security-design-2026-10-13.md`.
 

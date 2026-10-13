@@ -15,6 +15,10 @@
   ADR-0121 (**Proposed**: a bounded agent with information-flow control) and
   `docs/plans/agent-security-design-2026-10-13.md`. W4 becomes "NL-2 model-first + bounded agent design (ADR-0121)",
   gated on the owner's ratification of ADR-0121.
+- **Ratification (GOV-9, 2026-10-13).** The owner ratified ADR-0121 with the principle "better, not imitate" and allowed the
+  S1 egress (section 7, decisions 24-26). GOV-9 recorded it in `DECISIONS.md`, applied the amendment to `ARCHITECTURE.md`,
+  `AGENTS.md` and `ROADMAP.md`, and marked the draft applied. W4 is now **NL-2 / S1 (unblocked), then S2**: S1 first, then
+  S2 in `shadow` for at least 7 days and `active` only after the D11 gates. S3 writes still need their own amendment.
 - **Date:** 2026-10-12
 - **Base:** `main` at `a965590` (PR #173 merged, v4 closed). SQLite schema v15. `ConversationRuntimeDeps` baseline 35.
   Golden ratchet `turn-handler-routing` minTotal 419 and `action-shaped-fallthrough` 155 (`baseline.v1.json`).
@@ -322,13 +326,14 @@ assume section 7 is answered. A "no" drops the task without blocking the rest. M
 | 2 | BRF-3 | BRF | `core/application/reminders/daily-brief.ts`, `daily-brief-sources.ts` (+tests), `app/reminders/brief-sources.ts`, `reminder-config.ts`, `.env.example` | sonnet | ADR-0117 amendment |
 | 2 | STO-1 | STO | `storage-sqlite/src/migrations.ts`, `storage-sqlite/src/index.ts` (session and run queries), `core/ports/storage-provider.port.ts`, `core/application/session-manager.ts` (+tests) | opus | ADR-0119 |
 | 2 | GOV-7 | NL | `DECISIONS.md` (ADR-0120 and its ratification record, 2026-10-12), `ROADMAP.md`, this plan | opus | owner answers 20-23 |
+| 2 | GOV-9 | GOV | `DECISIONS.md` (ADR-0121 ratification record, 2026-10-13), `ARCHITECTURE.md`, `AGENTS.md`, `ROADMAP.md`, `docs/plans/architecture-amendment-agent-draft.md`, this plan | opus | owner answers 24-26 (done) |
 | 2 | NL-1 | NL | a new `core/application/nl-routing/*`, `core/ports/conversation-turn-handler.port.ts` (two optional members), `core/domain/enums.ts` (`INTENT_SELECTION`), `core/application/conversation-runtime.ts` (one dispatch point, one deps key), the catalog and `handleSelected` of `work-chat/*`, `calendar/*`, `mail/*`, `drive/*`, `help-intent/*` and `reminders/reminder-turn-handler.ts`, `core/ports/connector-query.ts` and `connector-jira` (D13), `intent-classifier.ts` and `chat-policy/*` and `prompt-composer.ts` (honest chat), `packages/ai-cli` (advertising the capability), `app/features/nl-intent.providers.ts` (new), `.env.example`, `golden/nl-intent.v1.json` (+tests) | opus (design, review), sonnet (handlers, tests) | ADR-0120 ratified; after BRF-3 (shared `reminders/*` and `.env.example`) |
 | 3 | GML-2 | CON | `core/application/mail/*`, `core/ports` mail port (additive), `core/domain/messaging.ts` (inbound reply field), `adapter-discord` and `adapter-telegram` inbound mapping, `connector-gmail/src/gmail-mail-reader.ts`, `app/features/mail.providers.ts`, golden corpora | opus | polish PR, ADR-0118 amendment, NL-1 merged (it owns `mail/*` in W2) |
 | 3 | DRV-2 + DRV-2b | CON | `core/application/drive/*`, `connector-gdrive/src/gdrive-reader.ts`, a new `connector-gdrive/src/sheets-reader.ts` (+ source scan), `app/features/drive.providers.ts` | opus (new host) | GML-2 merged first (same wave, sequential), polish PR, Sheets API enabled (Strict) |
 | 3 | CAL-2 | CON | No code: the owner picks calendars, then the `.env.local` edit (Strict). `core/domain` calendar event and `connector-calendar-google` only if an ADR-0110 amendment adds `calendarId` | haiku (listing), sonnet | decision 10 (yes) |
 | 3 | INT-4 | INT | `app/personal-v5-acceptance.test.ts`, golden additions, `baseline.v1.json` | sonnet | merged tracks |
 | 3 | DOC-G | DOC | `CURRENT_STATE.md`, `CHANGELOG.md`, `DECISIONS.md` (implementation notes), `ROADMAP.md`, quickstart, operator guide | sonnet | merged tracks |
-| 4 | NL-2 model-first + bounded agent design (ADR-0121) | NL | Agent stages S0/S2 per ADR-0121 (`core/application/agent/*`, `app/security/*`, `ops/security/*`) once ratified; `core/application/nl-routing/*`, `conversation-runtime.ts` (Phase C order), the Class B grammars being retired, `mail/*`, `drive/*`, `calendar/*`, `work-chat/*` and their read ports and adapters for the wave-2 gaps, golden corpora (+ its own acceptance and docs) | opus | the owner's ratification of ADR-0121 (S0 needs only the owner's yes to its list); NL-1 shadow data, the ADR-0120 D12 evaluation gate, the owner's yes (and for Phase C the D8 egress yes) |
+| 4 | NL-2 / S1, then S2 (ADR-0121, ratified 2026-10-13) | NL | Agent stages S0/S2 per ADR-0121 (`core/application/agent/*`, `app/security/*`, `ops/security/*`) once ratified; `core/application/nl-routing/*`, `conversation-runtime.ts` (Phase C order), the Class B grammars being retired, `mail/*`, `drive/*`, `calendar/*`, `work-chat/*` and their read ports and adapters for the wave-2 gaps, golden corpora (+ its own acceptance and docs) | opus | the owner's ratification of ADR-0121 (S0 needs only the owner's yes to its list); NL-1 shadow data, the ADR-0120 D12 evaluation gate, the owner's yes (and for Phase C the D8 egress yes) |
 
 Inside a wave, tasks run in parallel in separate worktrees, except where the Deps column orders two tasks of the same
 wave. P2 tasks may be dropped without blocking INT-4. INT-4 and DOC-G close waves 1-3; NL-2 carries its own acceptance
@@ -448,3 +453,12 @@ answered in the orchestrator chat on 2026-10-12; they are the owner answers 1-4 
 | 21 | NL selection: may it start writes? | — (open question of the design input) | Writes are irreversible; the read results show whether selection is trustworthy | **Reads first, writes after seeing the read results** (2026-10-12): "1차는 조회, 쓰기는 조회 결과 보고 진행". NL-initiated writes need a later ADR-0120 amendment (D5) |
 | 22 | An ambiguous phrase such as "오늘 등록된 jira 이슈" (created by whom?) | **One clarifying question, never chat** (a default of the design input); the 30-day TTL, basis line and override were the orchestrator's proposal on the answer | A guess is a wrong answer; chat deflects | **Ask once and remember the answer** (2026-10-12): "사용자한테 한번 물어보고, 그 물어본 답이 캐시로 되어 특정 시간에는 계속 캐시 연결 → 주제로 넘어가면 좋을거 같은데". Per actor and ambiguity key, 30-day TTL, a basis line on every answer, overridable at any time, stored in `Actor.metadata` with no migration (ADR-0120 D7) |
 | 23 | When does NL selection start? | — (open question of the design input) | ADR-0120 must be ratified before any NL code | **Next wave** (2026-10-12): "다음 웨이브로 바로". GOV-7 and NL-1 join wave 2 with BRF-3 and STO-1; GML-2 moves to wave 3; NL-2 follows the shadow data (section 4) |
+
+Decisions 24-26 were answered in the orchestrator chat on 2026-10-13 and are recorded in the ADR-0121 ratification
+record in `DECISIONS.md` (GOV-9).
+
+| # | Question | Answer |
+|---|---|---|
+| 24 | Ratify ADR-0121 and the ARCHITECTURE.md amendment? | **Yes, with a binding principle**: "확정이긴하지만 무조건적으로 OpenClaw 를 모방해서 개발하란 소린 아니니까 판단은 잘해야해 난 보다 나은 결과물을 얻고 싶은거야". OpenClaw is a reference, not a target. Each capability must earn its place by measured results (NL/plan eval, red-team 0 attacks, latency, owner UX); the simpler bounded or deterministic design wins when equal or better |
+| 25 | S1: may Phase C send grammar-hit owner messages (prepared text only) to the selector? | **Yes**: "허용 (권장)". The same provider-family and pre-egress guard rules apply |
+| 26 | The remaining design defaults (Q2, Q3, Q9) | "보안팀 공유는 빼고": Q2 (same-source references only, at most 10 ids) accepted; Q3 (calendar text local-only) accepted; Q9 (share the self-check with the security team) declined. Settled earlier the same day: Q4 observe 7 days then enforce with the owner's OK (ask due about 2026-10-20), Q5 token rotation later, Q6 Tailscale removed, Q7 in-repo secret scan (#186), Q8 L1 #185 and L2 #189 with the 6 s bound kept, Q10 OS-level control not now |

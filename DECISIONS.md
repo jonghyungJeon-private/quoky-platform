@@ -20933,8 +20933,8 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
 
 ## ADR-0121 — Bounded agent with information-flow control: one plan-then-execute read agent behind an `AgentProfile`, a planner that never sees external content, a quarantined summariser with no tools, labels that decide every model, argument and destination, caps and a kill switch, a process egress allowlist with a traffic ledger, and write proposals only through the existing approval cards. Amends ARCHITECTURE.md §8, §10, §12 and §13, AGENTS.md (agent runtime rule), ROADMAP.md non-goals, ADR-0008, ADR-0079, ADR-0120 D3/D5/D6 and ADR-0032 (M3 deps baseline 36→37).
 
-- **Status:** **Proposed** (2026-10-13). It is waiting for the Product Owner's ratification. No agent code may merge
-  before that, and stage S0 needs only its own approval (see "Staged rollout").
+- **Status:** **Ratified** (2026-10-13) by the Product Owner; see "ADR-0121 ratification record (2026-10-13)" at the
+  end of this file. Stage S0 needed only its own approval (see "Staged rollout"); S1 and S2 follow the record.
 - **Date:** 2026-10-13
 - **Inputs:**
   - `docs/plans/agent-security-design-2026-10-13.md`: the design, the threat model, the MSIT compliance mapping and
@@ -21542,3 +21542,51 @@ a minute. The same finding is logged as `egress.guard` with the same fields.
 - **One retry, poll only.** `getUpdates` is offset-based and safe to repeat, so a `telegram-poll` request that fails
   with `ECONNRESET`/`EPIPE`/`UND_ERR_SOCKET` before any response byte is repeated once, immediately (the body is replayed
   only if fully sent). Nothing else is ever retried. Tests: `egress-guard.test.ts` ("keep-alive", "retry").
+
+### ADR-0121 ratification record (2026-10-13)
+
+The Product Owner ratified ADR-0121 and the ARCHITECTURE.md amendment in the orchestrator chat on 2026-10-13. The
+basis, verbatim:
+
+1. On ratification: "확정이긴하지만 무조건적으로 OpenClaw 를 모방해서 개발하란 소린 아니니까 판단은 잘해야해 난 보다 나은
+   결과물을 얻고 싶은거야".
+2. On S1 egress (Phase C model-first, grammar-hit messages also go to the selector): "허용 (권장)".
+3. On the remaining defaults: "보안팀 공유는 빼고". So Q2 and Q3 are accepted and Q9 is declined.
+
+Decisions:
+
+1. ADR-0121 is ratified as written. Its Status is Ratified.
+2. **Product principle (binding interpretation rule for every ADR-0121 stage).** The owner's words in item 1 are
+   binding:
+   - OpenClaw is a reference, not a target. Nothing is built because OpenClaw has it.
+   - Each capability must earn its place through measured results: the NL/plan evaluation, red-team 0 successful
+     attacks, latency and owner UX.
+   - "Another product does it" is never a justification in a design, a review or a PR.
+   - When a simpler bounded or deterministic design gives equal or better results, that design wins.
+   - Where the ADR text and this rule seem to pull apart, the ADR's safety clauses (D1-D9, D11) still hold and the
+     choice between equal safe designs follows this rule.
+3. **S1 D8 egress yes.** Phase C (selection before the Class B grammars) may send grammar-hit owner messages to the
+   selector. Only prepared text is sent. The same provider-family rule and the same pre-egress credential guard (ADR-0120
+   D3, D8) apply. This is the owner's egress yes that the S1 row of "Staged rollout" requires.
+4. **Q2 accepted:** closed-format references from the same source only, at most 10 ids.
+   **Q3 accepted:** calendar text stays local-only (ADR-0110 D4).
+   **Q9 declined:** the self-check output is not shared with the security team.
+5. **Already settled earlier on 2026-10-13, recorded here:**
+   - Q4: the egress guard stays in `observe` for 7 days and then goes to `enforce` with the owner's OK. The enforce ask
+     is due around 2026-10-20.
+   - Q5: token rotation later.
+   - Q6: the owner removed Tailscale; the self-check passes.
+   - Q7: an in-repo secret scan, done in #186.
+   - Q8: L1 is done in #185, and L2 (startup warm-up) in #189. The A3 6 s bound is kept.
+   - Q10: the OS-level control for child processes is "not now" (R1 stands).
+6. **Authorized by this record:**
+   - S1 implementation, and its activation after its gates (ADR-0120 D6/D8/D10/D12).
+   - S2 implementation, with `shadow` for at least 7 days and `active` only after the D11 gates pass.
+   - Model-in-the-loop evaluation runs (D11) and the offline ARTEX-ko seeding of `golden/agent-redteam.v1.json`. The
+     owner reviews every corpus batch. ARTEX-ko runs only against fixtures, never against a live system.
+7. **Not authorized:**
+   - S3 write proposals (they need their own amendment, ADR-0112 D5 and ADR-0110 D4).
+   - Turning off or weakening any approval.
+   - Any new external target.
+8. `ARCHITECTURE.md` §8, §10, §12 and §13, the AGENTS.md Engineering Rules line and the ROADMAP.md non-goal are amended
+   in the same change with the text of `docs/plans/architecture-amendment-agent-draft.md` (now marked applied).
