@@ -89,7 +89,7 @@ export const GDRIVE_EXPORT_TYPES: Readonly<Record<string, string>> = Object.free
 
 /** Minimised partial responses: listing fields only; ids only for the count; no owner, sharing, link or size. */
 export const GDRIVE_LIST_FIELDS = 'files(id,name,mimeType,modifiedTime),nextPageToken,incompleteSearch';
-export const GDRIVE_COUNT_FIELDS = 'files(id),nextPageToken';
+export const GDRIVE_COUNT_FIELDS = 'files(id),nextPageToken,incompleteSearch';
 export const GDRIVE_GET_FIELDS = 'id,name,mimeType,modifiedTime,owners(displayName)';
 /** Response size bounds per call (bytes). A larger JSON response is refused and its body is not kept. */
 export const GDRIVE_LIST_MAX_BYTES = 512 * 1024;
@@ -378,11 +378,14 @@ export class GoogleDriveReader implements DriveReader {
     if (!ids.every((entry) => isRecord(entry) && isValidDriveFileId(entry.id))) throw new GDriveResponseError('drive');
     const more = counted.nextPageToken;
     if (more !== undefined && typeof more !== 'string') throw new GDriveResponseError('drive');
+    // Codex P2: the count is read across all drives too; an incomplete count is a lower bound, never an exact total.
+    if (counted.incompleteSearch !== undefined && typeof counted.incompleteSearch !== 'boolean') throw new GDriveResponseError('drive');
+    const countIncomplete = counted.incompleteSearch === true;
     return {
       files,
       matched: Math.max(files.length, ids.length),
-      matchedIsLowerBound: typeof more === 'string' && more.length > 0,
-      ...incomplete,
+      matchedIsLowerBound: (typeof more === 'string' && more.length > 0) || countIncomplete,
+      ...(countIncomplete ? { incomplete: true } : incomplete),
     };
   }
 

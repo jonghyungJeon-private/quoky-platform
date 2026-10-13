@@ -20390,6 +20390,9 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
     It answers with the typed `UNAVAILABLE` failure instead, so the owner gets the existing "could not read" reply. A
     hidden later sheet does not block the fallback, and the "(숨김 시트 N개 제외)" note stays accurate. This closes the
     residual where a hidden first sheet could be exported.
+  - **Codex P2, an incomplete count.** The ids-only count call also requests `incompleteSearch`. When Google answers
+    `true`, the total is a lower bound (`matchedIsLowerBound`), and the listing shows "…외 N건 이상" with the
+    partial-search note, in the existing partial style. A non-boolean value is a malformed response.
 
 ## Personal v5 ratification record — ADR-0119 and the ADR-0117/ADR-0118 amendments (2026-10-12)
 

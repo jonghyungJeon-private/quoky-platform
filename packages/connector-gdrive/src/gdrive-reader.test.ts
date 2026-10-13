@@ -97,7 +97,7 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
 
   it('searchByName: escapes the owner-typed name into a name-contains literal; counts the rest with an ids-only page', async () => {
     const { reader, calls } = harness((url) => {
-      if (url.searchParams.get('fields') === 'files(id),nextPageToken') {
+      if (url.searchParams.get('fields') === 'files(id),nextPageToken,incompleteSearch') {
         return json({ files: Array.from({ length: 100 }, (_, index) => ({ id: `id${index}` })), nextPageToken: 'more' });
       }
       return json({ files: Array.from({ length: 10 }, (_, index) => meta(`f${index}`)), nextPageToken: 'next' });

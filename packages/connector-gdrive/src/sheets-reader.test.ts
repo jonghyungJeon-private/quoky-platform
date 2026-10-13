@@ -91,7 +91,7 @@ describe('DRV-2: listings include the owner\'s shared drives (still drive.readon
   it('the list and the count call carry corpora=allDrives, includeItemsFromAllDrives and supportsAllDrives', async () => {
     const { reader, calls } = harness({
       drive: (url) =>
-        url.searchParams.get('fields') === 'files(id),nextPageToken'
+        url.searchParams.get('fields') === 'files(id),nextPageToken,incompleteSearch'
           ? json({ files: [{ id: 'x1' }, { id: 'x2' }] })
           : json({ files: Array.from({ length: 10 }, (_, index) => ({ ...meta(`f${index}`, DOC) })), nextPageToken: 'more' }),
     });
@@ -313,6 +313,29 @@ describe('DRV-2b CA review fixes: fair byte share, guard before every cut, hidde
     expect(document.text).not.toContain('IGNORE');
     const malformed = harness({ sheetsMeta: () => json({ sheets: [{ properties: { title: 'a', index: 0, hidden: 'yes' } }] }) });
     expect((await malformed.reader.exportText('s1')).firstSheetOnly).toBe('unavailable');
+  });
+
+  it('DRV-2 (Codex P2): an incomplete COUNT makes the total a lower bound and marks the listing partial', async () => {
+    const route = (countIncomplete: boolean) => (url: URL) =>
+      url.searchParams.get('fields') === 'files(id),nextPageToken,incompleteSearch'
+        ? json({ files: Array.from({ length: 12 }, (_, index) => ({ id: `c${index}` })), incompleteSearch: countIncomplete })
+        : json({ files: Array.from({ length: 10 }, (_, index) => meta(`f${index}`, DOC)), nextPageToken: 'more' });
+    const partial = harness({ drive: route(true) });
+    const result = await partial.reader.recentFiles();
+    expect(result).toMatchObject({ matched: 12, matchedIsLowerBound: true, incomplete: true });
+    const countCall = partial.calls.map((call) => new URL(call.url)).find((url) => url.searchParams.get('pageSize') === '100');
+    expect(countCall?.searchParams.get('fields')).toBe('files(id),nextPageToken,incompleteSearch');
+    expect(countCall?.searchParams.get('corpora')).toBe('allDrives');
+    const exact = harness({ drive: route(false) });
+    expect(await exact.reader.recentFiles()).toMatchObject({ matched: 12, matchedIsLowerBound: false });
+    expect((await exact.reader.recentFiles()).incomplete).toBeUndefined();
+    const odd = harness({
+      drive: (url) =>
+        url.searchParams.get('pageSize') === '100'
+          ? json({ files: [], incompleteSearch: 1 })
+          : json({ files: Array.from({ length: 10 }, (_, index) => meta(`f${index}`, DOC)), nextPageToken: 'more' }),
+    });
+    expect((await failure(odd.reader.recentFiles())).reason).toBe('INVALID_RESPONSE');
   });
 
   it('DRV-2: a listing Google answered from part of the drives is marked incomplete', async () => {

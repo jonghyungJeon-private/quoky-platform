@@ -275,6 +275,16 @@ describe('DRV-2b CA review fixes in Core', () => {
       PLAIN_TEXT_MARKUP,
     );
     expect(empty).toContain('(일부 공유 드라이브는 검색하지 못해 목록이 빠졌을 수 있어요)');
+    const counted = renderMessageContent(
+      renderDriveListing(
+        { kind: 'recent' },
+        { files: Array.from({ length: 10 }, (_, index) => ({ ...SHEET_FILE, id: `f${index}` })), matched: 12, matchedIsLowerBound: true, incomplete: true },
+        options,
+      ),
+      PLAIN_TEXT_MARKUP,
+    );
+    expect(counted).toContain('…외 2건 이상');
+    expect(counted).toContain('(일부 공유 드라이브는 검색하지 못해 목록이 빠졌을 수 있어요)');
     const whole = renderMessageContent(renderDriveListing({ kind: 'recent' }, { files: [SHEET_FILE], matched: 1, matchedIsLowerBound: false }, options), PLAIN_TEXT_MARKUP);
     expect(whole).not.toContain('공유 드라이브');
   });
