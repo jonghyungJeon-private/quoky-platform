@@ -33,8 +33,11 @@ const ENGLISH_ASSIGNMENT = new RegExp(
   `(?<![A-Za-z0-9])${EN_KEYWORD}(?:\\s+(?:is|are|was|will\\s+be)\\b|${KEY_QUOTE}\\s*[:=])\\s*\\S+`,
   'iu',
 );
-/** Vendor key / token formats — meaningful in both chat text and file content. */
-const SECRET_TOKEN_PATTERNS = [
+/**
+ * Vendor key / token formats — meaningful in both chat text and file content. Exported (read-only) so the repository
+ * secret scan enumerates every span with the same shapes the guard refuses on.
+ */
+export const SECRET_TOKEN_PATTERNS: readonly string[] = [
   '-----BEGIN [A-Z ]*PRIVATE KEY-----',
   '\\bsk-[A-Za-z0-9_-]{16,}',
   '\\b[sr]k_live_[A-Za-z0-9]{16,}',

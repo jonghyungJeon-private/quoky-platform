@@ -76,8 +76,9 @@ no since-empty sc_valid_since ''
 no since-bad-unit sc_valid_since 24m
 no since-neg sc_valid_since -1h
 CUT="$(TZ=UTC sc_cutoff 24h 1760400000)"
-eq cutoff-24h "2025-10-13T00:00:00" "$CUT"
-eq cutoff-7d "2025-10-07T00:00:00" "$(TZ=UTC sc_cutoff 7d 1760400000)"
+eq cutoff-24h 1760313600 "$CUT"
+eq cutoff-7d 1759795200 "$(TZ=UTC sc_cutoff 7d 1760400000)"
+eq cutoff-tz-free 1760313600 "$(TZ=Asia/Seoul sc_cutoff 24h 1760400000)"
 
 NETSTAT='Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)
 tcp4       0      0  127.0.0.1.47613        *.*                    LISTEN
@@ -116,7 +117,7 @@ LEDGER='{"v":1,"kind":"request","ts":"2026-10-13T09:00:00+09:00","host":"api.tel
 {"v":1,"kind":"guard","ts":"2026-10-13T09:00:02+09:00","host":"tracker.example.net","event":"new-destination","detail":"x","mode":"observe","action":"observed"}
 {"v":1,"kind":"guard","ts":"2026-10-13T09:00:03+09:00","host":"tracker.example.net","event":"new-destination","detail":"x","mode":"observe","action":"observed"}
 {"v":1,"kind":"request","ts":"2026-10-12T01:00:00+09:00","host":"old.example.net","initiator":"brief","bytesUp":999,"bytesDown":999,"outcome":"ok"}'
-SUM="$(printf '%s\n' "$LEDGER" | sc_summarize_ledger 2026-10-13T00:00:00)"
+SUM="$(printf '%s\n' "$LEDGER" | sc_summarize_ledger 1791817200)" # 2026-10-13T00:00:00+09:00
 eq ledger-total "lines=6 requests=2 up=150 down=950" "$(printf '%s\n' "$SUM" | grep '^lines=')"
 eq ledger-host "host	api.telegram.org	2	1100" "$(printf '%s\n' "$SUM" | grep '^host')"
 eq ledger-initiator "initiator	owner-turn	1" "$(printf '%s\n' "$SUM" | grep 'owner-turn')"
@@ -126,7 +127,24 @@ eq ledger-connect-map "149.154.166.110 api.telegram.org" "$(printf '%s\n' "$LEDG
 
 TMPD="$(mktemp -d)"
 touch "$TMPD/egress-2026-10-12.jsonl" "$TMPD/egress-2026-10-13.jsonl" "$TMPD/egress-2026-10-13.1.jsonl" "$TMPD/egress-2026-10-01.jsonl" "$TMPD/other.jsonl"
-eq since-files "egress-2026-10-12.jsonl egress-2026-10-13.1.jsonl egress-2026-10-13.jsonl" "$(sc_since_files "$TMPD" 2026-10-12T05:00:00 | xargs -n1 basename | paste -sd' ' -)"
+eq since-files "egress-2026-10-12.jsonl egress-2026-10-13.1.jsonl egress-2026-10-13.jsonl" "$(sc_since_files "$TMPD" 1791781200 | xargs -n1 basename | paste -sd' ' -)"
+rm -rf "$TMPD"
+
+# (e) Asia/Seoul host, UTC ledger timestamps: a guard event 10 minutes ago is inside a 1h window; one 2h ago is not.
+# NOW is 2025-10-13T22:00:00Z (2025-10-14 07:00 in Seoul), so the record's UTC file date is the previous local day.
+NOW=1760392800
+utc_iso() { TZ=UTC date -r "$1" "+%Y-%m-%dT%H:%M:%S$2" 2>/dev/null || TZ=UTC date -d "@$1" "+%Y-%m-%dT%H:%M:%S$2"; }
+TZLEDGER="{\"v\":1,\"kind\":\"guard\",\"ts\":\"$(utc_iso $((NOW - 600)) .123Z)\",\"host\":\"recent.example.net\",\"event\":\"new-destination\"}
+{\"v\":1,\"kind\":\"guard\",\"ts\":\"$(utc_iso $((NOW - 7200)) Z)\",\"host\":\"stale.example.net\",\"event\":\"new-destination\"}
+{\"v\":1,\"kind\":\"guard\",\"ts\":\"2025-10-14T06:55:00+09:00\",\"host\":\"offset.example.net\",\"event\":\"denied-range\"}"
+TZCUT="$(TZ=Asia/Seoul sc_cutoff 1h "$NOW")"
+TZSUM="$(printf '%s\n' "$TZLEDGER" | TZ=Asia/Seoul sc_summarize_ledger "$TZCUT")"
+eq tz-seoul-recent-utc-guard "guard	new-destination	recent.example.net	1" "$(printf '%s\n' "$TZSUM" | grep recent.example.net)"
+eq tz-seoul-offset-guard "guard	denied-range	offset.example.net	1" "$(printf '%s\n' "$TZSUM" | grep offset.example.net)"
+eq tz-seoul-stale-excluded 0 "$(printf '%s\n' "$TZSUM" | grep -c stale.example.net)"
+TMPD="$(mktemp -d)"
+touch "$TMPD/egress-2025-10-13.jsonl" "$TMPD/egress-2025-10-10.jsonl"
+eq tz-seoul-utc-file-in-window egress-2025-10-13.jsonl "$(TZ=Asia/Seoul sc_since_files "$TMPD" "$TZCUT" | xargs -n1 basename | paste -sd' ' -)"
 rm -rf "$TMPD"
 
 eq json-escape 'a\"b\\c' "$(sc_json_escape 'a"b\c')"

@@ -1,43 +1,60 @@
 /**
  * Repository secret scan (ADR-0121 S0, MSIT ③-2): scans the tracked working tree and the added lines of the full git
- * history for credential-shaped values with the SAME detector as the runtime credential guard
- * (`classifyCredentialFileContent`, ADR-0097). In-repo, no new dependency.
+ * history for credential-shaped values with the runtime credential guard's shapes and key rule (ADR-0097). In-repo,
+ * no new dependency.
  *
- * A hit names the file, the commit and the line, and a masked marker. The matched value is never read back out of the
- * detector, never stored in a finding and never printed (the detector only reports which rule fired and a line).
+ * Every rule enumerates EVERY span in a blob independently (no first-match, no early exit, no cap): each vendor token
+ * shape match, and each credential-shaped literal assigned to a credential-named key. Each span is classified and
+ * fingerprinted on its own, so a placeholder, a reviewed value or a fixture never hides another span. A hit names the
+ * file, the commit, the line and the span's SHA-256 fingerprint; the value itself is never stored or printed.
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { classifyCredentialFileContent, containsCredentialMaterial } from '@quoky/core';
+import {
+  classifyCredentialFileContent,
+  containsCredentialMaterial,
+  credentialDetectionView,
+  SECRET_TOKEN_PATTERNS,
+} from '@quoky/core';
 
 export type HitCategory = 'test' | 'docs' | 'source';
 
+/**
+ * How one span is judged, on its own:
+ * - `issued-candidate`: a vendor prefix with a plausible, random-looking body, or a GitHub token whose CRC32/base62
+ *   checksum is valid (always, in any path; no placeholder or fixture heuristic overrides a valid checksum);
+ * - `not-issued-shape`: a GitHub prefix whose body length or checksum is wrong, so GitHub cannot have issued it;
+ * - `fixture-shape`: a vendor prefix with a hand-made body (repeats, runs, `test`/`fake`, too short or low entropy);
+ * - `credential`: a credential-shaped value with no verifiable issuer shape (assignment literal, bearer, JWT, key block);
+ * - `placeholder`: a template or placeholder value. Reported, never gates.
+ */
+export type SpanClass = 'issued-candidate' | 'not-issued-shape' | 'fixture-shape' | 'credential' | 'placeholder';
+
 export interface SecretScanHit {
   readonly file: string;
-  /** `test` (fixtures and tests), `docs` (markdown, docs/, `.env.example`) or `source`. Only non-test hits gate. */
+  /** `test` (fixtures and tests), `docs` (markdown, docs/, `.env.example`) or `source`. */
   readonly category: HitCategory;
-  /** A known provider prefix with a plausible length outside a placeholder: a key to rotate if it is in a non-test file. */
+  readonly classification: SpanClass;
+  /** `classification === 'issued-candidate'`: a key to rotate unless its fingerprint is reviewed. Gates in any path. */
   readonly issuedCandidate: boolean;
-  /** SHA-256 of the random-looking provider-prefixed token on the line (never the value); empty when there is none. */
-  readonly fingerprint: string;
-  /** The token has a GitHub prefix but not a valid body length and CRC32/base62 checksum: it cannot be issued. */
+  /** `classification === 'not-issued-shape'`. */
   readonly notIssuedShape: boolean;
+  /** SHA-256 of this span's exact value (never the value). One per span; the reviewed list matches on it only. */
+  readonly fingerprint: string;
   /** The fingerprint is in the reviewed list: reported, does not gate. */
   readonly reviewed: boolean;
   /** Commit sha for a history hit, or `WORKTREE` for the working tree. */
   readonly commit: string;
-  /** 1-based line in the file at that commit; 0 when the finding spans lines and no single line is responsible. */
+  /** 1-based line in the file at that commit where the span starts. */
   readonly line: number;
   readonly rule: 'secret-token' | 'credential-assignment';
-  /** Always the fixed marker; the value is not available to this tool. */
+  /** Always the fixed marker; the value is never stored in a hit. */
   readonly masked: '[masked]';
 }
 
 export const WORKTREE_COMMIT = 'WORKTREE';
-/** Content above this size is skipped (generated or binary blobs), and counted in `skipped`. */
-export const MAX_SCAN_BYTES = 2 * 1024 * 1024;
 
 export function categorize(file: string): HitCategory {
   if (/(\.|-)(test|spec)\.[a-z]+$|(^|\/)(__tests__|tests?|fixtures?|__fixtures__|uat)\//i.test(file)) return 'test';
@@ -125,13 +142,38 @@ export function isValidGithubTokenShape(token: string): boolean {
   return out === body.slice(30);
 }
 
-const GITHUB_PREFIX = /^gh[pousr]_/;
-
 export function tokenFingerprint(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-const ISSUED_PREFIX = /^(sk-ant-|sk-proj-|github_pat_|gh[pousr]_|xox[bpsa]-|AKIA|ASIA|AIza|sk_live_)/;
+/** Every vendor prefix of the guard's token shapes; a random-looking body after one is an issued-key candidate. */
+const ISSUED_PREFIX = /^(sk-|[sr]k_live_|github_pat_|gh[pousr]_|xox[abeprs]-|AKIA|ASIA|AIza)/;
+const GITHUB_CLASSIC = /^gh[pousr]_/;
+const BEARER_PREFIX = /^Bearer\s+/;
+const PRIVATE_KEY_BEGIN = /^-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+
+function isPlaceholderToken(span: string): boolean {
+  if (PRIVATE_KEY_BEGIN.test(span)) return false;
+  const body = span.replace(ISSUED_PREFIX, '').replace(BEARER_PREFIX, '');
+  return isPlaceholder(span) || isPlaceholder(body);
+}
+
+/**
+ * Classifies one vendor-shaped span on its own. A GitHub classic token (`gh[pousr]_`) with a valid body length and
+ * CRC32/base62 checksum is ALWAYS an issued candidate: no placeholder, `test` or pattern heuristic can override it.
+ */
+export function classifyTokenSpan(span: string): SpanClass {
+  if (GITHUB_CLASSIC.test(span)) {
+    if (isValidGithubTokenShape(span)) return 'issued-candidate';
+    return isPlaceholderToken(span) ? 'placeholder' : 'not-issued-shape';
+  }
+  if (isPlaceholderToken(span)) return 'placeholder';
+  if (ISSUED_PREFIX.test(span)) {
+    const minLength = /^(AKIA|ASIA)/.test(span) ? 20 : 24;
+    return span.length >= minLength && entropy(span) >= 3.5 && !looksPatterned(span) ? 'issued-candidate' : 'fixture-shape';
+  }
+  return 'credential';
+}
 
 /**
  * Right-hand-side literals of an assignment on this line: a quoted literal right after `:`, `=`, `=>` or `:=`
@@ -150,16 +192,69 @@ function assignedLiterals(line: string, category: HitCategory): string[] {
   return out;
 }
 
-function tokensOf(line: string): string[] {
-  return line.split(/[\s'"`,;()[\]{}=:<>]+/).filter(Boolean);
-}
-
-const MAX_HITS_PER_BLOB = 500;
+const TOKEN_PATTERNS = SECRET_TOKEN_PATTERNS.map((p) => new RegExp(p, 'gu'));
+const PRIVATE_KEY_END = /-----END [A-Z ]*PRIVATE KEY-----/gu;
 
 /**
- * Scans one text blob and returns EVERY hit. `lineNumbers[i]` is the file line of `text.split('\n')[i]` (defaults to
- * i + 1). The guard reports the first finding of the text it is given, so after each finding (kept or filtered as a
- * placeholder) scanning resumes on the next line: an early placeholder never hides a later real secret.
+ * Every match of every vendor token shape in `text`, each pattern on its own (overlapping matches of different shapes,
+ * e.g. a bearer header around a GitHub token, are all kept). A private-key span runs from BEGIN to its END line.
+ */
+function tokenSpans(text: string): { index: number; value: string }[] {
+  const out: { index: number; value: string }[] = [];
+  for (const pattern of TOKEN_PATTERNS) {
+    for (const m of text.matchAll(pattern)) {
+      const index = m.index ?? 0;
+      let value = m[0];
+      if (PRIVATE_KEY_BEGIN.test(value)) {
+        PRIVATE_KEY_END.lastIndex = index + value.length;
+        const end = PRIVATE_KEY_END.exec(text);
+        const eol = text.indexOf('\n', index);
+        value = text.slice(index, end ? end.index + end[0].length : eol < 0 ? text.length : eol);
+      }
+      out.push({ index, value });
+    }
+  }
+  return out;
+}
+
+function lineStarts(text: string): number[] {
+  const starts = [0];
+  for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  return starts;
+}
+
+/** 0-based line index of `offset`. */
+function lineIndexOf(starts: readonly number[], offset: number): number {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if ((starts[mid] ?? 0) <= offset) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/** Token spans replaced by same-length filler (line feeds kept), so a token shape cannot pre-empt the key rule. */
+function maskTokens(text: string): string {
+  let out = text;
+  for (const pattern of TOKEN_PATTERNS) out = out.replace(pattern, (m) => m.replace(/[^\n]/gu, '_'));
+  return out;
+}
+
+/** Whether the guard's key rule sees a credential-named key assigned a literal on line `i` or the line before it. */
+function credentialKeyNear(lines: readonly string[], i: number): boolean {
+  const window = i > 0 ? `${lines[i - 1] ?? ''}\n${lines[i] ?? ''}` : (lines[i] ?? '');
+  return classifyCredentialFileContent(maskTokens(credentialDetectionView(window))).kind === 'credential-assignment';
+}
+
+/**
+ * Scans one text blob and returns EVERY hit; `lineNumbers[i]` is the file line of `text.split('\n')[i]` (defaults to
+ * i + 1). There is no first-match logic, no early exit and no cap:
+ * - `secret-token`: every match of every vendor shape, in the text and in its detection view;
+ * - `credential-assignment`: on every line, every credential-shaped literal assigned next to a credential-named key.
+ * Each span is classified and fingerprinted on its own; a filtered span (placeholder, fixture, reviewed) never
+ * suppresses another span.
  */
 export function scanText(
   file: string,
@@ -167,77 +262,60 @@ export function scanText(
   text: string,
   lineNumbers?: readonly number[],
 ): SecretScanHit[] {
-  const lines = text.split('\n');
   const category = categorize(file);
   const map = (index: number): number => lineNumbers?.[index] ?? index + 1;
   const hits: SecretScanHit[] = [];
-  let start = 0;
-  while (start < lines.length && hits.length < MAX_HITS_PER_BLOB) {
-    const finding = classifyCredentialFileContent(start === 0 ? text : lines.slice(start).join('\n'));
-    if (finding.kind === 'none') break;
-    let index: number;
-    if (finding.kind === 'credential-assignment') {
-      index = start + finding.line - 1;
-      // Precision: a hit counts only when a string literal near the key is credential-shaped by value.
-      const near = [lines[index] ?? '', lines[index + 1] ?? ''];
-      if (near.some((l) => assignedLiterals(l, category).some(isCredentialShapedValue))) {
-        hits.push({ file, category, issuedCandidate: false, fingerprint: '', notIssuedShape: false, reviewed: false, commit, line: map(index), rule: finding.kind, masked: '[masked]' });
-      }
-    } else {
-      // Locate the line with the same detector, one line at a time; a multi-line shape (private-key block) reports 0.
-      let found = -1;
-      for (let i = start; i < lines.length; i++) {
-        if (classifyCredentialFileContent(lines[i] ?? '').kind === 'secret-token') {
-          found = i;
-          break;
-        }
-      }
-      if (found < 0) {
-        hits.push({ file, category, issuedCandidate: false, fingerprint: '', notIssuedShape: false, reviewed: false, commit, line: 0, rule: 'secret-token', masked: '[masked]' });
-        break;
-      }
-      index = found;
-      const lineText = lines[index] ?? '';
-      const tokens = tokensOf(lineText);
-      const candidates = tokens.filter((t) => containsCredentialMaterial(t));
-      if (!(candidates.length > 0 && candidates.every(isPlaceholder))) {
-        const shaped = tokens.find(
-          (t) => ISSUED_PREFIX.test(t) && t.length >= 24 && !isPlaceholder(t) && entropy(t) >= 3.5 && !looksPatterned(t),
-        );
-        const notIssuedShape = shaped !== undefined && GITHUB_PREFIX.test(shaped) && !isValidGithubTokenShape(shaped);
-        hits.push({
-          file,
-          category,
-          issuedCandidate: shaped !== undefined && !notIssuedShape,
-          fingerprint: shaped === undefined ? '' : tokenFingerprint(shaped),
-          notIssuedShape,
-          reviewed: false,
-          commit,
-          line: map(index),
-          rule: 'secret-token',
-          masked: '[masked]',
-        });
-      }
+  const seen = new Set<string>();
+  const add = (rule: SecretScanHit['rule'], index: number, value: string, classification: SpanClass): void => {
+    const key = `${rule}\u0000${index}\u0000${value}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    hits.push({
+      file,
+      category,
+      classification,
+      issuedCandidate: classification === 'issued-candidate',
+      notIssuedShape: classification === 'not-issued-shape',
+      fingerprint: tokenFingerprint(value),
+      reviewed: false,
+      commit,
+      line: map(index),
+      rule,
+      masked: '[masked]',
+    });
+  };
+
+  const view = credentialDetectionView(text);
+  for (const source of view === text ? [text] : [text, view]) {
+    const starts = lineStarts(source);
+    for (const span of tokenSpans(source)) {
+      add('secret-token', lineIndexOf(starts, span.index), span.value, classifyTokenSpan(span.value));
     }
-    start = index + 1;
   }
-  return hits;
+
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const values = assignedLiterals(lines[i] ?? '', category).filter(isCredentialShapedValue);
+    if (values.length === 0 || !credentialKeyNear(lines, i)) continue;
+    for (const value of values) add('credential-assignment', i, value, 'credential');
+  }
+
+  return hits.sort((x, y) => x.line - y.line || x.rule.localeCompare(y.rule));
 }
 
 export interface HistoryScanResult {
   readonly hits: SecretScanHit[];
   readonly commits: number;
-  readonly skipped: number;
 }
 
 /**
- * Parses `git log -p --all --no-color --no-ext-diff` output line by line and scans the ADDED lines of every file in
- * every commit (a deleted line was already added by an earlier commit, so it is covered there).
+ * Parses `git log -p --text --all --no-color --no-ext-diff` output line by line and scans the ADDED lines of every
+ * file in every commit (a deleted line was already added by an earlier commit, so it is covered there). Every hunk is
+ * scanned whatever its size: there is no size cap and no hit cap.
  */
 export async function scanDiffStream(lines: AsyncIterable<string>): Promise<HistoryScanResult> {
   const hits: SecretScanHit[] = [];
   let commits = 0;
-  let skipped = 0;
   let commit = '';
   let file = '';
   let added: string[] = [];
@@ -247,11 +325,7 @@ export async function scanDiffStream(lines: AsyncIterable<string>): Promise<Hist
 
   const flush = (): void => {
     if (file && added.length > 0) {
-      const text = added.join('\n');
-      if (text.length > MAX_SCAN_BYTES) skipped++;
-      else {
-        hits.push(...scanText(file, commit, text, numbers));
-      }
+      for (const hit of scanText(file, commit, added.join('\n'), numbers)) hits.push(hit);
     }
     added = [];
     numbers = [];
@@ -310,7 +384,7 @@ export async function scanDiffStream(lines: AsyncIterable<string>): Promise<Hist
     }
   }
   flush();
-  return { hits, commits, skipped };
+  return { hits, commits };
 }
 
 /** Streams git's stdout lines; rejects when git is missing (ENOENT) or exits non-zero. */
@@ -319,7 +393,7 @@ async function* runGit(cwd: string, args: readonly string[]): AsyncGenerator<str
   const done = new Promise<void>((resolve, reject) => {
     child.once('error', reject);
     child.once('close', (code, signal) =>
-      code === 0 ? resolve() : reject(new Error(`git ${args[0] ?? ''} exited with ${code ?? signal ?? 'unknown'}`)),
+      code === 0 ? resolve() : reject(new Error(`git ${args.find((a) => !a.startsWith('-') && !a.includes('=')) ?? ''} exited with ${code ?? signal ?? 'unknown'}`)),
     );
   });
   done.catch(() => undefined); // observed below; avoids an unhandled rejection while lines are still streaming
@@ -327,34 +401,40 @@ async function* runGit(cwd: string, args: readonly string[]): AsyncGenerator<str
   await done;
 }
 
-async function gitLines(cwd: string, args: readonly string[]): Promise<string[]> {
-  const out: string[] = [];
-  for await (const l of runGit(cwd, args)) out.push(l);
-  return out;
+export interface WorkingTreeScanResult {
+  readonly hits: SecretScanHit[];
+  readonly files: number;
+  /** Tracked paths that could not be read (deleted in the working tree, or not a regular file). Listed, never silent. */
+  readonly unreadable: string[];
 }
 
-export async function scanWorkingTree(cwd: string): Promise<{ hits: SecretScanHit[]; files: number; skipped: number }> {
-  const names = await gitLines(cwd, ['ls-files']);
+/**
+ * Scans every tracked file, whatever its size or content (a text file with a NUL byte is still scanned): there is no
+ * size cap and no hit cap.
+ */
+export async function scanWorkingTree(cwd: string): Promise<WorkingTreeScanResult> {
+  const raw: string[] = [];
+  for await (const l of runGit(cwd, ['-c', 'core.quotePath=false', 'ls-files', '-z'])) raw.push(l);
+  const names = raw.join('\n').split('\u0000').filter(Boolean);
   const hits: SecretScanHit[] = [];
-  let skipped = 0;
+  const unreadable: string[] = [];
   for (const name of names) {
     let buf: Buffer;
     try {
       buf = readFileSync(`${cwd}/${name}`);
     } catch {
+      unreadable.push(name);
       continue;
     }
-    if (buf.length > MAX_SCAN_BYTES || buf.includes(0)) {
-      skipped++;
-      continue;
-    }
-    hits.push(...scanText(name, WORKTREE_COMMIT, buf.toString('utf8')));
+    for (const hit of scanText(name, WORKTREE_COMMIT, buf.toString('utf8'))) hits.push(hit);
   }
-  return { hits, files: names.length, skipped };
+  return { hits, files: names.length, unreadable };
 }
 
 export async function scanHistory(cwd: string): Promise<HistoryScanResult> {
-  return scanDiffStream(runGit(cwd, ['log', '-p', '--all', '--no-color', '--no-ext-diff', '--format=commit %H']));
+  return scanDiffStream(
+    runGit(cwd, ['-c', 'core.quotePath=false', 'log', '-p', '--text', '--all', '--no-color', '--no-ext-diff', '--format=commit %H']),
+  );
 }
 
 /** One report line per hit: file, commit, line, rule, masked value. Never the value. */
@@ -363,18 +443,20 @@ export function formatHit(hit: SecretScanHit): string {
     ? '  reviewed'
     : hit.issuedCandidate
       ? '  ROTATE-CANDIDATE'
-      : hit.notIssuedShape
-        ? '  not-issued-shape'
-        : '';
-  return `${hit.file}:${hit.line || '?'}  commit ${hit.commit.slice(0, 12)}  ${hit.rule}  ${hit.category}  ${hit.masked}${flag}`;
+      : hit.classification === 'credential'
+        ? ''
+        : `  ${hit.classification}`;
+  return `${hit.file}:${hit.line}  commit ${hit.commit.slice(0, 12)}  ${hit.rule}  ${hit.category}  ${hit.masked}  sha256:${hit.fingerprint.slice(0, 12)}${flag}`;
 }
 
 /**
- * Non-test hits fail the scan (placeholders and non-credential literals are already filtered out), and so does any
- * hit that looks like an issued provider key (known prefix, plausible length and entropy), test paths included.
+ * A hit gates unless its own fingerprint is reviewed or it is a placeholder: every non-test hit, and every
+ * issued-key candidate in any path (a checksum-valid GitHub token in a test file included).
  */
 export function gatingHits(hits: readonly SecretScanHit[]): SecretScanHit[] {
-  return hits.filter((h) => !h.reviewed && (h.category !== 'test' || h.issuedCandidate));
+  return hits.filter(
+    (h) => !h.reviewed && h.classification !== 'placeholder' && (h.category !== 'test' || h.issuedCandidate),
+  );
 }
 
 export interface SummaryRow {
@@ -432,7 +514,7 @@ export function loadReviewed(cwd: string): ReviewedEntry[] {
   });
 }
 
-/** Marks hits whose fingerprint is in the reviewed list. */
+/** Marks hits whose own span fingerprint is EXACTLY in the reviewed list (never by line, file or commit). */
 export function applyReviewed(hits: readonly SecretScanHit[], reviewed: readonly ReviewedEntry[]): SecretScanHit[] {
   const known = new Set(reviewed.map((e) => e.fingerprint));
   return hits.map((h) => (h.fingerprint !== '' && known.has(h.fingerprint) ? { ...h, reviewed: true } : h));

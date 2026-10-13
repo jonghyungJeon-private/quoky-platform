@@ -111,8 +111,11 @@ describe('credential-assignment precision', () => {
     expect(isCredentialShapedValue('./data/google-gmail-token.json')).toBe(false);
   });
 
-  it('does not count a placeholder token shape', () => {
-    expect(scanText('docs/a.md', 'WORKTREE', `token: ${GH_PREFIX}xxxxxxxxxxxxxxxxxxxxxxxx\n`)).toEqual([]);
+  it('reports a placeholder token shape as a placeholder that does not gate', () => {
+    const hits = scanText('docs/a.md', 'WORKTREE', `token: ${GH_PREFIX}${'x'.repeat(24)}\n`);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ rule: 'secret-token', classification: 'placeholder' });
+    expect(gatingHits(hits)).toHaveLength(0);
   });
 });
 
@@ -165,8 +168,11 @@ describe('every hit in a blob is reported', () => {
     const placeholder = ['sk', '-', 'x'.repeat(30)].join('');
     const real = ['xox', 'b-', 'q7Zk', 'P2mX', '9vLd', 'R4tY', 'b8Nc'].join('');
     const hits = scanText('src/a.ts', 'WORKTREE', `// ${placeholder}\nconst a = 1;\nconst slack = '${real}';\n`);
-    expect(hits).toHaveLength(1);
-    expect(hits[0]).toMatchObject({ line: 3, rule: 'secret-token' });
+    expect(hits.map((h) => [h.line, h.classification])).toEqual([
+      [1, 'placeholder'],
+      [3, 'issued-candidate'],
+    ]);
+    expect(gatingHits(hits).map((h) => h.line)).toEqual([3]);
   });
 
   it('does not let password="changeme" hide a later client secret', () => {
@@ -195,8 +201,7 @@ describe('git failures', () => {
 
 describe('GitHub token shape and the reviewed list', () => {
   // Builds a token with a valid body length and a computed checksum, from fragments (no literal in the file).
-  function validToken(): string {
-    const body30 = 'Q7zKp2MxL9vDr4TyB8NcW3sHf6JeA1';
+  function validToken(body30 = 'Q7zKp2MxL9vDr4TyB8NcW3sHf6JeA1'): string {
     // Reuse the scanner's own checksum by brute force over the checksum alphabet is not possible; compute here.
     const table = new Uint32Array(256).map((_, n) => {
       let c = n;
@@ -250,5 +255,86 @@ describe('GitHub token shape and the reviewed list', () => {
     const entries = loadReviewed(fileURLToPath(new URL('../../../../', import.meta.url)));
     expect(entries.length).toBeGreaterThan(0);
     for (const e of entries) expect(e.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('regression: no span hides another, no cap (S0-ops escalation)', () => {
+  const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  /** A GitHub classic token with a valid CRC32/base62 checksum, built at run time (no token literal in this file). */
+  function checksumValid(body30: string): string {
+    let c = 0xffffffff;
+    for (const b of Buffer.from(body30)) {
+      c ^= b;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    let n = (c ^ 0xffffffff) >>> 0;
+    let out = '';
+    for (let i = 0; i < 6; i++) {
+      out = ALPHABET[n % 62] + out;
+      n = Math.floor(n / 62);
+    }
+    return GH_PREFIX + body30 + out;
+  }
+  const secretKey = ['client', '_secret'].join('');
+
+  it('(a) a real assignment followed later by a placeholder token: both reported, the real one gates', () => {
+    const text = `${key} = "${realish}"\nconst a = 1;\nconst t = '${GH_PREFIX}${'x'.repeat(36)}';\n`;
+    const hits = scanText('src/a.ts', 'WORKTREE', text);
+    expect(hits.map((h) => [h.line, h.rule, h.classification])).toEqual([
+      [1, 'credential-assignment', 'credential'],
+      [3, 'secret-token', 'placeholder'],
+    ]);
+    expect(gatingHits(hits).map((h) => h.line)).toEqual([1]);
+  });
+
+  it('(a) also when the placeholder shares the file with several real assignments', () => {
+    const text = `${secretKey} = "${realish}"\nx = 1\n${key}: "${realish}Z9"\n// ${GH_PREFIX}${'x'.repeat(30)}\n`;
+    expect(gatingHits(scanText('src/a.ts', 'WORKTREE', text)).map((h) => h.line)).toEqual([1, 3]);
+  });
+
+  it('(b) two candidates on one line, one reviewed: the other still gates', () => {
+    const first = checksumValid('Q7zKp2MxL9vDr4TyB8NcW3sHf6JeA1');
+    const second = checksumValid('m4Rt8WqZ2nLp6YcV0bHs3KdJ9uFe5G');
+    const hits = scanText('x.test.ts', 'c'.repeat(40), `const pair = ['${first}', '${second}'];\n`);
+    expect(hits).toHaveLength(2);
+    expect(new Set(hits.map((h) => h.fingerprint)).size).toBe(2);
+    const reviewed = [{ fingerprint: hits[0]!.fingerprint, reason: 'r', reviewer: 'x', date: '2026-10-13' }];
+    const gating = gatingHits(applyReviewed(hits, reviewed));
+    expect(gating).toHaveLength(1);
+    expect(gating[0]?.fingerprint).toBe(hits[1]!.fingerprint);
+    expect(JSON.stringify(hits)).not.toContain(second);
+  });
+
+  it('(b) a reviewed assignment literal does not cover another literal on the same line', () => {
+    const hits = scanText('src/a.ts', 'WORKTREE', `${key} = "${realish}"; ${secretKey} = "${realish}Q4"\n`);
+    expect(hits).toHaveLength(2);
+    const applied = applyReviewed(hits, [{ fingerprint: hits[0]!.fingerprint, reason: 'r', reviewer: 'x', date: 'd' }]);
+    expect(gatingHits(applied)).toHaveLength(1);
+  });
+
+  it('(c) more than 500 hits in one blob are all reported (no cap)', async () => {
+    const body = Array.from({ length: 620 }, (_, i) => `${key}_${i} = "${realish}${i}"`).join('\n');
+    const hits = scanText('src/many.ts', 'WORKTREE', body);
+    expect(hits).toHaveLength(620);
+    expect(hits[619]?.line).toBe(620);
+    expect(gatingHits(hits)).toHaveLength(620);
+    const log = [`commit ${'d'.repeat(40)}`, 'diff --git a/src/many.ts b/src/many.ts', '+++ b/src/many.ts', '@@ -0,0 +1,620 @@', ...body.split('\n').map((l) => `+${l}`)];
+    expect((await scanDiffStream(lines(log.join('\n')))).hits).toHaveLength(620);
+  });
+
+  it('(d) a checksum-valid ghp_ token containing "test" in a test path is an issued candidate and gates', () => {
+    const token = checksumValid(`test${'x'.repeat(6)}TESTabcd1234FakeDumm`);
+    expect(isValidGithubTokenShape(token)).toBe(true);
+    const hits = scanText('apps/quoky/src/fixtures/a.test.ts', 'WORKTREE', `const t = '${token}';\n`);
+    expect(hits[0]).toMatchObject({ category: 'test', classification: 'issued-candidate', issuedCandidate: true });
+    expect(gatingHits(hits)).toHaveLength(1);
+    expect(formatHit(hits[0]!)).toContain('ROTATE-CANDIDATE');
+  });
+
+  it('enumerates a bearer header and the GitHub token inside it as separate spans', () => {
+    const token = checksumValid('Q7zKp2MxL9vDr4TyB8NcW3sHf6JeA1');
+    const hits = scanText('x.test.ts', 'WORKTREE', `headers: ['${['Bear', 'er'].join('')} ${token}']\n`);
+    expect(hits.map((h) => h.classification).sort()).toEqual(['credential', 'issued-candidate']);
+    expect(gatingHits(hits)).toHaveLength(1);
   });
 });

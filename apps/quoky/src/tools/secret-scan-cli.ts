@@ -1,7 +1,8 @@
 /**
  * `pnpm security:secret-scan [--no-history] [--no-tree] [--json]`: scans the repository (cwd) for credential-shaped
- * values (ADR-0121 S0). Prints file, commit and line with the value masked; exit 0 = no non-test hits and no issued-key candidate, 1 = otherwise, 2 = usage or git failure.
- * A credential-assignment counts only for a credential-shaped string literal (not identifiers, env names, placeholders).
+ * values (ADR-0121 S0). Prints file, commit, line and the span's fingerprint with the value masked; exit 0 = no gating
+ * hit, 1 = at least one (a non-test hit, or an issued-key candidate in any path, whose fingerprint is not reviewed),
+ * 2 = usage or git failure. Every span is reported: there is no hit cap and no size cap.
  */
 import {
   applyReviewed,
@@ -25,27 +26,28 @@ async function main(argv: readonly string[]): Promise<number> {
   const allHits: SecretScanHit[] = [];
   let files = 0;
   let commits = 0;
-  let skipped = 0;
+  let unreadable: string[] = [];
   if (!argv.includes('--no-tree')) {
     const tree = await scanWorkingTree(cwd);
-    allHits.push(...tree.hits);
+    for (const hit of tree.hits) allHits.push(hit);
     files = tree.files;
-    skipped += tree.skipped;
+    unreadable = tree.unreadable;
   }
   if (!argv.includes('--no-history')) {
     const history = await scanHistory(cwd);
-    allHits.push(...history.hits);
+    for (const hit of history.hits) allHits.push(hit);
     commits = history.commits;
-    skipped += history.skipped;
   }
   const hits = applyReviewed(allHits, loadReviewed(cwd));
   const gating = gatingHits(hits);
   const rotate = hits.filter((h) => h.issuedCandidate && !h.reviewed);
   const reviewedCount = hits.filter((h) => h.reviewed).length;
-  const totals = `${hits.length} hit(s), ${gating.length} gating (non-test or issued-key candidate), ${reviewedCount} reviewed`;
+  const placeholderCount = hits.filter((h) => h.classification === 'placeholder').length;
+  const totals = `${hits.length} hit(s), ${gating.length} gating (non-test or issued-key candidate), ${reviewedCount} reviewed, ${placeholderCount} placeholder`;
+  const tail = `${files} file(s), ${commits} commit(s), ${unreadable.length} unreadable tracked path(s)`;
   if (argv.includes('--json')) {
     process.stdout.write(
-      `${JSON.stringify({ hits, summary: summarize(hits), files, commits, skipped, hitCount: hits.length, gatingCount: gating.length })}\n`,
+      `${JSON.stringify({ hits, summary: summarize(hits), files, commits, unreadable, hitCount: hits.length, gatingCount: gating.length })}\n`,
     );
   } else if (argv.includes('--summary')) {
     process.stdout.write('rule x where x category: count\n');
@@ -53,10 +55,13 @@ async function main(argv: readonly string[]): Promise<number> {
     const perCommit = historyByCommit(hits, 'secret-token');
     if (perCommit.length > 0) process.stdout.write(`history secret-token per commit: ${perCommit.join(', ')}\n`);
     process.stdout.write(`rotation candidates (known provider prefix, plausible length, random-looking, any path): ${rotate.length} hit(s) in ${new Set(rotate.map((h) => h.commit)).size} commit(s)\n`);
-    process.stdout.write(`secret-scan: ${totals}; ${files} file(s), ${commits} commit(s), ${skipped} skipped\n`);
+    for (const hit of gating) process.stdout.write(`gating: ${formatHit(hit)}\n`);
+    for (const name of unreadable) process.stdout.write(`unreadable: ${name}\n`);
+    process.stdout.write(`secret-scan: ${totals}; ${tail}\n`);
   } else {
     for (const hit of hits) process.stdout.write(`${formatHit(hit)}\n`);
-    process.stdout.write(`secret-scan: ${totals}; ${files} tracked file(s), ${commits} commit(s), ${skipped} skipped\n`);
+    for (const name of unreadable) process.stdout.write(`unreadable: ${name}\n`);
+    process.stdout.write(`secret-scan: ${totals}; ${tail}\n`);
   }
   return gating.length > 0 ? 1 : 0;
 }

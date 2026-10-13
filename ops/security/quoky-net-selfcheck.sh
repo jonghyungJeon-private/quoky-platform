@@ -158,7 +158,7 @@ sc_classify_remote() {
   return 0
 }
 
-# sc_cutoff SINCE [NOW_EPOCH] -> local "YYYY-MM-DDTHH:MM:SS" of now minus SINCE. SINCE must match ^[0-9]+[hd]$.
+# sc_cutoff SINCE [NOW_EPOCH] -> epoch seconds of now minus SINCE (timezone-free). SINCE must match ^[0-9]+[hd]$.
 sc_valid_since() {
   [[ "$1" =~ ^[0-9]{1,4}[hd]$ ]]
 }
@@ -171,24 +171,49 @@ sc_cutoff() {
   if [ "$unit" = h ]; then secs=$((n * 3600)); else secs=$((n * 86400)); fi
   [ -n "$now" ] || now="$(date +%s)"
   epoch=$((now - secs))
-  date -r "$epoch" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -d "@$epoch" '+%Y-%m-%dT%H:%M:%S'
+  echo "$epoch"
 }
 
-# Ledger records (ADR-0121, branch egress): JSON lines with v:1 and kind request|connect|guard; ts is host-local ISO-8601.
-# sc_summarize_ledger CUTOFF < JSON lines
+# sc_utc_date EPOCH -> UTC "YYYY-MM-DD".
+sc_utc_date() {
+  TZ=UTC date -r "$1" '+%Y-%m-%d' 2>/dev/null || TZ=UTC date -d "@$1" '+%Y-%m-%d'
+}
+
+# Ledger records (ADR-0121, branch egress): JSON lines with v:1 and kind request|connect|guard; ts is ISO-8601 with
+# `Z` (UTC) or a +-HH:MM offset (a ts without a zone is read in the host's current offset).
+# sc_summarize_ledger CUTOFF_EPOCH < JSON lines
 #   -> "lines=N requests=R up=B down=B", then "host<TAB>h<TAB>count<TAB>bytes", "initiator<TAB>i<TAB>count" (request
 #      records only: bytes are never summed over connect or guard records) and "guard<TAB>event<TAB>host<TAB>count".
-#   Records older than CUTOFF (compared on the record's own ts, first 19 characters) are ignored.
+#   Records whose ts (converted to epoch seconds) is older than CUTOFF_EPOCH are ignored. A record whose ts cannot be
+#   parsed is kept (fail closed: a guard finding is never dropped for its timestamp format).
 sc_summarize_ledger() {
-  awk -v cutoff="$1" '
+  awk -v cutoff="$1" -v localoff="$(date +%z)" '
     function field(s, key,   re, m) {
       re = "\"" key "\"[ ]*:[ ]*(\"[^\"]*\"|[0-9]+)"
       if (match(s, re)) { m = substr(s, RSTART, RLENGTH); sub(/^[^:]*:[ ]*/, "", m); gsub(/"/, "", m); return m }
       return ""
     }
+    function zone(z,   sign) { # "+0900", "+09:00", "Z" or "" -> offset seconds east of UTC; -1e9 = invalid
+      if (z == "Z" || z == "z") return 0
+      gsub(/:/, "", z)
+      if (z !~ /^[+-][0-9][0-9][0-9][0-9]$/) return -1e9
+      sign = substr(z, 1, 1) == "-" ? -1 : 1
+      return sign * (substr(z, 2, 2) * 3600 + substr(z, 4, 2) * 60)
+    }
+    function epoch(ts,   y, mo, d, rest, off) { # ISO-8601 -> epoch seconds, or -1 when unparseable
+      if (ts !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/) return -1
+      y = substr(ts, 1, 4) + 0; mo = substr(ts, 6, 2) + 0; d = substr(ts, 9, 2) + 0
+      rest = substr(ts, 20); sub(/^\.[0-9]+/, "", rest)
+      off = rest == "" ? zone(localoff) : zone(rest)
+      if (off == -1e9) return -1
+      if (mo <= 2) { y--; mo += 12 }
+      return (365 * y + int(y / 4) - int(y / 100) + int(y / 400) + int((153 * (mo - 3) + 2) / 5) + d - 719469) * 86400 \
+        + substr(ts, 12, 2) * 3600 + substr(ts, 15, 2) * 60 + substr(ts, 18, 2) - off
+    }
     {
       ts = field($0, "ts")
-      if (ts == "" || substr(ts, 1, 19) < cutoff) next
+      e = epoch(ts)
+      if (e >= 0 && e < cutoff + 0) next
       n++
       k = field($0, "kind"); h = field($0, "host")
       if (k == "request") {
@@ -247,8 +272,11 @@ sc_ledger_dir() {
   return 1
 }
 
-sc_since_files() { # DIR CUTOFF -> ledger files (incl. egress-DATE.N.jsonl parts) whose date is >= the cutoff date
-  local dir="$1" cutoff="${2%%T*}" f d
+sc_since_files() { # DIR CUTOFF_EPOCH -> ledger files (incl. egress-DATE.N.jsonl parts) dated on or after the UTC day
+  # before the cutoff: one day of slack covers a file named by local or by UTC date in any timezone (records are then
+  # filtered exactly by their own ts).
+  local dir="$1" cutoff f d
+  cutoff="$(sc_utc_date "$(($2 - 86400))")"
   for f in "$dir"/egress-*.jsonl; do
     [ -e "$f" ] || continue
     d="${f##*/egress-}"

@@ -166,6 +166,8 @@ export {
   classifyCredentialFileContent,
   containsCredentialFileContent,
   containsCredentialMaterial,
+  credentialDetectionView,
+  SECRET_TOKEN_PATTERNS,
 } from './credential-guard';
 export type { CredentialFileFinding } from './credential-guard';
 // Personal v2 track sub-barrels (ADR-0096 D8). Each track exports its modules from its own sub-barrel only.
