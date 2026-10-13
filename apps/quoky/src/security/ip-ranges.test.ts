@@ -56,8 +56,35 @@ describe('deny ranges (ADR-0121 D8, design §5.2 step 1, T13)', () => {
     expect(classifyAddress(address)).toBe(category);
   });
 
+  it.each([
+    // IANA IPv6 Special-Purpose Address Registry: every entry not marked "Globally Reachable: True".
+    ['::1', 'loopback'], // ::1/128 loopback
+    ['::', 'unspecified'], // ::/128 unspecified
+    ['::ffff:8.8.8.8', 'reserved'], // ::ffff:0:0/96 IPv4-mapped (public embedded address still refused)
+    ['64:ff9b:1::1', 'reserved'], // 64:ff9b:1::/48 local-use IPv4/IPv6 translation
+    ['100::1', 'reserved'], // 100::/64 discard-only
+    ['100:0:0:1::1', 'reserved'], // 100:0:0:1::/64 dummy IPv6 prefix
+    ['2001::1', 'reserved'], // 2001::/23 IETF protocol assignments; 2001::/32 Teredo (N/A)
+    ['2001:1::1', 'reserved'], // 2001:1::1/128 PCP anycast (globally reachable, still refused: inside 2001::/23)
+    ['2001:2::1', 'benchmark'], // 2001:2::/48 benchmarking
+    ['2001:10::1', 'reserved'], // 2001:10::/28 deprecated ORCHID (N/A)
+    ['2001:20::1', 'reserved'], // 2001:20::/28 ORCHIDv2 (refused with the /23)
+    ['2001:db8:1::1', 'documentation'], // 2001:db8::/32 documentation
+    ['2002:808:808::1', 'reserved'], // 2002::/16 6to4 (N/A), public embedded address
+    ['3fff::1', 'documentation'], // 3fff::/20 documentation
+    ['3fff:fff::1', 'documentation'],
+    ['5f00::1', 'reserved'], // 5f00::/16 SRv6 SIDs
+    ['fc00::1', 'ula'], // fc00::/7 unique-local
+    ['fe80::abcd', 'link-local'], // fe80::/10 link-local unicast
+    ['fec0::1', 'reserved'], // deprecated site-local
+    ['ff0e::1', 'multicast'],
+    ['4000::1', 'reserved'], // outside global unicast 2000::/3
+  ])('IPv6 special-purpose %s is %s', (address, category) => {
+    expect(classifyAddress(address)).toBe(category);
+  });
+
   it.each(['8.8.8.8', '1.1.1.1', '149.154.167.220', '162.159.135.232', '100.63.255.255', '100.128.0.1', '172.32.0.1',
-    '169.253.255.255', '2606:4700::6810:84e5', '2001:4860:4860::8888', '::ffff:8.8.8.8', '64:ff9b::808:808', '2002:808:808::1'])(
+    '169.253.255.255', '2606:4700::6810:84e5', '2001:4860:4860::8888', '3fff:1000::1', '2001:200::1', '64:ff9b::808:808'])(
     'public %s is allowed',
     (address) => {
       expect(classifyAddress(address)).toBeUndefined();

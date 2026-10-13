@@ -13,8 +13,15 @@ import { hasConnectionStageEvidence } from '../connector-write-transport';
 import { runWithCorrelation } from '../correlation-context';
 import { redactSecrets } from '../error-diagnostics';
 import { EgressBudgets } from './egress-budget';
-import { EGRESS_REFUSED_CODE, EgressGuard, EgressRefusedError, GuardedDispatcher, installEgressGuard } from './egress-guard';
-import type { BaseConnector, GuardMode, ResolvedAddress, Resolver } from './egress-guard';
+import {
+  EGRESS_REFUSED_CODE,
+  EgressGuard,
+  EgressRefusedError,
+  GuardedDispatcher,
+  answerLookup,
+  installEgressGuard,
+} from './egress-guard';
+import type { BaseConnectorFactory, GuardMode, ResolvedAddress, Resolver } from './egress-guard';
 import type { EgressInventory } from './egress-policy';
 import { TrafficLedger } from './traffic-ledger';
 import type { LedgerRecord, LedgerSink } from './traffic-ledger';
@@ -99,19 +106,28 @@ function stubResolver(answers: Record<string, ReadonlyArray<readonly ResolvedAdd
 const v4 = (address: string): ResolvedAddress => ({ address, family: 4 });
 const v6 = (address: string): ResolvedAddress => ({ address, family: 6 });
 
+interface SeenConnect {
+  readonly hostname: string;
+  readonly servername: string | null | undefined;
+  /** What the guard's pinned lookup answered for this connection (or the error it gave). */
+  readonly addresses: unknown;
+}
+
 /**
- * The base connector the guard delegates to. It records the address the guard pinned and the servername it kept, then
- * (test only) reaches the local server: a public test address cannot be dialled offline.
+ * The base connector the guard delegates to. It records the name and servername it was given and what the guard's
+ * pinned lookup answers for that name, then (test only) reaches the local server: a public test address cannot be
+ * dialled offline.
  */
-function remappingConnector(): BaseConnector & { seen: Array<{ hostname: string; servername?: string }> } {
+function remappingConnector(): { factory: BaseConnectorFactory; seen: SeenConnect[] } {
   const real = buildConnector({});
-  const seen: Array<{ hostname: string; servername?: string }> = [];
-  const connector = ((options, callback) => {
-    seen.push({ hostname: options.hostname, ...(options.servername !== undefined ? { servername: options.servername } : {}) });
-    real({ ...options, hostname: '127.0.0.1' }, callback);
-  }) as BaseConnector & { seen: typeof seen };
-  connector.seen = seen;
-  return connector;
+  const seen: SeenConnect[] = [];
+  const factory: BaseConnectorFactory = (lookup) => (options, callback) => {
+    lookup(options.hostname, { all: true }, (error: Error | null, addresses: unknown) => {
+      seen.push({ hostname: options.hostname, servername: options.servername, addresses: error ?? addresses });
+      real({ ...options, hostname: '127.0.0.1' }, callback);
+    });
+  };
+  return { factory, seen };
 }
 
 interface Harness {
@@ -119,7 +135,7 @@ interface Harness {
   readonly dispatcher: GuardedDispatcher;
   readonly ledger: MemoryLedger;
   readonly logger: ReturnType<typeof recordingLogger>;
-  readonly connector: ReturnType<typeof remappingConnector>;
+  readonly connector: { readonly seen: SeenConnect[] };
   readonly resolver: ReturnType<typeof stubResolver>;
   fetch(url: string, init?: RequestInit): Promise<Response>;
 }
@@ -147,7 +163,7 @@ function harness(
     logger,
     ledger,
     resolve: resolver,
-    baseConnect: connector,
+    baseConnector: connector.factory,
     ...(options.budgets !== undefined ? { budgets: options.budgets } : {}),
   });
   const dispatcher = new GuardedDispatcher(guard);
@@ -188,19 +204,29 @@ function connectOnce(guard: EgressGuard, hostname: string, protocol = 'https:', 
   });
 }
 
-function unitGuard(mode: GuardMode, answers: Record<string, ReadonlyArray<readonly ResolvedAddress[]>>) {
+function unitGuard(
+  mode: GuardMode,
+  answers: Record<string, ReadonlyArray<readonly ResolvedAddress[]>>,
+  options: { throwSync?: boolean; resolve?: Resolver; dnsTimeoutMs?: number } = {},
+) {
   const ledger = new MemoryLedger();
-  const seen: Array<{ hostname: string; servername?: string }> = [];
+  const seen: SeenConnect[] = [];
   const resolver = stubResolver(answers);
   const guard = new EgressGuard({
     mode,
     inventory: inventory({ 'api.example.test': 'jira' }),
     logger: recordingLogger(),
     ledger,
-    resolve: resolver,
-    baseConnect: (options, callback) => {
-      seen.push({ hostname: options.hostname, ...(options.servername !== undefined ? { servername: options.servername } : {}) });
-      callback(null, {} as never);
+    resolve: options.resolve ?? resolver,
+    ...(options.dnsTimeoutMs !== undefined ? { dnsTimeoutMs: options.dnsTimeoutMs } : {}),
+    baseConnector: (lookup) => (connectOptions, callback) => {
+      if (options.throwSync === true) throw new Error('tls.connect threw synchronously');
+      lookup(connectOptions.hostname, { all: true }, (error: Error | null, addresses: unknown) => {
+        seen.push({ hostname: connectOptions.hostname, servername: connectOptions.servername, addresses: error ?? addresses });
+        const first = Array.isArray(addresses) ? (addresses[0] as ResolvedAddress | undefined) : undefined;
+        if (error !== null) callback(error, null);
+        else callback(null, { remoteAddress: first?.address } as never);
+      });
     },
   });
   return { guard, ledger, seen, resolver };
@@ -227,21 +253,30 @@ describe('connection-bound deny-range check (T13)', () => {
     expect(ledger.of('guard')).toMatchObject([{ event: 'denied-range', detail: category, action: 'blocked', mode: 'enforce' }]);
   });
 
-  it('observe logs the denied range and still connects, pinned to the first safe address', async () => {
+  it('observe is behaviour-neutral: it logs the denied range and hands every resolved address, in order, to the socket', async () => {
     const { guard, ledger, seen } = unitGuard('observe', { 'api.example.test': [[v4('10.0.0.1'), v4('93.184.216.34')]] });
     expect(await connectOnce(guard, 'api.example.test')).toBeNull();
-    expect(seen).toEqual([{ hostname: '93.184.216.34', servername: 'api.example.test' }]);
+    expect(seen).toEqual([
+      { hostname: 'api.example.test', servername: undefined, addresses: [v4('10.0.0.1'), v4('93.184.216.34')] },
+    ]);
     expect(ledger.of('guard')).toMatchObject([{ event: 'denied-range', detail: 'private', action: 'observed' }]);
-    expect(ledger.of('connect')).toMatchObject([{ ip: '93.184.216.34', outcome: 'pinned' }]);
+    expect(ledger.of('connect')).toMatchObject([{ ip: '10.0.0.1', outcome: 'pinned' }]);
   });
 
-  it('pins the checked address with SNI kept, and a rebinding answer can never swap it (one resolution per connection)', async () => {
+  it('pins to the checked list with the name kept for SNI, and a rebinding answer can never reach the socket', async () => {
     const { guard, seen, resolver } = unitGuard('enforce', {
-      'api.example.test': [[v4('93.184.216.34')], [v4('10.0.0.7')]],
+      'api.example.test': [[v6('2606:4700::1'), v4('93.184.216.34')], [v4('10.0.0.7')]],
     });
     expect(await connectOnce(guard, 'api.example.test')).toBeNull();
-    // The connector got the checked IP, never the name, so the socket cannot re-resolve to another address.
-    expect(seen).toEqual([{ hostname: '93.184.216.34', servername: 'api.example.test' }]);
+    // The socket keeps the NAME (SNI, certificate, Host) but its lookup answers only the checked list: every address,
+    // in resolver order, so multi-address fallback and Happy Eyeballs still work.
+    expect(seen).toEqual([
+      { hostname: 'api.example.test', servername: undefined, addresses: [v6('2606:4700::1'), v4('93.184.216.34')] },
+    ]);
+    expect(resolver.calls).toEqual(['api.example.test']);
+    // Once the connect is done the list is released: the pinned lookup never resolves on its own.
+    const late = await new Promise<unknown>((resolve) => guard.pinnedLookup('api.example.test', {}, (error) => resolve(error)));
+    expect(late).toMatchObject({ code: 'ENOTFOUND' });
     expect(resolver.calls).toEqual(['api.example.test']);
     // The next connection re-resolves; the rebound private answer is refused, nothing is dialled.
     const second = await connectOnce(guard, 'api.example.test');
@@ -253,7 +288,7 @@ describe('connection-bound deny-range check (T13)', () => {
   it('an IP literal is checked without any resolution; only the exact 127.0.0.1 local endpoint passes the loopback rule', async () => {
     const { guard, seen, resolver } = unitGuard('enforce', {});
     expect(await connectOnce(guard, '127.0.0.1', 'http:', String(port))).toBeNull();
-    expect(seen).toEqual([{ hostname: '127.0.0.1' }]);
+    expect(seen).toMatchObject([{ hostname: '127.0.0.1', addresses: [v4('127.0.0.1')] }]);
     expect(await connectOnce(guard, '127.0.0.1', 'http:', '8080')).toMatchObject({ reason: 'denied-range', detail: 'loopback' });
     expect(await connectOnce(guard, '[::ffff:127.0.0.1]', 'http:', String(port))).toMatchObject({ detail: 'loopback' });
     expect(resolver.calls).toEqual([]);
@@ -262,6 +297,40 @@ describe('connection-bound deny-range check (T13)', () => {
   it('a resolution failure passes through with its code (the write transport still sees ENOTFOUND)', async () => {
     const { guard } = unitGuard('enforce', {});
     expect(await connectOnce(guard, 'missing.example.test')).toMatchObject({ code: 'ENOTFOUND' });
+  });
+
+  it('a resolver that never answers fails after the DNS bound with EAI_AGAIN', async () => {
+    const { guard } = unitGuard('observe', {}, { resolve: () => new Promise(() => undefined), dnsTimeoutMs: 20 });
+    const error = await connectOnce(guard, 'api.example.test');
+    expect(error).toMatchObject({ code: 'EAI_AGAIN', message: 'name resolution timed out' });
+    expect(hasConnectionStageEvidence(error)).toBe(true);
+  });
+
+  it('a synchronous throw of the base connector reaches the callback once, never an unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const { guard } = unitGuard('observe', { 'api.example.test': [[v4('93.184.216.34')]] }, { throwSync: true });
+      let calls = 0;
+      const error = await new Promise<Error | null>((resolve) => {
+        guard.connect({ hostname: 'api.example.test', host: 'api.example.test', protocol: 'https:', port: '443' }, (e) => {
+          calls += 1;
+          resolve(e);
+        });
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(error).toMatchObject({ message: 'tls.connect threw synchronously' });
+      expect(calls).toBe(1);
+      expect(unhandled).toEqual([]);
+      // The held list is released after the failure.
+      const late = await new Promise<unknown>((resolve) => guard.pinnedLookup('api.example.test', {}, (e) => resolve(e)));
+      expect(late).toMatchObject({ code: 'ENOTFOUND' });
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });
 
@@ -278,7 +347,7 @@ describe('guarded dispatcher: observe versus enforce', () => {
     );
     expect(await response.text()).toBe('ok');
     expect(hits).toEqual([{ host: `svc.example.test:${port}`, url: '/rest/api/3/issue/PROJ-7?fields=summary', method: 'POST', body: 'hello' }]);
-    expect(h.connector.seen).toEqual([{ hostname: '93.184.216.34', servername: 'svc.example.test' }]);
+    expect(h.connector.seen).toMatchObject([{ hostname: 'svc.example.test', addresses: [v4('93.184.216.34')] }]);
     const [request] = h.ledger.of('request');
     expect(request).toMatchObject({
       v: 1,
@@ -296,7 +365,8 @@ describe('guarded dispatcher: observe versus enforce', () => {
       mode: 'observe',
     });
     expect(request?.ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
-    expect(h.ledger.of('connect')).toMatchObject([{ host: 'svc.example.test', ip: '93.184.216.34', port, outcome: 'pinned' }]);
+    // The connect record carries the socket's real remote address (the test connector reaches the local server).
+    expect(h.ledger.of('connect')).toMatchObject([{ host: 'svc.example.test', ip: '127.0.0.1', port, outcome: 'pinned' }]);
     // Plain http to a name is a finding, observed only.
     expect(h.ledger.of('guard')).toMatchObject([{ event: 'insecure-scheme', action: 'observed' }]);
   });
@@ -324,7 +394,7 @@ describe('guarded dispatcher: observe versus enforce', () => {
     expect(h.resolver.calls).toEqual([]);
     expect(hits).toEqual([]);
     // The query (and its value) is never recorded.
-    expect(h.ledger.of('request')).toMatchObject([{ host: 'new.example.test', path: '/x', outcome: 'refused', status: null, bytesUp: 0 }]);
+    expect(h.ledger.of('request')).toMatchObject([{ host: 'new.example.test', path: '/{id}', outcome: 'refused', status: null, bytesUp: 0 }]);
     expect(h.ledger.of('guard')).toMatchObject([{ event: 'new-destination', action: 'blocked', mode: 'enforce' }]);
   });
 
@@ -402,6 +472,68 @@ describe('budgets and backoff through the dispatcher (design §5.3)', () => {
   });
 });
 
+describe('pinned lookup answers (family and all honoured, order kept)', () => {
+  const mixed = [v6('2606:4700::1'), v4('93.184.216.34'), v6('2606:4700::2'), v4('93.184.216.35')];
+  const answer = (options: unknown): Promise<unknown[]> =>
+    new Promise((resolve) => answerLookup(mixed, options, (...args: unknown[]) => resolve(args)));
+
+  it.each([
+    [{ family: 4 }, [null, '93.184.216.34', 4]],
+    [{ family: 6 }, [null, '2606:4700::1', 6]],
+    [{ family: 0 }, [null, '2606:4700::1', 6]],
+    [{ family: 'IPv4' }, [null, '93.184.216.34', 4]],
+    [4, [null, '93.184.216.34', 4]],
+    [{ family: 4, all: true }, [null, [v4('93.184.216.34'), v4('93.184.216.35')]]],
+    [{ family: 0, all: true }, [null, mixed]],
+    [{ all: true }, [null, mixed]],
+  ])('%j → %j', async (options, expected) => {
+    expect(await answer(options)).toEqual(expected);
+  });
+
+  it('a family with no checked address is ENOTFOUND (the socket falls back only within the checked list)', async () => {
+    const [error] = await new Promise<unknown[]>((resolve) =>
+      answerLookup([v6('2606:4700::1')], { family: 4 }, (...args: unknown[]) => resolve(args)),
+    );
+    expect(error).toMatchObject({ code: 'ENOTFOUND' });
+  });
+
+  it('the http/https agent lookup returns the checked list for the requested family', async () => {
+    const { guard } = unitGuard('enforce', { 'api.example.test': [[v6('2606:4700::1'), v4('93.184.216.34')]] });
+    const v4Only = await new Promise<unknown[]>((resolve) =>
+      guard.lookup('api.example.test', { family: 4 }, (...args: unknown[]) => resolve(args)),
+    );
+    expect(v4Only).toEqual([null, '93.184.216.34', 4]);
+    const everything = await new Promise<unknown[]>((resolve) =>
+      guard.lookup('api.example.test', { all: true }, (...args: unknown[]) => resolve(args)),
+    );
+    expect(everything).toEqual([null, [v6('2606:4700::1'), v4('93.184.216.34')]]);
+  });
+});
+
+describe('dispatcher hardening', () => {
+  it('strips maxRedirections: a redirect is never followed inside the dispatcher', async () => {
+    respond = (req, res) => {
+      if (req.url === '/start') {
+        res.writeHead(302, { location: `http://elsewhere.example.test:${port}/landing` });
+        res.end();
+      } else res.end('landed');
+    };
+    const h = harness('enforce');
+    const answer = await undiciRequest(`http://127.0.0.1:${port}/start`, { dispatcher: h.dispatcher, maxRedirections: 3 });
+    await answer.body.text();
+    expect(answer.statusCode).toBe(302);
+    expect(hits.map((hit) => hit.url)).toEqual(['/start']);
+    expect(h.resolver.calls).toEqual([]);
+  });
+
+  it('a request enforce refuses by name is not counted in the budget windows', async () => {
+    const budgets = new EgressBudgets(() => Date.now());
+    const h = harness('enforce', { budgets });
+    for (let i = 0; i < 30; i += 1) await refusalOf(h.fetch('https://unlisted.example.test/'));
+    expect(budgets.admit('unlisted', 'background').verdict.ok).toBe(true);
+  });
+});
+
 describe('ledger redaction: no token-shaped string ever reaches the file', () => {
   it('a token in the path, the query, a header and the body leaves no trace in the ledger file', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'quoky-egress-'));
@@ -432,7 +564,7 @@ describe('ledger redaction: no token-shaped string ever reaches the file', () =>
       }
       // The existing redaction patterns find nothing to redact: no token-shaped string at all.
       expect(redactSecrets(content)).toBe(content);
-      expect(ledger.of('request')).toMatchObject([{ path: '/{id}/sendMessage', bytesUp: JSON.stringify({ text: githubToken }).length }]);
+      expect(ledger.of('request')).toMatchObject([{ path: '/{id}/{id}', bytesUp: JSON.stringify({ text: githubToken }).length }]);
       for (const record of ledger.records) {
         expect(Object.keys(record).sort()).not.toContain('headers');
         expect(Object.keys(record).sort()).not.toContain('url');
@@ -447,11 +579,23 @@ describe('installEgressGuard (process-wide)', () => {
   it('routes the global fetch and the https global agent through the guard, and uninstall restores both', async () => {
     const before = getGlobalDispatcher();
     const beforeHttps = https.globalAgent;
+    const beforeHttp = http.globalAgent;
     const ledger = new MemoryLedger();
     const guard = new EgressGuard({ mode: 'enforce', inventory: inventory(), logger: recordingLogger(), ledger });
     const installed = installEgressGuard(guard);
     try {
       expect(getGlobalDispatcher()).not.toBe(before);
+      // The replacement agents keep the previous settings (keep-alive, socket limits, options).
+      for (const [replaced, previous] of [[http.globalAgent, beforeHttp], [https.globalAgent, beforeHttps]] as const) {
+        const now = replaced as unknown as Record<string, unknown>;
+        const was = previous as unknown as Record<string, unknown>;
+        expect(replaced).not.toBe(previous);
+        expect(now.keepAlive).toBe(was.keepAlive);
+        expect(now.keepAliveMsecs).toBe(was.keepAliveMsecs);
+        expect(now.maxSockets).toBe(was.maxSockets);
+        expect(now.maxFreeSockets).toBe(was.maxFreeSockets);
+        expect(now.options).toMatchObject(was.options as object);
+      }
       expect((await fetch(`http://127.0.0.1:${port}/global`)).status).toBe(200);
       await expect(fetch('https://unlisted.example.test/')).rejects.toThrow();
       const agentError = await new Promise<Error>((resolve) => {
@@ -465,7 +609,7 @@ describe('installEgressGuard (process-wide)', () => {
         }).on('error', reject);
       });
       expect(httpLocal).toBe(200);
-      expect(ledger.of('request').map((record) => record.path)).toEqual(['/global', '/']);
+      expect(ledger.of('request').map((record) => record.path)).toEqual(['/{id}', '/']);
       // A library that brings its own undici Agent bypasses the dispatcher: observed (never blocked) when off-list.
       const foreign = new Agent();
       try {

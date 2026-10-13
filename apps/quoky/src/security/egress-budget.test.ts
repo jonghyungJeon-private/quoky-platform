@@ -31,12 +31,64 @@ describe('per-label budgets (design §5.3)', () => {
   it('refuses the 21st request in a minute for a connector, and frees the window after it slides', () => {
     const c = clock();
     const budgets = new EgressBudgets(c.now);
-    for (let i = 0; i < 20; i += 1) expect(budgets.admit('jira', 'owner-turn').verdict.ok).toBe(true);
-    expect(budgets.admit('jira', 'owner-turn').verdict).toEqual({ ok: false, reason: 'rate-minute' });
+    for (let i = 0; i < 20; i += 1) expect(budgets.admit('jira', 'background').verdict.ok).toBe(true);
+    expect(budgets.admit('jira', 'background').verdict).toEqual({ ok: false, reason: 'rate-minute' });
     // Another label is independent.
-    expect(budgets.admit('slack', 'owner-turn').verdict.ok).toBe(true);
+    expect(budgets.admit('slack', 'background').verdict.ok).toBe(true);
     c.advance(60_001);
-    expect(budgets.admit('jira', 'owner-turn').verdict.ok).toBe(true);
+    expect(budgets.admit('jira', 'background').verdict.ok).toBe(true);
+  });
+
+  it('an owner turn is never refused for request rate (still counted), but its typing indicators are capped', () => {
+    const budgets = new EgressBudgets(clock().now);
+    for (let i = 0; i < 100; i += 1) expect(budgets.admit('telegram', 'owner-turn').verdict.ok).toBe(true);
+    for (let i = 0; i < 100; i += 1) expect(budgets.admit('jira', 'owner-turn').verdict.ok).toBe(true);
+    // The owner's traffic is counted: background traffic of the same label is now over the cap.
+    expect(budgets.admit('jira', 'background').verdict).toEqual({ ok: false, reason: 'rate-minute' });
+    for (let i = 0; i < 30; i += 1) expect(budgets.admit('telegram-typing', 'owner-turn').verdict.ok).toBe(true);
+    expect(budgets.admit('telegram-typing', 'owner-turn').verdict).toEqual({ ok: false, reason: 'rate-minute' });
+    for (let i = 0; i < 20; i += 1) budgets.admit('discord-typing', 'owner-turn');
+    expect(budgets.admit('discord-typing', 'owner-turn').verdict).toEqual({ ok: false, reason: 'rate-minute' });
+  });
+
+  it('§5.1 worst case: a reminder catch-up (40 sends/min, 80 calendar re-check reads/min) is never locked out', () => {
+    const c = clock();
+    const budgets = new EgressBudgets(c.now);
+    // Four 15 s ticks, each with REMINDER_LIMITS.maxDeliveriesPerTick = 10 sends and 20 calendar reads.
+    for (let tick = 0; tick < 4; tick += 1) {
+      for (let i = 0; i < 20; i += 1) expect(budgets.admit('google-calendar', 'reminder').verdict.ok).toBe(true);
+      for (let i = 0; i < 10; i += 1) {
+        expect(budgets.admit('telegram', 'reminder').verdict.ok).toBe(true);
+        expect(budgets.admit('discord', 'reminder').verdict.ok).toBe(true);
+      }
+      c.advance(15_000);
+    }
+    // An owner reply and an approval ack in the same minute still go out.
+    expect(budgets.admit('telegram', 'owner-turn').verdict.ok).toBe(true);
+    expect(budgets.admit('discord', 'owner-turn').verdict.ok).toBe(true);
+    // Background sends on those channels (ops notices) stay capped at 30/min.
+    expect(budgets.admit('telegram', 'background').verdict).toEqual({ ok: false, reason: 'rate-minute' });
+  });
+
+  it('enforce does not count refused attempts, so retries cannot keep the window full; observe counts what it sends', () => {
+    const c = clock();
+    const enforce = new EgressBudgets(c.now);
+    for (let i = 0; i < 20; i += 1) enforce.admit('slack', 'background', { countRefused: false });
+    c.advance(30_000);
+    for (let i = 0; i < 50; i += 1) {
+      expect(enforce.admit('slack', 'background', { countRefused: false }).verdict.ok).toBe(false);
+    }
+    c.advance(30_001);
+    expect(enforce.admit('slack', 'background', { countRefused: false }).verdict.ok).toBe(true);
+
+    const d = clock();
+    const observe = new EgressBudgets(d.now);
+    for (let i = 0; i < 20; i += 1) observe.admit('slack', 'background');
+    d.advance(30_000);
+    for (let i = 0; i < 50; i += 1) observe.admit('slack', 'background');
+    d.advance(30_001);
+    // The over-cap requests observe let through are really sent, so they are still in the window.
+    expect(observe.admit('slack', 'background').verdict.ok).toBe(false);
   });
 
   it('enforces the hourly request cap and the hourly byte cap', () => {

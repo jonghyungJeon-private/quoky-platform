@@ -1,5 +1,5 @@
 import { channel } from 'node:diagnostics_channel';
-import { lookup as dnsLookup } from 'node:dns';
+import { ADDRCONFIG, lookup as dnsLookup } from 'node:dns';
 import http from 'node:http';
 import https from 'node:https';
 import { isIP } from 'node:net';
@@ -26,11 +26,15 @@ import type { GuardEventName, LedgerRequestRecord, LedgerSink } from './traffic-
  *   Node's built-in `fetch` and every `undici.request` without an explicit dispatcher (discord.js REST) use. Each request
  *   — and each hop of a redirect a caller still follows, because every hop is a new dispatch — is checked by NAME
  *   (https only, no IP literal, host on the allowlist), counted against its budget, and recorded in the traffic ledger.
- * - **Connection-bound address check and pinning.** A new connection resolves the host itself (`dns.lookup`, all
- *   addresses) and checks EVERY address against the deny ranges (`ip-ranges.ts`). It then connects to exactly the
- *   checked address while TLS SNI, certificate verification and the `Host` header keep the original name, so a later
- *   or second DNS answer (rebinding) can never swap the address. Loopback is allowed only for the exact
- *   `127.0.0.1:<port>` local endpoint (Ollama) named as such in the URL.
+ * - **Connection-bound address check and pinning.** A new connection resolves the host itself (`dns.lookup` with
+ *   `hints: ADDRCONFIG`, all addresses, resolver order, a 10 s bound) and checks EVERY address against the deny ranges
+ *   (`ip-ranges.ts`). The socket is then opened with the original name — so TLS SNI, certificate verification and the
+ *   `Host` header keep it — but its lookup answers ONLY from that checked list (family and `all` honoured, order kept,
+ *   so multi-address fallback and Happy Eyeballs still work). A later or second DNS answer (rebinding) can never reach
+ *   the socket. Loopback is allowed only for the exact `127.0.0.1:<port>` local endpoint (Ollama) named as such in the
+ *   URL. In `observe` every resolved address is kept, so observe connects exactly as Node would.
+ * - **Redirects.** `maxRedirections` is stripped, so the dispatcher never follows a redirect itself; a caller that
+ *   follows one (fetch) does so with a new, checked dispatch.
  * - **`http`/`https` modules.** `http.globalAgent` and `https.globalAgent` are replaced by agents that apply the same
  *   name check and the same checked, pinned lookup (they are connection-logged, not byte-counted).
  * - **Unguarded undici traffic.** A request created by another undici dispatcher (a library that brings its own Agent)
@@ -75,8 +79,17 @@ export interface ResolvedAddress {
 /** Name resolution (`dns.lookup` with `all: true` in production; a stub in tests). */
 export type Resolver = (hostname: string) => Promise<readonly ResolvedAddress[]>;
 
-/** The undici connector the guard delegates to after pinning (undici's `buildConnector()` in production). */
+/** The undici connector the guard delegates to after the check (undici's `buildConnector()` in production). */
 export type BaseConnector = (options: buildConnector.Options, callback: buildConnector.Callback) => void;
+
+/**
+ * Builds the base connector around the guard's pinned lookup. Production: `buildConnector({ lookup })`, so the socket's
+ * own name resolution is answered ONLY from the addresses the guard already checked (never a fresh DNS query).
+ */
+export type BaseConnectorFactory = (pinnedLookup: LookupFunction) => BaseConnector;
+
+/** Bound of one name resolution, the same as undici's connect timeout. */
+export const DNS_TIMEOUT_MS = 10_000;
 
 export interface EgressGuardOptions {
   readonly mode: GuardMode;
@@ -85,17 +98,68 @@ export interface EgressGuardOptions {
   readonly ledger?: LedgerSink;
   readonly budgets?: EgressBudgets;
   readonly resolve?: Resolver;
-  readonly baseConnect?: BaseConnector;
+  readonly baseConnector?: BaseConnectorFactory;
   readonly clock?: () => Date;
+  /** Default {@link DNS_TIMEOUT_MS}. */
+  readonly dnsTimeoutMs?: number;
 }
 
-const defaultResolver: Resolver = (hostname) =>
+/**
+ * `dns.lookup` as `net` would call it for an unspecified family (`hints: ADDRCONFIG`, resolver order kept), but with all
+ * addresses. The guard bounds it with {@link boundedResolver} ({@link DNS_TIMEOUT_MS}).
+ */
+export const defaultResolver: Resolver = (hostname) =>
   new Promise((resolve, reject) => {
-    dnsLookup(hostname, { all: true, verbatim: true }, (error, addresses) => {
+    dnsLookup(hostname, { all: true, verbatim: true, hints: ADDRCONFIG }, (error, addresses) => {
       if (error) reject(error);
       else resolve(addresses.map((entry) => ({ address: entry.address, family: entry.family })));
     });
   });
+
+/** Bounds a resolver: no answer within `timeoutMs` is an `EAI_AGAIN` failure (nothing was sent). */
+export function boundedResolver(resolve: Resolver, timeoutMs: number): Resolver {
+  return (hostname) =>
+    new Promise((fulfil, reject) => {
+      const timer = setTimeout(() => {
+        reject(Object.assign(new Error('name resolution timed out'), { code: 'EAI_AGAIN' }));
+      }, timeoutMs);
+      timer.unref?.();
+      resolve(hostname).then(
+        (addresses) => {
+          clearTimeout(timer);
+          fulfil(addresses);
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+}
+
+/** A resolution-stage error with a `code` the connector-write transport reads as "nothing was sent". */
+function notFound(message: string): Error {
+  return Object.assign(new Error(message), { code: 'ENOTFOUND' });
+}
+
+/**
+ * Answers a `net` lookup from a list of already-checked addresses, honouring the requested `family` (0, 4, 6, or
+ * `'IPv4'`/`'IPv6'`) and `all`. Order is kept, so with `all` (Happy Eyeballs, `autoSelectFamily`) and family 0 the socket
+ * can still fall back to the next address or the other family.
+ */
+export function answerLookup(addresses: readonly ResolvedAddress[], options: unknown, callback: (...args: unknown[]) => void): void {
+  const raw = typeof options === 'number' ? options : typeof options === 'object' && options !== null ? (options as { family?: unknown }).family : 0;
+  const family = raw === 'IPv4' ? 4 : raw === 'IPv6' ? 6 : typeof raw === 'number' ? raw : 0;
+  const all = typeof options === 'object' && options !== null && (options as { all?: unknown }).all === true;
+  const matching = family === 4 || family === 6 ? addresses.filter((entry) => entry.family === family) : [...addresses];
+  const first = matching[0];
+  if (first === undefined) {
+    callback(notFound('no checked address of the requested family'));
+    return;
+  }
+  if (all) callback(null, matching.map((entry) => ({ address: entry.address, family: entry.family })));
+  else callback(null, first.address, first.family);
+}
 
 /** How long a repeated finding (same event, host, label, detail) stays silent in the log and the ledger. */
 const FINDING_REPEAT_MS: Readonly<Record<GuardEventName, number>> = {
@@ -117,7 +181,8 @@ interface ConnectAttempt {
 }
 
 interface PinDecision {
-  readonly address?: ResolvedAddress;
+  /** The addresses the connection may use, in resolver order (all checked; in observe, all resolved). */
+  readonly addresses: readonly ResolvedAddress[];
   readonly denied?: DenyCategory;
   readonly refuse: boolean;
 }
@@ -130,6 +195,8 @@ export class EgressGuard {
   private readonly ledger: LedgerSink | undefined;
   private readonly resolve: Resolver;
   private readonly baseConnect: BaseConnector;
+  /** Checked address lists by host name, held while a connect to that host is in flight (read by the pinned lookup). */
+  private readonly pinned = new Map<string, { addresses: readonly ResolvedAddress[]; holders: number }>();
   private readonly clock: () => Date;
   private readonly findingsSeen = new Map<string, number>();
   private readonly bursts = new SmallRequestBurstDetector();
@@ -143,8 +210,8 @@ export class EgressGuard {
     this.ledger = options.ledger;
     this.clock = options.clock ?? (() => new Date(now()));
     this.budgets = options.budgets ?? new EgressBudgets(() => this.clock().getTime());
-    this.resolve = options.resolve ?? defaultResolver;
-    this.baseConnect = options.baseConnect ?? buildConnector({});
+    this.resolve = boundedResolver(options.resolve ?? defaultResolver, options.dnsTimeoutMs ?? DNS_TIMEOUT_MS);
+    this.baseConnect = (options.baseConnector ?? ((lookup) => buildConnector({ lookup })))(this.pinnedLookup);
   }
 
   // -------------------------------------------------------------------------------------------------------------------
@@ -152,9 +219,9 @@ export class EgressGuard {
   // -------------------------------------------------------------------------------------------------------------------
 
   /**
-   * Resolves `attempt.hostname` ONCE, checks every address, and picks the address to pin. In `enforce` any denied
-   * address refuses the connection; in `observe` the first non-denied address (else the first address) is used and the
-   * finding is logged.
+   * Resolves `attempt.hostname` ONCE and checks every address. In `enforce` any denied address refuses the connection; in
+   * `observe` the finding is logged and every resolved address is kept in resolver order, so observe connects exactly
+   * as Node would (behaviour-neutral).
    */
   async decidePin(attempt: ConnectAttempt, correlation: CorrelationContext | undefined): Promise<PinDecision> {
     const host = normalizeHost(attempt.hostname);
@@ -168,68 +235,104 @@ export class EgressGuard {
     const localAllowed = (address: ResolvedAddress): boolean =>
       literal && address.address === '127.0.0.1' && localEndpointFor(this.inventory, host, attempt.port) !== undefined;
     let denied: DenyCategory | undefined;
-    let chosen: ResolvedAddress | undefined;
     for (const address of addresses) {
       const category = localAllowed(address) ? undefined : classifyAddress(address.address);
       if (category !== undefined) denied ??= category;
-      else chosen ??= address;
     }
     const label = labelFor(this.inventory, host, attempt.port, '/');
     if (denied !== undefined) {
       this.finding('denied-range', host, label, denied, correlation, this.mode === 'enforce');
-      if (this.mode === 'enforce') return { denied, refuse: true };
+      if (this.mode === 'enforce') return { addresses: [], denied, refuse: true };
     }
-    return { address: chosen ?? addresses[0], ...(denied !== undefined ? { denied } : {}), refuse: false };
+    return { addresses, ...(denied !== undefined ? { denied } : {}), refuse: false };
   }
 
-  /** The undici `connect` function: check, pin, then delegate to the base connector with the checked address. */
+  /**
+   * The lookup handed to the base connector: it answers ONLY from the list {@link connect} checked for this host and
+   * never resolves again, so a rebinding answer cannot reach the socket. No held list means no address.
+   */
+  readonly pinnedLookup: LookupFunction = (hostname, options, callback) => {
+    const entry = this.pinned.get(normalizeHost(hostname));
+    if (entry === undefined) {
+      (callback as (error: Error) => void)(notFound('egress guard: no checked address for this host'));
+      return;
+    }
+    answerLookup(entry.addresses, options, callback as (...args: unknown[]) => void);
+  };
+
+  /**
+   * The undici `connect` function: resolve and check once, hold the checked list for the pinned lookup, then delegate
+   * to the base connector with the ORIGINAL name (so SNI, certificate verification and `Host` keep it). Every failure,
+   * including a synchronous throw of the base connector, reaches `callback` exactly once.
+   */
   readonly connect = (options: buildConnector.Options, callback: buildConnector.Callback): void => {
     const correlation = currentCorrelation();
     const hostname = normalizeHost(options.hostname);
     const port = Number(options.port) || (options.protocol === 'https:' ? 443 : 80);
     const label = labelFor(this.inventory, hostname, port, '/');
-    this.decidePin({ hostname, port, protocol: options.protocol }, correlation).then(
-      (decision) => {
-        if (decision.refuse || decision.address === undefined) {
+    let held = false;
+    let settled = false;
+    const finish = (error: Error | null, socket: Socket | null): void => {
+      if (settled) return;
+      settled = true;
+      if (held) this.release(hostname);
+      if (error !== null) callback(error, null);
+      else callback(null, socket as Socket);
+    };
+    this.decidePin({ hostname, port, protocol: options.protocol }, correlation)
+      .then((decision) => {
+        if (decision.refuse || decision.addresses.length === 0) {
           this.writeConnect(correlation, hostname, label, null, port, 'refused');
-          callback(new EgressRefusedError('denied-range', decision.denied), null);
+          finish(new EgressRefusedError('denied-range', decision.denied), null);
           return;
         }
-        const pinned = decision.address.address;
-        this.writeConnect(correlation, hostname, label, pinned, port, 'pinned');
-        // SNI and certificate verification keep the original name (undici passes `servername: null` by default).
-        const servername = options.servername || (isIP(hostname) === 0 ? hostname : undefined);
-        this.baseConnect(
-          { ...options, hostname: pinned, ...(servername !== undefined ? { servername } : {}) },
-          callback,
-        );
-      },
-      (error: unknown) => callback(error instanceof Error ? error : new Error('name resolution failed'), null),
-    );
+        this.hold(hostname, decision.addresses);
+        held = true;
+        this.baseConnect(options, (error, socket) => {
+          if (error === null && socket !== null) {
+            const ip = socket.remoteAddress ?? decision.addresses[0]?.address ?? null;
+            this.writeConnect(correlation, hostname, label, ip, port, 'pinned');
+          }
+          finish(error, socket);
+        });
+      })
+      .catch((error: unknown) => finish(error instanceof Error ? error : new Error('egress guard: connect failed'), null));
   };
 
   /**
-   * A `net` lookup for the `http`/`https` agents: the same single resolution, check and pin. Ports are unknown here, so
-   * loopback is never excepted (the local endpoint is an IP literal, which never reaches a lookup).
+   * A `net` lookup for the `http`/`https` agents: the same single resolution and check, answered with the checked list
+   * (family and `all` honoured). Ports are unknown here, so loopback is never excepted (the local endpoint is an IP
+   * literal, which never reaches a lookup).
    */
   readonly lookup: LookupFunction = (hostname, options, callback) => {
     const correlation = currentCorrelation();
-    const all = typeof options === 'object' && options !== null && (options as { all?: boolean }).all === true;
-    this.decidePin({ hostname, port: 0, protocol: 'https:' }, correlation).then(
-      (decision) => {
-        const label = labelFor(this.inventory, hostname, 0, '/');
-        if (decision.refuse || decision.address === undefined) {
-          this.writeConnect(correlation, normalizeHost(hostname), label, null, 0, 'refused');
-          (callback as (error: Error | null) => void)(new EgressRefusedError('denied-range', decision.denied));
+    const host = normalizeHost(hostname);
+    const label = labelFor(this.inventory, host, 0, '/');
+    this.decidePin({ hostname: host, port: 0, protocol: 'https:' }, correlation)
+      .then((decision) => {
+        if (decision.refuse || decision.addresses.length === 0) {
+          this.writeConnect(correlation, host, label, null, 0, 'refused');
+          (callback as (error: Error) => void)(new EgressRefusedError('denied-range', decision.denied));
           return;
         }
-        this.writeConnect(correlation, normalizeHost(hostname), label, decision.address.address, 0, 'pinned');
-        if (all) (callback as (e: null, a: ResolvedAddress[]) => void)(null, [decision.address]);
-        else (callback as (e: null, a: string, f: number) => void)(null, decision.address.address, decision.address.family);
-      },
-      (error: unknown) => (callback as (error: Error) => void)(error instanceof Error ? error : new Error('lookup failed')),
-    );
+        this.writeConnect(correlation, host, label, decision.addresses[0]?.address ?? null, 0, 'pinned');
+        answerLookup(decision.addresses, options, callback as (...args: unknown[]) => void);
+      })
+      .catch((error: unknown) => (callback as (error: Error) => void)(error instanceof Error ? error : new Error('lookup failed')));
   };
+
+  private hold(host: string, addresses: readonly ResolvedAddress[]): void {
+    const entry = this.pinned.get(host);
+    // Concurrent connects to one host each hold a list that was checked; the latest checked list answers.
+    this.pinned.set(host, { addresses, holders: (entry?.holders ?? 0) + 1 });
+  }
+
+  private release(host: string): void {
+    const entry = this.pinned.get(host);
+    if (entry === undefined) return;
+    if (entry.holders <= 1) this.pinned.delete(host);
+    else this.pinned.set(host, { addresses: entry.addresses, holders: entry.holders - 1 });
+  }
 
   // -------------------------------------------------------------------------------------------------------------------
   // Name-level check and budgets (per request / per redirect hop)
@@ -253,8 +356,11 @@ export class EgressGuard {
       this.finding(finding, host, label, finding, correlation, enforce);
       refusal ??= new EgressRefusedError(finding);
     }
+    // A request enforce refuses by name never reaches the budget windows (a retry loop cannot keep them full).
+    if (enforce && refusal !== undefined) return { refusal, ticket: NO_TICKET, label, host };
     const initiator: TrafficInitiator = correlation?.initiator ?? 'background';
-    const { verdict, ticket } = this.budgets.admit(label, initiator);
+    // In enforce a budget refusal is not counted either; in observe the request really goes out, so it counts.
+    const { verdict, ticket } = this.budgets.admit(label, initiator, { countRefused: !enforce });
     if (!verdict.ok) {
       const reason: EgressRefusalReason = verdict.reason === 'backoff' ? 'backoff' : 'budget-exceeded';
       this.finding(reason === 'backoff' ? 'backoff-open' : 'budget-exceeded', host, label, verdict.reason, correlation, enforce);
@@ -364,6 +470,8 @@ export class EgressGuard {
   }
 }
 
+const NO_TICKET: BudgetTicket = { addBytes: () => undefined };
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The undici dispatcher
 // ---------------------------------------------------------------------------------------------------------------------
@@ -471,7 +579,7 @@ export class GuardedDispatcher extends Dispatcher {
     const rawPath = String(options.path ?? '/');
     const method = String(options.method ?? 'GET').toUpperCase();
     const { refusal, ticket, label, host } = this.guard.admitRequest(url, rawPath, correlation);
-    const path = pathTemplate(rawPath);
+    const path = pathTemplate(label, rawPath);
     if (refusal !== undefined) {
       this.guard.finishRequest(
         { host, label, method, path, status: null, statusClass: 'none', bytesUp: 0, bytesDown: 0, latencyMs: 0, outcome: 'refused' },
@@ -502,7 +610,10 @@ export class GuardedDispatcher extends Dispatcher {
         result.retryAfter,
       );
     });
-    return this.guard.withinGuardedDispatch(() => this.agent.dispatch(options, wrapped));
+    // A redirect followed INSIDE the dispatcher would skip the per-hop checks: `maxRedirections` is stripped, so a 3xx
+    // goes back to the caller (fetch follows it with a new, checked dispatch).
+    const forwarded: Dispatcher.DispatchOptions = { ...options, maxRedirections: 0 } as Dispatcher.DispatchOptions;
+    return this.guard.withinGuardedDispatch(() => this.agent.dispatch(forwarded, wrapped));
   }
 
   override close(): Promise<void>;
@@ -564,6 +675,28 @@ function guardAgent<T extends http.Agent>(agent: T, guard: EgressGuard, protocol
 // Installation
 // ---------------------------------------------------------------------------------------------------------------------
 
+/** The settings of an existing agent, passed explicitly so the replacement behaves the same. */
+function agentSettingsOf(agent: http.Agent): http.AgentOptions {
+  const settings = agent as unknown as {
+    options?: http.AgentOptions;
+    keepAlive?: boolean;
+    keepAliveMsecs?: number;
+    maxSockets: number;
+    maxFreeSockets: number;
+    maxTotalSockets?: number;
+    scheduling?: 'fifo' | 'lifo';
+  };
+  return {
+    ...(settings.options ?? {}),
+    ...(settings.keepAlive !== undefined ? { keepAlive: settings.keepAlive } : {}),
+    ...(settings.keepAliveMsecs !== undefined ? { keepAliveMsecs: settings.keepAliveMsecs } : {}),
+    maxSockets: settings.maxSockets,
+    maxFreeSockets: settings.maxFreeSockets,
+    ...(settings.maxTotalSockets !== undefined ? { maxTotalSockets: settings.maxTotalSockets } : {}),
+    ...(settings.scheduling !== undefined ? { scheduling: settings.scheduling } : {}),
+  };
+}
+
 export interface InstalledEgressGuard {
   readonly guard: EgressGuard;
   /** Restores the previous global dispatcher and agents and stops the diagnostics observer (tests, shutdown). */
@@ -580,8 +713,9 @@ export function installEgressGuard(guard: EgressGuard): InstalledEgressGuard {
   const previousHttps = https.globalAgent;
   const dispatcher = new GuardedDispatcher(guard);
   setGlobalDispatcher(dispatcher);
-  http.globalAgent = guardAgent(new http.Agent(), guard, 'http:');
-  https.globalAgent = guardAgent(new https.Agent(), guard, 'https:');
+  // The replacement agents keep the previous global agents' settings (keep-alive, socket limits, options) explicitly.
+  http.globalAgent = guardAgent(new http.Agent(agentSettingsOf(previousHttp)), guard, 'http:');
+  https.globalAgent = guardAgent(new https.Agent(agentSettingsOf(previousHttps)), guard, 'https:');
   const requestCreate = channel('undici:request:create');
   const onCreate = (message: unknown): void => {
     const request = typeof message === 'object' && message !== null ? (message as { request?: { origin?: unknown } }).request : undefined;

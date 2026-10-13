@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConsoleLogger } from './console-logger';
-import { currentCorrelation, newCorrelationId, runWithCorrelation } from './correlation-context';
+import { continueAs, currentCorrelation, newCorrelationId, runWithCorrelation } from './correlation-context';
 import { isoWithOffset, localDateKey } from './security/iso-time';
 
 /** ISO-8601 with milliseconds and an explicit numeric offset (never a bare `Z`). */
@@ -64,6 +64,24 @@ describe('ConsoleLogger timestamps and correlation ids (ADR-0121 S0)', () => {
     expect(lines[0]).toMatch(new RegExp(` \\[turn\\] handled stage=inbound cid=${cid}$`));
     expect(lines[1]).not.toContain('cid=');
     expect(currentCorrelation()).toBeUndefined();
+  });
+
+  it('an inbound turn becomes an owner turn past the gate, keeping its cid', async () => {
+    const cid = newCorrelationId();
+    const seen = await runWithCorrelation(
+      'inbound',
+      async () => {
+        const before = currentCorrelation();
+        await Promise.resolve();
+        const after = await continueAs('owner-turn', async () => currentCorrelation());
+        return { before, after, outer: currentCorrelation() };
+      },
+      cid,
+    );
+    expect(seen.before).toEqual({ cid, initiator: 'inbound' });
+    expect(seen.after).toEqual({ cid, initiator: 'owner-turn' });
+    expect(seen.outer).toEqual({ cid, initiator: 'inbound' });
+    expect(continueAs('reminder', () => currentCorrelation())?.initiator).toBe('reminder');
   });
 
   it('keeps the existing redaction: a token-shaped value never reaches the console', () => {

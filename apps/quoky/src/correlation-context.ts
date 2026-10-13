@@ -11,8 +11,12 @@ import { newId } from '@quoky/core';
  * {@link currentCorrelation} is `undefined` and callers fall back to the `startup`/`background` initiator.
  */
 
-/** Who caused an outbound request (design §5.4 `initiator`). `agent-run` and `brief` arrive with later stages. */
-export type TrafficInitiator = 'owner-turn' | 'reminder' | 'startup' | 'background';
+/**
+ * Who caused an outbound request (design §5.4 `initiator`). `inbound` is an admitted message or decision before the
+ * startup identity gate has opened; it becomes `owner-turn` only once it is handled. `agent-run` and `brief` arrive with
+ * later stages.
+ */
+export type TrafficInitiator = 'owner-turn' | 'inbound' | 'reminder' | 'startup' | 'background';
 
 export interface CorrelationContext {
   readonly cid: string;
@@ -26,9 +30,21 @@ export function newCorrelationId(): string {
   return newId().replace(/-/g, '').slice(0, 16);
 }
 
-/** Runs `work` inside a new correlation context for `initiator`; the context follows every await inside it. */
+/**
+ * Runs `work` inside a correlation context for `initiator`; the context follows every await inside it. Pass the
+ * current `cid` to change only the initiator (the same turn moving past a gate).
+ */
 export function runWithCorrelation<T>(initiator: TrafficInitiator, work: () => T, cid: string = newCorrelationId()): T {
   return storage.run({ cid, initiator }, work);
+}
+
+/**
+ * Continues the CURRENT turn (same `cid`) as `initiator`, e.g. an `inbound` message once it is past the startup
+ * identity gate becomes an `owner-turn`. Outside any context a new id is used.
+ */
+export function continueAs<T>(initiator: TrafficInitiator, work: () => T): T {
+  const cid = storage.getStore()?.cid;
+  return cid === undefined ? runWithCorrelation(initiator, work) : runWithCorrelation(initiator, work, cid);
 }
 
 /** The active correlation context, or `undefined` outside any turn or tick. */

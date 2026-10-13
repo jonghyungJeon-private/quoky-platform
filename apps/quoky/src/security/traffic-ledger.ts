@@ -1,5 +1,6 @@
 import { closeSync, mkdirSync, openSync, readdirSync, statSync, unlinkSync, writeSync, chmodSync } from 'node:fs';
 import path from 'node:path';
+import { now } from '@quoky/core';
 import type { Logger } from '@quoky/core';
 import type { TrafficInitiator } from '../correlation-context';
 import { isoWithOffset, localDateKey } from './iso-time';
@@ -127,7 +128,7 @@ export class TrafficLedger implements LedgerSink {
   constructor(private readonly options: TrafficLedgerOptions) {
     this.maxFileBytes = options.maxFileBytes ?? DEFAULT_LEDGER_MAX_FILE_BYTES;
     this.retentionDays = options.retentionDays ?? DEFAULT_LEDGER_RETENTION_DAYS;
-    this.clock = options.clock ?? (() => new Date());
+    this.clock = options.clock ?? (() => new Date(now()));
   }
 
   /** The file a record written now goes to (tests and the startup log). */

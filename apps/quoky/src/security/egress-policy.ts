@@ -1,3 +1,4 @@
+import { TELEGRAM_METHODS } from '@quoky/adapter-telegram';
 import { isIpLiteral } from './ip-ranges';
 
 /**
@@ -113,7 +114,10 @@ export function labelFor(inventory: EgressInventory, host: string, port: number,
   switch (base) {
     case 'telegram':
       if (pathname.startsWith('/file/')) return 'telegram-file';
+      if (pathname.endsWith('/sendChatAction')) return 'telegram-typing';
       return pathname.endsWith('/getUpdates') ? 'telegram-poll' : 'telegram';
+    case 'discord':
+      return /^\/api\/v[0-9]+\/channels\/[^/]+\/typing$/.test(pathname) ? 'discord-typing' : 'discord';
     case 'google':
       if (pathname.startsWith('/calendar/')) return 'google-calendar';
       if (pathname.startsWith('/drive/')) return 'google-drive';
@@ -150,27 +154,93 @@ export function checkDestination(
   return findings;
 }
 
-const KEEP_WORD = /^[A-Za-z]+(?:[._-][A-Za-z]+)*$/;
-const KEEP_VERSION = /^v[0-9]{1,2}(?:\.[0-9]{1,2})?$/;
-const MAX_KEPT_SEGMENT = 40;
-const MAX_TEMPLATE_LENGTH = 200;
+/**
+ * Fixed path prefixes per budget label (an ALLOW-list). A prefix segment is a literal, `{v}` (an API version such as
+ * `v1`, `v10`, `v1beta`) or `{n}` (one digit, `/rest/api/3`). Nothing after the longest matching prefix is ever written:
+ * each later segment becomes `{id}`.
+ */
+const PATH_PREFIXES: Readonly<Record<string, readonly string[]>> = {
+  discord: [
+    '/api/{v}/channels', '/api/{v}/guilds', '/api/{v}/users', '/api/{v}/webhooks', '/api/{v}/gateway/bot', '/api/{v}/gateway',
+    '/api/{v}/applications', '/api/{v}/interactions', '/api/{v}/oauth2',
+  ],
+  'discord-typing': ['/api/{v}/channels'],
+  'discord-attachments': ['/attachments', '/ephemeral-attachments'],
+  'google-calendar': ['/calendar/v3/calendars', '/calendar/v3/users/me/calendarList', '/calendar/v3/freeBusy'],
+  'google-drive': ['/drive/v3/files', '/drive/v3/drives', '/drive/v3/about'],
+  google: ['/calendar/v3', '/drive/v3'],
+  gmail: [
+    '/gmail/v1/users/me/messages', '/gmail/v1/users/me/threads', '/gmail/v1/users/me/labels', '/gmail/v1/users/me/profile',
+  ],
+  'google-oauth': ['/token'],
+  jira: [
+    '/rest/api/{n}/search/jql', '/rest/api/{n}/search', '/rest/api/{n}/issue', '/rest/api/{n}/myself', '/rest/api/{n}/project',
+    '/rest/api/{n}/user', '/rest/api/{n}', '/rest/agile/1.0/board', '/rest/agile/1.0/sprint',
+  ],
+  confluence: [
+    '/wiki/rest/api/content', '/wiki/rest/api/search', '/wiki/rest/api/space', '/wiki/rest/api',
+    '/wiki/api/v2/pages', '/wiki/api/v2/spaces', '/wiki/api/v2',
+  ],
+  github: [
+    '/repos', '/user', '/users', '/orgs', '/installation/repositories', '/app/installations', '/search/issues', '/search/code',
+    '/rate_limit', '/graphql',
+  ],
+  openai: ['/v1/chat/completions', '/v1/responses', '/v1/models'],
+  gemini: ['/{v}/models'],
+  'ollama-local': ['/api/tags', '/api/generate', '/api/chat', '/api/embed', '/api/embeddings', '/api/version', '/api/show'],
+  'telegram-file': ['/file'],
+};
+
+/** Labels whose path is `/<token>/<method>`: only a method from the adapter's closed list is kept. */
+const TELEGRAM_LABELS: ReadonlySet<string> = new Set(['telegram', 'telegram-poll', 'telegram-typing']);
+const TELEGRAM_METHOD_NAMES: ReadonlySet<string> = new Set<string>(TELEGRAM_METHODS);
+/** Slack Web API methods are `<family>.<name>` (e.g. `search.messages`), the only segment after `/api`. */
+const SLACK_METHOD = /^[a-z]+(?:\.[a-zA-Z]+){1,3}$/;
+const VERSION_SEGMENT = /^v[0-9]{1,2}(?:beta[0-9]?|alpha[0-9]?)?(?:\.[0-9]{1,2})?$/;
+const MAX_ID_SEGMENTS = 6;
+
+function matchPrefix(segments: readonly string[], prefix: string): string[] | undefined {
+  const parts = prefix.split('/').filter((part) => part !== '');
+  if (parts.length > segments.length) return undefined;
+  const kept: string[] = [];
+  for (const [index, part] of parts.entries()) {
+    const segment = segments[index] ?? '';
+    if (part === '{v}' ? VERSION_SEGMENT.test(segment) : part === '{n}' ? /^[0-9]$/.test(segment) : part === segment) {
+      kept.push(segment);
+    } else {
+      return undefined;
+    }
+  }
+  return kept;
+}
 
 /**
- * The ledger's path TEMPLATE (design §5.4): the query string is dropped, and every segment that is not a plain word
- * (letters with `.`/`_`/`-` separators, at most 40 characters), an API version (`v1`, `v2.1`) or a single digit (`/rest/api/3`)
- * becomes `{id}`. Ids, keys, e-mail addresses, file names and the Telegram `bot<token>` segment are therefore never
- * written. Example: `/bot<token>/getUpdates?offset=5` → `/{id}/getUpdates`.
+ * The ledger's path TEMPLATE (design §5.4), built from an allow-list. The query string and fragment are dropped. The
+ * longest fixed prefix of the label (`PATH_PREFIXES`, e.g. `/api/v10/channels`, `/rest/api/3/search`) is kept, and every
+ * later segment becomes `{id}` (at most 6; more are dropped). Two closed method vocabularies are kept as well: the
+ * Telegram Bot API method after the `bot<token>` segment (always `{id}`), and the Slack Web API method after `/api`.
+ * A file name, an e-mail address, a repository or owner name, a space key, a user name, a channel, issue or Drive id and
+ * a webhook token therefore never reach the ledger, whether or not they consist of letters only. An unlisted host keeps
+ * no segment at all. Example: `/bot<token>/getUpdates?offset=5` → `/{id}/getUpdates`.
  */
-export function pathTemplate(path: string): string {
+export function pathTemplate(label: string, path: string): string {
   const pathname = (path.split(/[?#]/)[0] ?? '').trim();
-  if (pathname === '' || pathname === '/') return '/';
-  const segments = pathname.split('/').map((segment) => {
-    if (segment === '') return segment;
-    if (segment.length <= MAX_KEPT_SEGMENT && (KEEP_WORD.test(segment) || KEEP_VERSION.test(segment) || /^[0-9]$/.test(segment))) {
-      return segment;
+  const segments = pathname.split('/').filter((segment) => segment !== '');
+  if (segments.length === 0) return '/';
+  let kept: string[] = [];
+  if (TELEGRAM_LABELS.has(label)) {
+    const method = segments[1];
+    if (segments.length === 2 && method !== undefined && TELEGRAM_METHOD_NAMES.has(method)) return `/{id}/${method}`;
+    return `/${segments.slice(0, MAX_ID_SEGMENTS).map(() => '{id}').join('/')}`;
+  }
+  if (label === 'slack' || label === 'slack-search') {
+    if (segments[0] === 'api' && segments[1] !== undefined && SLACK_METHOD.test(segments[1])) kept = ['api', segments[1]];
+  } else {
+    for (const prefix of PATH_PREFIXES[label] ?? []) {
+      const match = matchPrefix(segments, prefix);
+      if (match !== undefined && match.length > kept.length) kept = match;
     }
-    return '{id}';
-  });
-  const template = segments.join('/');
-  return template.length > MAX_TEMPLATE_LENGTH ? `${template.slice(0, MAX_TEMPLATE_LENGTH)}...` : template;
+  }
+  const rest = segments.slice(kept.length, kept.length + MAX_ID_SEGMENTS).map(() => '{id}');
+  return `/${[...kept, ...rest].join('/')}`;
 }

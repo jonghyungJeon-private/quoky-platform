@@ -7,7 +7,10 @@ import type { TrafficInitiator } from '../correlation-context';
  * Each budget label (see `egress-policy.ts` `labelFor`) has request caps per minute and per hour and a byte cap per
  * hour (up + down, wire bytes); some labels add a daily download cap. The whole process has a daily download and upload
  * budget with an 80% alert. Counting uses exact sliding windows over the requests admitted in the last 24 h (a stricter
- * equivalent of the design's token buckets: a burst can never exceed the cap inside any window).
+ * equivalent of the design's token buckets: a burst can never exceed the cap inside any window). The request-rate caps
+ * never refuse the owner's own turn (its replies, approvals and acks), and on the owner's delivery channels and the
+ * reminder re-check reads they never refuse a reminder tick either; typing indicators have their own labels and caps,
+ * which apply to everyone. A request enforce refuses is not counted.
  *
  * Backoff: for the connector and API labels that had no retry policy of their own (Google, Atlassian, Slack, GitHub,
  * OpenAI, Gemini) a circuit breaker opens after 3 consecutive 429 or 5xx answers, for 5 minutes, doubling on each
@@ -32,7 +35,21 @@ export interface LabelBudget {
   readonly bytesDownPerDay?: number;
   /** Whether 429/5xx answers open the circuit breaker for this label. */
   readonly breaker?: boolean;
+  /**
+   * Initiators the REQUEST-RATE caps (`perMinute`, `perHour`) do not apply to; they are still counted and recorded.
+   * Default {@link DEFAULT_RATE_EXEMPT}: an owner turn (its replies, approvals and acks) is never refused for rate.
+   */
+  readonly rateExempt?: readonly TrafficInitiator[];
 }
+
+/** By default only the owner's own turn is exempt from the request-rate caps. */
+export const DEFAULT_RATE_EXEMPT: readonly TrafficInitiator[] = ['owner-turn'];
+/**
+ * The owner's delivery channels and the reminder re-check reads: owner turns AND reminder ticks are exempt, so a reminder
+ * catch-up (design §5.1 worst case: 10 sends and 20 calendar reads per 15 s tick, ≤ 40 sends/min) is never locked out.
+ * Their volume is bounded upstream by `REMINDER_LIMITS.maxDeliveriesPerTick`.
+ */
+const OWNER_DELIVERY_EXEMPT: readonly TrafficInitiator[] = ['owner-turn', 'reminder'];
 
 /**
  * Per-hour byte budget for every connector and platform label. The design gives the all-egress daily budget (200 MB
@@ -44,16 +61,19 @@ const CONNECTOR: LabelBudget = { perMinute: 20, perHour: 300, bytesPerHour: LABE
 
 /** Design §5.3, per label. A label missing here (including `unlisted`) gets {@link DEFAULT_BUDGET}. */
 export const EGRESS_BUDGETS: Readonly<Record<string, LabelBudget>> = Object.freeze({
-  // Telegram: one open poll (≈72/h idle at 50 s); sends ≤ 30/min; attachments ≤ 20 files/h, ≤ 100 MB/day.
+  // Telegram: one open poll (≈72/h idle at 50 s); sends ≤ 30/min outside owner turns and reminders; typing has its own
+  // cap that applies to everyone (a refused typing indicator loses nothing); attachments ≤ 20 files/h, ≤ 100 MB/day.
   'telegram-poll': { perMinute: 60, bytesPerHour: LABEL_BYTES_PER_HOUR },
-  telegram: { perMinute: 30, bytesPerHour: LABEL_BYTES_PER_HOUR },
+  telegram: { perMinute: 30, bytesPerHour: LABEL_BYTES_PER_HOUR, rateExempt: OWNER_DELIVERY_EXEMPT },
+  'telegram-typing': { perMinute: 30, bytesPerHour: LABEL_BYTES_PER_HOUR, rateExempt: [] },
   'telegram-file': { perHour: 20, bytesPerHour: LABEL_BYTES_PER_HOUR, bytesDownPerDay: 100 * MB },
-  // Discord: REST ≤ 30/min (discord.js handles 429); attachments as Telegram.
-  discord: { perMinute: 30, bytesPerHour: LABEL_BYTES_PER_HOUR },
+  // Discord: REST ≤ 30/min outside owner turns and reminders (discord.js handles 429); typing and attachments as Telegram.
+  discord: { perMinute: 30, bytesPerHour: LABEL_BYTES_PER_HOUR, rateExempt: OWNER_DELIVERY_EXEMPT },
+  'discord-typing': { perMinute: 20, bytesPerHour: LABEL_BYTES_PER_HOUR, rateExempt: [] },
   'discord-attachments': { perHour: 20, bytesPerHour: LABEL_BYTES_PER_HOUR, bytesDownPerDay: 100 * MB },
-  // Google APIs (each): ≤ 20/min, ≤ 300/h; breaker on 429/5xx.
+  // Google APIs (each): ≤ 20/min, ≤ 300/h; breaker on 429/5xx. Calendar reads of a reminder tick are exempt (above).
   google: CONNECTOR,
-  'google-calendar': CONNECTOR,
+  'google-calendar': { ...CONNECTOR, rateExempt: OWNER_DELIVERY_EXEMPT },
   'google-drive': CONNECTOR,
   gmail: CONNECTOR,
   'google-oauth': CONNECTOR,
@@ -129,13 +149,20 @@ export class EgressBudgets {
   }
 
   /**
-   * Checks the caps for one more request of `label` and counts it (it is counted even when refused-but-observed, so
-   * the windows reflect real traffic in `observe`). Owner turns are never refused for the GLOBAL volume (design §5.3:
-   * "refuse non-owner-initiated calls"); per-label caps apply to everyone.
+   * Checks the caps for one more request of `label` and counts it when it goes out. A refused request is counted only
+   * with `countRefused` (observe: the request is really sent); in enforce it is not, so retries of a refused request
+   * can never keep a window full. Request-rate caps skip the label's `rateExempt` initiators; volume caps and the
+   * backoff apply to everyone, except that owner turns are never refused for the GLOBAL volume (design §5.3: "refuse
+   * non-owner-initiated calls").
    */
-  admit(label: string, initiator: TrafficInitiator): { verdict: BudgetVerdict; ticket: BudgetTicket } {
+  admit(
+    label: string,
+    initiator: TrafficInitiator,
+    options: { readonly countRefused: boolean } = { countRefused: true },
+  ): { verdict: BudgetVerdict; ticket: BudgetTicket } {
     const now = this.nowMs();
     const verdict = this.check(label, initiator, now);
+    if (!verdict.ok && !options.countRefused) return { verdict, ticket: { addBytes: () => undefined } };
     const sample: Sample = { at: now, up: 0, down: 0 };
     this.samplesOf(label).push(sample);
     this.global.push(sample);
@@ -155,10 +182,11 @@ export class EgressBudgets {
     const breaker = this.breakers.get(label);
     if (breaker !== undefined && breaker.openUntil > now) return { ok: false, reason: 'backoff' };
     const samples = this.prune(this.samplesOf(label), now);
-    if (budget.perMinute !== undefined && count(samples, now - MINUTE_MS) >= budget.perMinute) {
+    const rateApplies = !(budget.rateExempt ?? DEFAULT_RATE_EXEMPT).includes(initiator);
+    if (rateApplies && budget.perMinute !== undefined && count(samples, now - MINUTE_MS) >= budget.perMinute) {
       return { ok: false, reason: 'rate-minute' };
     }
-    if (budget.perHour !== undefined && count(samples, now - HOUR_MS) >= budget.perHour) {
+    if (rateApplies && budget.perHour !== undefined && count(samples, now - HOUR_MS) >= budget.perHour) {
       return { ok: false, reason: 'rate-hour' };
     }
     if (budget.bytesPerHour !== undefined && bytes(samples, now - HOUR_MS, 'both') >= budget.bytesPerHour) {

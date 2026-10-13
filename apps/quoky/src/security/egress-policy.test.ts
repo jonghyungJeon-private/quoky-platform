@@ -79,27 +79,73 @@ describe('egress inventory (design §5.1): derived from configuration only', () 
   });
 });
 
-describe('ledger path template (design §5.4): no query, no ids, no token segment', () => {
+describe('ledger path template (design §5.4): an allow-list of fixed prefixes, every later segment {id}', () => {
   it.each([
-    ['/rest/api/3/search?jql=project%3DX', '/rest/api/3/search'],
-    ['/calendar/v3/calendars/owner@example.com/events?timeMin=x', '/calendar/v3/calendars/{id}/events'],
-    ['/gmail/v1/users/me/messages/18c2f0a9b1d2e3f4', '/gmail/v1/users/me/messages/{id}'],
-    ['/rest/api/3/issue/PROJ-123', '/rest/api/3/issue/{id}'],
-    ['/api/v10/channels/123456789012345678/messages', '/api/v10/channels/{id}/messages'],
-    ['/drive/v3/files/1AbCdEfGhIjKlMnOpQrStUvWxYz_0123/export', '/drive/v3/files/{id}/export'],
-    ['/', '/'],
-    ['', '/'],
-  ])('%s → %s', (path, template) => {
-    expect(pathTemplate(path)).toBe(template);
+    ['jira', '/rest/api/3/search?jql=project%3DX', '/rest/api/3/search'],
+    ['jira', '/rest/api/3/search/jql', '/rest/api/3/search/jql'],
+    ['jira', '/rest/api/3/issue/PROJ-123', '/rest/api/3/issue/{id}'],
+    ['jira', '/rest/api/3/issue/PROJ-123/comment', '/rest/api/3/issue/{id}/{id}'],
+    ['google-calendar', '/calendar/v3/calendars/owner@example.com/events?timeMin=x', '/calendar/v3/calendars/{id}/{id}'],
+    ['google-calendar', '/calendar/v3/calendars/primary/events', '/calendar/v3/calendars/{id}/{id}'],
+    ['gmail', '/gmail/v1/users/me/messages/18c2f0a9b1d2e3f4', '/gmail/v1/users/me/messages/{id}'],
+    ['google-drive', '/drive/v3/files/1AbCdEfGhIjKlMnOpQrStUvWxYz_0123/export', '/drive/v3/files/{id}/{id}'],
+    ['google-drive', '/drive/v3/files/budget/export', '/drive/v3/files/{id}/{id}'],
+    ['discord', '/api/v10/channels/123456789012345678/messages', '/api/v10/channels/{id}/{id}'],
+    ['discord', '/api/v10/users/alice', '/api/v10/users/{id}'],
+    ['discord', '/api/v10/gateway/bot', '/api/v10/gateway/bot'],
+    ['discord-typing', '/api/v10/channels/123/typing', '/api/v10/channels/{id}/{id}'],
+    // Discord CDN: channel id, attachment id and a letter-only file name all become {id}.
+    ['discord-attachments', '/attachments/111/222/salary_review.pdf?ex=1&hm=abc', '/attachments/{id}/{id}/{id}'],
+    ['discord-attachments', '/attachments/111/222/salary.pdf', '/attachments/{id}/{id}/{id}'],
+    // GitHub owner and repository names never survive, letters only or not.
+    ['github', '/repos/acme/payroll/pulls', '/repos/{id}/{id}/{id}'],
+    ['github', '/users/alice', '/users/{id}'],
+    ['github', '/app/installations/42/access_tokens', '/app/installations/{id}/{id}'],
+    // Confluence space keys and page ids.
+    ['confluence', '/wiki/rest/api/space/HR/content', '/wiki/rest/api/space/{id}/{id}'],
+    ['confluence', '/wiki/api/v2/spaces/SECRETSPACE/pages', '/wiki/api/v2/spaces/{id}/{id}'],
+    ['confluence', '/wiki/somethingElse/private', '/{id}/{id}/{id}'],
+    ['slack', '/api/search.messages', '/api/search.messages'],
+    ['slack', '/api/conversations.info', '/api/conversations.info'],
+    ['slack', '/api/payroll/channel', '/{id}/{id}/{id}'],
+    ['google-oauth', '/token', '/token'],
+    ['openai', '/v1/chat/completions', '/v1/chat/completions'],
+    ['gemini', '/v1beta/models/gemini-x:generateContent', '/v1beta/models/{id}'],
+    ['ollama-local', '/api/tags', '/api/tags'],
+    // An unlisted host keeps no segment at all, letters only or not.
+    ['unlisted', '/users/alice', '/{id}/{id}'],
+    ['unlisted', '/x', '/{id}'],
+    ['jira', '/', '/'],
+    ['jira', '', '/'],
+  ])('%s %s → %s', (label, path, template) => {
+    expect(pathTemplate(label, path)).toBe(template);
   });
 
-  it('a Telegram bot token segment and a webhook token never survive', () => {
+  it('webhook paths keep no secret segment, including a letters-only token', () => {
+    const lettersOnlyToken = 'AlphabeticSecretToken';
+    expect(pathTemplate('discord', `/api/v10/webhooks/123/${lettersOnlyToken}`)).toBe('/api/v10/webhooks/{id}/{id}');
+    expect(pathTemplate('unlisted', `/webhooks/123/${lettersOnlyToken}`)).toBe('/{id}/{id}/{id}');
+    expect(pathTemplate('discord', `/api/webhooks/123/${lettersOnlyToken}`)).not.toContain(lettersOnlyToken);
+  });
+
+  it('a Telegram bot token never survives; only a method of the adapter\'s closed list is kept', () => {
     // Built from fragments: no token-shaped literal in the source.
     const botToken = ['1234', '56789'].join('') + ':' + 'AAbbCC_dd-'.repeat(4);
-    expect(pathTemplate(`/bot${botToken}/getUpdates`)).toBe('/{id}/getUpdates');
-    expect(pathTemplate(`/file/bot${botToken}/photos/file_7.jpg`)).toBe('/file/{id}/photos/{id}');
-    const longWord = 'abcdefghij'.repeat(5);
-    expect(pathTemplate(`/api/webhooks/123/${longWord}`)).toBe('/api/webhooks/{id}/{id}');
+    expect(pathTemplate('telegram-poll', `/bot${botToken}/getUpdates`)).toBe('/{id}/getUpdates');
+    expect(pathTemplate('telegram', `/bot${botToken}/sendMessage`)).toBe('/{id}/sendMessage');
+    expect(pathTemplate('telegram', `/bot${botToken}/privateWord`)).toBe('/{id}/{id}');
+    expect(pathTemplate('telegram-file', `/file/bot${botToken}/photos/file_7.jpg`)).toBe('/file/{id}/{id}/{id}');
+  });
+
+  it('at most six {id} segments follow the prefix', () => {
+    expect(pathTemplate('unlisted', '/a/b/c/d/e/f/g/h/i')).toBe('/{id}/{id}/{id}/{id}/{id}/{id}');
+  });
+
+  it('typing indicators get their own labels', () => {
+    const inventory = buildEgressInventory(FULL);
+    expect(labelFor(inventory, 'api.telegram.org', 443, '/bot1/sendChatAction')).toBe('telegram-typing');
+    expect(labelFor(inventory, 'discord.com', 443, '/api/v10/channels/123/typing')).toBe('discord-typing');
+    expect(labelFor(inventory, 'discord.com', 443, '/api/v10/channels/123/messages')).toBe('discord');
   });
 });
 

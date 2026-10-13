@@ -22,7 +22,7 @@ import type {
 import { DEFAULT_IDENTITY_READY_TIMEOUT_MS, DISCORD_NOTIFICATION_PLATFORM } from '@quoky/adapter-discord';
 
 import { ConsoleLogger } from './console-logger';
-import { runWithCorrelation } from './correlation-context';
+import { continueAs, runWithCorrelation } from './correlation-context';
 import { startEgressGuard } from './security/egress-wiring';
 import { loadLocalEnvironment } from './env-loader';
 import { serializeError } from './error-diagnostics';
@@ -147,36 +147,41 @@ async function bootstrap(): Promise<void> {
   // Track B (Sprint 4c-Follow-up-2): secret-free structured diagnostics — name/message/redacted stack/cause plus
   // non-secret correlation context (stage + message/channel/user ids). The raw message text is deliberately NOT
   // logged (a user could paste a secret into chat); only non-secret identifiers are.
-  // ADR-0121 S0: each owner turn runs in its own correlation context, so its log lines and its traffic-ledger records
-  // carry the same content-free `cid`.
+  // ADR-0121 S0: each turn runs in its own correlation context, so its log lines and its traffic-ledger records carry
+  // the same content-free `cid`. The adapters admit owner messages only (ADR-0091/0114); the turn is tagged
+  // `owner-turn` (exempt from the request-rate caps) only after the startup identity gate opened, `inbound` before.
   platform.onMessage((message) =>
-    runWithCorrelation('owner-turn', () =>
-      inboundGate.then((verified) => (verified ? core.handleInboundMessage(message) : undefined)).catch((err) =>
-        log.error(
-          'inbound handling failed',
-          serializeError(err, {
-            stage: 'inbound',
-            messageId: message.id,
-            platform: message.context.platform,
-            channelId: message.context.channelId,
-            userId: message.context.userId,
-          }),
+    runWithCorrelation('inbound', () =>
+      inboundGate
+        .then((verified) => (verified ? continueAs('owner-turn', () => core.handleInboundMessage(message)) : undefined))
+        .catch((err) =>
+          log.error(
+            'inbound handling failed',
+            serializeError(err, {
+              stage: 'inbound',
+              messageId: message.id,
+              platform: message.context.platform,
+              channelId: message.context.channelId,
+              userId: message.context.userId,
+            }),
+          ),
         ),
-      ),
     ),
   );
   platform.onApprovalDecision((decision) =>
-    runWithCorrelation('owner-turn', () =>
-      inboundGate.then((verified) => (verified ? core.handleApprovalDecision(decision) : undefined)).catch((err) =>
-        log.error(
-          'approval handling failed',
-          serializeError(err, {
-            stage: 'approval-decision',
-            approvalId: decision.approvalId,
-            approved: decision.approved,
-          }),
+    runWithCorrelation('inbound', () =>
+      inboundGate
+        .then((verified) => (verified ? continueAs('owner-turn', () => core.handleApprovalDecision(decision)) : undefined))
+        .catch((err) =>
+          log.error(
+            'approval handling failed',
+            serializeError(err, {
+              stage: 'approval-decision',
+              approvalId: decision.approvalId,
+              approved: decision.approved,
+            }),
+          ),
         ),
-      ),
     ),
   );
 
