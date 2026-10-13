@@ -46,6 +46,7 @@ import {
   renderMailReadFailure,
   renderMailReplyPickExpired,
   renderMailReplyPickOutOfRange,
+  renderMailReplyPickUnknown,
   renderMailReplyPickWhich,
   renderMailThreadNotSupported,
   renderMailThreadRefused,
@@ -276,6 +277,13 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       this.log('info', 'mail.turn_handler.reply_pick', { matched: 'expired' });
       return this.reply(ctx, renderMailReplyPickExpired(language), 'RESPONDED', language, 'not-read');
     }
+    // Codex review P2: a reply that matches no live listing (another message, or a listing evicted past every record)
+    // never falls back to the last list — only a message that is not a reply may use the 30-minute last-list rule.
+    if (picked === undefined && isReply(ctx)) {
+      if (question.unnamed === true) return null;
+      this.log('info', 'mail.turn_handler.reply_pick', { matched: 'unknown' });
+      return this.reply(ctx, renderMailReplyPickUnknown(language), 'RESPONDED', language, 'not-read');
+    }
     const viaReply = picked?.kind === 'listing';
     if (viaReply) this.log('info', 'mail.turn_handler.reply_pick', { matched: 'listing' });
     const ids = picked?.kind === 'listing' ? picked.listing.ids : (this.currentListing(ctx)?.ids ?? []);
@@ -492,6 +500,12 @@ function failureOf(error: unknown): MailReadFailure {
 function startOfLocalDay(now: IsoTimestamp, timeZone: string): IsoTimestamp {
   const day = localDateOf(now, timeZone);
   return zonedToUtcIso({ ...day, hour: 0, minute: 0 }, timeZone);
+}
+
+/** GML-2: whether the owner's message is a platform reply (to anything). */
+function isReply(ctx: TurnHandlerContext): boolean {
+  const replyId = ctx.message.replyTo?.messageId;
+  return typeof replyId === 'string' && replyId.length > 0;
 }
 
 /** GML-2: one inbound message (platform message ids are unique only per conversation). */

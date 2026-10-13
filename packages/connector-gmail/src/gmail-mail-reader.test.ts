@@ -4,6 +4,7 @@ import { GmailEndpointNotAllowedError, GmailResponseTooLargeError, GmailScopeErr
 import {
   GMAIL_API_ORIGIN,
   GMAIL_FULL_MAX_BYTES,
+  GMAIL_THREAD_REQUEST_BUDGET,
   GmailMailReader,
   assertGmailReadRequest,
   buildGmailSearchQuery,
@@ -343,6 +344,44 @@ describe('GmailMailReader (ADR-0118 D2/D3)', () => {
       return json({ ...metadata('m2'), payload: { mimeType: 'text/plain', body: { data: b64('남은 메일') } } });
     });
     expect((await gone.reader.getThread('m2')).messages.map((entry) => entry.id)).toEqual(['m2']);
+  });
+
+  it('Codex review P1: a secret declared only in the QUOTED part, with a bare copy in the unquoted part, is withheld', async () => {
+    // Built from fragments at runtime (no credential-shaped literal in the source).
+    const value = ['Zq7', 'pW2', 'x9L', 'mK4', 'vB8', 'nR3'].join('');
+    const body = [`여기 다시 붙여요: ${value}`, '', 'On Thu, Oct 8, 2026 Kim <m1@example.com> wrote:', `> password: ${value}`].join('\n');
+    const { reader } = harness(threadApi(['m1', 'm2'], (id) => (id === 'm1' ? '첫 메일' : body)));
+    const thread = await reader.getThread('m2');
+    expect(JSON.stringify(thread)).not.toContain(value);
+    expect(thread.messages.map((entry) => [entry.id, entry.bodyText, entry.bodyTruncated])).toEqual([
+      ['m1', '첫 메일', false],
+      ['m2', '', true],
+    ]);
+  });
+
+  it('Codex review P2: every kept message oversized still sends at most 22 Gmail GETs, and the read stops partial', async () => {
+    const ids = Array.from({ length: 30 }, (_, index) => `m${index + 1}`);
+    const { reader, calls } = harness(threadApi(ids, () => '본문', { threadId: 'big', huge: new Set(ids) }));
+    const thread = await reader.getThread('m30');
+    const gets = calls.filter((call) => !call.url.startsWith('https://oauth2'));
+    expect(gets.length).toBeLessThanOrEqual(GMAIL_THREAD_REQUEST_BUDGET);
+    expect(GMAIL_THREAD_REQUEST_BUDGET).toBe(22);
+    expect(gets.every((call) => call.method === 'GET')).toBe(true);
+    // Partial: fewer messages than the thread holds, each without a body.
+    expect(thread.totalMessages).toBe(30);
+    expect(thread.messages.length).toBeLessThan(20);
+    expect(thread.messages.every((entry) => entry.bodyText === '' && entry.bodyTruncated)).toBe(true);
+    // A 401 retry counts too: the budget is shared by every GET.
+    let first = true;
+    const retrying = harness((url) => {
+      if (first && url.pathname.includes('/threads/')) {
+        first = false;
+        return json({}, 401);
+      }
+      return threadApi(ids, () => '본문', { threadId: 'big', huge: new Set(ids) })(url);
+    });
+    await retrying.reader.getThread('m30');
+    expect(retrying.calls.filter((call) => !call.url.startsWith('https://oauth2')).length).toBeLessThanOrEqual(GMAIL_THREAD_REQUEST_BUDGET);
   });
 
   it('GML-2 getThread failures are typed and value-free: a gone message, a mismatched or malformed thread, an invalid id', async () => {

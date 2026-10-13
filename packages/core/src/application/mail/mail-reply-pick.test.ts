@@ -21,6 +21,7 @@ import {
   renderMailReadFailure,
   renderMailReplyPickExpired,
   renderMailReplyPickOutOfRange,
+  renderMailReplyPickUnknown,
   renderMailReplyPickWhich,
   renderMailSummaryNeedsListing,
   renderMailThreadNotSupported,
@@ -192,12 +193,17 @@ describe('GML-2 reply-to-pick', () => {
     expect(r.gets).toEqual(['gm-2']);
   });
 
-  it('a reply to a non-listing message is not bound: the last listing is used as before, and a noun-less pick is not claimed', async () => {
+  it('a reply to a non-listing message picks nothing and never falls back to the last list; a noun-less pick is not claimed', async () => {
     const { rows, manager } = store();
     const r = reader();
     const handler = createMailTurnHandler({ reader: r.mail, timeZone: 'Asia/Seoul', sessions: manager });
     await twoListings(handler, rows, DISCORD_DM, 'r-a', 'r-b');
-    expect((await handler.handle(ctxOf(rows, { id: 'in-1', text: '1번 메일 요약해줘', replyTo: 'some-chat-reply' }, DISCORD_DM)))?.kind).toBe('summarize');
+    // Codex review P2: only a message that is NOT a reply may use the 30-minute last-list rule.
+    expect(textOf(await handler.handle(ctxOf(rows, { id: 'in-1', text: '1번 메일 요약해줘', replyTo: 'some-chat-reply' }, DISCORD_DM)))).toBe(
+      renderMailReplyPickUnknown('ko'),
+    );
+    expect(r.gets).toEqual([]);
+    expect((await handler.handle(ctxOf(rows, { id: 'in-1b', text: '1번 메일 요약해줘' }, DISCORD_DM)))?.kind).toBe('summarize');
     expect(r.gets).toEqual(['gm-3']);
     expect(await handler.handle(ctxOf(rows, { id: 'in-2', text: '2번 요약해줘', replyTo: 'some-chat-reply' }, DISCORD_DM))).toBeNull();
     expect(await handler.handle(ctxOf(rows, { id: 'in-3', text: '요약해줘', replyTo: 'r-a-but-not' }, DISCORD_DM))).toBeNull();
@@ -248,11 +254,11 @@ describe('GML-2 reply-to-pick', () => {
       renderMailReplyPickExpired('ko'),
     );
     expect(r.gets).toEqual(['gm-1']);
-    // Past the tombstone window the reply is unknown: the turn behaves as before (no listing → the needs-listing note).
+    // Past the tombstone window the reply is unknown: still nothing is picked from any other list.
     const restarted = createMailTurnHandler({ reader: r.mail, timeZone: 'Asia/Seoul', sessions: manager });
     expect(
       textOf(await restarted.handle(ctxOf(rows, { id: 'in-6', text: '1번 메일 요약해줘', replyTo: 'r-a', now: at(LISTING_REPLY_TOMBSTONE_MS + 60_000) }, DISCORD_DM))),
-    ).toBe(renderMailSummaryNeedsListing('ko'));
+    ).toBe(renderMailReplyPickUnknown('ko'));
   });
 
   it('CA review P2: with 9+ listings an evicted list becomes a tombstone — its reply is "expired", never another list', async () => {
@@ -285,7 +291,8 @@ describe('GML-2 reply-to-pick', () => {
 
   it('tombstones have their own cap: many listings keep 8 live lists and at most 64 tombstones', async () => {
     const { rows, manager } = store();
-    const handler = createMailTurnHandler({ reader: reader().mail, timeZone: 'Asia/Seoul', sessions: manager });
+    const r = reader();
+    const handler = createMailTurnHandler({ reader: r.mail, timeZone: 'Asia/Seoul', sessions: manager });
     for (let n = 0; n < 80; n += 1) {
       const ctx = ctxOf(rows, { id: `in-${n}`, text: '안 읽은 메일', now: at(n * 1000) }, DISCORD_DM);
       await handler.handle(ctx);
@@ -296,6 +303,16 @@ describe('GML-2 reply-to-pick', () => {
     expect(own?.expired).toHaveLength(LISTING_TOMBSTONES_MAX);
     const now = at(81 * 1000);
     expect(textOf(await handler.handle(ctxOf(rows, { id: 'in-x', text: '1번 요약해줘', replyTo: 'r-7', now }, DISCORD_DM)))).toBe(renderMailReplyPickExpired('ko'));
+    // Codex review P2 repro: list 0 is past every record (evicted beyond the tombstone cap); a reply to it must not read
+    // list 79 (the last list, still within 30 minutes) — on this handler and after a restart.
+    const restarted = createMailTurnHandler({ reader: reader().mail, timeZone: 'Asia/Seoul', sessions: manager });
+    for (const h of [handler, restarted]) {
+      for (const text of ['1번 메일 요약해줘', '이 메일 요약해줘', '1번 메일 스레드 요약해줘']) {
+        expect(textOf(await h.handle(ctxOf(rows, { id: 'in-y', text, replyTo: 'r-0', now }, DISCORD_DM))), text).toBe(renderMailReplyPickUnknown('ko'));
+      }
+      expect(await h.handle(ctxOf(rows, { id: 'in-z', text: '1번 요약해줘', replyTo: 'r-0', now }, DISCORD_DM))).toBeNull();
+    }
+    expect([r.gets, r.threads]).toEqual([[], []]);
   });
 
   it('CA review P3: in a DM, a noun-less thread request with no listing and no reply is left to chat', async () => {

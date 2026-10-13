@@ -394,6 +394,16 @@ export function renderMailReplyPickExpired(language: MailLanguage): string {
     : '답장하신 메일 목록이 오래돼서(24시간이 지남) 고를 수 없어요. 메일은 읽지 않았어요. 목록을 다시 보여 달라고 해 주세요.';
 }
 
+/**
+ * A summary request sent as a reply to a message that is not a listing Quoky can still pick from (another message, or a
+ * listing too old to be on record): nothing is picked or read, and the last list is NOT used instead.
+ */
+export function renderMailReplyPickUnknown(language: MailLanguage): string {
+  return language === 'en'
+    ? "I can't pick an email from the message you replied to (it isn't a mail list I can still use), so nothing was read. Ask for the list again."
+    : '답장하신 메시지에서는 메일을 고를 수 없어요(메일 목록이 아니거나 오래된 목록이에요). 메일은 읽지 않았어요. 목록을 다시 보여 달라고 해 주세요.';
+}
+
 /** The configured mail source cannot read threads (its reader has no thread read). */
 export function renderMailThreadNotSupported(language: MailLanguage): string {
   return language === 'en'
