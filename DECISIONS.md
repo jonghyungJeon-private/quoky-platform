@@ -21414,3 +21414,18 @@ a minute. The same finding is logged as `egress.guard` with the same fields.
   deferred the OS-level control.
 - **Rollout.** The default is `observe`. Flipping to `enforce` after 7 clean ledger days (design Q4) is a separate owner
   yes, and so is any runtime restart that applies this build.
+
+### ADR-0121 S0 follow-up — keep-alive reuse through the egress guard (2026-10-13)
+
+- **Finding.** The live ledger showed a `connect` record (new TCP+TLS handshake) to `api.telegram.org` for every
+  `getUpdates` long poll. Root cause: `GuardedDispatcher`'s `Agent` used undici's default 4 s `keepAliveTimeout`, so the
+  pooled connection was dropped before the next poll.
+- **Fix, scoped.** A long idle window exposes a request to a stale-socket reset, which is unsafe for a POST that sends
+  something. So the shared Agent keeps undici's default, and only requests labelled `telegram-poll` use a dedicated Agent
+  (`POLL_KEEP_ALIVE_TIMEOUT_MS` = 65 s for `keepAliveTimeout` and `keepAliveMaxTimeout`) inside `GuardedDispatcher`
+  (`apps/quoky/src/security/egress-guard.ts`). Both Agents use the same guarded, pinning connector and the same ledger,
+  so name checks, budgets, deny ranges and the per-new-connection address check are unchanged, and a reused socket
+  stays on the address checked when it was opened. No vendor name enters Core.
+- **One retry, poll only.** `getUpdates` is offset-based and safe to repeat, so a `telegram-poll` request that fails
+  with `ECONNRESET`/`EPIPE`/`UND_ERR_SOCKET` before any response byte is repeated once, immediately (the body is replayed
+  only if fully sent). Nothing else is ever retried. Tests: `egress-guard.test.ts` ("keep-alive", "retry").
