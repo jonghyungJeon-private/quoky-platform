@@ -117,6 +117,8 @@ interface Clause {
   readonly text: string;
   /** The sentence text up to the start of this clause (earlier clauses, connectors included). */
   readonly before: string;
+  /** The whole sentence the clause belongs to. */
+  readonly sentence: string;
 }
 
 /** Sentences and clauses: split on sentence ends, line breaks and Korean clause connectors. */
@@ -135,11 +137,22 @@ function clauses(text: string, source: UntrustedDocumentSource): Clause[] {
     for (const [from, to] of pieces) {
       const piece = sentence.slice(from, to);
       const trimmed = piece.trim();
-      if (trimmed.length > 0) out.push({ text: trimmed, before: sentence.slice(0, from + (piece.length - piece.trimStart().length)) });
+      if (trimmed.length > 0) out.push({ text: trimmed, before: sentence.slice(0, from + (piece.length - piece.trimStart().length)), sentence });
     }
   }
   return out;
 }
+
+/**
+ * A Quoky stand-in anywhere in the sentence, with any case marker or none (`Quoky가`, `Quoky에서`, `비서는`, `저희가`,
+ * `Quoky가 대신`), before or after the verb: such a sentence is never exempt. English `I`, `we`, `Quoky`, `the assistant`.
+ */
+const KO_STAND_IN_WORDS = [...KO_STAND_INS].filter((word) => /[^\x00-\x7f]/u.test(word) || word === 'quoky' || word === 'ai').join('|');
+const STAND_IN_ANYWHERE = new RegExp(
+  `(?:^|[\\s("'“‘「『,])(?:${KO_STAND_IN_WORDS})(?:가|이|는|은|를|을|에서|에게|에|께서|께|로|으로|대신|측|의|도|만|와|과|랑)?(?=[\\s,)"'”’」』]|$)` +
+    "|\\b(?:I|we|Quoky|the assistant|assistant|the bot)\\b",
+  'iu',
+);
 
 /**
  * Topic-marked words (`Gmail 팀은`, `김철수 님은`) name the actor too, but only a word shaped like a person or an
@@ -155,7 +168,8 @@ const KO_ACTOR_SHAPE = /[a-z0-9]|(?:님|씨|팀|사|측)$/u;
  * (`제가 김철수가 요청한 답장을 보냈어요`) puts a third-person subject nearest the verb while Quoky is still the actor.
  * A subject after the claim, an adverb or a generic noun never exempts.
  */
-function exemptBySubject(prefix: string, source: UntrustedDocumentSource): boolean {
+function exemptBySubject(prefix: string, sentence: string, source: UntrustedDocumentSource): boolean {
+  if (STAND_IN_ANYWHERE.test(sentence)) return false;
   let nearest: string | undefined;
   for (const match of prefix.matchAll(KO_SUBJECT)) {
     // An opening quote or bracket is not part of the subject (`"제가 …"` is still the first person).
@@ -175,12 +189,12 @@ function exemptBySubject(prefix: string, source: UntrustedDocumentSource): boole
  */
 const KO_REPORTED = /^\S{0,20}?(?:다는|다고|단\s|대요|다며)/u;
 
-function koreanClaim({ text: clause, before }: Clause, source: UntrustedDocumentSource): boolean {
+function koreanClaim({ text: clause, before, sentence }: Clause, source: UntrustedDocumentSource): boolean {
   for (const pattern of source === 'drive' ? [...KO_CLAIMS, ...KO_DRIVE_CLAIMS] : KO_CLAIMS) {
     const match = pattern.exec(clause);
     if (match === null) continue;
     if (KO_REPORTED.test(clause.slice(match.index + match[0].length))) continue;
-    if (exemptBySubject(before + clause.slice(0, match.index + match[0].length) + ' ', source)) continue;
+    if (exemptBySubject(before + clause.slice(0, match.index + match[0].length) + ' ', sentence, source)) continue;
     return true;
   }
   return false;

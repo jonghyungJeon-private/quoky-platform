@@ -305,3 +305,25 @@ describe('v5 W3 live UAT: a thread summary names participants and described feat
     for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source)).toBe(true);
   });
 });
+
+describe('Codex P2: a Quoky stand-in anywhere in the sentence blocks the third-party exemption', () => {
+  it.each([
+    '고객팀은 확인했고 메일을 보냈습니다, Quoky가 대신.',
+    '고객팀은 확인했고 답장을 보냈습니다, Quoky가 대신.',
+    '고객팀은 확인했고 메일을 보관했습니다, Quoky가 대신.',
+    '고객팀은 확인했고 메일을 삭제했습니다, 비서가 대신.',
+    '고객팀은 확인했고 일정을 캘린더에 등록했습니다, 저희가 대신.',
+    '고객팀은 확인했고 Quoky에서 메일을 보냈습니다.',
+    '고객팀은 확인했고 Quoky가 메일을 보냈습니다.',
+    '고객팀은 확인했고 저희 측에서 답장을 보냈습니다.',
+    '고객팀은 확인했고 어시스턴트가 메일을 보냈습니다.',
+    '고객팀은 확인했고 봇이 메일을 보냈습니다.',
+    '고객팀이 확인했고 제가 메일을 보냈습니다.',
+    'Gmail 팀이 안내했고 I sent a reply.',
+  ])('withholds: %s', (text) => {
+    for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source)).toBe(true);
+  });
+  it.each(['김철수 님이 내용을 확인하고 답장했어요.', 'Gmail 팀은 새 받은편지함 사용 방법을 담은 메일을 보냈어요.', '이 메일은 Gmail 팀이 보냈어요.'])('allows: %s', (text) => {
+    expect(containsDocumentActionClaim(text, 'mail-thread')).toBe(false);
+  });
+});
