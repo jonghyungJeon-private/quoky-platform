@@ -35,11 +35,24 @@ describe('connector-gmail read-only source scan (ADR-0118 D3/D6)', () => {
       /\/settings\b/,
       /\/attachments\b/,
       /\/history\b/,
-      /\/threads\b/,
       /uploadType/,
     ];
     for (const { name, text } of sources) {
       for (const pattern of forbidden) expect(code(text), `${name} ${pattern}`).not.toMatch(pattern);
+    }
+  });
+
+  it('GML-2: the only thread path is the pinned `threads/{id}` read (no thread list, modify, trash or delete)', () => {
+    const reader = code(sources.find((source) => source.name === 'gmail-mail-reader.ts')?.text ?? '');
+    // The literal path appears once (the constant); the constant is defined once and used once, for one thread id.
+    expect([...reader.matchAll(/\/threads\b/g)]).toHaveLength(1);
+    expect(reader).toMatch(/GMAIL_THREADS_PATH = '\/gmail\/v1\/users\/me\/threads';/);
+    expect([...reader.matchAll(/GMAIL_THREADS_PATH\b/g)]).toHaveLength(2);
+    expect(reader).toMatch(/new URL\(`\$\{GMAIL_THREADS_PATH\}\/\$\{encodeURIComponent\(located\.threadId\)\}`, GMAIL_API_ORIGIN\)/);
+    // The runtime allowlist admits `threads/{id}` only (never `threads` alone, nor a sub-resource).
+    expect(reader).toMatch(/threads\\\/\[A-Za-z0-9_-\]\{1,128\}\)\$\//);
+    for (const { name, text } of sources) {
+      expect(code(text), name).not.toMatch(/\/threads\/(?:\$\{[^}]+\}|[A-Za-z0-9_-]+)\/(?:modify|trash|untrash)/);
     }
   });
 

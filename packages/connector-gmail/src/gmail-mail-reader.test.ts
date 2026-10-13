@@ -273,6 +273,76 @@ describe('GmailMailReader (ADR-0118 D2/D3)', () => {
     expect(() => assertGmailReadRequest(new URL('https://evil.example/gmail/v1/users/me/messages'), 'GET')).toThrow(GmailEndpointNotAllowedError);
   });
 
+  it('GML-2 getThread: messages.get (minimal) for the thread id, then threads.get (full); mapped in order', async () => {
+    const message = (id: string, body: string, minutes: number) => ({
+      ...metadata(id),
+      internalDate: String(Date.parse('2026-10-08T00:00:00.000Z') + minutes * 60_000),
+      payload: { mimeType: 'text/plain', headers: [{ name: 'From', value: `Kim <${id}@example.com>` }, { name: 'Subject', value: 'Re: 계약' }], body: { data: b64(body) } },
+    });
+    const { reader, calls } = harness((url) => {
+      if (url.pathname === '/gmail/v1/users/me/messages/m2') return json({ id: 'm2', threadId: 't9' });
+      if (url.pathname === '/gmail/v1/users/me/threads/t9') return json({ id: 't9', messages: [message('m1', '첫 메일', 0), message('m2', '답장', 5)] });
+      return json({}, 404);
+    });
+    const thread = await reader.getThread('m2');
+    expect(thread.totalMessages).toBe(2);
+    expect(thread.messages.map((entry) => [entry.id, entry.bodyText, entry.sender.address])).toEqual([
+      ['m1', '첫 메일', 'm1@example.com'],
+      ['m2', '답장', 'm2@example.com'],
+    ]);
+    const api = calls.filter((call) => !call.url.startsWith('https://oauth2'));
+    expect(api.map((call) => [call.method, new URL(call.url).pathname])).toEqual([
+      ['GET', '/gmail/v1/users/me/messages/m2'],
+      ['GET', '/gmail/v1/users/me/threads/t9'],
+    ]);
+    expect(new URL(api[0]?.url as string).searchParams.get('format')).toBe('minimal');
+    expect(new URL(api[0]?.url as string).searchParams.get('fields')).toBe('id,threadId');
+    expect(new URL(api[1]?.url as string).searchParams.get('format')).toBe('full');
+  });
+
+  it('GML-2 getThread bounds: at most 20 messages (the first and the latest), 256 KiB of body text across them', async () => {
+    const ids = Array.from({ length: 30 }, (_, index) => `m${index + 1}`);
+    const { reader } = harness((url) => {
+      if (url.pathname === '/gmail/v1/users/me/messages/m30') return json({ id: 'm30', threadId: 'big' });
+      return json({ id: 'big', messages: ids.map((id) => ({ ...metadata(id), payload: { mimeType: 'text/plain', body: { data: b64('가'.repeat(30_000)) } } })) });
+    });
+    const thread = await reader.getThread('m30');
+    expect(thread.totalMessages).toBe(30);
+    expect(thread.messages.map((entry) => entry.id)).toEqual(['m1', ...ids.slice(11)]);
+    const bytes = thread.messages.reduce((sum, entry) => sum + Buffer.byteLength(entry.bodyText, 'utf8'), 0);
+    expect(bytes).toBeLessThanOrEqual(256 * 1024);
+    expect(thread.messages.every((entry) => entry.bodyText.length > 0)).toBe(true);
+    expect(thread.messages.some((entry) => entry.bodyTruncated)).toBe(true);
+  });
+
+  it('GML-2 getThread failures are typed and value-free: a gone message, a mismatched or malformed thread, an invalid id', async () => {
+    const gone = harness(() => json({ error: { code: 404 } }, 404));
+    expect(await failure(gone.reader.getThread('m1'))).toMatchObject({ reason: 'NOT_FOUND' });
+    const mismatch = harness((url) => (url.pathname.includes('/messages/') ? json({ id: 'm1', threadId: 't1' }) : json({ id: 'other', messages: [metadata('m1')] })));
+    expect(await failure(mismatch.reader.getThread('m1'))).toMatchObject({ reason: 'INVALID_RESPONSE' });
+    const badThreadId = harness(() => json({ id: 'm1', threadId: '../labels' }));
+    expect(await failure(badThreadId.reader.getThread('m1'))).toMatchObject({ reason: 'INVALID_RESPONSE' });
+    const empty = harness((url) => (url.pathname.includes('/messages/') ? json({ id: 'm1', threadId: 't1' }) : json({ id: 't1', messages: [] })));
+    expect(await failure(empty.reader.getThread('m1'))).toMatchObject({ reason: 'INVALID_RESPONSE' });
+    const badEntry = harness((url) => (url.pathname.includes('/messages/') ? json({ id: 'm1', threadId: 't1' }) : json({ id: 't1', messages: [{ id: 'a b' }] })));
+    expect(await failure(badEntry.reader.getThread('m1'))).toMatchObject({ reason: 'INVALID_RESPONSE' });
+    expect(await failure(gone.reader.getThread('bad id'))).toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+  });
+
+  it('GML-2: the request guard admits `threads/{id}` reads only', () => {
+    expect(() => assertGmailReadRequest(new URL('/gmail/v1/users/me/threads/t9?format=full&fields=id', GMAIL_API_ORIGIN), 'GET')).not.toThrow();
+    const refused: Array<[string, string]> = [
+      ['/gmail/v1/users/me/threads', 'GET'],
+      ['/gmail/v1/users/me/threads/t9', 'DELETE'],
+      ['/gmail/v1/users/me/threads/t9/modify', 'POST'],
+      ['/gmail/v1/users/me/threads/t9/trash', 'POST'],
+      ['/gmail/v1/users/me/threads/t9?pageToken=x', 'GET'],
+    ];
+    for (const [path, method] of refused) {
+      expect(() => assertGmailReadRequest(new URL(path, GMAIL_API_ORIGIN), method), `${method} ${path}`).toThrow(GmailEndpointNotAllowedError);
+    }
+  });
+
   it('construction makes no network call and refuses an empty credential', () => {
     let called = false;
     const fetchImpl = (async () => {

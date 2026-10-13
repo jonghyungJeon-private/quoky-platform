@@ -6,6 +6,8 @@ import {
   MAIL_SENDER_NAME_MAX_LENGTH,
   MAIL_SNIPPET_MAX_LENGTH,
   MAIL_SUBJECT_MAX_LENGTH,
+  MAIL_THREAD_MAX_MESSAGES,
+  MAIL_THREAD_TEXT_MAX_BYTES,
   boundMailLine,
   isValidMailMessageId,
   parseMailSearchQuery,
@@ -16,6 +18,7 @@ import {
   type MailReader,
   type MailSearchQuery,
   type MailSearchResult,
+  type MailThread,
   type ParsedMailSearchQuery,
 } from '@quoky/core';
 import {
@@ -43,9 +46,11 @@ import { refreshGmailAccessToken, type GmailAccessToken } from './oauth';
 export const GMAIL_API_ORIGIN = 'https://gmail.googleapis.com';
 /** The source's display name for Core's neutral mail copy (review P3-6). */
 export const GMAIL_SOURCE_LABEL = 'Gmail';
-/** The only API path family the client may call: `messages.list` and `messages.get`. */
+/** The only API path families the client may call: `messages.list`, `messages.get` and (GML-2) `threads.get`. */
 export const GMAIL_MESSAGES_PATH = '/gmail/v1/users/me/messages';
-const READ_PATH = /^\/gmail\/v1\/users\/me\/messages(?:\/[A-Za-z0-9_-]{1,128})?$/;
+/** GML-2 (ADR-0118 amendment of 2026-10-12): `threads.get` only — never the thread list, modify, trash or delete. */
+export const GMAIL_THREADS_PATH = '/gmail/v1/users/me/threads';
+const READ_PATH = /^\/gmail\/v1\/users\/me\/(?:messages(?:\/[A-Za-z0-9_-]{1,128})?|threads\/[A-Za-z0-9_-]{1,128})$/;
 /** The only query parameters a read request may carry. */
 const READ_PARAMS: ReadonlySet<string> = new Set(['q', 'maxResults', 'fields', 'format', 'metadataHeaders']);
 
@@ -53,10 +58,18 @@ const READ_PARAMS: ReadonlySet<string> = new Set(['q', 'maxResults', 'fields', '
 export const GMAIL_LIST_FIELDS = 'messages(id),nextPageToken';
 export const GMAIL_METADATA_FIELDS = 'id,labelIds,snippet,internalDate,payload/headers';
 export const GMAIL_FULL_FIELDS = 'id,labelIds,snippet,internalDate,payload';
+/** GML-2: the thread id of a listed message (`format=minimal`), then the thread's messages with their payloads. */
+export const GMAIL_THREAD_ID_FIELDS = 'id,threadId';
+export const GMAIL_THREAD_FIELDS = 'id,messages(id,labelIds,snippet,internalDate,payload)';
 /** Response size bounds per call (bytes). A larger response is refused and its body is not kept. */
 export const GMAIL_LIST_MAX_BYTES = 64 * 1024;
 export const GMAIL_METADATA_MAX_BYTES = 64 * 1024;
 export const GMAIL_FULL_MAX_BYTES = 4 * 1024 * 1024;
+export const GMAIL_THREAD_ID_MAX_BYTES = 4 * 1024;
+/** A thread's full payloads (HTML parts included) for at most a few dozen messages; a larger one is refused. */
+export const GMAIL_THREAD_MAX_BYTES = 8 * 1024 * 1024;
+/** A thread holding more messages than this is refused as malformed (Gmail caps threads well below it). */
+const GMAIL_THREAD_MESSAGES_HARD_MAX = 500;
 /** An access token is refreshed this long before Google says it expires. */
 const ACCESS_TOKEN_EXPIRY_SKEW_MS = 60_000;
 
@@ -74,7 +87,7 @@ export interface GmailMailReaderConfig {
 
 /**
  * Refuses any request outside the read-only allowlist BEFORE it is sent: the method must be GET, the origin the pinned
- * Gmail API origin, the path `messages` or `messages/{id}`, and only the read parameters may appear. There is no code
+ * Gmail API origin, the path `messages`, `messages/{id}` or (GML-2) `threads/{id}`, and only the read parameters may appear. There is no code
  * path that sends anything else; this is the runtime half of the read-only guarantee (the source scan is the other).
  */
 export function assertGmailReadRequest(url: URL, method: string): void {
@@ -107,7 +120,7 @@ export function buildGmailSearchQuery(query: ParsedMailSearchQuery): string {
 
 /**
  * Read-only Gmail adapter for the `MailReader` port (ADR-0118 D2/D3, GML-1). GET requests to the pinned
- * `messages.list` / `messages.get` endpoints only, through one guarded request function; the grant must be exactly
+ * `messages.list` / `messages.get` endpoints and (GML-2) `threads.get` only, through one guarded request function; the grant must be exactly
  * `gmail.readonly`; a timeout on every call, redirects refused, every response size-bounded, result counts bounded
  * (one page of at most 100 ids, metadata for at most 10). No send, draft, label, modify, trash or delete call exists.
  * The access token lives in memory only; the refresh token, client secret and access token are never logged and never
@@ -171,6 +184,42 @@ export class GmailMailReader implements MailReader {
     const extracted = extractBodyText(payload.payload);
     const body = truncateUtf8(extracted.text, MAIL_BODY_MAX_BYTES);
     return { ...summary, bodyText: body.text, bodyTruncated: body.truncated || extracted.truncated };
+  }
+
+  /**
+   * GML-2: the thread of a listed message, two guarded GETs (`messages.get` with `format=minimal` for its thread id, then
+   * `threads.get` with `format=full`), bounded to {@link MAIL_THREAD_MAX_MESSAGES} messages (the first and the latest)
+   * and {@link MAIL_THREAD_TEXT_MAX_BYTES} of body text across them, each body cut to its share of what is left.
+   */
+  async getThread(messageId: string): Promise<MailThread> {
+    if (!isValidMailMessageId(messageId)) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'gmail: invalid message id');
+    const idUrl = this.messagesUrl(messageId);
+    idUrl.searchParams.set('format', 'minimal');
+    idUrl.searchParams.set('fields', GMAIL_THREAD_ID_FIELDS);
+    const located = await this.getJson(idUrl, GMAIL_THREAD_ID_MAX_BYTES);
+    if (located.id !== messageId || !isValidMailMessageId(located.threadId)) throw new GmailResponseError('gmail');
+
+    const url = new URL(`${GMAIL_THREADS_PATH}/${encodeURIComponent(located.threadId)}`, GMAIL_API_ORIGIN);
+    url.searchParams.set('format', 'full');
+    url.searchParams.set('fields', GMAIL_THREAD_FIELDS);
+    const payload = await this.getJson(url, GMAIL_THREAD_MAX_BYTES);
+    const listed = payload.messages;
+    if (payload.id !== located.threadId || !Array.isArray(listed) || listed.length === 0 || listed.length > GMAIL_THREAD_MESSAGES_HARD_MAX) {
+      throw new GmailResponseError('gmail');
+    }
+    const records = listed.map((entry) => (isRecord(entry) && isValidMailMessageId(entry.id) ? entry : undefined));
+    if (records.some((entry) => entry === undefined)) throw new GmailResponseError('gmail');
+    const all = records as Array<Record<string, unknown> & { id: string }>;
+    const kept = all.length <= MAIL_THREAD_MAX_MESSAGES ? all : [all[0] as Record<string, unknown> & { id: string }, ...all.slice(all.length - (MAIL_THREAD_MAX_MESSAGES - 1))];
+    let bytesLeft = MAIL_THREAD_TEXT_MAX_BYTES;
+    const messages = kept.map((record, index) => {
+      const summary = mapSummary(record, record.id);
+      const extracted = extractBodyText(record.payload);
+      const body = truncateUtf8(extracted.text, Math.floor(bytesLeft / (kept.length - index)));
+      bytesLeft -= Buffer.byteLength(body.text, 'utf8');
+      return { ...summary, bodyText: body.text, bodyTruncated: body.truncated || extracted.truncated };
+    });
+    return { messages, totalMessages: all.length };
   }
 
   /** Metadata for one listed id; a message deleted since the search (404) is skipped. */
