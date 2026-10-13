@@ -5,6 +5,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### v5 INT-4 integration acceptance — on branch `claude/v5-int4-acceptance` (2026-10-14)
+
+Tests, golden data and docs only; no production code, migration, port or token change. `personal-v5-acceptance.test.ts`
+(offline, real `AppModule`) covers every merged v5 capability and the no-phrase-bound-routing principle; 41 golden cases
+were added to `nl-intent.v1.json` (pending the owner's batch approval; `baseline.v1.json` unchanged). One product gap is
+recorded as a skipped test: after a Phase C selector `none`, the classifier's personal-work-surface regex can still
+answer an advice question with a lookup. Details: the INT-4 note in `DECISIONS.md`.
+
 ### v5 GML-2 Gmail threads and reply picks — on branch `claude/v5-w3-gml2` (2026-10-13)
 
 ADR-0118 amendment of 2026-10-12 (ratified; owner decision 7: threads and reply picks yes, labels no). Additive port and

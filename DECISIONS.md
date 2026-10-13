@@ -22026,6 +22026,42 @@ Decisions:
   retirement decisions. Chief Architect review before merge (a port member and a dispatch-order change).
 - **Rebase.** Rebased on `origin/main` after #193 (ADR-0121 ratification); `pnpm typecheck` and the full suite re-run.
 
+### Personal v5 implementation note — INT-4 integration acceptance (2026-10-14)
+
+- **Scope.** Plan wave 3, task INT-4: `apps/quoky/src/personal-v5-acceptance.test.ts` (offline, in-process, in the v4 style: the
+  real `AppModule` over a real SQLite file, one scripted `fetch` that throws for any unknown URL, stub providers whose
+  `INTENT_SELECTION` answer is scripted), plus 41 golden cases. No production code changed.
+- **Covered end to end.** HARD-1 (bounded token reads for Gmail, Drive and Calendar); PLT-1 (a hostile mail subject is an
+  untrusted span, never Quoky copy); ADR-0120 (closed catalog, grounding, symbolic time, the pre-egress credential guard, the
+  600-character bound, one clarification then the Actor preference, `lastSelection` follow-ups, A2 grammar yield, A3 timeout
+  fallback, `c-shadow` agreement logging and startup refusals); S0 (the real guard and ledger over a loopback server with the
+  allowlist derived from the real configuration: observe and enforce decisions, the ledger path templates for Gmail threads,
+  Drive and Sheets, the `google-sheets` budget); BRF-3 (the unread-mail brief section); STO-1 (v16: the same channel id on
+  two platforms is two sessions, the `sessions.platform` column and index); DRV-2/2b (shared-drive parameters, every visible
+  sheet, hidden sheets never read); GML-2 (reply-to-pick, thread summary); the claim guard staying strict; the Drive kind yield.
+- **No phrase-bound routing (owner principle).** Eight capabilities (Jira, to-do, calendar, mail, Drive, Slack, brief, help)
+  are fed 4-8 wordings each (formal, casual, banmal, typos, spacing errors, English-Korean mix, word-order changes, indirect
+  asks). The fake model knows only the catalog id. In Phase C every wording is served by selection with the grammar not
+  consulted. In Phase A each wording reaches the same capability, and 30 of 47 do so by selection because no grammar matched
+  (the rest by a grammar that agrees). Capability-word chit-chat does no lookup when the selector says `none`, in Phase C and
+  in Phase A.
+- **Known product gap found (skipped test, not fixed here).** In Phase C with the selector answering `none`, the classifier's
+  regex `IntentClassifier.isPersonalWorkSurface` (`intent-classifier.ts:903`) still turns `할 일 관리하는 좋은 습관 알려줘`
+  into a personal-work lookup (served at `conversation-runtime.ts:3421`). The frozen surface clause is a documented fallback
+  (S1), but it must not answer after an explicit `none`. Test: `BUG: Phase C with selector none must not run a personal-work
+  lookup ...` (`it.skip`). In Phase A the to-do grammar captures the same sentence (the corpus case `neg-219`, a known wrong
+  capture that Phase C removes for the grammar only).
+- **Golden set.** 41 cases `v5int4-001..041` (jira, todo, calendar, mail, drive, slack, confluence, github, reminder, brief,
+  help; six follow-ups with a prior selection; 14 negatives; compound requests map to the cross-source `brief.today`) are
+  appended to `nl-intent.v1.json` with the schema unchanged. Three of them are answered by a frozen Class B grammar today, so
+  they carry the `grammar` and `grammarAnswer` tags and the eval pins in `nl-intent-eval.test.ts` moved from 241 to 244 tagged
+  cases (grammar side 243 positives, 205 exact, 240 entry, 227 user-visible, 1 wrong capture). Like the S1 batch they are
+  agent-drafted and PENDING the owner's batch approval (ADR-0120 D12). **`baseline.v1.json` is not changed:** it pins the
+  eight deterministic suites of `golden-eval.ts` and does not list `nl-intent.v1.json`, whose gates are its own tests
+  (`nl-intent-golden.test.ts`, the dispatch test and the eval CLI); there is no regeneration command for it.
+- **Not run.** Nothing here calls the Claude CLI or any network; the D12 model evaluation of the new cases is a Strict step
+  for the owner.
+
 ### ADR-0120 amendment A4 — an optional Class B probe on the turn-handler port (Accepted 2026-10-13) (2026-10-13)
 
 - **Status:** Proposed. The orchestrator asks the owner to accept it. The code is on `claude/v5-nl2-phase-c` and is inert
