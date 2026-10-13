@@ -10,6 +10,11 @@
   design input `docs/plans/nl-intent-design-2026-10-12.md`). GOV-7 appended ADR-0120 (natural-language capability
   selection); the owner ratified it the same day. NL-1 joins wave 2, GML-2 moves to wave 3, and NL-2
   waits for the NL-1 shadow data (section 4).
+- **Bounded agent (GOV-8, 2026-10-13).** The owner ratified ADR-0120 amendment A2 ("응 A2 승인하고"). The owner also asked
+  for an assistant-style design with security controls and the company's MSIT guidance applied. GOV-8 appended
+  ADR-0121 (**Proposed**: a bounded agent with information-flow control) and
+  `docs/plans/agent-security-design-2026-10-13.md`. W4 becomes "NL-2 model-first + bounded agent design (ADR-0121)",
+  gated on the owner's ratification of ADR-0121.
 - **Date:** 2026-10-12
 - **Base:** `main` at `a965590` (PR #173 merged, v4 closed). SQLite schema v15. `ConversationRuntimeDeps` baseline 35.
   Golden ratchet `turn-handler-routing` minTotal 419 and `action-shaped-fallthrough` 155 (`baseline.v1.json`).
@@ -323,7 +328,7 @@ assume section 7 is answered. A "no" drops the task without blocking the rest. M
 | 3 | CAL-2 | CON | No code: the owner picks calendars, then the `.env.local` edit (Strict). `core/domain` calendar event and `connector-calendar-google` only if an ADR-0110 amendment adds `calendarId` | haiku (listing), sonnet | decision 10 (yes) |
 | 3 | INT-4 | INT | `app/personal-v5-acceptance.test.ts`, golden additions, `baseline.v1.json` | sonnet | merged tracks |
 | 3 | DOC-G | DOC | `CURRENT_STATE.md`, `CHANGELOG.md`, `DECISIONS.md` (implementation notes), `ROADMAP.md`, quickstart, operator guide | sonnet | merged tracks |
-| 4 | NL-2 | NL | `core/application/nl-routing/*`, `conversation-runtime.ts` (Phase C order), the Class B grammars being retired, `mail/*`, `drive/*`, `calendar/*`, `work-chat/*` and their read ports and adapters for the wave-2 gaps, golden corpora (+ its own acceptance and docs) | opus | NL-1 shadow data, the ADR-0120 D12 evaluation gate, the owner's yes (and for Phase C the D8 egress yes) |
+| 4 | NL-2 model-first + bounded agent design (ADR-0121) | NL | Agent stages S0/S2 per ADR-0121 (`core/application/agent/*`, `app/security/*`, `ops/security/*`) once ratified; `core/application/nl-routing/*`, `conversation-runtime.ts` (Phase C order), the Class B grammars being retired, `mail/*`, `drive/*`, `calendar/*`, `work-chat/*` and their read ports and adapters for the wave-2 gaps, golden corpora (+ its own acceptance and docs) | opus | the owner's ratification of ADR-0121 (S0 needs only the owner's yes to its list); NL-1 shadow data, the ADR-0120 D12 evaluation gate, the owner's yes (and for Phase C the D8 egress yes) |
 
 Inside a wave, tasks run in parallel in separate worktrees, except where the Deps column orders two tasks of the same
 wave. P2 tasks may be dropped without blocking INT-4. INT-4 and DOC-G close waves 1-3; NL-2 carries its own acceptance
