@@ -1,6 +1,7 @@
 import type {
   ConversationTurnHandler,
   TurnHandlerContext,
+  TurnHandlerProbeContext,
   TurnHandlerReply,
   TurnHandlerWriteDraft,
 } from '../../ports/conversation-turn-handler.port';
@@ -132,7 +133,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
   }
 
   /** The schedule grammar exactly as `handle` reads it (a reminder is never a schedule question); `null` on no match. */
-  private parseQuestion(ctx: TurnHandlerContext): ReturnType<typeof parseCalendarQuestion> {
+  private parseQuestion(ctx: TurnHandlerProbeContext): ReturnType<typeof parseCalendarQuestion> {
     try {
       if (parseReminderMessage(ctx.message.text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
       return parseCalendarQuestion(ctx.message.text, { yieldToSelection: ctx.grammarYield === true });
@@ -145,7 +146,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
    * ADR-0120 D6 Phase C: the schedule-question grammar (frozen Class B, ADR-0110 D3) would answer this message, with the
    * `calendar.events` equivalent of the span it would list. A write request is Class A (`null`). Pure: nothing is read.
    */
-  classBProbe(ctx: TurnHandlerContext): NlClassBProbe | null {
+  classBProbe(ctx: TurnHandlerProbeContext): NlClassBProbe | null {
     const question = this.parseQuestion(ctx);
     if (question === null || question.kind === 'write-refused') return null;
     try {

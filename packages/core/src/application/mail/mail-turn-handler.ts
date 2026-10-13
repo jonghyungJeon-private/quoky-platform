@@ -3,6 +3,7 @@ import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import type {
   ConversationTurnHandler,
   TurnHandlerContext,
+  TurnHandlerProbeContext,
   TurnHandlerReply,
   TurnHandlerSummarizeReply,
 } from '../../ports/conversation-turn-handler.port';
@@ -152,7 +153,7 @@ export class MailTurnHandler implements ConversationTurnHandler {
   }
 
   /** The mail grammar exactly as `handle` reads it (a reminder is never a mail question); `null` on no match. */
-  private parseQuestion(ctx: TurnHandlerContext): MailQuestion | null {
+  private parseQuestion(ctx: TurnHandlerProbeContext): MailQuestion | null {
     try {
       if (parseReminderMessage(ctx.message.text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
       return parseMailQuestion(ctx.message.text);
@@ -165,7 +166,7 @@ export class MailTurnHandler implements ConversationTurnHandler {
    * ADR-0120 D6 Phase C: only the listing forms are frozen Class B. A write refusal, the usage hint and an `N번 메일 요약`
    * item summary are Class A (`null`), so `handle` answers them exactly as before. Pure: nothing is read.
    */
-  classBProbe(ctx: TurnHandlerContext): NlClassBProbe | null {
+  classBProbe(ctx: TurnHandlerProbeContext): NlClassBProbe | null {
     const question = this.parseQuestion(ctx);
     if (question === null || question.kind !== 'list') return null;
     return { grammarId: MAIL_LIST_GRAMMAR_ID, selection: mailGrammarSelection(question) };

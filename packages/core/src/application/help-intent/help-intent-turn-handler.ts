@@ -1,4 +1,4 @@
-import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
+import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerProbeContext, TurnHandlerReply } from '../../ports';
 import { outboundMessage } from '../message-rendering';
 import { nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlSelectedCommand } from '../nl-routing/catalog';
 import { NL_HELP_TOPICS, nlWave1Entry } from '../nl-routing/wave1-entries';
@@ -91,7 +91,7 @@ export class HelpIntentTurnHandler implements ConversationTurnHandler {
    * question with contributed lines, or the capability question. The `help.topic` equivalent is given for one topic the
    * catalog names (or `all` for the capability question); several topics have none. Pure, like `handle`'s matching.
    */
-  classBProbe(ctx: TurnHandlerContext): NlClassBProbe | null {
+  classBProbe(ctx: TurnHandlerProbeContext): NlClassBProbe | null {
     try {
       const topics = this.deps.topics ?? HELP_INTENT_TOPICS;
       const match = detectHelpIntent(ctx.message.text, topics);

@@ -7,6 +7,7 @@ import type { SessionManager } from '../session-manager';
 import type { NlAmbiguityKey, NlArgs, NlCatalogEntry, NlClassBProbe, NlGrammarSelection, NlSelectedCommand, NlText } from './catalog';
 import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput } from './selection-input';
 import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
+import { nlSelectionMeaning } from './selection-meaning';
 import { buildSelectionPrompt } from './selection-prompt';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
@@ -59,6 +60,9 @@ export type NlPhase = 'a' | 'c' | 'c-shadow';
 export const NL_PHASES: readonly NlPhase[] = ['a', 'c', 'c-shadow'];
 
 export const NL_SELECTION_TIMEOUT_MS = 6_000;
+
+/** S1 `c-shadow` (W2): at most this many background selections start per rolling hour; further hits are dropped. */
+export const NL_SHADOW_MAX_PER_HOUR = 60;
 
 /** ADR-0120 A3 follow-up: the startup warm-up bound. It applies to the warm-up call only, never to an owner turn. */
 export const NL_WARMUP_TIMEOUT_MS = 20_000;
@@ -178,6 +182,11 @@ export class NlSelectionService {
   private readonly cache = new Map<string, CacheEntry>();
   /** The last shadow run (tests await it; production never does). */
   lastShadowRun: Promise<void> = Promise.resolve();
+  /** W1: aborts every background selection on shutdown (`stopBackground`). */
+  private readonly background = new AbortController();
+  /** W2: the `c-shadow` job in flight (at most one) and the start times of the last hour (at most 60). */
+  private shadowInFlight = false;
+  private readonly shadowStarts: number[] = [];
 
   constructor(private readonly deps: NlSelectionServiceDeps) {
     this.mode = deps.mode;
@@ -275,12 +284,55 @@ export class NlSelectionService {
    * it acts on nothing and writes no session or actor state — its only output is one `nl_selection.agreement` line
    * (`mode: shadow`). Never throws; the caller must start it only after the reply was handed back.
    */
-  shadowGrammarHit(turn: NlSelectionTurn): Promise<void> {
+  shadowGrammarHit(
+    turn: Omit<NlSelectionTurn, 'chatProviderId' | 'chatProviderLocality'>,
+    resolveChat: () => Promise<{ readonly id: string; readonly locality: AiExecutionLocality } | undefined>,
+  ): Promise<void> {
     if (!this.phaseCShadowEnabled() || turn.grammar === undefined || turn.entries.length === 0) return Promise.resolve();
-    this.lastShadowRun = this.shadow(turn).catch((error: unknown) =>
-      this.log('warn', 'nl_selection.shadow_failed', { errorName: error instanceof Error ? error.name : typeof error }),
-    );
+    if (this.background.signal.aborted) return Promise.resolve();
+    // W2: one job in flight at most, and at most NL_SHADOW_MAX_PER_HOUR started per rolling hour; the rest are dropped.
+    const clock = this.deps.elapsed ?? Date.now;
+    const nowMs = clock();
+    while (this.shadowStarts.length > 0 && nowMs - (this.shadowStarts[0] as number) >= 3_600_000) this.shadowStarts.shift();
+    if (this.shadowInFlight || this.shadowStarts.length >= NL_SHADOW_MAX_PER_HOUR) {
+      this.logAgreement(turn, { outcome: 'dropped', reason: this.shadowInFlight ? 'in-flight' : 'hourly-cap', shadow: true });
+      return Promise.resolve();
+    }
+    this.shadowInFlight = true;
+    this.shadowStarts.push(nowMs);
+    // W1: the job (provider resolution included) is abortable by `stopBackground()` and bounded as a whole by the
+    // selection bound; on either, the in-flight call gets the abort signal (the CLI runner kills its child process).
+    const job = new AbortController();
+    const stop = (): void => job.abort();
+    this.background.signal.addEventListener('abort', stop, { once: true });
+    const timeoutMs = this.deps.timeoutMs ?? NL_SELECTION_TIMEOUT_MS;
+    const work = (async () => {
+      const chat = await resolveChat();
+      if (job.signal.aborted) return;
+      await this.shadow({ ...turn, ...(chat !== undefined ? { chatProviderId: chat.id, chatProviderLocality: chat.locality } : {}) }, job.signal);
+    })();
+    this.lastShadowRun = withTimeout(work, timeoutMs, true)
+      .catch((error: unknown) => {
+        job.abort();
+        if (error instanceof SelectionTimeout) {
+          if (!this.background.signal.aborted) this.logAgreement(turn, { outcome: 'fallback', reason: 'timeout', latencyMs: Math.max(0, clock() - nowMs), shadow: true });
+        } else {
+          this.log('warn', 'nl_selection.shadow_failed', { errorName: error instanceof Error ? error.name : typeof error });
+        }
+      })
+      .finally(() => {
+        this.shadowInFlight = false;
+        this.background.signal.removeEventListener('abort', stop);
+      });
     return this.lastShadowRun;
+  }
+
+  /**
+   * W1 (shutdown): abort every background selection (the `c-shadow` job and anything started later is refused). The
+   * in-flight provider call receives the abort signal, so the CLI runner terminates its child process. Idempotent.
+   */
+  stopBackground(): void {
+    this.background.abort();
   }
 
   /** Cheap pre-check (no router call): the flag is on and the mode is `active`. */
@@ -548,7 +600,7 @@ export class NlSelectionService {
 
   // ── shadow ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  private async shadow(turn: NlSelectionTurn): Promise<void> {
+  private async shadow(turn: NlSelectionTurn, signal?: AbortSignal): Promise<void> {
     const last = readLastSelection(turn.session, turn.actor.id, turn.now);
     const prepared = this.prepare(turn, last);
     if ('skip' in prepared) {
@@ -556,7 +608,9 @@ export class NlSelectionService {
       this.logAgreement(turn, { outcome: 'fallback', reason: prepared.skip, shadow: true });
       return;
     }
-    const selected = await this.select(turn, prepared, last);
+    const selected = await this.select(turn, prepared, last, signal);
+    // A job aborted on shutdown or at its bound logs nothing more (the caller logged the timeout).
+    if (signal?.aborted === true) return;
     if (selected.kind === 'egress-refused') {
       this.log('info', 'nl_selection.shadow', { outcome: 'skipped', reason: selected.reason, grammarId: turn.route });
       this.logAgreement(turn, { outcome: 'fallback', reason: selected.reason, shadow: true });
@@ -608,7 +662,7 @@ export class NlSelectionService {
     return prepared;
   }
 
-  private async select(turn: NlSelectionTurn, prepared: PreparedSelectionInput, last: LastSelection | undefined): Promise<SelectOutcome> {
+  private async select(turn: NlSelectionTurn, prepared: PreparedSelectionInput, last: LastSelection | undefined, signal?: AbortSignal): Promise<SelectOutcome> {
     const clock = this.deps.elapsed ?? Date.now;
     const started = clock();
     const previous = last === undefined ? undefined : { entryId: last.entryId, args: last.args };
@@ -639,7 +693,7 @@ export class NlSelectionService {
     let rawText: string;
     try {
       const result = await withTimeout(
-        provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs }),
+        provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, ...(signal !== undefined ? { signal } : {}) }),
         timeoutMs,
       );
       rawText = result.text;
@@ -706,7 +760,7 @@ export class NlSelectionService {
   private logAgreement(
     turn: NlSelectionTurn,
     result: {
-      readonly outcome: 'execute' | 'ask' | 'none' | 'skip' | 'unavailable' | 'fallback';
+      readonly outcome: 'execute' | 'ask' | 'none' | 'skip' | 'unavailable' | 'fallback' | 'dropped';
       readonly selection?: NlGrammarSelection;
       readonly reason?: string;
       readonly latencyMs?: number;
@@ -724,11 +778,20 @@ export class NlSelectionService {
       entryId: result.selection?.entryId ?? 'none',
       outcome: result.outcome,
       mode: result.shadow === true ? 'shadow' : 'active',
-      ...(decided ? { agree: agreeEntry && canonicalArgs(result.selection?.args) === canonicalArgs(grammar.selection?.args), agreeEntry } : {}),
+      // W3: `agree` compares MEANING (dates resolved by Core's clock, catalog defaults, count and the unread default
+      // normalized, `nlSelectionMeaning`) and is what D10 reads; `agreeEntry` is the entry alone.
+      ...(decided ? { agree: agreeEntry && this.sameMeaning(turn, result.selection, grammar.selection), agreeEntry } : {}),
       ...(result.reason !== undefined ? { reason: result.reason } : {}),
       ...(result.latencyMs !== undefined ? { latencyMs: result.latencyMs } : {}),
       ...(result.cached !== undefined ? { cached: result.cached } : {}),
     });
+  }
+
+  /** W3: both selections resolved to what the owner would see, with this turn's clock (values compared, never logged). */
+  private sameMeaning(turn: Pick<NlSelectionTurn, 'entries' | 'now'>, a: NlGrammarSelection | undefined, b: NlGrammarSelection | undefined): boolean {
+    if (a === undefined || b === undefined || a.entryId !== b.entryId) return false;
+    const entry = turn.entries.find((candidate) => candidate.id === a.entryId);
+    return nlSelectionMeaning(a, entry, turn.now, this.deps.timeZone) === nlSelectionMeaning(b, entry, turn.now, this.deps.timeZone);
   }
 
   private log(level: 'info' | 'warn', event: string, fields: LogFields): void {
@@ -754,11 +817,6 @@ function sameEgress(
   return 'same';
 }
 
-/** Order-independent canonical form of args for the agreement flag (values are compared, never logged). */
-function canonicalArgs(args: NlArgs | undefined): string {
-  if (args === undefined) return '';
-  return JSON.stringify(Object.keys(args).sort().map((key) => [key, args[key]]));
-}
 
 /** Whether the owner's own words name `value` of `key` (one of its grounding words, case- and spacing-insensitive). */
 function isAmbiguityValueGrounded(key: NlAmbiguityKey, value: string, groundingText: string): boolean {

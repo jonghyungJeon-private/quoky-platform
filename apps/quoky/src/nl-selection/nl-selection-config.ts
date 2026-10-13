@@ -10,7 +10,7 @@ import { NL_SELECTION_TIMEOUT_MS } from '@quoky/core';
  * - `QUOKY_NL_GRAMMAR_YIELD` (ADR-0120 amendment A2): exactly `off` or `on`; default `off`. `on` lets a Class B listing
  *   grammar decline a message with a qualifier it cannot express, so selection (mode `active` only) can bind it. It sends
  *   messages the host answers today to the selector, so it is its own flag.
- * - `QUOKY_NL_PHASE` (ADR-0120 D6, ADR-0121 S1): exactly `a` or `c`; default `a` (Phase A, every turn byte-identical to
+ * - `QUOKY_NL_PHASE` (ADR-0120 D6, ADR-0121 S1): exactly `a`, `c` or `c-shadow`; default `a` (Phase A, every turn byte-identical to
  *   before S1). `c` (Phase C) runs selection before the frozen Class B grammars, which become the fallback when the selector
  *   is unavailable; it acts in `active`, and in `shadow` it is grammar-hit shadowing (the grammar answers, the agreement is
  *   logged). It sends messages the host answers today to the selector (the D8 egress the owner allowed for S1), so it is
@@ -29,7 +29,7 @@ export interface NlSelectionConfig {
   readonly model: string;
   /** `QUOKY_NL_GRAMMAR_YIELD=on` (amendment A2). */
   readonly grammarYield: boolean;
-  /** `QUOKY_NL_PHASE` (S1): `a` (default) or `c`. */
+  /** `QUOKY_NL_PHASE` (S1): `a` (default), `c`, or `c-shadow` (only with mode `active`). */
   readonly phase: NlPhaseConfig;
   /** `QUOKY_NL_INTENT_TIMEOUT_MS` (amendment A3), milliseconds. */
   readonly timeoutMs: number;

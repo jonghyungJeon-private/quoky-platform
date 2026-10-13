@@ -52,6 +52,8 @@ interface GoldenCase {
   readonly channel?: boolean;
   /** S1: the frozen Class B grammar that answers this case in Phase A with QUOKY_NL_GRAMMAR_YIELD=on (production). */
   readonly grammar?: string;
+  /** S1: that grammar's own catalog equivalent (null: none), the eval's grammar-side scoring input. */
+  readonly grammarAnswer?: { readonly entryId: string; readonly args: NlArgs } | null;
 }
 
 const CORPUS = JSON.parse(
@@ -95,7 +97,7 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
   const connectorQueries: Array<{ source: string; query: ConnectorQuery }> = [];
   const readerCalls: string[] = [];
   /** Phase C: every `classBProbe` call (handler id and whether it was a hit). */
-  const probes: Array<{ handlerId: string; grammarId?: string; entryId?: string }> = [];
+  const probes: Array<{ handlerId: string; grammarId?: string; entryId?: string; selection?: { entryId: string; args: NlArgs } }> = [];
   let seq = 0;
 
   beforeAll(async () => {
@@ -217,7 +219,7 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       if (probe !== undefined) {
         (handler as { classBProbe?: ConversationTurnHandler['classBProbe'] }).classBProbe = (ctx) => {
           const hit = probe(ctx);
-          probes.push({ handlerId: handler.id, ...(hit !== null ? { grammarId: hit.grammarId, ...(hit.selection !== undefined ? { entryId: hit.selection.entryId } : {}) } : {}) });
+          probes.push({ handlerId: handler.id, ...(hit !== null ? { grammarId: hit.grammarId, ...(hit.selection !== undefined ? { entryId: hit.selection.entryId, selection: { entryId: hit.selection.entryId, args: { ...hit.selection.args } } } : {}) } : {}) });
           return hit;
         };
       }
@@ -468,6 +470,19 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       const probed = hit?.grammarId ?? (workSurface ? 'work-surface' : undefined);
       if (yieldOn ? golden.grammar !== probed : golden.grammar !== undefined && golden.grammar !== probed) {
         failures.push(`${golden.id}: corpus grammar tag ${golden.grammar ?? '-'} but the probe says ${probed ?? '-'}`);
+      }
+      // The recorded grammar answer (the eval's grammar-side scoring) is what the probe says, by meaning (dates resolved).
+      if (yieldOn && hit !== undefined) {
+        const recorded = golden.grammarAnswer ?? null;
+        const live = hit.selection ?? null;
+        const entry = core.NL_WAVE1_ENTRIES[(live ?? recorded)?.entryId as keyof typeof core.NL_WAVE1_ENTRIES];
+        const now = new Date().toISOString();
+        const same =
+          recorded === null || live === null
+            ? recorded === live
+            : core.nlSelectionMeaning(recorded as never, entry, now, 'Asia/Seoul') === core.nlSelectionMeaning(live as never, entry, now, 'Asia/Seoul') ||
+              (recorded.entryId === live.entryId && typeof recorded.args.range === 'string' && /^(?:next-)?[a-z]{3}$|^\d{2}-\d{2}$/.test(recorded.args.range));
+        if (!same) failures.push(`${golden.id}: recorded grammarAnswer ${JSON.stringify(recorded)} but the probe says ${JSON.stringify(live)}`);
       }
       if (hit !== undefined) {
         // Phase C: at a Class B position the selector runs first — before the grammar's own handle and before classify.
@@ -921,6 +936,31 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     });
     expect(JSON.stringify((await sessions.openForContext(ctxBase, ownerActor.id)).metadata ?? {})).toBe(before.metadata);
   });
+
+  it('S1 Phase C: on every routing-corpus turn without a probe hit (turn-handler, intent-routing, reminder/to-do precedence), Phase C makes the same claims as Phase A', async () => {
+    const texts: string[] = [];
+    for (const file of ['turn-handler-routing.v1.json', 'intent-routing.v1.json', 'reminder-todo-precedence.v1.json']) {
+      const suite = JSON.parse(readFileSync(join(__dirname, '../../../../packages/core/src/application/golden', file), 'utf8')) as { cases: Array<{ text: string }> };
+      for (const golden of suite.cases) texts.push(golden.text);
+    }
+    expect(texts.length).toBeGreaterThan(600);
+    const failures: string[] = [];
+    let hits = 0;
+    selectorAnswer = none;
+    for (const text of texts) {
+      const phaseA = await withPhase('a', 'active', () => turnOf(text));
+      const phaseC = await withPhase('c', 'active', () => turnOf(text));
+      if (phaseC.hits.length > 0) {
+        hits += 1;
+        continue;
+      }
+      if (JSON.stringify(phaseC.claims) !== JSON.stringify(phaseA.claims)) failures.push(`${text.slice(0, 40)}: claims ${phaseA.claims} -> ${phaseC.claims}`);
+      if (phaseC.selects !== phaseA.selects) failures.push(`${text.slice(0, 40)}: selects ${phaseA.selects} -> ${phaseC.selects}`);
+      if (phaseC.result.status !== phaseA.result.status) failures.push(`${text.slice(0, 40)}: status ${phaseA.result.status} -> ${phaseC.result.status}`);
+    }
+    expect(failures).toEqual([]);
+    expect(hits).toBeGreaterThan(0);
+  }, 600_000);
 
   it('S1 Phase C: Class A precedence is untouched — anchors, writes, memory, model, reminders and item summaries never reach the selector and answer as in Phase A', async () => {
     const classA = [

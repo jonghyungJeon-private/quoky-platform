@@ -3166,9 +3166,8 @@ export class ConversationRuntime {
     const now = this.clock();
     const entries = [...this.nlCatalog().values()].map((owned) => owned.entry);
     this.nlAfterReply.set(message, async () => {
-      const chat = await this.nlChatProvider({ capability: Capability.GENERAL_CHAT } as Intent, session, actor);
+      // The chat provider is resolved inside the service's bounded, abortable job (W1/W2).
       await this.deps.nlSelection?.shadowGrammarHit?.({
-        ...(chat !== undefined ? { chatProviderId: chat.id, chatProviderLocality: chat.locality } : {}),
         text: message.text,
         attachmentCount: message.attachments?.length ?? 0,
         ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
@@ -3179,7 +3178,7 @@ export class ConversationRuntime {
         route: 'class-b',
         grammar,
         pending: null,
-      });
+      }, () => this.nlChatProvider({ capability: Capability.GENERAL_CHAT } as Intent, session, actor));
     });
   }
 

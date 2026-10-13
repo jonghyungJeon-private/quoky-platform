@@ -4,6 +4,8 @@ import type { AiExecutionLocality, AiProvider, AiRequest, LogFields, Logger } fr
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry, type NlClassBProbe } from './catalog';
 import { NlSelectionService, type NlIntentMode, type NlPhase, type NlSelectionDecision, type NlSelectionRoute } from './nl-selection-service';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
+import { nlSelectionMeaning } from './selection-meaning';
+import { spawn } from 'node:child_process';
 
 // ADR-0120 D6 Phase C / ADR-0121 S1 at the service level, with a scripted stub selector (no model): the phase switch,
 // the S1 locality hardening (equal family AND equal execution locality), and the content-free D10/D11 agreement log.
@@ -126,14 +128,15 @@ describe('NlSelectionService — S1 c-shadow (Phase A live, grammar hits shadowe
       timeZone: 'Asia/Seoul',
       logger: { info: (event, fields) => void h.logs.push({ event, ...(fields ? { fields } : {}) }), warn: () => undefined, error: () => undefined },
     });
-    const turn = { text: '이번 주 일정 보여줘', attachmentCount: 0, session, actor: { id: 'owner', displayName: 'O', identities: [], createdAt: T0 }, now: T0, entries: ALL, route: 'class-b' as const, chatProviderId: 'scripted-selector', grammar, pending: null };
-    await counting.shadowGrammarHit(turn);
+    const turn = { text: '이번 주 일정 보여줘', attachmentCount: 0, session, actor: { id: 'owner', displayName: 'O', identities: [], createdAt: T0 }, now: T0, entries: ALL, route: 'class-b' as const, grammar, pending: null };
+    const chat = async () => ({ id: 'scripted-selector', locality: 'REMOTE' as const });
+    await counting.shadowGrammarHit(turn, chat);
     expect(h.calls).toHaveLength(1);
     expect(writes).toBe(0);
     expect(agreementLines(h.logs)).toEqual([expect.objectContaining({ grammarId: 'calendar-question', entryId: 'calendar.events', outcome: 'execute', mode: 'shadow', agree: true })]);
     // Outside c-shadow nothing is called.
     const off = harness({ mode: 'active', phase: 'c', script: [out('calendar.events')] });
-    await off.service.shadowGrammarHit({ ...turn });
+    await off.service.shadowGrammarHit({ ...turn }, chat);
     expect(off.calls).toHaveLength(0);
   });
 });
@@ -251,5 +254,152 @@ describe('selection prompt — S1 narrowing follow-up rule', () => {
     expect(prompt).toContain('A narrowing follow-up');
     expect(prompt).toContain('never CLEAR, never none');
     expect(prompt.split('\n').filter((line) => line.startsWith('Previous selection:')).at(-1)).toBe('Previous selection: none');
+  });
+});
+
+describe('S1 W3 — agreement by meaning (nlSelectionMeaning)', () => {
+  const meaning = (entryId: string, args: Record<string, unknown>) =>
+    nlSelectionMeaning({ entryId: entryId as never, args: args as never }, NL_WAVE1_ENTRIES[entryId as keyof typeof NL_WAVE1_ENTRIES], T0, 'Asia/Seoul');
+
+  it('resolves ISO dates, MM-DD and weekday symbols with Core\'s clock (2026-10-13 is a Tuesday in Seoul)', () => {
+    expect(meaning('calendar.events', { range: '2026-10-16' })).toBe(meaning('calendar.events', { range: 'fri' }));
+    expect(meaning('calendar.events', { range: '2026-10-20' })).toBe(meaning('calendar.events', { range: '10-20' }));
+    expect(meaning('calendar.events', { range: '2026-10-19' })).toBe(meaning('calendar.events', { range: 'next-mon' }));
+    expect(meaning('calendar.events', { range: '2026-10-17' })).not.toBe(meaning('calendar.events', { range: 'fri' }));
+    // The catalog default: no range is today.
+    expect(meaning('calendar.events', {})).toBe(meaning('calendar.events', { range: '2026-10-13' }));
+  });
+
+  it('a count question shows the same list; a bare mail check ignores the unread default; keywords stay exact', () => {
+    expect(meaning('todo.list', { count: true })).toBe(meaning('todo.list', {}));
+    expect(meaning('mail.list', { unread: true })).toBe(meaning('mail.list', {}));
+    expect(meaning('mail.list', { unread: true, today: true })).not.toBe(meaning('mail.list', { today: true }));
+    expect(meaning('jira.issues', { status: 'open' })).toBe(meaning('jira.issues', {}));
+    expect(meaning('slack.search', { keyword: '배포' })).not.toBe(meaning('slack.search', { keyword: '배포 관련' }));
+  });
+
+  it('the agreement log reads meaning: an ISO-date grammar answer agrees with the selector\'s `fri`', async () => {
+    const h = harness({ phase: 'c', script: [out('calendar.events', { range: 'fri' })] });
+    await h.decide('금요일 일정 뭐야?', { grammar: { grammarId: 'calendar-question', selection: { entryId: 'calendar.events', args: { range: '2026-10-16' } } } });
+    expect(agreementLines(h.logs)).toEqual([expect.objectContaining({ agree: true, agreeEntry: true })]);
+  });
+});
+
+describe('S1 W1/W2 — c-shadow jobs are bounded, single-flight, capped and stopped on shutdown', () => {
+  const grammar: NlClassBProbe = { grammarId: 'calendar-question', selection: { entryId: 'calendar.events', args: {} } };
+  const turnOf = (text: string) => ({
+    text,
+    attachmentCount: 0,
+    session: { id: 's' },
+    actor: { id: 'owner', displayName: 'O', identities: [], createdAt: T0 },
+    now: T0,
+    entries: ALL,
+    route: 'class-b' as const,
+    grammar,
+    pending: null,
+  });
+  const chat = async () => ({ id: 'slow', locality: 'REMOTE' as const });
+
+  function slowService(options: { execute?: (request: AiRequest) => Promise<{ text: string; artifacts: [] }>; elapsed?: () => number; timeoutMs?: number; select?: () => Promise<AiProvider> } = {}) {
+    const logs: Array<{ event: string; fields?: LogFields }> = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const provider: AiProvider = {
+      id: 'slow',
+      capabilities: [],
+      isAvailable: async () => true,
+      execute:
+        options.execute ??
+        (async (request) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          inFlight -= 1;
+          void request;
+          return { text: out('calendar.events'), artifacts: [] };
+        }),
+    };
+    const service = new NlSelectionService({
+      mode: 'active',
+      phase: 'c-shadow',
+      router: { select: options.select ?? (async () => provider) },
+      sessions: { updateMetadataEntry: async () => null },
+      actors: { get: async () => null, save: async (actor) => actor },
+      timeZone: 'Asia/Seoul',
+      logger: { info: (event, fields) => void logs.push({ event, ...(fields ? { fields } : {}) }), warn: (event, fields) => void logs.push({ event, ...(fields ? { fields } : {}) }), error: () => undefined },
+      ...(options.elapsed !== undefined ? { elapsed: options.elapsed } : {}),
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    });
+    return { service, logs, maxInFlight: () => maxInFlight };
+  }
+
+  it('32 overlapping grammar hits: at most one call in flight, the rest are `dropped` agreement lines', async () => {
+    const h = slowService();
+    const runs = Array.from({ length: 32 }, (_, index) => h.service.shadowGrammarHit(turnOf(`이번 주 일정 ${index}`), chat));
+    await Promise.all(runs);
+    await h.service.lastShadowRun;
+    expect(h.maxInFlight()).toBe(1);
+    const lines = agreementLines(h.logs);
+    expect(lines.filter((line) => line.outcome === 'dropped')).toHaveLength(31);
+    expect(lines.filter((line) => line.outcome === 'dropped').every((line) => line.reason === 'in-flight' && line.agree === undefined)).toBe(true);
+    expect(lines.filter((line) => line.outcome === 'execute')).toHaveLength(1);
+  });
+
+  it('at most 60 jobs start per rolling hour', async () => {
+    let clock = 0;
+    const h = slowService({ elapsed: () => clock, execute: async () => ({ text: out('calendar.events'), artifacts: [] }) });
+    for (let index = 0; index < 61; index += 1) await h.service.shadowGrammarHit(turnOf(`일정 ${index}`), chat);
+    expect(agreementLines(h.logs).filter((line) => line.outcome === 'dropped').map((line) => line.reason)).toEqual(['hourly-cap']);
+    clock += 3_600_000;
+    await h.service.shadowGrammarHit(turnOf('일정 다시'), chat);
+    expect(agreementLines(h.logs).filter((line) => line.outcome === 'execute')).toHaveLength(61);
+  });
+
+  it('the whole job — provider resolution included — is bounded; a hang ends as `fallback timeout` and frees the slot', async () => {
+    const h = slowService({ timeoutMs: 50, select: () => new Promise<AiProvider>(() => undefined) });
+    await h.service.shadowGrammarHit(turnOf('이번 주 일정'), chat);
+    expect(agreementLines(h.logs)).toEqual([expect.objectContaining({ outcome: 'fallback', reason: 'timeout' })]);
+    const hangingChat = slowService({ timeoutMs: 50 });
+    await hangingChat.service.shadowGrammarHit(turnOf('이번 주 일정'), () => new Promise(() => undefined));
+    expect(agreementLines(hangingChat.logs)).toEqual([expect.objectContaining({ outcome: 'fallback', reason: 'timeout' })]);
+    await hangingChat.service.shadowGrammarHit(turnOf('이번 주 일정 2'), chat);
+    expect(agreementLines(hangingChat.logs).at(-1)).toMatchObject({ outcome: 'execute' });
+  });
+
+  it('stopBackground() aborts the in-flight call: its child process does not survive shutdown, and later hits start nothing', async () => {
+    const children: number[] = [];
+    let calls = 0;
+    const h = slowService({
+      execute: (request) =>
+        new Promise((resolve, reject) => {
+          calls += 1;
+          // A stand-in for the `claude -p` child: the runner kills its process when the request's signal aborts.
+          const child = spawn('sleep', ['30'], { stdio: 'ignore' });
+          if (child.pid !== undefined) children.push(child.pid);
+          request.signal?.addEventListener('abort', () => {
+            child.kill('SIGTERM');
+            reject(new Error('aborted'));
+          }, { once: true });
+          child.on('exit', () => resolve({ text: out('calendar.events'), artifacts: [] }));
+        }),
+    });
+    const run = h.service.shadowGrammarHit(turnOf('이번 주 일정'), chat);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(children).toHaveLength(1);
+    h.service.stopBackground();
+    await run;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    expect(children.filter(alive)).toEqual([]);
+    expect(agreementLines(h.logs).filter((line) => line.outcome === 'execute')).toEqual([]);
+    await h.service.shadowGrammarHit(turnOf('이번 주 일정 2'), chat);
+    expect(calls).toBe(1);
   });
 });

@@ -16,10 +16,13 @@ note at the end of `DECISIONS.md`.
   content-free `nl_selection.agreement` log, the equal-locality rule, the `nl-select.v17` narrowing-follow-up rule, and
   a 727-case corpus with `grammar` tags (at least 25 per Class B entry). Eval, 3 runs: 98.6/98.4/98.1%, 0 wrong, lowest
   entry 93.0%, at most 0.8% over 6 s. Added latency on grammar-handled messages: p50 about 1.4 s, p95 about 2.1 s.
-  `pnpm build`, `typecheck` and `test` pass (435 files, 13,850 tests).
+  `pnpm build`, `typecheck` and `test` pass (435 files, 13,861 tests).
 - **Not run (Strict).** The `.env.local` edit (recommended first: `QUOKY_NL_PHASE=c-shadow` with the live `active`),
   the restart and the live UAT. The Chief Architect review is required before merge.
-- **Owner decision.** `c-shadow` first, then `c`; or keep Phase A + A2 if +1.4 s is too slow (see the note).
+- **Plan of record.** Ship `active` + `c-shadow` first; move grammars to `c` one at a time on per-grammar agreement
+  (`agree` by meaning). Owner asks: accept ADR-0120 amendment A4 (Proposed), and approve the 148-case S1 corpus batch.
+- **Review fixes (CA CHANGES REQUIRED, Codex P2).** Rebased on #193; `c-shadow` single-flight, 60/h, whole-job bound,
+  shutdown abort; meaning-based agreement; three-metric grammar-vs-selector scoring (user-visible 95.0% vs 97.9–99.2%).
 
 ### v5 STO-1 storage hardening, migration v16 — on branch `claude/v5-w2-sto1` (2026-10-13)
 

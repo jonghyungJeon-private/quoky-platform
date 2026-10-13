@@ -18,7 +18,13 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   ADR-0120 D10 grammar-retirement data.
 - **Hardening.** Selection also requires the chat provider's declared execution locality to equal the selector's
   (`chat-locality-differs`); prompt `nl-select.v17` makes "그 중에 …" with no previous selection a numbered question.
-- **Interface.** Optional pure `ConversationTurnHandler.classBProbe?(ctx)`; no migration, port, token or deps change.
+- **Interface.** Optional pure `ConversationTurnHandler.classBProbe?(ctx)` on a narrowed probe context (ADR-0120
+  amendment A4, Proposed); no migration, token or deps change.
+- **Review fixes.** `c-shadow` jobs run one at a time, at most 60 per hour (`dropped` agreement lines otherwise), are
+  bounded as a whole (provider resolution included) and aborted on shutdown (`stopBackground`, the CLI child is killed);
+  agreement compares meaning (dates resolved, defaults, count, unread default). Fair evidence: grammar side vs selector
+  side on the same 242 cases — exact 83.5% vs 97.9–99.2%, entry 98.8% vs 98.8–100%, user-visible 95.0% vs 97.9–99.2%.
+  The 148 S1 corpus cases are pending the owner's batch approval; corpus and prompt v17 have no held-out set.
 - **Eval (Strict, 3 runs, Haiku, 727 cases):** 98.6/98.4/98.1%, 0 wrong, lowest entry 93.0%, 0.1–0.8% over the 6 s
   bound; the grammar-handled subset 97.9–99.2% (the grammars themselves: 82.6% exact). Phase C adds p50 about 1.4 s and
   p95 about 2.1 s to those messages.

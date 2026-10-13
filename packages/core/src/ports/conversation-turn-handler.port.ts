@@ -63,6 +63,12 @@ export interface TurnHandlerContext {
   resolveActiveWorkspace(): Promise<WorkspaceRef | null>;
 }
 
+/**
+ * ADR-0120 amendment A4 (S1): the only fields a Class B probe may read — the owner's message, the turn's clock and the A2
+ * yield flag. No session, actor, anchor or workspace, so a probe cannot depend on (or touch) conversation state.
+ */
+export type TurnHandlerProbeContext = Pick<TurnHandlerContext, 'message' | 'now' | 'grammarYield'>;
+
 /** A deterministic reply: the handler's text is the turn's reply (the default variant, `kind` may be omitted). */
 export interface TurnHandlerReply {
   readonly kind?: 'reply';
@@ -166,5 +172,5 @@ export interface ConversationTurnHandler {
    * selector is unavailable. Class A branches (anchored commands, writes, item summaries, usage hints) return `null`, so
    * `handle` answers them exactly as before. Absent: the handler has no Class B grammar.
    */
-  classBProbe?(ctx: TurnHandlerContext): NlClassBProbe | null;
+  classBProbe?(ctx: TurnHandlerProbeContext): NlClassBProbe | null;
 }

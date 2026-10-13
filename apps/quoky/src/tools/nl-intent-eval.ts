@@ -21,6 +21,7 @@ import {
   NL_WAVE1_ENTRIES,
   buildSelectionPrompt,
   isNlCatalogEntryId,
+  nlSelectionMeaning,
   parseSelectionOutput,
   prepareSelectionInput,
   validateSelection,
@@ -48,6 +49,8 @@ export interface NlEvalCase {
   readonly note?: string;
   /** S1: the frozen Class B grammar that answers this case in Phase A (the grammar-handled subset of the report). */
   readonly grammar?: string;
+  /** S1: that grammar's own catalog equivalent (`null`: it has none), checked against the probes by the dispatch test. */
+  readonly grammarAnswer?: { readonly entryId: string; readonly args: NlArgs } | null;
 }
 
 export interface NlEvalCorpus {
@@ -347,4 +350,87 @@ export async function runEvaluation(input: {
     await Promise.all(Array.from({ length: input.plan.concurrency }, () => worker()));
   }
   return records;
+}
+
+// ── S1 fair evidence: the grammar side and the selector side on the same grammar-handled cases ─────────────────────
+
+/** One side's score on the grammar-handled cases: exact `{entry, args}`, entry only, and what the owner would see. */
+export interface NlSideScore {
+  readonly positives: number;
+  readonly exact: number;
+  readonly entry: number;
+  readonly userVisible: number;
+  /** Grammar-handled negatives the side captured (a read the owner did not ask for). */
+  readonly wrongCaptures: number;
+}
+
+/** Search-word noise that changes nothing the owner sees (the prompt's generic words, English articles, the 님 suffix). */
+const KEYWORD_NOISE = /(?:^|\s)(?:문서|자료|페이지|파일|관련|얘기|내용|메시지|건|거|the|an?)(?=\s|$)/giu;
+const KEYWORD_ARGS = ['keyword', 'name', 'from'];
+
+/**
+ * User-visible meaning: `nlSelectionMeaning` (dates resolved by Core's clock, catalog defaults, count and the unread
+ * default normalized) with keyword-like args stripped of noise words. Two selections with the same user-visible meaning
+ * show the owner the same listing.
+ */
+export function userVisibleMeaning(selection: { readonly entryId: string; readonly args: NlArgs }, now: string, timeZone = 'Asia/Seoul'): string {
+  const args: Record<string, NlArgs[string]> = { ...selection.args };
+  for (const name of KEYWORD_ARGS) {
+    const value = args[name];
+    if (typeof value !== 'string') continue;
+    const cleaned = value.replace(KEYWORD_NOISE, ' ').replace(/님$/u, '').replace(/\s+/g, ' ').trim();
+    if (cleaned.length > 0) args[name] = cleaned;
+  }
+  const entry = isNlCatalogEntryId(selection.entryId) ? NL_WAVE1_ENTRIES[selection.entryId] : undefined;
+  return nlSelectionMeaning({ entryId: selection.entryId as never, args }, entry, now as never, timeZone);
+}
+
+function sideScore(
+  cases: readonly NlEvalCase[],
+  answerOf: (golden: NlEvalCase) => { readonly entryId: string; readonly args: NlArgs } | null | undefined,
+  now: string,
+): NlSideScore {
+  let positives = 0;
+  let exact = 0;
+  let entry = 0;
+  let userVisible = 0;
+  let wrongCaptures = 0;
+  for (const golden of cases) {
+    const got = answerOf(golden);
+    if (golden.expect === 'none') {
+      if (got !== null && got !== undefined) wrongCaptures += 1;
+      continue;
+    }
+    positives += 1;
+    if (got === null || got === undefined || got.entryId !== golden.expect.entryId) continue;
+    entry += 1;
+    if (canonical(got.args) === canonical(golden.expect.args)) exact += 1;
+    if (userVisibleMeaning(got, now) === userVisibleMeaning(golden.expect, now)) userVisible += 1;
+  }
+  return { positives, exact, entry, userVisible, wrongCaptures };
+}
+
+/** The grammars on their own hits (offline, deterministic: the corpus `grammarAnswer`, recorded from the probes). */
+export function scoreGrammarSide(corpus: NlEvalCorpus, now: string): NlSideScore {
+  return sideScore(corpus.cases.filter((golden) => golden.grammar !== undefined), (golden) => golden.grammarAnswer ?? null, now);
+}
+
+/** The selector on the same cases, from one run's records (a clarification, timeout or error answers nothing). */
+export function scoreSelectorSide(corpus: NlEvalCorpus, records: readonly NlEvalRecord[], now: string): NlSideScore {
+  const byId = new Map(records.map((record) => [record.id, record] as const));
+  return sideScore(
+    corpus.cases.filter((golden) => golden.grammar !== undefined && byId.has(golden.id)),
+    (golden) => {
+      const record = byId.get(golden.id);
+      return record !== undefined && (record.outcome === 'hit' || record.outcome === 'miss' || record.outcome === 'wrong-capture') && record.got !== undefined && record.got !== 'none'
+        ? { entryId: record.got, args: record.gotArgs ?? (record.outcome === 'hit' && golden.expect !== 'none' ? golden.expect.args : {}) }
+        : null;
+    },
+    now,
+  );
+}
+
+export function formatSideScore(label: string, score: NlSideScore): string {
+  const pct = (count: number) => (score.positives === 0 ? '-' : `${((count / score.positives) * 100).toFixed(1)}%`);
+  return `${label}: exact ${score.exact}/${score.positives} (${pct(score.exact)}), entry ${score.entry} (${pct(score.entry)}), user-visible ${score.userVisible} (${pct(score.userVisible)}), wrong captures ${score.wrongCaptures}`;
 }

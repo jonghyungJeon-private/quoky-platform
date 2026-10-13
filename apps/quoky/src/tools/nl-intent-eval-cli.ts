@@ -26,6 +26,9 @@ import {
   loadCorpus,
   runEvaluation,
   summarize,
+  formatSideScore,
+  scoreGrammarSide,
+  scoreSelectorSide,
   type NlEvalCorpus,
   type NlEvalPlanOptions,
   type NlEvalRecord,
@@ -196,6 +199,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   if (parsed.mode === 'plan') {
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(formatSideScore('grammar side (offline, the Class B grammars on their own hits)', scoreGrammarSide(corpus, deps.now())));
     deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
     return EXIT_OK;
   }
@@ -226,6 +230,10 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   for (const [index, summary] of summaries.entries()) {
     deps.stdout(`run ${index + 1}/${plan.runs} (${plan.model}, ${plan.promptVersion}):`);
     for (const line of formatSummary(summary)) deps.stdout(line);
+  }
+  deps.stdout(formatSideScore('grammar side (the Class B grammars on their own hits)', scoreGrammarSide(corpus, startedAt)));
+  for (let run = 1; run <= plan.runs; run += 1) {
+    deps.stdout(formatSideScore(`selector side, run ${run} (same cases)`, scoreSelectorSide(corpus, records.filter((record) => record.run === run), startedAt)));
   }
   const misses = records.filter((record) => record.outcome !== 'hit' && record.outcome !== 'none');
   if (misses.length > 0) {

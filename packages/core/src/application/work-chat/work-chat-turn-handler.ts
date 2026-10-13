@@ -1,6 +1,7 @@
 import type {
   ConversationTurnHandler,
   TurnHandlerContext,
+  TurnHandlerProbeContext,
   TurnHandlerOutcome,
   TurnHandlerSummarizeReply,
 } from '../../ports/conversation-turn-handler.port';
@@ -140,7 +141,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
    * write requests and refusals, the usage hints and lookups the catalog cannot express (a GitHub or Jira text search)
    * are not probed (`null`), so `handle` answers them exactly as before. Pure: the desk is not called.
    */
-  classBProbe(ctx: TurnHandlerContext): NlClassBProbe | null {
+  classBProbe(ctx: TurnHandlerProbeContext): NlClassBProbe | null {
     let command: WorkChatCommand | null;
     try {
       command = detectWorkChatCommand(ctx.message.text, { yieldToSelection: ctx.grammarYield === true });
