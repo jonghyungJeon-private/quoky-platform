@@ -66,9 +66,9 @@ function memoryStore() {
       async get(id: Id) { return sessions.get(id) ?? null; },
       async save(session: Session) { sessions.set(session.id, session); return session; },
       async list() { return [...sessions.values()]; },
-      async findActiveByContext(channelId: string, threadId?: string) {
+      async findActiveByContext(platform: string, channelId: string, threadId?: string) {
         return [...sessions.values()].find(
-          (x) => x.status === SessionStatus.ACTIVE && x.context.channelId === channelId && x.context.threadId === threadId,
+          (x) => x.status === SessionStatus.ACTIVE && x.context.platform === platform && x.context.channelId === channelId && x.context.threadId === threadId,
         ) ?? null;
       },
     },

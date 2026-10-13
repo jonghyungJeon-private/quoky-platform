@@ -608,7 +608,7 @@ describe('INT-3 — mail and Drive are DM-only, summary only on request, inert o
 
   it('the real composition persists the displayed listing ids on the session (numbers survive a restart)', async () => {
     await full.turn(discordDm, '안 읽은 메일');
-    const session = await full.storage.sessions.findActiveByContext(discordDm.channelId);
+    const session = await full.storage.sessions.findActiveByContext(discordDm.platform, discordDm.channelId);
     const persisted = JSON.stringify(session?.metadata?.['quoky.lastListing'] ?? null);
     expect(persisted).toContain('"mail"');
     // Ids only: no subject or sender text is persisted.

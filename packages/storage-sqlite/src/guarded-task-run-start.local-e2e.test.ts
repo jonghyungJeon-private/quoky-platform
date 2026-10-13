@@ -262,7 +262,11 @@ describe('ADR-0088 guarded atomic start — real SQLite', () => {
       expect(await f.storage.taskRuns.list()).toEqual([winners[0]!.run]);
       raw(f, db => {
         expect(db.pragma('user_version', { simple: true })).toBe(LATEST_SCHEMA_VERSION);
-        expect((db.pragma('index_list(task_runs)') as { partial: number }[]).every(index => index.partial === 0)).toBe(true);
+        // The guarded start adds no partial index of its own. The only partial index on task_runs is ADR-0119's
+        // read-only usage-ledger index (schema v16), which the start path never reads.
+        const partial = (db.pragma('index_list(task_runs)') as { name: string; partial: number }[])
+          .filter(index => index.partial !== 0).map(index => index.name);
+        expect(partial).toEqual(['idx_task_runs_usage_finished']);
       });
     } finally {
       await Promise.all(children.map(child => new Promise<void>(resolve => {

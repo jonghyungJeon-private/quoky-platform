@@ -215,8 +215,10 @@ function prepareMigratedDatabase(path: string): void {
     migrationSteps.push(runMigrations(raw, MIGRATIONS.slice(0, 14)));
     expect(tableNames(db)).toContain('learning_items');
     expect(tableNames(db)).not.toContain('connector_write_receipts');
-    migrationSteps.push(runMigrations(raw, MIGRATIONS));
+    migrationSteps.push(runMigrations(raw, MIGRATIONS.slice(0, 15)));
     expect(tableNames(db)).toContain('connector_write_receipts');
+    // ADR-0119 (STO-1): v16 adds the session platform key and the usage-ledger index.
+    migrationSteps.push(runMigrations(raw, MIGRATIONS));
   } finally {
     db.close();
   }
@@ -487,25 +489,26 @@ afterAll(async () => {
 });
 
 describe('Personal v3 acceptance — migration lane through v15 (ADR-0096 D10, ADR-0107 D2, ADR-0112 D3)', () => {
-  it('the migration list is exactly 1..15, contiguous, and LATEST_SCHEMA_VERSION is 15', () => {
-    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(Array.from({ length: 15 }, (_, i) => i + 1));
-    expect(LATEST_SCHEMA_VERSION).toBe(15);
+  it('the migration list is exactly 1..16, contiguous, and LATEST_SCHEMA_VERSION is 16 (v16: ADR-0119)', () => {
+    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(Array.from({ length: 16 }, (_, i) => i + 1));
+    expect(LATEST_SCHEMA_VERSION).toBe(16);
     expect(MIGRATIONS[13]?.name).toMatch(/learning items/);
     expect(MIGRATIONS[14]?.name).toMatch(/connector write receipts/);
   });
 
-  it('a v13 (v2 release) DB stepped to 14 (learning_items) and 15 (connector_write_receipts), one version per step', () => {
+  it('a v13 (v2 release) DB stepped to 14 (learning_items), 15 (connector_write_receipts) and 16 (ADR-0119), one version per step', () => {
     expect(migrationSteps).toEqual([
       { from: 0, to: 13, applied: Array.from({ length: 13 }, (_, i) => i + 1) },
       { from: 13, to: 14, applied: [14] },
       { from: 14, to: 15, applied: [15] },
+      { from: 15, to: 16, applied: [16] },
     ]);
   });
 
   it('the production storage opened it without re-migrating; the receipts table has no payload text column', () => {
     const db = openRawDb(dbPath);
     try {
-      expect(Number(db.pragma('user_version', { simple: true }))).toBe(15);
+      expect(Number(db.pragma('user_version', { simple: true }))).toBe(16);
       expect(columnNames(db, 'learning_items')).toEqual([
         'id', 'actor_id', 'kind', 'capability', 'language', 'source_turn_id', 'source_memory_id', 'egress', 'created_at',
         'expires_at', 'data',
@@ -515,7 +518,7 @@ describe('Personal v3 acceptance — migration lane through v15 (ADR-0096 D10, A
         'updated_at', 'data',
       ]);
       type Db = Parameters<typeof runMigrations>[0];
-      expect(() => runMigrations(db as unknown as Db, MIGRATIONS.slice(0, 14))).toThrow('SCHEMA_VERSION_AHEAD');
+      expect(() => runMigrations(db as unknown as Db, MIGRATIONS.slice(0, 15))).toThrow('SCHEMA_VERSION_AHEAD');
     } finally {
       db.close();
     }

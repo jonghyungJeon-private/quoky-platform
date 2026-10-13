@@ -188,10 +188,10 @@ function harness(opts: HarnessOptions) {
       async get(id: string) {
         return sessions.get(id) ?? null;
       },
-      async findActiveByContext(channelId: string, threadId?: string) {
+      async findActiveByContext(platform: string, channelId: string, threadId?: string) {
         return (
           [...sessions.values()]
-            .filter((s) => s.status === SessionStatus.ACTIVE && s.context.channelId === channelId && s.context.threadId === threadId)
+            .filter((s) => s.status === SessionStatus.ACTIVE && s.context.platform === platform && s.context.channelId === channelId && s.context.threadId === threadId)
             .sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt))[0] ?? null
         );
       },

@@ -30,7 +30,7 @@ describe('runMigrations (ADR-0020 — versioned schema)', () => {
   });
 
   it('migration v7 preserves the CAP-011 work_items schema', () => {
-    expect(LATEST_SCHEMA_VERSION).toBe(15);
+    expect(LATEST_SCHEMA_VERSION).toBe(16);
     const db = new Database(':memory:');
     runMigrations(db);
     const cols = (db.pragma('table_info(work_items)') as Array<{ name: string }>).map((c) => c.name);
@@ -338,11 +338,9 @@ describe('migration v14 — learning items table (ADR-0107 D2, ADR-0096 D10)', (
 });
 
 describe('migration v15 — connector write receipts (ADR-0112 D3, ADR-0096 D10)', () => {
-  it('is the fixed version 15 appended after v14, and the latest version', () => {
+  it('is the fixed version 15 appended after v14', () => {
     expect(MIGRATIONS[13]).toMatchObject({ version: 14 });
     expect(MIGRATIONS[14]).toMatchObject({ version: 15 });
-    expect(MIGRATIONS).toHaveLength(15);
-    expect(LATEST_SCHEMA_VERSION).toBe(15);
     expect(() => assertContiguousMigrations(MIGRATIONS)).not.toThrow();
   });
 
@@ -358,13 +356,13 @@ describe('migration v15 — connector write receipts (ADR-0112 D3, ADR-0096 D10)
     const before = tableNames(db);
     expect(before).not.toContain('connector_write_receipts');
 
-    expect(runMigrations(db)).toEqual({ from: 14, to: 15, applied: [15] });
+    expect(runMigrations(db, MIGRATIONS.slice(0, 15))).toEqual({ from: 14, to: 15, applied: [15] });
     expect(tableNames(db)).toEqual(expect.arrayContaining([...before, 'connector_write_receipts']));
     expect(tableNames(db)).toHaveLength(before.length + 1);
     expect(db.prepare('SELECT id FROM sessions').all()).toEqual([{ id: 's1' }]);
     expect(db.prepare('SELECT id FROM reminders').all()).toEqual([{ id: 'r1' }]);
     expect(db.prepare('SELECT id FROM learning_items').all()).toEqual([{ id: 'l1' }]);
-    expect(runMigrations(db)).toEqual({ from: 15, to: 15, applied: [] });
+    expect(runMigrations(db, MIGRATIONS.slice(0, 15))).toEqual({ from: 15, to: 15, applied: [] });
     // Re-running the v15 DDL itself is idempotent (IF NOT EXISTS throughout).
     expect(() => MIGRATIONS[14]!.up(db)).not.toThrow();
     db.close();
@@ -373,12 +371,12 @@ describe('migration v15 — connector write receipts (ADR-0112 D3, ADR-0096 D10)
   it('migrates a v13 database through 14 and 15, and stamps a legacy untracked database forward to 15', () => {
     const db = new Database(':memory:');
     runMigrations(db, MIGRATIONS.slice(0, 13));
-    expect(runMigrations(db)).toEqual({ from: 13, to: 15, applied: [14, 15] });
+    expect(runMigrations(db, MIGRATIONS.slice(0, 15))).toEqual({ from: 13, to: 15, applied: [14, 15] });
     db.close();
     const legacy = new Database(':memory:');
     legacy.exec(`CREATE TABLE actors (id TEXT PRIMARY KEY, data TEXT NOT NULL);`);
     legacy.prepare(`INSERT INTO actors (id, data) VALUES ('a1', '{}')`).run();
-    expect(runMigrations(legacy)).toMatchObject({ from: 0, to: 15 });
+    expect(runMigrations(legacy, MIGRATIONS.slice(0, 15))).toMatchObject({ from: 0, to: 15 });
     expect(tableNames(legacy)).toContain('connector_write_receipts');
     expect(legacy.prepare('SELECT id FROM actors').all()).toEqual([{ id: 'a1' }]);
     legacy.close();
@@ -386,7 +384,7 @@ describe('migration v15 — connector write receipts (ADR-0112 D3, ADR-0096 D10)
 
   it('a v14 build refuses a v15 database with SCHEMA_VERSION_AHEAD and changes nothing', () => {
     const db = new Database(':memory:');
-    runMigrations(db);
+    runMigrations(db, MIGRATIONS.slice(0, 15));
     expect(() => runMigrations(db, MIGRATIONS.slice(0, 14))).toThrow('SCHEMA_VERSION_AHEAD');
     expect(userVersion(db)).toBe(15);
     expect(tableNames(db)).toContain('connector_write_receipts');

@@ -165,9 +165,9 @@ function sessionRepository() {
     async save(session: Session) { sessions.set(session.id, session); return session; },
     async delete(id: string) { sessions.delete(id); },
     async list() { return [...sessions.values()]; },
-    async findActiveByContext(channelId: string, threadId?: string) {
+    async findActiveByContext(platform: string, channelId: string, threadId?: string) {
       return [...sessions.values()]
-        .filter((s) => s.status === SessionStatus.ACTIVE && s.context.channelId === channelId && s.context.threadId === threadId)
+        .filter((s) => s.status === SessionStatus.ACTIVE && s.context.platform === platform && s.context.channelId === channelId && s.context.threadId === threadId)
         .sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt))[0] ?? null;
     },
   };

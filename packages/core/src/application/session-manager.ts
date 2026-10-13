@@ -19,7 +19,9 @@ export class SessionManager {
 
   /** Reuse the active session for this context, or open a new one. */
   async openForContext(context: ConversationContext, actorId: Id): Promise<Session> {
+    // ADR-0119 D2: the platform is part of the key; it is passed through as opaque data, never branched on.
     const active = await this.storage.sessions.findActiveByContext(
+      context.platform,
       context.channelId,
       context.threadId,
     );

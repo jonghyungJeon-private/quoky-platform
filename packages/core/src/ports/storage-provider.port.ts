@@ -173,8 +173,13 @@ export interface ActorRepository extends Repository<Actor> {
 }
 
 export interface SessionRepository extends Repository<Session> {
-  /** The most-recently-active ACTIVE session for a channel/thread, if any. */
-  findActiveByContext(channelId: string, threadId?: string): Promise<Session | null>;
+  /**
+   * The most-recently-active ACTIVE session for a conversation, if any (ADR-0119 D2): keyed by the opaque
+   * `ConversationContext.platform` together with the channel and thread, so equal channel ids on two platforms never
+   * share a session. `platform` is data the adapter set; Core passes it through and never branches on it. A stored
+   * session whose platform is unknown (recorded before it was kept) is never matched.
+   */
+  findActiveByContext(platform: string, channelId: string, threadId?: string): Promise<Session | null>;
 }
 
 export interface WorkItemRepository extends Repository<WorkItem> {
