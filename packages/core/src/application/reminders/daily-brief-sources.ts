@@ -4,9 +4,11 @@ import { resolveCalendarWindow } from '../../ports/calendar-window';
 import type { ConnectorItem, ConnectorProvider } from '../../ports/connector-provider.port';
 import { ConnectorQueryName, CONNECTOR_QUERY_MAX_LIMIT, type PersonalWorkFilter } from '../../ports/connector-query';
 import type { LogFields, Logger } from '../../ports/logger.port';
+import type { MailReader } from '../../ports/mail-reader.port';
 import { CALENDAR_READ_TIMEOUT_MS } from '../calendar/calendar-turn-handler';
+import { MAIL_READ_TIMEOUT_MS } from '../mail/mail-turn-handler';
 import { WORK_CHAT_DEFAULT_LOOKUP_DEADLINE_MS } from '../work-chat/work-chat-service';
-import type { DailyBriefCalendar } from './daily-brief';
+import { DAILY_BRIEF_MAX_MAIL_ENTRIES, type DailyBriefCalendar, type DailyBriefMail } from './daily-brief';
 
 /**
  * The connector reads of the morning brief (ADR-0117 D1/D2, BRF-1). Read-only and bounded; no model, no write, no
@@ -20,7 +22,12 @@ import type { DailyBriefCalendar } from './daily-brief';
  *   (`all` and `due-this-week`, each at most 20 items), bounded by the work-lookup deadline. The brief keeps the items
  *   due or updated today. A missing identity, an unavailable connector, a failure or a timeout is `null`.
  *
- * Both reads run concurrently, so a slow source holds the brief (and the dispatch tick) for at most the longer bound.
+ * - **Mail (BRF-3).** Only when the composition root passed a `MailReader` (`QUOKY_BRIEF_MAIL_ENABLED=true` and Gmail is
+ *   configured): ONE `search` for unread inbox mail with `limit` 3 — the count and the newest three summaries, so at
+ *   most 1 list call plus 3 metadata gets on the wire (nothing when the inbox is empty), never a body fetch. Bounded by
+ *   the mail handler's read timeout. A failure or a timeout is `null`. Only counts and failure classes are logged.
+ *
+ * The reads run concurrently, so a slow source holds the brief (and the dispatch tick) for at most the longer bound.
  * `read` never throws.
  */
 
@@ -36,7 +43,11 @@ export interface DailyBriefSourcesDeps {
   readonly calendar?: CalendarReader;
   /** ADR-0117 D2. Absent: the section is off (the default) or no connector is configured. */
   readonly work?: DailyBriefWorkSource;
+  /** ADR-0117 BRF-3. Absent: the section is off (the default) or Gmail is not configured. */
+  readonly mail?: MailReader;
   readonly logger?: Logger;
+  /** Injectable for tests; production uses MAIL_READ_TIMEOUT_MS. */
+  readonly mailTimeoutMs?: number;
   /** Injectable for tests; production uses CALENDAR_READ_TIMEOUT_MS. */
   readonly calendarTimeoutMs?: number;
   /** Injectable for tests; production uses WORK_CHAT_DEFAULT_LOOKUP_DEADLINE_MS. */
@@ -53,6 +64,7 @@ export interface DailyBriefSourcesRequest {
 export interface DailyBriefSourcesReadout {
   readonly calendar?: DailyBriefCalendar | null;
   readonly assignedWork?: readonly ConnectorItem[] | null;
+  readonly mail?: DailyBriefMail | null;
 }
 
 const BRIEF_WORK_FILTERS: readonly PersonalWorkFilter[] = ['all', 'due-this-week'];
@@ -97,13 +109,15 @@ export class DailyBriefSources {
   constructor(private readonly deps: DailyBriefSourcesDeps) {}
 
   async read(request: DailyBriefSourcesRequest): Promise<DailyBriefSourcesReadout> {
-    const [calendar, assignedWork] = await Promise.all([
+    const [calendar, assignedWork, mail] = await Promise.all([
       this.deps.calendar === undefined ? undefined : this.readCalendar(this.deps.calendar, request),
       this.deps.work === undefined ? undefined : this.readWork(this.deps.work, request),
+      this.deps.mail === undefined ? undefined : this.readMail(this.deps.mail),
     ]);
     return {
       ...(calendar !== undefined ? { calendar } : {}),
       ...(assignedWork !== undefined ? { assignedWork } : {}),
+      ...(mail !== undefined ? { mail } : {}),
     };
   }
 
@@ -149,6 +163,22 @@ export class DailyBriefSources {
       return items;
     } catch (error) {
       this.log('warn', 'reminder.brief.work_failed', { reason: failureClass(error) });
+      return null;
+    }
+  }
+
+  private async readMail(reader: MailReader): Promise<DailyBriefMail | null> {
+    try {
+      const result = await withTimeout(
+        () => reader.search({ unreadOnly: true, limit: DAILY_BRIEF_MAX_MAIL_ENTRIES }),
+        this.deps.mailTimeoutMs ?? MAIL_READ_TIMEOUT_MS,
+      );
+      if (!Array.isArray(result?.messages) || !Number.isFinite(result.matched)) return null;
+      const messages = result.messages.slice(0, DAILY_BRIEF_MAX_MAIL_ENTRIES);
+      this.log('info', 'reminder.brief.mail_read', { unread: result.matched, shown: messages.length });
+      return { count: result.matched, lowerBound: result.matchedIsLowerBound === true, messages };
+    } catch (error) {
+      this.log('warn', 'reminder.brief.mail_failed', { reason: failureClass(error) });
       return null;
     }
   }

@@ -86,14 +86,16 @@ function guardedField(value: string, maxChars: number, placeholder: string): Mes
   return guardedClippedSpan(value, maxChars, placeholder);
 }
 
-function senderOf(message: MailMessageSummary, language: MailLanguage): MessagePart {
+/** The listing's guarded sender span, shared with the daily brief's mail section (ADR-0117 BRF-3). */
+export function senderOf(message: MailMessageSummary, language: MailLanguage): MessagePart {
   const name = message.sender.name.trim();
   const shown = name.length > 0 ? name : message.sender.address.trim();
   if (shown.length === 0) return language === 'en' ? '(unknown sender)' : '(보낸 사람 없음)';
   return guardedField(shown, MAIL_SENDER_DISPLAY_MAX_CHARS, language === 'en' ? '(sender hidden)' : '(보낸 사람 숨김)');
 }
 
-function subjectOf(message: MailMessageSummary, language: MailLanguage): MessagePart {
+/** The listing's guarded subject span, shared with the daily brief's mail section (ADR-0117 BRF-3). */
+export function subjectOf(message: MailMessageSummary, language: MailLanguage): MessagePart {
   if (message.subject.trim().length === 0) return language === 'en' ? '(no subject)' : '(제목 없음)';
   return guardedField(message.subject, MAIL_SUBJECT_DISPLAY_MAX_CHARS, language === 'en' ? '(subject hidden)' : '(제목 숨김)');
 }

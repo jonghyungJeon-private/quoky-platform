@@ -5,6 +5,19 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### v5 BRF-3 unread mail in the brief — on branch `claude/v5-w2-brf3` (2026-10-13)
+
+ADR-0117 amendment (BRF-3). `QUOKY_BRIEF_MAIL_ENABLED` (default `false`, exact `true`/`false`) adds `안 읽은 메일 N건` and at most 3
+`sender · subject` lines to the daily and on-demand brief. No migration, port or token; `ConversationRuntimeDeps` unchanged.
+
+- **Bounded.** One unread search (limit 3, `gmail.readonly`): at most 4 `gmail` requests per brief (one list, up to three metadata gets),
+  inside the S0 budget. No body or snippet is read or shown.
+- **Safe.** Senders and subjects are the mail listing's guarded untrusted spans (link neutralizing, credential placeholder). No model
+  is called. DM-only: the on-demand handler refuses before any read outside a DM. A failed read shows `불러오지 못했어요` for that
+  section only.
+- **Validation.** `pnpm build`, `pnpm typecheck` and `pnpm test` pass (432 files, 13,794 tests), and so does `git diff --check`.
+  Not run: the Strict `.env.local` flag edit and the first live brief with the section.
+
 ### v5 S0 security baseline, ops half — on branch `claude/v5-s0-ops` (2026-10-13)
 
 ADR-0121 S0 (owner approved the start of S0). No runtime code path, migration or architecture change.

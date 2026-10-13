@@ -14,7 +14,7 @@ import { joinBody, messageBody, untrustedText, type MessagePart } from '../messa
 import type { CalendarEvent } from '../../ports/calendar-reader.port';
 import { EVENT_REMINDER_LOOKAHEAD_DAYS } from './event-reminder-calendar';
 import type { EventReminderTarget } from './event-reminder-grammar';
-import { composeDailyBrief, formatKoreanClock, type DailyBriefCalendar } from './daily-brief';
+import { composeDailyBrief, formatKoreanClock, type DailyBriefCalendar, type DailyBriefMail } from './daily-brief';
 import type { ConnectorItem } from '../../ports/connector-provider.port';
 import type { ReminderClarifyReason } from './reminder-grammar';
 import { toZonedDateTime } from './zoned-time';
@@ -222,6 +222,8 @@ export interface ReminderBriefTextInput {
   readonly calendar?: DailyBriefCalendar | null;
   /** ADR-0117 D2: omitted = the section is off; `null` = could not be read. */
   readonly assignedWork?: readonly ConnectorItem[] | null;
+  /** ADR-0117 BRF-3: omitted = the section is off; `null` = could not be read. */
+  readonly mail?: DailyBriefMail | null;
 }
 
 export class ReminderReplyComposer {

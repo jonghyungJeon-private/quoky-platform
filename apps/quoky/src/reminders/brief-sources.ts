@@ -1,4 +1,4 @@
-import { DailyBriefSources, type Actor, type CalendarReader, type ConnectorProvider, type Logger } from '@quoky/core';
+import { DailyBriefSources, type Actor, type CalendarReader, type ConnectorProvider, type Logger, type MailReader } from '@quoky/core';
 
 /**
  * The daily brief's read-only sources (ADR-0117 D1/D2, BRF-1), composed here so the Core dispatch service receives
@@ -8,8 +8,9 @@ import { DailyBriefSources, type Actor, type CalendarReader, type ConnectorProvi
  *   calendars — `primary` by default — as the schedule handler); otherwise no calendar section;
  * - assigned Jira work: only when `QUOKY_BRIEF_JIRA_ENABLED=true` AND the read-only Jira connector is registered. The
  *   composition root picks the connector by its source label; Core never branches on it.
+ * - mail (BRF-3): only when `QUOKY_BRIEF_MAIL_ENABLED=true` AND the read-only `MAIL_READER` is bound (Gmail configured).
  *
- * With neither configured this returns `undefined` and the brief is the local-only brief, byte for byte.
+ * With none configured this returns `undefined` and the brief is the local-only brief, byte for byte.
  */
 
 /** The connector source label the brief's opt-in work section reads (ADR-0117 D2 names Jira). */
@@ -32,6 +33,10 @@ export interface BriefSourcesCompositionOptions {
   readonly connectors?: readonly ConnectorProvider[] | null;
   /** `QUOKY_BRIEF_JIRA_ENABLED` (`config.reminders.briefJiraEnabled`). */
   readonly briefJiraEnabled: boolean;
+  /** The `MAIL_READER` binding (null/absent when Gmail is unconfigured). */
+  readonly mail?: MailReader | null;
+  /** `QUOKY_BRIEF_MAIL_ENABLED` (`config.reminders.briefMailEnabled`). */
+  readonly briefMailEnabled?: boolean;
   readonly storage: BriefActorStorageSeam;
   readonly logger?: Logger;
 }
@@ -41,7 +46,8 @@ export function createBriefSources(options: BriefSourcesCompositionOptions): Dai
   const connector = options.briefJiraEnabled
     ? (options.connectors ?? []).find((candidate) => candidate.source === BRIEF_WORK_CONNECTOR_SOURCE && candidate.readOnly)
     : undefined;
-  if (calendar === undefined && connector === undefined) return undefined;
+  const mail = options.briefMailEnabled === true ? (options.mail ?? undefined) : undefined;
+  if (calendar === undefined && connector === undefined && mail === undefined) return undefined;
   const storage = options.storage;
   return new DailyBriefSources({
     ...(calendar !== undefined ? { calendar } : {}),
@@ -59,6 +65,7 @@ export function createBriefSources(options: BriefSourcesCompositionOptions): Dai
           },
         }
       : {}),
+    ...(mail !== undefined ? { mail } : {}),
     ...(options.logger !== undefined ? { logger: options.logger } : {}),
   });
 }

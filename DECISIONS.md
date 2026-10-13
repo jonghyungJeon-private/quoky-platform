@@ -19139,6 +19139,37 @@ needed.
   - (R9) An English title containing `daily` / `weekly` (`daily standup meeting`) is read as a recurrence and keeps the
     ADR-0101 outcome (a clarification). The Korean `데일리 스크럼 회의` is unaffected.
 
+### ADR-0117 implementation note — BRF-3 unread mail in the morning brief (2026-10-13)
+
+- **Status:** Implementation note for the ADR-0117 BRF-3 amendment. Offline validation only; the Strict gates (the
+  `.env.local` flag edit and the first live brief with the section) are not run.
+- **Shape.** No migration, no new port or DI token (`ConversationRuntimeDeps` unchanged), no Gmail adapter change.
+  - `core/application/reminders/daily-brief.ts`: `DailyBriefMail` and an optional `mail` input. `undefined` is "section
+    off" (byte-identical brief), `null` is "could not read". `mailSection` renders `안 읽은 메일 N건[ 이상]` and at most
+    `DAILY_BRIEF_MAX_MAIL_ENTRIES` (3) lines `- sender · subject`, or `안 읽은 메일이 없어요.` /
+    `안 읽은 메일: 불러오지 못했어요.`. It is the last section, so the shrink order drops mail lines first.
+  - Lines reuse the mail listing's own guarded spans (`senderOf`/`subjectOf` of `mail-reply-renderer.ts`, now exported):
+    the guarded clip (14 and 30 characters), display-mode link neutralizing, the credential-shape placeholder, and an
+    `untrusted` span each. No number, id, snippet or body, so no list-to-id mapping is created (`N번 메일` keeps meaning
+    the last explicit listing).
+  - `daily-brief-sources.ts`: an optional `mail: MailReader` dependency and one more concurrent, bounded read.
+  - `apps/quoky`: `QUOKY_BRIEF_MAIL_ENABLED` (exact `true`/`false`, default `false`, `BRIEF_MAIL_ENABLED_INVALID`) in
+    `reminders/reminder-config.ts`; `createBriefSources` passes the bound `MAIL_READER` only when the flag is true;
+    `features/reminders.providers.ts` injects `MAIL_READER` optionally into both the scheduled and the on-demand brief.
+- **Egress budget.** One `search({ unreadOnly: true, limit: 3 })` per brief: the Gmail adapter makes one list call
+  (`gmail.readonly`, the same pinned `/gmail/v1/users/me/messages` path) plus at most 3 metadata gets (none when nothing
+  is unread), so at most 4 `gmail` requests, against the S0 `gmail` budget of 20/min and 300/h. The count is the same
+  search `안 읽은 메일` makes (up to 100, "이상" when it stopped there). No `getMessage`, so no body is fetched. An on-demand
+  brief repeats this per request; the DM-only handler refuses before any read outside a DM.
+- **Deviations from the ADR text.** None in behaviour. The ADR's "count dropped before any calendar line" is realised as
+  the section head (the count or the notice) being one of the lines every section keeps under the message budget, like
+  the other sections' heads; only the mail lines shrink (then `- 외 N건`), so a count is never silently lost.
+- **Tests.** `daily-brief.test.ts` (flag off byte-identical, 0, 2, 40 and 100+ unread, unreadable, hostile spans, one-
+  message fit), `daily-brief-sources.test.ts` (one search of 3, no body read, failure, timeout, malformed, log fields),
+  `brief-sources.test.ts`, `reminder-config.test.ts`, `bootstrap-preflight.test.ts`, and `apps/quoky/src/reminders/
+  brief-mail.test.ts` (end to end through the on-demand brief: DM-only before any read, the PLT-1 corpus hostile values
+  on the real Discord and Telegram renderings, a reader failure degrading only the mail section).
+
 ## ADR-0118 — Google read connectors, Gmail then Drive: `gmail.readonly` and `drive.readonly` on the existing Internal OAuth client, fixed-format DM-only listings, no send, draft or delete, and text to the chat-tier provider only on an explicit summary request. Amends ADR-0100 and ADR-0096 D5; relates ADR-0110 and ADR-0111.
 
 - **Status:** Ratified by the Product Owner on 2026-10-08 (recommended defaults; see the ratification record below)

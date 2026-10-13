@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — BRF-3 unread mail in the morning brief (ADR-0117 amendment, 2026-10-13)
+
+- **Opt-in `안 읽은 메일` section.** `QUOKY_BRIEF_MAIL_ENABLED` (exact `true`/`false`, default `false`) adds the unread count and at most 3
+    `sender · subject` lines to the brief, through the existing read-only `MAIL_READER` (one unread search of 3; no body, no snippet, no
+    id). Senders and subjects use the mail listing's guarded, link-neutralized untrusted spans. No model is called and the brief stays
+    DM-only. An unreadable mailbox shows `불러오지 못했어요` and never breaks the rest of the brief. Flag off: the brief is byte-identical.
+    No migration, port or token. Implementation note under ADR-0117 in `DECISIONS.md`.
+
 ## Unreleased — fix: NL selection startup warm-up (ADR-0120 A3 follow-up, 2026-10-13)
 
 - The first one or two selections after a restart timed out at 6 s on a cold `claude -p` start. With `QUOKY_NL_INTENT_MODE` `shadow` or `active`, one background
