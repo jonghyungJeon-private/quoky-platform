@@ -20805,6 +20805,279 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
 - **Side effect:** messages the calendar grammar answered with the default span because it had no symbol for them ("이번 달 일정", "지난주에 무슨 회의", "10월 1일부터 7일까지 일정") are exposed as qualifiers too and go to selection (`this-month`, `last-week`, a date range). A clock time or an attached time-of-day word stays expressed, so those hits are unchanged.
 - **Evaluation (prompt v16, 579 cases, flag on, mode active, Haiku, 1 run):** 96.3% (416/432), 0 wrong, 13 calls over the 4 s bound, gate passed (an earlier run: 97.2%). The selector call does not depend on the flag; the offline dispatch sweep runs with the flag off and on.
 
+### ADR-0120 amendment A2 ratification record (2026-10-13)
+
+- **Status change:** ADR-0120 amendment A2 ("Class B listing grammars yield to selection") goes from **Proposed** to
+  **Accepted**.
+- **Basis (verbatim):** the Product Owner wrote "응 A2 승인하고 설계안 작성 진행해" in the orchestrator chat on 2026-10-13.
+  This includes the A2 **D8 egress expansion**: a message that a Class B listing grammar declines because of an
+  unexpressed qualifier goes to the selector and, if nothing is selected, to chat, with the bounds of every selection
+  turn (600 characters, quote stripping, the credential guard, the 4 s bound, the same-provider-family rule).
+- **Applied:** `QUOKY_NL_GRAMMAR_YIELD=on` was added to the service `.env.local` and the service was restarted at about
+  09:05 KST on 2026-10-13. The orchestrator reported this; this record does not re-verify it. `QUOKY_NL_INTENT_MODE`
+  stays `active` (Phase A).
+- **Unchanged:**
+  - Phase C (selection before the Class B grammars), grammar-hit shadowing and grammar retirement still need their own
+    owner yes (ADR-0120 D6, D8, D10). They are planned under NL-2 and ADR-0121 stage S1.
+  - The grammar freeze (D10) holds: A2 narrows grammars and adds no phrase.
+- **Withdrawal:** setting `QUOKY_NL_GRAMMAR_YIELD=off` (a Strict `.env.local` edit and restart) restores the A1
+  behaviour byte-for-byte, with no data impact.
+- **Same instruction:** "설계안 작성 진행해" authorizes the docs-only design of ADR-0121 below. It authorizes no code and
+  no Strict action.
+
+## ADR-0121 — Bounded agent with information-flow control: one plan-then-execute read agent behind an `AgentProfile`, a planner that never sees external content, a quarantined summariser with no tools, labels that decide every model, argument and destination, caps and a kill switch, a process egress allowlist with a traffic ledger, and write proposals only through the existing approval cards. Amends ARCHITECTURE.md §8, §10, §12 and §13, AGENTS.md (agent runtime rule), ROADMAP.md non-goals, ADR-0008, ADR-0079, ADR-0120 D3/D5/D6 and ADR-0032 (M3 deps baseline 36→37).
+
+- **Status:** **Proposed** (2026-10-13). It is waiting for the Product Owner's ratification. No agent code may merge
+  before that, and stage S0 needs only its own approval (see "Staged rollout").
+- **Date:** 2026-10-13
+- **Inputs:**
+  - `docs/plans/agent-security-design-2026-10-13.md`: the design, the threat model, the MSIT compliance mapping and
+    the traffic audit.
+  - `docs/plans/architecture-amendment-agent-draft.md`: the proposed constitution text.
+  - ADR-0120 with its ratification record, amendments A1 and A2 and their implementation notes.
+  - `docs/plans/nl-intent-design-2026-10-12.md`.
+  - `docs/plans/personal-v5-plan.md`.
+- **Reaffirms unchanged:**
+  - ADR-0063 and ADR-0111 D3: content is untrusted data.
+  - ADR-0091 and ADR-0114: owner-only inbound.
+  - ADR-0110 D4: calendar text never reaches a `REMOTE` provider.
+  - ADR-0118 D7/D8: mail and Drive text leave the host only on a summary request, and routing uses the owner's text.
+  - ADR-0112: exact-payload, one-time, at-most-once writes.
+  - ADR-0115 D2: no tool definitions to any provider.
+  - ADR-0107 D5/D6: locality is declared data.
+  - ADR-0097: the credential guard.
+- **Relates:** ADR-0090 (L0/L1/L2 layering), ADR-0092 amendment D3, ADR-0113 (ops-UI), ADR-0102.
+
+### Context
+
+- **The owner wants an assistant, not a router.** The owner's words on 2026-10-13: "나는 최종적으로 AI 개인 비서 정도라,
+  OpenClaw식이 좀 더 맞을거 같긴한데, 어찌됐든 자연어 처리가 자연스럽게 되어야하고, 코드상 하드코딩으로는 한계가 있다는걸 알고
+  있어서 그랬어." A request such as "이번 주 회의 정리하고 관련 jira 이슈도 같이" needs several reads and a summary. ADR-0120
+  allows one selection of one read.
+- **Security is a hard requirement.** The owner also wrote: "보안상으로 취약점은 막긴 해야해". And: "최근에 tailscale 로 원격
+  접속으로 인해 회사 내부망에 보안팀이 요청이 있었어. 너무 잦은 트래픽으로 인해서 말야. 이런 취약점이 존재해서도 안돼."
+  The company `#ax-security` channel shared the MSIT advisory "최근 사이버공격 대비 기업 보안강화 권고" (2026-10). Its five
+  areas are mapped in §4 of the design document.
+- **The constitution forbids an agent today.** ARCHITECTURE.md §8.1 says "v1 has no agent runtime", and §8.3 makes
+  "plan-act-observe, tool use, sub-agents" `[LATER]`. ROADMAP.md non-goals say "No autonomous agent loops". AGENTS.md
+  forbids implementing an agent runtime early. This ADR therefore has to precede any code (§11.7). The request
+  **conflicts** with ARCHITECTURE.md as it stands, so the amendment must be ratified explicitly.
+- **The owner accepted a staged path and a list of controls on 2026-10-13:**
+  - The stages: A2; NL-2 model-first; a bounded read agent; a write-proposal agent.
+  - Prompt injection: dual LLM / CaMeL-style.
+  - Data-flow control and no URL fetch.
+  - No remote code execution.
+  - Least privilege.
+  - One-time exact-payload writes.
+  - Caps and a kill switch.
+  - The credential guard before every egress.
+  - A red-team gate of 0 successful attacks.
+  - Reviews on every step.
+  - The rollout order default-off → shadow → active.
+- **The traffic measured on 2026-10-13:**
+  - The Quoky process holds two outbound connections (the Telegram long poll and the Discord gateway) and one
+    loopback listener.
+  - The frequent periodic traffic on the host comes from development tooling: browser tabs and a ≈40 s relay poller.
+  - Tailscale is installed but logged out.
+  - Gaps: there is no process-wide egress allowlist, no volume log, and no timestamps in the log lines. The Claude CLI
+    child receives no setting that turns off its non-essential traffic.
+
+### Decision
+
+1. **D1 — Plan-then-execute, not a loop.** One bounded runtime, `AgentRunService`
+   (`packages/core/src/application/agent/`), is reached through the `AgentProfile` id `quoky.read-agent`.
+   - A privileged planner call (M1) produces a closed JSON plan of 1–6 steps. A one-step plan is exactly today's
+     ADR-0120 selection: the planner is `INTENT_SELECTION` with a v2 output schema, not a new call.
+   - Deterministic code validates the plan and executes it.
+   - At most one re-plan (M1') is allowed, and only on structural observations: counts, closed-format ids, types and
+     error codes.
+   - There are no sub-agents, no content-conditioned branches and no loops.
+2. **D2 — The plan DSL and its validation.** Each step is either a catalog `entry` with `args` or a `summarize` over
+   earlier steps with a closed output schema. Each step passes ADR-0120 D4 (closed ids, the configured and offered
+   entries, the bounds, symbolic time, grounding, the credential guard). An argument is one of two things:
+   - a literal grounded in the owner's own non-quoted text;
+   - a reference to a closed-format field (Jira keys, ISO dates, enum values, opaque connector ids). The field is
+     extracted deterministically by the `StructureProjector`, never by a model. A reference carries at most 10 values
+     and may feed only a READ step that the plan already declared.
+3. **D3 — A quarantined summariser.** M2 is a `SUMMARIZATION` request with an empty context bundle, no catalog, no
+   memory, no history and no tool definitions. The untrusted input is rendered inside an untrusted span
+   (`untrusted-document-readout.ts`), and the output is bound to a schema. The output:
+   - is labelled `UNTRUSTED` plus `MODEL_DERIVED`;
+   - goes only to the deterministic reply assembler;
+   - passes the link neutralizer and the credential guard;
+   - is never shown to M1, never stored and never used as an argument.
+
+   A run makes at most 3 M2 calls.
+4. **D4 — Information-flow labels and policy.** Each value carries `{trust, egress, scope, sources}`. Labels join to
+   the most restrictive value, and only the deterministic projector declassifies. The rules:
+   - M1 accepts only `TRUSTED` and `STRUCTURE` values. A canary check refuses any untrusted byte in the prompt.
+   - An M2 provider must satisfy the strictest egress label of its inputs. `LOCAL_MODEL_ONLY` needs a `LOCAL` provider,
+     otherwise the reply is a listing only. `REMOTE_ON_SUMMARY_REQUEST` needs a grounded summary request in the
+     owner's words. `HOST_ONLY` never leaves the host.
+   - Tool arguments accept `TRUSTED` literals and `STRUCTURE` references only.
+   - `OWNER_DM_ONLY` data appears only in the owner's DM.
+   - A flow from source A to a different destination B exists only as an approval card (D6).
+5. **D5 — The tools are the closed catalog only.** Stage S2 offers READ entries only.
+   - `AgentRunService`'s dependency type excludes `CommandRunner`, `ToolProvider` (MCP), workspace and git writes,
+     memory and learning writers, connector writers and any fetch. An import-scan test pins this.
+   - There is no shell, no code execution, no arbitrary URL fetch, no plugin installation and no MCP.
+   - The OAuth scopes stay read-only (`gmail.readonly`, `drive.readonly`, `calendar.readonly`).
+   - Agent runs happen in the owner's DM only.
+6. **D6 — Writes are proposals (stage S3, separate authority).** A `*.propose` entry may only create an existing
+   ADR-0112 / ADR-0110-amendment approval card.
+   - The card shows the exact payload, the destination (a `TRUSTED` value from the owner's words), a provenance banner
+     of the label sources and a "모델 작성 초안" marker.
+   - The draft is shown inside a quoted untrusted block.
+   - The approval is one-time and hash-bound, with no automatic retry.
+   - S3 needs its own amendment of ADR-0112 D5 and the ADR-0110 amendment D4, which today require the payload to be
+     the owner's text verbatim. **This ADR does not authorize S3.**
+7. **D7 — Bounds and the kill switch.**
+   - Per run: ≤ 6 steps, ≤ 1 re-plan, ≤ 10 connector calls, ≤ 5 model calls, 45 s of wall time and ≤ 40k input tokens.
+   - Per actor: ≤ 30 runs an hour and ≤ 150 a day.
+   - A breached bound ends the run with a deterministic partial reply and no retry.
+   - The flag is `QUOKY_AGENT_MODE=off|shadow|active`, exact, default `off`. `shadow` plans and validates but performs
+     no reads.
+   - The Class A owner control phrases `에이전트 중지` and `에이전트 재개` flip a persisted flag without a restart. The
+     ops-UI shows its state.
+8. **D8 — The process egress allowlist and the traffic ledger.** These are composition-root code; Core is unaware of
+   them.
+   - `apps/quoky/src/security/egress-guard.ts` wraps `globalThis.fetch` before bootstrap. It enforces the configured
+     host allowlist (design §5.1), https only (plain http only for exact `127.0.0.1`) and `redirect: 'error'`. It
+     refuses IP literals and the link-local (incl. metadata), RFC 1918 and CGNAT ranges.
+   - Clients that do not use `fetch` (discord.js) are observed through the undici and `net` diagnostics channels.
+   - The flag is `QUOKY_EGRESS_GUARD=observe|enforce`: `observe` for 7 days, then `enforce`.
+   - `traffic-ledger.ts` records per request: time with offset, correlation id, host, path template, status class,
+     bytes up and down, latency and initiator. It never records a header, token, query or body.
+   - The ledger keeps 1 min, 1 h, 24 h and 7 d windows. It alerts on a new host, a budget breach and repeated small
+     requests.
+   - The design §5.3 budgets apply.
+   - There is no inbound listener other than loopback, and no tunnel, relay, P2P or webhook.
+9. **D9 — Audit.** One content-free record per run goes into the run's `TaskRun` metadata (`quoky.agentRun`, no
+   migration), cross-referenced with the ledger. It holds:
+   - the plan as entry ids and argument kinds, never values;
+   - per step: host, status class, count, bytes, latency, labels and outcome;
+   - per model call: capability, provider id (audit only), locality, token estimate and latency;
+   - the approval card id, if any;
+   - the bound that ended the run.
+
+   `ConsoleLogger` gains ISO-8601 timestamps with an offset and a correlation id.
+10. **D10 — Model call points and latency.** The full list of model calls in a run is: M1, M1' (≤ 1), M2 (≤ 3), and
+    honest chat when the plan is `none`.
+    - Selection and planner latency is addressed in order: L1, then L2, then L3, then L4. L4 is applied only if more
+      than 1% of calls still go over the A3 bound (6 s).
+      - L1: the Claude child receives `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, added to the runner's caller env
+        allowlist.
+      - L2: one warm standby `claude -p` for `INTENT_SELECTION`. It is discarded after 15 idle minutes, and it is
+        adopted only if a measurement shows a gain.
+      - L3: a smaller, cache-friendly prompt.
+      - L4: superseded by ADR-0120 A3 (6 s default, `QUOKY_NL_INTENT_TIMEOUT_MS` 2–8 s).
+    - Rejected: a parallel race, a long-lived streaming session, a new vendor and a direct API key without the owner's
+      yes.
+11. **D11 — Gates.**
+    - **Red-team corpus:** `golden/agent-redteam.v1.json`, ≥ 300 cases in Korean and English. The attack families are
+      listed in the design §6. The corpus is seeded offline with ARTEX-ko and approved by the owner per batch.
+    - **Red-team result:** 0 successful attacks over 3 runs. Success is defined deterministically (design §3), with no
+      LLM judge.
+    - **Plan evaluation:** ≥ 95% exact plans and 0 wrong on negatives.
+    - **Offline suite:** validator, labels, canaries, bounds, kill switch, import scan.
+    - **Reviews:** the Chief Architect, Codex and `/security-review` on every PR.
+    - **Model runs:** each model-in-the-loop run is Strict.
+12. **D12 — Interfaces recorded before code (§11.7).**
+    - `ConversationRuntimeDeps` gains an optional `agentRuns?`. The deps baseline goes from 36 to 37 under the ADR-0032
+      M3 ratchet. The plan state and the bounds move into `AgentRunService`.
+    - The `FlowLabel` domain type is new.
+    - The plan schema v2 is an extension of the ADR-0120 selection output.
+    - Absent or `off`, behaviour is byte-identical. No new port or token, and no migration.
+
+### Staged rollout
+
+| Stage | What | Authority |
+|---|---|---|
+| S0 | Security baseline: L1; log timestamps and correlation ids; the traffic ledger; the egress guard in `observe` and then `enforce`; the self-check script `ops/security/quoky-net-selfcheck.sh`; the Telegram poll timeout 25 → 50 s. Owner actions: remove Tailscale and review the credentials | It can proceed on the owner's yes to the S0 list, even before ADR-0121 is ratified. No §8 change is involved |
+| S1 | NL-2 Phase C plus the latency work | ADR-0120 D6/D8/D10/D12 gates and the owner's egress yes |
+| S2 | The bounded read agent, `off` → `shadow` → `active` | Ratification of ADR-0121 and of the constitution amendment; the D11 gates |
+| S3 | The write-proposal agent | A separate amendment (ADR-0112 D5, ADR-0110 amendment D4); a red-team pass; the owner's yes |
+
+### Amended clauses
+
+| Clause | Settled text, short | Amendment |
+|---|---|---|
+| ARCHITECTURE.md §8.1 | "v1 has no agent runtime"; single-shot | One bounded plan-then-execute runtime (draft text in `docs/plans/architecture-amendment-agent-draft.md` §1) |
+| ARCHITECTURE.md §8.3 | Autonomous loops `[LATER]` behind `AgentProfile` | Bounded runtime `[NOW]` behind `AgentProfile`, with mandatory information-flow control; further autonomy by ADR |
+| ARCHITECTURE.md §10 | Risk table | A LOW row for agent read runs; a HIGH row for agent write proposals and cross-destination flows |
+| ARCHITECTURE.md §12 | Forbidden rules | Adds content→planner/argument, agent shell/fetch/MCP/writes, and off-allowlist egress, non-loopback listeners and tunnels |
+| ARCHITECTURE.md §13 | Execution: single-shot → agentic loops `[LATER]` | A bounded agent `[NOW]`; plus a network-posture row |
+| AGENTS.md Engineering Rules | No early agent runtime | Allows the ADR-0121 bounded runtime only |
+| ROADMAP.md Non-goals | "No autonomous agent loops" | "… beyond the bounded agent of ADR-0121" |
+| ADR-0008 Decision / V1-V2 | Agent runtime deferred (V2) | The bounded runtime is realised behind the reserved seam; the Capability and Provider contracts are unchanged (additive enum use only) |
+| ADR-0079 | `AgentProfile` runtime `[LATER]` | One profile id selects the bounded runtime; tools and authority stay out of profile fields |
+| ADR-0120 D3 | One selection call per message | One M1 per message; an agent run adds ≤ 1 M1' and ≤ 3 M2 |
+| ADR-0120 D5 | Reads only; writes suggestion-only | Unchanged for S2; S3 proposals need their own amendment (D6) |
+| ADR-0120 D6 | Phase A / Phase C dispatch | The agent plan is produced at the same dispatch point; Phase C ordering stays under ADR-0120 |
+| ADR-0032 M3 amendment | Deps baseline 36 | 37 (`agentRuns?`) |
+
+### Alternatives considered
+
+- **A full OpenClaw-style agent (rejected).** That means an open tool loop with model-native tool calling, a shell,
+  browsing and plugins, with the model reading content and choosing the next action. It is the most capable option,
+  but:
+  - Injected content can drive actions (OWASP LLM01/LLM06).
+  - The model's choices create egress the owner cannot predict, which goes against the security team's request.
+  - It conflicts with ADR-0115 D2, ADR-0110 D4 and ADR-0118 D7.
+  - A 0-attack gate is not credible without information-flow control.
+- **Stay with single selection (ADR-0120 only) (rejected as the end state).** It is safe, but it cannot serve
+  multi-source requests. The owner says hard-coding has reached its limit. It remains the behaviour of a one-step
+  plan.
+- **A fine-tuned or local classifier (deferred).** This would mean training data, a training pipeline and a new
+  provider or vendor (v5 decision 2), and it would still be one decision per message. A local model can later advertise
+  `INTENT_SELECTION` or serve M2 for `LOCAL_MODEL_ONLY` data with no Core change, once it passes the gates.
+- **Content-aware ReAct with output filtering (rejected).** Filters on model output are probabilistic. The design keeps
+  the guarantee structural: content never reaches the planner.
+
+### Consequences
+
+- **+** Multi-source natural requests become possible without phrase lists. A one-step plan is today's selection, so
+  there is no extra latency.
+- **+** Injection resistance holds by construction. Labels make the existing locality and egress ADRs enforceable at
+  one point.
+- **+** The process gets an explicit network posture (allowlist, budgets, ledger, self-check) that answers the
+  security team and MSIT ②④⑤.
+- **−** More moving parts: a planner schema, labels, a ledger and a guard. Two flags plus the kill switch.
+- **−** Multi-step answers are slower: up to 45 s, typically one M1 plus M2 calls.
+- **−** Calendar summaries need a ready local model, otherwise the reply is a listing.
+- **−** Deps 37; prompt changes invalidate the Stage 2A bindings until the next approved evaluation.
+
+### Residual risks
+
+- **R1 — Child processes.** The CLI and Ollama cannot be enforced in-process. Mitigations: L1 and self-check
+  observation.
+- **R2 — A plausible but wrong plan.** Mitigations: reads only, deterministic counts, the basis line and the 0-wrong
+  gate.
+- **R3 — A misleading quarantined summary.** It is marked as model-written.
+- **R4 — The runtime account.** It runs as the owner's account (MSIT ④-1) until a dedicated user is set up.
+- **R5 — The `Actor` document has no compare-and-set** (ADR-0120 R3).
+
+### Owner decisions requested
+
+These are Q1–Q10 of the design §7. The defaults are:
+
+1. Ratify this ADR and the constitution draft. S0 may proceed first.
+2. Allow closed-format references (≤ 10 ids, reads only).
+3. Keep calendar text local-only.
+4. Run the egress guard in `observe` for 7 days, then in `enforce`.
+5. Move to an Atlassian scoped token with expiry and review the Slack token.
+6. Remove Tailscale and reduce the dev-tooling traffic.
+7. Use an in-repo secret scan.
+8. Apply latency steps L1–L3 and keep the ADR-0120 A3 bound (6 s).
+9. Share the self-check output with the security team.
+10. No OS-level firewall for now; ask the security team.
+
+### V1 / V2
+
+- `[NOW]` after ratification: S0, S1, and S2 in `shadow` and then `active`.
+- `[LATER]`: S3 write proposals (separate amendment), sub-agents, more than one re-plan and content-conditioned
+  control flow (each by its own ADR).
+
 ### ADR-0120 amendment A3 — selection timeout 4 s → 6 s, configurable (2026-10-13)
 
 - **Status:** Accepted by the owner on 2026-10-13. The owner asked "그럼 의도 판단 4초 제한 자체도 변경해줘야하지 않을까 싶은데?" in reply to the live finding that a selection timed out at 4.0 s. The orchestrator recommended 6 s, and the owner agreed.
