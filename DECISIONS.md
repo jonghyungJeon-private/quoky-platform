@@ -20247,6 +20247,146 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
 - **Strict gates:** enabling the Google Sheets API in the Google Cloud project `quoky-personal-510806` (owner-confirmed);
   the live sessions (a long thread, a reply pick after a restart, a shared-drive document, a multi-sheet spreadsheet).
 
+### ADR-0118 amendment implementation note — GML-2 Gmail thread summaries and reply-to-pick (2026-10-13)
+
+- **Status:** Implementation note for decisions 1 and 2 of the amendment above (plan track GML-2, owner decision 7: thread
+  summaries and reply picks yes, labels no). Offline validation only, with fake readers, a fake `fetch` and fake
+  platforms; Gmail was never called. The Strict gates are not run: the live session (a long thread, a reply pick after a
+  restart, on Telegram and Discord). No migration, no new DI token, no new host or scope; `ConversationRuntimeDeps` is
+  unchanged.
+- **Port and domain (additive).**
+  - `InboundMessage.replyTo?: { messageId }` (`InboundReplyReference`, `core/domain/messaging.ts`). Opaque data in the
+    adapter's delivery-receipt form; Core only compares it with ids it recorded and never branches on the platform.
+  - `MailReader.getThread?(messageId): Promise<MailThread>` (`core/ports/mail-reader.port.ts`), optional, with
+    `MAIL_THREAD_MAX_MESSAGES = 20` and `MAIL_THREAD_TEXT_MAX_BYTES = 256 KiB`. A reader without it gets a fixed "this
+    connection cannot read a thread" reply, and nothing is read. No write method was added.
+- **Adapters.**
+  - Discord (`adapter-discord/src/reply-reference.ts`) maps only a real reply (`MessageType.Reply`) in the same channel to
+    the referenced snowflake, which is also its receipt id.
+  - Telegram (`admission.ts`, `telegram-platform-adapter.ts`) keeps only `reply_to_message.message_id` of the owner's own
+    private chat, as the receipt key `chatId:messageId`. The replied-to message's text, author and entities are dropped.
+  - Gmail (`gmail-mail-reader.ts`) adds `getThread`: `GET messages/{id}?format=minimal&fields=id,threadId`, then
+    `GET threads/{threadId}?format=minimal&fields=id,messages(id)` (ids only, 64 KiB), then `messages.get`
+    (`format=full`, 1 MiB each, 4 at a time) for the kept messages only: the first and the latest, up to 20. The whole
+    thread's payloads are never read in one response, so a long thread that re-quotes every earlier message (a
+    quadratic growth) still summarizes; a 40-message test thread does. A kept message over 1 MiB is shown with its
+    metadata and no body (cut); one deleted in between is skipped. Quoted history is stripped in the adapter before the
+    256 KiB is shared across the messages. A thread summary makes at most 22 `gmail` requests, within the S0
+    owner-turn budget, on the host and path prefixes already allowlisted (`/gmail/v1/users/me/threads`). The pinned
+    path allowlist now admits `threads/{id}` only (no thread list, `modify` or `trash`), and the source scan pins it to
+    that one read.
+- **Reply binding.**
+  - Every mail listing records the inbound id that asked for it (`requestId`).
+  - A new application hook, `TurnDeliveryObserver` (`core/application/turn-delivery.ts`), is not a port and not a turn
+    handler member. `QuokyCore` calls it after a delivery that returns a receipt, before the feedback record. A throwing
+    observer is logged with content-free fields and never changes delivery.
+  - `DeliveredTurn` carries only the inbound message id and context, the session id, the status
+    (`TurnResult['status']`) and the receipt ids, never the message text or attachments. `deliveredAt` for the feedback
+    record is read right after the send, before any observer runs.
+  - The mail handler implements the hook: it writes the receipt's platform ids (`replyIds`) into
+    `Session.metadata['quoky.lastListing']` and into its in-memory copy. Both copies use the same pure functions
+    (`withListing`, `withListingReplies`, `findListingByReply` in `last-listing.ts`).
+  - Observers are registered explicitly: the mail feature provides `MAIL_DELIVERY_OBSERVERS` (the same handler
+    instance, or none without Gmail), and `app.module.ts` injects that token into `QuokyCore`.
+  - A newer listing moves the replied-to one into `replied`. At most 8 live listings per Actor keep their ids, for 24 h
+    (`LISTING_REPLY_TTL_MS`). A listing that ages out, or that the 8-entry cap evicts, becomes a tombstone in `expired`:
+    reply ids only, with its own cap of 64 per Actor, kept 7 days. A reply to a tombstone gets "that list expired" and
+    is never matched to another list. (CA review P2: the first version capped live listings and tombstones together at
+    8, so a ninth listing could silently drop an old one and its reply fell through to the current list.) Only opaque
+    ids are stored: no subject, sender or snippet.
+- **Picking.**
+  - A message whose `replyTo.messageId` matches a recorded mail listing picks from that listing: `N번`, or `이 메일` for a
+    one-entry listing (several entries get the "which one" question).
+  - Only for such a reply may the mail noun be left out: `2번 요약해줘`, `요약해줘`, `스레드 요약해줘`,
+    `summarize 2`. These forms are read from the owner's own text; the content-free reply reference only enables them
+    (ADR-0118 D8, ADR-0120 D8).
+  - A reply to anything else picks nothing, and the turn is exactly as before. A number outside the replied-to listing
+    reads nothing. A message deleted since the listing gets the existing `NOT_FOUND` note.
+- **Thread summary.**
+  - Forms: `이 스레드 요약해줘`, `N번 메일 스레드 요약해줘`, `메일 N번 스레드 요약`, `summarize this thread`,
+    `summarize email thread N`.
+  - `mail/mail-thread-readout.ts` builds a new readout source, `mail-thread`. The prompt label is `EMAIL THREAD`, and a
+    thread task rule replaces the single-item rule. It also says to always name the sender as the subject of each
+    action, so the mail claim guard does not withhold a summary for a sentence with no subject. The mail and Drive
+    prompts are byte-identical.
+  - Every message is credential-guarded on its full normalized subject, sender and body BEFORE any clip. One match
+    withholds the whole thread, and nothing is sent.
+  - Quoted history (`>` lines and the text after an `On … wrote:` or `…님이 작성:` header) is dropped, unless nothing would
+    be left.
+  - The 3,000-code-point body budget is shared fairly. Each message keeps its head and tail under a Core-written
+    `[i/n] sender (domain) · date` line. The domain is the sender address's domain, defanged (`example[.]com`), so a
+    display name that imitates someone is visible. Any `[d/d]` marker anywhere in a body is rewritten to `(d/d)`, before
+    and again after the clip.
+  - `buildUntrustedDocumentReadout` then guards the composed and the clipped text again, and the runtime re-validates
+    the result.
+  - The same SUMMARIZATION path as GML-1: no tools, the claim guard (with its own `mail-thread` notice), and the history
+    note `[요청한 메일 스레드 1건을 요약해 보여 드림 …]`. The fixed footer says how many messages were read and sent.
+- **DM-only and honest failure.**
+  - A thread or summary request in a channel gets the DM-only reply, and nothing is read.
+  - A noun-less `이 스레드 요약해줘` or `3번 스레드 요약` outside a DM is left alone, because there it may mean the
+    platform's own thread. In a DM with no listing and no reply it is left to chat as well; naming the mail keeps the
+    "list your mail first" note.
+  - A failed thread read is the typed "could not read" note (status `FAILED`). A credential-shaped or empty thread gets
+    a fixed refusal, and listings call no model.
+- **Unchanged.** The mail listing format, its footer, the mail help line and usage line, the help reply, the NL catalog
+  (`mail.list` only, so no corpus cases were added under ADR-0120 D12), and every existing golden corpus. The offline
+  grammar side of the NL eval is identical to the S1 record (exact 202/242, entry 239, user-visible 224, 1 wrong capture).
+- **Deviations from the plan's file list.**
+  - The receipt binding needed `core/application/orchestrator.ts` (`QuokyCore.deliveryObservers`), the new
+    `turn-delivery.ts`, `last-listing.ts` and one `app.module.ts` injection.
+  - The `mail-thread` readout source touched `untrusted-document-readout.ts`, `prompt-composer.ts` (one rule table) and
+    `document-summary-claim-guard.ts` (one notice).
+  - No port method changed: `getThread` is optional, and the observer is application-level. The 24 h reply window is a
+    design choice. A reply names its list, so the 30-minute "last list" ambiguity does not apply to it.
+- **Tests.** Core:
+  - `mail-reply-pick.test.ts` (18): picks on Discord-shaped and Telegram-shaped ids, after a restart, memory-only, a
+    non-listing reply, expiry and tombstones (10 and 80 listings: eviction and the separate caps), stale ids, malformed records, thread summaries, an injection thread,
+    channel refusal, the noun-less DM fall-through, and listings that read nothing.
+  - `mail-thread-readout.test.ts` (9): bounds, fair share, the guard before and after the clip, quote stripping, header
+    imitation anywhere and after the clip, the defanged sender domain, and the PLT-1 hostile values.
+  - Grammar cases, QuokyCore observer tests, and runtime tests through `QuokyCore` on both id shapes: the listing makes
+    no model call, the reply pick makes one SUMMARIZATION call, and the thread prompt is `EMAIL THREAD` with no
+    action.
+  - The prompt rule.
+
+  Adapters: the Discord mapping and DM delivery, the Telegram admission and adapter key, and Gmail `getThread` (calls,
+  bounds, a 40-message re-quoting thread, an oversized and a deleted message, typed failures, the guard). Also the
+  explicit observer registration and `deliveredAt` ordering.
+- **Rule: the credential guard runs only on complete text; a body truncated before the guard is withheld.** (Codex delta
+  P1, orchestrator decision, conservative by design.) A message body cut at any stage before a guard could read it whole
+  is withheld exactly like a guard match: its sender and subject stay, and its body is never summarized. The cut can be
+  the 512 KiB MIME decode cap, an oversized message read as metadata only, or a body over its share in Core's thread
+  readout.
+  - **Adapter.** The Gmail adapter's `getMessage` and `getThread` guard the whole decoded body. They return
+    `bodyText: ''` with `bodyTruncated: true` when it is credential-shaped or was cut before the guard. A clean, complete
+    body is cut to the port bound only after the guard; the `MailMessage` port doc states this contract.
+  - **Single mail.** Core answers a withheld single mail with a fixed "too long to check safely, or looks like a secret;
+    not summarized" reply.
+  - **Thread.** Core writes a fixed `(body withheld …)` note under that message's header and counts it in the footer
+    ("N통은 본문이 너무 길어 안전하게 요약하지 않았어요"). A thread whose every body is withheld gets a fixed refusal.
+  - **What it fixes.** Before, a quoted `password:` declaration beyond the 512 KiB cap was lost, and its bare value near
+    the start reached the readout.
+- **Codex security review (one P1, two P2s), fixed on the branch:**
+  - P1: the adapter runs the credential guard on each message's RAW body (as read and normalized), before quote
+    stripping and any cut; a match withholds that message's body whole (empty, marked cut). Core's guard before and
+    after the clip is unchanged. Before, a `password:` declaration in a quoted part was stripped while a bare copy of the
+    value further down reached the readout.
+  - P2: a reply whose `replyTo` matches no live listing never falls back to the last list, whether it hits a tombstone
+    ("expired") or nothing on record ("I can't pick an email from the message you replied to"). Only a message that is not
+    a reply uses the 30-minute last-list rule. This supersedes "a reply to anything else … behaves as before" above.
+  - P2: one thread read has a hard budget of 22 Gmail GETs (`GMAIL_THREAD_REQUEST_BUDGET`), shared by the lookup, the
+    id listing, the message reads, 401 retries and the oversized-message metadata fallbacks. When it runs out the read
+    stops and the thread is partial (fewer messages than `totalMessages`); before, 20 oversized messages cost 42 GETs.
+- **Chief Architect review (PASS with one P2 and P3s), fixed on the branch:** P2 separate tombstone cap; P3 noun-less DM
+  fall-through, `[d/d]` rewrite anywhere and after the clip plus the sender domain, a narrowed `DeliveredTurn` with
+  explicit registration, `deliveredAt` before observers, the kept-messages-only Gmail read, and the thread prompt's
+  "name the sender" rule.
+- **Eval.** A 1-run regression check (authorized; Haiku, prompt `nl-select.v17`, 727 cases, plan digest `2ef72647…`):
+  559/565 (98.9%) exact hits, 0/162 wrong captures, lowest entry 96.3% (`mail.list`), 1 call (0.1%) over 6 s, p50
+  1.47 s and p95 2.36 s. The S1 gate passes. The selector input is unchanged by GML-2 (the review fixes touch only the
+  thread summary prompt), so this confirms that nothing moved; it is not a measurement of the new forms, which are
+  deterministic and covered by the offline tests.
+
 ### ADR-0118 amendment implementation note — DRV-2 shared drives and DRV-2b every sheet (2026-10-13)
 
 - **Status:** Implemented under the ratified ADR-0118 amendment of 2026-10-12, decisions (b) and (c) (v5 plan wave 3,

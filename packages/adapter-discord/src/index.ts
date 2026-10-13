@@ -8,6 +8,7 @@ import type { NotificationChannel, NotificationSendOptions } from './notificatio
 import { isAdmittedReaction, toRating } from './reactions';
 import { readConnectedIdentity } from './connected-identity';
 import { normalizeInboundText } from './addressing';
+import { discordReplyReferenceOf } from './reply-reference';
 import type { DiscordConnectedIdentity } from './connected-identity';
 import { AttachmentIntake, renderAttachmentIntakeNote, summarizeAttachmentIntake } from './attachments';
 import type { AttachmentIntakeOptions, AttachmentIntakeResult, AttachmentSource } from './attachments';
@@ -61,6 +62,7 @@ export {
   TEXT_ATTACHMENT_MAX_BYTES,
 } from './attachments';
 export { canonicalizeImage, MAX_IMAGE_DIMENSION } from './image-canonical';
+export { discordReplyReferenceOf } from './reply-reference';
 export type { CanonicalImage, ImageCheckCode } from './image-canonical';
 export type {
   AttachmentIntakeOptions,
@@ -620,6 +622,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       // A Discord message outside a guild is a DM with the bot (admission admits only the owner's own DM).
       direct: !message.guildId,
     };
+    const replyTo = discordReplyReferenceOf(message);
 
     return {
       id: message.id,
@@ -627,6 +630,8 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       // Addressing-only text next to attachments reaches Core as '' (Core knows no mention syntax; see addressing.ts).
       text: normalizeInboundText(message.content, attachments !== undefined && attachments.length > 0),
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      // GML-2: a reply's referenced message id, opaque to Core (matched only against this adapter's receipts).
+      ...(replyTo !== undefined ? { replyTo } : {}),
       receivedAt: now(),
     };
   }

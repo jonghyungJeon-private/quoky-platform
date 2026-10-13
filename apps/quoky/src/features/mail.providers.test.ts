@@ -11,6 +11,7 @@ import {
   ConnectorQueryError,
   MAIL_READER,
   type ConversationTurnHandler,
+  type TurnDeliveryObserver,
   type Logger,
   type MailReader,
 } from '@quoky/core';
@@ -22,7 +23,7 @@ import {
   REMINDER_TURN_HANDLERS,
   WORK_CHAT_TURN_HANDLERS,
 } from './feature-tokens';
-import { MAIL_TURN_HANDLERS, createMailProviders, createMailReader } from './mail.providers';
+import { MAIL_DELIVERY_OBSERVERS, MAIL_TURN_HANDLERS, createMailProviders, createMailReader } from './mail.providers';
 import { MEMORY_TURN_HANDLERS } from './memory.providers';
 import { MODEL_SELECTION_TURN_HANDLERS } from './provider-selection.providers';
 import { turnHandlersProvider } from './turn-handlers.providers';
@@ -190,6 +191,35 @@ describe('mail feature composition (ADR-0096 D7)', () => {
     } finally {
       await app.close();
     }
+  });
+
+  it('GML-2: the mail feature registers its handler explicitly as the delivery observer (none without Gmail)', async () => {
+    const reader: MailReader = {
+      source: 'mail',
+      readOnly: true,
+      search: async () => ({ messages: [], matched: 0, matchedIsLowerBound: false }),
+      getMessage: async () => {
+        throw new Error('not used');
+      },
+    };
+    const { app } = await compose(createMailProviders({ gmail: undefined, timeZone: 'Asia/Seoul', reader, logger: silentLogger() }));
+    try {
+      const [handler] = app.get<readonly ConversationTurnHandler[]>(MAIL_TURN_HANDLERS);
+      const observers = app.get<readonly TurnDeliveryObserver[]>(MAIL_DELIVERY_OBSERVERS);
+      expect(observers).toHaveLength(1);
+      expect(observers[0]).toBe(handler); // the same instance that answered the listing
+    } finally {
+      await app.close();
+    }
+    const unconfigured = await compose(createMailProviders({ gmail: undefined, timeZone: 'Asia/Seoul', logger: silentLogger() }));
+    try {
+      expect(unconfigured.app.get(MAIL_DELIVERY_OBSERVERS)).toEqual([]);
+    } finally {
+      await unconfigured.app.close();
+    }
+    const source = readFileSync(new URL('../app.module.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(/inject: \[ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder, \{ token: MAIL_DELIVERY_OBSERVERS, optional: true \}\]/);
+    expect(source).not.toMatch(/isTurnDeliveryObserver|observeDelivery/);
   });
 
   it('the feature file wires no provider, router, runtime or writer', () => {

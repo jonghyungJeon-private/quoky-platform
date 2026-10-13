@@ -166,7 +166,8 @@ describe('persisted last listing (GML-1 / DRV-1 residual)', () => {
     const stored = rows.get('s-1')?.metadata?.[LAST_LISTING_METADATA_KEY];
     expect(stored).toEqual({
       byActor: {
-        'a-1': { mail: { source: 'mail', ids: ['gm-1', 'gm-2'], at: NOW } },
+        // GML-2: the inbound id that asked for the mail listing (opaque, content-free) is kept for reply picks.
+        'a-1': { mail: { source: 'mail', ids: ['gm-1', 'gm-2'], at: NOW, requestId: 'm-1' } },
         'a-2': { drive: { source: 'drive', ids: ['gd-1', 'gd-2'], at: NOW } },
       },
     });

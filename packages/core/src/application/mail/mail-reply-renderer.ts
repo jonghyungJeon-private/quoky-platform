@@ -330,6 +330,23 @@ export function renderMailSummaryRefused(refusal: UntrustedDocumentRefusal, lang
     : '그 메일에 비밀값처럼 보이는 내용이 있어 요약하지 않았어요. 본문은 어디로도 보내지 않았어요.';
 }
 
+/**
+ * GML-2 review rule: the body could not be checked whole for secrets (cut before the guard, or credential-shaped), so it
+ * was withheld; nothing was sent.
+ */
+export function renderMailSummaryWithheld(language: MailLanguage): string {
+  return language === 'en'
+    ? 'That email is too long to check safely as a whole, or looks like it contains a secret, so I did not summarize it. Its body was not sent anywhere.'
+    : '그 메일은 본문이 너무 길어 전체를 안전하게 확인할 수 없거나 비밀값처럼 보이는 내용이 있어 요약하지 않았어요. 본문은 어디로도 보내지 않았어요.';
+}
+
+/** GML-2 review rule: every message of the thread had its body withheld; nothing was sent. */
+export function renderMailThreadWithheld(language: MailLanguage): string {
+  return language === 'en'
+    ? 'The emails in that thread are too long to check safely as a whole, or look like they contain a secret, so I did not summarize it. Nothing was sent anywhere.'
+    : '그 스레드의 메일 본문이 너무 길어 안전하게 확인할 수 없거나 비밀값처럼 보여 요약하지 않았어요. 본문은 어디로도 보내지 않았어요.';
+}
+
 /** The reply when the summary could not be produced (no ready provider, a provider failure). */
 export function renderMailSummaryUnavailable(language: MailLanguage): string {
   return language === 'en'
@@ -367,4 +384,78 @@ export function renderMailHistoryNote(language: MailLanguage, kind: MailHistoryK
     default:
       return en ? '[Quoky answered a mail request without reading any mail.]' : '[메일 요청에 안내만 함 — 메일은 읽지 않았어요.]';
   }
+}
+
+/*
+ * GML-2 (ADR-0118 amendment of 2026-10-12): thread summaries and reply picks. Fixed copy only; no mail field appears.
+ */
+
+/** "이 메일" in a reply to a listing that had several entries. */
+export function renderMailReplyPickWhich(count: number, language: MailLanguage): string {
+  return language === 'en'
+    ? `The list you replied to has ${count} emails. Which one? For example: "summarize email 1".`
+    : `답장하신 목록에 메일이 ${count}건 있어요. 몇 번 메일인지 알려 주세요. 예: "1번 메일 요약해줘"`;
+}
+
+/** A number the replied-to listing did not show; nothing is read. */
+export function renderMailReplyPickOutOfRange(index: number, count: number, language: MailLanguage): string {
+  return language === 'en'
+    ? `The list you replied to showed no email ${index} (1–${count}). Nothing was read.`
+    : `답장하신 목록에 ${index}번 메일이 없어요 (1–${count}번). 메일은 읽지 않았어요.`;
+}
+
+/** A reply to a listing Quoky showed too long ago: nothing is picked or read. */
+export function renderMailReplyPickExpired(language: MailLanguage): string {
+  return language === 'en'
+    ? 'The list you replied to is too old to pick from (over 24 hours), so nothing was read. Ask for the list again.'
+    : '답장하신 메일 목록이 오래돼서(24시간이 지남) 고를 수 없어요. 메일은 읽지 않았어요. 목록을 다시 보여 달라고 해 주세요.';
+}
+
+/**
+ * A summary request sent as a reply to a message that is not a listing Quoky can still pick from (another message, or a
+ * listing too old to be on record): nothing is picked or read, and the last list is NOT used instead.
+ */
+export function renderMailReplyPickUnknown(language: MailLanguage): string {
+  return language === 'en'
+    ? "I can't pick an email from the message you replied to (it isn't a mail list I can still use), so nothing was read. Ask for the list again."
+    : '답장하신 메시지에서는 메일을 고를 수 없어요(메일 목록이 아니거나 오래된 목록이에요). 메일은 읽지 않았어요. 목록을 다시 보여 달라고 해 주세요.';
+}
+
+/** The configured mail source cannot read threads (its reader has no thread read). */
+export function renderMailThreadNotSupported(language: MailLanguage): string {
+  return language === 'en'
+    ? 'This mail connection cannot read a whole thread. Nothing was read; "summarize email 1" summarizes one email.'
+    : '지금 메일 연결로는 스레드 전체를 읽을 수 없어요. 메일은 읽지 않았어요. 메일 1건은 "1번 메일 요약해줘"로 요약할 수 있어요.';
+}
+
+/** Nothing was sent: a message of the thread is credential-shaped (withheld, never redacted) or none has text. */
+export function renderMailThreadRefused(refusal: UntrustedDocumentRefusal, language: MailLanguage): string {
+  if (refusal === 'EMPTY') {
+    return language === 'en'
+      ? 'That thread has no text to summarize. Nothing was sent anywhere.'
+      : '그 스레드에는 요약할 본문이 없어요. 본문은 어디로도 보내지 않았어요.';
+  }
+  return language === 'en'
+    ? 'A message in that thread looks like it contains a secret, so I did not summarize the thread. Nothing was sent anywhere.'
+    : '그 스레드의 메일에 비밀값처럼 보이는 내용이 있어 요약하지 않았어요. 본문은 어디로도 보내지 않았어요.';
+}
+
+/** The reply when the thread summary could not be produced (no ready provider, a provider failure). */
+export function renderMailThreadSummaryUnavailable(language: MailLanguage): string {
+  return language === 'en'
+    ? "I couldn't summarize that thread right now. Please try again shortly."
+    : '지금은 메일 스레드를 요약하지 못했어요. 잠시 후 다시 시도해 주세요.';
+}
+
+/** The deterministic disclosure appended to a successful thread summary (how many messages were read and sent). */
+export function renderMailThreadSummaryFooter(shown: number, total: number, language: MailLanguage, withheld = 0): string {
+  const partial = total > shown;
+  if (language === 'en') {
+    const read = partial ? `the first and the latest ${shown - 1} of its ${total} emails` : `its ${shown} email${shown === 1 ? '' : 's'}`;
+    const skipped = withheld > 0 ? ` · ${withheld} body${withheld === 1 ? ' was' : 'ies were'} too long to check safely and not summarized` : '';
+    return `(One thread — ${read} — was sent to the chat model to summarize it${skipped} · the mailbox was only read; nothing was sent or changed)`;
+  }
+  const read = partial ? `${total}통 중 첫 메일과 최근 ${shown - 1}통` : `메일 ${shown}통`;
+  const skipped = withheld > 0 ? ` · ${withheld}통은 본문이 너무 길어 안전하게 요약하지 않았어요` : '';
+  return `(스레드 1개의 ${read} 본문을 대화 모델에 보내 요약했어요${skipped} · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았어요)`;
 }

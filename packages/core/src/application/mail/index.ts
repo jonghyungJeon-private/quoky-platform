@@ -6,3 +6,4 @@
 export * from './mail-question';
 export * from './mail-reply-renderer';
 export * from './mail-turn-handler';
+export * from './mail-thread-readout';

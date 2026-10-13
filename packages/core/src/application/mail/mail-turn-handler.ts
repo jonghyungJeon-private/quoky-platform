@@ -15,20 +15,45 @@ import {
   type MailReader,
   type MailSearchQuery,
   type MailSearchResult,
+  type MailThread,
 } from '../../ports/mail-reader.port';
 import type { Id, IsoTimestamp, MessageBody } from '../../domain';
 import { isDirectConversation, outboundMessage } from '../message-rendering';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { localDateOf, zonedToUtcIso } from '../reminders/zoned-time';
-import { persistListing, readPersistedListing } from '../last-listing';
+import {
+  LAST_LISTING_TTL_MS,
+  findListingByReply,
+  findPersistedListingByReply,
+  persistListing,
+  persistListingReplies,
+  readListing,
+  readPersistedListing,
+  withListing,
+  withListingReplies,
+  type ListingReplyMatch,
+  type PersistedListing,
+} from '../last-listing';
 import type { SessionManager } from '../session-manager';
+import type { DeliveredTurn, TurnDeliveryObserver } from '../turn-delivery';
 import { buildUntrustedDocumentReadout } from '../untrusted-document-readout';
-import { parseMailQuestion, type MailLanguage, type MailQuestion, type MailSummaryTarget } from './mail-question';
+import { parseMailQuestion, type MailLanguage, type MailQuestion } from './mail-question';
+import { buildMailThreadReadout } from './mail-thread-readout';
 import {
   renderMailDmOnly,
   renderMailHistoryNote,
   renderMailListing,
   renderMailReadFailure,
+  renderMailReplyPickExpired,
+  renderMailReplyPickOutOfRange,
+  renderMailReplyPickUnknown,
+  renderMailReplyPickWhich,
+  renderMailThreadNotSupported,
+  renderMailThreadRefused,
+  renderMailThreadWithheld,
+  renderMailSummaryWithheld,
+  renderMailThreadSummaryFooter,
+  renderMailThreadSummaryUnavailable,
   renderMailSummaryFooter,
   renderMailSummaryNeedsListing,
   renderMailSummaryOutOfRange,
@@ -57,8 +82,12 @@ export const MAIL_LIST_GRAMMAR_ID = 'mail-question.list';
 export const MAIL_READ_TIMEOUT_MS = 30_000;
 /** At most this many conversations' last mail list are kept in memory (the oldest is dropped first). */
 export const MAIL_RECENT_LISTINGS_MAX = 256;
-/** A summary may refer to a list shown at most this long ago. */
-export const MAIL_RECENT_LISTING_TTL_MS = 30 * 60_000;
+/** A summary may refer to a list shown at most this long ago (the shared listing TTL, memory and persisted alike). */
+export const MAIL_RECENT_LISTING_TTL_MS = LAST_LISTING_TTL_MS;
+/** GML-2: a listing waits at most this long for its delivery receipt (the reply is delivered right after the turn). */
+export const MAIL_PENDING_RECEIPT_TTL_MS = 5 * 60_000;
+/** GML-2: at most this many listings wait for their delivery receipt at once (the oldest is dropped first). */
+export const MAIL_PENDING_RECEIPTS_MAX = 64;
 
 /** The contributed help line (ADR-0096 D6; under the composer's 120-character bound; quoted phrases route here). */
 export const MAIL_HELP_LINES: readonly string[] = Object.freeze([
@@ -81,19 +110,19 @@ export interface MailTurnHandlerDeps {
   readonly sessions?: Pick<SessionManager, 'updateMetadataEntry'>;
 }
 
+/** GML-2: a listing reply waiting for its delivery receipt. */
+interface PendingReceipt {
+  readonly sessionId: Id;
+  readonly actorId: Id;
+  readonly requestId: string;
+  readonly at: IsoTimestamp;
+}
+
 class MailReadTimeout extends Error {
   constructor() {
     super('mail read timed out');
     this.name = 'MailReadTimeout';
   }
-}
-
-interface RecentListing {
-  readonly at: IsoTimestamp;
-  readonly sessionId: Id;
-  readonly actorId: Id;
-  /** The ids of the entries shown, in list order (never their text). */
-  readonly messageIds: readonly string[];
 }
 
 /**
@@ -113,22 +142,35 @@ interface RecentListing {
  *   refused here, before anything leaves the host.
  * - **History.** SHORT_TERM history keeps a fixed note instead of any mail reply, so mail text never reaches a later
  *   prompt; the ids of the listed messages (never their text) are kept in memory per (session, actor) for 30 minutes.
+ * - **Threads (GML-2).** `이 스레드 요약해줘` / `N번 메일 스레드 요약해줘` read the listed message's thread through the
+ *   optional `MailReader.getThread` (at most 20 messages, 256 KiB) and return the same `summarize` outcome over a
+ *   `mail-thread` readout: each message credential-guarded before and after the clip, no tools, the fixed footer.
+ * - **Reply picks (GML-2).** A listing records the inbound id that asked for it; after delivery `observeDelivery`
+ *   records the reply's platform ids (the delivery receipt). A later message whose opaque `replyTo.messageId` is one of
+ *   them picks from THAT listing (`N번`, or `이 메일` for a one-entry listing), and only then may the mail noun be left
+ *   out (`2번 요약해줘`). A reply to anything else picks nothing and the turn behaves as before.
  *
  * Creates no Task, TaskRun or ApprovalRequest; logs no message, mail text or query.
  */
-export class MailTurnHandler implements ConversationTurnHandler {
+export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObserver {
   readonly id = MAIL_TURN_HANDLER_ID;
   readonly stage = 'pre-classify' as const;
   readonly order = MAIL_TURN_HANDLER_ORDER;
   readonly helpLines = MAIL_HELP_LINES;
-  private readonly recentListings = new Map<string, RecentListing>();
+  /** The in-memory copy of the listing state, per session (the same shape and rules as the persisted record). */
+  private readonly memory = new Map<Id, unknown>();
+  /** GML-2: listings waiting for their delivery receipt, by inbound message. */
+  private readonly pendingReceipts = new Map<string, PendingReceipt>();
 
   constructor(private readonly deps: MailTurnHandlerDeps) {}
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerSummarizeReply | null> {
-    const question = this.parseQuestion(ctx);
+    const picked = this.replyMatch(ctx);
+    const question = this.parseQuestion(ctx, picked !== undefined);
     if (question === null) return null;
     const language = question.language;
+    // GML-2: words that name no mail (`이 스레드 요약해줘`) may mean the platform's own thread outside a DM: not ours.
+    if (question.kind === 'summarize' && question.unnamed === true && !isDirectConversation(ctx.message.context)) return null;
 
     if (question.kind === 'write-refused') {
       this.log('info', 'mail.turn_handler.write_refused', {});
@@ -149,14 +191,17 @@ export class MailTurnHandler implements ConversationTurnHandler {
             nlSelection: mailGrammarSelection(question),
           };
     }
-    return this.summarize(ctx, question.target, language);
+    return this.summarize(ctx, question, picked);
   }
 
-  /** The mail grammar exactly as `handle` reads it (a reminder is never a mail question); `null` on no match. */
-  private parseQuestion(ctx: TurnHandlerProbeContext): MailQuestion | null {
+  /**
+   * The mail grammar exactly as `handle` reads it (a reminder is never a mail question); `null` on no match. The
+   * reply-pick forms are read only when `replyBound` (a reply to a recorded mail listing).
+   */
+  private parseQuestion(ctx: TurnHandlerProbeContext, replyBound = false): MailQuestion | null {
     try {
       if (parseReminderMessage(ctx.message.text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
-      return parseMailQuestion(ctx.message.text);
+      return parseMailQuestion(ctx.message.text, { replyBound });
     } catch {
       return null;
     }
@@ -214,6 +259,7 @@ export class MailTurnHandler implements ConversationTurnHandler {
     const shownIds = messages.map((message) => message.id);
     this.rememberListing(ctx, shownIds);
     await this.persistShown(ctx, shownIds);
+    if (shownIds.length > 0) this.awaitReceipt(ctx);
     const body = renderMailListing(filter, { ...result, messages }, {
       timeZone: this.deps.timeZone,
       now: ctx.now,
@@ -225,21 +271,48 @@ export class MailTurnHandler implements ConversationTurnHandler {
 
   private async summarize(
     ctx: TurnHandlerContext,
-    target: MailSummaryTarget,
-    language: MailLanguage,
-  ): Promise<TurnHandlerReply | TurnHandlerSummarizeReply> {
-    const listing = this.currentListing(ctx);
-    const ids = listing?.messageIds ?? [];
-    if (ids.length === 0) return this.reply(ctx, renderMailSummaryNeedsListing(language), 'RESPONDED', language, 'not-read');
+    question: Extract<MailQuestion, { kind: 'summarize' }>,
+    picked: ListingReplyMatch | undefined,
+  ): Promise<TurnHandlerReply | TurnHandlerSummarizeReply | null> {
+    const { target, language } = question;
+    if (picked?.kind === 'expired') {
+      this.log('info', 'mail.turn_handler.reply_pick', { matched: 'expired' });
+      return this.reply(ctx, renderMailReplyPickExpired(language), 'RESPONDED', language, 'not-read');
+    }
+    // Codex review P2: a reply that matches no live listing (another message, or a listing evicted past every record)
+    // never falls back to the last list — only a message that is not a reply may use the 30-minute last-list rule.
+    if (picked === undefined && isReply(ctx)) {
+      if (question.unnamed === true) return null;
+      this.log('info', 'mail.turn_handler.reply_pick', { matched: 'unknown' });
+      return this.reply(ctx, renderMailReplyPickUnknown(language), 'RESPONDED', language, 'not-read');
+    }
+    const viaReply = picked?.kind === 'listing';
+    if (viaReply) this.log('info', 'mail.turn_handler.reply_pick', { matched: 'listing' });
+    const ids = picked?.kind === 'listing' ? picked.listing.ids : (this.currentListing(ctx)?.ids ?? []);
+    if (ids.length === 0) {
+      // CA review P3: words that name no mail (`이 스레드 요약해줘`, `3번 스레드 요약`) with no listing and no reply are not
+      // about mail at all: chat answers them.
+      if (question.unnamed === true && picked === undefined) return null;
+      return this.reply(ctx, renderMailSummaryNeedsListing(language), 'RESPONDED', language, 'not-read');
+    }
     let index: number;
     if (target.kind === 'this') {
-      if (ids.length !== 1) return this.reply(ctx, renderMailSummaryWhich(ids.length, language), 'RESPONDED', language, 'not-read');
+      if (ids.length !== 1) {
+        const which = viaReply ? renderMailReplyPickWhich(ids.length, language) : renderMailSummaryWhich(ids.length, language);
+        return this.reply(ctx, which, 'RESPONDED', language, 'not-read');
+      }
       index = 1;
     } else {
       index = target.index;
     }
     const id = ids[index - 1];
-    if (id === undefined) return this.reply(ctx, renderMailSummaryOutOfRange(index, ids.length, language), 'RESPONDED', language, 'not-read');
+    if (id === undefined) {
+      const outOfRange = viaReply
+        ? renderMailReplyPickOutOfRange(index, ids.length, language)
+        : renderMailSummaryOutOfRange(index, ids.length, language);
+      return this.reply(ctx, outOfRange, 'RESPONDED', language, 'not-read');
+    }
+    if (question.scope === 'thread') return this.summarizeThread(ctx, id, language);
 
     let message: MailMessage;
     try {
@@ -248,6 +321,12 @@ export class MailTurnHandler implements ConversationTurnHandler {
       const failure = failureOf(error);
       this.log('warn', 'mail.turn_handler.read_failed', { kind: 'summarize', reason: failure });
       return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
+    }
+    // GML-2 review rule: a body the reader could not hand over whole (empty and marked cut) was withheld before any guard
+    // could read it; it is never summarized (and never called "empty").
+    if (message.bodyText.trim().length === 0 && message.bodyTruncated) {
+      this.log('info', 'mail.turn_handler.summary_refused', { refusal: 'WITHHELD' });
+      return this.reply(ctx, renderMailSummaryWithheld(language), 'RESPONDED', language, 'not-summarized');
     }
     const built = buildUntrustedDocumentReadout({
       source: 'mail',
@@ -270,14 +349,101 @@ export class MailTurnHandler implements ConversationTurnHandler {
     };
   }
 
-  private rememberListing(ctx: TurnHandlerContext, messageIds: readonly string[]): void {
-    const key = listingKey(ctx.session.id, ctx.actor.id);
-    this.recentListings.delete(key);
-    this.recentListings.set(key, { at: ctx.now, sessionId: ctx.session.id, actorId: ctx.actor.id, messageIds: [...messageIds] });
-    while (this.recentListings.size > MAIL_RECENT_LISTINGS_MAX) {
-      const oldest = this.recentListings.keys().next().value;
+  /** GML-2: one thread, bounded and guarded like one mail; a reader without a thread read says so honestly. */
+  private async summarizeThread(
+    ctx: TurnHandlerContext,
+    messageId: string,
+    language: MailLanguage,
+  ): Promise<TurnHandlerReply | TurnHandlerSummarizeReply> {
+    const reader = this.deps.reader;
+    if (typeof reader.getThread !== 'function') {
+      this.log('info', 'mail.turn_handler.thread_unsupported', {});
+      return this.reply(ctx, renderMailThreadNotSupported(language), 'RESPONDED', language, 'not-read');
+    }
+    let thread: MailThread;
+    try {
+      thread = await this.withTimeout(reader.getThread(messageId));
+    } catch (error) {
+      const failure = failureOf(error);
+      this.log('warn', 'mail.turn_handler.read_failed', { kind: 'thread', reason: failure });
+      return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
+    }
+    const { result, shown, total, withheld } = buildMailThreadReadout(thread);
+    if (!result.ok) {
+      this.log('info', 'mail.turn_handler.summary_refused', { kind: 'thread', refusal: result.refusal, withheld });
+      const text = result.refusal === 'EMPTY' && withheld > 0 ? renderMailThreadWithheld(language) : renderMailThreadRefused(result.refusal, language);
+      return this.reply(ctx, text, 'RESPONDED', language, 'not-summarized');
+    }
+    this.log('info', 'mail.turn_handler.summarize', { kind: 'thread', shown, total, truncated: result.readout.truncated });
+    return {
+      kind: 'summarize',
+      readout: result.readout,
+      fallbackText: renderMailThreadSummaryUnavailable(language),
+      footer: renderMailThreadSummaryFooter(shown, total, language, withheld),
+    };
+  }
+
+  /**
+   * GML-2 (`TurnDeliveryObserver`, called by `QuokyCore` after delivery): bind a listing this handler answered to the
+   * platform ids of its delivered reply, in memory and in the persisted record. Best-effort; never throws.
+   */
+  async observeDelivery(turn: DeliveredTurn): Promise<void> {
+    try {
+      const key = receiptKey(turn.messageId, turn.context);
+      const pending = this.pendingReceipts.get(key);
+      if (pending === undefined) return;
+      this.pendingReceipts.delete(key);
+      if (turn.status !== 'RESPONDED' || turn.sessionId !== pending.sessionId || turn.platformMessageIds.length === 0) return;
+      const ids = turn.platformMessageIds;
+      const memory = withListingReplies(this.memory.get(pending.sessionId), pending.actorId, 'mail', pending.requestId, ids, pending.at);
+      if (memory.found) this.memory.set(pending.sessionId, memory.next);
+      if (this.deps.sessions !== undefined) {
+        await persistListingReplies(this.deps.sessions, pending.sessionId, pending.actorId, 'mail', pending.requestId, ids, pending.at);
+      }
+    } catch {
+      this.log('warn', 'mail.turn_handler.receipt_persist_failed', {});
+    }
+  }
+
+  /** GML-2: remember that this turn's reply is a listing, until its receipt arrives (bounded in count and time). */
+  private awaitReceipt(ctx: TurnHandlerContext): void {
+    const now = Date.parse(ctx.now);
+    for (const [key, pending] of this.pendingReceipts) {
+      const age = now - Date.parse(pending.at);
+      if (!Number.isFinite(age) || age < 0 || age >= MAIL_PENDING_RECEIPT_TTL_MS) this.pendingReceipts.delete(key);
+    }
+    const key = receiptKey(ctx.message.id, ctx.message.context);
+    this.pendingReceipts.delete(key);
+    this.pendingReceipts.set(key, { sessionId: ctx.session.id, actorId: ctx.actor.id, requestId: ctx.message.id, at: ctx.now });
+    while (this.pendingReceipts.size > MAIL_PENDING_RECEIPTS_MAX) {
+      const oldest = this.pendingReceipts.keys().next().value;
       if (oldest === undefined) break;
-      this.recentListings.delete(oldest);
+      this.pendingReceipts.delete(oldest);
+    }
+  }
+
+  /**
+   * GML-2: what a platform reply points at — a recorded mail listing (persisted record first, then memory), an expired
+   * one, or nothing (`undefined`: not a reply, or a reply to anything else).
+   */
+  private replyMatch(ctx: TurnHandlerContext): ListingReplyMatch | undefined {
+    const replyId = ctx.message.replyTo?.messageId;
+    if (typeof replyId !== 'string' || replyId.length === 0) return undefined;
+    const persisted = findPersistedListingByReply(ctx.session, ctx.actor.id, 'mail', replyId, ctx.now);
+    if (persisted?.kind === 'listing') return persisted;
+    const cached = findListingByReply(this.memory.get(ctx.session.id), ctx.actor.id, 'mail', replyId, ctx.now);
+    return cached?.kind === 'listing' ? cached : (persisted ?? cached);
+  }
+
+  private rememberListing(ctx: TurnHandlerContext, messageIds: readonly string[]): void {
+    const sessionId = ctx.session.id;
+    const next = withListing(this.memory.get(sessionId), ctx.actor.id, 'mail', messageIds, ctx.now, ctx.message.id);
+    this.memory.delete(sessionId);
+    if (next !== undefined) this.memory.set(sessionId, next);
+    while (this.memory.size > MAIL_RECENT_LISTINGS_MAX) {
+      const oldest = this.memory.keys().next().value;
+      if (oldest === undefined) break;
+      this.memory.delete(oldest);
     }
   }
 
@@ -285,32 +451,18 @@ export class MailTurnHandler implements ConversationTurnHandler {
   private async persistShown(ctx: TurnHandlerContext, messageIds: readonly string[]): Promise<void> {
     if (this.deps.sessions === undefined) return;
     try {
-      await persistListing(this.deps.sessions, ctx.session.id, ctx.actor.id, 'mail', messageIds, ctx.now);
+      await persistListing(this.deps.sessions, ctx.session.id, ctx.actor.id, 'mail', messageIds, ctx.now, ctx.message.id);
     } catch {
       this.log('warn', 'mail.turn_handler.listing_persist_failed', {});
     }
   }
 
   /** This (session, actor)'s last list within the TTL (the newer of the persisted record and the cache), or `undefined`. */
-  private currentListing(ctx: TurnHandlerContext): RecentListing | undefined {
-    const cached = this.cachedListing(ctx);
+  private currentListing(ctx: TurnHandlerContext): PersistedListing | undefined {
+    const cached = readListing(this.memory.get(ctx.session.id), ctx.actor.id, 'mail', ctx.now);
     const persisted = readPersistedListing(ctx.session, ctx.actor.id, 'mail', ctx.now);
-    if (persisted !== undefined && (cached === undefined || Date.parse(persisted.at) > Date.parse(cached.at))) {
-      return { at: persisted.at, sessionId: ctx.session.id, actorId: ctx.actor.id, messageIds: persisted.ids };
-    }
+    if (persisted !== undefined && (cached === undefined || Date.parse(persisted.at) > Date.parse(cached.at))) return persisted;
     return cached;
-  }
-
-  private cachedListing(ctx: TurnHandlerContext): RecentListing | undefined {
-    const key = listingKey(ctx.session.id, ctx.actor.id);
-    const listing = this.recentListings.get(key);
-    if (!listing || listing.sessionId !== ctx.session.id || listing.actorId !== ctx.actor.id) return undefined;
-    const age = Date.parse(ctx.now) - Date.parse(listing.at);
-    if (!Number.isFinite(age) || age < 0 || age >= MAIL_RECENT_LISTING_TTL_MS) {
-      this.recentListings.delete(key);
-      return undefined;
-    }
-    return listing;
   }
 
   private reply(
@@ -359,8 +511,15 @@ function startOfLocalDay(now: IsoTimestamp, timeZone: string): IsoTimestamp {
   return zonedToUtcIso({ ...day, hour: 0, minute: 0 }, timeZone);
 }
 
-function listingKey(sessionId: Id, actorId: Id): string {
-  return JSON.stringify([sessionId, actorId]);
+/** GML-2: whether the owner's message is a platform reply (to anything). */
+function isReply(ctx: TurnHandlerContext): boolean {
+  const replyId = ctx.message.replyTo?.messageId;
+  return typeof replyId === 'string' && replyId.length > 0;
+}
+
+/** GML-2: one inbound message (platform message ids are unique only per conversation). */
+function receiptKey(messageId: Id, context: { readonly platform: string; readonly channelId: string }): string {
+  return JSON.stringify([context.platform, context.channelId, messageId]);
 }
 
 /** Factory for the composition root (ADR-0096 D7). */

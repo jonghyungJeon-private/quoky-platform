@@ -23,8 +23,11 @@ import { normalizePromptContextContent } from './prompt-content-normalizer';
  */
 
 export const UNTRUSTED_DOCUMENT_READOUT_KIND = 'untrusted-document';
-/** The sources a readout may come from: a mail message (GML-1) or a Drive file's text export (DRV-1). */
-export const UNTRUSTED_DOCUMENT_SOURCES = ['mail', 'drive'] as const;
+/**
+ * The sources a readout may come from: a mail message (GML-1), a Drive file's text export (DRV-1) or a mail thread
+ * (GML-2, ADR-0118 amendment of 2026-10-12: its messages in order, each under a fixed `[i/n]` header line).
+ */
+export const UNTRUSTED_DOCUMENT_SOURCES = ['mail', 'drive', 'mail-thread'] as const;
 export type UntrustedDocumentSource = (typeof UNTRUSTED_DOCUMENT_SOURCES)[number];
 
 /**
@@ -120,7 +123,7 @@ export function normalizeUntrustedText(value: string): string {
  * body is normalized once because the credential guard must read the full text (review P1); every step is linear and
  * the adapter bounds the input (256 KiB).
  */
-function prepareBody(value: string): string {
+export function prepareUntrustedBody(value: string): string {
   return normalizeUntrustedText(value)
     .split('\n')
     .map((line) => line.trimEnd())
@@ -146,7 +149,7 @@ function isCredentialShaped(text: string): boolean {
  */
 export function buildUntrustedDocumentReadout(input: BuildUntrustedDocumentReadoutInput): UntrustedDocumentBuildResult {
   const sections = preparedSections(input.sections);
-  const body = sections !== undefined ? sections.full : neutralizeLinks(prepareBody(typeof input.body === 'string' ? input.body : ''), 'body');
+  const body = sections !== undefined ? sections.full : neutralizeLinks(prepareUntrustedBody(typeof input.body === 'string' ? input.body : ''), 'body');
   if (body.length === 0) return { ok: false, refusal: 'EMPTY' };
   // Review P1: the guard runs on the FULL normalized fields before any clip — a clip could cut a credential's key
   // (`password:`) while keeping its value — and again below on the exact clipped payload.
@@ -203,7 +206,7 @@ function preparedSections(sections: readonly UntrustedDocumentSection[] | undefi
   const total = kept.length;
   const prepared = kept.map((section, index): PreparedSection & { readonly fullHeader: string } => {
     const rawTitle = typeof section?.title === 'string' ? section.title : '';
-    const text = neutralizeLinks(prepareBody(typeof section?.body === 'string' ? section.body : ''), 'body');
+    const text = neutralizeLinks(prepareUntrustedBody(typeof section?.body === 'string' ? section.body : ''), 'body');
     const partial = section?.truncated === true ? ' (partial)' : '';
     const frame = (title: string): string => `[Sheet ${index + 1}/${total}] ${JSON.stringify(title)}${partial}`;
     return {
@@ -293,7 +296,11 @@ export function isSummarizableDocumentReadout(value: unknown): value is Untruste
 }
 
 /** What the source is called in the prompt header. */
-const SOURCE_LABEL: Readonly<Record<UntrustedDocumentSource, string>> = { mail: 'EMAIL MESSAGE', drive: 'DRIVE DOCUMENT' };
+const SOURCE_LABEL: Readonly<Record<UntrustedDocumentSource, string>> = {
+  mail: 'EMAIL MESSAGE',
+  drive: 'DRIVE DOCUMENT',
+  'mail-thread': 'EMAIL THREAD',
+};
 
 /**
  * The prompt text of a readout: a fixed header, then the fields JSON-quoted (so no field can imitate a section
@@ -329,6 +336,7 @@ export const UNTRUSTED_DOCUMENT_REQUEST_WITHHELD_NOTICE =
 const SOURCE_NOUN: Readonly<Record<UntrustedDocumentSource, { readonly ko: string; readonly en: string }>> = {
   mail: { ko: '메일', en: 'email' },
   drive: { ko: '문서', en: 'document' },
+  'mail-thread': { ko: '메일 스레드', en: 'email thread' },
 };
 
 export function renderUntrustedDocumentHistoryNote(source: UntrustedDocumentSource, language: 'ko' | 'en'): string {

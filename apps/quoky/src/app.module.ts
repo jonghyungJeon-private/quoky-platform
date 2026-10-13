@@ -68,6 +68,7 @@ import {
 import type {
   ContinuationBindingRepository,
   ConversationTurnHandler,
+  TurnDeliveryObserver,
   ConnectorWriteFlow,
   NlSelectionService,
   AiProvider,
@@ -131,7 +132,7 @@ import { createFeedbackProviders } from './features/feedback.providers';
 import { createCalendarProviders } from './features/calendar.providers';
 import { CONNECTOR_WRITE_FLOW, createConnectorWriteComposition } from './features/connector-writes.providers';
 import { createDriveProviders } from './features/drive.providers';
-import { createMailProviders } from './features/mail.providers';
+import { MAIL_DELIVERY_OBSERVERS, createMailProviders } from './features/mail.providers';
 import { createMemoryProviders } from './features/memory.providers';
 import { NL_SELECTION, createNlSelectionProviders } from './features/nl-selection.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
@@ -783,8 +784,15 @@ const application: Provider[] = [
   // subscriber — the `onFeedback` subscription lives here, not in main.ts. Reactions never produce a reply.
   {
     provide: QuokyCore,
-    useFactory: (runtime: ConversationRuntime, platform: PlatformAdapter, feedback: FeedbackRecorder) => {
-      const core = new QuokyCore({ runtime, platform, logger: coreLogger, feedback });
+    useFactory: (
+      runtime: ConversationRuntime,
+      platform: PlatformAdapter,
+      feedback: FeedbackRecorder,
+      deliveryObservers: readonly TurnDeliveryObserver[] = [],
+    ) => {
+      // ADR-0118 amendment (GML-2): observers registered explicitly by their feature (today: the mail handler, only when
+      // Gmail is configured) are told the delivery receipt of each reply.
+      const core = new QuokyCore({ runtime, platform, logger: coreLogger, feedback, ...(deliveryObservers.length > 0 ? { deliveryObservers } : {}) });
       platform.onFeedback?.((signal) =>
         core.handleFeedbackSignal(signal).catch((err: unknown) =>
           coreLogger.warn('feedback signal handling failed', {
@@ -794,7 +802,7 @@ const application: Provider[] = [
       );
       return core;
     },
-    inject: [ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder],
+    inject: [ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder, { token: MAIL_DELIVERY_OBSERVERS, optional: true }],
   },
 ];
 

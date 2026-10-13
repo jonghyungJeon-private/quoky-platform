@@ -1044,6 +1044,11 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       // ADR-0120 D8: blockquotes are quoted words; Core never treats them as the owner's request.
       ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
       ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+      // GML-2: the replied-to message in the same key form as this adapter's delivery receipts (`chatId:messageId`), so
+      // Core can match it against its own replies; opaque to Core.
+      ...(message.replyToMessageId !== undefined
+        ? { replyTo: { messageId: telegramMessageKey(message.chatId, message.replyToMessageId) } }
+        : {}),
       receivedAt: now(),
     };
   }

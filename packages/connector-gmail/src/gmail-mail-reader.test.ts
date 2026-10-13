@@ -4,10 +4,12 @@ import { GmailEndpointNotAllowedError, GmailResponseTooLargeError, GmailScopeErr
 import {
   GMAIL_API_ORIGIN,
   GMAIL_FULL_MAX_BYTES,
+  GMAIL_THREAD_REQUEST_BUDGET,
   GmailMailReader,
   assertGmailReadRequest,
   buildGmailSearchQuery,
 } from './gmail-mail-reader';
+import { MAX_RAW_BODY_BYTES } from './mime';
 import { GMAIL_OAUTH_TOKEN_URL, GMAIL_READONLY_SCOPE } from './oauth';
 
 // Fixture credentials: placeholders, not token-shaped. NEVER a real Gmail call: every request goes to the fake fetch.
@@ -271,6 +273,168 @@ describe('GmailMailReader (ADR-0118 D2/D3)', () => {
       expect(() => assertGmailReadRequest(new URL(path, GMAIL_API_ORIGIN), method), `${method} ${path}`).toThrow(GmailEndpointNotAllowedError);
     }
     expect(() => assertGmailReadRequest(new URL('https://evil.example/gmail/v1/users/me/messages'), 'GET')).toThrow(GmailEndpointNotAllowedError);
+  });
+
+  /** A thread fixture: `messages/{id}` minimal → thread id; `threads/{t}` → ids only; `messages/{id}` full → the message. */
+  function threadApi(ids: readonly string[], bodyOf: (id: string, index: number) => string, options: { threadId?: string; huge?: ReadonlySet<string> } = {}) {
+    const threadId = options.threadId ?? 't9';
+    return (url: URL) => {
+      const id = url.pathname.split('/').pop() as string;
+      if (url.pathname.startsWith('/gmail/v1/users/me/threads/')) return json({ id: threadId, messages: ids.map((entry) => ({ id: entry })) });
+      if (url.searchParams.get('format') === 'minimal') return json({ id, threadId });
+      const index = ids.indexOf(id);
+      const record = {
+        ...metadata(id),
+        internalDate: String(Date.parse('2026-10-08T00:00:00.000Z') + index * 60_000),
+        payload: {
+          mimeType: 'text/plain',
+          headers: [{ name: 'From', value: `Kim <${id}@example.com>` }, { name: 'Subject', value: 'Re: 계약' }],
+          body: { data: b64(options.huge?.has(id) === true ? 'x'.repeat(1_100_000) : bodyOf(id, index)) },
+        },
+      };
+      return url.searchParams.get('format') === 'metadata' ? json(metadata(id)) : json(record);
+    };
+  }
+
+  it('GML-2 getThread: the thread id, the thread\'s ids only, then each kept message in full; mapped in order', async () => {
+    const { reader, calls } = harness(threadApi(['m1', 'm2'], (id) => (id === 'm1' ? '첫 메일' : '답장\n\nOn Thu, Oct 8, 2026 Kim <m1@example.com> wrote:\n> 첫 메일')));
+    const thread = await reader.getThread('m2');
+    expect(thread.totalMessages).toBe(2);
+    expect(thread.messages.map((entry) => [entry.id, entry.bodyText, entry.sender.address])).toEqual([
+      ['m1', '첫 메일', 'm1@example.com'],
+      ['m2', '답장', 'm2@example.com'], // quoted history stripped in the adapter
+    ]);
+    const api = calls.filter((call) => !call.url.startsWith('https://oauth2'));
+    expect(api.map((call) => [call.method, new URL(call.url).pathname, new URL(call.url).searchParams.get('format')])).toEqual([
+      ['GET', '/gmail/v1/users/me/messages/m2', 'minimal'],
+      ['GET', '/gmail/v1/users/me/threads/t9', 'minimal'],
+      ['GET', '/gmail/v1/users/me/messages/m1', 'full'],
+      ['GET', '/gmail/v1/users/me/messages/m2', 'full'],
+    ]);
+    expect(new URL(api[1]?.url as string).searchParams.get('fields')).toBe('id,messages(id)');
+  });
+
+  it('GML-2 getThread: a 40-message thread that re-quotes every earlier message summarizes (first + latest 19, bounded)', async () => {
+    const ids = Array.from({ length: 40 }, (_, index) => `m${index + 1}`);
+    // Each reply quotes the whole history: the body grows with depth (the quadratic case the whole-thread read failed on).
+    const bodyOf = (_id: string, index: number) =>
+      [`답장 ${index + 1}: ${'내용 '.repeat(200)}`, '', 'On Thu, Oct 8, 2026 Kim wrote:', ...Array.from({ length: index }, (__, k) => `> 이전 ${k} ${'인용 '.repeat(1500)}`)].join('\n');
+    const { reader, calls } = harness(threadApi(ids, bodyOf, { threadId: 'long' }));
+    const thread = await reader.getThread('m40');
+    expect(thread.totalMessages).toBe(40);
+    expect(thread.messages.map((entry) => entry.id)).toEqual(['m1', ...ids.slice(21)]);
+    expect(thread.messages.every((entry) => entry.bodyText.startsWith('답장') && !entry.bodyText.includes('> 이전'))).toBe(true);
+    const bytes = thread.messages.reduce((sum, entry) => sum + Buffer.byteLength(entry.bodyText, 'utf8'), 0);
+    expect(bytes).toBeLessThanOrEqual(256 * 1024);
+    // Only the kept messages were read in full: 2 lookups + 20 messages.
+    expect(calls.filter((call) => !call.url.startsWith('https://oauth2'))).toHaveLength(22);
+  });
+
+  it('GML-2 getThread: a message over its 1 MiB bound is shown without a body (cut); a deleted one is skipped', async () => {
+    const { reader } = harness(threadApi(['m1', 'm2', 'm3'], () => '본문', { huge: new Set(['m2']) }));
+    const thread = await reader.getThread('m3');
+    expect(thread.messages.map((entry) => [entry.id, entry.bodyText, entry.bodyTruncated])).toEqual([
+      ['m1', '본문', false],
+      ['m2', '', true],
+      ['m3', '본문', false],
+    ]);
+    const gone = harness((url) => {
+      if (url.pathname.startsWith('/gmail/v1/users/me/threads/')) return json({ id: 't1', messages: [{ id: 'm1' }, { id: 'm2' }] });
+      if (url.searchParams.get('format') === 'minimal') return json({ id: 'm2', threadId: 't1' });
+      if (url.pathname.endsWith('/m1')) return json({ error: { code: 404 } }, 404);
+      return json({ ...metadata('m2'), payload: { mimeType: 'text/plain', body: { data: b64('남은 메일') } } });
+    });
+    expect((await gone.reader.getThread('m2')).messages.map((entry) => entry.id)).toEqual(['m2']);
+  });
+
+  it('Codex review P1: a secret declared only in the QUOTED part, with a bare copy in the unquoted part, is withheld', async () => {
+    // Built from fragments at runtime (no credential-shaped literal in the source).
+    const value = ['Zq7', 'pW2', 'x9L', 'mK4', 'vB8', 'nR3'].join('');
+    const body = [`여기 다시 붙여요: ${value}`, '', 'On Thu, Oct 8, 2026 Kim <m1@example.com> wrote:', `> password: ${value}`].join('\n');
+    const { reader } = harness(threadApi(['m1', 'm2'], (id) => (id === 'm1' ? '첫 메일' : body)));
+    const thread = await reader.getThread('m2');
+    expect(JSON.stringify(thread)).not.toContain(value);
+    expect(thread.messages.map((entry) => [entry.id, entry.bodyText, entry.bodyTruncated])).toEqual([
+      ['m1', '첫 메일', false],
+      ['m2', '', true],
+    ]);
+  });
+
+  it('Codex review P1 (MIME cap): a declaration past the 512 KiB decode cap with the bare value early is withheld, in a thread and a single mail', async () => {
+    const value = ['Hy4', 'tT9', 'qW1', 'eR6', 'uI2', 'oP5'].join('');
+    // The bare value near the start, then filler past the MIME decode cap, then the quoted declaration.
+    const body = [`값 다시 보냅니다 ${value}`, 'z'.repeat(MAX_RAW_BODY_BYTES), 'On Thu, Oct 8, 2026 Kim wrote:', `> password: ${value}`].join('\n');
+    const { reader } = harness(threadApi(['m1', 'm2'], (id) => (id === 'm1' ? '첫 메일' : body)));
+    const thread = await reader.getThread('m2');
+    expect(JSON.stringify(thread)).not.toContain(value);
+    expect(thread.messages.find((entry) => entry.id === 'm2')).toMatchObject({ bodyText: '', bodyTruncated: true, subject: 'Re: 계약' });
+    expect(thread.messages.find((entry) => entry.id === 'm1')?.bodyText).toBe('첫 메일');
+
+    const single = harness(() => json({ ...metadata('m9'), payload: { mimeType: 'text/plain', body: { data: b64(body) } } }));
+    const message = await single.reader.getMessage('m9');
+    expect(JSON.stringify(message)).not.toContain(value);
+    expect(message).toMatchObject({ bodyText: '', bodyTruncated: true });
+    // A single mail with a quoted declaration under the cap: the raw-body guard still withholds it.
+    const quoted = harness(() => json({ ...metadata('m8'), payload: { mimeType: 'text/plain', body: { data: b64(`다시: ${value}\n\n> password: ${value}`) } } }));
+    expect(await quoted.reader.getMessage('m8')).toMatchObject({ bodyText: '', bodyTruncated: true });
+    // A long but complete, clean body is guarded whole, then cut to the port bound (not withheld).
+    const long = harness(() => json({ ...metadata('m7'), payload: { mimeType: 'text/plain', body: { data: b64('가'.repeat(100_000)) } } }));
+    const cut = await long.reader.getMessage('m7');
+    expect(cut.bodyTruncated).toBe(true);
+    expect(cut.bodyText.length).toBeGreaterThan(0);
+  });
+
+  it('Codex review P2: every kept message oversized still sends at most 22 Gmail GETs, and the read stops partial', async () => {
+    const ids = Array.from({ length: 30 }, (_, index) => `m${index + 1}`);
+    const { reader, calls } = harness(threadApi(ids, () => '본문', { threadId: 'big', huge: new Set(ids) }));
+    const thread = await reader.getThread('m30');
+    const gets = calls.filter((call) => !call.url.startsWith('https://oauth2'));
+    expect(gets.length).toBeLessThanOrEqual(GMAIL_THREAD_REQUEST_BUDGET);
+    expect(GMAIL_THREAD_REQUEST_BUDGET).toBe(22);
+    expect(gets.every((call) => call.method === 'GET')).toBe(true);
+    // Partial: fewer messages than the thread holds, each without a body.
+    expect(thread.totalMessages).toBe(30);
+    expect(thread.messages.length).toBeLessThan(20);
+    expect(thread.messages.every((entry) => entry.bodyText === '' && entry.bodyTruncated)).toBe(true);
+    // A 401 retry counts too: the budget is shared by every GET.
+    let first = true;
+    const retrying = harness((url) => {
+      if (first && url.pathname.includes('/threads/')) {
+        first = false;
+        return json({}, 401);
+      }
+      return threadApi(ids, () => '본문', { threadId: 'big', huge: new Set(ids) })(url);
+    });
+    await retrying.reader.getThread('m30');
+    expect(retrying.calls.filter((call) => !call.url.startsWith('https://oauth2')).length).toBeLessThanOrEqual(GMAIL_THREAD_REQUEST_BUDGET);
+  });
+
+  it('GML-2 getThread failures are typed and value-free: a gone message, a mismatched or malformed thread, an invalid id', async () => {
+    const gone = harness(() => json({ error: { code: 404 } }, 404));
+    expect(await failure(gone.reader.getThread('m1'))).toMatchObject({ reason: 'NOT_FOUND' });
+    const mismatch = harness((url) => (url.pathname.includes('/messages/') ? json({ id: 'm1', threadId: 't1' }) : json({ id: 'other', messages: [{ id: 'm1' }] })));
+    expect(await failure(mismatch.reader.getThread('m1'))).toMatchObject({ reason: 'INVALID_RESPONSE' });
+    const badThreadId = harness(() => json({ id: 'm1', threadId: '../labels' }));
+    expect(await failure(badThreadId.reader.getThread('m1'))).toMatchObject({ reason: 'INVALID_RESPONSE' });
+    const empty = harness((url) => (url.pathname.includes('/messages/') ? json({ id: 'm1', threadId: 't1' }) : json({ id: 't1', messages: [] })));
+    expect(await failure(empty.reader.getThread('m1'))).toMatchObject({ reason: 'INVALID_RESPONSE' });
+    const badEntry = harness((url) => (url.pathname.includes('/messages/') ? json({ id: 'm1', threadId: 't1' }) : json({ id: 't1', messages: [{ id: 'a b' }] })));
+    expect(await failure(badEntry.reader.getThread('m1'))).toMatchObject({ reason: 'INVALID_RESPONSE' });
+    expect(await failure(gone.reader.getThread('bad id'))).toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+  });
+
+  it('GML-2: the request guard admits `threads/{id}` reads only', () => {
+    expect(() => assertGmailReadRequest(new URL('/gmail/v1/users/me/threads/t9?format=full&fields=id', GMAIL_API_ORIGIN), 'GET')).not.toThrow();
+    const refused: Array<[string, string]> = [
+      ['/gmail/v1/users/me/threads', 'GET'],
+      ['/gmail/v1/users/me/threads/t9', 'DELETE'],
+      ['/gmail/v1/users/me/threads/t9/modify', 'POST'],
+      ['/gmail/v1/users/me/threads/t9/trash', 'POST'],
+      ['/gmail/v1/users/me/threads/t9?pageToken=x', 'GET'],
+    ];
+    for (const [path, method] of refused) {
+      expect(() => assertGmailReadRequest(new URL(path, GMAIL_API_ORIGIN), method), `${method} ${path}`).toThrow(GmailEndpointNotAllowedError);
+    }
   });
 
   it('construction makes no network call and refuses an empty credential', () => {

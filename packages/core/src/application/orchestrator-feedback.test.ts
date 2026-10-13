@@ -226,3 +226,62 @@ describe('QuokyCore.handleFeedbackSignal (ADR-0098 D3)', () => {
     expect(platform.sends).toHaveLength(0);
   });
 });
+
+describe('QuokyCore delivery observers (ADR-0118 amendment, GML-2)', () => {
+  it('tells each observer after delivery, before the feedback record, with the inbound message and the receipt ids', async () => {
+    const events: Events = { order: [], logs: [] };
+    const platform = platformReturning(events, async () => ({ platformMessageIds: ['out-1', 'out-2'] }));
+    const { feedback } = recorderOf(events);
+    const seen: unknown[] = [];
+    const core = new QuokyCore({
+      runtime: runtimeOf(async () => workResult()),
+      platform,
+      logger: loggerOf(events),
+      feedback,
+      deliveryObservers: [{ observeDelivery: async (turn) => { events.order.push('observe'); seen.push(turn); } }],
+    });
+    await core.handleInboundMessage(messageOf('안 읽은 메일'));
+    expect(events.order).toEqual(['send', 'observe', 'record']);
+    // Only what an observer needs: the inbound id and context, never its text.
+    expect(seen).toEqual([{ messageId: 'in-1', context: CTX, sessionId: 'sess-1', status: 'RESPONDED', platformMessageIds: ['out-1', 'out-2'] }]);
+    expect(JSON.stringify(seen)).not.toContain('안 읽은 메일');
+  });
+
+  it('CA review P3: deliveredAt is read right after the send, before a slow observer runs', async () => {
+    const events: Events = { order: [], logs: [] };
+    const platform = platformReturning(events, async () => ({ platformMessageIds: ['out-1'] }));
+    const { feedback, turns } = recorderOf(events);
+    const core = new QuokyCore({
+      runtime: runtimeOf(async () => workResult()),
+      platform,
+      logger: loggerOf(events),
+      feedback,
+      clock: clockFrom('2026-10-02T10:00:00.000Z', '2026-10-02T10:00:01.000Z', '2026-10-02T10:00:09.000Z'),
+      deliveryObservers: [{ observeDelivery: async () => { events.order.push('observe'); } }],
+    });
+    await core.handleInboundMessage(messageOf('x'));
+    expect(turns[0]?.deliveredAt).toBe('2026-10-02T10:00:01.000Z');
+  });
+
+  it('is not called without a receipt; a throwing observer never alters delivery, the next observer or the record', async () => {
+    const events: Events = { order: [], logs: [] };
+    const silent = platformReturning(events, async () => undefined);
+    const calls: string[] = [];
+    const observers = [
+      { observeDelivery: async () => { calls.push('first'); throw new Error('secret listing text'); } },
+      { observeDelivery: async () => { calls.push('second'); } },
+    ];
+    const quiet = new QuokyCore({ runtime: runtimeOf(async () => workResult()), platform: silent, logger: loggerOf(events), deliveryObservers: observers });
+    await quiet.handleInboundMessage(messageOf('x'));
+    expect(calls).toEqual([]);
+
+    const platform = platformReturning(events, async () => ({ platformMessageIds: ['out-1'] }));
+    const { feedback, turns } = recorderOf(events);
+    const core = new QuokyCore({ runtime: runtimeOf(async () => workResult()), platform, logger: loggerOf(events), feedback, deliveryObservers: observers });
+    await expect(core.handleInboundMessage(messageOf('x'))).resolves.toBeUndefined();
+    expect(calls).toEqual(['first', 'second']);
+    expect(turns).toHaveLength(1);
+    expect(events.logs).toContainEqual({ level: 'warn', message: 'delivery observer failed', fields: { errorName: 'Error' } });
+    expect(JSON.stringify(events.logs)).not.toContain('secret listing text');
+  });
+});
