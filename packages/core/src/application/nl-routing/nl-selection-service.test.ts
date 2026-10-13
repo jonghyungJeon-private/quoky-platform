@@ -655,3 +655,34 @@ describe('NlSelectionService — startup warm-up (ADR-0120 A3 follow-up)', () =>
     }
   });
 });
+
+describe('NlSelectionService — warm-up cancellation and timer (ADR-0120 A3 follow-up)', () => {
+  it('passes the abort signal to the provider and starts no call when already aborted or aborted while resolving', async () => {
+    const h = harness({ execute: async () => ({ text: '{}' }) });
+    const controller = new AbortController();
+    await h.service.warmUp({ signal: controller.signal });
+    expect(h.calls[0]?.signal).toBe(controller.signal);
+    controller.abort();
+    expect(await h.service.warmUp({ signal: controller.signal })).toBe('skipped');
+    const late = new AbortController();
+    const h2 = harness({ select: async () => { late.abort(); return { id: 'scripted-selector', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: '', artifacts: [] }) } as unknown as AiProvider; } });
+    expect(await h2.service.warmUp({ signal: late.signal })).toBe('skipped');
+    expect(h2.calls).toHaveLength(0);
+  });
+
+  it('unrefs the 20 s warm-up timer, leaving no ref\'d timer behind', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness({ execute: async () => ({ text: '{}' }) });
+      await h.service.warmUp();
+      expect(vi.getTimerCount()).toBe(0);
+      const unref = vi.spyOn(globalThis, 'setTimeout');
+      await h.service.warmUp();
+      const timers = unref.mock.results.map((r) => r.value as { hasRef?: () => boolean });
+      expect(timers.some((timer) => timer.hasRef?.() === false)).toBe(true);
+      unref.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

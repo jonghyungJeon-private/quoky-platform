@@ -476,7 +476,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
 
     // ADR-0121 S0 L1: the child gets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 and nothing else beyond the allow-list.
-    const result = await this.runner(this.bin, this.buildArgs(request), { cwd, input, timeoutMs, env: CLAUDE_CHILD_ENV });
+    const result = await this.runner(this.bin, this.buildArgs(request), { cwd, input, timeoutMs, env: CLAUDE_CHILD_ENV, ...(request.signal !== undefined ? { signal: request.signal } : {}) });
 
     // Classified failure taxonomy (ADR-0015). stderr is masked before it leaves.
     if (result.timedOut) {

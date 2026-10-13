@@ -12,6 +12,8 @@ export interface CliRunOptions {
   /** Text written to the child's stdin (the prompt — never passed as an argv). */
   input: string;
   timeoutMs: number;
+  /** Aborting it terminates the child like a timeout (no spawn when already aborted). */
+  signal?: AbortSignal;
   /**
    * Provider-owned child environment overrides. Only the names in
    * {@link CALLER_ENV_ALLOWLIST} are accepted; anything else makes the run fail
@@ -445,6 +447,7 @@ export function createContainedCliRunner(hooks: ContainedRunnerHooks = {}): CliR
         if (finalized) return;
         finalized = true;
         clearTimers();
+        options.signal?.removeEventListener('abort', requestTermination);
         // A group whose termination started stays tracked until `reapGroup` confirms or forces it gone.
         if (groupPid !== undefined && !groupTerminationStarted) liveProcessGroups.delete(groupPid);
         child?.stdout?.removeAllListeners();
@@ -607,6 +610,11 @@ export function createContainedCliRunner(hooks: ContainedRunnerHooks = {}): CliR
         forceKillTimer.unref?.();
       };
 
+      if (options.signal?.aborted) {
+        spawnFailed = true;
+        settle(null);
+        return;
+      }
       try {
         child = spawnFn(bin, args, {
           cwd: options.cwd, // caller's cwd contract is preserved verbatim
@@ -720,6 +728,7 @@ export function createContainedCliRunner(hooks: ContainedRunnerHooks = {}): CliR
         });
       });
 
+      options.signal?.addEventListener('abort', requestTermination, { once: true });
       timeoutTimer = timers.setTimeout(() => {
         if (closeObserved || settled) return; // a normal exit is never a timeout
         timedOut = true;

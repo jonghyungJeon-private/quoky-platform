@@ -15,7 +15,7 @@ describe('scheduleNlWarmup (ADR-0120 A3 follow-up)', () => {
       expect(warmUp).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(NL_WARMUP_DELAY_MS + 1);
       expect(warmUp).toHaveBeenCalledTimes(1);
-      expect(warmUp).toHaveBeenCalledWith({ chatProviderId: 'claude-cli' });
+      expect(warmUp).toHaveBeenCalledWith({ chatProviderId: 'claude-cli', signal: expect.any(AbortSignal) });
       await vi.advanceTimersByTimeAsync(10 * 60_000);
       expect(warmUp).toHaveBeenCalledTimes(1);
     } finally {
@@ -47,6 +47,35 @@ describe('scheduleNlWarmup (ADR-0120 A3 follow-up)', () => {
       cancel();
       await vi.advanceTimersByTimeAsync(NL_WARMUP_DELAY_MS + 1);
       expect(warmUp).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancel aborts an in-flight warm-up and a warm-up never starts after cancel', async () => {
+    vi.useFakeTimers();
+    try {
+      let seen: AbortSignal | undefined;
+      const warmUp = vi.fn(async (options: { signal?: AbortSignal }) => {
+        seen = options.signal;
+        return 'ok' as const;
+      });
+      const cancel = scheduleNlWarmup({ nlSelection: { mode: 'active', warmUp }, router: { select: async () => provider }, logger });
+      await vi.advanceTimersByTimeAsync(NL_WARMUP_DELAY_MS + 1);
+      expect(seen?.aborted).toBe(false);
+      cancel();
+      expect(seen?.aborted).toBe(true);
+
+      // Cancelled while the provider is being resolved: the warm-up is never started.
+      let release: (p: AiProvider) => void = () => undefined;
+      const slow = new Promise<AiProvider>((resolve) => (release = resolve));
+      const warmUp2 = vi.fn(async () => 'ok' as const);
+      const cancel2 = scheduleNlWarmup({ nlSelection: { mode: 'active', warmUp: warmUp2 }, router: { select: () => slow }, logger });
+      await vi.advanceTimersByTimeAsync(NL_WARMUP_DELAY_MS + 1);
+      cancel2();
+      release(provider);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(warmUp2).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

@@ -162,17 +162,23 @@ export class NlSelectionService {
    * family check as a turn (D6/D8). Never throws, logs `nl_selection.warmup` with no content, and callers must not await it
    * on a startup or turn path.
    */
-  async warmUp(options: { readonly chatProviderId?: string } = {}): Promise<NlWarmupOutcome> {
+  async warmUp(options: { readonly chatProviderId?: string; readonly signal?: AbortSignal } = {}): Promise<NlWarmupOutcome> {
     if (this.mode === 'off') return 'skipped';
     const clock = this.deps.elapsed ?? Date.now;
     const started = clock();
     let outcome: NlWarmupOutcome;
+    const signal = options.signal;
+    if (signal?.aborted) return 'skipped';
     try {
       const provider = await this.deps.router.select(Capability.INTENT_SELECTION);
       if (options.chatProviderId !== undefined && (provider.family ?? provider.id) !== options.chatProviderId) return 'skipped';
+      // Cancelled while resolving the provider (shutdown): no call is started.
+      if (signal?.aborted) return 'skipped';
+      // The warm-up's own timer is unref'd so it never keeps the process alive; owner turns keep the plain timer.
       await withTimeout(
-        provider.execute({ capability: Capability.INTENT_SELECTION, prompt: nlWarmupPrompt(), timeoutMs: NL_WARMUP_TIMEOUT_MS }),
+        provider.execute({ capability: Capability.INTENT_SELECTION, prompt: nlWarmupPrompt(), timeoutMs: NL_WARMUP_TIMEOUT_MS, ...(signal !== undefined ? { signal } : {}) }),
         NL_WARMUP_TIMEOUT_MS,
+        true,
       );
       outcome = 'ok';
     } catch (error) {
@@ -648,10 +654,11 @@ export function nlWarmupPrompt(): string {
   return buildSelectionPrompt({ entries: [], text: NL_WARMUP_PROBE_TEXT });
 }
 
-async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(task: Promise<T>, timeoutMs: number, unref = false): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(new SelectionTimeout()), timeoutMs);
+    if (unref) timer.unref();
   });
   task.catch(() => undefined);
   try {

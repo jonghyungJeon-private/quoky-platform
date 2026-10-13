@@ -54,6 +54,11 @@ export interface AiRequest {
   /** The directory the CLI runs in, if the capability touches a workspace. */
   workspace?: WorkspaceRef;
   timeoutMs?: number;
+  /**
+   * Optional, additive: aborting it ends the call early (a CLI provider terminates its child process). Only the startup
+   * warm-up (ADR-0120 A3 follow-up) sets it; a provider that does not support it ignores it.
+   */
+  signal?: AbortSignal;
   metadata?: Metadata;
   /**
    * ADR-0111 D1/D5 (optional, additive): images for an `IMAGE_UNDERSTANDING` request. Core sets it only for a provider
