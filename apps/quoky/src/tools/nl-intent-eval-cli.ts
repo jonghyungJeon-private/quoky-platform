@@ -153,6 +153,14 @@ export function formatSummary(summary: NlEvalSummary): string[] {
       .map(([entry, slot]) => `  ${entry.padEnd(20)} ${slot.hits}/${slot.total} (${pct(slot.rate)})`),
     `latency: p50 ${summary.latency.p50} ms, p95 ${summary.latency.p95} ms, max ${summary.latency.max} ms, over ${summary.latency.boundMs / 1000} s: ${summary.latency.overRuntimeBound}`,
     `gate (>= 95% overall, >= 90% per entry, 0 wrong captures): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`,
+    `S1 gate (the gate above and <= 1% of calls over the ${summary.latency.boundMs / 1000} s bound: ${pct(summary.overBoundRate)}): ${summary.s1GatePassed ? 'PASSED' : 'FAILED'}`,
+    ...(summary.grammarSubset !== undefined
+      ? [
+          `grammar-handled subset (Phase C adds the selector here): ${summary.grammarSubset.hits}/${summary.grammarSubset.positives} (${pct(summary.grammarSubset.overall)})` +
+            `  wrong: ${summary.grammarSubset.wrongCaptures}  clarifications: ${summary.grammarSubset.clarifications}  timeouts: ${summary.grammarSubset.timeouts}` +
+            `  added latency p50 ${summary.grammarSubset.latency.p50} ms, p95 ${summary.grammarSubset.latency.p95} ms, max ${summary.grammarSubset.latency.max} ms`,
+        ]
+      : []),
   ];
 }
 
@@ -213,7 +221,8 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
       if (done % 50 === 0) deps.stderr(`… ${done}/${total}`);
     },
   });
-  const summaries = Array.from({ length: plan.runs }, (_, index) => summarize(records.filter((record) => record.run === index + 1), plan.callTimeoutMs));
+  const grammarCaseIds = new Set(corpus.cases.filter((golden) => golden.grammar !== undefined).map((golden) => golden.id));
+  const summaries = Array.from({ length: plan.runs }, (_, index) => summarize(records.filter((record) => record.run === index + 1), plan.callTimeoutMs, grammarCaseIds));
   for (const [index, summary] of summaries.entries()) {
     deps.stdout(`run ${index + 1}/${plan.runs} (${plan.model}, ${plan.promptVersion}):`);
     for (const line of formatSummary(summary)) deps.stdout(line);

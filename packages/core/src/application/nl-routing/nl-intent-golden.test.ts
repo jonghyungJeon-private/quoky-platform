@@ -17,6 +17,8 @@ export interface NlIntentCase {
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
   readonly channel?: boolean;
   readonly note?: string;
+  /** S1: the frozen Class B grammar that answers it in Phase A (production flags); checked by the app dispatch test. */
+  readonly grammar?: string;
 }
 
 const corpus = JSON.parse(readFileSync(new URL('../golden/nl-intent.v1.json', import.meta.url), 'utf8')) as {
@@ -36,6 +38,15 @@ describe('nl-intent.v1.json (ADR-0120 D12)', () => {
       expect(corpus.cases.filter((c) => c.expect !== 'none' && c.expect.entryId === id).length, id).toBeGreaterThanOrEqual(25);
     }
     expect(corpus.cases.filter((c) => c.expect === 'none').length).toBeGreaterThanOrEqual(80);
+  });
+
+  it('S1 (ADR-0121, ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has >= 25 phrasings that grammar answers today', () => {
+    const classB = ['jira.issues', 'github.items', 'slack.search', 'confluence.search', 'calendar.events', 'mail.list', 'drive.files', 'todo.list', 'help.topic'];
+    for (const id of classB) {
+      expect(corpus.cases.filter((c) => c.grammar !== undefined && c.expect !== 'none' && c.expect.entryId === id).length, id).toBeGreaterThanOrEqual(25);
+    }
+    // Narrowing follow-ups with no previous selection are negatives (a clarification is not wrong, a capture is).
+    expect(corpus.cases.filter((c) => c.prior === undefined && c.expect === 'none' && /^(?:그\s?중에|among those)/.test(c.text)).length).toBeGreaterThanOrEqual(5);
   });
 
   it("contains the owner's two phrases and the follow-up verbatim, with the expected selections", () => {

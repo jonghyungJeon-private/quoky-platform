@@ -114,6 +114,32 @@ describe('nl-intent evaluation timeout option (ADR-0120 A3)', () => {
     expect(summarize(records, 2000).latency).toMatchObject({ boundMs: 2000, overRuntimeBound: 2 });
     expect(summarize(records).latency).toMatchObject({ boundMs: NL_SELECTION_TIMEOUT_MS, overRuntimeBound: 1 });
   });
+
+  it('S1: the over-bound share gates at 1%, and the grammar-handled subset reports its own hits and latency', () => {
+    const records = Array.from({ length: 200 }, (_, index) => ({
+      run: 1,
+      id: `c${index}`,
+      expected: 'jira.issues',
+      outcome: index < 2 ? ('timeout' as const) : ('hit' as const),
+      latencyMs: index < 2 ? 6001 : 1000 + index,
+    }));
+    const twoOver = summarize(records, 6000, new Set(['c0', 'c10', 'c20', 'c30']));
+    expect(twoOver).toMatchObject({ overBoundRate: 0.01, gatePassed: true, s1GatePassed: true });
+    expect(twoOver.grammarSubset).toEqual({
+      cases: 4,
+      positives: 4,
+      hits: 3,
+      overall: 0.75,
+      wrongCaptures: 0,
+      clarifications: 0,
+      timeouts: 1,
+      latency: { p50: 1020, p95: 6001, max: 6001 },
+    });
+    const threeOver = summarize([...records, { run: 1, id: 'x', expected: 'jira.issues', outcome: 'timeout' as const, latencyMs: 6002 }], 6000);
+    expect(threeOver.overBoundRate).toBeGreaterThan(0.01);
+    expect(threeOver).toMatchObject({ gatePassed: true, s1GatePassed: false });
+    expect(threeOver.grammarSubset).toBeUndefined();
+  });
 });
 
 describe('nl-intent evaluation CLI (Strict digest gate)', () => {

@@ -31,6 +31,8 @@ import {
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 
 export const NL_EVAL_GATE = { overall: 0.95, perEntry: 0.9, wrongCaptures: 0 } as const;
+/** ADR-0121 S1 (design §6): at most 1% of the calls may go over the configured selection bound. */
+export const NL_EVAL_S1_MAX_OVER_BOUND_RATE = 0.01;
 /**
  * The runtime's selection bound (ADR-0120 D3, `NL_SELECTION_TIMEOUT_MS`). The evaluation calls with the same bound: a
  * call that does not answer within it is a `timeout` — not a hit and not wrong, exactly what the runtime would do.
@@ -44,6 +46,8 @@ export interface NlEvalCase {
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
   readonly channel?: boolean;
   readonly note?: string;
+  /** S1: the frozen Class B grammar that answers this case in Phase A (the grammar-handled subset of the report). */
+  readonly grammar?: string;
 }
 
 export interface NlEvalCorpus {
@@ -181,9 +185,31 @@ export interface NlEvalSummary {
   readonly errors: number;
   readonly latency: { readonly p50: number; readonly p95: number; readonly max: number; readonly boundMs: number; readonly overRuntimeBound: number };
   readonly gatePassed: boolean;
+  /** ADR-0121 S1: the share of calls over the bound, and the S1 gate (the D12 gate plus at most 1% over the bound). */
+  readonly overBoundRate: number;
+  readonly s1GatePassed: boolean;
+  /**
+   * S1 Phase C: the cases a frozen Class B grammar answers today (`grammar` in the corpus). Their latency is the latency
+   * Phase C adds to those messages (the grammar itself answers on the host in milliseconds).
+   */
+  readonly grammarSubset?: {
+    readonly cases: number;
+    readonly positives: number;
+    readonly hits: number;
+    readonly overall: number;
+    readonly wrongCaptures: number;
+    readonly clarifications: number;
+    readonly timeouts: number;
+    readonly latency: { readonly p50: number; readonly p95: number; readonly max: number };
+  };
 }
 
-export function summarize(records: readonly NlEvalRecord[], boundMs: number = NL_EVAL_RUNTIME_TIMEOUT_MS): NlEvalSummary {
+function percentile(values: readonly number[], p: number): number {
+  const sorted = values.filter((ms) => ms > 0).sort((a, b) => a - b);
+  return sorted.length === 0 ? 0 : (sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)] as number);
+}
+
+export function summarize(records: readonly NlEvalRecord[], boundMs: number = NL_EVAL_RUNTIME_TIMEOUT_MS, grammarCaseIds?: ReadonlySet<string>): NlEvalSummary {
   const positives = records.filter((record) => record.expected !== 'none');
   const hits = positives.filter((record) => record.outcome === 'hit').length;
   const perEntry: Record<string, { hits: number; total: number; rate: number }> = {};
@@ -197,6 +223,15 @@ export function summarize(records: readonly NlEvalRecord[], boundMs: number = NL
   const pct = (p: number) => (latencies.length === 0 ? 0 : latencies[Math.min(latencies.length - 1, Math.ceil((p / 100) * latencies.length) - 1)] as number);
   const overall = positives.length === 0 ? 1 : hits / positives.length;
   const wrongCaptures = records.filter((record) => record.outcome === 'wrong-capture').length;
+  const overRuntimeBound = latencies.filter((ms) => ms > boundMs).length;
+  const overBoundRate = records.length === 0 ? 0 : overRuntimeBound / records.length;
+  const gatePassed =
+    overall >= NL_EVAL_GATE.overall &&
+    Object.values(perEntry).every((slot) => slot.rate >= NL_EVAL_GATE.perEntry) &&
+    wrongCaptures <= NL_EVAL_GATE.wrongCaptures;
+  const grammarRecords = grammarCaseIds === undefined ? undefined : records.filter((record) => grammarCaseIds.has(record.id));
+  const grammarPositives = grammarRecords?.filter((record) => record.expected !== 'none') ?? [];
+  const grammarHits = grammarPositives.filter((record) => record.outcome === 'hit').length;
   return {
     cases: records.length,
     positives: positives.length,
@@ -208,11 +243,28 @@ export function summarize(records: readonly NlEvalRecord[], boundMs: number = NL
     clarifications: records.filter((record) => record.outcome === 'clarify').length,
     timeouts: records.filter((record) => record.outcome === 'timeout').length,
     errors: records.filter((record) => record.outcome === 'error').length,
-    latency: { p50: pct(50), p95: pct(95), max: latencies.at(-1) ?? 0, boundMs, overRuntimeBound: latencies.filter((ms) => ms > boundMs).length },
-    gatePassed:
-      overall >= NL_EVAL_GATE.overall &&
-      Object.values(perEntry).every((slot) => slot.rate >= NL_EVAL_GATE.perEntry) &&
-      wrongCaptures <= NL_EVAL_GATE.wrongCaptures,
+    latency: { p50: pct(50), p95: pct(95), max: latencies.at(-1) ?? 0, boundMs, overRuntimeBound },
+    gatePassed,
+    overBoundRate,
+    s1GatePassed: gatePassed && overBoundRate <= NL_EVAL_S1_MAX_OVER_BOUND_RATE,
+    ...(grammarRecords !== undefined
+      ? {
+          grammarSubset: {
+            cases: grammarRecords.length,
+            positives: grammarPositives.length,
+            hits: grammarHits,
+            overall: grammarPositives.length === 0 ? 1 : grammarHits / grammarPositives.length,
+            wrongCaptures: grammarRecords.filter((record) => record.outcome === 'wrong-capture').length,
+            clarifications: grammarRecords.filter((record) => record.outcome === 'clarify').length,
+            timeouts: grammarRecords.filter((record) => record.outcome === 'timeout').length,
+            latency: {
+              p50: percentile(grammarRecords.map((record) => record.latencyMs), 50),
+              p95: percentile(grammarRecords.map((record) => record.latencyMs), 95),
+              max: Math.max(0, ...grammarRecords.map((record) => record.latencyMs)),
+            },
+          },
+        }
+      : {}),
   };
 }
 

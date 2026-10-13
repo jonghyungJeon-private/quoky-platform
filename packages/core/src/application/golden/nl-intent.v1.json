@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5).",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted under the owner's S1 instruction), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives.",
   "cases": [
     {
       "id": "jira-001",
@@ -72,7 +72,8 @@
       "expect": {
         "entryId": "jira.issues",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.my-items"
     },
     {
       "id": "jira-006",
@@ -80,7 +81,8 @@
       "expect": {
         "entryId": "jira.issues",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.my-items"
     },
     {
       "id": "jira-007",
@@ -108,7 +110,8 @@
           "window": "due",
           "range": "this-week"
         }
-      }
+      },
+      "grammar": "work-lookup.due-this-week"
     },
     {
       "id": "jira-010",
@@ -119,7 +122,8 @@
           "window": "due",
           "range": "this-week"
         }
-      }
+      },
+      "grammar": "work-lookup.due-this-week"
     },
     {
       "id": "jira-011",
@@ -158,6 +162,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
+      "grammar": "work-lookup.my-items",
       "note": "no spaces"
     },
     {
@@ -168,7 +173,8 @@
         "args": {
           "keyword": "위클리카"
         }
-      }
+      },
+      "grammar": "work-lookup.my-items"
     },
     {
       "id": "jira-016",
@@ -441,7 +447,8 @@
       "expect": {
         "entryId": "jira.issues",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.my-items"
     },
     {
       "id": "jira-040",
@@ -449,7 +456,8 @@
       "expect": {
         "entryId": "jira.issues",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.my-items"
     },
     {
       "id": "jira-041",
@@ -547,7 +555,8 @@
         "args": {
           "limit": 5
         }
-      }
+      },
+      "grammar": "work-lookup.my-items"
     },
     {
       "id": "github-001",
@@ -557,7 +566,8 @@
         "args": {
           "query": "review-requests"
         }
-      }
+      },
+      "grammar": "work-lookup.review-requests"
     },
     {
       "id": "github-002",
@@ -567,7 +577,8 @@
         "args": {
           "query": "review-requests"
         }
-      }
+      },
+      "grammar": "work-lookup.review-requests"
     },
     {
       "id": "github-003",
@@ -619,7 +630,8 @@
           "query": "review-requests",
           "count": true
         }
-      }
+      },
+      "grammar": "work-lookup.review-requests"
     },
     {
       "id": "github-008",
@@ -641,7 +653,8 @@
         "args": {
           "query": "review-requests"
         }
-      }
+      },
+      "grammar": "work-lookup.review-requests"
     },
     {
       "id": "github-010",
@@ -668,7 +681,8 @@
       "expect": {
         "entryId": "github.items",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.my-items"
     },
     {
       "id": "github-013",
@@ -700,7 +714,8 @@
       "expect": {
         "entryId": "github.items",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.my-items"
     },
     {
       "id": "github-017",
@@ -762,7 +777,8 @@
         "args": {
           "query": "review-requests"
         }
-      }
+      },
+      "grammar": "work-lookup.review-requests"
     },
     {
       "id": "github-023",
@@ -799,7 +815,8 @@
         "args": {
           "query": "review-requests"
         }
-      }
+      },
+      "grammar": "work-lookup.review-requests"
     },
     {
       "id": "github-026",
@@ -874,7 +891,8 @@
         "args": {
           "keyword": "배포"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "slack-002",
@@ -884,7 +902,8 @@
         "args": {
           "keyword": "장애 공지"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "slack-003",
@@ -894,7 +913,8 @@
         "args": {
           "keyword": "배포"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "slack-004",
@@ -904,7 +924,8 @@
         "args": {
           "keyword": "배포 일정"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "slack-005",
@@ -946,6 +967,7 @@
           "keyword": "배포"
         }
       },
+      "grammar": "work-lookup.search",
       "note": "no space"
     },
     {
@@ -1008,7 +1030,8 @@
         "args": {
           "keyword": "위클리카"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "slack-015",
@@ -1063,7 +1086,8 @@
         "args": {
           "keyword": "장애"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "slack-019",
@@ -1083,7 +1107,8 @@
         "args": {
           "keyword": "점심 회식"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "slack-021",
@@ -1134,7 +1159,8 @@
         "args": {
           "keyword": "incident"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "slack-026",
@@ -1144,7 +1170,8 @@
         "args": {
           "keyword": "deploy"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "slack-027",
@@ -1164,7 +1191,8 @@
         "args": {
           "keyword": "hotfix"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "slack-029",
@@ -1196,7 +1224,8 @@
           "keyword": "migration",
           "limit": 2
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "confluence-001",
@@ -1206,7 +1235,8 @@
         "args": {
           "keyword": "온보딩"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "confluence-002",
@@ -1216,7 +1246,8 @@
         "args": {
           "keyword": "배포 가이드"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "confluence-003",
@@ -1246,7 +1277,8 @@
         "args": {
           "keyword": "DB 설계"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "confluence-006",
@@ -1268,6 +1300,7 @@
           "keyword": "정책"
         }
       },
+      "grammar": "work-lookup.search",
       "note": "spelling variant"
     },
     {
@@ -1299,7 +1332,8 @@
         "args": {
           "keyword": "회의록"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "confluence-011",
@@ -1388,7 +1422,8 @@
         "args": {
           "keyword": "ADR"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "confluence-019",
@@ -1460,7 +1495,8 @@
         "args": {
           "keyword": "onboarding"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "confluence-026",
@@ -1470,7 +1506,8 @@
         "args": {
           "keyword": "runbook"
         }
-      }
+      },
+      "grammar": "work-lookup.search"
     },
     {
       "id": "confluence-027",
@@ -1530,7 +1567,8 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {}
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-002",
@@ -1540,7 +1578,8 @@
         "args": {
           "range": "tomorrow"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-003",
@@ -1550,7 +1589,8 @@
         "args": {
           "range": "this-week"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-004",
@@ -1560,7 +1600,8 @@
         "args": {
           "range": "next-week"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-005",
@@ -1590,7 +1631,8 @@
         "args": {
           "remaining": true
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-008",
@@ -1598,7 +1640,8 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {}
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-009",
@@ -1626,7 +1669,8 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {}
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-012",
@@ -1635,6 +1679,7 @@
         "entryId": "calendar.events",
         "args": {}
       },
+      "grammar": "calendar-question",
       "note": "no space"
     },
     {
@@ -1646,6 +1691,7 @@
           "range": "tomorrow"
         }
       },
+      "grammar": "calendar-question",
       "note": "abbreviation 낼"
     },
     {
@@ -1656,7 +1702,8 @@
         "args": {
           "range": "10-20"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-015",
@@ -1676,7 +1723,8 @@
         "args": {
           "range": "upcoming"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-017",
@@ -1686,7 +1734,8 @@
         "args": {
           "range": "fri"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-018",
@@ -1696,7 +1745,8 @@
         "args": {
           "range": "next-mon"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-019",
@@ -1716,7 +1766,8 @@
         "args": {
           "count": true
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-021",
@@ -1726,7 +1777,8 @@
         "args": {
           "range": "day-after-tomorrow"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-022",
@@ -1736,7 +1788,8 @@
         "args": {
           "range": "this-weekend"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-023",
@@ -1746,7 +1799,8 @@
         "args": {
           "range": "next-weekend"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-024",
@@ -1767,7 +1821,8 @@
           "remaining": true,
           "count": true
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-026",
@@ -1816,7 +1871,8 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {}
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-030",
@@ -1833,7 +1889,8 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {}
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-032",
@@ -1843,7 +1900,8 @@
         "args": {
           "range": "tomorrow"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-033",
@@ -1853,7 +1911,8 @@
         "args": {
           "range": "this-week"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-034",
@@ -1863,7 +1922,8 @@
         "args": {
           "range": "upcoming"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-035",
@@ -1894,7 +1954,8 @@
         "args": {
           "remaining": true
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-038",
@@ -1904,7 +1965,8 @@
         "args": {
           "range": "10-25"
         }
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "calendar-039",
@@ -1935,7 +1997,8 @@
         "args": {
           "today": true
         }
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-002",
@@ -1945,7 +2008,8 @@
         "args": {
           "unread": true
         }
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-003",
@@ -1953,7 +2017,8 @@
       "expect": {
         "entryId": "mail.list",
         "args": {}
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-004",
@@ -1963,7 +2028,8 @@
         "args": {
           "unread": true
         }
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-005",
@@ -2001,7 +2067,8 @@
       "expect": {
         "entryId": "mail.list",
         "args": {}
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-009",
@@ -2065,7 +2132,8 @@
           "unread": true,
           "count": true
         }
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-016",
@@ -2075,7 +2143,8 @@
         "args": {
           "from": "홍과장님"
         }
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-017",
@@ -2098,7 +2167,8 @@
           "unread": true,
           "count": true
         }
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-019",
@@ -2139,7 +2209,8 @@
         "args": {
           "unread": true
         }
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-023",
@@ -2150,7 +2221,8 @@
         "args": {
           "today": true
         }
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-024",
@@ -2203,7 +2275,8 @@
         "args": {
           "unread": true
         }
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-028",
@@ -2222,7 +2295,8 @@
       "expect": {
         "entryId": "mail.list",
         "args": {}
-      }
+      },
+      "grammar": "mail-question.list"
     },
     {
       "id": "mail-030",
@@ -2282,7 +2356,8 @@
       "expect": {
         "entryId": "drive.files",
         "args": {}
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-002",
@@ -2292,7 +2367,8 @@
         "args": {
           "name": "기획서"
         }
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-003",
@@ -2300,7 +2376,8 @@
       "expect": {
         "entryId": "drive.files",
         "args": {}
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-004",
@@ -2328,7 +2405,8 @@
         "args": {
           "name": "회의록"
         }
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-007",
@@ -2356,7 +2434,8 @@
         "args": {
           "name": "분기 보고서"
         }
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-010",
@@ -2404,6 +2483,7 @@
           "name": "제안서"
         }
       },
+      "grammar": "drive-question.list",
       "note": "no space"
     },
     {
@@ -2413,7 +2493,8 @@
       "expect": {
         "entryId": "drive.files",
         "args": {}
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-016",
@@ -2424,7 +2505,8 @@
         "args": {
           "name": "기획서"
         }
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-017",
@@ -2461,7 +2543,8 @@
         "args": {
           "name": "2026 사업계획"
         }
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-020",
@@ -2469,7 +2552,8 @@
       "expect": {
         "entryId": "drive.files",
         "args": {}
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-021",
@@ -2479,7 +2563,8 @@
         "args": {
           "name": "온보딩"
         }
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-022",
@@ -2508,7 +2593,8 @@
       "expect": {
         "entryId": "drive.files",
         "args": {}
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-025",
@@ -2528,7 +2614,8 @@
         "args": {
           "name": "roadmap"
         }
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-027",
@@ -2546,7 +2633,8 @@
       "expect": {
         "entryId": "drive.files",
         "args": {}
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-029",
@@ -2575,7 +2663,8 @@
       "expect": {
         "entryId": "todo.list",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.todo-list"
     },
     {
       "id": "todo-002",
@@ -2583,7 +2672,8 @@
       "expect": {
         "entryId": "todo.list",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.todo-list"
     },
     {
       "id": "todo-003",
@@ -2601,7 +2691,8 @@
         "args": {
           "count": true
         }
-      }
+      },
+      "grammar": "work-lookup.todo-summary"
     },
     {
       "id": "todo-005",
@@ -2609,7 +2700,8 @@
       "expect": {
         "entryId": "todo.list",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.todo-list"
     },
     {
       "id": "todo-006",
@@ -2653,7 +2745,8 @@
         "args": {
           "count": true
         }
-      }
+      },
+      "grammar": "work-lookup.todo-summary"
     },
     {
       "id": "todo-011",
@@ -2662,6 +2755,7 @@
         "entryId": "todo.list",
         "args": {}
       },
+      "grammar": "work-lookup.todo-list",
       "note": "mixed"
     },
     {
@@ -2679,7 +2773,8 @@
       "expect": {
         "entryId": "todo.list",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.todo-list"
     },
     {
       "id": "todo-014",
@@ -2697,7 +2792,8 @@
       "expect": {
         "entryId": "todo.list",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.todo-list"
     },
     {
       "id": "todo-016",
@@ -2705,7 +2801,8 @@
       "expect": {
         "entryId": "todo.list",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.todo-list"
     },
     {
       "id": "todo-017",
@@ -2713,7 +2810,8 @@
       "expect": {
         "entryId": "todo.list",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.todo-list"
     },
     {
       "id": "todo-018",
@@ -2730,6 +2828,7 @@
         "entryId": "todo.list",
         "args": {}
       },
+      "grammar": "work-lookup.todo-list",
       "note": "chatty"
     },
     {
@@ -2740,7 +2839,8 @@
         "args": {
           "count": true
         }
-      }
+      },
+      "grammar": "work-lookup.todo-list"
     },
     {
       "id": "todo-021",
@@ -2756,7 +2856,8 @@
       "expect": {
         "entryId": "todo.list",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.todo-list"
     },
     {
       "id": "todo-023",
@@ -2764,7 +2865,8 @@
       "expect": {
         "entryId": "todo.list",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.todo-list"
     },
     {
       "id": "todo-024",
@@ -2782,7 +2884,8 @@
         "args": {
           "count": true
         }
-      }
+      },
+      "grammar": "work-lookup.todo-summary"
     },
     {
       "id": "todo-026",
@@ -3203,7 +3306,8 @@
       "expect": {
         "entryId": "brief.today",
         "args": {}
-      }
+      },
+      "grammar": "work-lookup.todo-list"
     },
     {
       "id": "brief-018",
@@ -3326,6 +3430,7 @@
         "entryId": "help.topic",
         "args": {}
       },
+      "grammar": "help-intent",
       "note": "owner example"
     },
     {
@@ -3334,7 +3439,8 @@
       "expect": {
         "entryId": "help.topic",
         "args": {}
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-004",
@@ -3342,7 +3448,8 @@
       "expect": {
         "entryId": "help.topic",
         "args": {}
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-005",
@@ -3350,7 +3457,8 @@
       "expect": {
         "entryId": "help.topic",
         "args": {}
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-006",
@@ -3393,7 +3501,8 @@
         "args": {
           "topic": "todo"
         }
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-011",
@@ -3403,7 +3512,8 @@
         "args": {
           "topic": "todo.complete"
         }
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-012",
@@ -3414,6 +3524,7 @@
           "topic": "reminder"
         }
       },
+      "grammar": "help-intent",
       "note": "owner example"
     },
     {
@@ -3424,7 +3535,8 @@
         "args": {
           "topic": "reminder"
         }
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-014",
@@ -3506,7 +3618,8 @@
         "args": {
           "topic": "memory"
         }
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-022",
@@ -3516,7 +3629,8 @@
         "args": {
           "topic": "feedback"
         }
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-023",
@@ -3526,7 +3640,8 @@
         "args": {
           "topic": "branch"
         }
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-024",
@@ -3556,7 +3671,8 @@
         "args": {
           "topic": "model"
         }
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-027",
@@ -3574,7 +3690,8 @@
       "expect": {
         "entryId": "help.topic",
         "args": {}
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-029",
@@ -3592,7 +3709,8 @@
         "args": {
           "topic": "reminder"
         }
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-031",
@@ -3632,7 +3750,8 @@
         "args": {
           "topic": "todo.complete"
         }
-      }
+      },
+      "grammar": "help-intent"
     },
     {
       "id": "help-035",
@@ -4761,7 +4880,8 @@
         "args": {
           "kind": "spreadsheet"
         }
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-033",
@@ -4812,7 +4932,8 @@
           "name": "기획서",
           "kind": "spreadsheet"
         }
-      }
+      },
+      "grammar": "drive-question.list"
     },
     {
       "id": "drive-038",
@@ -4974,7 +5095,8 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {}
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "drive-042",
@@ -4990,7 +5112,8 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {}
-      }
+      },
+      "grammar": "calendar-question"
     },
     {
       "id": "github-033",
@@ -5270,6 +5393,1599 @@
         }
       },
       "note": "follow-up 2, partial: no time-of-day filter exists, so the whole week is listed and the basis line says so (never a keyword or a wrong filter)"
+    },
+    {
+      "id": "jira-066",
+      "text": "지라 이슈 보여줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-067",
+      "text": "지라 티켓 목록 알려줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-068",
+      "text": "jira 이슈 리스트 보여줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-069",
+      "text": "지라 작업 뭐 있어",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-070",
+      "text": "지라에서 결제 관련 이슈 찾아줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "keyword": "결제"
+        }
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-071",
+      "text": "jira에서 로그인 이슈 검색해줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "keyword": "로그인"
+        }
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-072",
+      "text": "지라에서 위클리카 검색",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "keyword": "위클리카"
+        }
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-073",
+      "text": "정산 관련 지라 이슈 보여줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "keyword": "정산"
+        }
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-074",
+      "text": "배포 관련된 지라 티켓 알려줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "keyword": "배포"
+        }
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-075",
+      "text": "list jira issues",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-076",
+      "text": "show jira tickets",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-077",
+      "text": "이번주 마감 이슈 알려줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "window": "due",
+          "range": "this-week"
+        }
+      },
+      "grammar": "work-lookup.due-this-week",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-078",
+      "text": "내 지라 이슈 좀 보여줄래요?",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-079",
+      "text": "지라 이슈들 보여주세요",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-080",
+      "text": "이번 주 마감인 지라 티켓 뭐 있어?",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "window": "due",
+          "range": "this-week"
+        }
+      },
+      "grammar": "work-lookup.due-this-week",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-036",
+      "text": "깃허브 리뷰 요청 알려줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "grammar": "work-lookup.review-requests",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-037",
+      "text": "깃헙 리뷰 요청 보여줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "grammar": "work-lookup.review-requests",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-038",
+      "text": "github 리뷰 요청 확인해줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "grammar": "work-lookup.review-requests",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-039",
+      "text": "리뷰 요청 들어온 거 보여줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier)"
+    },
+    {
+      "id": "github-040",
+      "text": "리뷰 요청 받은 PR 알려줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "grammar": "work-lookup.review-requests",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-041",
+      "text": "내 깃허브 PR 보여줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-042",
+      "text": "내 깃헙 이슈 알려줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-043",
+      "text": "깃허브에 내 PR 뭐 있어?",
+      "expect": {
+        "entryId": "github.items",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-044",
+      "text": "내 github 이슈들 보여줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-045",
+      "text": "show my github prs",
+      "expect": {
+        "entryId": "github.items",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-046",
+      "text": "list my github issues",
+      "expect": {
+        "entryId": "github.items",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-047",
+      "text": "깃허브 리뷰 요청 들어온 거 있어?",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier)"
+    },
+    {
+      "id": "github-048",
+      "text": "내 깃허브 PR 중에 결제 관련 보여줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "keyword": "결제"
+        }
+      },
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier)"
+    },
+    {
+      "id": "github-049",
+      "text": "내 깃허브 이슈 중에 배포 관련된 거 알려줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "keyword": "배포"
+        }
+      },
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier)"
+    },
+    {
+      "id": "github-050",
+      "text": "깃허브 리뷰 요청 목록 보여줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "grammar": "work-lookup.review-requests",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-051",
+      "text": "리뷰 요청된 PR 있어?",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "grammar": "work-lookup.review-requests",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-052",
+      "text": "내 깃허브 풀리퀘 보여줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-053",
+      "text": "show me my github review requests please",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "grammar": "work-lookup.review-requests",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-033",
+      "text": "슬랙에서 회의록 찾아줘",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "회의록"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-034",
+      "text": "슬랙에서 릴리즈 노트 검색해줘",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "릴리즈 노트"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-035",
+      "text": "슬랙에서 점심 메뉴 찾아봐",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "점심 메뉴"
+        }
+      },
+      "note": "S1: near-grammar phrasing (no grammar hit)"
+    },
+    {
+      "id": "slack-036",
+      "text": "slack에서 결제 오류 검색",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "결제 오류"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-037",
+      "text": "온보딩 슬랙에서 찾아줘",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "온보딩"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-038",
+      "text": "슬랙에서 코드리뷰 검색해줘",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "코드리뷰"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-039",
+      "text": "슬랙에서 '서버 점검' 찾아줘",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "서버 점검"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-040",
+      "text": "슬랙에서 휴가 공지 검색해 줘",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "휴가 공지"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-041",
+      "text": "search slack for release",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "release"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-042",
+      "text": "search slack for outage report",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "outage report"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-043",
+      "text": "find hotfix in slack",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "hotfix"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-044",
+      "text": "슬랙에서 QA 일정 찾아줄래?",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "QA 일정"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-045",
+      "text": "슬랙에서 인증서 만료 검색",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "인증서 만료"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-046",
+      "text": "슬랙에서 디자인 리뷰 찾아봐줘",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "디자인 리뷰"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "slack-047",
+      "text": "슬랙에서 KPI 검색해줘",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "KPI"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-032",
+      "text": "컨플루언스에서 API 가이드 찾아줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "API 가이드"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-033",
+      "text": "컨플루언스에서 배포 절차 검색해줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "배포 절차"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-034",
+      "text": "컨플루언스에서 휴가 정책 찾아봐",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "휴가 정책"
+        }
+      },
+      "note": "S1: near-grammar phrasing (no grammar hit)"
+    },
+    {
+      "id": "confluence-035",
+      "text": "confluence에서 온콜 가이드 검색",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "온콜 가이드"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-036",
+      "text": "컨플루언스에서 회고 찾아줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "회고"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-037",
+      "text": "컨플루언스에서 아키텍처 검색",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "아키텍처"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-038",
+      "text": "컨플루언스에서 '보안 점검' 찾아줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "보안 점검"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-039",
+      "text": "컨플루언스에서 신규 입사자 안내 찾아줄래?",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "신규 입사자 안내"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-040",
+      "text": "컨플루언스에서 장애 보고서 검색해 줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "장애 보고서"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-041",
+      "text": "컨플루언스에서 릴리즈 노트 찾아봐줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "릴리즈 노트"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-042",
+      "text": "컨플루언스에서 데이터 사전 검색",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "데이터 사전"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-043",
+      "text": "컨플루언스에서 코딩 컨벤션 찾아줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "코딩 컨벤션"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-044",
+      "text": "search confluence for release process",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "release process"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-045",
+      "text": "search confluence for security policy",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "security policy"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-046",
+      "text": "find the onboarding guide in confluence",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "onboarding guide"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-047",
+      "text": "컨플루언스에서 비용 정산 방법 검색해줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "비용 정산 방법"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-048",
+      "text": "API 가이드 컨플루언스에서 찾아줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "API 가이드"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-049",
+      "text": "온보딩 체크리스트 컨플루언스에서 검색해줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "온보딩 체크리스트"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-050",
+      "text": "컨플루엔스에서 운영 매뉴얼 찾아줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "운영 매뉴얼"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "confluence-051",
+      "text": "look up incident postmortem in confluence",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "incident postmortem"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-038",
+      "text": "메일 보여줘",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {}
+      },
+      "note": "S1: near-grammar phrasing (no grammar hit)"
+    },
+    {
+      "id": "mail-039",
+      "text": "읽지 않은 메일 보여줘",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true
+        }
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-040",
+      "text": "새 메일 있어?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true
+        }
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-041",
+      "text": "오늘 받은 메일 있어?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "today": true
+        }
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-042",
+      "text": "오늘 온 메일 보여줘",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "today": true
+        }
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-043",
+      "text": "김부장님이 보낸 메일 있어?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "from": "김부장님"
+        }
+      },
+      "note": "S1: near-grammar phrasing (no grammar hit)"
+    },
+    {
+      "id": "mail-044",
+      "text": "이대리가 보낸 메일 보여줘",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "from": "이대리"
+        }
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-045",
+      "text": "메일함 확인해줘",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {}
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-046",
+      "text": "안 읽은 메일 몇 통이야?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true,
+          "count": true
+        }
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-047",
+      "text": "gmail 확인해줘",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {}
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-048",
+      "text": "show my emails",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {}
+      },
+      "note": "S1: near-grammar phrasing (no grammar hit)"
+    },
+    {
+      "id": "mail-049",
+      "text": "any new emails?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true
+        }
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-050",
+      "text": "show emails from Kim",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "from": "Kim"
+        }
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-051",
+      "text": "오늘 받은 메일 몇 개야?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "today": true,
+          "count": true
+        }
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-052",
+      "text": "읽지 않은 메일 알려줘",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true
+        }
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-053",
+      "text": "메일 왔어?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {}
+      },
+      "grammar": "mail-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "mail-054",
+      "text": "받은 메일 보여줘",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {}
+      },
+      "note": "S1: near-grammar phrasing (no grammar hit)"
+    },
+    {
+      "id": "drive-044",
+      "text": "구글 드라이브 최근 파일 알려줘",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {}
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "drive-045",
+      "text": "드라이브에서 예산안 찾아줘",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "name": "예산안"
+        }
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "drive-046",
+      "text": "드라이브에서 계약서 검색해줘",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "name": "계약서"
+        }
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "drive-047",
+      "text": "드라이브에서 회고록 찾아봐",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "name": "회고록"
+        }
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "drive-048",
+      "text": "드라이브에서 '마케팅 계획' 검색",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "name": "마케팅 계획"
+        }
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "drive-049",
+      "text": "구글 드라이브에서 매뉴얼 찾아줘",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "name": "매뉴얼"
+        }
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "drive-050",
+      "text": "show recent files in my drive",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {}
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "drive-051",
+      "text": "search drive for budget",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "name": "budget"
+        }
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "drive-052",
+      "text": "find invoice in google drive",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "name": "invoice"
+        }
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "drive-053",
+      "text": "드라이브에서 주간 보고 찾아줄래?",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "name": "주간 보고"
+        }
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "drive-054",
+      "text": "드라이브 최근 문서 알려줘",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {}
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "drive-055",
+      "text": "드라이브에서 견적서 찾아봐줘",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {
+          "name": "견적서"
+        }
+      },
+      "grammar": "drive-question.list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "todo-031",
+      "text": "할 일 보여줘",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammar": "work-lookup.todo-list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "todo-032",
+      "text": "내 할일 목록",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammar": "work-lookup.todo-list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "todo-033",
+      "text": "할일 보여줘",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammar": "work-lookup.todo-list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "todo-034",
+      "text": "할 일 리스트 보여줘",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammar": "work-lookup.todo-list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "todo-035",
+      "text": "투두 리스트 알려줘",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammar": "work-lookup.todo-list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "todo-036",
+      "text": "내 할 일 뭐 있어?",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammar": "work-lookup.todo-list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "todo-037",
+      "text": "할 일 목록 좀 보여줄래?",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammar": "work-lookup.todo-list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "todo-038",
+      "text": "show my to-do list",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "note": "S1: near-grammar phrasing (no grammar hit)"
+    },
+    {
+      "id": "todo-039",
+      "text": "list my todos",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammar": "work-lookup.todo-list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "todo-040",
+      "text": "what's on my todo list?",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "note": "S1: near-grammar phrasing (no grammar hit)"
+    },
+    {
+      "id": "todo-041",
+      "text": "할 일 몇 개야?",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {
+          "count": true
+        }
+      },
+      "grammar": "work-lookup.todo-summary",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "todo-042",
+      "text": "내 할 일 몇 개 남았어?",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {
+          "count": true
+        }
+      },
+      "grammar": "work-lookup.todo-summary",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "todo-043",
+      "text": "남은 할 일 보여줘",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammar": "work-lookup.todo-list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-036",
+      "text": "알림 어떻게 지워?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "reminder"
+        }
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-037",
+      "text": "완료 처리 어떻게 해?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "todo.complete"
+        }
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-038",
+      "text": "할 일 추가하는 법 알려줘",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "todo"
+        }
+      },
+      "grammar": "work-lookup.todo-list",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-039",
+      "text": "기억은 어떻게 저장해?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "memory"
+        }
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-040",
+      "text": "커밋 어떻게 해?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "commit"
+        }
+      },
+      "note": "S1: near-grammar phrasing (no grammar hit)"
+    },
+    {
+      "id": "help-041",
+      "text": "프로젝트 등록 어떻게 해?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "project"
+        }
+      },
+      "note": "S1: near-grammar phrasing (no grammar hit)"
+    },
+    {
+      "id": "help-042",
+      "text": "브랜치 어떻게 만들어?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "branch"
+        }
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-043",
+      "text": "피드백 남기는 법 알려줘",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "feedback"
+        }
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-044",
+      "text": "모델 어떻게 바꿔?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "model"
+        }
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-045",
+      "text": "리마인더 설정하는 방법",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "reminder"
+        }
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-046",
+      "text": "how do I add a todo?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "todo"
+        }
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-047",
+      "text": "what can Quoky do?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {}
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-048",
+      "text": "기능 뭐 있어?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {}
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-049",
+      "text": "how do I delete a reminder?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "reminder"
+        }
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "help-050",
+      "text": "할 일 취소는 어떻게 해?",
+      "expect": {
+        "entryId": "help.topic",
+        "args": {
+          "topic": "todo"
+        }
+      },
+      "grammar": "help-intent",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "neg-210",
+      "text": "그 중에 위클리카만",
+      "expect": "none",
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture"
+    },
+    {
+      "id": "neg-211",
+      "text": "그 중에 스크럼만",
+      "expect": "none",
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture"
+    },
+    {
+      "id": "neg-212",
+      "text": "그 중에 pdf만",
+      "expect": "none",
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture"
+    },
+    {
+      "id": "neg-213",
+      "text": "그중에 진행중인 것만",
+      "expect": "none",
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture"
+    },
+    {
+      "id": "neg-214",
+      "text": "among those, only the urgent ones",
+      "expect": "none",
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture"
+    },
+    {
+      "id": "neg-215",
+      "text": "그 중에 제일 급한 거만 보여줘",
+      "expect": "none",
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture"
+    },
+    {
+      "id": "neg-216",
+      "text": "슬랙 검색이 요즘 잘 안 되네",
+      "expect": "none",
+      "note": "S1 Phase C negative"
+    },
+    {
+      "id": "neg-217",
+      "text": "지라 이슈 보여주지 마",
+      "expect": "none",
+      "note": "S1 Phase C negative"
+    },
+    {
+      "id": "neg-218",
+      "text": "드라이브에 이 파일 올려줘",
+      "expect": "none",
+      "note": "S1 Phase C negative"
+    },
+    {
+      "id": "neg-219",
+      "text": "할 일 관리하는 좋은 습관 알려줘",
+      "expect": "none",
+      "grammar": "work-lookup.todo-list",
+      "note": "S1 Phase C negative; a Class B grammar captures it in Phase A"
+    },
+    {
+      "id": "neg-220",
+      "text": "깃허브 리뷰 요청 거절하는 법",
+      "expect": "none",
+      "note": "S1 Phase C negative"
+    },
+    {
+      "id": "neg-221",
+      "text": "컨플루언스에 회의록 페이지 하나 만들어줘",
+      "expect": "none",
+      "note": "S1 Phase C negative"
+    },
+    {
+      "id": "neg-222",
+      "text": "> 슬랙에서 배포 검색해줘\n이 문장 영어로 번역해줘",
+      "expect": "none",
+      "note": "S1 Phase C negative"
+    },
+    {
+      "id": "neg-223",
+      "text": "> 드라이브에서 기획서 찾아줘\n이거 누가 보낸 거야?",
+      "expect": "none",
+      "note": "S1 Phase C negative"
+    },
+    {
+      "id": "neg-224",
+      "text": "메일 답장 정중하게 쓰는 법",
+      "expect": "none",
+      "note": "S1 Phase C negative"
+    },
+    {
+      "id": "jira-081",
+      "text": "지라 티켓 보여줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-082",
+      "text": "내 지라 이슈 확인해줘",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "jira-083",
+      "text": "show my jira tickets",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-054",
+      "text": "깃허브 리뷰 요청 뭐 있어?",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "grammar": "work-lookup.review-requests",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-055",
+      "text": "내 깃허브 이슈 뭐 있어?",
+      "expect": {
+        "entryId": "github.items",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-056",
+      "text": "리뷰 요청 온 거 있어?",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "grammar": "work-lookup.review-requests",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-057",
+      "text": "내 깃헙 PR 알려줘",
+      "expect": {
+        "entryId": "github.items",
+        "args": {}
+      },
+      "grammar": "work-lookup.my-items",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
+    },
+    {
+      "id": "github-058",
+      "text": "show my github review requests now",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "grammar": "work-lookup.review-requests",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A"
     }
   ]
 }
