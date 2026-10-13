@@ -20096,6 +20096,10 @@ opening the v16 database fails with `SCHEMA_VERSION_AHEAD` and touches nothing.
 
 The backup, verify and scratch-copy check, and the v16 apply on the service DB; the deploy restart.
 
+### Implementation notes
+
+- STO-1 pre-step: refuse-newer shipped first (exit 78 `SCHEMA_VERSION_AHEAD`) so a rollback cannot crash-loop.
+
 ## ADR-0117 amendment — An opt-in unread-mail section in the morning brief (BRF-3): the count and at most 3 sender/subject lines, never the body, DM-only, off by default (2026-10-12)
 
 - **Status:** Ratified by the Product Owner on 2026-10-12 (recommended default of v5 decision 6; see the v5

@@ -198,6 +198,14 @@ const TELEGRAM_STARTUP_HINTS: Readonly<Record<TelegramStartupErrorCode, string>>
  * note) and is a Strict, backed-up DB edit.
  */
 export const TELEGRAM_IDENTITY_CONFLICT = 'ACTOR_IDENTITY_PROVISIONING_TARGET_CONFLICT:telegram';
+/**
+ * ADR-0096 D10 / ADR-0119 D4: the storage adapter refuses a database whose schema (`user_version`) is newer than this
+ * build. It is a configuration exit (78): relaunching the same build cannot help.
+ */
+export const SCHEMA_VERSION_AHEAD = 'SCHEMA_VERSION_AHEAD';
+const SCHEMA_VERSION_AHEAD_HINT =
+  'The database schema is newer than this build; nothing was changed. Deploy the newer build again, or restore the verified pre-migration backup (`quokyctl.sh backup --verify ...`) while the service is stopped, then restart. Migrations are forward-only: there is no downgrade.';
+
 const TELEGRAM_IDENTITY_CONFLICT_HINT =
   'The Telegram owner id in QUOKY_TELEGRAM_OWNER_ACTOR_MAP is already linked to another Quoky owner (Actor) than the Discord owner it maps to. Point the map back at that Discord owner, or unlink the Telegram identity from the other Actor (a Strict, owner-approved database edit after a verified backup; see the ADR-0114 implementation note in DECISIONS.md), then restart.';
 
@@ -232,6 +240,7 @@ export function describeStartupFailure(err: unknown): StartupFailureReport {
   const configCode = configErrorCode(err, message);
   if (configCode !== undefined) return { message: configCode, hint: CONFIG_ERROR_HINTS[configCode] };
   if (message === TELEGRAM_IDENTITY_CONFLICT) return { message, hint: TELEGRAM_IDENTITY_CONFLICT_HINT };
+  if (message === SCHEMA_VERSION_AHEAD) return { message, hint: SCHEMA_VERSION_AHEAD_HINT };
   const telegramCode = telegramStartupCode(err, message);
   if (telegramCode !== undefined) return { message: telegramCode, hint: TELEGRAM_STARTUP_HINTS[telegramCode] };
 
