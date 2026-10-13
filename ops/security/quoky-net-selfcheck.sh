@@ -2,40 +2,40 @@
 # shellcheck shell=bash
 # Quoky network self-check (ADR-0121 S0, design section 5.5, MSIT items 1-2, 4-4, 4-5, 5-3).
 #
-#   ops/security/quoky-net-selfcheck.sh [--json] [--since 24h]
+#   ops/security/quoky-net-selfcheck.sh [--json] [--since 24h|7d] [--expect-stopped]
 #
 # Read-only, no sudo, macOS first (bash 3.2 safe). It prints a one-page report the owner can hand to the security
 # team: the Quoky process tree, its live TCP/UDP connections against the expected host allowlist, its listening
 # sockets, remote-access / tunnel / VPN software, and a summary of the traffic ledger when one exists.
 # It never prints an environment value, a token, a header or a file content (only names, addresses and counts).
 # Exit 0 = every check passed; 1 = at least one finding (each is printed with its reason); 2 = usage.
+# --expect-stopped: for the step before a restart (incident recovery): the service must NOT be running, and the rest
+# (tunnel/VPN software, listeners on 22 and 5900, ledger findings) must still be clean.
 #
 # Environment (optional): QUOKY_LAUNCHD_LABEL (default com.quoky.personal), QUOKY_SELFCHECK_EXTRA_HOSTS (space
-# separated host suffixes to add to the allowlist), QUOKY_OPS_UI_PORT (default 47613), QUOKY_LEDGER_DIR.
+# separated EXACT host names to add to the static allowlist), QUOKY_OPS_UI_PORT (default 47613), QUOKY_LEDGER_DIR.
 #
 # Sourcing this file defines the parsing functions only (used by quoky-net-selfcheck.test.sh); it runs when executed.
 
 SC_LABEL="${QUOKY_LAUNCHD_LABEL:-com.quoky.personal}"
 SC_OPS_PORT="${QUOKY_OPS_UI_PORT:-47613}"
 
-# Allowed destination host suffixes (design 5.1). An IP is allowed when its reverse name, or the forward address of an
-# allowlisted host, matches. Cloudflare (Discord), Telegram and Anthropic ranges are listed because their reverse
-# names are generic or absent.
-SC_ALLOWED_SUFFIXES="telegram.org discord.gg discord.com discordapp.com discordapp.net anthropic.com googleapis.com \
-atlassian.net slack.com github.com githubusercontent.com openai.com"
-SC_ALLOWED_HOSTS="api.telegram.org gateway.discord.gg discord.com cdn.discordapp.com api.anthropic.com www.googleapis.com \
-gmail.googleapis.com oauth2.googleapis.com slack.com api.github.com github.com"
-# "label:cidr" pairs: networks that host allowlisted services behind generic reverse DNS.
-SC_KNOWN_RANGES="telegram:149.154.160.0/20 telegram:91.108.4.0/22 telegram:91.108.8.0/22 telegram:91.108.12.0/22 \
-telegram:91.108.16.0/22 telegram:91.108.56.0/22 cloudflare:162.159.128.0/17 cloudflare:104.16.0.0/13 \
-cloudflare:172.64.0.0/13 cloudflare:173.245.48.0/20 cloudflare:188.114.96.0/20 cloudflare:198.41.128.0/17 \
-anthropic:160.79.104.0/23"
+# Static allowlist of EXACT host names (design 5.1). A live remote address is verified by the traffic ledger's
+# `connect` records (IP -> host, design 5.5.3). With no ledger mapping it is "unverified" (a warning); it is a failure
+# only when its address is also not one of these hosts' own forward-resolved addresses. Reverse DNS (PTR) names and
+# provider address ranges are never trusted.
+SC_ALLOWED_HOSTS="api.telegram.org gateway.discord.gg discord.com cdn.discordapp.com media.discordapp.net api.anthropic.com \
+www.googleapis.com gmail.googleapis.com oauth2.googleapis.com slack.com api.github.com github.com"
+# Guard findings in the ledger window that fail the check; other guard events are warnings.
+SC_FAIL_GUARD_EVENTS="new-destination denied-range budget-exceeded"
 
 # ---------------------------------------------------------------- parsing helpers (pure, unit-tested)
 
-# sc_json_escape STRING -> JSON string body (no surrounding quotes).
+# sc_json_escape STRING -> JSON string body (no quotes): escapes backslash, quote, tab and newline; other control
+# characters become spaces.
 sc_json_escape() {
-  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+  printf '%s' "$1" | LC_ALL=C tr '\000-\010\013-\037' ' ' | awk 'BEGIN { ORS = "" }
+    { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); print sep $0; sep = "\\n" }'
 }
 
 # sc_ip_to_int A.B.C.D -> integer; fails on anything else.
@@ -127,60 +127,99 @@ sc_match_tunnel_process() {
   esac
 }
 
-# sc_host_allowed NAME -> success when NAME equals or is a subdomain of an allowlisted suffix.
+# sc_host_allowed NAME -> success when NAME is exactly an allowlisted host (or an extra exact host).
 sc_host_allowed() {
-  local name suffix
+  local name host
   name="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   name="${name%.}"
-  for suffix in $SC_ALLOWED_SUFFIXES ${QUOKY_SELFCHECK_EXTRA_HOSTS:-}; do
-    case "$name" in "$suffix" | *."$suffix") return 0 ;; esac
+  for host in $SC_ALLOWED_HOSTS ${QUOKY_SELFCHECK_EXTRA_HOSTS:-}; do
+    [ "$name" = "$host" ] && return 0
   done
   return 1
 }
 
-# sc_known_range IP -> prints the label of a known provider range containing IP.
-sc_known_range() {
-  local pair
-  for pair in $SC_KNOWN_RANGES; do
-    if sc_ip_in_cidr "$1" "${pair#*:}"; then echo "${pair%%:*}"; return 0; fi
-  done
-  return 1
+# sc_normalize_ip IP -> lowercase, without brackets.
+sc_normalize_ip() {
+  local ip="$1"
+  ip="${ip#\[}"
+  ip="${ip%\]}"
+  printf '%s' "$ip" | tr '[:upper:]' '[:lower:]'
 }
 
-# sc_classify_remote IP [REVERSE_NAME] [FORWARD_HOST]
-# -> "ok<TAB>label" or "unexpected<TAB>reason". Reverse name, forward-resolved allowlisted host and known range all count.
+# sc_classify_remote IP LEDGER_HOST STATIC_HOST
+# -> "ok<TAB>host" (verified by a ledger connect record), "unverified<TAB>host" (no ledger mapping, but the address is a
+#    static-allowlist host's), "unexpected<TAB>reason" (neither), or "ok<TAB>loopback".
 sc_classify_remote() {
-  local ip="$1" rname="${2:-}" fwd="${3:-}" label
+  local ip="$1" ledger_host="${2:-}" static_host="${3:-}"
   if sc_is_loopback "$ip"; then printf 'ok\tloopback\n'; return 0; fi
-  if [ -n "$fwd" ]; then printf 'ok\t%s\n' "$fwd"; return 0; fi
-  if [ -n "$rname" ] && sc_host_allowed "$rname"; then printf 'ok\t%s\n' "$rname"; return 0; fi
-  if label="$(sc_known_range "$ip")"; then printf 'ok\t%s range\n' "$label"; return 0; fi
-  if [ -n "$rname" ]; then
-    printf 'unexpected\t%s (%s) is not in the allowlist\n' "$ip" "$rname"
-  else
-    printf 'unexpected\t%s (no hostname) is not in the allowlist\n' "$ip"
-  fi
+  if [ -n "$ledger_host" ]; then printf 'ok\t%s\n' "$ledger_host"; return 0; fi
+  if [ -n "$static_host" ]; then printf 'unverified\t%s\n' "$static_host"; return 0; fi
+  printf 'unexpected\t%s is not in the traffic ledger and not an allowlisted host address\n' "$ip"
   return 0
 }
 
-# sc_summarize_ledger < JSON lines -> "lines=N up=B down=B", then host and initiator rows.
-# Reads only the fields host, initiator, bytesUp, bytesDown (design 5.4); anything else is ignored.
+# sc_cutoff SINCE [NOW_EPOCH] -> local "YYYY-MM-DDTHH:MM:SS" of now minus SINCE. SINCE must match ^[0-9]+[hd]$.
+sc_valid_since() {
+  [[ "$1" =~ ^[0-9]{1,4}[hd]$ ]]
+}
+sc_cutoff() {
+  local since="$1" now="${2:-}" n unit secs epoch
+  sc_valid_since "$since" || return 1
+  n="${since%[hd]}"
+  unit="${since#"$n"}"
+  n=$((10#$n))
+  if [ "$unit" = h ]; then secs=$((n * 3600)); else secs=$((n * 86400)); fi
+  [ -n "$now" ] || now="$(date +%s)"
+  epoch=$((now - secs))
+  date -r "$epoch" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -d "@$epoch" '+%Y-%m-%dT%H:%M:%S'
+}
+
+# Ledger records (ADR-0121, branch egress): JSON lines with v:1 and kind request|connect|guard; ts is host-local ISO-8601.
+# sc_summarize_ledger CUTOFF < JSON lines
+#   -> "lines=N requests=R up=B down=B", then "host<TAB>h<TAB>count<TAB>bytes", "initiator<TAB>i<TAB>count" (request
+#      records only: bytes are never summed over connect or guard records) and "guard<TAB>event<TAB>host<TAB>count".
+#   Records older than CUTOFF (compared on the record's own ts, first 19 characters) are ignored.
 sc_summarize_ledger() {
+  awk -v cutoff="$1" '
+    function field(s, key,   re, m) {
+      re = "\"" key "\"[ ]*:[ ]*(\"[^\"]*\"|[0-9]+)"
+      if (match(s, re)) { m = substr(s, RSTART, RLENGTH); sub(/^[^:]*:[ ]*/, "", m); gsub(/"/, "", m); return m }
+      return ""
+    }
+    {
+      ts = field($0, "ts")
+      if (ts == "" || substr(ts, 1, 19) < cutoff) next
+      n++
+      k = field($0, "kind"); h = field($0, "host")
+      if (k == "request") {
+        r++; u = field($0, "bytesUp") + 0; d = field($0, "bytesDown") + 0; i = field($0, "initiator")
+        up += u; down += d
+        if (h != "") { hc[h]++; hb[h] += u + d }
+        if (i != "") ic[i]++
+      } else if (k == "guard") {
+        e = field($0, "event"); gc[e "\t" h]++
+      }
+    }
+    END {
+      printf "lines=%d requests=%d up=%d down=%d\n", n, r, up, down
+      for (h in hc) printf "host\t%s\t%d\t%d\n", h, hc[h], hb[h]
+      for (i in ic) printf "initiator\t%s\t%d\n", i, ic[i]
+      for (g in gc) printf "guard\t%s\t%d\n", g, gc[g]
+    }' | sort
+}
+
+# sc_ledger_connect_map < JSON lines -> "ip host" for each connect record that pinned an address.
+sc_ledger_connect_map() {
   awk '
     function field(s, key,   re, m) {
       re = "\"" key "\"[ ]*:[ ]*(\"[^\"]*\"|[0-9]+)"
       if (match(s, re)) { m = substr(s, RSTART, RLENGTH); sub(/^[^:]*:[ ]*/, "", m); gsub(/"/, "", m); return m }
       return ""
     }
-    { n++; h = field($0, "host"); i = field($0, "initiator"); u = field($0, "bytesUp") + 0; d = field($0, "bytesDown") + 0
-      up += u; down += d
-      if (h != "") { hc[h]++; hb[h] += u + d }
-      if (i != "") ic[i]++ }
-    END {
-      printf "lines=%d up=%d down=%d\n", n, up, down
-      for (h in hc) printf "host\t%s\t%d\t%d\n", h, hc[h], hb[h]
-      for (i in ic) printf "initiator\t%s\t%d\n", i, ic[i]
-    }' | sort
+    field($0, "kind") == "connect" && field($0, "outcome") == "pinned" {
+      ip = tolower(field($0, "ip")); h = field($0, "host")
+      if (ip != "" && h != "") print ip, h
+    }' | sort -u
 }
 
 # ---------------------------------------------------------------- collection (host-dependent)
@@ -208,25 +247,22 @@ sc_ledger_dir() {
   return 1
 }
 
-sc_since_files() { # DIR SINCE(24h, 7d) -> ledger files modified inside the window
-  local dir="$1" since="$2" n unit days
-  n="${since%[hd]}"
-  unit="${since#"$n"}"
-  case "$unit" in h) days=$(((n + 23) / 24)) ;; d) days="$n" ;; *) days=1 ;; esac
-  [ "$days" -ge 1 ] || days=1
-  find "$dir" -name 'egress-*.jsonl' -mtime "-$days" 2>/dev/null | sort
+sc_since_files() { # DIR CUTOFF -> ledger files (incl. egress-DATE.N.jsonl parts) whose date is >= the cutoff date
+  local dir="$1" cutoff="${2%%T*}" f d
+  for f in "$dir"/egress-*.jsonl; do
+    [ -e "$f" ] || continue
+    d="${f##*/egress-}"
+    d="${d:0:10}"
+    [[ "$d" < "$cutoff" ]] || echo "$f"
+  done | sort
 }
 
 sc_resolve_forward() { # prints "IP host" for each allowlisted host (macOS dscacheutil)
   local h
   for h in $SC_ALLOWED_HOSTS; do
-    dscacheutil -q host -a name "$h" 2>/dev/null | awk -v h="$h" '$1 == "ip_address:" { print $2, h }'
+    dscacheutil -q host -a name "$h" 2>/dev/null | awk -v h="$h" '$1 == "ip_address:" || $1 == "ip6_address:" { print tolower($2), h }'
   done
   return 0
-}
-
-sc_reverse() { # IP -> name or empty (2 s bound)
-  host -W 2 "$1" 2>/dev/null | awk '/domain name pointer/ { sub(/\.$/, "", $NF); print $NF; exit }'
 }
 
 SC_FAILS=()
@@ -236,21 +272,22 @@ sc_warn() { SC_WARNS+=("$1"); }
 
 # sc_json_array_lines TEXT -> JSON array body of the non-empty lines.
 sc_json_array_lines() {
-  printf '%s' "$1" | awk 'NF { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); printf "%s\"%s\"", (c++ ? "," : ""), $0 }'
+  printf '%s' "$1" | LC_ALL=C tr '\000-\010\013-\037' ' ' | awk 'NF { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); printf "%s\"%s\"", (c++ ? "," : ""), $0 }'
 }
 
 sc_main() {
-  local json=0 since="24h"
+  local json=0 since="24h" expect_stopped=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --json) json=1 ;;
       --since)
         shift
         since="${1:-}"
-        case "$since" in [0-9]*[hd]) ;; *) echo "usage: quoky-net-selfcheck.sh [--json] [--since 24h|7d]" >&2; return 2 ;; esac
+        sc_valid_since "$since" || { echo "usage: quoky-net-selfcheck.sh [--json] [--since 24h|7d] [--expect-stopped]" >&2; return 2; }
         ;;
+      --expect-stopped) expect_stopped=1 ;;
       -h | --help) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; return 0 ;;
-      *) echo "usage: quoky-net-selfcheck.sh [--json] [--since 24h|7d]" >&2; return 2 ;;
+      *) echo "usage: quoky-net-selfcheck.sh [--json] [--since 24h|7d] [--expect-stopped]" >&2; return 2 ;;
     esac
     shift
   done
@@ -268,13 +305,29 @@ sc_main() {
     pidlist="$(echo "$pids" | paste -sd, -)"
     tree="$(ps -o pid=,ppid=,comm= -p "$pidlist" 2>/dev/null | awk '{ n = split($3, p, "/"); print $1 "\t" $2 "\t" p[n] }')"
     children="$(printf '%s\n' "$tree" | awk -F'\t' 'NF >= 3 { print $3 }' | sort | uniq -c | awk '{ printf "%s%s x%s", (NR > 1 ? ", " : ""), $2, $1 }')"
-  else
-    sc_fail "Quoky service ($SC_LABEL) is not running, so its connections cannot be checked"
+    [ "$expect_stopped" -eq 1 ] && sc_fail "Quoky service ($SC_LABEL) is running but --expect-stopped was given"
+  elif [ "$expect_stopped" -eq 0 ]; then
+    sc_fail "Quoky service ($SC_LABEL) is not running, so its connections cannot be checked (use --expect-stopped before a restart)"
+  fi
+
+  # 0. ledger (read first: its connect records map live IPs to hosts)
+  local ldir lfiles allfiles cutoff lsum="" connmap="" ledger_state="ledger not yet available" f
+  cutoff="$(sc_cutoff "$since")"
+  if ldir="$(sc_ledger_dir)"; then
+    allfiles="$(sc_since_files "$ldir" "$(sc_cutoff 7d)")"
+    [ -n "$allfiles" ] && connmap="$(printf '%s\n' "$allfiles" | while IFS= read -r f; do cat "$f"; done | sc_ledger_connect_map)"
+    lfiles="$(sc_since_files "$ldir" "$cutoff")"
+    if [ -n "$lfiles" ]; then
+      lsum="$(printf '%s\n' "$lfiles" | while IFS= read -r f; do cat "$f"; done | sc_summarize_ledger "$cutoff")"
+      ledger_state="present"
+    else
+      ledger_state="present, no entries in the last $since"
+    fi
   fi
 
   # 2. connections and listeners
-  local conns="" fwdmap rows="" listeners="" unexpected=0 ok_count=0
-  local pid cmd proto state loc rem ip rname fwd verdict host port
+  local conns="" fwdmap rows="" listeners="" unexpected=0 ok_count=0 unverified=0
+  local pid cmd proto state loc rem ip ledger_host fwd verdict host port
   if [ -n "$pidlist" ]; then
     conns="$(lsof -nP -a -p "$pidlist" -i 2>/dev/null | sc_parse_lsof_conns)"
   fi
@@ -296,14 +349,19 @@ sc_main() {
     fi
     [ -n "$rem" ] || continue
     read -r ip port <<<"$(sc_split_endpoint "$rem")"
+    ip="$(sc_normalize_ip "$ip")"
+    ledger_host="$(printf '%s\n' "$connmap" | awk -v ip="$ip" '$1 == ip { print $2; exit }')"
     fwd="$(printf '%s\n' "$fwdmap" | awk -v ip="$ip" '$1 == ip { print $2; exit }')"
-    rname=""
-    if ! sc_is_loopback "$ip" && [ -z "$fwd" ]; then rname="$(sc_reverse "$ip")"; fi
-    verdict="$(sc_classify_remote "$ip" "$rname" "$fwd")"
+    verdict="$(sc_classify_remote "$ip" "$ledger_host" "$fwd")"
     case "$verdict" in
       ok*)
         ok_count=$((ok_count + 1))
-        rows="${rows}${proto} ${state} -> ${rem}  ${verdict#ok$'\t'}  [expected]"$'\n'
+        rows="${rows}${proto} ${state} -> ${rem}  ${verdict#ok$'\t'}  [verified by ledger]"$'\n'
+        ;;
+      unverified*)
+        unverified=$((unverified + 1))
+        rows="${rows}${proto} ${state} -> ${rem}  ${verdict#unverified$'\t'}  [unverified: no ledger mapping]"$'\n'
+        sc_warn "unverified destination ${rem} (static allowlist host ${verdict#unverified$'\t'}, no ledger connect record)"
         ;;
       *)
         unexpected=$((unexpected + 1))
@@ -352,17 +410,15 @@ sc_main() {
   [ "$vnc_state" = on ] && sc_fail "Screen Sharing is on: a listener exists on TCP 5900"
   [ -n "$ra" ] || ra="none found"$'\n'
 
-  # 4. ledger
-  local ldir lfiles lsum="" ledger_state="ledger not yet available" f
-  if ldir="$(sc_ledger_dir)"; then
-    lfiles="$(sc_since_files "$ldir" "$since")"
-    if [ -n "$lfiles" ]; then
-      lsum="$(printf '%s\n' "$lfiles" | while IFS= read -r f; do cat "$f"; done | sc_summarize_ledger)"
-      ledger_state="present"
-    else
-      ledger_state="present, no entries in the last $since"
-    fi
-  fi
+  # 4. ledger guard findings in the window (host and type); the summary was read above
+  local g gevent ghost gcount
+  while IFS=$'\t' read -r g gevent ghost gcount; do
+    [ "$g" = guard ] || continue
+    case " $SC_FAIL_GUARD_EVENTS " in
+      *" $gevent "*) sc_fail "ledger guard finding in the last $since: $gevent on $ghost (x$gcount)" ;;
+      *) sc_warn "ledger guard event in the last $since: $gevent on $ghost (x$gcount)" ;;
+    esac
+  done <<<"$lsum"
 
   # 5. not Quoky: process names only, for transparency
   local other
@@ -400,7 +456,7 @@ sc_main() {
   echo "Service:   $SC_LABEL  pids: ${pidlist:-none}"
   echo "Processes: ${children:-none}"
   echo
-  echo "Connections of the Quoky process tree ($ok_count expected, $unexpected unexpected)"
+  echo "Connections of the Quoky process tree ($ok_count verified by ledger, $unverified unverified, $unexpected unexpected)"
   if [ -n "$rows" ]; then printf '%s' "$rows" | sed 's/^/  /'; else echo "  none"; fi
   echo
   echo "Listening sockets (only loopback is expected)"
