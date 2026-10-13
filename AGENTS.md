@@ -119,7 +119,7 @@ external/destructive action을 감싼다.
 - 시간과 ID는 shared `clock`/`id` utility를 사용한다.
 - `Resource` input과 `Artifact` output을 합치지 않는다.
 - Provider를 `Session`/`Task`/`Actor`에 pin하지 않는다.
-- God-interface와 deferred Workflow/agent runtime/dynamic plugin loader를 조기 구현하지 않는다.
+- God-interface와 deferred Workflow/dynamic plugin loader를 조기 구현하지 않는다. Agent runtime은 ADR-0121의 bounded plan-then-execute 범위만 허용한다.
 - 기존 style을 따르고 commit은 Conventional Commits 형식을 사용한다.
 
 ## Verification And Reporting
