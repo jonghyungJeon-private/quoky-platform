@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — v5 W3 live UAT fixes (2026-10-13)
+
+- **Thread-summary claim guard.** A thread summary naming the sender with a topic marker (`Gmail 팀은 … 메일을 보냈어요`), with the subject after the object (`이 메일은 Gmail 팀이 보냈어요`), or with the subject in an earlier clause (`김철수 님이 확인하고 답장했어요`) was withheld as a Quoky claim. The Korean third-person exemption now looks at the whole sentence and accepts `은/는` for an actor-shaped word; any Quoky stand-in before the claim still blocks it. Prompts unchanged. Tests added.
+- **Drive grammar and file kinds.** With `QUOKY_NL_GRAMMAR_YIELD` on, `드라이브 최근 스프레드시트` (and any recent or name listing that names a file kind) now declines so selection binds `kind`; flag off is unchanged. Tests added.
+
 ## Unreleased — GML-2: Gmail thread summaries and reply-to-pick (ADR-0118 amendment, 2026-10-13)
 
 - **Thread summaries.** `이 스레드 요약해줘`, `N번 메일 스레드 요약해줘`, `summarize this thread` and `summarize email thread N`

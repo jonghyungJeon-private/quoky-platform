@@ -20387,6 +20387,13 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   thread summary prompt), so this confirms that nothing moved; it is not a measurement of the new forms, which are
   deterministic and covered by the offline tests.
 
+### ADR-0118 amendment implementation note — thread-summary claim guard false positive (2026-10-13, live UAT)
+
+- **Symptom.** `1번 메일 스레드 요약해줘` on the Gmail welcome mail was withheld with the not-done notice (`document summary action claim replaced`); the same mail as a single mail passed.
+- **Root cause (shared guard, not the prompt).** The thread prompt tells the model to name the sender as the subject of every action, so a thread summary is full of sentences about the sender. `document-summary-claim-guard.ts` exempted a past-tense mail verb only when a `이/가/께서/님이` subject stood in the SAME clause and BEFORE the verb. It therefore withheld (a) a topic-marked sender (`Gmail 팀은 … 메일을 보냈어요`), (b) a subject after the object (`이 메일은 Gmail 팀이 보냈어요`), and (c) a verb in a later clause whose subject was in an earlier clause of the sentence (`김철수 님이 확인하고 답장했어요`: the connector `고` split off a subject-less `답장했어요`). Threads trigger it far more than a single mail. English and the Quoky claim lexicon are unchanged.
+- **Fix.** (1) The subject is searched in the whole sentence before the end of the claim wording, not only the clause. (2) `은/는` (and `님은`) count as a subject marker only for an actor-shaped word (Latin letters or digits, or a trailing 님/씨/팀/사/측); `라벨은`, `오늘은` do not, and temporal adverbs join the non-subject set. (3) The fail-closed rule is kept and widened to the sentence: any Quoky stand-in (`제`, `저`, `Quoky`, `비서`, …) before the claim, anywhere in the sentence, still blocks the exemption (`저는 메일을 보냈어요`, `메일은 제가 보냈어요`, `김철수 님이 확인하고 제가 답장했어요` stay withheld). A claim with no subject at all (`답장을 보냈어요`) stays withheld.
+- **Scope.** The guard is shared by mail, thread and Drive, so the Korean third-person exemption widens for all three. Prompts are untouched: the mail and Drive single-document prompts stay byte-identical, and the fixed footer remains the guarantee. Known remaining false positive: a sender named only in a header-like fragment in another clause (`보낸 사람은 …이고 … 메일을 보냈어요`).
+
 ### ADR-0118 amendment implementation note — DRV-2 shared drives and DRV-2b every sheet (2026-10-13)
 
 - **Status:** Implemented under the ratified ADR-0118 amendment of 2026-10-12, decisions (b) and (c) (v5 plan wave 3,
@@ -21240,6 +21247,12 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
   - ADR-0107 D5/D6: locality is declared data.
   - ADR-0097: the credential guard.
 - **Relates:** ADR-0090 (L0/L1/L2 layering), ADR-0092 amendment D3, ADR-0113 (ops-UI), ADR-0102.
+
+### ADR-0120 amendment A2 implementation note — the Drive grammar yields on a file-kind word (2026-10-13, live UAT)
+
+- **Symptom.** `드라이브 최근 스프레드시트` was answered by the Drive grammar with every recent file (PNGs, MP4s) although the selector supports `kind` (A1).
+- **Root cause.** The Drive grammar is whole-message anchored, and the earlier A2 audit concluded it needed no residual check. But its own vocabulary includes the type nouns (`스프레드시트`, `시트`, `구글 문서`, `docs`) as interchangeable document nouns (`DOC_NOUN`), and the recent listing it answers carries no `kind`. The word was expressed by the anchor yet dropped by the listing.
+- **Fix.** `parseDriveQuestion(text, { yieldToSelection })`: with yield on, a `recent` or `search` result declines when the message contains a Drive kind word from `DRIVE_KIND_WORDS` (the selector's own grounding list, one source of truth); selection then binds `kind`. The Drive handler passes `ctx.grammarYield`. Plain `문서`/`파일` are not kind words and still answer; summaries and write refusals are Class A and untouched. With yield off, behaviour is byte-identical. No phrase was added. `드라이브 pdf 최근 거` and `최근 시트 파일` were already not matched by the anchored grammar (they reach selection either way); tests pin that.
 
 ### Context
 

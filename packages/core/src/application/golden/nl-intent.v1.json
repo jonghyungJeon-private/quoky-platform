@@ -5510,13 +5510,6 @@
         "args": {
           "kind": "spreadsheet"
         }
-      },
-      "grammar": "drive-question.list",
-      "grammarAnswer": {
-        "entryId": "drive.files",
-        "args": {
-          "name": "엑셀"
-        }
       }
     },
     {
@@ -5567,13 +5560,6 @@
         "args": {
           "name": "기획서",
           "kind": "spreadsheet"
-        }
-      },
-      "grammar": "drive-question.list",
-      "grammarAnswer": {
-        "entryId": "drive.files",
-        "args": {
-          "name": "기획서"
         }
       }
     },

@@ -276,3 +276,32 @@ describe('CA review P2-B: every pattern is linear (CPU time, not wall-clock)', (
     }
   });
 });
+
+describe('v5 W3 live UAT: a thread summary names participants and described features (topic marker, subject carried across a connector)', () => {
+  it.each([
+    // A feature-description mail (the Gmail welcome mail): the sender is the topic, never Quoky.
+    'Gmail 팀은 새 받은편지함 사용 방법을 담은 메일을 보냈어요.',
+    '이 메일은 Gmail 팀이 보냈어요.',
+    'Gmail 팀이 메일을 보내고 답장하고 보관하는 기능을 추가했다고 안내했어요.',
+    // Participants of a thread "replied" and "sent": the subject stands in an earlier clause of the sentence.
+    '김철수 님이 내용을 확인하고 답장했어요.',
+    '김철수 님은 견적서를 보냈고 박영희 님이 답장을 보냈어요.',
+    'Gmail은 메일을 삭제하고 보관했어요.',
+  ])('allows (third party): %s', (text) => {
+    for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source)).toBe(false);
+  });
+
+  it.each([
+    // A real Quoky claim is still withheld, with or without a topic marker or a carried subject.
+    '답장을 보냈어요.',
+    '저는 메일을 보냈어요.',
+    'Quoky는 메일을 보냈어요.',
+    '오늘은 답장을 보냈어요.',
+    '메일은 제가 보냈어요.',
+    '제가 확인하고 답장했어요.',
+    '김철수 님이 확인하고 제가 답장했어요.',
+    'Gmail 팀이 안내했어요. 메일을 보관했어요.',
+  ])('withholds (Quoky claim): %s', (text) => {
+    for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source)).toBe(true);
+  });
+});

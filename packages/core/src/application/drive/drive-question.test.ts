@@ -254,3 +254,36 @@ describe('Drive grammar (ADR-0118 D4/D6/D7, DRV-1)', () => {
     expect(performance.now() - start).toBeLessThan(500);
   });
 });
+
+describe('ADR-0120 A2: the Drive grammar yields to selection when the owner names a file kind (v5 W3 live UAT)', () => {
+  it.each(['드라이브 최근 스프레드시트', '최근 시트 파일', '드라이브 pdf 최근 거', '최근 구글 문서', '드라이브에서 폴더 찾아줘', 'recent spreadsheets'])(
+    'declines under yield: %s',
+    (text) => {
+      expect(parseDriveQuestion(text, { yieldToSelection: true })).toBeNull();
+    },
+  );
+
+  it.each(['드라이브 최근 스프레드시트', '요즘 수정한 스프레드시트', '최근 시트 파일', '드라이브 pdf 최근 거'])(
+    'is unchanged with yield off: %s',
+    (text) => {
+      expect(parseDriveQuestion(text, { yieldToSelection: false })).toEqual(parseDriveQuestion(text));
+    },
+  );
+
+  it('keeps answering the listing the first time with yield off', () => {
+    expect(parseDriveQuestion('드라이브 최근 스프레드시트')).toEqual({ kind: 'recent', language: 'ko' });
+  });
+
+  it.each(['드라이브 최근 파일', '최근 문서', '드라이브에서 예산 찾아줘', '드라이브에서 회의록 문서 보여줘'])(
+    'still answers under yield: %s',
+    (text) => {
+      expect(parseDriveQuestion(text, { yieldToSelection: true })).toEqual(parseDriveQuestion(text));
+      expect(parseDriveQuestion(text, { yieldToSelection: true })).not.toBeNull();
+    },
+  );
+
+  it('does not touch a summary or a write refusal under yield', () => {
+    expect(parseDriveQuestion('2번 문서 요약해줘', { yieldToSelection: true })).not.toBeNull();
+    expect(parseDriveQuestion('드라이브에서 폴더 삭제해줘', { yieldToSelection: true })).toEqual({ kind: 'write-refused', language: 'ko' });
+  });
+});
