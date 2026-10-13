@@ -125,6 +125,11 @@ export interface GSheetTargets {
    * did not see it. Only the count is kept (for the summary note), never a title.
    */
   readonly hidden: number;
+  /**
+   * Whether the first grid sheet (lowest index) is hidden. The first-sheet CSV fallback would export exactly that sheet,
+   * so the reader never falls back to it (CA re-review).
+   */
+  readonly firstGridHidden: boolean;
 }
 
 /**
@@ -137,12 +142,16 @@ export function parseGSheetTargets(payload: Record<string, unknown>): GSheetTarg
   const grid: GSheetTarget[] = [];
   let dropped = false;
   let hidden = 0;
+  let firstGrid: { readonly index: number; readonly hidden: boolean } | undefined;
   for (const entry of listed) {
     const properties = isRecord(entry) && isRecord(entry.properties) ? entry.properties : undefined;
     if (properties === undefined) throw new GDriveResponseError('sheets');
     // An omitted type is the default (a grid); anything else (a chart, a data source) has no cell values to read.
     if (properties.sheetType !== undefined && properties.sheetType !== 'GRID') continue;
     if (properties.hidden !== undefined && typeof properties.hidden !== 'boolean') throw new GDriveResponseError('sheets');
+    const position = properties.index === undefined ? 0 : properties.index;
+    if (typeof position !== 'number' || !Number.isInteger(position) || position < 0) throw new GDriveResponseError('sheets');
+    if (firstGrid === undefined || position < firstGrid.index) firstGrid = { index: position, hidden: properties.hidden === true };
     if (properties.hidden === true) {
       hidden += 1;
       continue;
@@ -160,7 +169,12 @@ export function parseGSheetTargets(payload: Record<string, unknown>): GSheetTarg
   }
   grid.sort((a, b) => a.index - b.index);
   if (new Set(grid.map((sheet) => sheet.rawTitle)).size !== grid.length) throw new GDriveResponseError('sheets');
-  return { sheets: grid.slice(0, DRIVE_SHEETS_MAX), dropped: dropped || grid.length > DRIVE_SHEETS_MAX, hidden };
+  return {
+    sheets: grid.slice(0, DRIVE_SHEETS_MAX),
+    dropped: dropped || grid.length > DRIVE_SHEETS_MAX,
+    hidden,
+    firstGridHidden: firstGrid?.hidden === true,
+  };
 }
 
 /** Rows read per sheet so that all ranges together stay within {@link GSHEETS_MAX_CELLS}. */

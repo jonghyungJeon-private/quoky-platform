@@ -20385,8 +20385,11 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
       `DriveListResult.incomplete`, and the listing, including an empty answer, says "(일부 공유 드라이브는 검색하지 못해
       목록이 빠졌을 수 있어요)".
     - The `assertGDriveReadRequest` doc comment names the shared-drive parameters.
-  - **Residual.** The CSV fallback exports the spreadsheet's first sheet. If that sheet is hidden, Google may export it.
-    This happens only when the Sheets API read already failed.
+  - **CA re-review (PASS), honesty fix.** `parseGSheetTargets` records whether the first grid sheet is hidden
+    (`firstGridHidden`). If it is, the reader never uses the CSV fallback, because that would export the hidden sheet.
+    It answers with the typed `UNAVAILABLE` failure instead, so the owner gets the existing "could not read" reply. A
+    hidden later sheet does not block the fallback, and the "(숨김 시트 N개 제외)" note stays accurate. This closes the
+    residual where a hidden first sheet could be exported.
 
 ## Personal v5 ratification record — ADR-0119 and the ADR-0117/ADR-0118 amendments (2026-10-12)
 

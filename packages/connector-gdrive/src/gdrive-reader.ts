@@ -274,6 +274,11 @@ export class GoogleDriveReader implements DriveReader {
           ...(value.credentialShaped ? { credentialShaped: true } : {}),
         };
       }
+      // CA re-review: the CSV fallback exports the first grid sheet; when that sheet is hidden it is never exported (a
+      // hidden sheet is never read), and the summary answers honestly that the spreadsheet could not be read now.
+      if (sheets.known?.firstGridHidden === true) {
+        throw new ConnectorQueryError('UNAVAILABLE', 'gdrive: the spreadsheet could not be read sheet by sheet');
+      }
       // CA review suggestion: when the sheet list was read and shows exactly one visible sheet and no hidden one, the
       // first sheet IS the whole spreadsheet, so no "first sheet only" note is shown.
       if (!(sheets.known !== undefined && sheets.known.visible === 1 && sheets.known.hidden === 0)) firstSheetOnly = sheets.reason;
@@ -310,12 +315,16 @@ export class GoogleDriveReader implements DriveReader {
     id: string,
   ): Promise<
     | { readonly ok: true; readonly value: GSheetsText & { readonly hidden: number } }
-    | { readonly ok: false; readonly reason: DriveFirstSheetOnlyReason; readonly known?: { readonly visible: number; readonly hidden: number } }
+    | {
+        readonly ok: false;
+        readonly reason: DriveFirstSheetOnlyReason;
+        readonly known?: { readonly visible: number; readonly hidden: number; readonly firstGridHidden: boolean };
+      }
   > {
-    let known: { readonly visible: number; readonly hidden: number } | undefined;
+    let known: { readonly visible: number; readonly hidden: number; readonly firstGridHidden: boolean } | undefined;
     try {
       const targets = parseGSheetTargets(await this.readJson(gsheetsMetaUrl(id), GSHEETS_META_MAX_BYTES, 'sheets'));
-      known = { visible: targets.sheets.length + (targets.dropped ? 1 : 0), hidden: targets.hidden };
+      known = { visible: targets.sheets.length + (targets.dropped ? 1 : 0), hidden: targets.hidden, firstGridHidden: targets.firstGridHidden };
       if (targets.sheets.length === 0) {
         return { ok: true, value: { sections: [], text: '', truncated: targets.dropped, credentialShaped: false, hidden: targets.hidden } };
       }
