@@ -559,20 +559,60 @@ function observingHandler(
 }
 
 /**
- * Idle window of a pooled connection. undici's default is 4 s, shorter than the gap around a Telegram long poll, so
- * every poll paid a new TCP+TLS handshake (and a new address check + ledger `connect` record). 65 s covers a 50 s poll
- * plus processing; `keepAliveMaxTimeout` caps a longer server hint to the same bound. A reused socket stays pinned to
- * the address that was checked when it was opened; a new socket always goes through {@link EgressGuard.connect}.
+ * Idle window of the dedicated long-poll pool. undici's default (4 s) is shorter than the gap around a Telegram long
+ * poll, so every poll paid a new TCP+TLS handshake (and a new address check + ledger `connect` record). Only requests
+ * labelled `telegram-poll` use this pool: a long idle window exposes a request to a stale-socket reset, which is safe
+ * to repeat for the offset-based `getUpdates` but not for a POST that sends something. Everything else keeps undici's
+ * default window on the shared Agent. Both pools use the same guarded, pinning connector.
  */
-export const KEEP_ALIVE_TIMEOUT_MS = 65_000;
+export const POLL_KEEP_ALIVE_TIMEOUT_MS = 65_000;
+/** The ledger label whose requests use the long-poll pool and may be repeated once after a stale-socket reset. */
+const POLL_LABEL = 'telegram-poll';
+const STALE_SOCKET_CODES: ReadonlySet<string> = new Set(['ECONNRESET', 'EPIPE', 'UND_ERR_SOCKET']);
+
+/**
+ * Repeats ONE request once, immediately, when it fails with a stale-socket error before any response byte. Only the
+ * caller that knows the request is safe to repeat (a poll with a re-sendable body) uses it.
+ */
+function retryOnceOnStaleSocket(original: Handler, redispatch: (handler: Handler) => boolean): Handler {
+  let retried = false;
+  let sawResponse = false;
+  const wrapped: Handler = {
+    ...(original as object),
+    onConnect: (abort: (err?: Error) => void) => original.onConnect?.call(original, abort),
+    onError: (err: Error) => {
+      const code = (err as { code?: unknown }).code;
+      if (!retried && !sawResponse && typeof code === 'string' && STALE_SOCKET_CODES.has(code)) {
+        retried = true;
+        if (redispatch(wrapped)) return;
+      }
+      return original.onError?.call(original, err);
+    },
+    onHeaders: (statusCode: number, headers: Buffer[], resume: () => void, statusText: string) => {
+      if (statusCode >= 200) sawResponse = true;
+      return original.onHeaders?.call(original, statusCode, headers, resume, statusText) ?? true;
+    },
+    onData: (chunk: Buffer) => original.onData?.call(original, chunk) ?? true,
+    onComplete: (trailers: string[] | null) => original.onComplete?.call(original, trailers),
+    onBodySent: (chunk: unknown, total?: number) => (original.onBodySent as ((...args: unknown[]) => void) | undefined)?.call(original, chunk, total),
+  };
+  return wrapped;
+}
 
 /** The process-global dispatcher: name check + budget + ledger around an Agent whose connections are checked and pinned. */
 export class GuardedDispatcher extends Dispatcher {
   private readonly agent: Agent;
+  /** Dedicated pool for `telegram-poll`: the same guarded connector, a long idle window. */
+  private readonly pollAgent: Agent;
 
   constructor(private readonly guard: EgressGuard) {
     super();
-    this.agent = new Agent({ connect: guard.connect, keepAliveTimeout: KEEP_ALIVE_TIMEOUT_MS, keepAliveMaxTimeout: KEEP_ALIVE_TIMEOUT_MS });
+    this.agent = new Agent({ connect: guard.connect });
+    this.pollAgent = new Agent({
+      connect: guard.connect,
+      keepAliveTimeout: POLL_KEEP_ALIVE_TIMEOUT_MS,
+      keepAliveMaxTimeout: POLL_KEEP_ALIVE_TIMEOUT_MS,
+    });
   }
 
   override dispatch(options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandlers): boolean {
@@ -621,17 +661,45 @@ export class GuardedDispatcher extends Dispatcher {
     // A redirect followed INSIDE the dispatcher would skip the per-hop checks: `maxRedirections` is stripped, so a 3xx
     // goes back to the caller (fetch follows it with a new, checked dispatch).
     const forwarded: Dispatcher.DispatchOptions = { ...options, maxRedirections: 0 } as Dispatcher.DispatchOptions;
-    return this.guard.withinGuardedDispatch(() => this.agent.dispatch(forwarded, wrapped));
+    if (label !== POLL_LABEL) return this.guard.withinGuardedDispatch(() => this.agent.dispatch(forwarded, wrapped));
+    // A repeat needs a body that can be sent again: none, a string/bytes, or a (fetch) async-iterable body that is
+    // recorded as it goes out and replayed only if it was fully sent.
+    const body = (forwarded as { body?: unknown }).body;
+    let replay: (() => { body: unknown } | undefined) | undefined;
+    if (body === undefined || body === null || typeof body === 'string' || body instanceof Uint8Array) replay = () => ({ body });
+    else if (typeof (body as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === 'function') {
+      const chunks: Buffer[] = [];
+      let complete = false;
+      const source = body as AsyncIterable<Uint8Array | string>;
+      (forwarded as { body?: unknown }).body = (async function* record() {
+        for await (const chunk of source) {
+          chunks.push(Buffer.from(chunk));
+          yield chunk;
+        }
+        complete = true;
+      })();
+      replay = () => (complete ? { body: Buffer.concat(chunks) } : undefined);
+    }
+    const send = (handler: Handler, options: Dispatcher.DispatchOptions): boolean =>
+      this.guard.withinGuardedDispatch(() => this.pollAgent.dispatch(options, handler));
+    if (replay === undefined) return send(wrapped, forwarded);
+    const repeat = (handler: Handler): boolean => {
+      const again = replay();
+      if (again === undefined) return false;
+      send(handler, { ...forwarded, body: again.body } as Dispatcher.DispatchOptions);
+      return true;
+    };
+    return send(retryOnceOnStaleSocket(wrapped, repeat), forwarded);
   }
 
   override close(): Promise<void>;
   override close(callback: () => void): void;
   override close(callback?: () => void): Promise<void> | void {
     if (callback !== undefined) {
-      this.agent.close().then(() => callback(), () => callback());
+      Promise.all([this.agent.close(), this.pollAgent.close()]).then(() => callback(), () => callback());
       return;
     }
-    return this.agent.close();
+    return Promise.all([this.agent.close(), this.pollAgent.close()]).then(() => undefined);
   }
 
   override destroy(): Promise<void>;
@@ -642,10 +710,10 @@ export class GuardedDispatcher extends Dispatcher {
     const error = typeof errOrCallback === 'function' ? null : errOrCallback ?? null;
     const done = typeof errOrCallback === 'function' ? errOrCallback : callback;
     if (done !== undefined) {
-      this.agent.destroy(error).then(() => done(), () => done());
+      Promise.all([this.agent.destroy(error), this.pollAgent.destroy(error)]).then(() => done(), () => done());
       return;
     }
-    return this.agent.destroy(error);
+    return Promise.all([this.agent.destroy(error), this.pollAgent.destroy(error)]).then(() => undefined);
   }
 }
 

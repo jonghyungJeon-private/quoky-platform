@@ -7,8 +7,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 ## Unreleased — fix: keep-alive reuse through the egress guard (ADR-0121 S0 follow-up, 2026-10-13)
 
-- The guarded dispatcher's Agent used undici's 4 s idle default, so each Telegram long poll opened a new TCP+TLS connection. Idle
-    connections are now kept 65 s; pinning, deny ranges and ledger records are unchanged (a new connection is still checked).
+- The guarded dispatcher's Agent used undici's 4 s idle default, so each Telegram long poll opened a new TCP+TLS connection. Requests
+    labelled `telegram-poll` now use a dedicated, equally guarded Agent that keeps idle connections 65 s; every other request keeps the
+    default window. A poll that hits a stale-socket reset is repeated once; nothing else is retried. Pinning, deny ranges and ledger records are unchanged.
 
 ## Unreleased — Node 22 LTS runtime (ADR-0121 S0 owner item, 2026-10-13)
 

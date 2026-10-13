@@ -339,31 +339,90 @@ describe('connection-bound deny-range check (T13)', () => {
 // ---------------------------------------------------------------------------------------------------------------------
 
 describe('guarded dispatcher: observe versus enforce', () => {
-  it('keep-alive: sequential requests to one origin reuse one pinned connection (long-poll pattern)', async () => {
-    const h = harness('observe', { hosts: { 'svc.example.test': 'jira' }, answers: { 'svc.example.test': [[v4('93.184.216.34')]] } });
+  const TG = { 'svc.example.test': 'telegram' };
+  const TG_ANSWERS = { 'svc.example.test': [[v4('93.184.216.34')]] };
+  const poll = (h: Harness, n = 0) =>
+    h.fetch(`http://svc.example.test:${port}/bot1/getUpdates?offset=${n}`, { method: 'POST', body: '{"timeout":50}' });
+
+  it('keep-alive: sequential polls reuse one pinned connection (long-poll pattern)', async () => {
+    const h = harness('observe', { hosts: TG, answers: TG_ANSWERS });
     const sockets = new Set<unknown>();
     server.on('request', (req) => sockets.add(req.socket));
     for (let i = 0; i < 3; i += 1) {
-      const response = await h.fetch(`http://svc.example.test:${port}/poll`);
-      expect(await response.text()).toBe('ok');
+      expect(await (await poll(h, i)).text()).toBe('ok');
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(sockets.size).toBe(1);
     expect(h.connector.seen).toHaveLength(1);
     expect(h.ledger.of('connect')).toHaveLength(1);
+    expect(h.ledger.of('request').every((r) => r.label === 'telegram-poll')).toBe(true);
   });
 
-  it('keep-alive: the idle window outlives the gap between long polls', async () => {
-    const h = harness('observe', { hosts: { 'svc.example.test': 'jira' }, answers: { 'svc.example.test': [[v4('93.184.216.34')]] } });
+  it('keep-alive: the poll pool survives a 4.5 s idle gap, the default pool does not', async () => {
+    const h = harness('observe', { hosts: { ...TG, 'other.example.test': 'jira' }, answers: { ...TG_ANSWERS, 'other.example.test': [[v4('93.184.216.34')]] } });
     const sockets = new Set<unknown>();
     server.on('request', (req) => sockets.add(req.socket));
     server.keepAliveTimeout = 0; // the server sends no Keep-Alive hint and never closes an idle socket itself
-    await (await h.fetch(`http://svc.example.test:${port}/a`)).text();
+    await (await poll(h)).text();
     await new Promise((resolve) => setTimeout(resolve, 4_500));
-    await (await h.fetch(`http://svc.example.test:${port}/b`)).text();
+    await (await poll(h, 1)).text();
     expect(sockets.size).toBe(1);
     expect(h.ledger.of('connect')).toHaveLength(1);
-  }, 15_000);
+    sockets.clear();
+    await (await h.fetch(`http://other.example.test:${port}/a`)).text();
+    await new Promise((resolve) => setTimeout(resolve, 4_500));
+    await (await h.fetch(`http://other.example.test:${port}/b`)).text();
+    expect(sockets.size).toBe(2);
+  }, 20_000);
+
+  it('retry: a poll whose reused socket the server dropped is repeated once; the ledger records one request', async () => {
+    const h = harness('observe', { hosts: TG, answers: TG_ANSWERS });
+    expect(await (await poll(h)).text()).toBe('ok');
+    let calls = 0;
+    respond = (req, res) => {
+      calls += 1;
+      if (calls === 1) req.socket.destroy();
+      else res.end('again');
+    };
+    expect(await (await poll(h, 1)).text()).toBe('again');
+    expect(calls).toBe(2);
+    expect(h.ledger.of('request').filter((r) => r.outcome === 'ok')).toHaveLength(2);
+    expect(h.ledger.of('request')).toHaveLength(2);
+  });
+
+  it('retry: a poll is repeated at most once', async () => {
+    const h = harness('observe', { hosts: TG, answers: TG_ANSWERS });
+    let calls = 0;
+    respond = (req) => {
+      calls += 1;
+      req.socket.destroy();
+    };
+    await expect(poll(h)).rejects.toThrow();
+    expect(calls).toBe(2);
+  });
+
+  it('retry: a POST on the default agent is never repeated', async () => {
+    const h = harness('observe', { hosts: { 'svc.example.test': 'jira' }, answers: TG_ANSWERS });
+    await (await h.fetch(`http://svc.example.test:${port}/warm`)).text();
+    let calls = 0;
+    respond = (req) => {
+      calls += 1;
+      req.socket.destroy();
+    };
+    await expect(h.fetch(`http://svc.example.test:${port}/rest/api/3/issue`, { method: 'POST', body: 'x' })).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
+
+  it('retry: a telegram sendMessage is never repeated', async () => {
+    const h = harness('observe', { hosts: TG, answers: TG_ANSWERS });
+    let calls = 0;
+    respond = (req) => {
+      calls += 1;
+      req.socket.destroy();
+    };
+    await expect(h.fetch(`http://svc.example.test:${port}/bot1/sendMessage`, { method: 'POST', body: '{}' })).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
 
   it('observe: an allowlisted name is resolved by the guard, pinned to the checked IP, Host kept; the ledger records it', async () => {
     const h = harness('observe', { hosts: { 'svc.example.test': 'jira' }, answers: { 'svc.example.test': [[v4('93.184.216.34')]] } });
