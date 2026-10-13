@@ -22,6 +22,7 @@ import type {
 import { DEFAULT_IDENTITY_READY_TIMEOUT_MS, DISCORD_NOTIFICATION_PLATFORM } from '@quoky/adapter-discord';
 
 import { ConsoleLogger } from './console-logger';
+import { runWithCorrelation } from './correlation-context';
 import { loadLocalEnvironment } from './env-loader';
 import { serializeError } from './error-diagnostics';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
@@ -142,29 +143,35 @@ async function bootstrap(): Promise<void> {
   // Track B (Sprint 4c-Follow-up-2): secret-free structured diagnostics — name/message/redacted stack/cause plus
   // non-secret correlation context (stage + message/channel/user ids). The raw message text is deliberately NOT
   // logged (a user could paste a secret into chat); only non-secret identifiers are.
+  // ADR-0121 S0: each owner turn runs in its own correlation context, so its log lines and its traffic-ledger records
+  // carry the same content-free `cid`.
   platform.onMessage((message) =>
-    inboundGate.then((verified) => (verified ? core.handleInboundMessage(message) : undefined)).catch((err) =>
-      log.error(
-        'inbound handling failed',
-        serializeError(err, {
-          stage: 'inbound',
-          messageId: message.id,
-          platform: message.context.platform,
-          channelId: message.context.channelId,
-          userId: message.context.userId,
-        }),
+    runWithCorrelation('owner-turn', () =>
+      inboundGate.then((verified) => (verified ? core.handleInboundMessage(message) : undefined)).catch((err) =>
+        log.error(
+          'inbound handling failed',
+          serializeError(err, {
+            stage: 'inbound',
+            messageId: message.id,
+            platform: message.context.platform,
+            channelId: message.context.channelId,
+            userId: message.context.userId,
+          }),
+        ),
       ),
     ),
   );
   platform.onApprovalDecision((decision) =>
-    inboundGate.then((verified) => (verified ? core.handleApprovalDecision(decision) : undefined)).catch((err) =>
-      log.error(
-        'approval handling failed',
-        serializeError(err, {
-          stage: 'approval-decision',
-          approvalId: decision.approvalId,
-          approved: decision.approved,
-        }),
+    runWithCorrelation('owner-turn', () =>
+      inboundGate.then((verified) => (verified ? core.handleApprovalDecision(decision) : undefined)).catch((err) =>
+        log.error(
+          'approval handling failed',
+          serializeError(err, {
+            stage: 'approval-decision',
+            approvalId: decision.approvalId,
+            approved: decision.approved,
+          }),
+        ),
       ),
     ),
   );
