@@ -20352,6 +20352,20 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   Adapters: the Discord mapping and DM delivery, the Telegram admission and adapter key, and Gmail `getThread` (calls,
   bounds, a 40-message re-quoting thread, an oversized and a deleted message, typed failures, the guard). Also the
   explicit observer registration and `deliveredAt` ordering.
+- **Rule: the credential guard runs only on complete text; a body truncated before the guard is withheld.** (Codex delta
+  P1, orchestrator decision, conservative by design.) A message body cut at any stage before a guard could read it whole
+  is withheld exactly like a guard match: its sender and subject stay, and its body is never summarized. The cut can be
+  the 512 KiB MIME decode cap, an oversized message read as metadata only, or a body over its share in Core's thread
+  readout.
+  - **Adapter.** The Gmail adapter's `getMessage` and `getThread` guard the whole decoded body. They return
+    `bodyText: ''` with `bodyTruncated: true` when it is credential-shaped or was cut before the guard. A clean, complete
+    body is cut to the port bound only after the guard; the `MailMessage` port doc states this contract.
+  - **Single mail.** Core answers a withheld single mail with a fixed "too long to check safely, or looks like a secret;
+    not summarized" reply.
+  - **Thread.** Core writes a fixed `(body withheld …)` note under that message's header and counts it in the footer
+    ("N통은 본문이 너무 길어 안전하게 요약하지 않았어요"). A thread whose every body is withheld gets a fixed refusal.
+  - **What it fixes.** Before, a quoted `password:` declaration beyond the 512 KiB cap was lost, and its bare value near
+    the start reached the readout.
 - **Codex security review (one P1, two P2s), fixed on the branch:**
   - P1: the adapter runs the credential guard on each message's RAW body (as read and normalized), before quote
     stripping and any cut; a match withholds that message's body whole (empty, marked cut). Core's guard before and

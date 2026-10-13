@@ -21,8 +21,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     `Session.metadata['quoky.lastListing']` (no migration).
   - A reply works for 24 h (8 live listings per Actor). An aged-out or evicted listing becomes a tombstone (64 per Actor,
     7 days) whose reply gets "that list expired". A reply to anything else picks nothing and never falls back to the
-    last list. A thread read sends at most 22 Gmail GETs, and a credential-shaped raw message body is withheld before
-    quote stripping.
+    last list. A thread read sends at most 22 Gmail GETs. The credential guard runs only on complete text: a message
+    body that is credential-shaped, or was cut before the guard could read it whole (the MIME cap, an oversized
+    message), is withheld with a fixed note; single-mail summaries follow the same rule.
 - **Unchanged.** Listing format and footer, help and usage lines, the NL catalog and every golden corpus. Mail and Drive
   summary prompts are byte-identical. The DM-only rule stands, and there is no send, label or write path.
 
