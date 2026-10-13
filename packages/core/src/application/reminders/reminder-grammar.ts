@@ -754,10 +754,28 @@ function hasBatchim(ch: string): boolean {
   return code >= 0xac00 && code <= 0xd7a3 && (code - 0xac00) % 28 !== 0;
 }
 
-/** Strip a trailing object particle (`을` after a batchim, `를` after none) and quotative `(이)라고`. */
+/**
+ * The quotative ending of a reminder body ("물 마시라고 알려줘", "회의 준비라고 알려줘", "약 먹는다고 알려줘") read as
+ * morphology, not as a phrase list: an imperative verb stem (`하라고`, `…시라고`, `…으라고` after a batchim) becomes its
+ * noun form `…기` ("물 마시기"), a declarative `…다고` keeps its verb ("약 먹는다"), and a noun's `(이)라고` is dropped.
+ * `undefined` when the body does not end in a quotative.
+ */
+function stripKoQuotative(body: string): string | undefined {
+  const imperative = /^(.*?)(하|시)라고$/su.exec(body);
+  if (imperative && imperative[1] !== undefined && (imperative[1].trim().length > 0 || imperative[2] === '하')) return `${imperative[1]}${imperative[2]}기`;
+  const eu = /^(.*?)([가-힣])으라고$/su.exec(body);
+  if (eu && hasBatchim(eu[2] as string)) return `${eu[1]}${eu[2]}기`;
+  const noun = body.replace(/\s?(?:이라고|라고)$/, '');
+  if (noun !== body) return noun;
+  const declarative = /^(.*[가-힣])다고$/su.exec(body);
+  return declarative ? `${declarative[1]}다` : undefined;
+}
+
+/** Strip a trailing object particle (`을` after a batchim, `를` after none) and the quotative ending. */
 function stripKoTrailingParticles(body: string): string {
-  let out = body.replace(/\s?(?:이라고|라고)$/, '');
-  if (out !== body) return out;
+  const quoted = stripKoQuotative(body);
+  if (quoted !== undefined) return quoted;
+  let out = body;
   const last = out.slice(-1);
   const before = out.slice(-2, -1);
   if (out.length >= 2 && ((last === '을' && hasBatchim(before)) || (last === '를' && !hasBatchim(before) && /[가-힣]/.test(before)))) {
