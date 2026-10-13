@@ -21726,7 +21726,7 @@ Decisions:
   retirement decisions. Chief Architect review before merge (a port member and a dispatch-order change).
 - **Rebase.** Rebased on `origin/main` after #193 (ADR-0121 ratification); `pnpm typecheck` and the full suite re-run.
 
-### ADR-0120 amendment A4 — an optional Class B probe on the turn-handler port (Proposed — awaiting the owner's yes) (2026-10-13)
+### ADR-0120 amendment A4 — an optional Class B probe on the turn-handler port (Accepted 2026-10-13) (2026-10-13)
 
 - **Status:** Proposed. The orchestrator asks the owner to accept it. The code is on `claude/v5-nl2-phase-c` and is inert
   until `QUOKY_NL_PHASE` is `c` or `c-shadow`.
@@ -21752,3 +21752,14 @@ Decisions:
   nothing in it writes without the existing approval. Phase C never preempts a Class A handler, and the routing-corpus
   replay shows identical claims on every turn without a probe hit.
 - **Owner decision requested:** accept A4. Recommended: accept.
+
+#### S1 owner decisions (2026-10-13)
+
+The owner was asked to accept amendment A4, approve the 148-case corpus batch (`docs/plans/nl-corpus-batch-2026-10-13.md`) and start `active` + `c-shadow`. The answer, verbatim: "음 오케이 c-shadow로 진행하되, 7일 뒤 규칙별 데이터를 보기에는 너무 늦고, 하루정도 추이로 확인할 수 있겠어 ?". Recorded as:
+
+1. Amendment A4 is accepted.
+2. The 148-case batch is approved: the cases' `pending owner batch approval` notes are superseded by this record (ADR-0120 D12).
+3. The rollout starts with `QUOKY_NL_INTENT_MODE=active` and `QUOKY_NL_PHASE=c-shadow`.
+4. The review window is about one day instead of the Chief Architect's suggested 7 days. On 2026-10-14 the orchestrator reports the live `nl_selection.agreement` data per grammar alongside the 242-case corpus scores.
+   - A grammar moves to `c` only where the combined evidence is clear and the owner agrees.
+   - Grammars with too few live samples keep collecting data.
