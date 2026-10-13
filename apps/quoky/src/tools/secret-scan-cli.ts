@@ -1,13 +1,22 @@
 /**
  * `pnpm security:secret-scan [--no-history] [--no-tree] [--json]`: scans the repository (cwd) for credential-shaped
- * values (ADR-0121 S0). Prints file, commit and line with the value masked; exit 0 = no hits, 1 = hits, 2 = usage.
+ * values (ADR-0121 S0). Prints file, commit and line with the value masked; exit 0 = no non-test hits, 1 = non-test hits, 2 = usage.
+ * A credential-assignment counts only for a credential-shaped string literal (not identifiers, env names, placeholders).
  */
-import { formatHit, scanHistory, scanWorkingTree, type SecretScanHit } from './secret-scan';
+import {
+  formatHit,
+  gatingHits,
+  historyByCommit,
+  scanHistory,
+  scanWorkingTree,
+  summarize,
+  type SecretScanHit,
+} from './secret-scan';
 
 async function main(argv: readonly string[]): Promise<number> {
-  const known = new Set(['--no-history', '--no-tree', '--json']);
+  const known = new Set(['--no-history', '--no-tree', '--json', '--summary']);
   if (argv.some((a) => !known.has(a))) {
-    process.stderr.write('usage: secret-scan [--no-history] [--no-tree] [--json]\n');
+    process.stderr.write('usage: secret-scan [--no-history] [--no-tree] [--json] [--summary]\n');
     return 2;
   }
   const cwd = process.cwd();
@@ -27,13 +36,25 @@ async function main(argv: readonly string[]): Promise<number> {
     commits = history.commits;
     skipped += history.skipped;
   }
+  const gating = gatingHits(hits);
+  const rotate = hits.filter((h) => h.issuedCandidate && h.category !== 'test');
+  const totals = `${hits.length} hit(s), ${gating.length} gating (non-test)`;
   if (argv.includes('--json')) {
-    process.stdout.write(`${JSON.stringify({ hits, files, commits, skipped, hitCount: hits.length })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ hits, summary: summarize(hits), files, commits, skipped, hitCount: hits.length, gatingCount: gating.length })}\n`,
+    );
+  } else if (argv.includes('--summary')) {
+    process.stdout.write('rule x where x category: count\n');
+    for (const r of summarize(hits)) process.stdout.write(`  ${r.rule} x ${r.where} x ${r.category}: ${r.count}\n`);
+    const perCommit = historyByCommit(hits, 'secret-token');
+    if (perCommit.length > 0) process.stdout.write(`history secret-token per commit: ${perCommit.join(', ')}\n`);
+    process.stdout.write(`rotate candidates (known provider prefix, non-test, non-placeholder): ${rotate.length}\n`);
+    process.stdout.write(`secret-scan: ${totals}; ${files} file(s), ${commits} commit(s), ${skipped} skipped\n`);
   } else {
     for (const hit of hits) process.stdout.write(`${formatHit(hit)}\n`);
-    process.stdout.write(`secret-scan: ${hits.length} hit(s); ${files} tracked file(s), ${commits} commit(s), ${skipped} skipped\n`);
+    process.stdout.write(`secret-scan: ${totals}; ${files} tracked file(s), ${commits} commit(s), ${skipped} skipped\n`);
   }
-  return hits.length > 0 ? 1 : 0;
+  return gating.length > 0 ? 1 : 0;
 }
 
 main(process.argv.slice(2)).then(
