@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EgressConfigErrorCode, parseEgressConfig } from './egress-config';
-import { buildEgressInventory, checkDestination, labelFor, pathTemplate } from './egress-policy';
+import { TELEGRAM_METHODS } from '@quoky/adapter-telegram';
+import { SLACK_METHODS, buildEgressInventory, checkDestination, labelFor, pathTemplate } from './egress-policy';
 import type { EgressInventorySource } from './egress-policy';
 
 const MINIMAL: EgressInventorySource = {
@@ -107,7 +108,10 @@ describe('ledger path template (design §5.4): an allow-list of fixed prefixes, 
     ['confluence', '/wiki/somethingElse/private', '/{id}/{id}/{id}'],
     ['slack', '/api/search.messages', '/api/search.messages'],
     ['slack', '/api/conversations.info', '/api/conversations.info'],
-    ['slack', '/api/payroll/channel', '/{id}/{id}/{id}'],
+    ['slack', '/api/payroll/channel', '/api/{method}/{id}'],
+    ['slack', '/api/private.customerSecret', '/api/{method}'],
+    ['slack-search', '/api/search.customerSecret?query=x', '/api/{method}'],
+    ['slack', '/other/path', '/{id}/{id}'],
     ['google-oauth', '/token', '/token'],
     ['openai', '/v1/chat/completions', '/v1/chat/completions'],
     ['gemini', '/v1beta/models/gemini-x:generateContent', '/v1beta/models/{id}'],
@@ -133,8 +137,22 @@ describe('ledger path template (design §5.4): an allow-list of fixed prefixes, 
     const botToken = ['1234', '56789'].join('') + ':' + 'AAbbCC_dd-'.repeat(4);
     expect(pathTemplate('telegram-poll', `/bot${botToken}/getUpdates`)).toBe('/{id}/getUpdates');
     expect(pathTemplate('telegram', `/bot${botToken}/sendMessage`)).toBe('/{id}/sendMessage');
-    expect(pathTemplate('telegram', `/bot${botToken}/privateWord`)).toBe('/{id}/{id}');
+    expect(pathTemplate('telegram', `/bot${botToken}/privateWord`)).toBe('/{id}/{method}');
+    for (const method of TELEGRAM_METHODS.filter((name) => name !== 'downloadFile')) {
+      expect(pathTemplate('telegram', `/bot${botToken}/${method}`)).toBe(`/{id}/${method}`);
+    }
     expect(pathTemplate('telegram-file', `/file/bot${botToken}/photos/file_7.jpg`)).toBe('/file/{id}/{id}/{id}');
+  });
+
+  it('Slack keeps only the methods Quoky calls; any other dotted method is {method}', () => {
+    expect([...SLACK_METHODS].sort()).toEqual([
+      'chat.getPermalink', 'chat.postMessage', 'conversations.history', 'conversations.info', 'conversations.list',
+      'conversations.replies', 'search.messages',
+    ]);
+    for (const method of SLACK_METHODS) expect(pathTemplate('slack', `/api/${method}?cursor=abc`)).toBe(`/api/${method}`);
+    for (const method of ['auth.test', 'private.customerSecret', 'users.info', 'search.messages.extra', 'a.b']) {
+      expect(pathTemplate('slack', `/api/${method}`), method).toBe('/api/{method}');
+    }
   });
 
   it('at most six {id} segments follow the prefix', () => {

@@ -21265,7 +21265,7 @@ These are Q1–Q10 of the design §7. The defaults are:
 | Field | Value |
 |---|---|
 | `method` | upper-case HTTP method |
-| `path` | the path template, built from an allow-list: the query and fragment are dropped; the longest fixed prefix of the label is kept (for example `/api/v10/channels`, `/rest/api/3/search`, `/drive/v3/files`, `/repos`, `/wiki/rest/api/space`); every later segment becomes `{id}` (at most 6, more are dropped). Only two closed vocabularies are kept beyond a prefix: the Telegram Bot API method after the `bot<token>` segment (`/{id}/getUpdates`) and the Slack Web API method after `/api` (`/api/search.messages`). An unlisted host keeps no segment (`/{id}/…`). File names, repository and owner names, space keys, user names, channel, issue and Drive ids and webhook tokens never appear, letters only or not |
+| `path` | the path template, built from an allow-list: the query and fragment are dropped; the longest fixed prefix of the label is kept (for example `/api/v10/channels`, `/rest/api/3/search`, `/drive/v3/files`, `/repos`, `/wiki/rest/api/space`); every later segment becomes `{id}` (at most 6, more are dropped). Only two closed method lists are kept beyond a prefix: the Telegram Bot API methods of `adapter-telegram/src/bot-api.ts` `TELEGRAM_METHODS` after the `bot<token>` segment (`/{id}/getUpdates`), and the Slack Web API methods Quoky calls (`search.messages`, `conversations.info`, `conversations.history`, `conversations.list`, `conversations.replies`, `chat.postMessage`, `chat.getPermalink`) after `/api` (`/api/search.messages`); any other method is written as `{method}` (`/api/{method}`, `/{id}/{method}`). An unlisted host keeps no segment (`/{id}/…`). File names, repository and owner names, space keys, user names, channel, issue and Drive ids and webhook tokens never appear, letters only or not |
 | `status` | the HTTP status, or `null` |
 | `statusClass` | `1xx` … `5xx`, or `none` |
 | `bytesUp` | request body bytes |
@@ -21363,7 +21363,8 @@ a minute. The same finding is logged as `egress.guard` with the same fields.
 
 ### Review fixes (Chief Architect and Codex, 2026-10-13)
 
-- Path template switched from a letters-only heuristic to the per-label prefix allow-list above.
+- Path template switched from a letters-only heuristic to the per-label prefix allow-list above; the Slack and
+  Telegram method segments are closed lists, anything else is `{method}` (Codex delta, 2026-10-13).
 - Observe is behaviour-neutral: `hints: ADDRCONFIG`, every checked address handed to the socket's lookup with family
   and `all` honoured and order kept; a synchronous connector throw reaches the callback.
 - Budgets: owner turns rate-exempt only on the owner's delivery channels (with their typing labels) and

@@ -191,11 +191,28 @@ const PATH_PREFIXES: Readonly<Record<string, readonly string[]>> = {
   'telegram-file': ['/file'],
 };
 
-/** Labels whose path is `/<token>/<method>`: only a method from the adapter's closed list is kept. */
+/**
+ * Labels whose path is `/<token>/<method>`: only a method of the adapter's closed list (`TELEGRAM_METHODS`,
+ * `adapter-telegram/src/bot-api.ts`) is kept; any other method is written as `{method}`.
+ */
 const TELEGRAM_LABELS: ReadonlySet<string> = new Set(['telegram', 'telegram-poll', 'telegram-typing']);
 const TELEGRAM_METHOD_NAMES: ReadonlySet<string> = new Set<string>(TELEGRAM_METHODS);
-/** Slack Web API methods are `<family>.<name>` (e.g. `search.messages`), the only segment after `/api`. */
-const SLACK_METHOD = /^[a-z]+(?:\.[a-zA-Z]+){1,3}$/;
+/**
+ * The Slack Web API methods Quoky calls (`connector-slack/src/index.ts`, `slack-channel-writer.ts`) — a closed list.
+ * Any other method after `/api` is written as `{method}`, so a dotted segment that is not one of these can never carry
+ * data into the ledger.
+ */
+export const SLACK_METHODS: ReadonlySet<string> = new Set([
+  'search.messages',
+  'conversations.info',
+  'conversations.history',
+  'conversations.list',
+  'conversations.replies',
+  'chat.postMessage',
+  'chat.getPermalink',
+]);
+/** The placeholder for a method segment outside the closed lists. */
+const METHOD_PLACEHOLDER = '{method}';
 const VERSION_SEGMENT = /^v[0-9]{1,2}(?:beta[0-9]?|alpha[0-9]?)?(?:\.[0-9]{1,2})?$/;
 const MAX_ID_SEGMENTS = 6;
 
@@ -217,8 +234,9 @@ function matchPrefix(segments: readonly string[], prefix: string): string[] | un
 /**
  * The ledger's path TEMPLATE (design §5.4), built from an allow-list. The query string and fragment are dropped. The
  * longest fixed prefix of the label (`PATH_PREFIXES`, e.g. `/api/v10/channels`, `/rest/api/3/search`) is kept, and every
- * later segment becomes `{id}` (at most 6; more are dropped). Two closed method vocabularies are kept as well: the
- * Telegram Bot API method after the `bot<token>` segment (always `{id}`), and the Slack Web API method after `/api`.
+ * later segment becomes `{id}` (at most 6; more are dropped). Two closed method lists are kept as well: the Telegram Bot
+ * API method after the `bot<token>` segment (always `{id}`) and the Slack Web API method after `/api`; a method outside
+ * those lists becomes `{method}`.
  * A file name, an e-mail address, a repository or owner name, a space key, a user name, a channel, issue or Drive id and
  * a webhook token therefore never reach the ledger, whether or not they consist of letters only. An unlisted host keeps
  * no segment at all. Example: `/bot<token>/getUpdates?offset=5` → `/{id}/getUpdates`.
@@ -230,11 +248,16 @@ export function pathTemplate(label: string, path: string): string {
   let kept: string[] = [];
   if (TELEGRAM_LABELS.has(label)) {
     const method = segments[1];
-    if (segments.length === 2 && method !== undefined && TELEGRAM_METHOD_NAMES.has(method)) return `/{id}/${method}`;
+    if (segments.length === 2 && method !== undefined) {
+      return `/{id}/${TELEGRAM_METHOD_NAMES.has(method) ? method : METHOD_PLACEHOLDER}`;
+    }
     return `/${segments.slice(0, MAX_ID_SEGMENTS).map(() => '{id}').join('/')}`;
   }
   if (label === 'slack' || label === 'slack-search') {
-    if (segments[0] === 'api' && segments[1] !== undefined && SLACK_METHOD.test(segments[1])) kept = ['api', segments[1]];
+    const method = segments[1];
+    if (segments[0] === 'api' && method !== undefined) {
+      kept = ['api', SLACK_METHODS.has(method) ? method : METHOD_PLACEHOLDER];
+    }
   } else {
     for (const prefix of PATH_PREFIXES[label] ?? []) {
       const match = matchPrefix(segments, prefix);
