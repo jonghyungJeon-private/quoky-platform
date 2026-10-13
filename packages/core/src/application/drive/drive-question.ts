@@ -1,4 +1,6 @@
 import { DRIVE_LISTING_MAX_ENTRIES, DRIVE_NAME_QUERY_MAX_LENGTH } from '../../ports/drive-reader.port';
+import { normalizeForMatch } from '../nl-routing/selection-input';
+import { groundingWordIn } from '../nl-routing/selection-validator';
 import { DRIVE_KIND_WORDS } from '../nl-routing/wave1-entries';
 
 /**
@@ -318,8 +320,9 @@ export function parseDriveQuestion(text: string, options: { readonly yieldToSele
   // `폴더`) is a qualifier the grammar cannot express, so it declines and selection binds `kind`. A plain `문서`/`파일`
   // is not a kind word and still answers.
   if (options.yieldToSelection === true && question !== null && (question.kind === 'recent' || question.kind === 'search')) {
-    const lowered = normalizeDriveText(text).toLowerCase();
-    if (Object.values(DRIVE_KIND_WORDS).some((words) => words.some((word) => lowered.includes(word)))) return null;
+    // The selector's own grounding matcher: an ASCII word needs word boundaries (`docsify` is not `docs`).
+    const normalized = normalizeForMatch(normalizeDriveText(text));
+    if (Object.values(DRIVE_KIND_WORDS).some((words) => words.some((word) => groundingWordIn(normalized, normalizeForMatch(word))))) return null;
   }
   return question;
 }

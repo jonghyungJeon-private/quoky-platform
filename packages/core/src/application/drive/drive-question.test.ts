@@ -286,4 +286,9 @@ describe('ADR-0120 A2: the Drive grammar yields to selection when the owner name
     expect(parseDriveQuestion('2번 문서 요약해줘', { yieldToSelection: true })).not.toBeNull();
     expect(parseDriveQuestion('드라이브에서 폴더 삭제해줘', { yieldToSelection: true })).toEqual({ kind: 'write-refused', language: 'ko' });
   });
+
+  it('matches kind words like the selector grounding: docsify is not docs', () => {
+    expect(parseDriveQuestion('find docsify in my drive', { yieldToSelection: true })).toEqual({ kind: 'search', name: 'docsify', language: 'en' });
+    expect(parseDriveQuestion('recent docs', { yieldToSelection: true })).toBeNull();
+  });
 });
