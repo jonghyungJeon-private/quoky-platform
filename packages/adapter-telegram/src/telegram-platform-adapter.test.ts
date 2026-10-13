@@ -16,6 +16,7 @@ import {
   UNSUPPORTED_MESSAGE_NOTICE,
 } from './telegram-platform-adapter';
 import type { TelegramAdapterOptions } from './telegram-platform-adapter';
+import { telegramMessageKey } from './reactions';
 import { mergeAlbum } from './telegram-platform-adapter';
 import type { AdmittedTelegramMessage } from './admission';
 import {
@@ -636,6 +637,25 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     await h.adapter.start();
     await until(() => h.received.length === 1);
     expect(h.received[0]).toMatchObject({ text: '내 지라 이슈 보여줘\n이거 무슨 뜻이야?', quotedRanges: [{ start: 0, end: 11 }] });
+    await h.adapter.stop();
+  });
+
+  it('GML-2: a reply carries the replied-to message as an opaque `chatId:messageId` key (the receipt form), nothing else of it', async () => {
+    const reply = textUpdate(62, '2번 요약해줘');
+    (reply.message as Record<string, unknown>).reply_to_message = {
+      message_id: 4242,
+      chat: { id: OWNER_ID, type: 'private' },
+      from: { id: 999, is_bot: true, first_name: 'Quoky' },
+      text: '비밀 목록 본문',
+    };
+    const plain = textUpdate(63, '안 읽은 메일');
+    const fake = new FakeTelegram().queue('getUpdates', okReply([])).queue('getUpdates', okReply([reply, plain]));
+    const h = harness(fake);
+    await h.adapter.start();
+    await until(() => h.received.length === 2);
+    expect(h.received[0]?.replyTo).toEqual({ messageId: telegramMessageKey(String(OWNER_ID), '4242') });
+    expect(JSON.stringify(h.received[0])).not.toContain('비밀 목록 본문');
+    expect(h.received[1]?.replyTo).toBeUndefined();
     await h.adapter.stop();
   });
 

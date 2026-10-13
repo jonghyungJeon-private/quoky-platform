@@ -17,6 +17,25 @@ describe('Telegram admission (ADR-0114 D2): owner private chats only, drop by de
     });
   });
 
+  it('GML-2: keeps only the id of a replied-to message in the same private chat; another chat or a malformed id is no reply', () => {
+    const reply = (replyTo: unknown) => {
+      const update = textUpdate(9, '2번 요약해줘', { date: NOW });
+      (update.message as Record<string, unknown>).reply_to_message = replyTo;
+      return admit(update);
+    };
+    expect(reply({ message_id: 77, chat: { id: OWNER_ID, type: 'private' }, text: '목록' })).toMatchObject({
+      kind: 'admitted',
+      message: { replyToMessageId: '77' },
+    });
+    expect(JSON.stringify(reply({ message_id: 77, chat: { id: OWNER_ID }, text: '목록 본문' }))).not.toContain('목록 본문');
+    for (const malformed of [{ message_id: 77, chat: { id: 123 } }, { message_id: '77' }, { message_id: 1.5 }, 'x', null]) {
+      const admitted = reply(malformed);
+      expect(admitted.kind).toBe('admitted');
+      expect((admitted as { message: { replyToMessageId?: string } }).message.replyToMessageId).toBeUndefined();
+    }
+    expect((admit(textUpdate(9, 'hi', { date: NOW })) as { message: Record<string, unknown> }).message).not.toHaveProperty('replyToMessageId');
+  });
+
   it('ADR-0120 D8: marks blockquote entities of the text (or caption) as quoted ranges, clamped; other entities are ignored', () => {
     const text = '비밀프로젝트 지라 티켓 보여줘\n이 메모 무슨 뜻이야?';
     const quote = '비밀프로젝트 지라 티켓 보여줘'.length;

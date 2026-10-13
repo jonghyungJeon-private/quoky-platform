@@ -45,7 +45,7 @@ vi.mock('discord.js', async (importOriginal) => {
   return { ...actual, Client: FakeClient };
 });
 
-import { Events, GatewayIntentBits, Partials } from 'discord.js';
+import { Events, GatewayIntentBits, MessageType, Partials } from 'discord.js';
 import { DiscordPlatformAdapter, renderMarkdownTablesForDiscord } from './index';
 import type { DiscordAdapterOptions, DiscordConfig } from './index';
 
@@ -546,6 +546,16 @@ describe('DiscordPlatformAdapter — owner + channel gate (ADR-0091)', () => {
     expect(handled).toHaveLength(1);
     expect(handled[0]!.context).toMatchObject({ channelId: DM_CHANNEL, userId: OWNER });
     expect(handled[0]!.context.spaceId).toBeUndefined();
+  });
+
+  it('GML-2: an owner DM reply carries the referenced message id as the neutral reply field; a plain DM has none', async () => {
+    const { handled, deliver } = await harness();
+    const reply = { ...fakeMessage({ guildId: null, channelId: DM_CHANNEL }), type: MessageType.Reply, reference: { messageId: '888888888888888888', channelId: DM_CHANNEL } };
+    await deliver(reply as unknown as ReturnType<typeof fakeMessage>);
+    await deliver(fakeMessage({ guildId: null, channelId: DM_CHANNEL }));
+    expect(handled).toHaveLength(2);
+    expect(handled[0]!.replyTo).toEqual({ messageId: '888888888888888888' });
+    expect(handled[1]!.replyTo).toBeUndefined();
   });
 
   it('ignores a non-owner direct message', async () => {

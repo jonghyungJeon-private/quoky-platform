@@ -79,6 +79,12 @@ export interface AdmittedTelegramMessage {
    * ranges of `text` — quoted words, never the owner's request. Absent when there are none.
    */
   readonly quotedRanges?: readonly { readonly start: number; readonly end: number }[];
+  /**
+   * GML-2 (ADR-0118 amendment of 2026-10-12): the `message_id` of the message this one replies to (`reply_to_message`)
+   * in the same private chat. Absent when it is not a reply. Nothing of the replied-to message (its text, author or
+   * entities) is kept.
+   */
+  readonly replyToMessageId?: string;
 }
 
 /** An owner's 👍/👎 change on a message in their own private chat (TG-2). */
@@ -235,6 +241,7 @@ export function admitTelegramUpdate(
   if (nowSeconds - date > MAX_UPDATE_AGE_SECONDS) return ownerDrop('stale', userId);
   const mediaGroupId = attachments.length > 0 ? mediaGroupIdOf(record.media_group_id) : undefined;
   const quotedRanges = quotedRangesOf(stringOf(record.text) !== undefined ? record.entities : record.caption_entities, (text ?? '').length);
+  const replyToMessageId = replyToMessageIdOf(record.reply_to_message, userId);
   return {
     kind: 'admitted',
     message: {
@@ -247,8 +254,20 @@ export function admitTelegramUpdate(
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(mediaGroupId !== undefined ? { mediaGroupId } : {}),
       ...(quotedRanges.length > 0 ? { quotedRanges } : {}),
+      ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),
     },
   };
+}
+
+/**
+ * GML-2: the id of the replied-to message when it lives in the owner's own private chat (a reply to a message of another
+ * chat arrives as `external_reply`, which is not read). Only the id is taken; a malformed value is no reply.
+ */
+function replyToMessageIdOf(value: unknown, chatId: string): string | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { message_id: messageId, chat } = value as { message_id?: unknown; chat?: unknown };
+  if (typeof chat === 'object' && chat !== null && idOf((chat as { id?: unknown }).id) !== chatId) return undefined;
+  return idOf(messageId);
 }
 
 /** At most this many quoted ranges are kept per message (a malformed or hostile entity list is cut, never thrown on). */
