@@ -5,6 +5,23 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### v5 STO-1 storage hardening, migration v16 — on branch `claude/v5-w2-sto1` (2026-10-13)
+
+ADR-0119 (ratified 2026-10-12). Schema `LATEST_SCHEMA_VERSION` 15 → 16. The only port change is
+`SessionRepository.findActiveByContext(platform, channelId, threadId?)`. No new DI token; `ConversationRuntimeDeps` is
+unchanged. Details: the STO-1 implementation note under ADR-0119 in `DECISIONS.md`.
+
+- **Done (offline).**
+  - v16 adds `sessions.platform` (backfilled from the session JSON), `idx_sessions_platform_context` and the partial
+    usage index `idx_task_runs_usage_finished`.
+  - The platform-keyed lookup, and `SCHEMA_VERSION_AHEAD` as configuration exit 78.
+  - Tests on a realistic v15 fixture copy: no data loss, sessions found again, the equal-id split, idempotence,
+    transactional rollback, v15 refusal, `EXPLAIN QUERY PLAN`, and byte-identical usage ledgers.
+- **Not run (Strict).** The v16 apply on the service DB: backup, verify, scratch-copy rehearsal, then the deploy restart,
+  per `docs/ops/migration-v16-apply.md`. Live QA afterwards: one turn per platform continues its session, and the ops-UI
+  usage panel loads.
+- **Review.** The independent Chief Architect review is mandatory before merge (a Core storage port and a migration).
+
 ### v5 BRF-3 unread mail in the brief — on branch `claude/v5-w2-brf3` (2026-10-13)
 
 ADR-0117 amendment (BRF-3). `QUOKY_BRIEF_MAIL_ENABLED` (default `false`, exact `true`/`false`) adds `안 읽은 메일 N건` and at most 3
