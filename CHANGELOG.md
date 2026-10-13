@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — S1: NL-2 Phase C, model-first selection (ADR-0120 D6, ADR-0121 S1, 2026-10-13)
+
+- **`QUOKY_NL_PHASE`** (`a` | `c`, exact, default `a`). `c` with `QUOKY_NL_INTENT_MODE=active` runs the natural-language
+  selector BEFORE the frozen Class B grammars (calendar question, mail and Drive listings, work lookups and to-do list,
+  help-intent, the classifier's personal-work surface). The grammar answers only when the selector is unavailable (down,
+  timeout, malformed, provider family or locality mismatch, credential, over 600 characters). `none` goes to the
+  classifier and honest chat, as in Phase A. Class A routes are untouched. `c` with `shadow` is grammar-hit shadowing:
+  the grammar answers and only the agreement is logged. Default `a`: byte-identical to before.
+- **Agreement log** `nl_selection.agreement` (content-free: grammar id, entry ids, outcome, agree flags, latency) for the
+  ADR-0120 D10 grammar-retirement data.
+- **Hardening.** Selection also requires the chat provider's declared execution locality to equal the selector's
+  (`chat-locality-differs`); prompt `nl-select.v17` makes "그 중에 …" with no previous selection a numbered question.
+- **Interface.** Optional pure `ConversationTurnHandler.classBProbe?(ctx)`; no migration, port, token or deps change.
+- **Eval (Strict, 3 runs, Haiku, 727 cases):** 98.6/98.4/98.1%, 0 wrong, lowest entry 93.0%, 0.1–0.8% over the 6 s
+  bound; the grammar-handled subset 97.9–99.2% (the grammars themselves: 82.6% exact). Phase C adds p50 about 1.4 s and
+  p95 about 2.1 s to those messages.
+- **Corpus and eval.** `nl-intent.v1.json` 579 → 727 cases with a `grammar` tag (>= 25 grammar-handled phrasings per
+  entry); the eval reports the S1 over-bound gate and the grammar-handled subset (accuracy and the latency Phase C adds).
+
 ## Unreleased — STO-1 storage hardening, migration v16 (ADR-0119, 2026-10-13)
 
 - **Sessions are keyed by platform.** `SessionRepository.findActiveByContext(platform, channelId, threadId?)`: a Discord

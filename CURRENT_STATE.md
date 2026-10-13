@@ -5,6 +5,22 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### v5 S1 NL-2 Phase C (model-first selection) — on branch `claude/v5-nl2-phase-c` (2026-10-13)
+
+ADR-0120 D6/D8/D10/D12 and ADR-0121 S1 (the owner ratified S1 and gave the D8 egress yes). `QUOKY_NL_PHASE` (`a` by
+default, or `c`). No migration, port, token or deps change; one optional pure handler member, `classBProbe`. Details: the S1
+note at the end of `DECISIONS.md`.
+
+- **Done (offline and the Strict eval).** Selection runs before the Class B grammars, with the grammar as the fallback
+  when the selector is unavailable; `none` goes to the classifier and honest chat; Class A is untouched. Also: the
+  content-free `nl_selection.agreement` log, the equal-locality rule, the `nl-select.v17` narrowing-follow-up rule, and
+  a 727-case corpus with `grammar` tags (at least 25 per Class B entry). Eval, 3 runs: 98.6/98.4/98.1%, 0 wrong, lowest
+  entry 93.0%, at most 0.8% over 6 s. Added latency on grammar-handled messages: p50 about 1.4 s, p95 about 2.1 s.
+  `pnpm build`, `typecheck` and `test` pass (435 files, 13,845 tests).
+- **Not run (Strict).** The `.env.local` edit (`QUOKY_NL_PHASE=c`, recommended with `QUOKY_NL_INTENT_MODE=shadow` first),
+  the restart and the live UAT. The Chief Architect review is required before merge.
+- **Owner decision.** Shadow first, then active; or keep Phase A + A2 if +1.4 s is too slow (see the note).
+
 ### v5 STO-1 storage hardening, migration v16 — on branch `claude/v5-w2-sto1` (2026-10-13)
 
 ADR-0119 (ratified 2026-10-12). Schema `LATEST_SCHEMA_VERSION` 15 → 16. The only port change is

@@ -21590,3 +21590,92 @@ Decisions:
    - Any new external target.
 8. `ARCHITECTURE.md` §8, §10, §12 and §13, the AGENTS.md Engineering Rules line and the ROADMAP.md non-goal are amended
    in the same change with the text of `docs/plans/architecture-amendment-agent-draft.md` (now marked applied).
+
+### ADR-0120 / ADR-0121 S1 implementation note — NL-2 Phase C, model-first selection (2026-10-13)
+
+- **Status:** Implemented behind a new flag, default off (Phase A). The Product Owner ratified S1 and gave the D8 egress
+  yes on 2026-10-13 (ADR-0121 staged rollout, S1 row; ADR-0120 D6/D8). Nothing in production changes until
+  `QUOKY_NL_PHASE=c` is set in the service `.env.local` (a Strict edit and restart, not done here). No migration, no new
+  port, no new DI token; `ConversationRuntimeDeps` stays at 36.
+- **Flag.** `QUOKY_NL_PHASE` = `a` | `c` (exact; default `a`), parsed with the other NL keys in
+  `apps/quoky/src/nl-selection/nl-selection-config.ts` (`NL_PHASE_INVALID` otherwise). A separate key, like
+  `QUOKY_NL_GRAMMAR_YIELD`, because it widens egress; D11's `QUOKY_NL_INTENT_MODE` values are unchanged.
+  - `active` + `c`: Phase C (selection acts first at a Class B position).
+  - `shadow` + `c`: grammar-hit shadowing. The grammar answers exactly as in Phase A; one background selection runs and
+    only its content-free agreement is logged (D8 egress, no added latency). This is the recommended first step.
+  - `off`, or phase `a`: byte-identical to before S1. The runtime never asks a probe (pinned by the dispatch test).
+- **Interface (additive, ARCHITECTURE.md §13).** `ConversationTurnHandler.classBProbe?(ctx)` returns
+  `NlClassBProbe | null` = `{ grammarId, selection? }`: what the handler's frozen Class B grammar WOULD answer, synchronously
+  and with no read, write, provider call or state change. Implemented by the calendar question (`calendar-question`),
+  the mail and Drive listing forms (`mail-question.list`, `drive-question.list`), the work-chat lookup and to-do
+  list/summary phrases (`work-lookup.<my-items|due-this-week|review-requests|search|todo-list|todo-summary>`) and the
+  help-intent matcher (`help-intent`). Class A branches (anchored to-do heads, write requests and refusals, usage hints,
+  `N번 메일 요약` and document summaries, lookups the catalog cannot express) return `null`. The reminder grammar has no
+  probe: its LIST is an anchored command and CREATE/CANCEL are Class A (ADR-0101 D2 as amended).
+- **Dispatch (D6 Phase C).** In `handleInner`, (B0) becomes `dispatchPreClassifyPhaseC` when Phase C is on and no approval
+  is pending. Handlers run in their registry order; before each one's `handle`, its probe is asked (until one selection has
+  run). A hit whose catalog entry is offered runs selection through the same `handleNlSelection` path (route `class-b`):
+  - an executed read or a numbered question answers the turn;
+  - `none` ends the stage: the turn goes to B0b, the classifier and chat, with the D9 configured-sources fact, exactly as a
+    Phase A `none`; the grammar does not answer;
+  - `unavailable` (no provider, timeout, failure, malformed output) or `skip` (too long, credential, empty, family or
+    locality mismatch, unknown chat provider, shadow), or a selection no handler serves: the grammar's own `handle` runs
+    as the fallback and the stage continues as in Phase A.
+  A hit whose entry is not offered (an unconfigured source) keeps its grammar. At (C2) a selection already made at (B0)
+  is never repeated (one call per message, D3). The classifier's personal-work surface (a D6 Class B clause) gets the
+  `work-surface` route at (C2): selection first, the surface for every other outcome. Class A is untouched: control,
+  approvals, anchors, `기억해:`, memory/learning/model commands, writes, reminders, code work and the classifier's Class A
+  routes run exactly as before and are never preceded by selection.
+- **Agreement log (D10/D11).** `nl_selection.agreement`, one line per Phase C grammar-hit turn, in `active` and `shadow`:
+  `grammarId`, `grammarEntryId`, `entryId` (the selector's, or `none`), `outcome`
+  (`execute`|`ask`|`none`|`fallback`), `mode` (`active`|`shadow`), `agree` (entry and canonical args equal) and
+  `agreeEntry` (entry equal) on decided outcomes only, `reason` on a fallback, `latencyMs`, `cached`. Never the text and
+  never an argument value (a test asserts every value is a closed id, flag or number). D10's 98% retirement threshold is
+  read from these lines.
+- **S1 hardening (NL-1 residuals).**
+  - Equal family AND equal declared execution locality: `sameEgress` compares `family ?? id` and
+    `executionLocalityOf(selector) === executionLocalityOf(chat)`; a mismatch is the new skip reason
+    `chat-locality-differs`, before the cache and before any call. The runtime passes the chat provider's locality; the
+    warm-up and the A2 yield check apply the same rule.
+  - "그 중에 …" after an intervening turn: the cleared `lastSelection` stays cleared (follow-up 2), and prompt
+    `nl-select.v17` rule 6 now says a narrowing follow-up with `Previous selection: none` is NEEDS_CLARIFICATION with the
+    entries that could hold it — never CLEAR, never none — so D7 asks the numbered question instead of chat. No regex was
+    added (NL intent rule). Six corpus negatives cover it (a clarification is not wrong; a capture is).
+- **Corpus.** `nl-intent.v1.json` 579 → 727 cases. New optional field `grammar`: the Class B grammar that answers the case
+  in Phase A with production flags (`QUOKY_NL_GRAMMAR_YIELD=on`); the dispatch test checks the tag against the probes
+  case by case. Every entry with a Class B grammar has >= 25 tagged phrasings (Jira 27, GitHub 27, Slack 26, Confluence
+  27, calendar 27, mail 25, Drive 28, to-dos 26, help 28; 243 tagged in all). New negatives: narrowing follow-ups without
+  a previous selection, negated/write/how-to phrasings next to the grammars, and quoted grammar phrases.
+- **Measured: the grammars on their own hits (offline, production flags).** Of 242 tagged positives the grammar's own
+  catalog equivalent matches the golden `{entry, args}` exactly in 200 (82.6%) and the entry in 239 (98.8%). Most
+  differences are representation (an absolute date for `fri`/`10-20`, a count question answered by the list, an unread
+  default). About 10 are wrong answers the owner would see: "드라이브에서 엑셀 파일 보여줘" searches the name "엑셀"; "최근에
+  올라온 파일" searches "올라온"; "migration and show only 2" becomes the keyword; a limit is ignored; "할 일 추가하는 법" and
+  "일정, 알림, 할 일 다 합쳐서" list to-dos; and the negative "할 일 관리하는 좋은 습관 알려줘" is captured as the to-do list.
+- **Evaluation (Strict, authorized for S1).** `pnpm eval:nl -- --mode run --runs 3 --concurrency 4`, Haiku,
+  prompt `nl-select.v17`, 727 cases, 6 s bound, plan digest `aff6692d…`: 98.6%, 98.4% and 98.1% exact hits (565
+  positives); 0 wrong captures of 162 negatives in each run; lowest entry 93.0% (calendar, run 3); 1, 1 and 6 calls over
+  the bound (0.1%, 0.1%, 0.8%). The D12 gate and the S1 gate (at most 1% over the bound) passed in all three runs. On the
+  242 grammar-handled positives the selector scored 99.2%, 99.2% and 97.9% exact with 0 wrong (the grammars themselves:
+  82.6% exact, above). The narrowing follow-ups without a previous selection were a clarification in 16 of 18 calls and
+  `none` (chat) in 2, never a capture. Report: `data/eval/nl-intent-2026-10-13T06-02-54-177Z-haiku.json` (local).
+- **Latency.** Phase C adds one selection call to a message the grammar answered on the host. Measured on
+  the grammar-handled subset in the same runs (concurrency 4, one `claude -p` spawn per call): added p50 1.40, 1.42 and
+  1.44 s; p95 2.18, 2.12 and 2.04 s; max 4.4 s in runs 1 and 2, and two 6 s timeouts in run 3 (the grammar then answers
+  after 6 s). The whole corpus: p50 1.42–1.45 s and p95 2.29–2.60 s, about half the NL-1 numbers (p50 2.9 s); S0 L1 and the
+  Node 22 host change landed in between. L2 (warm standby) and L3 (prompt trim; 18 KB today) were not needed for the gate,
+  so they were not done (the simpler design, measured). Ledger: Phase C adds at most one Anthropic call per owner message
+  and only on grammar-hit turns (the S0 budget is at most 2 per message and 60 per hour).
+  - **Recommendation (owner decision):** roll out `shadow` + `c` first (no added latency, agreement data), then `active` +
+    `c`. If +1.4 s is too slow in daily use, keep Phase A + A2 (today's production) and retire grammars one at a time on
+    the D10 agreement data, or run Phase C only for grammars whose agreement is below the D10 threshold. A parallel grammar
+    race is not proposed: the answer still waits for the selector, so it saves nothing (and ADR-0121 D10 rejects it).
+- **Tests.** `pnpm build`, `pnpm typecheck` and `pnpm test` pass (435 files, 13,845 tests), and `git diff
+  --check` is clean. New: `nl-selection-phase-c.test.ts` (the phase switch, the locality rule, the content-free agreement
+  log, shadow, the prompt rule). In `nl-intent-dispatch.test.ts`: the Phase C corpus dispatch (both A2 settings, the tag
+  check, at least 25 per entry), probe purity over the corpus, Class A precedence (the same claims and byte-identical
+  replies in both phases), the fallback for every unavailable or skip cause and for `none`, the work-surface route,
+  grammar-hit shadowing, "그 중에 …" after chat, and the adversarial sweep under Phase A and C (now with the selection cache
+  cleared per variant). Phase A: the existing corpus dispatch is unchanged and no probe is ever asked.
+- **Not done here (Strict / owner).** The `.env.local` edit (`QUOKY_NL_PHASE`), the restart, live UAT, and the D10
+  retirement decisions. Chief Architect review before merge (a port member and a dispatch-order change).
