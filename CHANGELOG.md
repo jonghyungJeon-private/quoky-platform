@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — v5 S0 security baseline, ops half (ADR-0121, 2026-10-13)
+
+- **One-command network self-check.** `ops/security/quoky-net-selfcheck.sh [--json] [--since 24h]` reports the Quoky process tree,
+    its live connections against the host allowlist, listeners (only loopback is expected), remote-access/tunnel/VPN software and a
+    traffic-ledger summary. Read-only, no root, no secrets printed; exit 0 only when every check passes.
+- **Repository secret scan.** `pnpm security:secret-scan` scans tracked files and the full git history with the runtime credential
+    guard's detector and reports file, commit and line with the value masked. `classifyCredentialFileContent` is now exported from `@quoky/core`.
+- **Review fixes.** The scan reports every hit per file and gates on issued-key candidates in test paths; the self-check verifies addresses through the ledger's `connect` records, fails on ledger guard findings, filters by record time, supports IPv6 and `--expect-stopped`, and emits valid JSON.
+- **Runbooks.** `docs/ops/security-incident-response.md`, `docs/ops/key-rotation.md` and `docs/ops/remote-access-inventory.md`.
+
 ## Unreleased — v5 S0 security baseline, code half (ADR-0121 S0, 2026-10-13)
 
 No migration, no new port or DI token; `ConversationRuntimeDeps` stays 36. ADR-0121 stays Proposed (S0 only, approved by

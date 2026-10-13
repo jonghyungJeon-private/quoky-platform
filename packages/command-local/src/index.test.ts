@@ -35,11 +35,11 @@ describe('LocalCommandRunner — argv-array execution (CAP-007, ADR-0028)', () =
   });
 
   it('maps a raw success to exitCode 0 and masks/caps output', async () => {
-    const { raw } = recordingRaw({ status: 0, stdout: 'token sk-abcdefgh12345678', stderr: '', timedOut: false });
+    const { raw } = recordingRaw({ status: 0, stdout: 'token sk' + '-abcdefgh12345678', stderr: '', timedOut: false });
     const r = await new LocalCommandRunner(raw).run('node', ['-v'], opts);
     expect(r.exitCode).toBe(0);
     expect(r.timedOut).toBe(false);
-    expect(r.stdout).not.toContain('sk-abcdefgh12345678');
+    expect(r.stdout).not.toContain('sk' + '-abcdefgh12345678');
     expect(r.stdout).toContain('***redacted***');
   });
 
@@ -112,7 +112,7 @@ describe('LocalCommandRunner — argv-array execution (CAP-007, ADR-0028)', () =
 
 describe('maskCommandOutput', () => {
   it('redacts api keys, bearer tokens, and url credentials', () => {
-    expect(maskCommandOutput('key sk-abcdefgh12345678 done')).not.toContain('sk-abcdefgh12345678');
+    expect(maskCommandOutput('key sk' + '-abcdefgh12345678 done')).not.toContain('sk' + '-abcdefgh12345678');
     expect(maskCommandOutput('Authorization: Bearer abc.def.ghi')).not.toContain('abc.def.ghi');
     expect(maskCommandOutput('clone https://user:secrettoken@github.com/x')).not.toContain('secrettoken');
   });

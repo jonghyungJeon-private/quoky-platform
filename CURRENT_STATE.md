@@ -5,6 +5,24 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### v5 S0 security baseline, ops half — on branch `claude/v5-s0-ops` (2026-10-13)
+
+ADR-0121 S0 (owner approved the start of S0). No runtime code path, migration or architecture change.
+
+- **Self-check.** `ops/security/quoky-net-selfcheck.sh [--json] [--since 24h|7d] [--expect-stopped]` (read-only, no root). Live
+  connections are mapped to hosts through the ledger's `connect` records; an address with no mapping is "unverified" (a warning) and
+  fails only if it is also not an exact static-allowlist host address (no PTR names, no provider ranges). Bytes are summed over
+  `request` records only; a `new-destination`, `denied-range` or `budget-exceeded` guard finding inside the window (filtered on the
+  record's `ts`) fails the check. It also fails on running tunnel/VPN/remote-access software, listeners on 22 or 5900 and non-loopback
+  listeners. `--since` is validated (`^[0-9]+[hd]$`); `--json` is valid JSON. Fixture tests: `ops/security/quoky-net-selfcheck.test.sh`.
+  On this host it currently fails on the still-running Tailscale network extension (owner is removing it).
+- **Secret scan.** `pnpm security:secret-scan [--summary] [--json]` runs the runtime credential guard over tracked files and
+  `git log -p --all`, reports every hit (file, commit, line, masked), and counts a credential assignment only for a credential-shaped
+  string literal. Exit is non-zero for non-test hits and for any issued-key candidate (known provider prefix, plausible length,
+  random-looking) in any path. Current: 0 non-test hits, 7 history-only rotation candidates in 3 commits (test files; owner to confirm).
+- **Runbooks.** `docs/ops/security-incident-response.md`, `key-rotation.md`, `remote-access-inventory.md`.
+- **Open for the S0 gate.** Tailscale removal (owner), the ledger observe period (branch `claude/v5-s0-egress`), the Q10 OS-level egress decision.
+
 ### v5 S0 security baseline, code half — on branch `claude/v5-s0-egress` (2026-10-13)
 
 ADR-0121 stays **Proposed**; the owner approved S0 only ("보안 기반(S0)부터 진행"). No agent code, no migration, no new port;

@@ -274,7 +274,7 @@ describe('DefaultMemoryWriter lifecycle', () => {
 
   it('exports the writer credential predicate and the exact durable write scope of a record (ADR-0106)', () => {
     expect(isCredentialLikeMemoryText('password = hunter2hunter2')).toBe(true);
-    expect(isCredentialLikeMemoryText('ghp_abcdefghijklmnopqrstuvwxyz0123456789')).toBe(true);
+    expect(isCredentialLikeMemoryText('gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789')).toBe(true);
     expect(isCredentialLikeMemoryText('커피는 아메리카노')).toBe(false);
 
     expect(durableScopeOfRecord(durableRecord())).toEqual({ actorId: 'actor-1' });

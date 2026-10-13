@@ -1324,7 +1324,7 @@ describe('ConversationRuntime', () => {
     'remember: token is xyz',
     'remember: private key is abc',
     'remember: pin is 4321',
-    '기억해: 키는 sk-abcdefghijklmnopqrstuvwxyz',
+    '기억해: 키는 sk' + '-abcdefghijklmnopqrstuvwxyz',
     '기억해: {"password":"demo-value"}',
     '기억해: 비밀번호는테스트값이야',
     "기억해: {'token': 'abc123'}",
@@ -2710,7 +2710,7 @@ describe('Code-generation preview target context (QA-012)', () => {
   });
 
   it('a target whose content carries credential material → refused before any AI call, path only in the reply', async () => {
-    const pem = '{ "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEsecretbody\\n-----END PRIVATE KEY-----" }';
+    const pem = '{ "private_key": "-----' + 'BEGIN PRIVATE KEY-----\\nMIIEsecretbody\\n-----END PRIVATE KEY-----" }';
     const { result, calls } = await approveWith({ workspaceRead: () => pem }, planningOnlyRequestOf());
     expect(result.status).toBe('FAILED');
     expect(result.reply.text).toBe(

@@ -380,7 +380,7 @@ describe('runProviderEvaluation', () => {
       execute: async () => {
         n += 1;
         if (n === 1) throw new TypeError('secret detail that must not be stored');
-        return { text: 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789 안녕하세요! 반가워요.' };
+        return { text: 'Authorization: Bear' + 'er abcdefghijklmnopqrstuvwxyz0123456789 안녕하세요! 반가워요.' };
       },
     };
     const report = await runProviderEvaluation({ fixtures, plan, provider, now: () => 'T' });

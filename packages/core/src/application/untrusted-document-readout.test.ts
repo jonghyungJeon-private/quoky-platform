@@ -79,7 +79,7 @@ describe('untrusted document readout (ADR-0118 D7 under the ADR-0111 D3 rules)',
     expect(build(`pass​word=${SECRET}`)).toEqual({ ok: false, refusal: 'CREDENTIAL_SHAPED' });
     expect(build('평범한 본문', { title: `token ${SECRET}` })).toEqual({ ok: false, refusal: 'CREDENTIAL_SHAPED' });
     expect(build('평범한 본문', { author: SECRET })).toEqual({ ok: false, refusal: 'CREDENTIAL_SHAPED' });
-    expect(build(`-----BEGIN PRIVATE KEY-----\nMIIE${'A'.repeat(64)}\n-----END PRIVATE KEY-----`)).toEqual({
+    expect(build(`-----${''}BEGIN PRIVATE KEY-----\nMIIE${'A'.repeat(64)}\n-----END PRIVATE KEY-----`)).toEqual({
       ok: false,
       refusal: 'CREDENTIAL_SHAPED',
     });

@@ -99,7 +99,7 @@ describe('RuntimeResponseValidator', () => {
     expect(echo.disposition).toBe(ValidationDisposition.REJECT);
     expect(echo.reasonCodes).toContain(ResponseValidationReasonCode.MULTI_ENTRY_ECHO);
 
-    const secret = validate('The token is github_pat_abcdefghijklmnop123456.');
+    const secret = validate('The token is github' + '_pat_abcdefghijklmnop123456.');
     expect(secret.disposition).toBe(ValidationDisposition.REJECT);
     expect(secret.reasonCodes).toContain(ResponseValidationReasonCode.SECRET_EXPOSURE_RISK);
   });

@@ -12,7 +12,7 @@ import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } f
 import type { PullRequestCreationInput, PullRequestRef, RepositoryIdentity } from '@quoky/core';
 
 const IDENTITY: RepositoryIdentity = { provider: 'github', owner: 'acme', repo: 'widgets' };
-const TOKEN = 'ghp_superSecretTokenValue';
+const TOKEN = 'gh' + 'p_superSecretTokenValue';
 
 interface Call {
   url: string;
@@ -84,7 +84,7 @@ describe('GitHubRepositoryHostingProvider (CAP-010 adapter, ADR-0053, Sprint 3d-
       });
       await p.repositoryExists(IDENTITY);
       const h = calls[0]!.init.headers as Record<string, string>;
-      expect(h.Authorization).toBe('Bearer ghs_installationToken');
+      expect(h.Authorization).toBe('Bearer gh' + 's_installationToken');
     });
     it('throws when the github-app token source returns an empty token', async () => {
       const { fn } = fakeFetch(() => ({ status: 200 }));
@@ -347,9 +347,9 @@ describe('GitHubRepositoryHostingProvider (CAP-010 adapter, ADR-0053, Sprint 3d-
     });
 
     describe('dedicated read-only status token + partial status without check access', () => {
-      const WRITE = 'ghs_writeTokenForContentsAndPulls';
-      const READ_WITH_CHECKS = 'ghs_statusReadWithChecks';
-      const READ_NO_CHECKS = 'ghs_statusReadWithoutChecks';
+      const WRITE = 'gh' + 's_writeTokenForContentsAndPulls';
+      const READ_WITH_CHECKS = 'gh' + 's_statusReadWithChecks';
+      const READ_NO_CHECKS = 'gh' + 's_statusReadWithoutChecks';
       const UNAVAILABLE = { state: 'unavailable', totalCount: 0, successCount: 0, failureCount: 0, pendingCount: 0 };
       function bearerOf(c: Call): string | undefined {
         return (c.init.headers as Record<string, string>).Authorization;

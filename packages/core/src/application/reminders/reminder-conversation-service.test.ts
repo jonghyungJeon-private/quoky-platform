@@ -148,7 +148,7 @@ describe('ReminderConversationService create', () => {
 
   it('refuses a credential body with zero writes and never echoes it', async () => {
     const { repository, turn, composer } = setup();
-    const secret = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+    const secret = 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789';
     const reply = await turn(`내일 오전 9시에 token=${secret} 알려줘`);
     expect(reply?.text).toBe(composer.credentialRefused());
     expect(reply?.text).not.toContain(secret);

@@ -141,7 +141,7 @@ describe('feedbackRequestExcerpt', () => {
   });
 
   it('suppresses a request that matches the credential guard', () => {
-    const excerpt = feedbackRequestExcerpt('이 키 써줘 ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+    const excerpt = feedbackRequestExcerpt('이 키 써줘 gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789');
     expect(excerpt).toBe('(민감한 내용일 수 있어 표시하지 않아요)');
     expect(excerpt).not.toContain('ghp_');
   });

@@ -62,7 +62,7 @@ describe('readCodeGenerationContextFiles (QA-012)', () => {
   });
 
   it('refuses a target whose CONTENT carries credential material (name passes the workspace policy)', async () => {
-    const key = '{ "type": "service_account", "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n" }';
+    const key = '{ "type": "service_account", "private_key": "-----' + 'BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n" }';
     const ws = reader({ 'src/a.js': 'A', 'config/app.json': key });
     expect(await readCodeGenerationContextFiles(ws, REF, ['src/a.js', 'config/app.json'])).toEqual({
       ok: false, reason: 'target-contains-credential', targetIndex: 1, targetPath: 'config/app.json',
@@ -70,7 +70,7 @@ describe('readCodeGenerationContextFiles (QA-012)', () => {
     });
   });
 
-  it.each(['{"password":"demo-value"}', 'DB_PASSWORD=hunter2', 'const k = "AKIAIOSFODNN7EXAMPLE";'])(
+  it.each(['{"password":"demo-value"}', 'DB_PASSWORD=hunter2', 'const k = "AK' + 'IAIOSFODNN7EXAMPLE";'])(
     'refuses credential content %j',
     async (content) => {
       const out = await readCodeGenerationContextFiles(reader({ f: content }), REF, ['f']);
@@ -84,7 +84,7 @@ describe('readCodeGenerationContextFiles credential override grants (ADR-0097)',
   const sha = (text: string): string => createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
   // Line 3 carries a credential-named key assigned a literal (credential-assignment, not a token shape).
   const ASSIGN = 'export const a = 1;\n\nconst password = "demo-value";\n';
-  const TOKEN = 'const k = "AKIAIOSFODNN7EXAMPLE";\n';
+  const TOKEN = 'const k = "AK' + 'IAIOSFODNN7EXAMPLE";\n';
   const grant = (path: string, content: string, over: Partial<CredentialOverrideGrant> = {}): CredentialOverrideGrant => ({
     path, contentSha256: sha(content), detector: 'credential-assignment', line: 3, state: 'CONSUMED', ...over,
   });

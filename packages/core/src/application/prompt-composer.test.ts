@@ -1343,7 +1343,7 @@ describe('PromptComposer chat response policy (ADR-0098 D1, QUAL-1)', () => {
 
 describe('PromptComposer — external-work summary readout (ADR-0100 D8, WORK-T4)', () => {
   const composer = new PromptComposer();
-  const SECRET = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+  const SECRET = 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789';
   const readout = buildExternalWorkReadout({
     source: 'jira',
     query: 'due-this-week',
@@ -1494,7 +1494,7 @@ describe('PromptComposer — external-work summary readout (ADR-0100 D8, WORK-T4
 // ADR-0107 D5/D6 (LRN-2): the owner-curated example layer.
 describe('PromptComposer — curated examples (ADR-0107 D5/D6)', () => {
   const composer = new PromptComposer();
-  const GITHUB_TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+  const GITHUB_TOKEN = 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789';
   const FILE_SECRET = 'const dbPassword = "Sup3rS3cretValue!";';
   const example = (n: number, over: Partial<CuratedExampleEntry> = {}): CuratedExampleEntry => ({
     requestText: `회의록 요약해줘 ${n}`,

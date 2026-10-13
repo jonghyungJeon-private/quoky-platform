@@ -31,7 +31,7 @@ import {
 const CTX: ConversationContext = { platform: 'test', channelId: 'chan-1', userId: 'owner-user' };
 const OWNER: Actor = { id: 'owner-actor', displayName: 'Owner', identities: [], createdAt: '2026-10-01T00:00:00.000Z' };
 const T0 = '2026-10-02T09:00:00.000Z';
-const SECRET = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+const SECRET = 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789';
 
 function ctxOf(text: string): TurnHandlerContext {
   const session: Session = {

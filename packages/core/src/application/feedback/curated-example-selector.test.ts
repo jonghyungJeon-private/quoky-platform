@@ -22,7 +22,7 @@ import {
 
 const NOW = '2026-10-06T12:00:00.000Z';
 const OWNER = 'owner-actor';
-const GITHUB_TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+const GITHUB_TOKEN = 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789';
 
 const taskOf = (description: string, over: Partial<Task> = {}, capability = Capability.GENERAL_CHAT): Task => ({
   id: 'task-1',

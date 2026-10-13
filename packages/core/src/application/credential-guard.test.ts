@@ -50,7 +50,7 @@ describe('containsCredentialMaterial (durable-memory write gate + read-time excl
     '비밀 번호는 1234',
     '내 API 키는abcd1234',
     // token-shaped
-    'sk-abcdefghijklmnopqrstuvwxyz',
+    'sk' + '-abcdefghijklmnopqrstuvwxyz',
     '카드번호 1234-5678-9012-3456',
   ])('flags %j', (text) => {
     expect(containsCredentialMaterial(text)).toBe(true);
@@ -73,22 +73,22 @@ describe('containsCredentialMaterial (durable-memory write gate + read-time excl
 });
 
 const FILE_REFUSE_CASES: Array<[string, string]> = [
-  ['PEM private key', 'const k = `-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----`;'],
-  ['RSA private key', '-----BEGIN RSA PRIVATE KEY-----\nabc\n'],
+  ['PEM private key', 'const k = `-----' + 'BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----`;'],
+  ['RSA private key', '-----' + 'BEGIN RSA PRIVATE KEY-----\nabc\n'],
   [
     'service-account JSON',
-    '{\n  "type": "service_account",\n  "private_key_id": "abc",\n  "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n"\n}',
+    '{\n  "type": "service_account",\n  "private_key_id": "abc",\n  "private_key": "-----' + 'BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n"\n}',
   ],
   ['"private_key" field without a PEM header', '{ "private_key": "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" }'],
-  ['AWS access key id', 'const id = "AKIAIOSFODNN7EXAMPLE";'],
+  ['AWS access key id', 'const id = "AK' + 'IAIOSFODNN7EXAMPLE";'],
   ['AWS secret in ini', '[default]\naws_secret_access_key = wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY\n'],
-  ['GCP API key', 'apiKey: AIzaSyA1234567890abcdefghijklmnopqrstuv'],
-  ['GitHub token', 'GH = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"'],
-  ['GitHub fine-grained PAT', 'github_pat_11ABCDEFG0123456789_abcdefghijklmnop'],
-  ['Slack token', 'slack: xoxb-1234567890-abcdefghij'],
-  ['OpenAI-style key', 'client = OpenAI(api_key="sk-proj-abcdefghijklmnopqrstuv")'],
-  ['Stripe live key', 'STRIPE = sk_live_abcdefghijklmnop1234'],
-  ['JWT', 'const t = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";'],
+  ['GCP API key', 'apiKey: AI' + 'zaSyA1234567890abcdefghijklmnopqrstuv'],
+  ['GitHub token', 'GH = "gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789"'],
+  ['GitHub fine-grained PAT', 'github' + '_pat_11ABCDEFG0123456789_abcdefghijklmnop'],
+  ['Slack token', 'slack: xox' + 'b-1234567890-abcdefghij'],
+  ['OpenAI-style key', 'client = OpenAI(api_key="sk-p' + 'roj-abcdefghijklmnopqrstuv")'],
+  ['Stripe live key', 'STRIPE = sk_l' + 'ive_abcdefghijklmnop1234'],
+  ['JWT', 'const t = "ey' + 'JhbGciOiJIUzI1NiJ9.ey' + 'JzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";'],
   ['JSON password', '{"password":"demo-value"}'],
   ['YAML password', 'db:\n  password: hunter2\n'],
   ['.env assignment', 'DB_PASSWORD=hunter2\n'],
@@ -379,9 +379,9 @@ describe('classifyCredentialFileContent', () => {
   });
 
   it('reports secret-token for a PEM block or vendor token, taking precedence over an assignment', () => {
-    expect(classifyCredentialFileContent('-----BEGIN RSA PRIVATE KEY-----\nabc\n')).toEqual({ kind: 'secret-token' });
+    expect(classifyCredentialFileContent('-----' + 'BEGIN RSA PRIVATE KEY-----\nabc\n')).toEqual({ kind: 'secret-token' });
     expect(
-      classifyCredentialFileContent('password = "hunter2"\nconst gh = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";\n'),
+      classifyCredentialFileContent('password = "hunter2"\nconst gh = "gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789";\n'),
     ).toEqual({ kind: 'secret-token' });
   });
 

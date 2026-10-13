@@ -24,7 +24,7 @@ const WS: WorkspaceRef = { id: 'ws-1', rootPath: '/repo', kind: 'local-clone' };
 const ASSIGN = 'export const a = 1;\n\nconst password = "demo-value";\n';
 const ASSIGN_SHA = credentialOverrideContentSha256(ASSIGN);
 const OTHER = 'const apiKey = "demo-value";\n';
-const TOKEN = 'const k = "AKIAIOSFODNN7EXAMPLE";\n';
+const TOKEN = 'const k = "AK' + 'IAIOSFODNN7EXAMPLE";\n';
 
 const binding = {
   ownerActorId: 'owner-1',

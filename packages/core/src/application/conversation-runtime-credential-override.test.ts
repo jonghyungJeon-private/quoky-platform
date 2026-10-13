@@ -63,7 +63,7 @@ const composer = new ResponseComposer();
 /** Ordinary source the strict guard refuses (ADR-0097 D1 "strictness kept"). */
 const USER_TS = 'export class User {\n  constructor(token: string) {\n    this.token = token;\n  }\n}\n';
 const CONFIG_TS = 'export const config = {\n  password: "demo-only",\n};\n';
-const TOKEN_TS = 'const k = "AKIAIOSFODNN7EXAMPLE";\n';
+const TOKEN_TS = 'const k = "AK' + 'IAIOSFODNN7EXAMPLE";\n';
 const PLAIN_TS = 'export const greet = (name: string) => `hi ${name}`;\n';
 
 const lineOf = (content: string): number => {

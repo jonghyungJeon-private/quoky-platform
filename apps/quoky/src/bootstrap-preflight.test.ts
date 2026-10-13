@@ -131,10 +131,10 @@ describe('describeStartupFailure', () => {
   });
 
   it('passes unknown errors through with secrets redacted and no hint', () => {
-    const failure = describeStartupFailure(new Error('boom ghp_abcdefghijklmnopqrstuvwxyz0123456789'));
+    const failure = describeStartupFailure(new Error('boom gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789'));
     expect(failure.hint).toBeUndefined();
     expect(failure.message).toContain('boom');
-    expect(failure.message).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+    expect(failure.message).not.toContain('gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789');
     expect(describeStartupFailure('plain string').message).toBe('plain string');
   });
 });

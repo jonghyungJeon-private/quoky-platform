@@ -43,7 +43,7 @@ const ANCHOR_KEY = 'conversationCredentialOverrideAnchor';
 
 const ASSIGN_A = 'export const a = 1;\n\nconst password = "demo-value-a";\n';
 const ASSIGN_B = 'const apiKey = "demo-value-b";\n';
-const TOKEN = 'const k = "AKIAIOSFODNN7EXAMPLE";\n';
+const TOKEN = 'const k = "AK' + 'IAIOSFODNN7EXAMPLE";\n';
 
 const request: ExecutionRequest = {
   goal: 'fix login',

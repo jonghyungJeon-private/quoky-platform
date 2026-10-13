@@ -24,7 +24,7 @@ const PROBE: MessageMarkup = { ...PLAIN_TEXT_MARKUP, untrusted: (text, guard) =>
 const renderExternalWorkFooter = (readout: Parameters<typeof renderExternalWorkFooterBody>[0]): string =>
   renderMessageContent(renderExternalWorkFooterBody(readout), PROBE);
 
-const SECRET = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+const SECRET = 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789';
 
 function items(count: number, make: (index: number) => Partial<ConnectorItem> = () => ({})): ConnectorItem[] {
   return Array.from({ length: count }, (_value, index) => ({
@@ -84,7 +84,7 @@ describe('buildExternalWorkReadout', () => {
       items(3, (index) => [
         { url: `https://example.com/?token=${SECRET}` },
         { status: `password: swordfish123` },
-        { container: `api_key=sk-abcdefghijklmnopqrstuvwx` },
+        { container: `api_key=sk${''}-abcdefghijklmnopqrstuvwx` },
       ][index] ?? {}),
     );
     expect(readout.items[0]).not.toHaveProperty('url');
