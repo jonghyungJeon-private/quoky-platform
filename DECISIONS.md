@@ -20352,6 +20352,17 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   Adapters: the Discord mapping and DM delivery, the Telegram admission and adapter key, and Gmail `getThread` (calls,
   bounds, a 40-message re-quoting thread, an oversized and a deleted message, typed failures, the guard). Also the
   explicit observer registration and `deliveredAt` ordering.
+- **Codex security review (one P1, two P2s), fixed on the branch:**
+  - P1: the adapter runs the credential guard on each message's RAW body (as read and normalized), before quote
+    stripping and any cut; a match withholds that message's body whole (empty, marked cut). Core's guard before and
+    after the clip is unchanged. Before, a `password:` declaration in a quoted part was stripped while a bare copy of the
+    value further down reached the readout.
+  - P2: a reply whose `replyTo` matches no live listing never falls back to the last list, whether it hits a tombstone
+    ("expired") or nothing on record ("I can't pick an email from the message you replied to"). Only a message that is not
+    a reply uses the 30-minute last-list rule. This supersedes "a reply to anything else … behaves as before" above.
+  - P2: one thread read has a hard budget of 22 Gmail GETs (`GMAIL_THREAD_REQUEST_BUDGET`), shared by the lookup, the
+    id listing, the message reads, 401 retries and the oversized-message metadata fallbacks. When it runs out the read
+    stops and the thread is partial (fewer messages than `totalMessages`); before, 20 oversized messages cost 42 GETs.
 - **Chief Architect review (PASS with one P2 and P3s), fixed on the branch:** P2 separate tombstone cap; P3 noun-less DM
   fall-through, `[d/d]` rewrite anywhere and after the clip plus the sender domain, a narrowed `DeliveredTurn` with
   explicit registration, `deliveredAt` before observers, the kept-messages-only Gmail read, and the thread prompt's

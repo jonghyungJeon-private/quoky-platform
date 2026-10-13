@@ -16,7 +16,7 @@ change. Details: the GML-2 implementation note under the ADR-0118 amendment in `
     and again after it, with quoted history dropped and a fair head-and-tail share. DM-only.
   - Reply-to-pick on Discord and Telegram works through the listing's delivery-receipt ids (`TurnDeliveryObserver` on
     `QuokyCore`), stored in `Session.metadata`. A pick works for 24 h, and an expired one gets an honest reply.
-  - `pnpm build`, `typecheck` and `test` pass (438 files, 13,933 tests, after the Chief Architect review fixes: separate tombstone cap, kept-messages-only Gmail thread read). The 1-run NL eval (Haiku, 727 cases) is unchanged: 98.9%, 0 wrong captures, gate passed.
+  - `pnpm build`, `typecheck` and `test` pass (438 files, 13,935 tests, after the Chief Architect and Codex security review fixes). The 1-run NL eval (Haiku, 727 cases) is unchanged: 98.9%, 0 wrong captures, gate passed.
 - **Not run (Strict).** The live session: a long thread, a reply pick after a restart, on both platforms.
 - **Review.** Chief Architect review PASS; its P2 and P3s are fixed on the branch.
 

@@ -20,7 +20,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     delivery-receipt ids through the new application hook `TurnDeliveryObserver`, and the handler stores them in
     `Session.metadata['quoky.lastListing']` (no migration).
   - A reply works for 24 h (8 live listings per Actor). An aged-out or evicted listing becomes a tombstone (64 per Actor,
-    7 days) whose reply gets "that list expired". A reply to anything else picks nothing.
+    7 days) whose reply gets "that list expired". A reply to anything else picks nothing and never falls back to the
+    last list. A thread read sends at most 22 Gmail GETs, and a credential-shaped raw message body is withheld before
+    quote stripping.
 - **Unchanged.** Listing format and footer, help and usage lines, the NL catalog and every golden corpus. Mail and Drive
   summary prompts are byte-identical. The DM-only rule stands, and there is no send, label or write path.
 
