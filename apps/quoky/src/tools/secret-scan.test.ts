@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,11 +13,19 @@ import {
   isCredentialShapedValue,
   isValidGithubTokenShape,
   loadReviewed,
+  runSecretScan,
   scanDiffStream,
   scanHistory,
   scanText,
   summarize,
+  type SecretScanHit,
 } from './secret-scan';
+
+/** Collects streamed hits (tests only; the scanners themselves keep no hit list). */
+function collector(): { hits: SecretScanHit[]; sink: (h: SecretScanHit) => void } {
+  const hits: SecretScanHit[] = [];
+  return { hits, sink: (h) => void hits.push(h) };
+}
 
 // Fixtures are built from fragments at run time: no credential-shaped literal exists in this file.
 const GH_PREFIX = ['gh', 'p_'].join('');
@@ -72,11 +81,12 @@ describe('scanDiffStream', () => {
   ].join('\n');
 
   it('maps a hit to the commit, file and new-file line, and ignores removed lines', async () => {
-    const result = await scanDiffStream(lines(log));
+    const c = collector();
+    const result = await scanDiffStream(lines(log), c.sink);
     expect(result.commits).toBe(2);
-    expect(result.hits).toHaveLength(1);
-    expect(result.hits[0]).toMatchObject({ file: 'src/x.ts', commit: sha, line: 12, rule: 'secret-token' });
-    expect(JSON.stringify(result)).not.toContain(tokenValue);
+    expect(c.hits).toHaveLength(1);
+    expect(c.hits[0]).toMatchObject({ file: 'src/x.ts', commit: sha, line: 12, rule: 'secret-token' });
+    expect(JSON.stringify(c.hits)).not.toContain(tokenValue);
   });
 });
 
@@ -192,7 +202,7 @@ describe('git failures', () => {
   it('rejects instead of reporting a clean scan when git fails', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'scan-nogit-'));
     try {
-      await expect(scanHistory(dir)).rejects.toThrow();
+      await expect(scanHistory(dir, () => undefined)).rejects.toThrow();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -319,7 +329,9 @@ describe('regression: no span hides another, no cap (S0-ops escalation)', () => 
     expect(hits[619]?.line).toBe(620);
     expect(gatingHits(hits)).toHaveLength(620);
     const log = [`commit ${'d'.repeat(40)}`, 'diff --git a/src/many.ts b/src/many.ts', '+++ b/src/many.ts', '@@ -0,0 +1,620 @@', ...body.split('\n').map((l) => `+${l}`)];
-    expect((await scanDiffStream(lines(log.join('\n')))).hits).toHaveLength(620);
+    const c = collector();
+    await scanDiffStream(lines(log.join('\n')), c.sink);
+    expect(c.hits).toHaveLength(620);
   });
 
   it('(d) a checksum-valid ghp_ token containing "test" in a test path is an issued candidate and gates', () => {
@@ -336,5 +348,107 @@ describe('regression: no span hides another, no cap (S0-ops escalation)', () => 
     const hits = scanText('x.test.ts', 'WORKTREE', `headers: ['${['Bear', 'er'].join('')} ${token}']\n`);
     expect(hits.map((h) => h.classification).sort()).toEqual(['credential', 'issued-candidate']);
     expect(gatingHits(hits)).toHaveLength(1);
+  });
+});
+
+describe('final round: punctuation values, streaming, incomplete scans, fixture-unverified', () => {
+  const at = String.fromCharCode(64);
+  const bang = String.fromCharCode(33);
+  const punctuated = ['Hx7', bang, 'qLm', at, 'Zp2', bang, 'Rv'].join('');
+
+  it('detects a credential assignment whose value contains ! and @', () => {
+    expect(isCredentialShapedValue(punctuated)).toBe(true);
+    const hits = scanText('src/a.ts', 'WORKTREE', `const ${key} = "${punctuated}";\n`);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ rule: 'credential-assignment', classification: 'credential' });
+    expect(gatingHits(hits)).toHaveLength(1);
+    expect(JSON.stringify(hits)).not.toContain(punctuated);
+  });
+
+  it('detects punctuated values without digits but still rejects identifiers, kebab names and placeholders', () => {
+    expect(isCredentialShapedValue(['corRect', bang, 'hoRse', at, 'baTtery'].join(''))).toBe(true);
+    expect(isCredentialShapedValue('some-kebab-case-name')).toBe(false);
+    expect(isCredentialShapedValue('QUOKY_TELEGRAM_BOT_TOKEN')).toBe(false);
+    expect(isCredentialShapedValue('config.auth.password')).toBe(false);
+    expect(isCredentialShapedValue(`<your-${key}${bang}>`)).toBe(false);
+    expect(isCredentialShapedValue(`change-me${bang}${at}123`)).toBe(false);
+    expect(isCredentialShapedValue('^[a-z0-9]+$')).toBe(false);
+    expect(isCredentialShapedValue('workspace:*')).toBe(false); // "@quoky/github-app-auth": "workspace:*"
+  });
+
+  function gitRepo(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'scan-run-'));
+    const git = (...args: string[]): void => {
+      const r = spawnSync('git', ['-c', 'user.name=t', '-c', `user.email=t${at}example.invalid`, '-c', 'commit.gpgsign=false', ...args], { cwd: dir });
+      if (r.status !== 0) throw new Error(`git ${args[0]} failed`);
+    };
+    git('init', '-q');
+    writeFileSync(join(dir, 'a.ts'), 'export const answer = 42;\n');
+    writeFileSync(join(dir, 'gone.ts'), 'export const gone = 1;\n');
+    writeFileSync(join(dir, 'b.test.ts'), `const t = '${['xox', 'b-'].join('')}${'test'.repeat(6)}';\n`);
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    return dir;
+  }
+
+  async function run(cwd: string, mode: 'list' | 'summary' | 'json'): Promise<{ code: number; out: string }> {
+    let out = '';
+    const code = await runSecretScan({ cwd, tree: true, history: true, mode, write: (t) => void (out += t) });
+    return { code, out };
+  }
+
+  it('streams fixture-unverified hits under their own label in list and summary output, without gating', async () => {
+    const dir = gitRepo();
+    try {
+      const list = await run(dir, 'list');
+      expect(list.code).toBe(0);
+      expect(list.out.match(/^fixture-unverified: b\.test\.ts:1 /gm)).toHaveLength(2); // tree and history
+      const summary = await run(dir, 'summary');
+      expect(summary.code).toBe(0);
+      expect(summary.out.match(/^fixture-unverified: b\.test\.ts:1 /gm)).toHaveLength(2);
+      expect(summary.out).toContain('2 fixture-unverified (accepted residual, listed)');
+      expect(summary.out).not.toContain('test'.repeat(6));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('exits non-zero and lists an unreadable tracked file', async () => {
+    const dir = gitRepo();
+    try {
+      rmSync(join(dir, 'gone.ts'));
+      const { code, out } = await run(dir, 'summary');
+      expect(code).toBe(2);
+      expect(out).toContain('unreadable: gone.ts');
+      expect(out).toContain('INCOMPLETE');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('exits non-zero and lists a git failure', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'scan-nogit-'));
+    try {
+      const { code, out } = await run(dir, 'list');
+      expect(code).toBe(2);
+      expect(out).toMatch(/secret-scan: INCOMPLETE: git ls-files exited with/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('streams each hit to the sink before the scan finishes (no hit list is kept)', async () => {
+    const seen: number[] = [];
+    let produced = 0;
+    async function* paced(): AsyncIterable<string> {
+      yield `commit ${'e'.repeat(40)}`;
+      for (let i = 0; i < 3; i++) {
+        produced = i + 1;
+        yield* [`diff --git a/s${i}.ts b/s${i}.ts`, `+++ b/s${i}.ts`, '@@ -0,0 +1,1 @@', `+${key}_${i} = "${realish}${i}"`];
+      }
+    }
+    await scanDiffStream(paced(), () => void seen.push(produced));
+    // Hit i is delivered while file i + 1 has not been produced yet (the last one at the end).
+    expect(seen).toEqual([2, 3, 3]);
   });
 });

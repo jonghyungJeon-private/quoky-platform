@@ -26,11 +26,13 @@ export type HitCategory = 'test' | 'docs' | 'source';
  * - `issued-candidate`: a vendor prefix with a plausible, random-looking body, or a GitHub token whose CRC32/base62
  *   checksum is valid (always, in any path; no placeholder or fixture heuristic overrides a valid checksum);
  * - `not-issued-shape`: a GitHub prefix whose body length or checksum is wrong, so GitHub cannot have issued it;
- * - `fixture-shape`: a vendor prefix with a hand-made body (repeats, runs, `test`/`fake`, too short or low entropy);
+ * - `fixture-unverified`: a non-GitHub vendor prefix with a hand-made body (repeats, runs, `test`/`fake`, too short or low
+ *   entropy). No checksum exists to prove it fake, so it is an ACCEPTED RESIDUAL: it does not gate in a test path, but it
+ *   is always listed (never dropped);
  * - `credential`: a credential-shaped value with no verifiable issuer shape (assignment literal, bearer, JWT, key block);
  * - `placeholder`: a template or placeholder value. Reported, never gates.
  */
-export type SpanClass = 'issued-candidate' | 'not-issued-shape' | 'fixture-shape' | 'credential' | 'placeholder';
+export type SpanClass = 'issued-candidate' | 'not-issued-shape' | 'fixture-unverified' | 'credential' | 'placeholder';
 
 export interface SecretScanHit {
   readonly file: string;
@@ -80,21 +82,28 @@ function entropy(v: string): number {
   return h;
 }
 
+/** Password punctuation that kebab-case, dotted and snake_case identifiers never contain. */
+const STRONG_SYMBOL = /[!@#$%^&*?]/;
+
 /**
  * Whether a literal is credential-shaped by VALUE (the runtime guard's value rules plus length, charset and entropy):
- * a known vendor shape, or a 12+ character whitespace-free run with letters and digits and enough entropy.
- * Identifiers, env-var names, paths, URLs without userinfo and placeholders are not.
+ * a known vendor shape, or a whitespace-free run of letters, digits and password punctuation
+ * (`!@#$%^&*()-_=+.,;:?~/`) with enough entropy: 12+ characters with letters and digits, or 8+ characters with letters
+ * and a strong symbol (`!@#$%^&*?`). Identifiers, env-var names, paths, URLs without userinfo and placeholders are not.
  */
 export function isCredentialShapedValue(raw: string): boolean {
   const v = raw.trim();
   if (isPlaceholder(v)) return false;
   if (/\$\{|\{\{/.test(v)) return false; // an interpolated template is a reference, not a value
   if (containsCredentialMaterial(v)) return true;
-  if (v.length < 12 || /\s/.test(v)) return false;
+  if (/\s/.test(v)) return false;
+  const strong = STRONG_SYMBOL.test(v);
+  if (v.length < (strong ? 8 : 12)) return false;
   if (/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(v) && !/\d/.test(v)) return false; // identifier, env name
   if (/^(\.{0,2}\/|https?:\/\/[^@]*$|[a-z]+:\/\/[^@]*$)/i.test(v)) return false; // path or URL without userinfo
-  if (!/^[A-Za-z0-9+/=_.~-]+$/.test(v)) return false; // regexes, templates and prose are not credential charsets
-  if (!/[A-Za-z]/.test(v) || !/\d/.test(v)) return false;
+  if (/^(workspace|npm|link|file|portal|patch|catalog|jsr):/i.test(v)) return false; // a dependency spec (`workspace:*`)
+  if (!/^[A-Za-z0-9+/=_.~!@#$%^&*(),;:?-]+$/.test(v)) return false; // regexes ([]{}\|), quotes and prose are not
+  if (!/[A-Za-z]/.test(v) || !(/\d/.test(v) || strong)) return false;
   return entropy(v) >= 3.0;
 }
 
@@ -170,7 +179,7 @@ export function classifyTokenSpan(span: string): SpanClass {
   if (isPlaceholderToken(span)) return 'placeholder';
   if (ISSUED_PREFIX.test(span)) {
     const minLength = /^(AKIA|ASIA)/.test(span) ? 20 : 24;
-    return span.length >= minLength && entropy(span) >= 3.5 && !looksPatterned(span) ? 'issued-candidate' : 'fixture-shape';
+    return span.length >= minLength && entropy(span) >= 3.5 && !looksPatterned(span) ? 'issued-candidate' : 'fixture-unverified';
   }
   return 'credential';
 }
@@ -303,8 +312,10 @@ export function scanText(
   return hits.sort((x, y) => x.line - y.line || x.rule.localeCompare(y.rule));
 }
 
+/** Receives each hit as soon as it is found; the scanners keep no hit list (memory stays bounded by one blob). */
+export type HitSink = (hit: SecretScanHit) => void | Promise<void>;
+
 export interface HistoryScanResult {
-  readonly hits: SecretScanHit[];
   readonly commits: number;
 }
 
@@ -313,8 +324,7 @@ export interface HistoryScanResult {
  * file in every commit (a deleted line was already added by an earlier commit, so it is covered there). Every hunk is
  * scanned whatever its size: there is no size cap and no hit cap.
  */
-export async function scanDiffStream(lines: AsyncIterable<string>): Promise<HistoryScanResult> {
-  const hits: SecretScanHit[] = [];
+export async function scanDiffStream(lines: AsyncIterable<string>, onHit: HitSink): Promise<HistoryScanResult> {
   let commits = 0;
   let commit = '';
   let file = '';
@@ -323,24 +333,26 @@ export async function scanDiffStream(lines: AsyncIterable<string>): Promise<Hist
   let nextLine = 0;
   let inHunk = false;
 
-  const flush = (): void => {
-    if (file && added.length > 0) {
-      for (const hit of scanText(file, commit, added.join('\n'), numbers)) hits.push(hit);
-    }
+  const flush = async (): Promise<void> => {
+    const blob = added;
+    const blobLines = numbers;
     added = [];
     numbers = [];
+    if (file && blob.length > 0) {
+      for (const hit of scanText(file, commit, blob.join('\n'), blobLines)) await onHit(hit);
+    }
   };
 
   for await (const line of lines) {
     if (!inHunk && line.startsWith('commit ') && /^commit [0-9a-f]{7,64}\b/.test(line)) {
-      flush();
+      await flush();
       commit = line.slice(7, 47);
       file = '';
       commits++;
       continue;
     }
     if (line.startsWith('diff --git ')) {
-      flush();
+      await flush();
       file = '';
       inHunk = false;
       continue;
@@ -353,7 +365,7 @@ export async function scanDiffStream(lines: AsyncIterable<string>): Promise<Hist
       const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
       if (hunk) {
         // A new hunk starts a new block so line numbers stay exact.
-        flush();
+        await flush();
         nextLine = Number(hunk[1]);
         inHunk = true;
       }
@@ -361,7 +373,7 @@ export async function scanDiffStream(lines: AsyncIterable<string>): Promise<Hist
     }
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (hunk) {
-      flush();
+      await flush();
       nextLine = Number(hunk[1]);
       continue;
     }
@@ -374,7 +386,7 @@ export async function scanDiffStream(lines: AsyncIterable<string>): Promise<Hist
       // removed line or "no newline" marker: no new-file line
     } else {
       // Anything else (commit header, message, next diff) ends the hunk.
-      flush();
+      await flush();
       inHunk = false;
       if (line.startsWith('commit ') && /^commit [0-9a-f]{7,64}\b/.test(line)) {
         commit = line.slice(7, 47);
@@ -383,8 +395,8 @@ export async function scanDiffStream(lines: AsyncIterable<string>): Promise<Hist
       }
     }
   }
-  flush();
-  return { hits, commits };
+  await flush();
+  return { commits };
 }
 
 /** Streams git's stdout lines; rejects when git is missing (ENOENT) or exits non-zero. */
@@ -402,7 +414,6 @@ async function* runGit(cwd: string, args: readonly string[]): AsyncGenerator<str
 }
 
 export interface WorkingTreeScanResult {
-  readonly hits: SecretScanHit[];
   readonly files: number;
   /** Tracked paths that could not be read (deleted in the working tree, or not a regular file). Listed, never silent. */
   readonly unreadable: string[];
@@ -412,11 +423,10 @@ export interface WorkingTreeScanResult {
  * Scans every tracked file, whatever its size or content (a text file with a NUL byte is still scanned): there is no
  * size cap and no hit cap.
  */
-export async function scanWorkingTree(cwd: string): Promise<WorkingTreeScanResult> {
+export async function scanWorkingTree(cwd: string, onHit: HitSink): Promise<WorkingTreeScanResult> {
   const raw: string[] = [];
   for await (const l of runGit(cwd, ['-c', 'core.quotePath=false', 'ls-files', '-z'])) raw.push(l);
   const names = raw.join('\n').split('\u0000').filter(Boolean);
-  const hits: SecretScanHit[] = [];
   const unreadable: string[] = [];
   for (const name of names) {
     let buf: Buffer;
@@ -426,14 +436,15 @@ export async function scanWorkingTree(cwd: string): Promise<WorkingTreeScanResul
       unreadable.push(name);
       continue;
     }
-    for (const hit of scanText(name, WORKTREE_COMMIT, buf.toString('utf8'))) hits.push(hit);
+    for (const hit of scanText(name, WORKTREE_COMMIT, buf.toString('utf8'))) await onHit(hit);
   }
-  return { hits, files: names.length, unreadable };
+  return { files: names.length, unreadable };
 }
 
-export async function scanHistory(cwd: string): Promise<HistoryScanResult> {
+export async function scanHistory(cwd: string, onHit: HitSink): Promise<HistoryScanResult> {
   return scanDiffStream(
     runGit(cwd, ['-c', 'core.quotePath=false', 'log', '-p', '--text', '--all', '--no-color', '--no-ext-diff', '--format=commit %H']),
+    onHit,
   );
 }
 
@@ -453,10 +464,12 @@ export function formatHit(hit: SecretScanHit): string {
  * A hit gates unless its own fingerprint is reviewed or it is a placeholder: every non-test hit, and every
  * issued-key candidate in any path (a checksum-valid GitHub token in a test file included).
  */
+export function isGating(h: SecretScanHit): boolean {
+  return !h.reviewed && h.classification !== 'placeholder' && (h.category !== 'test' || h.issuedCandidate);
+}
+
 export function gatingHits(hits: readonly SecretScanHit[]): SecretScanHit[] {
-  return hits.filter(
-    (h) => !h.reviewed && h.classification !== 'placeholder' && (h.category !== 'test' || h.issuedCandidate),
-  );
+  return hits.filter(isGating);
 }
 
 export interface SummaryRow {
@@ -518,4 +531,108 @@ export function loadReviewed(cwd: string): ReviewedEntry[] {
 export function applyReviewed(hits: readonly SecretScanHit[], reviewed: readonly ReviewedEntry[]): SecretScanHit[] {
   const known = new Set(reviewed.map((e) => e.fingerprint));
   return hits.map((h) => (h.fingerprint !== '' && known.has(h.fingerprint) ? { ...h, reviewed: true } : h));
+}
+
+export interface SecretScanRunOptions {
+  readonly cwd: string;
+  readonly tree: boolean;
+  readonly history: boolean;
+  /** `list`: one line per hit; `summary`: counts plus every gating and fixture-unverified hit; `json`: NDJSON. */
+  readonly mode: 'list' | 'summary' | 'json';
+  /** Output sink; awaited, so a slow reader applies backpressure instead of buffering hits in memory. */
+  readonly write: (text: string) => void | Promise<void>;
+}
+
+/**
+ * Runs the scan and streams every hit to `write` as it is found. Only counters are kept in memory (no hit list), so
+ * memory stays bounded whatever the history size. Exit code: 0 = complete and nothing gates; 1 = at least one gating
+ * hit; 2 = the scan is incomplete (a git failure, an unreadable tracked path or an invalid reviewed list), always listed.
+ */
+export async function runSecretScan(o: SecretScanRunOptions): Promise<number> {
+  const counts = { hits: 0, gating: 0, reviewed: 0, placeholder: 0, fixtureUnverified: 0, rotate: 0, rotateCommits: 0 };
+  const rows = new Map<string, number>();
+  let lastRotateCommit = '';
+  let commitKey = '';
+  let commitCount = 0;
+  let files = 0;
+  let commits = 0;
+  let unreadable: string[] = [];
+
+  const flushCommit = async (): Promise<void> => {
+    if (o.mode === 'summary' && commitCount > 0) await o.write(`history secret-token: ${commitKey} x${commitCount}\n`);
+    commitKey = '';
+    commitCount = 0;
+  };
+
+  const run = async (): Promise<void> => {
+    const known = new Set(loadReviewed(o.cwd).map((e) => e.fingerprint));
+    const onHit = async (raw: SecretScanHit): Promise<void> => {
+      const hit = known.has(raw.fingerprint) ? { ...raw, reviewed: true } : raw;
+      const gating = isGating(hit);
+      const fixture = hit.classification === 'fixture-unverified';
+      const where = hit.commit === WORKTREE_COMMIT ? 'tree' : 'history';
+      counts.hits++;
+      if (gating) counts.gating++;
+      if (hit.reviewed) counts.reviewed++;
+      if (hit.classification === 'placeholder') counts.placeholder++;
+      if (fixture) counts.fixtureUnverified++;
+      if (hit.issuedCandidate && !hit.reviewed) {
+        counts.rotate++;
+        if (hit.commit !== lastRotateCommit) counts.rotateCommits++;
+        lastRotateCommit = hit.commit;
+      }
+      const row = `${hit.rule} x ${where} x ${hit.category}`;
+      rows.set(row, (rows.get(row) ?? 0) + 1);
+      if (o.mode === 'json') {
+        await o.write(`${JSON.stringify({ hit, gating })}\n`);
+      } else if (o.mode === 'list') {
+        await o.write(`${fixture ? 'fixture-unverified: ' : ''}${formatHit(hit)}\n`);
+      } else {
+        if (gating) await o.write(`gating: ${formatHit(hit)}\n`);
+        if (fixture) await o.write(`fixture-unverified: ${formatHit(hit)}\n`);
+        if (where === 'history' && hit.rule === 'secret-token') {
+          const key = `${hit.commit.slice(0, 10)} ${hit.category}`;
+          if (key !== commitKey) await flushCommit();
+          commitKey = key;
+          commitCount++;
+        }
+      }
+    };
+    if (o.tree) {
+      const tree = await scanWorkingTree(o.cwd, onHit);
+      files = tree.files;
+      unreadable = tree.unreadable;
+    }
+    if (o.history) commits = (await scanHistory(o.cwd, onHit)).commits;
+    await flushCommit();
+  };
+
+  let failure = '';
+  try {
+    await run();
+  } catch (err) {
+    failure = err instanceof Error ? err.message : 'unknown error';
+  }
+  for (const name of unreadable) await o.write(`unreadable: ${name}\n`);
+  if (failure) await o.write(`secret-scan: INCOMPLETE: ${failure}\n`);
+  const incomplete = failure !== '' || unreadable.length > 0;
+  const sortedRows = [...rows.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  if (o.mode === 'json') {
+    await o.write(`${JSON.stringify({ summary: Object.fromEntries(sortedRows), counts, files, commits, unreadable, incomplete, failure })}\n`);
+  } else {
+    if (o.mode === 'summary') {
+      await o.write('rule x where x category: count\n');
+      for (const [row, n] of sortedRows) await o.write(`  ${row}: ${n}\n`);
+      await o.write(
+        `rotation candidates (known provider prefix, plausible length, random-looking, any path): ${counts.rotate} hit(s) in ${counts.rotateCommits} commit run(s)\n`,
+      );
+    }
+    await o.write(
+      `secret-scan: ${counts.hits} hit(s), ${counts.gating} gating (non-test or issued-key candidate), ${counts.reviewed} reviewed, ` +
+        `${counts.placeholder} placeholder, ${counts.fixtureUnverified} fixture-unverified (accepted residual, listed); ` +
+        `${files} file(s), ${commits} commit(s), ${unreadable.length} unreadable tracked path(s)${incomplete ? '; INCOMPLETE' : ''}\n`,
+    );
+  }
+  if (incomplete) return 2;
+  return counts.gating > 0 ? 1 : 0;
 }
