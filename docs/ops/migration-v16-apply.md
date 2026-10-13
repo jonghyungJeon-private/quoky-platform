@@ -162,11 +162,13 @@ bash "$D/ops/launchd/quokyctl.sh" backup --verify "$R.db" || exit 1   # must say
 # c. Restore it with its vector snapshot. Here the data directory is $DATA and the copy name is $R (the quickstart's
 #    "복구 절차" uses $D for the data directory and $N for the name; do not mix them with this runbook's $D checkout).
 B="$DATA/backups"
-[ -f "$B/$R.db" ] && [ ! -L "$B/$R.db" ] && [ -d "$B/$R.vectors" ] || exit 1
+[ -f "$B/$R.db" ] && [ ! -L "$B/$R.db" ] || exit 1
 mkdir -p "$DATA/before-restore" && chmod 700 "$DATA/before-restore"
 mv "$DATA/quoky.db" "$DATA/quoky.db-wal" "$DATA/quoky.db-shm" "$DATA/vectors" "$DATA/before-restore/" 2>/dev/null
 cp -P "$B/$R.db" "$DATA/quoky.db" && chmod 600 "$DATA/quoky.db"
-cp -R "$B/$R.vectors" "$DATA/vectors" && chmod 700 "$DATA/vectors"
+if [ -d "$B/$R.vectors" ] && [ ! -L "$B/$R.vectors" ]; then   # same handling as the quickstart restore
+  cp -RPp "$B/$R.vectors" "$DATA/vectors" && rm -f "$DATA/vectors/.snapshot.json"
+fi
 sqlite3 "$DATA/quoky.db" 'PRAGMA user_version; PRAGMA integrity_check;'   # -> 15, ok
 # d. Deploy the pre-v16 build recorded in step 1.
 cd "$D" && git checkout -q --detach "$PREV" && pnpm install --frozen-lockfile && pnpm build
