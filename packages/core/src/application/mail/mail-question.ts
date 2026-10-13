@@ -18,6 +18,14 @@ import { MAIL_LISTING_MAX_ENTRIES, MAIL_SENDER_QUERY_MAX_LENGTH } from '../../po
  * Summaries: `이 메일 요약해줘`, `3번 메일 요약해줘`, `메일 3번 요약`, `두 번째 메일 요약해줘`, `summarize this email`,
  * `summarize email 3`. A summary refers to the session's last listing; the number is 1..10.
  *
+ * Thread summaries (GML-2, ADR-0118 amendment of 2026-10-12): `이 스레드 요약해줘`, `이 메일 스레드 요약해줘`,
+ * `3번 메일 스레드 요약해줘`, `3번 스레드 전체 요약해줘`, `메일 3번 스레드 요약`, `summarize this thread`,
+ * `summarize email thread 3`, `summarize the thread of email 3`.
+ *
+ * Reply picks (GML-2): only when the owner's message is a platform reply to a mail listing Quoky recorded
+ * (`replyBound`), the mail noun may be left out: `2번 요약해줘`, `요약해줘`, `이거 요약해줘`, `스레드 요약해줘`,
+ * `summarize 2`, `summarize this`. Without that reply these are not mail commands.
+ *
  * Write requests (refused with fixed copy, ADR-0118 D6): `메일 보내줘`, `<사람>에게 메일 보내줘`, `3번 메일 삭제해줘`,
  * `이 메일 보관해줘`, `메일 전달해줘`, `읽음으로 표시해줘`, `답장 보내줘`, `send/forward/delete/archive … email`.
  *
@@ -30,6 +38,9 @@ export type MailLanguage = 'ko' | 'en';
 
 export type MailSummaryTarget = { readonly kind: 'this' } | { readonly kind: 'index'; readonly index: number };
 
+/** GML-2: one message, or the whole thread it belongs to. */
+export type MailSummaryScope = 'message' | 'thread';
+
 export type MailQuestion =
   | {
       readonly kind: 'list';
@@ -38,7 +49,18 @@ export type MailQuestion =
       readonly from?: string;
       readonly language: MailLanguage;
     }
-  | { readonly kind: 'summarize'; readonly target: MailSummaryTarget; readonly language: MailLanguage }
+  | {
+      readonly kind: 'summarize';
+      readonly target: MailSummaryTarget;
+      readonly language: MailLanguage;
+      /** GML-2: `thread` for a thread summary; absent means one message (the GML-1 forms). */
+      readonly scope?: MailSummaryScope;
+      /**
+       * GML-2: the owner's words name no mail (`이 스레드 요약해줘`, or a reply-bound `2번 요약해줘`). Outside a DM such a
+       * message may mean the platform's own thread, so the handler leaves it alone there.
+       */
+      readonly unnamed?: true;
+    }
   | { readonly kind: 'write-refused'; readonly language: MailLanguage }
   | { readonly kind: 'usage'; readonly language: MailLanguage };
 
@@ -123,6 +145,34 @@ const SUMMARY_ORDINAL_KO = new RegExp(
   `^(?<o>첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열) ?번째 ?${MAIL}(?: ?내용)?(?:을|를)? ?(?:좀 ?)?${SUMMARY_TAIL}$`,
   'iu',
 );
+
+/** GML-2: the thread noun, with an optional `전체` (whole). */
+const THREAD = '(?:스레드|쓰레드|thread)(?: ?전체)?';
+const THREAD_THIS_KO = new RegExp(
+  `^(?:전체 ?)?(?<named>(?:이|그|저|방금|위|이번) ?(?:그 ?)?${MAIL}(?:의)? ?|(?:이|그|저|방금|위|이번) ?)${THREAD}(?: ?내용)?(?:을|를)? ?(?:좀 ?)?${SUMMARY_TAIL}$`,
+  'iu',
+);
+const THREAD_INDEX_KO = new RegExp(
+  `^(?<n>\\d{1,2}) ?번(?:째)? ?(?<named>${MAIL}(?:의)? ?)?${THREAD}(?: ?내용)?(?:을|를)? ?(?:좀 ?)?${SUMMARY_TAIL}$`,
+  'iu',
+);
+const THREAD_INDEX_AFTER_KO = new RegExp(`^${MAIL} ?(?<n>\\d{1,2}) ?번(?:째)?(?:의)? ?${THREAD}(?:을|를)? ?(?:좀 ?)?${SUMMARY_TAIL}$`, 'iu');
+const THREAD_ORDINAL_KO = new RegExp(
+  `^(?<o>첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열) ?번째 ?(?<named>${MAIL}(?:의)? ?)?${THREAD}(?:을|를)? ?(?:좀 ?)?${SUMMARY_TAIL}$`,
+  'iu',
+);
+const THREAD_THIS_EN = /^summari[sz]e (?:this|that|the) (?<named>(?:e-?mail|mail) )?thread(?: please)?$/i;
+const THREAD_INDEX_EN =
+  /^summari[sz]e (?:(?:e-?mail|mail) thread (?:#|no\.? ?|number )?(?<n>\d{1,2})|the thread of (?:e-?mail|mail) (?:#|no\.? ?|number )?(?<m>\d{1,2}))(?: please)?$/i;
+
+/** GML-2 reply picks: the noun-less forms, accepted only for a platform reply to a recorded mail listing. */
+const REPLY_THIS_KO = new RegExp(`^(?:(?:이거|이것|이건|그거|그것|이|그) ?(?:을|를|는|좀)? ?)?(?:좀 ?)?${SUMMARY_TAIL}$`, 'iu');
+const REPLY_INDEX_KO = new RegExp(`^(?<n>\\d{1,2}) ?번(?:째)?(?:을|를|은|는|만)? ?(?:좀 ?)?${SUMMARY_TAIL}$`, 'iu');
+const REPLY_ORDINAL_KO = new RegExp(`^(?<o>첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열) ?번째(?:을|를|는|만)? ?(?:좀 ?)?${SUMMARY_TAIL}$`, 'iu');
+const REPLY_THREAD_KO = new RegExp(`^(?:(?<n>\\d{1,2}) ?번(?:째)? ?)?${THREAD}(?:을|를)? ?(?:좀 ?)?${SUMMARY_TAIL}$`, 'iu');
+const REPLY_THIS_EN = /^summari[sz]e(?: (?:this|that|it))?(?: please)?$/i;
+const REPLY_INDEX_EN = /^summari[sz]e (?:#|no\.? ?|number )?(?<n>\d{1,2})(?: please)?$/i;
+const REPLY_THREAD_EN = /^summari[sz]e (?:the |this )?thread(?: (?:#|no\.? ?|number )?(?<n>\d{1,2}))?(?: please)?$/i;
 
 const WRITE_VERB_KO =
   '(?:보내 ?줘|보내 ?주세요|보내|전송해 ?줘|전송해 ?주세요|전송|삭제해 ?줘|삭제해 ?주세요|삭제|지워 ?줘|지워 ?주세요|' +
@@ -219,7 +269,15 @@ function parseSenderHead(head: string, show: boolean): { from: string; today: bo
  * The mail question `text` asks, or `null` when the message is not one of the anchored mail forms (it then falls
  * through unchanged). Pure; never reads a clock or any mail.
  */
-export function parseMailQuestion(text: string): MailQuestion | null {
+export interface MailQuestionOptions {
+  /**
+   * GML-2: the message is a platform reply to a mail listing Quoky recorded (its delivered reply ids). Only then are
+   * the noun-less reply-pick forms read. The handler decides it from the content-free reply reference, never from text.
+   */
+  readonly replyBound?: boolean;
+}
+
+export function parseMailQuestion(text: string, options: MailQuestionOptions = {}): MailQuestion | null {
   if (typeof text !== 'string' || text.length > 300) return null;
   const normalized = normalizeMailText(text);
   // Whitespace runs (line breaks included) are already one space here, so a line break needs no check of its own.
@@ -228,6 +286,13 @@ export function parseMailQuestion(text: string): MailQuestion | null {
 
   if (WRITE_KO.some((re) => re.test(normalized)) || WRITE_EN.test(normalized)) {
     return { kind: 'write-refused', language };
+  }
+
+  const thread = parseThreadSummary(normalized, language);
+  if (thread !== undefined) return thread;
+  if (options.replyBound === true) {
+    const picked = parseReplyPick(normalized, language);
+    if (picked !== undefined) return picked;
   }
 
   if (SUMMARY_THIS_KO.test(normalized) || SUMMARY_THIS_EN.test(normalized)) {
@@ -272,4 +337,62 @@ export function parseMailQuestion(text: string): MailQuestion | null {
     return { kind: 'list', unread: false, today: false, from: sender, language };
   }
   return null;
+}
+
+/** GML-2: `이 스레드 요약해줘`, `3번 메일 스레드 요약해줘`, … (`undefined` when not a thread form). */
+function parseThreadSummary(normalized: string, language: MailLanguage): MailQuestion | null | undefined {
+  const thisKo = THREAD_THIS_KO.exec(normalized);
+  const thisEn = thisKo ? null : THREAD_THIS_EN.exec(normalized);
+  const thisMatch = thisKo ?? thisEn;
+  if (thisMatch) {
+    const named = thisKo ? new RegExp(MAIL, 'iu').test(thisMatch.groups?.named ?? '') : thisMatch.groups?.named !== undefined;
+    return { kind: 'summarize', target: { kind: 'this' }, language, scope: 'thread', ...(named ? {} : { unnamed: true as const }) };
+  }
+  const indexed = THREAD_INDEX_KO.exec(normalized) ?? THREAD_INDEX_AFTER_KO.exec(normalized);
+  if (indexed) {
+    const target = indexTarget(indexed.groups?.n);
+    // `3번 스레드` names no mail; `메일 3번 스레드` and `3번 메일 스레드` do.
+    const named = indexed.groups?.named !== undefined || !/^\d/u.test(normalized);
+    // An out-of-range number gets the usage line only when the words name a mail (`11번 스레드` may be anything else).
+    if (target === null) return named ? { kind: 'usage', language } : null;
+    return { kind: 'summarize', target, language, scope: 'thread', ...(named ? {} : { unnamed: true as const }) };
+  }
+  const indexedEn = THREAD_INDEX_EN.exec(normalized);
+  if (indexedEn) {
+    const target = indexTarget(indexedEn.groups?.n ?? indexedEn.groups?.m);
+    return target ? { kind: 'summarize', target, language, scope: 'thread' } : { kind: 'usage', language };
+  }
+  const ordinal = THREAD_ORDINAL_KO.exec(normalized);
+  if (ordinal) {
+    const index = ORDINALS_KO[ordinal.groups?.o ?? ''];
+    if (index === undefined) return null;
+    const named = ordinal.groups?.named !== undefined;
+    return { kind: 'summarize', target: { kind: 'index', index }, language, scope: 'thread', ...(named ? {} : { unnamed: true as const }) };
+  }
+  return undefined;
+}
+
+/** GML-2: the noun-less forms a reply to a mail listing may use (`undefined` when none matches). */
+function parseReplyPick(normalized: string, language: MailLanguage): MailQuestion | undefined {
+  const unnamed = { unnamed: true as const };
+  const thread = REPLY_THREAD_KO.exec(normalized) ?? REPLY_THREAD_EN.exec(normalized);
+  if (thread) {
+    const raw = thread.groups?.n;
+    const target = raw === undefined ? ({ kind: 'this' } as const) : indexTarget(raw);
+    return target ? { kind: 'summarize', target, language, scope: 'thread', ...unnamed } : { kind: 'usage', language };
+  }
+  const indexed = REPLY_INDEX_KO.exec(normalized) ?? REPLY_INDEX_EN.exec(normalized);
+  if (indexed) {
+    const target = indexTarget(indexed.groups?.n);
+    return target ? { kind: 'summarize', target, language, ...unnamed } : { kind: 'usage', language };
+  }
+  const ordinal = REPLY_ORDINAL_KO.exec(normalized);
+  if (ordinal) {
+    const index = ORDINALS_KO[ordinal.groups?.o ?? ''];
+    if (index !== undefined) return { kind: 'summarize', target: { kind: 'index', index }, language, ...unnamed };
+  }
+  if (REPLY_THIS_KO.test(normalized) || REPLY_THIS_EN.test(normalized)) {
+    return { kind: 'summarize', target: { kind: 'this' }, language, ...unnamed };
+  }
+  return undefined;
 }

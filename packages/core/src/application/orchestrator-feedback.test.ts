@@ -226,3 +226,44 @@ describe('QuokyCore.handleFeedbackSignal (ADR-0098 D3)', () => {
     expect(platform.sends).toHaveLength(0);
   });
 });
+
+describe('QuokyCore delivery observers (ADR-0118 amendment, GML-2)', () => {
+  it('tells each observer after delivery, before the feedback record, with the inbound message and the receipt ids', async () => {
+    const events: Events = { order: [], logs: [] };
+    const platform = platformReturning(events, async () => ({ platformMessageIds: ['out-1', 'out-2'] }));
+    const { feedback } = recorderOf(events);
+    const seen: unknown[] = [];
+    const core = new QuokyCore({
+      runtime: runtimeOf(async () => workResult()),
+      platform,
+      logger: loggerOf(events),
+      feedback,
+      deliveryObservers: [{ observeDelivery: async (turn) => { events.order.push('observe'); seen.push(turn); } }],
+    });
+    await core.handleInboundMessage(messageOf('안 읽은 메일'));
+    expect(events.order).toEqual(['send', 'observe', 'record']);
+    expect(seen).toEqual([{ message: messageOf('안 읽은 메일'), sessionId: 'sess-1', status: 'RESPONDED', platformMessageIds: ['out-1', 'out-2'] }]);
+  });
+
+  it('is not called without a receipt; a throwing observer never alters delivery, the next observer or the record', async () => {
+    const events: Events = { order: [], logs: [] };
+    const silent = platformReturning(events, async () => undefined);
+    const calls: string[] = [];
+    const observers = [
+      { observeDelivery: async () => { calls.push('first'); throw new Error('secret listing text'); } },
+      { observeDelivery: async () => { calls.push('second'); } },
+    ];
+    const quiet = new QuokyCore({ runtime: runtimeOf(async () => workResult()), platform: silent, logger: loggerOf(events), deliveryObservers: observers });
+    await quiet.handleInboundMessage(messageOf('x'));
+    expect(calls).toEqual([]);
+
+    const platform = platformReturning(events, async () => ({ platformMessageIds: ['out-1'] }));
+    const { feedback, turns } = recorderOf(events);
+    const core = new QuokyCore({ runtime: runtimeOf(async () => workResult()), platform, logger: loggerOf(events), feedback, deliveryObservers: observers });
+    await expect(core.handleInboundMessage(messageOf('x'))).resolves.toBeUndefined();
+    expect(calls).toEqual(['first', 'second']);
+    expect(turns).toHaveLength(1);
+    expect(events.logs).toContainEqual({ level: 'warn', message: 'delivery observer failed', fields: { errorName: 'Error' } });
+    expect(JSON.stringify(events.logs)).not.toContain('secret listing text');
+  });
+});

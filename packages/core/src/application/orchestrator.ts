@@ -5,6 +5,7 @@ import { now } from '../util/clock';
 import type { ConversationRuntime, TurnResult } from './conversation-runtime';
 import type { FeedbackReactionInput, RecordTurnInput } from './feedback/feedback-recorder';
 import { formatSafeErrorText, safeRequestId, toSafeError } from './safe-error';
+import type { TurnDeliveryObserver } from './turn-delivery';
 
 /**
  * The feedback capture the facade drives (ADR-0098 D5) — structurally `FeedbackRecorder`. Both methods are
@@ -22,6 +23,11 @@ export interface QuokyCoreDeps {
   logger: Logger;
   /** Optional local feedback capture (ADR-0098 D5); absent means nothing is recorded. */
   feedback?: QuokyCoreFeedback;
+  /**
+   * ADR-0118 amendment (GML-2): told after a reply was delivered with a receipt, best-effort and in order (the mail
+   * handler binds its listing replies to their platform ids). Absent or empty: nothing is called.
+   */
+  deliveryObservers?: readonly TurnDeliveryObserver[];
   /** Shared clock; defaults to `util/clock.now`. */
   clock?: () => IsoTimestamp;
 }
@@ -92,6 +98,9 @@ export class QuokyCore {
     }
     const delivered = await this.deps.platform.sendMessage(result.reply);
     const receipt = receiptOf(delivered);
+    if (receipt !== undefined && receipt.platformMessageIds.length > 0) {
+      await this.observeDelivery(message, result, receipt);
+    }
     await this.recordTurn({
       message,
       result: {
@@ -123,6 +132,26 @@ export class QuokyCore {
       });
     } catch (err) {
       this.logCaptureFailure('reaction', err);
+    }
+  }
+
+  /** GML-2: each observer is guarded on its own; a failure is logged content-free and never changes delivery. */
+  private async observeDelivery(message: InboundMessage, result: TurnResult, receipt: OutboundDeliveryReceipt): Promise<void> {
+    for (const observer of this.deps.deliveryObservers ?? []) {
+      try {
+        await observer.observeDelivery({
+          message,
+          sessionId: result.sessionId,
+          status: result.status,
+          platformMessageIds: [...receipt.platformMessageIds],
+        });
+      } catch (err) {
+        try {
+          this.deps.logger.warn('delivery observer failed', { errorName: err instanceof Error ? err.name : typeof err });
+        } catch {
+          // Logging is best-effort; an observer must never affect the turn.
+        }
+      }
     }
   }
 

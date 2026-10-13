@@ -10,6 +10,7 @@ import {
   CONVERSATION_TURN_HANDLERS,
   ConnectorQueryError,
   MAIL_READER,
+  isTurnDeliveryObserver,
   type ConversationTurnHandler,
   type Logger,
   type MailReader,
@@ -190,6 +191,27 @@ describe('mail feature composition (ADR-0096 D7)', () => {
     } finally {
       await app.close();
     }
+  });
+
+  it('GML-2: the composed mail handler is the only delivery observer the facade gets from the handler list', async () => {
+    const reader: MailReader = {
+      source: 'mail',
+      readOnly: true,
+      search: async () => ({ messages: [], matched: 0, matchedIsLowerBound: false }),
+      getMessage: async () => {
+        throw new Error('not used');
+      },
+    };
+    const { app } = await compose(createMailProviders({ gmail: undefined, timeZone: 'Asia/Seoul', reader, logger: silentLogger() }));
+    try {
+      const all = app.get<readonly ConversationTurnHandler[]>(CONVERSATION_TURN_HANDLERS);
+      expect(all.filter(isTurnDeliveryObserver).map((handler) => handler.id)).toEqual(['mail']);
+    } finally {
+      await app.close();
+    }
+    const source = readFileSync(new URL('../app.module.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(/const deliveryObservers = turnHandlers\.filter\(isTurnDeliveryObserver\);/);
+    expect(source).toMatch(/inject: \[ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder, \{ token: CONVERSATION_TURN_HANDLERS, optional: true \}\]/);
   });
 
   it('the feature file wires no provider, router, runtime or writer', () => {

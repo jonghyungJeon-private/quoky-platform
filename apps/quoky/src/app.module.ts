@@ -64,6 +64,7 @@ import {
   RiskPolicy,
   RepositoryIdentityResolver,
   RepositoryHostingManager,
+  isTurnDeliveryObserver,
 } from '@quoky/core';
 import type {
   ContinuationBindingRepository,
@@ -783,8 +784,16 @@ const application: Provider[] = [
   // subscriber — the `onFeedback` subscription lives here, not in main.ts. Reactions never produce a reply.
   {
     provide: QuokyCore,
-    useFactory: (runtime: ConversationRuntime, platform: PlatformAdapter, feedback: FeedbackRecorder) => {
-      const core = new QuokyCore({ runtime, platform, logger: coreLogger, feedback });
+    useFactory: (
+      runtime: ConversationRuntime,
+      platform: PlatformAdapter,
+      feedback: FeedbackRecorder,
+      turnHandlers: readonly ConversationTurnHandler[] = [],
+    ) => {
+      // ADR-0118 amendment (GML-2): a handler that binds its replies to their delivery receipts (the mail listing) is
+      // told after delivery. Today only the mail handler, and only when Gmail is configured.
+      const deliveryObservers = turnHandlers.filter(isTurnDeliveryObserver);
+      const core = new QuokyCore({ runtime, platform, logger: coreLogger, feedback, ...(deliveryObservers.length > 0 ? { deliveryObservers } : {}) });
       platform.onFeedback?.((signal) =>
         core.handleFeedbackSignal(signal).catch((err: unknown) =>
           coreLogger.warn('feedback signal handling failed', {
@@ -794,7 +803,7 @@ const application: Provider[] = [
       );
       return core;
     },
-    inject: [ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder],
+    inject: [ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder, { token: CONVERSATION_TURN_HANDLERS, optional: true }],
   },
 ];
 

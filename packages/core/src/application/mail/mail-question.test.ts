@@ -191,3 +191,64 @@ describe('mail grammar (ADR-0118 D4/D6/D7)', () => {
     expect(parseMailQuestion('안​ 읽은 메일')).toMatchObject({ kind: 'list', unread: true });
   });
 });
+
+describe('GML-2 thread and reply-pick forms (ADR-0118 amendment of 2026-10-12)', () => {
+  it.each([
+    ['이 스레드 요약해줘', { kind: 'this' }, true],
+    ['이 스레드 전체 요약해줘', { kind: 'this' }, true],
+    ['이 메일 스레드 요약해줘', { kind: 'this' }, false],
+    ['그 메일의 스레드 요약해 줘', { kind: 'this' }, false],
+    ['3번 메일 스레드 요약해줘', { kind: 'index', index: 3 }, false],
+    ['3번 메일 스레드 전체 요약해줘', { kind: 'index', index: 3 }, false],
+    ['3번 스레드 요약', { kind: 'index', index: 3 }, true],
+    ['메일 2번 스레드 요약해줘', { kind: 'index', index: 2 }, false],
+    ['두 번째 메일 스레드 요약해줘', { kind: 'index', index: 2 }, false],
+    ['summarize this thread', { kind: 'this' }, true],
+    ['summarize this email thread', { kind: 'this' }, false],
+    ['summarize email thread 4', { kind: 'index', index: 4 }, false],
+    ['summarize the thread of email 2', { kind: 'index', index: 2 }, false],
+  ] as const)('%s → a thread summary', (text, target, unnamed) => {
+    const parsed = parseMailQuestion(text);
+    expect(parsed).toMatchObject({ kind: 'summarize', target, scope: 'thread' });
+    expect((parsed as { unnamed?: true }).unnamed === true).toBe(unnamed);
+  });
+
+  it('the GML-1 forms are unchanged (no scope); an out-of-range thread number is the usage line; writes stay refused', () => {
+    expect(parseMailQuestion('1번 메일 요약해줘')).toEqual({ kind: 'summarize', target: { kind: 'index', index: 1 }, language: 'ko' });
+    expect(parseMailQuestion('이 메일 요약해줘')).toEqual({ kind: 'summarize', target: { kind: 'this' }, language: 'ko' });
+    expect(parseMailQuestion('11번 메일 스레드 요약해줘')).toMatchObject({ kind: 'usage' });
+    expect(parseMailQuestion('11번 스레드 요약해줘')).toBeNull();
+    expect(parseMailQuestion('3번 메일 삭제해줘')).toMatchObject({ kind: 'write-refused' });
+    expect(parseMailQuestion('이 스레드에 답장 보내줘')).toBeNull();
+    expect(parseMailQuestion('스레드가 뭐야?')).toBeNull();
+    expect(parseMailQuestion('What is the difference between a process and a thread?')).toBeNull();
+  });
+
+  it.each([
+    ['2번 요약해줘', { kind: 'index', index: 2 }, undefined],
+    ['2번만 요약', { kind: 'index', index: 2 }, undefined],
+    ['두 번째 요약해줘', { kind: 'index', index: 2 }, undefined],
+    ['요약해줘', { kind: 'this' }, undefined],
+    ['이거 요약해 줘', { kind: 'this' }, undefined],
+    ['스레드 요약해줘', { kind: 'this' }, 'thread'],
+    ['2번 스레드 요약', { kind: 'index', index: 2 }, 'thread'],
+    ['summarize 3', { kind: 'index', index: 3 }, undefined],
+    ['summarize this', { kind: 'this' }, undefined],
+    ['summarize the thread', { kind: 'this' }, 'thread'],
+  ] as const)('reply-bound only: %s', (text, target, scope) => {
+    // Without the reply only a thread form that names a number or a determiner is claimed (`2번 스레드 요약`); the rest
+    // are not mail commands at all.
+    const unbound = parseMailQuestion(text);
+    if (scope === 'thread') expect(unbound === null || (unbound.kind === 'summarize' && unbound.scope === 'thread')).toBe(true);
+    else expect(unbound).toBeNull();
+    const bound = parseMailQuestion(text, { replyBound: true });
+    expect(bound).toMatchObject({ kind: 'summarize', target, unnamed: true, ...(scope !== undefined ? { scope } : {}) });
+  });
+
+  it('a reply-bound message that is not a pick is not claimed (chat stays chat)', () => {
+    for (const text of ['고마워', '이거 무슨 뜻이야?', '요약 말고 번역해줘', '2번이 제일 급해 보이네']) {
+      expect(parseMailQuestion(text, { replyBound: true }), text).toBeNull();
+    }
+    expect(parseMailQuestion('12번 요약해줘', { replyBound: true })).toMatchObject({ kind: 'usage' });
+  });
+});
