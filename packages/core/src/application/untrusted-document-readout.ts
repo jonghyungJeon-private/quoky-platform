@@ -148,10 +148,8 @@ function isCredentialShaped(text: string): boolean {
  * withheld, never redacted).
  */
 export function buildUntrustedDocumentReadout(input: BuildUntrustedDocumentReadoutInput): UntrustedDocumentBuildResult {
-  const body = neutralizeLinks(prepareUntrustedBody(typeof input.body === 'string' ? input.body : ''), 'body');
-
   const sections = preparedSections(input.sections);
-  const body = sections !== undefined ? sections.full : neutralizeLinks(prepareBody(typeof input.body === 'string' ? input.body : ''), 'body');
+  const body = sections !== undefined ? sections.full : neutralizeLinks(prepareUntrustedBody(typeof input.body === 'string' ? input.body : ''), 'body');
   if (body.length === 0) return { ok: false, refusal: 'EMPTY' };
   // Review P1: the guard runs on the FULL normalized fields before any clip — a clip could cut a credential's key
   // (`password:`) while keeping its value — and again below on the exact clipped payload.
@@ -208,7 +206,7 @@ function preparedSections(sections: readonly UntrustedDocumentSection[] | undefi
   const total = kept.length;
   const prepared = kept.map((section, index): PreparedSection & { readonly fullHeader: string } => {
     const rawTitle = typeof section?.title === 'string' ? section.title : '';
-    const text = neutralizeLinks(prepareBody(typeof section?.body === 'string' ? section.body : ''), 'body');
+    const text = neutralizeLinks(prepareUntrustedBody(typeof section?.body === 'string' ? section.body : ''), 'body');
     const partial = section?.truncated === true ? ' (partial)' : '';
     const frame = (title: string): string => `[Sheet ${index + 1}/${total}] ${JSON.stringify(title)}${partial}`;
     return {
