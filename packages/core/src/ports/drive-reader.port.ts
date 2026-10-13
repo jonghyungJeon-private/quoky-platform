@@ -77,6 +77,11 @@ export interface DriveListResult {
   readonly matched: number;
   /** True when more than `matched` files may exist (the count stopped at its bound). */
   readonly matchedIsLowerBound: boolean;
+  /**
+   * DRV-2, additive: the source said the search could not cover every place it searches (for example some shared
+   * drives), so the list, or an empty answer, may be partial.
+   */
+  readonly incomplete?: boolean;
 }
 
 /**
@@ -88,14 +93,17 @@ export interface DriveDocumentSection {
   readonly title: string;
   /** The sheet's values as text (one line per row). */
   readonly text: string;
+  /** True when this sheet's text was cut (a row, column, cell or byte bound), so it is shown only in part. */
+  readonly textTruncated?: boolean;
 }
 
 /**
  * DRV-2b fallback (closed, vendor-free): a spreadsheet whose sheets could not be read one by one was read as its first
- * sheet only. `service-disabled`: the adapter's per-sheet read is not enabled for the account; `unavailable`: that read
- * failed or was refused; `too-large`: its answer was over the adapter's size bound.
+ * sheet only. `service-disabled`: the adapter's per-sheet read is not enabled for the account; `not-permitted`: the
+ * grant that reads the file does not cover the per-sheet read (no new grant is ever requested for it); `unavailable`:
+ * that read failed or was refused; `too-large`: its answer was over the adapter's size bound.
  */
-export const DRIVE_FIRST_SHEET_ONLY_REASONS = ['service-disabled', 'unavailable', 'too-large'] as const;
+export const DRIVE_FIRST_SHEET_ONLY_REASONS = ['service-disabled', 'not-permitted', 'unavailable', 'too-large'] as const;
 export type DriveFirstSheetOnlyReason = (typeof DRIVE_FIRST_SHEET_ONLY_REASONS)[number];
 
 /** One file with its bounded exported text, read only for an explicit summary request (ADR-0118 D7). */
@@ -113,6 +121,14 @@ export interface DriveDocument extends DriveFileSummary {
   readonly sections?: readonly DriveDocumentSection[];
   /** DRV-2b, additive: set only when a spreadsheet was read as its first sheet only because the per-sheet read failed. */
   readonly firstSheetOnly?: DriveFirstSheetOnlyReason;
+  /** DRV-2b, additive: how many hidden sheets were deliberately not read (never their names or content). */
+  readonly hiddenSheetsSkipped?: number;
+  /**
+   * DRV-2b, additive: the adapter found credential-shaped text in a value it then had to cut (a cell, a title or a
+   * sheet over its bound), so the delivered text may hold only a fragment the guard cannot recognize. Core withholds
+   * the whole item (ADR-0111 D3: withheld, never redacted).
+   */
+  readonly credentialShaped?: boolean;
 }
 
 export interface DriveReader {

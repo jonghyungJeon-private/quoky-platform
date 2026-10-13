@@ -271,9 +271,21 @@ export class DriveTurnHandler implements ConversationTurnHandler {
       sourceTruncated: document.textTruncated,
       // DRV-2b: a spreadsheet read sheet by sheet; every title and cell is untrusted readout like the body.
       ...(Array.isArray(document.sections) && document.sections.length > 0
-        ? { sections: document.sections.map((section) => ({ title: section.title, body: section.text })) }
+        ? {
+            sections: document.sections.map((section) => ({
+              title: section.title,
+              body: section.text,
+              ...(section.textTruncated === true ? { truncated: true } : {}),
+            })),
+          }
         : {}),
     });
+    // DRV-2b (CA review): the adapter saw credential-shaped text in a value it had to cut; the delivered fragment may
+    // not be recognizable, so the whole item is withheld here, before anything leaves the host.
+    if (document.credentialShaped === true) {
+      this.log('info', 'drive.turn_handler.summary_refused', { refusal: 'CREDENTIAL_SHAPED', source: 'adapter' });
+      return this.reply(ctx, renderDriveSummaryRefused('CREDENTIAL_SHAPED', language), 'RESPONDED', language, 'not-summarized');
+    }
     if (!built.ok) {
       this.log('info', 'drive.turn_handler.summary_refused', { refusal: built.refusal });
       return this.reply(ctx, renderDriveSummaryRefused(built.refusal, language), 'RESPONDED', language, 'not-summarized');
@@ -288,7 +300,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
       kind: 'summarize',
       readout: built.readout,
       fallbackText: renderDriveSummaryUnavailable(language),
-      footer: renderDriveSummaryFooter(language, firstSheetOnly, this.deps.copy),
+      footer: renderDriveSummaryFooter(language, firstSheetOnly, this.deps.copy, hiddenSheetsOf(document.hiddenSheetsSkipped)),
     };
   }
 
@@ -382,6 +394,11 @@ function listingKey(sessionId: Id, actorId: Id): string {
 /** Factory for the composition root (ADR-0096 D7). */
 export function createDriveTurnHandler(deps: DriveTurnHandlerDeps): DriveTurnHandler {
   return new DriveTurnHandler(deps);
+}
+
+/** A bounded count of hidden sheets the adapter skipped (0 when absent or not a small positive integer). */
+function hiddenSheetsOf(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? Math.min(value, 999) : 0;
 }
 
 /** A closed reason only: an adapter value outside the list adds no note. */

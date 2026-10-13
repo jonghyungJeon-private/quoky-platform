@@ -88,7 +88,7 @@ export const GDRIVE_EXPORT_TYPES: Readonly<Record<string, string>> = Object.free
 });
 
 /** Minimised partial responses: listing fields only; ids only for the count; no owner, sharing, link or size. */
-export const GDRIVE_LIST_FIELDS = 'files(id,name,mimeType,modifiedTime),nextPageToken';
+export const GDRIVE_LIST_FIELDS = 'files(id,name,mimeType,modifiedTime),nextPageToken,incompleteSearch';
 export const GDRIVE_COUNT_FIELDS = 'files(id),nextPageToken';
 export const GDRIVE_GET_FIELDS = 'id,name,mimeType,modifiedTime,owners(displayName)';
 /** Response size bounds per call (bytes). A larger JSON response is refused and its body is not kept. */
@@ -114,8 +114,10 @@ export interface GoogleDriveReaderConfig {
  * Refuses any request outside the read-only allowlist BEFORE it is sent: the method must be GET and the origin the
  * pinned Drive API origin; then exactly one of
  *
- * - `files` (list) with `q`, `pageSize`, `orderBy`, `fields`, `spaces`;
- * - `files/{id}` (get) with `fields` only (never `alt`: no file is ever downloaded);
+ * - `files` (list) with `q`, `pageSize`, `orderBy`, `fields`, `spaces`, and the DRV-2 shared-drive parameters
+ *   `corpora=allDrives`, `includeItemsFromAllDrives=true`, `supportsAllDrives=true` (each only with that value; never
+ *   `driveId` or `pageToken`);
+ * - `files/{id}` (get) with `fields` and `supportsAllDrives=true` only (never `alt`: no file is ever downloaded);
  * - `files/{id}/export` with `mimeType` exactly `text/plain` or `text/csv`.
  *
  * There is no code path that sends anything else; this is the runtime half of the read-only guarantee (the source scan
@@ -258,10 +260,24 @@ export class GoogleDriveReader implements DriveReader {
     const base = { ...summary, ownerName: boundDriveLine(owner, DRIVE_OWNER_NAME_MAX_LENGTH) };
     // DRV-2b: a spreadsheet is read sheet by sheet; if that read is not possible, its first sheet as CSV, with a note.
     let firstSheetOnly: DriveFirstSheetOnlyReason | undefined;
+    let hiddenSheetsSkipped = 0;
     if (summary.kind === 'spreadsheet') {
       const sheets = await this.readAllSheets(id);
-      if (sheets.ok) return { ...base, text: sheets.value.text, textTruncated: sheets.value.truncated, sections: sheets.value.sections };
-      firstSheetOnly = sheets.reason;
+      if (sheets.ok) {
+        const { value } = sheets;
+        return {
+          ...base,
+          text: value.text,
+          textTruncated: value.truncated,
+          sections: value.sections,
+          ...(value.hidden > 0 ? { hiddenSheetsSkipped: value.hidden } : {}),
+          ...(value.credentialShaped ? { credentialShaped: true } : {}),
+        };
+      }
+      // CA review suggestion: when the sheet list was read and shows exactly one visible sheet and no hidden one, the
+      // first sheet IS the whole spreadsheet, so no "first sheet only" note is shown.
+      if (!(sheets.known !== undefined && sheets.known.visible === 1 && sheets.known.hidden === 0)) firstSheetOnly = sheets.reason;
+      hiddenSheetsSkipped = sheets.known?.hidden ?? 0;
     }
     const url = this.filesUrl(id, '/export');
     url.searchParams.set('mimeType', exportType);
@@ -271,32 +287,51 @@ export class GoogleDriveReader implements DriveReader {
       text: body.text,
       textTruncated: body.truncated,
       ...(firstSheetOnly !== undefined ? { firstSheetOnly } : {}),
+      ...(hiddenSheetsSkipped > 0 ? { hiddenSheetsSkipped } : {}),
     };
   }
 
   /**
-   * DRV-2b: every grid sheet through the Sheets API (two guarded GETs: the sheet list, then one bounded values read).
-   * A consent or grant problem is thrown as it is (the existing consent reply). Anything else — the API not enabled
-   * (403 `SERVICE_DISABLED` / `accessNotConfigured`), an answer over its size bound, a refusal, a timeout, a transport
-   * or shape failure — is a closed fallback reason: the caller reads the first sheet as CSV instead. Never a crash.
+   * DRV-2b: every visible grid sheet through the Sheets API (two guarded GETs: the sheet list, then one bounded values
+   * read). A token problem (a refresh failure, a grant other than `drive.readonly`, an access token rejected after one
+   * refresh) is thrown as it is (the existing consent or reconnect reply). Anything else is a closed fallback reason and
+   * the caller reads the first sheet as CSV instead — never a crash:
+   *
+   * - `service-disabled`: 403 `SERVICE_DISABLED` / `accessNotConfigured`;
+   * - `not-permitted`: a Sheets `INSUFFICIENT_SCOPE` after `files.get` succeeded with the same token. Reconnecting
+   *   cannot fix it — ADR-0118 D3 forbids the spreadsheets scope — so it is not the consent reply (orchestrator decision
+   *   under the amendment, CA review 2026-10-13);
+   * - `too-large`: an answer over its size bound;
+   * - `unavailable`: anything else (another 403, a 404, 429 or 5xx, a refusal, a timeout, a transport or shape failure).
+   *
+   * `known` carries the sheet counts when the sheet list was read before the failure.
    */
   private async readAllSheets(
     id: string,
-  ): Promise<{ readonly ok: true; readonly value: GSheetsText } | { readonly ok: false; readonly reason: DriveFirstSheetOnlyReason }> {
+  ): Promise<
+    | { readonly ok: true; readonly value: GSheetsText & { readonly hidden: number } }
+    | { readonly ok: false; readonly reason: DriveFirstSheetOnlyReason; readonly known?: { readonly visible: number; readonly hidden: number } }
+  > {
+    let known: { readonly visible: number; readonly hidden: number } | undefined;
     try {
       const targets = parseGSheetTargets(await this.readJson(gsheetsMetaUrl(id), GSHEETS_META_MAX_BYTES, 'sheets'));
-      if (targets.sheets.length === 0) return { ok: true, value: { sections: [], text: '', truncated: targets.dropped } };
+      known = { visible: targets.sheets.length + (targets.dropped ? 1 : 0), hidden: targets.hidden };
+      if (targets.sheets.length === 0) {
+        return { ok: true, value: { sections: [], text: '', truncated: targets.dropped, credentialShaped: false, hidden: targets.hidden } };
+      }
       const rows = gsheetsRowsPerSheet(targets.sheets.length);
       const values = await this.readJson(gsheetsValuesUrl(id, targets.sheets, rows), GSHEETS_VALUES_MAX_BYTES, 'sheets');
-      return { ok: true, value: renderGSheetsValues(values, targets, rows) };
+      return { ok: true, value: { ...renderGSheetsValues(values, targets, rows), hidden: targets.hidden } };
     } catch (error) {
+      const fallback = (reason: DriveFirstSheetOnlyReason) => ({ ok: false as const, reason, ...(known !== undefined ? { known } : {}) });
       if (error instanceof GDriveScopeError) throw error;
       if (error instanceof GDriveHttpError) {
-        if (error.endpoint === 'token' || error.reason === 'UNAUTHORIZED' || error.reason === 'INSUFFICIENT_SCOPE') throw error;
-        if (error.serviceDisabled) return { ok: false, reason: 'service-disabled' };
+        if (error.endpoint === 'token' || error.reason === 'UNAUTHORIZED') throw error;
+        if (error.serviceDisabled) return fallback('service-disabled');
+        if (error.reason === 'INSUFFICIENT_SCOPE') return fallback('not-permitted');
       }
-      if (error instanceof GDriveResponseTooLargeError) return { ok: false, reason: 'too-large' };
-      return { ok: false, reason: 'unavailable' };
+      if (error instanceof GDriveResponseTooLargeError) return fallback('too-large');
+      return fallback('unavailable');
     }
   }
 
@@ -310,13 +345,16 @@ export class GoogleDriveReader implements DriveReader {
     url.searchParams.set('fields', GDRIVE_LIST_FIELDS);
     setAllDrives(url);
     const payload = await this.readJson(url, GDRIVE_LIST_MAX_BYTES);
+    // DRV-2 (CA review suggestion): with `corpora=allDrives` Google may answer from only part of the corpus.
+    if (payload.incompleteSearch !== undefined && typeof payload.incompleteSearch !== 'boolean') throw new GDriveResponseError('drive');
+    const incomplete = payload.incompleteSearch === true ? { incomplete: true } : {};
     const listed = payload.files === undefined ? [] : payload.files;
     if (!Array.isArray(listed) || listed.length > limit) throw new GDriveResponseError('drive');
     const files = listed.map((entry) => mapFile(isRecord(entry) ? entry : {}, isRecord(entry) ? entry.id : undefined));
     if (new Set(files.map((file) => file.id)).size !== files.length) throw new GDriveResponseError('drive');
     const next = payload.nextPageToken;
     if (next !== undefined && typeof next !== 'string') throw new GDriveResponseError('drive');
-    if (typeof next !== 'string' || next.length === 0) return { files, matched: files.length, matchedIsLowerBound: false };
+    if (typeof next !== 'string' || next.length === 0) return { files, matched: files.length, matchedIsLowerBound: false, ...incomplete };
 
     const count = this.filesUrl();
     count.searchParams.set('q', q);
@@ -335,6 +373,7 @@ export class GoogleDriveReader implements DriveReader {
       files,
       matched: Math.max(files.length, ids.length),
       matchedIsLowerBound: typeof more === 'string' && more.length > 0,
+      ...incomplete,
     };
   }
 

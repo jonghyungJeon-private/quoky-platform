@@ -171,6 +171,13 @@ export function driveListingFooter(
     : messageBody(`(${label} 읽기 전용 · `, zone, ' 기준)');
 }
 
+/** DRV-2 (CA review suggestion): the source searched only part of the drives, so the list may be partial. */
+export function renderDriveIncompleteSearchNote(language: DriveLanguage): string {
+  return language === 'en'
+    ? '(Some shared drives could not be searched, so this list may be incomplete)'
+    : '(일부 공유 드라이브는 검색하지 못해 목록이 빠졌을 수 있어요)';
+}
+
 /** The two line breaks around the list body, plus room always reserved for the closing "…외 N건" line. */
 const DRIVE_LIST_RESERVE_CHARS = 2 + 40;
 
@@ -182,8 +189,9 @@ const DRIVE_LIST_RESERVE_CHARS = 2 + 40;
 export function renderDriveListing(filter: DriveListingFilter, result: DriveListResult, options: DriveRenderOptions): MessageBody {
   const { language } = options;
   const shown = result.files.slice(0, DRIVE_REPLY_MAX_ENTRIES);
+  const incomplete = result.incomplete === true ? [renderDriveIncompleteSearchNote(language)] : [];
   if (shown.length === 0 && result.matched === 0) {
-    return joinBody([emptyAnswer(filter, language), driveListingFooter(options.timeZone, language, false, options.copy)]);
+    return joinBody([emptyAnswer(filter, language), ...incomplete, driveListingFooter(options.timeZone, language, false, options.copy)]);
   }
   const hidden = Math.max(0, result.matched - shown.length);
   const lowerBound = result.matchedIsLowerBound;
@@ -193,7 +201,7 @@ export function renderDriveListing(filter: DriveListingFilter, result: DriveList
       maxChars: DRIVE_REPLY_MAX_CHARS,
       baseChars: DRIVE_LIST_RESERVE_CHARS,
       head: [header(filter, result, options)],
-      tail: [driveListingFooter(options.timeZone, language, shown.length > 0, options.copy)],
+      tail: [...incomplete, driveListingFooter(options.timeZone, language, shown.length > 0, options.copy)],
       lines: shown.map((file, index) => ({ content: entryLine(index + 1, file, options), item: true })),
       omitted:
         language === 'en'
@@ -325,13 +333,26 @@ export function renderDriveSummaryUnavailable(language: DriveLanguage): string {
  * The deterministic disclosure appended to a successful summary. DRV-2b: when a spreadsheet was read as its first sheet
  * only, one honest line says so first (with the composition root's hint when the per-sheet read is not enabled).
  */
-export function renderDriveSummaryFooter(language: DriveLanguage, firstSheetOnly?: DriveFirstSheetOnlyReason, copy?: DriveSourceCopy): string {
+export function renderDriveSummaryFooter(
+  language: DriveLanguage,
+  firstSheetOnly?: DriveFirstSheetOnlyReason,
+  copy?: DriveSourceCopy,
+  hiddenSheetsSkipped = 0,
+): string {
   const disclosure =
     language === 'en'
       ? "(This document's text was sent to the chat model to summarize it · the drive was only read; nothing was changed or shared)"
       : '(문서 1건의 텍스트를 대화 모델에 보내 요약했어요 · 드라이브는 읽기만 했고 아무것도 바꾸거나 공유하지 않았어요)';
-  const note = firstSheetOnly === undefined ? undefined : renderDriveFirstSheetOnlyNote(firstSheetOnly, language, copy);
-  return note === undefined ? disclosure : `${note}\n${disclosure}`;
+  const notes = [
+    ...(firstSheetOnly === undefined ? [] : [renderDriveFirstSheetOnlyNote(firstSheetOnly, language, copy)]),
+    ...(hiddenSheetsSkipped > 0 ? [renderDriveHiddenSheetsNote(hiddenSheetsSkipped, language)] : []),
+  ];
+  return [...notes, disclosure].join('\n');
+}
+
+/** DRV-2b (CA review): hidden sheets are never read; the summary says how many were left out (never their names). */
+export function renderDriveHiddenSheetsNote(count: number, language: DriveLanguage): string {
+  return language === 'en' ? `(${count} hidden sheet${count === 1 ? '' : 's'} skipped)` : `(숨김 시트 ${count}개 제외)`;
 }
 
 /** DRV-2b: the one line that says only the first sheet of a spreadsheet was read, and why (a closed reason). */
@@ -345,7 +366,15 @@ export function renderDriveFirstSheetOnlyNote(reason: DriveFirstSheetOnlyReason,
   if (reason === 'too-large') {
     return en ? '(Only the first sheet was read · the sheets were too large to read together)' : '(첫 번째 시트만 읽었어요 · 시트 내용이 너무 커서 한 번에 읽지 못했어요)';
   }
-  return en ? '(Only the first sheet was read · the other sheets could not be read just now)' : '(첫 번째 시트만 읽었어요 · 다른 시트는 지금 읽지 못했어요)';
+  if (reason === 'not-permitted') {
+    return en
+      ? '(Only the first sheet was read · this connection may not read the spreadsheet sheet by sheet)'
+      : '(첫 번째 시트만 읽었어요 · 이 연결로는 시트별로 읽을 수 없어요)';
+  }
+  // The sheet count is unknown here (one sheet is possible), so the note never claims there are other sheets.
+  return en
+    ? '(Only the first sheet was read · any other sheets could not be read just now)'
+    : '(첫 번째 시트만 읽었어요 · 다른 시트가 있다면 지금은 읽지 못했어요)';
 }
 
 /** What a Drive reply did, for its history note: listed files, read nothing, or read but showed nothing. */

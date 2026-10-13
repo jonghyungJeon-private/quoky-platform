@@ -76,6 +76,8 @@ export interface BuildUntrustedDocumentReadoutInput {
 export interface UntrustedDocumentSection {
   readonly title: string;
   readonly body: string;
+  /** The source already cut this section; its header says `(partial)`. */
+  readonly truncated?: boolean;
 }
 
 /** At most this many sections are read into one readout (the DRV-2b sheet bound). */
@@ -202,7 +204,8 @@ function preparedSections(sections: readonly UntrustedDocumentSection[] | undefi
   const prepared = kept.map((section, index): PreparedSection & { readonly fullHeader: string } => {
     const rawTitle = typeof section?.title === 'string' ? section.title : '';
     const text = neutralizeLinks(prepareBody(typeof section?.body === 'string' ? section.body : ''), 'body');
-    const frame = (title: string): string => `[Sheet ${index + 1}/${total}] ${JSON.stringify(title)}`;
+    const partial = section?.truncated === true ? ' (partial)' : '';
+    const frame = (title: string): string => `[Sheet ${index + 1}/${total}] ${JSON.stringify(title)}${partial}`;
     return {
       header: frame(oneLine(rawTitle, UNTRUSTED_DOCUMENT_SECTION_TITLE_MAX_CHARS)),
       fullHeader: frame(neutralizeLinks(normalizeUntrustedText(rawTitle), 'display').replace(/\s+/g, ' ').trim()),

@@ -20354,6 +20354,39 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   - The composition copy.
 - **Strict, not run.** The live session: a shared-drive document, a multi-sheet spreadsheet, and the first-sheet note if
   the API is ever disabled again. This change also needs the deploy restart.
+- **Chief Architect review fixes (2026-10-13, CHANGES REQUIRED → fixed).** The review verified egress, range safety,
+  formulas and links, the shared-drive parameters, the fallbacks and the PLT-1 exemption as clean.
+  - **Major: fair byte budget in the adapter.** `renderGSheetsValues` renders every sheet first, then shares the 256
+    KiB left after the headers by the same water-filling Core uses for its body budget. Each sheet gets at least
+    `total/n`, and unused share goes to the longer sheets, so a large first sheet no longer starves the rest. In the
+    CA's reproduction (3 sheets × 512 rows × 10 cells of about 36 Korean characters), all three sheets now survive at
+    about 85 KiB each. A sheet that is cut is marked: `DriveDocumentSection.textTruncated`, and `(partial)` in its Core
+    header.
+  - **Minor: the guard runs before every adapter cut.** The adapter runs the credential guard (both detectors, which
+    `@quoky/core` exports) before each cut:
+    - on every raw sheet title;
+    - on every raw cell it cuts at 1,000 characters;
+    - on the full text of every sheet it cuts to its byte share.
+
+    A match sets the additive `DriveDocument.credentialShaped`, and the Drive handler withholds the whole item before
+    anything leaves the host. The withholding reply is the existing one. A test pins a token that straddles the
+    1,000-character cut.
+  - **Orchestrator decision under the amendment: a Sheets `INSUFFICIENT_SCOPE` falls back.** It arrives after
+    `files.get` succeeded with the same token, and reconnecting cannot fix it, because ADR-0118 D3 forbids the
+    spreadsheets scope. So it does not get the consent reply. It falls back to the first-sheet CSV with the new closed
+    reason `not-permitted`: "(첫 번째 시트만 읽었어요 · 이 연결로는 시트별로 읽을 수 없어요)". A token-endpoint failure, a
+    grant other than `drive.readonly`, and a 401 after one refresh still get the consent or reconnect reply.
+  - **Suggestions, all done.**
+    - The sheet-list mask adds `hidden`. Hidden sheets are never read, because they are an easy place to hide an
+      injection. Only their count is kept (`hiddenSheetsSkipped`), and the footer says "(숨김 시트 N개 제외)".
+    - The `unavailable` note no longer claims other sheets exist: "(… · 다른 시트가 있다면 지금은 읽지 못했어요)". When
+      the sheet list was read and shows exactly one visible sheet and no hidden one, there is no note at all.
+    - The listing reads `incompleteSearch` (in the field mask). A partial answer sets the additive
+      `DriveListResult.incomplete`, and the listing, including an empty answer, says "(일부 공유 드라이브는 검색하지 못해
+      목록이 빠졌을 수 있어요)".
+    - The `assertGDriveReadRequest` doc comment names the shared-drive parameters.
+  - **Residual.** The CSV fallback exports the spreadsheet's first sheet. If that sheet is hidden, Google may export it.
+    This happens only when the Sheets API read already failed.
 
 ## Personal v5 ratification record — ADR-0119 and the ADR-0117/ADR-0118 amendments (2026-10-12)
 

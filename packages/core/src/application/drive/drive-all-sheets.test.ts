@@ -12,7 +12,13 @@ import {
   renderUntrustedDocumentForPrompt,
 } from '../untrusted-document-readout';
 import { createDriveTurnHandler } from './drive-turn-handler';
-import { renderDriveDmOnly, renderDriveFirstSheetOnlyNote, renderDriveSummaryFooter, type DriveSourceCopy } from './drive-reply-renderer';
+import {
+  renderDriveDmOnly,
+  renderDriveFirstSheetOnlyNote,
+  renderDriveListing,
+  renderDriveSummaryFooter,
+  type DriveSourceCopy,
+} from './drive-reply-renderer';
 
 /**
  * DRV-2b (ADR-0118 amendment 2026-10-12 (c)): a spreadsheet summary carries every sheet the adapter read, each with its
@@ -192,7 +198,8 @@ describe('DRV-2b: every sheet of a spreadsheet in one bounded, guarded readout',
 describe('DRV-2b fallback: only the first sheet could be read', () => {
   it.each([
     ['service-disabled', '(첫 번째 시트만 읽었어요 · 모든 시트를 읽으려면 Google Sheets API가 필요해요)'],
-    ['unavailable', '(첫 번째 시트만 읽었어요 · 다른 시트는 지금 읽지 못했어요)'],
+    ['not-permitted', '(첫 번째 시트만 읽었어요 · 이 연결로는 시트별로 읽을 수 없어요)'],
+    ['unavailable', '(첫 번째 시트만 읽었어요 · 다른 시트가 있다면 지금은 읽지 못했어요)'],
     ['too-large', '(첫 번째 시트만 읽었어요 · 시트 내용이 너무 커서 한 번에 읽지 못했어요)'],
   ] as const)('%s: the summary still runs on the first sheet and the footer says so first', async (reason, note) => {
     const { outcome } = await summarize({ text: '항목,금액\n서버,100', firstSheetOnly: reason });
@@ -226,5 +233,49 @@ describe('DRV-2b stays DM-only and summary-on-request (ADR-0118 D5/D7)', () => {
     await handler.handle(ctx('최근 문서'));
     await handler.handle(ctx('드라이브에서 예산 찾아줘'));
     expect(reads).toEqual([]);
+  });
+});
+
+describe('DRV-2b CA review fixes in Core', () => {
+  it('a document the adapter flagged as credential-shaped (a token split by a cut) is withheld whole: nothing is sent', async () => {
+    const { outcome } = await summarize({ sections: sections(2), credentialShaped: true });
+    expect(replyText(outcome)).toContain('비밀값처럼 보이는 내용');
+  });
+
+  it('a sheet the source cut is marked (partial) in its header', async () => {
+    const { outcome } = await summarize({ sections: [{ title: 'A', text: '1,2', textTruncated: true }, { title: 'B', text: '3' }], textTruncated: true });
+    const body = (asSummary(outcome).readout as { body: string; truncated: boolean }).body;
+    expect(body).toBe('[Sheet 1/2] "A" (partial)\n1,2\n\n[Sheet 2/2] "B"\n3');
+    expect((asSummary(outcome).readout as { truncated: boolean }).truncated).toBe(true);
+  });
+
+  it('hidden sheets skipped are counted in the footer (숨김 시트 N개 제외), never named', async () => {
+    const { outcome } = await summarize({ sections: sections(1), hiddenSheetsSkipped: 2 });
+    expect(renderMessageContent(asSummary(outcome).footer, PLAIN_TEXT_MARKUP)).toBe(`(숨김 시트 2개 제외)\n${renderDriveSummaryFooter('ko')}`);
+    const both = await summarize({ text: '항목', firstSheetOnly: 'unavailable', hiddenSheetsSkipped: 1 });
+    expect(renderMessageContent(asSummary(both.outcome).footer, PLAIN_TEXT_MARKUP).split('\n')).toEqual([
+      '(첫 번째 시트만 읽었어요 · 다른 시트가 있다면 지금은 읽지 못했어요)',
+      '(숨김 시트 1개 제외)',
+      renderDriveSummaryFooter('ko'),
+    ]);
+    expect(renderDriveSummaryFooter('en', undefined, undefined, 1).split('\n')[0]).toBe('(1 hidden sheet skipped)');
+    const odd = await summarize({ sections: sections(1), hiddenSheetsSkipped: -3 });
+    expect(renderMessageContent(asSummary(odd.outcome).footer, PLAIN_TEXT_MARKUP)).toBe(renderDriveSummaryFooter('ko'));
+  });
+
+  it('DRV-2: a partial (incomplete) search says so, including an empty answer', () => {
+    const options = { timeZone: 'Asia/Seoul', now: NOW, language: 'ko' as const };
+    const listed = renderMessageContent(
+      renderDriveListing({ kind: 'recent' }, { files: [SHEET_FILE], matched: 1, matchedIsLowerBound: false, incomplete: true }, options),
+      PLAIN_TEXT_MARKUP,
+    );
+    expect(listed).toContain('(일부 공유 드라이브는 검색하지 못해 목록이 빠졌을 수 있어요)');
+    const empty = renderMessageContent(
+      renderDriveListing({ kind: 'search', name: '예산' }, { files: [], matched: 0, matchedIsLowerBound: false, incomplete: true }, options),
+      PLAIN_TEXT_MARKUP,
+    );
+    expect(empty).toContain('(일부 공유 드라이브는 검색하지 못해 목록이 빠졌을 수 있어요)');
+    const whole = renderMessageContent(renderDriveListing({ kind: 'recent' }, { files: [SHEET_FILE], matched: 1, matchedIsLowerBound: false }, options), PLAIN_TEXT_MARKUP);
+    expect(whole).not.toContain('공유 드라이브');
   });
 });

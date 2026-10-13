@@ -27,6 +27,10 @@ are in the DRV-2/DRV-2b implementation note under the ADR-0118 amendment in `DEC
   merge (a new pinned host and a port field).
 - **Deviation recorded.** `files.export` does not carry `supportsAllDrives`. It is not a documented export parameter,
   and an export works by id.
+- **Chief Architect review: CHANGES REQUIRED, now fixed.** The fixes are a fair 256 KiB share per sheet, the guard
+  before each adapter cut, the `not-permitted` fallback for a Sheets scope error (an orchestrator decision), hidden
+  sheets skipped and counted, a truthful single-sheet note, and `incompleteSearch` marking. See the review-fix bullet
+  in the DRV-2/DRV-2b note.
 
 ### v5 S1 NL-2 Phase C (model-first selection) — on branch `claude/v5-nl2-phase-c` (2026-10-13)
 

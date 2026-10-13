@@ -27,6 +27,15 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   closed method list. The self-check static host list includes it. No other host is added.
 - **Port.** `DriveDocument` gains optional `sections` and `firstSheetOnly` (additive, vendor-free). There is no
   migration, token or deps change.
+- **CA review fixes.**
+  - The 256 KiB adapter budget is shared fairly between sheets, so a large first sheet no longer starves the rest, and
+    each cut sheet is marked `(partial)`.
+  - The credential guard runs on raw titles, cut cells and cut sheets before the cut (`credentialShaped` withholds the
+    item).
+  - A Sheets `INSUFFICIENT_SCOPE` falls back with the `not-permitted` note.
+  - Hidden sheets are skipped and counted in the footer ("숨김 시트 N개 제외").
+  - The single-sheet note is truthful.
+  - `incompleteSearch` marks partial shared-drive listings.
 
 ## Unreleased — S1: NL-2 Phase C, model-first selection (ADR-0120 D6, ADR-0121 S1, 2026-10-13)
 

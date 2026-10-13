@@ -87,7 +87,7 @@ describe('GoogleDriveReader (ADR-0118 D2/D3, DRV-1)', () => {
     expect(list.searchParams.get('q')).toBe("trashed = false and mimeType != 'application/vnd.google-apps.folder'");
     expect(list.searchParams.get('pageSize')).toBe('10');
     expect(list.searchParams.get('orderBy')).toBe('modifiedTime desc');
-    expect(list.searchParams.get('fields')).toBe('files(id,name,mimeType,modifiedTime),nextPageToken');
+    expect(list.searchParams.get('fields')).toBe('files(id,name,mimeType,modifiedTime),nextPageToken,incompleteSearch');
     expect(calls[0]?.method).toBe('POST');
     for (const call of calls.slice(1)) {
       expect(call.method).toBe('GET');

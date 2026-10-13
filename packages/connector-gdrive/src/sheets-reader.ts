@@ -3,6 +3,8 @@ import {
   DRIVE_SHEET_TITLE_MAX_LENGTH,
   DRIVE_TEXT_MAX_BYTES,
   boundDriveLine,
+  containsCredentialFileContent,
+  containsCredentialMaterial,
   type DriveDocumentSection,
 } from '@quoky/core';
 import { GDriveEndpointNotAllowedError, GDriveResponseError } from './errors';
@@ -20,8 +22,9 @@ import { decodeBoundedUtf8 } from './text';
  *   (`valueRenderOption=FORMATTED_VALUE`: what the cell shows, never its formula), by rows. No write method exists.
  * - **Bounds:** at most {@link DRIVE_SHEETS_MAX} grid sheets (chart and data-source sheets are skipped), at most
  *   {@link GSHEETS_MAX_COLUMNS} columns and a row bound that keeps the whole read under {@link GSHEETS_MAX_CELLS} cells,
- *   each cell cut at {@link GSHEETS_CELL_MAX_CHARS}, and the whole text (titles included) cut at
- *   {@link DRIVE_TEXT_MAX_BYTES} across sheets. Every JSON answer is size-bounded by the caller.
+ *   each cell cut at {@link GSHEETS_CELL_MAX_CHARS}, and the whole text (titles included) kept inside
+ *   {@link DRIVE_TEXT_MAX_BYTES}, shared fairly between the sheets. Hidden sheets are never read (only counted). Every
+ *   JSON answer is size-bounded by the caller.
  * - **Untrusted:** a sheet title and every cell are written by whoever edits the spreadsheet. A title is sent back to
  *   Google only inside a quoted A1 range (apostrophes doubled), and returned to Core as bounded one-line data.
  */
@@ -32,8 +35,8 @@ export const GSHEETS_API_ORIGIN = 'https://sheets.googleapis.com';
 export const GSHEETS_SERVICE_LABEL = 'Google Sheets API';
 const SPREADSHEET_PATH = /^\/v4\/spreadsheets\/[A-Za-z0-9_-]{1,128}$/;
 const VALUES_PATH = /^\/v4\/spreadsheets\/[A-Za-z0-9_-]{1,128}\/values:batchGet$/;
-/** The spreadsheet metadata mask: sheet titles, indexes and types only. */
-export const GSHEETS_META_FIELDS = 'sheets.properties(title,index,sheetType)';
+/** The spreadsheet metadata mask: sheet titles, indexes, types and the hidden flag only. */
+export const GSHEETS_META_FIELDS = 'sheets.properties(title,index,sheetType,hidden)';
 /** The values mask: the values of each range only (no range echo, no spreadsheet id). */
 export const GSHEETS_VALUES_FIELDS = 'valueRanges.values';
 /** Values only, by rows: never `FORMULA`, never `UNFORMATTED_VALUE`. */
@@ -117,19 +120,33 @@ export interface GSheetTargets {
   readonly sheets: readonly GSheetTarget[];
   /** Grid sheets left out: beyond {@link DRIVE_SHEETS_MAX}, or with a title too long to address. */
   readonly dropped: boolean;
+  /**
+   * Hidden sheets, never read: a hidden sheet is where an injection is easiest to hide from the owner, and the owner
+   * did not see it. Only the count is kept (for the summary note), never a title.
+   */
+  readonly hidden: number;
 }
 
-/** The grid sheets of a metadata answer, in sheet order, bounded; chart and data-source sheets are skipped. */
+/**
+ * The visible grid sheets of a metadata answer, in sheet order, bounded; chart and data-source sheets are skipped and
+ * hidden sheets are counted, not read.
+ */
 export function parseGSheetTargets(payload: Record<string, unknown>): GSheetTargets {
   const listed = payload.sheets === undefined ? [] : payload.sheets;
   if (!Array.isArray(listed) || listed.length > GSHEETS_META_MAX_ENTRIES) throw new GDriveResponseError('sheets');
   const grid: GSheetTarget[] = [];
   let dropped = false;
+  let hidden = 0;
   for (const entry of listed) {
     const properties = isRecord(entry) && isRecord(entry.properties) ? entry.properties : undefined;
     if (properties === undefined) throw new GDriveResponseError('sheets');
     // An omitted type is the default (a grid); anything else (a chart, a data source) has no cell values to read.
     if (properties.sheetType !== undefined && properties.sheetType !== 'GRID') continue;
+    if (properties.hidden !== undefined && typeof properties.hidden !== 'boolean') throw new GDriveResponseError('sheets');
+    if (properties.hidden === true) {
+      hidden += 1;
+      continue;
+    }
     const title = properties.title;
     const index = properties.index === undefined ? 0 : properties.index;
     if (typeof title !== 'string' || title.length === 0 || typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
@@ -143,7 +160,7 @@ export function parseGSheetTargets(payload: Record<string, unknown>): GSheetTarg
   }
   grid.sort((a, b) => a.index - b.index);
   if (new Set(grid.map((sheet) => sheet.rawTitle)).size !== grid.length) throw new GDriveResponseError('sheets');
-  return { sheets: grid.slice(0, DRIVE_SHEETS_MAX), dropped: dropped || grid.length > DRIVE_SHEETS_MAX };
+  return { sheets: grid.slice(0, DRIVE_SHEETS_MAX), dropped: dropped || grid.length > DRIVE_SHEETS_MAX, hidden };
 }
 
 /** Rows read per sheet so that all ranges together stay within {@link GSHEETS_MAX_CELLS}. */
@@ -171,82 +188,122 @@ export interface GSheetsText {
   readonly sections: readonly DriveDocumentSection[];
   /** The sections joined (`[title]` then the rows), at most {@link DRIVE_TEXT_MAX_BYTES} of UTF-8. */
   readonly text: string;
-  /** A sheet, a row, a column, a cell or the end of the text was left out. */
+  /** A sheet, a row, a column, a cell or part of a sheet's text was left out. */
+  readonly truncated: boolean;
+  /**
+   * Credential-shaped text was found in a value BEFORE it was cut (a title, a cell over its bound, a sheet over its
+   * byte share): the cut text may carry only an unrecognizable fragment, so Core must withhold the whole item.
+   */
+  readonly credentialShaped: boolean;
+}
+
+/** Whether the credential guard (both detectors, as Core runs them) matches `text`. */
+function isCredentialShaped(text: string): boolean {
+  return containsCredentialMaterial(text) || containsCredentialFileContent(text);
+}
+
+interface RenderedSheet {
+  readonly title: string;
+  readonly header: string;
+  readonly text: string;
+  readonly bytes: number;
   readonly truncated: boolean;
 }
 
 /**
  * The text of a values answer: one CSV-style line per row (a cell's line breaks and tabs become spaces, a cell holding a
- * comma or a quote is quoted), each cell cut at {@link GSHEETS_CELL_MAX_CHARS}, the whole cut at
- * {@link DRIVE_TEXT_MAX_BYTES} (titles and separators counted) at a row boundary, or inside the row that crosses it on a
- * code-point boundary. Linear in the (already size-bounded) answer.
+ * comma or a quote is quoted), each cell cut at {@link GSHEETS_CELL_MAX_CHARS}. The {@link DRIVE_TEXT_MAX_BYTES} budget
+ * left after the headers is SHARED between the sheets (CA review, major): each sheet gets at least its equal share and
+ * a short sheet gives its unused share to the longer ones (water-filling, as Core shares its body budget), so a large
+ * first sheet can never starve the later ones. A sheet over its share is cut on a code-point boundary and marked.
+ * The credential guard reads every raw title, every raw cell that is cut, and every full sheet text that is cut, BEFORE
+ * the cut (CA review, minor). Linear in the (already size-bounded) answer.
  */
 export function renderGSheetsValues(payload: Record<string, unknown>, targets: GSheetTargets, rows: number): GSheetsText {
   const ranges = payload.valueRanges === undefined ? [] : payload.valueRanges;
   if (!Array.isArray(ranges) || ranges.length !== targets.sheets.length) throw new GDriveResponseError('sheets');
-  const sections: DriveDocumentSection[] = [];
-  const joined: string[] = [];
-  let truncated = targets.dropped;
-  let budget = DRIVE_TEXT_MAX_BYTES;
-  for (const [position, target] of targets.sheets.entries()) {
+  let credentialShaped = false;
+  const flagIfCredential = (raw: string): void => {
+    if (!credentialShaped && isCredentialShaped(raw)) credentialShaped = true;
+  };
+  // Pass 1: every sheet in full (bounded by the answer size and the row, column and cell bounds).
+  const rendered: RenderedSheet[] = targets.sheets.map((target, position) => {
     const range = ranges[position];
     if (!isRecord(range)) throw new GDriveResponseError('sheets');
     const values = range.values === undefined ? [] : range.values;
     if (!Array.isArray(values) || values.length > rows) throw new GDriveResponseError('sheets');
-    if (values.length === rows) truncated = true; // there may be more rows below the bound
-    const title = boundDriveLine(target.rawTitle, DRIVE_SHEET_TITLE_MAX_LENGTH);
-    const header = `${position > 0 ? '\n\n' : ''}[${title}]\n`;
-    const headerBytes = Buffer.byteLength(header, 'utf8');
-    if (headerBytes > budget) {
-      truncated = true;
-      break;
-    }
-    budget -= headerBytes;
+    // A title is untrusted and is cut to one bounded line: guard the raw title first.
+    flagIfCredential(target.rawTitle);
+    let truncated = values.length === rows; // there may be more rows below the bound
     const lines: string[] = [];
-    let cut = false;
     for (const row of values) {
       if (!Array.isArray(row) || row.length > GSHEETS_MAX_COLUMNS) throw new GDriveResponseError('sheets');
       if (row.length === GSHEETS_MAX_COLUMNS) truncated = true; // there may be more columns to the right
-      const rendered = row.map((cell) => renderCell(cell, () => (truncated = true)));
+      const cells = row.map((cell) => {
+        const result = renderCell(cell);
+        if (result.cut) {
+          truncated = true;
+          flagIfCredential(result.raw);
+        }
+        return result.text;
+      });
       // Trailing empty cells are dropped from the array (no regex over a hostile, comma-heavy line).
-      while (rendered.length > 0 && rendered[rendered.length - 1] === '') rendered.pop();
-      const line = `${lines.length > 0 ? '\n' : ''}${rendered.join(',')}`;
-      const bytes = Buffer.byteLength(line, 'utf8');
-      if (bytes > budget) {
-        const partial = decodeBoundedUtf8(Buffer.from(line, 'utf8'), budget).text;
-        if (partial.length > 0) lines.push(partial);
-        budget = 0;
-        cut = true;
-        break;
-      }
-      budget -= bytes;
-      lines.push(line);
+      while (cells.length > 0 && cells[cells.length - 1] === '') cells.pop();
+      lines.push(cells.join(','));
     }
-    const text = lines.join('');
-    sections.push({ title, text });
-    joined.push(header, text);
-    if (cut) {
-      truncated = true;
-      break;
-    }
+    const title = boundDriveLine(target.rawTitle, DRIVE_SHEET_TITLE_MAX_LENGTH);
+    const text = lines.join('\n');
+    return { title, header: `${position > 0 ? '\n\n' : ''}[${title}]\n`, text, bytes: Buffer.byteLength(text, 'utf8'), truncated };
+  });
+  // Pass 2: share the byte budget left after the headers (water-filling: shortest first).
+  const headerBytes = rendered.reduce((sum, sheet) => sum + Buffer.byteLength(sheet.header, 'utf8'), 0);
+  let room = Math.max(0, DRIVE_TEXT_MAX_BYTES - headerBytes);
+  const shares = new Array<number>(rendered.length).fill(0);
+  const order = rendered.map((sheet, index) => ({ index, need: sheet.bytes })).sort((a, b) => a.need - b.need);
+  for (const [position, entry] of order.entries()) {
+    const share = Math.floor(room / (order.length - position));
+    const given = Math.min(entry.need, share);
+    shares[entry.index] = given;
+    room -= given;
   }
-  if (sections.length < targets.sheets.length) truncated = true;
-  return { sections, text: joined.join(''), truncated };
+  const sections: DriveDocumentSection[] = [];
+  const joined: string[] = [];
+  let truncated = targets.dropped;
+  for (const [index, sheet] of rendered.entries()) {
+    const share = shares[index] ?? 0;
+    let text = sheet.text;
+    let sheetTruncated = sheet.truncated;
+    if (sheet.bytes > share) {
+      // The full sheet is guarded before its cut: a credential the cut splits would not be recognized afterwards.
+      flagIfCredential(sheet.text);
+      text = decodeBoundedUtf8(Buffer.from(sheet.text, 'utf8'), share).text;
+      sheetTruncated = true;
+    }
+    if (sheetTruncated) truncated = true;
+    sections.push({ title: sheet.title, text, ...(sheetTruncated ? { textTruncated: true } : {}) });
+    joined.push(sheet.header, text);
+  }
+  return { sections, text: joined.join(''), truncated, credentialShaped };
 }
 
-/** One cell as text: a string, number or boolean value only (anything else is empty), one line, bounded, CSV-quoted. */
-function renderCell(cell: unknown, onCut: () => void): string {
-  let raw = typeof cell === 'string' ? cell : typeof cell === 'number' || typeof cell === 'boolean' ? String(cell) : '';
+/**
+ * One cell as text: a string, number or boolean value only (anything else is empty), one line, bounded, CSV-quoted.
+ * `raw` is the uncut value, returned only when it was cut so the caller can guard it.
+ */
+function renderCell(cell: unknown): { readonly text: string; readonly cut: boolean; readonly raw: string } {
+  const raw = typeof cell === 'string' ? cell : typeof cell === 'number' || typeof cell === 'boolean' ? String(cell) : '';
+  let value = raw;
+  let cut = false;
   if (raw.length > GSHEETS_CELL_MAX_CHARS) {
-    onCut();
+    cut = true;
     let end = GSHEETS_CELL_MAX_CHARS;
     // Never split a surrogate pair.
     const last = raw.charCodeAt(end - 1);
     if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-    raw = raw.slice(0, end);
+    value = raw.slice(0, end);
   }
-  const line = raw.replace(/[\r\n\t\u2028\u2029]+/g, ' ');
-  return /[",]/.test(line) ? `"${line.replace(/"/g, '""')}"` : line;
+  const line = value.replace(/[\r\n\t\u2028\u2029]+/g, ' ');
+  return { text: /[",]/.test(line) ? `"${line.replace(/"/g, '""')}"` : line, cut, raw: cut ? raw : '' };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
