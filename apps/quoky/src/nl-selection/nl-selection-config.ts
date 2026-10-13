@@ -14,14 +14,15 @@ import { NL_SELECTION_TIMEOUT_MS } from '@quoky/core';
  *   before S1). `c` (Phase C) runs selection before the frozen Class B grammars, which become the fallback when the selector
  *   is unavailable; it acts in `active`, and in `shadow` it is grammar-hit shadowing (the grammar answers, the agreement is
  *   logged). It sends messages the host answers today to the selector (the D8 egress the owner allowed for S1), so it is
- *   its own flag. Ignored in `off`.
+ *   its own flag. Ignored in `off`. `c-shadow` (only with `active`, else `NL_PHASE_REQUIRES_ACTIVE`): Phase A stays fully
+ *   live; after a Class B grammar has answered, one background selection runs for the agreement log only.
  * - `QUOKY_NL_INTENT_MODEL`: the Claude CLI `--model` of a selection call (an alias such as `haiku`, or a full model name);
  *   default `haiku`. Adapter configuration only: Core never sees it.
  * - `QUOKY_NL_INTENT_TIMEOUT_MS` (ADR-0120 amendment A3): the per-call selection bound, an integer from 2000 to 8000;
  *   default `NL_SELECTION_TIMEOUT_MS` (6 s).
  */
 export type NlIntentModeConfig = 'off' | 'shadow' | 'active';
-export type NlPhaseConfig = 'a' | 'c';
+export type NlPhaseConfig = 'a' | 'c' | 'c-shadow';
 
 export interface NlSelectionConfig {
   readonly mode: NlIntentModeConfig;
@@ -42,6 +43,7 @@ export const NlSelectionConfigErrorCode = {
   NL_GRAMMAR_YIELD_INVALID: 'NL_GRAMMAR_YIELD_INVALID',
   NL_INTENT_TIMEOUT_INVALID: 'NL_INTENT_TIMEOUT_INVALID',
   NL_PHASE_INVALID: 'NL_PHASE_INVALID',
+  NL_PHASE_REQUIRES_ACTIVE: 'NL_PHASE_REQUIRES_ACTIVE',
 } as const;
 export type NlSelectionConfigErrorCode = (typeof NlSelectionConfigErrorCode)[keyof typeof NlSelectionConfigErrorCode];
 
@@ -82,8 +84,12 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
     throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_GRAMMAR_YIELD_INVALID);
   }
   const rawPhase = env.QUOKY_NL_PHASE;
-  if (rawPhase !== undefined && rawPhase !== 'a' && rawPhase !== 'c') {
+  if (rawPhase !== undefined && rawPhase !== 'a' && rawPhase !== 'c' && rawPhase !== 'c-shadow') {
     throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_PHASE_INVALID);
+  }
+  // `c-shadow` keeps Phase A live and shadows only grammar hits; without `active` there is no live Phase A to keep.
+  if (rawPhase === 'c-shadow' && rawMode !== 'active') {
+    throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_PHASE_REQUIRES_ACTIVE);
   }
   const rawTimeout = env.QUOKY_NL_INTENT_TIMEOUT_MS;
   let timeoutMs = NL_SELECTION_TIMEOUT_MS;
@@ -96,7 +102,7 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
     mode: (rawMode as NlIntentModeConfig | undefined) ?? 'off',
     model: rawModel ?? DEFAULT_NL_INTENT_MODEL,
     grammarYield: rawYield === 'on',
-    phase: rawPhase === 'c' ? 'c' : 'a',
+    phase: rawPhase === 'c' || rawPhase === 'c-shadow' ? rawPhase : 'a',
     timeoutMs,
   };
 }

@@ -1052,7 +1052,7 @@ export interface ConversationRuntimeDeps {
    * validation, the clarification state, `lastSelection` and the interpretation preferences belong to the service.
    */
   readonly nlSelection?: Pick<NlSelectionService, 'mode' | 'decide'> &
-    Partial<Pick<NlSelectionService, 'takePending' | 'recordGrammarSelection' | 'clearLastSelection' | 'yieldsToSelection' | 'grammarYieldEnabled' | 'phaseCEnabled'>>;
+    Partial<Pick<NlSelectionService, 'takePending' | 'recordGrammarSelection' | 'clearLastSelection' | 'yieldsToSelection' | 'grammarYieldEnabled' | 'phaseCEnabled' | 'phaseCShadowEnabled' | 'shadowGrammarHit'>>;
   readonly logger: Logger;
 }
 
@@ -2227,6 +2227,7 @@ export class ConversationRuntime {
     try {
       const result = await this.handleInner(message);
       await this.settleNlLastSelection(message);
+      this.startAfterReply(message);
       return result;
     } catch (err) {
       // An error turn ends the follow-up window too: whatever was recorded this turn no longer describes a shown listing.
@@ -3033,6 +3034,19 @@ export class ConversationRuntime {
       const phaseC = await this.dispatchPreClassifyPhaseC(message, session, actor, applyAnchor, userMemory.id, nlPending);
       if (phaseC.kind === 'responded') return phaseC.result;
       nlEarly = phaseC.early;
+    } else if (this.nlPhaseCShadow(lookup.pending)) {
+      // S1 `c-shadow`: exactly the Phase A dispatch; a Class B answer also queues one background selection that starts
+      // only after this turn's reply was handed back (`startAfterReply`) and only logs its agreement.
+      const ctx = this.turnHandlerContext(message, session, actor, applyAnchor);
+      let responder: ConversationTurnHandler | undefined;
+      const handled = await this.dispatchTurnHandlers('pre-classify', this.turnHandlersByStage['pre-classify'], ctx, (handler) => {
+        responder = handler;
+      });
+      if (handled) {
+        const probe = responder === undefined ? null : this.nlClassBProbe(responder, ctx);
+        if (probe !== null) this.queueGrammarHitShadow(message, session, actor, probe);
+        return this.respondTurnHandler(message, session, actor, userMemory.id, handled);
+      }
     } else {
       const preClassifyDispatch = this.runTurnHandlers('pre-classify', () =>
         this.turnHandlerContext(message, session, actor, applyAnchor),
@@ -3130,6 +3144,63 @@ export class ConversationRuntime {
   /** ADR-0120 D6 Phase C (S1) is on for this turn: `QUOKY_NL_PHASE=c`, `active` or `shadow`, and no approval pending. */
   private nlPhaseC(pending: unknown): boolean {
     return !pending && this.deps.nlSelection?.phaseCEnabled?.() === true;
+  }
+
+  /** S1 `c-shadow` is on for this turn: `QUOKY_NL_PHASE=c-shadow` with `active`, and no approval pending. */
+  private nlPhaseCShadow(pending: unknown): boolean {
+    return !pending && this.deps.nlSelection?.phaseCShadowEnabled?.() === true && this.deps.nlSelection.shadowGrammarHit !== undefined;
+  }
+
+  /** Background work that must start only after a turn's reply was handed back (by message object). */
+  private readonly nlAfterReply = new WeakMap<InboundMessage, () => Promise<void>>();
+
+  /** The last background run started after a reply (tests await it; production never does). */
+  lastAfterReplyRun: Promise<void> = Promise.resolve();
+
+  /**
+   * S1 `c-shadow`: queue the grammar-hit selection for after the reply. The inputs are this turn's snapshot (the owner's
+   * text, the session's metadata as the turn saw it, the offered entries); the chat provider is resolved in the
+   * background, so nothing here delays the reply.
+   */
+  private queueGrammarHitShadow(message: InboundMessage, session: Session, actor: Actor, grammar: NlClassBProbe): void {
+    const now = this.clock();
+    const entries = [...this.nlCatalog().values()].map((owned) => owned.entry);
+    this.nlAfterReply.set(message, async () => {
+      const chat = await this.nlChatProvider({ capability: Capability.GENERAL_CHAT } as Intent, session, actor);
+      await this.deps.nlSelection?.shadowGrammarHit?.({
+        ...(chat !== undefined ? { chatProviderId: chat.id, chatProviderLocality: chat.locality } : {}),
+        text: message.text,
+        attachmentCount: message.attachments?.length ?? 0,
+        ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
+        session: { id: session.id, ...(session.metadata !== undefined ? { metadata: session.metadata } : {}) },
+        actor,
+        now,
+        entries,
+        route: 'class-b',
+        grammar,
+        pending: null,
+      });
+    });
+  }
+
+  /** Start the queued after-reply work on the next macrotask, after `handle` has resolved; never throws. */
+  private startAfterReply(message: InboundMessage): void {
+    const run = this.nlAfterReply.get(message);
+    if (run === undefined) return;
+    this.nlAfterReply.delete(message);
+    this.lastAfterReplyRun = new Promise<void>((resolve) => {
+      setImmediate(() => {
+        run()
+          .catch((error: unknown) => {
+            try {
+              this.deps.logger.warn('nl selection after-reply failed', { errorName: error instanceof Error ? error.name : typeof error });
+            } catch {
+              // best-effort
+            }
+          })
+          .finally(resolve);
+      });
+    });
   }
 
   /** ADR-0120 amendment A2: selection would run for this turn (the selector is where this turn's chat would go). */
@@ -3540,10 +3611,12 @@ export class ConversationRuntime {
     stage: TurnHandlerStage,
     handlers: readonly ConversationTurnHandler[],
     ctx: TurnHandlerContext,
+    onResponded?: (handler: ConversationTurnHandler) => void,
   ): Promise<TurnHandlerOutcome | null> {
     for (const handler of handlers) {
       const handled = await handler.handle(ctx);
       if (handled) {
+        onResponded?.(handler);
         this.deps.logger.info('turn handler responded', {
           handlerId: handler.id,
           stage,

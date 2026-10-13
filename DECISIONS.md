@@ -21601,8 +21601,15 @@ Decisions:
   `apps/quoky/src/nl-selection/nl-selection-config.ts` (`NL_PHASE_INVALID` otherwise). A separate key, like
   `QUOKY_NL_GRAMMAR_YIELD`, because it widens egress; D11's `QUOKY_NL_INTENT_MODE` values are unchanged.
   - `active` + `c`: Phase C (selection acts first at a Class B position).
-  - `shadow` + `c`: grammar-hit shadowing. The grammar answers exactly as in Phase A; one background selection runs and
-    only its content-free agreement is logged (D8 egress, no added latency). This is the recommended first step.
+  - `shadow` + `c`: grammar-hit shadowing with selection off for fall-through messages too (Phase A selection stops), so
+    it is not a rollout step for the live service.
+  - `active` + `c-shadow` (the recommended first step; `c-shadow` with any other mode fails startup with
+    `NL_PHASE_REQUIRES_ACTIVE`): Phase A stays fully live — grammars answer instantly and selection acts on fall-through.
+    When a Class B grammar answered (`dispatchTurnHandlers` reports the responder, its probe hit), one background
+    selection is queued and started on the next macrotask after `handle` resolved (`startAfterReply`), so it never delays
+    a reply. Same bounds as any selection (one call, the configured bound, no retry, the credential guard, the family and
+    locality rule; D8 yes covers it); it writes no session or actor state (`NlSelectionService.shadowGrammarHit`), and its
+    only output is the `nl_selection.agreement` line with `mode: shadow`. The work-surface route is not shadowed here.
   - `off`, or phase `a`: byte-identical to before S1. The runtime never asks a probe (pinned by the dispatch test).
 - **Interface (additive, ARCHITECTURE.md §13).** `ConversationTurnHandler.classBProbe?(ctx)` returns
   `NlClassBProbe | null` = `{ grammarId, selection? }`: what the handler's frozen Class B grammar WOULD answer, synchronously
@@ -21646,6 +21653,9 @@ Decisions:
   case by case. Every entry with a Class B grammar has >= 25 tagged phrasings (Jira 27, GitHub 27, Slack 26, Confluence
   27, calendar 27, mail 25, Drive 28, to-dos 26, help 28; 243 tagged in all). New negatives: narrowing follow-ups without
   a previous selection, negated/write/how-to phrasings next to the grammars, and quoted grammar phrases.
+- **Why Phase C (measured, the owner's principle "보다 나은 결과물", not imitation):** on the same 242 grammar-handled
+  messages the grammars are 82.6% exact and the selector 97.9–99.2% exact with 0 wrong (evaluation below). That gap is
+  the justification for model-first selection; the `c-shadow` agreement data checks it on live traffic before `c`.
 - **Measured: the grammars on their own hits (offline, production flags).** Of 242 tagged positives the grammar's own
   catalog equivalent matches the golden `{entry, args}` exactly in 200 (82.6%) and the entry in 239 (98.8%). Most
   differences are representation (an absolute date for `fri`/`10-20`, a count question answered by the list, an unread
@@ -21666,11 +21676,11 @@ Decisions:
   Node 22 host change landed in between. L2 (warm standby) and L3 (prompt trim; 18 KB today) were not needed for the gate,
   so they were not done (the simpler design, measured). Ledger: Phase C adds at most one Anthropic call per owner message
   and only on grammar-hit turns (the S0 budget is at most 2 per message and 60 per hour).
-  - **Recommendation (owner decision):** roll out `shadow` + `c` first (no added latency, agreement data), then `active` +
-    `c`. If +1.4 s is too slow in daily use, keep Phase A + A2 (today's production) and retire grammars one at a time on
+  - **Recommendation (owner decision):** roll out `active` + `c-shadow` first (Phase A unchanged, no added reply latency,
+    live agreement data), then `active` + `c`. If +1.4 s is too slow in daily use, keep Phase A + A2 (today's production) and retire grammars one at a time on
     the D10 agreement data, or run Phase C only for grammars whose agreement is below the D10 threshold. A parallel grammar
     race is not proposed: the answer still waits for the selector, so it saves nothing (and ADR-0121 D10 rejects it).
-- **Tests.** `pnpm build`, `pnpm typecheck` and `pnpm test` pass (435 files, 13,845 tests), and `git diff
+- **Tests.** `pnpm build`, `pnpm typecheck` and `pnpm test` pass (435 files, 13,850 tests), and `git diff
   --check` is clean. New: `nl-selection-phase-c.test.ts` (the phase switch, the locality rule, the content-free agreement
   log, shadow, the prompt rule). In `nl-intent-dispatch.test.ts`: the Phase C corpus dispatch (both A2 settings, the tag
   check, at least 25 per entry), probe purity over the corpus, Class A precedence (the same claims and byte-identical

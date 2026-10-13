@@ -52,10 +52,11 @@ export const NL_INTENT_MODES: readonly NlIntentMode[] = ['off', 'shadow', 'activ
  * ADR-0120 D6 phase (S1, `QUOKY_NL_PHASE`). `a` (the default): selection runs only on turns every earlier route left for
  * chat. `c`: selection also runs first where a frozen Class B grammar would answer, and the grammar is the fallback when
  * the selector is unavailable. Phase C acts only in `active`; in `shadow` it is grammar-hit shadowing (the grammar
- * answers, the selection and its agreement are logged).
+ * answers, the selection and its agreement are logged). `c-shadow` (only with `active`): Phase A stays fully live, and
+ * after a Class B grammar has answered, one background selection runs and only its agreement is logged.
  */
-export type NlPhase = 'a' | 'c';
-export const NL_PHASES: readonly NlPhase[] = ['a', 'c'];
+export type NlPhase = 'a' | 'c' | 'c-shadow';
+export const NL_PHASES: readonly NlPhase[] = ['a', 'c', 'c-shadow'];
 
 export const NL_SELECTION_TIMEOUT_MS = 6_000;
 
@@ -258,6 +259,28 @@ export class NlSelectionService {
    */
   phaseCEnabled(): boolean {
     return this.deps.phase === 'c' && (this.mode === 'active' || this.mode === 'shadow');
+  }
+
+  /**
+   * S1 `c-shadow`: Phase A stays live (grammars answer, selection acts on fall-through) and a grammar-hit turn gets one
+   * background selection after its reply, for the agreement log only. Only with `active`.
+   */
+  phaseCShadowEnabled(): boolean {
+    return this.deps.phase === 'c-shadow' && this.mode === 'active';
+  }
+
+  /**
+   * S1 `c-shadow`: the background selection for a turn a Class B grammar already answered. Same bounds as any selection
+   * (the D3 preparation, the credential guard, the family and locality rule, one call, the configured bound, no retry);
+   * it acts on nothing and writes no session or actor state — its only output is one `nl_selection.agreement` line
+   * (`mode: shadow`). Never throws; the caller must start it only after the reply was handed back.
+   */
+  shadowGrammarHit(turn: NlSelectionTurn): Promise<void> {
+    if (!this.phaseCShadowEnabled() || turn.grammar === undefined || turn.entries.length === 0) return Promise.resolve();
+    this.lastShadowRun = this.shadow(turn).catch((error: unknown) =>
+      this.log('warn', 'nl_selection.shadow_failed', { errorName: error instanceof Error ? error.name : typeof error }),
+    );
+    return this.lastShadowRun;
   }
 
   /** Cheap pre-check (no router call): the flag is on and the mode is `active`. */

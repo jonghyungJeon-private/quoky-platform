@@ -102,6 +102,42 @@ describe('NlSelectionService — Phase C switch (ADR-0120 D6, ADR-0121 S1)', () 
   });
 });
 
+describe('NlSelectionService — S1 c-shadow (Phase A live, grammar hits shadowed after the reply)', () => {
+  const grammar: NlClassBProbe = { grammarId: 'calendar-question', selection: { entryId: 'calendar.events', args: { range: 'this-week' } } };
+
+  it('is on only with c-shadow in active; c and a never shadow a grammar hit this way', () => {
+    expect(harness({ mode: 'active', phase: 'c-shadow' }).service.phaseCShadowEnabled()).toBe(true);
+    expect(harness({ mode: 'active', phase: 'c-shadow' }).service.phaseCEnabled()).toBe(false);
+    for (const [mode, phase] of [['shadow', 'c-shadow'], ['off', 'c-shadow'], ['active', 'c'], ['active', 'a']] as const) {
+      expect(harness({ mode, phase }).service.phaseCShadowEnabled(), `${mode}/${phase}`).toBe(false);
+    }
+  });
+
+  it('one bounded call, only an agreement line (mode shadow), no session or actor write; a no-op outside c-shadow', async () => {
+    let writes = 0;
+    const h = harness({ mode: 'active', phase: 'c-shadow', script: [out('calendar.events', { range: 'this-week' })] });
+    const session = { id: 'sess-c', metadata: { untouched: true } };
+    const counting = new NlSelectionService({
+      mode: 'active',
+      phase: 'c-shadow',
+      router: { select: async () => ({ id: 'scripted-selector', capabilities: [], isAvailable: async () => true, execute: async (request) => { h.calls.push(request); return { text: out('calendar.events', { range: 'this-week' }), artifacts: [] }; } }) },
+      sessions: { updateMetadataEntry: async () => { writes += 1; return null; } },
+      actors: { get: async () => { writes += 1; return null; }, save: async (actor) => { writes += 1; return actor; } },
+      timeZone: 'Asia/Seoul',
+      logger: { info: (event, fields) => void h.logs.push({ event, ...(fields ? { fields } : {}) }), warn: () => undefined, error: () => undefined },
+    });
+    const turn = { text: '이번 주 일정 보여줘', attachmentCount: 0, session, actor: { id: 'owner', displayName: 'O', identities: [], createdAt: T0 }, now: T0, entries: ALL, route: 'class-b' as const, chatProviderId: 'scripted-selector', grammar, pending: null };
+    await counting.shadowGrammarHit(turn);
+    expect(h.calls).toHaveLength(1);
+    expect(writes).toBe(0);
+    expect(agreementLines(h.logs)).toEqual([expect.objectContaining({ grammarId: 'calendar-question', entryId: 'calendar.events', outcome: 'execute', mode: 'shadow', agree: true })]);
+    // Outside c-shadow nothing is called.
+    const off = harness({ mode: 'active', phase: 'c', script: [out('calendar.events')] });
+    await off.service.shadowGrammarHit({ ...turn });
+    expect(off.calls).toHaveLength(0);
+  });
+});
+
 describe('NlSelectionService — S1 locality hardening (NL-1 residual)', () => {
   it('an equal family with a different execution locality is refused before any call', async () => {
     const local = harness({ family: 'claude-cli', locality: 'LOCAL', script: [out('jira.issues')] });

@@ -294,7 +294,7 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
   }
 
   /** S1: switch the live service to Phase C (and a mode) for one scenario; the selection cache is cleared on entry. */
-  async function withPhase<T>(phase: 'a' | 'c', mode: 'off' | 'shadow' | 'active', run: () => Promise<T>): Promise<T> {
+  async function withPhase<T>(phase: 'a' | 'c' | 'c-shadow', mode: 'off' | 'shadow' | 'active', run: () => Promise<T>): Promise<T> {
     const service = (runtime as unknown as { deps: { nlSelection: { mode: string; cache: Map<string, unknown>; deps: { phase?: string } } } }).deps.nlSelection;
     const saved = { mode: service.mode, phase: service.deps.phase };
     service.mode = mode;
@@ -1120,6 +1120,86 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       spy.mockRestore();
       selectorAnswer = none;
     }
+  });
+
+  it('S1 c-shadow: Phase A stays live — the grammar reply is handed back before the background selection starts, only the agreement is logged, and no session or preference state changes', async () => {
+    const service = (runtime as unknown as { deps: { nlSelection: { lastShadowRun: Promise<void>; deps: { logger: { info: (event: string, fields?: Record<string, unknown>) => void } } } } }).deps.nlSelection;
+    const lines: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+    const spy = vi.spyOn(service.deps.logger, 'info').mockImplementation((event, fields) => void lines.push({ event, ...(fields ? { fields } : {}) }));
+    try {
+      const text = '다음 주 일정 알려줘';
+      const phaseA = await withPhase('a', 'active', () => turnOf(text));
+      const ctx = context();
+      await withPhase('c-shadow', 'active', async () => {
+        selectorAnswer = answer('calendar.events', { range: 'next-week' });
+        const start = marks();
+        const result = await send(text, ctx);
+        order.push('replied');
+        const stateAtReply = JSON.stringify((await sessions.openForContext(ctx, ownerActor.id)).metadata ?? {});
+        const preferencesAtReply = JSON.stringify((await storage.actors.get(ownerActor.id))?.metadata ?? {});
+        await (runtime as unknown as { lastAfterReplyRun: Promise<void> }).lastAfterReplyRun;
+        await service.lastShadowRun;
+        const turnOrder = order.slice(start.order);
+        // The grammar answered exactly as in Phase A, and the selector ran once, only after the reply was handed back.
+        expect(result.reply.text).toBe(phaseA.result.reply.text);
+        expect(claims.slice(start.claims).map((claim) => claim.handlerId)).toEqual(['calendar']);
+        expect(selected.length).toBe(start.selected);
+        expect(turnOrder.filter((step) => step === 'select')).toHaveLength(1);
+        expect(turnOrder.indexOf('replied')).toBeLessThan(turnOrder.indexOf('select'));
+        expect(lines.filter((line) => line.event === 'nl_selection.agreement').at(-1)?.fields).toMatchObject({
+          grammarId: 'calendar-question',
+          entryId: 'calendar.events',
+          outcome: 'execute',
+          mode: 'shadow',
+          agree: true,
+        });
+        expect(JSON.stringify((await sessions.openForContext(ctx, ownerActor.id)).metadata ?? {})).toBe(stateAtReply);
+        expect(JSON.stringify((await storage.actors.get(ownerActor.id))?.metadata ?? {})).toBe(preferencesAtReply);
+
+        // Fall-through messages keep Phase A's live selection.
+        selectorAnswer = answer('jira.issues');
+        const fallThrough = await turnOf('지라 쪽 내 건들 좀 훑어볼래 c-shadow');
+        expect(fallThrough.order.slice(0, 2)).toEqual(['classify', 'select']);
+        expect(fallThrough.served).toEqual([expect.objectContaining({ entryId: 'jira.issues' })]);
+      });
+    } finally {
+      spy.mockRestore();
+      selectorAnswer = none;
+    }
+  });
+
+  it('S1: off, a, c and c-shadow behave distinctly on one grammar-hit message', async () => {
+    const text = '모레 일정 보여줘';
+    const runIn = async (phase: 'a' | 'c' | 'c-shadow', mode: 'off' | 'active') =>
+      withPhase(phase, mode, async () => {
+        selectorAnswer = answer('calendar.events', { range: 'day-after-tomorrow' });
+        const before = order.length;
+        const turn = await turnOf(text);
+        await (runtime as unknown as { lastAfterReplyRun: Promise<void> }).lastAfterReplyRun;
+        await (runtime as unknown as { deps: { nlSelection: { lastShadowRun: Promise<void> } } }).deps.nlSelection.lastShadowRun;
+        return { ...turn, selectsTotal: order.slice(before).filter((step) => step === 'select').length };
+      });
+    const off = await runIn('a', 'off');
+    const a = await runIn('a', 'active');
+    const c = await runIn('c', 'active');
+    const shadow = await runIn('c-shadow', 'active');
+    // off and a: the grammar answers, no selector call at all.
+    for (const turn of [off, a]) {
+      expect(turn.claims).toEqual(['calendar']);
+      expect(turn.selects).toBe(0);
+    }
+    // c: the selector answers first and serves the read; the grammar does not.
+    expect(c.claims).toEqual([]);
+    expect(c.selects).toBe(1);
+    expect(c.served).toEqual([expect.objectContaining({ entryId: 'calendar.events' })]);
+    // c-shadow: the grammar answers within the turn (no selection in it), the selector runs once after the reply.
+    expect(shadow.claims).toEqual(['calendar']);
+    expect(shadow.selects).toBe(0);
+    expect(shadow.served).toEqual([]);
+    expect(shadow.selectsTotal).toBe(1);
+    expect(shadow.result.reply.text).toBe(a.result.reply.text);
+    expect([off.selectsTotal, a.selectsTotal, c.selectsTotal]).toEqual([0, 0, 1]);
+    selectorAnswer = none;
   });
 
   it('S1: "그 중에 …" after an intervening chat turn asks the numbered question in Phase C too (the selector is told there is no previous selection)', async () => {

@@ -11,8 +11,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   selector BEFORE the frozen Class B grammars (calendar question, mail and Drive listings, work lookups and to-do list,
   help-intent, the classifier's personal-work surface). The grammar answers only when the selector is unavailable (down,
   timeout, malformed, provider family or locality mismatch, credential, over 600 characters). `none` goes to the
-  classifier and honest chat, as in Phase A. Class A routes are untouched. `c` with `shadow` is grammar-hit shadowing:
-  the grammar answers and only the agreement is logged. Default `a`: byte-identical to before.
+  classifier and honest chat, as in Phase A. Class A routes are untouched. `c-shadow` (only with `active`, else a startup
+  error) keeps Phase A fully live and runs one background selection after a grammar's reply, for the agreement log only.
+  Default `a`: byte-identical to before.
 - **Agreement log** `nl_selection.agreement` (content-free: grammar id, entry ids, outcome, agree flags, latency) for the
   ADR-0120 D10 grammar-retirement data.
 - **Hardening.** Selection also requires the chat provider's declared execution locality to equal the selector's

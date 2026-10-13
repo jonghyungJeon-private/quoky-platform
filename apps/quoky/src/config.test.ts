@@ -576,6 +576,13 @@ describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
     }
   });
 
+  it('QUOKY_NL_PHASE=c-shadow is valid only with QUOKY_NL_INTENT_MODE=active; any other combination fails startup', () => {
+    expect(loadConfig(env({ QUOKY_NL_PHASE: 'c-shadow', QUOKY_NL_INTENT_MODE: 'active' })).nlSelection).toMatchObject({ mode: 'active', phase: 'c-shadow' });
+    for (const mode of [undefined, 'off', 'shadow'] as const) {
+      expect(() => loadConfig(env({ QUOKY_NL_PHASE: 'c-shadow', ...(mode !== undefined ? { QUOKY_NL_INTENT_MODE: mode } : {}) })), String(mode)).toThrow(/^NL_PHASE_REQUIRES_ACTIVE$/);
+    }
+  });
+
   it.each(['', '--model', 'haiku model', 'x'.repeat(200)])('rejects a malformed selection model %j', (value) => {
     expect(() => loadConfig(env({ QUOKY_NL_INTENT_MODEL: value }))).toThrow(/^NL_INTENT_MODEL_INVALID$/);
   });
