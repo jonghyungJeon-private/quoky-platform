@@ -576,26 +576,46 @@ const STALE_SOCKET_CODES: ReadonlySet<string> = new Set(['ECONNRESET', 'EPIPE', 
  */
 function retryOnceOnStaleSocket(original: Handler, redispatch: (handler: Handler) => boolean): Handler {
   let retried = false;
-  let sawResponse = false;
+  // A repeat is safe only for the stale-socket case: the whole request went out and nothing at all came back.
+  let requestSent = false;
+  let responseActivity = false;
   const wrapped: Handler = {
     ...(original as object),
     onConnect: (abort: (err?: Error) => void) => original.onConnect?.call(original, abort),
+    onRequestSent: () => {
+      requestSent = true;
+      return (original.onRequestSent as (() => void) | undefined)?.call(original);
+    },
+    onResponseStarted: () => {
+      responseActivity = true;
+      return (original.onResponseStarted as (() => void) | undefined)?.call(original);
+    },
     onError: (err: Error) => {
       const code = (err as { code?: unknown }).code;
-      if (!retried && !sawResponse && typeof code === 'string' && STALE_SOCKET_CODES.has(code)) {
+      if (!retried && requestSent && !responseActivity && typeof code === 'string' && STALE_SOCKET_CODES.has(code)) {
         retried = true;
+        requestSent = false;
         if (redispatch(wrapped)) return;
       }
       return original.onError?.call(original, err);
     },
     onHeaders: (statusCode: number, headers: Buffer[], resume: () => void, statusText: string) => {
-      if (statusCode >= 200) sawResponse = true;
+      responseActivity = true; // any status, 1xx included
       return original.onHeaders?.call(original, statusCode, headers, resume, statusText) ?? true;
     },
-    onData: (chunk: Buffer) => original.onData?.call(original, chunk) ?? true,
+    onData: (chunk: Buffer) => {
+      responseActivity = true;
+      return original.onData?.call(original, chunk) ?? true;
+    },
     onComplete: (trailers: string[] | null) => original.onComplete?.call(original, trailers),
     onBodySent: (chunk: unknown, total?: number) => (original.onBodySent as ((...args: unknown[]) => void) | undefined)?.call(original, chunk, total),
   };
+  if (typeof original.onUpgrade === 'function') {
+    wrapped.onUpgrade = (statusCode: number, headers: Buffer[] | string[] | null, socket: import('node:stream').Duplex) => {
+      responseActivity = true;
+      return original.onUpgrade?.call(original, statusCode, headers, socket);
+    };
+  }
   return wrapped;
 }
 

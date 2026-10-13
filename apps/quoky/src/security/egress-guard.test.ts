@@ -390,6 +390,75 @@ describe('guarded dispatcher: observe versus enforce', () => {
     expect(h.ledger.of('request')).toHaveLength(2);
   });
 
+  // Raw-socket replies for the "something came back / not fully sent" cases (a reset after response activity must surface).
+  const rawServer = async (onData: (socket: import('node:net').Socket, calls: number) => void) => {
+    const net = await import('node:net');
+    let calls = 0;
+    const raw = net.createServer((socket) => {
+      calls += 1;
+      const n = calls;
+      let seen = '';
+      socket.on('error', () => undefined);
+      socket.on('data', (d) => {
+        seen += d.toString();
+        if (seen.includes('\r\n\r\n')) onData(socket, n);
+      });
+    });
+    await new Promise<void>((resolve) => raw.listen(0, '127.0.0.1', resolve));
+    return { raw, port: (raw.address() as AddressInfo).port, calls: () => calls };
+  };
+  const rawPoll = (h: Harness, rawPort: number, body = '{"timeout":50}') =>
+    h.fetch(`http://svc.example.test:${rawPort}/bot1/getUpdates`, { method: 'POST', body });
+
+  it('retry: a reset after a 1xx response is not repeated', async () => {
+    const h = harness('observe', { hosts: TG, answers: TG_ANSWERS });
+    const s = await rawServer((socket) => {
+      socket.write('HTTP/1.1 102 Processing\r\n\r\n');
+      setTimeout(() => socket.destroy(), 20);
+    });
+    try {
+      await expect(rawPoll(h, s.port)).rejects.toThrow();
+      expect(s.calls()).toBe(1);
+    } finally {
+      s.raw.close();
+    }
+  });
+
+  it('retry: a reset after partial response data is not repeated', async () => {
+    const h = harness('observe', { hosts: TG, answers: TG_ANSWERS });
+    const s = await rawServer((socket) => {
+      socket.write('HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\npartial');
+      setTimeout(() => socket.destroy(), 20);
+    });
+    try {
+      await expect(rawPoll(h, s.port).then((r) => r.text())).rejects.toThrow();
+      expect(s.calls()).toBe(1);
+    } finally {
+      s.raw.close();
+    }
+  });
+
+  it('retry: a reset before the request body was fully sent (onRequestSent not reached) is not repeated', async () => {
+    const h = harness('observe', { hosts: TG, answers: TG_ANSWERS });
+    const net = await import('node:net');
+    let calls = 0;
+    // Resets as soon as the connection opens and never reads the request: the body is still being written.
+    const raw = net.createServer((socket) => {
+      calls += 1;
+      socket.on('error', () => undefined);
+      socket.resetAndDestroy();
+    });
+    await new Promise<void>((resolve) => raw.listen(0, '127.0.0.1', resolve));
+    const rawPort = (raw.address() as AddressInfo).port;
+    try {
+      const big = 'x'.repeat(8 * 1024 * 1024);
+      await expect(rawPoll(h, rawPort, big)).rejects.toThrow();
+      expect(calls).toBe(1);
+    } finally {
+      raw.close();
+    }
+  });
+
   it('retry: a poll is repeated at most once', async () => {
     const h = harness('observe', { hosts: TG, answers: TG_ANSWERS });
     let calls = 0;
