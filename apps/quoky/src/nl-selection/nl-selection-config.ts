@@ -12,9 +12,9 @@ import { NL_SELECTION_TIMEOUT_MS } from '@quoky/core';
  *   messages the host answers today to the selector, so it is its own flag.
  * - `QUOKY_NL_PHASE` (ADR-0120 D6, ADR-0121 S1): exactly `a`, `c` or `c-shadow`; default `a` (Phase A, every turn byte-identical to
  *   before S1). `c` (Phase C) runs selection before the frozen Class B grammars, which become the fallback when the selector
- *   is unavailable; it acts in `active`, and in `shadow` it is grammar-hit shadowing (the grammar answers, the agreement is
- *   logged). It sends messages the host answers today to the selector (the D8 egress the owner allowed for S1), so it is
- *   its own flag. Ignored in `off`. `c-shadow` (only with `active`, else `NL_PHASE_REQUIRES_ACTIVE`): Phase A stays fully
+ *   is unavailable; it acts in `active` only (with `shadow` it is refused at startup, `NL_PHASE_REQUIRES_ACTIVE`: that path
+ *   would shadow grammar hits without the c-shadow bounds). It sends messages the host answers today to the selector (the
+ *   D8 egress the owner allowed for S1), so it is its own flag. Ignored in `off`. `c-shadow` (only with `active`, else `NL_PHASE_REQUIRES_ACTIVE`): Phase A stays fully
  *   live; after a Class B grammar has answered, one background selection runs for the agreement log only.
  * - `QUOKY_NL_INTENT_MODEL`: the Claude CLI `--model` of a selection call (an alias such as `haiku`, or a full model name);
  *   default `haiku`. Adapter configuration only: Core never sees it.
@@ -87,8 +87,9 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
   if (rawPhase !== undefined && rawPhase !== 'a' && rawPhase !== 'c' && rawPhase !== 'c-shadow') {
     throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_PHASE_INVALID);
   }
-  // `c-shadow` keeps Phase A live and shadows only grammar hits; without `active` there is no live Phase A to keep.
-  if (rawPhase === 'c-shadow' && rawMode !== 'active') {
+  // `c-shadow` keeps Phase A live and shadows only grammar hits; without `active` there is no live Phase A to keep. `c`
+  // with `shadow` would shadow grammar hits outside the bounded c-shadow job, so it is refused too (`c` + `off` is inert).
+  if ((rawPhase === 'c-shadow' && rawMode !== 'active') || (rawPhase === 'c' && rawMode === 'shadow')) {
     throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_PHASE_REQUIRES_ACTIVE);
   }
   const rawTimeout = env.QUOKY_NL_INTENT_TIMEOUT_MS;

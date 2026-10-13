@@ -52,8 +52,7 @@ export const NL_INTENT_MODES: readonly NlIntentMode[] = ['off', 'shadow', 'activ
 /**
  * ADR-0120 D6 phase (S1, `QUOKY_NL_PHASE`). `a` (the default): selection runs only on turns every earlier route left for
  * chat. `c`: selection also runs first where a frozen Class B grammar would answer, and the grammar is the fallback when
- * the selector is unavailable. Phase C acts only in `active`; in `shadow` it is grammar-hit shadowing (the grammar
- * answers, the selection and its agreement are logged). `c-shadow` (only with `active`): Phase A stays fully live, and
+ * the selector is unavailable. Phase C acts only in `active` (the app refuses `c` with `shadow`). `c-shadow` (only with `active`): Phase A stays fully live, and
  * after a Class B grammar has answered, one background selection runs and only its agreement is logged.
  */
 export type NlPhase = 'a' | 'c' | 'c-shadow';
@@ -232,6 +231,8 @@ export class NlSelectionService {
     if (this.mode === 'off') return { kind: 'skip', reason: 'off' };
     if (turn.entries.length === 0) return { kind: 'skip', reason: 'no-catalog' };
     if (this.mode === 'shadow') {
+      // A grammar-hit turn is never shadowed here (unbounded): only the bounded `c-shadow` job shadows grammar hits.
+      if (turn.grammar !== undefined) return { kind: 'skip', reason: 'shadow' };
       this.lastShadowRun = this.shadow(turn).catch((error: unknown) =>
         this.log('warn', 'nl_selection.shadow_failed', { errorName: error instanceof Error ? error.name : typeof error }),
       );
@@ -264,10 +265,10 @@ export class NlSelectionService {
 
   /**
    * ADR-0120 D6 Phase C (S1): the runtime probes the Class B grammars and runs selection first on a hit. True only with
-   * `QUOKY_NL_PHASE=c` in `active` (act) or `shadow` (grammar-hit shadowing: the grammar still answers). Never in `off`.
+   * `QUOKY_NL_PHASE=c` in `active`. Grammar-hit shadowing exists only as the bounded `c-shadow` job.
    */
   phaseCEnabled(): boolean {
-    return this.deps.phase === 'c' && (this.mode === 'active' || this.mode === 'shadow');
+    return this.deps.phase === 'c' && this.mode === 'active';
   }
 
   /**
@@ -778,8 +779,8 @@ export class NlSelectionService {
       entryId: result.selection?.entryId ?? 'none',
       outcome: result.outcome,
       mode: result.shadow === true ? 'shadow' : 'active',
-      // W3: `agree` compares MEANING (dates resolved by Core's clock, catalog defaults, count and the unread default
-      // normalized, `nlSelectionMeaning`) and is what D10 reads; `agreeEntry` is the entry alone.
+      // W3: `agree` compares MEANING (dates resolved by Core's clock, catalog defaults, count dropped; nothing that changes
+      // the results is normalized, `nlSelectionMeaning`) and is what D10 reads; `agreeEntry` is the entry alone.
       ...(decided ? { agree: agreeEntry && this.sameMeaning(turn, result.selection, grammar.selection), agreeEntry } : {}),
       ...(result.reason !== undefined ? { reason: result.reason } : {}),
       ...(result.latencyMs !== undefined ? { latencyMs: result.latencyMs } : {}),

@@ -22,7 +22,7 @@ note at the end of `DECISIONS.md`.
 - **Plan of record.** Ship `active` + `c-shadow` first; move grammars to `c` one at a time on per-grammar agreement
   (`agree` by meaning). Owner asks: accept ADR-0120 amendment A4 (Proposed), and approve the 148-case S1 corpus batch.
 - **Review fixes (CA CHANGES REQUIRED, Codex P2).** Rebased on #193; `c-shadow` single-flight, 60/h, whole-job bound,
-  shutdown abort; meaning-based agreement; three-metric grammar-vs-selector scoring (user-visible 95.0% vs 97.9–99.2%).
+  shutdown abort; meaning-based agreement; three-metric grammar-vs-selector scoring (user-visible 92.6% vs 97.9–99.2%).
 
 ### v5 STO-1 storage hardening, migration v16 — on branch `claude/v5-w2-sto1` (2026-10-13)
 

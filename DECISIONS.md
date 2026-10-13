@@ -21603,8 +21603,9 @@ Decisions:
   `apps/quoky/src/nl-selection/nl-selection-config.ts` (`NL_PHASE_INVALID` otherwise). A separate key, like
   `QUOKY_NL_GRAMMAR_YIELD`, because it widens egress; D11's `QUOKY_NL_INTENT_MODE` values are unchanged.
   - `active` + `c`: Phase C (selection acts first at a Class B position).
-  - `shadow` + `c`: grammar-hit shadowing with selection off for fall-through messages too (Phase A selection stops), so
-    it is not a rollout step for the live service.
+  - `shadow` + `c`: refused at startup (`NL_PHASE_REQUIRES_ACTIVE`, CA review): it would stop Phase A selection and
+    shadow grammar hits outside the bounded job. `phaseCEnabled()` is true only in `active`, and `decide()` in `shadow`
+    never starts a grammar-hit shadow. `c` + `off` stays inert.
   - `active` + `c-shadow` (the recommended first step; `c-shadow` with any other mode fails startup with
     `NL_PHASE_REQUIRES_ACTIVE`): Phase A stays fully live — grammars answer instantly and selection acts on fall-through.
     When a Class B grammar answered (`dispatchTurnHandlers` reports the responder, its probe hit), one background
@@ -21647,8 +21648,9 @@ Decisions:
   outcomes only, `reason` on a fallback or a drop, `latencyMs`, `cached`. Never the text and never an argument value (a
   test asserts every value is a closed id, flag or number). Review fix W3: `agree` compares MEANING
   (`nlSelectionMeaning`: ranges resolved to instants with Core's clock and `QUOKY_TIMEZONE`, so `fri`, `10-16` and
-  `2026-10-16` agree; catalog defaults filled; `count` dropped because a count question shows the same list; a bare mail
-  check ignores the unread default; keywords stay exact); `agreeEntry` is the entry alone. **D10's 98% retirement
+  `2026-10-16` agree; catalog defaults filled; `count` dropped because a count question shows the same list; nothing that
+  changes which results come back is normalized — after Codex's delta P2, `unread: true` vs all mail disagrees even for a
+  bare "메일 확인해줘"; keywords stay exact); `agreeEntry` is the entry alone. **D10's 98% retirement
   threshold reads `agree`**, per grammar id.
 - **S1 hardening (NL-1 residuals).**
   - Equal family AND equal declared execution locality: `sameEgress` compares `family ?? id` and
@@ -21672,18 +21674,20 @@ Decisions:
   |---|---|---|
   | exact `{entry, args}` | 202 (83.5%) | 99.2% / 99.2% / 97.9% |
   | entry | 239 (98.8%) | 100% / 99.6% / 98.8% |
-  | user-visible (meaning, keyword noise words ignored) | 230 (95.0%) | 99.2% / 99.2% / 97.9% |
+  | user-visible (meaning, keyword noise words ignored) | 224 (92.6%) | 99.2% / 99.2% / 97.9% |
   | wrong capture of a grammar-hit negative | 1 | 0 |
 
-  The fair comparison is user-visible correctness: 95.0% versus 97.9–99.2% (the Chief Architect estimated about 95.9% for
-  the grammars). That measured gap, not imitation, is the justification for model-first selection, and `c-shadow`
+  The fair comparison is user-visible correctness: 92.6% versus 97.9–99.2%. The Chief Architect estimated about 95.9% for
+  the grammars; the strict rule (Codex P2) also counts the six bare mail checks the grammar answers with unread-only mail
+  as different from the golden all-mail listing. That measured gap, not imitation, is the justification for model-first selection, and `c-shadow`
   checks it on live traffic, grammar by grammar, before any grammar moves to `c`. **Caveats:** the corpus and prompt
   `nl-select.v17` were developed together and there is no held-out set, so the selector numbers are optimistic; the 148
   S1 cases are **pending the owner's batch approval** (ADR-0120 D12), not approved.
 - **Measured: the grammars on their own hits (offline, production flags).** Of 242 tagged positives the grammar's own
   catalog equivalent (recorded per case as `grammarAnswer`, checked against the probes by meaning) matches the golden
   `{entry, args}` exactly in 202 (83.5%) and the entry in 239 (98.8%). Most differences are representation (an absolute
-  date for `fri`, a count question answered by the list, an unread default). About 10 are wrong answers the owner would see: "드라이브에서 엑셀 파일 보여줘" searches the name "엑셀"; "최근에
+  date for `fri`, a count question answered by the list); the unread-only answer to a bare mail check is a real
+  difference (unread only vs all mail). About 10 are wrong answers the owner would see: "드라이브에서 엑셀 파일 보여줘" searches the name "엑셀"; "최근에
   올라온 파일" searches "올라온"; "migration and show only 2" becomes the keyword; a limit is ignored; "할 일 추가하는 법" and
   "일정, 알림, 할 일 다 합쳐서" list to-dos; and the negative "할 일 관리하는 좋은 습관 알려줘" is captured as the to-do list.
 - **Evaluation (Strict, authorized for S1).** `pnpm eval:nl -- --mode run --runs 3 --concurrency 4`, Haiku,
@@ -21710,13 +21714,13 @@ Decisions:
 - **Tests.** `pnpm build`, `pnpm typecheck` and `pnpm test` pass (435 files, 13,861 tests), and `git diff --check` is clean.
   Review additions: W1 (a real child process is gone after `stopBackground()`), W2 (32 overlapping hits give one call in
   flight and 31 `dropped` lines; the hourly cap; a hang in provider resolution ends at the bound), W3 (ISO dates against
-  `fri`/`10-20`, count, the unread default), the three-metric scoring, and a replay of the turn-handler, intent-routing
+  `fri`/`10-20`, count, unread-only vs all mail disagreeing), the three-metric scoring, and a replay of the turn-handler, intent-routing
   and reminder/to-do precedence corpora (646 turns): on every turn without a probe hit Phase C makes the same claims,
   selector calls and status as Phase A. New: `nl-selection-phase-c.test.ts` (the phase switch, the locality rule, the content-free agreement
   log, shadow, the prompt rule). In `nl-intent-dispatch.test.ts`: the Phase C corpus dispatch (both A2 settings, the tag
   check, at least 25 per entry), probe purity over the corpus, Class A precedence (the same claims and byte-identical
   replies in both phases), the fallback for every unavailable or skip cause and for `none`, the work-surface route,
-  grammar-hit shadowing, "그 중에 …" after chat, and the adversarial sweep under Phase A and C (now with the selection cache
+  `c` + `shadow` refused and inert, "그 중에 …" after chat, and the adversarial sweep under Phase A and C (now with the selection cache
   cleared per variant). Phase A: the existing corpus dispatch is unchanged and no probe is ever asked.
 - **Not done here (Strict / owner).** The `.env.local` edit (`QUOKY_NL_PHASE`), the restart, live UAT, and the D10
   retirement decisions. Chief Architect review before merge (a port member and a dispatch-order change).

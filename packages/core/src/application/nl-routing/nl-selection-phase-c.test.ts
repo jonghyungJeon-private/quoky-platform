@@ -92,7 +92,7 @@ describe('NlSelectionService — Phase C switch (ADR-0120 D6, ADR-0121 S1)', () 
   it('phaseCEnabled only with QUOKY_NL_PHASE=c in active or shadow; Phase A is the default', () => {
     const cases: Array<[NlIntentMode, NlPhase | undefined, boolean]> = [
       ['off', 'c', false],
-      ['shadow', 'c', true],
+      ['shadow', 'c', false],
       ['active', 'c', true],
       ['active', 'a', false],
       ['active', undefined, false],
@@ -221,13 +221,13 @@ describe('NlSelectionService — D10/D11 agreement log (content-free)', () => {
     expect(agreementLines(plain.logs)).toEqual([]);
   });
 
-  it('shadow (grammar-hit shadowing): the decision is skip, the selection runs in the background and logs only the agreement', async () => {
+  it('mode shadow never starts an (unbounded) grammar-hit shadow through decide(): no call, no agreement line', async () => {
     const h = harness({ mode: 'shadow', phase: 'c', script: [out('jira.issues', { keyword: '위클리카' })] });
+    expect(h.service.phaseCEnabled()).toBe(false);
     expect(await h.decide('위클리카 관련 지라 이슈 보여줘', { grammar })).toEqual({ kind: 'skip', reason: 'shadow' });
     await h.service.lastShadowRun;
-    expect(h.calls).toHaveLength(1);
-    expect(agreementLines(h.logs)).toEqual([expect.objectContaining({ outcome: 'execute', mode: 'shadow', agree: true, agreeEntry: true })]);
-    assertContentFree(agreementLines(h.logs), ['위클리카 관련 지라 이슈 보여줘', '위클리카']);
+    expect(h.calls).toHaveLength(0);
+    expect(agreementLines(h.logs)).toEqual([]);
   });
 });
 
@@ -270,10 +270,15 @@ describe('S1 W3 — agreement by meaning (nlSelectionMeaning)', () => {
     expect(meaning('calendar.events', {})).toBe(meaning('calendar.events', { range: '2026-10-13' }));
   });
 
-  it('a count question shows the same list; a bare mail check ignores the unread default; keywords stay exact', () => {
+  it('a count question shows the same list; unread-only vs all mail disagree (Codex P2); keywords stay exact', () => {
     expect(meaning('todo.list', { count: true })).toBe(meaning('todo.list', {}));
-    expect(meaning('mail.list', { unread: true })).toBe(meaning('mail.list', {}));
+    // An argument that changes which results come back is never normalized away.
+    expect(meaning('mail.list', { unread: true })).not.toBe(meaning('mail.list', {}));
+    expect(meaning('mail.list', { unread: true })).not.toBe(meaning('mail.list', { unread: false }));
     expect(meaning('mail.list', { unread: true, today: true })).not.toBe(meaning('mail.list', { today: true }));
+    // A bare "메일" with both sides on the same default agrees (the explicit default false equals absent).
+    expect(meaning('mail.list', {})).toBe(meaning('mail.list', { unread: false }));
+    expect(meaning('mail.list', { unread: true })).toBe(meaning('mail.list', { unread: true, count: true }));
     expect(meaning('jira.issues', { status: 'open' })).toBe(meaning('jira.issues', {}));
     expect(meaning('slack.search', { keyword: '배포' })).not.toBe(meaning('slack.search', { keyword: '배포 관련' }));
   });

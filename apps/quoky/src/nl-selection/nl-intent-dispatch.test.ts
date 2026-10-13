@@ -1132,7 +1132,7 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     selectorAnswer = none;
   });
 
-  it('S1 Phase C in shadow (grammar-hit shadowing): the grammar answers byte-identically, one background selection logs only the content-free agreement', async () => {
+  it('S1: c with mode shadow (refused at startup) is inert in the runtime too — the grammar answers, no selector call, no agreement; active Phase C logs content-free agreement', async () => {
     const service = (runtime as unknown as { deps: { nlSelection: { lastShadowRun: Promise<void>; deps: { logger: { info: (event: string, fields?: Record<string, unknown>) => void } } } } }).deps.nlSelection;
     const lines: Array<{ event: string; fields?: Record<string, unknown> }> = [];
     const spy = vi.spyOn(service.deps.logger, 'info').mockImplementation((event, fields) => void lines.push({ event, ...(fields ? { fields } : {}) }));
@@ -1147,14 +1147,14 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       });
       expect(shadow.claims).toEqual(phaseA.claims);
       expect(shadow.result.reply.text).toBe(phaseA.result.reply.text);
-      expect(shadow.served).toEqual([]);
-      const agreement = lines.filter((line) => line.event === 'nl_selection.agreement');
-      expect(agreement).toEqual([{ event: 'nl_selection.agreement', fields: expect.objectContaining({ grammarId: 'work-lookup.my-items', grammarEntryId: 'jira.issues', entryId: 'jira.issues', outcome: 'execute', mode: 'shadow', agree: true, agreeEntry: true }) }]);
-      // Active Phase C logs the same line, and neither carries the text or an argument value.
+      expect(shadow.hits).toEqual([]);
+      expect(shadow.selects).toBe(0);
+      expect(lines.filter((line) => line.event === 'nl_selection.agreement')).toEqual([]);
+      // Active Phase C logs the agreement, and it carries neither the text nor an argument value.
       selectorAnswer = answer('github.items', { keyword: '위클리카' });
       await withPhase('c', 'active', () => turnOf('위클리카 관련 지라 이슈 보여줘요'));
       const all = lines.filter((line) => line.event === 'nl_selection.agreement');
-      expect(all.at(-1)?.fields).toMatchObject({ entryId: 'github.items', outcome: 'execute', mode: 'active', agree: false, agreeEntry: false });
+      expect(all.at(-1)?.fields).toMatchObject({ grammarId: 'work-lookup.my-items', entryId: 'github.items', outcome: 'execute', mode: 'active', agree: false, agreeEntry: false });
       expect(JSON.stringify(all)).not.toMatch(/위클리카|지라|보여/);
     } finally {
       spy.mockRestore();

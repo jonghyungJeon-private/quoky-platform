@@ -22,8 +22,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   amendment A4, Proposed); no migration, token or deps change.
 - **Review fixes.** `c-shadow` jobs run one at a time, at most 60 per hour (`dropped` agreement lines otherwise), are
   bounded as a whole (provider resolution included) and aborted on shutdown (`stopBackground`, the CLI child is killed);
-  agreement compares meaning (dates resolved, defaults, count, unread default). Fair evidence: grammar side vs selector
-  side on the same 242 cases — exact 83.5% vs 97.9–99.2%, entry 98.8% vs 98.8–100%, user-visible 95.0% vs 97.9–99.2%.
+  agreement compares meaning (dates resolved, defaults, count; unread-only vs all mail disagrees). Fair evidence: grammar side vs selector
+  side on the same 242 cases — exact 83.5% vs 97.9–99.2%, entry 98.8% vs 98.8–100%, user-visible 92.6% vs 97.9–99.2%.
   The 148 S1 corpus cases are pending the owner's batch approval; corpus and prompt v17 have no held-out set.
 - **Eval (Strict, 3 runs, Haiku, 727 cases):** 98.6/98.4/98.1%, 0 wrong, lowest entry 93.0%, 0.1–0.8% over the 6 s
   bound; the grammar-handled subset 97.9–99.2% (the grammars themselves: 82.6% exact). Phase C adds p50 about 1.4 s and

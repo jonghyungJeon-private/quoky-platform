@@ -576,11 +576,15 @@ describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
     }
   });
 
-  it('QUOKY_NL_PHASE=c-shadow is valid only with QUOKY_NL_INTENT_MODE=active; any other combination fails startup', () => {
+  it('QUOKY_NL_PHASE=c-shadow is valid only with active, and c is refused with shadow; those combinations fail startup', () => {
     expect(loadConfig(env({ QUOKY_NL_PHASE: 'c-shadow', QUOKY_NL_INTENT_MODE: 'active' })).nlSelection).toMatchObject({ mode: 'active', phase: 'c-shadow' });
     for (const mode of [undefined, 'off', 'shadow'] as const) {
       expect(() => loadConfig(env({ QUOKY_NL_PHASE: 'c-shadow', ...(mode !== undefined ? { QUOKY_NL_INTENT_MODE: mode } : {}) })), String(mode)).toThrow(/^NL_PHASE_REQUIRES_ACTIVE$/);
     }
+    // CA review: `c` with `shadow` would shadow grammar hits outside the bounded job, so it fails startup too.
+    expect(() => loadConfig(env({ QUOKY_NL_PHASE: 'c', QUOKY_NL_INTENT_MODE: 'shadow' }))).toThrow(/^NL_PHASE_REQUIRES_ACTIVE$/);
+    expect(loadConfig(env({ QUOKY_NL_PHASE: 'c', QUOKY_NL_INTENT_MODE: 'active' })).nlSelection.phase).toBe('c');
+    expect(loadConfig(env({ QUOKY_NL_PHASE: 'c', QUOKY_NL_INTENT_MODE: 'off' })).nlSelection).toMatchObject({ mode: 'off', phase: 'c' });
   });
 
   it.each(['', '--model', 'haiku model', 'x'.repeat(200)])('rejects a malformed selection model %j', (value) => {

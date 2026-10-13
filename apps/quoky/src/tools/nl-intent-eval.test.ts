@@ -235,6 +235,6 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
     const tagged = real.cases.filter((golden) => golden.grammar !== undefined);
     expect(tagged).toHaveLength(243);
     expect(tagged.every((golden) => golden.grammarAnswer !== undefined)).toBe(true);
-    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 242, exact: 202, entry: 239, userVisible: 230, wrongCaptures: 1 });
+    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 242, exact: 202, entry: 239, userVisible: 224, wrongCaptures: 1 });
   });
 });

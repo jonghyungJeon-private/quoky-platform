@@ -8,11 +8,11 @@ import { normalizeNlRangeSymbol, resolveNlRange } from './symbolic-time';
  *
  *  - every absent argument takes its catalog default (`range` today, `status` open, `query` my-items, flags false);
  *  - a range is resolved to its instants (`fri`, `10-20` and `2026-10-16` are the same day when they are);
- *  - `count` is dropped: a count question is answered with the same deterministic list plus a count line;
- *  - a bare mail check (no `today`, no `from`) ignores `unread`: the mail grammar's default listing is the unread inbox,
- *    and "메일 확인해줘" asks for that inbox either way.
+ *  - `count` is dropped: a count question is answered with the same deterministic list plus a count line.
  *
- * Keywords stay exact (after case and spacing): a different search word is a different result. Pure.
+ * Nothing that changes which results come back is normalized (Codex P2): `unread: true` (unread only) and an absent
+ * `unread` (all mail) are different queries and disagree, even for a bare "메일 확인해줘". Keywords stay exact (after case
+ * and spacing): a different search word is a different result. Pure.
  */
 export function nlSelectionMeaning(
   selection: NlGrammarSelection,
@@ -37,6 +37,5 @@ export function nlSelectionMeaning(
       values[spec.name] = value.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
     }
   }
-  if (selection.entryId === 'mail.list' && values.today === undefined && values.from === undefined) delete values.unread;
   return JSON.stringify([selection.entryId, Object.keys(values).sort().map((name) => [name, values[name]])]);
 }
