@@ -344,7 +344,11 @@ attended UAT is running; uninstall Tailscale including its network extension and
   each a new host configuration, are:
   1. a macOS `pf` anchor with an outbound allowlist for the service user;
   2. a per-application rule in Little Snitch or LuLu;
-  3. running the service and its children as a dedicated restricted user, or under a `sandbox-exec` network profile.
+  3. a `sandbox-exec` profile whose network rules allow only the allowlisted destinations.
+
+  A dedicated restricted user on its own restricts files, not network destinations. It only counts as enforcement when
+  it is combined with option 1 (a `pf` rule keyed to that user) or option 3. Until one of options 1-3 is in place, the
+  design claims enforcement for in-process clients only.
 
   L1 reduces the CLI's destinations. The self-check observes child connections, but observing is not blocking.
 - **The honest guarantee:**
