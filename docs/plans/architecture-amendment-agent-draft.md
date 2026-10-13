@@ -34,6 +34,9 @@
 >    - Raw external content is read only by a **quarantined** model call. That call has no tools, uses a schema-bound
 >      output, and its output goes only to the owner's reply.
 >    - Content can never choose a step, and never becomes a free-text argument.
+>    - A closed-format id projected deterministically from a read result may feed only a later read of the same source
+>      and destination origin. It never feeds another connector, another origin or a write.
+>    - Every argument carries a provenance label.
 >    - A model call's provider must satisfy the strictest egress label of its inputs (§5.14).
 > 4. An agent has **no** shell, code execution, arbitrary URL fetch, MCP or plugin tool, memory write or connector
 >    write. A write is only ever a proposal that creates an existing exact-payload, one-time approval (§10). Steps,
@@ -63,8 +66,10 @@ Add after the paragraph on reminders:
 >   them) reach a planning model, choose a step, or become a free-text argument of a tool call.
 > - ❌ Giving any agent or model a shell, code execution, arbitrary URL fetch, MCP/plugin tools, memory writes or
 >   connector writes.
-> - ❌ Egress to a destination that is not on the process egress allowlist, or any inbound listener other than loopback;
->   remote-access tunnels and P2P overlays in the runtime.
+> - ❌ Egress to a destination that is not on the egress allowlist, or to an internal, metadata or CGNAT address after
+>   resolution. In-process enforcement covers the runtime's own HTTP paths. Child processes are covered by the
+>   OS-level control chosen under ADR-0121.
+> - ❌ Any inbound listener other than loopback, and any remote-access tunnel or P2P overlay in the runtime.
 
 ## 4. §13 Future Expansion Strategy: row change
 

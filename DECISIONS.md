@@ -20896,9 +20896,18 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
    earlier steps with a closed output schema. Each step passes ADR-0120 D4 (closed ids, the configured and offered
    entries, the bounds, symbolic time, grounding, the credential guard). An argument is one of two things:
    - a literal grounded in the owner's own non-quoted text;
-   - a reference to a closed-format field (Jira keys, ISO dates, enum values, opaque connector ids). The field is
-     extracted deterministically by the `StructureProjector`, never by a model. A reference carries at most 10 values
-     and may feed only a READ step that the plan already declared.
+   - a reference to a closed-format id (Jira keys, opaque connector ids). The id is extracted deterministically by
+     the `StructureProjector`, never by a model.
+
+   A reference is **source-bound**:
+   - It may feed only a READ step, already declared in the plan, of the **same source entry and the same destination
+     origin** it was projected from. For example, a Jira key from a Jira readout may feed only a Jira read on the same
+     site.
+   - It never feeds another connector, another origin or a write. A cross-source use exists only as a stage-S3
+     approval card that shows the exact values.
+   - It carries at most 10 values, and a run uses at most 10 referenced values in all.
+   - Every argument carries a provenance label (`literal` or `reference`, with the source step, entry and origin).
+   - Dates come only from the planner's symbolic time, never from content.
 3. **D3 — A quarantined summariser.** M2 is a `SUMMARIZATION` request with an empty context bundle, no catalog, no
    memory, no history and no tool definitions. The untrusted input is rendered inside an untrusted span
    (`untrusted-document-readout.ts`), and the output is bound to a schema. The output:
@@ -20914,7 +20923,8 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
    - An M2 provider must satisfy the strictest egress label of its inputs. `LOCAL_MODEL_ONLY` needs a `LOCAL` provider,
      otherwise the reply is a listing only. `REMOTE_ON_SUMMARY_REQUEST` needs a grounded summary request in the
      owner's words. `HOST_ONLY` never leaves the host.
-   - Tool arguments accept `TRUSTED` literals and `STRUCTURE` references only.
+   - Tool arguments accept `TRUSTED` literals and same-source `STRUCTURE` references only. A cross-source reference
+     is refused like `UNTRUSTED` text, because ids and dates can carry encoded data to another server.
    - `OWNER_DM_ONLY` data appears only in the owner's DM.
    - A flow from source A to a different destination B exists only as an approval card (D6).
 5. **D5 — The tools are the closed catalog only.** Stage S2 offers READ entries only.
@@ -20941,10 +20951,26 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
      ops-UI shows its state.
 8. **D8 — The process egress allowlist and the traffic ledger.** These are composition-root code; Core is unaware of
    them.
-   - `apps/quoky/src/security/egress-guard.ts` wraps `globalThis.fetch` before bootstrap. It enforces the configured
-     host allowlist (design §5.1), https only (plain http only for exact `127.0.0.1`) and `redirect: 'error'`. It
-     refuses IP literals and the link-local (incl. metadata), RFC 1918 and CGNAT ranges.
-   - Clients that do not use `fetch` (discord.js) are observed through the undici and `net` diagnostics channels.
+   - `apps/quoky/src/security/egress-guard.ts` is installed before bootstrap as the undici dispatcher for every
+     Quoky `fetch`. It also replaces the `http`/`https` global agents. It enforces:
+     - the configured host allowlist (design §5.1);
+     - https only, with plain http only for exact `127.0.0.1`;
+     - `redirect: 'error'`, and a check on every hop of any redirect a library still follows;
+     - refusal of IP literals.
+   - **The address check is connection-bound.** The guard resolves the host itself and refuses the connection if any
+     resolved address is in a deny range: loopback (except the exact Ollama binding), RFC 1918, link-local
+     169.254/16 and fe80::/10 (metadata), CGNAT 100.64/10 (which covers Tailscale), ULA fc00::/7, reserved ranges, and
+     their IPv4-mapped forms. It then connects to the checked address only (a pinned `lookup`), keeping SNI, certificate
+     verification and `Host`, so DNS rebinding cannot swap the address.
+   - Traffic outside these paths is observed and alerted on, not blocked:
+     - discord.js wherever its options do not take the agent or dispatcher;
+     - libraries that open raw sockets;
+     - **child processes** (`claude -p`, `ollama`, `git`).
+
+     In-process hooks cannot block them. A process-wide guarantee needs an OS-level control: a macOS `pf` anchor, a
+     LuLu or Little Snitch rule, or a restricted user or `sandbox-exec` profile. That control is an explicit S0 owner
+     and security-team decision (design Q10). Until it is made, the claimed guarantee covers Quoky's own Node HTTP
+     paths only.
    - The flag is `QUOKY_EGRESS_GUARD=observe|enforce`: `observe` for 7 days, then `enforce`.
    - `traffic-ledger.ts` records per request: time with offset, correlation id, host, path template, status class,
      bytes up and down, latency and initiator. It never records a header, token, query or body.
@@ -20980,6 +21006,10 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
       LLM judge.
     - **Plan evaluation:** ≥ 95% exact plans and 0 wrong on negatives.
     - **Offline suite:** validator, labels, canaries, bounds, kill switch, import scan.
+      - A **cross-source reference test**: ids or dates projected from mail, calendar or Drive and offered to Jira or
+        any other connector are refused, while a same-source Jira→Jira reference passes; the 11th value fails.
+      - An **egress-guard test**: an allowlisted name resolving to a private, metadata, CGNAT or ULA address is
+        refused, a rebinding lookup still connects only to the checked IP, and redirects fail.
     - **Reviews:** the Chief Architect, Codex and `/security-review` on every PR.
     - **Model runs:** each model-in-the-loop run is Strict.
 12. **D12 — Interfaces recorded before code (§11.7).**
@@ -20993,7 +21023,7 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
 
 | Stage | What | Authority |
 |---|---|---|
-| S0 | Security baseline: L1; log timestamps and correlation ids; the traffic ledger; the egress guard in `observe` and then `enforce`; the self-check script `ops/security/quoky-net-selfcheck.sh`; the Telegram poll timeout 25 → 50 s. Owner actions: remove Tailscale and review the credentials | It can proceed on the owner's yes to the S0 list, even before ADR-0121 is ratified. No §8 change is involved |
+| S0 | Security baseline: L1; log timestamps and correlation ids; the traffic ledger; the egress guard in `observe` and then `enforce` (Node HTTP paths); the OS-level egress decision for child processes (owner and security team); the self-check script `ops/security/quoky-net-selfcheck.sh`; the Telegram poll timeout 25 → 50 s. Owner actions: remove Tailscale and review the credentials | It can proceed on the owner's yes to the S0 list, even before ADR-0121 is ratified. No §8 change is involved |
 | S1 | NL-2 Phase C plus the latency work | ADR-0120 D6/D8/D10/D12 gates and the owner's egress yes |
 | S2 | The bounded read agent, `off` → `shadow` → `active` | Ratification of ADR-0121 and of the constitution amendment; the D11 gates |
 | S3 | The write-proposal agent | A separate amendment (ADR-0112 D5, ADR-0110 amendment D4); a red-team pass; the owner's yes |
@@ -21049,8 +21079,8 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
 
 ### Residual risks
 
-- **R1 — Child processes.** The CLI and Ollama cannot be enforced in-process. Mitigations: L1 and self-check
-  observation.
+- **R1 — Child processes.** The CLI, Ollama and git cannot be enforced in-process. Until the OS-level control (Q10) is
+  in place they are reduced by L1 and observed by the self-check, not blocked.
 - **R2 — A plausible but wrong plan.** Mitigations: reads only, deterministic counts, the basis line and the 0-wrong
   gate.
 - **R3 — A misleading quarantined summary.** It is marked as model-written.
@@ -21062,7 +21092,7 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
 These are Q1–Q10 of the design §7. The defaults are:
 
 1. Ratify this ADR and the constitution draft. S0 may proceed first.
-2. Allow closed-format references (≤ 10 ids, reads only).
+2. Allow closed-format references for same-source reads only (≤ 10 ids; never cross-source or a write).
 3. Keep calendar text local-only.
 4. Run the egress guard in `observe` for 7 days, then in `enforce`.
 5. Move to an Atlassian scoped token with expiry and review the Slack token.
@@ -21070,7 +21100,8 @@ These are Q1–Q10 of the design §7. The defaults are:
 7. Use an in-repo secret scan.
 8. Apply latency steps L1–L3 and keep the ADR-0120 A3 bound (6 s).
 9. Share the self-check output with the security team.
-10. No OS-level firewall for now; ask the security team.
+10. Decide in S0, with the security team, which OS-level egress control covers child processes: `pf`, LuLu or Little
+    Snitch, or a restricted user or sandbox.
 
 ### V1 / V2
 

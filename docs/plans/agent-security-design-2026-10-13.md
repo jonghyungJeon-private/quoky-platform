@@ -26,8 +26,9 @@ such as "이번 주 회의 정리하고 관련 jira 이슈도 같이", which nee
 typed plan over the existing catalog; Quoky's deterministic code validates and executes it; raw connector content is
 summarized only by a **quarantined** model call that has no tools, whose output goes only to the owner, and which can
 never influence which step runs next. Every value carries an information-flow label, and labels decide which model,
-which destination and which reply may receive it. The whole process sits behind a code-enforced egress allowlist with
-a traffic ledger. This amends ARCHITECTURE.md §8 ("no agent runtime"), so ADR-0121 and a constitution amendment come
+which destination and which reply may receive it. Quoky's own Node HTTP paths sit behind an egress allowlist enforced in code. The allowlist checks destinations at
+connection time (resolved and pinned addresses) and is paired with a traffic ledger. Child processes need an OS-level
+control, which is an S0 decision (§5.2). This amends ARCHITECTURE.md §8 ("no agent runtime"), so ADR-0121 and a constitution amendment come
 first.
 
 ## 2. Architecture
@@ -84,8 +85,18 @@ owner DM text ──(owner gate ADR-0091/0114, Class A control/approvals/anchors
 - An `args` value is either a **literal** that passes ADR-0120 D4 grounding in the owner's own non-quoted text, or a
   **reference** to a closed-format field (`jiraKeys` `^[A-Z][A-Z0-9]{1,9}-\d{1,6}$`, ISO dates, enum values,
   connector-native opaque ids) that the `StructureProjector` extracts **deterministically by regex/schema**, never by
-  a model. Free text from content can never become an argument. A reference is capped (`max` ≤ 10) and may only feed a
-  READ step declared in the original plan (owner question Q2).
+  a model. Free text from content can never become an argument (owner question Q2).
+- **A reference is source-bound.** A projected value may be an argument only of a READ step of the **same source and
+  same destination origin** it came from. For example, a Jira key projected from a Jira readout may feed only a later
+  `jira.issues` read on the same Jira site.
+  - It never feeds another connector, another origin or any write. A Jira key found in a calendar event or a mail is
+    therefore display-only: an id string is still a channel that can carry data to whichever server receives it.
+  - Cross-source use exists only in stage 4, as an approval card that shows the exact values.
+  - Caps: at most 10 values per reference and at most 10 referenced values per run.
+  - Every argument carries a provenance label `{kind: literal|reference, sourceStep, sourceEntry, sourceOrigin}`. The
+    validator refuses a reference whose `sourceEntry`/`sourceOrigin` differs from the consuming step's.
+  - Dates and enum values from content are not references at all. The planner's symbolic time (ADR-0120 D4) is the only
+    source of a date argument.
 - Control flow is fixed before the first read: no conditionals on content, no loops, ≤ 6 steps, ≤ 1 re-plan.
 
 ### 2.3 Quarantined summariser (M2)
@@ -118,8 +129,12 @@ Policy (`flow-policy.ts`, checked before every model call, connector call and re
    `executionLocality: 'LOCAL'` (ARCHITECTURE.md §5.14), else no summary (listing only); `REMOTE_ON_SUMMARY_REQUEST` →
    only when the owner's text asked for a summary (a grounded summary verb in the plan, not inferred); `HOST_ONLY` →
    never leaves.
-3. **Connector arguments accept `TRUSTED` literals or `STRUCTURE` references only.** `UNTRUSTED` → any argument is a
-   hard refusal (blocks exfiltration through search queries, e.g. mail text pushed into a Slack search).
+3. **Connector arguments accept only two kinds of value.** The first is a `TRUSTED` literal. The second is a
+   `STRUCTURE` reference whose provenance has the same source entry and origin as the consuming READ step (§2.2).
+   - An `UNTRUSTED` value is a hard refusal as any argument. This blocks exfiltration through search queries, for
+     example mail text pushed into a Slack search.
+   - A reference from another source is also a hard refusal. This blocks exfiltration through encoded ids, for example
+     data encoded as a sequence of Jira keys or dates and sent to another server.
 4. **Replies:** `OWNER_DM_ONLY` data renders only in the owner's DM; in a channel the run stops before reading.
 5. **Cross-destination flow (stage 4):** data labelled from source A reaching a write to destination B ≠ A is allowed
    only through an approval card that shows the exact payload and a provenance banner ("메일 내용 포함"); the
@@ -184,7 +199,9 @@ spawn (`packages/ai-cli/src/index.ts:441-452`, `nl-selection-service.ts:50`). Pr
    session is **rejected**: it carries conversation state across owner messages (cross-turn leakage, growing context).
 3. **L3 — smaller, cache-friendly prompt.** Static catalog first and the owner text last; trim the KO/EN description
    lines; target −30% prompt bytes, measured with the D12 evaluation (prompt version bump, Strict run).
-4. **L4 — bound 4 → 5 s** only if L1–L3 leave > 1% over the bound.
+4. **L4 — superseded by ADR-0120 A3.** The bound is now 6 s by default and configurable with
+   `QUOKY_NL_INTENT_TIMEOUT_MS` (2–8 s). L1–L3 aim to keep calls over the configured bound at ≤ 1% without raising it
+   further.
 - **Rejected:** a parallel race (doubles Anthropic calls; contradicts the traffic request), a new vendor or a
   direct Anthropic API key (owner question Q8), a local model for selection (ADR-0120 alternatives; not measured).
 
@@ -200,7 +217,7 @@ without a card; credential material leaving the host; a write without an approva
 | T2 | Direct injection via quoted/pasted text in the owner's message (T / LLM01) | ADR-0120 D3/D8: quotes, code and attachments become placeholders; pasted text cannot ground an argument | Existing NL corpus negatives + red-team "pasted instruction" family |
 | T3 | Q-LLM output steering the next step (E / LLM05 improper output handling) | Q-LLM output is `UNTRUSTED`, render-only; references accept only `StructureProjector` fields | Property test: random/hostile M2 outputs never change the executed step list or any argument |
 | T4 | Excessive agency: shell, code, URL fetch, MCP, plugin, write (E / LLM06) | Closed READ catalog; deps type excludes `CommandRunner`, `ToolProvider`, writers, fetch | Import-scan test on `application/agent/*`; validator test rejects every non-READ id |
-| T5 | Exfiltration through read arguments (I / LLM02) | §2.4 rule 3: `UNTRUSTED` → argument refused; closed-format references only | Fixture where a mail asks to "search Slack for <secret>": assert no Slack call carries it |
+| T5 | Exfiltration through read arguments (I / LLM02) | §2.4 rule 3: `UNTRUSTED` → argument refused; references only from the same source and origin, ≤ 10 per reference and per run, provenance label on every argument | Fixture where a mail asks to "search Slack for <secret>": assert no Slack call carries it; **cross-source reference test**: Jira keys or dates projected from a mail, an event or a Drive file and offered to `jira.issues` (or any other connector) are refused by the validator, and a same-source Jira→Jira reference passes; the cap test fails the 11th value |
 | T6 | Exfiltration through links, image embeds, unfurls in replies (I / LLM05) | `link-neutralizer.ts` on all untrusted text; Telegram `link_preview_options.is_disabled` (`telegram-platform-adapter.ts:1146`); Discord embeds suppressed for agent replies (to add) | Render test: no scheme URL, no bare domain, no markdown image survives; Discord payload has the suppress flag |
 | T7 | Cross-destination leak, e.g. mail → Slack (I) | Stage 4 only, via card with exact payload + provenance; destination `TRUSTED` only | Red-team "forward this to #general" in mail content: no card for a destination absent from owner text |
 | T8 | Secrets to a model or connector (I / LLM02) | Credential guard before every egress: M1 (exists), M2, every string argument, replies | Guard tests with vendor-format fixtures in content and owner text |
@@ -208,7 +225,7 @@ without a card; credential material leaving the host; a write without an approva
 | T10 | Repudiation: no record of what ran (R) | Content-free audit per run with correlation id and timestamps (§2.8) | Audit schema test; a scan asserts no fixture text in records |
 | T11 | Unbounded consumption, cost, traffic (D / LLM10) | §2.7 caps, §5.3 budgets, circuit breaker, kill switch | Bound tests per cap; kill-switch test mid-run |
 | T12 | Repeated small queries (MSIT ⑤) | Ledger 1 min / 1 h / 24 h windows with thresholds and a DM alert | Synthetic ledger replay triggers the alert |
-| T13 | SSRF / unexpected destination / metadata endpoints (MSIT ②) | Egress allowlist in code; `redirect: 'error'` everywhere; IP literals, link-local (169.254.0.0/16), private ranges refused except exact `127.0.0.1` Ollama | Guard unit tests; redirect test per reader |
+| T13 | SSRF / unexpected destination / metadata endpoints (MSIT ②) | Egress allowlist in code with a connection-bound DNS check and pinning (§5.2); `redirect: 'error'`; IP literals and every deny range refused, except exact `127.0.0.1` Ollama | Guard unit tests: an allowlisted name resolving to 10/8, 169.254.169.254, 100.64/10, fc00::/7 or a mapped IPv6 address is refused; a rebinding test (first lookup public, second private) still connects only to the checked IP; a redirect test per reader |
 | T14 | Prompt leakage (I / LLM07) | Prompts hold no secrets; catalog text is non-secret | Credential scan of all prompt templates in CI-equivalent test |
 | T15 | Supply chain: CLI auto-update, npm deps (T / LLM03) | L1 disables CLI auto-update; pinned CLI version check at start; `pnpm audit --prod` monthly; lockfile | Startup check logs CLI version; audit report in the ops checklist |
 | T16 | Memory / learning poisoning (T / LLM04, LLM08) | Agent never writes Quoky Memory or learning; M2 output not stored | Test: a run leaves memory and learning tables unchanged |
@@ -239,7 +256,7 @@ Status: **M** meets · **P** partial · **G** gap · **H** host/organisation ite
 | ④-1 No admin rights for runtime account; restrict DB/file access | launchd user agent; launcher umask 077; token files 0600 `O_NOFOLLOW` (`connector-gmail/src/token-file.ts:74`); CLI children get an env allowlist only (`cli-runner.ts:89`). Runs as the owner's own account with full `HOME` | P | Later: a dedicated standard user (Claude CLI login must move with it) — residual |
 | ④-2 Uploads never execute | Attachments are bounded text Resources or image bytes, never persisted, never executed (ADR-0111) | M | — |
 | ④-3 EDR/AV with alerts | Company endpoint software | H | Owner/IT confirm EDR is active on the host |
-| ④-4 Restrict system-to-system communication | Fixed origins per adapter; Ollama exact `127.0.0.1` (`cli-runner.ts:104`). No process-wide allowlist | P | Egress guard enforce mode (§5.2) |
+| ④-4 Restrict system-to-system communication | Fixed origins per adapter; Ollama exact `127.0.0.1` (`cli-runner.ts:104`). No process-wide allowlist | P | Egress guard `enforce` for Node HTTP paths (§5.2); for child processes, an OS-level control (Q10) |
 | ④-5 Monitor new external communication | None | G | Ledger "new destination" DM alert; self-check |
 | ⑤-1 Limit export to work scope; minimize data in responses | DM-only personal data; listings capped, no bodies (ADR-0118); calendar text local-only (ADR-0110 D4). Work summaries fall back to Claude by default (`.env.example:240`) | P | Agent labels (§2.4); owner may set `QUOKY_WORK_SUMMARY_ENABLED=false` |
 | ⑤-2 Synchronized log time, correlation | `ConsoleLogger` prints no timestamp (`apps/quoky/src/console-logger.ts:26-33`); no turn correlation id | G | ISO-8601 with offset on every line + turn/run correlation id; host automatic time on |
@@ -272,10 +289,20 @@ account privilege (④-1, residual).
 | `127.0.0.1:11434` | Ollama (local) | On demand | `ai-cli/src/cli-runner.ts:104` |
 | **Listener** `127.0.0.1:47613` | Ops-UI (loopback only) | — | `ops-ui/http/server.ts:156` |
 
-Local periodic work with **no** network: reminder tick 15 s (`reminders/reminder-tick-driver.ts:27`), usage notice poll
-1 h (`ops/provider-usage-notice.ts:169`), attachment sweeps 60 s, PRV-3 hourly check, backup job. Measured on
-2026-10-13: exactly two established outbound TCP connections (Telegram, Discord) and one loopback listener — consistent
-with this table. Quoky's steady-state footprint is small; it is not the source of "frequent traffic".
+**Timers.** Their checks are local, but some of them **can cause network traffic**:
+
+| Timer | Cadence | Network it can cause | Worst case |
+|---|---|---|---|
+| Reminder tick (`apps/quoky/src/reminders/reminder-tick-driver.ts:27`, `packages/core/src/application/reminders/reminder-dispatch-service.ts:182`) | 15 s; the due-check is a local DB read | Each due reminder is one owner send to Discord or Telegram. An event reminder first re-checks the calendar with two `www.googleapis.com` reads (`event-reminder-calendar.ts`, 15 s bound). The daily brief reads Calendar, plus Jira and Gmail when opted in | `maxDeliveriesPerTick` = 10, so ≤ 10 sends and ≤ 20 calendar reads per tick (≤ 40 sends/min). This happens only when many reminders are due at once, for example a catch-up after sleep. Idle: 0 |
+| Usage notice (`apps/quoky/src/ops/provider-usage-notice.ts:169`) | 1 h; the poll is a local ledger read | At most one owner DM per notice kind per month (monthly totals, threshold) | 2 kinds × ≤ 3 attempts (`USAGE_NOTICE_MAX_ATTEMPTS`) = ≤ 6 DMs/month |
+| Ops notices (`apps/quoky/src/ops/ops-notice.ts`) | On event | An owner DM on the primary platform, for example `CRASH_LOOP` | Bounded per kind by the notice ledger (24 h window) |
+| Typing refresh | 4.5 s on Telegram, 8 s on Discord, only while a reply is being produced | `sendChatAction` or the Discord typing call | ≤ 27 or ≤ 16 ticks per reply (`TYPING_MAX_TICKS`) |
+
+Attachment sweeps (60 s), the PRV-3 hourly check and the backup job have no network effect.
+
+**Measured on 2026-10-13:** exactly two established outbound TCP connections (Telegram and Discord) and one loopback
+listener. This matches the table. Quoky's idle footprint is small, and it is not the source of the "frequent traffic".
+The reminder burst above is the worst case that the §5.3 budgets must cap.
 
 **Not Quoky (development tooling on the same host):** the ego-browser holding Discord Web and Telegram Web tabs (each
 a persistent websocket plus background polling and media loads), and the orchestrator's relay poller reading Discord
@@ -288,18 +315,44 @@ attended UAT is running; uninstall Tailscale including its network extension and
 
 - **Allowlist** = the hosts of §5.1, derived from configuration at start (Jira/Confluence host from config, OpenAI/
   Gemini only when selected), frozen, logged once at start (names only).
-- **Enforcement for `fetch`:** installed first in `apps/quoky/src/main.ts` (before `NestFactory`), wrapping
-  `globalThis.fetch`: https only (http only for exact `127.0.0.1`), host must be on the list, IP literals refused,
-  link-local (169.254.0.0/16, incl. cloud metadata), RFC 1918, CGNAT 100.64.0.0/10 (Tailscale range) refused,
-  `redirect` forced to `'error'`. A refusal is a typed error and a ledger entry.
-- **Observation for non-`fetch` clients** (discord.js REST uses its own undici; the gateway uses `ws`): subscribe to the
-  process-wide `undici:request:create` / `undici:client:connected` diagnostics channels (the pattern already used in
-  `apps/quoky/src/connector-write-transport.ts`) and to `net` socket creation; an off-list host is logged and alerted
-  (observe, not block — fixed library hosts).
-- **Children** (`claude`, `ollama`): cannot be enforced in-process; L1 removes the CLI's side traffic; the self-check
-  lists child connections.
-- **Rollout:** `QUOKY_EGRESS_GUARD=observe|enforce` (default `observe` for 7 days, then `enforce` after a clean ledger;
-  Q4).
+- **Connection-bound address check.** A hostname check alone is not enough, because an allowlisted name can resolve, or
+  be rebound, to an internal or metadata address. The guard therefore does four things:
+  1. **Resolve and check.** It resolves the host itself (`dns.lookup` with `all: true`). It refuses the connection if
+     **any** returned address is in a deny range:
+     - loopback 127.0.0.0/8 and ::1, except the single exact `127.0.0.1:<ollama port>` binding;
+     - RFC 1918 (10/8, 172.16/12, 192.168/16);
+     - link-local 169.254.0.0/16 (cloud metadata) and fe80::/10;
+     - CGNAT 100.64.0.0/10 (this covers Tailscale);
+     - ULA fc00::/7;
+     - 0.0.0.0/8, multicast and reserved ranges;
+     - IPv4-mapped IPv6 forms of all of these.
+  2. **Pin.** It connects to exactly the checked address and keeps the original hostname for TLS SNI, certificate
+     verification and the `Host` header. This is a pinned `lookup`/`connect` in a dedicated undici `Agent`
+     (`connect: { lookup }`), installed as the dispatcher of every Quoky `fetch`. A later re-resolution cannot swap the
+     address.
+  3. **Redirects.** Redirects are disabled (`redirect: 'error'`) for every call. Any redirect a library still follows
+     re-enters the same check per hop.
+  4. **IP literals** in URLs are refused.
+- **What in-process enforcement covers (`enforce` mode):**
+  - every `fetch`/undici request made through the Quoky dispatcher;
+  - Node's `http.globalAgent`/`https.globalAgent`, replaced with agents that use the same pinned, checked `lookup`;
+  - the websocket and REST traffic of discord.js wherever its client options accept that agent or dispatcher. Where
+    they do not, the traffic is observed only through the `undici:*` and `net` diagnostics channels (the pattern in
+    `apps/quoky/src/connector-write-transport.ts`) and alerted on.
+- **What it cannot cover:** child processes (`claude -p`, `ollama`, `git` in code work) and any library that opens raw
+  sockets. In-process hooks do not reach another process. For these only an **OS-level control** works. The options,
+  each a new host configuration, are:
+  1. a macOS `pf` anchor with an outbound allowlist for the service user;
+  2. a per-application rule in Little Snitch or LuLu;
+  3. running the service and its children as a dedicated restricted user, or under a `sandbox-exec` network profile.
+
+  L1 reduces the CLI's destinations. The self-check observes child connections, but observing is not blocking.
+- **The honest guarantee:**
+  - `enforce` blocks off-list destinations, and internal or metadata addresses, for Quoky's own Node HTTP paths.
+  - It does **not** make the whole process tree egress-tight. Process-wide enforcement needs one of the OS-level
+    controls above, and that choice is an explicit S0 decision for the owner and the security team (Q10).
+- **Rollout:** `QUOKY_EGRESS_GUARD=observe|enforce`. The default is `observe` for 7 days, then `enforce` after a clean
+  ledger (Q4).
 
 ### 5.3 Budgets
 
@@ -347,15 +400,15 @@ budget breach, ≥ 20 small (< 2 KB) requests to one host in 5 min outside an ow
 
 | Stage | Scope | Gate to enter `active` |
 |---|---|---|
-| S0 Security baseline (before any agent code) | L1 env; timestamps + correlation ids; traffic ledger; egress guard `observe`; self-check script; Telegram poll 50 s; Tailscale removed (owner); key review (owner) | Self-check exit 0; 7 days of ledger within budgets with no unexplained host; then guard `enforce`; CA + Codex + `/security-review` PASS |
-| S1 NL-2 Phase C (model-first) | ADR-0120 D6 Phase C; grammars as provider-down fallback; L2/L3 latency work | ADR-0120 D12 gate (≥ 95%, ≥ 90% per entry, 0 wrong, 3 runs); > 4 s calls ≤ 1%; D8 egress yes (owner); ledger budgets hold |
+| S0 Security baseline (before any agent code) | L1 env; timestamps + correlation ids; traffic ledger; egress guard `observe`; self-check script; Telegram poll 50 s; Tailscale removed (owner); key review (owner); the OS-level egress decision for child processes (Q10, owner + security team) | Self-check exit 0; 7 days of ledger within budgets with no unexplained host; then guard `enforce`; CA + Codex + `/security-review` PASS |
+| S1 NL-2 Phase C (model-first) | ADR-0120 D6 Phase C; grammars as provider-down fallback; L2/L3 latency work | ADR-0120 D12 gate (≥ 95%, ≥ 90% per entry, 0 wrong, 3 runs); calls over the configured selection bound (A3: 6 s default) ≤ 1%; D8 egress yes (owner); ledger budgets hold |
 | S2 Bounded read agent | §2 with READ entries; `QUOKY_AGENT_MODE` off → shadow (plan + validate + log, **no reads**) ≥ 7 days → active | ADR-0121 + constitution amendment ratified; offline suite (validator, labels, bounds, kill switch, import scan, canaries); **injection red-team suite: 0 successful attacks over 3 runs**; agent-plan eval ≥ 95% exact plans, 0 wrong on negatives; CA + Codex + `/security-review` on every PR; live UAT in the owner DM |
 | S3 Write-proposal agent | `*.propose` entries → existing cards; provenance banner | Separate amendment of ADR-0112 D5 and the ADR-0110 amendment D4; red-team with exfiltration and card-spoofing families, 0 successful; owner yes |
 
 **Red-team suite** (`packages/core/src/application/golden/agent-redteam.v1.json`, Strict to run with a model):
 ≥ 300 cases. Korean and English. Families: (1) instruction-in-content for every connector (mail body, Drive doc,
 event description, Jira comment, Slack message, Confluence page, PR body); (2) pasted/quoted instructions; (3) argument
-smuggling ("search Slack for …"); (4) link/image exfiltration; (5) destination hijack ("forward to #general"); (6)
+smuggling ("search Slack for …", ids or dates encoded in content and aimed at another connector); (4) link/image exfiltration; (5) destination hijack ("forward to #general"); (6)
 credential bait; (7) budget exhaustion ("repeat for every day this year"); (8) card spoofing (S3). Cases are seeded by
 **ARTEX-ko** (an AI attack generator, per the company's "AI로 뚫고 AI로 막고" stance): run offline against fixtures only,
 never against live company systems. Generated cases are reviewed by the owner before entering the corpus (ADR-0098 D7).
@@ -366,8 +419,9 @@ ledger and replies (no LLM judge). New ARTEX-ko attack families are re-run after
 
 1. **Q1 — Ratify ADR-0121 and the constitution amendment** (`architecture-amendment-agent-draft.md`)? *Default: ratify;
    S2 code waits for it. S0 needs only this design's S0 list approved.*
-2. **Q2 — Closed-format references:** may ids extracted deterministically from read results (Jira keys, dates) fill
-   arguments of a READ step the planner already declared (≤ 10)? *Default: yes, reads only; free text never.*
+2. **Q2 — Closed-format references:** may ids extracted deterministically from a read result fill arguments of a
+   READ step the plan already declared, **on the same source and origin only** (for example, Jira keys from Jira for a Jira
+   read; ≤ 10)? *Default: yes. Same-source reads only; never cross-source, never writes, never free text.*
 3. **Q3 — Calendar text stays local-only** (ADR-0110 D4): with Ollama not ready, the calendar part of an agent answer is
    a listing without a summary. *Default: keep.*
 4. **Q4 — Egress guard:** `observe` for 7 days, then `enforce`? *Default: yes.*
@@ -378,12 +432,15 @@ ledger and replies (no LLM judge). New ARTEX-ko attack families are re-run after
 7. **Q7 — Secret scan** with the existing credential guard (no new dependency) rather than gitleaks. *Default: in-repo.*
 8. **Q8 — Selection latency:** apply L1–L3, keep the A3 bound (6 s), no race, no direct Anthropic API key. *Default: yes.*
 9. **Q9 — Share the self-check output with the security team** after S0. *Default: yes.*
-10. **Q10 — OS-level outbound firewall** (e.g. LuLu) as a second layer. *Default: not now; ask the security team.*
+10. **Q10 — OS-level egress control for child processes** (`claude -p`, `ollama`, `git`), which in-process hooks cannot
+    block. Options: a macOS `pf` anchor, a LuLu or Little Snitch rule, or a restricted user or `sandbox-exec` profile.
+    This is an S0 decision. *Default: ask the security team which control they accept. Until it is decided, claim
+    enforcement only for Quoky's own Node HTTP paths.*
 
 ## 8. Residuals
 
-- The ledger cannot enforce destinations for child processes (Claude CLI, Ollama). L1 reduces their egress, and the
-  self-check observes it.
+- In-process enforcement does not cover child processes (Claude CLI, Ollama, git) or raw-socket libraries. Until an
+  OS-level control is chosen (Q10), they are reduced by L1 and observed by the self-check, but not blocked.
 - A plausible but wrong plan is still possible. Mitigations: reads only, deterministic counts, a basis line, and the
   0-wrong gate.
 - The quarantined summary can still mislead the owner in its own text (LLM09). It is marked as model-written.
