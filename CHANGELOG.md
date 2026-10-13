@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — fix: a database newer than the build is refused with exit 78 (ADR-0119 STO-1 pre-step, 2026-10-13)
+
+- `SCHEMA_VERSION_AHEAD` exited 1, so launchd relaunched the service in a loop after a rollback to an older build. It is now a configuration failure
+    (exit 78, ADR-0102 D5) with a self-contained hint: deploy the newer build, or restore the verified pre-migration backup. Nothing is changed in the database.
+
 ## Unreleased — BRF-3 unread mail in the morning brief (ADR-0117 amendment, 2026-10-13)
 
 - **Opt-in `안 읽은 메일` section.** `QUOKY_BRIEF_MAIL_ENABLED` (exact `true`/`false`, default `false`) adds the unread count and at most 3

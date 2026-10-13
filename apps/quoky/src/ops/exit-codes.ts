@@ -1,5 +1,5 @@
 import { TelegramStartupErrorCode } from '@quoky/adapter-telegram';
-import { TELEGRAM_IDENTITY_CONFLICT, type StartupFailureReport } from '../bootstrap-preflight';
+import { SCHEMA_VERSION_AHEAD, TELEGRAM_IDENTITY_CONFLICT, type StartupFailureReport } from '../bootstrap-preflight';
 import { QuokyConfigErrorCode } from '../config';
 import { ContinuationReceiverActivationErrorCode } from '../continuation/continuation-receiver-activation';
 import { ProviderRoutingActivationErrorCode } from '../provider-routing/provider-routing-activation';
@@ -29,6 +29,9 @@ const CONFIGURATION_FAILURES: ReadonlySet<string> = new Set<string>([
   // ADR-0102 D3: relaunching cannot help until the owner frees disk space / fixes the backup directory; the launcher
   // stops after 3 in a row instead of retrying a full-database copy every 10 seconds.
   BackupErrorCode.BACKUP_PRE_MIGRATION_FAILED,
+  // ADR-0096 D10 / ADR-0119 D4: the database is newer than this build (e.g. a v15 build on a v16 database). Nothing is
+  // touched; relaunching the same build cannot help until the owner restores the pre-migration backup or redeploys.
+  SCHEMA_VERSION_AHEAD,
   InstanceLockErrorCode.INSTANCE_ALREADY_RUNNING,
   StartupIdentityErrorCode.DISCORD_IDENTITY_MISMATCH,
   // ADR-0102 D5 / ADR-0114 D4/D5: a definitive Telegram answer at startup (another bot, a rejected token, a webhook

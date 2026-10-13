@@ -59,6 +59,36 @@ describe('assertDiscordTokenConfigured', () => {
 });
 
 describe('describeStartupFailure', () => {
+  it('ADR-0119 D4: a database newer than this build (thrown by the real storage start) is a configuration exit with a restore hint', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { SqliteStorageProvider, LATEST_SCHEMA_VERSION } = await import('@quoky/storage-sqlite');
+    const { startupExitCode, QuokyExitCode } = await import('./ops/exit-codes');
+    const dir = mkdtempSync(path.join(tmpdir(), 'quoky-ahead-'));
+    try {
+      const dbPath = path.join(dir, 'quoky.db');
+      const seed = new SqliteStorageProvider({ dbPath });
+      await seed.init();
+      await seed.close();
+      // Stamp the file one version ahead, as a newer build would leave it.
+      const { createRequire } = await import('node:module');
+      const requireFromStorage = createRequire(path.join(__dirname, '../../../packages/storage-sqlite/package.json'));
+      const Database = requireFromStorage('better-sqlite3') as new (file: string) => { pragma(source: string): unknown; close(): void };
+      const raw = new Database(dbPath);
+      raw.pragma(`user_version = ${LATEST_SCHEMA_VERSION + 1}`);
+      raw.close();
+      let caught: unknown;
+      try { await new SqliteStorageProvider({ dbPath }).init(); } catch (err) { caught = err; }
+      const failure = describeStartupFailure(caught);
+      expect(failure.message).toBe('SCHEMA_VERSION_AHEAD');
+      expect(failure.hint).toContain('verified pre-migration backup');
+      expect(failure.hint).toContain('quokyctl.sh backup --verify');
+      expect(startupExitCode(failure)).toBe(QuokyExitCode.CONFIGURATION);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('maps the discord.js DisallowedIntents login error (by code or message) to a Developer Portal hint', () => {
     const byCode = Object.assign(new Error('Privileged intent provided is not enabled or whitelisted.'), {
       code: 'DisallowedIntents',
