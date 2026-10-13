@@ -528,7 +528,7 @@ describe('loadConfig — Discord channel ids (ADR-0091)', () => {
 
 describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
   it('defaults to off with the haiku selection model, and accepts exactly off, shadow or active', () => {
-    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false });
+    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, timeoutMs: 6000 });
     expect(loadConfig(env({})).ai.intentSelectionModel).toBe('haiku');
     for (const mode of ['off', 'shadow', 'active'] as const) {
       expect(loadConfig(env({ QUOKY_NL_INTENT_MODE: mode })).nlSelection.mode).toBe(mode);
@@ -538,6 +538,14 @@ describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
 
   it.each(['', 'ON', 'Active', 'true', 'phase-c', ' active'])('rejects a non-exact mode %j without echoing it', (value) => {
     expect(() => loadConfig(env({ QUOKY_NL_INTENT_MODE: value }))).toThrow(/^NL_INTENT_MODE_INVALID$/);
+  });
+
+  it('QUOKY_NL_INTENT_TIMEOUT_MS defaults to 6 s and accepts a whole number from 2000 to 8000 (amendment A3)', () => {
+    expect(loadConfig(env({})).nlSelection.timeoutMs).toBe(6000);
+    expect(loadConfig(env({ QUOKY_NL_INTENT_TIMEOUT_MS: '5000' })).nlSelection.timeoutMs).toBe(5000);
+    for (const value of ['1999', '8001', 'abc', '5.5']) {
+      expect(() => loadConfig(env({ QUOKY_NL_INTENT_TIMEOUT_MS: value })), value).toThrow(/^NL_INTENT_TIMEOUT_INVALID$/);
+    }
   });
 
   it('QUOKY_NL_GRAMMAR_YIELD defaults to off and accepts exactly off or on (amendment A2)', () => {

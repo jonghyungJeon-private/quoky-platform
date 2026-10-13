@@ -19,6 +19,7 @@ import { ClaudeCliProvider, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky
 import type { AiProvider } from '@quoky/core';
 import {
   NL_EVAL_GATE,
+  NL_EVAL_RUNTIME_TIMEOUT_MS,
   buildPlan,
   computePlanDigest,
   loadCorpus,
@@ -122,11 +123,11 @@ export function formatSummary(summary: NlEvalSummary): string[] {
   const pct = (rate: number) => `${(rate * 100).toFixed(1)}%`;
   return [
     `overall: ${summary.hits}/${summary.positives} (${pct(summary.overall)})  wrong captures: ${summary.wrongCaptures}/${summary.negatives}` +
-      `  clarifications: ${summary.clarifications}  timeouts (> 4 s, counted as misses): ${summary.timeouts}  errors: ${summary.errors}`,
+      `  clarifications: ${summary.clarifications}  timeouts (> ${NL_EVAL_RUNTIME_TIMEOUT_MS / 1000} s, counted as misses): ${summary.timeouts}  errors: ${summary.errors}`,
     ...Object.entries(summary.perEntry)
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([entry, slot]) => `  ${entry.padEnd(20)} ${slot.hits}/${slot.total} (${pct(slot.rate)})`),
-    `latency: p50 ${summary.latency.p50} ms, p95 ${summary.latency.p95} ms, max ${summary.latency.max} ms, over 4 s: ${summary.latency.overRuntimeBound}`,
+    `latency: p50 ${summary.latency.p50} ms, p95 ${summary.latency.p95} ms, max ${summary.latency.max} ms, over ${NL_EVAL_RUNTIME_TIMEOUT_MS / 1000} s: ${summary.latency.overRuntimeBound}`,
     `gate (>= 95% overall, >= 90% per entry, 0 wrong captures): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`,
   ];
 }

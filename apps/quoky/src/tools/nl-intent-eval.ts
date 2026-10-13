@@ -77,7 +77,7 @@ export interface NlEvalPlan {
   readonly model: string;
   readonly runs: number;
   readonly concurrency: number;
-  /** The per-call bound (the runtime's 4 s). */
+  /** The per-call bound (the runtime's selection bound). */
   readonly callTimeoutMs: number;
   readonly caseIds: readonly string[];
 }
@@ -170,7 +170,7 @@ export interface NlEvalSummary {
   readonly wrongCaptures: number;
   readonly negatives: number;
   readonly clarifications: number;
-  /** Calls that did not answer within the runtime's 4 s bound (each one a miss on a positive). */
+  /** Calls that did not answer within the runtime's selection bound (each one a miss on a positive). */
   readonly timeouts: number;
   readonly errors: number;
   readonly latency: { readonly p50: number; readonly p95: number; readonly max: number; readonly overRuntimeBound: number };

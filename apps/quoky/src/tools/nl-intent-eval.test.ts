@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Capability, type AiProvider, type AiRequest } from '@quoky/core';
+import { Capability, NL_SELECTION_TIMEOUT_MS, type AiProvider, type AiRequest } from '@quoky/core';
 import { buildPlan, computePlanDigest, runEvaluation, scoreOutput, summarize, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, runCli, type CliDeps } from './nl-intent-eval-cli';
 
@@ -36,10 +36,10 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
     const records = [
       { run: 1, id: 'a', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 100 },
       { run: 1, id: 'b', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 300 },
-      { run: 1, id: 'c', expected: 'none', outcome: 'none' as const, latencyMs: 4500 },
+      { run: 1, id: 'c', expected: 'none', outcome: 'none' as const, latencyMs: 6500 },
     ];
     const passed = summarize(records);
-    expect(passed).toMatchObject({ overall: 1, wrongCaptures: 0, gatePassed: true, latency: { p50: 300, p95: 4500, overRuntimeBound: 1 } });
+    expect(passed).toMatchObject({ overall: 1, wrongCaptures: 0, gatePassed: true, latency: { p50: 300, p95: 6500, overRuntimeBound: 1 } });
     expect(summarize([...records, { run: 1, id: 'd', expected: 'none', outcome: 'wrong-capture', latencyMs: 1 }]).gatePassed).toBe(false);
     expect(summarize([...records, { run: 1, id: 'e', expected: 'jira.issues', outcome: 'miss', latencyMs: 1 }]).gatePassed).toBe(false);
   });
@@ -69,7 +69,7 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
 });
 
 describe('nl-intent evaluation under the runtime bound', () => {
-  it('calls with the 4 s bound and counts a slower answer as a timeout (a miss, never wrong)', async () => {
+  it('calls with the runtime selection bound and counts a slower answer as a timeout (a miss, never wrong)', async () => {
     const seen: number[] = [];
     const provider = {
       id: 'slow',
@@ -86,7 +86,7 @@ describe('nl-intent evaluation under the runtime bound', () => {
     expect(seen).toEqual([20, 20]);
     expect(records.map((record) => record.outcome)).toEqual(['timeout', 'timeout']);
     expect(summarize(records)).toMatchObject({ timeouts: 2, hits: 0, wrongCaptures: 0, gatePassed: false });
-    expect(buildPlan(CORPUS, 'sha', { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 1, concurrency: 1 }).callTimeoutMs).toBe(4000);
+    expect(buildPlan(CORPUS, 'sha', { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 1, concurrency: 1 }).callTimeoutMs).toBe(NL_SELECTION_TIMEOUT_MS);
   });
 });
 

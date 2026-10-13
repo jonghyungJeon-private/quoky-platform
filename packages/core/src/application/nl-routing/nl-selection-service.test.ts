@@ -3,7 +3,7 @@ import { AiProviderError } from '../../errors';
 import { AiFailureKind, Capability, type Actor, type IsoTimestamp, type Session } from '../../domain';
 import type { AiProvider, AiRequest, LogFields, Logger } from '../../ports';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { NlSelectionService, choiceIndex, resolveChoice, type NlIntentMode, type NlSelectionDecision } from './nl-selection-service';
+import { NL_SELECTION_TIMEOUT_MS, NlSelectionService, choiceIndex, resolveChoice, type NlIntentMode, type NlSelectionDecision } from './nl-selection-service';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   INTERPRETATION_PREFERENCE_TTL_MS,
@@ -184,7 +184,7 @@ describe('NlSelectionService — modes and the D3 call contract', () => {
     const h = harness({ script: [out('jira.issues')] });
     await h.decide('오늘 나한테 할당된 jira 이슈가 있을텐데 ?');
     expect(h.calls).toHaveLength(1);
-    expect(h.calls[0]).toMatchObject({ capability: Capability.INTENT_SELECTION, timeoutMs: 4000 });
+    expect(h.calls[0]).toMatchObject({ capability: Capability.INTENT_SELECTION, timeoutMs: NL_SELECTION_TIMEOUT_MS });
     expect(h.calls[0]!.prompt).toContain('<<<\n오늘 나한테 할당된 jira 이슈가 있을텐데 ?\n>>>');
     expect(Object.keys(h.calls[0]!)).toEqual(['capability', 'prompt', 'timeoutMs']);
   });

@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — v5 NL-1 selection timeout (ADR-0120 amendment A3, 2026-10-13)
+
+- **Natural-language intent selection waits 6 s, not 4 s (ADR-0120 A3).** The default per-call bound is now 6000 ms, still one
+  call and no retry. Live evaluation showed 13 to 18 of about 430 to 500 calls per run timing out at 4 s (p50 2.9 s, p95 3.6 s).
+  A slow or failed selection now takes at most 2 s longer before the turn falls back; normal turns are unchanged.
+- **`QUOKY_NL_INTENT_TIMEOUT_MS` (new, optional).** An integer from 2000 to 8000 overrides the bound. Any other value stops
+  startup with `NL_INTENT_TIMEOUT_INVALID`. Unset keeps 6000.
+
 ## Unreleased — v5 NL-1 live re-test follow-up 2 (ADR-0120, 2026-10-12)
 
 - **"그 중에 …" binds to the listing you just saw.** A listing answered by a deterministic grammar (calendar, Jira, GitHub,
