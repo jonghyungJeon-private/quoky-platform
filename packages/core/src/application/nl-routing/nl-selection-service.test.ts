@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AiProviderError } from '../../errors';
 import { AiFailureKind, Capability, type Actor, type IsoTimestamp, type Session } from '../../domain';
 import type { AiProvider, AiRequest, LogFields, Logger } from '../../ports';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { NL_SELECTION_TIMEOUT_MS, NlSelectionService, choiceIndex, resolveChoice, type NlIntentMode, type NlSelectionDecision } from './nl-selection-service';
+import { buildSelectionPrompt } from './selection-prompt';
+import { NL_SELECTION_TIMEOUT_MS, NL_WARMUP_TIMEOUT_MS, NL_WARMUP_PROBE_TEXT, nlWarmupPrompt, NlSelectionService, choiceIndex, resolveChoice, type NlIntentMode, type NlSelectionDecision } from './nl-selection-service';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   INTERPRETATION_PREFERENCE_TTL_MS,
@@ -603,5 +604,54 @@ describe('NlSelectionService — the interpretation preference (D7: ask once, 30
     await (h.service as unknown as { deps: { actors: { save(a: Actor): Promise<Actor> } } }).deps.actors.save({ ...actor, metadata: { other: 1 } });
     await h.decide('1', { now: at(1000) });
     expect(h.actor().metadata).toMatchObject({ other: 1, [INTERPRETATION_PREFERENCES_METADATA_KEY]: { 'jira.created-scope': { value: 'assignee' } } });
+  });
+});
+
+describe('NlSelectionService — startup warm-up (ADR-0120 A3 follow-up)', () => {
+  it('fires once in active with the fixed content-free prompt and the generous bound, and logs only outcome and latency', async () => {
+    const h = harness({ execute: async () => ({ text: '{}' }) });
+    expect(await h.service.warmUp()).toBe('ok');
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]).toMatchObject({ capability: Capability.INTENT_SELECTION, timeoutMs: NL_WARMUP_TIMEOUT_MS });
+    expect(h.calls[0]?.prompt).toBe(nlWarmupPrompt());
+    expect(nlWarmupPrompt()).toBe(buildSelectionPrompt({ entries: [], text: NL_WARMUP_PROBE_TEXT }));
+    const warm = h.logs.filter((entry) => entry.event === 'nl_selection.warmup');
+    expect(warm).toHaveLength(1);
+    expect(Object.keys(warm[0]?.fields ?? {}).sort()).toEqual(['latencyMs', 'outcome']);
+    expect(warm[0]?.fields).toMatchObject({ outcome: 'ok' });
+  });
+
+  it('never fires in off mode', async () => {
+    const h = harness({ mode: 'off' });
+    expect(await h.service.warmUp()).toBe('skipped');
+    expect(h.calls).toHaveLength(0);
+    expect(h.logs).toHaveLength(0);
+  });
+
+  it('is skipped when the selector family differs from the given chat provider', async () => {
+    const h = harness();
+    expect(await h.service.warmUp({ chatProviderId: 'other-family' })).toBe('skipped');
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('logs a failure or a missing provider without throwing', async () => {
+    const failing = harness({ execute: async () => { throw new Error('boom'); } });
+    await expect(failing.service.warmUp()).resolves.toBe('error');
+    expect(failing.logs.find((entry) => entry.event === 'nl_selection.warmup')?.fields).toMatchObject({ outcome: 'error' });
+    const none = harness({ select: async () => { throw new Error('no provider'); } });
+    await expect(none.service.warmUp()).resolves.toBe('error');
+  });
+
+  it('logs a timeout without throwing', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness({ execute: () => new Promise(() => undefined) });
+      const run = h.service.warmUp();
+      await vi.advanceTimersByTimeAsync(NL_WARMUP_TIMEOUT_MS + 1);
+      await expect(run).resolves.toBe('timeout');
+      expect(h.logs.find((entry) => entry.event === 'nl_selection.warmup')?.fields).toMatchObject({ outcome: 'timeout' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

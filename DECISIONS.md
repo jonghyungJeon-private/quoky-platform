@@ -21119,6 +21119,13 @@ These are Q1–Q10 of the design §7. The defaults are:
   - A slow or failed selection now takes at most 2 s longer before the turn falls back. Normal turns are unchanged.
 - **Follow-up:** reducing the latency itself (a warm process, a smaller prompt) belongs to the ADR-0121 design.
 
+### ADR-0120 A3 follow-up: startup warm-up (2026-10-13)
+
+- **Problem (live):** right after a restart the first one or two selections hit the 6 s bound (`nl_selection.decided outcome=unavailable cause=timeout latencyMs≈6100`) because of a cold `claude -p` start; later calls take 1.2–2 s. The first owner question fell through to honest chat.
+- **Change:** when `QUOKY_NL_INTENT_MODE` is `shadow` or `active`, `main.ts` schedules one background warm-up about 5 s after startup, once providers are ready (`apps/quoky/src/nl-selection/nl-warmup.ts`, `NlSelectionService.warmUp`). It never blocks startup or a turn, and it is cancelled on shutdown. `off` schedules nothing. It logs `nl_selection.warmup outcome=ok|timeout|error latencyMs=…` and nothing else. Its own bound is 20 s (`NL_WARMUP_TIMEOUT_MS`); the 6 s bound for owner turns is unchanged.
+- **Egress statement:** the prompt is a fixed constant (the selection instruction text, no catalog entry, the word `warmup`). It carries no owner text, session data, memory or connector content, and the reply is discarded. It goes through the same router path (`INTENT_SELECTION`) and only when that provider's family equals the family the default chat reaches (D6/D8); otherwise it is skipped with no call. The D3 credential guard passes trivially (no variable content). One call per process start; there is no periodic timer.
+- **Not done:** the idle re-warm. A re-warm triggered on the next turn cannot help that turn, so it adds traffic without benefit; the ADR-0121 L2 standby design remains the place for it.
+
 ### ADR-0121 S0-ops implementation note — self-check, secret scan, runbooks (2026-10-13)
 
 - **Status:** Implemented under the owner's approval to start S0 (2026-10-13). This is the ops half; the traffic ledger and egress guard are on the parallel `claude/v5-s0-egress` branch. No architecture change.
