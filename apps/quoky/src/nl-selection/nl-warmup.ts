@@ -1,4 +1,4 @@
-import { Capability, type AiProvider, type Logger, type NlSelectionService } from '@quoky/core';
+import { Capability, executionLocalityOf, type AiExecutionLocality, type AiProvider, type Logger, type NlSelectionService } from '@quoky/core';
 
 /**
  * ADR-0120 A3 follow-up (startup warm-up): once the providers are ready, one content-free selection call runs in the
@@ -8,7 +8,7 @@ import { Capability, type AiProvider, type Logger, type NlSelectionService } fro
 export const NL_WARMUP_DELAY_MS = 5_000;
 
 export interface NlWarmupDeps {
-  readonly nlSelection: Pick<NlSelectionService, 'mode'> & { warmUp(options: { chatProviderId?: string; signal?: AbortSignal }): Promise<unknown> };
+  readonly nlSelection: Pick<NlSelectionService, 'mode'> & { warmUp(options: { chatProviderId?: string; chatProviderLocality?: AiExecutionLocality; signal?: AbortSignal }): Promise<unknown> };
   readonly router: { select(capability: Capability): Promise<AiProvider> };
   readonly logger: Logger;
   readonly delayMs?: number;
@@ -25,7 +25,7 @@ export function scheduleNlWarmup(deps: NlWarmupDeps): () => void {
         // Egress (D6/D8): warm only the selector's own provider, and only when it is the family the default chat reaches.
         const chat = await deps.router.select(Capability.GENERAL_CHAT);
         if (controller.signal.aborted) return;
-        await deps.nlSelection.warmUp({ chatProviderId: chat.family ?? chat.id, signal: controller.signal });
+        await deps.nlSelection.warmUp({ chatProviderId: chat.family ?? chat.id, chatProviderLocality: executionLocalityOf(chat), signal: controller.signal });
       } catch (error) {
         try {
           deps.logger.warn('nl_selection.warmup', { outcome: 'error', errorName: error instanceof Error ? error.name : typeof error });

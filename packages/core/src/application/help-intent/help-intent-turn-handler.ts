@@ -1,7 +1,7 @@
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
 import { outboundMessage } from '../message-rendering';
-import { nlStringArg, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
-import { nlWave1Entry } from '../nl-routing/wave1-entries';
+import { nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlSelectedCommand } from '../nl-routing/catalog';
+import { NL_HELP_TOPICS, nlWave1Entry } from '../nl-routing/wave1-entries';
 import { renderHelpText } from '../response-composer';
 import {
   composeHelpIntentReply,
@@ -13,6 +13,8 @@ import {
 } from './help-intent';
 
 export const HELP_INTENT_TURN_HANDLER_ID = 'help-intent';
+/** The content-free Class B grammar id of the help-intent matcher (ADR-0120 D10 agreement log). */
+export const HELP_INTENT_GRAMMAR_ID = 'help-intent';
 
 /**
  * ADR-0120 `help.topic`: topics only selection names (the grammar's index stays frozen, ADR-0120 D10). A topic answers
@@ -82,6 +84,29 @@ export class HelpIntentTurnHandler implements ConversationTurnHandler {
     return {
       reply: { context: ctx.message.context, text: composeHelpIntentReply(selected.language, lines), replyToMessageId: ctx.message.id },
     };
+  }
+
+  /**
+   * ADR-0120 D6 Phase C: the help-intent matcher (frozen Class B, ADR-0104 D4) would answer this message — a how-to
+   * question with contributed lines, or the capability question. The `help.topic` equivalent is given for one topic the
+   * catalog names (or `all` for the capability question); several topics have none. Pure, like `handle`'s matching.
+   */
+  classBProbe(ctx: TurnHandlerContext): NlClassBProbe | null {
+    try {
+      const topics = this.deps.topics ?? HELP_INTENT_TOPICS;
+      const match = detectHelpIntent(ctx.message.text, topics);
+      if (match === null) {
+        return detectCapabilityQuestion(ctx.message.text) === null ? null : { grammarId: HELP_INTENT_GRAMMAR_ID, selection: { entryId: 'help.topic', args: {} } };
+      }
+      const source = typeof this.deps.helpLines === 'function' ? this.deps.helpLines() : this.deps.helpLines;
+      if (selectHelpLines(match, source, { topics, exclude: HELP_INTENT_HELP_LINES }).length === 0) return null;
+      const [topic, ...more] = match.topicIds;
+      return topic !== undefined && more.length === 0 && (NL_HELP_TOPICS as readonly string[]).includes(topic) && topic !== 'all'
+        ? { grammarId: HELP_INTENT_GRAMMAR_ID, selection: { entryId: 'help.topic', args: { topic } } }
+        : { grammarId: HELP_INTENT_GRAMMAR_ID };
+    } catch {
+      return null;
+    }
   }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {

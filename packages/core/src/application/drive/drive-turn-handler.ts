@@ -1,4 +1,4 @@
-import { nlStringArg, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlSelectedCommand } from '../nl-routing/catalog';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import type {
   ConversationTurnHandler,
@@ -54,6 +54,8 @@ export const DRIVE_TURN_HANDLER_ID = 'drive';
  * never claimed.
  */
 export const DRIVE_TURN_HANDLER_ORDER = 145;
+/** The content-free Class B grammar id of the Drive listing forms (ADR-0120 D10 agreement log). */
+export const DRIVE_LIST_GRAMMAR_ID = 'drive-question.list';
 /** The whole read (one listing, or one export) must finish within this bound. */
 export const DRIVE_READ_TIMEOUT_MS = 30_000;
 /** At most this many conversations' last Drive list are kept in memory (the oldest is dropped first). */
@@ -128,15 +130,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
   constructor(private readonly deps: DriveTurnHandlerDeps) {}
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerSummarizeReply | null> {
-    const text = ctx.message.text;
-    if ((ctx.message.attachments?.length ?? 0) > 0) return null;
-    let question: DriveQuestion | null;
-    try {
-      if (parseReminderMessage(text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
-      question = parseDriveQuestion(text);
-    } catch {
-      return null;
-    }
+    const question = this.parseQuestion(ctx);
     if (question === null) return null;
     const language = question.language;
     // A bare `이 문서` / `this document` is someone else's document unless a Drive list is open in this conversation.
@@ -159,6 +153,27 @@ export class DriveTurnHandler implements ConversationTurnHandler {
         : { ...listed, nlSelection: { entryId: 'drive.files', args: question.kind === 'search' ? { name: question.name } : {} } };
     }
     return this.summarize(ctx, question.target, language);
+  }
+
+  /** The Drive grammar exactly as `handle` reads it (attachments and reminders are never a Drive question). */
+  private parseQuestion(ctx: TurnHandlerContext): DriveQuestion | null {
+    if ((ctx.message.attachments?.length ?? 0) > 0) return null;
+    try {
+      if (parseReminderMessage(ctx.message.text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
+      return parseDriveQuestion(ctx.message.text);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ADR-0120 D6 Phase C: only the recent and name-search listing forms are frozen Class B; a write refusal, the usage hint
+   * and a document summary are Class A (`null`). Pure: nothing is read.
+   */
+  classBProbe(ctx: TurnHandlerContext): NlClassBProbe | null {
+    const question = this.parseQuestion(ctx);
+    if (question === null || (question.kind !== 'recent' && question.kind !== 'search')) return null;
+    return { grammarId: DRIVE_LIST_GRAMMAR_ID, selection: { entryId: 'drive.files', args: question.kind === 'search' ? { name: question.name } : {} } };
   }
 
   /** ADR-0120 D1: `drive.files`, offered whenever this handler is registered (Drive is configured). */

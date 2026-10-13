@@ -11,7 +11,7 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  */
 
 /** Bumped whenever the instruction text changes (the eval plan digest binds it). */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v16';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v17';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -123,6 +123,8 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   A count follow-up ("그거 몇 개야", "how many is that") with a previous selection is the same entry and args plus',
     '   count true. With Previous selection none it refers to nothing: NEEDS_CLARIFICATION, entryId jira.issues, args {"count":true},',
     '   alternatives [{"entryId":"calendar.events","args":{"count":true}}] (the owner is then asked which list).',
+    '   A narrowing follow-up ("그 중에 X만", "그거 중에 X", "among those, only X") with Previous selection none also refers to',
+    '   nothing: NEEDS_CLARIFICATION with the (at most 2) entries whose keyword or filter could hold X; never CLEAR, never none.',
     '7. ambiguity is NEEDS_CLARIFICATION only when two entries fit equally well; list them in alternatives (at most 2).',
     '   Otherwise CLEAR with "alternatives": [].',
     '',

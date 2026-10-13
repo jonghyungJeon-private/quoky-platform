@@ -1,4 +1,4 @@
-import { nlFlagArg, nlStringArg, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlFlagArg, nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import type {
   ConversationTurnHandler,
@@ -50,6 +50,8 @@ export const MAIL_TURN_HANDLER_ID = 'mail';
  * claimed, so `내일 9시에 메일 확인 알려줘` stays a reminder.
  */
 export const MAIL_TURN_HANDLER_ORDER = 140;
+/** The content-free Class B grammar id of the mail listing forms (ADR-0120 D10 agreement log). */
+export const MAIL_LIST_GRAMMAR_ID = 'mail-question.list';
 /** The whole read (one search plus its metadata reads, or one message) must finish within this bound. */
 export const MAIL_READ_TIMEOUT_MS = 30_000;
 /** At most this many conversations' last mail list are kept in memory (the oldest is dropped first). */
@@ -123,14 +125,7 @@ export class MailTurnHandler implements ConversationTurnHandler {
   constructor(private readonly deps: MailTurnHandlerDeps) {}
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerSummarizeReply | null> {
-    const text = ctx.message.text;
-    let question: MailQuestion | null;
-    try {
-      if (parseReminderMessage(text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
-      question = parseMailQuestion(text);
-    } catch {
-      return null;
-    }
+    const question = this.parseQuestion(ctx);
     if (question === null) return null;
     const language = question.language;
 
@@ -150,13 +145,30 @@ export class MailTurnHandler implements ConversationTurnHandler {
         ? listed
         : {
             ...listed,
-            nlSelection: {
-              entryId: 'mail.list',
-              args: { ...(question.unread ? { unread: true } : {}), ...(question.today ? { today: true } : {}), ...(question.from !== undefined ? { from: question.from } : {}) },
-            },
+            nlSelection: mailGrammarSelection(question),
           };
     }
     return this.summarize(ctx, question.target, language);
+  }
+
+  /** The mail grammar exactly as `handle` reads it (a reminder is never a mail question); `null` on no match. */
+  private parseQuestion(ctx: TurnHandlerContext): MailQuestion | null {
+    try {
+      if (parseReminderMessage(ctx.message.text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
+      return parseMailQuestion(ctx.message.text);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ADR-0120 D6 Phase C: only the listing forms are frozen Class B. A write refusal, the usage hint and an `N번 메일 요약`
+   * item summary are Class A (`null`), so `handle` answers them exactly as before. Pure: nothing is read.
+   */
+  classBProbe(ctx: TurnHandlerContext): NlClassBProbe | null {
+    const question = this.parseQuestion(ctx);
+    if (question === null || question.kind !== 'list') return null;
+    return { grammarId: MAIL_LIST_GRAMMAR_ID, selection: mailGrammarSelection(question) };
   }
 
   /** ADR-0120 D1: `mail.list`, offered whenever this handler is registered (Gmail is configured). */
@@ -353,4 +365,12 @@ function listingKey(sessionId: Id, actorId: Id): string {
 /** Factory for the composition root (ADR-0096 D7). */
 export function createMailTurnHandler(deps: MailTurnHandlerDeps): MailTurnHandler {
   return new MailTurnHandler(deps);
+}
+
+/** The structural `mail.list` equivalent of a listing form (canonical: defaults omitted). */
+function mailGrammarSelection(question: Extract<MailQuestion, { kind: 'list' }>): NlGrammarSelection {
+  return {
+    entryId: 'mail.list',
+    args: { ...(question.unread ? { unread: true } : {}), ...(question.today ? { today: true } : {}), ...(question.from !== undefined ? { from: question.from } : {}) },
+  };
 }

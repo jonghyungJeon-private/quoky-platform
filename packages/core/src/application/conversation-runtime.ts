@@ -90,9 +90,9 @@ import {
   externalActionRequestOf,
   type IntentClassifyContext,
 } from './intent-classifier';
-import type { NlCatalogEntry } from './nl-routing/catalog';
+import type { NlCatalogEntry, NlClassBProbe } from './nl-routing/catalog';
 import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './nl-routing/honest-chat';
-import { languageOf, type NlSelectionService } from './nl-routing/nl-selection-service';
+import { languageOf, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
 import { LAST_SELECTION_METADATA_KEY, type PendingQuestion } from './nl-routing/selection-state';
 import { codeGenerationDispatchOfError } from './code-generation-manager';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
@@ -1052,7 +1052,7 @@ export interface ConversationRuntimeDeps {
    * validation, the clarification state, `lastSelection` and the interpretation preferences belong to the service.
    */
   readonly nlSelection?: Pick<NlSelectionService, 'mode' | 'decide'> &
-    Partial<Pick<NlSelectionService, 'takePending' | 'recordGrammarSelection' | 'clearLastSelection' | 'yieldsToSelection' | 'grammarYieldEnabled'>>;
+    Partial<Pick<NlSelectionService, 'takePending' | 'recordGrammarSelection' | 'clearLastSelection' | 'yieldsToSelection' | 'grammarYieldEnabled' | 'phaseCEnabled'>>;
   readonly logger: Logger;
 }
 
@@ -2310,7 +2310,7 @@ export class ConversationRuntime {
       this.deps.nlSelection?.yieldsToSelection !== undefined &&
       this.deps.nlSelection.grammarYieldEnabled?.() === true &&
       !lookup.pending &&
-      (await this.deps.nlSelection.yieldsToSelection(await this.nlChatProviderId({ capability: Capability.GENERAL_CHAT } as Intent, session, actor)))
+      (await this.nlYieldsToSelection(session, actor))
     ) {
       this.nlYield.add(message);
     }
@@ -3025,11 +3025,21 @@ export class ConversationRuntime {
 
     // (B0) ADR-0096 `pre-classify` turn handlers — after the QA-018 stray-decision reply and the `기억해:` block,
     // immediately before the intent classifier.
-    const preClassifyDispatch = this.runTurnHandlers('pre-classify', () =>
-      this.turnHandlerContext(message, session, actor, applyAnchor),
-    );
-    const preClassifyHandled = preClassifyDispatch ? await preClassifyDispatch : null;
-    if (preClassifyHandled) return this.respondTurnHandler(message, session, actor, userMemory.id, preClassifyHandled);
+    // ADR-0120 D6 Phase C (S1, `QUOKY_NL_PHASE=c`): at the position where a frozen Class B grammar would answer, selection
+    // runs first; the grammar answers only when the selector is unavailable. Class A handlers keep their order and run as
+    // before. Phase A (the default): exactly the dispatch below.
+    let nlEarly: NlEarlySelection | undefined;
+    if (this.nlPhaseC(lookup.pending)) {
+      const phaseC = await this.dispatchPreClassifyPhaseC(message, session, actor, applyAnchor, userMemory.id, nlPending);
+      if (phaseC.kind === 'responded') return phaseC.result;
+      nlEarly = phaseC.early;
+    } else {
+      const preClassifyDispatch = this.runTurnHandlers('pre-classify', () =>
+        this.turnHandlerContext(message, session, actor, applyAnchor),
+      );
+      const preClassifyHandled = preClassifyDispatch ? await preClassifyDispatch : null;
+      if (preClassifyHandled) return this.respondTurnHandler(message, session, actor, userMemory.id, preClassifyHandled);
+    }
 
     // (B0b) ADR-0104 D3 (DET-1, QA-V2-W8-02): a whole-message status question or completion statement about a
     // code-chain action ("커밋됐어?", "푸시했어", "브랜치 삭제했어", "did you push?") that no route above answered is
@@ -3059,14 +3069,18 @@ export class ConversationRuntime {
     // (C2) ADR-0120 D6 Phase A: natural-language selection, only on a turn every earlier route (the pre-classify
     // grammars, the B0b status answer and the classifier above) left for chat — `GENERAL_CHAT`, or `POLICY_SENSITIVE_CHAT`
     // for the personal-data reason alone — and never while an approval is pending. Absent or `off`: nothing runs here.
-    let nlFacts: NlChatFacts | undefined;
-    if (this.deps.nlSelection !== undefined && this.deps.nlSelection.mode !== 'off' && !lookup.pending) {
-      const route = ConversationRuntime.nlSelectionRoute(intent);
+    // Phase C: a selection already made at a Class B position this turn is not repeated (one call per message, D3); its
+    // honest-chat fact carries over. The classifier's personal-work surface is a Class B grammar too (`work-surface`):
+    // selection runs first there, and the surface is the fallback for every other outcome.
+    let nlFacts: NlChatFacts | undefined = nlEarly?.facts;
+    if (nlEarly === undefined && this.deps.nlSelection !== undefined && this.deps.nlSelection.mode !== 'off' && !lookup.pending) {
+      const route = ConversationRuntime.nlSelectionRoute(intent) ?? (this.nlPhaseC(lookup.pending) ? ConversationRuntime.nlWorkSurfaceRoute(intent) : undefined);
       if (route !== undefined) {
         try {
-          const selected = await this.handleNlSelection(message, session, actor, applyAnchor, userMemory.id, route, intent, nlPending);
+          const grammar: NlClassBProbe | undefined = route === 'work-surface' ? { grammarId: 'work-surface', selection: { entryId: 'todo.list', args: {} } } : undefined;
+          const selected = await this.handleNlSelection(message, session, actor, applyAnchor, userMemory.id, route, intent, nlPending, grammar);
           if (selected.kind === 'responded') return selected.result;
-          nlFacts = selected.facts;
+          if (route !== 'work-surface') nlFacts = selected.facts;
         } catch (err) {
           return this.failReadOnlyTurn(message, session, err);
         }
@@ -3108,6 +3122,99 @@ export class ConversationRuntime {
     else this.nlTurns.set(message, { sessionId: session.id, keep: true });
   }
 
+  /** ADR-0120 D6 Phase C: the classifier's personal-work surface (a frozen Class B clause, D6) as a selection route. */
+  private static nlWorkSurfaceRoute(intent: Intent): 'work-surface' | undefined {
+    return intent.type === IntentType.LOOKUP && intent.raw?.kind === 'personal-work-surface' ? 'work-surface' : undefined;
+  }
+
+  /** ADR-0120 D6 Phase C (S1) is on for this turn: `QUOKY_NL_PHASE=c`, `active` or `shadow`, and no approval pending. */
+  private nlPhaseC(pending: unknown): boolean {
+    return !pending && this.deps.nlSelection?.phaseCEnabled?.() === true;
+  }
+
+  /** ADR-0120 amendment A2: selection would run for this turn (the selector is where this turn's chat would go). */
+  private async nlYieldsToSelection(session: Session, actor: Actor): Promise<boolean> {
+    const chat = await this.nlChatProvider({ capability: Capability.GENERAL_CHAT } as Intent, session, actor);
+    return (await this.deps.nlSelection?.yieldsToSelection?.(chat?.id, chat?.locality)) === true;
+  }
+
+  /**
+   * ADR-0120 D6 Phase C (S1): the `pre-classify` stage with selection first at a Class B position. Handlers run in their
+   * registry order; before each one's `handle`, its pure `classBProbe` is asked (only while no selection has run this
+   * turn). A hit whose catalog entry is offered runs selection:
+   *  - an executed read or a question answers the turn;
+   *  - `none` ends the stage: the turn continues to the classifier and chat (D9 honest chat), exactly as a Phase A `none`;
+   *  - unavailable or skipped (provider down, timeout, family or locality mismatch, credential, too long): the grammar's
+   *    own `handle` runs as the fallback and the stage continues as in Phase A.
+   * A Class A answer (a probe `null`) is never preceded by selection. The selection runs at most once per message.
+   */
+  private async dispatchPreClassifyPhaseC(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    applyAnchor: ApplyPreviewAnchor | null,
+    userMemoryId: Id,
+    nlPending: PendingQuestion | null | undefined,
+  ): Promise<{ readonly kind: 'responded'; readonly result: TurnResult } | { readonly kind: 'continue'; readonly early?: NlEarlySelection }> {
+    const handlers = this.turnHandlersByStage['pre-classify'];
+    if (handlers.length === 0) return { kind: 'continue' };
+    const ctx = this.turnHandlerContext(message, session, actor, applyAnchor);
+    let early: NlEarlySelection | undefined;
+    for (const handler of handlers) {
+      if (early === undefined) {
+        const probe = this.nlClassBProbe(handler, ctx);
+        if (probe !== null) {
+          let selected: Awaited<ReturnType<ConversationRuntime['handleNlSelection']>>;
+          try {
+            selected = await this.handleNlSelection(
+              message,
+              session,
+              actor,
+              applyAnchor,
+              userMemoryId,
+              'class-b',
+              { capability: Capability.GENERAL_CHAT } as Intent,
+              nlPending,
+              probe,
+            );
+          } catch (err) {
+            // Like (C2): a selected read is read-only, so a failure renders the confirmed-not-applied wording.
+            return { kind: 'responded', result: await this.failReadOnlyTurn(message, session, err) };
+          }
+          if (selected.kind === 'responded') return selected;
+          early = { ...(selected.facts !== undefined ? { facts: selected.facts } : {}) };
+          if (!selected.fallback) return { kind: 'continue', early };
+        }
+      }
+      const handled = await handler.handle(ctx);
+      if (handled) {
+        this.deps.logger.info('turn handler responded', {
+          handlerId: handler.id,
+          stage: 'pre-classify',
+          sessionId: ctx.session.id,
+          status: handled.kind === 'summarize' ? 'SUMMARIZE' : handled.kind === 'write-draft' ? 'WRITE_DRAFT' : handled.status ?? 'RESPONDED',
+        });
+        return { kind: 'responded', result: await this.respondTurnHandler(message, session, actor, userMemoryId, handled) };
+      }
+    }
+    return { kind: 'continue', ...(early !== undefined ? { early } : {}) };
+  }
+
+  /** A handler's Class B probe, only when its catalog equivalent (if any) is offered this turn; never throws. */
+  private nlClassBProbe(handler: ConversationTurnHandler, ctx: TurnHandlerContext): NlClassBProbe | null {
+    if (typeof handler.classBProbe !== 'function') return null;
+    let probe: NlClassBProbe | null;
+    try {
+      probe = handler.classBProbe(ctx);
+    } catch {
+      return null;
+    }
+    if (probe === null || typeof probe !== 'object') return null;
+    // A grammar answer the catalog cannot offer now (an unconfigured source's "not configured" reply) keeps its grammar.
+    if (probe.selection !== undefined && !this.nlCatalog().has(probe.selection.entryId)) return null;
+    return probe;
+  }
+
   /** ADR-0120 D6: the Phase A routes selection may run on, or `undefined`. */
   private static nlSelectionRoute(intent: Intent): 'chat' | 'personal-data' | undefined {
     if (intent.capability === Capability.GENERAL_CHAT && intent.type === IntentType.CHAT) return 'chat';
@@ -3126,15 +3233,16 @@ export class ConversationRuntime {
    * turn's capability with the session's selection context). `undefined` when it cannot be known (the routed Stage 2A
    * seam decides GENERAL_CHAT itself, or nothing resolves); selection is then skipped. Read as opaque data.
    */
-  private async nlChatProviderId(intent: Intent, session: Session, actor: Actor): Promise<string | undefined> {
+  private async nlChatProvider(intent: Intent, session: Session, actor: Actor): Promise<{ readonly id: string; readonly locality: AiExecutionLocality } | undefined> {
     if (intent.capability === Capability.GENERAL_CHAT && this.deps.runtimeProviderRouting) return undefined;
     try {
       const context = { sessionId: session.id, actorId: actor.id };
       const provider = this.deps.router.resolve
         ? (await this.deps.router.resolve(intent.capability, context)).provider
         : await this.deps.router.select(intent.capability, context);
-      // The provider family, so a model variant (`claude-cli:opus`) still counts as its base provider for egress.
-      return provider.family ?? provider.id;
+      // The provider family, so a model variant (`claude-cli:opus`) still counts as its base provider for egress, plus its
+      // declared locality (S1: an equal family must also have an equal locality).
+      return { id: provider.family ?? provider.id, locality: executionLocalityOf(provider) };
     } catch {
       return undefined;
     }
@@ -3167,17 +3275,22 @@ export class ConversationRuntime {
     actor: Actor,
     applyAnchor: ApplyPreviewAnchor | null,
     userMemoryId: Id,
-    route: 'chat' | 'personal-data',
+    route: NlSelectionRoute,
     intent: Intent,
     nlPending?: PendingQuestion | null,
-  ): Promise<{ readonly kind: 'responded'; readonly result: TurnResult } | { readonly kind: 'continue'; readonly facts?: NlChatFacts }> {
+    grammar?: NlClassBProbe,
+  ): Promise<
+    | { readonly kind: 'responded'; readonly result: TurnResult }
+    | { readonly kind: 'continue'; readonly facts?: NlChatFacts; readonly fallback?: true }
+  > {
     const nl = this.deps.nlSelection as Pick<NlSelectionService, 'mode' | 'decide'>;
     const catalog = this.nlCatalog();
     const entries = [...catalog.values()].map((owned) => owned.entry);
-    const chatProviderId = await this.nlChatProviderId(intent, session, actor);
+    const chat = await this.nlChatProvider(intent, session, actor);
     const decision = await nl.decide({
-      ...(chatProviderId !== undefined ? { chatProviderId } : {}),
+      ...(chat !== undefined ? { chatProviderId: chat.id, chatProviderLocality: chat.locality } : {}),
       ...(nlPending !== undefined ? { pending: nlPending } : {}),
+      ...(grammar !== undefined ? { grammar } : {}),
       text: message.text,
       attachmentCount: message.attachments?.length ?? 0,
       ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
@@ -3190,21 +3303,25 @@ export class ConversationRuntime {
     const honest = nl.mode === 'active' && entries.length > 0 ? { entries } : undefined;
     switch (decision.kind) {
       case 'skip':
-        return { kind: 'continue' };
+        // Phase C: the grammar is the fallback when selection did not run (shadow included: the grammar answers).
+        return { kind: 'continue', ...(grammar !== undefined ? { fallback: true as const } : {}) };
       case 'none':
-      case 'unavailable':
         return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+      case 'unavailable':
+        return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}), ...(grammar !== undefined ? { fallback: true as const } : {}) };
       case 'ask':
         this.deps.logger.info('nl selection asked', { sessionId: session.id });
         return { kind: 'responded', result: await this.respondComposed(message, session, outboundMessage(message.context, decision.text)) };
       case 'execute': {
         const owner = catalog.get(decision.command.entryId);
         const serve = owner?.handler.handleSelected;
-        if (owner === undefined || serve === undefined) return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+        // Phase C: a selection no handler serves leaves the turn to the grammar that would have answered it.
+        const unserved = { kind: 'continue' as const, ...(honest !== undefined ? { facts: honest } : {}), ...(grammar !== undefined ? { fallback: true as const } : {}) };
+        if (owner === undefined || serve === undefined) return unserved;
         // The service already wrote this selection as `lastSelection`; it stays only when the handler shows the listing.
         this.nlTurns.set(message, { sessionId: session.id, keep: false });
         const outcome = await serve.call(owner.handler, decision.command, this.turnHandlerContext(message, session, actor, applyAnchor));
-        if (outcome === null) return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}) };
+        if (outcome === null) return unserved;
         // A failed read shows no listing: a later "그 중에 …" must not refine it.
         if (outcome.kind !== 'summarize' && outcome.kind !== 'write-draft' && outcome.status === 'FAILED') {
           this.nlTurns.set(message, { sessionId: session.id, keep: false });
@@ -8382,4 +8499,9 @@ export class ConversationRuntime {
   private responded(session: Session, reply: OutboundMessage, workFacts?: TurnWorkFacts): TurnResult {
     return { status: 'RESPONDED', reply, sessionId: session.id, ...(workFacts ? { workFacts } : {}) };
   }
+}
+
+/** ADR-0120 D6 Phase C: a selection already made at a Class B position this turn (the honest-chat fact it left, if any). */
+interface NlEarlySelection {
+  readonly facts?: NlChatFacts;
 }

@@ -10,18 +10,26 @@ import { NL_SELECTION_TIMEOUT_MS } from '@quoky/core';
  * - `QUOKY_NL_GRAMMAR_YIELD` (ADR-0120 amendment A2): exactly `off` or `on`; default `off`. `on` lets a Class B listing
  *   grammar decline a message with a qualifier it cannot express, so selection (mode `active` only) can bind it. It sends
  *   messages the host answers today to the selector, so it is its own flag.
+ * - `QUOKY_NL_PHASE` (ADR-0120 D6, ADR-0121 S1): exactly `a` or `c`; default `a` (Phase A, every turn byte-identical to
+ *   before S1). `c` (Phase C) runs selection before the frozen Class B grammars, which become the fallback when the selector
+ *   is unavailable; it acts in `active`, and in `shadow` it is grammar-hit shadowing (the grammar answers, the agreement is
+ *   logged). It sends messages the host answers today to the selector (the D8 egress the owner allowed for S1), so it is
+ *   its own flag. Ignored in `off`.
  * - `QUOKY_NL_INTENT_MODEL`: the Claude CLI `--model` of a selection call (an alias such as `haiku`, or a full model name);
  *   default `haiku`. Adapter configuration only: Core never sees it.
  * - `QUOKY_NL_INTENT_TIMEOUT_MS` (ADR-0120 amendment A3): the per-call selection bound, an integer from 2000 to 8000;
  *   default `NL_SELECTION_TIMEOUT_MS` (6 s).
  */
 export type NlIntentModeConfig = 'off' | 'shadow' | 'active';
+export type NlPhaseConfig = 'a' | 'c';
 
 export interface NlSelectionConfig {
   readonly mode: NlIntentModeConfig;
   readonly model: string;
   /** `QUOKY_NL_GRAMMAR_YIELD=on` (amendment A2). */
   readonly grammarYield: boolean;
+  /** `QUOKY_NL_PHASE` (S1): `a` (default) or `c`. */
+  readonly phase: NlPhaseConfig;
   /** `QUOKY_NL_INTENT_TIMEOUT_MS` (amendment A3), milliseconds. */
   readonly timeoutMs: number;
 }
@@ -33,6 +41,7 @@ export const NlSelectionConfigErrorCode = {
   NL_INTENT_MODEL_INVALID: 'NL_INTENT_MODEL_INVALID',
   NL_GRAMMAR_YIELD_INVALID: 'NL_GRAMMAR_YIELD_INVALID',
   NL_INTENT_TIMEOUT_INVALID: 'NL_INTENT_TIMEOUT_INVALID',
+  NL_PHASE_INVALID: 'NL_PHASE_INVALID',
 } as const;
 export type NlSelectionConfigErrorCode = (typeof NlSelectionConfigErrorCode)[keyof typeof NlSelectionConfigErrorCode];
 
@@ -72,6 +81,10 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
   if (rawYield !== undefined && rawYield !== 'off' && rawYield !== 'on') {
     throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_GRAMMAR_YIELD_INVALID);
   }
+  const rawPhase = env.QUOKY_NL_PHASE;
+  if (rawPhase !== undefined && rawPhase !== 'a' && rawPhase !== 'c') {
+    throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_PHASE_INVALID);
+  }
   const rawTimeout = env.QUOKY_NL_INTENT_TIMEOUT_MS;
   let timeoutMs = NL_SELECTION_TIMEOUT_MS;
   if (rawTimeout !== undefined) {
@@ -83,6 +96,7 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
     mode: (rawMode as NlIntentModeConfig | undefined) ?? 'off',
     model: rawModel ?? DEFAULT_NL_INTENT_MODEL,
     grammarYield: rawYield === 'on',
+    phase: rawPhase === 'c' ? 'c' : 'a',
     timeoutMs,
   };
 }
