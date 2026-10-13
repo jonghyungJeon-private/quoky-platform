@@ -161,9 +161,11 @@ const DOCUMENT_SUMMARY_TASK_RULE: Readonly<Record<UntrustedDocumentSource, strin
   'mail-thread':
     'Summarize the single email thread in the background resource for the current User request: what it is about, ' +
     'who said what in order (each message starts with a "[i/n] sender (domain) · date" line), where it stands now, ' +
-    'and any decisions, open questions, dates, deadlines or requests. Always name the sender as the subject of each ' +
-    "action (for example '김철수 님이 회의를 제안했어요' or 'Kim proposed a meeting'). Use only what the messages say; never " +
-    'invent senders, dates, amounts, links or attachments.',
+    'and any decisions, open questions, dates, deadlines or requests. Do not narrate mail actions with past-tense ' +
+    'action verbs (보냈다, 답장했다, 전달했다, 보관했다, 삭제했다, 등록했다; sent, replied, forwarded): write each message as ' +
+    '"<sender>의 메일: <what it says>" (or "<sender>\'s email: <what it says>"), or use noun phrases such as "회신 내용" or ' +
+    '"발송 안내". Describing what a product lets users do must also avoid the past tense. Use only what the messages ' +
+    'say; never invent senders, dates, amounts, links or attachments.',
 };
 
 const documentSummaryDeveloperRules = (source: UntrustedDocumentSource): readonly string[] => Object.freeze([

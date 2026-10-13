@@ -1,4 +1,7 @@
 import { DRIVE_LISTING_MAX_ENTRIES, DRIVE_NAME_QUERY_MAX_LENGTH } from '../../ports/drive-reader.port';
+import { normalizeForMatch } from '../nl-routing/selection-input';
+import { groundingWordIn } from '../nl-routing/selection-validator';
+import { DRIVE_KIND_WORDS } from '../nl-routing/wave1-entries';
 
 /**
  * The deterministic Drive grammar (ADR-0118 D4/D6/D7, DRV-1). Pure and anchored: a message is claimed only when the
@@ -311,7 +314,20 @@ function fromName(parsed: string | 'recent' | 'usage' | null, language: DriveLan
  * The Drive question `text` asks, or `null` when the message is not one of the anchored Drive forms (it then falls
  * through unchanged). Pure; never reads a clock or any file.
  */
-export function parseDriveQuestion(text: string): DriveQuestion | null {
+export function parseDriveQuestion(text: string, options: { readonly yieldToSelection?: boolean } = {}): DriveQuestion | null {
+  const question = parseDriveGrammar(text);
+  // ADR-0120 A2: a listing carries no file kind. With yield on, a message that names one (`최근 스프레드시트`, `pdf`,
+  // `폴더`) is a qualifier the grammar cannot express, so it declines and selection binds `kind`. A plain `문서`/`파일`
+  // is not a kind word and still answers.
+  if (options.yieldToSelection === true && question !== null && (question.kind === 'recent' || question.kind === 'search')) {
+    // The selector's own grounding matcher: an ASCII word needs word boundaries (`docsify` is not `docs`).
+    const normalized = normalizeForMatch(normalizeDriveText(text));
+    if (Object.values(DRIVE_KIND_WORDS).some((words) => words.some((word) => groundingWordIn(normalized, normalizeForMatch(word))))) return null;
+  }
+  return question;
+}
+
+function parseDriveGrammar(text: string): DriveQuestion | null {
   if (typeof text !== 'string' || text.length > 300) return null;
   const normalized = normalizeDriveText(text);
   if (normalized.length === 0) return null;

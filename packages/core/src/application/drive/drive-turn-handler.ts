@@ -164,7 +164,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
     if ((ctx.message.attachments?.length ?? 0) > 0) return null;
     try {
       if (parseReminderMessage(ctx.message.text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
-      return parseDriveQuestion(ctx.message.text);
+      return parseDriveQuestion(ctx.message.text, { yieldToSelection: ctx.grammarYield === true });
     } catch {
       return null;
     }

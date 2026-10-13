@@ -20387,6 +20387,13 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   thread summary prompt), so this confirms that nothing moved; it is not a measurement of the new forms, which are
   deterministic and covered by the offline tests.
 
+### ADR-0118 amendment implementation note — thread-summary claim guard false positive (2026-10-13, live UAT)
+
+- **Symptom.** `1번 메일 스레드 요약해줘` on the Gmail welcome mail was withheld with the not-done notice (`document summary action claim replaced`); the same mail as a single mail passed.
+- **Root cause.** The thread prompt told the model to name the sender as the subject of every action, so a thread summary narrated mail actions in the past tense (`Gmail 팀은 … 메일을 보냈어요`, `김철수 님이 확인하고 답장했어요`), which the strict claim guard rightly cannot tell from a Quoky claim.
+- **Decision (revised after Codex review): the guard stays strict; the thread prompt avoids action verbs.** A first fix widened the Korean third-person exemption of `document-summary-claim-guard.ts` (whole-sentence subject, topic markers). Codex found a bypass family (a Quoky stand-in after or beside the third party; then spaced, zero-width or hyphenated `Quoky`, an implied assistant action `김철수님이 부탁하셔서 메일을 보내 드렸습니다`, and a cross-sentence split). A guard is a safety net where a false negative is far worse than a false positive, so the widening was reverted entirely: the guard and its tests are origin/main behavior, plus regression tests that keep the strict cases blocked. Three of the reported bypasses (`Quo-ky`, the implied action, the cross-sentence split) are already not blocked at origin/main; they are recorded as known gaps in the guard test, not fixed here (the fixed footer stating nothing was sent is the guarantee).
+- **Fix at the source.** The `mail-thread` task rule (`prompt-composer.ts`) no longer says to name the sender as the subject of each action. It says not to narrate mail actions with past-tense action verbs (보냈다, 답장했다, 전달했다, 보관했다, 삭제했다, 등록했다; sent, replied, forwarded), to write each message as `<보낸 사람>의 메일: <내용 요약>` or with noun phrases (`회신 내용`, `발송 안내`), and to avoid the past tense when describing what a product lets users do. The mail and Drive single-document prompts are byte-identical; a prompt test pins the thread rule.
+
 ### ADR-0118 amendment implementation note — DRV-2 shared drives and DRV-2b every sheet (2026-10-13)
 
 - **Status:** Implemented under the ratified ADR-0118 amendment of 2026-10-12, decisions (b) and (c) (v5 plan wave 3,
@@ -21240,6 +21247,12 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
   - ADR-0107 D5/D6: locality is declared data.
   - ADR-0097: the credential guard.
 - **Relates:** ADR-0090 (L0/L1/L2 layering), ADR-0092 amendment D3, ADR-0113 (ops-UI), ADR-0102.
+
+### ADR-0120 amendment A2 implementation note — the Drive grammar yields on a file-kind word (2026-10-13, live UAT)
+
+- **Symptom.** `드라이브 최근 스프레드시트` was answered by the Drive grammar with every recent file (PNGs, MP4s) although the selector supports `kind` (A1).
+- **Root cause.** The Drive grammar is whole-message anchored, and the earlier A2 audit concluded it needed no residual check. But its own vocabulary includes the type nouns (`스프레드시트`, `시트`, `구글 문서`, `docs`) as interchangeable document nouns (`DOC_NOUN`), and the recent listing it answers carries no `kind`. The word was expressed by the anchor yet dropped by the listing.
+- **Fix.** `parseDriveQuestion(text, { yieldToSelection })`: with yield on, a `recent` or `search` result declines when the message contains a Drive kind word from `DRIVE_KIND_WORDS` (the selector's own grounding list, one source of truth); selection then binds `kind`. The Drive handler passes `ctx.grammarYield`. Plain `문서`/`파일` are not kind words and still answer; summaries and write refusals are Class A and untouched. With yield off, behaviour is byte-identical. No phrase was added. `드라이브 pdf 최근 거` and `최근 시트 파일` were already not matched by the anchored grammar (they reach selection either way); tests pin that.
 
 ### Context
 

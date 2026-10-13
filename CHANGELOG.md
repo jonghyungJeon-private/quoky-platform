@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — v5 W3 live UAT fixes (2026-10-13)
+
+- **Thread-summary prompt.** A thread summary no longer narrates mail actions with past-tense action verbs (the strict claim guard withheld a legitimate Gmail welcome-mail summary). The guard is unchanged; the thread task rule now asks for `<sender>의 메일: <summary>` or noun phrases. Mail and Drive prompts unchanged.
+- **Drive grammar and file kinds.** With `QUOKY_NL_GRAMMAR_YIELD` on, `드라이브 최근 스프레드시트` (and any recent or name listing that names a file kind) now declines so selection binds `kind`; flag off is unchanged. Tests added.
+
 ## Unreleased — GML-2: Gmail thread summaries and reply-to-pick (ADR-0118 amendment, 2026-10-13)
 
 - **Thread summaries.** `이 스레드 요약해줘`, `N번 메일 스레드 요약해줘`, `summarize this thread` and `summarize email thread N`

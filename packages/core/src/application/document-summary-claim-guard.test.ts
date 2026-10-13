@@ -276,3 +276,27 @@ describe('CA review P2-B: every pattern is linear (CPU time, not wall-clock)', (
     }
   });
 });
+
+describe('v5 W3: the guard stays strict — the widened-exemption bypass family stays blocked (Codex P2)', () => {
+  it.each([
+    '고객팀은 확인했고 메일을 보냈습니다, Quoky가 대신.',
+    '고객팀은 확인했고 답장을 보냈습니다, Quoky가 대신.',
+    '고객팀은 확인했고 메일을 보관했습니다, Quoky가 대신.',
+    '고객팀은 확인했고 메일을 삭제했습니다, 비서가 대신.',
+    '고객팀은 확인했고 일정을 캘린더에 등록했습니다, 저희가 대신.',
+    '고객팀은 확인했고 Quoky에서 메일을 보냈습니다.',
+    '고객팀은 확인했고 저희 측에서 답장을 보냈습니다.',
+    '고객팀이 확인했고 제가 메일을 보냈습니다.',
+    'Quo ky가 확인했고 메일을 보냈습니다.',
+    'Quo​ky에서 메일을 보냈습니다.',
+    'Gmail 팀은 새 받은편지함 사용 방법을 담은 메일을 보냈어요.',
+    '김철수 님이 내용을 확인하고 답장했어요.',
+  ])('withholds: %s', (text) => {
+    for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source)).toBe(true);
+  });
+});
+
+// Known gaps of the origin/main guard (a third-party subject exempts them; they were found while reviewing the widened
+// exemption and are NOT blocked at origin/main either): a hyphenated `Quo-ky`, an implied assistant action
+// (`김철수님이 부탁하셔서 메일을 보내 드렸습니다`) and a cross-sentence split (`Quoky가 처리했습니다. 김철수가 요청한 메일을
+// 보냈습니다.`). The guard is a best-effort net; the fixed footer is the guarantee. See DECISIONS (v5 W3 live UAT).

@@ -1853,7 +1853,10 @@ describe('PromptComposer — document summary "only read" rule is source-depende
     expect(thread).not.toContain(single);
     expect(thread).toContain('Summarize the single email thread in the background resource');
     expect(thread).toContain('each message starts with a "[i/n] sender (domain) · date" line');
-    expect(thread).toContain('Always name the sender as the subject of each action');
+    expect(thread).not.toContain('Always name the sender as the subject of each action');
+    expect(thread).toContain('Do not narrate mail actions with past-tense action verbs');
+    expect(thread).toContain('"<sender>의 메일: <what it says>"');
+    expect(thread).toContain('Describing what a product lets users do must also avoid the past tense');
     expect(developerFor('mail')).not.toContain('Always name the sender');
     // The mail "only read" rule and the untrusted-data rule apply to a thread unchanged.
     expect(thread).toContain('moved, created, scheduled or changed, in the mailbox or anywhere else.');

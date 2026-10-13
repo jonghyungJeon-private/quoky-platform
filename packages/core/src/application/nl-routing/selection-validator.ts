@@ -186,7 +186,7 @@ function checkArg(spec: NlArgSpec, value: NlArgValue): NlArgValue | undefined {
  * A grounding word in normalized text. A word made of ASCII letters and digits only must start a word and may end it or
  * take a plural `s` ("docs" is not in "docker", "sheet" is in "sheets"); a Korean word is a plain substring.
  */
-function groundingWordIn(text: string, word: string): boolean {
+export function groundingWordIn(text: string, word: string): boolean {
   if (!/^[a-z0-9][a-z0-9 -]*$/.test(word)) return text.includes(word);
   const escaped = word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
   return new RegExp(`(?<![a-z0-9])${escaped}s?(?![a-z0-9])`).test(text);
