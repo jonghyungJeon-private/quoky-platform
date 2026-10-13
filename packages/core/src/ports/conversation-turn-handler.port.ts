@@ -17,7 +17,7 @@ import type { UntrustedDocumentReadout } from '../application/untrusted-document
 // Type-only, like the readout above: the parsed connector-write request (ADR-0112 D5), plain data.
 import type { ConnectorWriteDraft } from '../application/connector-writes/connector-write-draft';
 // Type-only, like the readouts above: the closed natural-language catalog and a validated selection (ADR-0120), plain data.
-import type { NlCatalogEntry, NlGrammarSelection, NlSelectedCommand } from '../application/nl-routing/catalog';
+import type { NlCatalogEntry, NlClassBProbe, NlGrammarSelection, NlSelectedCommand } from '../application/nl-routing/catalog';
 
 /**
  * The three fixed dispatch points in `ConversationRuntime.handleInner` (ADR-0096 D3):
@@ -62,6 +62,12 @@ export interface TurnHandlerContext {
   /** The active project's workspace, opened lazily on request; `null` when there is none or it cannot open. */
   resolveActiveWorkspace(): Promise<WorkspaceRef | null>;
 }
+
+/**
+ * ADR-0120 amendment A4 (S1): the only fields a Class B probe may read — the owner's message, the turn's clock and the A2
+ * yield flag. No session, actor, anchor or workspace, so a probe cannot depend on (or touch) conversation state.
+ */
+export type TurnHandlerProbeContext = Pick<TurnHandlerContext, 'message' | 'now' | 'grammarYield'>;
 
 /** A deterministic reply: the handler's text is the turn's reply (the default variant, `kind` may be omitted). */
 export interface TurnHandlerReply {
@@ -159,4 +165,12 @@ export interface ConversationTurnHandler {
    * provider, no Task, no approval; the handler enforces its own DM-only rule). `null` lets the turn continue to chat.
    */
   handleSelected?(command: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null>;
+  /**
+   * ADR-0120 D6 Phase C (S1): whether one of this handler's frozen Class B grammars would answer this message, and with
+   * which catalog equivalent — synchronous and pure: no read, no write, no provider, no state change. The runtime asks
+   * it only when Phase C is on; then a hit runs selection first and `handle` is called only as the fallback when the
+   * selector is unavailable. Class A branches (anchored commands, writes, item summaries, usage hints) return `null`, so
+   * `handle` answers them exactly as before. Absent: the handler has no Class B grammar.
+   */
+  classBProbe?(ctx: TurnHandlerProbeContext): NlClassBProbe | null;
 }

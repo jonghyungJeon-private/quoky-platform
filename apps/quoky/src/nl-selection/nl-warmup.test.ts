@@ -6,7 +6,7 @@ const provider = { id: 'p', family: 'claude-cli' } as unknown as AiProvider;
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
 describe('scheduleNlWarmup (ADR-0120 A3 follow-up)', () => {
-  it('returns immediately and fires the warm-up once after the delay in active mode, with the chat family', async () => {
+  it('returns immediately and fires the warm-up once after the delay in active mode, with the chat family and locality', async () => {
     vi.useFakeTimers();
     try {
       const warmUp = vi.fn(async () => 'ok' as const);
@@ -15,7 +15,7 @@ describe('scheduleNlWarmup (ADR-0120 A3 follow-up)', () => {
       expect(warmUp).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(NL_WARMUP_DELAY_MS + 1);
       expect(warmUp).toHaveBeenCalledTimes(1);
-      expect(warmUp).toHaveBeenCalledWith({ chatProviderId: 'claude-cli', signal: expect.any(AbortSignal) });
+      expect(warmUp).toHaveBeenCalledWith({ chatProviderId: 'claude-cli', chatProviderLocality: 'REMOTE', signal: expect.any(AbortSignal) });
       await vi.advanceTimersByTimeAsync(10 * 60_000);
       expect(warmUp).toHaveBeenCalledTimes(1);
     } finally {

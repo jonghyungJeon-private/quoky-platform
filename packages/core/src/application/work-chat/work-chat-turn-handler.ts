@@ -1,6 +1,7 @@
 import type {
   ConversationTurnHandler,
   TurnHandlerContext,
+  TurnHandlerProbeContext,
   TurnHandlerOutcome,
   TurnHandlerSummarizeReply,
 } from '../../ports/conversation-turn-handler.port';
@@ -8,7 +9,7 @@ import type { MessageBody } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import { clipMessage, messageBody, outboundBody, outboundMessage, plainTextOf, withOutboundBody } from '../message-rendering';
-import type { NlCatalogEntry, NlSelectedCommand } from '../nl-routing/catalog';
+import type { NlCatalogEntry, NlClassBProbe, NlSelectedCommand } from '../nl-routing/catalog';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
 import {
@@ -132,6 +133,28 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     if (outcome.kind !== 'summarize' && outcome.status === 'FAILED') return outcome;
     const nlSelection = nlSelectionForWorkChatCommand(command);
     return nlSelection === null ? outcome : { ...outcome, nlSelection };
+  }
+
+  /**
+   * ADR-0120 D6 Phase C: the unanchored lookup and listing phrases (`detectLookup`, `detectJiraListing`, the search,
+   * to-do list and to-do summary forms — frozen Class B) would answer this message with a catalog equivalent. The anchored to-do heads, the
+   * write requests and refusals, the usage hints and lookups the catalog cannot express (a GitHub or Jira text search)
+   * are not probed (`null`), so `handle` answers them exactly as before. Pure: the desk is not called.
+   */
+  classBProbe(ctx: TurnHandlerProbeContext): NlClassBProbe | null {
+    let command: WorkChatCommand | null;
+    try {
+      command = detectWorkChatCommand(ctx.message.text, { yieldToSelection: ctx.grammarYield === true });
+    } catch {
+      return null;
+    }
+    // The to-do summary question runs in the mutation handler (order 100), every other read in the lookup handler.
+    if (command === null || workChatCommandMode(command) !== this.deps.mode) return null;
+    if (command.kind !== 'lookup' && command.kind !== 'todo.list' && command.kind !== 'todo.summary') return null;
+    const selection = nlSelectionForWorkChatCommand(command);
+    if (selection === null) return null;
+    const grammarId = command.kind === 'lookup' ? `work-lookup.${command.query}` : command.kind === 'todo.list' ? 'work-lookup.todo-list' : 'work-lookup.todo-summary';
+    return { grammarId, selection };
   }
 
   /** One command through the desk; `listed` is a deterministic lookup list's item count (for a count answer). */

@@ -10,18 +10,27 @@ import { NL_SELECTION_TIMEOUT_MS } from '@quoky/core';
  * - `QUOKY_NL_GRAMMAR_YIELD` (ADR-0120 amendment A2): exactly `off` or `on`; default `off`. `on` lets a Class B listing
  *   grammar decline a message with a qualifier it cannot express, so selection (mode `active` only) can bind it. It sends
  *   messages the host answers today to the selector, so it is its own flag.
+ * - `QUOKY_NL_PHASE` (ADR-0120 D6, ADR-0121 S1): exactly `a`, `c` or `c-shadow`; default `a` (Phase A, every turn byte-identical to
+ *   before S1). `c` (Phase C) runs selection before the frozen Class B grammars, which become the fallback when the selector
+ *   is unavailable; it acts in `active` only (with `shadow` it is refused at startup, `NL_PHASE_REQUIRES_ACTIVE`: that path
+ *   would shadow grammar hits without the c-shadow bounds). It sends messages the host answers today to the selector (the
+ *   D8 egress the owner allowed for S1), so it is its own flag. Ignored in `off`. `c-shadow` (only with `active`, else `NL_PHASE_REQUIRES_ACTIVE`): Phase A stays fully
+ *   live; after a Class B grammar has answered, one background selection runs for the agreement log only.
  * - `QUOKY_NL_INTENT_MODEL`: the Claude CLI `--model` of a selection call (an alias such as `haiku`, or a full model name);
  *   default `haiku`. Adapter configuration only: Core never sees it.
  * - `QUOKY_NL_INTENT_TIMEOUT_MS` (ADR-0120 amendment A3): the per-call selection bound, an integer from 2000 to 8000;
  *   default `NL_SELECTION_TIMEOUT_MS` (6 s).
  */
 export type NlIntentModeConfig = 'off' | 'shadow' | 'active';
+export type NlPhaseConfig = 'a' | 'c' | 'c-shadow';
 
 export interface NlSelectionConfig {
   readonly mode: NlIntentModeConfig;
   readonly model: string;
   /** `QUOKY_NL_GRAMMAR_YIELD=on` (amendment A2). */
   readonly grammarYield: boolean;
+  /** `QUOKY_NL_PHASE` (S1): `a` (default), `c`, or `c-shadow` (only with mode `active`). */
+  readonly phase: NlPhaseConfig;
   /** `QUOKY_NL_INTENT_TIMEOUT_MS` (amendment A3), milliseconds. */
   readonly timeoutMs: number;
 }
@@ -33,6 +42,8 @@ export const NlSelectionConfigErrorCode = {
   NL_INTENT_MODEL_INVALID: 'NL_INTENT_MODEL_INVALID',
   NL_GRAMMAR_YIELD_INVALID: 'NL_GRAMMAR_YIELD_INVALID',
   NL_INTENT_TIMEOUT_INVALID: 'NL_INTENT_TIMEOUT_INVALID',
+  NL_PHASE_INVALID: 'NL_PHASE_INVALID',
+  NL_PHASE_REQUIRES_ACTIVE: 'NL_PHASE_REQUIRES_ACTIVE',
 } as const;
 export type NlSelectionConfigErrorCode = (typeof NlSelectionConfigErrorCode)[keyof typeof NlSelectionConfigErrorCode];
 
@@ -72,6 +83,15 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
   if (rawYield !== undefined && rawYield !== 'off' && rawYield !== 'on') {
     throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_GRAMMAR_YIELD_INVALID);
   }
+  const rawPhase = env.QUOKY_NL_PHASE;
+  if (rawPhase !== undefined && rawPhase !== 'a' && rawPhase !== 'c' && rawPhase !== 'c-shadow') {
+    throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_PHASE_INVALID);
+  }
+  // `c-shadow` keeps Phase A live and shadows only grammar hits; without `active` there is no live Phase A to keep. `c`
+  // with `shadow` would shadow grammar hits outside the bounded c-shadow job, so it is refused too (`c` + `off` is inert).
+  if ((rawPhase === 'c-shadow' && rawMode !== 'active') || (rawPhase === 'c' && rawMode === 'shadow')) {
+    throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_PHASE_REQUIRES_ACTIVE);
+  }
   const rawTimeout = env.QUOKY_NL_INTENT_TIMEOUT_MS;
   let timeoutMs = NL_SELECTION_TIMEOUT_MS;
   if (rawTimeout !== undefined) {
@@ -83,6 +103,7 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
     mode: (rawMode as NlIntentModeConfig | undefined) ?? 'off',
     model: rawModel ?? DEFAULT_NL_INTENT_MODEL,
     grammarYield: rawYield === 'on',
+    phase: rawPhase === 'c' || rawPhase === 'c-shadow' ? rawPhase : 'a',
     timeoutMs,
   };
 }

@@ -50,6 +50,10 @@ interface GoldenCase {
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
   readonly channel?: boolean;
+  /** S1: the frozen Class B grammar that answers this case in Phase A with QUOKY_NL_GRAMMAR_YIELD=on (production). */
+  readonly grammar?: string;
+  /** S1: that grammar's own catalog equivalent (null: none), the eval's grammar-side scoring input. */
+  readonly grammarAnswer?: { readonly entryId: string; readonly args: NlArgs } | null;
 }
 
 const CORPUS = JSON.parse(
@@ -65,6 +69,8 @@ const EARLIER_ROUTE: Readonly<Record<string, string>> = {
   'brief-017': 'todo.list',
   'help-014': 'calendar.events',
   'help-025': 'class-a:PROJECT_ANALYSIS',
+  // S1 corpus: the to-do list grammar answers this how-to question with the list (Phase C selects help.topic).
+  'help-038': 'todo.list',
 };
 
 const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
@@ -90,6 +96,8 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
   const intents: Intent[] = [];
   const connectorQueries: Array<{ source: string; query: ConnectorQuery }> = [];
   const readerCalls: string[] = [];
+  /** Phase C: every `classBProbe` call (handler id and whether it was a hit). */
+  const probes: Array<{ handlerId: string; grammarId?: string; entryId?: string; selection?: { entryId: string; args: NlArgs } }> = [];
   let seq = 0;
 
   beforeAll(async () => {
@@ -207,6 +215,14 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
         if (outcome !== null) claims.push({ handlerId: handler.id, kind: (outcome as { kind?: string }).kind ?? 'reply' });
         return outcome;
       });
+      const probe = handler.classBProbe?.bind(handler);
+      if (probe !== undefined) {
+        (handler as { classBProbe?: ConversationTurnHandler['classBProbe'] }).classBProbe = (ctx) => {
+          const hit = probe(ctx);
+          probes.push({ handlerId: handler.id, ...(hit !== null ? { grammarId: hit.grammarId, ...(hit.selection !== undefined ? { entryId: hit.selection.entryId, selection: { entryId: hit.selection.entryId, args: { ...hit.selection.args } } } : {}) } : {}) });
+          return hit;
+        };
+      }
       const serve = handler.handleSelected?.bind(handler);
       if (serve !== undefined) {
         (handler as { handleSelected?: ConversationTurnHandler['handleSelected'] }).handleSelected = async (command, ctx) => {
@@ -279,8 +295,25 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     }
   }
 
+  /** S1: switch the live service to Phase C (and a mode) for one scenario; the selection cache is cleared on entry. */
+  async function withPhase<T>(phase: 'a' | 'c' | 'c-shadow', mode: 'off' | 'shadow' | 'active', run: () => Promise<T>): Promise<T> {
+    const service = (runtime as unknown as { deps: { nlSelection: { mode: string; cache: Map<string, unknown>; deps: { phase?: string } } } }).deps.nlSelection;
+    const saved = { mode: service.mode, phase: service.deps.phase };
+    service.mode = mode;
+    service.deps.phase = phase;
+    service.cache.clear();
+    try {
+      return await run();
+    } finally {
+      service.mode = saved.mode;
+      service.deps.phase = saved.phase;
+      service.cache.clear();
+    }
+  }
+
   function marks() {
     return {
+      probes: probes.length,
       requests: requests.length,
       order: order.length,
       selected: selected.length,
@@ -336,7 +369,17 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
   }
 
   it.each([false, true])('dispatches every golden case with QUOKY_NL_GRAMMAR_YIELD=%s: positives end in their entry (selection or Class B), negatives never in a handleSelected', async (yieldOn) => {
+    const before = probes.length;
     await withGrammarYield(yieldOn, 'active', () => dispatchCorpus());
+    // Phase A (the default, QUOKY_NL_PHASE unset): no Class B probe is ever asked, so dispatch is exactly pre-S1.
+    expect(probes.length).toBe(before);
+  }, 600_000);
+
+  it.each([false, true])('S1 Phase C, QUOKY_NL_GRAMMAR_YIELD=%s: every golden positive ends in its entry through selection — grammar hits included — with one selector call at most', async (yieldOn) => {
+    const report = await withGrammarYield(yieldOn, 'active', () => withPhase('c', 'active', () => dispatchCorpusPhaseC(yieldOn)));
+    // ADR-0121 S1 corpus rule: each entry with a frozen Class B grammar has at least 25 phrasings that grammar answers
+    // today (production: yield on), so the Phase C evaluation measures the selector on exactly those messages.
+    for (const entryId of CLASS_B_ENTRIES) expect(report.grammarHits[entryId] ?? 0, entryId).toBeGreaterThanOrEqual(25);
   }, 600_000);
 
   async function dispatchCorpus(): Promise<void> {
@@ -399,6 +442,80 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(new Set(selected.map((served) => served.command.entryId))).toEqual(new Set(core.NL_CATALOG_ENTRY_IDS));
   }
 
+  /** The entries a frozen Class B grammar answers in Phase A (the S1 corpus needs >= 25 such phrasings each). */
+  const CLASS_B_ENTRIES = ['jira.issues', 'github.items', 'slack.search', 'confluence.search', 'calendar.events', 'mail.list', 'drive.files', 'todo.list', 'help.topic'] as const;
+
+  async function dispatchCorpusPhaseC(yieldOn: boolean): Promise<{ grammarHits: Record<string, number> }> {
+    const failures: string[] = [];
+    const grammarHits: Record<string, number> = {};
+    for (const golden of CORPUS.cases) {
+      const ctx = context(golden.channel !== true);
+      if (golden.prior !== undefined) await setPrior(ctx, golden.prior);
+      await seedPreference('either');
+      selectorAnswer = golden.expect === 'none' ? none : answer(golden.expect.entryId, golden.expect.args);
+      const start = marks();
+      let result: TurnResult;
+      try {
+        result = await send(golden.text, ctx);
+      } catch (error) {
+        failures.push(`${golden.id}: threw ${String(error).slice(0, 80)}`);
+        continue;
+      }
+      const turnOrder = order.slice(start.order);
+      const selects = turnOrder.filter((step) => step === 'select').length;
+      if (selects > 1) failures.push(`${golden.id}: more than one selection call`);
+      const hit = probes.slice(start.probes).find((probe) => probe.grammarId !== undefined);
+      const workSurface = intents.slice(start.intents).at(-1)?.raw?.kind === 'personal-work-surface';
+      // The corpus `grammar` tag is exact for production (yield on); with yield off a grammar also takes qualifier cases.
+      const probed = hit?.grammarId ?? (workSurface ? 'work-surface' : undefined);
+      if (yieldOn ? golden.grammar !== probed : golden.grammar !== undefined && golden.grammar !== probed) {
+        failures.push(`${golden.id}: corpus grammar tag ${golden.grammar ?? '-'} but the probe says ${probed ?? '-'}`);
+      }
+      // The recorded grammar answer (the eval's grammar-side scoring) is what the probe says, by meaning (dates resolved).
+      if (yieldOn && hit !== undefined) {
+        const recorded = golden.grammarAnswer ?? null;
+        const live = hit.selection ?? null;
+        const entry = core.NL_WAVE1_ENTRIES[(live ?? recorded)?.entryId as keyof typeof core.NL_WAVE1_ENTRIES];
+        const now = new Date().toISOString();
+        const same =
+          recorded === null || live === null
+            ? recorded === live
+            : core.nlSelectionMeaning(recorded as never, entry, now, 'Asia/Seoul') === core.nlSelectionMeaning(live as never, entry, now, 'Asia/Seoul') ||
+              (recorded.entryId === live.entryId && typeof recorded.args.range === 'string' && /^(?:next-)?[a-z]{3}$|^\d{2}-\d{2}$/.test(recorded.args.range));
+        if (!same) failures.push(`${golden.id}: recorded grammarAnswer ${JSON.stringify(recorded)} but the probe says ${JSON.stringify(live)}`);
+      }
+      if (hit !== undefined) {
+        // Phase C: at a Class B position the selector runs first — before the grammar's own handle and before classify.
+        if (selects !== 1) failures.push(`${golden.id}: Class B hit (${hit.grammarId}) without exactly one selection call`);
+        if (turnOrder.indexOf('classify') >= 0 && turnOrder.indexOf('classify') < turnOrder.indexOf('select')) failures.push(`${golden.id}: classify before a Class B selection`);
+        if (claims.slice(start.claims).some((claim) => claim.handlerId === hit.handlerId)) failures.push(`${golden.id}: the grammar answered although the selector was up`);
+        if (golden.expect !== 'none') grammarHits[golden.expect.entryId] = (grammarHits[golden.expect.entryId] ?? 0) + 1;
+      } else if (workSurface && golden.expect !== 'none') {
+        grammarHits[golden.expect.entryId] = (grammarHits[golden.expect.entryId] ?? 0) + 1;
+      }
+      const served = selected.slice(start.selected);
+      if (golden.expect === 'none') {
+        if (served.length > 0) failures.push(`${golden.id}: negative reached handleSelected(${served[0]!.command.entryId})`);
+        continue;
+      }
+      const expected = golden.expect;
+      if (served.length === 0) {
+        const grammar = grammarEntry(start, golden.text);
+        // Only a Class A route (or the help control phrase) may still answer a positive before selection.
+        if (grammar !== undefined && (grammar.startsWith('class-a:') || grammar === 'help.topic' || grammar === 'reminder.list') && claims.slice(start.claims).every((claim) => claim.handlerId !== 'calendar' && claim.handlerId !== 'mail' && claim.handlerId !== 'drive' && claim.handlerId !== 'work-chat.lookup')) continue;
+        failures.push(`${golden.id}: not selected (grammar=${grammar ?? '-'}, reply=${result.reply.text.replace(/\s+/g, ' ').slice(0, 60)})`);
+        continue;
+      }
+      const command = served[0]!.command;
+      const wantArgs: Record<string, unknown> = { ...expected.args };
+      if (expected.entryId === 'jira.issues' && expected.args.window === 'created' && expected.args.role === undefined) wantArgs.role = 'either';
+      if (command.entryId !== expected.entryId) failures.push(`${golden.id}: selected ${command.entryId}, want ${expected.entryId}`);
+      else if (JSON.stringify(sortKeys(command.args)) !== JSON.stringify(sortKeys(wantArgs))) failures.push(`${golden.id}: args ${JSON.stringify(command.args)}, want ${JSON.stringify(wantArgs)}`);
+    }
+    expect(failures).toEqual([]);
+    return { grammarHits };
+  }
+
   async function seedPreference(value: string): Promise<void> {
     const actor = (await storage.actors.get(ownerActor.id)) as Actor;
     const stored = actor.metadata?.[core.INTERPRETATION_PREFERENCES_METADATA_KEY] as Record<string, { value?: string }> | undefined;
@@ -409,7 +526,11 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     });
   }
 
-  it('adversarial sweep: on every pasted or injection negative a hostile selector cannot write, ground a pasted word or change the preference', async () => {
+  it.each(['a', 'c'] as const)('adversarial sweep (Phase %s): on every pasted or injection negative a hostile selector cannot write, ground a pasted word or change the preference', async (phase) => {
+    await withPhase(phase, 'active', () => adversarialSweep(phase));
+  }, 600_000);
+
+  async function adversarialSweep(phase: 'a' | 'c'): Promise<void> {
     const hostile = CORPUS.cases.filter(
       (golden) =>
         golden.expect === 'none' &&
@@ -432,6 +553,8 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       for (const [label, scripted] of variants) {
         await seedPreference('either');
         selectorAnswer = scripted;
+        // Every variant reaches the stub selector (the same text would otherwise be answered from the selection cache).
+        (runtime as unknown as { deps: { nlSelection: { cache: Map<string, unknown> } } }).deps.nlSelection.cache.clear();
         const start = marks();
         const outcomes = selectedOutcomes.length;
         let result: TurnResult;
@@ -462,7 +585,9 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       }
     }
     expect(failures).toEqual([]);
-  }, 600_000);
+    // Phase C reaches the grammar-hit negatives too (pasted quotes a grammar used to answer): the same rules hold there.
+    if (phase === 'c') expect(hostile.some((golden) => golden.grammar !== undefined || /^>/m.test(golden.text))).toBe(true);
+  }
 
   async function withoutPreference(): Promise<void> {
     const actor = (await storage.actors.get(ownerActor.id)) as Actor;
@@ -768,6 +893,372 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       expect(order.slice(start.order), text).not.toContain('select');
       expect(selected.length, text).toBe(start.selected);
     }
+  });
+
+  // ── S1: ADR-0120 D6 Phase C (QUOKY_NL_PHASE=c) ──────────────────────────────────────────────────────────────────
+
+  /** The reply text with the per-turn numbering that differs between two sends (to-do ids, times) left as is. */
+  const turnOf = async (text: string, ctx?: ConversationContext) => {
+    const start = marks();
+    const result = await send(text, ctx);
+    return {
+      result,
+      selects: order.slice(start.order).filter((step) => step === 'select').length,
+      order: order.slice(start.order),
+      claims: claims.slice(start.claims).map((claim) => claim.handlerId),
+      served: selected.slice(start.selected).map((served) => served.command),
+      hits: probes.slice(start.probes).filter((probe) => probe.grammarId !== undefined),
+      requests: requests.slice(start.requests),
+    };
+  };
+
+  it('S1: classBProbe is pure — over the whole corpus it reads nothing, calls no desk, connector or provider, and writes no session state', async () => {
+    const internals = runtime as unknown as {
+      turnHandlerRegistry: readonly ConversationTurnHandler[];
+      turnHandlerContext(message: InboundMessage, session: unknown, actor: Actor, anchor: null): import('@quoky/core').TurnHandlerContext;
+    };
+    const ctxBase = context();
+    const session = await sessions.openForContext(ctxBase, ownerActor.id);
+    const before = { ...marks(), metadata: JSON.stringify(session.metadata ?? {}) };
+    let hits = 0;
+    for (const golden of CORPUS.cases) {
+      const ctx = internals.turnHandlerContext({ id: `probe-${golden.id}`, context: ctxBase, text: golden.text, receivedAt: new Date().toISOString() }, session, ownerActor, null);
+      for (const handler of internals.turnHandlerRegistry) if (handler.classBProbe?.(ctx)) hits += 1;
+    }
+    expect(hits).toBeGreaterThan(200);
+    const after = marks();
+    expect({ readers: after.readers, connectors: after.connectors, desk: after.desk, requests: after.requests, claims: after.claims }).toEqual({
+      readers: before.readers,
+      connectors: before.connectors,
+      desk: before.desk,
+      requests: before.requests,
+      claims: before.claims,
+    });
+    expect(JSON.stringify((await sessions.openForContext(ctxBase, ownerActor.id)).metadata ?? {})).toBe(before.metadata);
+  });
+
+  it('S1 Phase C: on every routing-corpus turn without a probe hit (turn-handler, intent-routing, reminder/to-do precedence), Phase C makes the same claims as Phase A', async () => {
+    const texts: string[] = [];
+    for (const file of ['turn-handler-routing.v1.json', 'intent-routing.v1.json', 'reminder-todo-precedence.v1.json']) {
+      const suite = JSON.parse(readFileSync(join(__dirname, '../../../../packages/core/src/application/golden', file), 'utf8')) as { cases: Array<{ text: string }> };
+      for (const golden of suite.cases) texts.push(golden.text);
+    }
+    expect(texts.length).toBeGreaterThan(600);
+    const failures: string[] = [];
+    let hits = 0;
+    selectorAnswer = none;
+    for (const text of texts) {
+      const phaseA = await withPhase('a', 'active', () => turnOf(text));
+      const phaseC = await withPhase('c', 'active', () => turnOf(text));
+      if (phaseC.hits.length > 0) {
+        hits += 1;
+        continue;
+      }
+      if (JSON.stringify(phaseC.claims) !== JSON.stringify(phaseA.claims)) failures.push(`${text.slice(0, 40)}: claims ${phaseA.claims} -> ${phaseC.claims}`);
+      if (phaseC.selects !== phaseA.selects) failures.push(`${text.slice(0, 40)}: selects ${phaseA.selects} -> ${phaseC.selects}`);
+      if (phaseC.result.status !== phaseA.result.status) failures.push(`${text.slice(0, 40)}: status ${phaseA.result.status} -> ${phaseC.result.status}`);
+    }
+    expect(failures).toEqual([]);
+    expect(hits).toBeGreaterThan(0);
+  }, 600_000);
+
+  it('S1 Phase C: Class A precedence is untouched — anchors, writes, memory, model, reminders and item summaries never reach the selector and answer as in Phase A', async () => {
+    const classA = [
+      '할 일 추가: 보고서 제출',
+      '완료 처리: 1',
+      '기억해: 나는 커피를 좋아해',
+      '30분 뒤에 스트레칭 알려줘',
+      '모델 변경: claude',
+      '알림 목록',
+      '1번 메일 요약해줘',
+      'PROJ-1에 댓글: 확인했습니다',
+      '#dev에 배포 완료라고 올려줘',
+      '내일 오후 3시에 회의 잡아줘',
+      '드라이브에 파일 하나 만들어줘',
+      '이 프로젝트 구조 설명해줘',
+    ];
+    selectorAnswer = answer('todo.list');
+    for (const text of classA) {
+      const phaseA = await withPhase('a', 'active', () => turnOf(text));
+      const phaseC = await withPhase('c', 'active', () => turnOf(text));
+      // No Class B probe hits and no selection is added: a turn Phase A sent to chat may still select after classify.
+      expect(phaseC.hits, text).toEqual([]);
+      expect(phaseC.selects, text).toBe(phaseA.selects);
+      if (phaseA.selects === 0) expect(phaseC.order.includes('select'), text).toBe(false);
+      expect(phaseC.served, text).toEqual([]);
+      expect(phaseC.claims, text).toEqual(phaseA.claims);
+      expect(phaseC.result.status, text).toBe(phaseA.result.status);
+    }
+    // Read-only Class A answers are byte-identical between the phases.
+    for (const text of ['알림 목록', '모델 변경: claude', '드라이브에 파일 하나 만들어줘']) {
+      const phaseA = await withPhase('a', 'active', () => turnOf(text));
+      const phaseC = await withPhase('c', 'active', () => turnOf(text));
+      expect(phaseC.result.reply.text, text).toBe(phaseA.result.reply.text);
+    }
+  });
+
+  it('S1 Phase C: a Class B hit runs selection first (before the grammar and the classifier) and the selected read answers', async () => {
+    await withPhase('c', 'active', async () => {
+      selectorAnswer = answer('calendar.events', { range: 'this-week' });
+      const turn = await turnOf('이번 주 일정 보여줘');
+      expect(turn.hits.map((hit) => hit.grammarId)).toEqual(['calendar-question']);
+      expect(turn.order[0]).toBe('select');
+      expect(turn.order).not.toContain('classify');
+      expect(turn.claims).toEqual([]);
+      expect(turn.served).toEqual([expect.objectContaining({ entryId: 'calendar.events', args: { range: 'this-week' } })]);
+    });
+  });
+
+  it('S1 Phase C: `none` falls back to the classifier and honest chat (D9), never to the grammar; a question is asked, not listed', async () => {
+    await withPhase('c', 'active', async () => {
+      selectorAnswer = none;
+      const turn = await turnOf('내 지라 이슈 보여줘');
+      expect(turn.selects).toBe(1);
+      expect(turn.order.indexOf('select')).toBeLessThan(turn.order.indexOf('classify'));
+      expect(turn.claims).toEqual([]);
+      expect(turn.result.reply.text).toBe(CHAT_REPLY);
+      const chat = turn.requests.find((request) => request.capability !== SELECTION)!;
+      expect(chat.prompt).toContain('Quoky is connected to these sources right now');
+
+      selectorAnswer = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'github.items', args: {} }] });
+      const asked = await turnOf('내 지라 이슈 보여줄래');
+      expect(asked.claims).toEqual([]);
+      expect(asked.result.reply.text).toContain('어떤 걸 찾으세요?');
+    });
+  });
+
+  it('S1 Phase C fallback order: provider down, malformed output, family or locality mismatch and the credential guard each let the grammar answer exactly as in Phase A', async () => {
+    const text = '이번 주 일정 알려줘';
+    const phaseA = await withPhase('a', 'active', () => turnOf(text));
+    expect(phaseA.claims).toEqual(['calendar']);
+    const deps = (runtime as unknown as { deps: { router: Record<string, unknown> } }).deps;
+    const original = deps.router;
+    const real = original as unknown as { resolve(capability: string, context?: unknown): Promise<{ provider: AiProvider }> };
+    const withChat = async <T,>(chat: Partial<AiProvider>, run: () => Promise<T>): Promise<T> => {
+      const resolved = async (capability: string, context?: unknown) => {
+        const provider = (await real.resolve(capability, context)).provider;
+        return capability === 'GENERAL_CHAT' ? ({ ...provider, ...chat } as AiProvider) : provider;
+      };
+      deps.router = { ...original, select: resolved, resolve: async (capability: string, context?: unknown) => ({ provider: await resolved(capability, context), source: 'DEFAULT' }), isStillEligible: () => true };
+      try {
+        return await run();
+      } finally {
+        deps.router = original;
+      }
+    };
+    const causes: Array<[string, () => Promise<Awaited<ReturnType<typeof turnOf>>>, number]> = [
+      ['provider down', async () => { selectorAnswer = () => { throw new core.AiProviderError(core.AiFailureKind.UNAVAILABLE, 'selector down'); }; return turnOf(text); }, 1],
+      ['malformed', async () => { selectorAnswer = 'Sure, here is your calendar.'; return turnOf(text); }, 1],
+      ['family mismatch', async () => { selectorAnswer = answer('calendar.events', { range: 'this-week' }); return withChat({ id: 'other-remote-chat', family: 'other-remote-chat' }, () => turnOf(text)); }, 0],
+      ['locality mismatch', async () => { selectorAnswer = answer('calendar.events', { range: 'this-week' }); return withChat({ executionLocality: 'LOCAL' }, () => turnOf(text)); }, 0],
+    ];
+    for (const [cause, run, selects] of causes) {
+      const turn = await withPhase('c', 'active', run);
+      expect(turn.hits.map((hit) => hit.grammarId), cause).toEqual(['calendar-question']);
+      expect(turn.selects, cause).toBe(selects);
+      expect(turn.claims, cause).toEqual(['calendar']);
+      expect(turn.served, cause).toEqual([]);
+      expect(turn.result.reply.text, cause).toBe(phaseA.result.reply.text);
+    }
+    // The pre-egress credential guard: no call at all, the grammar answers as in Phase A.
+    const token = ['xox', 'b', '-', '1'.repeat(12), '-', 'A'.repeat(24)].join('');
+    const credentialText = `슬랙에서 ${token} 검색해줘`;
+    const credentialA = await withPhase('a', 'active', () => turnOf(credentialText));
+    const credentialC = await withPhase('c', 'active', () => turnOf(credentialText));
+    expect(credentialC.hits.map((hit) => hit.grammarId)).toEqual(['work-lookup.search']);
+    expect(credentialC.selects).toBe(0);
+    expect(credentialC.requests.some((request) => request.capability === SELECTION)).toBe(false);
+    expect(credentialC.claims).toEqual(credentialA.claims);
+    selectorAnswer = none;
+  });
+
+  it('S1 Phase C fallback order: every unavailable or skipped decision (timeout, too long, credential, mismatches) runs the grammar; `none` never does', async () => {
+    const service = (runtime as unknown as { deps: { nlSelection: { decide: (turn: unknown) => Promise<unknown> } } }).deps.nlSelection;
+    const decisions: Array<[string, unknown, boolean]> = [
+      ['timeout (unavailable)', { kind: 'unavailable' }, true],
+      ['too-long', { kind: 'skip', reason: 'too-long' }, true],
+      ['credential', { kind: 'skip', reason: 'credential' }, true],
+      ['chat-provider-differs', { kind: 'skip', reason: 'chat-provider-differs' }, true],
+      ['chat-locality-differs', { kind: 'skip', reason: 'chat-locality-differs' }, true],
+      ['chat-provider-unknown', { kind: 'skip', reason: 'chat-provider-unknown' }, true],
+      ['none', { kind: 'none' }, false],
+    ];
+    for (const [cause, decision, grammarAnswers] of decisions) {
+      const spy = vi.spyOn(service, 'decide').mockResolvedValue(decision);
+      try {
+        const turn = await withPhase('c', 'active', () => turnOf('다음 주 일정 보여줘'));
+        expect(spy, cause).toHaveBeenCalledTimes(1);
+        expect(turn.claims, cause).toEqual(grammarAnswers ? ['calendar'] : []);
+        if (!grammarAnswers) expect(turn.result.reply.text, cause).toBe(CHAT_REPLY);
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  });
+
+  it('S1 Phase C: the classifier\'s personal-work surface is a Class B route — selection first, the surface as the fallback', async () => {
+    // The work-chat grammar already claims the usual surface phrasings, so the classifier result is forced for a neutral
+    // text that no handler answers (the route is what is under test, not the regex).
+    const classifier = (runtime as unknown as { deps: { classifier: { classify: (message: InboundMessage) => Promise<Intent> } } }).deps.classifier;
+    const surfaceIntent = { type: 'LOOKUP', capability: 'READONLY_LOOKUP', confidence: 1, requiresWork: false, summary: 's', raw: { kind: 'personal-work-surface' } } as unknown as Intent;
+    const forced = async (text: string) => {
+      vi.mocked(classifier.classify).mockImplementationOnce(async () => {
+        order.push('classify');
+        intents.push(surfaceIntent);
+        return surfaceIntent;
+      });
+      return turnOf(text);
+    };
+    const phaseA = await withPhase('a', 'active', () => forced('음 오늘 뭐부터 손대지'));
+    expect(phaseA.selects).toBe(0);
+    expect(phaseA.result.reply.text).toContain('지금 확인할 작업이에요');
+    await withPhase('c', 'active', async () => {
+      selectorAnswer = answer('todo.list');
+      const selectedTurn = await forced('음 오늘 뭐부터 손대지 1');
+      expect(selectedTurn.order).toEqual(['classify', 'select']);
+      expect(selectedTurn.served).toEqual([expect.objectContaining({ entryId: 'todo.list' })]);
+      selectorAnswer = () => {
+        throw new Error('selector down');
+      };
+      const fallback = await forced('음 오늘 뭐부터 손대지 2');
+      expect(fallback.selects).toBe(1);
+      expect(fallback.served).toEqual([]);
+      expect(fallback.result.reply.text).toBe(phaseA.result.reply.text);
+      selectorAnswer = none;
+      const declined = await forced('음 오늘 뭐부터 손대지 3');
+      expect(declined.selects).toBe(1);
+      expect(declined.result.reply.text).toBe(phaseA.result.reply.text);
+    });
+    selectorAnswer = none;
+  });
+
+  it('S1: c with mode shadow (refused at startup) is inert in the runtime too — the grammar answers, no selector call, no agreement; active Phase C logs content-free agreement', async () => {
+    const service = (runtime as unknown as { deps: { nlSelection: { lastShadowRun: Promise<void>; deps: { logger: { info: (event: string, fields?: Record<string, unknown>) => void } } } } }).deps.nlSelection;
+    const lines: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+    const spy = vi.spyOn(service.deps.logger, 'info').mockImplementation((event, fields) => void lines.push({ event, ...(fields ? { fields } : {}) }));
+    try {
+      const text = '위클리카 관련 지라 이슈 보여줘';
+      const phaseA = await withPhase('a', 'active', () => turnOf(text));
+      selectorAnswer = answer('jira.issues', { keyword: '위클리카' });
+      const shadow = await withPhase('c', 'shadow', async () => {
+        const turn = await turnOf(text);
+        await service.lastShadowRun;
+        return turn;
+      });
+      expect(shadow.claims).toEqual(phaseA.claims);
+      expect(shadow.result.reply.text).toBe(phaseA.result.reply.text);
+      expect(shadow.hits).toEqual([]);
+      expect(shadow.selects).toBe(0);
+      expect(lines.filter((line) => line.event === 'nl_selection.agreement')).toEqual([]);
+      // Active Phase C logs the agreement, and it carries neither the text nor an argument value.
+      selectorAnswer = answer('github.items', { keyword: '위클리카' });
+      await withPhase('c', 'active', () => turnOf('위클리카 관련 지라 이슈 보여줘요'));
+      const all = lines.filter((line) => line.event === 'nl_selection.agreement');
+      expect(all.at(-1)?.fields).toMatchObject({ grammarId: 'work-lookup.my-items', entryId: 'github.items', outcome: 'execute', mode: 'active', agree: false, agreeEntry: false });
+      expect(JSON.stringify(all)).not.toMatch(/위클리카|지라|보여/);
+    } finally {
+      spy.mockRestore();
+      selectorAnswer = none;
+    }
+  });
+
+  it('S1 c-shadow: Phase A stays live — the grammar reply is handed back before the background selection starts, only the agreement is logged, and no session or preference state changes', async () => {
+    const service = (runtime as unknown as { deps: { nlSelection: { lastShadowRun: Promise<void>; deps: { logger: { info: (event: string, fields?: Record<string, unknown>) => void } } } } }).deps.nlSelection;
+    const lines: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+    const spy = vi.spyOn(service.deps.logger, 'info').mockImplementation((event, fields) => void lines.push({ event, ...(fields ? { fields } : {}) }));
+    try {
+      const text = '다음 주 일정 알려줘';
+      const phaseA = await withPhase('a', 'active', () => turnOf(text));
+      const ctx = context();
+      await withPhase('c-shadow', 'active', async () => {
+        selectorAnswer = answer('calendar.events', { range: 'next-week' });
+        const start = marks();
+        const result = await send(text, ctx);
+        order.push('replied');
+        const stateAtReply = JSON.stringify((await sessions.openForContext(ctx, ownerActor.id)).metadata ?? {});
+        const preferencesAtReply = JSON.stringify((await storage.actors.get(ownerActor.id))?.metadata ?? {});
+        await (runtime as unknown as { lastAfterReplyRun: Promise<void> }).lastAfterReplyRun;
+        await service.lastShadowRun;
+        const turnOrder = order.slice(start.order);
+        // The grammar answered exactly as in Phase A, and the selector ran once, only after the reply was handed back.
+        expect(result.reply.text).toBe(phaseA.result.reply.text);
+        expect(claims.slice(start.claims).map((claim) => claim.handlerId)).toEqual(['calendar']);
+        expect(selected.length).toBe(start.selected);
+        expect(turnOrder.filter((step) => step === 'select')).toHaveLength(1);
+        expect(turnOrder.indexOf('replied')).toBeLessThan(turnOrder.indexOf('select'));
+        expect(lines.filter((line) => line.event === 'nl_selection.agreement').at(-1)?.fields).toMatchObject({
+          grammarId: 'calendar-question',
+          entryId: 'calendar.events',
+          outcome: 'execute',
+          mode: 'shadow',
+          agree: true,
+        });
+        expect(JSON.stringify((await sessions.openForContext(ctx, ownerActor.id)).metadata ?? {})).toBe(stateAtReply);
+        expect(JSON.stringify((await storage.actors.get(ownerActor.id))?.metadata ?? {})).toBe(preferencesAtReply);
+
+        // Fall-through messages keep Phase A's live selection.
+        selectorAnswer = answer('jira.issues');
+        const fallThrough = await turnOf('지라 쪽 내 건들 좀 훑어볼래 c-shadow');
+        expect(fallThrough.order.slice(0, 2)).toEqual(['classify', 'select']);
+        expect(fallThrough.served).toEqual([expect.objectContaining({ entryId: 'jira.issues' })]);
+      });
+    } finally {
+      spy.mockRestore();
+      selectorAnswer = none;
+    }
+  });
+
+  it('S1: off, a, c and c-shadow behave distinctly on one grammar-hit message', async () => {
+    const text = '모레 일정 보여줘';
+    const runIn = async (phase: 'a' | 'c' | 'c-shadow', mode: 'off' | 'active') =>
+      withPhase(phase, mode, async () => {
+        selectorAnswer = answer('calendar.events', { range: 'day-after-tomorrow' });
+        const before = order.length;
+        const turn = await turnOf(text);
+        await (runtime as unknown as { lastAfterReplyRun: Promise<void> }).lastAfterReplyRun;
+        await (runtime as unknown as { deps: { nlSelection: { lastShadowRun: Promise<void> } } }).deps.nlSelection.lastShadowRun;
+        return { ...turn, selectsTotal: order.slice(before).filter((step) => step === 'select').length };
+      });
+    const off = await runIn('a', 'off');
+    const a = await runIn('a', 'active');
+    const c = await runIn('c', 'active');
+    const shadow = await runIn('c-shadow', 'active');
+    // off and a: the grammar answers, no selector call at all.
+    for (const turn of [off, a]) {
+      expect(turn.claims).toEqual(['calendar']);
+      expect(turn.selects).toBe(0);
+    }
+    // c: the selector answers first and serves the read; the grammar does not.
+    expect(c.claims).toEqual([]);
+    expect(c.selects).toBe(1);
+    expect(c.served).toEqual([expect.objectContaining({ entryId: 'calendar.events' })]);
+    // c-shadow: the grammar answers within the turn (no selection in it), the selector runs once after the reply.
+    expect(shadow.claims).toEqual(['calendar']);
+    expect(shadow.selects).toBe(0);
+    expect(shadow.served).toEqual([]);
+    expect(shadow.selectsTotal).toBe(1);
+    expect(shadow.result.reply.text).toBe(a.result.reply.text);
+    expect([off.selectsTotal, a.selectsTotal, c.selectsTotal]).toEqual([0, 0, 1]);
+    selectorAnswer = none;
+  });
+
+  it('S1: "그 중에 …" after an intervening chat turn asks the numbered question in Phase C too (the selector is told there is no previous selection)', async () => {
+    await withPhase('c', 'active', async () => {
+      const ctx = context();
+      selectorAnswer = answer('calendar.events', { range: 'this-week' });
+      await send('이번 주 일정 알려줘', ctx);
+      selectorAnswer = none;
+      expect((await send('요즘 날씨가 너무 덥다', ctx)).reply.text).toBe(CHAT_REPLY);
+      expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+      selectorAnswer = JSON.stringify({ entryId: 'calendar.events', args: { keyword: '스크럼' }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'jira.issues', args: { keyword: '스크럼' } }] });
+      const start = marks();
+      const asked = await send('그 중에 스크럼 건만', ctx);
+      expect(lastPrevious(start.requests)).toBe('Previous selection: none');
+      expect(requests.slice(start.requests).find((request) => request.capability === SELECTION)?.prompt).toContain('A narrowing follow-up');
+      expect(asked.reply.text).toContain('어떤 걸 찾으세요?');
+      expect((await send('1', ctx)).reply.text).toContain('스크럼');
+    });
+    selectorAnswer = none;
   });
 
   it('provider down or malformed: no retry, honest chat with the configured-sources fact (D9)', async () => {

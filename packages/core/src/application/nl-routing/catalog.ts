@@ -141,6 +141,17 @@ export interface NlGrammarSelection {
   readonly args: NlArgs;
 }
 
+/**
+ * ADR-0120 D6 Phase C (S1): what a frozen Class B grammar WOULD answer for this message, computed without reading
+ * anything (`ConversationTurnHandler.classBProbe`). `grammarId` is a closed, content-free id of the grammar (for the D10
+ * agreement log); `selection` is the grammar's own catalog equivalent (the `nlSelection` its listing would record), absent
+ * when the grammar's answer has none (an invalid date, several help topics).
+ */
+export interface NlClassBProbe {
+  readonly grammarId: string;
+  readonly selection?: NlGrammarSelection;
+}
+
 /** Typed readers for canonical args (handlers never cast). */
 export function nlStringArg(args: NlArgs, name: string): string | undefined {
   const value = args[name];

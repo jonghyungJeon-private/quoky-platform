@@ -539,7 +539,7 @@ describe('loadConfig — egress guard (ADR-0121 S0)', () => {
 
 describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
   it('defaults to off with the haiku selection model, and accepts exactly off, shadow or active', () => {
-    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, timeoutMs: 6000 });
+    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, phase: 'a', timeoutMs: 6000 });
     expect(loadConfig(env({})).ai.intentSelectionModel).toBe('haiku');
     for (const mode of ['off', 'shadow', 'active'] as const) {
       expect(loadConfig(env({ QUOKY_NL_INTENT_MODE: mode })).nlSelection.mode).toBe(mode);
@@ -565,6 +565,26 @@ describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
     for (const value of ['', 'ON', 'true', '1']) {
       expect(() => loadConfig(env({ QUOKY_NL_GRAMMAR_YIELD: value })), value).toThrow(/^NL_GRAMMAR_YIELD_INVALID$/);
     }
+  });
+
+  it('QUOKY_NL_PHASE defaults to a (Phase A) and accepts exactly a or c (ADR-0120 D6, ADR-0121 S1)', () => {
+    expect(loadConfig(env({})).nlSelection.phase).toBe('a');
+    expect(loadConfig(env({ QUOKY_NL_PHASE: 'a' })).nlSelection.phase).toBe('a');
+    expect(loadConfig(env({ QUOKY_NL_PHASE: 'c' })).nlSelection.phase).toBe('c');
+    for (const value of ['', 'C', 'A', 'b', 'phase-c', ' c', 'active-first']) {
+      expect(() => loadConfig(env({ QUOKY_NL_PHASE: value })), value).toThrow(/^NL_PHASE_INVALID$/);
+    }
+  });
+
+  it('QUOKY_NL_PHASE=c-shadow is valid only with active, and c is refused with shadow; those combinations fail startup', () => {
+    expect(loadConfig(env({ QUOKY_NL_PHASE: 'c-shadow', QUOKY_NL_INTENT_MODE: 'active' })).nlSelection).toMatchObject({ mode: 'active', phase: 'c-shadow' });
+    for (const mode of [undefined, 'off', 'shadow'] as const) {
+      expect(() => loadConfig(env({ QUOKY_NL_PHASE: 'c-shadow', ...(mode !== undefined ? { QUOKY_NL_INTENT_MODE: mode } : {}) })), String(mode)).toThrow(/^NL_PHASE_REQUIRES_ACTIVE$/);
+    }
+    // CA review: `c` with `shadow` would shadow grammar hits outside the bounded job, so it fails startup too.
+    expect(() => loadConfig(env({ QUOKY_NL_PHASE: 'c', QUOKY_NL_INTENT_MODE: 'shadow' }))).toThrow(/^NL_PHASE_REQUIRES_ACTIVE$/);
+    expect(loadConfig(env({ QUOKY_NL_PHASE: 'c', QUOKY_NL_INTENT_MODE: 'active' })).nlSelection.phase).toBe('c');
+    expect(loadConfig(env({ QUOKY_NL_PHASE: 'c', QUOKY_NL_INTENT_MODE: 'off' })).nlSelection).toMatchObject({ mode: 'off', phase: 'c' });
   });
 
   it.each(['', '--model', 'haiku model', 'x'.repeat(200)])('rejects a malformed selection model %j', (value) => {

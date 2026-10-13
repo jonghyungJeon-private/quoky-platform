@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, NL_SELECTION_TIMEOUT_MS, type AiProvider, type AiRequest } from '@quoky/core';
-import { buildPlan, computePlanDigest, runEvaluation, scoreOutput, summarize, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
+import { buildPlan, computePlanDigest, loadCorpus, runEvaluation, scoreGrammarSide, scoreOutput, scoreSelectorSide, summarize, userVisibleMeaning, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, planOptions, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // ADR-0120 D12 evaluation harness, offline: plan and digest, exact-match scoring after Core validation, the gate, and the
@@ -114,6 +114,32 @@ describe('nl-intent evaluation timeout option (ADR-0120 A3)', () => {
     expect(summarize(records, 2000).latency).toMatchObject({ boundMs: 2000, overRuntimeBound: 2 });
     expect(summarize(records).latency).toMatchObject({ boundMs: NL_SELECTION_TIMEOUT_MS, overRuntimeBound: 1 });
   });
+
+  it('S1: the over-bound share gates at 1%, and the grammar-handled subset reports its own hits and latency', () => {
+    const records = Array.from({ length: 200 }, (_, index) => ({
+      run: 1,
+      id: `c${index}`,
+      expected: 'jira.issues',
+      outcome: index < 2 ? ('timeout' as const) : ('hit' as const),
+      latencyMs: index < 2 ? 6001 : 1000 + index,
+    }));
+    const twoOver = summarize(records, 6000, new Set(['c0', 'c10', 'c20', 'c30']));
+    expect(twoOver).toMatchObject({ overBoundRate: 0.01, gatePassed: true, s1GatePassed: true });
+    expect(twoOver.grammarSubset).toEqual({
+      cases: 4,
+      positives: 4,
+      hits: 3,
+      overall: 0.75,
+      wrongCaptures: 0,
+      clarifications: 0,
+      timeouts: 1,
+      latency: { p50: 1020, p95: 6001, max: 6001 },
+    });
+    const threeOver = summarize([...records, { run: 1, id: 'x', expected: 'jira.issues', outcome: 'timeout' as const, latencyMs: 6002 }], 6000);
+    expect(threeOver.overBoundRate).toBeGreaterThan(0.01);
+    expect(threeOver).toMatchObject({ gatePassed: true, s1GatePassed: false });
+    expect(threeOver.grammarSubset).toBeUndefined();
+  });
 });
 
 describe('nl-intent evaluation CLI (Strict digest gate)', () => {
@@ -175,5 +201,40 @@ describe('nl-intent evaluation CLI timeout flag (ADR-0120 A3)', () => {
     expect(planOptions({}, { QUOKY_NL_INTENT_TIMEOUT_MS: '8001' }).timeoutMs).toBeUndefined();
     expect(planOptions({ '--timeout-ms': '4000' }, { QUOKY_NL_INTENT_TIMEOUT_MS: '3000' }).timeoutMs).toBe(4000);
     expect(planOptions({}, {}).timeoutMs).toBeUndefined();
+  });
+});
+
+describe('S1 fair evidence — grammar side vs selector side on the grammar-handled cases', () => {
+  const NOW = '2026-10-13T06:00:00.000Z';
+  const cases: NlEvalCase[] = [
+    { id: 'g1', text: '금요일 일정 뭐야?', expect: { entryId: 'calendar.events', args: { range: 'fri' } }, grammar: 'calendar-question', grammarAnswer: { entryId: 'calendar.events', args: { range: '10-16' } } },
+    { id: 'g2', text: '컨플루언스에서 온보딩 문서 검색해줘', expect: { entryId: 'confluence.search', args: { keyword: '온보딩' } }, grammar: 'work-lookup.search', grammarAnswer: { entryId: 'confluence.search', args: { keyword: '온보딩 문서' } } },
+    { id: 'g3', text: '드라이브에서 엑셀 파일 보여줘', expect: { entryId: 'drive.files', args: { kind: 'spreadsheet' } }, grammar: 'drive-question.list', grammarAnswer: { entryId: 'drive.files', args: { name: '엑셀' } } },
+    { id: 'g4', text: '할 일 관리하는 좋은 습관 알려줘', expect: 'none', grammar: 'work-lookup.todo-list', grammarAnswer: { entryId: 'todo.list', args: {} } },
+    { id: 'n1', text: '오늘 날씨', expect: 'none' },
+  ];
+  const corpus: NlEvalCorpus = { version: 1, cases };
+
+  it('scores exact, entry and user-visible correctness, and counts a grammar capture of a negative', () => {
+    expect(scoreGrammarSide(corpus, NOW)).toEqual({ positives: 3, exact: 0, entry: 3, userVisible: 2, wrongCaptures: 1 });
+    expect(userVisibleMeaning({ entryId: 'calendar.events', args: { range: '10-16' } }, NOW)).toBe(userVisibleMeaning({ entryId: 'calendar.events', args: { range: 'fri' } }, NOW));
+  });
+
+  it('scores the selector on the same cases from a run\'s records (a clarification answers nothing)', () => {
+    const records = [
+      { run: 1, id: 'g1', expected: 'calendar.events', outcome: 'hit' as const, got: 'calendar.events', gotArgs: { range: 'fri' }, latencyMs: 1 },
+      { run: 1, id: 'g2', expected: 'confluence.search', outcome: 'clarify' as const, got: 'confluence.search', latencyMs: 1 },
+      { run: 1, id: 'g3', expected: 'drive.files', outcome: 'hit' as const, got: 'drive.files', gotArgs: { kind: 'spreadsheet' }, latencyMs: 1 },
+      { run: 1, id: 'g4', expected: 'none', outcome: 'none' as const, got: 'none', latencyMs: 1 },
+    ];
+    expect(scoreSelectorSide(corpus, records, NOW)).toEqual({ positives: 3, exact: 2, entry: 2, userVisible: 2, wrongCaptures: 0 });
+  });
+
+  it('the committed corpus: every grammar-tagged case records the grammar answer (243), and the grammar side is reproducible', () => {
+    const { corpus: real } = loadCorpus();
+    const tagged = real.cases.filter((golden) => golden.grammar !== undefined);
+    expect(tagged).toHaveLength(243);
+    expect(tagged.every((golden) => golden.grammarAnswer !== undefined)).toBe(true);
+    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 242, exact: 202, entry: 239, userVisible: 224, wrongCaptures: 1 });
   });
 });

@@ -235,6 +235,8 @@ async function bootstrap(): Promise<void> {
     stopping = true;
     haltRelease?.cancel();
     cancelNlWarmup();
+    // S1 W1: abort a c-shadow background selection in flight (its claude child process is terminated).
+    app.get<NlSelectionService>(NL_SELECTION).stopBackground();
     // First: no reminder claim/complete may run while the platform and storage are closing. stop() waits for the
     // in-flight delivery + outcome write up to its hard bound; if that elapses, the reminder stays FIRING and the
     // next startup turns it into DELIVERY_UNCERTAIN (never resent).

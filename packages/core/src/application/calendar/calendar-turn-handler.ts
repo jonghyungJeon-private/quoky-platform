@@ -1,6 +1,7 @@
 import type {
   ConversationTurnHandler,
   TurnHandlerContext,
+  TurnHandlerProbeContext,
   TurnHandlerReply,
   TurnHandlerWriteDraft,
 } from '../../ports/conversation-turn-handler.port';
@@ -13,7 +14,7 @@ import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
 import type { CalendarRecentListing, ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { parseCalendarQuestion, placeCalendarSpan, type CalendarLanguage, type CalendarWindow } from './calendar-question';
-import { nlFlagArg, nlStringArg, type NlCatalogEntry, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlFlagArg, nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
 import { isoDateOf, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { parseCalendarWriteRequest } from './calendar-write-request';
@@ -33,6 +34,8 @@ export const CALENDAR_TURN_HANDLER_ID = 'calendar';
  * anchored to-dos (100), before reminders (200), work lookups (300) and help intent (400).
  */
 export const CALENDAR_TURN_HANDLER_ORDER = 150;
+/** The content-free Class B grammar id of the schedule-question grammar (ADR-0120 D10 agreement log). */
+export const CALENDAR_GRAMMAR_ID = 'calendar-question';
 /** The whole read (every configured calendar and page) must finish within this bound. */
 export const CALENDAR_READ_TIMEOUT_MS = 30_000;
 /** At most this many sessions' last calendar list are kept in memory (the oldest is dropped first). */
@@ -106,13 +109,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerWriteDraft | null> {
     const text = ctx.message.text;
-    let question: ReturnType<typeof parseCalendarQuestion>;
-    try {
-      if (parseReminderMessage(text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
-      question = parseCalendarQuestion(text, { yieldToSelection: ctx.grammarYield === true });
-    } catch {
-      return null;
-    }
+    const question = this.parseQuestion(ctx);
     if (question === null) return null;
     const language = question.language;
     if (question.kind === 'write-refused') {
@@ -133,6 +130,32 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
     const answered = await this.answer(ctx, window, question.remaining === true, language);
     // ADR-0120 follow-up: the structural `calendar.events` equivalent of what this grammar just listed.
     return answered.status === 'FAILED' ? answered : { ...answered, nlSelection: calendarGrammarSelection(window, question.remaining === true) };
+  }
+
+  /** The schedule grammar exactly as `handle` reads it (a reminder is never a schedule question); `null` on no match. */
+  private parseQuestion(ctx: TurnHandlerProbeContext): ReturnType<typeof parseCalendarQuestion> {
+    try {
+      if (parseReminderMessage(ctx.message.text, { now: ctx.now, timeZone: this.deps.timeZone }).kind !== 'NOT_REMINDER') return null;
+      return parseCalendarQuestion(ctx.message.text, { yieldToSelection: ctx.grammarYield === true });
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ADR-0120 D6 Phase C: the schedule-question grammar (frozen Class B, ADR-0110 D3) would answer this message, with the
+   * `calendar.events` equivalent of the span it would list. A write request is Class A (`null`). Pure: nothing is read.
+   */
+  classBProbe(ctx: TurnHandlerProbeContext): NlClassBProbe | null {
+    const question = this.parseQuestion(ctx);
+    if (question === null || question.kind === 'write-refused') return null;
+    try {
+      const window = placeCalendarSpan(question.span, ctx.now, this.deps.timeZone);
+      if (window !== undefined) return { grammarId: CALENDAR_GRAMMAR_ID, selection: calendarGrammarSelection(window, question.remaining === true) };
+    } catch {
+      // An unplaceable span is still the grammar's turn (it answers with the invalid-date note).
+    }
+    return { grammarId: CALENDAR_GRAMMAR_ID };
   }
 
   /** ADR-0120 D1: `calendar.events`, offered whenever this handler is registered (a reader is configured, D5). */
