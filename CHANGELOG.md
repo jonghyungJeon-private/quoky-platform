@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — fix: keep-alive reuse through the egress guard (ADR-0121 S0 follow-up, 2026-10-13)
+
+- The guarded dispatcher's Agent used undici's 4 s idle default, so each Telegram long poll opened a new TCP+TLS connection. Idle
+    connections are now kept 65 s; pinning, deny ranges and ledger records are unchanged (a new connection is still checked).
+
 ## Unreleased — Node 22 LTS runtime (ADR-0121 S0 owner item, 2026-10-13)
 
 - **Runtime moves from Node 18 (end-of-life) to Node 22 LTS.** `.nvmrc` is `22.22.1` and `engines.node` is `>=22.12`. The owner approved this on 2026-10-13. It closes the CVE-2025-22150 exposure that remained through Node 18's bundled undici (FormData). The full suite passes on 22.22.1. The service plist is reinstalled with `--node` pointing at Node 22, and `better-sqlite3` is rebuilt for the new ABI.

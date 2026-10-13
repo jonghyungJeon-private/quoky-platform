@@ -21414,3 +21414,14 @@ a minute. The same finding is logged as `egress.guard` with the same fields.
   deferred the OS-level control.
 - **Rollout.** The default is `observe`. Flipping to `enforce` after 7 clean ledger days (design Q4) is a separate owner
   yes, and so is any runtime restart that applies this build.
+
+### ADR-0121 S0 follow-up — keep-alive reuse through the egress guard (2026-10-13)
+
+- **Finding.** The live ledger showed a `connect` record (new TCP+TLS handshake) to `api.telegram.org` for every
+  `getUpdates` long poll. Root cause: `GuardedDispatcher` built its `Agent` with undici's default `keepAliveTimeout`
+  (4 s), so the pooled connection was dropped before the next poll.
+- **Fix.** The single shared `Agent` now sets `keepAliveTimeout` and `keepAliveMaxTimeout` to 65 s
+  (`KEEP_ALIVE_TIMEOUT_MS`, `apps/quoky/src/security/egress-guard.ts`). The guard is unchanged: name checks, budgets and
+  request records run per request; the address check, pinning and `connect` record run per NEW connection, and a reused
+  connection stays on the address that was checked when it was opened. Every connector that uses the global dispatcher
+  benefits. Regression tests: `egress-guard.test.ts` ("keep-alive").

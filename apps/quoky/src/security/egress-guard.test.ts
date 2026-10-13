@@ -339,6 +339,32 @@ describe('connection-bound deny-range check (T13)', () => {
 // ---------------------------------------------------------------------------------------------------------------------
 
 describe('guarded dispatcher: observe versus enforce', () => {
+  it('keep-alive: sequential requests to one origin reuse one pinned connection (long-poll pattern)', async () => {
+    const h = harness('observe', { hosts: { 'svc.example.test': 'jira' }, answers: { 'svc.example.test': [[v4('93.184.216.34')]] } });
+    const sockets = new Set<unknown>();
+    server.on('request', (req) => sockets.add(req.socket));
+    for (let i = 0; i < 3; i += 1) {
+      const response = await h.fetch(`http://svc.example.test:${port}/poll`);
+      expect(await response.text()).toBe('ok');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(sockets.size).toBe(1);
+    expect(h.connector.seen).toHaveLength(1);
+    expect(h.ledger.of('connect')).toHaveLength(1);
+  });
+
+  it('keep-alive: the idle window outlives the gap between long polls', async () => {
+    const h = harness('observe', { hosts: { 'svc.example.test': 'jira' }, answers: { 'svc.example.test': [[v4('93.184.216.34')]] } });
+    const sockets = new Set<unknown>();
+    server.on('request', (req) => sockets.add(req.socket));
+    server.keepAliveTimeout = 0; // the server sends no Keep-Alive hint and never closes an idle socket itself
+    await (await h.fetch(`http://svc.example.test:${port}/a`)).text();
+    await new Promise((resolve) => setTimeout(resolve, 4_500));
+    await (await h.fetch(`http://svc.example.test:${port}/b`)).text();
+    expect(sockets.size).toBe(1);
+    expect(h.ledger.of('connect')).toHaveLength(1);
+  }, 15_000);
+
   it('observe: an allowlisted name is resolved by the guard, pinned to the checked IP, Host kept; the ledger records it', async () => {
     const h = harness('observe', { hosts: { 'svc.example.test': 'jira' }, answers: { 'svc.example.test': [[v4('93.184.216.34')]] } });
     const response = await runWithCorrelation('owner-turn', () =>

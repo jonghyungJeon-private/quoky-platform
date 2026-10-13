@@ -558,13 +558,21 @@ function observingHandler(
   return wrapped;
 }
 
+/**
+ * Idle window of a pooled connection. undici's default is 4 s, shorter than the gap around a Telegram long poll, so
+ * every poll paid a new TCP+TLS handshake (and a new address check + ledger `connect` record). 65 s covers a 50 s poll
+ * plus processing; `keepAliveMaxTimeout` caps a longer server hint to the same bound. A reused socket stays pinned to
+ * the address that was checked when it was opened; a new socket always goes through {@link EgressGuard.connect}.
+ */
+export const KEEP_ALIVE_TIMEOUT_MS = 65_000;
+
 /** The process-global dispatcher: name check + budget + ledger around an Agent whose connections are checked and pinned. */
 export class GuardedDispatcher extends Dispatcher {
   private readonly agent: Agent;
 
   constructor(private readonly guard: EgressGuard) {
     super();
-    this.agent = new Agent({ connect: guard.connect });
+    this.agent = new Agent({ connect: guard.connect, keepAliveTimeout: KEEP_ALIVE_TIMEOUT_MS, keepAliveMaxTimeout: KEEP_ALIVE_TIMEOUT_MS });
   }
 
   override dispatch(options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandlers): boolean {
