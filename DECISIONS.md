@@ -21119,6 +21119,15 @@ These are Q1–Q10 of the design §7. The defaults are:
   - A slow or failed selection now takes at most 2 s longer before the turn falls back. Normal turns are unchanged.
 - **Follow-up:** reducing the latency itself (a warm process, a smaller prompt) belongs to the ADR-0121 design.
 
+### ADR-0121 S0-ops implementation note — self-check, secret scan, runbooks (2026-10-13)
+
+- **Status:** Implemented under the owner's approval to start S0 (2026-10-13). This is the ops half; the traffic ledger and egress guard are on the parallel `claude/v5-s0-egress` branch. No architecture change.
+- **Owner decisions applied:** no OS-level firewall for now (Q10 stays open); token rotation later (the runbook exists, no rotation was done); the owner removes Tailscale manually.
+- **Self-check:** `ops/security/quoky-net-selfcheck.sh [--json] [--since 24h]` (design 5.5). It is read-only, needs no root and is bash 3.2 safe. It reports the Quoky process tree, its live TCP/UDP connections against the allowlist (forward DNS of allowlisted hosts, reverse DNS suffix, and the Telegram, Cloudflare and Anthropic ranges), listeners, remote-access/tunnel/VPN software (Tailscale, ZeroTier, ngrok, cloudflared, frp, AnyDesk, TeamViewer, `utun` CGNAT addresses, connected VPN configurations, listeners on 22 and 5900) and a ledger summary, or "ledger not yet available". Exit 0 only if every check passes. Installed-but-not-running software is a warning. It prints no environment value or secret. Fixture tests: `ops/security/quoky-net-selfcheck.test.sh`, run by vitest.
+- **Secret scan:** `pnpm security:secret-scan` (`apps/quoky/src/tools/secret-scan*.ts`) runs the runtime credential guard's `classifyCredentialFileContent` (now exported from `@quoky/core`) over tracked files and the added lines of `git log -p --all`. A hit is file, commit, line and rule with the value masked; the detector never returns the value. Q7 default (in-repo, no dependency). The detector is deliberately strict, so test fixtures and documentation produce hits. The count is a triage list, not a failure of the repository's secrecy.
+- **Runbooks:** `docs/ops/security-incident-response.md` (MSIT 5-5, KISA via boho.or.kr and 118), `docs/ops/key-rotation.md` (MSIT 3-3), `docs/ops/remote-access-inventory.md` (MSIT 1-2, 3-5).
+- **Open for the S0 gate:** Tailscale removal (owner); 7 days of ledger and the `observe` period (egress branch); the ledger path and JSON field names the self-check reads (`host`, `initiator`, `bytesUp`, `bytesDown`) must match the egress branch.
+
 ## ADR-0121 S0 implementation note — security baseline, code half (2026-10-13)
 
 - **Authority.** On 2026-10-13 the owner approved starting with S0 only: "보안 기반(S0)부터 진행". ADR-0121 itself stays
