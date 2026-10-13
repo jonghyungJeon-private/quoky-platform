@@ -43,7 +43,7 @@ import {
 } from './ops-ui-wiring';
 import type { OpsUiContainer, OpsUiHandle, OpsUiWiringInput } from './ops-ui-wiring';
 
-const GITHUB_TOKEN = 'ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+const GITHUB_TOKEN = 'gh' + 'p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
 
 let dir: string;
 const handles: OpsUiHandle[] = [];

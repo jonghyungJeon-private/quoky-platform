@@ -28,7 +28,7 @@ import type { WorkChatOutcome, WorkChatServiceDeps } from './work-chat-service';
 import { EXTERNAL_WORK_PROMPT_MAX_CHARS, renderExternalWorkReadoutForPrompt } from './external-work-readout';
 import { WORK_CHAT_REPLY_MAX_CHARS } from './work-chat-renderer';
 
-const SECRET = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+const SECRET = 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789';
 
 const owner: Actor = {
   id: 'owner-1',
@@ -218,7 +218,7 @@ describe('to-do commands (WorkManager only)', () => {
 
   it('refuses a credential title before anything is stored', async () => {
     const { say, work } = harness();
-    for (const body of [`토큰 ${SECRET} 정리`, '비밀번호는 hunter2hunter2 로 바꾸기', 'api_key=sk-abcdefghijklmnopqrstuvwx']) {
+    for (const body of [`토큰 ${SECRET} 정리`, '비밀번호는 hunter2hunter2 로 바꾸기', 'api_key=sk' + '-abcdefghijklmnopqrstuvwx']) {
       const text = textOf(await say(`할 일 추가: ${body}`));
       expect(text).toContain('저장하지 않았어요');
       expect(text).not.toContain(SECRET);

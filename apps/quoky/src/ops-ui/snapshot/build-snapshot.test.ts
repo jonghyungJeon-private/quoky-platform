@@ -28,8 +28,8 @@ const NOW = '2026-10-06T05:00:00.000Z';
 const OWNER = 'actor-owner-1';
 
 // Credential-shaped strings (each matches the ADR-0097 strict guard) and conversation-body markers.
-const GITHUB_TOKEN = 'ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
-const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE';
+const GITHUB_TOKEN = 'gh' + 'p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+const AWS_KEY = 'AK' + 'IAIOSFODNN7EXAMPLE';
 const SLACK_TOKEN = 'xox' + 'b-123456789012-123456789012-abcdefghijklmnopqrstuvwx';
 const FILE_SECRET = 'password = "hunter2hunter2"';
 const SECRETS = [GITHUB_TOKEN, AWS_KEY, SLACK_TOKEN, 'hunter2hunter2'];

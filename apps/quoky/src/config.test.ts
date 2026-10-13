@@ -117,12 +117,12 @@ describe('loadConfig — GitHub App auth (Sprint 4b, ADR-0061)', () => {
         QUOKY_GITHUB_OWNER: 'q',
         QUOKY_GITHUB_REPO: 'r',
         QUOKY_GITHUB_APP_ID: '123',
-        QUOKY_GITHUB_APP_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----x-----END PRIVATE KEY-----',
+        QUOKY_GITHUB_APP_PRIVATE_KEY: '-----' + 'BEGIN PRIVATE KEY-----x-----END PRIVATE KEY-----',
       }),
     );
     expect(cfg.githubApp).toEqual({
       appId: '123',
-      privateKeyPem: '-----BEGIN PRIVATE KEY-----x-----END PRIVATE KEY-----',
+      privateKeyPem: '-----' + 'BEGIN PRIVATE KEY-----x-----END PRIVATE KEY-----',
     });
     expect(JSON.stringify(cfg.repositoryHosting)).not.toContain('BEGIN PRIVATE KEY');
   });

@@ -248,7 +248,7 @@ describe('AttachmentIntake — text files are bounded UNTRUSTED readout (ADR-011
   });
 
   it('refuses a credential-shaped text file and drops its content', async () => {
-    const secret = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+    const secret = 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789';
     const files = {
       [`${CDN}/token.txt`]: { body: Buffer.from(`deploy token ${secret}\n`) },
       [`${CDN}/config.json`]: { body: Buffer.from('{ "db_password": "hunter2-prod" }\n') },

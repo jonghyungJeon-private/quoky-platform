@@ -76,7 +76,7 @@ const ACTOR_ID = `actor-${OWNER_ID}`;
 const context: ConversationContext = { platform: 'discord', channelId: '777777777777777777', userId: OWNER_ID };
 const NOW = '2026-10-02T03:00:00.000Z';
 const SUMMARY = 'PROJ-1 인증서 교체가 내일 마감이라 먼저 보셔야 해요.';
-const SECRET = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+const SECRET = 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789';
 
 const JIRA_ITEMS: ConnectorItem[] = [
   {

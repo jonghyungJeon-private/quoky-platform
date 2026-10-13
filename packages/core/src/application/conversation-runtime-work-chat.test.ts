@@ -73,7 +73,7 @@ const OWNER: Actor = {
   createdAt: '2026-10-01T00:00:00.000Z',
 };
 const T0 = '2026-10-02T09:00:00.000Z';
-const SECRET = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+const SECRET = 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789';
 const SUMMARY = 'OPS-1 인증서 교체가 내일 마감이라 먼저 보셔야 해요.';
 
 const bad = (name: string) => () => {

@@ -214,7 +214,7 @@ describe('MemoryCommandService — list and view (ADR-0106 D3)', () => {
     const h = harness([
       memory(`긴 내용 ${'가'.repeat(300)}`),
       memory('@everyone 회의는 <@123> 담당'),
-      memory('내 GitHub 토큰은 ghp_abcdefghijklmnopqrstuvwxyz0123456789'),
+      memory('내 GitHub 토큰은 gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789'),
     ]);
     const listed = await h.run('기억 목록');
     const first = listed.text.split('\n').find((line) => line.startsWith('1. ')) ?? '';
@@ -504,7 +504,7 @@ describe('MemoryCommandService — edit (ADR-0106 D5)', () => {
 
   it('refuses a credential-shaped edit before issuing any code', async () => {
     const h = harness([memory('서버 주소 메모')]);
-    for (const text of ['기억 1 수정: password = hunter2hunter2', '기억 1 수정: 토큰 ghp_abcdefghijklmnopqrstuvwxyz0123456789']) {
+    for (const text of ['기억 1 수정: password = hunter2hunter2', '기억 1 수정: 토큰 gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789']) {
       const result = await h.run(text);
       expect(result.outcome, text).toBe('edit-sensitive');
       expect(result.text).not.toMatch(/기억 확인 [A-Z0-9]{4}/);

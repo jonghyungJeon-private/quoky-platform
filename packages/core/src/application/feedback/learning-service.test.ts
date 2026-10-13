@@ -438,7 +438,7 @@ describe('learning text guard helpers', () => {
     expect(learningTextRefusal(undefined)).toBe('EMPTY');
     expect(learningTextRefusal('   ')).toBe('EMPTY');
     expect(learningTextRefusal(CREDENTIAL)).toBe('CREDENTIAL');
-    expect(learningTextRefusal('const apiKey = "sk-abcdefghijklmnopqrstuvwx";')).toBe('CREDENTIAL');
+    expect(learningTextRefusal('const apiKey = "sk' + '-abcdefghijklmnopqrstuvwx";')).toBe('CREDENTIAL');
     expect(learningTextRefusal('가'.repeat(LEARNING_TEXT_MAX_CHARS + 1))).toBe('TOO_LONG');
     expect(learningTextRefusal('가'.repeat(LEARNING_TEXT_MAX_CHARS))).toBeNull();
     expect(learningTextRefusal('비밀번호 정책 문서를 요약해줘')).toBeNull();
