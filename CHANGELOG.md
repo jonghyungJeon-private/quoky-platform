@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — GML-2: Gmail thread summaries and reply-to-pick (ADR-0118 amendment, 2026-10-13)
+
+- **Thread summaries.** `이 스레드 요약해줘`, `N번 메일 스레드 요약해줘`, `summarize this thread` and `summarize email thread N`
+  summarize the thread of a listed mail. The thread is read with the optional `MailReader.getThread` (Gmail: `messages.get`
+  minimal, then `threads.get`; `gmail.readonly`, no new host): at most 20 messages and 256 KiB of text. The readout is a new
+  `mail-thread` source (prompt label `EMAIL THREAD`). Each message is credential-guarded before the clip, and the whole
+  readout again after it. Quoted history is dropped and the 3,000-character budget is shared fairly under `[i/n]` headers.
+  No tools are offered, the claim guard runs, and a fixed footer says how many messages were read. DM-only.
+- **Reply-to-pick.** A Discord or Telegram reply to a mail listing picks from THAT listing: `N번`, or `이 메일` for a
+  one-entry listing. Only for such a reply may the mail noun be left out (`2번 요약해줘`, `요약해줘`, `스레드 요약해줘`).
+  - The adapters fill the new optional `InboundMessage.replyTo`. `QuokyCore` tells the mail handler the listing reply's
+    delivery-receipt ids through the new application hook `TurnDeliveryObserver`, and the handler stores them in
+    `Session.metadata['quoky.lastListing']` (no migration).
+  - A reply works for 24 h. After that it gets "that list expired" for 7 days. A reply to anything else picks nothing.
+- **Unchanged.** Listing format and footer, help and usage lines, the NL catalog and every golden corpus. Mail and Drive
+  summary prompts are byte-identical. The DM-only rule stands, and there is no send, label or write path.
+
 ## Unreleased — DRV-2 Drive shared drives, DRV-2b every sheet of a spreadsheet (ADR-0118 amendment, 2026-10-13)
 
 - **Shared drives (DRV-2).** Drive search and `최근 문서` include the owner's shared drives (`corpora=allDrives`,

@@ -5,6 +5,21 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### v5 GML-2 Gmail threads and reply picks — on branch `claude/v5-w3-gml2` (2026-10-13)
+
+ADR-0118 amendment of 2026-10-12 (ratified; owner decision 7: threads and reply picks yes, labels no). Additive port and
+domain changes only: `InboundMessage.replyTo?` and the optional `MailReader.getThread?`. No migration, DI token or deps
+change. Details: the GML-2 implementation note under the ADR-0118 amendment in `DECISIONS.md`.
+
+- **Done (offline).**
+  - Thread summaries use the `mail-thread` readout: at most 20 messages and 256 KiB, guarded per message before the clip
+    and again after it, with quoted history dropped and a fair head-and-tail share. DM-only.
+  - Reply-to-pick on Discord and Telegram works through the listing's delivery-receipt ids (`TurnDeliveryObserver` on
+    `QuokyCore`), stored in `Session.metadata`. A pick works for 24 h, and an expired one gets an honest reply.
+  - `pnpm build`, `typecheck` and `test` pass (438 files, 13,927 tests). The 1-run NL eval (Haiku, 727 cases) is unchanged: 98.9%, 0 wrong captures, gate passed.
+- **Not run (Strict).** The live session: a long thread, a reply pick after a restart, on both platforms.
+- **Review.** A Core domain and port-type change: independent review before merge.
+
 ### v5 DRV-2 shared drives + DRV-2b every sheet — on branch `claude/v5-w3-drv2` (2026-10-13)
 
 This change implements the ratified ADR-0118 amendment of 2026-10-12, (b) and (c). It has no migration and no DI token,
