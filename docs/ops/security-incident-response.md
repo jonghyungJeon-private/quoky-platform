@@ -56,10 +56,13 @@ credential, check its usage history for the exposure window and put the result i
 
 ## 6. Recover and close
 
-1. Run `ops/security/quoky-net-selfcheck.sh` on the clean host: exit 0 is required before restart.
-2. `pnpm security:secret-scan` and fix any new hit; rewrite history only with owner approval (it changes shared refs).
-3. Re-enter the new credentials through the hidden dialog (`key-rotation.md` section 2), restart with
-   `quokyctl.sh install --apply`, verify one owner DM round trip.
+1. **Before restart (service still stopped):** run `ops/security/quoky-net-selfcheck.sh --expect-stopped`. It requires the
+   service to be stopped and exit 0 means no tunnel, VPN or remote-access software is running, no listener on 22 or 5900,
+   and no ledger guard finding in the window. A plain run (without the flag) fails while the service is stopped, by design.
+2. `pnpm security:secret-scan` and fix any new gating hit; rewrite history only with owner approval (it changes shared refs).
+3. Re-enter the new credentials through the hidden dialog (`key-rotation.md` section 2), then restart with the exact install command of
+   the live service: `ops/launchd/quokyctl.sh install --apply --repo <quoky-service checkout> --node <nvm node path> --env-file <quoky-service checkout>/.env.local` (take the paths from `quokyctl.sh status`; never print env values). Then run
+   `ops/security/quoky-net-selfcheck.sh` without the flag (exit 0 expected) and verify one owner DM round trip.
 4. Write a short post-incident note (cause, timeline, fixes) and update the design or this runbook.
 
 ## 7. Owner contact steps

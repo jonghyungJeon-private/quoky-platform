@@ -21128,6 +21128,8 @@ These are Q1–Q10 of the design §7. The defaults are:
 - **Runbooks:** `docs/ops/security-incident-response.md` (MSIT 5-5, KISA via boho.or.kr and 118), `docs/ops/key-rotation.md` (MSIT 3-3), `docs/ops/remote-access-inventory.md` (MSIT 1-2, 3-5).
 - **Open for the S0 gate:** Tailscale removal (owner); 7 days of ledger and the `observe` period (egress branch); the ledger path and JSON field names the self-check reads (`host`, `initiator`, `bytesUp`, `bytesDown`) must match the egress branch.
 
+- **S0-ops review fixes (2026-10-13, Chief Architect).** The scan now reports every hit per file (an early placeholder cannot hide a later secret), gates on issued-key candidates in test paths too, and fails (exit 2) when git fails. The self-check reads the ledger by kind (bytes over `request` only), fails on `new-destination`, `denied-range` and `budget-exceeded` guard findings in the window (filtered on `ts`), verifies live addresses through `connect` records (IP to host) instead of PTR names or provider ranges, treats an unmapped address as "unverified" (a warning, a failure only when also outside the exact-host static allowlist), handles IPv6, validates `--since` and emits valid JSON. `--expect-stopped` gives the incident runbook a pre-restart check.
+
 ## ADR-0121 S0 implementation note — security baseline, code half (2026-10-13)
 
 - **Authority.** On 2026-10-13 the owner approved starting with S0 only: "보안 기반(S0)부터 진행". ADR-0121 itself stays

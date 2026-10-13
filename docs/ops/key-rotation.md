@@ -20,7 +20,8 @@ rotation is scheduled for later; this runbook is for that day and for any incide
 ## 2. Entering a new value (all credentials)
 
 Use a hidden macOS dialog; the value never appears in the terminal, history or chat. Run in the owner's own terminal,
-in the repository, with the service stopped (`quokyctl.sh uninstall --apply`) or restarted afterwards:
+in the `quoky-service` checkout (the one the launchd agent runs from; its `.env.local` is the file the service reads),
+with the service stopped (`quokyctl.sh uninstall --apply`) or restarted afterwards:
 
 ```bash
 KEY=QUOKY_TELEGRAM_BOT_TOKEN   # the variable name from the table
@@ -33,8 +34,9 @@ chmod 600 .env.local && ls -l .env.local
 ```
 
 The value is double-quoted because a value containing `#` would otherwise be cut. Check only the variable name and
-mode (`grep -c '^QUOKY_TELEGRAM_BOT_TOKEN=' .env.local`), never print the value. Then restart
-(`quokyctl.sh install --apply` or `restart --apply`) and run the verification in the section for that credential. The
+mode (`grep -c '^QUOKY_TELEGRAM_BOT_TOKEN=' .env.local`), never print the value. Then restart with
+the exact install command of the live service, `ops/launchd/quokyctl.sh install --apply --repo <quoky-service checkout> --node <nvm node path> --env-file <quoky-service checkout>/.env.local` (the live plist runs the `quoky-service` checkout with the nvm node and that `.env.local`; take the
+paths from `quokyctl.sh status`, which prints no env value), and run the verification in the section for that credential. The
 Google token files are different: re-run `node apps/quoky/dist/tools/calendar-auth.js --out <new file> ...`, which writes a new
 0600 file after the browser consent (see its header for `--gmail`, `--drive`, `--with-events`), then point the
 `*_TOKEN_FILE` variable at the new file the same way.
@@ -43,14 +45,14 @@ Google token files are different: re-run `node apps/quoky/dist/tools/calendar-au
 
 ### Discord bot
 - **Revoke and re-issue:** Discord Developer Portal, the application, Bot, Reset Token (the old one stops working at once).
-- **Enter:** section 2 with `DISCORD_BOT_TOKEN`. Restart.
+- **Enter:** section 2 with `DISCORD_BOT_TOKEN`, then restart (the install command in section 2).
 - **Verify:** `quokyctl.sh status`; the logs show the gateway login; send the owner DM a test message.
 - **Usage history:** no per-token log exists in Discord. Check the bot's server audit log and the Quoky logs and ledger
   (destinations `discord.com`, `gateway.discord.gg`) for the exposure window.
 
 ### Telegram bot
 - **Revoke and re-issue:** BotFather, `/mybots`, the bot, API Token, Revoke current token (or `/revoke`). A new token is issued at once.
-- **Enter:** section 2 with `QUOKY_TELEGRAM_BOT_TOKEN`. Restart. A restart after a long stop resumes polling from the stored offset.
+- **Enter:** section 2 with `QUOKY_TELEGRAM_BOT_TOKEN`. Restart (the install command in section 2). A restart after a long stop resumes polling from the stored offset.
 - **Verify:** `quokyctl.sh telegram` (read-only state), then an owner message.
 - **Usage history:** Telegram offers none; use the Quoky ledger (`api.telegram.org`) and logs. Also confirm 2-step verification on the owner account.
 
@@ -79,7 +81,7 @@ Google token files are different: re-run `node apps/quoky/dist/tools/calendar-au
 - **Revoke and re-issue:** for the App, github.com settings, Developer settings, GitHub Apps, the app, Private keys:
   delete the exposed key, generate a new one, replace the file at `QUOKY_GITHUB_APP_PRIVATE_KEY_PATH` (0600; installation
   tokens are short-lived and expire by themselves). For a personal token: Settings, Developer settings, Tokens, Delete, then create a fine-grained one.
-- **Verify:** an owner code-work read of an allowlisted repository.
+- **Verify:** an owner code-work read of an allowlisted GitHub repository.
 - **Usage history:** the organization or personal Security log (Settings, Security log) filtered by the token or app; the app's Advanced tab shows recent deliveries.
 
 ### OpenAI / Gemini (only if enabled)
@@ -87,7 +89,7 @@ Google token files are different: re-run `node apps/quoky/dist/tools/calendar-au
 
 ## 4. After any rotation
 
-1. `pnpm security:secret-scan` (no new hit) and `ops/security/quoky-net-selfcheck.sh` (exit 0).
+1. `pnpm security:secret-scan` (no new gating hit) and, with the service running again, `ops/security/quoky-net-selfcheck.sh` (exit 0).
 2. Write the date, credential, reason and usage-history result in the owner's rotation log (outside the repository).
 3. If a value was ever committed or pasted somewhere shared, treat it as exposed even after deletion: rotate it and
    follow `security-incident-response.md`.
