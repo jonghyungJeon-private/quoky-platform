@@ -105,6 +105,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       if (symbol === 'upcoming' && rangeSpec.allowUpcoming !== true) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
       range = resolveNlRange(symbol, ctx.now, ctx.timeZone);
       if (range === undefined) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+      if (rangeSpec.pastOnly === true && Date.parse(range.from) > Date.parse(ctx.now)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
     }
   }
   // (5) grounding and (6) the credential guard, on every string arg
@@ -122,7 +123,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       if (!stated && ctx.previousArgs?.[spec.name] !== value) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
     }
     if (spec.kind === 'keyword') {
-      if (rangeSpec !== undefined && isTimeExpression(value)) return { ok: false, reason: 'time-keyword', entryId, arg: spec.name };
+      if (rangeSpec !== undefined && spec.name !== 'from' && isTimeExpression(value)) return { ok: false, reason: 'time-keyword', entryId, arg: spec.name };
       const previous = ctx.previousArgs?.[spec.name];
       const fromPrevious = typeof previous === 'string' && previous === value;
       if (!fromPrevious && !isGroundedIn(value, ctx.groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };

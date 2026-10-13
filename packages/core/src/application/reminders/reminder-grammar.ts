@@ -758,13 +758,20 @@ function hasBatchim(ch: string): boolean {
  * The quotative ending of a reminder body ("물 마시라고 알려줘", "회의 준비라고 알려줘", "약 먹는다고 알려줘") read as
  * morphology, not as a phrase list: an imperative verb stem (`하라고`, `…시라고`, `…으라고` after a batchim) becomes its
  * noun form `…기` ("물 마시기"), a declarative `…다고` keeps its verb ("약 먹는다"), and a noun's `(이)라고` is dropped.
- * `undefined` when the body does not end in a quotative.
+ * `undefined` when the body does not end in a quotative. Known limit: a longer vowel-ending verb stem ("기다리라고") reads
+ * as a noun and keeps its stem; a one-syllable stem is a verb (see below).
  */
 function stripKoQuotative(body: string): string | undefined {
+  // `…시라고` is an honorific imperative only after another word ("물 마시라고"); a lone "택시라고" is the quoted noun.
   const imperative = /^(.*?)(하|시)라고$/su.exec(body);
-  if (imperative && imperative[1] !== undefined && (imperative[1].trim().length > 0 || imperative[2] === '하')) return `${imperative[1]}${imperative[2]}기`;
+  if (imperative && imperative[1] !== undefined && (imperative[2] === '하' || /\s/u.test(imperative[1]))) return `${imperative[1]}${imperative[2]}기`;
   const eu = /^(.*?)([가-힣])으라고$/su.exec(body);
   if (eu && hasBatchim(eu[2] as string)) return `${eu[1]}${eu[2]}기`;
+  // A one-syllable word before 라고 with no final consonant is an imperative stem ("일찍 자라고", "우유 사라고", "빨리
+  // 가라고"): one-syllable nouns of that shape are rare in a reminder, while a longer vowel-ending word ("택시라고",
+  // "회의라고") is far more often the quoted noun, so only the one-syllable form is read as a verb (fewer errors overall).
+  const bare = /^(.*?(?:^|\s))([가-힣])라고$/su.exec(body);
+  if (bare && !hasBatchim(bare[2] as string) && bare[1] !== undefined && bare[1].trim().length > 0) return `${bare[1]}${bare[2]}기`;
   const noun = body.replace(/\s?(?:이라고|라고)$/, '');
   if (noun !== body) return noun;
   const declarative = /^(.*[가-힣])다고$/su.exec(body);

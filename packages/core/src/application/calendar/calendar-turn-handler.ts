@@ -239,7 +239,10 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       ...(narrows && narrowing.timedOnly === true ? { timedOnly: true } : {}),
       ...(narrowing.availability === true ? { availability: true } : {}),
       ...(excludedAllDay > 0 ? { excludedAllDay } : {}),
-      ...(keyword !== undefined ? { keyword, ...(pageFull ? { partial: true } : {}) } : {}),
+      // A full page was narrowed after the read: the answer may be incomplete, so it says so and claims no free time.
+      ...(pageFull ? { pageFull: true } : {}),
+      ...((keyword !== undefined || narrows || narrowing.availability === true) && pageFull ? { partial: true } : {}),
+      ...(keyword !== undefined ? { keyword } : {}),
     };
     const reply = renderCalendarEvents(window, events, renderOptions);
     this.rememberListing(ctx.session.id, ctx.actor.id, {

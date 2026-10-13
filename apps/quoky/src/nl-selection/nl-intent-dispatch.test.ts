@@ -721,6 +721,20 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'this-week', timedOnly: true }]);
   });
 
+  it('review P2: a mail item pick is transient — it is not stored, so "안 읽은 것만" refines the listing, not the pick', async () => {
+    const ctx = context();
+    selectorAnswer = answer('mail.list', {});
+    await send('메일함 좀', ctx);
+    selectorAnswer = answer('mail.list', { item: 2 });
+    await send('2번은 누가 보냈어?', ctx);
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'mail.list', args: {} });
+    selectorAnswer = answer('mail.list', { unread: true });
+    const start = marks();
+    await send('안 읽은 것만', ctx);
+    expect(lastPrevious(start.requests)).toBe('Previous selection: {"entryId":"mail.list","args":{}}');
+    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ unread: true }]);
+  });
+
   it('follow-up 2, defect 1: a chat turn clears lastSelection, so "그 중에 스크럼만" then gets the clarification question', async () => {
     const ctx = context();
     await send('이번 주 일정 알려줘', ctx);

@@ -1003,3 +1003,16 @@ describe('reminder grammar — status questions answered with LIST (ADR-0104 D3,
     expect(parse(message).kind).not.toBe('LIST');
   });
 });
+
+describe('quotative reminder titles — one-syllable imperative stems (review P2)', () => {
+  it.each([
+    ['내일 9시에 일찍 자라고 알려줘', '일찍 자기'],
+    ['내일 9시에 우유 사라고 알려줘', '우유 사기'],
+    ['내일 9시에 빨리 가라고 알려줘', '빨리 가기'],
+    // multi-syllable vowel-ending words stay quoted nouns (fewer errors than reading them as verb stems)
+    ['내일 9시에 택시라고 알려줘', '택시'],
+    ['내일 9시에 회의라고 알려줘', '회의'],
+  ])('%j -> %j', (message, body) => {
+    expect(once(message)).toMatchObject({ body });
+  });
+});

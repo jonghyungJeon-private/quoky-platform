@@ -265,14 +265,14 @@ export function nlRangeLabel(range: NlResolvedRange, language: 'ko' | 'en'): str
 const TIME_WORD_PATTERNS: readonly RegExp[] = [
   /^(?:월|화|수|목|금|토|일)요일$/u,
   /^(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)(?:day|nesday|sday|urday|rsday)?s?$/u,
-  /^(?:오늘|어제|내일|모레|글피|그저께|그제|엊그제|이번|지난|저번|다음|다다음|금주|차주|담주|주말|평일|이번주|지난주|다음주|다다음주|이번달|지난달|다음달|월말|말일|연말|올해|작년|내년|오전|오후|아침|점심|저녁|밤|낮|새벽|주|달|하루|종일|말|초|중순|하순|상순)$/u,
+  /^(?:오늘|어제|내일|모레|글피|그저께|그제|엊그제|이번|지난|저번|다음|다다음|금주|차주|담주|주말|평일|이번주|지난주|다음주|다다음주|이번달|지난달|다음달|월말|말일|연말|올해|작년|내년|오전|오후|아침|저녁|밤|낮|새벽|주|달|하루|종일|말|초|중순|하순|상순)$/u,
   /^(?:today|yesterday|tomorrow|tonight|morning|afternoon|evening|night|noon|week|weekend|weekday|month|year|next|last|this|past|recent|upcoming|day|days|weeks|months)$/u,
   /^\d{1,2}월$/u,
   /^\d{1,2}일$/u,
   /^\d{1,2}시(?:\d{1,2}분)?(?:반)?$/u,
   /^\d{1,2}:\d{2}$/u,
   /^\d{1,2}[/.-]\d{1,2}$/u,
-  /^\d{4}-\d{2}-\d{2}$/u,
+  /^\d{4}[./-]\d{1,2}[./-]\d{1,2}\.?$/u,
   /^\d{1,2}월\d{1,2}일$/u,
   /^\d+(?:주|일|개월|달|년)(?:전|후|간|동안)?$/u,
   /^\d{1,2}(?:am|pm)$/u,
@@ -289,6 +289,6 @@ function isTimeWord(token: string): boolean {
 
 /** Whether every word of `text` is a time word (a weekday, date, relative period or part of day). */
 export function isTimeExpression(text: string): boolean {
-  const tokens = text.normalize('NFC').toLowerCase().replace(/[,.;!?~]/gu, ' ').split(/\s+/u).filter((token) => token.length > 0);
+  const tokens = text.normalize('NFC').toLowerCase().replace(/(?<!\d)[,.;!?~]|[,.;!?~](?!\d)/gu, ' ').split(/\s+/u).filter((token) => token.length > 0);
   return tokens.length > 0 && tokens.every(isTimeWord);
 }

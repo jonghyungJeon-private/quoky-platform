@@ -215,3 +215,39 @@ describe('R6 mail item picks', () => {
     expect(prompt).toContain('item: 1-10');
   });
 });
+
+describe('review fixes: time-word scope, numeric dates, DST, transient item, future mail range', () => {
+  it('numeric dates are time words even with punctuation, and 점심 is not one', () => {
+    for (const text of ['10.07', '10/7', '10월 7일', '10.7.', '2026.10.07', '10-07']) expect(isTimeExpression(text), text).toBe(true);
+    expect(isTimeExpression('점심')).toBe(false);
+    expect(isTimeExpression('점심 회식')).toBe(false);
+    expect(validateSelection({ entryId: 'calendar.events', args: { keyword: '10.07' } }, ctx('10.07 거는?'))).toMatchObject({ ok: false, reason: 'time-keyword' });
+    expect(validateSelection({ entryId: 'calendar.events', args: { keyword: '점심' } }, ctx('점심 일정만'))).toMatchObject({ ok: true });
+  });
+
+  it('a sender named like a weekday stays valid and survives the stored-selection scrub; a title keyword does not', () => {
+    expect(validateSelection({ entryId: 'mail.list', args: { from: 'Sun' } }, ctx('Sun이 보낸 메일'))).toMatchObject({ ok: true, value: { args: { from: 'Sun' } } });
+    expect(validateSelection({ entryId: 'mail.list', args: { from: '월요일' } }, ctx('월요일 씨 메일'))).toMatchObject({ ok: true });
+    expect(migrateStoredSelection({ entryId: 'mail.list', args: { from: 'Sun', range: 'today' } })).toEqual({ entryId: 'mail.list', args: { from: 'Sun', range: 'today' } });
+    expect(migrateStoredSelection({ entryId: 'calendar.events', args: { keyword: 'Sun' } }).args).toEqual({});
+  });
+
+  it('a mail period in the future is refused; a period that includes now is fine', () => {
+    for (const range of ['tomorrow', 'next-week', 'next-wed', 'day-after-tomorrow']) {
+      expect(validateSelection({ entryId: 'mail.list', args: { range } }, ctx('내일 온 메일')), range).toMatchObject({ ok: false, reason: 'range' });
+    }
+    for (const range of ['today', 'this-week', 'yesterday', 'last-fri']) expect(validateSelection({ entryId: 'mail.list', args: { range } }, ctx('메일')), range).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'calendar.events', args: { range: 'tomorrow' } }, ctx('내일'))).toMatchObject({ ok: true });
+  });
+
+  it('the new symbols respect DST in America/New_York (the clocks go back on 2026-11-01)', () => {
+    const NY = 'America/New_York';
+    const now = '2026-10-29T16:00:00.000Z'; // Thursday
+    // week-after-next: Monday 2026-11-09 .. 11-16 is after the change (EST, UTC-5); this Monday 10-26 is EDT (UTC-4).
+    expect(resolveNlRange('week-after-next', now, NY)).toMatchObject({ from: '2026-11-09T05:00:00.000Z', to: '2026-11-16T05:00:00.000Z' });
+    expect(resolveNlRange('this-sun', now, NY)).toMatchObject({ from: '2026-11-01T04:00:00.000Z', to: '2026-11-02T05:00:00.000Z' });
+    expect(resolveNlRange('last-fri', now, NY)).toMatchObject({ from: '2026-10-23T04:00:00.000Z', to: '2026-10-24T04:00:00.000Z' });
+    // rest-of-month spans the change: 3 days, to the first midnight of November local time... month end is 10-31.
+    expect(resolveNlRange('rest-of-month', now, NY)).toMatchObject({ from: '2026-10-29T04:00:00.000Z', to: '2026-11-01T04:00:00.000Z', days: 3 });
+  });
+});

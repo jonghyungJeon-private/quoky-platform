@@ -1018,8 +1018,10 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
 
   describe('live edge-case UAT (2026-10-14) - read-side gaps R1, R2, R6, R8, R9 end to end through the selector', () => {
     const listCalls = (from: number) => fetches.slice(from).filter((record) => record.url.startsWith(`${GMAIL}gmail/v1/users/me/messages?`));
-    /** `YYYY-MM-DD` of today + `offset` days in the owner's zone (the harness runs on the real clock). */
-    const seoulDate = (offset: number): string => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date(Date.now() + offset * 86_400_000));
+    /** `YYYY-MM-DD` of the app's own "tomorrow" (+ `offset`), read from the window the app queried: no second clock. */
+    let appTomorrow = '';
+    const seoulDate = (offset: number): string =>
+      new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date(Date.parse(`${appTomorrow}T12:00:00+09:00`) + (offset - 1) * 86_400_000));
     const timed = (id: string, title: string, startKst: string, endKst: string, day: string): import('@quoky/core').CalendarEvent => ({
       id,
       title,
@@ -1071,9 +1073,14 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
 
     it('R2: "내일 오후에 시간 비어?" keeps only afternoon events and answers free when there are none; "오후만" works as a follow-up on the previous day', async () => {
       await withPhase('c', 'active', async () => {
-        const day = seoulDate(1);
         const saved = calendarEvents;
         try {
+          calendarEvents = [];
+          selectorAnswer = answer('calendar.events', { range: 'tomorrow' });
+          const probe = await turnOf('내일 일정');
+          const queried = probe.calendar.at(-1)?.from ?? '';
+          appTomorrow = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date(Date.parse(queried) + 3_600_000));
+          const day = seoulDate(1);
           calendarEvents = [
             { ...timed('c-0', '종일 휴가', '00:00', '23:59', day), allDay: true, start: day, end: seoulDate(2) },
             timed('c-1', '오전 스크럼', '09:30', '10:00', day),

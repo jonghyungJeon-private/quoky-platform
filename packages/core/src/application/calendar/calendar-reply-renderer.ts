@@ -235,6 +235,8 @@ export interface CalendarRenderOptions {
   readonly availability?: boolean;
   /** All-day events the narrowing left out (they have no hour): the answer says how many. */
   readonly excludedAllDay?: number;
+  /** The read returned a full page: the footer says so even when narrowing left fewer events than the page held. */
+  readonly pageFull?: boolean;
 }
 
 const PART_OF_DAY_NAME = {
@@ -323,17 +325,23 @@ export function renderCalendarEvents(
   const first = window.startDate;
   const placed = placedInWindow(window, events, timeZone);
   const period = periodLabel(window, language, options.partOfDay);
-  const truncatedAt = events.length >= options.limit ? options.limit : undefined;
+  const truncatedAt = options.pageFull === true || events.length >= options.limit ? options.limit : undefined;
   const baseTail = footer(timeZone, language, truncatedAt, options.writesEnabled === true);
+  const narrowed = options.partOfDay !== undefined || options.timedOnly === true || options.availability === true;
+  const allDayOnly = (options.excludedAllDay ?? 0) > 0 && options.partial !== true;
   const notes = [
-    options.keyword !== undefined && options.partial === true ? partialNote(language) : undefined,
-    excludedNote(options.excludedAllDay, language),
+    (options.keyword !== undefined || narrowed) && options.partial === true ? partialNote(language) : undefined,
+    allDayOnly && placed.length === 0 && (options.availability === true || narrowed) ? undefined : excludedNote(options.excludedAllDay, language),
   ].filter((note): note is string => note !== undefined);
   const tail = notes.length > 0 ? joinBody([...notes, baseTail]) : baseTail;
   const remaining = options.remaining === true;
   if (placed.length === 0) {
     const none = options.keyword !== undefined
       ? language === 'en' ? `${period}: no events with "${options.keyword}" in the title${options.partial === true ? ' among those I checked (I could not check them all)' : ''}.` : `${period}: 불러온 일정 중 "${options.keyword}" 포함 일정이 없어요${options.partial === true ? ' (전체를 확인하진 못했어요)' : ''}.`
+      : options.partial === true && narrowed
+      ? language === 'en' ? `${period}: none among the events I checked (I could not check them all), so I can't say you're free.` : `${period}: 불러온 일정 중에는 없어요. 전체를 확인하진 못해서 비어 있다고는 말씀드릴 수 없어요.`
+      : allDayOnly && narrowed
+      ? language === 'en' ? `${period}: no timed events (${options.excludedAllDay} all-day event${options.excludedAllDay === 1 ? '' : 's'}).` : `${period}: 시간이 정해진 일정은 없어요 (종일 일정 ${options.excludedAllDay}개).`
       : options.availability === true
       ? language === 'en' ? `${period}: nothing scheduled, so you're free.` : `${period}: 일정이 없어요 — 비어 있어요.`
       : options.timedOnly === true

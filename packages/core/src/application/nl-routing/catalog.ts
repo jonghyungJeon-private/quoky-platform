@@ -49,6 +49,8 @@ export interface NlArgSpec {
   readonly values?: readonly string[];
   /** `range` only: whether `upcoming` (from now to the lookahead end) is accepted; every other symbol always is. */
   readonly allowUpcoming?: boolean;
+  /** `range` only: the period must have started already (mail received in a future period is meaningless). */
+  readonly pastOnly?: boolean;
   readonly required?: boolean;
   /**
    * `enum` only: words that show the owner asked for a value (a value listed here counts only when one of its words is in
@@ -65,6 +67,11 @@ export interface NlArgSpec {
    * entry's `normalize` into its replacement (e.g. `mail.list` `today` -> `range` `today`).
    */
   readonly deprecated?: boolean;
+  /**
+   * The argument belongs to this one answer only (e.g. which listed mail was asked about): it is never stored in
+   * `lastSelection`, so a follow-up ("안 읽은 것만") refines the listing, not the pick.
+   */
+  readonly transient?: boolean;
   /** The value the entry uses when the argument is absent; canonical args omit an argument equal to it. */
   readonly default?: string | boolean;
   /** One provider-facing line (English, bounded). */

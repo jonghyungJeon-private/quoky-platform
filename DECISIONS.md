@@ -22145,18 +22145,27 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
      range, one list line (sender, subject, date; no body) when it is in range, "먼저 목록" when there is none. Summarize,
      reply and read-the-body requests ("그거 요약해줘") stay `none` by the prompt rule (item summarize is the separate write/
      action design, not done here); the existing Class A `N번 메일 요약해줘` is unchanged.
-- **R9 (clarification, no amendment).** D6 keeps the Class B grammars as the fallback "when the provider is down". The
-  classifier's personal-work surface clause is one of them. Phase C now honors that: when the selector ACTUALLY ran (active
-  mode, at a Class B position or at the `work-surface` route) and answered `none`, that decision wins and the turn is chat
-  (`chatIntentOf`), so "할 일 관리하는 좋은 습관 알려줘" and "캘린더는 보지 말고 할 일만 알려줘" no longer dump Jira/GitHub. A
-  skipped, failed, timed-out or disabled selector still leaves the surface as the fallback. Phase A (selection only after the
-  classifier) is unchanged and its known limitation stays documented.
+- **A5 change 9 — a selector `none` beats the personal-work surface (R9; supersedes text of the S1 note).** This reverses
+  one sentence of the ADR-0120 S1 / Phase C implementation note (above, "The classifier's personal-work surface … gets the
+  `work-surface` route at (C2): selection first, the surface for every other outcome"): a selector `none` is no longer an
+  "other outcome" that falls back to the surface. D6 itself ("Class B … kept as fallback" for a provider that is down) is
+  unchanged and is what A5 restores. Rule: when the selector actually ran (active mode, at a Class B position or at the
+  `work-surface` route) and answered `none`, that decision wins and the turn is chat (`chatIntentOf`), so "할 일 관리하는
+  좋은 습관 알려줘" and "캘린더는 보지 말고 할 일만 알려줘" no longer dump Jira/GitHub. A skipped, failed, timed-out or
+  disabled selector still leaves the surface as the fallback. Phase A is unchanged.
 - **R11 (stopped, no change).** `今日の予定は？` never reaches the selector because the ADR-0098 amendment D1 (c)
   other-language route is Class A in D6 ("the injection, external-action and other-language routes"), and selection runs only
   on `GENERAL_CHAT` or `POLICY_SENSITIVE_CHAT` for the personal-data reason alone. Letting the selector see it is a change to a
   settled D6 clause and to an ADR-0098 policy route, so it is left alone and reported. If the owner wants it: a new amendment
   that adds `unsupported-language` to the Phase A routes (the selector prompt and descriptions are already ko/en and the
   model reads Japanese; the reply language follows the existing policy).
+- **Review fixes (2026-10-14).** A narrowing applied to a full read page is partial: the footer and partial note stay and no
+  "free"/"no meetings" claim is made; an all-day-only window answers "시간이 정해진 일정은 없어요 (종일 일정 N개)". `item` is
+  `transient` (never stored in `lastSelection`). The time-word rule and the stored scrub cover title keywords only, never
+  `from`; `점심` is not a time word; numeric dates (10.07, 10/7, 2026.10.07) are. A mail `range` must have started (a future
+  period is refused). Reminder titles: a one-syllable stem before 라고 ("일찍 자라고") is an imperative (`자기`); a longer
+  vowel-ending word ("택시라고") stays a quoted noun, because nouns of that shape are far commoner in reminders than
+  multi-syllable bare imperatives; `…시라고` is honorific only after another word. Known limit: "기다리라고" keeps its cut stem.
 - **Not done (separate design).** Writes and action intents: todo add, reminder cancel, item summarize, Slack post.
 - **Reminder title (R10, outside ADR-0120).** `stripKoTrailingParticles` read the quotative `-라고` of "물 마시라고" as a
   noun's `(이)라고` and cut the verb stem ('물 마시'). It is now generic morphology on the ending: an imperative stem

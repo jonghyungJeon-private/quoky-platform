@@ -4,7 +4,8 @@ import { isTimeExpression } from './symbolic-time';
 import { nlWave1Entry } from './wave1-entries';
 
 /**
- * The content-free state of natural-language selection (ADR-0120 D7), all plain data, no migration:
+ * The content-free state of natural-language selection (ADR-0120 D7), all plain data, no storage migration (a stored
+ * `lastSelection` of an older args shape is rewritten when it is read, `migrateStoredSelection`: amendment A5):
  *
  *  - `Session.metadata['quoky.lastSelection']` = `{ actorId, entryId, args, at }`, 30 minutes — the previous selection a
  *    follow-up refines ("그 중에 위클리카만"). Structure only: an entry id and canonical args, never an item, title,
@@ -117,7 +118,8 @@ export function migrateStoredSelection(selection: StoredSelection): StoredSelect
     const kept: Record<string, NlArgValue> = {};
     for (const [name, value] of Object.entries(args)) {
       const spec = entry.args.find((candidate) => candidate.name === name);
-      if (spec?.kind === 'keyword' && typeof value === 'string' && isTimeExpression(value)) continue;
+      // Title keywords only: a sender (`from`) named like a weekday or month stays.
+      if (spec?.kind === 'keyword' && spec.name !== 'from' && typeof value === 'string' && isTimeExpression(value)) continue;
       kept[name] = value;
     }
     args = kept;
