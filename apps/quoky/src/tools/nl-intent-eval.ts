@@ -28,6 +28,7 @@ import {
   type NlArgs,
   type NlCatalogEntry,
 } from '@quoky/core';
+import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 
 export const NL_EVAL_GATE = { overall: 0.95, perEntry: 0.9, wrongCaptures: 0 } as const;
 /**
@@ -66,6 +67,8 @@ export interface NlEvalPlanOptions {
   readonly perEntry: number;
   readonly runs: number;
   readonly concurrency: number;
+  /** The per-call bound (`QUOKY_NL_INTENT_TIMEOUT_MS` rule: 2000..8000). Default {@link NL_EVAL_RUNTIME_TIMEOUT_MS}. */
+  readonly timeoutMs?: number;
 }
 
 export interface NlEvalPlan {
@@ -89,6 +92,9 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
   if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 5) throw new Error('runs must be 1..5');
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(options.model)) throw new Error('invalid model');
+  if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || parseNlIntentTimeoutMs(String(options.timeoutMs)) === undefined)) {
+    throw new Error('timeoutMs must be an integer 2000..8000');
+  }
   const counts = new Map<string, number>();
   const caseIds: string[] = [];
   for (const golden of corpus.cases) {
@@ -108,7 +114,7 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
     model: options.model,
     runs: options.runs,
     concurrency: options.concurrency,
-    callTimeoutMs: NL_EVAL_RUNTIME_TIMEOUT_MS,
+    callTimeoutMs: options.timeoutMs ?? NL_EVAL_RUNTIME_TIMEOUT_MS,
     caseIds,
   };
 }
@@ -173,11 +179,11 @@ export interface NlEvalSummary {
   /** Calls that did not answer within the runtime's selection bound (each one a miss on a positive). */
   readonly timeouts: number;
   readonly errors: number;
-  readonly latency: { readonly p50: number; readonly p95: number; readonly max: number; readonly overRuntimeBound: number };
+  readonly latency: { readonly p50: number; readonly p95: number; readonly max: number; readonly boundMs: number; readonly overRuntimeBound: number };
   readonly gatePassed: boolean;
 }
 
-export function summarize(records: readonly NlEvalRecord[]): NlEvalSummary {
+export function summarize(records: readonly NlEvalRecord[], boundMs: number = NL_EVAL_RUNTIME_TIMEOUT_MS): NlEvalSummary {
   const positives = records.filter((record) => record.expected !== 'none');
   const hits = positives.filter((record) => record.outcome === 'hit').length;
   const perEntry: Record<string, { hits: number; total: number; rate: number }> = {};
@@ -202,7 +208,7 @@ export function summarize(records: readonly NlEvalRecord[]): NlEvalSummary {
     clarifications: records.filter((record) => record.outcome === 'clarify').length,
     timeouts: records.filter((record) => record.outcome === 'timeout').length,
     errors: records.filter((record) => record.outcome === 'error').length,
-    latency: { p50: pct(50), p95: pct(95), max: latencies.at(-1) ?? 0, overRuntimeBound: latencies.filter((ms) => ms > NL_EVAL_RUNTIME_TIMEOUT_MS).length },
+    latency: { p50: pct(50), p95: pct(95), max: latencies.at(-1) ?? 0, boundMs, overRuntimeBound: latencies.filter((ms) => ms > boundMs).length },
     gatePassed:
       overall >= NL_EVAL_GATE.overall &&
       Object.values(perEntry).every((slot) => slot.rate >= NL_EVAL_GATE.perEntry) &&

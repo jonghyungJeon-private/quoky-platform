@@ -49,6 +49,16 @@ const CLAUDE_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/;
 const TIMEOUT_MIN_MS = 2_000;
 const TIMEOUT_MAX_MS = 8_000;
 
+/**
+ * The `QUOKY_NL_INTENT_TIMEOUT_MS` rule (amendment A3), shared with the evaluation CLI: a whole number of milliseconds
+ * from 2000 to 8000 written as plain digits. Returns the value, or `undefined` when the text does not satisfy it.
+ */
+export function parseNlIntentTimeoutMs(raw: string): number | undefined {
+  if (!/^[0-9]+$/.test(raw)) return undefined;
+  const value = Number(raw);
+  return value >= TIMEOUT_MIN_MS && value <= TIMEOUT_MAX_MS ? value : undefined;
+}
+
 export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfig {
   const rawMode = env.QUOKY_NL_INTENT_MODE;
   if (rawMode !== undefined && !(MODES as readonly string[]).includes(rawMode)) {
@@ -65,10 +75,8 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
   const rawTimeout = env.QUOKY_NL_INTENT_TIMEOUT_MS;
   let timeoutMs = NL_SELECTION_TIMEOUT_MS;
   if (rawTimeout !== undefined) {
-    const value = /^[0-9]+$/.test(rawTimeout) ? Number(rawTimeout) : Number.NaN;
-    if (!(value >= TIMEOUT_MIN_MS && value <= TIMEOUT_MAX_MS)) {
-      throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_INTENT_TIMEOUT_INVALID);
-    }
+    const value = parseNlIntentTimeoutMs(rawTimeout);
+    if (value === undefined) throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_INTENT_TIMEOUT_INVALID);
     timeoutMs = value;
   }
   return {

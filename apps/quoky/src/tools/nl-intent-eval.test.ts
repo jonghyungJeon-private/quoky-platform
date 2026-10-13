@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, NL_SELECTION_TIMEOUT_MS, type AiProvider, type AiRequest } from '@quoky/core';
 import { buildPlan, computePlanDigest, runEvaluation, scoreOutput, summarize, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
-import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, runCli, type CliDeps } from './nl-intent-eval-cli';
+import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, planOptions, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // ADR-0120 D12 evaluation harness, offline: plan and digest, exact-match scoring after Core validation, the gate, and the
 // Strict digest check that refuses a run before any provider is constructed. No process is spawned here.
@@ -90,6 +90,32 @@ describe('nl-intent evaluation under the runtime bound', () => {
   });
 });
 
+describe('nl-intent evaluation timeout option (ADR-0120 A3)', () => {
+  const base = { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 1, concurrency: 1 };
+
+  it('the plan carries a custom callTimeoutMs and defaults to the runtime bound', () => {
+    expect(buildPlan(CORPUS, 'sha', { ...base, timeoutMs: 5000 }).callTimeoutMs).toBe(5000);
+    expect(buildPlan(CORPUS, 'sha', { ...base, timeoutMs: 8000 }).callTimeoutMs).toBe(8000);
+    expect(buildPlan(CORPUS, 'sha', base).callTimeoutMs).toBe(NL_SELECTION_TIMEOUT_MS);
+  });
+
+  it('rejects a timeout outside 2000..8000 or not an integer', () => {
+    for (const timeoutMs of [1999, 8001, 5.5, Number.NaN]) {
+      expect(() => buildPlan(CORPUS, 'sha', { ...base, timeoutMs }), String(timeoutMs)).toThrow('timeoutMs must be an integer 2000..8000');
+    }
+  });
+
+  it('counts over-bound calls against the plan value, not the constant', () => {
+    const records = [
+      { run: 1, id: 'a', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 3000 },
+      { run: 1, id: 'b', expected: 'none', outcome: 'none' as const, latencyMs: 7000 },
+    ];
+    expect(summarize(records, 6000).latency).toMatchObject({ boundMs: 6000, overRuntimeBound: 1 });
+    expect(summarize(records, 2000).latency).toMatchObject({ boundMs: 2000, overRuntimeBound: 2 });
+    expect(summarize(records).latency).toMatchObject({ boundMs: NL_SELECTION_TIMEOUT_MS, overRuntimeBound: 1 });
+  });
+});
+
 describe('nl-intent evaluation CLI (Strict digest gate)', () => {
   function deps(created: string[]): CliDeps & { out: string[]; err: string[] } {
     const out: string[] = [];
@@ -134,5 +160,20 @@ describe('nl-intent evaluation CLI (Strict digest gate)', () => {
     expect(await runCli(['--mode', 'plan', '--entries', 'notion.pages'], deps([]))).toBe(EXIT_USAGE);
     expect(await runCli(['--mode', 'plan', '--runs', '9'], deps([]))).toBe(EXIT_USAGE);
     expect(await runCli(['--mode', 'plan', '--model', '--x'], deps([]))).toBe(EXIT_USAGE);
+  });
+});
+
+describe('nl-intent evaluation CLI timeout flag (ADR-0120 A3)', () => {
+  it('--timeout-ms sets the plan bound; an invalid flag is a usage error', () => {
+    expect(planOptions({ '--timeout-ms': '5000' }, {}).timeoutMs).toBe(5000);
+    expect(() => planOptions({ '--timeout-ms': '1999' }, {})).toThrow(/--timeout-ms/);
+    expect(() => planOptions({ '--timeout-ms': 'abc' }, {})).toThrow(/--timeout-ms/);
+  });
+
+  it('falls back to a valid QUOKY_NL_INTENT_TIMEOUT_MS, ignores an invalid one, and the flag wins', () => {
+    expect(planOptions({}, { QUOKY_NL_INTENT_TIMEOUT_MS: '3000' }).timeoutMs).toBe(3000);
+    expect(planOptions({}, { QUOKY_NL_INTENT_TIMEOUT_MS: '8001' }).timeoutMs).toBeUndefined();
+    expect(planOptions({ '--timeout-ms': '4000' }, { QUOKY_NL_INTENT_TIMEOUT_MS: '3000' }).timeoutMs).toBe(4000);
+    expect(planOptions({}, {}).timeoutMs).toBeUndefined();
   });
 });

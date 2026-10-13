@@ -17,6 +17,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ClaudeCliProvider, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
 import type { AiProvider } from '@quoky/core';
+import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import {
   NL_EVAL_GATE,
   NL_EVAL_RUNTIME_TIMEOUT_MS,
@@ -45,10 +46,21 @@ Strict:   pnpm eval:nl -- --mode run [options] --approved-plan-digest <sha256 fr
 
 Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>  --entries <id,id,...>  --negatives true|false (default true)
          --per-entry <N, 0 = all>  --runs <1-5, default 1>  --concurrency <1-8, default 4>
+         --timeout-ms <2000-8000, default QUOKY_NL_INTENT_TIMEOUT_MS if valid, else ${NL_EVAL_RUNTIME_TIMEOUT_MS}>
 Gate: >= ${NL_EVAL_GATE.overall * 100}% overall, >= ${NL_EVAL_GATE.perEntry * 100}% per entry, ${NL_EVAL_GATE.wrongCaptures} wrong captures.
 `;
 
-const OPTIONS = new Set(['--mode', '--model', '--entries', '--negatives', '--per-entry', '--runs', '--concurrency', '--approved-plan-digest']);
+const OPTIONS = new Set([
+  '--mode',
+  '--model',
+  '--entries',
+  '--negatives',
+  '--per-entry',
+  '--runs',
+  '--concurrency',
+  '--timeout-ms',
+  '--approved-plan-digest',
+]);
 
 export class UsageError extends Error {}
 
@@ -77,10 +89,22 @@ function integer(value: string | undefined, fallback: number): number {
   return Number(value);
 }
 
-export function planOptions(options: Readonly<Record<string, string>>): NlEvalPlanOptions {
+export function planOptions(
+  options: Readonly<Record<string, string>>,
+  env: NodeJS.ProcessEnv = process.env,
+): NlEvalPlanOptions {
   const negatives = options['--negatives'] ?? 'true';
   if (negatives !== 'true' && negatives !== 'false') throw new UsageError('--negatives must be true or false');
+  const flag = options['--timeout-ms'];
+  let timeoutMs: number | undefined;
+  if (flag !== undefined) {
+    timeoutMs = parseNlIntentTimeoutMs(flag);
+    if (timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 8000');
+  } else if (env.QUOKY_NL_INTENT_TIMEOUT_MS !== undefined) {
+    timeoutMs = parseNlIntentTimeoutMs(env.QUOKY_NL_INTENT_TIMEOUT_MS);
+  }
   return {
+    timeoutMs,
     model: options['--model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
     entries: (options['--entries'] ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
     includeNegatives: negatives === 'true',
@@ -123,11 +147,11 @@ export function formatSummary(summary: NlEvalSummary): string[] {
   const pct = (rate: number) => `${(rate * 100).toFixed(1)}%`;
   return [
     `overall: ${summary.hits}/${summary.positives} (${pct(summary.overall)})  wrong captures: ${summary.wrongCaptures}/${summary.negatives}` +
-      `  clarifications: ${summary.clarifications}  timeouts (> ${NL_EVAL_RUNTIME_TIMEOUT_MS / 1000} s, counted as misses): ${summary.timeouts}  errors: ${summary.errors}`,
+      `  clarifications: ${summary.clarifications}  timeouts (> ${summary.latency.boundMs / 1000} s, counted as misses): ${summary.timeouts}  errors: ${summary.errors}`,
     ...Object.entries(summary.perEntry)
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([entry, slot]) => `  ${entry.padEnd(20)} ${slot.hits}/${slot.total} (${pct(slot.rate)})`),
-    `latency: p50 ${summary.latency.p50} ms, p95 ${summary.latency.p95} ms, max ${summary.latency.max} ms, over ${NL_EVAL_RUNTIME_TIMEOUT_MS / 1000} s: ${summary.latency.overRuntimeBound}`,
+    `latency: p50 ${summary.latency.p50} ms, p95 ${summary.latency.p95} ms, max ${summary.latency.max} ms, over ${summary.latency.boundMs / 1000} s: ${summary.latency.overRuntimeBound}`,
     `gate (>= 95% overall, >= 90% per entry, 0 wrong captures): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`,
   ];
 }
@@ -189,7 +213,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
       if (done % 50 === 0) deps.stderr(`… ${done}/${total}`);
     },
   });
-  const summaries = Array.from({ length: plan.runs }, (_, index) => summarize(records.filter((record) => record.run === index + 1)));
+  const summaries = Array.from({ length: plan.runs }, (_, index) => summarize(records.filter((record) => record.run === index + 1), plan.callTimeoutMs));
   for (const [index, summary] of summaries.entries()) {
     deps.stdout(`run ${index + 1}/${plan.runs} (${plan.model}, ${plan.promptVersion}):`);
     for (const line of formatSummary(summary)) deps.stdout(line);
