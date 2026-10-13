@@ -1,6 +1,6 @@
 /**
  * `pnpm security:secret-scan [--no-history] [--no-tree] [--json]`: scans the repository (cwd) for credential-shaped
- * values (ADR-0121 S0). Prints file, commit and line with the value masked; exit 0 = no non-test hits, 1 = non-test hits, 2 = usage.
+ * values (ADR-0121 S0). Prints file, commit and line with the value masked; exit 0 = no non-test hits and no issued-key candidate, 1 = otherwise, 2 = usage or git failure.
  * A credential-assignment counts only for a credential-shaped string literal (not identifiers, env names, placeholders).
  */
 import {
@@ -37,8 +37,8 @@ async function main(argv: readonly string[]): Promise<number> {
     skipped += history.skipped;
   }
   const gating = gatingHits(hits);
-  const rotate = hits.filter((h) => h.issuedCandidate && h.category !== 'test');
-  const totals = `${hits.length} hit(s), ${gating.length} gating (non-test)`;
+  const rotate = hits.filter((h) => h.issuedCandidate);
+  const totals = `${hits.length} hit(s), ${gating.length} gating (non-test or issued-key candidate)`;
   if (argv.includes('--json')) {
     process.stdout.write(
       `${JSON.stringify({ hits, summary: summarize(hits), files, commits, skipped, hitCount: hits.length, gatingCount: gating.length })}\n`,
@@ -48,7 +48,7 @@ async function main(argv: readonly string[]): Promise<number> {
     for (const r of summarize(hits)) process.stdout.write(`  ${r.rule} x ${r.where} x ${r.category}: ${r.count}\n`);
     const perCommit = historyByCommit(hits, 'secret-token');
     if (perCommit.length > 0) process.stdout.write(`history secret-token per commit: ${perCommit.join(', ')}\n`);
-    process.stdout.write(`rotate candidates (known provider prefix, non-test, non-placeholder): ${rotate.length}\n`);
+    process.stdout.write(`rotation candidates (known provider prefix, plausible length, random-looking, any path): ${rotate.length} hit(s) in ${new Set(rotate.map((h) => h.commit)).size} commit(s)\n`);
     process.stdout.write(`secret-scan: ${totals}; ${files} file(s), ${commits} commit(s), ${skipped} skipped\n`);
   } else {
     for (const hit of hits) process.stdout.write(`${formatHit(hit)}\n`);

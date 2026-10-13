@@ -64,6 +64,7 @@ function entropy(v: string): number {
 export function isCredentialShapedValue(raw: string): boolean {
   const v = raw.trim();
   if (isPlaceholder(v)) return false;
+  if (/\$\{|\{\{/.test(v)) return false; // an interpolated template is a reference, not a value
   if (containsCredentialMaterial(v)) return true;
   if (v.length < 12 || /\s/.test(v)) return false;
   if (/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(v) && !/\d/.test(v)) return false; // identifier, env name
@@ -71,6 +72,16 @@ export function isCredentialShapedValue(raw: string): boolean {
   if (!/^[A-Za-z0-9+/=_.~-]+$/.test(v)) return false; // regexes, templates and prose are not credential charsets
   if (!/[A-Za-z]/.test(v) || !/\d/.test(v)) return false;
   return entropy(v) >= 3.0;
+}
+
+/** A token body with a repeated block, a run (abcd, 1234, xxxx) or very few distinct characters is a hand-made fake. */
+export function looksPatterned(token: string): boolean {
+  const body = token.replace(ISSUED_PREFIX, '');
+  return (
+    /(.{3,16})\1/.test(body) ||
+    /(abcd|0123|1234|x{4}|a{4}|0{4}|1{4}|fake|test|dummy|example|redact|secret|sample)/i.test(body) ||
+    new Set(body).size <= Math.ceil(body.length / 4)
+  );
 }
 
 const ISSUED_PREFIX = /^(sk-ant-|sk-proj-|github_pat_|gh[pousr]_|xox[bpsa]-|AKIA|ASIA|AIza|sk_live_)/;
@@ -96,44 +107,62 @@ function tokensOf(line: string): string[] {
   return line.split(/[\s'"`,;()[\]{}=:<>]+/).filter(Boolean);
 }
 
-/** Scans one text blob. `lineNumbers[i]` is the file line of `text.split('\n')[i]` (defaults to i + 1). */
+const MAX_HITS_PER_BLOB = 500;
+
+/**
+ * Scans one text blob and returns EVERY hit. `lineNumbers[i]` is the file line of `text.split('\n')[i]` (defaults to
+ * i + 1). The guard reports the first finding of the text it is given, so after each finding (kept or filtered as a
+ * placeholder) scanning resumes on the next line: an early placeholder never hides a later real secret.
+ */
 export function scanText(
   file: string,
   commit: string,
   text: string,
   lineNumbers?: readonly number[],
-): SecretScanHit | undefined {
-  const finding = classifyCredentialFileContent(text);
-  if (finding.kind === 'none') return undefined;
+): SecretScanHit[] {
   const lines = text.split('\n');
+  const category = categorize(file);
   const map = (index: number): number => lineNumbers?.[index] ?? index + 1;
-  let index = -1;
-  if (finding.kind === 'credential-assignment') {
-    index = finding.line - 1;
-    // Precision: a hit counts only when a string literal near the key is credential-shaped by value.
-    const near = [lines[index] ?? '', lines[index + 1] ?? ''];
-    if (!near.some((l) => assignedLiterals(l, categorize(file)).some(isCredentialShapedValue))) return undefined;
-  } else {
-    // Locate the line with the same detector, one line at a time; multi-line shapes (private-key blocks) report 0.
-    index = lines.findIndex((l) => classifyCredentialFileContent(l).kind === 'secret-token');
-    if (index >= 0) {
-      const candidates = tokensOf(lines[index] ?? '').filter((t) => containsCredentialMaterial(t));
-      if (candidates.length > 0 && candidates.every(isPlaceholder)) return undefined;
+  const hits: SecretScanHit[] = [];
+  let start = 0;
+  while (start < lines.length && hits.length < MAX_HITS_PER_BLOB) {
+    const finding = classifyCredentialFileContent(start === 0 ? text : lines.slice(start).join('\n'));
+    if (finding.kind === 'none') break;
+    let index: number;
+    if (finding.kind === 'credential-assignment') {
+      index = start + finding.line - 1;
+      // Precision: a hit counts only when a string literal near the key is credential-shaped by value.
+      const near = [lines[index] ?? '', lines[index + 1] ?? ''];
+      if (near.some((l) => assignedLiterals(l, category).some(isCredentialShapedValue))) {
+        hits.push({ file, category, issuedCandidate: false, commit, line: map(index), rule: finding.kind, masked: '[masked]' });
+      }
+    } else {
+      // Locate the line with the same detector, one line at a time; a multi-line shape (private-key block) reports 0.
+      let found = -1;
+      for (let i = start; i < lines.length; i++) {
+        if (classifyCredentialFileContent(lines[i] ?? '').kind === 'secret-token') {
+          found = i;
+          break;
+        }
+      }
+      if (found < 0) {
+        hits.push({ file, category, issuedCandidate: false, commit, line: 0, rule: 'secret-token', masked: '[masked]' });
+        break;
+      }
+      index = found;
+      const lineText = lines[index] ?? '';
+      const tokens = tokensOf(lineText);
+      const candidates = tokens.filter((t) => containsCredentialMaterial(t));
+      if (!(candidates.length > 0 && candidates.every(isPlaceholder))) {
+        const issuedCandidate = tokens.some(
+          (t) => ISSUED_PREFIX.test(t) && t.length >= 24 && !isPlaceholder(t) && entropy(t) >= 3.5 && !looksPatterned(t),
+        );
+        hits.push({ file, category, issuedCandidate, commit, line: map(index), rule: 'secret-token', masked: '[masked]' });
+      }
     }
+    start = index + 1;
   }
-  const lineText = index >= 0 ? (lines[index] ?? '') : '';
-  const issuedCandidate =
-    finding.kind === 'secret-token' &&
-    tokensOf(lineText).some((t) => ISSUED_PREFIX.test(t) && t.length >= 24 && !isPlaceholder(t) && entropy(t) >= 3.5);
-  return {
-    file,
-    category: categorize(file),
-    issuedCandidate,
-    commit,
-    line: index >= 0 ? map(index) : 0,
-    rule: finding.kind,
-    masked: '[masked]',
-  };
+  return hits;
 }
 
 export interface HistoryScanResult {
@@ -162,8 +191,7 @@ export async function scanDiffStream(lines: AsyncIterable<string>): Promise<Hist
       const text = added.join('\n');
       if (text.length > MAX_SCAN_BYTES) skipped++;
       else {
-        const hit = scanText(file, commit, text, numbers);
-        if (hit) hits.push(hit);
+        hits.push(...scanText(file, commit, text, numbers));
       }
     }
     added = [];
@@ -226,17 +254,24 @@ export async function scanDiffStream(lines: AsyncIterable<string>): Promise<Hist
   return { hits, commits, skipped };
 }
 
-function runGit(cwd: string, args: readonly string[]): AsyncIterable<string> {
+/** Streams git's stdout lines; rejects when git is missing (ENOENT) or exits non-zero. */
+async function* runGit(cwd: string, args: readonly string[]): AsyncGenerator<string> {
   const child = spawn('git', [...args], { cwd, stdio: ['ignore', 'pipe', 'ignore'] });
-  return createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const done = new Promise<void>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) =>
+      code === 0 ? resolve() : reject(new Error(`git ${args[0] ?? ''} exited with ${code ?? signal ?? 'unknown'}`)),
+    );
+  });
+  done.catch(() => undefined); // observed below; avoids an unhandled rejection while lines are still streaming
+  for await (const line of createInterface({ input: child.stdout, crlfDelay: Infinity })) yield line;
+  await done;
 }
 
-function gitLines(cwd: string, args: readonly string[]): Promise<string[]> {
-  return (async () => {
-    const out: string[] = [];
-    for await (const l of runGit(cwd, args)) out.push(l);
-    return out;
-  })();
+async function gitLines(cwd: string, args: readonly string[]): Promise<string[]> {
+  const out: string[] = [];
+  for await (const l of runGit(cwd, args)) out.push(l);
+  return out;
 }
 
 export async function scanWorkingTree(cwd: string): Promise<{ hits: SecretScanHit[]; files: number; skipped: number }> {
@@ -254,8 +289,7 @@ export async function scanWorkingTree(cwd: string): Promise<{ hits: SecretScanHi
       skipped++;
       continue;
     }
-    const hit = scanText(name, WORKTREE_COMMIT, buf.toString('utf8'));
-    if (hit) hits.push(hit);
+    hits.push(...scanText(name, WORKTREE_COMMIT, buf.toString('utf8')));
   }
   return { hits, files: names.length, skipped };
 }
@@ -270,9 +304,12 @@ export function formatHit(hit: SecretScanHit): string {
   return `${hit.file}:${hit.line || '?'}  commit ${hit.commit.slice(0, 12)}  ${hit.rule}  ${hit.category}  ${hit.masked}${flag}`;
 }
 
-/** Only non-test hits fail the scan (placeholders and non-credential literals are already filtered out). */
+/**
+ * Non-test hits fail the scan (placeholders and non-credential literals are already filtered out), and so does any
+ * hit that looks like an issued provider key (known prefix, plausible length and entropy), test paths included.
+ */
 export function gatingHits(hits: readonly SecretScanHit[]): SecretScanHit[] {
-  return hits.filter((h) => h.category !== 'test');
+  return hits.filter((h) => h.category !== 'test' || h.issuedCandidate);
 }
 
 export interface SummaryRow {

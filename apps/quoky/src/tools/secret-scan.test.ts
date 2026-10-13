@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   categorize,
   formatHit,
@@ -6,6 +9,7 @@ import {
   historyByCommit,
   isCredentialShapedValue,
   scanDiffStream,
+  scanHistory,
   scanText,
   summarize,
 } from './secret-scan';
@@ -21,18 +25,18 @@ async function* lines(...text: string[]): AsyncIterable<string> {
 
 describe('scanText', () => {
   it('reports nothing for clean text', () => {
-    expect(scanText('a.ts', 'WORKTREE', 'const answer = 42;\n')).toBeUndefined();
+    expect(scanText('a.ts', 'WORKTREE', 'const answer = 42;\n')).toEqual([]);
   });
 
   it('reports a vendor token shape with its line and never the value', () => {
-    const hit = scanText('a.ts', 'WORKTREE', `// header\nconst t = '${tokenValue}';\n`);
+    const hit = scanText('a.ts', 'WORKTREE', `// header\nconst t = '${tokenValue}';\n`)[0];
     expect(hit).toMatchObject({ file: 'a.ts', commit: 'WORKTREE', line: 2, rule: 'secret-token', masked: '[masked]' });
     expect(JSON.stringify(hit)).not.toContain(tokenValue);
     expect(formatHit(hit!)).not.toContain(tokenValue);
   });
 
   it('reports a credential assignment with the exact line', () => {
-    const hit = scanText('c.env', 'abc', `A=1\n${assignment(['q7Zk', 'P2mX', '9vLd'].join(''))}\n`);
+    const hit = scanText('c.env', 'abc', `A=1\n${assignment(['q7Zk', 'P2mX', '9vLd'].join(''))}\n`)[0];
     expect(hit).toMatchObject({ line: 2, rule: 'credential-assignment' });
     expect(JSON.stringify(hit)).not.toContain('q7Zk');
   });
@@ -73,6 +77,7 @@ describe('scanDiffStream', () => {
 });
 
 const key = ['pass', 'word'].join('');
+const issuedBody = ['gh', 'p_', 'q7ZkP2mX9vLdR4tYb8NcW3sHf6JeA1uKo5Gi'].join('');
 const realish = ['q7Zk', 'P2mX', '9vLd', 'R4tY', 'b8Nc'].join('');
 
 describe('credential-assignment precision', () => {
@@ -86,11 +91,11 @@ describe('credential-assignment precision', () => {
     ['a type annotation', `const ${key}: string = ${key}Input;`],
     ['prose in a comment', `// the ${key} = "${realish}" example`],
   ])('does not count %s', (_name, line) => {
-    expect(scanText('apps/quoky/src/a.ts', 'WORKTREE', `${line}\n`)).toBeUndefined();
+    expect(scanText('apps/quoky/src/a.ts', 'WORKTREE', `${line}\n`)).toEqual([]);
   });
 
   it('counts a credential-shaped string literal in source', () => {
-    const hit = scanText('apps/quoky/src/a.ts', 'WORKTREE', `const ${key} = "${realish}";\n`);
+    const hit = scanText('apps/quoky/src/a.ts', 'WORKTREE', `const ${key} = "${realish}";\n`)[0];
     expect(hit).toMatchObject({ rule: 'credential-assignment', category: 'source', line: 1 });
   });
 
@@ -103,16 +108,16 @@ describe('credential-assignment precision', () => {
   });
 
   it('does not count a placeholder token shape', () => {
-    expect(scanText('docs/a.md', 'WORKTREE', `token: ${GH_PREFIX}xxxxxxxxxxxxxxxxxxxxxxxx\n`)).toBeUndefined();
+    expect(scanText('docs/a.md', 'WORKTREE', `token: ${GH_PREFIX}xxxxxxxxxxxxxxxxxxxxxxxx\n`)).toEqual([]);
   });
 });
 
 describe('summary and gating', () => {
   const hits = [
-    scanText('a.test.ts', 'WORKTREE', `x = '${tokenValue}'\n`),
-    scanText('docs/a.md', 'a'.repeat(40), `${key}: ${realish}\n`),
-    scanText('src/b.ts', 'WORKTREE', `const ${key} = "${realish}";\n`),
-  ].flatMap((h) => (h ? [h] : []));
+    ...scanText('a.test.ts', 'WORKTREE', `x = '${tokenValue}'\n`),
+    ...scanText('docs/a.md', 'a'.repeat(40), `${key}: ${realish}\n`),
+    ...scanText('src/b.ts', 'WORKTREE', `const ${key} = "${realish}";\n`),
+  ];
 
   it('categorizes files', () => {
     expect(categorize('packages/x/src/a.test.ts')).toBe('test');
@@ -130,14 +135,56 @@ describe('summary and gating', () => {
   });
 
   it('gates only on non-test hits', () => {
+    // The test hit's body is patterned (a fake), so it is not an issued-key candidate and does not gate.
     expect(gatingHits(hits)).toHaveLength(2);
     expect(gatingHits(hits.filter((h) => h.category === 'test'))).toHaveLength(0);
   });
 
   it('flags an issued-looking provider key outside tests, with no value', () => {
-    const hit = scanText('src/c.ts', 'b'.repeat(40), `const t = '${tokenValue}';\n`);
+    const hit = scanText('src/c.ts', 'b'.repeat(40), `const t = '${issuedBody}';\n`)[0];
     expect(hit?.issuedCandidate).toBe(true);
     expect(formatHit(hit!)).toContain('ROTATE-CANDIDATE');
-    expect(formatHit(hit!)).not.toContain(tokenValue);
+    expect(formatHit(hit!)).not.toContain(issuedBody);
+  });
+
+  it('gates on an issued-looking key even in a test file', () => {
+    const hits = scanText('x.test.ts', 'c'.repeat(40), `const t = '${issuedBody}';\n`);
+    expect(hits[0]?.issuedCandidate).toBe(true);
+    expect(gatingHits(hits)).toHaveLength(1);
+  });
+});
+
+describe('every hit in a blob is reported', () => {
+  const secretKey = ['client', '_secret'].join('');
+
+  it('does not let an early placeholder token hide a later real token', () => {
+    const placeholder = ['sk', '-', 'x'.repeat(30)].join('');
+    const real = ['xox', 'b-', 'q7Zk', 'P2mX', '9vLd', 'R4tY', 'b8Nc'].join('');
+    const hits = scanText('src/a.ts', 'WORKTREE', `// ${placeholder}\nconst a = 1;\nconst slack = '${real}';\n`);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ line: 3, rule: 'secret-token' });
+  });
+
+  it('does not let password="changeme" hide a later client secret', () => {
+    const text = `${key} = "changeme"\nother = 1\n\n${secretKey} = "${realish}"\n`;
+    const hits = scanText('src/a.ts', 'WORKTREE', text);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ line: 4, rule: 'credential-assignment' });
+  });
+
+  it('reports several real hits with their own lines', () => {
+    const text = `${key} = "${realish}"\nx = 1\n${secretKey}: "${realish}Z9"\n`;
+    expect(scanText('src/a.ts', 'WORKTREE', text).map((h) => h.line)).toEqual([1, 3]);
+  });
+});
+
+describe('git failures', () => {
+  it('rejects instead of reporting a clean scan when git fails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'scan-nogit-'));
+    try {
+      await expect(scanHistory(dir)).rejects.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
