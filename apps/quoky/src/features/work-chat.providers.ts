@@ -34,6 +34,8 @@ export const WORK_CHAT_FEATURE_CONFIG = Symbol('WorkChatFeatureConfig');
 /** Composition seam for offline acceptance only; production passes none (console logger). */
 export interface WorkChatCompositionOptions {
   readonly logger?: Logger;
+  /** ADR-0120 amendment A6: content-free action receipts on to-do replies (`QUOKY_NL_ACTIONS` not `off`). */
+  readonly actionReceipts?: () => boolean;
 }
 
 export function createWorkChatProviders(
@@ -50,7 +52,11 @@ export function createWorkChatProviders(
         workSurface: WorkSurfaceQuery,
         connectors: ConnectorManager,
         work: WorkManager,
-      ) => new WorkChatService({ workSurface, connectors, work }, { summaryEnabled: config.summaryEnabled }),
+      ) =>
+        new WorkChatService(
+          { workSurface, connectors, work },
+          { summaryEnabled: config.summaryEnabled, ...(options.actionReceipts?.() === true ? { actionReceipts: true } : {}) },
+        ),
       inject: [WORK_CHAT_FEATURE_CONFIG, WorkSurfaceQuery, ConnectorManager, WorkManager],
     },
     {
@@ -62,4 +68,6 @@ export function createWorkChatProviders(
   ];
 }
 
-export const workChatProviders: Provider[] = createWorkChatProviders(() => loadConfig().work);
+export const workChatProviders: Provider[] = createWorkChatProviders(() => loadConfig().work, {
+  actionReceipts: () => loadConfig().nlSelection.actions !== 'off',
+});

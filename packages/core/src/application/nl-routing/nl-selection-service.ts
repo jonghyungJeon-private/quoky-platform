@@ -1,10 +1,65 @@
-import { Capability, type Actor, type InboundQuotedRange, type IsoTimestamp, type Session } from '../../domain';
+import { Capability, type Actor, type ConversationContext, type InboundQuotedRange, type IsoTimestamp, type Session } from '../../domain';
 import { executionLocalityOf, type AiExecutionLocality, type AiProvider } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import type { SessionManager } from '../session-manager';
-import type { NlAmbiguityKey, NlArgs, NlCatalogEntry, NlClassBProbe, NlGrammarSelection, NlSelectedCommand, NlText } from './catalog';
+import {
+  LAST_LISTING_METADATA_KEY,
+  findAnyListingByReply,
+  readListingRecord,
+  withLabelledListing,
+  withListingReplies,
+  type ListingItem,
+  type ListingSource,
+} from '../last-listing';
+import type { DeliveredTurn, TurnDeliveryObserver } from '../turn-delivery';
+import {
+  isNlActionEntryId,
+  isNlWave1EntryId,
+  type NlActionEntryId,
+  type NlActionReceipt,
+  type NlAmbiguityKey,
+  type NlArgs,
+  type NlCatalogEntry,
+  type NlCatalogRisk,
+  type NlClassBProbe,
+  type NlGrammarSelection,
+  type NlItemSource,
+  type NlItemTarget,
+  type NlListingReceipt,
+  type NlSelectedCommand,
+  type NlText,
+} from './catalog';
+import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
+import {
+  hasReferenceRecord,
+  renderReferenceContext,
+  resolveItemReference,
+  resolveUndo,
+  type NlReferenceState,
+  type NlResolutionOutcome,
+} from './item-reference';
+import { LAST_ACTION_METADATA_KEY, readLastAction, withLastAction, withLastActionEcho, type LastActionRecord } from './last-action';
+import {
+  NL_ACTION_LOG_EVENT,
+  NlActionCaps,
+  actionLevelActs,
+  nlActionLogFields,
+  renderBulk,
+  renderCapped,
+  renderDeicticPayload,
+  renderInputRefusal,
+  renderReferenceQuestion,
+  renderRestate,
+  renderTimeInTitle,
+  renderTimeOutsideWhen,
+  renderUndoUnresolved,
+  resolveLabelChoice,
+  type NlActionAudit,
+  type NlActionLevel,
+} from './nl-action-policy';
 import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput } from './selection-input';
 import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { nlSelectionMeaning } from './selection-meaning';
@@ -13,6 +68,7 @@ import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   LAST_SELECTION_METADATA_KEY,
   NL_PENDING_METADATA_KEY,
+  isActionPendingQuestion,
   lastSelectionRecord,
   pendingQuestionRecord,
   readInterpretationPreference,
@@ -113,6 +169,18 @@ export interface NlSelectionTurn {
    * `session.metadata` (direct callers).
    */
   readonly pending?: PendingQuestion | null;
+  /**
+   * ADR-0120 amendment A6-D2: the opaque platform id the owner's message replies to (reply-to-pick names its listing; a
+   * reply to an echo names its action). Absent: not a reply.
+   */
+  readonly replyToMessageId?: string;
+  /**
+   * A6-D3: the turn's correlation id (the inbound message id), carried on every `nl_action.decided` line with the session
+   * id so a line joins its turn (the app's logger also appends the per-turn `cid`). Opaque; never content.
+   */
+  readonly turnId?: string;
+  /** ADR-0120 A6: the platform marked part of the text as code (`InboundMessage.formatting.code`); never an action. */
+  readonly codeFormatted?: boolean;
 }
 
 export type NlSelectionSkipReason =
@@ -133,8 +201,11 @@ export type NlSelectionDecision =
   | { readonly kind: 'none' }
   /** No provider, a timeout, a failure or malformed output: the existing path, then honest chat (D3, R5). */
   | { readonly kind: 'unavailable' }
-  /** A validated read for the owning handler's `handleSelected`; `basis` is the first reply line (D7). */
-  | { readonly kind: 'execute'; readonly command: NlSelectedCommand; readonly basis?: string }
+  /**
+   * A validated read (or, with A6, an action) for the owning handler's `handleSelected`; `basis` is the first reply line
+   * (D7). `action` is present only for an A6 entry: the content-free audit facts the runtime completes after dispatch.
+   */
+  | { readonly kind: 'execute'; readonly command: NlSelectedCommand; readonly basis?: string; readonly action?: NlActionAudit }
   /** One numbered question (D7), never chat; the pending choice is already saved. */
   | { readonly kind: 'ask'; readonly text: string };
 
@@ -156,6 +227,39 @@ export interface NlSelectionServiceDeps {
   readonly timeoutMs?: number;
   /** Tests only: monotonic milliseconds for latency (default `Date.now`). */
   readonly elapsed?: () => number;
+  /**
+   * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
+   * record is written and every prompt and reply is byte-identical to `nl-select.v18`. Any other level requires mode
+   * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
+   */
+  readonly actions?: {
+    readonly level: NlActionLevel;
+    readonly killSwitch?: NlActionSwitch;
+    /** Tests only: other caps. */
+    readonly caps?: NlActionCaps;
+  };
+}
+
+/** A6: the content-free record of a turn that will be completed by `recordActionReceipt` after dispatch. */
+interface PendingEcho {
+  readonly sessionId: string;
+  readonly actorId: string;
+  readonly requestId: string;
+  readonly at: IsoTimestamp;
+  readonly echo: boolean;
+  readonly listing?: ListingSource;
+}
+
+/** A6: at most this many delivery receipts wait at once, each at most 5 minutes (like GML-2's listing receipts). */
+const ECHO_RECEIPTS_MAX = 64;
+const ECHO_RECEIPT_TTL_MS = 5 * 60_000;
+
+/** A6 configuration errors (value-free codes; the app maps them to a startup refusal). */
+export class NlActionsConfigError extends Error {
+  constructor(readonly code: 'NL_ACTIONS_REQUIRES_ACTIVE' | 'NL_ACTIONS_REQUIRES_KILL_SWITCH' | 'NL_ACTIONS_EXTERNAL_NOT_AVAILABLE') {
+    super(code);
+    this.name = 'NlActionsConfigError';
+  }
 }
 
 interface CacheEntry {
@@ -176,9 +280,14 @@ class SelectionTimeout extends Error {
   }
 }
 
-export class NlSelectionService {
+export class NlSelectionService implements TurnDeliveryObserver {
   readonly mode: NlIntentMode;
   private readonly cache = new Map<string, CacheEntry>();
+  /** A6 (`QUOKY_NL_ACTIONS`). */
+  private readonly actionLevelValue: NlActionLevel;
+  private readonly actionCaps: NlActionCaps;
+  /** A6: echoes and listings waiting for their delivery receipt (by inbound message). */
+  private readonly echoReceipts = new Map<string, PendingEcho>();
   /** The last shadow run (tests await it; production never does). */
   lastShadowRun: Promise<void> = Promise.resolve();
   /** W1: aborts every background selection on shutdown (`stopBackground`). */
@@ -189,6 +298,13 @@ export class NlSelectionService {
 
   constructor(private readonly deps: NlSelectionServiceDeps) {
     this.mode = deps.mode;
+    this.actionLevelValue = deps.actions?.level ?? 'off';
+    this.actionCaps = deps.actions?.caps ?? new NlActionCaps();
+    // A6-D8: any level but `off` needs `active`; `local` / `external` are release-gated on the kill switch.
+    if (this.actionLevelValue !== 'off' && deps.mode !== 'active') throw new NlActionsConfigError('NL_ACTIONS_REQUIRES_ACTIVE');
+    if (this.actionLevelValue !== 'off' && deps.actions?.killSwitch === undefined) throw new NlActionsConfigError('NL_ACTIONS_REQUIRES_KILL_SWITCH');
+    // R3 (external previews, the banner, the yield) is not built: `external` is refused, never silently treated as local.
+    if (this.actionLevelValue === 'external') throw new NlActionsConfigError('NL_ACTIONS_EXTERNAL_NOT_AVAILABLE');
   }
 
   /**
@@ -388,6 +504,150 @@ export class NlSelectionService {
     }
   }
 
+  // ── A6: natural-language actions (ADR-0120 amendment A6) ─────────────────────────────────────────────────────────
+
+  /** `QUOKY_NL_ACTIONS`; `off` unless configured. */
+  actionLevel(): NlActionLevel {
+    return this.actionLevelValue;
+  }
+
+  /**
+   * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
+   * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
+   * prompt is `nl-select.v18` byte for byte.
+   */
+  actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
+    if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
+    return this.deps.actions?.killSwitch?.state(actor) !== 'stopped';
+  }
+
+  /**
+   * A6-D3 kill switch, the LAST check before an action runs (Codex review P1): the switch is re-read from the persisted
+   * Actor, so a stop saved while the selector was running wins over the turn's snapshot. A failed read refuses.
+   */
+  async actionsStillActing(actor: Pick<Actor, 'id' | 'metadata'>): Promise<boolean> {
+    if (this.mode !== 'active' || !actionLevelActs(this.actionLevelValue)) return false;
+    try {
+      const fresh = await this.deps.actors.get(actor.id);
+      return fresh !== null && this.actionsActing(fresh);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Whether an A6 decision may act for this actor (`local` / `external` and running); `shadow` only logs. */
+  actionsActing(actor: Pick<Actor, 'metadata'>): boolean {
+    return this.actionsOffered(actor) && actionLevelActs(this.actionLevelValue);
+  }
+
+  /**
+   * A6-D3: the owner's kill-switch phrase (`에이전트 중지` / `에이전트 재개`), recognized only while the level is not `off`
+   * (with `off` the phrase is ordinary text, byte-identical). Returns the fixed reply, or `undefined` when the text is not
+   * the phrase. Never throws.
+   */
+  async handleSwitchPhrase(actor: Actor, text: string, now: IsoTimestamp): Promise<string | undefined> {
+    if (this.mode !== 'active' || this.actionLevelValue === 'off') return undefined;
+    const wanted = parseActionSwitchPhrase(text);
+    const killSwitch = this.deps.actions?.killSwitch;
+    if (wanted === undefined || killSwitch === undefined) return undefined;
+    const saved = await killSwitch.set(actor.id, actor, wanted, now);
+    return renderActionSwitchReply(saved, languageOf(text));
+  }
+
+  /**
+   * Owner decision 8: the anchored `되돌리기`, the provider-down twin of `action.undo`. The same resolution as a selected
+   * undo, with no selector call. `undefined` when the text is not the phrase or actions are not acting.
+   */
+  async decideAnchoredUndo(
+    turn: Pick<NlSelectionTurn, 'text' | 'session' | 'actor' | 'now' | 'entries' | 'replyToMessageId' | 'turnId' | 'quotedRanges' | 'codeFormatted'>,
+  ): Promise<NlSelectionDecision | undefined> {
+    // The anchored phrase is the whole message on one line and meets the same plain-line eligibility as any action.
+    if (!/^되돌리기[.!]?$/u.test(turn.text.normalize('NFC').trim())) return undefined;
+    if (nlActionInputRefusal(turn.text, turn.text, markedMaterial(turn)) !== undefined) return undefined;
+    if (!this.actionsActing(turn.actor) || !turn.entries.some((entry) => entry.id === 'action.undo')) return undefined;
+    const fullTurn: NlSelectionTurn = { ...turn, attachmentCount: 0, route: 'chat' };
+    const decision = await this.decideUndo(fullTurn, 'ko', 0, 'none');
+    return decision;
+  }
+
+  /**
+   * A6-D2: answer an open A6 question at the start of a turn, before any grammar (its answer, "3" or "요약", must not be
+   * read as anything else). `undefined` when the text is not an answer (the turn then routes normally; the question has
+   * already ended, D7). Only while actions are acting.
+   */
+  async answerActionPending(turn: NlSelectionTurn): Promise<NlSelectionDecision | undefined> {
+    const pending = turn.pending ?? undefined;
+    if (!isActionPendingQuestion(pending) || !this.actionsActing(turn.actor)) return undefined;
+    const answerInput = prepareSelectionInput(turn.text, 0, turn.quotedRanges ?? []);
+    if ('skip' in answerInput) return undefined;
+    const language = /\p{L}/u.test(answerInput.groundingText) ? languageOf(turn.text) : pending.language;
+    if (this.answerRefused(pending, turn, answerInput.groundingText)) return undefined;
+    try {
+      return await this.answerActionQuestion(pending, turn, answerInput.groundingText, language);
+    } catch (error) {
+      this.log('warn', 'nl_action.answer_failed', { errorName: error instanceof Error ? error.name : typeof error });
+      return undefined;
+    }
+  }
+
+  /**
+   * A6-D2/D3: what a handler reported after a turn (an A6 dispatch or an anchored Class A command): the to-do / reminder
+   * listing it showed, the action it executed (`quoky.lastAction`, the echo label merged into the listing), a question it
+   * asked (candidate ids only) or a reschedule question. Writes nothing while the level is `off`. Logs `nl_action.decided`
+   * for an A6 dispatch. Never throws.
+   */
+  async recordActionReceipt(input: {
+    readonly session: Pick<Session, 'id'>;
+    readonly actor: Pick<Actor, 'id' | 'metadata'>;
+    readonly message: { readonly id: string; readonly context: ConversationContext };
+    readonly now: IsoTimestamp;
+    readonly action?: NlActionReceipt;
+    readonly listing?: NlListingReceipt;
+    /** The A6 decision this turn dispatched (absent for an anchored command). */
+    readonly decided?: NlActionAudit;
+    readonly language?: 'ko' | 'en';
+  }): Promise<void> {
+    if (this.mode !== 'active' || this.actionLevelValue === 'off') return;
+    try {
+      await this.recordReceipt(input);
+    } catch (error) {
+      this.log('warn', 'nl_action.record_failed', { errorName: error instanceof Error ? error.name : typeof error });
+    }
+  }
+
+  /** The audit line for an A6 dispatch that did not run: no handler served it, or the switch stopped it at dispatch. */
+  logActionUnserved(decided: NlActionAudit, reason: 'unserved' | 'stopped' = 'unserved', correlationId?: string): void {
+    this.log('info', NL_ACTION_LOG_EVENT, { ...nlActionLogFields({ ...decided, result: 'refused', reason }), ...(correlationId !== undefined ? { turnId: correlationId } : {}) });
+  }
+
+  /**
+   * A6 (`TurnDeliveryObserver`): bind the delivered echo of an action to `lastAction.echoReplyIds`, and a to-do / reminder
+   * listing to its reply ids (reply-to-pick). Best-effort; never throws.
+   */
+  async observeDelivery(turn: DeliveredTurn): Promise<void> {
+    try {
+      const key = echoKey(turn.messageId, turn.context);
+      const pending = this.echoReceipts.get(key);
+      if (pending === undefined) return;
+      this.echoReceipts.delete(key);
+      if (turn.status !== 'RESPONDED' || turn.sessionId !== pending.sessionId || turn.platformMessageIds.length === 0) return;
+      const ids = turn.platformMessageIds;
+      if (pending.echo) {
+        await this.deps.sessions.updateMetadataEntry({ id: pending.sessionId }, LAST_ACTION_METADATA_KEY, (current) =>
+          withLastActionEcho(current, pending.actorId, pending.requestId, ids, pending.at).next,
+        );
+      }
+      if (pending.listing !== undefined) {
+        const source = pending.listing;
+        await this.deps.sessions.updateMetadataEntry({ id: pending.sessionId }, LAST_LISTING_METADATA_KEY, (current) =>
+          withListingReplies(current, pending.actorId, source, pending.requestId, ids, pending.at).next,
+        );
+      }
+    } catch {
+      this.log('warn', 'nl_action.receipt_persist_failed', {});
+    }
+  }
+
   // ── active ────────────────────────────────────────────────────────────────────────────────────────────────────
 
   private async decideActive(turn: NlSelectionTurn): Promise<NlSelectionDecision> {
@@ -401,18 +661,30 @@ export class NlSelectionService {
       const answerInput = prepareSelectionInput(turn.text, 0, turn.quotedRanges ?? []);
       if (!('skip' in answerInput)) {
         // A bare "1" has no language of its own: the answer keeps the question's.
-        const answered = await this.answerPending(pending, turn, answerInput.groundingText, /\p{L}/u.test(answerInput.groundingText) ? language : pending.language);
+        const answerLanguage = /\p{L}/u.test(answerInput.groundingText) ? language : pending.language;
+        const answered = isActionPendingQuestion(pending)
+          ? this.actionsActing(turn.actor)
+            ? this.answerRefused(pending, turn, answerInput.groundingText)
+              ? undefined
+              : await this.answerActionQuestion(pending, turn, answerInput.groundingText, answerLanguage)
+            : undefined
+          : await this.answerPending(pending, turn, answerInput.groundingText, answerLanguage);
         if (answered !== undefined) return answered;
       }
     }
+    // A6-D8/D3: action entries reach the selector only while the level allows and the kill switch is running; otherwise
+    // they are dropped here too (the runtime already drops them), so the prompt is v18 byte for byte.
+    const actionsOn = this.actionsOffered(turn.actor) && turn.entries.some(isNlActionEntry);
+    const effective: NlSelectionTurn = actionsOn ? turn : { ...turn, entries: turn.entries.filter((entry) => !isNlActionEntry(entry)) };
+    const reference = actionsOn ? this.referenceState(turn) : undefined;
     const last = readLastSelection(turn.session, turn.actor.id, turn.now);
-    const prepared = this.prepare(turn, last);
+    const prepared = this.prepare(effective, last);
     if ('skip' in prepared) {
       this.log('info', 'nl_selection.skipped', { reason: prepared.skip, route: turn.route });
       this.logAgreement(turn, { outcome: 'fallback', reason: prepared.skip });
       return { kind: 'skip', reason: prepared.skip };
     }
-    const selected = await this.select(turn, prepared, last);
+    const selected = await this.select(effective, prepared, last, undefined, reference);
     if (selected.kind === 'egress-refused') {
       this.log('info', 'nl_selection.skipped', { reason: selected.reason, route: turn.route });
       this.logAgreement(turn, { outcome: 'fallback', reason: selected.reason });
@@ -423,10 +695,13 @@ export class NlSelectionService {
       this.logAgreement(turn, { outcome: 'fallback', reason: selected.cause, latencyMs: selected.latencyMs });
       return { kind: 'unavailable' };
     }
-    const decision = await this.fromOutput(selected.output, turn, prepared, last, language);
+    const decision =
+      reference !== undefined && selected.output.entryId !== null && isNlActionEntryId(selected.output.entryId)
+        ? await this.decideAction(selected.output, effective, prepared, language, reference, selected.latencyMs)
+        : await this.fromOutput(selected.output, effective, prepared, last, language, reference !== undefined);
     this.logAgreement(turn, {
       outcome: decision.kind,
-      ...(decision.kind === 'execute' ? { selection: { entryId: decision.command.entryId, args: decision.command.args } } : {}),
+      ...(decision.kind === 'execute' && isNlWave1EntryId(decision.command.entryId) ? { selection: { entryId: decision.command.entryId, args: decision.command.args } } : {}),
       latencyMs: selected.latencyMs,
       cached: selected.cached,
     });
@@ -448,16 +723,19 @@ export class NlSelectionService {
     prepared: PreparedSelectionInput,
     last: LastSelection | undefined,
     language: 'ko' | 'en',
+    actionsOn = false,
   ): Promise<NlSelectionDecision> {
     if (output.entryId === null) return { kind: 'none' };
     const ctx = this.validationContext(turn, prepared.groundingText, last?.args);
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
     if (main.ok && output.ambiguity === 'CLEAR') return this.complete(main.value, turn, last, language, prepared.groundingText);
-    // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess.
+    // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action
+    // candidate is never a numbered option (only READ entries are stored as options).
     const options: NlValidatedSelection[] = [];
     for (const candidate of [{ entryId: output.entryId, args: output.args }, ...output.alternatives]) {
+      if (actionsOn && isNlActionEntryId(candidate.entryId)) continue;
       const repaired = validateWithRepair(candidate, ctx);
-      if (repaired.ok && !options.some((option) => option.entry.id === repaired.value.entry.id)) options.push(repaired.value);
+      if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) options.push(repaired.value);
     }
     if (options.length === 0) {
       // An entry that is not offered (an unconfigured source) or not in the catalog is honest chat's to explain.
@@ -469,7 +747,7 @@ export class NlSelectionService {
       this.log('info', 'nl_selection.validation_failed', { entryId: entry.id, reason: main.ok ? 'ambiguous' : main.reason, ...(main.ok || main.arg === undefined ? {} : { arg: main.arg }) });
       return { kind: 'ask', text: renderUsageQuestion(entry, language) };
     }
-    const stored = options.map((option): StoredSelection => ({ entryId: option.entry.id, args: option.args }));
+    const stored = options.map((option): StoredSelection => ({ entryId: option.entry.id as StoredSelection['entryId'], args: option.args }));
     await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
       pendingQuestionRecord(turn.actor.id, { kind: 'entry', at: turn.now, language, options: stored, groundingText: prepared.groundingText }),
     );
@@ -486,6 +764,9 @@ export class NlSelectionService {
     note?: 'saved' | 'changed',
   ): Promise<NlSelectionDecision> {
     const { entry } = selection;
+    // Only a wave-1 READ entry completes here (an A6 action entry has its own path and is never `lastSelection`).
+    const entryId = entry.id;
+    if (!isNlWave1EntryId(entryId)) return { kind: 'none' };
     let args = selection.args;
     let basisNote = note;
     let open = selection.openAmbiguity;
@@ -519,7 +800,7 @@ export class NlSelectionService {
           language,
           key: open.key,
           values,
-          selection: { entryId: entry.id, args },
+          selection: { entryId, args },
         };
         await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, question));
         this.log('info', 'nl_selection.preference_asked', { key: open.key });
@@ -547,7 +828,7 @@ export class NlSelectionService {
     };
     // A transient arg (a pick of one listed item) answers this turn only and never becomes the follow-up's base.
     const stored = Object.fromEntries(Object.entries(args).filter(([name]) => entry.args.find((spec) => spec.name === name)?.transient !== true));
-    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(turn.actor.id, { entryId: entry.id, args: stored }, turn.now));
+    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(turn.actor.id, { entryId, args: stored }, turn.now));
     const described = entry.describe?.(args, selection.range, language);
     const basis = described === undefined ? undefined : renderBasis(described, language, basisNote);
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}) };
@@ -579,6 +860,7 @@ export class NlSelectionService {
       if (picked === undefined || !picked.ok) return undefined;
       return this.complete(picked.value, turn, readLastSelection(turn.session, turn.actor.id, turn.now), language, pending.groundingText ?? '');
     }
+    if (pending.kind !== 'preference') return undefined;
     const entry = offered.get(pending.selection.entryId);
     const key = entry?.ambiguity?.find((candidate) => candidate.key === pending.key);
     if (entry === undefined || key === undefined) return undefined;
@@ -599,6 +881,370 @@ export class NlSelectionService {
     const validated = validateSelection({ entryId: entry.id, args }, this.validationContext(turn, '', args));
     if (!validated.ok) return undefined;
     return this.complete(validated.value, turn, undefined, language, '', 'saved');
+  }
+
+  // ── A6 decisions ───────────────────────────────────────────────────────────────────────────────────────────────
+
+  /** A6-D2: the content-free reference state of this turn (fresh listings, the last action, the reply target). */
+  private referenceState(turn: Pick<NlSelectionTurn, 'session' | 'actor' | 'now' | 'replyToMessageId'>): NlReferenceState {
+    const listingValue = turn.session.metadata?.[LAST_LISTING_METADATA_KEY];
+    const lastAction = readLastAction(turn.session.metadata?.[LAST_ACTION_METADATA_KEY], turn.actor.id, turn.now);
+    const replyId = turn.replyToMessageId;
+    const listing = replyId === undefined ? undefined : findAnyListingByReply(listingValue, turn.actor.id, replyId, turn.now);
+    return {
+      listings: readListingRecord(listingValue, turn.actor.id, turn.now),
+      ...(lastAction !== undefined ? { lastAction } : {}),
+      ...(replyId !== undefined ? { replyTo: { messageId: replyId, ...(listing !== undefined ? { listing } : {}) } } : {}),
+      now: turn.now,
+    };
+  }
+
+  /** One `nl_action.decided` line (content-free) and the question / refusal it answers with. */
+  private actionAnswer(audit: NlActionAudit, text: string): NlSelectionDecision {
+    this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
+    return { kind: 'ask', text };
+  }
+
+  /**
+   * A6: a selector output naming an action entry. Validation (A6-D1/D3), `lastSelection` cleared (D3), shadow logging
+   * (D8), caps (D3), reference resolution (D2), the content-mode key (record C); then the command for the handler.
+   */
+  private async decideAction(
+    output: NlSelectionOutput,
+    turn: NlSelectionTurn,
+    prepared: PreparedSelectionInput,
+    language: 'ko' | 'en',
+    reference: NlReferenceState,
+    latencyMs: number,
+  ): Promise<NlSelectionDecision> {
+    const entryId = output.entryId as NlActionEntryId;
+    // A6-D3: a turn that executes, previews or asks for an A6 entry clears `lastSelection` (never refinable).
+    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => undefined);
+    const ctx = this.validationContext(turn, prepared.groundingText, undefined, true);
+    const validated = validateSelection({ entryId, args: output.args }, ctx);
+    const base = { entryId, risk: ctx.offered.get(entryId)?.risk ?? 'LOCAL_WRITE', refKind: refKindOf(output.args), latencyMs, ...correlationOf(turn) } as const;
+    // The A6 input guard (red team): a long paste, hidden characters or an embedded command form never act.
+    const inputRefusal = ctx.offered.has(entryId) ? nlActionInputRefusal(turn.text, prepared.groundingText, markedMaterial(turn)) : undefined;
+    if (inputRefusal !== undefined) {
+      const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: inputRefusal };
+      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      return this.actionAnswer(audit, renderInputRefusal(language));
+    }
+    if (!validated.ok) {
+      // An entry that is not offered (an external write before R3, an unconfigured source) is honest chat's to explain.
+      if (validated.reason === 'not-offered' || validated.reason === 'unknown-entry' || validated.reason === 'not-read') return { kind: 'none' };
+      // `item.summarize` without a content word: the owner did not ask for the content (record C) — nothing is read.
+      if (entryId === 'item.summarize' && validated.reason === 'ungrounded' && validated.arg === 'mode') return { kind: 'none' };
+      const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: validated.reason };
+      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      return this.actionAnswer(audit, validationReply(validated.reason, language));
+    }
+    const { entry } = validated.value;
+    let args = validated.value.args;
+    if (output.ambiguity !== 'CLEAR') {
+      const audit: NlActionAudit = { ...base, risk: entry.risk, resolution: 'ambiguous', result: 'asked', reason: 'ambiguous' };
+      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      return this.actionAnswer(audit, isNlBulkRequest(prepared.groundingText) ? renderBulk(language) : renderRestate(language));
+    }
+    if (entryId === 'action.undo') return this.decideUndo(turn, language, latencyMs, 'none', reference);
+    // A6-D2: resolve the target in code (most recent listing only, display numbers, lastAction).
+    let target: NlItemTarget | undefined;
+    let resolution: NlResolutionOutcome = 'none';
+    const ref = parseNlRef(args.ref);
+    const source = nlActionSourceOf(entryId, args);
+    if (ref !== undefined && source !== undefined) {
+      const resolved = resolveItemReference({ entryId, source, ref, groundingText: prepared.groundingText, state: reference });
+      if (resolved.kind === 'unresolved') {
+        const audit: NlActionAudit = { ...base, risk: entry.risk, resolution: resolved.outcome, result: 'asked', reason: resolved.outcome };
+        if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+        if (resolved.candidates !== undefined && resolved.candidates.length > 0) {
+          await this.askTarget(turn, language, entryId, source, resolved.candidates, args, resolved.listingAt);
+        }
+        return this.actionAnswer(
+          audit,
+          renderReferenceQuestion(resolved.outcome, source, language, {
+            ...(resolved.found !== undefined ? { found: resolved.found as NlItemSource } : {}),
+            ...(resolved.count !== undefined ? { count: resolved.count } : {}),
+            ...(resolved.index !== undefined ? { index: resolved.index } : {}),
+            ...(resolved.candidates !== undefined ? { labels: resolved.candidates.map((item) => item.label) } : {}),
+          }),
+        );
+      }
+      target = resolved.target;
+      resolution = 'resolved';
+    }
+    const audit: NlActionAudit = { ...base, risk: entry.risk, resolution, ...(target !== undefined ? { target } : {}), result: 'executed' };
+    if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+    if (!this.actionCaps.allows(turn.actor.id, entry.risk, Date.parse(turn.now))) {
+      return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
+    }
+    let basis: string | undefined;
+    if (entryId === 'item.summarize' && target !== undefined) {
+      const mode = await this.contentMode(turn, args, language);
+      if (mode.kind === 'ask') {
+        await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
+          pendingQuestionRecord(turn.actor.id, {
+            kind: 'action-mode',
+            at: turn.now,
+            language,
+            target,
+            ...(args.scope === 'thread' ? { scope: 'thread' as const } : {}),
+          }),
+        );
+        return this.actionAnswer({ ...audit, result: 'asked', reason: 'content-mode' }, renderPreferenceQuestion(ITEM_CONTENT_MODE, language));
+      }
+      args = { ...args, mode: mode.value };
+      basis = mode.basis;
+    }
+    this.actionCaps.note(turn.actor.id, entry.risk, Date.parse(turn.now));
+    const command: NlSelectedCommand = { entryId, args, language, ...(target !== undefined ? { target } : {}) };
+    return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}), action: audit };
+  }
+
+  /** A6 (D8) `shadow`: the decision is logged and nothing acts; the turn continues as today (honest chat). */
+  private shadowAction(audit: NlActionAudit): NlSelectionDecision {
+    this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
+    return { kind: 'none' };
+  }
+
+  /** Ratification record A: which action "되돌려줘" (or the anchored `되돌리기`) undoes; never an undo of an undo. */
+  private async decideUndo(
+    turn: Pick<NlSelectionTurn, 'session' | 'actor' | 'now' | 'replyToMessageId' | 'turnId'>,
+    language: 'ko' | 'en',
+    latencyMs: number,
+    _resolution: NlResolutionOutcome,
+    reference: NlReferenceState = this.referenceState(turn),
+  ): Promise<NlSelectionDecision> {
+    const base = { entryId: 'action.undo', risk: 'LOCAL_WRITE' as NlCatalogRisk, refKind: 'none' as const, latencyMs, ...correlationOf(turn) };
+    const resolved = resolveUndo(reference);
+    if (resolved.kind === 'unresolved') {
+      const audit: NlActionAudit = { ...base, resolution: resolved.outcome === 'stale' ? 'stale' : 'none', result: 'refused', reason: resolved.outcome };
+      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      return this.actionAnswer(audit, renderUndoUnresolved(resolved.outcome, language));
+    }
+    const audit: NlActionAudit = { ...base, resolution: 'resolved', target: resolved.target, result: 'undone' };
+    if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+    if (!this.actionCaps.allows(turn.actor.id, 'LOCAL_WRITE', Date.parse(turn.now))) {
+      return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
+    }
+    this.actionCaps.note(turn.actor.id, 'LOCAL_WRITE', Date.parse(turn.now));
+    return { kind: 'execute', command: { entryId: 'action.undo', args: {}, language, target: resolved.target, undo: resolved.undo }, action: audit };
+  }
+
+  /** Record C: an explicit mode word wins (and overwrites the stored choice); else the stored choice; else ask once. */
+  private async contentMode(
+    turn: NlSelectionTurn,
+    args: NlArgs,
+    language: 'ko' | 'en',
+  ): Promise<{ readonly kind: 'value'; readonly value: string; readonly basis?: string } | { readonly kind: 'ask' }> {
+    const values = ITEM_CONTENT_MODE.values.map((value) => value.value);
+    const stored = readInterpretationPreference(turn.actor, ITEM_CONTENT_MODE.key, values, turn.now);
+    const explicit = typeof args.mode === 'string' ? args.mode : undefined;
+    if (explicit !== undefined) {
+      if (stored !== undefined && stored !== explicit && (await this.savePreference(turn, ITEM_CONTENT_MODE.key, explicit))) {
+        return { kind: 'value', value: explicit, basis: renderBasis(modeLabel(explicit, language), language, 'changed') };
+      }
+      return { kind: 'value', value: explicit };
+    }
+    if (stored !== undefined) return { kind: 'value', value: stored, basis: renderBasis(modeLabel(stored, language), language, undefined) };
+    return { kind: 'ask' };
+  }
+
+  /** A6-D2: a target question stores candidate ids only and is recorded as the most recent listing with its labels. */
+  private async askTarget(
+    turn: NlSelectionTurn,
+    language: 'ko' | 'en',
+    entryId: NlActionEntryId,
+    source: NlItemSource,
+    candidates: readonly ListingItem[],
+    args: NlArgs,
+    listingAt?: IsoTimestamp,
+  ): Promise<void> {
+    const enumArgs: Record<string, string> = {};
+    for (const name of ['source', 'scope', 'mode']) if (typeof args[name] === 'string') enumArgs[name] = args[name] as string;
+    await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
+      pendingQuestionRecord(turn.actor.id, {
+        kind: 'action-target',
+        at: turn.now,
+        language,
+        entryId,
+        source,
+        candidates: candidates.slice(0, 10),
+        args: enumArgs,
+        ...(listingAt !== undefined ? { listingAt } : {}),
+      }),
+    );
+    await this.writeSession(turn, LAST_LISTING_METADATA_KEY, (current) =>
+      withLabelledListing(current, turn.actor.id, source, candidates.slice(0, 10), turn.now, 'merge'),
+    );
+  }
+
+  /**
+   * The A6 input guard on an answer to an A6 question (Codex review P2): a long paste, hidden characters or an embedded
+   * command form is never an answer, so it never acts through one; the turn then routes normally (where any action
+   * decision meets the same guard). Logs the refusal.
+   */
+  private answerRefused(
+    pending: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' }>,
+    turn: NlSelectionTurn,
+    groundingText: string,
+  ): boolean {
+    const refusal = nlActionInputRefusal(turn.text, groundingText, markedMaterial(turn));
+    if (refusal === undefined) return false;
+    const entryId = pending.kind === 'action-target' ? pending.entryId : pending.kind === 'action-mode' ? 'item.summarize' : 'action.undo';
+    this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields({ entryId, risk: entryId === 'item.summarize' ? 'ITEM_READ' : 'LOCAL_WRITE', refKind: 'none', resolution: 'none', result: 'refused', reason: refusal, ...correlationOf(turn) }));
+    return true;
+  }
+
+  /** A6: the owner's answer to an open A6 question; `undefined` when the text is not an answer. */
+  private async answerActionQuestion(
+    pending: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' }>,
+    turn: NlSelectionTurn,
+    answerText: string,
+    language: 'ko' | 'en',
+  ): Promise<NlSelectionDecision | undefined> {
+    const offered = offeredMap(turn.entries);
+    if (pending.kind === 'action-target') {
+      const entry = offered.get(pending.entryId);
+      if (entry === undefined) return undefined;
+      const choice = resolveLabelChoice(answerText, pending.candidates.map((candidate) => candidate.label));
+      if (choice.kind === 'none') return undefined;
+      if (choice.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
+      const picked = pending.candidates[choice.index];
+      if (picked === undefined) return undefined;
+      const target: NlItemTarget = {
+        source: pending.source,
+        id: picked.id,
+        label: picked.label,
+        ...(pending.listingAt !== undefined ? { listingAt: pending.listingAt } : {}),
+      };
+      const audit: NlActionAudit = { entryId: pending.entryId, risk: entry.risk, refKind: 'index', resolution: 'resolved', target, result: 'executed', ...correlationOf(turn) };
+      if (!this.actionCaps.allows(turn.actor.id, entry.risk, Date.parse(turn.now))) return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
+      let args: NlArgs = pending.args;
+      let basis: string | undefined;
+      if (pending.entryId === 'item.summarize') {
+        const mode = await this.contentMode(turn, args, language);
+        if (mode.kind === 'ask') {
+          await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
+            pendingQuestionRecord(turn.actor.id, { kind: 'action-mode', at: turn.now, language, target, ...(args.scope === 'thread' ? { scope: 'thread' as const } : {}) }),
+          );
+          return this.actionAnswer({ ...audit, result: 'asked', reason: 'content-mode' }, renderPreferenceQuestion(ITEM_CONTENT_MODE, language));
+        }
+        args = { ...args, mode: mode.value };
+        basis = mode.basis;
+      }
+      this.actionCaps.note(turn.actor.id, entry.risk, Date.parse(turn.now));
+      return { kind: 'execute', command: { entryId: pending.entryId, args, language, target }, ...(basis !== undefined ? { basis } : {}), action: audit };
+    }
+    if (pending.kind === 'action-mode') {
+      if (!offered.has('item.summarize')) return undefined;
+      const labels = ITEM_CONTENT_MODE.values.map((value) => [value.label.ko, value.label.en, ...value.aliases]);
+      const resolved = resolveChoice(answerText, labels);
+      if (resolved.kind === 'none') return undefined;
+      if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
+      if (resolved.kind === 'unclear') {
+        await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, { ...pending, at: turn.now }));
+        return { kind: 'ask', text: renderPreferenceQuestion(ITEM_CONTENT_MODE, language) };
+      }
+      const mode = ITEM_CONTENT_MODE.values[resolved.index]?.value;
+      if (mode === undefined) return undefined;
+      const audit: NlActionAudit = { entryId: 'item.summarize', risk: 'ITEM_READ', refKind: 'index', resolution: 'resolved', target: pending.target, result: 'executed', ...correlationOf(turn) };
+      if (!this.actionCaps.allows(turn.actor.id, 'ITEM_READ', Date.parse(turn.now))) return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
+      await this.savePreference(turn, ITEM_CONTENT_MODE.key, mode);
+      this.actionCaps.note(turn.actor.id, 'ITEM_READ', Date.parse(turn.now));
+      const args: NlArgs = { source: pending.target.source, mode, ...(pending.scope === 'thread' ? { scope: 'thread' } : {}) };
+      return {
+        kind: 'execute',
+        command: { entryId: 'item.summarize', args, language, target: pending.target },
+        basis: renderBasis(modeLabel(mode, language), language, 'saved'),
+        action: audit,
+      };
+    }
+    // action-reschedule: the owner's own words carry the new time (parsed by the deterministic grammar in the handler).
+    if (!offered.has('action.undo') || !containsNlTimeExpression(answerText)) return undefined;
+    const when = normalizeNlSpan(answerText);
+    const audit: NlActionAudit = { entryId: 'action.undo', risk: 'LOCAL_WRITE', refKind: 'none', resolution: 'resolved', target: pending.target, result: 'undone', ...correlationOf(turn) };
+    if (!this.actionCaps.allows(turn.actor.id, 'LOCAL_WRITE', Date.parse(turn.now))) return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
+    this.actionCaps.note(turn.actor.id, 'LOCAL_WRITE', Date.parse(turn.now));
+    return {
+      kind: 'execute',
+      command: { entryId: 'action.undo', args: { when }, language, target: pending.target, undo: { entryId: 'reminder.cancel', version: pending.version } },
+      action: audit,
+    };
+  }
+
+  /** A6: write what a handler reported (listing, lastAction and echo label, question, reschedule) and log the dispatch. */
+  private async recordReceipt(input: Parameters<NlSelectionService['recordActionReceipt']>[0]): Promise<void> {
+    const { session, actor, message, now, action, listing, decided } = input;
+    const language = input.language ?? 'ko';
+    const turnRef = { session: { id: session.id } };
+    const write = (key: string, update: (current: unknown) => unknown) => this.writeSession(turnRef as NlSelectionTurn, key, update);
+    let echo = false;
+    let listed: ListingSource | undefined;
+    if (listing !== undefined) {
+      // An empty listing removes the slot: an older list of that source is never picked from after it.
+      await write(LAST_LISTING_METADATA_KEY, (current) => withLabelledListing(current, actor.id, listing.source, listing.items, now, 'listing', message.id));
+      if (listing.items.length > 0) listed = listing.source;
+    }
+    if (action !== undefined && (action.source === 'todo' || action.source === 'reminder')) {
+      const source = action.source;
+      if ((action.result === 'executed' || action.result === 'undone') && action.itemId !== undefined) {
+        const record: LastActionRecord = {
+          entryId: action.result === 'undone' ? 'action.undo' : action.entryId,
+          source,
+          itemId: action.itemId,
+          ...(action.label !== undefined ? { label: action.label } : {}),
+          ...(action.version !== undefined ? { version: action.version } : {}),
+          at: now,
+          undoable: action.result === 'executed' && action.undoable !== false,
+          undone: false,
+          ...(action.result === 'undone' && action.undoOf !== undefined ? { undoOf: action.undoOf } : {}),
+          requestId: message.id,
+          echoReplyIds: [],
+        };
+        await write(LAST_ACTION_METADATA_KEY, (current) => withLastAction(current, actor.id, record, now));
+        echo = true;
+        // A6-D2: the echo label merges into a fresh listing of the same source (or becomes it).
+        if (action.label !== undefined) {
+          const label = action.label;
+          const itemId = action.itemId;
+          await write(LAST_LISTING_METADATA_KEY, (current) => withLabelledListing(current, actor.id, source, [{ label, id: itemId }], now, 'merge', message.id));
+          listed ??= source;
+        }
+      } else if (action.result === 'asked' && action.candidates !== undefined && action.candidates.length > 0) {
+        const candidates = action.candidates.slice(0, 10);
+        await write(NL_PENDING_METADATA_KEY, () =>
+          pendingQuestionRecord(actor.id, { kind: 'action-target', at: now, language, entryId: action.entryId, source, candidates, args: {} }),
+        );
+        await write(LAST_LISTING_METADATA_KEY, (current) => withLabelledListing(current, actor.id, source, candidates, now, 'merge', message.id));
+        listed ??= source;
+      } else if (action.result === 'reschedule' && action.itemId !== undefined && action.version !== undefined && source === 'reminder') {
+        const target: NlItemTarget = { source, id: action.itemId, ...(action.label !== undefined ? { label: action.label } : {}) };
+        const version = action.version;
+        await write(NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(actor.id, { kind: 'action-reschedule', at: now, language, target, version }));
+      }
+    }
+    if (decided !== undefined) {
+      const result = action === undefined ? decided.result : action.result === 'reschedule' ? 'asked' : action.result;
+      this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields({ ...decided, result, ...(action?.reason !== undefined ? { reason: action.reason } : {}) }));
+    }
+    if (echo || listed !== undefined) this.awaitEcho(session.id, actor.id, message, now, echo, listed);
+  }
+
+  private awaitEcho(sessionId: string, actorId: string, message: { readonly id: string; readonly context: ConversationContext }, now: IsoTimestamp, echo: boolean, listing?: ListingSource): void {
+    const nowMs = Date.parse(now);
+    for (const [key, pending] of this.echoReceipts) {
+      const age = nowMs - Date.parse(pending.at);
+      if (!Number.isFinite(age) || age < 0 || age >= ECHO_RECEIPT_TTL_MS) this.echoReceipts.delete(key);
+    }
+    const key = echoKey(message.id, message.context);
+    this.echoReceipts.delete(key);
+    this.echoReceipts.set(key, { sessionId, actorId, requestId: message.id, at: now, echo, ...(listing !== undefined ? { listing } : {}) });
+    while (this.echoReceipts.size > ECHO_RECEIPTS_MAX) {
+      const oldest = this.echoReceipts.keys().next().value;
+      if (oldest === undefined) break;
+      this.echoReceipts.delete(oldest);
+    }
   }
 
   // ── shadow ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -630,7 +1276,7 @@ export class NlSelectionService {
     if (output.entryId !== null) {
       const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args));
       if (!validated.ok) outcome = 'INVALID';
-      else if (output.ambiguity === 'CLEAR') executable = { entryId: validated.value.entry.id, args: validated.value.args };
+      else if (output.ambiguity === 'CLEAR' && isNlWave1EntryId(validated.value.entry.id)) executable = { entryId: validated.value.entry.id, args: validated.value.args };
     }
     if (turn.grammar !== undefined) {
       this.logAgreement(turn, {
@@ -665,7 +1311,13 @@ export class NlSelectionService {
     return prepared;
   }
 
-  private async select(turn: NlSelectionTurn, prepared: PreparedSelectionInput, last: LastSelection | undefined, signal?: AbortSignal): Promise<SelectOutcome> {
+  private async select(
+    turn: NlSelectionTurn,
+    prepared: PreparedSelectionInput,
+    last: LastSelection | undefined,
+    signal?: AbortSignal,
+    reference?: NlReferenceState,
+  ): Promise<SelectOutcome> {
     const clock = this.deps.elapsed ?? Date.now;
     const started = clock();
     const previous = last === undefined ? undefined : { entryId: last.entryId, args: last.args };
@@ -680,19 +1332,28 @@ export class NlSelectionService {
     }
     const egress = sameEgress(provider, turn.chatProviderId, turn.chatProviderLocality);
     if (egress !== 'same') return { kind: 'egress-refused', reason: egress };
+    // A6-D3: a turn with any fresh reference record bypasses the cache (no read, no write); an action, ITEM_READ or ref
+    // output is never stored and never served, so a side-effecting choice always reflects this turn's state.
+    const actionsOn = reference !== undefined;
+    const bypass = actionsOn && hasReferenceRecord(reference);
     const cacheKey = JSON.stringify([
       turn.actor.id,
       normalizeForMatch(prepared.text),
       previous ?? null,
       turn.entries.map((entry) => entry.id),
     ]);
-    const hit = this.cache.get(cacheKey);
-    if (hit !== undefined && clock() - hit.at < NL_SELECTION_CACHE_TTL_MS) {
+    const hit = bypass ? undefined : this.cache.get(cacheKey);
+    if (hit !== undefined && clock() - hit.at < NL_SELECTION_CACHE_TTL_MS && !(actionsOn && !isCacheableOutput(hit.output))) {
       return { kind: 'output', output: hit.output, latencyMs: Math.max(0, clock() - started), cached: true };
     }
     if (hit !== undefined) this.cache.delete(cacheKey);
     const timeoutMs = this.deps.timeoutMs ?? NL_SELECTION_TIMEOUT_MS;
-    const prompt = buildSelectionPrompt({ entries: turn.entries, text: prepared.text, ...(previous !== undefined ? { previous } : {}) });
+    const prompt = buildSelectionPrompt({
+      entries: turn.entries,
+      text: prepared.text,
+      ...(previous !== undefined ? { previous } : {}),
+      ...(reference !== undefined ? { actions: { referenceContext: renderReferenceContext(reference) } } : {}),
+    });
     let rawText: string;
     try {
       const result = await withTimeout(
@@ -706,24 +1367,27 @@ export class NlSelectionService {
     const latencyMs = Math.max(0, clock() - started);
     const output = parseSelectionOutput(rawText);
     if (output === null) return { kind: 'unavailable', cause: 'malformed', latencyMs };
-    this.cache.set(cacheKey, { at: clock(), output });
-    while (this.cache.size > NL_SELECTION_CACHE_MAX_ENTRIES) {
-      const oldest = this.cache.keys().next().value;
-      if (oldest === undefined) break;
-      this.cache.delete(oldest);
+    if (!bypass && (!actionsOn || isCacheableOutput(output))) {
+      this.cache.set(cacheKey, { at: clock(), output });
+      while (this.cache.size > NL_SELECTION_CACHE_MAX_ENTRIES) {
+        const oldest = this.cache.keys().next().value;
+        if (oldest === undefined) break;
+        this.cache.delete(oldest);
+      }
     }
     return { kind: 'output', output, latencyMs, cached: false };
   }
 
   // ── state ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  private validationContext(turn: NlSelectionTurn, groundingText: string, previousArgs: NlArgs | undefined): NlValidationContext {
+  private validationContext(turn: NlSelectionTurn, groundingText: string, previousArgs: NlArgs | undefined, actions = false): NlValidationContext {
     return {
       offered: offeredMap(turn.entries),
       groundingText,
       ...(previousArgs !== undefined ? { previousArgs } : {}),
       now: turn.now,
       timeZone: this.deps.timeZone,
+      ...(actions ? { actions: true } : {}),
     };
   }
 
@@ -997,4 +1661,57 @@ function renderUsageQuestion(entry: NlCatalogEntry, language: 'ko' | 'en'): stri
   return language === 'en'
     ? `I could not tell exactly what to look up in ${pick(entry.label, language)}. Please say it like ${pick(entry.usage, language)}.`
     : `${pick(entry.label, language)}에서 무엇을 찾을지 정확히 모르겠어요. ${pick(entry.usage, language)}처럼 말씀해 주세요.`;
+}
+
+/** A6-D3: only `none` and READ outputs (main and alternatives) may be cached while actions are offered. */
+function isCacheableOutput(output: NlSelectionOutput): boolean {
+  if (output.entryId !== null && !isNlWave1EntryId(output.entryId)) return false;
+  return output.alternatives.every((alternative) => isNlWave1EntryId(alternative.entryId));
+}
+
+/** The closed ref kind of a selector output, for the audit line. */
+function refKindOf(args: NlArgs): NlActionAudit['refKind'] {
+  if (typeof args.match === 'string') return 'match';
+  const ref = parseNlRef(args.ref);
+  return ref === undefined ? 'none' : ref.kind;
+}
+
+/** The fixed answer to an A6 validation failure (A6-D1/D3). */
+function validationReply(reason: string, language: 'ko' | 'en'): string {
+  switch (reason) {
+    case 'deictic-payload':
+      return renderDeicticPayload(language);
+    case 'time-in-title':
+      return renderTimeInTitle(language);
+    case 'time-outside-when':
+      return renderTimeOutsideWhen(language);
+    case 'bulk':
+      return renderBulk(language);
+    case 'credential':
+      return language === 'en'
+        ? 'That looks like a password or token, so I will not store it. Nothing was changed.'
+        : '비밀번호나 토큰처럼 보이는 내용은 저장하지 않아요. 아무것도 바꾸지 않았어요.';
+    default:
+      return renderRestate(language);
+  }
+}
+
+function modeLabel(mode: string, language: 'ko' | 'en'): string {
+  const value = ITEM_CONTENT_MODE.values.find((candidate) => candidate.value === mode);
+  return value === undefined ? mode : language === 'en' ? value.label.en : value.label.ko;
+}
+
+/** A6: one inbound message (platform message ids are unique only per conversation). */
+function echoKey(messageId: string, context: { readonly platform: string; readonly channelId: string }): string {
+  return JSON.stringify([context.platform, context.channelId, messageId]);
+}
+
+/** A6-D3: the correlation fields of an audit line (session id and turn id), never content. */
+function correlationOf(turn: Pick<NlSelectionTurn, 'session' | 'turnId'>): { readonly sessionId: string; readonly turnId?: string } {
+  return { sessionId: turn.session.id, ...(turn.turnId !== undefined ? { turnId: turn.turnId } : {}) };
+}
+
+/** A6: the platform marked part of the message as quoted or as code: material, never one plain instruction. */
+function markedMaterial(turn: Pick<NlSelectionTurn, 'quotedRanges' | 'codeFormatted'>): boolean {
+  return (turn.quotedRanges ?? []).length > 0 || turn.codeFormatted === true;
 }

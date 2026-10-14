@@ -1,4 +1,4 @@
-import type { Id, IsoTimestamp, Reminder, ReminderDraft, ReminderFiringCompletion } from '../domain';
+import type { ActionWriteCondition, Id, IsoTimestamp, Reminder, ReminderDraft, ReminderFiringCompletion } from '../domain';
 
 /**
  * PORT: owner reminder persistence (ADR-0101 D4/D9; DI token `REMINDER_REPOSITORY`).
@@ -12,7 +12,9 @@ import type { Id, IsoTimestamp, Reminder, ReminderDraft, ReminderFiringCompletio
 export type CreateReminderResult =
   | { status: 'CREATED'; reminder: Reminder }
   /** The owner already has `maxActive` SCHEDULED/FIRING reminders; nothing was written. */
-  | { status: 'LIMIT_REACHED'; activeCount: number };
+  | { status: 'LIMIT_REACHED'; activeCount: number }
+  /** ADR-0120 A6-D3: the write's condition failed (the actor's action switch was stopped); nothing was written. */
+  | { status: 'STOPPED' };
 
 export type CancelReminderResult =
   | { status: 'CANCELED'; reminder: Reminder }
@@ -20,25 +22,42 @@ export type CancelReminderResult =
   /** Already COMPLETED, CANCELED, FAILED or DELIVERY_UNCERTAIN; unchanged. */
   | { status: 'ALREADY_FINAL'; reminder: Reminder }
   /** FIRING: it is being sent right now and cannot be canceled. */
-  | { status: 'IN_FLIGHT'; reminder: Reminder };
+  | { status: 'IN_FLIGHT'; reminder: Reminder }
+  /** ADR-0120 A6-D3: the write's condition failed; nothing was written. */
+  | { status: 'STOPPED' };
 
 export type CompleteFiringResult =
   | { status: 'COMPLETED'; reminder: Reminder }
   /** The reminder is no longer FIRING under this attempt id; nothing was written. */
   | { status: 'CONFLICT' };
 
+/** ADR-0120 amendment A6 (ratification record B): the outcome of the undo-only reactivation. */
+export type ReactivateReminderResult =
+  | { status: 'REACTIVATED'; reminder: Reminder }
+  | { status: 'NOT_FOUND' }
+  /** No longer CANCELED, or changed since the cancel being undone (the version differs); nothing was written. */
+  | { status: 'CHANGED'; reminder: Reminder }
+  /** The owner already has `maxActive` SCHEDULED/FIRING reminders; nothing was written. */
+  | { status: 'LIMIT_REACHED'; activeCount: number }
+  /** ADR-0120 A6-D3: the write's condition failed; nothing was written. */
+  | { status: 'STOPPED' };
+
+/**
+ * ADR-0120 amendment A6-D3: every write method below takes an optional `condition`; the store evaluates it inside the same
+ * IMMEDIATE transaction as the write, right before it, and answers `STOPPED` (nothing written) when it fails.
+ */
 export interface ReminderRepository {
   /**
    * Atomically count the actor's active reminders and, below `maxActive`, store the draft with the next stable
    * per-actor `displayNo` (one more than the highest ever assigned to that actor; numbers are never reused).
    */
-  createWithinLimit(draft: ReminderDraft, maxActive: number): Promise<CreateReminderResult>;
+  createWithinLimit(draft: ReminderDraft, maxActive: number, condition?: ActionWriteCondition): Promise<CreateReminderResult>;
   /** The actor's SCHEDULED and FIRING reminders, ordered by `displayNo` ascending. */
   listActiveByActor(actorId: Id): Promise<Reminder[]>;
   /** The actor's reminder with that number in any status, or null. Owner-scoped: never another actor's. */
   getByDisplayNo(actorId: Id, displayNo: number): Promise<Reminder | null>;
   /** Conditional SCHEDULED → CANCELED for the actor's reminder `displayNo`. */
-  cancel(actorId: Id, displayNo: number, at: IsoTimestamp): Promise<CancelReminderResult>;
+  cancel(actorId: Id, displayNo: number, at: IsoTimestamp, condition?: ActionWriteCondition): Promise<CancelReminderResult>;
   /**
    * Atomically move at most `limit` SCHEDULED reminders with `nextFireAt <= now` (earliest first) to FIRING,
    * stamping `attemptId` and `firingStartedAt = now`; returns the claimed reminders.
@@ -48,4 +67,11 @@ export interface ReminderRepository {
   completeFiring(id: Id, attemptId: Id, completion: ReminderFiringCompletion): Promise<CompleteFiringResult>;
   /** Every FIRING reminder (startup recovery treats each as `UNCERTAIN`, never resends). */
   listFiring(): Promise<Reminder[]>;
+  /**
+   * ADR-0120 amendment A6 (record B), the A6 undo path ONLY: atomically replace the actor's CANCELED reminder `next.id`
+   * with `next` (a SCHEDULED value computed by `reactivateReminder`), compare-and-set on status `CANCELED` and the stored
+   * `updatedAt` equal to `expectedUpdatedAt`, and only while the actor has fewer than `maxActive` active reminders (the
+   * `createWithinLimit` rule). The row keeps its `displayNo`.
+   */
+  reactivate(actorId: Id, next: Reminder, expectedUpdatedAt: IsoTimestamp, maxActive: number, condition?: ActionWriteCondition): Promise<ReactivateReminderResult>;
 }

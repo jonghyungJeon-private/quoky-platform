@@ -539,12 +539,29 @@ describe('loadConfig — egress guard (ADR-0121 S0)', () => {
 
 describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
   it('defaults to off with the haiku selection model, and accepts exactly off, shadow or active', () => {
-    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, phase: 'a', timeoutMs: 6000 });
+    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, phase: 'a', timeoutMs: 6000, actions: 'off' });
     expect(loadConfig(env({})).ai.intentSelectionModel).toBe('haiku');
     for (const mode of ['off', 'shadow', 'active'] as const) {
       expect(loadConfig(env({ QUOKY_NL_INTENT_MODE: mode })).nlSelection.mode).toBe(mode);
     }
     expect(loadConfig(env({ QUOKY_NL_INTENT_MODEL: 'claude-haiku-4-5' })).ai.intentSelectionModel).toBe('claude-haiku-4-5');
+  });
+
+  it('QUOKY_NL_ACTIONS (amendment A6-D8): default off, exact values, any level but off needs QUOKY_NL_INTENT_MODE=active', () => {
+    expect(loadConfig(env({})).nlSelection.actions).toBe('off');
+    for (const level of ['off', 'shadow', 'local'] as const) {
+      expect(loadConfig(env({ QUOKY_NL_INTENT_MODE: 'active', QUOKY_NL_ACTIONS: level })).nlSelection.actions).toBe(level);
+    }
+    // R3 is not built: `external` is refused at startup.
+    expect(() => loadConfig(env({ QUOKY_NL_INTENT_MODE: 'active', QUOKY_NL_ACTIONS: 'external' }))).toThrow(/^NL_ACTIONS_EXTERNAL_NOT_AVAILABLE$/);
+    expect(loadConfig(env({ QUOKY_NL_ACTIONS: 'off' })).nlSelection.actions).toBe('off');
+    for (const value of ['', 'on', 'Local', 'true', ' local']) {
+      expect(() => loadConfig(env({ QUOKY_NL_INTENT_MODE: 'active', QUOKY_NL_ACTIONS: value })), value).toThrow(/^NL_ACTIONS_INVALID$/);
+    }
+    for (const mode of [undefined, 'off', 'shadow'] as const) {
+      const vars = mode === undefined ? { QUOKY_NL_ACTIONS: 'local' } : { QUOKY_NL_INTENT_MODE: mode, QUOKY_NL_ACTIONS: 'local' };
+      expect(() => loadConfig(env(vars)), String(mode)).toThrow(/^NL_ACTIONS_REQUIRES_ACTIVE$/);
+    }
   });
 
   it.each(['', 'ON', 'Active', 'true', 'phase-c', ' active'])('rejects a non-exact mode %j without echoing it', (value) => {

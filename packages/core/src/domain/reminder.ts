@@ -411,6 +411,29 @@ export function cancelReminder(reminder: Reminder, at: IsoTimestamp): Reminder {
 }
 
 /**
+ * ADR-0120 amendment A6, ratification record B (narrowly amends ADR-0101 D4): CANCELED → SCHEDULED for the SAME reminder
+ * (same id, same `#N`), ONLY from the A6 undo path (the inverse of a cancel). `nextFireAt` is the next occurrence after
+ * now (a recurring one resumes there; missed occurrences are never sent); `schedule` replaces a one-shot's instant when
+ * the owner gave a new time. The repository applies it with a compare-and-set on `CANCELED` and the expected version,
+ * within the active limit. Pure.
+ */
+export function reactivateReminder(reminder: Reminder, at: IsoTimestamp, nextFireAt: IsoTimestamp, schedule?: ReminderSchedule): Reminder {
+  if (reminder.status !== ReminderStatus.CANCELED) throw new InvalidReminderTransitionError(reminder.status, ReminderStatus.SCHEDULED, 'reactivate');
+  if (!isIsoInstant(nextFireAt) || Date.parse(nextFireAt) <= Date.parse(at)) throw new InvalidReminderError('FIRE_TIME_INVALID');
+  const nextSchedule = schedule ?? reminder.schedule;
+  if (!isValidReminderSchedule(nextSchedule) || (schedule !== undefined && reminder.schedule.type !== schedule.type)) throw new InvalidReminderError('SCHEDULE_INVALID');
+  return {
+    ...withoutKeys(reminder, ['firingAttemptId', 'firingStartedAt']),
+    status: ReminderStatus.SCHEDULED,
+    schedule: nextSchedule,
+    occurrenceAt: nextFireAt,
+    nextFireAt,
+    attempt: 0,
+    updatedAt: at,
+  };
+}
+
+/**
  * SCHEDULED → SCHEDULED: a recurring occurrence missed beyond the 60-minute catch-up is skipped (never sent) and
  * the reminder moves to its next occurrence with `lastOutcome = SKIPPED_MISSED`.
  */

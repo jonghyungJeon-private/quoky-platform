@@ -5,6 +5,17 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### v5 NL actions R0 (ADR-0120 amendment A6) — on branch `claude/v5-a6-r0` (2026-10-14)
+
+The A6 code is merged-ready but inert: `QUOKY_NL_ACTIONS` defaults to `off`, and with `off` the selector prompt is
+`nl-select.v18` byte for byte and every reply is unchanged (pinned by a prompt golden and a 791-case replay). R0 adds the
+action catalog and validation, labelled to-do / reminder listing slots, `quoky.lastAction`, deterministic item references,
+the per-action undo inverses (two undo-only domain transitions, one additive `ReminderRepository.reactivate`; no
+migration, no new runtime deps key), `item.summarize` summary / full, the persisted kill switch, caps, audit logs, the
+`eval:nl` action and read-regression modes and the red-team harness. Not authorised yet (Strict, owner): R1 `shadow` /
+`local`, model runs, `.env.local` edits, live sessions; the corpus batches (relabel, red team) are drafted on
+`claude/v5-a6-corpus`. Details: the A6 R0 implementation note in `DECISIONS.md`.
+
 ### v5 NL read-side fixes (live UAT 2026-10-14) — on branch `claude/v5-nl-uat-fixes` (2026-10-14)
 
 ADR-0120 amendment A5 (**Proposed**, awaiting the owner's yes): typed args `mail.list` `range`/`item`, `calendar.events`

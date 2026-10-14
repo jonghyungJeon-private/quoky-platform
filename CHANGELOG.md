@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — NL actions R0, inert (ADR-0120 amendment A6, 2026-10-14)
+
+- **Flag.** `QUOKY_NL_ACTIONS` = `off` (default) | `shadow` | `local` | `external`. With `off` the selector prompt is
+  `nl-select.v18` byte for byte and every reply is unchanged; any other level needs `QUOKY_NL_INTENT_MODE=active` and the
+  persisted kill switch (`에이전트 중지` / `에이전트 재개`, `Actor.metadata`).
+- **Action entries.** `todo.add`, `todo.complete`, `todo.cancel`, `reminder.create`, `reminder.cancel`, `action.undo`,
+  `item.summarize` (mail, Drive; `mode` summary | full). Payloads are the owner's verbatim spans from the current turn;
+  references resolve in code against the most recent listing; undo is a per-action inverse (`reopenWorkItem`,
+  `reactivateReminder` with one CAS repository method; no migration). Prompt `nl-select.v19` when actions are offered.
+- **Safety.** Action outputs are never cached or stored as `lastSelection`; caps; content-free `nl_action.decided` logs;
+  a D9 stale-command guard; the full text of an item is rendered in untrusted spans with no model call.
+- **Eligibility.** An action request is one plain line (A6-D3a): line separators are checked on the raw text, structure
+  and command checks also on an NFKC-folded copy, Telegram `code`/`pre` entities reach Core as the content-free
+  `InboundMessage.formatting.code` flag, and the anchored `되돌리기` follows the same rule. TAB counts as a control,
+  only a plain space may pad the line, and the colons of an http(s) URL token and of an `HH:MM` time are not read as
+  `key:` labels (nothing else is exempt). A store without the
+  atomic `saveIf` never takes a conditioned to-do write, and the stopped reply follows the turn language.
+- **Tooling.** `pnpm eval:nl -- --mode action` and `--mode read-regression`; the A6 red-team harness; seed fixtures; the
+  corpus schema in `docs/plans/nl-action-corpus-schema.md`; offline acceptance `personal-v5-a6-acceptance.test.ts`.
+
 ## Unreleased — NL read-side gaps from the 2026-10-14 live UAT (ADR-0120 amendment A5, Proposed)
 
 - **Mail period.** `mail.list` takes a symbolic `range` (yesterday, this-week, last-week, a weekday …); it reaches Gmail as an

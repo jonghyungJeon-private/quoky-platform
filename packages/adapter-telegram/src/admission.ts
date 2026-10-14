@@ -80,6 +80,11 @@ export interface AdmittedTelegramMessage {
    */
   readonly quotedRanges?: readonly { readonly start: number; readonly end: number }[];
   /**
+   * ADR-0120 amendment A6: the text carried a `code` or `pre` entity (code or preformatted text whose markers are not in
+   * `text`). Content-free: only the fact, never the entity's text or language.
+   */
+  readonly codeFormatted?: true;
+  /**
    * GML-2 (ADR-0118 amendment of 2026-10-12): the `message_id` of the message this one replies to (`reply_to_message`)
    * in the same private chat. Absent when it is not a reply. Nothing of the replied-to message (its text, author or
    * entities) is kept.
@@ -240,7 +245,9 @@ export function admitTelegramUpdate(
   if (id === undefined || typeof date !== 'number' || !Number.isFinite(date)) return drop('malformed');
   if (nowSeconds - date > MAX_UPDATE_AGE_SECONDS) return ownerDrop('stale', userId);
   const mediaGroupId = attachments.length > 0 ? mediaGroupIdOf(record.media_group_id) : undefined;
-  const quotedRanges = quotedRangesOf(stringOf(record.text) !== undefined ? record.entities : record.caption_entities, (text ?? '').length);
+  const entities = stringOf(record.text) !== undefined ? record.entities : record.caption_entities;
+  const quotedRanges = quotedRangesOf(entities, (text ?? '').length);
+  const codeFormatted = hasCodeEntity(entities);
   const replyToMessageId = replyToMessageIdOf(record.reply_to_message, userId);
   return {
     kind: 'admitted',
@@ -254,6 +261,7 @@ export function admitTelegramUpdate(
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(mediaGroupId !== undefined ? { mediaGroupId } : {}),
       ...(quotedRanges.length > 0 ? { quotedRanges } : {}),
+      ...(codeFormatted ? { codeFormatted: true as const } : {}),
       ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),
     },
   };
@@ -268,6 +276,12 @@ function replyToMessageIdOf(value: unknown, chatId: string): string | undefined 
   const { message_id: messageId, chat } = value as { message_id?: unknown; chat?: unknown };
   if (typeof chat === 'object' && chat !== null && idOf((chat as { id?: unknown }).id) !== chatId) return undefined;
   return idOf(messageId);
+}
+
+/** ADR-0120 A6: whether the entities mark code or preformatted text (the text itself no longer shows the markers). */
+function hasCodeEntity(entities: unknown): boolean {
+  if (!Array.isArray(entities)) return false;
+  return entities.slice(0, 256).some((entity) => typeof entity === 'object' && entity !== null && ['code', 'pre'].includes((entity as { type?: unknown }).type as string));
 }
 
 /** At most this many quoted ranges are kept per message (a malformed or hostile entity list is cut, never thrown on). */

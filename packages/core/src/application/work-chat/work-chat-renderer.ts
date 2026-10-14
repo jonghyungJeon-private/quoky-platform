@@ -394,3 +394,87 @@ export function renderExternalWorkList(readout: ExternalWorkReadout): MessageBod
   }
   return fit(lines);
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// ADR-0120 amendment A6: echo lines of natural-language to-do actions (never used by the anchored grammar)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * ADR-0120 amendment A6-D2: how many to-do rows `renderMyWork` certainly shows. The reply is fitted to its budget on the
+ * RENDERED text of the platform (droppable rows go from the end, the work-surface rows first), so this counts each row at
+ * twice its plain length (the worst escaping) against the budget minus a reserve for the fixed lines. It may record fewer
+ * labels than the owner sees (then a number asks), never one the budget cut.
+ */
+export function renderedTodoRows(todos: readonly WorkItem[]): number {
+  const budget = WORK_CHAT_REPLY_MAX_CHARS - 400;
+  let used = 0;
+  let shown = 0;
+  for (const [index, item] of todos.slice(0, TODO_LIST_MAX_ROWS).entries()) {
+    const refs = item.resourceRefs.slice(0, REFS_SHOWN).reduce((sum, ref) => sum + Array.from(ref.identity).length + 2, item.resourceRefs.length > 0 ? 12 : 0);
+    const length = `${index + 1}. `.length + 2 * (Array.from(clip(item.title ?? '(제목 없는 항목)', LIST_TITLE_MAX_CHARS)).length + refs) + 1;
+    if (used + length > budget) break;
+    used += length;
+    shown += 1;
+  }
+  return shown;
+}
+
+/** A6-D3: the undo hint of every A6 local write (the 10-minute `lastAction` window). */
+export const NL_ACTION_UNDO_HINT = '되돌리기: "되돌려줘" (10분)';
+
+/** The number of a to-do as the owner sees it: its position among the open to-dos (createdAt order), 1-based. */
+export function todoNumberOf(todos: readonly WorkItem[], id: string): number | undefined {
+  const index = todos.findIndex((item) => item.id === id);
+  return index < 0 ? undefined : index + 1;
+}
+
+/** `할 일 7번으로 추가했어요: "UAT 결과 정리" · 되돌리기: "되돌려줘" (10분)` (A6-D3 echo). */
+export function renderTodoActionAdded(item: WorkItem, no: number): MessageBody {
+  return fit([{ text: messageContent(`할 일 ${no}번으로 추가했어요: "`, titleOf(item, 200), `" · ${NL_ACTION_UNDO_HINT}`) }]);
+}
+
+/** Completed or taken off the list (record decision 3: a cancel reads "목록에서 뺐어요"). */
+export function renderTodoActionTransitioned(item: WorkItem, no: number | undefined, action: 'complete' | 'cancel'): MessageBody {
+  const head = no === undefined ? '할 일을' : `할 일 ${no}번을`;
+  const verb = action === 'complete' ? '완료 처리했어요' : '목록에서 뺐어요';
+  return fit([{ text: messageContent(`${head} ${verb}: "`, titleOf(item, 200), `" · ${NL_ACTION_UNDO_HINT}`) }]);
+}
+
+/** The inverse of a completion or a cancel: the same to-do is open again under its current number. */
+export function renderTodoActionReopened(item: WorkItem, no: number | undefined): MessageBody {
+  const head = no === undefined ? '할 일을' : `할 일 ${no}번을`;
+  return fit([{ text: messageContent(`${head} 다시 열었어요: "`, titleOf(item, 200), '"') }]);
+}
+
+/** The inverse of an add: that to-do is canceled. */
+export function renderTodoActionAddUndone(item: WorkItem): MessageBody {
+  return fit([{ text: messageContent('방금 추가한 할 일을 취소했어요: "', titleOf(item, 200), '"') }]);
+}
+
+/** An inverse that cannot run (record A): said plainly, nothing changed. */
+export function renderTodoUndoRefused(reason: 'already-final' | 'changed' | 'not-found' | 'not-final'): string {
+  switch (reason) {
+    case 'already-final':
+      return '이미 완료/취소된 할 일이라 되돌릴 게 없어요.';
+    case 'changed':
+      return '그 뒤에 바뀐 할 일이라 되돌리지 않았어요. 아무것도 바꾸지 않았어요.';
+    case 'not-final':
+      return '그 할 일은 이미 열려 있어요. 아무것도 바꾸지 않았어요.';
+    case 'not-found':
+      return '되돌릴 할 일을 찾지 못했어요. 아무것도 바꾸지 않았어요.';
+  }
+}
+
+/** A6-D2 execution-time check: the target is gone or no longer open. */
+export function renderTodoActionNotActionable(): string {
+  return '그 할 일은 이미 완료되었거나 목록에서 빠졌어요. 아무것도 바꾸지 않았어요.';
+}
+
+/** A `match` that names no single open to-do: the candidates under their own numbers (A6-D2), nothing changed. */
+export function renderTodoActionWhich(candidates: ReadonlyArray<{ no: number; item: WorkItem }>): MessageBody {
+  if (candidates.length === 0) return fit([{ text: '그 이름의 열린 할 일을 찾지 못했어요. 아무것도 바꾸지 않았어요. 몇 번인지 말씀해 주세요.' }]);
+  return fit([
+    { text: '어느 할 일인가요? 번호로 답해 주세요. 아직 아무것도 바꾸지 않았어요.' },
+    ...candidates.slice(0, 10).map(({ no, item }) => ({ text: messageContent(`${no}. `, titleOf(item)), droppable: true })),
+  ]);
+}

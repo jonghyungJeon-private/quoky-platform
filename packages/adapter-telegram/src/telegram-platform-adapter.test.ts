@@ -640,6 +640,20 @@ describe('Telegram long polling: offset, admission drops, backoff', () => {
     await h.adapter.stop();
   });
 
+  it('ADR-0120 A6: a code or pre entity reaches Core only as the content-free `formatting.code` flag', async () => {
+    const coded = textUpdate(63, '1번 완료해줘');
+    (coded.message as Record<string, unknown>).entities = [{ type: 'pre', offset: 0, length: 3, language: 'yaml' }];
+    const plain = textUpdate(64, '2번 완료해줘');
+    const fake = new FakeTelegram().queue('getUpdates', okReply([])).queue('getUpdates', okReply([coded, plain]));
+    const h = harness(fake);
+    await h.adapter.start();
+    await until(() => h.received.length === 2);
+    expect(h.received[0]).toMatchObject({ text: '1번 완료해줘', formatting: { code: true } });
+    expect(JSON.stringify(h.received[0])).not.toContain('yaml');
+    expect(h.received[1]).not.toHaveProperty('formatting');
+    await h.adapter.stop();
+  });
+
   it('GML-2: a reply carries the replied-to message as an opaque `chatId:messageId` key (the receipt form), nothing else of it', async () => {
     const reply = textUpdate(62, '2번 요약해줘');
     (reply.message as Record<string, unknown>).reply_to_message = {
@@ -1331,5 +1345,10 @@ describe('mergeAlbum quoted ranges (ADR-0120 D8)', () => {
     const only = part('a', 'solo', [{ start: 0, end: 2 }]);
     expect(mergeAlbum([only])).toBe(only);
     expect(mergeAlbum([part('a', 'one'), part('b', 'two')]).quotedRanges).toBeUndefined();
+  });
+
+  it('ADR-0120 A6: the album is code-formatted when any part is, and not otherwise', () => {
+    expect(mergeAlbum([part('a', 'one'), { ...part('b', 'two'), codeFormatted: true }]).codeFormatted).toBe(true);
+    expect(mergeAlbum([part('a', 'one'), part('b', 'two')])).not.toHaveProperty('codeFormatted');
   });
 });

@@ -1,3 +1,4 @@
+import type { ActionWriteCondition } from '../domain/action-write-condition';
 import type {
   Capability,
   ContinuationBinding,
@@ -187,6 +188,12 @@ export interface WorkItemRepository extends Repository<WorkItem> {
   listByActor(actorId: Id): Promise<WorkItem[]>;
   /** Work correlated to an external input, without persisting connector DTOs. */
   listByResource(resource: ResourceRef): Promise<WorkItem[]>;
+  /**
+   * ADR-0120 amendment A6-D3: save `item` only while `condition` holds, evaluated atomically with the write (same
+   * transaction). Resolves `null` (nothing written) when the actor's action switch is stopped. Optional: a store without
+   * it is used through a check-then-save fallback.
+   */
+  saveIf?(item: WorkItem, condition: ActionWriteCondition): Promise<WorkItem | null>;
 }
 
 export interface ApprovalRepository extends Repository<ApprovalRequest> {

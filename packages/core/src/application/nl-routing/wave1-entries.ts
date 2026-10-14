@@ -1,4 +1,4 @@
-import type { NlAmbiguityKey, NlArgs, NlArgValue, NlCatalogEntry, NlCatalogEntryId } from './catalog';
+import type { NlAmbiguityKey, NlArgs, NlArgValue, NlCatalogEntry, NlWave1EntryId } from './catalog';
 import { nlRangeLabel, type NlResolvedRange } from './symbolic-time';
 
 /**
@@ -416,7 +416,7 @@ const helpTopic: NlCatalogEntry = {
   usage: { ko: '"도움말"', en: '"help"' },
 };
 
-export const NL_WAVE1_ENTRIES: Readonly<Record<NlCatalogEntryId, NlCatalogEntry>> = Object.freeze({
+export const NL_WAVE1_ENTRIES: Readonly<Record<NlWave1EntryId, NlCatalogEntry>> = Object.freeze({
   'jira.issues': jiraIssues,
   'github.items': githubItems,
   'slack.search': searchEntry('slack.search', 'Slack', ['slack', '슬랙'], '슬랙에서 키워드 검색.'),
@@ -431,6 +431,6 @@ export const NL_WAVE1_ENTRIES: Readonly<Record<NlCatalogEntryId, NlCatalogEntry>
 });
 
 /** The wave-1 entry of `id`. */
-export function nlWave1Entry(id: NlCatalogEntryId): NlCatalogEntry {
+export function nlWave1Entry(id: NlWave1EntryId): NlCatalogEntry {
   return NL_WAVE1_ENTRIES[id];
 }

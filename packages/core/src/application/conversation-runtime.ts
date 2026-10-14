@@ -65,7 +65,7 @@ import {
   mentionsConnectorWriteExecutionStep,
 } from './connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
-import { messageBody, outboundBody, outboundMessage, withOutboundBody } from './message-rendering';
+import { isDirectConversation, messageBody, outboundBody, outboundMessage, withOutboundBody } from './message-rendering';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance, isPendingCancelUtterance } from './approval-decision';
 import {
   ApprovalDecisionService,
@@ -91,10 +91,11 @@ import {
   externalActionRequestOf,
   type IntentClassifyContext,
 } from './intent-classifier';
-import type { NlCatalogEntry, NlClassBProbe } from './nl-routing/catalog';
+import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe } from './nl-routing/catalog';
 import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './nl-routing/honest-chat';
-import { languageOf, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
-import { LAST_SELECTION_METADATA_KEY, type PendingQuestion } from './nl-routing/selection-state';
+import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
+import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from './nl-routing/nl-action-policy';
+import { LAST_SELECTION_METADATA_KEY, isActionPendingQuestion, type PendingQuestion } from './nl-routing/selection-state';
 import { codeGenerationDispatchOfError } from './code-generation-manager';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '../domain';
@@ -1053,7 +1054,29 @@ export interface ConversationRuntimeDeps {
    * validation, the clarification state, `lastSelection` and the interpretation preferences belong to the service.
    */
   readonly nlSelection?: Pick<NlSelectionService, 'mode' | 'decide'> &
-    Partial<Pick<NlSelectionService, 'takePending' | 'recordGrammarSelection' | 'clearLastSelection' | 'yieldsToSelection' | 'grammarYieldEnabled' | 'phaseCEnabled' | 'phaseCShadowEnabled' | 'shadowGrammarHit'>>;
+    Partial<
+      Pick<
+        NlSelectionService,
+        | 'takePending'
+        | 'recordGrammarSelection'
+        | 'clearLastSelection'
+        | 'yieldsToSelection'
+        | 'grammarYieldEnabled'
+        | 'phaseCEnabled'
+        | 'phaseCShadowEnabled'
+        | 'shadowGrammarHit'
+        // ADR-0120 amendment A6 (no new deps key: the same `nlSelection` slot); all inert while QUOKY_NL_ACTIONS is off.
+        | 'actionLevel'
+        | 'actionsOffered'
+        | 'actionsActing'
+        | 'handleSwitchPhrase'
+        | 'decideAnchoredUndo'
+        | 'answerActionPending'
+        | 'recordActionReceipt'
+        | 'logActionUnserved'
+        | 'actionsStillActing'
+      >
+    >;
   readonly logger: Logger;
 }
 
@@ -2316,6 +2339,12 @@ export class ConversationRuntime {
     ) {
       this.nlYield.add(message);
     }
+    // ADR-0120 amendment A6-D3: the owner's kill-switch phrase (`에이전트 중지` / `에이전트 재개`, Class A, owner DM, every
+    // state). Recognized only while QUOKY_NL_ACTIONS is not `off` (with `off` the text is routed exactly as before).
+    if (this.deps.nlSelection?.handleSwitchPhrase !== undefined && isDirectConversation(message.context) && !expiryNotice) {
+      const switched = await this.deps.nlSelection.handleSwitchPhrase(actor, message.text, this.clock());
+      if (switched !== undefined) return this.responded(session, outboundMessage(message.context, switched));
+    }
     if (control) {
       return this.handleControlTurn(message, session, actor, control, expiryNotice ? null : lookup.pending, expiryNotice);
     }
@@ -2351,6 +2380,14 @@ export class ConversationRuntime {
     // that it lapsed — never run, and never handed to a model as a bare "1".
     const lapsedReply = lapsedWrite ? ConversationRuntime.lapsedConnectorWriteStep(lapsedWrite, message.text) : null;
     if (lapsedReply) return this.respondConnectorWriteStep(message, session, lapsedReply, '');
+
+    // ADR-0120 amendment A6: an open A6 question is answered before any grammar ("3", "요약" must not be read as anything
+    // else), and the anchored `되돌리기` (owner decision 8) runs the undo with no selector call. Both only while actions are
+    // acting and no approval is pending; with QUOKY_NL_ACTIONS `off` neither exists.
+    if (!lookup.pending && this.deps.nlSelection?.actionsActing?.(actor) === true) {
+      const early = await this.handleEarlyNlAction(message, session, actor, lookup.applyAnchor, userMemory.id, nlPending);
+      if (early !== undefined) return early;
+    }
 
     // (A) Approval-decision routing — ONLY when a pending approval is derived for this session.
     const pending = lookup.planPending;
@@ -3329,9 +3366,14 @@ export class ConversationRuntime {
     }
   }
 
-  /** The catalog entries the registered handlers contribute right now, each with its owning handler (first wins). */
-  private nlCatalog(): Map<string, { readonly entry: NlCatalogEntry; readonly handler: ConversationTurnHandler }> {
+  /**
+   * The catalog entries the registered handlers contribute right now, each with its owning handler (first wins). An A6
+   * action entry is included only for `actor` while the selection service offers actions (QUOKY_NL_ACTIONS not `off`,
+   * kill switch running); otherwise the map is exactly the READ catalog it was before A6.
+   */
+  private nlCatalog(actor?: Actor): Map<string, { readonly entry: NlCatalogEntry; readonly handler: ConversationTurnHandler }> {
     const owned = new Map<string, { readonly entry: NlCatalogEntry; readonly handler: ConversationTurnHandler }>();
+    const actions = actor !== undefined && this.deps.nlSelection?.actionsOffered?.(actor) === true;
     for (const handler of this.turnHandlerRegistry) {
       if (typeof handler.handleSelected !== 'function') continue;
       let entries: readonly NlCatalogEntry[];
@@ -3340,9 +3382,112 @@ export class ConversationRuntime {
       } catch {
         continue;
       }
-      for (const entry of entries) if (!owned.has(entry.id)) owned.set(entry.id, { entry, handler });
+      for (const entry of entries) {
+        if (entry.risk !== 'READ' && !actions) continue;
+        if (!owned.has(entry.id)) owned.set(entry.id, { entry, handler });
+      }
     }
     return owned;
+  }
+
+  /** A6: every handler that declares action entry `entryId` (several serve `item.summarize` / `action.undo` by source). */
+  private nlActionServers(entryId: string): ConversationTurnHandler[] {
+    const servers: ConversationTurnHandler[] = [];
+    for (const handler of this.turnHandlerRegistry) {
+      if (typeof handler.handleSelected !== 'function') continue;
+      try {
+        if ((handler.catalog ?? []).some((entry) => entry.id === entryId)) servers.push(handler);
+      } catch {
+        continue;
+      }
+    }
+    return servers;
+  }
+
+  /** A6: the turn's A6 decision (by message), completed with the handler's receipt in `respondTurnHandler`. */
+  private readonly nlActionTurns = new WeakMap<InboundMessage, { readonly audit: NlActionAudit; readonly language: 'ko' | 'en' }>();
+
+  /**
+   * ADR-0120 amendment A6: dispatch one A6 decision to the handler that serves its source (the first that answers), then
+   * present it like that handler's own reply with the basis line first. `lastSelection` is never kept (A6-D3). A decision
+   * no handler serves gets a fixed reply: an action request never falls to chat.
+   */
+  private async dispatchNlAction(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    applyAnchor: ApplyPreviewAnchor | null,
+    userMemoryId: Id,
+    decision: Extract<NlSelectionDecision, { kind: 'execute' }>,
+  ): Promise<TurnResult> {
+    this.nlTurns.set(message, { sessionId: session.id, keep: false });
+    // A6-D3: the kill switch is re-read from the persisted Actor as the last check before anything runs.
+    if (this.deps.nlSelection?.actionsStillActing !== undefined && !(await this.deps.nlSelection.actionsStillActing(actor))) {
+      if (decision.action !== undefined) this.deps.nlSelection.logActionUnserved?.(decision.action, 'stopped', message.id);
+      return this.respondComposed(message, session, outboundMessage(message.context, renderActionStopped(decision.command.language)));
+    }
+    // Every write the handler makes carries the switch as a condition its store checks atomically with the write.
+    const ctx = this.turnHandlerContext(message, session, actor, applyAnchor, { actionSwitchOf: actor.id });
+    let outcome: TurnHandlerOutcome | null = null;
+    let handlerId: string | undefined;
+    for (const handler of this.nlActionServers(decision.command.entryId)) {
+      outcome = (await handler.handleSelected?.(decision.command, ctx)) ?? null;
+      if (outcome !== null) {
+        handlerId = handler.id;
+        break;
+      }
+    }
+    if (outcome === null) {
+      if (decision.action !== undefined) this.deps.nlSelection?.logActionUnserved?.(decision.action, 'unserved', message.id);
+      return this.respondComposed(message, session, outboundMessage(message.context, renderActionUnavailable(decision.command.language)));
+    }
+    if (decision.action !== undefined) this.nlActionTurns.set(message, { audit: decision.action, language: decision.command.language });
+    this.deps.logger.info('nl action dispatched', { handlerId, entryId: decision.command.entryId, sessionId: session.id });
+    const result = await this.respondTurnHandler(message, session, actor, userMemoryId, outcome);
+    if (decision.basis === undefined) return result;
+    return { ...result, reply: withOutboundBody(result.reply, messageBody(decision.basis, '\n', outboundBody(result.reply))) };
+  }
+
+  /** A6: the early answer to an open A6 question, or the anchored `되돌리기`; `undefined` continues the turn. */
+  private async handleEarlyNlAction(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    applyAnchor: ApplyPreviewAnchor | null,
+    userMemoryId: Id,
+    nlPending: PendingQuestion | null | undefined,
+  ): Promise<TurnResult | undefined> {
+    const nl = this.deps.nlSelection;
+    if (nl === undefined) return undefined;
+    const entries = [...this.nlCatalog(actor).values()].map((owned) => owned.entry);
+    const base = {
+      text: message.text,
+      attachmentCount: message.attachments?.length ?? 0,
+      ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
+      session,
+      actor,
+      now: this.clock(),
+      entries,
+      route: 'chat' as const,
+      ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}),
+      turnId: message.id,
+      ...(message.formatting?.code === true ? { codeFormatted: true } : {}),
+    };
+    let decision: NlSelectionDecision | undefined;
+    try {
+      if (isActionPendingQuestion(nlPending) && nl.answerActionPending !== undefined) decision = await nl.answerActionPending({ ...base, pending: nlPending });
+      if (decision === undefined && nl.decideAnchoredUndo !== undefined) decision = await nl.decideAnchoredUndo(base);
+    } catch {
+      decision = undefined;
+    }
+    if (decision === undefined) return undefined;
+    if (decision.kind === 'ask') return this.respondComposed(message, session, outboundMessage(message.context, decision.text));
+    if (decision.kind !== 'execute') return undefined;
+    try {
+      return await this.dispatchNlAction(message, session, actor, applyAnchor, userMemoryId, decision);
+    } catch (err) {
+      return this.failReadOnlyTurn(message, session, err);
+    }
   }
 
   /**
@@ -3365,13 +3510,16 @@ export class ConversationRuntime {
     | { readonly kind: 'continue'; readonly facts?: NlChatFacts; readonly fallback?: true; readonly declined?: true }
   > {
     const nl = this.deps.nlSelection as Pick<NlSelectionService, 'mode' | 'decide'>;
-    const catalog = this.nlCatalog();
+    const catalog = this.nlCatalog(actor);
     const entries = [...catalog.values()].map((owned) => owned.entry);
     const chat = await this.nlChatProvider(intent, session, actor);
     const decision = await nl.decide({
       ...(chat !== undefined ? { chatProviderId: chat.id, chatProviderLocality: chat.locality } : {}),
       ...(nlPending !== undefined ? { pending: nlPending } : {}),
       ...(grammar !== undefined ? { grammar } : {}),
+      ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}),
+      turnId: message.id,
+      ...(message.formatting?.code === true ? { codeFormatted: true } : {}),
       text: message.text,
       attachmentCount: message.attachments?.length ?? 0,
       ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
@@ -3381,7 +3529,9 @@ export class ConversationRuntime {
       entries,
       route,
     });
-    const honest = nl.mode === 'active' && entries.length > 0 ? { entries } : undefined;
+    // A6-D6: the honest-chat fact names the action families only while they act (shadow keeps today's fact).
+    const factEntries = this.deps.nlSelection?.actionsActing?.(actor) === true ? entries : entries.filter((entry) => entry.risk === 'READ');
+    const honest = nl.mode === 'active' && factEntries.length > 0 ? { entries: factEntries } : undefined;
     switch (decision.kind) {
       case 'skip':
         // Phase C: the grammar is the fallback when selection did not run (shadow included: the grammar answers).
@@ -3394,6 +3544,10 @@ export class ConversationRuntime {
         this.deps.logger.info('nl selection asked', { sessionId: session.id });
         return { kind: 'responded', result: await this.respondComposed(message, session, outboundMessage(message.context, decision.text)) };
       case 'execute': {
+        // ADR-0120 amendment A6: an action (or ITEM_READ) decision goes to the handler that serves its source.
+        if (isNlActionEntryId(decision.command.entryId)) {
+          return { kind: 'responded', result: await this.dispatchNlAction(message, session, actor, applyAnchor, userMemoryId, decision) };
+        }
         const owner = catalog.get(decision.command.entryId);
         const serve = owner?.handler.handleSelected;
         // Phase C: a selection no handler serves leaves the turn to the grammar that would have answered it.
@@ -3646,6 +3800,7 @@ export class ConversationRuntime {
     session: Session,
     actor: Actor,
     anchor: ApplyPreviewAnchor | null,
+    nlActionWriteCondition?: { readonly actionSwitchOf: Id },
   ): TurnHandlerContext {
     const sourceMessage = message;
     const applyAnchor: TurnHandlerAnchorSnapshot | null = anchor
@@ -3669,6 +3824,7 @@ export class ConversationRuntime {
       applyAnchor,
       ...(this.nlYield.has(sourceMessage) ? { grammarYield: true } : {}),
       resolveActiveWorkspace: () => this.resolveActiveWorkspaceForHandler(sessionId, activeProjectId),
+      ...(nlActionWriteCondition !== undefined ? { nlActionWriteCondition: Object.freeze({ ...nlActionWriteCondition }) } : {}),
     });
   }
 
@@ -3714,6 +3870,25 @@ export class ConversationRuntime {
       if (await this.deps.nlSelection.recordGrammarSelection(session, actor.id, handled.nlSelection, this.clock())) {
         this.keepNlLastSelection(message, session);
       }
+    }
+    // ADR-0120 amendment A6-D2/D3: the content-free receipts of a to-do / reminder listing or action (an A6 dispatch or an
+    // anchored command) become `quoky.lastAction`, the echo label and the listing slot. The service writes nothing while
+    // QUOKY_NL_ACTIONS is `off`; the reply is never changed.
+    const decided = this.nlActionTurns.get(message);
+    if (
+      this.deps.nlSelection?.recordActionReceipt !== undefined &&
+      (decided !== undefined || (handled.kind !== 'summarize' && handled.kind !== 'write-draft' && (handled.nlAction !== undefined || handled.nlListing !== undefined)))
+    ) {
+      const receipt = handled.kind !== 'summarize' && handled.kind !== 'write-draft' ? handled : undefined;
+      await this.deps.nlSelection.recordActionReceipt({
+        session,
+        actor,
+        message: { id: message.id, context: message.context },
+        now: this.clock(),
+        ...(receipt?.nlAction !== undefined ? { action: receipt.nlAction } : {}),
+        ...(receipt?.nlListing !== undefined ? { listing: receipt.nlListing } : {}),
+        ...(decided !== undefined ? { decided: decided.audit, language: decided.language } : {}),
+      });
     }
     if (handled.kind === 'summarize') return this.handleTurnHandlerSummary(message, session, actor, userMemoryId, handled);
     if (handled.kind === 'write-draft') return this.handleConnectorWriteDraft(message, session, actor, handled);

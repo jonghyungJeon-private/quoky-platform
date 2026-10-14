@@ -788,8 +788,15 @@ const application: Provider[] = [
       runtime: ConversationRuntime,
       platform: PlatformAdapter,
       feedback: FeedbackRecorder,
-      deliveryObservers: readonly TurnDeliveryObserver[] = [],
+      mailObservers: readonly TurnDeliveryObserver[] = [],
+      nlSelection?: NlSelectionService,
     ) => {
+      // ADR-0120 amendment A6: the selection service binds an action's echo ids (it records nothing while QUOKY_NL_ACTIONS
+      // is off, and returns at once).
+      const deliveryObservers: readonly TurnDeliveryObserver[] = [
+        ...mailObservers,
+        ...(nlSelection !== undefined && nlSelection.actionLevel() !== 'off' ? [nlSelection] : []),
+      ];
       // ADR-0118 amendment (GML-2): observers registered explicitly by their feature (today: the mail handler, only when
       // Gmail is configured) are told the delivery receipt of each reply.
       const core = new QuokyCore({ runtime, platform, logger: coreLogger, feedback, ...(deliveryObservers.length > 0 ? { deliveryObservers } : {}) });
@@ -802,7 +809,7 @@ const application: Provider[] = [
       );
       return core;
     },
-    inject: [ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder, { token: MAIL_DELIVERY_OBSERVERS, optional: true }],
+    inject: [ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder, { token: MAIL_DELIVERY_OBSERVERS, optional: true }, { token: NL_SELECTION, optional: true }],
   },
 ];
 

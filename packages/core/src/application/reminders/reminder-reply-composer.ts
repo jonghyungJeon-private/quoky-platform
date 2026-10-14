@@ -226,6 +226,9 @@ export interface ReminderBriefTextInput {
   readonly mail?: DailyBriefMail | null;
 }
 
+/** ADR-0120 amendment A6-D3: the undo hint of a natural-language reminder action (the 10-minute window). */
+const A6_UNDO_HINT = '되돌리기: "되돌려줘" (10분)';
+
 export class ReminderReplyComposer {
   /** "10월 3일(토) 오전 9:00에 '회의 준비' 알려드릴게요. (#4 · 취소: '알림 4 취소')" */
   created(reminder: Reminder, now: IsoTimestamp): string {
@@ -243,6 +246,58 @@ export class ReminderReplyComposer {
 
   clarify(reason: ReminderClarifyReason): string {
     return CLARIFY_COPY[reason];
+  }
+
+  // -- ADR-0120 amendment A6: echoes of natural-language reminder actions (never used by the anchored grammar) -------
+
+  /** When the reminder fires, in absolute terms (and its recurrence). */
+  private scheduleText(reminder: Reminder, now: IsoTimestamp): string {
+    const first = reminder.nextFireAt ?? reminder.occurrenceAt;
+    if (reminder.schedule.type === 'ONCE' || first === undefined) return `${formatAbsolute(first ?? now, reminder.timeZone, now)}`;
+    return `${reminderRepeatLabel(reminder.schedule)} ${recurringClock(reminder.schedule)} (첫 알림 ${formatAbsolute(first, reminder.timeZone, now)})`;
+  }
+
+  /** A6-D3 echo: `알림 #N을 만들었어요: 10월 15일(목) 오전 9:00 · '물 마시기' · 되돌리기: "되돌려줘" (10분)`. */
+  actionCreated(reminder: Reminder, now: IsoTimestamp): string {
+    const what = reminder.kind === 'BRIEF' ? '오늘의 브리핑' : `'${reminder.body}'`;
+    return `${withObjectParticle(`알림 #${reminder.displayNo}`)} 만들었어요: ${this.scheduleText(reminder, now)} · ${what} · ${A6_UNDO_HINT}`;
+  }
+
+  /** A6-D3 echo of a natural-language cancel. */
+  actionCanceled(reminder: Reminder): string {
+    return `${this.canceled(reminder)} · ${A6_UNDO_HINT}`;
+  }
+
+  /** Record A: the same reminder (same #N) is scheduled again. */
+  actionReactivated(reminder: Reminder, now: IsoTimestamp): string {
+    return `${withObjectParticle(`알림 #${reminder.displayNo}`)} 다시 켰어요: ${this.scheduleText(reminder, now)}`;
+  }
+
+  /** Record A: an inverse that cannot run, said plainly; nothing changed. */
+  undoRefused(reason: 'fired' | 'changed' | 'event-gone' | 'event-moved' | 'event-unreadable' | 'in-flight' | 'not-found' | 'schedule'): string {
+    switch (reason) {
+      case 'event-moved':
+        return '그 일정의 시간이 바뀌어서 알림을 다시 켜지 않았어요. 새 시간 기준 알림이 필요하면 다시 말씀해 주세요.';
+      case 'event-unreadable':
+        return '그 일정을 지금 확인할 수 없어서 알림을 다시 켜지 않았어요.';
+      case 'fired':
+        return '이미 알림이 나갔어요. 되돌릴 게 없어요.';
+      case 'changed':
+        return '그 뒤에 바뀐 알림이라 되돌리지 않았어요. 아무것도 바꾸지 않았어요.';
+      case 'event-gone':
+        return '그 일정이 이미 지났거나 없어져서 알림을 다시 켤 수 없어요.';
+      case 'in-flight':
+        return '알림을 지금 보내는 중이라 되돌릴 수 없어요.';
+      case 'not-found':
+        return '되돌릴 알림을 찾지 못했어요. 아무것도 바꾸지 않았어요.';
+      case 'schedule':
+        return '원래 한 번만 울리는 알림이에요. 한 번 울릴 시간을 말씀해 주세요.';
+    }
+  }
+
+  /** Record A: undoing the cancel of a one-shot whose time passed asks for a new time (the reminder id is kept). */
+  undoAskTime(displayNo: number): string {
+    return `알림 #${displayNo}의 시간이 이미 지났어요. 언제 다시 알려 드릴까요?`;
   }
 
   /**
@@ -334,8 +389,16 @@ export class ReminderReplyComposer {
 
   /** `알림 목록`: number, local time, repeat label and body; bounded to one message. */
   list(reminders: readonly Reminder[], now: IsoTimestamp): MessageBody {
+    return this.listRendered(reminders, now).body;
+  }
+
+  /**
+   * {@link list} plus how many reminders it actually shows (the character budget can stop it early): ADR-0120 amendment
+   * A6 records exactly the rows the owner saw, never one the budget cut.
+   */
+  listRendered(reminders: readonly Reminder[], now: IsoTimestamp): { readonly body: MessageBody; readonly shown: number } {
     if (reminders.length === 0) {
-      return '예정된 알림이 없어요. 예: "내일 오전 9시에 회의 준비 알려줘"';
+      return { body: '예정된 알림이 없어요. 예: "내일 오전 9시에 회의 준비 알려줘"', shown: 0 };
     }
     const header = `예정된 알림 ${reminders.length}건`;
     const lines: MessagePart[] = [];
@@ -364,7 +427,7 @@ export class ReminderReplyComposer {
     }
     const omitted = reminders.length - lines.length;
     const tail = omitted > 0 ? [`외 ${omitted}건은 생략했어요.`] : [];
-    return joinBody([header, ...lines, ...tail]);
+    return { body: joinBody([header, ...lines, ...tail]), shown: lines.length };
   }
 
   canceled(reminder: Reminder): string {

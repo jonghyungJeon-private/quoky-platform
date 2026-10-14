@@ -1,0 +1,687 @@
+/**
+ * ADR-0120 amendment A6 evaluation (A6-D7, NLA-6 tooling): the action corpus (`golden/nl-action.v1.json`, schema in
+ * `docs/plans/nl-action-corpus-schema.md`) and the read-regression mode (`golden/nl-intent.v1.json` with the A6 entries
+ * offered). Exact `{entry, args, target}` scoring after Core's OWN decision path — the real `NlSelectionService` over a
+ * session built from each case's content-free fixture, so validation, reference resolution, caps and the content-mode key
+ * are exactly the runtime's. No LLM judge. Pure except for the injected provider; only a Strict run spawns anything.
+ *
+ * Per action case:
+ *  - `hit`: Core executes the gold entry with the gold canonical args and the gold target (or, for a gold ask/refuse, Core
+ *    does not execute and the selector named the gold entry and args);
+ *  - `wrong-target`: Core would execute an item other than the gold one (gate 0);
+ *  - `negative-capture`: a negative executed or previewed an action (gate 0; a question counts as neither);
+ *  - `question`: Core asked on a positive (the question rate on positive reference cases, at most 10%);
+ *  - `miss`, `none`, `timeout`, `error`, `skipped` as in the intent evaluation.
+ * Per read-regression case: the D12 outcomes plus `action-capture` (a read case captured by an action or ITEM_READ entry;
+ * gate 0). A case carrying an owner-approved `a6Relabel` is scored against the relabel and reported apart.
+ */
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import {
+  Capability,
+  ITEM_CONTENT_MODE,
+  INTERPRETATION_PREFERENCES_METADATA_KEY,
+  LAST_ACTION_METADATA_KEY,
+  LAST_LISTING_METADATA_KEY,
+  NL_ACTION_ENTRIES,
+  NL_ACTION_ENTRY_IDS,
+  NL_ACTION_PROMPT_VERSION,
+  NL_CATALOG_ENTRY_IDS,
+  NL_PENDING_METADATA_KEY,
+  NL_SELECTION_TIMEOUT_MS,
+  NL_WAVE1_ENTRIES,
+  NlActionSwitch,
+  NlSelectionService,
+  buildSelectionPrompt,
+  detectWorkChatCommand,
+  executionLocalityOf,
+  parseDriveQuestion,
+  parseMailQuestion,
+  parseReminderMessage,
+  isNlActionEntryId,
+  isNlCatalogEntryId,
+  isNlWave1EntryId,
+  parseSelectionOutput,
+  pendingQuestionRecord,
+  prepareSelectionInput,
+  validateSelection,
+  withLabelledListing,
+  withLastAction,
+  withListingReplies,
+  type Actor,
+  type AiProvider,
+  type IsoTimestamp,
+  type NlArgs,
+  type NlCatalogEntry,
+  type NlSelectionDecision,
+  type Session,
+} from '@quoky/core';
+
+export const NL_ACTION_EVAL_GATE = Object.freeze({
+  overall: 0.95,
+  perEntry: 0.9,
+  spanExact: 0.95,
+  wrongTarget: 0,
+  negativeCaptures: 0,
+  questionRateOnReferences: 0.1,
+  overBoundRate: 0.01,
+});
+
+const GOLDEN_DIR = resolve(__dirname, '../../../../packages/core/src/application/golden');
+export const NL_ACTION_CORPUS_PATH = resolve(GOLDEN_DIR, 'nl-action.v1.json');
+export const NL_ACTION_SEED_PATH = resolve(GOLDEN_DIR, 'nl-action.seed.v1.json');
+export const NL_INTENT_CORPUS_PATH = resolve(GOLDEN_DIR, 'nl-intent.v1.json');
+
+const FAMILIES = ['live', 'paraphrase', 'reference', 'negative', 'undo', 'mode'] as const;
+const OUTCOMES = ['execute', 'ask', 'refuse'] as const;
+const REASONS = [
+  'out-of-range', 'expired', 'ambiguous', 'stale', 'other-source', 'none', 'conflict',
+  'deictic-payload', 'time-in-title', 'time-outside-when', 'when-unparsed', 'credential',
+  'content-mode',
+  'no-action', 'undo-of-undo', 'already-final', 'changed', 'fired', 'past-time', 'event-gone', 'limit', 'echo-mismatch',
+  'bulk', 'not-dm', 'capped', 'stopped',
+] as const;
+const SOURCES = ['todo', 'reminder', 'mail', 'drive'] as const;
+type Source = (typeof SOURCES)[number];
+
+export interface NlActionFixture {
+  readonly listings?: ReadonlyArray<{ readonly source: Source; readonly labels: readonly number[]; readonly ageMinutes: number; readonly ids?: readonly string[] }>;
+  readonly lastWritten?: Source;
+  readonly lastAction?: {
+    readonly entryId: string;
+    readonly source: 'todo' | 'reminder';
+    readonly itemId: string;
+    readonly label?: number;
+    readonly ageMinutes: number;
+    readonly undone?: boolean;
+    readonly echoReplyIds?: readonly string[];
+  };
+  readonly pending?: {
+    readonly kind: 'action-target' | 'action-mode' | 'action-reschedule';
+    readonly entryId?: string;
+    readonly candidates?: ReadonlyArray<{ readonly label: number; readonly id: string }>;
+    readonly ageMinutes: number;
+  };
+  readonly replyTo?: { readonly kind: 'listing'; readonly source: Source; readonly ageMinutes?: number } | { readonly kind: 'echo'; readonly matchesLastAction: boolean };
+  readonly items?: unknown;
+  readonly contentMode?: 'summary' | 'full';
+  readonly prior?: { readonly entryId: string; readonly args: NlArgs };
+}
+
+export interface NlActionExpect {
+  readonly entryId: string;
+  readonly args: NlArgs;
+  readonly outcome: (typeof OUTCOMES)[number];
+  readonly target?: { readonly source: Source; readonly id: string };
+  readonly reason?: string;
+}
+
+export interface NlActionCase {
+  readonly id: string;
+  readonly family: (typeof FAMILIES)[number];
+  readonly text: string;
+  readonly fixture?: NlActionFixture;
+  readonly expect: 'none' | NlActionExpect;
+  readonly batch?: string;
+  readonly note?: string;
+}
+
+export interface NlActionCorpus {
+  readonly version: number;
+  readonly promptVersion?: string;
+  readonly cases: readonly NlActionCase[];
+}
+
+/** The drafted corpus when present, plus the R0 seed (ids are kept distinct by the schema check). */
+export function loadActionCorpus(paths: readonly string[] = [NL_ACTION_CORPUS_PATH, NL_ACTION_SEED_PATH]): { corpus: NlActionCorpus; sha256: string; files: string[] } {
+  const hash = createHash('sha256');
+  const cases: NlActionCase[] = [];
+  const files: string[] = [];
+  for (const path of paths) {
+    if (!existsSync(path)) continue;
+    const text = readFileSync(path, 'utf8');
+    hash.update(text);
+    files.push(path);
+    cases.push(...((JSON.parse(text) as NlActionCorpus).cases ?? []));
+  }
+  return { corpus: { version: 1, promptVersion: NL_ACTION_PROMPT_VERSION, cases }, sha256: hash.digest('hex'), files };
+}
+
+const ALL_READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
+const ALL_ACTIONS: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined);
+export const NL_ACTION_EVAL_ENTRIES: readonly NlCatalogEntry[] = [...ALL_READS, ...ALL_ACTIONS];
+const SPAN_ARGS = ['title', 'match', 'body', 'when'];
+const TARGET_ENTRIES = new Set(['todo.complete', 'todo.cancel', 'reminder.cancel', 'item.summarize', 'action.undo']);
+
+/** The schema check of `docs/plans/nl-action-corpus-schema.md` (problems as `id: what`, never a value). */
+export function validateActionCorpus(corpus: NlActionCorpus): string[] {
+  const problems: string[] = [];
+  const ids = new Set<string>();
+  for (const golden of corpus.cases) {
+    const where = typeof golden.id === 'string' ? golden.id : '(no id)';
+    if (typeof golden.id !== 'string' || !/^a6-[a-z0-9.-]+$/.test(golden.id)) problems.push(`${where}: id`);
+    if (ids.has(golden.id)) problems.push(`${where}: duplicate id`);
+    ids.add(golden.id);
+    if (!(FAMILIES as readonly string[]).includes(golden.family)) problems.push(`${where}: family`);
+    if (typeof golden.text !== 'string' || golden.text.trim().length === 0) problems.push(`${where}: text`);
+    else if ('skip' in prepareSelectionInput(golden.text)) problems.push(`${where}: text is skipped by selection`);
+    for (const listing of golden.fixture?.listings ?? []) {
+      if (!(SOURCES as readonly string[]).includes(listing.source)) problems.push(`${where}: listing source`);
+      if (!Array.isArray(listing.labels) || listing.labels.some((label) => !Number.isSafeInteger(label) || label < 1)) problems.push(`${where}: listing labels`);
+      if (listing.ids !== undefined && listing.ids.length !== listing.labels.length) problems.push(`${where}: listing ids`);
+      if (!Number.isFinite(listing.ageMinutes) || listing.ageMinutes < 0) problems.push(`${where}: listing age`);
+    }
+    const last = golden.fixture?.lastAction;
+    if (last !== undefined && (!isNlActionEntryId(last.entryId) || (last.source !== 'todo' && last.source !== 'reminder'))) problems.push(`${where}: lastAction`);
+    if (golden.expect === 'none') continue;
+    const expect = golden.expect;
+    if (!isNlCatalogEntryId(expect.entryId)) problems.push(`${where}: expect entry`);
+    if (!(OUTCOMES as readonly string[]).includes(expect.outcome)) problems.push(`${where}: expect outcome`);
+    if (expect.outcome !== 'execute' && (expect.reason === undefined || !(REASONS as readonly string[]).includes(expect.reason))) problems.push(`${where}: expect reason`);
+    if (expect.outcome === 'execute' && TARGET_ENTRIES.has(expect.entryId) && expect.args.match === undefined && expect.target === undefined) problems.push(`${where}: expect target`);
+    // A gold selection must be what the validator accepts from this text (grounded spans and refs, closed values).
+    if (isNlCatalogEntryId(expect.entryId) && !('skip' in prepareSelectionInput(golden.text))) {
+      const prepared = prepareSelectionInput(golden.text) as { groundingText: string };
+      const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
+      const result = validateSelection({ entryId: expect.entryId, args: expect.args }, { offered, groundingText: prepared.groundingText, now: '2026-10-14T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true, ...(golden.fixture?.prior !== undefined ? { previousArgs: golden.fixture.prior.args } : {}) });
+      const refusedByRule = expect.outcome !== 'execute' && ['deictic-payload', 'time-in-title', 'time-outside-when', 'bulk', 'credential'].includes(expect.reason ?? '');
+      if (!result.ok && !refusedByRule) problems.push(`${where}: gold does not validate (${result.reason} ${result.arg ?? ''})`);
+      else if (result.ok && canonical(result.value.args) !== canonical(expect.args)) problems.push(`${where}: gold args not canonical`);
+    }
+  }
+  return problems;
+}
+
+function canonical(args: NlArgs): string {
+  return JSON.stringify(Object.entries(args).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+// ── fixtures → the session and actor Core reads ────────────────────────────────────────────────────────────────
+
+const ACTOR_ID = 'eval-owner';
+
+/** The content-free session / actor state a case's fixture describes, at `now`. */
+export function fixtureWorld(fixture: NlActionFixture | undefined, now: IsoTimestamp): { session: Session; actor: Actor; replyToMessageId?: string } {
+  const minus = (minutes: number): IsoTimestamp => new Date(Date.parse(now) - minutes * 60_000).toISOString();
+  let listing: unknown;
+  let replyToMessageId: string | undefined;
+  const listings = [...(fixture?.listings ?? [])].sort((a, b) => b.ageMinutes - a.ageMinutes);
+  // `lastWritten` names the youngest listing explicitly: it is written last at its age (minus a millisecond tie-break).
+  for (const slot of listings) {
+    const age = fixture?.lastWritten === slot.source ? Math.max(0, slot.ageMinutes - 0.001) : slot.ageMinutes;
+    const items = slot.labels.map((label, index) => ({ label, id: slot.ids?.[index] ?? `${slot.source}-${label}` }));
+    const requestId = `req-${slot.source}`;
+    listing = withLabelledListing(listing, ACTOR_ID, slot.source, items, minus(age), 'listing', requestId);
+    if (fixture?.replyTo?.kind === 'listing' && fixture.replyTo.source === slot.source) {
+      listing = withListingReplies(listing, ACTOR_ID, slot.source, requestId, [`reply-${slot.source}`], minus(age)).next;
+      replyToMessageId = `reply-${slot.source}`;
+    }
+  }
+  const metadata: Record<string, unknown> = {};
+  if (listing !== undefined) metadata[LAST_LISTING_METADATA_KEY] = listing;
+  const last = fixture?.lastAction;
+  if (last !== undefined && isNlActionEntryId(last.entryId)) {
+    const echo = last.echoReplyIds ?? (fixture?.replyTo?.kind === 'echo' ? ['echo-current'] : []);
+    metadata[LAST_ACTION_METADATA_KEY] = withLastAction(
+      undefined,
+      ACTOR_ID,
+      {
+        entryId: last.entryId,
+        source: last.source,
+        itemId: last.itemId,
+        ...(last.label !== undefined ? { label: last.label } : {}),
+        version: minus(last.ageMinutes),
+        at: minus(last.ageMinutes),
+        undoable: last.entryId !== 'action.undo',
+        undone: last.undone === true,
+        ...(last.entryId === 'action.undo' ? { undoOf: 'todo.complete' as const } : {}),
+        echoReplyIds: echo,
+      },
+      minus(last.ageMinutes),
+    );
+    if (fixture?.replyTo?.kind === 'echo') replyToMessageId = fixture.replyTo.matchesLastAction ? (echo[0] ?? 'echo-current') : 'echo-older';
+  }
+  const pending = fixture?.pending;
+  if (pending !== undefined && pending.kind === 'action-target' && pending.entryId !== undefined && isNlActionEntryId(pending.entryId) && pending.candidates !== undefined) {
+    const source = pending.entryId.startsWith('todo') ? 'todo' : pending.entryId.startsWith('reminder') ? 'reminder' : 'mail';
+    metadata[NL_PENDING_METADATA_KEY] = pendingQuestionRecord(ACTOR_ID, { kind: 'action-target', at: minus(pending.ageMinutes), language: 'ko', entryId: pending.entryId, source, candidates: pending.candidates, args: {} });
+  }
+  if (fixture?.prior !== undefined && isNlWave1EntryId(fixture.prior.entryId)) {
+    metadata['quoky.lastSelection'] = { actorId: ACTOR_ID, entryId: fixture.prior.entryId, args: { ...fixture.prior.args }, at: minus(1) };
+  }
+  const actorMetadata: Record<string, unknown> = {};
+  if (fixture?.contentMode !== undefined) {
+    actorMetadata[INTERPRETATION_PREFERENCES_METADATA_KEY] = { [ITEM_CONTENT_MODE.key]: { value: fixture.contentMode, at: minus(60) } };
+  }
+  return {
+    session: { id: 'eval-session', actorId: ACTOR_ID, context: { platform: 'eval', channelId: 'dm', userId: 'owner', direct: true }, status: 'ACTIVE' as Session['status'], createdAt: now, lastActivityAt: now, metadata },
+    actor: { id: ACTOR_ID, displayName: 'Owner', identities: [], createdAt: now, metadata: actorMetadata },
+    ...(replyToMessageId !== undefined ? { replyToMessageId } : {}),
+  };
+}
+
+/** Core's decision for one selector output on one case (the real service, local level, a fresh world). */
+export async function decideActionCase(
+  golden: Pick<NlActionCase, 'text' | 'fixture'>,
+  provider: AiProvider,
+  now: IsoTimestamp,
+  options: { readonly timeoutMs?: number } = {},
+): Promise<{ readonly decision: NlSelectionDecision; readonly audit?: Record<string, unknown> }> {
+  const world = fixtureWorld(golden.fixture, now);
+  let session = world.session;
+  let actor = world.actor;
+  const logs: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+  const logger = {
+    info: (event: string, fields?: Record<string, unknown>) => void logs.push({ event, ...(fields !== undefined ? { fields } : {}) }),
+    warn: (event: string, fields?: Record<string, unknown>) => void logs.push({ event, ...(fields !== undefined ? { fields } : {}) }),
+    error: () => undefined,
+  };
+  const actors = {
+    get: async () => actor,
+    save: async (next: Actor) => {
+      actor = next;
+      return next;
+    },
+  };
+  const service = new NlSelectionService({
+    mode: 'active',
+    router: { select: async () => provider },
+    sessions: {
+      updateMetadataEntry: async (_ref, key, update) => {
+        const metadata: Record<string, unknown> = { ...(session.metadata ?? {}) };
+        const next = update(metadata[key]);
+        if (next === undefined) delete metadata[key];
+        else metadata[key] = next;
+        session = { ...session, metadata };
+        return session;
+      },
+    },
+    actors,
+    timeZone: 'Asia/Seoul',
+    logger,
+    timeoutMs: options.timeoutMs ?? NL_SELECTION_TIMEOUT_MS,
+    actions: { level: 'local', killSwitch: new NlActionSwitch({ actors, logger }) },
+  });
+  const decision = await service.decide({
+    text: golden.text,
+    attachmentCount: 0,
+    session,
+    actor,
+    now,
+    entries: NL_ACTION_EVAL_ENTRIES,
+    route: 'chat',
+    chatProviderId: provider.family ?? provider.id,
+    chatProviderLocality: executionLocalityOf(provider),
+    ...(world.replyToMessageId !== undefined ? { replyToMessageId: world.replyToMessageId } : {}),
+  });
+  const audit = logs.filter((log) => log.event === 'nl_action.decided').at(-1)?.fields;
+  return { decision, ...(audit !== undefined ? { audit } : {}) };
+}
+
+export type NlActionOutcome = 'hit' | 'miss' | 'question' | 'wrong-target' | 'negative-capture' | 'none' | 'read' | 'timeout' | 'error' | 'skipped';
+
+export interface NlActionRecord {
+  readonly run: number;
+  readonly id: string;
+  readonly family: string;
+  readonly expected: string;
+  readonly outcome: NlActionOutcome;
+  readonly spanExact?: boolean;
+  readonly got?: string;
+  readonly latencyMs: number;
+  readonly reason?: string;
+}
+
+/** Score Core's decision against the gold (exported for the offline tests). */
+export function scoreActionDecision(golden: NlActionCase, raw: string, decision: NlSelectionDecision, audit?: Record<string, unknown>): Omit<NlActionRecord, 'run' | 'latencyMs'> {
+  const expected = golden.expect === 'none' ? 'none' : golden.expect.entryId;
+  const base = { id: golden.id, family: golden.family, expected };
+  const output = parseSelectionOutput(raw);
+  if (decision.kind === 'unavailable') return { ...base, outcome: output === null ? 'error' : 'timeout' };
+  if (decision.kind === 'skip') return { ...base, outcome: 'skipped' };
+  const reason = typeof audit?.reason === 'string' ? audit.reason : undefined;
+  const executed = decision.kind === 'execute' ? decision.command : undefined;
+  const isAction = executed !== undefined && isNlActionEntryId(executed.entryId);
+  if (golden.expect === 'none') {
+    if (isAction) return { ...base, outcome: 'negative-capture', got: executed.entryId };
+    if (executed !== undefined) return { ...base, outcome: 'read', got: executed.entryId };
+    return { ...base, outcome: decision.kind === 'none' ? 'none' : 'question', ...(reason !== undefined ? { reason } : {}) };
+  }
+  const gold = golden.expect;
+  const spans = SPAN_ARGS.filter((name) => typeof gold.args[name] === 'string');
+  const outputArgs = output?.entryId === gold.entryId ? output.args : {};
+  const spanExact = spans.length === 0 ? undefined : spans.every((name) => typeof outputArgs[name] === 'string' && (outputArgs[name] as string).replace(/\s+/g, ' ').trim().replace(/^['"「“‘]|['"」”’]$/gu, '') === gold.args[name]);
+  const withSpan = spanExact === undefined ? {} : { spanExact };
+  if (gold.outcome !== 'execute') {
+    if (isAction && executed.target !== undefined) return { ...base, outcome: 'wrong-target', got: executed.entryId, ...withSpan };
+    if (executed !== undefined) return { ...base, outcome: 'miss', got: executed.entryId, ...withSpan };
+    const named = output?.entryId === gold.entryId && canonical(withoutMode(output.args, gold.args)) === canonical(withoutMode(gold.args, gold.args));
+    return { ...base, outcome: named ? 'hit' : 'miss', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
+  }
+  if (executed === undefined) return { ...base, outcome: decision.kind === 'none' ? 'miss' : 'question', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
+  const sameTarget = gold.target === undefined || (executed.target?.source === gold.target.source && executed.target.id === gold.target.id);
+  if (executed.target !== undefined && gold.target !== undefined && !sameTarget) return { ...base, outcome: 'wrong-target', got: executed.entryId, ...withSpan };
+  const same = executed.entryId === gold.entryId && canonical(withoutMode(executed.args, gold.args)) === canonical(gold.args) && sameTarget;
+  return { ...base, outcome: same ? 'hit' : 'miss', got: executed.entryId, ...withSpan };
+}
+
+/** A stored content-mode preference fills `mode`; the gold names only what the selector must output. */
+function withoutMode(args: NlArgs, gold: NlArgs): NlArgs {
+  if (gold.mode !== undefined || args.mode === undefined) return args;
+  const { mode: _mode, ...rest } = args;
+  return rest;
+}
+
+export interface NlActionSummary {
+  readonly cases: number;
+  readonly positives: number;
+  readonly hits: number;
+  readonly overall: number;
+  readonly perEntry: Readonly<Record<string, { readonly hits: number; readonly total: number; readonly rate: number }>>;
+  readonly spanExact: number;
+  readonly wrongTargets: number;
+  readonly negativeCaptures: number;
+  readonly referenceQuestionRate: number;
+  readonly overBoundRate: number;
+  readonly gatePassed: boolean;
+}
+
+export function summarizeAction(records: readonly NlActionRecord[], boundMs: number = NL_SELECTION_TIMEOUT_MS): NlActionSummary {
+  const positives = records.filter((record) => record.expected !== 'none');
+  const hits = positives.filter((record) => record.outcome === 'hit').length;
+  const perEntry: Record<string, { hits: number; total: number; rate: number }> = {};
+  for (const record of positives) {
+    const slot = (perEntry[record.expected] ??= { hits: 0, total: 0, rate: 0 });
+    slot.total += 1;
+    if (record.outcome === 'hit') slot.hits += 1;
+  }
+  for (const slot of Object.values(perEntry)) slot.rate = slot.total === 0 ? 0 : slot.hits / slot.total;
+  const spanRecords = records.filter((record) => record.spanExact !== undefined);
+  const spanExact = spanRecords.length === 0 ? 1 : spanRecords.filter((record) => record.spanExact === true).length / spanRecords.length;
+  const references = positives.filter((record) => record.family === 'reference' || record.family === 'live');
+  const referenceQuestionRate = references.length === 0 ? 0 : references.filter((record) => record.outcome === 'question').length / references.length;
+  const wrongTargets = records.filter((record) => record.outcome === 'wrong-target').length;
+  const negativeCaptures = records.filter((record) => record.outcome === 'negative-capture').length;
+  const overBoundRate = records.length === 0 ? 0 : records.filter((record) => record.latencyMs > boundMs).length / records.length;
+  const overall = positives.length === 0 ? 1 : hits / positives.length;
+  const gate = NL_ACTION_EVAL_GATE;
+  return {
+    cases: records.length,
+    positives: positives.length,
+    hits,
+    overall,
+    perEntry,
+    spanExact,
+    wrongTargets,
+    negativeCaptures,
+    referenceQuestionRate,
+    overBoundRate,
+    gatePassed:
+      overall >= gate.overall &&
+      Object.values(perEntry).every((slot) => slot.rate >= gate.perEntry) &&
+      spanExact >= gate.spanExact &&
+      wrongTargets <= gate.wrongTarget &&
+      negativeCaptures <= gate.negativeCaptures &&
+      referenceQuestionRate <= gate.questionRateOnReferences &&
+      overBoundRate <= gate.overBoundRate,
+  };
+}
+
+// ── plans ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
+export type NlActionEvalKind = 'nl-action-eval' | 'nl-read-regression';
+
+export interface NlActionPlan {
+  readonly kind: NlActionEvalKind;
+  readonly promptVersion: string;
+  readonly promptSha256: string;
+  readonly corpusSha256: string;
+  readonly model: string;
+  readonly runs: number;
+  readonly concurrency: number;
+  readonly callTimeoutMs: number;
+  readonly caseIds: readonly string[];
+}
+
+/** The v19 instruction text with every entry offered and nothing referenced: any prompt edit changes the digest. */
+export function actionPromptSha256(): string {
+  return createHash('sha256').update(buildSelectionPrompt({ entries: NL_ACTION_EVAL_ENTRIES, text: '', actions: { referenceContext: 'none' } })).digest('hex');
+}
+
+export function buildActionPlan(
+  kind: NlActionEvalKind,
+  caseIds: readonly string[],
+  corpusSha256: string,
+  options: { readonly model: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number },
+): NlActionPlan {
+  if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 5) throw new Error('runs must be 1..5');
+  if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(options.model)) throw new Error('invalid model');
+  return {
+    kind,
+    promptVersion: NL_ACTION_PROMPT_VERSION,
+    promptSha256: actionPromptSha256(),
+    corpusSha256,
+    model: options.model,
+    runs: options.runs,
+    concurrency: options.concurrency,
+    callTimeoutMs: options.timeoutMs ?? NL_SELECTION_TIMEOUT_MS,
+    caseIds: [...caseIds],
+  };
+}
+
+export function computeActionPlanDigest(plan: NlActionPlan): string {
+  return createHash('sha256').update(JSON.stringify(plan)).digest('hex');
+}
+
+/** Wrap a provider so each call's raw text and latency are seen by the evaluation (the service sees the same text). */
+function recording(provider: AiProvider, clock: () => number): { provider: AiProvider; last: () => { raw: string; latencyMs: number } } {
+  let raw = '';
+  let latencyMs = 0;
+  const wrapped: AiProvider = {
+    ...provider,
+    id: provider.id,
+    ...(provider.family !== undefined ? { family: provider.family } : {}),
+    capabilities: provider.capabilities,
+    isAvailable: () => provider.isAvailable(),
+    execute: async (request) => {
+      const started = clock();
+      try {
+        const result = await provider.execute(request);
+        raw = result.text;
+        return result;
+      } finally {
+        latencyMs = clock() - started;
+      }
+    },
+  };
+  return { provider: wrapped, last: () => ({ raw, latencyMs }) };
+}
+
+/** Run the action plan (Strict: the caller checked the approved digest). */
+export async function runActionEvaluation(input: {
+  readonly corpus: NlActionCorpus;
+  readonly plan: NlActionPlan;
+  readonly provider: AiProvider;
+  readonly now: () => IsoTimestamp;
+  readonly elapsed?: () => number;
+  readonly onRecord?: (record: NlActionRecord) => void;
+}): Promise<NlActionRecord[]> {
+  const byId = new Map(input.corpus.cases.map((golden) => [golden.id, golden] as const));
+  const records: NlActionRecord[] = [];
+  for (let run = 1; run <= input.plan.runs; run += 1) {
+    const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is NlActionCase => golden !== undefined);
+    const worker = async (): Promise<void> => {
+      for (let golden = queue.shift(); golden !== undefined; golden = queue.shift()) {
+        const rec = recording(input.provider, input.elapsed ?? Date.now);
+        let record: NlActionRecord;
+        try {
+          const { decision, audit } = await decideActionCase(golden, rec.provider, input.now(), { timeoutMs: input.plan.callTimeoutMs });
+          const { raw, latencyMs } = rec.last();
+          record = { run, latencyMs, ...scoreActionDecision(golden, raw, decision, audit) };
+        } catch (error) {
+          record = { run, id: golden.id, family: golden.family, expected: golden.expect === 'none' ? 'none' : golden.expect.entryId, outcome: 'error', latencyMs: rec.last().latencyMs, reason: error instanceof Error ? error.name : 'unknown' };
+        }
+        records.push(record);
+        input.onRecord?.(record);
+      }
+    };
+    await Promise.all(Array.from({ length: input.plan.concurrency }, () => worker()));
+  }
+  return records;
+}
+
+// ── read regression (A6-D7) ────────────────────────────────────────────────────────────────────────────────────
+
+export interface NlReadRegressionCase {
+  readonly id: string;
+  readonly text: string;
+  readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
+  readonly prior?: { readonly entryId: string; readonly args: NlArgs };
+  /** Owner-approved relabel of a summary-`none` case (ratification decision 10). */
+  readonly a6Relabel?: { readonly entryId: string; readonly args: NlArgs; readonly batch: string };
+}
+
+export type NlReadRegressionOutcome = 'hit' | 'miss' | 'clarify' | 'none' | 'wrong-capture' | 'action-capture' | 'timeout' | 'error' | 'skipped';
+
+/** Score one read case with the A6 entries offered: any validated action or ITEM_READ capture is `action-capture`. */
+export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, now: string): { readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string } {
+  const relabeled = golden.a6Relabel !== undefined;
+  const expect = golden.a6Relabel ?? golden.expect;
+  const prepared = prepareSelectionInput(golden.text);
+  if ('skip' in prepared) return { outcome: 'skipped', relabeled };
+  const output = parseSelectionOutput(raw);
+  if (output === null) return { outcome: 'error', relabeled };
+  if (output.entryId === null) return { outcome: expect === 'none' ? 'none' : 'miss', relabeled, got: 'none' };
+  const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
+  const validated = validateSelection(
+    { entryId: output.entryId, args: output.args },
+    { offered, groundingText: prepared.groundingText, now, timeZone: 'Asia/Seoul', actions: true, ...(golden.prior !== undefined ? { previousArgs: golden.prior.args } : {}) },
+  );
+  if (!validated.ok || output.ambiguity !== 'CLEAR') return { outcome: 'clarify', relabeled, got: output.entryId };
+  const got = validated.value.entry.id;
+  const isAction = validated.value.entry.risk !== 'READ';
+  const goldIsAction = expect !== 'none' && isNlActionEntryId(expect.entryId);
+  if (isAction && !goldIsAction) return { outcome: 'action-capture', relabeled, got };
+  if (expect === 'none') return { outcome: 'wrong-capture', relabeled, got };
+  return { outcome: got === expect.entryId && canonical(validated.value.args) === canonical(expect.args) ? 'hit' : 'miss', relabeled, got };
+}
+
+export function loadReadRegressionCorpus(path: string = NL_INTENT_CORPUS_PATH): { cases: NlReadRegressionCase[]; sha256: string } {
+  const text = readFileSync(path, 'utf8');
+  return { cases: (JSON.parse(text) as { cases: NlReadRegressionCase[] }).cases, sha256: createHash('sha256').update(text).digest('hex') };
+}
+
+/** The read-regression prompt of one case: v19, every entry offered, the case's prior as the previous selection. */
+export function readRegressionPrompt(golden: NlReadRegressionCase): string | undefined {
+  const prepared = prepareSelectionInput(golden.text);
+  if ('skip' in prepared) return undefined;
+  return buildSelectionPrompt({
+    entries: NL_ACTION_EVAL_ENTRIES,
+    text: prepared.text,
+    actions: { referenceContext: 'none' },
+    ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId) ? { previous: { entryId: golden.prior.entryId, args: golden.prior.args } } : {}),
+  });
+}
+
+export async function runReadRegression(input: {
+  readonly cases: readonly NlReadRegressionCase[];
+  readonly plan: NlActionPlan;
+  readonly provider: AiProvider;
+  readonly now: () => string;
+  readonly elapsed?: () => number;
+}): Promise<Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string }>> {
+  const byId = new Map(input.cases.map((golden) => [golden.id, golden] as const));
+  const clock = input.elapsed ?? Date.now;
+  const records: Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string }> = [];
+  for (let run = 1; run <= input.plan.runs; run += 1) {
+    const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is NlReadRegressionCase => golden !== undefined);
+    const worker = async (): Promise<void> => {
+      for (let golden = queue.shift(); golden !== undefined; golden = queue.shift()) {
+        const prompt = readRegressionPrompt(golden);
+        if (prompt === undefined) {
+          records.push({ run, id: golden.id, outcome: 'skipped', relabeled: golden.a6Relabel !== undefined, latencyMs: 0 });
+          continue;
+        }
+        const started = clock();
+        try {
+          const result = await input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs });
+          records.push({ run, id: golden.id, latencyMs: clock() - started, ...scoreReadRegression(golden, result.text, input.now()) });
+        } catch {
+          records.push({ run, id: golden.id, outcome: 'error', relabeled: golden.a6Relabel !== undefined, latencyMs: clock() - started });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: input.plan.concurrency }, () => worker()));
+  }
+  return records;
+}
+
+/** The A6-D7 read-regression gate: the D12 gate on non-relabeled cases, and 0 action captures anywhere. */
+export function summarizeReadRegression(records: ReadonlyArray<{ outcome: NlReadRegressionOutcome; relabeled: boolean; id: string }>, goldOf: (id: string) => string): {
+  readonly overall: number;
+  readonly actionCaptures: number;
+  readonly wrongCaptures: number;
+  readonly relabeled: { readonly hits: number; readonly total: number };
+  readonly gatePassed: boolean;
+} {
+  const gated = records.filter((record) => !record.relabeled);
+  const positives = gated.filter((record) => goldOf(record.id) !== 'none');
+  const perEntry = new Map<string, { hits: number; total: number }>();
+  for (const record of positives) {
+    const slot = perEntry.get(goldOf(record.id)) ?? { hits: 0, total: 0 };
+    slot.total += 1;
+    if (record.outcome === 'hit') slot.hits += 1;
+    perEntry.set(goldOf(record.id), slot);
+  }
+  const overall = positives.length === 0 ? 1 : positives.filter((record) => record.outcome === 'hit').length / positives.length;
+  const actionCaptures = records.filter((record) => record.outcome === 'action-capture').length;
+  const wrongCaptures = gated.filter((record) => record.outcome === 'wrong-capture').length;
+  const relabeled = records.filter((record) => record.relabeled);
+  return {
+    overall,
+    actionCaptures,
+    wrongCaptures,
+    relabeled: { hits: relabeled.filter((record) => record.outcome === 'hit').length, total: relabeled.length },
+    gatePassed: overall >= 0.95 && [...perEntry.values()].every((slot) => slot.hits / slot.total >= 0.9) && wrongCaptures === 0 && actionCaptures === 0,
+  };
+}
+
+// ── the grammar-side baseline (A6-D7 "measured, not imitated") ─────────────────────────────────────────────────────
+
+/** Ids of the A6 entries a corpus targets (for the per-entry report). */
+export const NL_ACTION_REPORT_ENTRIES: readonly string[] = NL_ACTION_ENTRY_IDS.filter((id) => NL_ACTION_ENTRIES[id] !== undefined);
+
+/** Which A6 entry the anchored grammar alone would act as for this text (Class A), or `undefined`. Pure. */
+export function grammarActionOf(text: string, now: string): string | undefined {
+  const work = detectWorkChatCommand(text);
+  if (work?.kind === 'todo.add' || work?.kind === 'todo.complete' || work?.kind === 'todo.cancel') return work.kind;
+  try {
+    const reminder = parseReminderMessage(text, { now, timeZone: 'Asia/Seoul' });
+    if (reminder.kind === 'CREATE' || reminder.kind === 'CREATE_EVENT_RELATIVE') return 'reminder.create';
+    if (reminder.kind === 'CANCEL') return 'reminder.cancel';
+  } catch {
+    // not a reminder
+  }
+  if (parseMailQuestion(text)?.kind === 'summarize' || parseDriveQuestion(text)?.kind === 'summarize') return 'item.summarize';
+  return undefined;
+}
+
+/**
+ * The grammar-side baseline per entry (offline): on the positive execute cases, how many the anchored grammar alone would
+ * act on as the same entry (an upper bound: the grammar cannot resolve a deictic or a shown label), and how many
+ * negatives it would act on. Compared with the selector side of a run, per entry (A6-D7 "measured, not imitated").
+ */
+export function scoreActionGrammarSide(corpus: NlActionCorpus, now: string): Record<string, { readonly claimed: number; readonly total: number }> {
+  const result: Record<string, { claimed: number; total: number }> = {};
+  for (const golden of corpus.cases) {
+    const key = golden.expect === 'none' ? 'none' : golden.expect.outcome === 'execute' ? golden.expect.entryId : undefined;
+    if (key === undefined) continue;
+    const slot = (result[key] ??= { claimed: 0, total: 0 });
+    slot.total += 1;
+    const claimed = grammarActionOf(golden.text, now);
+    if (key === 'none' ? claimed !== undefined : claimed === key) slot.claimed += 1;
+  }
+  return result;
+}

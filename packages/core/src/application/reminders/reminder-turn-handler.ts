@@ -5,7 +5,8 @@ import type {
 } from '../../ports/conversation-turn-handler.port';
 import type { Logger } from '../../ports/logger.port';
 import { isDirectConversation, outboundMessage } from '../message-rendering';
-import type { NlCatalogEntry, NlSelectedCommand } from '../nl-routing/catalog';
+import { isNlActionEntryId, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import type { OnDemandBrief } from './on-demand-brief';
 import type { ReminderConversationService } from './reminder-conversation-service';
@@ -55,7 +56,8 @@ export const REMINDER_DISABLED_HELP_LINES: readonly string[] = [
 ];
 
 export interface ReminderTurnHandlerDeps {
-  readonly conversation: Pick<ReminderConversationService, 'handleTurn'> & Partial<Pick<ReminderConversationService, 'listReply'>>;
+  readonly conversation: Pick<ReminderConversationService, 'handleTurn'> &
+    Partial<Pick<ReminderConversationService, 'listReply' | 'listReplyDetailed' | 'handleTurnDetailed' | 'handleAction'>>;
   /** Fallback copy if the service ever throws (it is documented never to). */
   readonly composer: Pick<ReminderReplyComposer, 'storageFailure'>;
   /** `QUOKY_REMINDERS_ENABLED`; selects the help lines only (the service owns the disabled reply). */
@@ -84,13 +86,23 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
       ...(this.deps.enabled && this.deps.conversation.listReply !== undefined ? [nlWave1Entry('reminder.list')] : []),
       // The brief rides on the reminder store: with reminders off it is not offered (and never answered).
       ...(this.deps.enabled && this.deps.brief !== undefined ? [nlWave1Entry('brief.today')] : []),
+      // ADR-0120 amendment A6: the reminder action entries (offered by the runtime only while QUOKY_NL_ACTIONS allows).
+      ...(this.deps.enabled && this.deps.conversation.handleAction !== undefined
+        ? [nlActionEntry('reminder.create'), nlActionEntry('reminder.cancel'), nlActionEntry('action.undo')]
+        : []),
     ];
   }
 
   /** A validated selection (ADR-0120 interfaces): the existing reminder LIST, or the model-free on-demand brief (DM only). */
   async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     const base = { context: ctx.message.context, actorId: ctx.actor.id, messageId: ctx.message.id, now: ctx.now };
+    if (isNlActionEntryId(selected.entryId)) return this.handleAction(selected, ctx, base);
     if (selected.entryId === 'reminder.list') {
+      // A6: the detailed form also reports the listing as rendered (present only with QUOKY_NL_ACTIONS not off).
+      if (this.deps.conversation.listReplyDetailed !== undefined) {
+        const listed = await this.deps.conversation.listReplyDetailed(base);
+        return { reply: listed.reply, ...(listed.listing !== undefined ? { nlListing: listed.listing } : {}) };
+      }
       return this.deps.conversation.listReply === undefined ? null : { reply: await this.deps.conversation.listReply(base) };
     }
     if (selected.entryId !== 'brief.today' || this.deps.brief === undefined || !this.deps.enabled) return null;
@@ -112,17 +124,48 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
     }
   }
 
+  /** ADR-0120 amendment A6: one reminder action (or the undo of one), DM-only, with its content-free receipt. */
+  private async handleAction(
+    selected: NlSelectedCommand,
+    ctx: TurnHandlerContext,
+    base: { readonly context: TurnHandlerContext['message']['context']; readonly actorId: string; readonly messageId: string; readonly now: string },
+  ): Promise<TurnHandlerReply | null> {
+    const handleAction = this.deps.conversation.handleAction;
+    if (handleAction === undefined || !this.deps.enabled) return null;
+    if (selected.entryId === 'action.undo' && selected.target?.source !== 'reminder') return null;
+    if (selected.entryId !== 'reminder.create' && selected.entryId !== 'reminder.cancel' && selected.entryId !== 'action.undo') return null;
+    if (!isDirectConversation(ctx.message.context)) {
+      const text = selected.language === 'en' ? 'I do that only in a direct message. Nothing was changed.' : '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.';
+      return { reply: outboundMessage(ctx.message.context, text, { replyToMessageId: ctx.message.id }), nlAction: { entryId: selected.entryId, result: 'refused', source: 'reminder', reason: 'not-dm' } };
+    }
+    const condition = ctx.nlActionWriteCondition;
+    const result = await handleAction.call(this.deps.conversation, selected, { ...base, ...(condition !== undefined ? { actionCondition: condition } : {}) });
+    const reply = result.reply;
+    return {
+      reply,
+      ...(reply.content !== undefined ? { history: { assistant: REMINDER_EVENT_HISTORY_NOTE } } : {}),
+      ...(result.action !== undefined ? { nlAction: result.action } : {}),
+    };
+  }
+
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     try {
-      const reply = await this.deps.conversation.handleTurn({
+      const input = {
         text: ctx.message.text,
         context: ctx.message.context,
         actorId: ctx.actor.id,
         messageId: ctx.message.id,
         now: ctx.now,
-      });
+      };
+      // A6: the detailed form carries the content-free receipts (present only with QUOKY_NL_ACTIONS not off).
+      const detailed = this.deps.conversation.handleTurnDetailed !== undefined ? await this.deps.conversation.handleTurnDetailed(input) : undefined;
+      const reply = detailed !== undefined ? detailed?.reply ?? null : await this.deps.conversation.handleTurn(input);
       if (!reply) return null;
-      return reply.content !== undefined ? { reply, history: { assistant: REMINDER_EVENT_HISTORY_NOTE } } : { reply };
+      const receipts = {
+        ...(detailed?.action !== undefined ? { nlAction: detailed.action } : {}),
+        ...(detailed?.listing !== undefined ? { nlListing: detailed.listing } : {}),
+      };
+      return reply.content !== undefined ? { reply, history: { assistant: REMINDER_EVENT_HISTORY_NOTE }, ...receipts } : { reply, ...receipts };
     } catch (error) {
       // The service catches its own failures; this is the handler-contract backstop. It cannot know whether the
       // text was a reminder phrase, and falling through could let chat promise a reminder, so it answers with the

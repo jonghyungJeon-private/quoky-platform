@@ -93,13 +93,14 @@ function liveReminders(storage: ReminderStorageSeam): ReminderRepository {
 /** Delegates every call to the storage's CURRENT `reminders` repository (never a pre-init snapshot). */
 export function lazyReminderRepository(storage: ReminderStorageSeam): ReminderRepository {
   return {
-    createWithinLimit: (draft, maxActive) => liveReminders(storage).createWithinLimit(draft, maxActive),
+    createWithinLimit: (draft, maxActive, condition) => liveReminders(storage).createWithinLimit(draft, maxActive, condition),
     listActiveByActor: (actorId) => liveReminders(storage).listActiveByActor(actorId),
     getByDisplayNo: (actorId, displayNo) => liveReminders(storage).getByDisplayNo(actorId, displayNo),
-    cancel: (actorId, displayNo, at) => liveReminders(storage).cancel(actorId, displayNo, at),
+    cancel: (actorId, displayNo, at, condition) => liveReminders(storage).cancel(actorId, displayNo, at, condition),
     claimDue: (now, limit, attemptId) => liveReminders(storage).claimDue(now, limit, attemptId),
     completeFiring: (id, attemptId, completion) => liveReminders(storage).completeFiring(id, attemptId, completion),
     listFiring: () => liveReminders(storage).listFiring(),
+    reactivate: (actorId, next, expectedUpdatedAt, maxActive, condition) => liveReminders(storage).reactivate(actorId, next, expectedUpdatedAt, maxActive, condition),
   };
 }
 
@@ -125,6 +126,8 @@ export interface RemindersCompositionOptions {
   readonly clock?: () => IsoTimestamp;
   readonly timers?: ReminderTickTimers;
   readonly logger?: Logger;
+  /** ADR-0120 amendment A6: content-free action receipts on reminder replies (`QUOKY_NL_ACTIONS` not `off`). */
+  readonly actionReceipts?: () => boolean;
 }
 
 export function createRemindersProviders(
@@ -162,6 +165,7 @@ export function createRemindersProviders(
           logger,
           // ADR-0117 D5 (BRF-2): the read-only calendar resolves the event a pre-meeting reminder names.
           ...(calendar ? { calendar } : {}),
+          ...(options.actionReceipts?.() === true ? { actionReceipts: true } : {}),
         }),
       inject: [
         REMINDER_FEATURE_CONFIG,
@@ -290,4 +294,6 @@ export function createRemindersProviders(
   ];
 }
 
-export const remindersProviders: Provider[] = createRemindersProviders(() => loadConfig().reminders);
+export const remindersProviders: Provider[] = createRemindersProviders(() => loadConfig().reminders, {
+  actionReceipts: () => loadConfig().nlSelection.actions !== 'off',
+});
