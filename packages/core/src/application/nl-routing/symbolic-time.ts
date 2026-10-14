@@ -461,7 +461,11 @@ export function nlWeekdayMentions(text: string, sourceWords: readonly string[] =
     const side = boundSideOf(head?.[1]);
     // "next Friday" may be this coming Friday, "last Friday" this week's and "this Monday" on a Sunday tomorrow, so an
     // English anchor only fixes the direction; "the last Friday of the month" is an ordinal, not an anchor.
-    const ordinal = /^\s+(?:of|in)\b/u.test(source.slice((match.index ?? 0) + match[0].length));
+    const ordinal =
+      anchor === 'last' &&
+      /^\s+(?:of|in)\s+(?:(?:the|this|next)\s+month|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)\b/iu.test(
+        source.slice((match.index ?? 0) + match[0].length),
+      );
     mentions.push({
       weekday,
       certain: true,

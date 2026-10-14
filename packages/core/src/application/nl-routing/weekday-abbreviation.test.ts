@@ -329,5 +329,9 @@ describe('CA final check: English "this" and "the last Friday of"', () => {
     expect(calendar('last Friday of October', '10-30')).toMatchObject({ ok: true });
     expect(calendar('last Friday of October', '10-29')).toMatchObject({ ok: false, reason: 'weekday' });
     expect(calendar('what happened last Friday', '10-30')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar('last Friday in the standup', 'next-fri')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar('next Friday in the afternoon', 'last-fri')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar('this Friday in the afternoon', '10-02')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar('the last Friday in October', '10-30')).toMatchObject({ ok: true });
   });
 });

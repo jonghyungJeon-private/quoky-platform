@@ -22260,8 +22260,8 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
     before.
   - *English anchors.* English anchors never fix the Monday-based week. "this" puts the day in the current week or the
     next seven days ("this Monday" said on a Sunday is tomorrow). "next" puts it after today and "last" before today.
-    Each anchor stays attached to a bound ("by this Friday" refuses last week). "the last Friday of the month" / "of
-    October" is an ordinal, so it has no direction. A bare three-letter form ("sun") is a weekday only with its anchor
+    Each anchor stays attached to a bound ("by this Friday" refuses last week). "last" followed by of/in and the, this or
+    next month, or by a month name ("the last Friday of October"), is an ordinal, so it has no direction. A bare three-letter form ("sun") is a weekday only with its anchor
     (CA final check).
   - *Glosses.* A parenthesised gloss after an abbreviation is read like the next word: "금(골드)" is uncertain, "수(오전)"
     is certain. Weekdays are counted across glosses and punctuation: "수(오전), 금(오후)" names two days, so the check steps
