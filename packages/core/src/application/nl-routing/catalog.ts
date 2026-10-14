@@ -49,6 +49,8 @@ export interface NlArgSpec {
   readonly values?: readonly string[];
   /** `range` only: whether `upcoming` (from now to the lookahead end) is accepted; every other symbol always is. */
   readonly allowUpcoming?: boolean;
+  /** `keyword` only: a value made of time words is legitimate here (a sender named "Sun"); the time-keyword rule skips it. */
+  readonly allowsTimeWords?: boolean;
   /** `range` only: the period must have started already (mail received in a future period is meaningless). */
   readonly pastOnly?: boolean;
   readonly required?: boolean;

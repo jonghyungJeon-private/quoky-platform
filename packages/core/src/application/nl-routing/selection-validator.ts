@@ -123,7 +123,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       if (!stated && ctx.previousArgs?.[spec.name] !== value) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
     }
     if (spec.kind === 'keyword') {
-      if (rangeSpec !== undefined && spec.name !== 'from' && isTimeExpression(value)) return { ok: false, reason: 'time-keyword', entryId, arg: spec.name };
+      if (rangeSpec !== undefined && spec.allowsTimeWords !== true && isTimeExpression(value)) return { ok: false, reason: 'time-keyword', entryId, arg: spec.name };
       const previous = ctx.previousArgs?.[spec.name];
       const fromPrevious = typeof previous === 'string' && previous === value;
       if (!fromPrevious && !isGroundedIn(value, ctx.groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };

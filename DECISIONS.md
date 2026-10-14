@@ -22165,7 +22165,7 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
   `from`; `점심` is not a time word; numeric dates (10.07, 10/7, 2026.10.07) are. A mail `range` must have started (a future
   period is refused). Reminder titles: a one-syllable stem before 라고 ("일찍 자라고") is an imperative (`자기`); a longer
   vowel-ending word ("택시라고") stays a quoted noun, because nouns of that shape are far commoner in reminders than
-  multi-syllable bare imperatives; `…시라고` is honorific only after another word. Known limit: "기다리라고" keeps its cut stem.
+  multi-syllable bare imperatives; `…시라고` is honorific only after another word. Known limits: "기다리라고" keeps its cut stem; "공항 택시라고" reads the lone-word noun rule as a verb ("공항 택시기"), because a "…시라고" after another word is treated as an honorific imperative. Dotted numbers read as dates only as m.dd (two-digit day) or yyyy.mm.dd; "4.20" is therefore a date, "4.2" a version.
 - **Not done (separate design).** Writes and action intents: todo add, reminder cancel, item summarize, Slack post.
 - **Reminder title (R10, outside ADR-0120).** `stripKoTrailingParticles` read the quotative `-라고` of "물 마시라고" as a
   noun's `(이)라고` and cut the verb stem ('물 마시'). It is now generic morphology on the ending: an imperative stem

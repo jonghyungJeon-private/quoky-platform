@@ -218,7 +218,7 @@ describe('R6 mail item picks', () => {
 
 describe('review fixes: time-word scope, numeric dates, DST, transient item, future mail range', () => {
   it('numeric dates are time words even with punctuation, and 점심 is not one', () => {
-    for (const text of ['10.07', '10/7', '10월 7일', '10.7.', '2026.10.07', '10-07']) expect(isTimeExpression(text), text).toBe(true);
+    for (const text of ['10.07', '10/7', '10월 7일', '10.07.', '2026.10.07', '10-07']) expect(isTimeExpression(text), text).toBe(true);
     expect(isTimeExpression('점심')).toBe(false);
     expect(isTimeExpression('점심 회식')).toBe(false);
     expect(validateSelection({ entryId: 'calendar.events', args: { keyword: '10.07' } }, ctx('10.07 거는?'))).toMatchObject({ ok: false, reason: 'time-keyword' });
@@ -258,5 +258,15 @@ describe('review delta: transient args are stripped when a stored selection is r
     const session = { metadata: { 'quoky.lastSelection': lastSelectionRecord('a-1', { entryId: 'mail.list', args: { item: 3, range: 'today' } }, NOW) } };
     expect(readLastSelection(session, 'a-1', NOW)).toMatchObject({ args: { range: 'today' } });
     expect(readLastSelection(session, 'a-1', NOW)?.args).not.toHaveProperty('item');
+  });
+});
+
+describe('review polish: version numbers are not dates', () => {
+  it.each(['2.0', '4.2', 'v4.2', '1.10.3', '0.13', '13.5'])('%s is a keyword, not a time expression', (text) => {
+    expect(isTimeExpression(text)).toBe(false);
+    expect(validateSelection({ entryId: 'calendar.events', args: { keyword: text } }, ctx(`${text} 릴리스만`))).toMatchObject({ ok: true });
+  });
+  it.each(['10.07', '10/7', '10월 7일', '2026.10.07', '12/31', '1.15'])('%s is a date', (text) => {
+    expect(isTimeExpression(text)).toBe(true);
   });
 });

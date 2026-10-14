@@ -123,7 +123,7 @@ export function migrateStoredSelection(selection: StoredSelection): StoredSelect
     for (const [name, value] of Object.entries(args)) {
       const spec = entry.args.find((candidate) => candidate.name === name);
       // Title keywords only: a sender (`from`) named like a weekday or month stays.
-      if (spec?.kind === 'keyword' && spec.name !== 'from' && typeof value === 'string' && isTimeExpression(value)) continue;
+      if (spec?.kind === 'keyword' && spec.allowsTimeWords !== true && typeof value === 'string' && isTimeExpression(value)) continue;
       kept[name] = value;
     }
     args = kept;

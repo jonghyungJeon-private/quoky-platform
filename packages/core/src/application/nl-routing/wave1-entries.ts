@@ -261,7 +261,7 @@ const mailList: NlCatalogEntry = {
     { name: 'unread', kind: 'flag', default: false, description: 'true for unread/new mail (안 읽은, 읽지 않은, 새, unread, new).' },
     { name: 'range', kind: 'range', pastOnly: true, description: 'The period the mail was RECEIVED in: today (오늘 온), yesterday (어제 온), this-week, last-week, last-7-days, a weekday (last-fri = 지난주 금요일), a date. Omit when the owner names no period.' },
     { name: 'today', kind: 'flag', default: false, deprecated: true, description: 'Deprecated: use range today.' },
-    { name: 'from', kind: 'keyword', description: 'The sender name or address the owner names, copied verbatim (e.g. 김부장님).' },
+    { name: 'from', kind: 'keyword', allowsTimeWords: true, description: 'The sender name or address the owner names, copied verbatim (e.g. 김부장님).' },
     { name: 'item', kind: 'limit', transient: true, description: 'Only when the owner asks about ONE already-listed mail by its number ("N번째 건 누가 보냈어?"): that number. Never for a summary, reply or write request (those are none).' },
     COUNT,
   ],
