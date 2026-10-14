@@ -22249,6 +22249,24 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
     말씀해 주세요."
   - *Tests.* Each finding has tests: a Sunday clock, English "next Wed", the cached retry, and the mail repair that ends in
     `weekday`.
+- **Final review round (Chief Architect delta, Codex; the fix-loop cap).**
+  - *Uncertain + anchor.* An uncertain weekday with a week anchor accepts a period only inside that week or containing the
+    day ("이번 주 금 시세 발표" refuses last week, next week and 10/17-19).
+  - *Hidden period.* A keyword is a title only if a content word is left after removing the weekday and time words. That
+    word must not be an entry source word or a grammar word (`nlKeywordIsTitle`). So "수요일 회의" or "수요일 일정" with the
+    whole next week is refused as `weekday`, and "수요일 스터디" stays a title.
+  - *Bounds.* Inclusive bounds (까지, 부터, ~, by, until, through, from, since) must contain the day. Only exclusive ones
+    widen by one day, on their own side: 이후, 후에 and after start the day after; 전에, 이전, 전까지 and before end the day
+    before.
+  - *English anchors.* English "this" fixes this week. "next" and "last" fix only the direction from today, because "next
+    Friday" may be this coming Friday. Both stay attached to a bound ("by this Friday" refuses last week). A bare
+    three-letter form ("sun") is a weekday only with its anchor.
+  - *Glosses.* A parenthesised gloss after an abbreviation is read like the next word: "금(골드)" is uncertain, "수(오전)"
+    is certain. Weekdays are counted across glosses and punctuation: "수(오전), 금(오후)" names two days, so the check steps
+    aside.
+  - *Cache.* A `weekday` refusal reached through the repair path is also dropped from the cache.
+  - *Accepted residual* (cap reached). After this round, only a wrong day shown or a regression against `main` blocks.
+    Extra questions on unusual phrasings are accepted.
 - **"다음 주 일 많아?" (decided).** 일 after an anchor is uncertain: it is also the commonest noun for work and day, and the
   noun reading is the likelier one here. Core cannot tell the two apart structurally, so it does not force either. For
   this one syllable it accepts Sunday of that week, or a period with no weekday (the whole week), and refuses any other
