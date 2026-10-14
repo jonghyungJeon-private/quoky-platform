@@ -10,6 +10,7 @@ export * from './honest-chat';
 export * from './wave1-entries';
 export * from './nl-selection-service';
 export * from './action-entries';
+export * from './action-switch';
 export * from './item-reference';
 export * from './last-action';
 export * from './nl-action-policy';

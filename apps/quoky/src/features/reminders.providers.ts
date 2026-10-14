@@ -126,6 +126,8 @@ export interface RemindersCompositionOptions {
   readonly clock?: () => IsoTimestamp;
   readonly timers?: ReminderTickTimers;
   readonly logger?: Logger;
+  /** ADR-0120 amendment A6: content-free action receipts on reminder replies (`QUOKY_NL_ACTIONS` not `off`). */
+  readonly actionReceipts?: () => boolean;
 }
 
 export function createRemindersProviders(
@@ -163,6 +165,7 @@ export function createRemindersProviders(
           logger,
           // ADR-0117 D5 (BRF-2): the read-only calendar resolves the event a pre-meeting reminder names.
           ...(calendar ? { calendar } : {}),
+          ...(options.actionReceipts?.() === true ? { actionReceipts: true } : {}),
         }),
       inject: [
         REMINDER_FEATURE_CONFIG,
@@ -291,4 +294,6 @@ export function createRemindersProviders(
   ];
 }
 
-export const remindersProviders: Provider[] = createRemindersProviders(() => loadConfig().reminders);
+export const remindersProviders: Provider[] = createRemindersProviders(() => loadConfig().reminders, {
+  actionReceipts: () => loadConfig().nlSelection.actions !== 'off',
+});

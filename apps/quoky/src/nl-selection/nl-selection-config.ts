@@ -20,9 +20,14 @@ import { NL_SELECTION_TIMEOUT_MS } from '@quoky/core';
  *   default `haiku`. Adapter configuration only: Core never sees it.
  * - `QUOKY_NL_INTENT_TIMEOUT_MS` (ADR-0120 amendment A3): the per-call selection bound, an integer from 2000 to 8000;
  *   default `NL_SELECTION_TIMEOUT_MS` (6 s).
+ * - `QUOKY_NL_ACTIONS` (ADR-0120 amendment A6-D8): exactly `off`, `shadow`, `local` or `external`; default `off` (no action
+ *   entry is ever offered and every prompt and reply is byte-identical to `nl-select.v18`). Any other value requires
+ *   `QUOKY_NL_INTENT_MODE=active` (`NL_ACTIONS_REQUIRES_ACTIVE`, a startup refusal); the composition root always builds
+ *   the persisted kill switch, and the service refuses to start without it. Each non-`off` level is a Strict owner step.
  */
 export type NlIntentModeConfig = 'off' | 'shadow' | 'active';
 export type NlPhaseConfig = 'a' | 'c' | 'c-shadow';
+export type NlActionsConfig = 'off' | 'shadow' | 'local' | 'external';
 
 export interface NlSelectionConfig {
   readonly mode: NlIntentModeConfig;
@@ -33,6 +38,8 @@ export interface NlSelectionConfig {
   readonly phase: NlPhaseConfig;
   /** `QUOKY_NL_INTENT_TIMEOUT_MS` (amendment A3), milliseconds. */
   readonly timeoutMs: number;
+  /** `QUOKY_NL_ACTIONS` (amendment A6): `off` (default), `shadow`, `local` or `external`. */
+  readonly actions: NlActionsConfig;
 }
 
 export const DEFAULT_NL_INTENT_MODEL = 'haiku';
@@ -44,6 +51,8 @@ export const NlSelectionConfigErrorCode = {
   NL_INTENT_TIMEOUT_INVALID: 'NL_INTENT_TIMEOUT_INVALID',
   NL_PHASE_INVALID: 'NL_PHASE_INVALID',
   NL_PHASE_REQUIRES_ACTIVE: 'NL_PHASE_REQUIRES_ACTIVE',
+  NL_ACTIONS_INVALID: 'NL_ACTIONS_INVALID',
+  NL_ACTIONS_REQUIRES_ACTIVE: 'NL_ACTIONS_REQUIRES_ACTIVE',
 } as const;
 export type NlSelectionConfigErrorCode = (typeof NlSelectionConfigErrorCode)[keyof typeof NlSelectionConfigErrorCode];
 
@@ -55,6 +64,7 @@ export class NlSelectionConfigError extends Error {
 }
 
 const MODES: readonly NlIntentModeConfig[] = ['off', 'shadow', 'active'];
+const ACTION_LEVELS: readonly NlActionsConfig[] = ['off', 'shadow', 'local', 'external'];
 /** The `QUOKY_CLAUDE_MODEL` shape (an alias or a full model name). */
 const CLAUDE_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/;
 const TIMEOUT_MIN_MS = 2_000;
@@ -99,7 +109,16 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
     if (value === undefined) throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_INTENT_TIMEOUT_INVALID);
     timeoutMs = value;
   }
+  const rawActions = env.QUOKY_NL_ACTIONS;
+  if (rawActions !== undefined && !(ACTION_LEVELS as readonly string[]).includes(rawActions)) {
+    throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_ACTIONS_INVALID);
+  }
+  // A6-D8: an action level needs Phase A live (`active`); the kill switch is checked by the service at construction.
+  if (rawActions !== undefined && rawActions !== 'off' && rawMode !== 'active') {
+    throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_ACTIONS_REQUIRES_ACTIVE);
+  }
   return {
+    actions: (rawActions as NlActionsConfig | undefined) ?? 'off',
     mode: (rawMode as NlIntentModeConfig | undefined) ?? 'off',
     model: rawModel ?? DEFAULT_NL_INTENT_MODEL,
     grammarYield: rawYield === 'on',

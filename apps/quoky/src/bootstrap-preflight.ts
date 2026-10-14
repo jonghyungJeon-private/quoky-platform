@@ -117,6 +117,8 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.NL_GRAMMAR_YIELD_INVALID]: 'QUOKY_NL_GRAMMAR_YIELD must be unset, "off", or "on".',
   [QuokyConfigErrorCode.NL_PHASE_INVALID]: 'QUOKY_NL_PHASE must be unset, "a", "c", or "c-shadow".',
   [QuokyConfigErrorCode.NL_PHASE_REQUIRES_ACTIVE]: 'QUOKY_NL_PHASE=c-shadow needs QUOKY_NL_INTENT_MODE=active, and QUOKY_NL_PHASE=c cannot be combined with shadow.',
+  [QuokyConfigErrorCode.NL_ACTIONS_INVALID]: 'QUOKY_NL_ACTIONS must be unset, "off", "shadow", "local", or "external".',
+  [QuokyConfigErrorCode.NL_ACTIONS_REQUIRES_ACTIVE]: 'QUOKY_NL_ACTIONS other than "off" needs QUOKY_NL_INTENT_MODE=active.',
   [QuokyConfigErrorCode.NL_INTENT_TIMEOUT_INVALID]:
     'QUOKY_NL_INTENT_TIMEOUT_MS must be unset or a whole number of milliseconds from 2000 to 8000.',
   // ADR-0121 S0 egress guard and traffic ledger. Names and shapes only, never a value.

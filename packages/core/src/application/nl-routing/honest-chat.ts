@@ -1,4 +1,5 @@
 import type { NlCatalogEntry } from './catalog';
+import { renderRestate } from './nl-action-policy';
 
 /**
  * Honest chat after selection (ADR-0120 D9). When the selector finds no entry (or cannot run), the chat turn carries
@@ -30,12 +31,32 @@ export function renderConfiguredSourcesFact(entries: readonly NlCatalogEntry[], 
   }
   if (helpLines.length > 0) {
     const commands = bounded(helpLines.map((line) => line.replace(/^[-\s]+/u, '').trim()).filter(Boolean).join(' | '), COMMANDS_MAX_CHARS);
+    // ADR-0120 amendment A6-D6 (amends D9): for the action families offered this turn, the fact no longer hands out command
+    // phrases; Quoky does them when asked in plain words. Without an offered action entry the sentence is unchanged.
+    const actions = entries.filter((entry) => entry.risk !== 'READ');
     parts.push(
-      `Quoky's own commands (the User sends them exactly; a chat reply cannot run them or do the action): ${commands}. ` +
-        'When the User asks to create, change, send or remember something, reply with the exact command to send.',
+      actions.length === 0
+        ? `Quoky's own commands (the User sends them exactly; a chat reply cannot run them or do the action): ${commands}. ` +
+            'When the User asks to create, change, send or remember something, reply with the exact command to send.'
+        : `Quoky's own commands (the User sends them exactly; a chat reply cannot run them or do the action): ${commands}. ` +
+            `Quoky does these actions itself when the User asks in plain words: ${actions.map((entry) => entry.label.en).join(', ')}. ` +
+            'A chat reply never performs them, never claims they are done and never tells the User to type a fixed command phrase ' +
+            'for them; it asks the User to say again what to do and which item. For any other request to create, change, send ' +
+            'or remember something, reply with the exact command to send.',
     );
   }
   return parts.join(' ');
+}
+
+/**
+ * ADR-0120 amendment A6-D6: the D9 stale-command guard. While an action family is offered, a chat reply that quotes that
+ * family's own fixed command phrase (its entry's `staleCommands`, a closed set) is replaced by the deterministic
+ * "무엇을/어느 항목을 다시 말씀해 주세요". Families that are not offered keep today's behaviour.
+ */
+export function guardStaleActionCommands(text: string, entries: readonly NlCatalogEntry[], language: 'ko' | 'en'): FalseIncapabilityGuardResult {
+  if (typeof text !== 'string' || text.length === 0) return { text, guarded: false };
+  const quoted = entries.some((entry) => entry.risk !== 'READ' && (entry.staleCommands ?? []).some((pattern) => pattern.test(text)));
+  return quoted ? { text: renderRestate(language), guarded: true } : { text, guarded: false };
 }
 
 function bounded(text: string, max: number): string {
@@ -84,6 +105,9 @@ export function guardFalseIncapabilityClaims(
   helpLines: readonly string[] = [],
 ): FalseIncapabilityGuardResult {
   if (typeof text !== 'string' || text.trim() === '') return { text, guarded: false };
+  // A6-D6: a reply quoting an offered action family's command phrase is stale (checked before the D5 exemption below).
+  const stale = guardStaleActionCommands(text, entries, language);
+  if (stale.guarded) return stale;
   // A reply that hands the owner one of Quoky's own commands is already the right answer (D5): never replaced.
   // The help index ("도움말", "help") is a deflection, not an action command: naming it does not make a denial true.
   const commands = quotedCommandsOf([...helpLines, ...entries.map((entry) => entry.usage.ko)]).filter((command) => !HELP_INDEX.test(command));
