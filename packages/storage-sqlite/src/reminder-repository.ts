@@ -12,6 +12,7 @@ import type {
   CreateReminderResult,
   Id,
   IsoTimestamp,
+  ReactivateReminderResult,
   Reminder,
   ReminderDraft,
   ReminderFiringCompletion,
@@ -141,6 +142,31 @@ export class SqliteReminderRepository implements ReminderRepository {
       `SELECT * FROM reminders WHERE status = ? ORDER BY next_fire_at ASC, id ASC`,
     ).all(ReminderStatus.FIRING) as ReminderRow[];
     return rows.map(toReminder);
+  }
+
+  /**
+   * ADR-0120 amendment A6 (record B), the undo path only: one IMMEDIATE transaction that re-reads the row, requires it to
+   * be the actor's, `CANCELED` and unchanged (`updatedAt`), checks the active limit like `createWithinLimit`, and writes
+   * `next` through the single CAS write helper (expected status `CANCELED`). `display_no` is untouched.
+   */
+  async reactivate(actorId: Id, next: Reminder, expectedUpdatedAt: IsoTimestamp, maxActive: number): Promise<ReactivateReminderResult> {
+    if (!Number.isSafeInteger(maxActive) || maxActive < 0) throw new Error('REMINDER_LIMIT_INVALID');
+    if (next.status !== ReminderStatus.SCHEDULED || next.nextFireAt === undefined || next.actorId !== actorId) {
+      throw new Error('REMINDER_REACTIVATION_INVALID');
+    }
+    canonicalInstant(next.nextFireAt);
+    return this.immediate((): ReactivateReminderResult => {
+      const row = this.db.prepare('SELECT * FROM reminders WHERE id = ? AND actor_id = ?').get(next.id, actorId) as ReminderRow | undefined;
+      if (!row) return { status: 'NOT_FOUND' };
+      const current = toReminder(row);
+      if (row.status !== ReminderStatus.CANCELED || current.updatedAt !== expectedUpdatedAt || current.displayNo !== next.displayNo) {
+        return { status: 'CHANGED', reminder: current };
+      }
+      const activeCount = this.countActive(actorId);
+      if (activeCount >= maxActive) return { status: 'LIMIT_REACHED', activeCount };
+      this.write(next, ReminderStatus.CANCELED);
+      return { status: 'REACTIVATED', reminder: next };
+    });
   }
 
   private countActive(actorId: Id): number {

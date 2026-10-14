@@ -5,6 +5,7 @@ import {
   assertResourceRefCapacity,
   correlateWorkItem,
   normalizeWorkItemTitle,
+  reopenWorkItem,
   transitionWorkItem,
   uniqueResourceRefs,
 } from '../domain';
@@ -85,6 +86,19 @@ export class WorkManager {
       const canonical = await this.storage.workItems.get(id);
       if (!canonical) throw new Error(`WorkItem not found: ${id}`);
       return this.storage.workItems.save(transitionWorkItem(canonical, status, now()));
+    });
+  }
+
+  /**
+   * ADR-0120 amendment A6 (record B), the A6 undo path ONLY: reopen the SAME completed or canceled item, provided it is
+   * unchanged since the action being undone (`expectedUpdatedAt`). Throws `WorkItemReopenError` otherwise. Serialized
+   * with every other mutation of the item.
+   */
+  async reopen(id: Id, expectedUpdatedAt: string): Promise<WorkItem> {
+    return this.serialize(id, async () => {
+      const canonical = await this.storage.workItems.get(id);
+      if (!canonical) throw new Error(`WorkItem not found: ${id}`);
+      return this.storage.workItems.save(reopenWorkItem(canonical, now(), expectedUpdatedAt));
     });
   }
 

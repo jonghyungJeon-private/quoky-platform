@@ -27,6 +27,15 @@ export type CompleteFiringResult =
   /** The reminder is no longer FIRING under this attempt id; nothing was written. */
   | { status: 'CONFLICT' };
 
+/** ADR-0120 amendment A6 (ratification record B): the outcome of the undo-only reactivation. */
+export type ReactivateReminderResult =
+  | { status: 'REACTIVATED'; reminder: Reminder }
+  | { status: 'NOT_FOUND' }
+  /** No longer CANCELED, or changed since the cancel being undone (the version differs); nothing was written. */
+  | { status: 'CHANGED'; reminder: Reminder }
+  /** The owner already has `maxActive` SCHEDULED/FIRING reminders; nothing was written. */
+  | { status: 'LIMIT_REACHED'; activeCount: number };
+
 export interface ReminderRepository {
   /**
    * Atomically count the actor's active reminders and, below `maxActive`, store the draft with the next stable
@@ -48,4 +57,11 @@ export interface ReminderRepository {
   completeFiring(id: Id, attemptId: Id, completion: ReminderFiringCompletion): Promise<CompleteFiringResult>;
   /** Every FIRING reminder (startup recovery treats each as `UNCERTAIN`, never resends). */
   listFiring(): Promise<Reminder[]>;
+  /**
+   * ADR-0120 amendment A6 (record B), the A6 undo path ONLY: atomically replace the actor's CANCELED reminder `next.id`
+   * with `next` (a SCHEDULED value computed by `reactivateReminder`), compare-and-set on status `CANCELED` and the stored
+   * `updatedAt` equal to `expectedUpdatedAt`, and only while the actor has fewer than `maxActive` active reminders (the
+   * `createWithinLimit` rule). The row keeps its `displayNo`.
+   */
+  reactivate(actorId: Id, next: Reminder, expectedUpdatedAt: IsoTimestamp, maxActive: number): Promise<ReactivateReminderResult>;
 }

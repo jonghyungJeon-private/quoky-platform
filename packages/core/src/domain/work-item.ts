@@ -53,6 +53,26 @@ export function transitionWorkItem(
   return { ...item, status: to, updatedAt };
 }
 
+/** Why {@link reopenWorkItem} refused: the item is not final, or it changed since the action being undone. */
+export class WorkItemReopenError extends Error {
+  constructor(readonly code: 'NOT_FINAL' | 'CHANGED') {
+    super(code === 'NOT_FINAL' ? 'WorkItem is not COMPLETED or CANCELED' : 'WorkItem changed since the action being undone');
+    this.name = 'WorkItemReopenError';
+  }
+}
+
+/**
+ * ADR-0120 amendment A6, ratification record B (narrowly amends ADR-0075's lifecycle): `COMPLETED` / `CANCELED` →
+ * `ACTIVE`, the SAME item, ONLY from the A6 undo path (the inverse of a completion or a cancel). The generic
+ * {@link transitionWorkItem} table stays closed for every other caller. `expectedUpdatedAt` is the item's version right
+ * after the action being undone: an item changed since then is never reopened. Pure.
+ */
+export function reopenWorkItem(item: WorkItem, at: IsoTimestamp, expectedUpdatedAt: IsoTimestamp): WorkItem {
+  if (item.status !== WorkItemStatus.COMPLETED && item.status !== WorkItemStatus.CANCELED) throw new WorkItemReopenError('NOT_FINAL');
+  if (item.updatedAt !== expectedUpdatedAt) throw new WorkItemReopenError('CHANGED');
+  return { ...item, status: WorkItemStatus.ACTIVE, updatedAt: at };
+}
+
 /** Deduplicate correlations by stable ResourceRef identity while preserving order. */
 export function uniqueResourceRefs(refs: readonly ResourceRef[]): readonly ResourceRef[] {
   const identities = new Set<string>();

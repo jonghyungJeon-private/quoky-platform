@@ -100,6 +100,7 @@ export function lazyReminderRepository(storage: ReminderStorageSeam): ReminderRe
     claimDue: (now, limit, attemptId) => liveReminders(storage).claimDue(now, limit, attemptId),
     completeFiring: (id, attemptId, completion) => liveReminders(storage).completeFiring(id, attemptId, completion),
     listFiring: () => liveReminders(storage).listFiring(),
+    reactivate: (actorId, next, expectedUpdatedAt, maxActive) => liveReminders(storage).reactivate(actorId, next, expectedUpdatedAt, maxActive),
   };
 }
 
