@@ -43,13 +43,34 @@ const MAX_ID_CHARS = 512;
 /** A long reply may be several platform messages (chunks); each is one id. */
 const MAX_REPLY_IDS = 16;
 const MAX_REPLY_ID_CHARS = 256;
-const SLOTS = ['mail', 'drive'] as const;
+/** A shown label: a list number or a reminder's display number (`#N`). */
+const MAX_LABEL = 1_000_000;
+const SLOTS = ['mail', 'drive', 'todo', 'reminder'] as const;
 
-export type ListingSource = 'mail' | 'drive';
+/**
+ * The listing slots: `mail` and `drive` (GML-1/DRV-1), plus the ADR-0120 amendment A6-D2 labelled slots `todo` and
+ * `reminder`, written only while `QUOKY_NL_ACTIONS` is not `off` (so with `off` the record is exactly as before).
+ */
+export type ListingSource = (typeof SLOTS)[number];
+
+export function isListingSource(value: unknown): value is ListingSource {
+  return typeof value === 'string' && (SLOTS as readonly string[]).includes(value);
+}
 
 export interface PersistedListing {
   readonly at: IsoTimestamp;
   readonly ids: readonly string[];
+  /**
+   * A6-D2: the label the owner saw for each id, in display order (a to-do number, a reminder's `#N`, a list number).
+   * Absent: positions 1..n (every mail and Drive listing).
+   */
+  readonly labels?: readonly number[];
+}
+
+/** One shown item of a labelled listing (A6-D2): the label the owner saw and the item's id. */
+export interface ListingItem {
+  readonly label: number;
+  readonly id: string;
 }
 
 /** GML-2: what a platform reply points at. */
@@ -65,6 +86,8 @@ interface Entry {
   readonly at: IsoTimestamp;
   readonly requestId?: string;
   readonly replyIds?: readonly string[];
+  /** A6-D2: shown labels parallel to `ids` (absent = 1..n). */
+  readonly labels?: readonly number[];
 }
 
 /** A listing that can no longer be picked from: only which replies it had (GML-2). */
@@ -84,6 +107,12 @@ function recordOf(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+function boundedLabels(value: unknown, count: number): number[] | undefined {
+  if (!Array.isArray(value) || value.length !== count) return undefined;
+  if (!value.every((label) => Number.isSafeInteger(label) && (label as number) >= 1 && (label as number) <= MAX_LABEL)) return undefined;
+  return new Set(value).size === value.length ? [...(value as number[])] : undefined;
+}
+
 function boundedIds(value: unknown, max: number, maxChars: number): string[] | undefined {
   if (!Array.isArray(value) || value.length > max) return undefined;
   return value.every((id) => typeof id === 'string' && id.length > 0 && id.length <= maxChars) ? [...(value as string[])] : undefined;
@@ -93,7 +122,7 @@ function boundedIds(value: unknown, max: number, maxChars: number): string[] | u
 function entryOf(raw: unknown, source: ListingSource | undefined, allowEmptyIds = false): Entry | undefined {
   const entry = recordOf(raw);
   const actual = entry.source;
-  if (actual !== 'mail' && actual !== 'drive') return undefined;
+  if (!isListingSource(actual)) return undefined;
   if (source !== undefined && actual !== source) return undefined;
   if (typeof entry.at !== 'string' || !Number.isFinite(Date.parse(entry.at))) return undefined;
   const ids = boundedIds(entry.ids, MAX_IDS, MAX_ID_CHARS);
@@ -101,12 +130,19 @@ function entryOf(raw: unknown, source: ListingSource | undefined, allowEmptyIds 
   // The GML-2 fields are optional; a malformed one is dropped, never trusted.
   const requestId = typeof entry.requestId === 'string' && entry.requestId.length > 0 && entry.requestId.length <= MAX_REPLY_ID_CHARS ? entry.requestId : undefined;
   const replyIds = entry.replyIds === undefined ? undefined : boundedIds(entry.replyIds, MAX_REPLY_IDS, MAX_REPLY_ID_CHARS);
+  // A6-D2: labels must match the ids one to one; a malformed label list makes the whole entry untrusted.
+  let labels: number[] | undefined;
+  if (entry.labels !== undefined) {
+    labels = boundedLabels(entry.labels, ids.length);
+    if (labels === undefined) return undefined;
+  }
   return {
     source: actual,
     ids,
     at: entry.at as IsoTimestamp,
     ...(requestId !== undefined ? { requestId } : {}),
     ...(replyIds !== undefined && replyIds.length > 0 ? { replyIds } : {}),
+    ...(labels !== undefined ? { labels } : {}),
   };
 }
 
@@ -122,7 +158,7 @@ function fresh(at: IsoTimestamp, now: IsoTimestamp): boolean {
 function tombstoneOf(raw: unknown, source?: ListingSource): Tombstone | undefined {
   const record = recordOf(raw);
   const actual = record.source;
-  if (actual !== 'mail' && actual !== 'drive') return undefined;
+  if (!isListingSource(actual)) return undefined;
   if (source !== undefined && actual !== source) return undefined;
   if (typeof record.at !== 'string' || !Number.isFinite(Date.parse(record.at))) return undefined;
   const replyIds = boundedIds(record.replyIds, MAX_REPLY_IDS, MAX_REPLY_ID_CHARS);
@@ -194,6 +230,7 @@ function serializeEntry(entry: Entry): Record<string, unknown> {
     at: entry.at,
     ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}),
     ...(entry.replyIds !== undefined ? { replyIds: [...entry.replyIds] } : {}),
+    ...(entry.labels !== undefined ? { labels: [...entry.labels] } : {}),
   };
 }
 
@@ -289,7 +326,9 @@ export function withListingReplies(
 /** The current listing of this source for this Actor within the TTL, from a listing-state value; else `undefined`. */
 export function readListing(value: unknown, actorId: Id, source: ListingSource, now: IsoTimestamp): PersistedListing | undefined {
   const listing = entryOf(recordOf(recordOf(recordOf(value).byActor)[actorId])[source], source);
-  return listing !== undefined && fresh(listing.at, now) ? { at: listing.at, ids: [...listing.ids] } : undefined;
+  return listing !== undefined && fresh(listing.at, now)
+    ? { at: listing.at, ids: [...listing.ids], ...(listing.labels !== undefined ? { labels: [...listing.labels] } : {}) }
+    : undefined;
 }
 
 /**
@@ -320,7 +359,7 @@ export function findListingByReply(
   if (hit !== undefined) {
     const age = ageOf(hit.at, now);
     if (Number.isFinite(age) && age >= 0 && age < LISTING_REPLY_TTL_MS && hit.ids.length > 0) {
-      return { kind: 'listing', listing: { at: hit.at, ids: [...hit.ids] } };
+      return { kind: 'listing', listing: { at: hit.at, ids: [...hit.ids], ...(hit.labels !== undefined ? { labels: [...hit.labels] } : {}) } };
     }
     // A listing that aged out but was not yet settled into a tombstone (no write since): still never another list.
     if (Number.isFinite(age) && age >= 0 && age < LISTING_REPLY_TOMBSTONE_MS) return { kind: 'expired' };
@@ -391,4 +430,130 @@ export async function persistListingReplies(
     return result.next;
   });
   return saved !== null && found;
+}
+
+// ── ADR-0120 amendment A6-D2: labelled listings, the most recent slot, reply lookup across every slot ───────────────
+
+/** The shown items of a listing: its labels (or positions 1..n) paired with its ids, in display order. */
+export function listingItems(listing: PersistedListing): ListingItem[] {
+  return listing.ids.map((id, index) => ({ label: listing.labels?.[index] ?? index + 1, id }));
+}
+
+/** How echo or question labels are recorded (A6-D2): `listing` replaces the slot; `merge` merges into a fresh one. */
+export type LabelledListingMode = 'listing' | 'merge';
+
+/**
+ * Pure (A6-D2): record labelled items for `source`.
+ *  - `listing`: the items ARE the listing the owner just saw (a to-do or reminder listing), like {@link withListing}.
+ *  - `merge`: an echo ("할 일 7번으로 추가했어요") or a question's candidates. While a listing of the same source is fresh,
+ *    the labels merge into it (an existing label keeps its id unless the same label now names another item, which then
+ *    wins) and the listing becomes the most recent one; only when none is fresh do the items become the listing. A merge
+ *    never shrinks a list the owner is working down ("1번 완료" → "2번도 완료").
+ */
+export function withLabelledListing(
+  current: unknown,
+  actorId: Id,
+  source: ListingSource,
+  items: readonly ListingItem[],
+  now: IsoTimestamp,
+  mode: LabelledListingMode,
+  requestId?: string,
+): unknown {
+  const valid = items.filter(
+    (item, index) =>
+      Number.isSafeInteger(item.label) &&
+      item.label >= 1 &&
+      item.label <= MAX_LABEL &&
+      typeof item.id === 'string' &&
+      item.id.length > 0 &&
+      item.id.length <= MAX_ID_CHARS &&
+      items.findIndex((other) => other.label === item.label) === index,
+  );
+  return rewrite(current, actorId, now, (own) => {
+    const slots = { ...own.slots };
+    const replied = [...own.replied];
+    const previous = slots[source];
+    let merged: ListingItem[] = [...valid];
+    if (mode === 'merge' && previous !== undefined) {
+      const kept = listingItems({ at: previous.at, ids: previous.ids, ...(previous.labels !== undefined ? { labels: previous.labels } : {}) });
+      merged = kept.map((item) => valid.find((next) => next.label === item.label) ?? item);
+      for (const item of valid) if (!merged.some((existing) => existing.label === item.label)) merged.push(item);
+    }
+    merged = merged.slice(0, MAX_IDS);
+    if (previous?.replyIds !== undefined && mode === 'listing') replied.push(previous);
+    if (merged.length === 0) {
+      if (mode === 'listing') delete slots[source];
+      return { slots, ...settle(replied, own.expired, now) };
+    }
+    const request = requestId !== undefined && requestId.length > 0 && requestId.length <= MAX_REPLY_ID_CHARS ? requestId : undefined;
+    const keepReplies = mode === 'merge' && previous !== undefined;
+    slots[source] = {
+      source,
+      ids: merged.map((item) => item.id),
+      labels: merged.map((item) => item.label),
+      at: now,
+      ...(keepReplies && previous.requestId !== undefined ? { requestId: previous.requestId } : request !== undefined ? { requestId: request } : {}),
+      ...(keepReplies && previous.replyIds !== undefined ? { replyIds: previous.replyIds } : {}),
+    };
+    return { slots, ...settle(replied, own.expired, now) };
+  });
+}
+
+/** One fresh slot as A6 reads it (A6-D2). */
+export interface ListingSlot {
+  readonly source: ListingSource;
+  readonly at: IsoTimestamp;
+  readonly items: readonly ListingItem[];
+}
+
+/** A6-D2: every fresh slot of this Actor and the most recently written one (the latest `at`). */
+export interface ListingRecord {
+  readonly slots: Partial<Record<ListingSource, ListingSlot>>;
+  readonly mostRecent?: ListingSlot;
+}
+
+/** The fresh listing slots of this Actor from a listing-state value, and which was written last. Pure. */
+export function readListingRecord(value: unknown, actorId: Id, now: IsoTimestamp): ListingRecord {
+  const slots: Partial<Record<ListingSource, ListingSlot>> = {};
+  let mostRecent: ListingSlot | undefined;
+  for (const source of SLOTS) {
+    const listing = readListing(value, actorId, source, now);
+    if (listing === undefined) continue;
+    const slot: ListingSlot = { source, at: listing.at, items: listingItems(listing) };
+    slots[source] = slot;
+    if (mostRecent === undefined || Date.parse(slot.at) > Date.parse(mostRecent.at)) mostRecent = slot;
+  }
+  return { slots, ...(mostRecent !== undefined ? { mostRecent } : {}) };
+}
+
+/** A6-D2: what a platform reply points at across every slot (reply-to-pick names its listing explicitly). */
+export type AnyListingReplyMatch =
+  | { readonly kind: 'listing'; readonly slot: ListingSlot }
+  | { readonly kind: 'expired'; readonly source: ListingSource };
+
+export function findAnyListingByReply(value: unknown, actorId: Id, replyMessageId: string, now: IsoTimestamp): AnyListingReplyMatch | undefined {
+  let expired: ListingSource | undefined;
+  for (const source of SLOTS) {
+    const match = findListingByReply(value, actorId, source, replyMessageId, now);
+    if (match?.kind === 'listing') return { kind: 'listing', slot: { source, at: match.listing.at, items: listingItems(match.listing) } };
+    if (match?.kind === 'expired') expired ??= source;
+  }
+  return expired === undefined ? undefined : { kind: 'expired', source: expired };
+}
+
+/** Persist labelled items (A6-D2), field-scoped under the session write lock. Resolves `false` when nothing was written. */
+export async function persistLabelledListing(
+  sessions: Pick<SessionManager, 'updateMetadataEntry'>,
+  sessionId: Id,
+  actorId: Id,
+  source: ListingSource,
+  items: readonly ListingItem[],
+  now: IsoTimestamp,
+  mode: LabelledListingMode,
+  requestId?: string,
+): Promise<boolean> {
+  const saved = await sessions.updateMetadataEntry({ id: sessionId }, LAST_LISTING_METADATA_KEY, (current) =>
+    withLabelledListing(current, actorId, source, items, now, mode, requestId),
+  );
+  return saved !== null;
 }
