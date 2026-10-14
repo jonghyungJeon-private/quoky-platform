@@ -480,20 +480,21 @@ export function withLabelledListing(
       for (const item of valid) if (!merged.some((existing) => existing.label === item.label)) merged.push(item);
     }
     merged = merged.slice(0, MAX_IDS);
-    if (previous?.replyIds !== undefined && mode === 'listing') replied.push(previous);
+    // A listing whose reply was delivered is an immutable snapshot of what that message showed: a merge never rewrites
+    // it. The pre-merge listing moves into `replied` with its reply ids, so a platform reply to the ORIGINAL message
+    // resolves against exactly the labels it showed (Codex review P1), and the merged listing starts without reply ids.
+    if (previous?.replyIds !== undefined) replied.push(previous);
     if (merged.length === 0) {
       if (mode === 'listing') delete slots[source];
       return { slots, ...settle(replied, own.expired, now) };
     }
     const request = requestId !== undefined && requestId.length > 0 && requestId.length <= MAX_REPLY_ID_CHARS ? requestId : undefined;
-    const keepReplies = mode === 'merge' && previous !== undefined;
     slots[source] = {
       source,
       ids: merged.map((item) => item.id),
       labels: merged.map((item) => item.label),
       at: now,
-      ...(keepReplies && previous.requestId !== undefined ? { requestId: previous.requestId } : request !== undefined ? { requestId: request } : {}),
-      ...(keepReplies && previous.replyIds !== undefined ? { replyIds: previous.replyIds } : {}),
+      ...(request !== undefined ? { requestId: request } : {}),
     };
     return { slots, ...settle(replied, own.expired, now) };
   });

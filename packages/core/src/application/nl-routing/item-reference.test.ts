@@ -166,6 +166,18 @@ describe('resolution table (every A6-D2 branch)', () => {
   });
 });
 
+describe('a reply resolves against exactly what its message showed (Codex review P1)', () => {
+  it('list [1:A, 2:B] → complete A → add C (echo 2:C) → a reply to the ORIGINAL list with "2번 완료" means B, never C', () => {
+    let value = withLabelledListing(undefined, ACTOR, 'todo', [{ label: 1, id: 'A' }, { label: 2, id: 'B' }], at(0), 'listing', 'req-list');
+    value = withListingReplies(value, ACTOR, 'todo', 'req-list', ['list-message'], at(0)).next;
+    value = withLabelledListing(value, ACTOR, 'todo', [{ label: 1, id: 'A' }], at(1), 'merge', 'req-done');
+    value = withLabelledListing(value, ACTOR, 'todo', [{ label: 2, id: 'C' }], at(2), 'merge', 'req-add');
+    // Without a reply, label 2 is the newest echo (C); a reply to the original list message is pinned to B.
+    expect(resolve('todo.complete', 'todo', '#2', '2번 완료', state(value, 3))).toMatchObject({ kind: 'resolved', target: { id: 'C' } });
+    expect(resolve('todo.complete', 'todo', '#2', '2번 완료', state(value, 3, { replyTo: 'list-message' }))).toMatchObject({ kind: 'resolved', target: { id: 'B', label: 2 } });
+  });
+});
+
 describe('property: random states never resolve to another source, a stale item or an older listing', () => {
   it('holds over 2000 random states', () => {
     let seed = 42;
