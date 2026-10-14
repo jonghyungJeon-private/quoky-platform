@@ -22938,3 +22938,82 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   messages never reach the selector (ADR-0098 D1 c; A5); the A6 live gate has limited statistical power (A6-D7, R-A4); undo
   copies get new numbers (R-A2); Session and Actor metadata have no compare-and-set (ADR-0120 R3, R-A5); item text may reach an
   HTTP API vendor only when the owner selected one (R-A3, ADR-0118 D7 widening).
+
+### ADR-0120 amendment A2 implementation note 2 — every Class B grammar yields what it cannot express (2026-10-14, live Telegram after A5)
+
+- **Live evidence** (Telegram, 2026-10-14, after the A5 deploy; `QUOKY_NL_INTENT_MODE=active`, `QUOKY_NL_PHASE=c-shadow`,
+  `QUOKY_NL_GRAMMAR_YIELD=on`). A frozen Class B grammar answered first in five cases while the logged shadow selection
+  was right:
+  1. "다음 주 수요일 오후에 뭐 있어" and 2. "내일 오후 일정": the calendar grammar showed the whole day.
+  3. "캘린더는 보지 말고 할 일만 알려줘": the Jira/GitHub work surface ("지금 확인할 작업이에요").
+  4. "할 일 관리하는 좋은 습관 알려줘": the to-do list.
+  5. "슬랙에서 배포 얘기 나온 거 찾아줘": a Slack search for the literal "배포 얘기 나온 거" (0 results).
+- **Root causes (why A2 did not fire).**
+  - Cases 1-2: the calendar's A2 vocabulary (`CALENDAR_EXPRESSED`) reused the grammar's span, which absorbs an attached
+    time-of-day word ("내일 오후"), so 오후 counted as expressed although the grammar answers the whole day. A2 kept it on
+    purpose when no catalog arg could carry it ("attached time-of-day words stay expressed", A2 side effect). A5 then added
+    `calendar.events` `partOfDay`, so that premise lapsed but the vocabulary was not revisited.
+  - Case 3: the work-chat detector already declines it (a negation), but the classifier's personal-work surface clause
+    (`IntentClassifier.isPersonalWorkSurface`, a D6 Class B clause) is a substring regex ("할 일 … 알려") that A2 never
+    covered. In Phase A the surface answers before Phase A selection can run; A5 change 9 helps only when the selector
+    already ran (Phase C).
+  - Case 4: the to-do list phrases were outside the A2 audit. One of them is the verbatim copy of the surface clause, a
+    substring match, so "할 일 … 알려줘" with anything in between was the list (the known S1 wrong capture `neg-219`).
+  - Case 5: the search grammar's free-text slot takes the rest of the sentence and sends it whole. The residual check
+    cannot see this (inside a keyword slot every word is "expressed" as keyword), while the selector's keyword rule (A5 R7,
+    `withoutGenericTail`) keeps only the core term "배포".
+- **The rule** (one rule, three checks, all only when the runtime's A2 gate says selection would run). A Class B grammar
+  answers only when it expresses everything the message asks:
+  - (a) **Leftover content** (A2 as before): after the grammar's own vocabulary and the closed grammatical classes are
+    removed, no content word may remain. Now applied to the to-do list phrases (`TODO_LIST_EXPRESSED`,
+    `todoListLeavesUnexpressedContent` in `work-chat-command.ts`) and to the classifier's surface clause (the same phrase
+    family, `IntentClassifyContext.grammarYield`; when it declines, classification continues as if the clause had not
+    matched).
+  - (b) **A word that grounds a typed arg the grammar does not carry** never counts as expressed
+    (`containsGroundingWord`, `grammar-residual.ts`; the selector's own grounding list, the `DRIVE_KIND_WORDS` precedent).
+    The calendar spans in `CALENDAR_EXPRESSED` stop before a time-of-day word, and `CALENDAR_PART_OF_DAY_WORDS` outside a
+    clock time makes the grammar decline. A clock time keeps its part-of-day word ("오후 3시에" is answered as before).
+    `jiraKeywordCarriesQualifier` now uses the same helper.
+  - (c) **A free-text slot must already be the catalog keyword** (`slotSwallowsClause`): a Slack/Confluence search slot
+    or a Jira keyword slot that the selector-side canonicalization (`canonicalNlKeyword`, moved to the leaf module
+    `nl-routing/keyword-canonical.ts` to avoid an import cycle) would cut makes the grammar decline. A GitHub text search
+    has no catalog equivalent and is unchanged.
+- **Calendar: decline, not honour.** The grammar is frozen (D10), and A5 already implements part of day once in the selected
+  path: overlap, all-day entries counted, follow-ups, basis line. A second copy in the grammar would be a widening and a
+  second implementation. With yield on the grammar declines and A5's typed arg answers.
+- **Why this is not hardcoding.** No sentence, intent, source or topic phrase was added. The word lists are each grammar's
+  own vocabulary (the to-do nouns and prefixes, including "남은" from the to-do summary grammar), the selector's own
+  argument vocabularies (part-of-day grounding words, the keyword canonicalization), and one closed-class filler ("다시",
+  next to "한번" and "계속"). The live sentences are declined by those general checks; the rule table test
+  (`grammar-yield-table.test.ts`) pins grammars × residual kinds, and other sentences of the same shape behave the same.
+- **Off is unchanged.** Every check is gated on `grammarYield` (flag on, `active`, no approval pending, the selector is the
+  chat provider). A replay of the 13 golden corpora (1,800 texts, each with the yield on and off) shows 0 differences
+  with yield off. With yield on, 27 texts change:
+  - 15 are real grammar-claim changes. Five are a part of day (cases 1-2, "내일 아침 일정 알려줘", "오늘 저녁에 약속 있나",
+    "오늘 오후 한가해?", "내일 오후에 시간 돼?"). Five are a swallowed search slot (case 5, "온보딩 문서", "DB 설계 문서",
+    "정책 문서", "결제 관련 내용"). Five are to-do substring captures: case 4, "할 일 추가하는 법 알려줘" (now answered by the
+    help grammar), "할 일 몇 개 있는지만 알려줘" (count), "일정, 알림, 할 일 다 합쳐서 오늘 거 알려줘" (the brief) and
+    "아까 추가한 할 일들 보여줘".
+  - 12 change only the classifier's surface label on anchored to-do commands and reminders, which a Class A handler
+    answers before classification. The routing-corpus replays in the dispatch test show the same claims.
+- **Corpus.** `nl-intent.v1.json` grows from 791 to 797 cases. 12 cases lose their `grammar` tag; `help-038` is now tagged
+  `help-intent`. Six new `uat5gy-*` cases: two live sentences and four plain phrases the grammars still answer. They are
+  agent-drafted and pending the owner's D12 batch approval. Grammar side on the tagged cases (`scoreGrammarSide`):
+  250 → 242 tagged; exact 205/249 (82.3%) → 209/242 (86.4%); entry 246 → 241 (99.6%); user-visible 228 (91.6%) → 227
+  (93.8%); wrong captures 1 → 0. Each entry still has at least 25 grammar-tagged phrasings.
+- **Selector down.** A declined message gets honest chat (the A2 R5 trade-off, unchanged). The plain phrases ("내일 일정",
+  "내 할 일", "슬랙에서 배포 찾아줘") are still answered by their grammars with no selector call (acceptance test).
+- **The follow-on reference.** After case 5 is fixed, the search runs on "배포" and records `lastSelection`
+  `slack.search {keyword: 배포}`. An intervening chat turn clears it (follow-up 2, by design), so "아까 찾은 것 중 첫 번째 거
+  자세히" and "그 중에 …" reach the selector with `Previous selection: none` and get the D7 question (prompt v17 rule 6),
+  never a guess. Nothing was changed there: keeping a listing across a chat turn would reverse the follow-up 2 clause.
+  "첫 번째 거 자세히" also has no catalog equivalent for Slack or Confluence (no `item` arg and no listing slot, unlike
+  mail in A5). Both need an owner decision.
+- **A2 text this updates.** The A2 side-effect sentence "an attached time-of-day word stays expressed" no longer holds once
+  A5's `partOfDay` exists. A2's own Change clause (a qualifier the grammar cannot express makes it decline) now covers it.
+- **Tests.** `grammar-yield-table.test.ts` (grammars × residual kinds, yield on and off); `grammar-residual.test.ts`
+  (part of day, grounding words, slot rule); the calendar handler; the INT-4 acceptance block "live Telegram (2026-10-14,
+  after A5)" covers the five sentences, the chain, the selector down, and mode off / yield off. The eval pins moved; the
+  dispatch Phase C tag check with yield off accepts an earlier grammar (`help-038`).
+- **Not done.** No migration, no new flag, no `.env.local` change, no provider or platform branch, no prompt change
+  (`nl-select.v18`).
