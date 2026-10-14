@@ -23380,7 +23380,7 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   the 179 negatives named a weekday (CA review P2). Agent-drafted, PENDING the owner's D12 batch approval.
 - **Weekday-statement negatives, probed (owner-approved, Haiku, 20 calls each on v18 and on v20).** Wrong captures: 0 of
   120 on v18 and 0 of 120 on v20 (every call `none`). The evaluation runs below predate these six cases.
-- **Relabels proposed for the owner's D12 batch (not applied; the approved gold is unchanged).**
+- **Relabels proposed for the owner's D12 batch (as proposed on 2026-10-14; approved and applied 2026-10-15, see below).**
   - `calendar-010` → `{range: tomorrow, availability: true}`; `calendar-036` → `{range: fri, availability: true}`;
     `calendar-026` → `{range: wed, partOfDay: afternoon, availability: true}`; `calendar-057` →
     `{range: this-week, partOfDay: afternoon}` (plus `timedOnly: true` if T1 below).
@@ -23416,6 +23416,34 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   (96.0%), 0/179 wrong captures, 3 timeouts. No entry drops by more than one case (help.topic 50 → 49, Jira 90 → 89; both
   single-case variance: `help-045`, `jira-008`), and calendar rises 71 → 76/83. The mail misses in both prompts are the
   selector adding `range: today` to "새 메일" (`mail-004`, `-009`), independent of this change.
+- **Owner decisions (2026-10-15, through the orchestrator; owner-acknowledged, not an amendment).**
+  1. *A6 `off` pin wording.* Approved as "A6 off = the current read prompt (now v20)". The A6 text (the model gate:
+     "With the flag `off`, the selector prompt is byte-identical to `nl-select.v18`, the prompt on `main` after A5") and
+     the A6 R0 implementation note ("the selector prompt is `nl-select.v18` byte for byte") name the read prompt of their
+     day: the `off` path equals the current read prompt, `nl-select.v20`, pinned by `golden/nl-select.v20.prompts.json`.
+     The ratified text is not rewritten.
+  2. *Gold relabels approved (D12 owner batch):* `calendar-010` and `calendar-036` add `availability: true`;
+     `calendar-026` adds `partOfDay: afternoon` and `availability: true`; `calendar-057` adds `partOfDay: afternoon`.
+  3. *`timedOnly`: T1 approved* — "회의/미팅" (meeting) in a calendar question means timed events. `calendar-008`, `-020`,
+     `-025`, `-030` and `-035` get `timedOnly: true`. No code change: the A5 rule 3 grounding (`CALENDAR_TIMED_ONLY_WORDS`)
+     already accepts it. The prompt example "내일 미팅 있나?" → `{range: tomorrow}` still shows no flag; aligning it is
+     left for the next prompt version (that moves the A6 `off` pin again).
+  - The nine relabels are applied in `nl-intent.v1.json`, the old expectation kept in each note. **Still PENDING** the
+    owner's D12 batch: `uat5ca-01..10` (and the earlier `uat5r*` and `uat5wd-*` batches). The grammar side moves to exact
+    208/248, user-visible 226 (the calendar grammar answers `calendar-008/-020/-025` without the flag).
+- **Codex review fixes (P2).** The selector-output cache key now carries the prompt version (`nlSelectionCacheKey`: the
+  read prompt, or the A6 action prompt when actions are offered), so an output computed under one prompt is never served
+  under another; tests check the v18/v20/v21 keys and a read-only turn followed by an action turn. A weekday refusal whose
+  alternative validates now puts the weekday hint above the numbered options instead of showing only the options.
+- **Eval on the relabelled gold:** owner-approved, 1 run, Haiku, `nl-select.v20`, calendar, mail and Jira with every
+  negative including `uat5ca-05..10`, 424 cases, 6 s bound, plan digest `c729c2ec…`, report
+  `data/eval/nl-intent-2026-10-14T23-16-27-296Z-haiku.json` (local). Overall 230/239 (96.2%); calendar 79/83 (95.2%),
+  Jira 89/91 (97.8%), mail 62/65 (95.4%); wrong captures 0/185; p50 1300 ms, p95 1944 ms, 0 timeouts. The D12 and S1
+  gates pass on this run. One run, not the three stable runs D12 asks for. The calendar misses: `calendar-025` dropped
+  `remaining`, `calendar-035` omitted `timedOnly` (T1 gold), `calendar-032` "do I have any meetings tomorrow?" got
+  `availability` (not in the batch), and `calendar-057` added `timedOnly` to the approved `{this-week, afternoon}` (under T1
+  "회의 중에" arguably carries it; the owner may want to add it to the gold).
+
 
 ## ADR-0112 amendment 1 — Slack channel-message delete: a narrow `ChannelMessageDeleteWriter`, only for a message Quoky posted, bound to that post's SENT receipt, only as the undo of a post (Proposed — owner decision pending) (2026-10-14)
 

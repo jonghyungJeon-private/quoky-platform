@@ -56,11 +56,13 @@ Details and the review record for each item are in the matching notes in `DECISI
 - **Eval.** 3 owner-approved Haiku runs on calendar, mail and Jira (418 cases): calendar 90.4%, 89.2%,
   90.4% (baseline 86.3%; on the old 80 cases 72, 71, 72 vs 69), overall 94.1%, 93.7%, 95.0%, wrong captures 1, 0, 0 (`neg-042`, a
   pre-existing flake also seen on v18). The remaining calendar misses are all owner-decision cases; with the proposed
-  relabels calendar is 92.8-94.0%. Full corpus (808 cases, 1 run each): v20 97.1% vs v18 96.0%, 0 wrong captures. The
-  D12 gate does not pass until the owner decides the relabels and `timedOnly`.
-- **Open for the owner.** The D12 relabels of `calendar-010/026/036/057`; the `timedOnly` reading of a plain meeting
-  question (T1 relabel, or T2 a narrowing rule = amendment); "이번 주 금요일까지" as today through Friday needs a new
-  symbol or bound rule (amendment); `uat5ca-01..10` await the D12 batch.
+  relabels calendar is 92.8-94.0%. Full corpus (808 cases, 1 run each): v20 97.1% vs v18 96.0%, 0 wrong captures. After the owner's
+  D12 batch of 2026-10-15 (nine relabels, `timedOnly` T1), one run on the relabelled gold passes the gate: 96.2% overall,
+  calendar 95.2%, Jira 97.8%, mail 95.4%, 0/185 wrong captures (three stable runs still to do).
+- **Owner decisions (2026-10-15).** A6 `off` = the current read prompt (v20), acknowledged; nine calendar relabels and
+  `timedOnly` T1 approved and applied.
+- **Open for the owner.** "이번 주 금요일까지" as today through Friday needs a new symbol or bound rule (amendment);
+  `uat5ca-01..10` await the D12 batch; `calendar-057` with or without `timedOnly`.
 
 Details: the A5 implementation note 3 in `DECISIONS.md`.
 

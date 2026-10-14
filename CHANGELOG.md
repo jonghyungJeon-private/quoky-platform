@@ -26,8 +26,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Eval.** 3 owner-approved Haiku runs on calendar, mail and Jira (418 cases): calendar 90.4%, 89.2%,
   90.4% (baseline 86.3%; on the old 80 cases 72, 71, 72 vs 69), overall 94.1%, 93.7%, 95.0%, wrong captures 1, 0, 0 (`neg-042`, a
   pre-existing flake also seen on v18). The remaining calendar misses are all owner-decision cases; with the proposed
-  relabels calendar is 92.8-94.0%. Full corpus (808 cases, 1 run each): v20 97.1% vs v18 96.0%, 0 wrong captures. The
-  D12 gate does not pass until the owner decides the relabels and `timedOnly`.
+  relabels calendar is 92.8-94.0%. Full corpus (808 cases, 1 run each): v20 97.1% vs v18 96.0%, 0 wrong captures. After the owner's
+  D12 batch of 2026-10-15 (nine relabels, `timedOnly` T1), one run on the relabelled gold passes the gate: 96.2% overall,
+  calendar 95.2%, Jira 97.8%, mail 95.4%, 0/185 wrong captures (three stable runs still to do).
 
 ## Unreleased — The document-summary claim guard closes its three recorded gaps (ADR-0118 amendment implementation note, 2026-10-14)
 
