@@ -22879,3 +22879,27 @@ merged as Proposed in #200 before this record. The owner's words, where given, v
   blocking it needs a phrase rule (the owner forbids) or a policy that unmarked text after a colon is material (it would
   break natural positives such as "할 일에 추가해줘: 보고서 쓰기"). Owner decision requested.
 - **Config.** `QUOKY_NL_ACTIONS=external` is refused at startup until R3. The v18 prompt golden has 76 inputs.
+
+#### A6 clauses pending owner confirmation in the R1 batch (2026-10-14)
+
+These clauses came out of the R0 reviews. They are implemented (inert while `QUOKY_NL_ACTIONS=off`) and are **pending owner
+confirmation in the R1 batch**; until confirmed they are interpretations recorded by the implementer, not ratified text.
+
+- **A6-D3a — the A6 input guard.** No A6 action (a selection, an answer to an A6 question, an early answer, the anchored
+  `되돌리기` path) acts on a message that:
+  1. is longer than **300 characters** (`NL_ACTION_MAX_INPUT_CHARS`; an action request is one short instruction; the
+     600-character selection bound still applies to reads);
+  2. carries **hidden characters**: Unicode format characters (`Cf`: zero-width space and joiner, bidi embeddings,
+     overrides and isolates, tag characters), variation selectors, line and paragraph separators, Hangul fillers and
+     C0/C1 controls. The only exception is U+FE0F and U+200D inside an emoji sequence (❤️, ☀️, 👨‍💻, keycaps);
+  3. contains an **exact-command form**: an ADR-0100 D1 to-do head followed by a colon ("할 일 추가:"), the anchored
+     Slack post head ("#채널에 게시:") or the Slack post execution phrase, each taken from its own grammar (a command
+     inside a request, quoted, pasted, glued or a look-alike is material, not an instruction).
+  Also, **pasted structure grounds nothing**: every action argument (span, ref, enum and flag words) is grounded only in
+  the owner's prose with each bracketed structure that looks like data (`{…}`, or `[…]` holding a quote, a key:value pair
+  or a comma list) removed; an ordinary bracketed phrase ("[긴급] 보고서 쓰기") stays prose. A refused message gets one fixed
+  reply and a content-free `nl_action.decided` line; an answer it would have given is not taken.
+- **A6-D3b — the kill switch as the last check.** The persisted switch is re-read at dispatch and again by the handler
+  immediately before each state mutation (to-do add, complete, cancel, reopen; reminder create, cancel, reactivate).
+- **A6-D1a — the owner's words on event reminders.** A natural-language `reminder.create` with an event-relative `when`
+  stores the owner's body span, and the event title only when the span is empty. The anchored BRF-2 grammar is unchanged.
