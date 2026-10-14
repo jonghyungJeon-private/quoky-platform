@@ -22885,21 +22885,23 @@ merged as Proposed in #200 before this record. The owner's words, where given, v
 These clauses came out of the R0 reviews. They are implemented (inert while `QUOKY_NL_ACTIONS=off`) and are **pending owner
 confirmation in the R1 batch**; until confirmed they are interpretations recorded by the implementer, not ratified text.
 
-- **A6-D3a — the A6 input guard.** No A6 action (a selection, an answer to an A6 question, an early answer, the anchored
-  `되돌리기` path) acts on a message that:
-  1. is longer than **300 characters** (`NL_ACTION_MAX_INPUT_CHARS`; an action request is one short instruction; the
-     600-character selection bound still applies to reads);
-  2. carries **hidden characters**: Unicode format characters (`Cf`: zero-width space and joiner, bidi embeddings,
-     overrides and isolates, tag characters), variation selectors, line and paragraph separators, Hangul fillers and
-     C0/C1 controls. The only exception is U+FE0F and U+200D inside an emoji sequence (❤️, ☀️, 👨‍💻, keycaps);
-  3. contains an **exact-command form**: an ADR-0100 D1 to-do head followed by a colon ("할 일 추가:"), the anchored
-     Slack post head ("#채널에 게시:") or the Slack post execution phrase, each taken from its own grammar (a command
-     inside a request, quoted, pasted, glued or a look-alike is material, not an instruction).
-  Also, **pasted structure grounds nothing**: every action argument (span, ref, enum and flag words) is grounded only in
-  the owner's prose with each bracketed structure that looks like data (`{…}`, or `[…]` holding a quote, a key:value pair
-  or a comma list) removed; an ordinary bracketed phrase ("[긴급] 보고서 쓰기") stays prose. A refused message gets one fixed
-  reply and a content-free `nl_action.decided` line; an answer it would have given is not taken.
-- **A6-D3b — the kill switch as the last check.** The persisted switch is re-read at dispatch and again by the handler
-  immediately before each state mutation (to-do add, complete, cancel, reopen; reminder create, cancel, reactivate).
+- **A6-D3a — action requests are one plain line (fail closed).** A turn can lead to an A6 action (a selection, an undo,
+  the anchored `되돌리기`, an answer to an A6 question) only when the whole message:
+  1. is a single line of at most **300 characters**, with no platform quote;
+  2. has **no hidden characters**: Unicode format characters (zero-width, bidi, tag characters), variation selectors, line
+     and paragraph separators, Hangul fillers, C0/C1 controls. U+FE0F and U+200D are allowed only inside an emoji
+     sequence (❤️, ☀️, 👨‍💻, keycaps);
+  3. has **no structure markers**: `{` or `}`, a `[…]` whose content looks like data (a quote, a key with a colon, a
+     comma list) or an unbalanced bracket, a backtick, `~~~`, a leading `>`, or an ASCII identifier key followed by a
+     colon and a value (`request: …`, YAML-like). An ordinary bracketed phrase ("[긴급] 보고서 쓰기") is allowed;
+  4. has **no exact-command form**: a to-do head with a colon ("할 일 추가:"), the Slack post head ("#채널에 게시:") or
+     the Slack post execution phrase, each taken from its own grammar.
+  Anything else does not act; reads are unaffected, and the reply asks for the action in one plain sentence ("동작 요청은
+  한 문장으로 말씀해 주세요"). Because an eligible message is plain text, every argument is grounded in the whole message,
+  and argument-free entries (undo) are covered by the same rule.
+- **A6-D3b — the kill switch is atomic with the write.** Every A6 store write (to-do add, complete, cancel, reopen;
+  reminder create, cancel, reactivate) carries an `ActionWriteCondition`; the store evaluates it inside the write's own
+  transaction, right before the row is written (SQLite: the actor row is read in the same IMMEDIATE transaction). While
+  the persisted switch is stopped, nothing is written, whatever happened since dispatch. Anchored commands carry none.
 - **A6-D1a — the owner's words on event reminders.** A natural-language `reminder.create` with an event-relative `when`
   stores the owner's body span, and the event title only when the span is empty. The anchored BRF-2 grammar is unchanged.
