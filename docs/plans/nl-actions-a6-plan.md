@@ -12,6 +12,10 @@
   external writes.
 - **Base:** `origin/main` after #199, which merged A5 (Accepted) with prompt `nl-select.v18`. Both A5 and A6 edit
   `nl-routing/*` and the selector prompt, and A6's read-regression gate pins `nl-select.v18` for the flag `off`.
+- **Version note (2026-10-14, historical labels below).** ADR-0120 A5 implementation note 3 bumped the read prompt to
+  `nl-select.v20` and the A6 action prompt to `nl-select.v21`. Every `nl-select.v18` (the `off` pin) and `nl-select.v19`
+  (the action prompt) in this plan is the R0-era label; read them as `v20` and `v21` now
+  (`golden/nl-select.v20.prompts.json` is the `off` pin).
 - **Model tiers** (subagent tiering rule):
   - haiku: mechanical work, log reading, docs;
   - sonnet: well-specified implementation and tests;
