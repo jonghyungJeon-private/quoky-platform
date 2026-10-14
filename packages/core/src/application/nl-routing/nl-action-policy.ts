@@ -211,8 +211,8 @@ export function renderCapped(language: Lang): string {
 /** The A6 input guard refused a message (too long, hidden characters, an embedded command form): nothing ran. */
 export function renderInputRefusal(language: Lang): string {
   return language === 'en'
-    ? 'That message carries pasted material, a command inside it or hidden characters, so I did nothing. Please say what to do in one short sentence.'
-    : '메시지에 붙여넣은 내용이나 명령문, 보이지 않는 문자가 섞여 있어서 실행하지 않았어요. 원하는 작업을 짧게 한 문장으로 말씀해 주세요.';
+    ? 'I did nothing: please ask for an action in one plain sentence (no pasted, quoted or structured text, no command inside it).'
+    : '아무것도 실행하지 않았어요. 동작 요청은 한 문장으로 말씀해 주세요 (붙여넣은 내용, 인용, 명령문 없이).';
 }
 
 /** The kill switch stopped an action at dispatch (A6-D3): nothing ran. */

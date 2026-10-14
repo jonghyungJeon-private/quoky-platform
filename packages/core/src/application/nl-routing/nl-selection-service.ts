@@ -918,7 +918,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const validated = validateSelection({ entryId, args: output.args }, ctx);
     const base = { entryId, risk: ctx.offered.get(entryId)?.risk ?? 'LOCAL_WRITE', refKind: refKindOf(output.args), latencyMs, ...correlationOf(turn) } as const;
     // The A6 input guard (red team): a long paste, hidden characters or an embedded command form never act.
-    const inputRefusal = ctx.offered.has(entryId) ? nlActionInputRefusal(turn.text, prepared.groundingText) : undefined;
+    const inputRefusal = ctx.offered.has(entryId) ? nlActionInputRefusal(turn.text, prepared.groundingText, (turn.quotedRanges ?? []).length > 0) : undefined;
     if (inputRefusal !== undefined) {
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: inputRefusal };
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
@@ -1083,7 +1083,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     turn: NlSelectionTurn,
     groundingText: string,
   ): boolean {
-    const refusal = nlActionInputRefusal(turn.text, groundingText);
+    const refusal = nlActionInputRefusal(turn.text, groundingText, (turn.quotedRanges ?? []).length > 0);
     if (refusal === undefined) return false;
     const entryId = pending.kind === 'action-target' ? pending.entryId : pending.kind === 'action-mode' ? 'item.summarize' : 'action.undo';
     this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields({ entryId, risk: entryId === 'item.summarize' ? 'ITEM_READ' : 'LOCAL_WRITE', refKind: 'none', resolution: 'none', result: 'refused', reason: refusal, ...correlationOf(turn) }));

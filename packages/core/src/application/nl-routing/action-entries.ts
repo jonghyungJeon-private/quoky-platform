@@ -530,28 +530,45 @@ const COMMAND_FORMS: readonly RegExp[] = [
   ),
 ];
 
-export type NlActionInputRefusal = 'too-long' | 'hidden-characters' | 'embedded-command';
+export type NlActionInputRefusal = 'too-long' | 'hidden-characters' | 'not-plain' | 'embedded-command';
+
+/** A bracket whose content looks like data: a quote, an identifier key with a colon, or a comma list. */
+export function looksLikeData(inner: string): boolean {
+  return /["“”'`]|[\p{L}\p{N}_]\s*:|,/u.test(inner);
+}
 
 /**
- * A6 refuses to act on a message (before any validation) when:
- *  - it is longer than {@link NL_ACTION_MAX_INPUT_CHARS} (a long paste is not one instruction);
- *  - it carries hidden characters (format, zero-width, bidi, variation selectors, separators, controls), which can make
- *    what the owner sees differ from what is parsed;
- *  - it contains a Class A command form anywhere (the exact commands are sent alone and run by their own grammar; one
- *    inside a request, quoted, pasted or glued to other text, or a look-alike the grammar did not accept, is material,
- *    not an instruction).
- * These are value checks over closed sets (the existing command heads); nothing here routes a message.
+ * Markers of structured or quoted material (fail closed: any of them means the message is not one plain instruction):
+ * braces, a data-like square bracket, backticks, a tilde fence, a line-leading `>`, or an ASCII identifier key followed
+ * by a colon and a value (`request: …`, YAML-like). An ordinary bracketed phrase ("[긴급] 보고서 쓰기") is not a marker.
  */
-export function nlActionInputRefusal(rawText: string, groundingText: string): NlActionInputRefusal | undefined {
-  if (Array.from(rawText).length > NL_ACTION_MAX_INPUT_CHARS) return 'too-long';
-  if (HIDDEN.test(rawText.replace(EMOJI_SEQUENCE, ''))) return 'hidden-characters';
+function hasStructureMarker(text: string): boolean {
+  if (/[{}`]/u.test(text) || /~~~/u.test(text) || /^\s*>/u.test(text)) return true;
+  for (const match of text.matchAll(/\[([^[\]]*)\]/gu)) if (looksLikeData(match[1] ?? '')) return true;
+  if (/[[\]]/u.test(text.replace(/\[[^[\]]*\]/gu, ''))) return true;
+  return /(?:^|[\s,(])[A-Za-z_][A-Za-z0-9_-]*\s*:\s*\S/u.test(text);
+}
+
+/**
+ * Action eligibility (ADR-0120 A6 input guard, fail closed). A turn may lead to an A6 action (a selection, an undo, an
+ * answer to an A6 question) only when the WHOLE message is one plain instruction:
+ *  - a single line, at most {@link NL_ACTION_MAX_INPUT_CHARS} characters, with no platform quote;
+ *  - free of hidden characters (format, zero-width, bidi, tag, variation selectors, separators, controls), emoji
+ *    sequences excepted;
+ *  - free of structure markers (see {@link hasStructureMarker});
+ *  - free of an exact-command form (the to-do colon heads, the Slack post head, the Slack post execution phrase).
+ * Otherwise nothing acts (reads still work). The grounding text of an eligible message is the whole plain message.
+ */
+export function nlActionInputRefusal(rawText: string, groundingText: string, quoted = false): NlActionInputRefusal | undefined {
+  const text = rawText.normalize('NFC');
+  if (Array.from(text).length > NL_ACTION_MAX_INPUT_CHARS) return 'too-long';
+  if (HIDDEN.test(text.replace(EMOJI_SEQUENCE, ''))) return 'hidden-characters';
+  if (quoted || /[\r\n]/u.test(text.trim()) || hasStructureMarker(text)) return 'not-plain';
   const folded = groundingText.normalize('NFKC');
-  if (COMMAND_FORMS.some((form) => form.test(folded))) return 'embedded-command';
+  if (COMMAND_FORMS.some((form) => form.test(folded) || form.test(text.normalize('NFKC')))) return 'embedded-command';
   return undefined;
 }
 
-/** A bracket whose content looks like structured data (a quote, a key:value pair or a comma list), e.g. pasted JSON. */
-const STRUCTURED_CONTENT = /["“”]|[\p{L}\p{N}_]\s*:|,/u;
 
 /**
  * The owner's own prose of the message: every bracketed STRUCTURE (`{…}` / `[…]` holding a quote, a key:value pair or a
@@ -563,7 +580,7 @@ export function withoutStructures(groundingText: string): string {
   for (let round = 0; round < 8; round += 1) {
     const next = text.replace(/\{([^{}]*)\}|\[([^[\]]*)\]/gu, (whole, brace: string | undefined, square: string | undefined) => {
       const inner = brace ?? square ?? '';
-      return brace !== undefined || STRUCTURED_CONTENT.test(inner) ? ' ' : whole;
+      return brace !== undefined || looksLikeData(inner) ? ' ' : whole;
     });
     if (next === text) break;
     text = next;

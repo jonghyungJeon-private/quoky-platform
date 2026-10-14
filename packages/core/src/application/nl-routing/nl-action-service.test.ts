@@ -407,3 +407,16 @@ describe('round 2: pending answers meet the input guard (Codex review P2)', () =
     expect((await w.decide('{"request":"1번 완료해줘"}', { now: at(1) })).kind).not.toBe('execute');
   });
 });
+
+describe('round 3: an argument-free undo from pasted JSON never executes', () => {
+  it('{"request":"되돌려줘"} with a fresh last action gets the plain-sentence reply', async () => {
+    const w = world({ script: [out('action.undo')] });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
+    const decision = await w.decide('{"request":"되돌려줘"}', { now: at(1) });
+    expect(decision).toEqual({ kind: 'ask', text: '아무것도 실행하지 않았어요. 동작 요청은 한 문장으로 말씀해 주세요 (붙여넣은 내용, 인용, 명령문 없이).' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'not-plain' });
+    // Reads still work on the same kind of text.
+    const reads = world({ script: [out('mail.list')] });
+    expect((await reads.decide('> 참고 메모\n메일함 보여줘', { now: at(1) })).kind).toBe('execute');
+  });
+});
