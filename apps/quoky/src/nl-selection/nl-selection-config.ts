@@ -24,6 +24,7 @@ import { NL_SELECTION_TIMEOUT_MS } from '@quoky/core';
  *   entry is ever offered and every prompt and reply is byte-identical to `nl-select.v18`). Any other value requires
  *   `QUOKY_NL_INTENT_MODE=active` (`NL_ACTIONS_REQUIRES_ACTIVE`, a startup refusal); the composition root always builds
  *   the persisted kill switch, and the service refuses to start without it. Each non-`off` level is a Strict owner step.
+ *   `external` (R3) is refused at startup (`NL_ACTIONS_EXTERNAL_NOT_AVAILABLE`) until its stage is built.
  */
 export type NlIntentModeConfig = 'off' | 'shadow' | 'active';
 export type NlPhaseConfig = 'a' | 'c' | 'c-shadow';
@@ -53,6 +54,7 @@ export const NlSelectionConfigErrorCode = {
   NL_PHASE_REQUIRES_ACTIVE: 'NL_PHASE_REQUIRES_ACTIVE',
   NL_ACTIONS_INVALID: 'NL_ACTIONS_INVALID',
   NL_ACTIONS_REQUIRES_ACTIVE: 'NL_ACTIONS_REQUIRES_ACTIVE',
+  NL_ACTIONS_EXTERNAL_NOT_AVAILABLE: 'NL_ACTIONS_EXTERNAL_NOT_AVAILABLE',
 } as const;
 export type NlSelectionConfigErrorCode = (typeof NlSelectionConfigErrorCode)[keyof typeof NlSelectionConfigErrorCode];
 
@@ -113,6 +115,8 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
   if (rawActions !== undefined && !(ACTION_LEVELS as readonly string[]).includes(rawActions)) {
     throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_ACTIONS_INVALID);
   }
+  // A6-D8: `external` is the R3 stage; its previews, banner and yield are not built, so it is refused until then.
+  if (rawActions === 'external') throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_ACTIONS_EXTERNAL_NOT_AVAILABLE);
   // A6-D8: an action level needs Phase A live (`active`); the kill switch is checked by the service at construction.
   if (rawActions !== undefined && rawActions !== 'off' && rawMode !== 'active') {
     throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_ACTIONS_REQUIRES_ACTIVE);

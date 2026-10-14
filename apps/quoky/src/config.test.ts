@@ -549,9 +549,11 @@ describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
 
   it('QUOKY_NL_ACTIONS (amendment A6-D8): default off, exact values, any level but off needs QUOKY_NL_INTENT_MODE=active', () => {
     expect(loadConfig(env({})).nlSelection.actions).toBe('off');
-    for (const level of ['off', 'shadow', 'local', 'external'] as const) {
+    for (const level of ['off', 'shadow', 'local'] as const) {
       expect(loadConfig(env({ QUOKY_NL_INTENT_MODE: 'active', QUOKY_NL_ACTIONS: level })).nlSelection.actions).toBe(level);
     }
+    // R3 is not built: `external` is refused at startup.
+    expect(() => loadConfig(env({ QUOKY_NL_INTENT_MODE: 'active', QUOKY_NL_ACTIONS: 'external' }))).toThrow(/^NL_ACTIONS_EXTERNAL_NOT_AVAILABLE$/);
     expect(loadConfig(env({ QUOKY_NL_ACTIONS: 'off' })).nlSelection.actions).toBe('off');
     for (const value of ['', 'on', 'Local', 'true', ' local']) {
       expect(() => loadConfig(env({ QUOKY_NL_INTENT_MODE: 'active', QUOKY_NL_ACTIONS: value })), value).toThrow(/^NL_ACTIONS_INVALID$/);
