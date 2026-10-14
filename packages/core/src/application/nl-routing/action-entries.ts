@@ -561,7 +561,7 @@ function hasStructureMarker(rawText: string): boolean {
  */
 const HTTP_URL_TOKEN = /(?<![^\s(\[,])https?:\/\/[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::\d{1,5})?(?:[/?#]\S*)?(?<!:)(?=\s|[)\],]|$)/giu;
 /** An `HH:MM` time followed by a word boundary or the end of the text ("9:30", "14:05에"; not "12:00request"). */
-const CLOCK_TIME = /(?<!\d)\d{1,2}:\d{2}(?![A-Za-z0-9_])/gu;
+const CLOCK_TIME = /(?<![A-Za-z0-9_])\d{1,2}:\d{2}(?![A-Za-z0-9_])/gu;
 
 /**
  * The key-colon exemption (A6-D3a): in a valid http(s) URL token only the literal `://` (and a numeric port's colon)

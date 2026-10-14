@@ -384,7 +384,7 @@ describe('round 5: TAB is a control, only a plain space pads, URLs and times are
 });
 
 describe('round 6: the URL exemption neutralises only an http(s) `://`, never removes text', () => {
-  it.each(['x://request: buy milk', 'x://,request:add-a-todo', '12:00request: buy milk', 'https://request: buy milk', 'https://request:buy-milk', 'https://a.example/x,request:add', 'https://a.example/x request: add'])(
+  it.each(['x://request: buy milk', 'x://,request:add-a-todo', '12:00request: buy milk', 'request12:34 buy milk', 'a_9:30 x', 'https://request: buy milk', 'https://request:buy-milk', 'https://a.example/x,request:add', 'https://a.example/x request: add'])(
     '%s refuses',
     (text) => {
       expect(nlActionInputRefusal(text, text)).toBe('not-plain');
