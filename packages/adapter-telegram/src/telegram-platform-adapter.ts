@@ -1043,6 +1043,8 @@ export class TelegramPlatformAdapter implements PlatformAdapter, NotificationSin
       text: message.text,
       // ADR-0120 D8: blockquotes are quoted words; Core never treats them as the owner's request.
       ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
+      // ADR-0120 A6: code / pre entities lose their markers in `text`; Core learns only the content-free fact.
+      ...(message.codeFormatted === true ? { formatting: { code: true as const } } : {}),
       ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       // GML-2: the replied-to message in the same key form as this adapter's delivery receipts (`chatId:messageId`), so
       // Core can match it against its own replies; opaque to Core.
@@ -1360,8 +1362,9 @@ export function mergeAlbum(parts: readonly AdmittedTelegramMessage[]): AdmittedT
     joined = true;
   }
   const attachments = parts.flatMap((part) => part.attachments ?? []);
-  const { quotedRanges: _first, ...rest } = first;
-  return { ...rest, text, attachments, ...(quotedRanges.length > 0 ? { quotedRanges } : {}) };
+  const { quotedRanges: _first, codeFormatted: _code, ...rest } = first;
+  const codeFormatted = parts.some((part) => part.codeFormatted === true);
+  return { ...rest, text, attachments, ...(quotedRanges.length > 0 ? { quotedRanges } : {}), ...(codeFormatted ? { codeFormatted: true as const } : {}) };
 }
 
 /** One signal aborted when any of `signals` is (or already was); `dispose` drops the listeners. */

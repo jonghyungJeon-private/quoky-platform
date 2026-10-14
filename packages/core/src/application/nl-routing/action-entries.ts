@@ -560,14 +560,21 @@ function hasStructureMarker(text: string): boolean {
  * Otherwise nothing acts (reads still work). The grounding text of an eligible message is the whole plain message.
  */
 export function nlActionInputRefusal(rawText: string, groundingText: string, quoted = false): NlActionInputRefusal | undefined {
+  // Every check runs on the RAW text before any trim, and the structure, colon-head and hidden-character checks also on
+  // an NFKC-folded copy, so full-width and compatibility forms (｛ ｝ ［ ］ ｀ ：) count as their ASCII marks. The owner's
+  // original text is what spans are grounded in.
   const text = rawText.normalize('NFC');
+  const folded = rawText.normalize('NFKC');
   if (Array.from(text).length > NL_ACTION_MAX_INPUT_CHARS) return 'too-long';
-  if (HIDDEN.test(text.replace(EMOJI_SEQUENCE, ''))) return 'hidden-characters';
-  if (quoted || /[\r\n]/u.test(text.trim()) || hasStructureMarker(text)) return 'not-plain';
-  const folded = groundingText.normalize('NFKC');
-  if (COMMAND_FORMS.some((form) => form.test(folded) || form.test(text.normalize('NFKC')))) return 'embedded-command';
+  if (HIDDEN.test(text.replace(EMOJI_SEQUENCE, '')) || HIDDEN.test(folded.replace(EMOJI_SEQUENCE, ''))) return 'hidden-characters';
+  if (quoted || LINE_SEPARATOR.test(rawText) || LINE_SEPARATOR.test(folded) || hasStructureMarker(text) || hasStructureMarker(folded)) return 'not-plain';
+  const groundingFolded = groundingText.normalize('NFKC');
+  if (COMMAND_FORMS.some((form) => form.test(groundingFolded) || form.test(folded))) return 'embedded-command';
   return undefined;
 }
+
+/** Any line break or separator: CR, LF, VT, FF, NEL (U+0085), LINE and PARAGRAPH SEPARATOR. Checked before any trim. */
+const LINE_SEPARATOR = /[\r\n\u000B\u000C\u0085\u2028\u2029]/u;
 
 
 /**

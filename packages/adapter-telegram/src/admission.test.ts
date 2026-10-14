@@ -54,6 +54,17 @@ describe('Telegram admission (ADR-0114 D2): owner private chats only, drop by de
     expect(admit(textUpdate(10, '안녕', { date: NOW }))).toMatchObject({ kind: 'admitted', message: expect.not.objectContaining({ quotedRanges: expect.anything() }) });
   });
 
+  it('ADR-0120 A6: a code or pre entity on the text or caption sets the content-free codeFormatted flag; other entities do not', () => {
+    for (const type of ['code', 'pre']) {
+      const update = textUpdate(11, 'request: 1번 완료해줘', { date: NOW });
+      (update.message as Record<string, unknown>).entities = [{ type, offset: 0, length: 7 }];
+      expect(admit(update)).toMatchObject({ kind: 'admitted', message: { codeFormatted: true } });
+    }
+    const bold = textUpdate(12, '보고서 추가', { date: NOW });
+    (bold.message as Record<string, unknown>).entities = [{ type: 'bold', offset: 0, length: 3 }, { type: 'blockquote', offset: 0, length: 3 }];
+    expect((admit(bold) as { message: Record<string, unknown> }).message).not.toHaveProperty('codeFormatted');
+  });
+
   it.each([
     ['a non-owner in a private chat', textUpdate(1, 'hi', { from: STRANGER_ID, date: NOW }), 'not-owner'],
     ['a bot sender with an owner id', textUpdate(1, 'hi', { isBot: true, date: NOW }), 'not-owner'],

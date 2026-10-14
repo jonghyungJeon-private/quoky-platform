@@ -179,6 +179,8 @@ export interface NlSelectionTurn {
    * id so a line joins its turn (the app's logger also appends the per-turn `cid`). Opaque; never content.
    */
   readonly turnId?: string;
+  /** ADR-0120 A6: the platform marked part of the text as code (`InboundMessage.formatting.code`); never an action. */
+  readonly codeFormatted?: boolean;
 }
 
 export type NlSelectionSkipReason =
@@ -556,8 +558,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * Owner decision 8: the anchored `되돌리기`, the provider-down twin of `action.undo`. The same resolution as a selected
    * undo, with no selector call. `undefined` when the text is not the phrase or actions are not acting.
    */
-  async decideAnchoredUndo(turn: Pick<NlSelectionTurn, 'text' | 'session' | 'actor' | 'now' | 'entries' | 'replyToMessageId' | 'turnId'>): Promise<NlSelectionDecision | undefined> {
+  async decideAnchoredUndo(
+    turn: Pick<NlSelectionTurn, 'text' | 'session' | 'actor' | 'now' | 'entries' | 'replyToMessageId' | 'turnId' | 'quotedRanges' | 'codeFormatted'>,
+  ): Promise<NlSelectionDecision | undefined> {
+    // The anchored phrase is the whole message on one line and meets the same plain-line eligibility as any action.
     if (!/^되돌리기[.!]?$/u.test(turn.text.normalize('NFC').trim())) return undefined;
+    if (nlActionInputRefusal(turn.text, turn.text, markedMaterial(turn)) !== undefined) return undefined;
     if (!this.actionsActing(turn.actor) || !turn.entries.some((entry) => entry.id === 'action.undo')) return undefined;
     const fullTurn: NlSelectionTurn = { ...turn, attachmentCount: 0, route: 'chat' };
     const decision = await this.decideUndo(fullTurn, 'ko', 0, 'none');
@@ -918,7 +924,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const validated = validateSelection({ entryId, args: output.args }, ctx);
     const base = { entryId, risk: ctx.offered.get(entryId)?.risk ?? 'LOCAL_WRITE', refKind: refKindOf(output.args), latencyMs, ...correlationOf(turn) } as const;
     // The A6 input guard (red team): a long paste, hidden characters or an embedded command form never act.
-    const inputRefusal = ctx.offered.has(entryId) ? nlActionInputRefusal(turn.text, prepared.groundingText, (turn.quotedRanges ?? []).length > 0) : undefined;
+    const inputRefusal = ctx.offered.has(entryId) ? nlActionInputRefusal(turn.text, prepared.groundingText, markedMaterial(turn)) : undefined;
     if (inputRefusal !== undefined) {
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: inputRefusal };
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
@@ -1083,7 +1089,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     turn: NlSelectionTurn,
     groundingText: string,
   ): boolean {
-    const refusal = nlActionInputRefusal(turn.text, groundingText, (turn.quotedRanges ?? []).length > 0);
+    const refusal = nlActionInputRefusal(turn.text, groundingText, markedMaterial(turn));
     if (refusal === undefined) return false;
     const entryId = pending.kind === 'action-target' ? pending.entryId : pending.kind === 'action-mode' ? 'item.summarize' : 'action.undo';
     this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields({ entryId, risk: entryId === 'item.summarize' ? 'ITEM_READ' : 'LOCAL_WRITE', refKind: 'none', resolution: 'none', result: 'refused', reason: refusal, ...correlationOf(turn) }));
@@ -1703,4 +1709,9 @@ function echoKey(messageId: string, context: { readonly platform: string; readon
 /** A6-D3: the correlation fields of an audit line (session id and turn id), never content. */
 function correlationOf(turn: Pick<NlSelectionTurn, 'session' | 'turnId'>): { readonly sessionId: string; readonly turnId?: string } {
   return { sessionId: turn.session.id, ...(turn.turnId !== undefined ? { turnId: turn.turnId } : {}) };
+}
+
+/** A6: the platform marked part of the message as quoted or as code: material, never one plain instruction. */
+function markedMaterial(turn: Pick<NlSelectionTurn, 'quotedRanges' | 'codeFormatted'>): boolean {
+  return (turn.quotedRanges ?? []).length > 0 || turn.codeFormatted === true;
 }

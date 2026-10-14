@@ -333,3 +333,31 @@ describe('round 3: action-eligible input is one plain line (fail closed)', () =>
     }
   });
 });
+
+describe('round 4: compatibility forms fold to ASCII and any line separator refuses (fail closed)', () => {
+  it.each([
+    ['full-width braces', '｛"request":"1번 완료해줘"｝'],
+    ['full-width backticks', '｀1번 완료해줘｀ 이거'],
+    ['full-width data brackets', '［1,2］ 완료해줘'],
+    ['full-width colon head', 'request： 1번 완료해줘'],
+    ['full-width key and colon', 'ｒｅｑｕｅｓｔ： 1번 완료해줘'],
+    ['full-width blockquote', '＞ 1번 완료해줘'],
+    ['surrounding CRLF', '\r\n1번 완료해줘\r\n'],
+    ['trailing LF', '1번 완료해줘\n'],
+    ['U+2028', ' 1번 완료해줘'],
+    ['U+2029', '1번 완료해줘 '],
+    ['U+0085', '1번 완료해줘\u0085'],
+    ['vertical tab', '\u000B1번 완료해줘'],
+    ['form feed', '1번 완료해줘\u000C'],
+  ])('%s is not an action request', (_name, text) => {
+    expect(['not-plain', 'hidden-characters']).toContain(nlActionInputRefusal(text, text));
+  });
+
+  it('line separators refuse as not-plain; a full-width exact-command head refuses; the original text is unchanged for spans', () => {
+    expect(nlActionInputRefusal(' 1번 완료해줘\r\n', ' 1번 완료해줘\r\n')).toBe('not-plain');
+    expect(nlActionInputRefusal('이거 할 일 추가： 점검', '이거 할 일 추가： 점검')).toBe('embedded-command');
+    for (const text of ['할 일에 ＡＢＣ 보고서 추가해줘', '할 일에 ① 보고서 추가해줘', '할 일에 [보고서 작성] 추가해줘', '9:30 회의 준비 할 일로']) {
+      expect(nlActionInputRefusal(text, text), text).toBeUndefined();
+    }
+  });
+});

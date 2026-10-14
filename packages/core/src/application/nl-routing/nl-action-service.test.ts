@@ -34,7 +34,7 @@ interface World {
   session(): Session;
   actor(): Actor;
   setMetadata(key: string, value: unknown): void;
-  decide(text: string, opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; pending?: PendingQuestion | null; replyTo?: string }): Promise<NlSelectionDecision>;
+  decide(text: string, opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; pending?: PendingQuestion | null; replyTo?: string; codeFormatted?: boolean }): Promise<NlSelectionDecision>;
 }
 
 function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | ((request: AiRequest) => string); caps?: NlActionCaps; withSwitch?: boolean } = {}): World {
@@ -120,6 +120,7 @@ function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | 
         chatProviderId: 'scripted',
         ...(opts.pending !== undefined ? { pending: opts.pending } : {}),
         ...(opts.replyTo !== undefined ? { replyToMessageId: opts.replyTo } : {}),
+        ...(opts.codeFormatted === true ? { codeFormatted: true } : {}),
         turnId: 'turn-1',
       });
     },
@@ -314,6 +315,38 @@ describe('references, questions and the audit line', () => {
     const decision = await w.service.decideAnchoredUndo({ text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
     expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', undo: { entryId: 'todo.add' } } });
     expect(w.calls).toHaveLength(0);
+  });
+});
+
+describe('round 4: the anchored 되돌리기 meets the plain-line eligibility (Codex P2)', () => {
+  it.each([
+    ['a platform quote', { text: '되돌리기', quotedRanges: [{ start: 0, end: 4 }] }],
+    ['platform code formatting', { text: '되돌리기', codeFormatted: true }],
+    ['surrounding CRLF', { text: '\r\n되돌리기\r\n' }],
+    ['a trailing U+2028', { text: '되돌리기\u2028' }],
+    ['a padded 305-character message', { text: `${' '.repeat(301)}되돌리기` }],
+    ['a full-width brace wrapper', { text: '｛되돌리기｝' }],
+  ])('%s never undoes', async (_name, extra) => {
+    const w = world({ script: [] });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
+    const decision = await w.service.decideAnchoredUndo({ session: w.session(), actor: w.actor(), now: at(1), entries: ALL, ...extra });
+    expect(decision).toBeUndefined();
+    expect(w.calls).toHaveLength(0);
+  });
+
+  it('spaces around the single line still anchor', async () => {
+    const w = world({ script: [] });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
+    expect(await w.service.decideAnchoredUndo({ text: '  되돌리기 ', session: w.session(), actor: w.actor(), now: at(1), entries: ALL })).toMatchObject({ kind: 'execute' });
+  });
+
+  it('platform code formatting refuses a selected action like a quote does', async () => {
+    for (const codeFormatted of [true, false]) {
+      const w = world({ script: [out('todo.complete', { ref: '#2' })] });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3]));
+      const decision = await w.decide('2번 완료 처리해줘', { now: at(1), codeFormatted });
+      expect(decision.kind === 'execute', String(codeFormatted)).toBe(!codeFormatted);
+    }
   });
 });
 

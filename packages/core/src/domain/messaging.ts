@@ -109,6 +109,15 @@ export interface InboundQuotedRange {
 }
 
 /**
+ * Content-free formatting facts the platform reported but the text no longer shows (ADR-0120 amendment A6): `code`
+ * means part of the text was marked as code or preformatted (e.g. a code entity whose markers are not in the text).
+ * Platform-neutral; absent when there is nothing to report.
+ */
+export interface InboundFormatting {
+  readonly code?: true;
+}
+
+/**
  * The platform message an inbound message replies to (ADR-0118 amendment of 2026-10-12, GML-2), as each platform
  * adapter maps its native reply. `messageId` is opaque data in the same form the adapter reports in its
  * delivery receipts (ADR-0098 D3), so Core can only compare it with ids it recorded for its own replies; Core never
@@ -125,6 +134,8 @@ export interface InboundMessage {
   text: string;
   /** Optional, additive (ADR-0120 D8): ranges of `text` the platform marked as quoted. Absent when there are none. */
   quotedRanges?: readonly InboundQuotedRange[];
+  /** Optional, additive (ADR-0120 A6): formatting the text no longer shows; an action request must have none. */
+  formatting?: InboundFormatting;
   /**
    * Optional, additive (ADR-0118 amendment, GML-2): the message this one replies to. Absent when it is not a reply or
    * the adapter cannot tell; Core then behaves exactly as before.

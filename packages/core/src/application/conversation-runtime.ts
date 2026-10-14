@@ -3471,6 +3471,7 @@ export class ConversationRuntime {
       route: 'chat' as const,
       ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}),
       turnId: message.id,
+      ...(message.formatting?.code === true ? { codeFormatted: true } : {}),
     };
     let decision: NlSelectionDecision | undefined;
     try {
@@ -3518,6 +3519,7 @@ export class ConversationRuntime {
       ...(grammar !== undefined ? { grammar } : {}),
       ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}),
       turnId: message.id,
+      ...(message.formatting?.code === true ? { codeFormatted: true } : {}),
       text: message.text,
       attachmentCount: message.attachments?.length ?? 0,
       ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
