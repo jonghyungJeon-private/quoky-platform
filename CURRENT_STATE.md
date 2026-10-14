@@ -49,15 +49,16 @@ Details and the review record for each item are in the matching notes in `DECISI
 ### v5 claim guard gaps closed (ADR-0118 amendment implementation note) — on branch `claude/v5-claim-guard` (2026-10-14)
 
 - **What changed.** `document-summary-claim-guard.ts` closes the three gaps recorded under the v5 W3 "guard stays strict"
-  decision:
-  - a split or disguised `Quoky` (normalization);
-  - an implied assistant action under a third-party framing (the subject must govern the claim's own verb, and an
-    honorific subject never exempts `드렸`);
-  - a cross-sentence split (a Quoky actor anywhere in the reply, or a generic stand-in in a neighbouring sentence, means no
-    exemption; English passive "on your behalf" and dropped-subject forms).
-  The change is stricter only: no flag, migration or prompt change.
-- **Measured.** One newly withheld repository string out of 23,844, and it is a true positive. Known fail-closed false
-  positives: an adjective before the object (`급한 메일`) and `AI가` in a neighbouring sentence.
+  decision. The change is stricter only: no flag, migration or prompt change.
+  - A split or disguised `Quoky` is caught by normalization.
+  - An implied assistant action is withheld: the subject must govern the claim's own verb, and every match in a clause is
+    judged.
+  - A cross-sentence split is caught: a Quoky actor with an action anywhere in the reply, or a generic stand-in in the
+    claim's own sentence, removes the exemption. English request-framed passives and dropped-subject forms count too.
+  - The review round (CA CHANGES REQUIRED, Codex P1s) is addressed.
+- **Measured.** Against origin/main, 3 repository strings out of 23,857 are newly withheld: one true positive, plus a
+  selector prompt and a code fragment that are not summaries. None are lost. Accepted residuals: misspelled names
+  (`Quokky`, `쿠오키`) and bare Korean passives (`메일이 발송되었습니다`).
 - **Not run live.** The change has offline tests only.
 
 Details: the claim-guard gaps implementation note in `DECISIONS.md`.
