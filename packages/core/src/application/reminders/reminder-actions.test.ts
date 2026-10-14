@@ -240,3 +240,46 @@ describe('a selector-chosen reminder list records the listing as rendered (CA re
     expect((await off.conversation.listReplyDetailed(base())).listing).toBeUndefined();
   });
 });
+
+describe('round 2: the kill switch is the last check before each mutation (Codex review P1)', () => {
+  it('a stop persisted while the calendar lookup is pending prevents the event reminder create', async () => {
+    let release: () => void = () => undefined;
+    let stopped = false;
+    const repository = new MemoryRepository();
+    const start = '2026-10-15T01:00:00.000Z';
+    const conversation = new ReminderConversationService({
+      repository,
+      composer: new ReminderReplyComposer(),
+      timeZone: 'Asia/Seoul',
+      enabled: true,
+      logger: silent,
+      actionReceipts: true,
+      calendar: {
+        listEvents: () =>
+          new Promise<CalendarEvent[]>((resolve) => {
+            release = () => resolve([{ id: 'evt-1', title: '주간 회의', start, end: '2026-10-15T02:00:00.000Z', allDay: false, status: 'confirmed', calendarName: '기본' }]);
+          }),
+      },
+    });
+    const pendingCreate = conversation.handleAction(cmd('reminder.create', { body: '자료 출력', when: '주간 회의 10분 전' }), { ...base(), actionGuard: async () => !stopped });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    stopped = true;
+    release();
+    const result = await pendingCreate;
+    expect(result.action).toMatchObject({ result: 'refused', reason: 'stopped' });
+    expect(repository.rows).toHaveLength(0);
+  });
+
+  it('cancel, undo-create and reactivate also stop at the guard; anchored commands have no guard', async () => {
+    const { conversation, repository } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '물', when: '내일 9시' }), base());
+    const stop = { ...base(), actionGuard: async () => false };
+    expect((await conversation.handleAction(cmd('reminder.create', { body: '약', when: '내일 10시' }), stop)).action).toMatchObject({ reason: 'stopped' });
+    expect((await conversation.handleAction(cmd('reminder.cancel', { ref: '#13' }, { target: { source: 'reminder', label: 13 } }), stop)).action).toMatchObject({ reason: 'stopped' });
+    expect((await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.create' } }), stop)).action).toMatchObject({ reason: 'stopped' });
+    expect(repository.rows.map((row) => row.status)).toEqual([ReminderStatus.SCHEDULED]);
+    const canceled = await conversation.handleAction(cmd('reminder.cancel', { ref: '#13' }, { target: { source: 'reminder', label: 13 } }), base());
+    expect((await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version: canceled.action?.version as string } }), stop)).action).toMatchObject({ reason: 'stopped' });
+    expect(repository.rows[0]?.status).toBe(ReminderStatus.CANCELED);
+  });
+});

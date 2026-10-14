@@ -163,3 +163,22 @@ describe('the to-do listing receipt is capped at the rows certainly rendered (P3
     expect(await empty.desk.handle(list, owner)).toMatchObject({ listing: { source: 'todo', items: [] } });
   });
 });
+
+describe('round 2: the kill switch is the last check before each to-do mutation', () => {
+  it('add, complete, cancel and both undo inverses mutate nothing when the guard says stop', async () => {
+    const { desk, rows } = world();
+    await addThree(desk);
+    const first = [...rows.values()][0] as WorkItem;
+    const stop = async () => false;
+    const snapshot = () => [...rows.values()].map((item) => `${item.id}:${item.status}`).join(',');
+    const before = snapshot();
+    expect(await desk.handleAction(cmd('todo.add', { title: '새 일' }), owner, stop)).toMatchObject({ action: { reason: 'stopped' } });
+    expect(await desk.handleAction(cmd('todo.complete', { ref: '#1' }, { target: { source: 'todo', id: first.id, label: 1 } }), owner, stop)).toMatchObject({ action: { reason: 'stopped' } });
+    expect(await desk.handleAction(cmd('action.undo', {}, { target: { source: 'todo', id: first.id }, undo: { entryId: 'todo.add' } }), owner, stop)).toMatchObject({ action: { reason: 'stopped' } });
+    expect(snapshot()).toBe(before);
+    const done = await desk.handleAction(cmd('todo.complete', { ref: '#1' }, { target: { source: 'todo', id: first.id, label: 1 } }), owner);
+    const version = (done as { action: { version: string } }).action.version;
+    expect(await desk.handleAction(cmd('action.undo', {}, { target: { source: 'todo', id: first.id }, undo: { entryId: 'todo.complete', version } }), owner, stop)).toMatchObject({ action: { reason: 'stopped' } });
+    expect(rows.get(first.id)?.status).toBe(WorkItemStatus.COMPLETED);
+  });
+});

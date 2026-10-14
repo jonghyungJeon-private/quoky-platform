@@ -23,6 +23,15 @@ import { containsCredentialMaterial } from '../credential-guard';
 import { parseReminderMessage, parseReminderWhen, type ReminderClarifyReason, type ReminderCommand } from './reminder-grammar';
 import { nextOccurrenceAfter } from './reminder-schedule';
 import type { NlActionReceipt, NlListingReceipt, NlSelectedCommand } from '../nl-routing/catalog';
+import { renderActionStopped } from '../nl-routing/nl-action-policy';
+
+/** The kill switch stopped a write after its lookup (A6-D3). */
+const STOPPED = Symbol('stopped');
+
+/** The A6 mutation guard: absent on every anchored path (always allowed); a failed re-read refuses. */
+async function guardAllows(input: { readonly actionGuard?: () => Promise<boolean> }): Promise<boolean> {
+  return input.actionGuard === undefined || (await input.actionGuard().catch(() => false));
+}
 import { eventReminderStoredTitle, type ReminderReplyComposer } from './reminder-reply-composer';
 
 /**
@@ -78,6 +87,8 @@ export interface ReminderTurnInput {
   /** The inbound message id; the reply is addressed to it. */
   readonly messageId: Id;
   readonly now: IsoTimestamp;
+  /** ADR-0120 amendment A6-D3: on an A6 action only, the kill switch re-read immediately before each mutation. */
+  readonly actionGuard?: () => Promise<boolean>;
 }
 
 /** OPS-2 (ADR-0113 D7): the typed cancel entry's input — the owner Actor, the `알림 N` number and the shared clock. */
@@ -210,8 +221,9 @@ export class ReminderConversationService {
     target: EventReminderTarget,
     input: ReminderTurnInput,
     ownerBody?: string,
-  ): Promise<{ readonly body: MessageBody; readonly reminder?: Reminder }> {
+  ): Promise<{ readonly body: MessageBody; readonly reminder?: Reminder; readonly stopped?: true }> {
     const body = await this.createEventRelative(offsetMinutes, target, input, ownerBody);
+    if (body === STOPPED) return { body: renderActionStopped('ko'), stopped: true };
     return typeof body === 'object' && body !== null && 'reminder' in body ? (body as { body: MessageBody; reminder: Reminder }) : { body: body as MessageBody };
   }
 
@@ -220,7 +232,7 @@ export class ReminderConversationService {
     target: EventReminderTarget,
     input: ReminderTurnInput,
     ownerBody?: string,
-  ): Promise<MessageBody | { readonly body: MessageBody; readonly reminder: Reminder }> {
+  ): Promise<MessageBody | typeof STOPPED | { readonly body: MessageBody; readonly reminder: Reminder }> {
     const { composer, repository } = this.deps;
     if (this.eventCalendar === undefined) return composer.eventCalendarUnavailable();
     const read = await this.eventCalendar.readForCreation(target, input.now, this.deps.timeZone);
@@ -267,6 +279,8 @@ export class ReminderConversationService {
       if (error instanceof InvalidReminderError) return composer.eventCalendarReadFailed();
       throw error;
     }
+    // A6-D3: after the calendar lookup, the kill switch is the last check before the write.
+    if (!(await guardAllows(input))) return STOPPED;
     const created = await repository.createWithinLimit(draft, REMINDER_LIMITS.maxActivePerActor);
     return created.status === 'CREATED'
       ? { body: composer.eventCreated(created.reminder, new Date(resolution.startMs).toISOString(), input.now), reminder: created.reminder }
@@ -359,7 +373,7 @@ export class ReminderConversationService {
     if (when.kind === 'event') {
       // BRF-2 resolves the event; the reminder keeps the owner's own words (the event title only when they are empty).
       const event = await this.createEventRelativeDetailed(when.offsetMinutes, when.target, input, body);
-      if (event.reminder === undefined) return { reply: this.reply(input, event.body), action: refusedReceipt(command, 'event') };
+      if (event.reminder === undefined) return { reply: this.reply(input, event.body), action: refusedReceipt(command, event.stopped === true ? 'stopped' : 'event') };
       return { reply: this.reply(input, event.body), action: { ...receiptOf('reminder.create', event.reminder), result: 'executed' } };
     }
     let draft;
@@ -379,6 +393,7 @@ export class ReminderConversationService {
       if (error instanceof InvalidReminderError) return refuse(composer.clarify(this.clarifyReasonOf(error)), 'invalid');
       throw error;
     }
+    if (!(await guardAllows(input))) return refuse(renderActionStopped('ko'), 'stopped');
     const created = await repository.createWithinLimit(draft, REMINDER_LIMITS.maxActivePerActor);
     if (created.status !== 'CREATED') return refuse(composer.limitReached(created.activeCount), 'limit');
     return { reply: this.reply(input, composer.actionCreated(created.reminder, input.now)), action: receiptOf('reminder.create', created.reminder) };
@@ -397,6 +412,7 @@ export class ReminderConversationService {
     const reminder = await this.targetReminder(command, input.actorId);
     const displayNo = command.target?.label ?? 0;
     if (reminder === null) return { reply: this.reply(input, this.deps.composer.cancelNotFound(displayNo)), action: refusedReceipt(command, 'not-found') };
+    if (!(await guardAllows(input))) return { reply: this.reply(input, renderActionStopped('ko')), action: refusedReceipt(command, 'stopped') };
     const canceled = await this.cancelDetailed({ actorId: input.actorId, displayNo: reminder.displayNo, now: input.now });
     if (canceled.reminder === undefined) return { reply: this.reply(input, canceled.result.reply), action: refusedReceipt(command, canceled.result.status.toLowerCase()) };
     return { reply: this.reply(input, this.deps.composer.actionCanceled(canceled.reminder)), action: receiptOf('reminder.cancel', canceled.reminder) };
@@ -415,6 +431,7 @@ export class ReminderConversationService {
     if (undone === 'reminder.create') {
       if (reminder.status === ReminderStatus.FIRING) return refuse('in-flight');
       if (reminder.status !== ReminderStatus.SCHEDULED) return refuse(reminder.status === ReminderStatus.CANCELED ? 'changed' : 'fired');
+      if (!(await guardAllows(input))) return { reply: this.reply(input, renderActionStopped('ko')), action: { entryId: 'action.undo', result: 'refused', source: 'reminder', reason: 'stopped' } };
       const canceled = await this.cancelDetailed({ actorId: input.actorId, displayNo: reminder.displayNo, now: input.now });
       if (canceled.reminder === undefined) return { reply: this.reply(input, canceled.result.reply), action: { entryId: 'action.undo', result: 'refused', source: 'reminder', reason: 'changed' } };
       return {
@@ -465,6 +482,7 @@ export class ReminderConversationService {
     } catch {
       return refuse('changed');
     }
+    if (!(await guardAllows(input))) return { reply: this.reply(input, renderActionStopped('ko')), action: { entryId: 'action.undo', result: 'refused', source: 'reminder', reason: 'stopped' } };
     const result = await repository.reactivate(input.actorId, next, expected, REMINDER_LIMITS.maxActivePerActor);
     switch (result.status) {
       case 'REACTIVATED':

@@ -61,6 +61,12 @@ export interface TurnHandlerContext {
   readonly grammarYield?: boolean;
   /** The active project's workspace, opened lazily on request; `null` when there is none or it cannot open. */
   resolveActiveWorkspace(): Promise<WorkspaceRef | null>;
+  /**
+   * ADR-0120 amendment A6-D3: present only on an A6 action dispatch. The handler calls it immediately before every state
+   * mutation (create, complete, cancel, reopen, reactivate) and mutates nothing when it resolves `false`: the persisted
+   * kill switch is the last check, after any handler I/O (a calendar lookup).
+   */
+  nlActionGuard?(): Promise<boolean>;
 }
 
 /**

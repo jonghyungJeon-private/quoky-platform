@@ -138,7 +138,8 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
       const text = selected.language === 'en' ? 'I do that only in a direct message. Nothing was changed.' : '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.';
       return { reply: outboundMessage(ctx.message.context, text, { replyToMessageId: ctx.message.id }), nlAction: { entryId: selected.entryId, result: 'refused', source: 'reminder', reason: 'not-dm' } };
     }
-    const result = await handleAction.call(this.deps.conversation, selected, base);
+    const guard = ctx.nlActionGuard?.bind(ctx);
+    const result = await handleAction.call(this.deps.conversation, selected, { ...base, ...(guard !== undefined ? { actionGuard: guard } : {}) });
     const reply = result.reply;
     return {
       reply,

@@ -144,7 +144,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     }
     let outcome: WorkChatOutcome;
     try {
-      outcome = await handleAction.call(this.deps.desk, selected, ctx.actor);
+      outcome = await handleAction.call(this.deps.desk, selected, ctx.actor, ctx.nlActionGuard?.bind(ctx));
     } catch (error) {
       this.deps.logger.error('work_chat.turn_handler.failed', { handlerId: this.id, errorName: error instanceof Error ? error.name : 'unknown' });
       return { reply: outboundMessage(ctx.message.context, renderTodoFailure()), status: 'FAILED' };
