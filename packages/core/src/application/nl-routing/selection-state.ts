@@ -1,8 +1,11 @@
 import type { Actor, Id, IsoTimestamp, Metadata, Session } from '../../domain';
 import { isNlCatalogEntryId, type NlArgs, type NlArgValue, type NlCatalogEntryId } from './catalog';
+import { isTimeExpression } from './symbolic-time';
+import { nlWave1Entry } from './wave1-entries';
 
 /**
- * The content-free state of natural-language selection (ADR-0120 D7), all plain data, no migration:
+ * The content-free state of natural-language selection (ADR-0120 D7), all plain data, no storage migration (a stored
+ * `lastSelection` of an older args shape is rewritten when it is read, `migrateStoredSelection`: amendment A5):
  *
  *  - `Session.metadata['quoky.lastSelection']` = `{ actorId, entryId, args, at }`, 30 minutes — the previous selection a
  *    follow-up refines ("그 중에 위클리카만"). Structure only: an entry id and canonical args, never an item, title,
@@ -100,7 +103,32 @@ export function readLastSelection(session: Pick<Session, 'metadata'>, actorId: I
   const record = recordOf(session.metadata?.[LAST_SELECTION_METADATA_KEY]);
   if (record.actorId !== actorId || !fresh(record.at, now, LAST_SELECTION_TTL_MS)) return undefined;
   const selection = selectionOf(record);
-  return selection === undefined ? undefined : { ...selection, at: record.at as IsoTimestamp };
+  return selection === undefined ? undefined : { ...migrateStoredSelection(selection), at: record.at as IsoTimestamp };
+}
+
+/**
+ * A stored selection of an older shape, read as the current one: the entry's own `migrateArgs` (e.g. `mail.list`
+ * `today` -> `range`), and a keyword that is only a time expression is dropped on an entry with a period ("목요일" stuck as
+ * a title keyword by an earlier turn must not follow the owner to the next period; live UAT R4). Real keywords stay.
+ */
+export function migrateStoredSelection(selection: StoredSelection): StoredSelection {
+  const entry = nlWave1Entry(selection.entryId);
+  let args = entry.migrateArgs?.(selection.args) ?? selection.args;
+  // A transient arg (a pick of one listed item) is never a follow-up's base, whatever wrote the record.
+  if (entry.args.some((spec) => spec.transient === true && spec.name in args)) {
+    args = Object.fromEntries(Object.entries(args).filter(([name]) => entry.args.find((spec) => spec.name === name)?.transient !== true));
+  }
+  if (entry.args.some((spec) => spec.kind === 'range')) {
+    const kept: Record<string, NlArgValue> = {};
+    for (const [name, value] of Object.entries(args)) {
+      const spec = entry.args.find((candidate) => candidate.name === name);
+      // Title keywords only: a sender (`from`) named like a weekday or month stays.
+      if (spec?.kind === 'keyword' && spec.allowsTimeWords !== true && typeof value === 'string' && isTimeExpression(value)) continue;
+      kept[name] = value;
+    }
+    args = kept;
+  }
+  return args === selection.args ? selection : { entryId: selection.entryId, args };
 }
 
 export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now: IsoTimestamp): Metadata {

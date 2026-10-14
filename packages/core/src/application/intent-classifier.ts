@@ -648,7 +648,20 @@ const PATH_CHANGE_VERB_EN = enRequest(
  *   - everything else → general chat (becomes a Task).
  * AI-driven classification arrives later; the `router` is held for it.
  */
+/**
+ * The chat intent of `text`, as the classifier would have returned it had no personal-work surface clause matched.
+ * ADR-0120 D6 Phase C: when the selector ran and answered `none` for a turn the surface clause had claimed, the selector's
+ * decision wins and the turn is chat (live UAT R9: "할 일 관리하는 좋은 습관 알려줘" is advice, not a work lookup).
+ */
+export function chatIntentOf(text: string): Intent {
+  return IntentClassifier.chatIntentOf(text.trim());
+}
+
 export class IntentClassifier {
+  static chatIntentOf(text: string): Intent {
+    return IntentClassifier.chatIntent(text);
+  }
+
   constructor(private readonly router: CapabilityRouter) {}
 
   async classify(message: InboundMessage, ctx?: IntentClassifyContext): Promise<Intent> {

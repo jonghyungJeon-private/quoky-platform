@@ -29,8 +29,12 @@ export const NL_RANGE_SYMBOLS = [
   'next-week',
   'this-weekend',
   'next-weekend',
+  /** The week after next (다다음 주). */
+  'week-after-next',
   'this-month',
   'last-month',
+  /** From today to the last day of this month ("이번 달 말까지"). */
+  'rest-of-month',
   'last-7-days',
   'next-7-days',
   /** From now to the end of the lookahead (the next event); calendar only. */
@@ -38,7 +42,10 @@ export const NL_RANGE_SYMBOLS = [
 ] as const;
 export type NlRangeSymbol = (typeof NL_RANGE_SYMBOLS)[number];
 
-/** Weekday symbols: `mon` = the nearest Monday from today (today included); `next-mon` = Monday of next week. */
+/**
+ * Weekday symbols: `mon` = the nearest such day from today (today included); `this-mon` = that day of the current
+ * Monday-based week; `next-mon` / `last-mon` = that day of next / last week.
+ */
 export const NL_WEEKDAY_SYMBOLS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 
 /** ADR-0120 D4 step 3: a date span of at most 31 days. */
@@ -78,14 +85,14 @@ const FULL_WEEKDAY: Readonly<Record<string, string>> = {
  */
 export function normalizeNlRangeSymbol(symbol: string): string {
   const lower = symbol.trim().toLowerCase();
-  const weekday = /^(next-)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/.exec(lower);
+  const weekday = /^((?:this|next|last)-)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/.exec(lower);
   return weekday ? `${weekday[1] ?? ''}${FULL_WEEKDAY[weekday[2] as string]}` : lower;
 }
 
 /** Whether `symbol` is syntactically a range symbol (it may still fail to resolve: "02-30", a span over 31 days). */
 export function isNlRangeSymbol(symbol: string): boolean {
   if ((NL_RANGE_SYMBOLS as readonly string[]).includes(symbol)) return true;
-  if (/^(?:next-)?(?:mon|tue|wed|thu|fri|sat|sun)$/.test(symbol)) return true;
+  if (/^(?:(?:this|next|last)-)?(?:mon|tue|wed|thu|fri|sat|sun)$/.test(symbol)) return true;
   const parts = symbol.split('..');
   if (parts.length > 2) return false;
   return parts.every((part) => DATE.test(part));
@@ -129,6 +136,10 @@ export function resolveNlRange(symbol: string, now: IsoTimestamp, timeZone: stri
       return place(addLocalDays(monday, 5), 2);
     case 'next-weekend':
       return place(addLocalDays(monday, 12), 2);
+    case 'week-after-next':
+      return place(addLocalDays(monday, 14), 7);
+    case 'rest-of-month':
+      return place(today, daysInMonth(today.year, today.month) - today.day + 1);
     case 'this-month':
       return place({ ...today, day: 1 }, daysInMonth(today.year, today.month));
     case 'last-month': {
@@ -146,11 +157,12 @@ export function resolveNlRange(symbol: string, now: IsoTimestamp, timeZone: stri
     default:
       break;
   }
-  const weekday = /^(next-)?(mon|tue|wed|thu|fri|sat|sun)$/.exec(symbol);
+  const weekday = /^(?:(this|next|last)-)?(mon|tue|wed|thu|fri|sat|sun)$/.exec(symbol);
   if (weekday) {
     const index = WEEKDAY_INDEX[weekday[2] as string] as number;
     if (weekday[1] === undefined) return place(addLocalDays(today, (index - weekdayOf(today) + 7) % 7), 1);
-    return place(addLocalDays(monday, 7 + ((index + 6) % 7)), 1);
+    const weekStart = weekday[1] === 'next' ? addLocalDays(monday, 7) : weekday[1] === 'last' ? addLocalDays(monday, -7) : monday;
+    return place(addLocalDays(weekStart, (index + 6) % 7), 1);
   }
   const parts = symbol.split('..');
   if (parts.length > 2) return undefined;
@@ -209,8 +221,10 @@ const KO_SYMBOL_LABEL: Readonly<Record<string, string>> = {
   'next-week': '다음 주',
   'this-weekend': '이번 주말',
   'next-weekend': '다음 주말',
+  'week-after-next': '다다음 주',
   'this-month': '이번 달',
   'last-month': '지난달',
+  'rest-of-month': '이번 달 말까지',
   'last-7-days': '최근 7일',
   'next-7-days': '앞으로 7일',
   upcoming: '다가오는 일정',
@@ -225,8 +239,10 @@ const EN_SYMBOL_LABEL: Readonly<Record<string, string>> = {
   'next-week': 'next week',
   'this-weekend': 'this weekend',
   'next-weekend': 'next weekend',
+  'week-after-next': 'the week after next',
   'this-month': 'this month',
   'last-month': 'last month',
+  'rest-of-month': 'until the end of this month',
   'last-7-days': 'the last 7 days',
   'next-7-days': 'the next 7 days',
   upcoming: 'upcoming',
@@ -239,4 +255,42 @@ export function nlRangeLabel(range: NlResolvedRange, language: 'ko' | 'en'): str
   const day = (date: LocalDate) => (language === 'en' ? isoDateOf(date) : `${date.month}월 ${date.day}일`);
   if (range.days === 1) return day(range.startDate);
   return `${day(range.startDate)}~${day(addLocalDays(range.startDate, range.days - 1))}`;
+}
+
+/**
+ * Words a time expression is made of (weekday, relative day or week, part of day, date or clock time). Validation of
+ * ARG VALUES only (never routing): a keyword made of nothing but these is a period, which belongs in `range` or
+ * `partOfDay`, never in a title or sender filter (live UAT R4: "목요일 거는?" must not become the keyword "목요일").
+ */
+const TIME_WORD_PATTERNS: readonly RegExp[] = [
+  /^(?:월|화|수|목|금|토|일)요일$/u,
+  /^(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)(?:day|nesday|sday|urday|rsday)?s?$/u,
+  /^(?:오늘|어제|내일|모레|글피|그저께|그제|엊그제|이번|지난|저번|다음|다다음|금주|차주|담주|주말|평일|이번주|지난주|다음주|다다음주|이번달|지난달|다음달|월말|말일|연말|올해|작년|내년|오전|오후|아침|저녁|밤|낮|새벽|주|달|하루|종일|말|초|중순|하순|상순)$/u,
+  /^(?:today|yesterday|tomorrow|tonight|morning|afternoon|evening|night|noon|week|weekend|weekday|month|year|next|last|this|past|recent|upcoming|day|days|weeks|months)$/u,
+  /^\d{1,2}월$/u,
+  /^\d{1,2}일$/u,
+  /^\d{1,2}시(?:\d{1,2}분)?(?:반)?$/u,
+  /^\d{1,2}:\d{2}$/u,
+  // A numeric date: m/d, m-dd, or dotted m.dd with a two-digit day; a version number ("2.0", "4.2", "1.10.3") is not one.
+  /^(?:0?[1-9]|1[0-2])\/(?:0?[1-9]|[12]\d|3[01])$/u,
+  /^(?:0?[1-9]|1[0-2])[.-](?:0[1-9]|[12]\d|3[01])\.?$/u,
+  /^\d{4}[./-]\d{1,2}[./-]\d{1,2}\.?$/u,
+  /^\d{1,2}월\d{1,2}일$/u,
+  /^\d+(?:주|일|개월|달|년)(?:전|후|간|동안)?$/u,
+  /^\d{1,2}(?:am|pm)$/u,
+];
+/** One particle or ending glued on a time word ("목요일은", "오후에", "내일까지"). */
+const TIME_WORD_TAIL = /(?:에서|까지|부터|에는|으로|은|는|이|가|을|를|에|의|도|만|쯤|께|쯤에)$/u;
+
+function isTimeWord(token: string): boolean {
+  if (token.length === 0) return false;
+  if (TIME_WORD_PATTERNS.some((pattern) => pattern.test(token))) return true;
+  const stripped = token.replace(TIME_WORD_TAIL, '');
+  return stripped !== token && stripped.length > 0 && TIME_WORD_PATTERNS.some((pattern) => pattern.test(stripped));
+}
+
+/** Whether every word of `text` is a time word (a weekday, date, relative period or part of day). */
+export function isTimeExpression(text: string): boolean {
+  const tokens = text.normalize('NFC').toLowerCase().replace(/(?<!\d)[,.;!?~]|[,.;!?~](?!\d)/gu, ' ').split(/\s+/u).filter((token) => token.length > 0);
+  return tokens.length > 0 && tokens.every(isTimeWord);
 }

@@ -545,7 +545,9 @@ export class NlSelectionService {
       ...(selection.range !== undefined ? { range: selection.range } : {}),
       language,
     };
-    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(turn.actor.id, { entryId: entry.id, args }, turn.now));
+    // A transient arg (a pick of one listed item) answers this turn only and never becomes the follow-up's base.
+    const stored = Object.fromEntries(Object.entries(args).filter(([name]) => entry.args.find((spec) => spec.name === name)?.transient !== true));
+    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(turn.actor.id, { entryId: entry.id, args: stored }, turn.now));
     const described = entry.describe?.(args, selection.range, language);
     const basis = described === undefined ? undefined : renderBasis(described, language, basisNote);
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}) };
@@ -833,6 +835,8 @@ function validateWithRepair(candidate: NlSelectionCandidate, ctx: NlValidationCo
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const result = validateSelection(current, ctx);
     if (result.ok) return result;
+    // A time word in a keyword is never repaired by dropping it: the period it names would be lost silently.
+    if (result.reason === 'time-keyword') return result;
     const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);
     const spec = entry?.args.find((arg) => arg.name === result.arg);
     if (spec === undefined || spec.required === true || !(spec.name in current.args)) return result;

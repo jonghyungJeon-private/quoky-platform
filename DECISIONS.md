@@ -22099,3 +22099,98 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
 4. The review window is about one day instead of the Chief Architect's suggested 7 days. On 2026-10-14 the orchestrator reports the live `nl_selection.agreement` data per grammar alongside the 242-case corpus scores.
    - A grammar moves to `c` only where the combined evidence is clear and the owner agrees.
    - Grammars with too few live samples keep collecting data.
+
+### ADR-0120 amendment A5 — read-side typed args from the 2026-10-14 live edge-case UAT (Accepted) (2026-10-14)
+
+- **Status:** **Accepted** by the owner on 2026-10-14 ("승인·배포 (권장)"), after Codex PASS and a Chief Architect APPROVE. The 23
+  `uat5r*` corpus cases still await the owner's explicit D12 batch approval; they gate no live behaviour. Originally: every change is an
+  additive typed arg of an existing wave-1 READ entry, a symbolic range symbol, a validation rule or a selector description,
+  never a phrase list that routes. D1 says widening an entry needs an amendment plus corpus cases; this is that amendment and
+  the cases are in `nl-intent.v1.json` (`uat5r*`, 23 cases, pending the owner's batch approval under D12).
+- **Why.** The 2026-10-14 live run (Telegram, real replies, `edge-S` / `edge-C`) showed read gaps in which the selector chose the
+  right entry but the catalog had nowhere to put what the owner said: mail ignored dates, the calendar ignored part of day,
+  Jira ignored order, and a weekday word became a title keyword that then stuck to later periods.
+- **What changes (all `READ`, no new entry, no write, no egress, no provider/platform branch in Core).**
+  1. `mail.list` gains `range` (any D4 symbol except `upcoming`) and `item` (1..10); the older `today` flag stays accepted but
+     hidden from the selector and is rewritten to `range=today` by the entry's `normalize` and, for a stored `lastSelection`,
+     by `migrateArgs` (so a 30-minute-old selection that carries `today` keeps working). The range is passed to the reader
+     as an owner-zone `[receivedAfter, receivedBefore)` window (new optional `MailSearchQuery.receivedBefore`, Gmail
+     `before:` in epoch seconds); `today` keeps the exact old `after:` only query. An empty period says so for that period.
+  2. `calendar.events` gains `partOfDay` (morning 00-12, afternoon 12-18, evening 18-24 local; grounded by the owner's words
+     via `valueGrounding`, carried by follow-ups), `timedOnly` and `availability`. A part of day keeps the timed events that
+     OVERLAP it on some day of the period; all-day entries are left out and the answer says how many ("종일 일정 1개는 …
+     뺐어요"), so nothing is silently hidden. `availability` only changes the empty answer ("비어 있어요"); a busy window is
+     listed as before. The `next` (upcoming) window ignores both.
+  3. `timedOnly` (R5, "그 중에 회의만") is a **grounded flag** (new `NlArgSpec.flagGrounding`, the flag twin of
+     `valueGrounding`): it counts only when a meeting word is in the owner's text or the flag carries over. Design choice: an
+     owner-visible, typed, deterministic filter (timed events only) rather than a title keyword "회의", because the owner's
+     titles are not all called 회의 and a keyword would drop real meetings; all-day leave and holiday entries are exactly what
+     "회의만" excludes.
+  4. `jira.issues` gains `sort` (`oldest` | `newest` | `recently-updated`, grounded by owner words). It travels as a closed
+     name through `WorkChatPersonalWorkOptions` and the additive `PersonalWorkQueryParams.sort`; only the Jira adapter maps it
+     to a constant `ORDER BY created ASC | created DESC | updated DESC`. Owner text is never part of the JQL. GitHub, which
+     rejects options it does not know, is never sent it (only `jira.issues` has the arg).
+  5. Symbolic time (D4 step 4) gains `last-<weekday>`, `this-<weekday>`, `week-after-next` and `rest-of-month` ("이번 달
+     말까지" = today to the last day, at most 31 days). The `next-<weekday>` and `mon..sun` symbols are unchanged.
+  6. **Time words are periods, not keywords (R4).** A new D4 validation failure `time-keyword`: on an entry that has a `range`,
+     a keyword made only of time words (weekday, date, relative period, part of day) is refused, never repaired by dropping
+     it (the period it carried would vanish silently), so the owner gets the usual D7 clarification. A stored
+     `lastSelection` is scrubbed of such a keyword when it is read, so an earlier turn's "목요일" cannot follow the owner to
+     "다음 주는?". Real title keywords stay. The word list is a validator for arg VALUES (the `DRIVE_KIND_WORDS` precedent),
+     it routes nothing. Search entries (no `range`) are untouched: "슬랙에서 월요일 검색" stays valid.
+  7. **Search keyword (R7).** The selector description and prompt now ask for the core term only; the existing
+     `withoutGenericTail` canonicalization (which only ever drops trailing words, so the result stays a substring of the
+     owner's text and grounding holds) gains the conversational tail words of "배포 얘기 나온 거" (나온, 언급된, 올라온, 이야기 …).
+  8. **Mail item picks (R6).** `item` lets the selector express "N번째 건 누가 보냈어?" without a re-list: the handler answers
+     from the last listing's ids (`~30 min`, the existing record) — "목록에 2건만 있어요. 3번 메일은 없어요." when it is out of
+     range, one list line (sender, subject, date; no body) when it is in range, "먼저 목록" when there is none. Summarize,
+     reply and read-the-body requests ("그거 요약해줘") stay `none` by the prompt rule (item summarize is the separate write/
+     action design, not done here); the existing Class A `N번 메일 요약해줘` is unchanged.
+- **A5 change 9 — a selector `none` beats the personal-work surface (R9; supersedes text of the S1 note).** This reverses
+  one sentence of the ADR-0120 S1 / Phase C implementation note (above, "The classifier's personal-work surface … gets the
+  `work-surface` route at (C2): selection first, the surface for every other outcome"): a selector `none` is no longer an
+  "other outcome" that falls back to the surface. D6 itself ("Class B … kept as fallback" for a provider that is down) is
+  unchanged and is what A5 restores. Rule: when the selector actually ran (active mode, at a Class B position or at the
+  `work-surface` route) and answered `none`, that decision wins and the turn is chat (`chatIntentOf`), so "할 일 관리하는
+  좋은 습관 알려줘" and "캘린더는 보지 말고 할 일만 알려줘" no longer dump Jira/GitHub. A skipped, failed, timed-out or
+  disabled selector still leaves the surface as the fallback. Phase A is unchanged.
+- **R11 (stopped, no change).** `今日の予定は？` never reaches the selector because the ADR-0098 amendment D1 (c)
+  other-language route is Class A in D6 ("the injection, external-action and other-language routes"), and selection runs only
+  on `GENERAL_CHAT` or `POLICY_SENSITIVE_CHAT` for the personal-data reason alone. Letting the selector see it is a change to a
+  settled D6 clause and to an ADR-0098 policy route, so it is left alone and reported. If the owner wants it: a new amendment
+  that adds `unsupported-language` to the Phase A routes (the selector prompt and descriptions are already ko/en and the
+  model reads Japanese; the reply language follows the existing policy).
+- **Review fixes (2026-10-14).** A narrowing applied to a full read page is partial: the footer and partial note stay and no
+  "free"/"no meetings" claim is made; an all-day-only window answers "시간이 정해진 일정은 없어요 (종일 일정 N개)". `item` is
+  `transient` (never stored in `lastSelection`). The time-word rule and the stored scrub cover title keywords only, never
+  `from`; `점심` is not a time word; numeric dates (10.07, 10/7, 2026.10.07) are. A mail `range` must have started (a future
+  period is refused). Reminder titles: a one-syllable stem before 라고 ("일찍 자라고") is an imperative (`자기`); a longer
+  vowel-ending word ("택시라고") stays a quoted noun, because nouns of that shape are far commoner in reminders than
+  multi-syllable bare imperatives; `…시라고` is honorific only after another word. Known limits: "기다리라고" keeps its cut stem; "공항 택시라고" reads the lone-word noun rule as a verb ("공항 택시기"), because a "…시라고" after another word is treated as an honorific imperative. Dotted numbers read as dates only as m.dd (two-digit day) or yyyy.mm.dd; "4.20" is therefore a date, "4.2" a version.
+- **Not done (separate design).** Writes and action intents: todo add, reminder cancel, item summarize, Slack post.
+- **Reminder title (R10, outside ADR-0120).** `stripKoTrailingParticles` read the quotative `-라고` of "물 마시라고" as a
+  noun's `(이)라고` and cut the verb stem ('물 마시'). It is now generic morphology on the ending: an imperative stem
+  (`하라고`, `…시라고`, `…으라고` after a batchim) becomes its noun form (`…기`: "물 마시기"), a declarative `…다고` keeps its
+  verb ("약 먹는다"), a noun's `(이)라고` is dropped as before. Known limit: a noun that itself ends in 시 or 하 followed by 라고
+  reads as a verb stem; the owner can always restate the title.
+- **Selector contract.** `NL_SELECTION_PROMPT_VERSION` is `nl-select.v18` (the eval plan digest binds it). The prompt hides
+  `deprecated` args and carries new generic examples that are not corpus phrases (the golden test checks it).
+- **Owner decision requested:** accept A5 (and batch-approve the 23 cases). Recommended: accept.
+
+### ADR-0120 amendment A5 implementation note — read-side gaps (2026-10-14)
+
+- **Where.** `nl-routing/{symbolic-time,wave1-entries,selection-validator,selection-state,selection-prompt,catalog}.ts`,
+  `mail/{mail-turn-handler,mail-reply-renderer}.ts`, `calendar/{calendar-turn-handler,calendar-reply-renderer}.ts`,
+  `work-chat/{work-chat-selection,work-chat-command,work-chat-service}.ts`, `ports/{mail-reader.port,connector-query}.ts`,
+  `connector-gmail` (`before:`), `connector-jira` (`JQL_SORT_ORDER`), `intent-classifier.ts` (`chatIntentOf`),
+  `conversation-runtime.ts` (`declined`), `reminders/reminder-grammar.ts` (`stripKoQuotative`).
+- **Tests.** `nl-routing/uat-read-gaps.test.ts` (symbols, time words, grounded flags and enums, migration, prompt),
+  handler tests for mail, calendar and Jira (reader queries, filters, texts), connector tests (`before:`, constant ORDER BY,
+  unsupported sort), the dispatch test (R4/R5 multi-turn sequence; the old "surface after `none`" expectation now expects
+  chat), the INT-4 acceptance (the skipped BUG test is un-skipped; R1, R2, R6, R8, R9 end to end through the real AppModule),
+  reminder titles, and `chatIntentOf`. 23 `uat5r*` golden cases; the 6 new Class B hits carry their `grammar` / `grammarAnswer`
+  (the frozen calendar grammar answers "다다음 주" as next week and the search grammar sends "배포 얘기 나온 거" whole, which
+  is exactly what the selector now fixes). `mail.list` golden expectations moved from `today: true` to `range: "today"`.
+- **No behaviour change without a selector.** Grammar answers are byte-identical (`mailGrammarSelection` now records
+  `range: "today"` as its catalog equivalent, read back identically). Offline eval: `pnpm eval:nl -- --mode plan`, plan digest
+  recorded in the PR; no model was called.

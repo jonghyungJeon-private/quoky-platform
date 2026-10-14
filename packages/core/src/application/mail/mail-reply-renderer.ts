@@ -41,6 +41,8 @@ export type MailReadFailure = ConnectorQueryErrorReason | 'TIMEOUT';
 export interface MailListingFilter {
   readonly unread: boolean;
   readonly today: boolean;
+  /** A period other than today the mail was received in ("어제", "지난주"), as the owner-facing label per language. */
+  readonly period?: { readonly ko: string; readonly en: string };
   readonly from?: string;
 }
 
@@ -155,8 +157,8 @@ function header(filter: MailListingFilter, result: MailSearchResult, options: Ma
   const en = options.language === 'en';
   const count = countText(result, options.language);
   const scope = en
-    ? `${filter.unread ? 'Unread ' : ''}${filter.today ? "today's " : ''}mail`
-    : `${filter.today ? '오늘 받은 ' : ''}${filter.unread ? '안 읽은 ' : ''}메일`;
+    ? `${filter.unread ? 'Unread ' : ''}${filter.today ? "today's " : ''}mail${filter.period !== undefined ? ` received ${filter.period.en}` : ''}`
+    : `${filter.today ? '오늘 받은 ' : ''}${filter.period !== undefined ? `${filter.period.ko} 받은 ` : ''}${filter.unread ? '안 읽은 ' : ''}메일`;
   if (filter.from !== undefined) {
     return en
       ? messageBody(`${scope.charAt(0).toUpperCase()}${scope.slice(1)} from "`, senderQuery(filter.from), `": ${count}`)
@@ -167,12 +169,12 @@ function header(filter: MailListingFilter, result: MailSearchResult, options: Ma
 
 function emptyAnswer(filter: MailListingFilter, language: MailLanguage): MessageBody {
   if (language === 'en') {
-    const scope = `${filter.unread ? 'unread ' : ''}${filter.today ? 'mail received today' : 'mail'}`;
+    const scope = `${filter.unread ? 'unread ' : ''}${filter.today ? 'mail received today' : filter.period !== undefined ? `mail received ${filter.period.en}` : 'mail'}`;
     return filter.from !== undefined
       ? messageBody(`No ${scope} from "`, senderQuery(filter.from), '".')
       : `No ${scope}.`;
   }
-  const scope = `${filter.today ? '오늘 받은 ' : ''}${filter.unread ? '안 읽은 ' : ''}메일`;
+  const scope = `${filter.today ? '오늘 받은 ' : ''}${filter.period !== undefined ? `${filter.period.ko} 받은 ` : ''}${filter.unread ? '안 읽은 ' : ''}메일`;
   return filter.from !== undefined
     ? messageBody('"', senderQuery(filter.from), `"에게서 온 ${scope}을 찾지 못했어요.`)
     : `${scope}이 없어요.`;
@@ -227,6 +229,22 @@ export function renderMailListing(filter: MailListingFilter, result: MailSearchR
           : { hidden, before: '…외 ', after: lowerBound ? '건 이상' : '건' },
     }),
   );
+}
+
+/**
+ * Live UAT R6: a number the owner asked about ("3번은 누가 보냈어?") that the last list does not have. It says how many
+ * the list held; it never re-prints the list and reads nothing.
+ */
+export function renderMailPickOutOfRange(index: number, count: number, language: MailLanguage): string {
+  if (count === 0) return renderMailSummaryNeedsListing(language);
+  return language === 'en'
+    ? `The last list has only ${count} email${count === 1 ? '' : 's'}, so there is no email ${index}.`
+    : `목록에 ${count}건만 있어요. ${index}번 메일은 없어요.`;
+}
+
+/** Live UAT R6: the one listed mail the owner asked about, as a list line (sender, subject, date); no body is shown. */
+export function renderMailPickLine(index: number, message: MailMessageSummary, options: MailRenderOptions): MessageBody {
+  return entryLine(index, { ...message, snippet: '' }, { unread: false, today: false }, options);
 }
 
 /** The truthful note for a failed read: it always says the mail was NOT checked (never "no mail"). */

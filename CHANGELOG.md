@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — NL read-side gaps from the 2026-10-14 live UAT (ADR-0120 amendment A5, Proposed)
+
+- **Mail period.** `mail.list` takes a symbolic `range` (yesterday, this-week, last-week, a weekday …); it reaches Gmail as an
+  owner-zone `after:`/`before:` window and the basis line and the empty answer name the period. The old `today` flag is
+  migrated (also in a stored `lastSelection`).
+- **Calendar part of day.** `partOfDay` (오전/오후/저녁), `timedOnly` ("회의만") and `availability` ("시간 비어?"): events are
+  filtered by overlap, all-day entries are left out and counted, an empty free/busy window answers "비어 있어요"; works as a
+  follow-up modifier.
+- **Symbolic time.** `last-<weekday>`, `this-<weekday>`, `week-after-next`, `rest-of-month`.
+- **Time words are periods.** A keyword that is only a weekday, date or period is refused (and scrubbed from a stored
+  selection), so "목요일 거는?" no longer sticks as a title keyword.
+- **Search keyword, Jira order, mail item picks.** Core-term search keywords; `jira.issues` `sort` (constant ORDER BY);
+  "3번은 누가 보냈어?" answers from the last list ("목록에 2건만 있어요") instead of re-listing.
+- **Selector `none` wins (R9).** After a Phase C selector `none`, the personal-work surface regex no longer answers (INT-4 bug
+  fixed, its test un-skipped); the surface stays the fallback only when the selector did not run or failed.
+- **Reminder title.** "물 마시라고 알려줘" is stored as "물 마시기" (quotative morphology, not a phrase list).
+- **Not changed.** Other-language messages (Class A, ADR-0098 D1 c) still skip selection; write/action intents are untouched.
+  Selector prompt `nl-select.v18`; 23 golden cases (`uat5r*`).
+
 ## Unreleased — Personal v5 integration acceptance, INT-4 (2026-10-14)
 
 - **Acceptance test.** `apps/quoky/src/personal-v5-acceptance.test.ts` runs the real `AppModule` offline over every merged v5

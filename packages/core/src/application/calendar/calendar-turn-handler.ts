@@ -16,6 +16,8 @@ import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { parseCalendarQuestion, placeCalendarSpan, type CalendarLanguage, type CalendarWindow } from './calendar-question';
 import { nlFlagArg, nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
 import { isoDateOf, type NlResolvedRange } from '../nl-routing/symbolic-time';
+import { CALENDAR_PART_OF_DAY_VALUES, type CalendarPartOfDay } from '../nl-routing/wave1-entries';
+import { addLocalDays, zonedToUtcIso } from '../reminders/zoned-time';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { parseCalendarWriteRequest } from './calendar-write-request';
 import {
@@ -167,11 +169,25 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
    */
   async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     if (selected.entryId !== 'calendar.events' || selected.range === undefined) return null;
-    return this.answer(ctx, calendarWindowOfRange(selected.range, ctx.now, this.deps.timeZone), nlFlagArg(selected.args, 'remaining'), selected.language, nlStringArg(selected.args, 'keyword'));
+    const part = nlStringArg(selected.args, 'partOfDay');
+    const partOfDay = (CALENDAR_PART_OF_DAY_VALUES as readonly string[]).includes(part ?? '') ? (part as CalendarPartOfDay) : undefined;
+    const narrowing = {
+      ...(partOfDay !== undefined ? { partOfDay } : {}),
+      ...(nlFlagArg(selected.args, 'timedOnly') ? { timedOnly: true as const } : {}),
+      ...(nlFlagArg(selected.args, 'availability') ? { availability: true as const } : {}),
+    };
+    return this.answer(ctx, calendarWindowOfRange(selected.range, ctx.now, this.deps.timeZone), nlFlagArg(selected.args, 'remaining'), selected.language, nlStringArg(selected.args, 'keyword'), narrowing);
   }
 
   /** Read `window` once and answer with the deterministic list (shared by the grammar and selection). */
-  private async answer(ctx: TurnHandlerContext, window: CalendarWindow, remainingOnly: boolean, language: CalendarLanguage, keyword?: string): Promise<TurnHandlerReply> {
+  private async answer(
+    ctx: TurnHandlerContext,
+    window: CalendarWindow,
+    remainingOnly: boolean,
+    language: CalendarLanguage,
+    keyword?: string,
+    narrowing: CalendarNarrowing = {},
+  ): Promise<TurnHandlerReply> {
     // "남은 일정" (Codex P2 on 5594c16): read from now, and drop any timed event that already ended, in case a reader
     // returns the whole day anyway; a span that is already over reads nothing.
     const remaining = remainingOnly;
@@ -179,6 +195,9 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
     const from = remaining && nowMs > Date.parse(window.from) ? ctx.now : window.from;
     let events: readonly CalendarEvent[];
     let pageFull = false;
+    let excludedAllDay = 0;
+    // The next-event window has no day to narrow: part of day and timed-only apply to a listed period only.
+    const narrows = window.span.kind !== 'next' && (narrowing.partOfDay !== undefined || narrowing.timedOnly === true);
     try {
       events =
         remaining && nowMs >= Date.parse(window.to)
@@ -186,6 +205,16 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
           : await this.readWithTimeout({ from, to: window.to, limit: CALENDAR_EVENTS_MAX_LIMIT });
       pageFull = events.length >= CALENDAR_EVENTS_MAX_LIMIT;
       if (remaining) events = events.filter((event) => !hasFinished(event, nowMs));
+      // Live UAT R2/R5: a part of the day keeps the timed events that overlap it on some day of the window; timed-only
+      // drops all-day entries (leave, holidays). Both leave all-day events out and count them, so the reply says so.
+      if (narrows) {
+        excludedAllDay = events.filter((event) => event.allDay).length;
+        events = events.filter((event) => !event.allDay);
+        if (narrowing.partOfDay !== undefined) {
+          const parts = partOfDayWindows(window, narrowing.partOfDay, this.deps.timeZone);
+          events = events.filter((event) => overlapsAny(event, parts));
+        }
+      }
       // ADR-0120 follow-up: a grounded title keyword narrows the fetched events here, on the title only, case-insensitively.
       // Titles never reach the model (ADR-0110 D4); the filter runs after the read and the remaining filter.
       if (keyword !== undefined) {
@@ -206,7 +235,14 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       limit: CALENDAR_EVENTS_MAX_LIMIT,
       writesEnabled: this.deps.writesEnabled === true,
       ...(remaining ? { remaining: true } : {}),
-      ...(keyword !== undefined ? { keyword, ...(pageFull ? { partial: true } : {}) } : {}),
+      ...(narrows && narrowing.partOfDay !== undefined ? { partOfDay: narrowing.partOfDay } : {}),
+      ...(narrows && narrowing.timedOnly === true ? { timedOnly: true } : {}),
+      ...(narrowing.availability === true ? { availability: true } : {}),
+      ...(excludedAllDay > 0 ? { excludedAllDay } : {}),
+      // A full page was narrowed after the read: the answer may be incomplete, so it says so and claims no free time.
+      ...(pageFull ? { pageFull: true } : {}),
+      ...((keyword !== undefined || narrows || narrowing.availability === true) && pageFull ? { partial: true } : {}),
+      ...(keyword !== undefined ? { keyword } : {}),
     };
     const reply = renderCalendarEvents(window, events, renderOptions);
     this.rememberListing(ctx.session.id, ctx.actor.id, {
@@ -276,6 +312,42 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       // best-effort
     }
   }
+}
+
+/** The narrowing of a selected calendar read (live UAT R2/R5). */
+interface CalendarNarrowing {
+  readonly partOfDay?: CalendarPartOfDay;
+  readonly timedOnly?: true;
+  readonly availability?: true;
+}
+
+/** Local-hour bounds of the closed parts of a day: morning 00-12, afternoon 12-18, evening 18-24. */
+const PART_OF_DAY_HOURS: Readonly<Record<CalendarPartOfDay, readonly [number, number]>> = {
+  morning: [0, 12],
+  afternoon: [12, 18],
+  evening: [18, 24],
+};
+
+/** The `[from, to)` instants of `part` on every local day of `window`. */
+function partOfDayWindows(window: CalendarWindow, part: CalendarPartOfDay, timeZone: string): ReadonlyArray<readonly [number, number]> {
+  const [startHour, endHour] = PART_OF_DAY_HOURS[part];
+  const spans: Array<readonly [number, number]> = [];
+  for (let offset = 0; offset < window.days; offset += 1) {
+    const day = addLocalDays(window.startDate, offset);
+    const from = zonedToUtcIso({ ...day, hour: startHour, minute: 0 }, timeZone);
+    const to = endHour === 24 ? zonedToUtcIso({ ...addLocalDays(day, 1), hour: 0, minute: 0 }, timeZone) : zonedToUtcIso({ ...day, hour: endHour, minute: 0 }, timeZone);
+    spans.push([Date.parse(from), Date.parse(to)]);
+  }
+  return spans;
+}
+
+/** Whether a timed event overlaps one of the spans (an instantaneous event counts when it starts inside one). */
+function overlapsAny(event: CalendarEvent, spans: ReadonlyArray<readonly [number, number]>): boolean {
+  const start = Date.parse(event.start);
+  const end = Date.parse(event.end);
+  if (!Number.isFinite(start)) return false;
+  const last = Number.isFinite(end) && end > start ? end : start + 1;
+  return spans.some(([from, to]) => start < to && last > from);
 }
 
 /** The cache key of one actor's last list in one conversation. */

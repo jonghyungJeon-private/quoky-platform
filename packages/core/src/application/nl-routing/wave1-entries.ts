@@ -71,6 +71,20 @@ export function jiraKeywordCarriesQualifier(keyword: string): boolean {
   });
 }
 
+/** The closed Jira sort orders (live UAT R8): each maps to a constant ORDER BY in the adapter, never to owner text. */
+export const JIRA_SORT_VALUES = ['oldest', 'newest', 'recently-updated'] as const;
+/** Words that show the owner asked for a Jira order: a `sort` value counts only when one is in the owner's own text. */
+export const JIRA_SORT_WORDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  oldest: ['오래된', '오래 된', '가장 오래', '제일 오래', '옛날', 'oldest', 'longest open'],
+  newest: ['최신', '가장 새', '제일 새', '새로 만든', '새로 생긴', 'newest', 'latest', 'most recent'],
+  'recently-updated': ['최근 업데이트', '최근에 업데이트', '최근 수정', '최근에 수정', '최근 변경', '업데이트 순', '수정 순', 'recently updated', 'last updated', 'most recently updated'],
+});
+const JIRA_SORT_LABEL: Readonly<Record<string, { ko: string; en: string }>> = {
+  oldest: { ko: '오래된 순', en: 'oldest first' },
+  newest: { ko: '최신 순', en: 'newest first' },
+  'recently-updated': { ko: '최근 업데이트 순', en: 'recently updated first' },
+};
+
 const JIRA_ROLE_LABEL: Readonly<Record<string, { ko: string; en: string }>> = {
   assignee: { ko: '내가 담당', en: 'assigned to me' },
   reporter: { ko: '내가 보고자', en: 'reported by me' },
@@ -101,7 +115,8 @@ const jiraIssues: NlCatalogEntry = {
     { name: 'window', kind: 'enum', values: ['created', 'updated', 'due'], description: 'Which date the period applies to: created (등록된/생성된/새로 올라온), updated (업데이트된/수정된/변경된), due (마감/기한). Omit when no such event word is used.' },
     { name: 'range', kind: 'range', description: 'The period of `window`. Omit unless `window` is set.' },
     { name: 'status', kind: 'enum', values: ['open', 'all', 'in-progress'], default: 'open', valueGrounding: { 'in-progress': JIRA_IN_PROGRESS_WORDS }, description: 'all only when the owner includes finished/closed issues (완료된 것도, 전체, all); in-progress only when the owner asks for issues being worked on (진행중인, 진행 중, in progress, working on); default open.' },
-    { name: 'keyword', kind: 'keyword', description: 'A topic word the owner wants the issues narrowed to, copied verbatim (e.g. 위클리카).' },
+    { name: 'keyword', kind: 'keyword', description: 'A topic word the owner wants the issues narrowed to, copied verbatim (e.g. 위클리카). Never a weekday, date or period word: those are `range`.' },
+    { name: 'sort', kind: 'enum', values: [...JIRA_SORT_VALUES], valueGrounding: JIRA_SORT_WORDS, description: 'Only when the owner asks for an order: oldest (제일 오래된 것, 오래된 순), newest (가장 새로 만든, 최신 순), recently-updated (최근에 업데이트된 순). Never guess it; "the oldest one" keeps the other args and adds sort oldest.' },
     COUNT,
     SEARCH_LIMIT,
   ],
@@ -128,7 +143,8 @@ const jiraIssues: NlCatalogEntry = {
           ? (language === 'en' ? 'including done' : '완료 포함')
           : window === undefined ? (language === 'en' ? 'open' : '미해결') : undefined;
     const keyword = typeof args.keyword === 'string' ? (language === 'en' ? `matching ${quoted(args.keyword)}` : `${quoted(args.keyword)} 포함`) : undefined;
-    return joinBasis([role?.[language], when, status, keyword]);
+    const sort = typeof args.sort === 'string' ? JIRA_SORT_LABEL[args.sort]?.[language] : undefined;
+    return joinBasis([role?.[language], when, status, keyword, sort]);
   },
 };
 
@@ -171,7 +187,7 @@ function searchEntry(id: 'slack.search' | 'confluence.search', source: string, a
       ko,
     },
     args: [
-      { name: 'keyword', kind: 'keyword', required: true, description: 'The search words, copied verbatim from the owner\'s text (no particles such as 에서/를).' },
+      { name: 'keyword', kind: 'keyword', required: true, description: 'The core search term(s) only, copied verbatim from the owner\'s text: no particles (에서/를) and no conversational filler ("배포 얘기 나온 거" -> 배포, "결제 관련 내용" -> 결제).' },
       COUNT,
       SEARCH_LIMIT,
     ],
@@ -182,6 +198,23 @@ function searchEntry(id: 'slack.search' | 'confluence.search', source: string, a
     },
   };
 }
+
+/** The closed parts of a day (live UAT R2): morning 00:00-12:00, afternoon 12:00-18:00, evening 18:00-24:00 local time. */
+export const CALENDAR_PART_OF_DAY_VALUES = ['morning', 'afternoon', 'evening'] as const;
+export type CalendarPartOfDay = (typeof CALENDAR_PART_OF_DAY_VALUES)[number];
+/** Words that show the owner named a part of the day: a `partOfDay` value counts only when one is in the owner's own text. */
+export const CALENDAR_PART_OF_DAY_WORDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  morning: ['오전', '아침', 'morning'],
+  afternoon: ['오후', '점심 이후', '점심 지나', '점심 후', 'afternoon'],
+  evening: ['저녁', '밤', '야간', 'evening', 'tonight', 'night'],
+});
+/** Words that show the owner narrowed to meetings (timed events): `timedOnly` counts only when one is in the owner's words. */
+export const CALENDAR_TIMED_ONLY_WORDS: readonly string[] = ['회의', '미팅', '시간 지정', '시간대 있는', 'meeting', 'meetings'];
+const PART_OF_DAY_LABEL: Readonly<Record<string, { ko: string; en: string }>> = {
+  morning: { ko: '오전', en: 'morning' },
+  afternoon: { ko: '오후', en: 'afternoon' },
+  evening: { ko: '저녁', en: 'evening' },
+};
 
 const calendarEvents: NlCatalogEntry = {
   id: 'calendar.events',
@@ -196,7 +229,10 @@ const calendarEvents: NlCatalogEntry = {
   args: [
     { name: 'range', kind: 'range', default: 'today', allowUpcoming: true, description: 'The period; upcoming for "the next meeting/event" (다음 회의 언제). Default today.' },
     { name: 'remaining', kind: 'flag', default: false, description: 'true only for events still left (남은 일정, remaining).' },
-    { name: 'keyword', kind: 'keyword', description: 'A word of the event title the owner wants the events narrowed to ("스크럼만", "스크럼 일정"), copied verbatim; omit for all events.' },
+    { name: 'partOfDay', kind: 'enum', values: [...CALENDAR_PART_OF_DAY_VALUES], valueGrounding: CALENDAR_PART_OF_DAY_WORDS, description: 'Only when the owner names a part of the day: morning (오전, 아침), afternoon (오후, 점심 이후), evening (저녁, 밤). The events are filtered to that part of the day; the day itself stays in `range`. A follow-up "오후만" keeps the previous range and adds it.' },
+    { name: 'timedOnly', kind: 'flag', default: false, flagGrounding: CALENDAR_TIMED_ONLY_WORDS, description: 'true only when the owner narrows to meetings/timed events and away from all-day entries such as leave or holidays ("회의만", "미팅만", "only meetings").' },
+    { name: 'availability', kind: 'flag', default: false, description: 'true when the owner asks whether they are free, busy or available ("시간 비어?", "한가해?", "바빠?", "am I free"); an empty answer then says they are free.' },
+    { name: 'keyword', kind: 'keyword', description: 'A word of the event title the owner wants the events narrowed to ("스크럼만", "스크럼 일정"), copied verbatim; omit for all events. Never a weekday, date, part of day or period word ("목요일", "오후"): those are `range` / `partOfDay`.' },
     COUNT,
   ],
   usage: { ko: '"오늘 일정"', en: '"오늘 일정"' },
@@ -204,8 +240,10 @@ const calendarEvents: NlCatalogEntry = {
   describe(args: NlArgs, range: NlResolvedRange | undefined, language): string | undefined {
     const period = rangePart(range, language) ?? (language === 'en' ? 'today' : '오늘');
     const keyword = typeof args.keyword === 'string' ? (language === 'en' ? `title contains ${quoted(args.keyword)}` : `${quoted(args.keyword)} 포함`) : undefined;
-    if (language === 'en') return joinBasis([`${period}${args.remaining === true ? ', remaining' : ''} events`, keyword]);
-    return joinBasis([`${period} ${args.remaining === true ? '남은 일정' : '일정'}`, keyword]);
+    const part = typeof args.partOfDay === 'string' ? PART_OF_DAY_LABEL[args.partOfDay]?.[language] : undefined;
+    const timed = args.timedOnly === true ? (language === 'en' ? 'timed events only' : '시간 지정 일정만') : undefined;
+    if (language === 'en') return joinBasis([`${period}${part !== undefined ? ` ${part}` : ''}${args.remaining === true ? ', remaining' : ''} events`, timed, keyword]);
+    return joinBasis([`${period}${part !== undefined ? ` ${part}` : ''} ${args.remaining === true ? '남은 일정' : '일정'}`, timed, keyword]);
   },
 };
 
@@ -221,15 +259,27 @@ const mailList: NlCatalogEntry = {
   },
   args: [
     { name: 'unread', kind: 'flag', default: false, description: 'true for unread/new mail (안 읽은, 읽지 않은, 새, unread, new).' },
-    { name: 'today', kind: 'flag', default: false, description: 'true for mail received today (오늘 온/받은).' },
-    { name: 'from', kind: 'keyword', description: 'The sender name or address the owner names, copied verbatim (e.g. 김부장님).' },
+    { name: 'range', kind: 'range', pastOnly: true, description: 'The period the mail was RECEIVED in: today (오늘 온), yesterday (어제 온), this-week, last-week, last-7-days, a weekday (last-fri = 지난주 금요일), a date. Omit when the owner names no period.' },
+    { name: 'today', kind: 'flag', default: false, deprecated: true, description: 'Deprecated: use range today.' },
+    { name: 'from', kind: 'keyword', allowsTimeWords: true, description: 'The sender name or address the owner names, copied verbatim (e.g. 김부장님).' },
+    { name: 'item', kind: 'limit', transient: true, description: 'Only when the owner asks about ONE already-listed mail by its number ("N번째 건 누가 보냈어?"): that number. Never for a summary, reply or write request (those are none).' },
     COUNT,
   ],
   usage: { ko: '"안 읽은 메일"', en: '"안 읽은 메일"' },
   sourceNames: ['gmail', 'e-mail', 'email', 'inbox', '지메일', '이메일', '메일'],
-  describe(args: NlArgs, _range, language): string | undefined {
+  migrateArgs(args: NlArgs): NlArgs {
+    // A selection stored before the symbolic `range` carried `today`; it is the same period now.
+    if (!('today' in args)) return args;
+    const { today, ...rest } = args;
+    return today === true && rest.range === undefined ? { ...rest, range: 'today' } : rest;
+  },
+  normalize(args: Record<string, NlArgValue>): void {
+    if (args.today === true && args.range === undefined) args.range = 'today';
+    delete args.today;
+  },
+  describe(args: NlArgs, range: NlResolvedRange | undefined, language): string | undefined {
     const parts: string[] = [];
-    if (args.today === true) parts.push(language === 'en' ? 'today' : '오늘 받은');
+    if (range !== undefined) parts.push(language === 'en' ? `received ${nlRangeLabel(range, language)}` : `${nlRangeLabel(range, language)} 받은`);
     if (args.unread === true) parts.push(language === 'en' ? 'unread' : '안 읽은');
     if (typeof args.from === 'string') parts.push(language === 'en' ? `from ${quoted(args.from)}` : `${quoted(args.from)}에게서 온`);
     if (parts.length === 0) parts.push(language === 'en' ? 'recent' : '최근');

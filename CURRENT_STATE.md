@@ -5,6 +5,16 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### v5 NL read-side fixes (live UAT 2026-10-14) — on branch `claude/v5-nl-uat-fixes` (2026-10-14)
+
+ADR-0120 amendment A5 (**Proposed**, awaiting the owner's yes): typed args `mail.list` `range`/`item`, `calendar.events`
+`partOfDay`/`timedOnly`/`availability`, `jira.issues` `sort`; symbols `last-<weekday>`, `this-<weekday>`,
+`week-after-next`, `rest-of-month`; time words refused as keywords; a Phase C selector `none` now beats the personal-work
+surface clause (the INT-4 BUG test is un-skipped); reminder titles keep the verb of a quotative ("물 마시기").
+Additive port fields only (`MailSearchQuery.receivedBefore`, `PersonalWorkQueryParams.sort`); no migration, token or deps
+change, no new egress. Prompt `nl-select.v18`. Left alone and reported: other-language messages never reach the selector
+(Class A, ADR-0098 D1 c). Details: the A5 notes in `DECISIONS.md`.
+
 ### v5 INT-4 integration acceptance — on branch `claude/v5-int4-acceptance` (2026-10-14)
 
 Tests, golden data and docs only; no production code, migration, port or token change. `personal-v5-acceptance.test.ts`

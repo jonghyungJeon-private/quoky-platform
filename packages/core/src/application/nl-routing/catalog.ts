@@ -49,12 +49,31 @@ export interface NlArgSpec {
   readonly values?: readonly string[];
   /** `range` only: whether `upcoming` (from now to the lookahead end) is accepted; every other symbol always is. */
   readonly allowUpcoming?: boolean;
+  /** `keyword` only: a value made of time words is legitimate here (a sender named "Sun"); the time-keyword rule skips it. */
+  readonly allowsTimeWords?: boolean;
+  /** `range` only: the period must have started already (mail received in a future period is meaningless). */
+  readonly pastOnly?: boolean;
   readonly required?: boolean;
   /**
    * `enum` only: words that show the owner asked for a value (a value listed here counts only when one of its words is in
    * the owner's own text or the value carries over from the previous selection; a value not listed needs none).
    */
   readonly valueGrounding?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * `flag` only: words that show the owner asked for the filter. A `true` counts only when one of them is in the owner's
+   * own text or the flag carries over from the previous selection (the flag twin of `valueGrounding`).
+   */
+  readonly flagGrounding?: readonly string[];
+  /**
+   * An argument kept only to read older stored selections: accepted, never shown to the selector, and rewritten by the
+   * entry's `normalize` into its replacement (e.g. `mail.list` `today` -> `range` `today`).
+   */
+  readonly deprecated?: boolean;
+  /**
+   * The argument belongs to this one answer only (e.g. which listed mail was asked about): it is never stored in
+   * `lastSelection`, so a follow-up ("안 읽은 것만") refines the listing, not the pick.
+   */
+  readonly transient?: boolean;
   /** The value the entry uses when the argument is absent; canonical args omit an argument equal to it. */
   readonly default?: string | boolean;
   /** One provider-facing line (English, bounded). */
@@ -115,6 +134,8 @@ export interface NlCatalogEntry {
    * (ADR-0120 D9) recognizes a false "cannot access" claim about the source by them. Absent for Quoky's own data.
    */
   readonly sourceNames?: readonly string[];
+  /** Rewrites a stored (`lastSelection`) args record of an older shape into the current one; pure, defaults untouched. */
+  migrateArgs?(args: NlArgs): NlArgs;
   /** Entry-specific normalization after the type checks (e.g. a Jira period without a date field). */
   normalize?(args: Record<string, NlArgValue>): void;
   /** The basis line text (without the `기준:` prefix) for these canonical args. */

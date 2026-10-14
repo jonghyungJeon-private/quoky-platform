@@ -693,6 +693,48 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(refined.reply.text).not.toContain('Jira');
   });
 
+  it('live UAT R4/R5: a weekday follow-up is a period, never a title keyword; a time-word keyword never sticks to the next period; "회의만" keeps the period', async () => {
+    const ctx = context();
+    await send('이번 주 일정 알려줘', ctx);
+    // The selector wrongly returns the weekday as a keyword: validation refuses it, nothing is served, no keyword is stored.
+    selectorAnswer = answer('calendar.events', { range: 'this-week', keyword: '목요일' });
+    let start = marks();
+    const refused = await send('목요일 거는?', ctx);
+    expect(selected.slice(start.selected)).toEqual([]);
+    expect(refused.reply.text).not.toContain('"목요일"');
+    // The right answer is a period.
+    selectorAnswer = answer('calendar.events', { range: 'this-thu' });
+    start = marks();
+    await send('목요일 거는?', ctx);
+    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'this-thu' }]);
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ args: { range: 'this-thu' } });
+    // Next period: no keyword to carry.
+    selectorAnswer = answer('calendar.events', { range: 'week-after-next' });
+    start = marks();
+    await send('아니 다다음 주', ctx);
+    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'week-after-next' }]);
+    // "회의만": the flag is grounded in the owner's word and drops all-day entries.
+    await send('이번 주 일정 알려줘', ctx);
+    selectorAnswer = answer('calendar.events', { range: 'this-week', timedOnly: true });
+    start = marks();
+    await send('그 중에 회의만', ctx);
+    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'this-week', timedOnly: true }]);
+  });
+
+  it('review P2: a mail item pick is transient — it is not stored, so "안 읽은 것만" refines the listing, not the pick', async () => {
+    const ctx = context();
+    selectorAnswer = answer('mail.list', {});
+    await send('메일함 좀', ctx);
+    selectorAnswer = answer('mail.list', { item: 2 });
+    await send('2번은 누가 보냈어?', ctx);
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'mail.list', args: {} });
+    selectorAnswer = answer('mail.list', { unread: true });
+    const start = marks();
+    await send('안 읽은 것만', ctx);
+    expect(lastPrevious(start.requests)).toBe('Previous selection: {"entryId":"mail.list","args":{}}');
+    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ unread: true }]);
+  });
+
   it('follow-up 2, defect 1: a chat turn clears lastSelection, so "그 중에 스크럼만" then gets the clarification question', async () => {
     const ctx = context();
     await send('이번 주 일정 알려줘', ctx);
@@ -1096,7 +1138,7 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     }
   });
 
-  it('S1 Phase C: the classifier\'s personal-work surface is a Class B route — selection first, the surface as the fallback', async () => {
+  it('S1 Phase C: the classifier\'s personal-work surface is a Class B route — selection first, the surface only when the selector did not run or failed', async () => {
     // The work-chat grammar already claims the usual surface phrasings, so the classifier result is forced for a neutral
     // text that no handler answers (the route is what is under test, not the regex).
     const classifier = (runtime as unknown as { deps: { classifier: { classify: (message: InboundMessage) => Promise<Intent> } } }).deps.classifier;
@@ -1124,10 +1166,12 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       expect(fallback.selects).toBe(1);
       expect(fallback.served).toEqual([]);
       expect(fallback.result.reply.text).toBe(phaseA.result.reply.text);
+      // Live UAT R9: a selector that RAN and answered `none` wins over the surface clause — the turn is chat.
       selectorAnswer = none;
       const declined = await forced('음 오늘 뭐부터 손대지 3');
       expect(declined.selects).toBe(1);
-      expect(declined.result.reply.text).toBe(phaseA.result.reply.text);
+      expect(declined.served).toEqual([]);
+      expect(declined.result.reply.text).toBe(CHAT_REPLY);
     });
     selectorAnswer = none;
   });

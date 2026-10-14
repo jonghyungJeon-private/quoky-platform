@@ -122,6 +122,23 @@ describe('JiraConnectorProvider', () => {
     ]);
   });
 
+  it('live UAT R8: a closed sort name renders a constant ORDER BY; owner text is never part of the JQL', async () => {
+    const fake = fakeFetch(200, { issues: [] });
+    const jira = provider(fake.fetchImpl);
+    await jira.query(personalWork('account-123', { sort: 'oldest' }));
+    await jira.query(personalWork('account-123', { sort: 'newest', status: 'in-progress' }));
+    await jira.query(personalWork('account-123', { sort: 'recently-updated', window: { field: 'created', from: '2026-10-12', to: '2026-10-13' } }));
+    await jira.query(personalWork('account-123', { filter: 'due-this-week', sort: 'oldest' }));
+    const jql = fake.calls.map((call) => new URL(call.url).searchParams.get('jql'));
+    expect(jql).toEqual([
+      'assignee = "account-123" AND resolution = Unresolved AND statusCategory != Done ORDER BY created ASC',
+      'assignee = "account-123" AND statusCategory = indeterminate ORDER BY created DESC',
+      'assignee = "account-123" AND resolution = Unresolved AND statusCategory != Done AND created >= "2026-10-12" AND created < "2026-10-13" ORDER BY updated DESC',
+      'assignee = "account-123" AND resolution = Unresolved AND statusCategory != Done AND duedate <= endOfWeek() ORDER BY created ASC',
+    ]);
+    await expect(jira.query(personalWork('account-123', { sort: 'created ASC; DROP' as never }))).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+  });
+
   it('ADR-0120 P3: bounds created/updated by minutes relative to now, so the Jira profile time zone cannot shift the window', async () => {
     const fake = fakeFetch(200, { issues: [] });
     // Now: 2026-10-12 12:00 in Asia/Seoul (03:00Z). "Today" in Seoul is [2026-10-11T15:00Z, 2026-10-12T15:00Z).

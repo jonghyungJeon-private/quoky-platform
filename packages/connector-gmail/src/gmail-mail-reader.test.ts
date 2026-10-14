@@ -118,6 +118,16 @@ describe('GmailMailReader (ADR-0118 D2/D3)', () => {
     expect(buildGmailSearchQuery({ ...base, receivedAfter: '2026-10-07T15:00:00.000Z', receivedAfterMs: Date.parse('2026-10-07T15:00:00.000Z') })).toBe(
       'in:inbox after:1791385200',
     );
+    // Live UAT R1: a period's end is epoch seconds too, so the owner's local midnight is exact in any zone.
+    expect(
+      buildGmailSearchQuery({
+        ...base,
+        receivedAfter: '2026-10-06T15:00:00.000Z',
+        receivedAfterMs: Date.parse('2026-10-06T15:00:00.000Z'),
+        receivedBefore: '2026-10-07T15:00:00.000Z',
+        receivedBeforeMs: Date.parse('2026-10-07T15:00:00.000Z'),
+      }),
+    ).toBe('in:inbox after:1791298800 before:1791385200');
     expect(buildGmailSearchQuery({ ...base, from: '김철수' })).toBe('from:"김철수"');
     expect(buildGmailSearchQuery({ ...base, from: 'a" OR label:secret (x) {y}' })).toBe('from:"a OR label secret x y"');
     expect(() => buildGmailSearchQuery({ ...base, from: '"()"' })).toThrow();

@@ -151,7 +151,7 @@ function relativeDayLabel(offset: number | undefined, language: CalendarLanguage
 }
 
 /** "오늘(10월 6일(화))" → "오늘 · 10월 6일(화)"; "이번 주 · 10월 5일(월)~10월 11일(일)". */
-function periodLabel(window: CalendarWindow, language: CalendarLanguage): string {
+function periodLabel(window: CalendarWindow, language: CalendarLanguage, partOfDay?: 'morning' | 'afternoon' | 'evening'): string {
   const first = window.startDate;
   const last = addLocalDays(first, window.days - 1);
   const range = window.days === 1 ? dateLabel(first, language) : `${dateLabel(first, language)} ~ ${dateLabel(last, language)}`;
@@ -160,7 +160,9 @@ function periodLabel(window: CalendarWindow, language: CalendarLanguage): string
   if (span.kind === 'day') name = relativeDayLabel(window.dayOffset, language);
   else if (span.kind === 'week') name = language === 'en' ? (span.which === 'next' ? 'Next week' : 'This week') : span.which === 'next' ? '다음 주' : '이번 주';
   else if (span.kind === 'weekend') name = language === 'en' ? (span.which === 'next' ? 'Next weekend' : 'This weekend') : span.which === 'next' ? '다음 주말' : '이번 주말';
-  return name === undefined ? range : `${name} · ${range}`;
+  const part = partOfDay === undefined ? undefined : PART_OF_DAY_NAME[partOfDay][language];
+  if (name === undefined) return part === undefined ? range : `${range} ${part}`;
+  return `${part === undefined ? name : `${name} ${part}`} · ${range}`;
 }
 
 function footer(timeZone: string, language: CalendarLanguage, truncatedAt?: number, writesEnabled = false): MessageBody {
@@ -225,6 +227,27 @@ export interface CalendarRenderOptions {
   readonly keyword?: string;
   /** The keyword filter ran over a full (possibly truncated) page: the answer is partial and says so. */
   readonly partial?: boolean;
+  /** The events were narrowed to a part of the day (live UAT R2): the header names it. */
+  readonly partOfDay?: 'morning' | 'afternoon' | 'evening';
+  /** The events were narrowed to timed events (live UAT R5): an empty answer says so. */
+  readonly timedOnly?: boolean;
+  /** The owner asked whether they are free: an empty answer says "free". */
+  readonly availability?: boolean;
+  /** All-day events the narrowing left out (they have no hour): the answer says how many. */
+  readonly excludedAllDay?: number;
+  /** The read returned a full page: the footer says so even when narrowing left fewer events than the page held. */
+  readonly pageFull?: boolean;
+}
+
+const PART_OF_DAY_NAME = {
+  morning: { ko: '오전', en: 'morning' },
+  afternoon: { ko: '오후', en: 'afternoon' },
+  evening: { ko: '저녁', en: 'evening' },
+} as const;
+
+function excludedNote(count: number | undefined, language: CalendarLanguage): string | undefined {
+  if (count === undefined || count <= 0) return undefined;
+  return language === 'en' ? `(${count} all-day event${count === 1 ? '' : 's'} left out: they have no set hours.)` : `(종일 일정 ${count}개는 시간이 정해져 있지 않아 뺐어요.)`;
 }
 
 function partialNote(language: CalendarLanguage): string {
@@ -301,14 +324,28 @@ export function renderCalendarEvents(
   if (window.span.kind === 'next') return renderNextEvent(window, events, options);
   const first = window.startDate;
   const placed = placedInWindow(window, events, timeZone);
-  const period = periodLabel(window, language);
-  const truncatedAt = events.length >= options.limit ? options.limit : undefined;
+  const period = periodLabel(window, language, options.partOfDay);
+  const truncatedAt = options.pageFull === true || events.length >= options.limit ? options.limit : undefined;
   const baseTail = footer(timeZone, language, truncatedAt, options.writesEnabled === true);
-  const tail = options.keyword !== undefined && options.partial === true ? joinBody([partialNote(language), baseTail]) : baseTail;
+  const narrowed = options.partOfDay !== undefined || options.timedOnly === true || options.availability === true;
+  const allDayOnly = (options.excludedAllDay ?? 0) > 0 && options.partial !== true;
+  const notes = [
+    (options.keyword !== undefined || narrowed) && options.partial === true ? partialNote(language) : undefined,
+    allDayOnly && placed.length === 0 && (options.availability === true || narrowed) ? undefined : excludedNote(options.excludedAllDay, language),
+  ].filter((note): note is string => note !== undefined);
+  const tail = notes.length > 0 ? joinBody([...notes, baseTail]) : baseTail;
   const remaining = options.remaining === true;
   if (placed.length === 0) {
     const none = options.keyword !== undefined
       ? language === 'en' ? `${period}: no events with "${options.keyword}" in the title${options.partial === true ? ' among those I checked (I could not check them all)' : ''}.` : `${period}: 불러온 일정 중 "${options.keyword}" 포함 일정이 없어요${options.partial === true ? ' (전체를 확인하진 못했어요)' : ''}.`
+      : options.partial === true && narrowed
+      ? language === 'en' ? `${period}: none among the events I checked (I could not check them all), so I can't say you're free.` : `${period}: 불러온 일정 중에는 없어요. 전체를 확인하진 못해서 비어 있다고는 말씀드릴 수 없어요.`
+      : allDayOnly && narrowed
+      ? language === 'en' ? `${period}: no timed events (${options.excludedAllDay} all-day event${options.excludedAllDay === 1 ? '' : 's'}).` : `${period}: 시간이 정해진 일정은 없어요 (종일 일정 ${options.excludedAllDay}개).`
+      : options.availability === true
+      ? language === 'en' ? `${period}: nothing scheduled, so you're free.` : `${period}: 일정이 없어요 — 비어 있어요.`
+      : options.timedOnly === true
+      ? language === 'en' ? `${period}: no timed events (meetings).` : `${period}: 시간이 정해진 일정(회의)이 없어요.`
       : remaining
       ? language === 'en' ? `${period}: nothing left on your calendar.` : `${period}: 남은 일정이 없어요.`
       : language === 'en' ? `${period}: nothing on your calendar.` : `${period}: 캘린더에 일정이 없어요.`;

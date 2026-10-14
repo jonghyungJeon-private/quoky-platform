@@ -11,7 +11,7 @@ import {
 } from './catalog';
 import { isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
-import { isNlRangeSymbol, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from './symbolic-time';
+import { isNlRangeSymbol, isTimeExpression, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from './symbolic-time';
 
 /**
  * Deterministic validation of a selector candidate (ADR-0120 D4, the ADR-0090 L2 policy), in order:
@@ -19,7 +19,8 @@ import { isNlRangeSymbol, normalizeNlRangeSymbol, resolveNlRange, type NlResolve
  *  (2) the entry is offered in this turn's catalog (registered and configured) and is a READ entry (D5);
  *  (3) bounds: limit 1..10, keyword 1..100 characters;
  *  (4) a range is a symbol Core resolves with the turn's clock and `QUOKY_TIMEZONE` (at most 31 days);
- *  (5) grounding: a keyword appears verbatim in the owner's non-quoted text or in the previous selection's args;
+ *  (5) grounding: a keyword appears verbatim in the owner's non-quoted text or in the previous selection's args, and an
+ *      entry with a `range` never takes a time expression as a keyword; a grounded flag / enum value needs an owner word;
  *  (6) the credential guard runs on every string arg.
  * A failure names the reason and the argument, never a value. Pure: `now` is an input.
  */
@@ -37,6 +38,8 @@ export type NlValidationFailureReason =
   | 'missing-arg'
   | 'range'
   | 'ungrounded'
+  /** A keyword that is only a time expression ("목요일", "내일 오후"): a period belongs in `range` / `partOfDay`. */
+  | 'time-keyword'
   | 'credential';
 
 export interface NlValidatedSelection {
@@ -102,11 +105,17 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       if (symbol === 'upcoming' && rangeSpec.allowUpcoming !== true) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
       range = resolveNlRange(symbol, ctx.now, ctx.timeZone);
       if (range === undefined) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+      if (rangeSpec.pastOnly === true && Date.parse(range.from) > Date.parse(ctx.now)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
     }
   }
   // (5) grounding and (6) the credential guard, on every string arg
   for (const spec of entry.args) {
     const value = args[spec.name];
+    if (spec.kind === 'flag' && value === true && spec.flagGrounding !== undefined) {
+      const text = normalizeForMatch(ctx.groundingText);
+      const stated = spec.flagGrounding.some((word) => groundingWordIn(text, normalizeForMatch(word)));
+      if (!stated && ctx.previousArgs?.[spec.name] !== true) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
+    }
     if (typeof value !== 'string') continue;
     if (spec.kind === 'enum' && spec.valueGrounding?.[value] !== undefined) {
       const text = normalizeForMatch(ctx.groundingText);
@@ -114,6 +123,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       if (!stated && ctx.previousArgs?.[spec.name] !== value) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
     }
     if (spec.kind === 'keyword') {
+      if (rangeSpec !== undefined && spec.allowsTimeWords !== true && isTimeExpression(value)) return { ok: false, reason: 'time-keyword', entryId, arg: spec.name };
       const previous = ctx.previousArgs?.[spec.name];
       const fromPrevious = typeof previous === 'string' && previous === value;
       if (!fromPrevious && !isGroundedIn(value, ctx.groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
@@ -150,7 +160,11 @@ export function canonicalArgs(entry: NlCatalogEntry, args: Readonly<Record<strin
  * "온보딩", "정책 자료" → "정책") is dropped when words remain. The closed list names kinds of content, never a source or
  * a capability, so it cannot change which entry runs — only the search words.
  */
-const GENERIC_TAIL = new Set(['문서', '문서들', '자료', '페이지', '파일', '관련', '얘기', '내용', '메시지', '건', '거', '것']);
+const GENERIC_TAIL = new Set([
+  '문서', '문서들', '자료', '페이지', '파일', '관련', '얘기', '내용', '메시지', '건', '거', '것',
+  // Conversational filler after the topic ("배포 얘기 나온 거"): the search term is the topic alone (live UAT R7).
+  '나온', '나왔던', '나왔나', '언급된', '언급한', '올라온', '있는', '있던', '관련된', '관한', '대한', '이야기',
+]);
 
 function withoutGenericTail(keyword: string): string {
   const words = keyword.split(' ');

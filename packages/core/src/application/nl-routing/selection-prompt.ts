@@ -11,7 +11,7 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  */
 
 /** Bumped whenever the instruction text changes (the eval plan digest binds it). */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v17';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v18';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -50,6 +50,17 @@ const EXAMPLES: readonly PromptExample[] = [
   { text: '하루 일정 할 일 싹 정리', output: '{"entryId":"brief.today","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['brief.today'] },
   { text: '메일함', output: '{"entryId":"mail.list","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
   { text: '몇 건이야?', previous: '{"entryId":"mail.list","args":{"unread":true}}', output: '{"entryId":"mail.list","args":{"unread":true,"count":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
+  { text: '어제 도착한 메일 보여줘', output: '{"entryId":"mail.list","args":{"range":"yesterday"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
+  { text: '두 번째 건 누구한테 온 거야?', previous: '{"entryId":"mail.list","args":{}}', output: '{"entryId":"mail.list","args":{"item":2},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
+  { text: '그거 요약해줘', previous: '{"entryId":"mail.list","args":{}}', output: none, needs: ['mail.list'] },
+  { text: '모레 저녁에 한가해?', output: '{"entryId":"calendar.events","args":{"range":"day-after-tomorrow","partOfDay":"evening","availability":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '오후만', previous: '{"entryId":"calendar.events","args":{"range":"day-after-tomorrow"}}', output: '{"entryId":"calendar.events","args":{"range":"day-after-tomorrow","partOfDay":"afternoon"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '지난주 금요일에 뭐 있었지', output: '{"entryId":"calendar.events","args":{"range":"last-fri"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '다다음 주는?', previous: '{"entryId":"calendar.events","args":{"range":"next-week"}}', output: '{"entryId":"calendar.events","args":{"range":"week-after-next"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '목요일 거는?', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-thu"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '그 중에 미팅 시간 있는 것만', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-week","timedOnly":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '가장 오래된 것부터 보여줘', previous: '{"entryId":"jira.issues","args":{"status":"in-progress"}}', output: '{"entryId":"jira.issues","args":{"status":"in-progress","sort":"oldest"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
+  { text: '슬랙에 장애 관련 이야기 나온 거 있어?', output: '{"entryId":"slack.search","args":{"keyword":"장애"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['slack.search'] },
   { text: '지라 티켓 하나 새로 만들어줘', output: none, needs: [] },
   { text: '슬랙에서 장애 대응 얘기 나온 거 있나', output: '{"entryId":"slack.search","args":{"keyword":"장애 대응"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['slack.search'] },
   { text: '슬랙 검색 기능이 원래 이렇게 느려?', output: none, needs: [] },
@@ -117,7 +128,14 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   the type word is then `kind`, not part of `name`. Do not use `keyword` on the calendar for "busy/free" questions.',
     '   A message that is only a source name ("지라", "메일", "일정", "드라이브") selects that source\'s default listing with',
     '   args {}; a bare "슬랙" or "컨플루언스" has no keyword, so answer NEEDS_CLARIFICATION with that entry.',
-    '   Time: use only the range symbols below; never write a timestamp or a year the owner did not write.',
+    '   Time: use only the range symbols below; never write a timestamp or a year the owner did not write. A weekday, date or',
+    '   period word (목요일, 어제, 다다음 주, 이번 달 말까지) is ALWAYS `range`, never a keyword, from, or name; a part of the day',
+    '   (오전, 오후, 저녁) is `partOfDay`. A follow-up that names another day ("목요일 거는?" after a week) changes `range` only',
+    '   (this-thu), keeps the other previous args, and never makes the day word a keyword.',
+    '   Search keyword (Slack, Confluence): only the core topic term(s); drop conversational filler such as 얘기, 나온, 관련, 거.',
+    '   Mail: a period the mail was received in is `range` ("어제 온 메일" = yesterday); a question about ONE listed mail by its',
+    '   number ("N번째 건 누가 보냈어?") is `item`; summarizing, replying to or reading one mail ("그거 요약해줘") is none, not a list.',
+    '   Jira order: sort oldest/newest/recently-updated only when the owner asks for an order ("제일 오래된 건"); keep the previous args.',
     '6. Follow-ups: when a previous selection is given and the message narrows or corrects it ("그 중에 X만", "아니 보고자만",',
     '   "내일은?"), return the same entryId with the previous args plus only the change the message states.',
     '   A count follow-up ("그거 몇 개야", "how many is that") with a previous selection is the same entry and args plus',
@@ -128,7 +146,8 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '7. ambiguity is NEEDS_CLARIFICATION only when two entries fit equally well; list them in alternatives (at most 2).',
     '   Otherwise CLEAR with "alternatives": [].',
     '',
-    `Range symbols: ${NL_RANGE_SYMBOLS.join(', ')}; mon..sun (the nearest such day); next-mon..next-sun (that day next week);`,
+    `Range symbols: ${NL_RANGE_SYMBOLS.join(', ')}; mon..sun (the nearest such day); this-mon..this-sun (that day of this week);`,
+    'next-mon..next-sun and last-mon..last-sun (that day of next / last week: 지난주 금요일 = last-fri);',
     'MM-DD for a date the owner names (10월 20일 -> 10-20); MM-DD..MM-DD for a span of at most 31 days.',
     '',
     'Catalog:',
@@ -140,6 +159,7 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
       continue;
     }
     for (const spec of entry.args) {
+      if (spec.deprecated === true) continue;
       const values = spec.kind === 'enum' ? (spec.values ?? []).join('|') : spec.kind === 'flag' ? 'true' : spec.kind === 'limit' ? '1-10' : spec.kind === 'range' ? 'range symbol' : 'verbatim text';
       lines.push(`  ${spec.name}${spec.required === true ? ' (required)' : ''}: ${values}. ${bounded(spec.description)}`);
     }

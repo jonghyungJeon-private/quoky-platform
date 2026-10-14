@@ -1,7 +1,7 @@
 import { nlFlagArg, nlLimitArg, nlStringArg, type NlCatalogEntryId, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
 import { addLocalDays } from '../reminders/zoned-time';
 import { isoDateOf } from '../nl-routing/symbolic-time';
-import type { PersonalWorkRole, PersonalWorkStatus, PersonalWorkWindowField } from '../../ports/connector-query';
+import type { PersonalWorkRole, PersonalWorkSort, PersonalWorkStatus, PersonalWorkWindowField } from '../../ports/connector-query';
 import type { WorkChatCommand, WorkChatPersonalWorkOptions, WorkChatSource } from './work-chat-command';
 
 /**
@@ -21,6 +21,7 @@ export const WORK_CHAT_SOURCE_ENTRY: Readonly<Record<WorkChatSource, NlCatalogEn
 const ROLES: readonly string[] = ['assignee', 'reporter', 'either'];
 const STATUSES: readonly string[] = ['open', 'all', 'in-progress'];
 const WINDOWS: readonly string[] = ['created', 'updated', 'due'];
+const SORTS: readonly string[] = ['oldest', 'newest', 'recently-updated'];
 
 /** The typed command for a selection, or `null` when the entry is not a work-chat read. */
 export function workChatCommandForSelection(selected: NlSelectedCommand): WorkChatCommand | null {
@@ -113,6 +114,7 @@ function jiraOptions(selected: NlSelectedCommand): WorkChatPersonalWorkOptions |
   const role = nlStringArg(selected.args, 'role');
   const status = nlStringArg(selected.args, 'status');
   const field = nlStringArg(selected.args, 'window');
+  const sort = nlStringArg(selected.args, 'sort');
   const range = selected.range;
   const window =
     field !== undefined && WINDOWS.includes(field) && range !== undefined
@@ -129,6 +131,7 @@ function jiraOptions(selected: NlSelectedCommand): WorkChatPersonalWorkOptions |
     ...(window !== undefined ? { window } : {}),
     ...(role !== undefined && role !== 'assignee' && ROLES.includes(role) ? { role: role as PersonalWorkRole } : {}),
     ...(status !== undefined && status !== 'open' && STATUSES.includes(status) ? { status: status as PersonalWorkStatus } : {}),
+    ...(sort !== undefined && SORTS.includes(sort) ? { sort: sort as PersonalWorkSort } : {}),
   };
   return Object.keys(options).length === 0 ? undefined : options;
 }

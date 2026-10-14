@@ -76,6 +76,14 @@ describe('reminder grammar — one-time Korean reminders (now = Fri 2026-10-02 1
     ['내일 9시에 점검을 알려줘', '점검', '2026-10-03T09:00'],
     ['내일 9시에 가을 산책 알려줘', '가을 산책', '2026-10-03T09:00'], // `을` of 가을 is not a particle
     ['내일 9시에 회의 준비라고 알려줘', '회의 준비', '2026-10-03T09:00'],
+    // Live UAT R10: a quotative on a verb stem reads as the noun form (morphology, not a phrase list); a noun's (이)라고 is dropped
+    ['10분 뒤에 물 마시라고 알려줘', '물 마시기', '2026-10-02T14:10'],
+    ['내일 9시에 약 먹으라고 알려줘', '약 먹기', '2026-10-03T09:00'],
+    ['내일 9시에 보고서 제출하라고 알려줘', '보고서 제출하기', '2026-10-03T09:00'],
+    ['내일 9시에 스트레칭 하라고 알려줘', '스트레칭 하기', '2026-10-03T09:00'],
+    ['내일 9시에 산책 가시라고 알려줘', '산책 가시기', '2026-10-03T09:00'],
+    ['내일 9시에 약 먹는다고 알려줘', '약 먹는다', '2026-10-03T09:00'],
+    ['내일 9시에 팀장님 면담이라고 알려줘', '팀장님 면담', '2026-10-03T09:00'],
     ['회의 준비 내일 9시에 알려줘', '회의 준비', '2026-10-03T09:00'],
     ['내일 9시에 회의 준비 알려주세요', '회의 준비', '2026-10-03T09:00'],
     ['내일 9시에 회의 준비 리마인드 해줘', '회의 준비', '2026-10-03T09:00'],
@@ -993,5 +1001,22 @@ describe('reminder grammar — status questions answered with LIST (ADR-0104 D3,
     '알림 설정했어', '알림 있어', '알림 남았어', '알림 걸어놨어', '알림 안 남았지?', '알림 설정 안 했어?', '알림 설정하지 마',
   ])('%j is not a status question', (message) => {
     expect(parse(message).kind).not.toBe('LIST');
+  });
+});
+
+describe('quotative reminder titles — one-syllable imperative stems (review P2)', () => {
+  it.each([
+    ['내일 9시에 일찍 자라고 알려줘', '일찍 자기'],
+    ['내일 9시에 자라고 알려줘', '자기'],
+    ['내일 9시에 마시라고 알려줘', '마시기'],
+    ['내일 9시에 물 마시라고 알려줘', '물 마시기'],
+    ['내일 9시에 약 먹으라고 알려줘', '약 먹기'],
+    ['내일 9시에 우유 사라고 알려줘', '우유 사기'],
+    ['내일 9시에 빨리 가라고 알려줘', '빨리 가기'],
+    // multi-syllable vowel-ending words stay quoted nouns (fewer errors than reading them as verb stems)
+    ['내일 9시에 택시라고 알려줘', '택시'],
+    ['내일 9시에 회의라고 알려줘', '회의'],
+  ])('%j -> %j', (message, body) => {
+    expect(once(message)).toMatchObject({ body });
   });
 });
