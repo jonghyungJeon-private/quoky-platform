@@ -9,8 +9,10 @@ import type { MessageBody } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import { clipMessage, messageBody, outboundBody, outboundMessage, plainTextOf, withOutboundBody } from '../message-rendering';
-import type { NlCatalogEntry, NlClassBProbe, NlSelectedCommand } from '../nl-routing/catalog';
+import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
+import { isDirectConversation } from '../message-rendering';
 import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
 import {
   EXTERNAL_WORK_EXCERPT_MAX_CHARS,
@@ -75,7 +77,7 @@ export const WORK_CHAT_LOOKUP_TURN_HELP_LINES: readonly string[] = Object.freeze
 export const WORK_SUMMARY_REPLY_MAX_CHARS = 1900;
 
 export interface WorkChatTurnHandlerDeps {
-  readonly desk: Pick<WorkDesk, 'handle' | 'configuredSources'>;
+  readonly desk: Pick<WorkDesk, 'handle' | 'configuredSources'> & Partial<Pick<WorkDesk, 'handleAction'>>;
   readonly mode: WorkChatMode;
   /**
    * `QUOKY_WORK_SUMMARY_ENABLED` (owner decision ADR-0100 #2). The desk already honours it; the handler re-checks it
@@ -104,7 +106,12 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
    * handler offers none (writes are never selected, D5). A getter, read on every selection turn.
    */
   get catalog(): readonly NlCatalogEntry[] {
-    if (this.deps.mode !== 'lookup') return [];
+    if (this.deps.mode !== 'lookup') {
+      // ADR-0120 amendment A6: the to-do action entries (the runtime offers them only while QUOKY_NL_ACTIONS allows).
+      return this.deps.desk.handleAction === undefined
+        ? []
+        : [nlActionEntry('todo.add'), nlActionEntry('todo.complete'), nlActionEntry('todo.cancel'), nlActionEntry('action.undo')];
+    }
     const configured = this.deps.desk.configuredSources?.() ?? [];
     return [...configured.map((source) => nlWave1Entry(WORK_CHAT_SOURCE_ENTRY[source])), nlWave1Entry('todo.list')];
   }
@@ -114,7 +121,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
    * `handle` answers it. A count question gets the deterministic list with a count line first (never a summary).
    */
   async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
-    if (this.deps.mode !== 'lookup') return null;
+    if (this.deps.mode !== 'lookup') return this.handleAction(selected, ctx);
     const command = workChatCommandForSelection(selected);
     if (command === null) return null;
     const { outcome, listed } = await this.run(command, ctx);
@@ -122,6 +129,31 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     if (outcome.kind !== undefined && outcome.kind !== 'reply') return outcome;
     const count = renderWorkChatCount(command.source, listed, selected.language);
     return { ...outcome, reply: withOutboundBody(outcome.reply, messageBody(count, '\n', outboundBody(outcome.reply))) };
+  }
+
+  /**
+   * ADR-0120 amendment A6: a validated to-do action (or the undo of one), its target resolved by Core. DM-only (A6-D1).
+   * The reply carries the content-free receipt the runtime records as `lastAction`.
+   */
+  private async handleAction(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
+    const handleAction = this.deps.desk.handleAction;
+    if (handleAction === undefined || !isNlActionEntryId(selected.entryId)) return null;
+    if (selected.entryId === 'action.undo' && selected.target?.source !== 'todo') return null;
+    if (!isDirectConversation(ctx.message.context)) {
+      return { reply: outboundMessage(ctx.message.context, renderActionDmOnly(selected.language)), nlAction: { entryId: selected.entryId, result: 'refused', source: 'todo', reason: 'not-dm' } };
+    }
+    let outcome: WorkChatOutcome;
+    try {
+      outcome = await handleAction.call(this.deps.desk, selected, ctx.actor);
+    } catch (error) {
+      this.deps.logger.error('work_chat.turn_handler.failed', { handlerId: this.id, errorName: error instanceof Error ? error.name : 'unknown' });
+      return { reply: outboundMessage(ctx.message.context, renderTodoFailure()), status: 'FAILED' };
+    }
+    if (outcome.kind !== 'reply') return null;
+    return {
+      reply: outboundMessage(ctx.message.context, outboundBody(outcome)),
+      ...(outcome.action !== undefined ? { nlAction: outcome.action } : {}),
+    };
   }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
@@ -184,7 +216,12 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     }
     if (outcome.kind === 'none') return { outcome: null };
     if (outcome.kind === 'reply') {
-      const reply = { reply: outboundMessage(ctx.message.context, outboundBody(outcome)) };
+      // ADR-0120 amendment A6: the desk's content-free receipts ride along (present only with QUOKY_NL_ACTIONS not off).
+      const reply = {
+        reply: outboundMessage(ctx.message.context, outboundBody(outcome)),
+        ...(outcome.action !== undefined ? { nlAction: outcome.action } : {}),
+        ...(outcome.listing !== undefined ? { nlListing: outcome.listing } : {}),
+      };
       return outcome.listed === undefined ? { outcome: reply } : { outcome: reply, listed: outcome.listed };
     }
     // Only lookups summarise, and only with summaries enabled; anything else gets the deterministic list.
@@ -206,6 +243,11 @@ export function createWorkChatTurnHandlers(
   deps: Omit<WorkChatTurnHandlerDeps, 'mode'>,
 ): readonly [WorkChatTurnHandler, WorkChatTurnHandler] {
   return [new WorkChatTurnHandler({ ...deps, mode: 'mutation' }), new WorkChatTurnHandler({ ...deps, mode: 'lookup' })];
+}
+
+/** A6-D1: every action entry is DM-only. */
+function renderActionDmOnly(language: 'ko' | 'en'): string {
+  return language === 'en' ? 'I do that only in a direct message. Nothing was changed.' : '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.';
 }
 
 function backstopText(command: WorkChatCommand): string {

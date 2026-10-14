@@ -394,3 +394,67 @@ export function renderExternalWorkList(readout: ExternalWorkReadout): MessageBod
   }
   return fit(lines);
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// ADR-0120 amendment A6: echo lines of natural-language to-do actions (never used by the anchored grammar)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** A6-D3: the undo hint of every A6 local write (the 10-minute `lastAction` window). */
+export const NL_ACTION_UNDO_HINT = '되돌리기: "되돌려줘" (10분)';
+
+/** The number of a to-do as the owner sees it: its position among the open to-dos (createdAt order), 1-based. */
+export function todoNumberOf(todos: readonly WorkItem[], id: string): number | undefined {
+  const index = todos.findIndex((item) => item.id === id);
+  return index < 0 ? undefined : index + 1;
+}
+
+/** `할 일 7번으로 추가했어요: "UAT 결과 정리" · 되돌리기: "되돌려줘" (10분)` (A6-D3 echo). */
+export function renderTodoActionAdded(item: WorkItem, no: number): MessageBody {
+  return fit([{ text: messageContent(`할 일 ${no}번으로 추가했어요: "`, titleOf(item, 200), `" · ${NL_ACTION_UNDO_HINT}`) }]);
+}
+
+/** Completed or taken off the list (record decision 3: a cancel reads "목록에서 뺐어요"). */
+export function renderTodoActionTransitioned(item: WorkItem, no: number | undefined, action: 'complete' | 'cancel'): MessageBody {
+  const head = no === undefined ? '할 일을' : `할 일 ${no}번을`;
+  const verb = action === 'complete' ? '완료 처리했어요' : '목록에서 뺐어요';
+  return fit([{ text: messageContent(`${head} ${verb}: "`, titleOf(item, 200), `" · ${NL_ACTION_UNDO_HINT}`) }]);
+}
+
+/** The inverse of a completion or a cancel: the same to-do is open again under its current number. */
+export function renderTodoActionReopened(item: WorkItem, no: number | undefined): MessageBody {
+  const head = no === undefined ? '할 일을' : `할 일 ${no}번을`;
+  return fit([{ text: messageContent(`${head} 다시 열었어요: "`, titleOf(item, 200), '"') }]);
+}
+
+/** The inverse of an add: that to-do is canceled. */
+export function renderTodoActionAddUndone(item: WorkItem): MessageBody {
+  return fit([{ text: messageContent('방금 추가한 할 일을 취소했어요: "', titleOf(item, 200), '"') }]);
+}
+
+/** An inverse that cannot run (record A): said plainly, nothing changed. */
+export function renderTodoUndoRefused(reason: 'already-final' | 'changed' | 'not-found' | 'not-final'): string {
+  switch (reason) {
+    case 'already-final':
+      return '이미 완료/취소된 할 일이라 되돌릴 게 없어요.';
+    case 'changed':
+      return '그 뒤에 바뀐 할 일이라 되돌리지 않았어요. 아무것도 바꾸지 않았어요.';
+    case 'not-final':
+      return '그 할 일은 이미 열려 있어요. 아무것도 바꾸지 않았어요.';
+    case 'not-found':
+      return '되돌릴 할 일을 찾지 못했어요. 아무것도 바꾸지 않았어요.';
+  }
+}
+
+/** A6-D2 execution-time check: the target is gone or no longer open. */
+export function renderTodoActionNotActionable(): string {
+  return '그 할 일은 이미 완료되었거나 목록에서 빠졌어요. 아무것도 바꾸지 않았어요.';
+}
+
+/** A `match` that names no single open to-do: the candidates under their own numbers (A6-D2), nothing changed. */
+export function renderTodoActionWhich(candidates: ReadonlyArray<{ no: number; item: WorkItem }>): MessageBody {
+  if (candidates.length === 0) return fit([{ text: '그 이름의 열린 할 일을 찾지 못했어요. 아무것도 바꾸지 않았어요. 몇 번인지 말씀해 주세요.' }]);
+  return fit([
+    { text: '어느 할 일인가요? 번호로 답해 주세요. 아직 아무것도 바꾸지 않았어요.' },
+    ...candidates.slice(0, 10).map(({ no, item }) => ({ text: messageContent(`${no}. `, titleOf(item)), droppable: true })),
+  ]);
+}

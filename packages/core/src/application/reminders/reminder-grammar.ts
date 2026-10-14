@@ -1528,3 +1528,44 @@ export function parseReminderMessage(text: string, options: ReminderGrammarOptio
   const ctx: ResolveContext = { nowMs, timeZone };
   return KO_VERB_PRESENT.test(message) ? parseKorean(message, ctx) : parseEnglish(message, ctx);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// ADR-0120 amendment A6: the `when` span of a natural-language reminder, parsed by THIS grammar
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The fixed body and verb the `when` span is embedded with: the time semantics are exactly the grammar's. */
+const WHEN_PROBE_BODY = '확인';
+const WHEN_PROBE_VERB = '리마인드 해줘';
+
+export type ReminderWhen =
+  | { readonly kind: 'time'; readonly schedule: ReminderSchedule; readonly firstFireAt: IsoTimestamp; readonly timeZone: string }
+  | { readonly kind: 'event'; readonly offsetMinutes: number; readonly target: EventReminderTarget }
+  | { readonly kind: 'clarify'; readonly reason: ReminderClarifyReason };
+
+/**
+ * A6-D1: parse the `when` span the selector copied from the owner's words with the deterministic ADR-0101 grammar (BRF-2
+ * for an event-relative span). The model never produces a time: the span is embedded in one fixed reminder sentence
+ * ("<when>에 확인 리마인드 해줘") and the grammar's own result is used, so the schedule, the clarify reasons and every bound
+ * are byte-identical to the anchored grammar's. Anything the grammar reads as more than a time (the probe body changed)
+ * is a clarification, never a guess. Pure; never throws for any input string.
+ */
+export function parseReminderWhen(when: string, options: ReminderGrammarOptions): ReminderWhen {
+  const span = when.normalize('NFC').replace(/\s+/g, ' ').trim().replace(/\s?(?:에는|에|부터)$/u, '').trim();
+  if (span.length === 0 || /[\n:：]/u.test(span)) return { kind: 'clarify', reason: 'MISSING_TIME' };
+  // BRF-2: an event-relative span names its event itself ("회의 10분 전"), so it is read with the verb alone.
+  const eventRelative = options.eventRelative !== false ? parseReminderMessage(`${span}에 알려줘`, options) : undefined;
+  if (eventRelative?.kind === 'CREATE_EVENT_RELATIVE') return { kind: 'event', offsetMinutes: eventRelative.offsetMinutes, target: eventRelative.target };
+  const command = parseReminderMessage(`${span}에 ${WHEN_PROBE_BODY} ${WHEN_PROBE_VERB}`, options);
+  switch (command.kind) {
+    case 'CREATE':
+      return command.body === WHEN_PROBE_BODY
+        ? { kind: 'time', schedule: command.schedule, firstFireAt: command.firstFireAt, timeZone: command.timeZone }
+        : { kind: 'clarify', reason: 'AMBIGUOUS_TIME' };
+    case 'CREATE_EVENT_RELATIVE':
+      return { kind: 'event', offsetMinutes: command.offsetMinutes, target: command.target };
+    case 'CLARIFY':
+      return { kind: 'clarify', reason: command.reason };
+    default:
+      return { kind: 'clarify', reason: 'MISSING_TIME' };
+  }
+}

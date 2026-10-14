@@ -17,7 +17,7 @@ import type { UntrustedDocumentReadout } from '../application/untrusted-document
 // Type-only, like the readout above: the parsed connector-write request (ADR-0112 D5), plain data.
 import type { ConnectorWriteDraft } from '../application/connector-writes/connector-write-draft';
 // Type-only, like the readouts above: the closed natural-language catalog and a validated selection (ADR-0120), plain data.
-import type { NlCatalogEntry, NlClassBProbe, NlGrammarSelection, NlSelectedCommand } from '../application/nl-routing/catalog';
+import type { NlActionReceipt, NlCatalogEntry, NlClassBProbe, NlGrammarSelection, NlListingReceipt, NlSelectedCommand } from '../application/nl-routing/catalog';
 
 /**
  * The three fixed dispatch points in `ConversationRuntime.handleInner` (ADR-0096 D3):
@@ -87,6 +87,14 @@ export interface TurnHandlerReply {
    * "그 중에 …" refines this listing. Absent: the reply has no catalog equivalent and the runtime clears `lastSelection`.
    */
   readonly nlSelection?: NlGrammarSelection;
+  /**
+   * ADR-0120 amendment A6-D2/D3: the local write this reply reports (an A6 selection or an anchored Class A command),
+   * content-free. The runtime records `quoky.lastAction` and the echo label from it, only while `QUOKY_NL_ACTIONS` is
+   * not `off`. Never changes the reply.
+   */
+  readonly nlAction?: NlActionReceipt;
+  /** A6-D2: the to-do or reminder listing this reply shows (labels and ids only), recorded like `nlAction`. */
+  readonly nlListing?: NlListingReceipt;
 }
 
 /**

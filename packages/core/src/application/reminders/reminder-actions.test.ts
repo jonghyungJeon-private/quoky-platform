@@ -1,0 +1,187 @@
+import { describe, expect, it } from 'vitest';
+import {
+  REMINDER_LIMITS,
+  ReminderStatus,
+  cancelReminder,
+  type ConversationContext,
+  type Reminder,
+  type ReminderDraft,
+} from '../../domain';
+import type {
+  CancelReminderResult,
+  CompleteFiringResult,
+  CreateReminderResult,
+  ReactivateReminderResult,
+  ReminderRepository,
+} from '../../ports/reminder-repository.port';
+import type { Logger } from '../../ports/logger.port';
+import { plainTextOf } from '../message-rendering';
+import type { NlSelectedCommand } from '../nl-routing/catalog';
+import { ReminderConversationService } from './reminder-conversation-service';
+import { ReminderReplyComposer } from './reminder-reply-composer';
+
+// ADR-0120 amendment A6 (NLA-3): natural-language reminder actions and their per-action inverses (ratification record
+// A), the undo-only reactivation through the one additive CAS method, and unchanged anchored replies with receipts.
+
+const CONTEXT: ConversationContext = { platform: 'discord', channelId: 'c1', userId: 'owner', direct: true };
+const ACTOR = 'actor-1';
+const NOW = '2026-10-14T03:00:00.000Z'; // Wed 12:00 KST
+const silent: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined };
+
+class MemoryRepository implements ReminderRepository {
+  readonly rows: Reminder[] = [];
+  private nextNo = 13;
+  async createWithinLimit(draft: ReminderDraft, maxActive: number): Promise<CreateReminderResult> {
+    const active = this.rows.filter((r) => r.actorId === draft.actorId && (r.status === ReminderStatus.SCHEDULED || r.status === ReminderStatus.FIRING));
+    if (active.length >= maxActive) return { status: 'LIMIT_REACHED', activeCount: active.length };
+    const reminder: Reminder = { ...draft, displayNo: this.nextNo++ };
+    this.rows.push(reminder);
+    return { status: 'CREATED', reminder };
+  }
+  async listActiveByActor(actorId: string): Promise<Reminder[]> {
+    return this.rows.filter((r) => r.actorId === actorId && (r.status === ReminderStatus.SCHEDULED || r.status === ReminderStatus.FIRING));
+  }
+  async getByDisplayNo(actorId: string, displayNo: number): Promise<Reminder | null> {
+    return this.rows.find((r) => r.actorId === actorId && r.displayNo === displayNo) ?? null;
+  }
+  async cancel(actorId: string, displayNo: number, at: string): Promise<CancelReminderResult> {
+    const index = this.rows.findIndex((r) => r.actorId === actorId && r.displayNo === displayNo);
+    const row = this.rows[index];
+    if (row === undefined) return { status: 'NOT_FOUND' };
+    if (row.status === ReminderStatus.FIRING) return { status: 'IN_FLIGHT', reminder: row };
+    if (row.status !== ReminderStatus.SCHEDULED) return { status: 'ALREADY_FINAL', reminder: row };
+    const canceled = cancelReminder(row, at);
+    this.rows[index] = canceled;
+    return { status: 'CANCELED', reminder: canceled };
+  }
+  async reactivate(actorId: string, next: Reminder, expectedUpdatedAt: string, maxActive: number): Promise<ReactivateReminderResult> {
+    const index = this.rows.findIndex((r) => r.id === next.id && r.actorId === actorId);
+    const row = this.rows[index];
+    if (row === undefined) return { status: 'NOT_FOUND' };
+    if (row.status !== ReminderStatus.CANCELED || row.updatedAt !== expectedUpdatedAt) return { status: 'CHANGED', reminder: row };
+    const active = (await this.listActiveByActor(actorId)).length;
+    if (active >= maxActive) return { status: 'LIMIT_REACHED', activeCount: active };
+    this.rows[index] = next;
+    return { status: 'REACTIVATED', reminder: next };
+  }
+  async claimDue(): Promise<Reminder[]> {
+    return [];
+  }
+  async completeFiring(): Promise<CompleteFiringResult> {
+    return { status: 'CONFLICT' };
+  }
+  async listFiring(): Promise<Reminder[]> {
+    return [];
+  }
+}
+
+function service(actionReceipts = true) {
+  const repository = new MemoryRepository();
+  const conversation = new ReminderConversationService({
+    repository,
+    composer: new ReminderReplyComposer(),
+    timeZone: 'Asia/Seoul',
+    enabled: true,
+    logger: silent,
+    actionReceipts,
+    idGenerator: (() => {
+      let n = 0;
+      return () => `rem-${++n}`;
+    })(),
+  });
+  return { repository, conversation };
+}
+
+const base = (now = NOW) => ({ context: CONTEXT, actorId: ACTOR, messageId: 'm1', now });
+const cmd = (entryId: NlSelectedCommand['entryId'], args: NlSelectedCommand['args'] = {}, extra: Partial<NlSelectedCommand> = {}): NlSelectedCommand => ({ entryId, args, language: 'ko', ...extra });
+const text = (result: { reply: { text: string; content?: unknown } }) => plainTextOf((result.reply.content as never) ?? result.reply.text);
+
+describe('anchored reminder commands keep their replies and only gain receipts', () => {
+  it('create, list and cancel: same text; receipts only with actionReceipts', async () => {
+    const on = service(true);
+    const off = service(false);
+    const create = { ...base(), text: '내일 9시에 물 마시기 알려줘' };
+    const a = await on.conversation.handleTurnDetailed(create);
+    const b = await off.conversation.handleTurnDetailed(create);
+    expect(a?.reply.text).toBe(b?.reply.text);
+    expect(a?.action).toMatchObject({ entryId: 'reminder.create', source: 'reminder', label: 13 });
+    expect(b?.action).toBeUndefined();
+    expect((await on.conversation.handleTurnDetailed({ ...base(), text: '알림 목록' }))?.listing).toEqual({ source: 'reminder', items: [{ label: 13, id: 'rem-1' }] });
+    expect((await on.conversation.handleTurnDetailed({ ...base(), text: '알림 13 취소' }))?.action).toMatchObject({ entryId: 'reminder.cancel', label: 13 });
+    expect(await on.conversation.handleTurn({ ...base(), text: '알림 목록' })).toEqual((await on.conversation.handleTurnDetailed({ ...base(), text: '알림 목록' }))?.reply);
+  });
+});
+
+describe('A6 reminder actions', () => {
+  it('reminder.create parses `when` with the deterministic grammar and echoes #N, the absolute time and the undo hint', async () => {
+    const { conversation, repository } = service();
+    const result = await conversation.handleAction(cmd('reminder.create', { body: '물 마시기', when: '내일 9시' }), base());
+    expect(text(result)).toMatch(/^알림 #13을 만들었어요: 10월 15일\(목\) 오전 9:00 · '물 마시기' · 되돌리기: "되돌려줘" \(10분\)$/u);
+    expect(repository.rows[0]).toMatchObject({ body: '물 마시기', schedule: { type: 'ONCE' }, nextFireAt: '2026-10-15T00:00:00.000Z' });
+    const unclear = await conversation.handleAction(cmd('reminder.create', { body: '물', when: '회의' }), base());
+    expect(unclear.action).toMatchObject({ result: 'refused', reason: 'when-unparsed' });
+  });
+
+  it('reminder.cancel by display number; a target id that does not match refuses', async () => {
+    const { conversation } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '물 마시기', when: '내일 9시' }), base());
+    expect((await conversation.handleAction(cmd('reminder.cancel', { ref: 'recent' }, { target: { source: 'reminder', id: 'other', label: 13 } }), base())).action).toMatchObject({ result: 'refused' });
+    const canceled = await conversation.handleAction(cmd('reminder.cancel', { ref: '#13' }, { target: { source: 'reminder', label: 13 } }), base());
+    expect(text(canceled)).toContain('알림 #13 취소했어요');
+    expect(canceled.action).toMatchObject({ entryId: 'reminder.cancel', result: 'executed', itemId: 'rem-1', label: 13 });
+  });
+});
+
+describe('reminder inverses (ratification record A)', () => {
+  it('reminder.create → cancel it; a one-shot that already fired → "이미 알림이 나갔어요"', async () => {
+    const { conversation, repository } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '물 마시기', when: '내일 9시' }), base());
+    const undo = await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.create' } }), base());
+    expect(undo.action).toMatchObject({ result: 'undone', undoOf: 'reminder.create', undoable: false });
+    expect(repository.rows[0]?.status).toBe(ReminderStatus.CANCELED);
+    await conversation.handleAction(cmd('reminder.create', { body: '약', when: '내일 10시' }), base());
+    repository.rows[1] = { ...(repository.rows[1] as Reminder), status: ReminderStatus.COMPLETED };
+    const fired = await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-2', label: 14 }, undo: { entryId: 'reminder.create' } }), base());
+    expect(text(fired)).toBe('이미 알림이 나갔어요. 되돌릴 게 없어요.');
+  });
+
+  it('reminder.cancel → the SAME reminder (same #N) is scheduled again; a recurring one resumes from its next occurrence', async () => {
+    const { conversation, repository } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '약 먹기', when: '매일 아침 8시' }), base());
+    const canceled = await conversation.handleAction(cmd('reminder.cancel', { ref: '#13' }, { target: { source: 'reminder', label: 13 } }), base());
+    const version = canceled.action?.version as string;
+    // Two days later: missed occurrences are never sent; it resumes from the next 08:00 after now.
+    const later = '2026-10-16T05:00:00.000Z';
+    const undo = await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version } }), base(later));
+    expect(undo.action).toMatchObject({ result: 'undone', undoOf: 'reminder.cancel', label: 13 });
+    expect(repository.rows[0]).toMatchObject({ id: 'rem-1', displayNo: 13, status: ReminderStatus.SCHEDULED, schedule: { type: 'DAILY' }, nextFireAt: '2026-10-16T23:00:00.000Z' });
+    expect(text(undo)).toContain('알림 #13을 다시 켰어요');
+  });
+
+  it('a one-shot whose time passed asks for a new time (reminder id only); the answer reschedules the same #N', async () => {
+    const { conversation, repository } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '스트레칭', when: '30분 뒤' }), base());
+    const canceled = await conversation.handleAction(cmd('reminder.cancel', { ref: '#13' }, { target: { source: 'reminder', label: 13 } }), base());
+    const late = '2026-10-14T04:00:00.000Z';
+    const ask = await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version: canceled.action?.version as string } }), base(late));
+    expect(ask.action).toMatchObject({ result: 'reschedule', itemId: 'rem-1', label: 13, reason: 'past-time' });
+    expect(text(ask)).toBe('알림 #13의 시간이 이미 지났어요. 언제 다시 알려 드릴까요?');
+    const answered = await conversation.handleAction(cmd('action.undo', { when: '내일 9시' }, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel' } }), base(late));
+    expect(answered.action).toMatchObject({ result: 'undone', label: 13 });
+    expect(repository.rows[0]).toMatchObject({ displayNo: 13, status: ReminderStatus.SCHEDULED, schedule: { type: 'ONCE', at: '2026-10-15T00:00:00.000Z' } });
+  });
+
+  it('a CAS lost to a concurrent change and the active limit are said plainly', async () => {
+    const { conversation, repository } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '물', when: '내일 9시' }), base());
+    await conversation.handleAction(cmd('reminder.cancel', { ref: '#13' }, { target: { source: 'reminder', label: 13 } }), base());
+    const stale = await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version: '2000-01-01T00:00:00.000Z' } }), base());
+    expect(stale.action).toMatchObject({ result: 'refused', reason: 'changed' });
+    const version = repository.rows[0]?.updatedAt as string;
+    for (let i = 0; i < REMINDER_LIMITS.maxActivePerActor; i += 1) {
+      repository.rows.push({ ...(repository.rows[0] as Reminder), id: `fill-${i}`, displayNo: 100 + i, status: ReminderStatus.SCHEDULED });
+    }
+    const limited = await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version } }), base());
+    expect(limited.action).toMatchObject({ result: 'refused', reason: 'limit' });
+  });
+});
