@@ -236,11 +236,14 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     expect(new Set(keys).size).toBe(3);
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v20');
     expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v21');
+    // The same turn entries every time; only the kill switch decides the prompt (stopped: v20, running: v21).
     const w = world({ script: [NONE, NONE, NONE] });
-    await w.decide('오늘 날씨 좋다', { entries: READS });
-    await w.decide('오늘 날씨 좋다', { entries: READS, now: at(1) });
+    await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
+    await w.decide('오늘 날씨 좋다', { entries: ALL });
+    await w.decide('오늘 날씨 좋다', { entries: ALL, now: at(1) });
     expect(w.calls).toHaveLength(1);
-    await w.decide('오늘 날씨 좋다', { now: at(2) });
+    await w.service.handleSwitchPhrase(w.actor(), '에이전트 재개', at(2));
+    await w.decide('오늘 날씨 좋다', { entries: ALL, now: at(2) });
     expect(w.calls).toHaveLength(2);
     expect(w.calls[0]?.prompt).not.toContain('8. Action entries');
     expect(w.calls[1]?.prompt).toContain('8. Action entries');

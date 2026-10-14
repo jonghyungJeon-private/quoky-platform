@@ -23424,10 +23424,19 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
      The ratified text is not rewritten.
   2. *Gold relabels approved (D12 owner batch):* `calendar-010` and `calendar-036` add `availability: true`;
      `calendar-026` adds `partOfDay: afternoon` and `availability: true`; `calendar-057` adds `partOfDay: afternoon`.
-  3. *`timedOnly`: T1 approved* — "회의/미팅" (meeting) in a calendar question means timed events. `calendar-008`, `-020`,
-     `-025`, `-030` and `-035` get `timedOnly: true`. No code change: the A5 rule 3 grounding (`CALENDAR_TIMED_ONLY_WORDS`)
-     already accepts it. The prompt example "내일 미팅 있나?" → `{range: tomorrow}` still shows no flag; aligning it is
-     left for the next prompt version (that moves the A6 `off` pin again).
+  3. *`timedOnly`: T1 approved for exactly five cases* — `calendar-008`, `-020`, `-025`, `-030` and `-035` get
+     `timedOnly: true` ("회의/미팅" there means timed events). No code change: the A5 rule 3 grounding
+     (`CALENDAR_TIMED_ONLY_WORDS`) already accepts it.
+     - **Open owner question for the D12 batch (not relabelled):** the other cases with a meeting word and no
+       `timedOnly` in their gold — `calendar-005`, `-016`, `-018`, `-029`, `-032`, `-034` and `-057` — keep their gold
+       until the owner says whether T1 covers them.
+     - **Not applied:** the 2026-10-14 proposal "calendar-057 … (plus `timedOnly: true` if T1 below)". The approved
+       relabel of `calendar-057` is `{range: this-week, partOfDay: afternoon}` only; adding `timedOnly` needs the owner's
+       confirmation.
+     - **Deferred prompt alignment** (next prompt version; it moves the A6 `off` pin again): two prompt texts contradict
+       T1 — the example "내일 미팅 있나?" → `{range: tomorrow}` (no flag), and the `timedOnly` arg description
+       (`wave1-entries.ts:231`, "true only when the owner narrows to meetings/timed events … ("회의만", "미팅만", "only
+       meetings")"). The description likely explains the `calendar-035` miss below (the flag omitted).
   - The nine relabels are applied in `nl-intent.v1.json`, the old expectation kept in each note. **Still PENDING** the
     owner's D12 batch: `uat5ca-01..10` (and the earlier `uat5r*` and `uat5wd-*` batches). The grammar side moves to exact
     208/248, user-visible 226 (the calendar grammar answers `calendar-008/-020/-025` without the flag).
@@ -23442,6 +23451,8 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   gates pass on this run. One run, not the three stable runs D12 asks for. The calendar misses: `calendar-025` dropped
   `remaining`, `calendar-035` omitted `timedOnly` (T1 gold), `calendar-032` "do I have any meetings tomorrow?" got
   `availability` (not in the batch), and `calendar-057` added `timedOnly` to the approved `{this-week, afternoon}` (under T1
+  "회의 중에" arguably carries it; it is in the open owner question above).
+
   "회의 중에" arguably carries it; the owner may want to add it to the gold).
 
 
