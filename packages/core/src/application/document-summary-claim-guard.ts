@@ -239,12 +239,33 @@ interface SentenceActors {
   readonly generic: boolean;
 }
 
-/** Reported speech after a first-person word (`'저는 …'라고`, `…했다고 말씀하셨어요`): the third party's words. */
-const KO_REPORTED_SPEECH = /라고|다고|냐고|자고|라며|다며|라는|다는|래요|대요/u;
+/**
+ * Reported speech after a first-person word (`'저는 …'라고`, `…했다고 말씀하셨어요`): the third party's words. Anchored at
+ * the word's end, and `다는` / `대요` only after a finite form (`했다는`, `한다는`), so `바라는` is not a quotation.
+ */
+const KO_QUOTATIVE_END = /(?:라고|다고|냐고|자고|라며|다며)$/u;
+const KO_QUOTATIVE_ADNOMINAL_END = /(?:다는|대요)$/u;
+
+function koReportedSpeech(token: string): boolean {
+  let end = token.length;
+  while (end > 0 && !WORD_CHARACTER.test(token.charAt(end - 1))) end -= 1;
+  const word = token.slice(Math.max(0, end - 8), end);
+  if (KO_QUOTATIVE_END.test(word)) return true;
+  if (!KO_QUOTATIVE_ADNOMINAL_END.test(word)) return false;
+  const final = hangul(word.charAt(word.length - 3))?.final;
+  return final === 20 || final === 4;
+}
 const QUOTE_MARK = /["“”‘’'「」『』]/u;
 /** An English reporting verb or a quote before `we` / `I` (`Kim says we finalized …`): the third party's words. */
 const EN_REPORTING =
   /\b(?:say|says|said|write|writes|wrote|mention|mentions|mentioned|tell|tells|told|ask|asks|asked|note|notes|noted|explain|explains|explained|report|reports|reported|claim|claims|claimed|add|adds|added|confirm|confirms|confirmed|according\s+to)\b|["“‘]/i;
+
+/**
+ * A first person who only read or verified a third party's report (`I confirmed Alice's report that the email was
+ * sent`, `I checked that …`): the embedded act is the third party's, so Quoky is not its actor (Codex P2).
+ */
+const EN_VERIFIES_REPORT =
+  /^\S+(?:['’](?:ve|d))?\s+(?:[a-z]{1,20}\s+){0,3}?(?:confirmed|checked|noticed|saw|read|found|summari[sz]ed|reviewed|verified|noted|looked\s+at)\s+(?:that\b|\p{Lu}[\p{L}.-]{0,30}['’]s\s+(?:report|email|e-mail|mail|message|note|update|reply|claim|statement|summary|post)\b|(?:the|a|an)\s+(?:report|email|e-mail|mail|message|note|update|reply)\s+(?:from|by)\s+\p{Lu})/u;
 
 function actorsIn(sentence: string): SentenceActors {
   const tokens = sentence.split(/\s+/u).filter((token) => token.length > 0);
@@ -252,14 +273,14 @@ function actorsIn(sentence: string): SentenceActors {
   // Reported speech after a word, read right to left once (linear).
   const reportedAfter: boolean[] = new Array<boolean>(tokens.length + 1).fill(false);
   for (let index = tokens.length - 1; index >= 0; index -= 1) {
-    reportedAfter[index] = reportedAfter[index + 1] === true || KO_REPORTED_SPEECH.test(tokens[index + 1] ?? '');
+    reportedAfter[index] = reportedAfter[index + 1] === true || koReportedSpeech(tokens[index + 1] ?? '');
   }
   let quoted = false;
   let strong = false;
   let generic = false;
   for (let index = 0; index < words.length && !(strong && generic); index += 1) {
     const word = words[index] as string;
-    const ownWords = !quoted && reportedAfter[index] !== true && !KO_REPORTED_SPEECH.test(tokens[index] ?? '');
+    const ownWords = !quoted && reportedAfter[index] !== true && !koReportedSpeech(tokens[index] ?? '');
     if (QUOTE_MARK.test(tokens[index] ?? '')) quoted = true;
     if (word.length === 0) continue;
     if (ownWords && KO_FIRST_PERSON_ACTORS.has(word)) strong = true;
@@ -274,7 +295,10 @@ function actorsIn(sentence: string): SentenceActors {
   }
   const english = EN_ACTOR.exec(sentence);
   const reporting = EN_REPORTING.exec(sentence);
-  const englishActor = english !== null && (reporting === null || reporting.index > english.index);
+  const englishActor =
+    english !== null &&
+    (reporting === null || reporting.index > english.index) &&
+    !EN_VERIFIES_REPORT.test(sentence.slice(english.index, english.index + english[0].length + 80));
   const acting = (strong && (KO_ACTION.test(sentence) || hasPastSyllable(sentence))) || englishActor;
   return { acting, generic };
 }
@@ -572,30 +596,56 @@ const EN_BARE_DRIVE = enBareParticiple(
 );
 const EN_YOUR_REPLY_PASSIVE = enYourReplyPassive(EN_MAIL_VERBS);
 
-/** First words of a heading that are not a person (`Summary:`, `Next steps:`, `The sender:`) or are Quoky's own. */
+/** Words that are not a person's name in a heading or an attribution (`Summary:`, `Completed tasks:`, `What I did:`). */
 const EN_HEADING_NOT_A_PERSON =
-  /^(?:i|we|me|my|our|us|quoky|assistant|the|this|that|these|those|here|done|ok|okay|summary|status|update|updates|action|actions|result|results|note|notes|next|key|main|highlights|today|todo|reply|answer|response|thread|email|message|subject|from|to|re|fwd|tl|요약|결과|완료|다음|참고|정리)$/iu;
-const HEADING_NAME = /^(?:[-*•>#]+\s*)?(\p{Lu}[\p{L}.-]{0,30}|[가-힣]{2,5})/u;
+  /^(?:i|we|me|my|our|us|quoky|assistant|the|this|that|these|those|here|done|ok|okay|summary|status|update|updates|action|actions|result|results|note|notes|next|key|main|highlights|today|todo|reply|answer|response|thread|email|message|subject|to|re|fwd|tl|what|how|why|when|where|who|completed|complete|pending|open|closed|task|tasks|item|items|change|changes|step|steps|overview|details|background|context|decision|decisions|question|questions|attachment|attachments|deadline|deadlines|schedule|agenda|timeline|recap|takeaways|points|follow|요약|결과|완료|다음|참고|정리)$/iu;
+/** A first-person token anywhere in a heading or attribution. */
+const FIRST_PERSON_TOKEN = /\b(?:I|we|my|our|me|us)\b|(?:^|\s)(?:제|저|저희|나|내|우리)(?:가|는|의|도)?(?=\s|$)/iu;
 
+/** Whether `name` is a person other than Quoky: every word a name, none a heading word, a stand-in or the first person. */
+function personName(name: string): boolean {
+  if (FIRST_PERSON_TOKEN.test(name)) return false;
+  return name
+    .split(/\s+/u)
+    .filter((word) => word.length > 0)
+    .every((word) => {
+      const bare = wordOf(word).replace(/님$/u, '');
+      const stem = KO_ACTOR_FORM.exec(bare)?.[1] ?? bare;
+      return (
+        bare.length > 0 &&
+        !EN_HEADING_NOT_A_PERSON.test(bare) &&
+        !QUOKY_NAME_WORD.test(bare) &&
+        ![bare, stem].some((form) => KO_STAND_INS.has(form) || KO_GENERIC_STAND_INS.has(form) || KO_FIRST_PERSON_ACTORS.has(form))
+      );
+    });
+}
+
+const EN_NAME = String.raw`\p{Lu}[\p{L}.-]{0,30}(?:\s+\p{Lu}[\p{L}.-]{0,30}){0,2}`;
+const KO_NAME = String.raw`[가-힣]{2,5}(?:\s?님)?`;
 /**
- * A heading line that names a third party (CA re-review): any line ending in `:` whose first word is a name, not a
- * heading word or Quoky (`Kim's email:`, `Kim wrote:`, `Kim (Sales):`, `Kim's update:`, `Kim — key points:`, `김철수:`).
+ * A heading that names a person (CA follow-up): `Kim:`, `Kim Lee:`, `From Kim:`, `Kim's update:`, `Kim wrote:` /
+ * `says:`, `Kim (Sales):`, `Kim — key points:`, `김철수:`, `김철수 님의 메일:`. Group 1 is the name.
  */
+const PERSON_HEADING = new RegExp(
+  String.raw`^(?:[-*•>#]+\s*)?(?:[Ff]rom\s+)?(${EN_NAME}|${KO_NAME})` +
+    String.raw`(?:['’]s\s+.{1,40}|\s+(?:wrote|writes|says|said|replied|asked|added|noted|mentioned)|\s*\([^()]{1,30}\)|\s+[—–-]\s+.{1,40}|\s?의\s?.{1,20})?:$`,
+  'u',
+);
+
+/** A heading line that names a third party and holds no first-person token (`What I did:` and `My actions:` do not). */
 function thirdPartyHeading(line: string): boolean {
-  if (line.length > 120 || !line.endsWith(':')) return false;
-  const name = HEADING_NAME.exec(line)?.[1];
-  return name !== undefined && !EN_HEADING_NOT_A_PERSON.test(name) && !QUOKY_NAME_WORD.test(name.toLowerCase());
+  if (line.length > 120 || !line.endsWith(':') || FIRST_PERSON_TOKEN.test(line)) return false;
+  const name = PERSON_HEADING.exec(line)?.[1];
+  return name !== undefined && personName(name);
 }
 
 /** An item attributed to a third party at its end: `Sent the contract to legal (Kim).`, `(by Kim Lee)`, `(김철수)`. */
-const EN_TRAILING_ATTRIBUTION =
-  /\((?:by\s+|from\s+|per\s+)?(\p{Lu}[\p{L}.'’-]{0,30}(?:\s+\p{Lu}[\p{L}.'’-]{0,30}){0,2}|[가-힣]{2,5}(?:\s?님)?)\)\s*[.!]?$/u;
+const EN_TRAILING_ATTRIBUTION = new RegExp(String.raw`\((?:by\s+|from\s+|per\s+)?(${EN_NAME}|${KO_NAME})\)\s*[.!]?$`, 'u');
 
+/** Not `(제가)`, `(비서)` or `(Quoky)`: a stand-in in the parentheses is Quoky, not a third party (CA follow-up). */
 function attributedToThirdParty(line: string): boolean {
   const name = EN_TRAILING_ATTRIBUTION.exec(line.length > 200 ? line.slice(-200) : line)?.[1];
-  if (name === undefined) return false;
-  const first = name.split(/\s/u)[0] ?? '';
-  return !EN_HEADING_NOT_A_PERSON.test(first) && !QUOKY_NAME_WORD.test(first.toLowerCase());
+  return name !== undefined && personName(name);
 }
 
 /**
@@ -619,8 +669,11 @@ function droppedSubjectClaim(text: string): boolean {
   return false;
 }
 
-/** Clauses of an English sentence, so request framing must govern the passive's own clause (`As requested, here is …:`). */
-const EN_CLAUSE_SPLIT = /[:;—–]|\s-\s/u;
+/**
+ * Clauses of an English sentence, so request framing must govern the passive's own clause (`As requested, here is …:`)
+ * and a third-party agent exempts only its own clause (`… sent by Alice, but the email was deleted on your behalf`).
+ */
+const EN_CLAUSE_SPLIT = /[:;—–]|\s-\s|,\s*(?:but|and|while|whereas|although|though|yet|so|whilst)\b|\s(?:but|while|whereas|although|though|whilst)\s/iu;
 
 function englishClaim(
   text: string,
@@ -638,7 +691,9 @@ function englishClaim(
       if (EN_THIRD_PARTY_AGENT.test(clause) || !EN_ON_YOUR_BEHALF.test(clause)) continue;
       if (passive.test(clause) || bare.test(clause)) return true;
     }
-    if (!EN_THIRD_PARTY_AGENT.test(sentence) && passive.test(sentence) && actorInReply()) return true;
+    for (const clause of sentence.split(EN_CLAUSE_SPLIT)) {
+      if (!EN_THIRD_PARTY_AGENT.test(clause) && passive.test(clause) && actorInReply()) return true;
+    }
   }
   return droppedSubjectClaim(text);
 }

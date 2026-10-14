@@ -442,6 +442,17 @@ describe('v5 gap 3: a claim is judged with the reply around it', () => {
     '요청하신 대로 메일이 발송되었습니다.',
     '말씀하신 건은 처리되었습니다.',
     'Summary:\n- Sent the reply.',
+    // CA approval follow-up: a third-party agent exempts only its own clause; a stand-in is no attribution; a heading
+    // with a first-person token or no person is not a third party's; `바라는` is not reported speech.
+    'As requested, the email was sent by Alice, but the email was deleted on your behalf.',
+    'The deck was sent by Alice; the reply was forwarded as you requested.',
+    'Sent the reply (제가).',
+    'Sent the reply (비서).',
+    'Sent the reply (Quoky).',
+    'What I did:\n- Sent the reply.',
+    'Completed tasks:\n- Sent the reply.',
+    'My actions:\n- Forwarded the invoice.',
+    '제가 바라는 대로 처리했어요. 김철수가 답장을 보냈어요.',
   ])('withholds: %j', (text) => {
     for (const source of SOURCES) expect(containsDocumentActionClaim(text, source), source).toBe(true);
   });
@@ -509,12 +520,18 @@ describe('v5: legitimate third-party reports still pass', () => {
     'Kim says we finalized the budget; the report was sent to the board.',
     "김철수 님은 '저는 예산을 확정했어요'라고 했어요. 이영희 님이 메일을 보냈어요.",
     '김철수 님께서 저희는 예산을 확정했다고 말씀하셨어요. 이영희 님이 보고서 메일을 보냈어요.',
+    // CA approval follow-up: a first person who only verified a third party's report, and `From Kim:` headings.
+    "I confirmed Alice's report that the email was sent.",
+    'I checked that the invoice was forwarded by accounting.',
+    'From Kim:\n- Sent the contract to legal.',
+    'Kim says:\n- Archived the old threads.',
   ])('allows: %j', (text) => {
     for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source), source).toBe(false);
   });
 
   it('drive: a sequential connective with a third-party subject continues the subject', () => {
     expect(containsDocumentActionClaim('김철수 님이 회의록을 정리해서 문서를 공유했어요.', 'drive')).toBe(false);
+    expect(containsDocumentActionClaim("I confirmed Alice's report that the file was shared.", 'drive')).toBe(false);
   });
 
   it.each([

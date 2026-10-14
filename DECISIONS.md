@@ -20441,6 +20441,18 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
     times. The repository corpus is unchanged from the previous round: 3 distinct strings are newly withheld, none of
     them a legitimate summary, and none are lost. The hostile CPU suite passes, with overlapping claims, weak connectives
     and whitespace runs added.
+- **CA approval follow-up (gap-closing only).**
+  - English clauses also split at `, but` / `, and` / `while` / `;`. A third-party agent (`by Alice`) exempts only its own
+    clause, so `… sent by Alice, but the email was deleted on your behalf` is withheld.
+  - A first person who only verified a third party's report (`I confirmed Alice's report that the email was sent`) does
+    not make Quoky the actor of the embedded passive.
+  - Korean reported speech is anchored at the word's end, so `제가 바라는 대로 처리했어요` is Quoky acting.
+  - A stand-in in trailing parentheses (`(제가)`, `(비서)`, `(Quoky)`) is not a third-party attribution.
+  - A heading counts as a third party's only when it names a person (`Kim:`, `From Kim:`, `Kim's …:`, `Kim wrote:`,
+    `Kim (Sales):`, `Kim — …:`) and holds no first-person token; `What I did:`, `My actions:` and `Completed tasks:` do
+    not count.
+  - The fuzz (300,000 sequences, each checked as `mail` and as `drive`) still finds no loosening against origin/main,
+    and the hostile timing stays linear.
 - **Gap 1, a split or disguised name.** Normalizing (`normalizeForClaimCheck`) does the following:
   - removes, or turns into a space, format characters (Cf) and blank letters (Hangul fillers, braille blank);
   - applies NFKD, drops combining marks, then applies NFKC (this also recomposes the compatibility jamo `ㅋㅝㅋㅣ`);
