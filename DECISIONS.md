@@ -22197,6 +22197,12 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
 
 ### ADR-0120 amendment A5 implementation note 2 — a one-syllable weekday is a weekday only after a week anchor, and a period never loses the owner's weekday (2026-10-14, live Telegram)
 
+- **Status: acknowledged by the owner on 2026-10-14** ("이대로 진행"), after a Chief Architect APPROVE WITH CHANGES and
+  Codex findings (all addressed in the review round below). The visible trade-offs acknowledged:
+  - "다다음 주 수요일" is asked instead of being shown as the whole week after next;
+  - a full weekday name with a longer period ("이번 달 금요일 일정" read as this month) is asked;
+  - a false weekday reading of an abbreviation ("지난주 금 시세", "차주 월 납입") is asked, never answered with a wrong
+    day.
 - **Live defect** (Telegram, 2026-10-14 15:52 KST; `active`, `c-shadow`, grammar yield on). "다음 주 수 일정 있어?" (수 =
   수요일) was declined by the calendar grammar as designed (A2 note 2: "다음 주 수" is a noun before 수) and the selector ran,
   but the reply was "10월 19일(월)", next Monday, instead of Wednesday 10/21.
@@ -22224,6 +22230,25 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
      (`validateWithRepair`), so the owner gets the D7 usage question, never another day.
   3. *A weekday abbreviation is a period, not a title keyword.* The A5 `time-keyword` rule also covers a keyword made of
      the abbreviations this message uses as weekdays ("수" in "다음 주 수 일정").
+- **Review round (Chief Architect, Codex).**
+  - *Bounds.* The bound tail allows a space and 날 before the particle ("금요일 까지", "수요일날까지", "수요일 부터 3일").
+    English bound markers (by, until, till, through, from, since, before, after) may carry their anchor ("by this Friday").
+    A bound weekday may also sit right next to the period ("수요일 이후" as Thursday on).
+  - *Forms.* The colloquial 월욜 … 일욜 are full names. Any punctuation or symbol ends an abbreviation ("수(오전)").
+  - *Uncertain readings.* A full weekday inside a grounded title keyword with other words ("수요일 스터디", "sunday school")
+    is uncertain (A5 rule 6: real title keywords stay). An abbreviation followed by a content word that is neither a time
+    word, a closed function word (the A2 classes, `isNlContentWord`) nor one of the selected entry's own `aliases` ("수
+    일정", "목 메일") is uncertain too ("이번 주 금 시세 발표"). An uncertain weekday accepts that day or a period without a
+    weekday; another single day is still refused.
+  - *Names.* A sender value is removed only as a whole word, optionally with one particle, so "Sun" never erases "Sunday".
+  - *Keywords.* A one-syllable weekday is never a keyword when the message names a weekday in any form, including several
+    weekdays or a full name ("다음 주 수요일 일정" with keyword "수").
+  - *Service.* An output refused for `weekday` or `time-keyword` is dropped from the selector-output cache, so an identical
+    retry calls the model again. A `weekday` refusal, including one reached after the repair dropped a future mail
+    range, asks with a weekday hint: "…에서 어느 날을 볼지 정확히 모르겠어요. '다음 주 수요일'처럼 주와 요일을 함께
+    말씀해 주세요."
+  - *Tests.* Each finding has tests: a Sunday clock, English "next Wed", the cached retry, and the mail repair that ends in
+    `weekday`.
 - **"다음 주 일 많아?" (decided).** 일 after an anchor is uncertain: it is also the commonest noun for work and day, and the
   noun reading is the likelier one here. Core cannot tell the two apart structurally, so it does not force either. For
   this one syllable it accepts Sunday of that week, or a period with no weekday (the whole week), and refuses any other

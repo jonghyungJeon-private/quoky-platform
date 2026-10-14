@@ -54,9 +54,11 @@ Details and the review record for each item are in the matching notes in `DECISI
   ("금요일까지") must lie inside the period; "다음 주 일 많아?" accepts the week or Sunday.
 - **Unchanged.** Prompt `nl-select.v18` byte for byte, no new symbol, flag, env, migration or port.
 - **Corpus.** 804 cases; `uat5wd-01..07` await the owner's D12 look.
-- **Open for the owner.** "다다음 주 수요일" is asked instead of showing the whole week after next. Showing that day would
-  need a new symbol or prompt text. A prompt hint for the abbreviations (v19-equivalent) would turn more of the remaining
-  asks into answers.
+- **Acknowledged by the owner (2026-10-14, "이대로 진행").** "다다음 주 수요일", a full weekday with a longer period and
+  a false abbreviation reading ("지난주 금 시세") are asked, never answered with another day. The question names the week
+  and the day, and a refused output is not cached.
+- **Open for the owner.** Showing "다다음 주 수요일" directly would need a new symbol or prompt text. A prompt hint for the
+  abbreviations (v19-equivalent) would turn more of the remaining asks into answers.
 
 Details: the A5 implementation note 2 in `DECISIONS.md`.
 

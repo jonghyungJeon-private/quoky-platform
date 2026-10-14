@@ -16,8 +16,13 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   the new reason `weekday`. It is never repaired, so the owner is asked instead of being shown another day. A bound
   weekday ("금요일까지") must lie inside the period. The abbreviation is never a title keyword. "다음 주 일 많아?" accepts
   the week or Sunday (일 is also "work").
+- **Review round.** Spaced and 날 bounds ("금요일 까지", "수요일날까지"), English bounds with an anchor, 월욜 … 일욜,
+  punctuation after an abbreviation, a weekday inside a title keyword or an abbreviation before another content word
+  (uncertain: that day or the period), whole-word sender removal, no one-syllable weekday keyword when any weekday is
+  named. A refused output is not cached, and the question names the week and the day.
 - **Unchanged.** Selector prompt `nl-select.v18` byte for byte (A6 `off` identity intact), no new symbol, flag, env,
-  migration or port change. "다다음 주 수요일" read as the whole week after next is now asked instead of listed.
+  migration or port change. Acknowledged by the owner ("이대로 진행"): "다다음 주 수요일", a full weekday with a longer
+  period and a false abbreviation reading are asked instead of answered.
 - **Corpus and eval.** `uat5wd-01..07` (804 cases, pending D12). One owner-approved Haiku run on calendar, mail and Jira
   (414 cases): 93.6% overall, 0 wrong captures, new cases 6/7. The live sentence is now asked when the model drops the
   weekday. The other misses are pre-existing exact-arg differences.
