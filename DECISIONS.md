@@ -22887,7 +22887,9 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
 
 - **A6-D3a — action requests are one plain line (fail closed).** A turn can lead to an A6 action (a selection, an undo,
   the anchored `되돌리기`, an answer to an A6 question) only when the whole message:
-  1. is a single line of at most **300 characters**, with no platform quote;
+  1. is a single line of at most **300 characters**, with no platform quote and no platform code formatting
+     (`InboundMessage.formatting.code`: a Telegram `code`/`pre` entity, whose markers are not in the text). The line
+     check runs on the raw text before any trim: CR, LF, VT, FF, U+0085, U+2028 and U+2029 anywhere refuse;
   2. has **no hidden characters**: Unicode format characters (zero-width, bidi, tag characters), variation selectors, line
      and paragraph separators, Hangul fillers, C0/C1 controls. U+FE0F and U+200D are allowed only inside an emoji
      sequence (❤️, ☀️, 👨‍💻, keycaps);
@@ -22896,6 +22898,10 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
      colon and a value (`request: …`, YAML-like). An ordinary bracketed phrase ("[긴급] 보고서 쓰기") is allowed;
   4. has **no exact-command form**: a to-do head with a colon ("할 일 추가:"), the Slack post head ("#채널에 게시:") or
      the Slack post execution phrase, each taken from its own grammar.
+  Checks 2–4 also run on an NFKC-folded copy, so full-width and compatibility forms (`｛ ｝ ［ ］ ｀ ＞ ：`) count as
+  their ASCII marks; spans are still taken from the owner's original text. The anchored `되돌리기` meets the same rule and
+  must be the whole trimmed message. Discord needs no flag: only `message.content` is read (code fences keep their
+  backticks), and embeds, attachment text, forwarded snapshots and referenced-message content never enter the text.
   Anything else does not act; reads are unaffected, and the reply asks for the action in one plain sentence ("동작 요청은
   한 문장으로 말씀해 주세요"). Because an eligible message is plain text, every argument is grounded in the whole message,
   and argument-free entries (undo) are covered by the same rule.
