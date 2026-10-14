@@ -136,6 +136,10 @@ closed values, spans are verbatim.
 - `undo` cases for every inverse and every "cannot run" row of the ratification record (A);
 - `mode` cases for `summary`, `full`, and the open key asked once, reused and overridden (ratification record C).
 
+A test fails when a corpus text of 8 characters or more appears verbatim in the v19 prompt. The v19 action examples are
+"\"주간 리포트 초안\" 할 일 목록에 넣어둬", "세 번째 거 끝냈으니까 처리해 줘", "방금 만든 거 취소해", "아 잘못했다 되돌려 놔",
+"두 번째 파일 원문 그대로 보여줘", "1번은 뭐라고 왔어?", "그 할 일 아까 다 했었어", "할 일 전부 완료로 바꿔줘": do not reuse them.
+
 ## 3. `golden/agent-redteam.v1.json` (the A6 family)
 
 ```jsonc
