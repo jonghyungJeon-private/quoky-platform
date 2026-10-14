@@ -40,6 +40,9 @@ const TABLE: ReadonlyArray<{ readonly grammar: keyof typeof GRAMMARS; readonly r
   { grammar: 'calendar-question', residual: 'part-of-day', text: '내일 밤 일정' },
   { grammar: 'calendar-question', residual: 'leftover-content', text: '이번 주 정기회의 일정 있어?' },
   { grammar: 'calendar-question', residual: 'leftover-content', text: '다음 주 수 일정 있어?' },
+  { grammar: 'calendar-question', residual: 'leftover-content', text: '내일 지도 일정 있어?' },
+  { grammar: 'calendar-question', residual: 'leftover-content', text: '오늘 바 일정 있어?' },
+  { grammar: 'calendar-question', residual: 'leftover-content', text: '내일 등 일정 있어?' },
   { grammar: 'calendar-question', residual: 'none', text: "what's on my calendar at 3pm this afternoon" },
   { grammar: 'calendar-question', residual: 'none', text: 'any meetings this afternoon at 3pm?' },
   { grammar: 'calendar-question', residual: 'part-of-day', text: 'what is on my calendar this afternoon' },
@@ -71,6 +74,13 @@ const TABLE: ReadonlyArray<{ readonly grammar: keyof typeof GRAMMARS; readonly r
   // A dependent noun is grammar only after an adnominal word (ㄴ/ㄹ final): "알려줄 수", not "다음 주 수".
   { grammar: 'work-lookup', residual: 'none', text: '할 일 알려줄 수 있나요?' },
   { grammar: 'work-lookup', residual: 'none', text: '할 일 보여줄 수 있어요?' },
+  { grammar: 'work-lookup', residual: 'none', text: '할 일 남은 거 보여줘' },
+  // Never after a noun, and never with a particle attached ("지도", "수도", "데이" are words).
+  { grammar: 'work-lookup', residual: 'leftover-content', text: '할 일 지도 알려줘' },
+  { grammar: 'work-lookup', residual: 'leftover-content', text: '오늘 할 일 수도 알려줘' },
+  { grammar: 'work-lookup', residual: 'leftover-content', text: '할 일 데이 알려줘' },
+  { grammar: 'work-lookup', residual: 'leftover-content', text: '할 일 수 알려줘' },
+  { grammar: 'work-lookup', residual: 'leftover-content', text: '할 일 줄 알려줘' },
   { grammar: 'work-surface', residual: 'leftover-content', text: '할 일 팁 알려줘' },
   { grammar: 'work-lookup', residual: 'none', text: '내 지라 티켓 뭐 있어?' },
   { grammar: 'work-lookup', residual: 'none', text: '내 github 이슈들 보여줘' },

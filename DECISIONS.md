@@ -22971,9 +22971,11 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
       - the closed class of degree and frequency adverbs (`ONE_SYLLABLE_ADVERB`: 다, 또, 더, 꼭, 잘, 딱, 막, 곧, 늘, 참, 꽤,
         퍽, 쭉, 확, 싹, 푹; 좀 was already in `KO_FUNCTION`). The negating 안/못 are not in the class: they change the
         meaning;
-      - a dependent noun (수, 줄, 데, 거, 것, 게, 건, 걸, 바, 뿐, 때, 듯, 채, 지, 등, with an optional particle), but only by
-        a morphology rule: the previous word ends in an adnominal ㄴ or ㄹ ("알려줄 수 있나요", "남은 거", "있는 데").
-        Elsewhere the syllable is content ("다음 주 수 일정 있어?" declines: 수 = 수요일).
+      - a bare dependent noun (수, 줄, 데, 거, 것, 게, 건, 걸, 바, 뿐, 때, 듯, 채, 지, 등; no particle attached). It is
+        grammar only right after a verbal adnominal form: a request or existence form ending in ㄴ/ㄹ ("알려줄 수", "있는
+        거"), or an expressed match ending in an adnominal verbal syllable ("요청 온 거", "남은 거"). It is never grammar after
+        a noun ("할 일 수", "내일 지도", "다음 주 수" decline). Orchestrator scope reduction after the 0d45216 regression:
+        this rule may only make declines more likely.
     - The request and existence morphology gains the adnominal forms 줄/드릴, 실 and 는 ("알려줄", "보여주실", "있는"). The
       hard-listed 알려줄 was removed from `KO_FUNCTION`.
     - A fragment glued to a removed vocabulary word is morphology only AFTER the word and only as one closed suffix

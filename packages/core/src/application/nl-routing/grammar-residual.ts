@@ -50,30 +50,24 @@ const KO_FUNCTION =
 const ONE_SYLLABLE_ADVERB = /^(?:다|또|더|꼭|잘|딱|막|곧|늘|참|꽤|퍽|쭉|확|싹|푹)$/u;
 
 /**
- * Dependent nouns (수, 줄, 데, 거, 것, …) are grammar only after an adnominal word, a morphology rule rather than a list of
- * phrases: the previous word ends in ㄴ or ㄹ ("알려줄 수", "남은 거", "있는 데"). Elsewhere the syllable is content ("다음 주
- * 수 일정": 수 = 수요일).
+ * Dependent nouns (수, 줄, 데, 거, 것, …), bare (no particle), are grammar only right after a VERBAL adnominal form: a
+ * request or existence form ending in ㄴ/ㄹ ("알려줄 수", "보여줄 수", "있는 거"), or an expressed match ending in an
+ * adnominal verbal syllable ("요청 온 거", "남은 거"). Never after a noun ("할 일 수", "내일 지도", "다음 주 수"). This can only
+ * make a grammar decline more often than a fixed list would, never less.
  */
-const DEPENDENT_NOUN_WORD = new RegExp(`^(?:수|줄|데|거|것|게|건|걸|바|뿐|때|듯|채|지|등)(?:${PARTICLES})?[?？.!~]*$`, 'u');
+const DEPENDENT_NOUN = /^(?:수|줄|데|거|것|게|건|걸|바|뿐|때|듯|채|지|등)$/u;
+/** The adnominal verbal syllables that may close an expressed match ("온", "된", "받은", "남은", "있는", "마감인"). */
+const ADNOMINAL_SYLLABLE = /(?:은|는|던|된|온|인|한)$/u;
 function endsInAdnominal(word: string): boolean {
-  const last = word.replace(/[^\p{Script=Hangul}]+$/u, '').at(-1);
+  const last = word.at(-1);
   if (last === undefined) return false;
   const code = last.charCodeAt(0) - 0xac00;
   if (code < 0 || code > 11171) return false;
   const final = code % 28;
   return final === 4 || final === 8; // ㄴ or ㄹ
 }
-function withoutBoundDependentNouns(text: string): string {
-  const parts = text.split(/(\s+)/u);
-  let previous = '';
-  return parts
-    .map((part) => {
-      if (/^\s*$/u.test(part)) return part;
-      const bound = DEPENDENT_NOUN_WORD.test(part) && endsInAdnominal(previous);
-      previous = part;
-      return bound ? ' ' : part;
-    })
-    .join('');
+function isVerbalAdnominal(word: string): boolean {
+  return endsInAdnominal(word) && (REQUEST_VERBAL.test(word) || EXIST_VERBAL.test(word));
 }
 
 /**
@@ -122,6 +116,8 @@ function isClosedWord(token: string): boolean {
 
 /** What an expressed match is replaced with: a non-letter that keeps the fragments around it in one token. */
 const REMOVED = '\u0001';
+/** The same, for a match that ends in an adnominal verbal syllable. */
+const REMOVED_ADNOMINAL = '\u0002';
 
 /**
  * The content words of `text` that neither the grammar's own vocabulary (`expressed`, global-safe regexes of the forms it
@@ -129,18 +125,28 @@ const REMOVED = '\u0001';
  * message. Pure.
  */
 export function unexpressedContentWords(text: string, expressed: readonly RegExp[]): string[] {
-  let rest = withoutBoundDependentNouns(stripMarks(text));
+  let rest = stripMarks(text);
   for (const pattern of expressed) {
     const flags = pattern.flags.replace(/[gy]/gu, '');
-    // The whitespace a match swallowed stays, so only fragments really glued to the match share its token.
-    rest = rest.replace(new RegExp(pattern.source, `${flags}g`), (match) => `${/^\s*/u.exec(match)?.[0] ?? ''}${REMOVED}${/\s*$/u.exec(match)?.[0] ?? ''}`);
+    // The whitespace a match swallowed stays, so only fragments really glued to the match share its token. A match that
+    // ends in an adnominal verbal syllable ("온", "남은") is marked, so a dependent noun after it is grammar.
+    rest = rest.replace(new RegExp(pattern.source, `${flags}g`), (match) => {
+      const marker = ADNOMINAL_SYLLABLE.test(match.trimEnd()) ? REMOVED_ADNOMINAL : REMOVED;
+      return `${/^\s*/u.exec(match)?.[0] ?? ''}${marker}${/\s*$/u.exec(match)?.[0] ?? ''}`;
+    });
   }
   const out: string[] = [];
-  for (const token of rest.split(/[^\p{L}\p{N}'’\u0001-]+/u)) {
+  let previous = '';
+  for (const token of rest.split(/[^\p{L}\p{N}'’\u0001\u0002-]+/u)) {
+    if (token.length === 0) continue;
+    const after = previous;
+    previous = token;
+    // A bare dependent noun right after a verbal adnominal form is grammar ("알려줄 수", "요청 온 거").
+    if (DEPENDENT_NOUN.test(token) && (after.endsWith(REMOVED_ADNOMINAL) || isVerbalAdnominal(after))) continue;
     // Inside a token that held an expressed word: a fragment AFTER it is morphology only when it is one closed suffix
     // (`GLUED_SUFFIX`) or a closed word; a fragment BEFORE it ("아이할일") is a word of its own. A token with no expressed
     // word is judged as a whole.
-    const pieces = token.split(REMOVED);
+    const pieces = token.split(/[\u0001\u0002]/u);
     pieces.forEach((piece, index) => {
       const word = piece.replace(/^['’-]+|['’-]+$/gu, '');
       if (word.length === 0) return;
