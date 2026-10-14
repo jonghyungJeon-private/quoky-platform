@@ -116,6 +116,19 @@ function isContentToken(token: string): boolean {
   return !EN_FUNCTION.has(token);
 }
 
+/**
+ * Whether one word is content for the closed grammatical classes above (not a particle, function word, closed adverb,
+ * request, existence or interrogative form). Shared with the weekday reading of `symbolic-time` (A5 implementation note 2).
+ */
+export function isNlContentWord(token: string): boolean {
+  return isContentToken(token.normalize('NFC').toLowerCase());
+}
+
+/** Whether `text` is nothing but particles ("이", "에는"). */
+export function isNlParticleOnly(text: string): boolean {
+  return PARTICLE_ONLY.test(text);
+}
+
 /** A closed-class word other than a particle run (a glued fragment may not be a free run of particles). */
 function isClosedWord(token: string): boolean {
   return KO_FUNCTION.test(token) || ONE_SYLLABLE_ADVERB.test(token) || REQUEST_VERBAL.test(token) || EXIST_VERBAL.test(token) || WH_VERBAL.test(token);

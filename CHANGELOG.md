@@ -5,6 +5,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — a one-syllable weekday after a week anchor, and a period never loses the owner's weekday (ADR-0120 A5 implementation note 2, 2026-10-14)
+
+- **Live fix.** "다음 주 수 일정 있어?" was answered with next Monday (10/19) instead of Wednesday 10/21. The selector
+  sometimes reads the abbreviated weekday as another day (`next-mon`) or drops it (`next-week`, keyword "수"), and nothing
+  checked the period against the weekday the owner wrote.
+- **Rule, no phrases.** A one-syllable weekday (월 화 수 목 금 토 일) is a weekday only as its own word right after a week
+  anchor (이번 주, 다음 주, 담주, 지난주, 다다음 주 …); elsewhere it keeps its other meaning ("할 일", "남은 수", "3월", "금
+  시세"). On calendar, mail and Jira, a period that drops or changes the one weekday the owner named fails validation with
+  the new reason `weekday`. It is never repaired, so the owner is asked instead of being shown another day. A bound
+  weekday ("금요일까지") must lie inside the period. The abbreviation is never a title keyword. "다음 주 일 많아?" accepts
+  the week or Sunday (일 is also "work").
+- **Review round.** Spaced and 날 bounds ("금요일 까지", "수요일날까지"), English bounds with an anchor, 월욜 … 일욜,
+  punctuation after an abbreviation, a weekday inside a title keyword or an abbreviation before another content word
+  (uncertain: that day or the period), whole-word sender removal, no one-syllable weekday keyword when any weekday is
+  named. A refused output is not cached, and the question names the week and the day.
+- **Final review round.** An uncertain anchored weekday stays inside its week. A keyword that only hides the period
+  ("수요일 회의") is refused. Inclusive bounds contain the day; only exclusive ones (이후, 전에, after, before) widen by one
+  day. English "this" means this week or the coming seven days, "next"/"last" set the direction ("the last Friday of" is an ordinal). Glosses ("금(골드)", "수(오전), 금(오후)") are read
+  structurally. Extra questions on unusual phrasings are an accepted residual.
+- **Unchanged.** Selector prompt `nl-select.v18` byte for byte (A6 `off` identity intact), no new symbol, flag, env,
+  migration or port change. Acknowledged by the owner ("이대로 진행"): "다다음 주 수요일", a full weekday with a longer
+  period and a false abbreviation reading are asked instead of answered.
+- **Corpus and eval.** `uat5wd-01..07` (804 cases, pending D12). One owner-approved Haiku run on calendar, mail and Jira
+  (414 cases): 93.6% overall, 0 wrong captures, new cases 6/7. The live sentence is now asked when the model drops the
+  weekday. The other misses are pre-existing exact-arg differences.
+
 ## Unreleased — Class B grammars yield what they cannot express (ADR-0120 A2 implementation note 2, 2026-10-14; acknowledged by the owner)
 
 - **Live fix.** Five Telegram sentences from the 2026-10-14 run after A5 were answered by a frozen grammar that dropped part of

@@ -29,7 +29,7 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 - Egress `enforce`: after 7 clean ledger days; the owner ask is due around 2026-10-20.
 - A6 R1 batch: the red-team and relabel review of the drafted corpus, and the A6 clause confirmations (A6-D3a and the
   others under "A6 clauses pending owner confirmation"). `QUOKY_NL_ACTIONS` stays `off` until then.
-- D12 batch approval of the 23 `uat5r*` golden cases (A5). They gate no live behaviour.
+- D12 batch approval of the 23 `uat5r*` golden cases (A5) and the 7 `uat5wd-*` cases (A5 note 2). They gate no live behaviour.
 - Token rotation: deferred (ADR-0121 S0 owner decision, design Q5).
 - OS-level firewall for child processes: "not now" (ADR-0121 S0 owner decision, design Q10).
 
@@ -45,6 +45,22 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
   tracks' notes). Still pending from v4: the OpenAI and Gemini keys, the PRV-3 monthly DM, LRN-5 round trip.
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
+
+### v5 one-syllable weekday guard (ADR-0120 A5 implementation note 2) — on branch `claude/v5-weekday-abbrev` (2026-10-14)
+
+- **What changed.** A live "다음 주 수 일정 있어?" got next Monday. A one-syllable weekday now counts as a weekday only
+  right after a week anchor, and a selected period that drops or changes the one weekday the owner named fails
+  validation (`weekday`, never repaired). The owner gets the usage question instead of another day. A bound weekday
+  ("금요일까지") must lie inside the period; "다음 주 일 많아?" accepts the week or Sunday.
+- **Unchanged.** Prompt `nl-select.v18` byte for byte, no new symbol, flag, env, migration or port.
+- **Corpus.** 804 cases; `uat5wd-01..07` await the owner's D12 look.
+- **Acknowledged by the owner (2026-10-14, "이대로 진행").** "다다음 주 수요일", a full weekday with a longer period and
+  a false abbreviation reading ("지난주 금 시세") are asked, never answered with another day. The question names the week
+  and the day, and a refused output is not cached.
+- **Open for the owner.** Showing "다다음 주 수요일" directly would need a new symbol or prompt text. A prompt hint for the
+  abbreviations (v19-equivalent) would turn more of the remaining asks into answers.
+
+Details: the A5 implementation note 2 in `DECISIONS.md`.
 
 ### v5 Class B grammar yield, part 2 (ADR-0120 A2 implementation note 2) — on branch `claude/v5-grammar-yield` (2026-10-14)
 

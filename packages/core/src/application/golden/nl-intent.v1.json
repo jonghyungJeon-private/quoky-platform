@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) are PENDING the owner's batch approval under ADR-0120 D12.",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) are PENDING the owner's batch approval under ADR-0120 D12. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) are PENDING the owner's batch approval under ADR-0120 D12.",
   "cases": [
     {
       "id": "jira-001",
@@ -9062,6 +9062,79 @@
         }
       },
       "note": "plain phrase: the calendar grammar still answers with yield on [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5wd-01",
+      "text": "다음 주 수 일정 있어?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "next-wed"
+        }
+      },
+      "note": "the live sentence: a one-syllable weekday after a week anchor is that weekday (was answered with next Monday) [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5wd-02",
+      "text": "이번 주 금 일정 알려줘",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-fri"
+        }
+      },
+      "note": "one-syllable weekday with this week [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5wd-03",
+      "text": "지난주 월에 무슨 일정 있었지",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "last-mon"
+        }
+      },
+      "note": "one-syllable weekday with a particle, last week [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5wd-04",
+      "text": "담주 화 오전에 뭐 있어",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "next-tue",
+          "partOfDay": "morning"
+        }
+      },
+      "note": "colloquial next-week anchor, weekday plus part of day [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5wd-05",
+      "text": "다음주 토 일정",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "next-sat"
+        }
+      },
+      "note": "anchor without a space [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5wd-06",
+      "text": "지난주 목에 온 메일",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "last-thu"
+        }
+      },
+      "note": "mail received on a one-syllable weekday of last week [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5wd-07",
+      "text": "금 시세 알려줘",
+      "expect": "none",
+      "note": "금 without a week anchor is gold, not Friday: no source to read [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
     }
   ]
 }

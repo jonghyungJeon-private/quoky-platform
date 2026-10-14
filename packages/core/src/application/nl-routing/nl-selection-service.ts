@@ -268,7 +268,14 @@ interface CacheEntry {
 }
 
 type SelectOutcome =
-  | { readonly kind: 'output'; readonly output: NlSelectionOutput; readonly latencyMs: number; readonly cached: boolean }
+  | {
+      readonly kind: 'output';
+      readonly output: NlSelectionOutput;
+      readonly latencyMs: number;
+      readonly cached: boolean;
+      /** Where the output is cached (absent: not cached), so a refused period can be forgotten. */
+      readonly cacheKey?: string;
+    }
   /** D6/D8: the selector is not the provider this turn's chat would reach; nothing was sent. */
   | { readonly kind: 'egress-refused'; readonly reason: 'chat-provider-differs' | 'chat-locality-differs' | 'chat-provider-unknown' }
   | { readonly kind: 'unavailable'; readonly cause: 'no-provider' | 'timeout' | 'failed' | 'malformed'; readonly latencyMs: number };
@@ -698,7 +705,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const decision =
       reference !== undefined && selected.output.entryId !== null && isNlActionEntryId(selected.output.entryId)
         ? await this.decideAction(selected.output, effective, prepared, language, reference, selected.latencyMs)
-        : await this.fromOutput(selected.output, effective, prepared, last, language, reference !== undefined);
+        : await this.fromOutput(selected.output, effective, prepared, last, language, reference !== undefined, selected.cacheKey);
     this.logAgreement(turn, {
       outcome: decision.kind,
       ...(decision.kind === 'execute' && isNlWave1EntryId(decision.command.entryId) ? { selection: { entryId: decision.command.entryId, args: decision.command.args } } : {}),
@@ -724,19 +731,27 @@ export class NlSelectionService implements TurnDeliveryObserver {
     last: LastSelection | undefined,
     language: 'ko' | 'en',
     actionsOn = false,
+    cacheKey?: string,
   ): Promise<NlSelectionDecision> {
     if (output.entryId === null) return { kind: 'none' };
     const ctx = this.validationContext(turn, prepared.groundingText, last?.args);
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
+    this.forgetRefusedPeriod(cacheKey, main);
     if (main.ok && output.ambiguity === 'CLEAR') return this.complete(main.value, turn, last, language, prepared.groundingText);
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action
     // candidate is never a numbered option (only READ entries are stored as options).
     const options: NlValidatedSelection[] = [];
-    for (const candidate of [{ entryId: output.entryId, args: output.args }, ...output.alternatives]) {
+    let weekdayRefused = !main.ok && main.reason === 'weekday';
+    for (const [index, candidate] of [{ entryId: output.entryId, args: output.args }, ...output.alternatives].entries()) {
       if (actionsOn && isNlActionEntryId(candidate.entryId)) continue;
       const repaired = validateWithRepair(candidate, ctx);
+      // A repair that drops another arg and then loses the owner's weekday ("지난주 수" with a future mail range) is asked
+      // with the weekday hint as well.
+      if (index === 0 && !repaired.ok && repaired.reason === 'weekday') weekdayRefused = true;
       if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) options.push(repaired.value);
     }
+    // A refusal reached through the repair path is not kept in the cache either.
+    if (weekdayRefused && cacheKey !== undefined) this.cache.delete(cacheKey);
     if (options.length === 0) {
       // An entry that is not offered (an unconfigured source) or not in the catalog is honest chat's to explain.
       if (!main.ok && (main.reason === 'unknown-entry' || main.reason === 'not-offered' || main.reason === 'not-read')) {
@@ -745,7 +760,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       const entry = main.ok ? main.value.entry : main.entryId !== undefined ? ctx.offered.get(main.entryId) : undefined;
       if (entry === undefined) return { kind: 'none' };
       this.log('info', 'nl_selection.validation_failed', { entryId: entry.id, reason: main.ok ? 'ambiguous' : main.reason, ...(main.ok || main.arg === undefined ? {} : { arg: main.arg }) });
-      return { kind: 'ask', text: renderUsageQuestion(entry, language) };
+      return { kind: 'ask', text: weekdayRefused ? renderWeekdayQuestion(entry, language) : renderUsageQuestion(entry, language) };
     }
     const stored = options.map((option): StoredSelection => ({ entryId: option.entry.id as StoredSelection['entryId'], args: option.args }));
     await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
@@ -1275,6 +1290,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     let executable: NlGrammarSelection | undefined;
     if (output.entryId !== null) {
       const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args));
+      this.forgetRefusedPeriod(selected.cacheKey, validated);
       if (!validated.ok) outcome = 'INVALID';
       else if (output.ambiguity === 'CLEAR' && isNlWave1EntryId(validated.value.entry.id)) executable = { entryId: validated.value.entry.id, args: validated.value.args };
     }
@@ -1344,7 +1360,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     ]);
     const hit = bypass ? undefined : this.cache.get(cacheKey);
     if (hit !== undefined && clock() - hit.at < NL_SELECTION_CACHE_TTL_MS && !(actionsOn && !isCacheableOutput(hit.output))) {
-      return { kind: 'output', output: hit.output, latencyMs: Math.max(0, clock() - started), cached: true };
+      return { kind: 'output', output: hit.output, latencyMs: Math.max(0, clock() - started), cached: true, cacheKey };
     }
     if (hit !== undefined) this.cache.delete(cacheKey);
     const timeoutMs = this.deps.timeoutMs ?? NL_SELECTION_TIMEOUT_MS;
@@ -1367,7 +1383,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const latencyMs = Math.max(0, clock() - started);
     const output = parseSelectionOutput(rawText);
     if (output === null) return { kind: 'unavailable', cause: 'malformed', latencyMs };
-    if (!bypass && (!actionsOn || isCacheableOutput(output))) {
+    const cacheable = !bypass && (!actionsOn || isCacheableOutput(output));
+    if (cacheable) {
       this.cache.set(cacheKey, { at: clock(), output });
       while (this.cache.size > NL_SELECTION_CACHE_MAX_ENTRIES) {
         const oldest = this.cache.keys().next().value;
@@ -1375,7 +1392,15 @@ export class NlSelectionService implements TurnDeliveryObserver {
         this.cache.delete(oldest);
       }
     }
-    return { kind: 'output', output, latencyMs, cached: false };
+    return { kind: 'output', output, latencyMs, cached: false, ...(cacheable ? { cacheKey } : {}) };
+  }
+
+  /**
+   * A period the validator refused because it lost the owner's weekday or carried a time word as a keyword is not kept in
+   * the output cache, so the owner's identical retry asks the model again instead of getting the same question.
+   */
+  private forgetRefusedPeriod(cacheKey: string | undefined, result: NlValidationResult): void {
+    if (cacheKey !== undefined && !result.ok && (result.reason === 'weekday' || result.reason === 'time-keyword')) this.cache.delete(cacheKey);
   }
 
   // ── state ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1499,8 +1524,9 @@ function validateWithRepair(candidate: NlSelectionCandidate, ctx: NlValidationCo
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const result = validateSelection(current, ctx);
     if (result.ok) return result;
-    // A time word in a keyword is never repaired by dropping it: the period it names would be lost silently.
-    if (result.reason === 'time-keyword') return result;
+    // A time word in a keyword, or a period that lost the owner's weekday, is never repaired by dropping it: the period it
+    // names would be lost silently (A5 rule 6, A5 implementation note 2).
+    if (result.reason === 'time-keyword' || result.reason === 'weekday') return result;
     const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);
     const spec = entry?.args.find((arg) => arg.name === result.arg);
     if (spec === undefined || spec.required === true || !(spec.name in current.args)) return result;
@@ -1655,6 +1681,13 @@ function renderPreferenceQuestion(key: NlAmbiguityKey, language: 'ko' | 'en'): s
 
 function renderCancelled(language: 'ko' | 'en'): string {
   return language === 'en' ? 'OK, I cancelled that choice. Ask again whenever you like.' : '알겠어요, 선택을 취소했어요. 필요하면 다시 말씀해 주세요.';
+}
+
+/** A5 implementation note 2: the question when the selected period lost the weekday the owner named. */
+function renderWeekdayQuestion(entry: NlCatalogEntry, language: 'ko' | 'en'): string {
+  return language === 'en'
+    ? `I could not tell which day to look up in ${pick(entry.label, language)}. Please name the week and the day, like "next Wednesday".`
+    : `${pick(entry.label, language)}에서 어느 날을 볼지 정확히 모르겠어요. "다음 주 수요일"처럼 주와 요일을 함께 말씀해 주세요.`;
 }
 
 function renderUsageQuestion(entry: NlCatalogEntry, language: 'ko' | 'en'): string {
