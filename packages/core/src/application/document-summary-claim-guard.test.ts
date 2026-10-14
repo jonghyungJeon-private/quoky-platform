@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { containsDocumentActionClaim, renderDocumentActionClaimWithheld } from './document-summary-claim-guard';
+import {
+  containsDocumentActionClaim,
+  normalizeForClaimCheck,
+  renderDocumentActionClaimWithheld,
+} from './document-summary-claim-guard';
 import { neutralizeLinks } from './link-neutralizer';
 
 describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
@@ -268,6 +272,13 @@ describe('CA review P2-B: every pattern is linear (CPU time, not wall-clock)', (
     'we did': repeat('we did '),
     'mixed': repeat('문서를 공유 권한을 I have did made 내용을 에게 업데이트 할 일 알림 '),
     'no separators': repeat('문서공유권한내용업데이트에게알림할일'),
+    // v5: the normalizer, the predicate scan, the actor scan and the English sentence checks.
+    'split names': repeat('Q-u-o-k-쿼 '),
+    'invisible': repeat('Q\u200bu\u3164o\u0301'),
+    'subject and predicates': `김철수님이 ${repeat('부탁하셔서 ')}메일을 보내 드렸습니다`,
+    'subjects': repeat('김철수가 메일을 '),
+    'sentences': repeat('제가. 비서가. 김철수가 메일을 보냈어요. '),
+    'passive': repeat('has been on your behalf '),
   };
   it.each(Object.keys(hostile))('%s: 32,000 characters, both sources, under 100 ms CPU each', (name) => {
     const text = hostile[name] as string;
@@ -296,7 +307,136 @@ describe('v5 W3: the guard stays strict — the widened-exemption bypass family 
   });
 });
 
-// Known gaps of the origin/main guard (a third-party subject exempts them; they were found while reviewing the widened
-// exemption and are NOT blocked at origin/main either): a hyphenated `Quo-ky`, an implied assistant action
-// (`김철수님이 부탁하셔서 메일을 보내 드렸습니다`) and a cross-sentence split (`Quoky가 처리했습니다. 김철수가 요청한 메일을
-// 보냈습니다.`). The guard is a best-effort net; the fixed footer is the guarantee. See DECISIONS (v5 W3 live UAT).
+/**
+ * v5 claim guard: the three gaps recorded under the v5 W3 decision (ADR-0118 amendment implementation note, thread
+ * summary claim guard false positive) are closed. Each row was NOT withheld by the origin/main guard.
+ */
+const SOURCES = ['mail', 'mail-thread', 'drive'] as const;
+
+describe('v5 gap 1: a split, disguised or decorated Quoky name is Quoky', () => {
+  it.each([
+    'Quo-ky가 메일을 보냈습니다.',
+    'Quo ky가 확인하고 메일을 보냈습니다.',
+    'Quo​ky가 메일을 보냈어요.',
+    'Quo⁠ky가 답장을 보냈어요.',
+    'Quoㅤky가 메일을 보냈어요.', // Hangul filler
+    'Quoﾠky가 메일을 보냈어요.', // half-width Hangul filler
+    'Q.u.o.k.y가 메일을 삭제했어요.',
+    'Quo_ky가 회신했습니다.',
+    'Qu0ky가 메일을 보관했어요.',
+    'Ｑｕｏｋｙ가 메일을 보냈어요.', // full-width
+    'Ｑｕｏ－ｋｙ가 메일을 보냈어요.',
+    'Ԛuoky가 메일을 보냈어요.', // Cyrillic Qa
+    'Quоky가 메일을 보냈어요.', // Cyrillic o
+    'Quokу가 메일을 보냈어요.', // Cyrillic u (y)
+    'Quoκy가 메일을 보냈어요.', // Greek kappa
+    'Q̈uoky가 메일을 보냈어요.', // combining diaeresis
+    'Quóky가 답장을 보냈어요.', // combining acute
+    '쿼 키가 메일을 보냈어요.',
+    '쿼​키가 메일을 보냈어요.',
+    'Quoky봇이 메일을 보냈어요.',
+    'Quo-ky sent the reply.',
+    'Q u o k y has forwarded the email.',
+    'Ι sent the reply.', // Greek capital iota as `I`
+    'І’ve forwarded it.', // Cyrillic I
+    'I​sent the reply.',
+    'Iㅤsent the reply.',
+  ])('withholds: %j', (text) => {
+    for (const source of SOURCES) expect(containsDocumentActionClaim(text, source), source).toBe(true);
+  });
+});
+
+describe('v5 gap 2: a third-party subject exempts only the claim of its own verb', () => {
+  it.each([
+    // The recorded gap: the subject belongs to a connective clause, the benefactive claim has no subject.
+    '김철수님이 부탁하셔서 메일을 보내 드렸습니다.',
+    '김철수님이 부탁하셔서 메일을 보내 놓았습니다.',
+    '김철수 님이 요청해서 답장을 보냈어요.',
+    '김철수가 요청했는데 메일을 보냈어요.',
+    '김철수가 요청하니까 답장을 보냈어요.',
+    '김철수가 원하면 메일을 보냈어요.',
+    '김철수님이 부탁해, 메일을 보내 드렸어요.',
+    // A relative clause: the subject is the requester, not the actor.
+    '김철수가 요청한 메일을 보냈어요.',
+    '김철수가 보낸 메일을 전달했어요.',
+    '김철수 님이 부탁하신 답장을 보냈습니다.',
+    '김철수가 받은 메일을 삭제했어요.',
+    '사용자님이 요청하신 브랜치를 삭제했습니다.',
+    // An honorific subject never exempts a humble benefactive claim (an honoured subject would take -시-).
+    '김철수님이 메일을 보내 드렸습니다.',
+    '팀장님께서 답장을 전달해 드렸어요.',
+    // Benefactive and completed forms with no subject are first-person claims.
+    '메일을 보내 놓았습니다.',
+    '메일을 보내 뒀어요.',
+    '답장을 전달해 뒀어요.',
+    '처리해 드렸습니다.',
+    '요청하신 건은 처리 완료했습니다.',
+    '할 일을 추가해 놨어요.',
+  ])('withholds: %s', (text) => {
+    for (const source of SOURCES) expect(containsDocumentActionClaim(text, source), source).toBe(true);
+  });
+});
+
+describe('v5 gap 3: a claim is judged with the reply around it', () => {
+  it.each([
+    'Quoky가 처리했습니다. 김철수가 요청한 메일을 보냈습니다.',
+    'Quoky가 확인했습니다. 김철수가 메일을 보냈습니다.',
+    'Quoky는 확인만 했어요. 김철수 님이 답장을 보냈어요.',
+    '제가 확인했어요.\n김철수 님이 메일을 보냈어요.',
+    '김철수 님이 메일을 보냈어요.\n물론 제가 대신요.',
+    '저희 측에서 검토했어요. 김철수가 메일을 보관했어요.',
+    '비서가 확인했어요. 김철수가 답장을 보냈어요.',
+    '김철수가 답장을 보냈어요. 비서가 대신 했어요.',
+    'Quoky가\n메일을 보냈어요.',
+    'Quoky\n가 메일을 보냈어요.',
+    'Quoky here. Sent the reply.',
+    'Done — forwarded it to Kim.',
+    '- Archived the thread.',
+    'The reply has been sent on your behalf.',
+    'On your behalf, the email was forwarded to accounting.',
+    'The invite was scheduled as you requested.',
+    'Your reply was sent to Kim.',
+    "I've sent the reply.",
+  ])('withholds: %j', (text) => {
+    for (const source of SOURCES) expect(containsDocumentActionClaim(text, source), source).toBe(true);
+  });
+});
+
+describe('v5: legitimate third-party reports still pass', () => {
+  it.each([
+    '김철수님이 메일을 보냈습니다.',
+    '김철수 님이 견적서 메일을 보냈어요.',
+    '김철수가 메일을 보냈어요. 이영희 님이 답장을 보냈어요.',
+    '김철수가 고객에게 메일을 보내 드렸어요.',
+    '김철수님이 부탁하셔서 이영희가 메일을 보냈어요.',
+    '인사팀에서는 팀장님이 메일을 전달했어요.',
+    '시스템 점검 안내예요. 김철수 님이 공지 메일을 보냈어요.',
+    'quoky-platform 저장소 알림이에요. 김철수가 리뷰 메일을 보냈어요.',
+    'the PR was merged by Alice',
+    'The PR was merged by Alice.',
+    'Kim sent the slides and asked for comments by Friday.',
+    'The email was sent to all staff.',
+    'Kim forwarded the invoice on behalf of the finance team.',
+    'Set up a meeting with Kim by Friday.',
+  ])('allows: %j', (text) => {
+    for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source), source).toBe(false);
+  });
+
+  it.each([
+    // Known false positives that fail closed: an adjective adnominal reads as a relative clause, a third-party report
+    // split across a line break loses its subject, and a generic stand-in nearby removes the exemption.
+    '김철수 님이 급한 메일을 보냈어요.',
+    '김철수가\n메일을 보냈어요.',
+    // A generic stand-in (`AI가`) in a neighbouring sentence withholds a third-party report.
+    'AI가 업무를 바꾼다는 기사예요. 김철수 님이 이 기사를 메일로 보냈어요.',
+  ])('fails closed: %j', (text) => {
+    expect(containsDocumentActionClaim(text, 'mail')).toBe(true);
+  });
+
+  it('normalizes without changing ordinary text', () => {
+    expect(normalizeForClaimCheck('김철수 님이 견적서 메일을 보냈어요.')).toBe('김철수 님이 견적서 메일을 보냈어요.');
+    expect(normalizeForClaimCheck('Quo-ky와 쿼 키')).toBe('Quoky와 쿼키');
+    expect(normalizeForClaimCheck('보​냈어요', '')).toBe('보냈어요');
+    expect(normalizeForClaimCheck('I​sent', ' ')).toBe('I sent');
+  });
+});
