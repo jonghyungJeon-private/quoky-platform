@@ -22,7 +22,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   named. A refused output is not cached, and the question names the week and the day.
 - **Final review round.** An uncertain anchored weekday stays inside its week. A keyword that only hides the period
   ("수요일 회의") is refused. Inclusive bounds contain the day; only exclusive ones (이후, 전에, after, before) widen by one
-  day. English "this" fixes the week, "next"/"last" the direction. Glosses ("금(골드)", "수(오전), 금(오후)") are read
+  day. English "this" means this week or the coming seven days, "next"/"last" set the direction ("the last Friday of" is an ordinal). Glosses ("금(골드)", "수(오전), 금(오후)") are read
   structurally. Extra questions on unusual phrasings are an accepted residual.
 - **Unchanged.** Selector prompt `nl-select.v18` byte for byte (A6 `off` identity intact), no new symbol, flag, env,
   migration or port change. Acknowledged by the owner ("이대로 진행"): "다다음 주 수요일", a full weekday with a longer

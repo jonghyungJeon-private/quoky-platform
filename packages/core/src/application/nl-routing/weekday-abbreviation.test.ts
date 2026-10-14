@@ -303,3 +303,31 @@ describe('final review round', () => {
     expect(calendar('after last Friday calendar', 'next-week')).toMatchObject({ ok: false, reason: 'weekday' });
   });
 });
+
+describe('CA final check: English "this" and "the last Friday of"', () => {
+  const SUNDAY = '2026-10-18T03:00:00.000Z'; // Sunday 2026-10-18 12:00 in Asia/Seoul
+  const SATURDAY = '2026-10-17T03:00:00.000Z';
+  const at = (now: string, text: string, range: string, entryId: 'calendar.events' | 'jira.issues' = 'calendar.events', extra: Record<string, string> = {}) =>
+    validateSelection({ entryId, args: { ...extra, range } }, ctx(text, { now }));
+
+  it('"this Monday" on a Sunday is tomorrow (or this week\'s Monday); never a day outside both', () => {
+    expect(at(SUNDAY, 'anything this Monday?', 'mon')).toMatchObject({ ok: true });
+    expect(at(SUNDAY, 'anything this Monday?', 'next-mon')).toMatchObject({ ok: true });
+    expect(at(SUNDAY, 'anything this Monday?', 'this-mon')).toMatchObject({ ok: true });
+    expect(at(SUNDAY, 'anything this Monday?', 'last-mon')).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+
+  it('"this Friday" on a weekend is the coming Friday, and bounds keep it', () => {
+    expect(at(SATURDAY, 'what do I have this Friday?', 'fri')).toMatchObject({ ok: true });
+    expect(at(SUNDAY, 'what do I have this Friday?', 'fri')).toMatchObject({ ok: true });
+    expect(at(SUNDAY, 'issues due by this Friday', '10-18..10-23', 'jira.issues', { window: 'due' })).toMatchObject({ ok: true });
+    expect(calendar('by this Friday calendar', 'last-week')).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+
+  it('"the last Friday of the month" is an ordinal, not a past anchor', () => {
+    expect(calendar('the last Friday of the month', '10-30')).toMatchObject({ ok: true });
+    expect(calendar('last Friday of October', '10-30')).toMatchObject({ ok: true });
+    expect(calendar('last Friday of October', '10-29')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar('what happened last Friday', '10-30')).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+});

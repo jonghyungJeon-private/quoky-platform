@@ -322,14 +322,17 @@ export interface NlWeekdayMention {
   readonly boundSide?: NlBoundSide;
   /** The week anchor attached to it ("다음 주 수" = next, "this Friday" = this). */
   readonly week?: NlWeekAnchor;
-  /** English "next" / "last" without a fixed week: the day is after / before today. */
+  /**
+   * English anchors, which never fix the Monday-based week: "next" / "last" put the day after / before today; "this" puts
+   * it in the current week or the coming seven days ("this Monday" said on a Sunday is tomorrow).
+   */
   readonly direction?: NlWeekdayDirection;
   /** The one-syllable form, when the owner used it. */
   readonly abbreviation?: string;
 }
 
 export type NlBoundSide = 'after' | 'before';
-export type NlWeekdayDirection = 'future' | 'past';
+export type NlWeekdayDirection = 'future' | 'past' | 'this';
 
 /** The one weekday the owner's text names (several mentions of the same weekday merged). */
 export interface NlExpressedWeekday {
@@ -456,14 +459,15 @@ export function nlWeekdayMentions(text: string, sourceWords: readonly string[] =
     if (weekday === undefined) continue;
     const head = EN_BOUND_HEAD.exec(source.slice(0, match.index ?? 0));
     const side = boundSideOf(head?.[1]);
-    // "this Friday" is this week's; "next Friday" may be this coming Friday and "last Friday" this week's, so those only
-    // fix the direction from today.
+    // "next Friday" may be this coming Friday, "last Friday" this week's and "this Monday" on a Sunday tomorrow, so an
+    // English anchor only fixes the direction; "the last Friday of the month" is an ordinal, not an anchor.
+    const ordinal = /^\s+(?:of|in)\b/u.test(source.slice((match.index ?? 0) + match[0].length));
     mentions.push({
       weekday,
       certain: true,
       bound: head !== null,
       ...(side !== undefined ? { boundSide: side } : {}),
-      ...(anchor === 'this' ? { week: 'this' as const } : anchor === 'next' ? { direction: 'future' as const } : anchor === 'last' ? { direction: 'past' as const } : {}),
+      ...(ordinal || anchor === undefined ? {} : { direction: anchor === 'next' ? ('future' as const) : anchor === 'last' ? ('past' as const) : ('this' as const) }),
     });
   }
   return mentions;
@@ -512,8 +516,16 @@ export function nlRangeKeepsWeekday(range: NlResolvedRange | undefined, expresse
     const offset = Math.round(compareLocalDates(date, weekStart) / 86_400_000);
     return offset >= 0 && offset < 7;
   };
-  const inDirection = (date: LocalDate): boolean =>
-    expressed.direction === undefined || (expressed.direction === 'future' ? compareLocalDates(date, today) > 0 : compareLocalDates(date, today) < 0);
+  const inDirection = (date: LocalDate): boolean => {
+    const offset = Math.round(compareLocalDates(date, today) / 86_400_000);
+    if (expressed.direction === 'future') return offset > 0;
+    if (expressed.direction === 'past') return offset < 0;
+    if (expressed.direction === 'this') {
+      const fromMonday = Math.round(compareLocalDates(date, monday) / 86_400_000);
+      return (offset >= 0 && offset <= 6) || (fromMonday >= 0 && fromMonday <= 6);
+    }
+    return true;
+  };
   const named = (date: LocalDate): boolean => weekdayOf(date) === expressed.weekday && inWeek(date) && inDirection(date);
   const days = Array.from({ length: range.days }, (_, index) => addLocalDays(range.startDate, index));
   const contains = days.some(named);

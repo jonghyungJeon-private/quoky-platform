@@ -22258,9 +22258,11 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
   - *Bounds.* Inclusive bounds (까지, 부터, ~, by, until, through, from, since) must contain the day. Only exclusive ones
     widen by one day, on their own side: 이후, 후에 and after start the day after; 전에, 이전, 전까지 and before end the day
     before.
-  - *English anchors.* English "this" fixes this week. "next" and "last" fix only the direction from today, because "next
-    Friday" may be this coming Friday. Both stay attached to a bound ("by this Friday" refuses last week). A bare
-    three-letter form ("sun") is a weekday only with its anchor.
+  - *English anchors.* English anchors never fix the Monday-based week. "this" puts the day in the current week or the
+    next seven days ("this Monday" said on a Sunday is tomorrow). "next" puts it after today and "last" before today.
+    Each anchor stays attached to a bound ("by this Friday" refuses last week). "the last Friday of the month" / "of
+    October" is an ordinal, so it has no direction. A bare three-letter form ("sun") is a weekday only with its anchor
+    (CA final check).
   - *Glosses.* A parenthesised gloss after an abbreviation is read like the next word: "금(골드)" is uncertain, "수(오전)"
     is certain. Weekdays are counted across glosses and punctuation: "수(오전), 금(오후)" names two days, so the check steps
     aside.
