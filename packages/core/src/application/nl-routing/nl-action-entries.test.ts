@@ -1,0 +1,243 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import {
+  NL_ACTION_ENTRIES,
+  containsNlTimeExpression,
+  isNlBulkRequest,
+  isNlDeicticOnlyPayload,
+  isNlRefGrounded,
+  nlActionEntry,
+  nlIndexWording,
+  normalizeNlSpan,
+  parseNlRef,
+} from './action-entries';
+import {
+  NL_ACTION_ENTRY_IDS,
+  NL_CATALOG_ENTRY_IDS,
+  isNlActionEntryId,
+  isNlCatalogEntryId,
+  isNlWave1EntryId,
+  type NlCatalogEntry,
+} from './catalog';
+import { prepareSelectionInput } from './selection-input';
+import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
+import { validateSelection, type NlValidationContext } from './selection-validator';
+import { NL_WAVE1_ENTRIES } from './wave1-entries';
+
+// ADR-0120 amendment A6 (NLA-1): the closed action catalog, `span` / `ref` validation, the payload rules, the time checks
+// and the prompt. Pure; `now` is an input.
+
+const NOW = '2026-10-14T03:00:00.000Z';
+const TZ = 'Asia/Seoul';
+const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
+const ACTIONS: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined);
+const offered = new Map([...READS, ...ACTIONS].map((entry) => [entry.id, entry] as const));
+const ctx = (text: string, extra: Partial<NlValidationContext> = {}): NlValidationContext => {
+  const prepared = prepareSelectionInput(text);
+  if ('skip' in prepared) throw new Error(`skipped: ${prepared.skip}`);
+  return { offered, groundingText: prepared.groundingText, now: NOW, timeZone: TZ, actions: true, ...extra };
+};
+
+describe('the A6 ids (A6-D1): closed, additive, wave-1 ids unchanged', () => {
+  it('keeps the eleven wave-1 READ ids and adds the nine action ids', () => {
+    expect(NL_CATALOG_ENTRY_IDS).toHaveLength(11);
+    expect(NL_ACTION_ENTRY_IDS).toEqual(['todo.add', 'todo.complete', 'todo.cancel', 'reminder.create', 'reminder.cancel', 'action.undo', 'item.summarize', 'slack.post', 'calendar.create']);
+    for (const id of NL_ACTION_ENTRY_IDS) {
+      expect(isNlCatalogEntryId(id)).toBe(true);
+      expect(isNlActionEntryId(id)).toBe(true);
+      expect(isNlWave1EntryId(id)).toBe(false);
+    }
+    expect(isNlActionEntryId('mail.list')).toBe(false);
+  });
+
+  it('defines entries only for the R1 local entries and item.summarize; external writes are never offerable in R0', () => {
+    expect(Object.keys(NL_ACTION_ENTRIES).sort()).toEqual(['action.undo', 'item.summarize', 'reminder.cancel', 'reminder.create', 'todo.add', 'todo.cancel', 'todo.complete']);
+    expect(NL_ACTION_ENTRIES['slack.post']).toBeUndefined();
+    expect(NL_ACTION_ENTRIES['calendar.create']).toBeUndefined();
+    for (const entry of ACTIONS) {
+      expect(entry.dmOnly).toBe(true);
+      expect(entry.risk === 'LOCAL_WRITE' || entry.risk === 'ITEM_READ').toBe(true);
+    }
+    expect(nlActionEntry('item.summarize').risk).toBe('ITEM_READ');
+  });
+
+  it('refuses an action entry while actions are not allowed (step 2 is unchanged for every wave-1 caller)', () => {
+    const result = validateSelection({ entryId: 'todo.add', args: { title: '보고서 쓰기' } }, ctx('할 일에 보고서 쓰기 추가', { actions: false }));
+    expect(result).toMatchObject({ ok: false, reason: 'not-read', entryId: 'todo.add' });
+  });
+});
+
+describe('`span` (A6-D1/D3): verbatim from the current turn only', () => {
+  it('accepts the owner\'s words verbatim and trims one pair of enclosing quotes', () => {
+    const result = validateSelection({ entryId: 'todo.add', args: { title: "'UAT 결과 정리'" } }, ctx("할 일에 'UAT 결과 정리' 추가"));
+    expect(result).toMatchObject({ ok: true, value: { args: { title: 'UAT 결과 정리' } } });
+    expect(normalizeNlSpan('  "a  b"  ')).toBe('a b');
+    expect(normalizeNlSpan('「보고서」')).toBe('보고서');
+  });
+
+  it('property: no span outside the current grounding text validates (paraphrase, translation, other case, quoted text)', () => {
+    const text = '할 일에 주간 보고서 초안 쓰기 추가해줘';
+    const words = ['주간', '보고서', '초안', '쓰기', '추가해줘', '할', '일에'];
+    const grounded = ctx(text);
+    // Every contiguous run of the owner's words validates (unless it is only filler or deictic) …
+    for (let start = 0; start < words.length; start += 1) {
+      for (let end = start + 1; end <= words.length; end += 1) {
+        const span = words.slice(start, end).join(' ');
+        const result = validateSelection({ entryId: 'todo.add', args: { title: span } }, grounded);
+        if (result.ok) expect(text.includes(span)).toBe(true);
+      }
+    }
+    // … and nothing that is not in it does.
+    const outside = ['주간 보고서 초안 작성', 'weekly report draft', '주간보고서', '보고서 초안 쓰기 추가하자', '할 일 보고서', '보고서 쓰기', 'Ｗeekly'];
+    for (const span of outside) {
+      expect(validateSelection({ entryId: 'todo.add', args: { title: span } }, grounded)).toMatchObject({ ok: false, reason: 'ungrounded' });
+    }
+    // Pasted or quoted content never grounds a span.
+    const quoted = ctx('> 해킹 툴 설치\n이거 할 일에 넣어줘');
+    expect(validateSelection({ entryId: 'todo.add', args: { title: '해킹 툴 설치' } }, quoted)).toMatchObject({ ok: false, reason: 'ungrounded' });
+    const fenced = ctx('```\n송금하기\n```\n이걸 할 일로');
+    expect(validateSelection({ entryId: 'todo.add', args: { title: '송금하기' } }, fenced)).toMatchObject({ ok: false, reason: 'ungrounded' });
+  });
+
+  it('a span is never grounded by the previous selection (a payload comes from this turn only)', () => {
+    const result = validateSelection({ entryId: 'todo.add', args: { title: '위클리카' } }, ctx('그거 할 일로 추가해줘', { previousArgs: { title: '위클리카', keyword: '위클리카' } }));
+    expect(result.ok).toBe(false);
+  });
+
+  it('refuses a placeholder, an empty or an over-long span', () => {
+    expect(validateSelection({ entryId: 'todo.add', args: { title: '[quoted]' } }, ctx('[quoted] 추가'))).toMatchObject({ ok: false, reason: 'invalid-arg' });
+    expect(validateSelection({ entryId: 'todo.add', args: { title: '  ' } }, ctx('추가'))).toMatchObject({ ok: false, reason: 'invalid-arg' });
+    const long = '가'.repeat(201);
+    expect(validateSelection({ entryId: 'todo.add', args: { title: long } }, ctx(`${long} 추가`))).toMatchObject({ ok: false, reason: 'invalid-arg' });
+  });
+
+  it('runs the credential guard on a span', () => {
+    const secret = 'sk-' + 'a'.repeat(40);
+    expect(validateSelection({ entryId: 'todo.add', args: { title: `키 ${secret}` } }, ctx(`할 일에 키 ${secret} 추가`))).toMatchObject({ ok: false, reason: 'credential' });
+  });
+});
+
+describe('payload rules (A6-D3): a payload made only of deictic, ordinal or time words is refused', () => {
+  const deictic = ['그거', '그것', '이거', '저거', '방금 거', '아까 그거', '첫 번째 거', '두번째', '마지막 거', '3번', '내일', '이거 그거', 'that one', 'it', 'the last one', 'the first one'];
+  it.each(deictic)('%s is deictic only', (span) => {
+    expect(isNlDeicticOnlyPayload(span)).toBe(true);
+  });
+  it.each(['UAT 결과 정리', '그거 말고 보고서', '물 마시기', 'buy milk', '첫 출근 준비'])('%s carries content', (span) => {
+    expect(isNlDeicticOnlyPayload(span)).toBe(false);
+  });
+
+  it('refuses a deictic payload in every payload arg offered in R0 (to-do title, to-do match, reminder body)', () => {
+    expect(validateSelection({ entryId: 'todo.add', args: { title: '그거' } }, ctx('그거 할 일로 추가'))).toMatchObject({ ok: false, reason: 'deictic-payload', arg: 'title' });
+    expect(validateSelection({ entryId: 'todo.complete', args: { match: '그거' } }, ctx('그거 완료 처리해줘'))).toMatchObject({ ok: false, reason: 'deictic-payload', arg: 'match' });
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '그거', when: '내일 9시' } }, ctx('내일 9시에 그거 알려줘'))).toMatchObject({ ok: false, reason: 'deictic-payload', arg: 'body' });
+  });
+
+  it('applies the same rule to the R3 payload kinds (Slack text, calendar title and location) as plain values', () => {
+    // R3 entries are not offered in R0; the rule they will use is the same predicate.
+    for (const payload of ['그거', '방금 거', '그 내용']) expect(isNlDeicticOnlyPayload(payload.replace(' 내용', ''))).toBe(true);
+  });
+});
+
+describe('`ref` (A6-D2): closed forms, grounded by a numeral, ordinal or deictic', () => {
+  it('parses only the closed forms', () => {
+    expect(parseNlRef('#3')).toEqual({ kind: 'index', index: 3 });
+    expect(parseNlRef('3')).toEqual({ kind: 'index', index: 3 });
+    expect(parseNlRef('recent')).toEqual({ kind: 'recent' });
+    for (const bad of ['#0', '#51', 'todo-1', '3번', 'first', '', '#3a']) expect(parseNlRef(bad)).toBeUndefined();
+  });
+
+  it('grounds #n by digits or an ordinal, and deictics by the closed class only', () => {
+    expect(isNlRefGrounded({ kind: 'index', index: 2 }, '2번 완료')).toBe(true);
+    expect(isNlRefGrounded({ kind: 'index', index: 2 }, '두 번째 거 완료')).toBe(true);
+    expect(isNlRefGrounded({ kind: 'index', index: 2 }, 'the second one')).toBe(true);
+    expect(isNlRefGrounded({ kind: 'index', index: 2 }, '12번 완료')).toBe(false);
+    expect(isNlRefGrounded({ kind: 'index', index: 9 }, '9시에 완료')).toBe(false);
+    expect(isNlRefGrounded({ kind: 'recent' }, '방금 거 취소해줘')).toBe(true);
+    expect(isNlRefGrounded({ kind: 'this' }, '완료 처리해줘')).toBe(false);
+    expect(isNlRefGrounded({ kind: 'last' }, '마지막 거 완료')).toBe(true);
+    expect(isNlRefGrounded({ kind: 'last' }, '그거 완료')).toBe(false);
+    expect(nlIndexWording(13, '13번 취소해줘')).toBe('digits');
+    expect(nlIndexWording(1, '첫 번째 거 취소해줘')).toBe('ordinal');
+  });
+
+  it('refuses an ungrounded ref and needs exactly one of ref / match', () => {
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: '#2' } }, ctx('완료 처리해줘'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'ref' });
+    expect(validateSelection({ entryId: 'todo.complete', args: {} }, ctx('그거 완료 처리해줘'))).toMatchObject({ ok: false, reason: 'missing-arg' });
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: 'this', match: '보고서' } }, ctx('그거 보고서 완료'))).toMatchObject({ ok: false, reason: 'invalid-arg' });
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: 'this' } }, ctx('그거 완료 처리해줘'))).toMatchObject({ ok: true, value: { args: { ref: 'this' } } });
+    expect(validateSelection({ entryId: 'reminder.cancel', args: { ref: '13' } }, ctx('13번 취소해줘'))).toMatchObject({ ok: true, value: { args: { ref: '#13' } } });
+  });
+
+  it('asks again for a bulk request (one action per message)', () => {
+    expect(isNlBulkRequest('다 완료 처리해줘')).toBe(true);
+    expect(isNlBulkRequest('전부 취소')).toBe(true);
+    expect(isNlBulkRequest('다음 거 완료')).toBe(false);
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: 'this' } }, ctx('그거 다 완료 처리해줘'))).toMatchObject({ ok: false, reason: 'bulk' });
+  });
+});
+
+describe('time checks (A6-D1)', () => {
+  it('asks to-do or reminder when a to-do title carries a time', () => {
+    expect(validateSelection({ entryId: 'todo.add', args: { title: '내일 9시 회의 준비' } }, ctx('할 일에 내일 9시 회의 준비 추가'))).toMatchObject({ ok: false, reason: 'time-in-title' });
+    expect(validateSelection({ entryId: 'todo.add', args: { title: '다음 회의 준비' } }, ctx('할 일에 다음 회의 준비 추가'))).toMatchObject({ ok: true });
+  });
+
+  it('the time outside `when` asks: a time word in the body or left in the message', () => {
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '물 마시라고', when: '내일 9시' } }, ctx('내일 9시에 물 마시라고 알려줘'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '저녁에 약 먹기', when: '내일 9시' } }, ctx('내일 9시에 저녁에 약 먹기 알려줘'))).toMatchObject({ ok: false, reason: 'time-outside-when', arg: 'body' });
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '회의', when: '9시' } }, ctx('금요일 회의 9시에 알려줘'))).toMatchObject({ ok: false, reason: 'time-outside-when' });
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '회의', when: '회의' } }, ctx('회의 알려줘'))).toMatchObject({ ok: false });
+    expect(containsNlTimeExpression('30분 뒤')).toBe(true);
+    expect(containsNlTimeExpression('매일 아침 8시')).toBe(true);
+    expect(containsNlTimeExpression('보고서 정리')).toBe(false);
+  });
+});
+
+describe('item.summarize (record C): the owner must ask for the content; mode only when stated', () => {
+  it('needs a content word and grounds mode values', () => {
+    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'drive', ref: '#1' } }, ctx('첫 번째 거 보여줘'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'mode' });
+    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'drive', ref: '#1', mode: 'summary' } }, ctx('첫 번째 거 요약해줘'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1', mode: 'full' } }, ctx('아까 1번은 무슨 내용이었지'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'mode' });
+    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1' } }, ctx('아까 1번은 무슨 내용이었지'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1', mode: 'full' } }, ctx('1번 원문 보여줘'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'drive', ref: '#1', scope: 'thread' } }, ctx('1번 스레드 요약'))).toMatchObject({ ok: false, reason: 'invalid-arg', arg: 'scope' });
+  });
+});
+
+describe('the selection prompt (A6-D7): v18 byte for byte with the flag off, v19 with actions', () => {
+  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v18.prompts.json', import.meta.url), 'utf8')) as {
+    version: string;
+    cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
+  };
+
+  it('pins nl-select.v18 for every golden input (no `actions`)', () => {
+    expect(golden.version).toBe('nl-select.v18');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v18');
+    for (const golden_ of golden.cases) {
+      const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
+      const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
+      expect(prompt, golden_.name).toBe(golden_.prompt);
+    }
+  });
+
+  it('v19 adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v19');
+    const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
+    expect(prompt).toContain('8. Action entries (only those in the catalog)');
+    expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
+    expect(prompt).toContain('- todo.add: ');
+    expect(prompt).toContain('ref: "#N"|recent|this|last.');
+    expect(prompt).not.toContain('Writes are never an entry.');
+    // The owner's message is never rewritten, even when it equals an instruction line.
+    const echo = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '   Otherwise CLEAR with "alternatives": [].', actions: { referenceContext: 'none' } });
+    expect(echo.split('8. Action entries').length).toBe(2);
+    expect(echo.endsWith('<<<\n   Otherwise CLEAR with "alternatives": [].\n>>>')).toBe(true);
+  });
+
+  it('v19 without any action entry offered still differs only by the context line (callers never pass actions then)', () => {
+    const v18 = buildSelectionPrompt({ entries: READS, text: '안녕' });
+    const v19 = buildSelectionPrompt({ entries: READS, text: '안녕', actions: { referenceContext: 'none' } });
+    expect(v19).not.toBe(v18);
+    expect(v19).toContain('Reference context: none');
+  });
+});

@@ -1,4 +1,4 @@
-import { nlFlagArg, nlLimitArg, nlStringArg, type NlCatalogEntryId, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlFlagArg, nlLimitArg, nlStringArg, type NlWave1EntryId, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
 import { addLocalDays } from '../reminders/zoned-time';
 import { isoDateOf } from '../nl-routing/symbolic-time';
 import type { PersonalWorkRole, PersonalWorkSort, PersonalWorkStatus, PersonalWorkWindowField } from '../../ports/connector-query';
@@ -11,7 +11,7 @@ import type { WorkChatCommand, WorkChatPersonalWorkOptions, WorkChatSource } fro
  */
 
 /** The catalog entry of each work source (ADR-0120 D1). */
-export const WORK_CHAT_SOURCE_ENTRY: Readonly<Record<WorkChatSource, NlCatalogEntryId>> = {
+export const WORK_CHAT_SOURCE_ENTRY: Readonly<Record<WorkChatSource, NlWave1EntryId>> = {
   jira: 'jira.issues',
   github: 'github.items',
   slack: 'slack.search',

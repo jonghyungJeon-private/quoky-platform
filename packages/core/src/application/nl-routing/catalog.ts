@@ -24,14 +24,46 @@ export const NL_CATALOG_ENTRY_IDS = [
   'brief.today',
   'help.topic',
 ] as const;
-export type NlCatalogEntryId = (typeof NL_CATALOG_ENTRY_IDS)[number];
+/** A wave-1 READ entry id: the only ids `lastSelection` and a numbered entry question ever hold. */
+export type NlWave1EntryId = (typeof NL_CATALOG_ENTRY_IDS)[number];
+
+/**
+ * ADR-0120 amendment A6-D1: the closed action ids. `slack.post` and `calendar.create` are reserved for R3 (never offered
+ * before their stage); every other id is offered only while `QUOKY_NL_ACTIONS` allows it (`action-entries.ts`).
+ */
+export const NL_ACTION_ENTRY_IDS = [
+  'todo.add',
+  'todo.complete',
+  'todo.cancel',
+  'reminder.create',
+  'reminder.cancel',
+  'action.undo',
+  'item.summarize',
+  'slack.post',
+  'calendar.create',
+] as const;
+export type NlActionEntryId = (typeof NL_ACTION_ENTRY_IDS)[number];
+
+/** Every closed catalog id: the wave-1 reads plus the A6 action ids. */
+export type NlCatalogEntryId = NlWave1EntryId | NlActionEntryId;
 
 export function isNlCatalogEntryId(value: unknown): value is NlCatalogEntryId {
+  return isNlWave1EntryId(value) || isNlActionEntryId(value);
+}
+
+export function isNlWave1EntryId(value: unknown): value is NlWave1EntryId {
   return typeof value === 'string' && (NL_CATALOG_ENTRY_IDS as readonly string[]).includes(value);
 }
 
-/** ADR-0120 D1/D5: wave 1 offers `READ` entries only. */
-export type NlCatalogRisk = 'READ' | 'LOCAL_WRITE' | 'EXTERNAL_WRITE';
+export function isNlActionEntryId(value: unknown): value is NlActionEntryId {
+  return typeof value === 'string' && (NL_ACTION_ENTRY_IDS as readonly string[]).includes(value);
+}
+
+/**
+ * ADR-0120 D1/D5: wave 1 offers `READ` entries only. A6-D1 adds `ITEM_READ` (one item's text to the chat-tier provider on
+ * the owner's explicit request) and selectable `LOCAL_WRITE` / `EXTERNAL_WRITE` action entries.
+ */
+export type NlCatalogRisk = 'READ' | 'ITEM_READ' | 'LOCAL_WRITE' | 'EXTERNAL_WRITE';
 
 /**
  * One argument of an entry:
@@ -39,9 +71,11 @@ export type NlCatalogRisk = 'READ' | 'LOCAL_WRITE' | 'EXTERNAL_WRITE';
  *  - `keyword`: owner text, 1..100 characters, grounded verbatim in the owner's non-quoted text (ADR-0120 D4 step 5);
  *  - `range`: a symbolic period (`symbolic-time.ts`), at most 31 days;
  *  - `flag`: a boolean;
- *  - `limit`: an integer 1..10 (ADR-0120 D4 step 3).
+ *  - `limit`: an integer 1..10 (ADR-0120 D4 step 3);
+ *  - `span` (A6-D1): the owner's words, verbatim, from the CURRENT turn's grounding text only (a payload);
+ *  - `ref` (A6-D1): a closed item reference, `#1`..`#50`, `recent`, `this` or `last`, resolved by Core, never by the model.
  */
-export type NlArgKind = 'enum' | 'keyword' | 'range' | 'flag' | 'limit';
+export type NlArgKind = 'enum' | 'keyword' | 'range' | 'flag' | 'limit' | 'span' | 'ref';
 
 export interface NlArgSpec {
   readonly name: string;
@@ -49,7 +83,10 @@ export interface NlArgSpec {
   readonly values?: readonly string[];
   /** `range` only: whether `upcoming` (from now to the lookahead end) is accepted; every other symbol always is. */
   readonly allowUpcoming?: boolean;
-  /** `keyword` only: a value made of time words is legitimate here (a sender named "Sun"); the time-keyword rule skips it. */
+  /**
+   * `keyword`: a value made of time words is legitimate here (a sender named "Sun"); the time-keyword rule skips it.
+   * `span` (A6): the span IS a time (`when`), so the payload rule (not only deictic/time words) does not apply.
+   */
   readonly allowsTimeWords?: boolean;
   /** `range` only: the period must have started already (mail received in a future period is meaningless). */
   readonly pastOnly?: boolean;
@@ -76,6 +113,8 @@ export interface NlArgSpec {
   readonly transient?: boolean;
   /** The value the entry uses when the argument is absent; canonical args omit an argument equal to it. */
   readonly default?: string | boolean;
+  /** `span` only: the maximum length in code points (A6-D1: a title or body 1..200). */
+  readonly maxChars?: number;
   /** One provider-facing line (English, bounded). */
   readonly description: string;
 }
@@ -140,6 +179,79 @@ export interface NlCatalogEntry {
   normalize?(args: Record<string, NlArgValue>): void;
   /** The basis line text (without the `기준:` prefix) for these canonical args. */
   describe?(args: NlArgs, range: NlResolvedRange | undefined, language: 'ko' | 'en'): string | undefined;
+  /**
+   * A6 entries only: an entry-level check after the per-arg checks (e.g. exactly one of `ref` / `match`, a time word in a
+   * to-do title). Pure; `groundingText` is the owner's own non-quoted words of this turn. A failure names a reason.
+   */
+  check?(args: NlArgs, groundingText: string): NlEntryCheckFailure | undefined;
+  /**
+   * A6-D6 (D9 stale-command guard): output patterns of this family's own fixed command phrases. A chat reply that quotes
+   * one while the family is offered is replaced. Never used for routing.
+   */
+  readonly staleCommands?: readonly RegExp[];
+}
+
+/** An entry-level validation failure (A6): the reason and, when one arg is at fault, its name (never a value). */
+export interface NlEntryCheckFailure {
+  readonly reason: 'invalid-arg' | 'missing-arg' | 'ungrounded' | 'deictic-payload' | 'time-in-title' | 'time-outside-when' | 'bulk';
+  readonly arg?: string;
+}
+
+/** Where an A6 target lives (A6-D2): Quoky's own to-dos and reminders, or a listed mail / Drive item. */
+export type NlItemSource = 'todo' | 'reminder' | 'mail' | 'drive';
+
+/**
+ * A6-D2: the item a validated action acts on, resolved by Core from the owner's reference and the content-free listing
+ * records (never chosen by the model). `id` is the local UUID or the provider's opaque id; `label` is the number the owner
+ * saw (a to-do or list number, or a reminder's `#N`). `id` is absent only for a reminder named by its stable display
+ * number with no fresh reminder listing: the handler resolves `#label` through the repository (owner-scoped).
+ */
+export interface NlItemTarget {
+  readonly source: NlItemSource;
+  readonly id?: string;
+  readonly label?: number;
+  /** The listing's timestamp, for a provider item (the audit target reference: source, label, listing at). */
+  readonly listingAt?: string;
+}
+
+/**
+ * A6-D2/D3: what a handler reports after an action it ran (an A6 selection or an anchored Class A command), so the
+ * runtime can record `quoky.lastAction`, the echo label and the audit line. Content-free: ids, labels, a version stamp,
+ * closed values. Ignored while `QUOKY_NL_ACTIONS` is `off`.
+ */
+export interface NlActionReceipt {
+  readonly entryId: NlActionEntryId;
+  /**
+   * `executed`: the action ran; `undone`: an inverse ran; `asked`: the handler asked which item (candidates below);
+   * `refused`: nothing ran (already final, not found, a limit); `reschedule`: undoing the cancel of a past one-shot asks
+   * for a new time (the reminder id is kept as the pending question).
+   */
+  readonly result: 'executed' | 'undone' | 'asked' | 'refused' | 'reschedule';
+  readonly source: NlItemSource;
+  readonly itemId?: string;
+  readonly label?: number;
+  readonly version?: string;
+  /** Whether "되돌려줘" may undo this execution (false for an undo itself). */
+  readonly undoable?: boolean;
+  /** `undone` only: the entry whose action was undone. */
+  readonly undoOf?: NlActionEntryId;
+  /** `asked` only: the candidates under their shown labels (ids only). */
+  readonly candidates?: readonly { readonly label: number; readonly id: string }[];
+  /** A closed reason for `refused` / `asked` (never a value). */
+  readonly reason?: string;
+}
+
+/** A6-D2: a to-do or reminder listing a handler showed (the labels the owner saw and the ids), content-free. */
+export interface NlListingReceipt {
+  readonly source: 'todo' | 'reminder';
+  readonly items: readonly { readonly label: number; readonly id: string }[];
+}
+
+/** A6 undo: what the inverse undoes (the `lastAction` record's entry and the item version it left behind). */
+export interface NlUndoSpec {
+  readonly entryId: NlActionEntryId;
+  /** The item's `updatedAt` right after the action (an inverse of a completion or cancel needs it unchanged). */
+  readonly version?: string;
 }
 
 /** A validated selection the runtime hands to the owning handler's `handleSelected` (ADR-0120 interfaces). */
@@ -150,6 +262,10 @@ export interface NlSelectedCommand {
   /** The `range` arg placed by Core's clock and `QUOKY_TIMEZONE`; absent without a range. */
   readonly range?: NlResolvedRange;
   readonly language: 'ko' | 'en';
+  /** A6-D2: the resolved item (an action with a `ref` or `match`, `item.summarize`, `action.undo`). */
+  readonly target?: NlItemTarget;
+  /** A6 `action.undo` only: the action the inverse undoes. */
+  readonly undo?: NlUndoSpec;
 }
 
 /**
@@ -158,7 +274,7 @@ export interface NlSelectedCommand {
  * as `lastSelection` so a later "그 중에 …" refines the listing the owner actually saw.
  */
 export interface NlGrammarSelection {
-  readonly entryId: NlCatalogEntryId;
+  readonly entryId: NlWave1EntryId;
   readonly args: NlArgs;
 }
 

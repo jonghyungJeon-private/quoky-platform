@@ -4,7 +4,7 @@ import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import type { SessionManager } from '../session-manager';
-import type { NlAmbiguityKey, NlArgs, NlCatalogEntry, NlClassBProbe, NlGrammarSelection, NlSelectedCommand, NlText } from './catalog';
+import { isNlWave1EntryId, type NlAmbiguityKey, type NlArgs, type NlCatalogEntry, type NlClassBProbe, type NlGrammarSelection, type NlSelectedCommand, type NlText } from './catalog';
 import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput } from './selection-input';
 import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { nlSelectionMeaning } from './selection-meaning';
@@ -426,7 +426,7 @@ export class NlSelectionService {
     const decision = await this.fromOutput(selected.output, turn, prepared, last, language);
     this.logAgreement(turn, {
       outcome: decision.kind,
-      ...(decision.kind === 'execute' ? { selection: { entryId: decision.command.entryId, args: decision.command.args } } : {}),
+      ...(decision.kind === 'execute' && isNlWave1EntryId(decision.command.entryId) ? { selection: { entryId: decision.command.entryId, args: decision.command.args } } : {}),
       latencyMs: selected.latencyMs,
       cached: selected.cached,
     });
@@ -469,7 +469,7 @@ export class NlSelectionService {
       this.log('info', 'nl_selection.validation_failed', { entryId: entry.id, reason: main.ok ? 'ambiguous' : main.reason, ...(main.ok || main.arg === undefined ? {} : { arg: main.arg }) });
       return { kind: 'ask', text: renderUsageQuestion(entry, language) };
     }
-    const stored = options.map((option): StoredSelection => ({ entryId: option.entry.id, args: option.args }));
+    const stored = options.map((option): StoredSelection => ({ entryId: option.entry.id as StoredSelection['entryId'], args: option.args }));
     await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
       pendingQuestionRecord(turn.actor.id, { kind: 'entry', at: turn.now, language, options: stored, groundingText: prepared.groundingText }),
     );
@@ -486,6 +486,9 @@ export class NlSelectionService {
     note?: 'saved' | 'changed',
   ): Promise<NlSelectionDecision> {
     const { entry } = selection;
+    // Only a wave-1 READ entry completes here (ADR-0120 A6: an action entry is never `lastSelection`).
+    const entryId = entry.id;
+    if (!isNlWave1EntryId(entryId)) return { kind: 'none' };
     let args = selection.args;
     let basisNote = note;
     let open = selection.openAmbiguity;
@@ -519,7 +522,7 @@ export class NlSelectionService {
           language,
           key: open.key,
           values,
-          selection: { entryId: entry.id, args },
+          selection: { entryId, args },
         };
         await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, question));
         this.log('info', 'nl_selection.preference_asked', { key: open.key });
@@ -547,7 +550,7 @@ export class NlSelectionService {
     };
     // A transient arg (a pick of one listed item) answers this turn only and never becomes the follow-up's base.
     const stored = Object.fromEntries(Object.entries(args).filter(([name]) => entry.args.find((spec) => spec.name === name)?.transient !== true));
-    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(turn.actor.id, { entryId: entry.id, args: stored }, turn.now));
+    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(turn.actor.id, { entryId, args: stored }, turn.now));
     const described = entry.describe?.(args, selection.range, language);
     const basis = described === undefined ? undefined : renderBasis(described, language, basisNote);
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}) };
@@ -579,6 +582,7 @@ export class NlSelectionService {
       if (picked === undefined || !picked.ok) return undefined;
       return this.complete(picked.value, turn, readLastSelection(turn.session, turn.actor.id, turn.now), language, pending.groundingText ?? '');
     }
+    if (pending.kind !== 'preference') return undefined;
     const entry = offered.get(pending.selection.entryId);
     const key = entry?.ambiguity?.find((candidate) => candidate.key === pending.key);
     if (entry === undefined || key === undefined) return undefined;
@@ -630,7 +634,7 @@ export class NlSelectionService {
     if (output.entryId !== null) {
       const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args));
       if (!validated.ok) outcome = 'INVALID';
-      else if (output.ambiguity === 'CLEAR') executable = { entryId: validated.value.entry.id, args: validated.value.args };
+      else if (output.ambiguity === 'CLEAR' && isNlWave1EntryId(validated.value.entry.id)) executable = { entryId: validated.value.entry.id, args: validated.value.args };
     }
     if (turn.grammar !== undefined) {
       this.logAgreement(turn, {

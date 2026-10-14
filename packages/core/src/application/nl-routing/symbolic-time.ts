@@ -282,6 +282,11 @@ const TIME_WORD_PATTERNS: readonly RegExp[] = [
 /** One particle or ending glued on a time word ("목요일은", "오후에", "내일까지"). */
 const TIME_WORD_TAIL = /(?:에서|까지|부터|에는|으로|은|는|이|가|을|를|에|의|도|만|쯤|께|쯤에)$/u;
 
+/** One word of a time expression (a weekday, relative day or week, part of day, date or clock time), particles allowed. */
+export function isNlTimeWord(token: string): boolean {
+  return isTimeWord(token.normalize('NFC').toLowerCase());
+}
+
 function isTimeWord(token: string): boolean {
   if (token.length === 0) return false;
   if (TIME_WORD_PATTERNS.some((pattern) => pattern.test(token))) return true;

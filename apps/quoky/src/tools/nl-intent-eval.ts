@@ -20,7 +20,7 @@ import {
   NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
   buildSelectionPrompt,
-  isNlCatalogEntryId,
+  isNlWave1EntryId,
   nlSelectionMeaning,
   parseSelectionOutput,
   prepareSelectionInput,
@@ -94,7 +94,7 @@ export interface NlEvalPlan {
 
 export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: NlEvalPlanOptions): NlEvalPlan {
   for (const entry of options.entries) {
-    if (!isNlCatalogEntryId(entry)) throw new Error(`unknown entry ${entry}`);
+    if (!isNlWave1EntryId(entry)) throw new Error(`unknown entry ${entry}`);
   }
   if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 5) throw new Error('runs must be 1..5');
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
@@ -314,7 +314,7 @@ export async function runEvaluation(input: {
         const prompt = buildSelectionPrompt({
           entries: ALL_ENTRIES,
           text: prepared.text,
-          ...(golden.prior !== undefined && isNlCatalogEntryId(golden.prior.entryId)
+          ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId)
             ? { previous: { entryId: golden.prior.entryId, args: golden.prior.args } }
             : {}),
         });
@@ -381,7 +381,7 @@ export function userVisibleMeaning(selection: { readonly entryId: string; readon
     const cleaned = value.replace(KEYWORD_NOISE, ' ').replace(/님$/u, '').replace(/\s+/g, ' ').trim();
     if (cleaned.length > 0) args[name] = cleaned;
   }
-  const entry = isNlCatalogEntryId(selection.entryId) ? NL_WAVE1_ENTRIES[selection.entryId] : undefined;
+  const entry = isNlWave1EntryId(selection.entryId) ? NL_WAVE1_ENTRIES[selection.entryId] : undefined;
   return nlSelectionMeaning({ entryId: selection.entryId as never, args }, entry, now as never, timeZone);
 }
 

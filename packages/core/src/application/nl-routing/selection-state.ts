@@ -1,5 +1,14 @@
 import type { Actor, Id, IsoTimestamp, Metadata, Session } from '../../domain';
-import { isNlCatalogEntryId, type NlArgs, type NlArgValue, type NlCatalogEntryId } from './catalog';
+import {
+  isNlActionEntryId,
+  isNlWave1EntryId,
+  type NlActionEntryId,
+  type NlArgs,
+  type NlArgValue,
+  type NlItemSource,
+  type NlItemTarget,
+  type NlWave1EntryId,
+} from './catalog';
 import { isTimeExpression } from './symbolic-time';
 import { nlWave1Entry } from './wave1-entries';
 
@@ -32,8 +41,9 @@ const MAX_ARGS = 12;
 const MAX_STRING = 200;
 const MAX_GROUNDING = 1000;
 
+/** A stored selection is always a wave-1 READ entry: an A6 action id is never `lastSelection` nor a numbered option. */
 export interface StoredSelection {
-  readonly entryId: NlCatalogEntryId;
+  readonly entryId: NlWave1EntryId;
   readonly args: NlArgs;
 }
 
@@ -61,7 +71,70 @@ export type PendingQuestion =
       readonly values: readonly string[];
       /** The selection the answer completes. */
       readonly selection: StoredSelection;
+    }
+  /**
+   * ADR-0120 amendment A6-D2: which item did the owner mean? Candidate ids under their shown labels ONLY (never a span);
+   * only target entries resume from it (`todo.complete`/`todo.cancel`, `reminder.cancel`, `item.summarize`,
+   * `action.undo`). `args` keeps the closed enum args (`source`, `scope`, `mode`) of `item.summarize`, nothing else.
+   */
+  | {
+      readonly kind: 'action-target';
+      readonly at: IsoTimestamp;
+      readonly language: 'ko' | 'en';
+      readonly entryId: NlActionEntryId;
+      readonly source: NlItemSource;
+      readonly candidates: readonly { readonly label: number; readonly id: string }[];
+      readonly args: NlArgs;
+      readonly listingAt?: IsoTimestamp;
+    }
+  /** Ratification record C: summary or full? The resolved item id only; the answer is kept as the D7 preference. */
+  | {
+      readonly kind: 'action-mode';
+      readonly at: IsoTimestamp;
+      readonly language: 'ko' | 'en';
+      readonly target: NlItemTarget;
+      readonly scope?: 'item' | 'thread';
+    }
+  /** Ratification record A: undoing the cancel of a one-shot whose time passed asks for a new time (the reminder id only). */
+  | {
+      readonly kind: 'action-reschedule';
+      readonly at: IsoTimestamp;
+      readonly language: 'ko' | 'en';
+      readonly target: NlItemTarget;
     };
+
+/** Whether a pending question belongs to A6 (answered before any grammar, only while actions are live). */
+export function isActionPendingQuestion(question: PendingQuestion | null | undefined): question is Extract<PendingQuestion, { kind: `action-${string}` }> {
+  return question?.kind === 'action-target' || question?.kind === 'action-mode' || question?.kind === 'action-reschedule';
+}
+
+const ITEM_SOURCES: readonly NlItemSource[] = ['todo', 'reminder', 'mail', 'drive'];
+const ACTION_ENUM_ARGS: Readonly<Record<string, readonly string[]>> = { source: ['mail', 'drive'], scope: ['item', 'thread'], mode: ['summary', 'full'] };
+const MAX_CANDIDATES = 10;
+
+function targetOf(value: unknown): NlItemTarget | undefined {
+  const record = recordOf(value);
+  if (!(ITEM_SOURCES as readonly unknown[]).includes(record.source)) return undefined;
+  const id = typeof record.id === 'string' && record.id.length > 0 && record.id.length <= 512 ? record.id : undefined;
+  const label = Number.isSafeInteger(record.label) && (record.label as number) >= 1 ? (record.label as number) : undefined;
+  // Only a reminder may be named by its display number alone.
+  if (id === undefined && (record.source !== 'reminder' || label === undefined)) return undefined;
+  const listingAt = typeof record.listingAt === 'string' && Number.isFinite(Date.parse(record.listingAt)) ? record.listingAt : undefined;
+  return {
+    source: record.source as NlItemSource,
+    ...(id !== undefined ? { id } : {}),
+    ...(label !== undefined ? { label } : {}),
+    ...(listingAt !== undefined ? { listingAt } : {}),
+  };
+}
+
+function actionArgsOf(value: unknown): NlArgs {
+  const args: Record<string, NlArgValue> = {};
+  for (const [name, arg] of Object.entries(recordOf(value))) {
+    if (typeof arg === 'string' && (ACTION_ENUM_ARGS[name] ?? []).includes(arg)) args[name] = arg;
+  }
+  return args;
+}
 
 function recordOf(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -88,7 +161,7 @@ function argsOf(value: unknown): NlArgs | undefined {
 
 function selectionOf(value: unknown): StoredSelection | undefined {
   const record = recordOf(value);
-  if (!isNlCatalogEntryId(record.entryId)) return undefined;
+  if (!isNlWave1EntryId(record.entryId)) return undefined;
   const args = argsOf(record.args);
   return args === undefined ? undefined : { entryId: record.entryId, args };
 }
@@ -147,6 +220,34 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
     const groundingText = typeof record.groundingText === 'string' && record.groundingText.length <= MAX_GROUNDING ? record.groundingText : undefined;
     return { kind: 'entry', at, language, options: options as StoredSelection[], ...(groundingText !== undefined ? { groundingText } : {}) };
   }
+  if (record.kind === 'action-target' && isNlActionEntryId(record.entryId) && (ITEM_SOURCES as readonly unknown[]).includes(record.source) && Array.isArray(record.candidates)) {
+    const candidates = record.candidates
+      .map((candidate) => recordOf(candidate))
+      .filter((candidate) => Number.isSafeInteger(candidate.label) && (candidate.label as number) >= 1 && typeof candidate.id === 'string' && candidate.id.length > 0 && candidate.id.length <= 512)
+      .map((candidate) => ({ label: candidate.label as number, id: candidate.id as string }));
+    if (candidates.length === 0 || candidates.length !== record.candidates.length || candidates.length > MAX_CANDIDATES) return undefined;
+    const listingAt = typeof record.listingAt === 'string' && Number.isFinite(Date.parse(record.listingAt)) ? (record.listingAt as IsoTimestamp) : undefined;
+    return {
+      kind: 'action-target',
+      at,
+      language,
+      entryId: record.entryId,
+      source: record.source as NlItemSource,
+      candidates,
+      args: actionArgsOf(record.args),
+      ...(listingAt !== undefined ? { listingAt } : {}),
+    };
+  }
+  if (record.kind === 'action-mode') {
+    const target = targetOf(record.target);
+    if (target === undefined) return undefined;
+    const scope = record.scope === 'thread' || record.scope === 'item' ? record.scope : undefined;
+    return { kind: 'action-mode', at, language, target, ...(scope !== undefined ? { scope } : {}) };
+  }
+  if (record.kind === 'action-reschedule') {
+    const target = targetOf(record.target);
+    return target === undefined || target.source !== 'reminder' ? undefined : { kind: 'action-reschedule', at, language, target };
+  }
   if (record.kind === 'preference' && typeof record.key === 'string' && Array.isArray(record.values)) {
     const values = record.values.filter((value): value is string => typeof value === 'string' && value.length <= 40);
     const selection = selectionOf(record.selection);
@@ -157,6 +258,26 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
 }
 
 export function pendingQuestionRecord(actorId: Id, question: PendingQuestion): Metadata {
+  switch (question.kind) {
+    case 'action-target':
+      return {
+        actorId,
+        kind: question.kind,
+        at: question.at,
+        language: question.language,
+        entryId: question.entryId,
+        source: question.source,
+        candidates: question.candidates.slice(0, MAX_CANDIDATES).map((candidate) => ({ label: candidate.label, id: candidate.id })),
+        args: actionArgsOf(question.args),
+        ...(question.listingAt !== undefined ? { listingAt: question.listingAt } : {}),
+      };
+    case 'action-mode':
+      return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target }, ...(question.scope !== undefined ? { scope: question.scope } : {}) };
+    case 'action-reschedule':
+      return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target } };
+    default:
+      break;
+  }
   return question.kind === 'entry'
     ? {
         actorId,
