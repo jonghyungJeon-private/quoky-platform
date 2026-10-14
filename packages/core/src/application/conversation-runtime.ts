@@ -221,7 +221,7 @@ import type { IntentResolutionContext } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
 import type { WorkSurface } from './work-surface-query';
 import type { ExternalWorkReadout } from './work-chat/external-work-readout';
-import { detectWorkChatCommand } from './work-chat/work-chat-command';
+import { detectWorkChatCommand, todoListLeavesUnexpressedContent } from './work-chat/work-chat-command';
 import {
   curatedExamplesForPrompt,
   isExternalWorkReadout,
@@ -3127,12 +3127,19 @@ export class ConversationRuntime {
     // Phase C: a selection already made at a Class B position this turn is not repeated (one call per message, D3); its
     // honest-chat fact carries over. The classifier's personal-work surface is a Class B grammar too (`work-surface`):
     // selection runs first there, and the surface is the fallback for every other outcome.
+    // ADR-0120 A2 (implementation note 2): in Phase A the same route runs when the A2 yield is on and the surface clause (a
+    // substring match) leaves content its phrase family cannot express. A selector `none` then makes the turn chat; a
+    // skipped, failed, timed-out or unavailable selector leaves the surface as the fallback (A5 change 9). No agreement line
+    // is logged for it (no grammar probe), so the D10 data stays Phase C only.
     let nlFacts: NlChatFacts | undefined = nlEarly?.facts;
     if (nlEarly === undefined && this.deps.nlSelection !== undefined && this.deps.nlSelection.mode !== 'off' && !lookup.pending) {
-      const route = ConversationRuntime.nlSelectionRoute(intent) ?? (this.nlPhaseC(lookup.pending) ? ConversationRuntime.nlWorkSurfaceRoute(intent) : undefined);
+      const phaseC = this.nlPhaseC(lookup.pending);
+      const route =
+        ConversationRuntime.nlSelectionRoute(intent) ??
+        (phaseC || this.nlSurfaceYields(message) ? ConversationRuntime.nlWorkSurfaceRoute(intent) : undefined);
       if (route !== undefined) {
         try {
-          const grammar: NlClassBProbe | undefined = route === 'work-surface' ? { grammarId: 'work-surface', selection: { entryId: 'todo.list', args: {} } } : undefined;
+          const grammar: NlClassBProbe | undefined = route === 'work-surface' && phaseC ? { grammarId: 'work-surface', selection: { entryId: 'todo.list', args: {} } } : undefined;
           const selected = await this.handleNlSelection(message, session, actor, applyAnchor, userMemory.id, route, intent, nlPending, grammar);
           if (selected.kind === 'responded') return selected.result;
           if (route !== 'work-surface') nlFacts = selected.facts;
@@ -3182,6 +3189,14 @@ export class ConversationRuntime {
     const turn = this.nlTurns.get(message);
     if (turn !== undefined) turn.keep = true;
     else this.nlTurns.set(message, { sessionId: session.id, keep: true });
+  }
+
+  /**
+   * ADR-0120 A2 (implementation note 2): the classifier's personal-work surface clause yields to selection on this turn —
+   * the A2 gate is on and the message leaves content the to-do / my-work phrase family cannot express.
+   */
+  private nlSurfaceYields(message: InboundMessage): boolean {
+    return this.nlYield.has(message) && todoListLeavesUnexpressedContent(message.text.trim());
   }
 
   /** ADR-0120 D6 Phase C: the classifier's personal-work surface (a frozen Class B clause, D6) as a selection route. */

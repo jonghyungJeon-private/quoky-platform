@@ -3,7 +3,8 @@ import type { Intent } from '../../domain';
 import { CONNECTOR_SEARCH_TEXT_MAX_LENGTH } from '../../ports';
 import type { PersonalWorkRole, PersonalWorkSort, PersonalWorkStatus, PersonalWorkWindowField } from '../../ports/connector-query';
 import { unnegatedMatch } from '../intent-negation';
-import { leavesUnexpressedContent } from '../nl-routing/grammar-residual';
+import { leavesUnexpressedContent, slotSwallowsClause } from '../nl-routing/grammar-residual';
+import { canonicalNlKeyword } from '../nl-routing/keyword-canonical';
 import { jiraKeywordCarriesQualifier } from '../nl-routing/wave1-entries';
 import type { ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
 
@@ -374,8 +375,35 @@ function isNegatedMessage(text: string): boolean {
   return !unnegatedMatch(text, [/^[\s\S]+$/]);
 }
 
-function isTodoList(text: string): boolean {
+/**
+ * Everything the to-do list phrases can express (ADR-0120 A2, 2026-10-14) — their own words only: the to-do and work
+ * nouns, the owner and "now" prefixes they accept, "남은" (the list shows only open to-dos, `SUMMARY_REMAINING_KO`), the
+ * list nouns, and the legacy surface clause's "해야 할 일/작업" (request verbs and endings are closed classes in
+ * `grammar-residual.ts`). The to-do list has no period or filter, so a prefix such as "오늘" is part of the phrase, not a
+ * qualifier. The legacy clause below matches a SUBSTRING ("할 일 … 알려"), so "할 일 관리하는 좋은 습관 알려줘" used to be
+ * answered with the list; with yield on, the words it leaves ("관리하는", "습관") make it decline. The vocabulary order
+ * matters: "해야 할 일" is removed before the bare to-do noun.
+ */
+const TODO_LIST_EXPRESSED: readonly RegExp[] = [
+  /(?:해야\s*)?할\s*(?:일|작업)/,
+  new RegExp(TODO_NOUN, 'i'),
+  /내가|제가|나는|나의|오늘|지금|현재|전체|남은|업무|작업|목록|리스트/,
+  /\b(?:to-?dos?|todos?|tasks?|list|work|need)\b/i,
+];
+
+/**
+ * Whether a to-do list phrase — or the classifier's personal-work surface clause, which is the same phrase family
+ * (`IntentClassifier.isPersonalWorkSurface`) — leaves content it cannot express (ADR-0120 A2): the caller then declines
+ * when selection would run. Pure.
+ */
+export function todoListLeavesUnexpressedContent(text: string): boolean {
+  return leavesUnexpressedContent(text, TODO_LIST_EXPRESSED);
+}
+
+function isTodoList(text: string, yieldToSelection: boolean): boolean {
   if (isNegatedMessage(text)) return false;
+  // ADR-0120 A2: only a list request the phrases express entirely is answered with the list when selection would run.
+  if (yieldToSelection && todoListLeavesUnexpressedContent(text)) return false;
   // The legacy regex stays verbatim and unguarded so the detector remains a superset of the classifier branch; every
   // newer pattern is skipped for code, file, URL and explain-style messages (`isDevOrExplainMessage`).
   if (LEGACY_PERSONAL_WORK_SURFACE.test(text)) return true;
@@ -457,6 +485,26 @@ const CONTENT_SHAPED = /[\r\n]|[:：`]/;
 const QUOTE_CLASS = '"\'“”‘’「」『』';
 const ANY_QUOTE = new RegExp(`[${QUOTE_CLASS}]`, 'u');
 const ONE_SHORT_QUOTED = new RegExp(`^[^${QUOTE_CLASS}]*[${QUOTE_CLASS}][^${QUOTE_CLASS}]{1,30}[${QUOTE_CLASS}][^${QUOTE_CLASS}]*$`, 'u');
+/**
+ * A keyword the owner quoted (one short quoted span, the {@link ONE_SHORT_QUOTED} shape, whose text is the keyword:
+ * `"배포 관련"`, `"온보딩 문서"`) is their exact literal: the A2 slot rule never cuts it.
+ */
+const QUOTED_SPAN = new RegExp(`[${QUOTE_CLASS}]([^${QUOTE_CLASS}]{1,30})[${QUOTE_CLASS}]`, 'u');
+function swallowsClause(rawSlot: string, slot: string): boolean {
+  const quoted = ONE_SHORT_QUOTED.test(rawSlot) ? QUOTED_SPAN.exec(rawSlot)?.[1] : undefined;
+  if (quoted !== undefined && cleanSearchText(quoted) === slot) return false;
+  return slotSwallowsClause(slot, canonicalNlKeyword);
+}
+
+/**
+ * A Jira slot carries a role, status, date field or period only OUTSIDE a quoted literal: `"진행중인 배포" 관련` is a
+ * keyword, `진행중인 "배포" 관련` carries a status (ADR-0120 A2 implementation note 2).
+ */
+function jiraSlotCarriesQualifier(rawSlot: string): boolean {
+  const outside = ONE_SHORT_QUOTED.test(rawSlot) ? rawSlot.replace(QUOTED_SPAN, ' ') : rawSlot;
+  return jiraKeywordCarriesQualifier(outside);
+}
+
 function namesIssueOrIsContent(text: string): boolean {
   if (ISSUE_KEY_OR_URL.test(text) || CONTENT_SHAPED.test(text)) return true;
   return ANY_QUOTE.test(text) && !ONE_SHORT_QUOTED.test(text);
@@ -478,10 +526,16 @@ function searchCommand(sourceToken: string, rawText: string, whole: string, yiel
   // names an issue key or link, or is labelled/quoted/multi-line content, keeps its old routing.
   if (source === 'jira' && !namesIssueOrIsContent(whole)) {
     // ADR-0120 follow-up 2: a role, status, date field or period inside the "keyword" is for selection's typed args.
-    if (yieldToSelection && jiraKeywordCarriesQualifier(text)) return null;
+    if (yieldToSelection && jiraSlotCarriesQualifier(rawText)) return null;
     const keyword = cleanSearchText(stripItemNoun(text));
+    // ADR-0120 A2 (2026-10-14): a keyword slot that swallowed a clause is not the keyword the catalog would search.
+    if (yieldToSelection && keyword && swallowsClause(rawText, keyword)) return null;
     return keyword ? { kind: 'lookup', source, query: 'my-items', text: keyword } : { kind: 'lookup', source, query: 'my-items' };
   }
+  // ADR-0120 A2 (2026-10-14): the search slot takes the rest of the sentence ("배포 얘기 나온 거"); when the catalog's own
+  // keyword rule would cut it, the grammar would search words the owner did not mean, so it declines for selection. A
+  // GitHub text search has no catalog equivalent, so it keeps its grammar.
+  if (yieldToSelection && (source === 'slack' || source === 'confluence') && swallowsClause(rawText, text)) return null;
   return { kind: 'lookup', source, query: 'search', text };
 }
 
@@ -671,7 +725,7 @@ function detectJiraListing(text: string, yieldToSelection: boolean): WorkChatCom
   if (keyword !== undefined) {
     const cleaned = cleanSearchText(keyword);
     if (cleaned.length === 0 || EMPTY_KEYWORD.test(cleaned)) return null;
-    if (yieldToSelection && jiraKeywordCarriesQualifier(cleaned)) return null;
+    if (yieldToSelection && (jiraSlotCarriesQualifier(keyword) || swallowsClause(keyword, cleaned))) return null;
     if (Array.from(cleaned).length > WORK_CHAT_SEARCH_TEXT_MAX_LENGTH) return { kind: 'usage', topic: 'search-too-long' };
     return { kind: 'lookup', source: 'jira', query: 'my-items', text: cleaned };
   }
@@ -738,7 +792,7 @@ function detectUnanchored(text: string, yieldToSelection: boolean): WorkChatComm
     detectSearch(text, yieldToSelection) ??
     detectExternalWrite(text) ??
     detectLookup(text, yieldToSelection) ??
-    (isTodoList(text) ? { kind: 'todo.list' } : null) ??
+    (isTodoList(text, yieldToSelection) ? { kind: 'todo.list' } : null) ??
     (isTodoSummaryQuestion(text) ? { kind: 'todo.summary' } : null) ??
     detectBareAddUsage(text) ??
     detectCompletionHint(text)

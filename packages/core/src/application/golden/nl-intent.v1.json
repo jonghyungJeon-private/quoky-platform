@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12.",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) are PENDING the owner's batch approval under ADR-0120 D12.",
   "cases": [
     {
       "id": "jira-001",
@@ -1395,13 +1395,6 @@
         "args": {
           "keyword": "온보딩"
         }
-      },
-      "grammar": "work-lookup.search",
-      "grammarAnswer": {
-        "entryId": "confluence.search",
-        "args": {
-          "keyword": "온보딩 문서"
-        }
       }
     },
     {
@@ -1449,13 +1442,6 @@
         "args": {
           "keyword": "DB 설계"
         }
-      },
-      "grammar": "work-lookup.search",
-      "grammarAnswer": {
-        "entryId": "confluence.search",
-        "args": {
-          "keyword": "DB 설계 문서"
-        }
       }
     },
     {
@@ -1476,13 +1462,6 @@
         "entryId": "confluence.search",
         "args": {
           "keyword": "정책"
-        }
-      },
-      "grammar": "work-lookup.search",
-      "grammarAnswer": {
-        "entryId": "confluence.search",
-        "args": {
-          "keyword": "정책 문서"
         }
       },
       "note": "spelling variant"
@@ -3325,11 +3304,9 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "grammar": "work-lookup.todo-list",
-      "grammarAnswer": {
-        "entryId": "todo.list",
-        "args": {}
-      }
+      "grammar": "work-surface",
+      "grammarAnswer": null,
+      "grammarYieldOff": "work-lookup.todo-list"
     },
     {
       "id": "todo-017",
@@ -3375,11 +3352,9 @@
           "count": true
         }
       },
-      "grammar": "work-lookup.todo-list",
-      "grammarAnswer": {
-        "entryId": "todo.list",
-        "args": {}
-      }
+      "grammar": "work-surface",
+      "grammarAnswer": null,
+      "grammarYieldOff": "work-lookup.todo-list"
     },
     {
       "id": "todo-021",
@@ -3858,11 +3833,9 @@
         "entryId": "brief.today",
         "args": {}
       },
-      "grammar": "work-lookup.todo-list",
-      "grammarAnswer": {
-        "entryId": "todo.list",
-        "args": {}
-      }
+      "grammar": "work-surface",
+      "grammarAnswer": null,
+      "grammarYieldOff": "work-lookup.todo-list"
     },
     {
       "id": "brief-018",
@@ -7849,12 +7822,15 @@
           "topic": "todo"
         }
       },
-      "grammar": "work-lookup.todo-list",
+      "grammar": "help-intent",
       "grammarAnswer": {
-        "entryId": "todo.list",
-        "args": {}
+        "entryId": "help.topic",
+        "args": {
+          "topic": "todo"
+        }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]",
+      "grammarYieldOff": "work-lookup.todo-list"
     },
     {
       "id": "help-039",
@@ -8108,11 +8084,9 @@
       "id": "neg-219",
       "text": "할 일 관리하는 좋은 습관 알려줘",
       "expect": "none",
-      "grammar": "work-lookup.todo-list",
-      "grammarAnswer": {
-        "entryId": "todo.list",
-        "args": {}
-      },
+      "grammar": "work-surface",
+      "grammarAnswer": null,
+      "grammarYieldOff": "work-lookup.todo-list",
       "note": "S1 Phase C negative; a Class B grammar captures it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
     },
     {
@@ -8806,13 +8780,6 @@
           "partOfDay": "afternoon"
         }
       },
-      "grammar": "calendar-question",
-      "grammarAnswer": {
-        "entryId": "calendar.events",
-        "args": {
-          "range": "2026-10-21"
-        }
-      },
       "note": "weekday plus part of day [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
     },
     {
@@ -8843,13 +8810,6 @@
           "partOfDay": "morning"
         }
       },
-      "grammar": "calendar-question",
-      "grammarAnswer": {
-        "entryId": "calendar.events",
-        "args": {
-          "range": "tomorrow"
-        }
-      },
       "note": "morning events [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
     },
     {
@@ -8860,11 +8820,6 @@
         "args": {
           "partOfDay": "evening"
         }
-      },
-      "grammar": "calendar-question",
-      "grammarAnswer": {
-        "entryId": "calendar.events",
-        "args": {}
       },
       "note": "evening events [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
     },
@@ -8969,13 +8924,6 @@
           "keyword": "배포"
         }
       },
-      "grammar": "work-lookup.search",
-      "grammarAnswer": {
-        "entryId": "slack.search",
-        "args": {
-          "keyword": "배포 얘기 나온 거"
-        }
-      },
       "note": "core search term without conversational filler [UAT R7: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
     },
     {
@@ -8985,13 +8933,6 @@
         "entryId": "confluence.search",
         "args": {
           "keyword": "결제"
-        }
-      },
-      "grammar": "work-lookup.search",
-      "grammarAnswer": {
-        "entryId": "confluence.search",
-        "args": {
-          "keyword": "결제 관련 내용"
         }
       },
       "note": "core search term without filler [UAT R7: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
@@ -9030,6 +8971,97 @@
       "text": "일정 관리 잘하는 법 알려줘",
       "expect": "none",
       "note": "advice, not a calendar read [UAT R9: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5gy-01",
+      "text": "내일 오후 일정",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow",
+          "partOfDay": "afternoon"
+        }
+      },
+      "note": "a part of day the calendar grammar cannot carry: it declines (A2 yield) and selection binds partOfDay [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5gy-02",
+      "text": "캘린더는 보지 말고 할 일만 알려줘",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammar": "work-surface",
+      "grammarAnswer": null,
+      "note": "an exclusion the personal-work surface clause cannot express: with yield on it asks the selector first and keeps the surface as the fallback (A5 change 9) [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5gy-03",
+      "text": "내 할 일",
+      "expect": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammar": "work-lookup.todo-list",
+      "grammarAnswer": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "note": "plain phrase: the to-do grammar still answers with yield on [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5gy-04",
+      "text": "슬랙에서 배포 찾아줘",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "배포"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "grammarAnswer": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "배포"
+        }
+      },
+      "note": "plain phrase: the search slot is already the canonical keyword, so the grammar still answers [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5gy-05",
+      "text": "컨플루언스에서 온보딩 검색해줘",
+      "expect": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "온보딩"
+        }
+      },
+      "grammar": "work-lookup.search",
+      "grammarAnswer": {
+        "entryId": "confluence.search",
+        "args": {
+          "keyword": "온보딩"
+        }
+      },
+      "note": "plain phrase: the search slot is already the canonical keyword, so the grammar still answers [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5gy-06",
+      "text": "내일 일정",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow"
+        }
+      },
+      "grammar": "calendar-question",
+      "grammarAnswer": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow"
+        }
+      },
+      "note": "plain phrase: the calendar grammar still answers with yield on [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
     }
   ]
 }

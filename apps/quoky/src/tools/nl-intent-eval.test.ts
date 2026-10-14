@@ -230,11 +230,16 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
     expect(scoreSelectorSide(corpus, records, NOW)).toEqual({ positives: 3, exact: 2, entry: 2, userVisible: 2, wrongCaptures: 0 });
   });
 
-  it('the committed corpus: every grammar-tagged case records the grammar answer (250), and the grammar side is reproducible', () => {
+  it('the committed corpus: every grammar-tagged case records the grammar answer (247), and the grammar side is reproducible', () => {
     const { corpus: real } = loadCorpus();
     const tagged = real.cases.filter((golden) => golden.grammar !== undefined);
-    expect(tagged).toHaveLength(250);
+    // ADR-0120 A2 implementation note 2 (2026-10-14): 8 cases a grammar used to answer while dropping part of the message
+    // (a part of day, a swallowed search clause) are no longer grammar hits; 4 to-do substring captures and one live
+    // sentence are now the surface clause's (`work-surface`: selection first, the surface as the fallback); help-038 is the
+    // help grammar's; 4 plain phrases were added. The rate changes come from cases leaving or joining the denominator.
+    expect(tagged).toHaveLength(247);
     expect(tagged.every((golden) => golden.grammarAnswer !== undefined)).toBe(true);
-    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 249, exact: 205, entry: 246, userVisible: 228, wrongCaptures: 1 });
+    // `work-surface` has no catalog equivalent (the Jira/GitHub surface is not the to-do list), so its answer is null.
+    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 246, exact: 209, entry: 241, userVisible: 227, wrongCaptures: 0 });
   });
 });

@@ -976,10 +976,15 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
       });
     });
 
-    it('known Phase A limitation (documented, fixed by Phase C for the grammar): the to-do grammar captures "할 일 관리하는 좋은 습관 알려줘"', async () => {
+    it('Phase A with yield on (production) no longer captures "할 일 관리하는 좋은 습관 알려줘" (A2 note 2); with yield off the frozen grammar still does', async () => {
       const phaseA = await withPhase('a', 'active', () => turnOf('할 일 관리하는 좋은 습관 알려줘'));
-      expect(phaseA.claims.map((claim) => claim.handlerId)).toEqual(['work-chat.lookup']);
-      expect(phaseA.connectors.length).toBeGreaterThan(0);
+      expect(phaseA.selects).toBe(1);
+      expect(phaseA.claims).toEqual([]);
+      expect(phaseA.connectors).toEqual([]);
+      expect(phaseA.result.reply.text).toBe(CHAT_REPLY);
+      const yieldOff = await withGrammarYield(false, () => withPhase('a', 'active', () => turnOf('할 일 관리하는 좋은 습관 알려줘')));
+      expect(yieldOff.claims.map((claim) => claim.handlerId)).toEqual(['work-chat.lookup']);
+      expect(yieldOff.connectors.length).toBeGreaterThan(0);
       // Phase C: the selector (none) is asked first and the grammar no longer answers.
       const phaseC = await withPhase('c', 'active', () => turnOf('할 일 관리하는 좋은 습관 알려줘'));
       expect(phaseC.selects).toBe(1);
@@ -1132,6 +1137,154 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
         expect(turn.calendar).toEqual([]);
         expect(turn.result.reply.text).toBe(CHAT_REPLY);
       });
+    });
+  });
+
+  // ADR-0120 A2 implementation note 2: the live Telegram run of 2026-10-14 after A5 (QUOKY_NL_INTENT_MODE=active,
+  // QUOKY_NL_PHASE=c-shadow, QUOKY_NL_GRAMMAR_YIELD=on). In each case a frozen Class B grammar answered first while the
+  // shadow selection was right. Phase A is what c-shadow serves in the foreground; the scripted selector plays the model.
+  describe('live Telegram (2026-10-14, after A5) - a Class B grammar declines what it cannot express, selection answers', () => {
+    afterEach(() => {
+      selectorAnswer = none;
+    });
+    const down = () => {
+      throw new Error('selector down');
+    };
+    const timedEvent = (id: string, title: string, day: string, start: string, end: string): import('@quoky/core').CalendarEvent => ({
+      id,
+      title,
+      start: `${day}T${start}:00+09:00`,
+      end: `${day}T${end}:00+09:00`,
+      allDay: false,
+      status: 'confirmed',
+      calendarName: 'primary',
+    });
+
+    it('1-2: a part of the day goes to selection (partOfDay), so the afternoon is filtered instead of the whole day', async () => {
+      await withPhase('a', 'active', async () => {
+        const saved = calendarEvents;
+        try {
+          // The app's own "tomorrow", read from the window the grammar queried (no second clock).
+          const probe = await turnOf('내일 일정');
+          expect(probe.claims.map((claim) => claim.handlerId)).toEqual(['calendar']);
+          const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date(Date.parse(probe.calendar.at(-1)?.from ?? '') + 3_600_000));
+          calendarEvents = [timedEvent('g-1', '오전 주간 회의', day, '09:30', '10:30'), timedEvent('g-2', '오후 설계 리뷰', day, '14:00', '15:00')];
+
+          selectorAnswer = answer('calendar.events', { range: 'tomorrow', partOfDay: 'afternoon' });
+          const afternoon = await turnOf('내일 오후 일정');
+          expect(afternoon.claims).toEqual([]);
+          expect(afternoon.selects).toBe(1);
+          expect(afternoon.served.map((command) => command.args)).toEqual([{ range: 'tomorrow', partOfDay: 'afternoon' }]);
+          expect(afternoon.result.reply.text).toContain('오후 설계 리뷰');
+          expect(afternoon.result.reply.text).not.toContain('오전 주간 회의');
+
+          selectorAnswer = answer('calendar.events', { range: 'next-wed', partOfDay: 'afternoon' });
+          const nextWed = await turnOf('다음 주 수요일 오후에 뭐 있어');
+          expect(nextWed.claims).toEqual([]);
+          expect(nextWed.served.map((command) => command.args)).toEqual([{ range: 'next-wed', partOfDay: 'afternoon' }]);
+          const window = nextWed.calendar[0]!;
+          expect((Date.parse(window.to) - Date.parse(window.from)) / 86_400_000).toBe(1);
+
+          // A clock time keeps its part of day: the grammar still answers it, with no selector call.
+          const clock = await turnOf('내일 오후 3시에 뭐 있어');
+          expect(clock.selects).toBe(0);
+          expect(clock.claims.map((claim) => claim.handlerId)).toEqual(['calendar']);
+        } finally {
+          calendarEvents = saved;
+        }
+      });
+    });
+
+    it('3: an exclusion the personal-work surface clause cannot express reaches selection; the surface dump is gone', async () => {
+      await withPhase('a', 'active', async () => {
+        selectorAnswer = answer('todo.list');
+        const turn = await turnOf('캘린더는 보지 말고 할 일만 알려줘');
+        expect(turn.selects).toBe(1);
+        expect(turn.served.map((command) => command.entryId)).toEqual(['todo.list']);
+        expect(turn.calendar).toEqual([]);
+        expect(turn.result.reply.text).not.toMatch(/^지금 확인할 작업이에요/u);
+      });
+    });
+
+    it('4: advice about to-dos is not the to-do list: the substring grammar declines and the selector says none (chat)', async () => {
+      await withPhase('a', 'active', async () => {
+        selectorAnswer = none;
+        const turn = await turnOf('할 일 관리하는 좋은 습관 알려줘');
+        expect(turn.selects).toBe(1);
+        expect(turn.claims).toEqual([]);
+        expect(turn.connectors).toEqual([]);
+        expect(turn.result.reply.text).toBe(CHAT_REPLY);
+      });
+    });
+
+    it('5 and the chain: the search slot no longer swallows the clause (keyword 배포), and a reference after a chat turn asks instead of guessing', async () => {
+      await withPhase('a', 'active', async () => {
+        const ctx = context();
+        selectorAnswer = answer('slack.search', { keyword: '배포' });
+        const search = await turnOf('슬랙에서 배포 얘기 나온 거 찾아줘', ctx);
+        expect(search.claims).toEqual([]);
+        expect(search.served.map((command) => command.args)).toEqual([{ keyword: '배포' }]);
+        expect(search.connectors.map((entry) => entry.source)).toEqual(['slack']);
+        expect(JSON.stringify(search.connectors[0]?.query)).toContain('"배포"');
+        expect(JSON.stringify(search.connectors[0]?.query)).not.toContain('얘기');
+        // The search found items (the stub returns two), and the selection is the follow-up's previous selection.
+        expect(search.result.reply.text).toContain('slack 위클리카 정산 화면');
+        expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'slack.search', args: { keyword: '배포' } });
+
+        // An intervening chat turn ends the follow-up window (ADR-0120 follow-up 2: a turn with no catalog equivalent clears it).
+        selectorAnswer = none;
+        expect((await turnOf('고마워', ctx)).result.reply.text).toBe(CHAT_REPLY);
+        expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+
+        // "그 중에 …" and "아까 찾은 것 중 …" then reach the selector with no previous selection; the prompt rule (v17 rule 6)
+        // makes it a numbered question, never a guess and never a read.
+        for (const text of ['그 중에 프로덕션만', '아까 찾은 것 중 첫 번째 거 자세히']) {
+          selectorAnswer = JSON.stringify({ entryId: 'slack.search', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'confluence.search', args: {} }] });
+          const asked = await turnOf(text, ctx);
+          expect(asked.requests.find((request) => request.capability === SELECTION)?.prompt, text).toContain('Previous selection: none');
+          expect(asked.connectors, text).toEqual([]);
+          expect(asked.served, text).toEqual([]);
+          expect(asked.result.reply.text, text).not.toBe(CHAT_REPLY);
+          expect(asked.result.reply.text, text).toMatch(/[?？]|말씀해 주세요/u);
+        }
+      });
+    });
+
+    it('with the selector failing: the calendar and search declines get honest chat (A2 R5); the surface clause falls back to the surface (A5 change 9); plain phrases keep their grammars', async () => {
+      await withPhase('a', 'active', async () => {
+        selectorAnswer = down;
+        for (const text of ['다음 주 수요일 오후에 뭐 있어', '내일 오후 일정', '슬랙에서 배포 얘기 나온 거 찾아줘']) {
+          const turn = await turnOf(text);
+          expect(turn.selects, text).toBe(1);
+          expect(turn.claims, text).toEqual([]);
+          expect(turn.connectors, text).toEqual([]);
+          expect(turn.calendar, text).toEqual([]);
+          expect(turn.result.reply.text, text).toBe(CHAT_REPLY);
+        }
+        // The personal-work surface clause yields only to a selector that answers: a failed selection leaves the surface
+        // as the fallback, exactly as before (ADR-0120 A5 change 9, "Phase A is unchanged").
+        for (const text of ['캘린더는 보지 말고 할 일만 알려줘', '할 일 관리하는 좋은 습관 알려줘', '이번 주 해야 할 일 알려줘']) {
+          const turn = await turnOf(text);
+          expect(turn.selects, text).toBe(1);
+          expect(turn.served, text).toEqual([]);
+          expect(turn.result.reply.text, text).toMatch(/^지금 확인할 작업이에요/u);
+        }
+        for (const [text, handlerId] of [['내일 일정', 'calendar'], ['내 할 일', 'work-chat.lookup'], ['슬랙에서 배포 찾아줘', 'work-chat.lookup']] as const) {
+          const turn = await turnOf(text);
+          expect(turn.selects, text).toBe(0);
+          expect(turn.claims.map((claim) => claim.handlerId), text).toEqual([handlerId]);
+        }
+        const plainSearch = await turnOf('슬랙에서 배포 찾아줘');
+        expect(JSON.stringify(plainSearch.connectors[0]?.query)).toContain('"배포"');
+      });
+    });
+
+    it('QUOKY_NL_INTENT_MODE off or the yield flag off: every grammar answers exactly as before (no selector call)', async () => {
+      for (const run of [() => withPhase('a', 'off', () => turnOf('내일 오후 일정')), () => withGrammarYield(false, () => withPhase('a', 'active', () => turnOf('슬랙에서 배포 얘기 나온 거 찾아줘')))]) {
+        const turn = await run();
+        expect(turn.selects).toBe(0);
+        expect(turn.claims.length).toBe(1);
+      }
     });
   });
 

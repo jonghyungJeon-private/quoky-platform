@@ -21,6 +21,9 @@ import {
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
 import { isNlRangeSymbol, isTimeExpression, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from './symbolic-time';
+import { canonicalNlKeyword } from './keyword-canonical';
+
+export { canonicalNlKeyword } from './keyword-canonical';
 
 /**
  * Deterministic validation of a selector candidate (ADR-0120 D4, the ADR-0090 L2 policy), in order:
@@ -202,23 +205,6 @@ export function canonicalArgs(entry: NlCatalogEntry, args: Readonly<Record<strin
   return kept;
 }
 
-/**
- * Search-term canonicalization (not routing): a trailing generic noun the selector sometimes keeps ("온보딩 문서" →
- * "온보딩", "정책 자료" → "정책") is dropped when words remain. The closed list names kinds of content, never a source or
- * a capability, so it cannot change which entry runs — only the search words.
- */
-const GENERIC_TAIL = new Set([
-  '문서', '문서들', '자료', '페이지', '파일', '관련', '얘기', '내용', '메시지', '건', '거', '것',
-  // Conversational filler after the topic ("배포 얘기 나온 거"): the search term is the topic alone (live UAT R7).
-  '나온', '나왔던', '나왔나', '언급된', '언급한', '올라온', '있는', '있던', '관련된', '관한', '대한', '이야기',
-]);
-
-function withoutGenericTail(keyword: string): string {
-  const words = keyword.split(' ');
-  while (words.length > 1 && GENERIC_TAIL.has(words[words.length - 1] as string)) words.pop();
-  return words.join(' ');
-}
-
 /** Type check of one argument (D4 steps 1 and 3); the normalized value or `undefined`. */
 function checkArg(spec: NlArgSpec, value: NlArgValue): NlArgValue | undefined {
   switch (spec.kind) {
@@ -235,7 +221,7 @@ function checkArg(spec: NlArgSpec, value: NlArgValue): NlArgValue | undefined {
     }
     case 'keyword': {
       if (typeof value !== 'string') return undefined;
-      const keyword = withoutGenericTail(value.normalize('NFC').replace(/\s+/g, ' ').trim());
+      const keyword = canonicalNlKeyword(value);
       const length = Array.from(keyword).length;
       if (length === 0 || length > NL_KEYWORD_MAX_CHARS || CONTROL.test(keyword)) return undefined;
       return keyword;

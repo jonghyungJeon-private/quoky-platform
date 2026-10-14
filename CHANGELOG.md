@@ -5,6 +5,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Class B grammars yield what they cannot express (ADR-0120 A2 implementation note 2, 2026-10-14; acknowledged by the owner)
+
+- **Live fix.** Five Telegram sentences from the 2026-10-14 run after A5 were answered by a frozen grammar that dropped part of
+  the message: "다음 주 수요일 오후에 뭐 있어" and "내일 오후 일정" (whole day), "캘린더는 보지 말고 할 일만 알려줘" (Jira/GitHub
+  surface), "할 일 관리하는 좋은 습관 알려줘" (the to-do list), "슬랙에서 배포 얘기 나온 거 찾아줘" (searched the whole clause).
+  With `QUOKY_NL_GRAMMAR_YIELD=on` and `active`, selection now runs first: `partOfDay`, the to-do list, chat, keyword "배포".
+- **One rule, no phrases.** When selection would run, a Class B grammar declines when:
+  - (a) a content word is left after its own vocabulary. This now also covers the to-do list phrases and the classifier's
+    personal-work surface clause. One-syllable words count, except the closed degree adverbs, a dependent noun after an
+    adnominal word, and one ordered suffix glued after a grammar word;
+  - (b) a word grounds a typed arg it does not carry (the calendar's part of day outside a clock time);
+  - (c) its free-text slot is not already the catalog's canonical keyword (Slack/Confluence search, Jira keyword). Quoted
+    keywords are kept whole, and Jira qualifier words count only outside the quotes.
+- **Fallbacks.** The surface clause keeps the surface as the fallback when the selector is skipped, fails or times out
+  (A5 change 9). A declined calendar or search message gets honest chat when a selection call fails (A2 R5). With the yield
+  off, nothing changes (13-corpus replay: 0 differences).
+- **Corpus and tests.** `nl-intent.v1.json` grows from 791 to 797 cases (`uat5gy-01..06`, pending D12).
+  - Metadata-only tag edits on 8 cases from approved batches, and an optional `grammarYieldOff` tag.
+  - Grammar side, with `work-surface` scored as having no catalog equivalent: 250 → 247 tagged. Exact goes from 82.3% to
+    85.0% and wrong captures from 1 to 0, but only because cases left or joined the denominator; no grammar answer
+    improved.
+  - Tests: new `grammar-yield-table.test.ts` and an INT-4 acceptance block.
+
 ## Unreleased — Personal v5 closeout (DOC-G, 2026-10-14)
 
 - **Scope.** Docs only. Waves 1-3 and INT-4 are merged: W1 #175-#178; NL selection #179-#183 (A1-A4, A5 #199); ADR-0121 design

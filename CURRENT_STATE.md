@@ -46,6 +46,29 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
 
+### v5 Class B grammar yield, part 2 (ADR-0120 A2 implementation note 2) — on branch `claude/v5-grammar-yield` (2026-10-14)
+
+**Acknowledged by the owner on 2026-10-14** ("승인·배포"). This includes the selector-failure trade-offs: with a failing
+selector, a calendar part-of-day message gets chat, and four to-do phrasings fall back to the surface instead of the to-do
+list. Remaining over-yield-only cases (an extra selector call) are accepted residual. The note
+supersedes the A2 side-effect sentence on time-of-day words, extends the A2 Change scope and clarifies A5 change 9
+("Phase A is unchanged").
+
+- **What changed.** The five live Telegram sentences of 2026-10-14 that a frozen grammar answered by dropping part of the
+  message now reach selection first when the A2 yield is on. One rule over every Class B grammar: leftover content (now
+  also the to-do list phrases and the personal-work surface clause), a typed-arg word the grammar does not carry (calendar
+  part of day outside a clock time), and a free-text slot that is not the canonical keyword (quoted keywords kept).
+- **Fallbacks.** The surface clause keeps its fallback (A5 change 9). A declined calendar or search message gets chat when
+  the selection call fails (A2 R5).
+- **Unchanged.** With the yield off nothing changes (13-corpus replay: 0 differences). No migration, flag, env, prompt,
+  provider or classifier-interface change.
+- **Corpus.** 797 cases; `uat5gy-01..06` and 8 metadata-only tag edits await the owner's D12 look.
+- **Open for the owner.**
+  - A reference after a chat turn ("아까 찾은 것 중 첫 번째 거 자세히") asks a question, by follow-up 2 design.
+  - Slack and Confluence have no item-detail entry.
+
+Details: the A2 implementation note 2 in `DECISIONS.md`.
+
 ### v5 NL actions R0 (ADR-0120 amendment A6) — on branch `claude/v5-a6-r0` (2026-10-14)
 
 The A6 code is merged-ready but inert: `QUOKY_NL_ACTIONS` defaults to `off`, and with `off` the selector prompt is
