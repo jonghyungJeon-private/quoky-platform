@@ -21,7 +21,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Live fixes.** "다음 주 수 일정 있어?" read as next week plus the keyword "수" now gets the week-and-day question, not
   the generic one, and the selector now answers `next-wed`. "이번 주 금요일까지 일정" showing only Friday is a vocabulary
   gap (no "until <weekday>" symbol): stopped for an owner amendment decision, nothing changed.
-- **Corpus.** `uat5ca-01..04` (808 cases), PENDING the owner's D12 batch. Relabels proposed, not applied.
+- **Corpus.** `uat5ca-01..10` (814 cases; 05-10 are weekday statements that stay `none`, 0/240 captures in probes on
+  v18 and v20), PENDING the owner's D12 batch. Relabels proposed, not applied.
 - **Eval.** 3 owner-approved Haiku runs on calendar, mail and Jira (418 cases): calendar 90.4%, 89.2%,
   90.4% (baseline 86.3%; on the old 80 cases 72, 71, 72 vs 69), overall 94.1%, 93.7%, 95.0%, wrong captures 1, 0, 0 (`neg-042`, a
   pre-existing flake also seen on v18). The remaining calendar misses are all owner-decision cases; with the proposed

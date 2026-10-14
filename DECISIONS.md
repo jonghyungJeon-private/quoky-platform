@@ -23341,6 +23341,11 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   fixed the same three sentences but raised a wrong capture: "아이폰 알림 어떻게 꺼?" (`neg-012`) became `help.topic` in
   9 of 32 calls (v18: 0 of 32) and once in the 3-run evaluation. It was dropped; the shorter wording gives 0 of 20. This
   is an implementation note, not an amendment: no ratified text changes (the symbols and their meaning are A5's).
+  **Caveat on the gain (CA review).** The three examples are close to three corpus cases: 금요일 = fri to `calendar-017`
+  "금요일 일정 뭐야?" and `jira-030` "금요일 마감인 지라 이슈 알려줘", 다음 주 수 = next-wed to `uat5wd-01` "다음 주 수 일정
+  있어?" (no phrase is quoted, but the pattern is the same). Part of the calendar gain below therefore comes from cases
+  the examples cover. The generalisation evidence is `uat5ca-04` "담주 금 일정 뭐 있어" (another anchor spelling and
+  another weekday, `next-fri`), `uat5ca-01..03`, and the canonical form, which needs no example: all hit in 3 of 3 runs.
 - **A6 byte identity, updated consciously.** The A6 `off` path pinned the v18 bytes. The pin moves to v20:
   `golden/nl-select.v18.prompts.json` is replaced by `golden/nl-select.v20.prompts.json`, generated from the v18 file by
   replacing exactly those two lines in each of its 76 prompts (the git rename shows 76 changed prompt lines plus the
@@ -23354,8 +23359,10 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   "캘린더 일정 조회에서 무엇을 찾을지 정확히 모르겠어요" because the model answered `next-week` plus the keyword "수"
   (4 of 20 probe calls on v18). The per-arg check refuses that keyword as `time-keyword` before the weekday check (step 4b)
   runs, and only `weekday` chose the hint. Now `isWeekdayRefusal` (`nl-selection-service.ts`) chooses the weekday
-  question for `weekday`, and for `time-keyword` when the owner's text names a weekday, on the main output and on the
-  repaired first candidate. Other refusals keep the usage question. The prompt example above makes `next-wed` the selector's
+  question for `weekday`, and for `time-keyword` when the refused keyword itself holds a weekday form (a one-syllable
+  weekday or a full name, `nlKeywordHasWeekdayForm`) and the owner's text names a weekday, on the main output and on the
+  repaired first candidate. Other refusals keep the usage question: "다음 주 수요일 오후 일정" with the keyword "오후" is
+  not asked for a week and a day the owner already gave (CA review P2). The prompt example above makes `next-wed` the selector's
   answer (20 of 20 probe calls on v20).
 - **Live observation 2 — "이번 주 금요일까지 일정" showed only Friday 10/16 (a vocabulary gap, stopped).** The selector
   answers `this-fri` (12 of 20 probe calls on v18, the live reply) or `this-week` (8 of 20); v20 is the same (6/6 of 12). Both validate: A5 note 2
@@ -23366,9 +23373,13 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   inclusive end bound ("까지", "until", "by", "through") as today through that day. Both change what the owner sees for
   a whole class of phrasings and add to the A5 symbol set or its meaning, so this is left for the owner as an amendment
   decision. Nothing was changed for it.
-- **Golden cases.** `uat5ca-01..04` (808 cases): "금요일에 무슨 일정 있어?" → `fri`, "이번 주 목요일 일정 보여줘" →
+- **Golden cases.** `uat5ca-01..10` (814 cases): "금요일에 무슨 일정 있어?" → `fri`, "이번 주 목요일 일정 보여줘" →
   `this-thu` (both with their calendar-grammar tags), "목요일 마감인 지라 일 있어?" → due `thu`, "담주 금 일정 뭐 있어" →
-  `next-fri`. Agent-drafted, PENDING the owner's D12 batch approval.
+  `next-fri`; and six weekday statements that must stay `none` (`uat5ca-05..10`: "금요일에 친구 만나기로 했어", "다음 주
+  수요일 생일이야", "월요일은 늘 피곤해", "수요일마다 운동해", "이번 주 금요일 휴가야", "토요일에 이사해"), added because only 2 of
+  the 179 negatives named a weekday (CA review P2). Agent-drafted, PENDING the owner's D12 batch approval.
+- **Weekday-statement negatives, probed (owner-approved, Haiku, 20 calls each on v18 and on v20).** Wrong captures: 0 of
+  120 on v18 and 0 of 120 on v20 (every call `none`). The evaluation runs below predate these six cases.
 - **Relabels proposed for the owner's D12 batch (not applied; the approved gold is unchanged).**
   - `calendar-010` → `{range: tomorrow, availability: true}`; `calendar-036` → `{range: fri, availability: true}`;
     `calendar-026` → `{range: wed, partOfDay: afternoon, availability: true}`; `calendar-057` →
