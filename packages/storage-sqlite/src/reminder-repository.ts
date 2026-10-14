@@ -6,7 +6,9 @@ import {
   claimReminder,
   isActiveReminderStatus,
 } from '@quoky/core';
+import { actionWriteConditionHolds } from './action-write-condition';
 import type {
+  ActionWriteCondition,
   CancelReminderResult,
   CompleteFiringResult,
   CreateReminderResult,
@@ -61,13 +63,15 @@ function toReminder(row: ReminderRow): Reminder {
 export class SqliteReminderRepository implements ReminderRepository {
   constructor(private readonly db: Db) {}
 
-  async createWithinLimit(draft: ReminderDraft, maxActive: number): Promise<CreateReminderResult> {
+  async createWithinLimit(draft: ReminderDraft, maxActive: number, condition?: ActionWriteCondition): Promise<CreateReminderResult> {
     if (!Number.isSafeInteger(maxActive) || maxActive < 0) throw new Error('REMINDER_LIMIT_INVALID');
     if (draft.status !== ReminderStatus.SCHEDULED || draft.nextFireAt === undefined) {
       throw new Error('REMINDER_DRAFT_INVALID');
     }
     const nextFireAt = canonicalInstant(draft.nextFireAt);
     return this.immediate((): CreateReminderResult => {
+      // ADR-0120 A6-D3: the action switch is read in this transaction, right before the write.
+      if (!actionWriteConditionHolds(this.db, condition)) return { status: 'STOPPED' };
       const activeCount = this.countActive(draft.actorId);
       if (activeCount >= maxActive) return { status: 'LIMIT_REACHED', activeCount };
       const { max } = this.db.prepare('SELECT MAX(display_no) AS max FROM reminders WHERE actor_id = ?')
@@ -93,8 +97,9 @@ export class SqliteReminderRepository implements ReminderRepository {
     return row ? toReminder(row) : null;
   }
 
-  async cancel(actorId: Id, displayNo: number, at: IsoTimestamp): Promise<CancelReminderResult> {
+  async cancel(actorId: Id, displayNo: number, at: IsoTimestamp, condition?: ActionWriteCondition): Promise<CancelReminderResult> {
     return this.immediate((): CancelReminderResult => {
+      if (!actionWriteConditionHolds(this.db, condition)) return { status: 'STOPPED' };
       const row = this.findByDisplayNo(actorId, displayNo);
       if (!row) return { status: 'NOT_FOUND' };
       const current = toReminder(row);
@@ -149,13 +154,14 @@ export class SqliteReminderRepository implements ReminderRepository {
    * be the actor's, `CANCELED` and unchanged (`updatedAt`), checks the active limit like `createWithinLimit`, and writes
    * `next` through the single CAS write helper (expected status `CANCELED`). `display_no` is untouched.
    */
-  async reactivate(actorId: Id, next: Reminder, expectedUpdatedAt: IsoTimestamp, maxActive: number): Promise<ReactivateReminderResult> {
+  async reactivate(actorId: Id, next: Reminder, expectedUpdatedAt: IsoTimestamp, maxActive: number, condition?: ActionWriteCondition): Promise<ReactivateReminderResult> {
     if (!Number.isSafeInteger(maxActive) || maxActive < 0) throw new Error('REMINDER_LIMIT_INVALID');
     if (next.status !== ReminderStatus.SCHEDULED || next.nextFireAt === undefined || next.actorId !== actorId) {
       throw new Error('REMINDER_REACTIVATION_INVALID');
     }
     canonicalInstant(next.nextFireAt);
     return this.immediate((): ReactivateReminderResult => {
+      if (!actionWriteConditionHolds(this.db, condition)) return { status: 'STOPPED' };
       const row = this.db.prepare('SELECT * FROM reminders WHERE id = ? AND actor_id = ?').get(next.id, actorId) as ReminderRow | undefined;
       if (!row) return { status: 'NOT_FOUND' };
       const current = toReminder(row);

@@ -13,18 +13,34 @@ import { WorkChatService, type WorkChatOutcome } from './work-chat-service';
 
 const owner: Actor = { id: 'owner-1', displayName: 'Owner', identities: [], createdAt: '2026-10-14T00:00:00.000Z' };
 
-function world(actionReceipts = true) {
+function world(actionReceipts = true, onAwait: (point?: 'write') => void = () => undefined) {
   const rows = new Map<string, WorkItem>();
+  const actor = { metadata: {} as Record<string, unknown> };
   const storage = {
+    actors: {
+      async get() {
+        onAwait();
+        return { ...owner, metadata: actor.metadata };
+      },
+    },
     workItems: {
       async get(id: string) {
+        onAwait();
         return rows.get(id) ?? null;
       },
       async save(item: WorkItem) {
         rows.set(item.id, item);
         return item;
       },
+      // The store's atomic conditional write (the SQLite adapter checks the actor row in the same transaction).
+      async saveIf(item: WorkItem) {
+        onAwait('write');
+        if (actor.metadata['quoky.actionSwitch'] !== undefined && (actor.metadata['quoky.actionSwitch'] as { state: string }).state === 'stopped') return null;
+        rows.set(item.id, item);
+        return item;
+      },
       async listByActor(actorId: string) {
+        onAwait();
         return [...rows.values()].filter((item) => item.actorId === actorId).sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1));
       },
       async listByResource() {
@@ -37,7 +53,7 @@ function world(actionReceipts = true) {
     { workSurface: { forActor: async () => ({ items: [], status: 'COMPLETE', sources: [] }) as never }, connectors: { list: () => [] }, work },
     { summaryEnabled: false, actionReceipts },
   );
-  return { rows, work, desk };
+  return { rows, work, desk, actor };
 }
 
 const text = (outcome: WorkChatOutcome): string => (outcome.kind === 'reply' ? plainTextOf(outcome.content ?? outcome.text) : `<${outcome.kind}>`);
@@ -164,21 +180,53 @@ describe('the to-do listing receipt is capped at the rows certainly rendered (P3
   });
 });
 
-describe('round 2: the kill switch is the last check before each to-do mutation', () => {
-  it('add, complete, cancel and both undo inverses mutate nothing when the guard says stop', async () => {
-    const { desk, rows } = world();
-    await addThree(desk);
-    const first = [...rows.values()][0] as WorkItem;
-    const stop = async () => false;
-    const snapshot = () => [...rows.values()].map((item) => `${item.id}:${item.status}`).join(',');
-    const before = snapshot();
-    expect(await desk.handleAction(cmd('todo.add', { title: '새 일' }), owner, stop)).toMatchObject({ action: { reason: 'stopped' } });
-    expect(await desk.handleAction(cmd('todo.complete', { ref: '#1' }, { target: { source: 'todo', id: first.id, label: 1 } }), owner, stop)).toMatchObject({ action: { reason: 'stopped' } });
-    expect(await desk.handleAction(cmd('action.undo', {}, { target: { source: 'todo', id: first.id }, undo: { entryId: 'todo.add' } }), owner, stop)).toMatchObject({ action: { reason: 'stopped' } });
-    expect(snapshot()).toBe(before);
-    const done = await desk.handleAction(cmd('todo.complete', { ref: '#1' }, { target: { source: 'todo', id: first.id, label: 1 } }), owner);
-    const version = (done as { action: { version: string } }).action.version;
-    expect(await desk.handleAction(cmd('action.undo', {}, { target: { source: 'todo', id: first.id }, undo: { entryId: 'todo.complete', version } }), owner, stop)).toMatchObject({ action: { reason: 'stopped' } });
-    expect(rows.get(first.id)?.status).toBe(WorkItemStatus.COMPLETED);
+
+describe('the kill switch is atomic with every to-do write (Codex round 3, A6-D3)', () => {
+  const condition = { actionSwitchOf: owner.id };
+  type Step = (desk: WorkChatService, rows: Map<string, WorkItem>) => Promise<WorkChatOutcome>;
+  const first = (rows: Map<string, WorkItem>) => [...rows.values()].find((item) => item.title === '보고서 쓰기') as WorkItem;
+  const cases: Array<[string, Step | null, Step]> = [
+    ['add', null, (desk) => desk.handleAction(cmd('todo.add', { title: '새 일' }), owner, condition)],
+    ['complete', null, (desk, rows) => desk.handleAction(cmd('todo.complete', { ref: '#1' }, { target: { source: 'todo', id: first(rows).id, label: 1 } }), owner, condition)],
+    ['cancel', null, (desk, rows) => desk.handleAction(cmd('todo.cancel', { ref: '#1' }, { target: { source: 'todo', id: first(rows).id, label: 1 } }), owner, condition)],
+    ['undo add (cancel)', null, (desk, rows) => desk.handleAction(cmd('action.undo', {}, { target: { source: 'todo', id: first(rows).id }, undo: { entryId: 'todo.add' } }), owner, condition)],
+    [
+      'undo complete (reopen)',
+      (desk, rows) => desk.handleAction(cmd('todo.complete', { ref: '#1' }, { target: { source: 'todo', id: first(rows).id, label: 1 } }), owner),
+      (desk, rows) => desk.handleAction(cmd('action.undo', {}, { target: { source: 'todo', id: first(rows).id }, undo: { entryId: 'todo.complete', version: first(rows).updatedAt } }), owner, condition),
+    ],
+  ];
+
+  it.each(cases)('%s: a stop persisted at ANY await point before the write means nothing is written', async (_name, prepare, act) => {
+    // Count the await points of an unstopped run up to and including the write, then stop at each one in turn.
+    let awaits = 0;
+    let writeAt = 0;
+    const probe = world(true, (point) => {
+      awaits += 1;
+      if (point === 'write') writeAt = awaits;
+    });
+    await addThree(probe.desk);
+    if (prepare) await prepare(probe.desk, probe.rows);
+    awaits = 0;
+    writeAt = 0;
+    await act(probe.desk, probe.rows);
+    const points = writeAt;
+    expect(points).toBeGreaterThan(0);
+    for (let stopAt = 1; stopAt <= points; stopAt += 1) {
+      let count = 0;
+      let armed = false;
+      const w = world(true, () => {
+        if (!armed) return;
+        count += 1;
+        if (count === stopAt) w.actor.metadata = { 'quoky.actionSwitch': { state: 'stopped', at: 'x' } };
+      });
+      await addThree(w.desk);
+      if (prepare) await prepare(w.desk, w.rows);
+      const before = [...w.rows.values()].map((item) => `${item.id}:${item.status}`).join(',');
+      armed = true;
+      const outcome = await act(w.desk, w.rows);
+      expect(outcome, `stop at await ${stopAt}/${points}`).toMatchObject({ action: { reason: 'stopped' } });
+      expect([...w.rows.values()].map((item) => `${item.id}:${item.status}`).join(','), `stop at await ${stopAt}`).toBe(before);
+    }
   });
 });

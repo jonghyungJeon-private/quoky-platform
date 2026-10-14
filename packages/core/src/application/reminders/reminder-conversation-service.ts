@@ -9,6 +9,7 @@ import {
   type ConversationContext,
   type Id,
   type IsoTimestamp,
+  type ActionWriteCondition,
   type MessageBody,
   type OutboundMessage,
 } from '../../domain';
@@ -25,13 +26,8 @@ import { nextOccurrenceAfter } from './reminder-schedule';
 import type { NlActionReceipt, NlListingReceipt, NlSelectedCommand } from '../nl-routing/catalog';
 import { renderActionStopped } from '../nl-routing/nl-action-policy';
 
-/** The kill switch stopped a write after its lookup (A6-D3). */
+/** The kill switch stopped a write inside its transaction (A6-D3). */
 const STOPPED = Symbol('stopped');
-
-/** The A6 mutation guard: absent on every anchored path (always allowed); a failed re-read refuses. */
-async function guardAllows(input: { readonly actionGuard?: () => Promise<boolean> }): Promise<boolean> {
-  return input.actionGuard === undefined || (await input.actionGuard().catch(() => false));
-}
 import { eventReminderStoredTitle, type ReminderReplyComposer } from './reminder-reply-composer';
 
 /**
@@ -87,8 +83,11 @@ export interface ReminderTurnInput {
   /** The inbound message id; the reply is addressed to it. */
   readonly messageId: Id;
   readonly now: IsoTimestamp;
-  /** ADR-0120 amendment A6-D3: on an A6 action only, the kill switch re-read immediately before each mutation. */
-  readonly actionGuard?: () => Promise<boolean>;
+  /**
+   * ADR-0120 amendment A6-D3: on an A6 action only, the condition every write carries into the repository, which
+   * evaluates it atomically with the write (the persisted kill switch). Absent on every anchored path.
+   */
+  readonly actionCondition?: ActionWriteCondition;
 }
 
 /** OPS-2 (ADR-0113 D7): the typed cancel entry's input — the owner Actor, the `알림 N` number and the shared clock. */
@@ -97,6 +96,8 @@ export interface ReminderCancelInput {
   readonly actorId: Id;
   readonly displayNo: number;
   readonly now: IsoTimestamp;
+  /** A6-D3: the write condition (A6 actions only). */
+  readonly condition?: ActionWriteCondition;
 }
 
 /**
@@ -201,6 +202,7 @@ export class ReminderConversationService {
           throw error;
         }
         const created = await repository.createWithinLimit(draft, REMINDER_LIMITS.maxActivePerActor);
+        if (created.status === 'STOPPED') return { body: renderActionStopped('ko') };
         return created.status === 'CREATED'
           ? { body: composer.created(created.reminder, input.now), action: receiptOf('reminder.create', created.reminder) }
           : { body: composer.limitReached(created.activeCount) };
@@ -279,9 +281,9 @@ export class ReminderConversationService {
       if (error instanceof InvalidReminderError) return composer.eventCalendarReadFailed();
       throw error;
     }
-    // A6-D3: after the calendar lookup, the kill switch is the last check before the write.
-    if (!(await guardAllows(input))) return STOPPED;
-    const created = await repository.createWithinLimit(draft, REMINDER_LIMITS.maxActivePerActor);
+    // A6-D3: the condition is evaluated by the repository inside the write's transaction (after any lookup).
+    const created = await repository.createWithinLimit(draft, REMINDER_LIMITS.maxActivePerActor, input.actionCondition);
+    if (created.status === 'STOPPED') return STOPPED;
     return created.status === 'CREATED'
       ? { body: composer.eventCreated(created.reminder, new Date(resolution.startMs).toISOString(), input.now), reminder: created.reminder }
       : composer.limitReached(created.activeCount);
@@ -297,13 +299,16 @@ export class ReminderConversationService {
   }
 
   /** {@link cancelByDisplayNo} plus the canceled reminder (A6 receipts). Same replies. Never throws. */
-  private async cancelDetailed(input: ReminderCancelInput): Promise<{ readonly result: ReminderCancelResult; readonly reminder?: Reminder }> {
+  private async cancelDetailed(input: ReminderCancelInput): Promise<{ readonly result: ReminderCancelResult; readonly reminder?: Reminder; readonly stopped?: true }> {
     const { composer, repository } = this.deps;
     const { displayNo } = input;
     if (!this.deps.enabled) return { result: { status: 'DISABLED', displayNo, reply: composer.disabled() } };
     try {
-      const result = await repository.cancel(input.actorId, displayNo, input.now);
+      const result = await repository.cancel(input.actorId, displayNo, input.now, input.condition);
       switch (result.status) {
+        case 'STOPPED':
+          // Only an A6 action carries a condition; the typed entry of the operations UI never sees this.
+          return { result: { status: 'FAILED', displayNo, reply: renderActionStopped('ko') }, stopped: true };
         case 'CANCELED':
           return { result: { status: 'CANCELED', displayNo, reply: composer.canceled(result.reminder) }, reminder: result.reminder };
         case 'NOT_FOUND':
@@ -393,8 +398,8 @@ export class ReminderConversationService {
       if (error instanceof InvalidReminderError) return refuse(composer.clarify(this.clarifyReasonOf(error)), 'invalid');
       throw error;
     }
-    if (!(await guardAllows(input))) return refuse(renderActionStopped('ko'), 'stopped');
-    const created = await repository.createWithinLimit(draft, REMINDER_LIMITS.maxActivePerActor);
+    const created = await repository.createWithinLimit(draft, REMINDER_LIMITS.maxActivePerActor, input.actionCondition);
+    if (created.status === 'STOPPED') return refuse(renderActionStopped('ko'), 'stopped');
     if (created.status !== 'CREATED') return refuse(composer.limitReached(created.activeCount), 'limit');
     return { reply: this.reply(input, composer.actionCreated(created.reminder, input.now)), action: receiptOf('reminder.create', created.reminder) };
   }
@@ -412,9 +417,10 @@ export class ReminderConversationService {
     const reminder = await this.targetReminder(command, input.actorId);
     const displayNo = command.target?.label ?? 0;
     if (reminder === null) return { reply: this.reply(input, this.deps.composer.cancelNotFound(displayNo)), action: refusedReceipt(command, 'not-found') };
-    if (!(await guardAllows(input))) return { reply: this.reply(input, renderActionStopped('ko')), action: refusedReceipt(command, 'stopped') };
-    const canceled = await this.cancelDetailed({ actorId: input.actorId, displayNo: reminder.displayNo, now: input.now });
-    if (canceled.reminder === undefined) return { reply: this.reply(input, canceled.result.reply), action: refusedReceipt(command, canceled.result.status.toLowerCase()) };
+    const canceled = await this.cancelDetailed({ actorId: input.actorId, displayNo: reminder.displayNo, now: input.now, ...conditionOf(input) });
+    if (canceled.reminder === undefined) {
+      return { reply: this.reply(input, canceled.result.reply), action: refusedReceipt(command, canceled.stopped === true ? 'stopped' : canceled.result.status.toLowerCase()) };
+    }
     return { reply: this.reply(input, this.deps.composer.actionCanceled(canceled.reminder)), action: receiptOf('reminder.cancel', canceled.reminder) };
   }
 
@@ -431,9 +437,10 @@ export class ReminderConversationService {
     if (undone === 'reminder.create') {
       if (reminder.status === ReminderStatus.FIRING) return refuse('in-flight');
       if (reminder.status !== ReminderStatus.SCHEDULED) return refuse(reminder.status === ReminderStatus.CANCELED ? 'changed' : 'fired');
-      if (!(await guardAllows(input))) return { reply: this.reply(input, renderActionStopped('ko')), action: { entryId: 'action.undo', result: 'refused', source: 'reminder', reason: 'stopped' } };
-      const canceled = await this.cancelDetailed({ actorId: input.actorId, displayNo: reminder.displayNo, now: input.now });
-      if (canceled.reminder === undefined) return { reply: this.reply(input, canceled.result.reply), action: { entryId: 'action.undo', result: 'refused', source: 'reminder', reason: 'changed' } };
+      const canceled = await this.cancelDetailed({ actorId: input.actorId, displayNo: reminder.displayNo, now: input.now, ...conditionOf(input) });
+      if (canceled.reminder === undefined) {
+        return { reply: this.reply(input, canceled.result.reply), action: { entryId: 'action.undo', result: 'refused', source: 'reminder', reason: canceled.stopped === true ? 'stopped' : 'changed' } };
+      }
       return {
         reply: this.reply(input, composer.canceled(canceled.reminder)),
         action: { ...receiptOf('action.undo', canceled.reminder), result: 'undone', undoOf: 'reminder.create', undoable: false },
@@ -482,9 +489,10 @@ export class ReminderConversationService {
     } catch {
       return refuse('changed');
     }
-    if (!(await guardAllows(input))) return { reply: this.reply(input, renderActionStopped('ko')), action: { entryId: 'action.undo', result: 'refused', source: 'reminder', reason: 'stopped' } };
-    const result = await repository.reactivate(input.actorId, next, expected, REMINDER_LIMITS.maxActivePerActor);
+    const result = await repository.reactivate(input.actorId, next, expected, REMINDER_LIMITS.maxActivePerActor, input.actionCondition);
     switch (result.status) {
+      case 'STOPPED':
+        return { reply: this.reply(input, renderActionStopped('ko')), action: { entryId: 'action.undo', result: 'refused', source: 'reminder', reason: 'stopped' } };
       case 'REACTIVATED':
         return {
           reply: this.reply(input, composer.actionReactivated(result.reminder, input.now)),
@@ -542,6 +550,11 @@ export class ReminderConversationService {
   private reply(input: ReminderTurnInput, body: MessageBody): OutboundMessage {
     return outboundMessage(input.context, body, { replyToMessageId: input.messageId });
   }
+}
+
+/** The A6 write condition of a turn, as a cancel input field. */
+function conditionOf(input: { readonly actionCondition?: ActionWriteCondition }): { readonly condition?: ActionWriteCondition } {
+  return input.actionCondition === undefined ? {} : { condition: input.actionCondition };
 }
 
 /** A6: the content-free receipt of a reminder write (its id, `#N` and version). */

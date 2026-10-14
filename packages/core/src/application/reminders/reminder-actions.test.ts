@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   REMINDER_LIMITS,
+  type ActionWriteCondition,
   ReminderStatus,
   cancelReminder,
   type ConversationContext,
@@ -32,7 +33,13 @@ const silent: Logger = { info: () => undefined, warn: () => undefined, error: ()
 class MemoryRepository implements ReminderRepository {
   readonly rows: Reminder[] = [];
   private nextNo = 13;
-  async createWithinLimit(draft: ReminderDraft, maxActive: number): Promise<CreateReminderResult> {
+  /** The actor's persisted switch, read atomically with each conditional write (as the SQLite adapter does). */
+  stopped = false;
+  private blocked(condition?: ActionWriteCondition): boolean {
+    return condition !== undefined && this.stopped;
+  }
+  async createWithinLimit(draft: ReminderDraft, maxActive: number, condition?: ActionWriteCondition): Promise<CreateReminderResult> {
+    if (this.blocked(condition)) return { status: 'STOPPED' };
     const active = this.rows.filter((r) => r.actorId === draft.actorId && (r.status === ReminderStatus.SCHEDULED || r.status === ReminderStatus.FIRING));
     if (active.length >= maxActive) return { status: 'LIMIT_REACHED', activeCount: active.length };
     const reminder: Reminder = { ...draft, displayNo: this.nextNo++ };
@@ -45,7 +52,8 @@ class MemoryRepository implements ReminderRepository {
   async getByDisplayNo(actorId: string, displayNo: number): Promise<Reminder | null> {
     return this.rows.find((r) => r.actorId === actorId && r.displayNo === displayNo) ?? null;
   }
-  async cancel(actorId: string, displayNo: number, at: string): Promise<CancelReminderResult> {
+  async cancel(actorId: string, displayNo: number, at: string, condition?: ActionWriteCondition): Promise<CancelReminderResult> {
+    if (this.blocked(condition)) return { status: 'STOPPED' };
     const index = this.rows.findIndex((r) => r.actorId === actorId && r.displayNo === displayNo);
     const row = this.rows[index];
     if (row === undefined) return { status: 'NOT_FOUND' };
@@ -55,7 +63,8 @@ class MemoryRepository implements ReminderRepository {
     this.rows[index] = canceled;
     return { status: 'CANCELED', reminder: canceled };
   }
-  async reactivate(actorId: string, next: Reminder, expectedUpdatedAt: string, maxActive: number): Promise<ReactivateReminderResult> {
+  async reactivate(actorId: string, next: Reminder, expectedUpdatedAt: string, maxActive: number, condition?: ActionWriteCondition): Promise<ReactivateReminderResult> {
+    if (this.blocked(condition)) return { status: 'STOPPED' };
     const index = this.rows.findIndex((r) => r.id === next.id && r.actorId === actorId);
     const row = this.rows[index];
     if (row === undefined) return { status: 'NOT_FOUND' };
@@ -241,10 +250,12 @@ describe('a selector-chosen reminder list records the listing as rendered (CA re
   });
 });
 
-describe('round 2: the kill switch is the last check before each mutation (Codex review P1)', () => {
+
+describe('the kill switch is atomic with every reminder write (Codex round 3, A6-D3)', () => {
+  const condition = { actionSwitchOf: ACTOR };
+
   it('a stop persisted while the calendar lookup is pending prevents the event reminder create', async () => {
     let release: () => void = () => undefined;
-    let stopped = false;
     const repository = new MemoryRepository();
     const start = '2026-10-15T01:00:00.000Z';
     const conversation = new ReminderConversationService({
@@ -261,25 +272,28 @@ describe('round 2: the kill switch is the last check before each mutation (Codex
           }),
       },
     });
-    const pendingCreate = conversation.handleAction(cmd('reminder.create', { body: '자료 출력', when: '주간 회의 10분 전' }), { ...base(), actionGuard: async () => !stopped });
+    const pendingCreate = conversation.handleAction(cmd('reminder.create', { body: '자료 출력', when: '주간 회의 10분 전' }), { ...base(), actionCondition: condition });
     await new Promise((resolve) => setTimeout(resolve, 5));
-    stopped = true;
+    repository.stopped = true;
     release();
-    const result = await pendingCreate;
-    expect(result.action).toMatchObject({ result: 'refused', reason: 'stopped' });
+    expect((await pendingCreate).action).toMatchObject({ result: 'refused', reason: 'stopped' });
     expect(repository.rows).toHaveLength(0);
   });
 
-  it('cancel, undo-create and reactivate also stop at the guard; anchored commands have no guard', async () => {
+  it('create, cancel, undo-create (cancel) and undo-cancel (reactivate): the write carries the condition; anchored writes do not', async () => {
     const { conversation, repository } = service();
     await conversation.handleAction(cmd('reminder.create', { body: '물', when: '내일 9시' }), base());
-    const stop = { ...base(), actionGuard: async () => false };
+    const stop = { ...base(), actionCondition: condition };
+    repository.stopped = true;
     expect((await conversation.handleAction(cmd('reminder.create', { body: '약', when: '내일 10시' }), stop)).action).toMatchObject({ reason: 'stopped' });
     expect((await conversation.handleAction(cmd('reminder.cancel', { ref: '#13' }, { target: { source: 'reminder', label: 13 } }), stop)).action).toMatchObject({ reason: 'stopped' });
     expect((await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.create' } }), stop)).action).toMatchObject({ reason: 'stopped' });
     expect(repository.rows.map((row) => row.status)).toEqual([ReminderStatus.SCHEDULED]);
-    const canceled = await conversation.handleAction(cmd('reminder.cancel', { ref: '#13' }, { target: { source: 'reminder', label: 13 } }), base());
-    expect((await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version: canceled.action?.version as string } }), stop)).action).toMatchObject({ reason: 'stopped' });
+    // An anchored command carries no condition: it still works while the switch is stopped.
+    await conversation.handleTurn({ ...base(), text: '알림 13 취소' });
+    expect(repository.rows[0]?.status).toBe(ReminderStatus.CANCELED);
+    const version = repository.rows[0]?.updatedAt as string;
+    expect((await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version } }), stop)).action).toMatchObject({ reason: 'stopped' });
     expect(repository.rows[0]?.status).toBe(ReminderStatus.CANCELED);
   });
 });

@@ -13,7 +13,8 @@ import type { Logger } from '../../ports/logger.port';
  * - ADR-0121 S2 may reuse this switch by its own note (ADR-0121 D7 names a data-directory flag).
  */
 
-export const ACTION_SWITCH_METADATA_KEY = 'quoky.actionSwitch';
+export { ACTION_SWITCH_METADATA_KEY } from '../../domain/action-write-condition';
+import { ACTION_SWITCH_METADATA_KEY } from '../../domain/action-write-condition';
 
 export type NlActionSwitchState = 'running' | 'stopped';
 

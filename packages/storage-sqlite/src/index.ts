@@ -3,12 +3,14 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import { MIGRATIONS, runMigrations } from './migrations';
+import { actionWriteConditionHolds } from './action-write-condition';
 import { ACTIVE_SESSION_IN_THREAD_SQL, ACTIVE_SESSION_WITHOUT_THREAD_SQL, USAGE_FINISHED_BETWEEN_SQL } from './queries';
 import { SqliteContinuationBindingRepository } from './continuation-binding-repository';
 import { SqliteFeedbackRepository } from './feedback-repository';
 import { SqliteReminderRepository } from './reminder-repository';
 import { SqliteLearningRepository } from './learning-repository';
 import { SqliteConnectorWriteReceiptRepository } from './connector-write-receipt-repository';
+import type { ActionWriteCondition } from '@quoky/core';
 import type {
   ConnectorWriteReceiptRepository, ContinuationBindingRepository, FeedbackRepository, LearningRepository,
   ReminderRepository,
@@ -701,6 +703,24 @@ class SqliteWorkItemRepository
 
   override async list(): Promise<WorkItem[]> {
     return (await super.list()).map(hydrateWorkItem);
+  }
+
+  /** ADR-0120 amendment A6-D3: the save, only while the actor's action switch runs, in one IMMEDIATE transaction. */
+  async saveIf(item: WorkItem, condition: ActionWriteCondition): Promise<WorkItem | null> {
+    const write = this.db.transaction((): WorkItem | null => {
+      if (!actionWriteConditionHolds(this.db, condition)) return null;
+      this.db
+        .prepare(
+          `INSERT INTO work_items (id, actor_id, project_id, status, origin, data)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET actor_id = excluded.actor_id,
+             project_id = excluded.project_id, status = excluded.status,
+             origin = excluded.origin, data = excluded.data`,
+        )
+        .run(item.id, item.actorId, item.projectId ?? null, item.status, item.origin, JSON.stringify(item));
+      return item;
+    });
+    return write.immediate();
   }
 
   async listByActor(actorId: Id): Promise<WorkItem[]> {

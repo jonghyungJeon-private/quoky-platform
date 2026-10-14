@@ -93,14 +93,14 @@ function liveReminders(storage: ReminderStorageSeam): ReminderRepository {
 /** Delegates every call to the storage's CURRENT `reminders` repository (never a pre-init snapshot). */
 export function lazyReminderRepository(storage: ReminderStorageSeam): ReminderRepository {
   return {
-    createWithinLimit: (draft, maxActive) => liveReminders(storage).createWithinLimit(draft, maxActive),
+    createWithinLimit: (draft, maxActive, condition) => liveReminders(storage).createWithinLimit(draft, maxActive, condition),
     listActiveByActor: (actorId) => liveReminders(storage).listActiveByActor(actorId),
     getByDisplayNo: (actorId, displayNo) => liveReminders(storage).getByDisplayNo(actorId, displayNo),
-    cancel: (actorId, displayNo, at) => liveReminders(storage).cancel(actorId, displayNo, at),
+    cancel: (actorId, displayNo, at, condition) => liveReminders(storage).cancel(actorId, displayNo, at, condition),
     claimDue: (now, limit, attemptId) => liveReminders(storage).claimDue(now, limit, attemptId),
     completeFiring: (id, attemptId, completion) => liveReminders(storage).completeFiring(id, attemptId, completion),
     listFiring: () => liveReminders(storage).listFiring(),
-    reactivate: (actorId, next, expectedUpdatedAt, maxActive) => liveReminders(storage).reactivate(actorId, next, expectedUpdatedAt, maxActive),
+    reactivate: (actorId, next, expectedUpdatedAt, maxActive, condition) => liveReminders(storage).reactivate(actorId, next, expectedUpdatedAt, maxActive, condition),
   };
 }
 

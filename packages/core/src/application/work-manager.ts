@@ -1,7 +1,9 @@
 import { newId } from '../util/id';
 import { now } from '../util/clock';
 import {
+  ActionWriteStoppedError,
   WorkItemStatus,
+  isActionSwitchRunning,
   assertResourceRefCapacity,
   correlateWorkItem,
   normalizeWorkItemTitle,
@@ -9,7 +11,7 @@ import {
   transitionWorkItem,
   uniqueResourceRefs,
 } from '../domain';
-import type { Id, ResourceRef, WorkItem, WorkItemOrigin } from '../domain';
+import type { ActionWriteCondition, Id, ResourceRef, WorkItem, WorkItemOrigin } from '../domain';
 import type { StorageProvider } from '../ports';
 
 export interface CreateWorkItemInput {
@@ -44,7 +46,24 @@ export class WorkManager {
     return run;
   }
 
-  async create(input: CreateWorkItemInput): Promise<WorkItem> {
+  /**
+   * ADR-0120 amendment A6-D3: the one write path of every A6 to-do mutation. With a `condition`, the store evaluates it
+   * atomically with the write (`saveIf`, the same transaction) and nothing is written while the actor's switch is
+   * stopped (`ActionWriteStoppedError`). A store without `saveIf` falls back to a re-read right before the save.
+   */
+  private async write(item: WorkItem, condition?: ActionWriteCondition): Promise<WorkItem> {
+    if (condition === undefined) return this.storage.workItems.save(item);
+    if (this.storage.workItems.saveIf !== undefined) {
+      const saved = await this.storage.workItems.saveIf(item, condition);
+      if (saved === null) throw new ActionWriteStoppedError();
+      return saved;
+    }
+    const actor = await this.storage.actors.get(condition.actionSwitchOf);
+    if (actor === null || !isActionSwitchRunning(actor.metadata)) throw new ActionWriteStoppedError();
+    return this.storage.workItems.save(item);
+  }
+
+  async create(input: CreateWorkItemInput, condition?: ActionWriteCondition): Promise<WorkItem> {
     const timestamp = now();
     const resourceRefs = uniqueResourceRefs(input.resourceRefs ?? []);
     assertResourceRefCapacity(resourceRefs);
@@ -59,7 +78,7 @@ export class WorkManager {
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    return this.storage.workItems.save(workItem);
+    return this.write(workItem, condition);
   }
 
   async get(id: Id): Promise<WorkItem | null> {
@@ -81,11 +100,11 @@ export class WorkManager {
     return this.storage.workItems.listByResource(resource);
   }
 
-  async transition(id: Id, status: WorkItemStatus): Promise<WorkItem> {
+  async transition(id: Id, status: WorkItemStatus, condition?: ActionWriteCondition): Promise<WorkItem> {
     return this.serialize(id, async () => {
       const canonical = await this.storage.workItems.get(id);
       if (!canonical) throw new Error(`WorkItem not found: ${id}`);
-      return this.storage.workItems.save(transitionWorkItem(canonical, status, now()));
+      return this.write(transitionWorkItem(canonical, status, now()), condition);
     });
   }
 
@@ -94,11 +113,11 @@ export class WorkManager {
    * unchanged since the action being undone (`expectedUpdatedAt`). Throws `WorkItemReopenError` otherwise. Serialized
    * with every other mutation of the item.
    */
-  async reopen(id: Id, expectedUpdatedAt: string): Promise<WorkItem> {
+  async reopen(id: Id, expectedUpdatedAt: string, condition?: ActionWriteCondition): Promise<WorkItem> {
     return this.serialize(id, async () => {
       const canonical = await this.storage.workItems.get(id);
       if (!canonical) throw new Error(`WorkItem not found: ${id}`);
-      return this.storage.workItems.save(reopenWorkItem(canonical, now(), expectedUpdatedAt));
+      return this.write(reopenWorkItem(canonical, now(), expectedUpdatedAt), condition);
     });
   }
 

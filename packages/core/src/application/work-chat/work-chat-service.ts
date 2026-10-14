@@ -6,8 +6,8 @@ import {
   WorkItemTitleError,
   normalizeWorkItemTitle,
 } from '../../domain';
-import { WorkItemReopenError } from '../../domain';
-import type { Actor, MessageBody, MessageContent, ResourceRef, WorkItem } from '../../domain';
+import { ActionWriteStoppedError, WorkItemReopenError } from '../../domain';
+import type { ActionWriteCondition, Actor, MessageBody, MessageContent, ResourceRef, WorkItem } from '../../domain';
 import type { NlActionReceipt, NlListingReceipt, NlSelectedCommand } from '../nl-routing/catalog';
 import { renderActionStopped } from '../nl-routing/nl-action-policy';
 import {
@@ -114,7 +114,7 @@ export interface WorkDesk {
    * ADR-0120 amendment A6: one validated natural-language to-do action (`todo.add`, `todo.complete`, `todo.cancel`, or
    * `action.undo` of a to-do action), its target already resolved by Core. Absent: no A6 to-do entry is offered.
    */
-  handleAction?(command: NlSelectedCommand, actor: Actor, guard?: () => Promise<boolean>): Promise<WorkChatOutcome>;
+  handleAction?(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome>;
 }
 
 export interface WorkChatServiceDeps {
@@ -367,7 +367,12 @@ export class WorkChatService implements WorkDesk {
   }
 
   /** The anchored add, plus the created item (A6 receipts). The reply copy is unchanged. */
-  private async addTodoItem(rawTitle: string, refs: readonly ResourceRef[], actor: Actor): Promise<{ readonly body: MessageBody; readonly item?: WorkItem }> {
+  private async addTodoItem(
+    rawTitle: string,
+    refs: readonly ResourceRef[],
+    actor: Actor,
+    condition?: ActionWriteCondition,
+  ): Promise<{ readonly body: MessageBody; readonly item?: WorkItem }> {
     if (rawTitle.trim().length === 0) return { body: renderTodoEmptyTitle() };
     // A credential-bearing title is refused before anything is stored (ADR-0100 D5; the guard is unchanged, ADR-0097).
     if (containsCredentialMaterial(rawTitle)) return { body: renderTodoCredentialRefused() };
@@ -382,12 +387,15 @@ export class WorkChatService implements WorkDesk {
     }
     if (containsCredentialMaterial(title)) return { body: renderTodoCredentialRefused() };
     try {
-      const item = await this.deps.work.create({
-        actorId: actor.id,
-        title,
-        resourceRefs: refs,
-        origin: 'conversation',
-      });
+      const item = await this.deps.work.create(
+        {
+          actorId: actor.id,
+          title,
+          resourceRefs: refs,
+          origin: 'conversation',
+        },
+        ...(condition !== undefined ? [condition] : []),
+      );
       return { body: renderTodoAdded(item, looksReminderShaped(title)), item };
     } catch (error) {
       if (error instanceof WorkItemCorrelationError && error.code === 'TOO_MANY_REFS') {
@@ -440,30 +448,29 @@ export class WorkChatService implements WorkDesk {
    * ADR-0120 amendment A6: one validated to-do action (A6-D1/D3), the target resolved by Core. Re-reads the item by id at
    * execution (A6-D2 step 5: it must exist, belong to the actor and be ACTIVE); never throws.
    */
-  async handleAction(command: NlSelectedCommand, actor: Actor, guard?: () => Promise<boolean>): Promise<WorkChatOutcome> {
-    // A6-D3: `guard` (the persisted kill switch) is called immediately before each mutation below.
-    const allowed = async (): Promise<boolean> => guard === undefined || (await guard().catch(() => false));
+  async handleAction(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome> {
+    // A6-D3: every write below carries `condition`; the store evaluates it atomically with the write.
     try {
       switch (command.entryId) {
         case 'todo.add':
-          return await this.actionAdd(command, actor, allowed);
+          return await this.actionAdd(command, actor, condition);
         case 'todo.complete':
         case 'todo.cancel':
-          return await this.actionTransition(command, actor, allowed);
+          return await this.actionTransition(command, actor, condition);
         case 'action.undo':
-          return command.target?.source === 'todo' ? await this.actionUndo(command, actor, allowed) : { kind: 'none' };
+          return command.target?.source === 'todo' ? await this.actionUndo(command, actor, condition) : { kind: 'none' };
         default:
           return { kind: 'none' };
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof ActionWriteStoppedError) return stoppedOutcome(command.entryId);
       return reply(renderTodoFailure());
     }
   }
 
-  private async actionAdd(command: NlSelectedCommand, actor: Actor, allowed: () => Promise<boolean>): Promise<WorkChatOutcome> {
+  private async actionAdd(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome> {
     const title = typeof command.args.title === 'string' ? command.args.title : '';
-    if (!(await allowed())) return stoppedOutcome(command.entryId);
-    const added = await this.addTodoItem(title, [], actor);
+    const added = await this.addTodoItem(title, [], actor, condition);
     if (added.item === undefined) return replyWith(added.body, { action: { entryId: 'todo.add', result: 'refused', source: 'todo', reason: 'invalid' } });
     const no = todoNumberOf(await this.activeTodos(actor), added.item.id) ?? 0;
     return replyWith(renderTodoActionAdded(added.item, no), {
@@ -471,7 +478,7 @@ export class WorkChatService implements WorkDesk {
     });
   }
 
-  private async actionTransition(command: NlSelectedCommand, actor: Actor, allowed: () => Promise<boolean>): Promise<WorkChatOutcome> {
+  private async actionTransition(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome> {
     const entryId = command.entryId as 'todo.complete' | 'todo.cancel';
     const status = entryId === 'todo.complete' ? WorkItemStatus.COMPLETED : WorkItemStatus.CANCELED;
     const todos = await this.activeTodos(actor);
@@ -502,15 +509,14 @@ export class WorkChatService implements WorkDesk {
       item = (exact[0] as { no: number; item: WorkItem }).item;
       no = (exact[0] as { no: number; item: WorkItem }).no;
     }
-    if (!(await allowed())) return stoppedOutcome(entryId);
-    const updated = await this.deps.work.transition(item.id, status);
+    const updated = await this.deps.work.transition(item.id, status, condition);
     return replyWith(renderTodoActionTransitioned(updated, no, entryId === 'todo.complete' ? 'complete' : 'cancel'), {
       action: { entryId, result: 'executed', source: 'todo', itemId: updated.id, ...(no !== undefined ? { label: no } : {}), version: updated.updatedAt, undoable: true },
     });
   }
 
   /** Record A: the per-action inverse of a to-do action; an inverse that cannot run is said plainly. */
-  private async actionUndo(command: NlSelectedCommand, actor: Actor, allowed: () => Promise<boolean>): Promise<WorkChatOutcome> {
+  private async actionUndo(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome> {
     const id = command.target?.id;
     const undone = command.undo?.entryId;
     const refused = (reason: 'already-final' | 'changed' | 'not-found' | 'not-final') =>
@@ -520,8 +526,7 @@ export class WorkChatService implements WorkDesk {
     if (item === null || item.actorId !== actor.id) return refused('not-found');
     if (undone === 'todo.add') {
       if (item.status !== WorkItemStatus.ACTIVE) return refused('already-final');
-      if (!(await allowed())) return stoppedOutcome('action.undo');
-      const canceled = await this.deps.work.transition(item.id, WorkItemStatus.CANCELED);
+      const canceled = await this.deps.work.transition(item.id, WorkItemStatus.CANCELED, condition);
       return replyWith(renderTodoActionAddUndone(canceled), {
         action: { entryId: 'action.undo', result: 'undone', source: 'todo', itemId: canceled.id, undoOf: 'todo.add', undoable: false },
       });
@@ -529,9 +534,8 @@ export class WorkChatService implements WorkDesk {
     if (undone !== 'todo.complete' && undone !== 'todo.cancel') return refused('not-found');
     if (this.deps.work.reopen === undefined || command.undo?.version === undefined) return refused('changed');
     let reopened: WorkItem;
-    if (!(await allowed())) return stoppedOutcome('action.undo');
     try {
-      reopened = await this.deps.work.reopen(item.id, command.undo.version);
+      reopened = await this.deps.work.reopen(item.id, command.undo.version, condition);
     } catch (error) {
       if (error instanceof WorkItemReopenError) return refused(error.code === 'CHANGED' ? 'changed' : 'not-final');
       throw error;

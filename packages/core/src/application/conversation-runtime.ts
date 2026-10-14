@@ -3426,10 +3426,8 @@ export class ConversationRuntime {
       if (decision.action !== undefined) this.deps.nlSelection.logActionUnserved?.(decision.action, 'stopped', message.id);
       return this.respondComposed(message, session, outboundMessage(message.context, renderActionStopped(decision.command.language)));
     }
-    // The same re-read, handed to the handler as the last check right before each of its state mutations.
-    const stillActing = this.deps.nlSelection?.actionsStillActing;
-    const guard = stillActing === undefined ? undefined : () => stillActing.call(this.deps.nlSelection, actor);
-    const ctx = this.turnHandlerContext(message, session, actor, applyAnchor, guard);
+    // Every write the handler makes carries the switch as a condition its store checks atomically with the write.
+    const ctx = this.turnHandlerContext(message, session, actor, applyAnchor, { actionSwitchOf: actor.id });
     let outcome: TurnHandlerOutcome | null = null;
     let handlerId: string | undefined;
     for (const handler of this.nlActionServers(decision.command.entryId)) {
@@ -3800,7 +3798,7 @@ export class ConversationRuntime {
     session: Session,
     actor: Actor,
     anchor: ApplyPreviewAnchor | null,
-    nlActionGuard?: () => Promise<boolean>,
+    nlActionWriteCondition?: { readonly actionSwitchOf: Id },
   ): TurnHandlerContext {
     const sourceMessage = message;
     const applyAnchor: TurnHandlerAnchorSnapshot | null = anchor
@@ -3824,7 +3822,7 @@ export class ConversationRuntime {
       applyAnchor,
       ...(this.nlYield.has(sourceMessage) ? { grammarYield: true } : {}),
       resolveActiveWorkspace: () => this.resolveActiveWorkspaceForHandler(sessionId, activeProjectId),
-      ...(nlActionGuard !== undefined ? { nlActionGuard } : {}),
+      ...(nlActionWriteCondition !== undefined ? { nlActionWriteCondition: Object.freeze({ ...nlActionWriteCondition }) } : {}),
     });
   }
 
