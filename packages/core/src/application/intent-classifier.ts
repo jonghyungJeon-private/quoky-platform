@@ -5,10 +5,17 @@ import { detectReplyLanguage, isExternalActionKind } from './chat-policy';
 import type { ExternalActionKind, ExternalActionRequest } from './chat-policy';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
+import { todoListLeavesUnexpressedContent } from './work-chat/work-chat-command';
 
 export interface IntentClassifyContext {
   /** False when the conversation has no active project; omitted keeps the context-free behavior. */
   readonly hasActiveProject?: boolean;
+  /**
+   * ADR-0120 amendment A2: natural-language selection would run for this turn (the runtime's yield gate). The frozen
+   * personal-work surface clause (a D6 Class B clause) then declines a message it cannot express entirely, and the
+   * message is classified as if the clause had not matched. Omitted: exactly the old behavior.
+   */
+  readonly grammarYield?: boolean;
 }
 
 /** `Intent.raw.kind` of a REGISTER_PROJECT intent whose path is not absolute (QA-015). */
@@ -665,7 +672,7 @@ export class IntentClassifier {
   constructor(private readonly router: CapabilityRouter) {}
 
   async classify(message: InboundMessage, ctx?: IntentClassifyContext): Promise<Intent> {
-    const intent = this.classifyText(message);
+    const intent = this.classifyText(message, ctx?.grammarYield === true);
     if (ctx?.hasActiveProject === false && IntentClassifier.isBareProjectKeywordMatch(message.text.trim(), intent)) {
       return IntentClassifier.chatIntent(message.text.trim());
     }
@@ -709,11 +716,13 @@ export class IntentClassifier {
     return false;
   }
 
-  private classifyText(message: InboundMessage): Intent {
+  private classifyText(message: InboundMessage, grammarYield = false): Intent {
     void this.router;
     const text = message.text.trim();
 
-    if (IntentClassifier.isPersonalWorkSurface(text)) {
+    // ADR-0120 A2 (2026-10-14): the surface clause matches a substring ("할 일 … 알려"), so with yield on it answers only a
+    // message its own phrase family expresses entirely ("캘린더는 보지 말고 할 일만 알려줘" goes on, to selection).
+    if (IntentClassifier.isPersonalWorkSurface(text) && !(grammarYield && todoListLeavesUnexpressedContent(text))) {
       return {
         type: IntentType.LOOKUP,
         capability: Capability.READONLY_LOOKUP,

@@ -3103,7 +3103,11 @@ export class ConversationRuntime {
 
     let intent: Intent;
     try {
-      intent = await this.deps.classifier.classify(message, { hasActiveProject: Boolean(session.activeProjectId) });
+      intent = await this.deps.classifier.classify(message, {
+        hasActiveProject: Boolean(session.activeProjectId),
+        // ADR-0120 amendment A2: the classifier's personal-work surface clause is a Class B grammar too.
+        ...(this.nlYield.has(message) ? { grammarYield: true } : {}),
+      });
     } catch (err) {
       return this.failReadOnlyTurn(message, session, err); // nothing ran yet — provably no mutation
     }

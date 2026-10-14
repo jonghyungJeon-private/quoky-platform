@@ -466,9 +466,10 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       if (selects > 1) failures.push(`${golden.id}: more than one selection call`);
       const hit = probes.slice(start.probes).find((probe) => probe.grammarId !== undefined);
       const workSurface = intents.slice(start.intents).at(-1)?.raw?.kind === 'personal-work-surface';
-      // The corpus `grammar` tag is exact for production (yield on); with yield off a grammar also takes qualifier cases.
+      // The corpus `grammar` tag is exact for production (yield on); with yield off a grammar also takes qualifier cases,
+      // and an earlier grammar may take a tagged case before its own grammar (help-038: the to-do substring before help).
       const probed = hit?.grammarId ?? (workSurface ? 'work-surface' : undefined);
-      if (yieldOn ? golden.grammar !== probed : golden.grammar !== undefined && golden.grammar !== probed) {
+      if (yieldOn ? golden.grammar !== probed : golden.grammar !== undefined && probed === undefined) {
         failures.push(`${golden.id}: corpus grammar tag ${golden.grammar ?? '-'} but the probe says ${probed ?? '-'}`);
       }
       // The recorded grammar answer (the eval's grammar-side scoring) is what the probe says, by meaning (dates resolved).

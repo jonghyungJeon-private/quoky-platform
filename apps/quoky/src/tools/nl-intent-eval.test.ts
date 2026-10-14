@@ -230,11 +230,14 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
     expect(scoreSelectorSide(corpus, records, NOW)).toEqual({ positives: 3, exact: 2, entry: 2, userVisible: 2, wrongCaptures: 0 });
   });
 
-  it('the committed corpus: every grammar-tagged case records the grammar answer (250), and the grammar side is reproducible', () => {
+  it('the committed corpus: every grammar-tagged case records the grammar answer (242), and the grammar side is reproducible', () => {
     const { corpus: real } = loadCorpus();
     const tagged = real.cases.filter((golden) => golden.grammar !== undefined);
-    expect(tagged).toHaveLength(250);
+    // ADR-0120 A2 implementation note 2 (2026-10-14): 12 cases a grammar used to answer while dropping part of the message
+    // (a part of day, a swallowed search clause, a to-do substring) are no longer grammar hits, help-038 is now answered by
+    // the help grammar, and 4 plain phrases were added; the one wrong capture (neg-219) is gone.
+    expect(tagged).toHaveLength(242);
     expect(tagged.every((golden) => golden.grammarAnswer !== undefined)).toBe(true);
-    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 249, exact: 205, entry: 246, userVisible: 228, wrongCaptures: 1 });
+    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 242, exact: 209, entry: 241, userVisible: 227, wrongCaptures: 0 });
   });
 });

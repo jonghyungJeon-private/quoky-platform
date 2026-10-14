@@ -118,9 +118,21 @@ describe('calendar turn handler (ADR-0110 D3–D6)', () => {
       expect(await handler.handle(ctx(text)), `${text} (off)`).toBeNull();
     }
     expect(calls.length).toBe(1);
-    // No leftover qualifier: the grammar answers exactly as before even when it may yield.
-    for (const text of ['이번 주 일정 있어?', '내일 오후 일정 알려줘', '내일 9시에 뭐 있어?', '나 내일 바빠?']) {
+    // No leftover qualifier: the grammar answers exactly as before even when it may yield. A clock time keeps its part of
+    // the day ("오후 3시에": the day's list shows every time).
+    for (const text of ['이번 주 일정 있어?', '내일 9시에 뭐 있어?', '내일 오후 3시에 뭐 있어?', '나 내일 바빠?']) {
       expect(await handler.handle(yielding(text)), text).toEqual(await handler.handle(ctx(text)));
+    }
+  });
+
+  it('declines a part of the day it would answer with the whole day, only when it may yield (ADR-0120 A2 note 2, live 2026-10-14)', async () => {
+    const { reader } = fakeReader(async () => [MEETING]);
+    const handler = createCalendarTurnHandler({ reader, timeZone: SEOUL });
+    const yielding = (text: string): TurnHandlerContext => ({ ...ctx(text), grammarYield: true });
+    for (const text of ['다음 주 수요일 오후에 뭐 있어', '내일 오후 일정', '내일 오후 일정 알려줘', '내일 아침 일정 알려줘', '오늘 저녁에 약속 있나', '내일 밤 일정', "what's on my calendar tonight"]) {
+      expect(await handler.handle(yielding(text)), text).toBeNull();
+      // Flag off (or selection not running): the frozen grammar answers the whole day, byte for byte as before.
+      expect(await handler.handle(ctx(text)), `${text} (off)`).toMatchObject({ status: 'RESPONDED' });
     }
   });
 

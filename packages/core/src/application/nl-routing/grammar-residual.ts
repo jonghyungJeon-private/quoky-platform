@@ -38,7 +38,7 @@ const WH_VERBAL = new RegExp(`^(?:뭐|뭘|뭔|무엇|언제|몇|시|개|건|어�
 
 /** Korean closed-class words: interrogatives, request verbs and endings, existence and state endings, first person, fillers. */
 const KO_FUNCTION =
-  /^(?:나|내|제|저|저의|나의|우리|좀|뭐|뭘|뭐가|뭐야|뭐예요|뭐에요|뭐지|뭐였어|뭐였지|뭔지|무엇|무슨|어떤|어떻게|어때|어때요|돼|돼요|되나|되니|될까|되는지|많이|계속|몇|몇개|몇시|시야|시예요|개|개야|개예요|언제|언제야|언제예요|있어|있어요|있나|있나요|있니|있는지|있을까|있을텐데|있었지|있었어|있었나|있었어요|없어|없나|없니|없어요|알려줘|알려줘요|알려줄래|알려줄래요|알려주세요|알려|알려줄|보여줘|보여줘요|보여줄래|보여주세요|보여|확인|확인해줘|확인해주세요|확인해|조회|조회해줘|정리|정리해줘|정리해주세요|목록|리스트|줘|줘요|주세요|줄래|줄래요|해줘|해주세요|해|보기|봐|봐줘|있다|없다|맞아|맞나|그럼|그러면|그리고|근데|혹시|그냥|한번|안녕|쿼키|쿼키야)$/u;
+  /^(?:나|내|제|저|저의|나의|우리|좀|뭐|뭘|뭐가|뭐야|뭐예요|뭐에요|뭐지|뭐였어|뭐였지|뭔지|무엇|무슨|어떤|어떻게|어때|어때요|돼|돼요|되나|되니|될까|되는지|많이|계속|몇|몇개|몇시|시야|시예요|개|개야|개예요|언제|언제야|언제예요|있어|있어요|있나|있나요|있니|있는지|있을까|있을텐데|있었지|있었어|있었나|있었어요|없어|없나|없니|없어요|알려줘|알려줘요|알려줄래|알려줄래요|알려주세요|알려|알려줄|보여줘|보여줘요|보여줄래|보여주세요|보여|확인|확인해줘|확인해주세요|확인해|조회|조회해줘|정리|정리해줘|정리해주세요|목록|리스트|줘|줘요|주세요|줄래|줄래요|해줘|해주세요|해|보기|봐|봐줘|있다|없다|맞아|맞나|그럼|그러면|그리고|근데|혹시|그냥|한번|다시|안녕|쿼키|쿼키야)$/u;
 
 const EN_FUNCTION = new Set([
   'a', 'an', 'the', 'my', 'me', 'i', 'we', 'our', 'do', 'does', 'did', 'have', 'has', 'had', 'am', 'are', 'is', 'was', 'were', 'be', 'been', 'will',
@@ -87,4 +87,34 @@ export function unexpressedContentWords(text: string, expressed: readonly RegExp
 /** Whether something the owner said would change the meaning and the grammar cannot express it (the grammar then declines). */
 export function leavesUnexpressedContent(text: string, expressed: readonly RegExp[]): boolean {
   return unexpressedContentWords(text, expressed).length > 0;
+}
+
+/**
+ * Whether `text` contains one of `words` — the grounding words of a typed catalog argument (a part of the day, a Jira
+ * role or period, a Drive kind). A Latin word matches as a whole word ("weekly" is not "week"); a Korean word matches
+ * inside a token, so an attached particle or ending still counts ("오후에", "진행중인").
+ *
+ * The second part of the A2 rule (2026-10-14): a Class B grammar never counts a word as expressed when the word grounds
+ * a typed argument of the grammar's own catalog entry that the grammar does not carry. The word lists are the
+ * selector's own grounding vocabularies (one source of truth), never phrases.
+ */
+export function containsGroundingWord(text: string, words: readonly string[]): boolean {
+  const lowerText = text.normalize('NFC').toLowerCase();
+  return words.some((word) => {
+    const lower = word.normalize('NFC').toLowerCase();
+    return /^[a-z\s-]+$/u.test(lower)
+      ? new RegExp(`(?<![a-z])${lower.replace(/[-\s]+/gu, '[-\\s]+')}(?![a-z])`, 'u').test(lowerText)
+      : lowerText.includes(lower);
+  });
+}
+
+/**
+ * The third part of the A2 rule (2026-10-14): a grammar slot that takes free text and sends it whole as a catalog keyword
+ * (a Slack or Confluence search term, a Jira keyword) expresses the message only when that text is already what the
+ * catalog's own keyword rule keeps (`canonical`, the selector-side canonicalization). When the rule would cut it — the
+ * slot swallowed a clause such as "배포 얘기 나온 거" — the grammar would search for words the owner did not mean, so it
+ * declines and selection binds the core term.
+ */
+export function slotSwallowsClause(slot: string, canonical: (value: string) => string): boolean {
+  return canonical(slot) !== slot;
 }

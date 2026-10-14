@@ -1,4 +1,5 @@
 import type { NlAmbiguityKey, NlArgs, NlArgValue, NlCatalogEntry, NlWave1EntryId } from './catalog';
+import { containsGroundingWord } from './grammar-residual';
 import { nlRangeLabel, type NlResolvedRange } from './symbolic-time';
 
 /**
@@ -65,10 +66,7 @@ export function jiraKeywordCarriesQualifier(keyword: string): boolean {
     '배정',
   ];
   // Latin words match as whole words ("weekly" is a topic, "week" a period); Korean words match inside the token (particles).
-  return words.some((word) => {
-    const lower = word.toLowerCase();
-    return /^[a-z\s-]+$/u.test(lower) ? new RegExp(`(?<![a-z])${lower.replace(/[-\s]+/gu, '[-\\s]+')}(?![a-z])`, 'u').test(text) : text.includes(lower);
-  });
+  return containsGroundingWord(text, words);
 }
 
 /** The closed Jira sort orders (live UAT R8): each maps to a constant ORDER BY in the adapter, never to owner text. */
