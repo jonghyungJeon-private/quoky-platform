@@ -22195,9 +22195,12 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
   `range: "today"` as its catalog equivalent, read back identically). Offline eval: `pnpm eval:nl -- --mode plan`, plan digest
   recorded in the PR; no model was called.
 
-### ADR-0120 amendment A6 — natural-language selection of ACTION and WRITE intents: local writes and item summaries act, external writes only preview (Proposed — awaiting the owner's yes) (2026-10-14)
+### ADR-0120 amendment A6 — natural-language selection of ACTION and WRITE intents: local writes and item summaries act, external writes only preview (Accepted 2026-10-14 with the owner's amendments) (2026-10-14)
 
-- **Status:** **Proposed.** Revised after the Chief Architect review of `b6fe65e` (14 findings, all addressed here).
+- **Status:** **Accepted** by the Product Owner on 2026-10-14, **with amendments** (undo by per-action inverse,
+  `item.summarize` modes). See "ADR-0120 amendment A6 ratification record (2026-10-14)" at the end of this file; where
+  the record and the text below differ, the record wins. Originally Proposed and revised after the Chief Architect
+  review of `b6fe65e` (14 findings, all addressed here).
   - Docs only. No code exists.
   - Everything below sits behind a new flag that defaults to `off`. With `off`, every reply and the selector prompt are
     byte-identical to `main` after A5 (#199, Accepted; prompt `nl-select.v18`).
@@ -22633,3 +22636,157 @@ There is no new port or token, no migration and no new runtime deps key: the swi
    **Recommended: yes.**
 10. Corpus approval: the owner reviews at least the red-team batch and the relabel batch (summary-`none` cases in
     `nl-intent.v1.json` become `item.summarize`). **Recommended: yes.**
+
+### ADR-0120 amendment A6 ratification record (2026-10-14)
+
+The Product Owner decided all ten A6 owner decisions on 2026-10-14. The orchestrator relayed the decisions, and A6 was
+merged as Proposed in #200 before this record. The owner's words, where given, verbatim:
+
+- On decision 1: "S3 일정을 내가 하루로 해놔서 … 그 이후에 진행하는거면 괜찮아".
+- On decision 2: "각 기능마다 되돌려줘라는 문구는 각각 다르게 동작할거라 예상돼". The owner's examples: a Jira create is
+  undone by deleting the issue, a Jira transition by returning it to its previous status, and code by a rollback.
+
+#### Decisions
+
+1. **A6 is a separate ADR-0120 amendment, not ADR-0121 "S3 write proposals"** (ratification record item 7). Accepted.
+   - **Clarification of the owner's remark.** The one-day schedule the owner set was the **S1 `c-shadow` review
+     window** (S1 owner decisions, 2026-10-13), not S3. S3 has no schedule and is still not authorised. A6 does not
+     depend on S3, because its payloads are the owner's verbatim words.
+   - **Authorised now:** A6 **R0**, meaning the inert code (flag `off`), the persisted kill switch, the offline suites
+     and the corpus drafting.
+   - **Not authorised by this record.** Each of the following needs the owner's separate yes under the Strict rules:
+     - each live stage: R1 `shadow` and `local`, R3 `external`, R4;
+     - each model-in-the-loop run;
+     - each `.env.local` edit and restart;
+     - each live or labelled-shadow session.
+2. **CHANGED — undo restores the original state through a per-action inverse.** This replaces the A6-D3 undo table and
+   the "re-create under a new number" rule, and **supersedes owner decision 2 as proposed**. See "Amended A6 text" below.
+3. **`todo.cancel` is accepted for R1.** For the owner it means "take it off my list", and the echo says "목록에서
+   뺐어요". Internally it stays `CANCELED` so that it can be undone.
+4. **Accepted:** the only yield point is `external-write-unsupported`, from R3.
+5. **Accepted, CHANGED — `item.summarize` gains `mode: summary | full`.** This replaces the A6-D1 `item.summarize` row
+   and the A6 widening of ADR-0118 D7. See "Amended A6 text" below.
+6. **Accepted:** Jira create comes in R4 under its own ADR-0112 amendment, and A6 has no NL Jira comment or transition.
+   The Jira transition undo the owner mentioned is out of A6 scope and is recorded for later.
+7. **Accepted:** external-write destinations come from the current turn only.
+8. **Accepted:** the persisted kill switch (`에이전트 중지` / `에이전트 재개`, in `Actor.metadata`) is built in R0, with
+   the anchored `되돌리기` as the provider-down twin of `action.undo`.
+9. **Accepted:** the live gate is at least 100 attended, labelled turns per stage, with a bound of about 3%.
+10. **Accepted:** the owner reviews the red-team batch and the relabel batch (the summary-`none` cases of
+    `nl-intent.v1.json` become `item.summarize`). The orchestrator told the owner both arrive around the afternoon of
+    2026-10-15, during R0.
+
+#### Amended A6 text
+
+**A. Undo: a per-action inverse (replaces the A6-D3 undo table, its "after an undo" rule and the
+   compensating-write alternative).**
+
+- **Which action is undone.** The target is the latest action of this (Session, Actor) within the `lastAction` window
+  (10 minutes), or the action whose echo a platform reply points to. That reply must arrive within 30 minutes and its
+  ids must match the action's `echoReplyIds`; otherwise Quoky asks.
+- **No undo of an undo.** "되돌려줘" after an undo answers "되돌린 작업은 다시 되돌릴 수 없어요".
+- **An inverse that cannot run is never forced.** When the item already fired, was changed or removed elsewhere, or a
+  permission is missing, the reply says so plainly and offers the nearest alternative.
+- **The inverses:**
+
+  | Action | Inverse | When the inverse cannot run |
+  |---|---|---|
+  | `todo.add` | Cancel **that** to-do | Already completed or canceled: say so; offer nothing |
+  | `todo.complete` | **Reopen the same to-do** (`COMPLETED` → `ACTIVE`, same id). The list orders by creation, so it returns to its original place; the echo shows its current number | Changed since the completion (its `updatedAt` differs): say so |
+  | `todo.cancel` | **Restore the same to-do** (`CANCELED` → `ACTIVE`, same id) | Changed since the cancel: say so |
+  | `reminder.create` | Cancel it (a recurring one with all its future occurrences) | A one-shot that already fired (`COMPLETED`, `FAILED` or `DELIVERY_UNCERTAIN`): "이미 알림이 나갔어요"; offer nothing |
+  | `reminder.cancel` | **Reactivate the same reminder** (`CANCELED` → `SCHEDULED`, same id, same `#N`). A recurring (`DAILY` / `WEEKLY`) one resumes from its next occurrence after now, and missed occurrences are not sent. An event-relative one resumes only while its event still exists in the future | A one-shot whose time has passed: **ask for a new time**. The pending question stores the reminder id only, and the owner's next message supplies the time in its own words, parsed by the deterministic time grammar. If the event is gone: say so. If the active-reminder limit (`REMINDER_LIMITS.maxActivePerActor`) is reached: say so |
+  | `slack.post` (R3) | **Delete that message**, as an external write of its own: preview → CRITICAL approval → execution phrase → receipt | Already deleted, or missing permission: say so |
+  | `calendar.create` (R3) | **Delete that event** through the existing `calendar-delete` flow, bound to the event id from the SENT receipt | Moved or changed since creation (provider version drift): `NOT_SENT('TARGET_CHANGED')` as today; say so |
+  | Jira create (R4) | **Delete the issue** (an external write with approval). If the delete permission is missing, ask whether to **close** it instead through the existing transition writer (an external write with approval) | No permission for either: say so |
+
+- **What `lastAction` becomes.**
+  - A local undo marks the original record `undone: true`.
+  - `lastAction` becomes an `action.undo` record whose `itemId` is the restored or canceled item, and which is not
+    itself undoable.
+  - An external undo (a deletion) is recorded only after its own SENT receipt.
+- **The gates change accordingly.**
+  - The A6-D7 corpus gains undo cases for each inverse and each "cannot run" row.
+  - The "number changed" wording is gone.
+  - Script-labelled intended undos (UAT U2, U3) stay out of the misparse count.
+- **Out of A6 scope (recorded for later):** undo of a Jira transition (to its previous status) and code rollback.
+
+**B. Reverse state transitions: code-level rules, no schema change, no migration.** Checked against the stores on
+`origin/main` `cbdf325`.
+
+- **To-dos.**
+  - `work_items` stores `status` as free `TEXT` plus the JSON `data` (migration "work_items table (CAP-011)"), with no
+    `CHECK` constraint.
+  - The closed lifecycle is the `TRANSITIONS` table in `core/domain/work-item.ts`, where `COMPLETED` and `CANCELED`
+    have no successors.
+  - Reopen and restore need **a new domain function, `reopenWorkItem(item, at, expectedUpdatedAt)`** (`COMPLETED` or
+    `CANCELED` → `ACTIVE`), callable only from the undo path, plus a `WorkManager` method. The generic
+    `transitionWorkItem` table stays closed for every other caller.
+  - **This narrowly amends ADR-0075's lifecycle ("ACTIVE → COMPLETED/CANCELED").** A reopened item is `ACTIVE` again,
+    so WorkHandoff consumers, which read the current status, treat it as delegatable again. That is the owner's intent.
+- **Reminders.**
+  - `reminders` stores `status` as `TEXT` and `next_fire_at` as nullable `TEXT`, with `UNIQUE(actor_id, display_no)`
+    and no `CHECK` constraint.
+  - The ADR-0101 D4 transition table in `core/domain/reminder.ts` has `CANCELED: []`, and `cancelReminder` clears
+    `nextFireAt`.
+  - Reactivation needs:
+    - **a new domain function, `reactivateReminder(reminder, at, nextFireAt)`** (`CANCELED` → `SCHEDULED`, undo path
+      only);
+    - **one additive `ReminderRepository` port method**, a compare-and-set update guarded by `status = 'CANCELED'` and
+      the expected `updatedAt`, which also enforces the active limit the way `createWithinLimit` does.
+  - The row keeps its `display_no`, so the unique key is unaffected.
+  - **This narrowly amends ADR-0101 D4** (`CANCELED` stops being terminal for the undo path alone).
+- **Therefore no migration and no Strict DB step.** The change is code-level transition rules, one additive port
+  method and an additive manager method.
+  - The A6 claim "no new port or token" still holds: a method is added to an existing port, and no new port or DI
+    token is created.
+  - If implementation finds otherwise, the task stops with `NEEDS_SCOPE_EXPANSION`, and any migration becomes a Strict
+    step for the owner.
+- **External inverses need write operations that do not exist yet:**
+  - The Slack delete needs `chat.delete` on the bot's own message. `ChannelMessageWriter` has `post` only, so R3 needs
+    **an ADR-0112 amendment adding a channel-message delete operation** (its receipt operation value and the same
+    allowlist) before `slack.post` goes `external`.
+  - The calendar delete exists today (`CALENDAR_EVENT_DELETE`).
+  - The Jira delete, and the close fallback through the existing transition writer, belong to the R4 ADR-0112
+    amendment.
+
+**C. `item.summarize` modes (replaces the A6-D1 `item.summarize` row and the A6 ADR-0118 D7 widening).**
+
+- **The new arg.** `mode: summary | full`, an enum with `valueGrounding`:
+  - `summary`: 요약, 정리, 간추려, 짧게, summarize, summary;
+  - `full`: 원문, 전체, 전문, 그대로 보여, 다 보여, full text, whole, original.
+- **When the mode is not stated.** If the owner's words ask about the content without stating a mode ("내용 알려줘",
+  "무슨 얘기였어", "아까 1번은 무슨 내용이었지"), the mode is an **open ADR-0120 D7 interpretation key**,
+  `item.content-mode`:
+  - asked once ("요약해서 볼까요, 전체를 볼까요?");
+  - the owner's pick answers the turn and is kept per actor for **30 days** in `Actor.metadata`;
+  - the basis line shows it;
+  - an explicit mode word always wins and overwrites the preference.
+- **`summary`** is the existing summary path. Text goes to the chat-tier provider on this explicit request, and that
+  provider may be an HTTP API vendor the owner selected (ADR-0115). The ADR-0118 D7 widening is now limited to the
+  owner's own answer to the content-mode question or the stored preference; an unstated content word alone never
+  sends text.
+- **`full`** sends **no text to any model**. It is a deterministic owner-DM reply of the item's text through the
+  PLT-1 untrusted spans.
+  - **What exists today.** Both readers fetch bodies into the bounded `UntrustedDocumentReadout`
+    (`untrusted-document-readout.ts`; mail through `mail-thread-readout.ts`, Drive and DRV-2b sheets through the Drive
+    handler). PLT-1 provides `untrustedText` spans (`message-rendering.ts`) and the link neutraliser.
+  - **What is missing (built in R1, NLA-4):**
+    1. a `full` reply variant in the mail and Drive handlers that renders the readout's sections to the owner instead
+       of handing them to `summarize`;
+    2. an owner-facing renderer with a character bound (the readout's existing per-section bound), platform chunking,
+       and a "앞부분만 보여드려요 (전체 N자)" note when truncated;
+    3. the credential guard on the rendered text, with a credential-bearing section masked and counted as today.
+  - There is no "show the whole mail or document" command today; `full` is new behaviour behind the A6 flag.
+  - The text goes only to the owner's DM on the messaging platform, as listings and summaries already do. No model and
+    no new host are involved.
+- **The corpus gains** cases for both modes and for the open key: asked once, then reused, then overridden.
+
+#### Amended clauses added by this record
+
+| Clause | Settled text, short | Change |
+|---|---|---|
+| ADR-0075 lifecycle | `ACTIVE` → `COMPLETED` / `CANCELED`; terminal | Plus `COMPLETED` / `CANCELED` → `ACTIVE` through `reopenWorkItem`, from the A6 undo path only |
+| ADR-0101 D4 | `CANCELED` is terminal | Plus `CANCELED` → `SCHEDULED` through `reactivateReminder`, from the A6 undo path only, with a compare-and-set and the active limit |
+| ADR-0118 D7 (as widened by A6) | A content word counts as a summary request | Narrowed: only an explicit summary word, the owner's answer to the content-mode question, or the stored preference sends text to a model. `full` sends text to no model |
+| ADR-0112 D1 | Comment, transition and post | Unchanged by this record. R3 needs a Slack-delete amendment, and R4 a Jira create and delete amendment |
