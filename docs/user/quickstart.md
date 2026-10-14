@@ -762,7 +762,7 @@ Discord와 같은 소유자로 Telegram 개인 대화에서도 Quoky와 이야�
 
 | 변수 | 기본값 | 뜻 |
 |---|---|---|
-| `QUOKY_NL_INTENT_MODE` | `off` | 자연어 기능 선택. `off`(끔), `shadow`(기록만), `active`(선택 결과로 응답). `active`여야 아래 키들이 동작 |
+| `QUOKY_NL_INTENT_MODE` | `off` | 자연어 기능 선택. `off`(끔), `shadow`(기록만), `active`(선택 결과로 응답). 대부분의 자연어 기능은 `active`에서만 동작(`c-shadow`·`QUOKY_NL_ACTIONS`는 `active`가 아니면 시작 거부, 양보는 무시) |
 | `QUOKY_NL_INTENT_MODEL` | `haiku` | 기능 선택에 쓰는 Claude 모델 |
 | `QUOKY_NL_PHASE` | `a` | `a`(기존 규칙 응답 먼저), `c-shadow`(규칙이 답한 뒤 뒤에서 선택만 실행하고 `nl_selection.agreement`로 기록, 답은 바뀌지 않음), `c`(선택을 먼저 실행). `c`는 소유자 승인 전에는 쓰지 않음 |
 | `QUOKY_NL_GRAMMAR_YIELD` | `off` | `on`이면 목록·조회 규칙이 남은 내용 단어가 있을 때 자연어 선택에 양보 (`active`에서만) |

@@ -543,7 +543,7 @@ Setup for users is in `docs/user/quickstart.md` ("Personal v5 설정과 점검")
 
 | Variable | Default | Operator notes |
 |---|---|---|
-| `QUOKY_NL_INTENT_MODE` | `off` | `off` \| `shadow` \| `active`. The other NL keys need `active` (a startup error otherwise) |
+| `QUOKY_NL_INTENT_MODE` | `off` | `off` \| `shadow` \| `active`. Most NL features act only in `active`: grammar yield is ignored otherwise, `QUOKY_NL_PHASE=c-shadow` and `QUOKY_NL_ACTIONS` refuse to start without it; the model key also applies in `shadow` |
 | `QUOKY_NL_INTENT_MODEL` | `haiku` | Claude CLI model of the selection call (ADR-0120) |
 | `QUOKY_NL_PHASE` | `a` | `a` \| `c-shadow` \| `c`, exact. `c-shadow` needs `active`. `c` (selection before the Class B grammars, ADR-0121 S1) is a Strict per-grammar step |
 | `QUOKY_NL_GRAMMAR_YIELD` | `off` | Listing grammars yield to selection when leftover content words remain (amendment A2). Needs `active` |
@@ -560,7 +560,7 @@ Setup for users is in `docs/user/quickstart.md` ("Personal v5 설정과 점검")
   The guard covers Quoky's Node HTTP paths only; child processes (`claude -p`, `ollama`, `git`) are not enforced (ADR-0121 R1).
 - **Self-check and secret scan.** Read-only:
   `ops/security/quoky-net-selfcheck.sh [--json] [--since 24h]` reports the Quoky process tree and its live connections against
-  the allowlist, and reads the ledger. `pnpm security:secret-scan` must show no new gating hit; it prints counters, not values.
+  the allowlist, and reads the ledger. `pnpm security:secret-scan` must show no new gating hit; it prints per-hit locations and fingerprints with the value masked, never the secret itself.
 - **Node 22.** The always-on service runs Node 22 LTS (`.nvmrc` 22.22.1; `engines.node` >=22.12). Pass the Node 22 binary
   with `--node` when installing the launchd service; a Node 18 binary is end-of-life and is not used.
 - **Owner items still open.** S1 per-grammar Phase C; egress `enforce`; the A6 R1 batch (red-team, relabel, clause
