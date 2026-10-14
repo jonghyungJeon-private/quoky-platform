@@ -239,6 +239,7 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
     // help grammar's; 4 plain phrases were added. The rate changes come from cases leaving or joining the denominator.
     expect(tagged).toHaveLength(247);
     expect(tagged.every((golden) => golden.grammarAnswer !== undefined)).toBe(true);
-    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 246, exact: 211, entry: 244, userVisible: 230, wrongCaptures: 1 });
+    // `work-surface` has no catalog equivalent (the Jira/GitHub surface is not the to-do list), so its answer is null.
+    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 246, exact: 209, entry: 241, userVisible: 227, wrongCaptures: 0 });
   });
 });

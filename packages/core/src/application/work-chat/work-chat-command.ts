@@ -496,6 +496,15 @@ function swallowsClause(rawSlot: string, slot: string): boolean {
   return slotSwallowsClause(slot, canonicalNlKeyword);
 }
 
+/**
+ * A Jira slot carries a role, status, date field or period only OUTSIDE a quoted literal: `"진행중인 배포" 관련` is a
+ * keyword, `진행중인 "배포" 관련` carries a status (ADR-0120 A2 implementation note 2).
+ */
+function jiraSlotCarriesQualifier(rawSlot: string): boolean {
+  const outside = ONE_SHORT_QUOTED.test(rawSlot) ? rawSlot.replace(QUOTED_SPAN, ' ') : rawSlot;
+  return jiraKeywordCarriesQualifier(outside);
+}
+
 function namesIssueOrIsContent(text: string): boolean {
   if (ISSUE_KEY_OR_URL.test(text) || CONTENT_SHAPED.test(text)) return true;
   return ANY_QUOTE.test(text) && !ONE_SHORT_QUOTED.test(text);
@@ -517,7 +526,7 @@ function searchCommand(sourceToken: string, rawText: string, whole: string, yiel
   // names an issue key or link, or is labelled/quoted/multi-line content, keeps its old routing.
   if (source === 'jira' && !namesIssueOrIsContent(whole)) {
     // ADR-0120 follow-up 2: a role, status, date field or period inside the "keyword" is for selection's typed args.
-    if (yieldToSelection && jiraKeywordCarriesQualifier(text)) return null;
+    if (yieldToSelection && jiraSlotCarriesQualifier(rawText)) return null;
     const keyword = cleanSearchText(stripItemNoun(text));
     // ADR-0120 A2 (2026-10-14): a keyword slot that swallowed a clause is not the keyword the catalog would search.
     if (yieldToSelection && keyword && swallowsClause(rawText, keyword)) return null;
@@ -716,7 +725,7 @@ function detectJiraListing(text: string, yieldToSelection: boolean): WorkChatCom
   if (keyword !== undefined) {
     const cleaned = cleanSearchText(keyword);
     if (cleaned.length === 0 || EMPTY_KEYWORD.test(cleaned)) return null;
-    if (yieldToSelection && (jiraKeywordCarriesQualifier(cleaned) || swallowsClause(keyword, cleaned))) return null;
+    if (yieldToSelection && (jiraSlotCarriesQualifier(keyword) || swallowsClause(keyword, cleaned))) return null;
     if (Array.from(cleaned).length > WORK_CHAT_SEARCH_TEXT_MAX_LENGTH) return { kind: 'usage', topic: 'search-too-long' };
     return { kind: 'lookup', source: 'jira', query: 'my-items', text: cleaned };
   }
