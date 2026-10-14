@@ -23,6 +23,7 @@ import type { NlSelectionCandidate } from './selection-output';
 import {
   isNlRangeSymbol,
   isWeekdayOrTimeKeyword,
+  nlCanonicalWeekdaySymbol,
   nlRangeKeepsWeekday,
   nlKeywordIsTitle,
   nlSingleWeekday,
@@ -147,7 +148,16 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // (4) symbolic time
   let range: NlResolvedRange | undefined;
   const rangeSpec = entry.args.find((spec) => spec.kind === 'range');
+  // The weekdays the owner's words name, outside a value that may legitimately be one (a sender called "월요일").
+  const mentions: readonly NlWeekdayMention[] = rangeSpec !== undefined ? nlWeekdayMentions(withoutNameValues(entry, args, ctx.groundingText), entry.aliases) : [];
   if (rangeSpec !== undefined) {
+    // A weekday symbol that names the same day as the owner's own week word is spelled the owner's way ("금요일" = fri,
+    // never this-fri when both are this Friday): a canonical form, never another day (calendar-accuracy note).
+    const given = args[rangeSpec.name];
+    if (typeof given === 'string') {
+      const previousRange = ctx.previousArgs?.[rangeSpec.name];
+      args[rangeSpec.name] = nlCanonicalWeekdaySymbol(given, nlSingleWeekday(mentions), typeof previousRange === 'string' ? previousRange : undefined, ctx.now, ctx.timeZone);
+    }
     const symbol = typeof args[rangeSpec.name] === 'string' ? (args[rangeSpec.name] as string) : typeof rangeSpec.default === 'string' ? rangeSpec.default : undefined;
     if (symbol !== undefined) {
       if (symbol === 'upcoming' && rangeSpec.allowUpcoming !== true) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
@@ -156,8 +166,6 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       if (rangeSpec.pastOnly === true && Date.parse(range.from) > Date.parse(ctx.now)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
     }
   }
-  // The weekdays the owner's words name, outside a value that may legitimately be one (a sender called "월요일").
-  const mentions: readonly NlWeekdayMention[] = rangeSpec !== undefined ? nlWeekdayMentions(withoutNameValues(entry, args, ctx.groundingText), entry.aliases) : [];
   // (5) grounding and (6) the credential guard, on every string arg. A6: the previous selection never grounds an action,
   // and every action argument (span, ref, enum and flag words, the entry check) is grounded only in the owner's prose:
   // a pasted structure (JSON, data) grounds nothing (Codex review P1).

@@ -56,7 +56,7 @@ describe('the action corpus (A6-D7)', () => {
     expect(corpus.cases.filter((golden) => golden.family === 'live').length).toBeGreaterThanOrEqual(6);
   });
 
-  it('no corpus phrase is quoted in the v19 prompt (the evaluation measures generalization)', () => {
+  it('no corpus phrase is quoted in the v21 prompt (the evaluation measures generalization)', () => {
     const prompt = buildSelectionPrompt({ entries: NL_ACTION_EVAL_ENTRIES, text: '', actions: { referenceContext: 'none' } });
     expect(corpus.cases.filter((golden) => golden.text.trim().length >= 8 && prompt.includes(golden.text.trim())).map((golden) => golden.id)).toEqual([]);
   });
@@ -125,7 +125,7 @@ describe('scoring (A6-D7): a wrong target is never a question; negatives capture
 describe('read regression (A6-D7): 0 read cases captured by an action entry', () => {
   const { cases } = loadReadRegressionCorpus();
 
-  it('builds the v19 prompt with every entry offered for each read case', () => {
+  it('builds the v21 prompt with every entry offered for each read case', () => {
     const prompt = readRegressionPrompt({ id: 'r', text: '오늘 메일 보여줘', expect: { entryId: 'mail.list', args: { range: 'today' } } }) ?? '';
     expect(prompt).toContain('- item.summarize: ');
     expect(prompt).toContain('Reference context: none');

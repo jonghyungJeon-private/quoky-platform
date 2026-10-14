@@ -47,7 +47,7 @@ describe('R3 symbolic time: last-<weekday>, this-<weekday>, week-after-next, res
 
   it('shows the selector the new symbols', () => {
     const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v18');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v20');
     expect(prompt).toContain('week-after-next');
     expect(prompt).toContain('rest-of-month');
     expect(prompt).toContain('last-mon..last-sun');
