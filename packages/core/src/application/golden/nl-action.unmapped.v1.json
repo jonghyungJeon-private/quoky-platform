@@ -1,0 +1,242 @@
+{
+ "version": 1,
+ "description": "Cases of the draft corpus that the R0 schema cannot express (pending content-mode answer: the turn carries no ref). Kept here so no case is lost; not loaded by any code.",
+ "cases": [
+  {
+   "id": "act-summarize-069",
+   "utterance": "요약",
+   "context": {
+    "lastListing": {
+     "source": "mail",
+     "ageMin": 1,
+     "items": [
+      {
+       "label": 1,
+       "id": "mail-item-1"
+      },
+      {
+       "label": 2,
+       "id": "mail-item-2"
+      },
+      {
+       "label": 3,
+       "id": "mail-item-3"
+      },
+      {
+       "label": 4,
+       "id": "mail-item-4"
+      },
+      {
+       "label": 5,
+       "id": "mail-item-5"
+      }
+     ]
+    },
+    "pendingQuestion": {
+     "kind": "content-mode",
+     "candidates": [
+      {
+       "source": "mail",
+       "label": 2,
+       "id": "mail-item-2"
+      }
+     ],
+     "ageMin": 1
+    }
+   },
+   "expected": {
+    "entry": "item.summarize",
+    "args": {
+     "source": "mail",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "target": {
+     "source": "mail",
+     "label": 2,
+     "id": "mail-item-2"
+    }
+   },
+   "tags": [
+    "item.summarize",
+    "mail",
+    "pending-answer"
+   ]
+  },
+  {
+   "id": "act-summarize-070",
+   "utterance": "전체",
+   "context": {
+    "lastListing": {
+     "source": "mail",
+     "ageMin": 1,
+     "items": [
+      {
+       "label": 1,
+       "id": "mail-item-1"
+      },
+      {
+       "label": 2,
+       "id": "mail-item-2"
+      },
+      {
+       "label": 3,
+       "id": "mail-item-3"
+      },
+      {
+       "label": 4,
+       "id": "mail-item-4"
+      },
+      {
+       "label": 5,
+       "id": "mail-item-5"
+      }
+     ]
+    },
+    "pendingQuestion": {
+     "kind": "content-mode",
+     "candidates": [
+      {
+       "source": "mail",
+       "label": 2,
+       "id": "mail-item-2"
+      }
+     ],
+     "ageMin": 1
+    }
+   },
+   "expected": {
+    "entry": "item.summarize",
+    "args": {
+     "source": "mail",
+     "ref": "#2",
+     "mode": "full"
+    },
+    "target": {
+     "source": "mail",
+     "label": 2,
+     "id": "mail-item-2"
+    }
+   },
+   "tags": [
+    "item.summarize",
+    "mail",
+    "pending-answer"
+   ]
+  },
+  {
+   "id": "act-summarize-071",
+   "utterance": "요약해서 보여줘",
+   "context": {
+    "lastListing": {
+     "source": "drive",
+     "ageMin": 1,
+     "items": [
+      {
+       "label": 1,
+       "id": "drive-item-1"
+      },
+      {
+       "label": 2,
+       "id": "drive-item-2"
+      },
+      {
+       "label": 3,
+       "id": "drive-item-3"
+      },
+      {
+       "label": 4,
+       "id": "drive-item-4"
+      }
+     ]
+    },
+    "pendingQuestion": {
+     "kind": "content-mode",
+     "candidates": [
+      {
+       "source": "drive",
+       "label": 3,
+       "id": "drive-item-3"
+      }
+     ],
+     "ageMin": 2
+    }
+   },
+   "expected": {
+    "entry": "item.summarize",
+    "args": {
+     "source": "drive",
+     "ref": "#3",
+     "mode": "summary"
+    },
+    "target": {
+     "source": "drive",
+     "label": 3,
+     "id": "drive-item-3"
+    }
+   },
+   "tags": [
+    "item.summarize",
+    "drive",
+    "pending-answer"
+   ]
+  },
+  {
+   "id": "act-summarize-072",
+   "utterance": "전체 다 보여줘",
+   "context": {
+    "lastListing": {
+     "source": "drive",
+     "ageMin": 1,
+     "items": [
+      {
+       "label": 1,
+       "id": "drive-item-1"
+      },
+      {
+       "label": 2,
+       "id": "drive-item-2"
+      },
+      {
+       "label": 3,
+       "id": "drive-item-3"
+      },
+      {
+       "label": 4,
+       "id": "drive-item-4"
+      }
+     ]
+    },
+    "pendingQuestion": {
+     "kind": "content-mode",
+     "candidates": [
+      {
+       "source": "drive",
+       "label": 3,
+       "id": "drive-item-3"
+      }
+     ],
+     "ageMin": 2
+    }
+   },
+   "expected": {
+    "entry": "item.summarize",
+    "args": {
+     "source": "drive",
+     "ref": "#3",
+     "mode": "full"
+    },
+    "target": {
+     "source": "drive",
+     "label": 3,
+     "id": "drive-item-3"
+    }
+   },
+   "tags": [
+    "item.summarize",
+    "drive",
+    "pending-answer"
+   ]
+  }
+ ]
+}
