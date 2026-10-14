@@ -241,6 +241,8 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
     expect(tagged).toHaveLength(249);
     expect(tagged.every((golden) => golden.grammarAnswer !== undefined)).toBe(true);
     // `work-surface` has no catalog equivalent (the Jira/GitHub surface is not the to-do list), so its answer is null.
-    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 248, exact: 209, entry: 243, userVisible: 229, wrongCaptures: 0 });
+    // The owner's D12 batch of 2026-10-15 relabelled calendar-008/-020/-025 (timedOnly), which the calendar grammar answers
+    // without the flag: exact 209 → 208, user-visible 229 → 226.
+    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 248, exact: 208, entry: 243, userVisible: 226, wrongCaptures: 0 });
   });
 });
