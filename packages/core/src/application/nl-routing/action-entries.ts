@@ -501,8 +501,11 @@ export function nlActionSourceOf(entryId: NlActionEntryId, args: NlArgs): 'todo'
  */
 export const NL_ACTION_MAX_INPUT_CHARS = 300;
 
-/** Format, zero-width, bidi, tag, variation-selector and line/paragraph-separator characters, and controls. */
-const HIDDEN = /[\p{Cf}\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180F\u2028\u2029\u3164\uFE00-\uFE0F\uFFA0]|[\u{E0100}-\u{E01EF}]|[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
+/**
+ * Format, zero-width, bidi, tag, variation-selector and line/paragraph-separator characters, and every C0/C1 control
+ * (TAB included). CR and LF are left to the line check, which refuses them as `not-plain`.
+ */
+const HIDDEN = /[\p{Cf}\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180F\u2028\u2029\u3164\uFE00-\uFE0F\uFFA0]|[\u{E0100}-\u{E01EF}]|[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
 /**
  * An emoji with its own presentation selector (U+FE0F), skin tone or ZWJ joins (❤️, ☀️, 👨‍💻) and a keycap (1️⃣): the only
  * place U+FE0F and U+200D are allowed. Tag characters and every other hidden character stay refused.
@@ -546,7 +549,16 @@ function hasStructureMarker(text: string): boolean {
   if (/[{}`]/u.test(text) || /~~~/u.test(text) || /^\s*>/u.test(text)) return true;
   for (const match of text.matchAll(/\[([^[\]]*)\]/gu)) if (looksLikeData(match[1] ?? '')) return true;
   if (/[[\]]/u.test(text.replace(/\[[^[\]]*\]/gu, ''))) return true;
-  return /(?:^|[\s,(])[A-Za-z_][A-Za-z0-9_-]*\s*:\s*\S/u.test(text);
+  return /(?:^|[\s,(])[A-Za-z_][A-Za-z0-9_-]*\s*:\s*\S/u.test(withoutUrlsAndTimes(text));
+}
+
+/**
+ * The key-colon check ignores a URL scheme (`https://…`) and an `HH:MM` time: each becomes a neutral word, so a URL
+ * after a key ("request: https://…") still reads as `key: value` and is refused. English labels ("Q4: …", "remind me:
+ * …") stay refused (A6-D3a known refusals).
+ */
+function withoutUrlsAndTimes(text: string): string {
+  return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s]*/giu, 'URL').replace(/\b\d{1,2}:\d{2}\b/gu, '0');
 }
 
 /**
@@ -568,6 +580,8 @@ export function nlActionInputRefusal(rawText: string, groundingText: string, quo
   if (Array.from(text).length > NL_ACTION_MAX_INPUT_CHARS) return 'too-long';
   if (HIDDEN.test(text.replace(EMOJI_SEQUENCE, '')) || HIDDEN.test(folded.replace(EMOJI_SEQUENCE, ''))) return 'hidden-characters';
   if (quoted || LINE_SEPARATOR.test(rawText) || LINE_SEPARATOR.test(folded) || hasStructureMarker(text) || hasStructureMarker(folded)) return 'not-plain';
+  // Only a plain space may pad the line: any other leading or trailing whitespace (NBSP, ideographic, em space …) refuses.
+  if (/^[^\S ]|[^\S ]$/u.test(text)) return 'hidden-characters';
   const groundingFolded = groundingText.normalize('NFKC');
   if (COMMAND_FORMS.some((form) => form.test(groundingFolded) || form.test(folded))) return 'embedded-command';
   return undefined;

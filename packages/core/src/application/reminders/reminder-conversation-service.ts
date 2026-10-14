@@ -88,6 +88,8 @@ export interface ReminderTurnInput {
    * evaluates it atomically with the write (the persisted kill switch). Absent on every anchored path.
    */
   readonly actionCondition?: ActionWriteCondition;
+  /** A6: the selected turn's language, for the A6-only replies (the stopped switch). Korean when absent. */
+  readonly language?: 'ko' | 'en';
 }
 
 /** OPS-2 (ADR-0113 D7): the typed cancel entry's input — the owner Actor, the `알림 N` number and the shared clock. */
@@ -98,6 +100,8 @@ export interface ReminderCancelInput {
   readonly now: IsoTimestamp;
   /** A6-D3: the write condition (A6 actions only). */
   readonly condition?: ActionWriteCondition;
+  /** A6: the selected turn's language, for the stopped-switch reply. Korean when absent. */
+  readonly language?: 'ko' | 'en';
 }
 
 /**
@@ -202,7 +206,7 @@ export class ReminderConversationService {
           throw error;
         }
         const created = await repository.createWithinLimit(draft, REMINDER_LIMITS.maxActivePerActor);
-        if (created.status === 'STOPPED') return { body: renderActionStopped('ko') };
+        if (created.status === 'STOPPED') return { body: renderActionStopped(input.language ?? 'ko') };
         return created.status === 'CREATED'
           ? { body: composer.created(created.reminder, input.now), action: receiptOf('reminder.create', created.reminder) }
           : { body: composer.limitReached(created.activeCount) };
@@ -225,7 +229,7 @@ export class ReminderConversationService {
     ownerBody?: string,
   ): Promise<{ readonly body: MessageBody; readonly reminder?: Reminder; readonly stopped?: true }> {
     const body = await this.createEventRelative(offsetMinutes, target, input, ownerBody);
-    if (body === STOPPED) return { body: renderActionStopped('ko'), stopped: true };
+    if (body === STOPPED) return { body: renderActionStopped(input.language ?? 'ko'), stopped: true };
     return typeof body === 'object' && body !== null && 'reminder' in body ? (body as { body: MessageBody; reminder: Reminder }) : { body: body as MessageBody };
   }
 
@@ -308,7 +312,7 @@ export class ReminderConversationService {
       switch (result.status) {
         case 'STOPPED':
           // Only an A6 action carries a condition; the typed entry of the operations UI never sees this.
-          return { result: { status: 'FAILED', displayNo, reply: renderActionStopped('ko') }, stopped: true };
+          return { result: { status: 'FAILED', displayNo, reply: renderActionStopped(input.language ?? 'ko') }, stopped: true };
         case 'CANCELED':
           return { result: { status: 'CANCELED', displayNo, reply: composer.canceled(result.reminder) }, reminder: result.reminder };
         case 'NOT_FOUND':
@@ -348,7 +352,7 @@ export class ReminderConversationService {
    * execution. Never throws.
    */
   async handleAction(command: NlSelectedCommand, input: Omit<ReminderTurnInput, 'text'>): Promise<ReminderTurnResult> {
-    const turn: ReminderTurnInput = { ...input, text: '' };
+    const turn: ReminderTurnInput = { ...input, text: '', language: command.language };
     if (!this.deps.enabled) return { reply: this.reply(turn, this.deps.composer.disabled()), action: refusedReceipt(command, 'disabled') };
     try {
       switch (command.entryId) {
@@ -399,7 +403,7 @@ export class ReminderConversationService {
       throw error;
     }
     const created = await repository.createWithinLimit(draft, REMINDER_LIMITS.maxActivePerActor, input.actionCondition);
-    if (created.status === 'STOPPED') return refuse(renderActionStopped('ko'), 'stopped');
+    if (created.status === 'STOPPED') return refuse(renderActionStopped(command.language), 'stopped');
     if (created.status !== 'CREATED') return refuse(composer.limitReached(created.activeCount), 'limit');
     return { reply: this.reply(input, composer.actionCreated(created.reminder, input.now)), action: receiptOf('reminder.create', created.reminder) };
   }
@@ -492,7 +496,7 @@ export class ReminderConversationService {
     const result = await repository.reactivate(input.actorId, next, expected, REMINDER_LIMITS.maxActivePerActor, input.actionCondition);
     switch (result.status) {
       case 'STOPPED':
-        return { reply: this.reply(input, renderActionStopped('ko')), action: { entryId: 'action.undo', result: 'refused', source: 'reminder', reason: 'stopped' } };
+        return { reply: this.reply(input, renderActionStopped(input.language ?? 'ko')), action: { entryId: 'action.undo', result: 'refused', source: 'reminder', reason: 'stopped' } };
       case 'REACTIVATED':
         return {
           reply: this.reply(input, composer.actionReactivated(result.reminder, input.now)),
@@ -553,8 +557,11 @@ export class ReminderConversationService {
 }
 
 /** The A6 write condition of a turn, as a cancel input field. */
-function conditionOf(input: { readonly actionCondition?: ActionWriteCondition }): { readonly condition?: ActionWriteCondition } {
-  return input.actionCondition === undefined ? {} : { condition: input.actionCondition };
+function conditionOf(input: { readonly actionCondition?: ActionWriteCondition; readonly language?: 'ko' | 'en' }): { readonly condition?: ActionWriteCondition; readonly language?: 'ko' | 'en' } {
+  return {
+    ...(input.actionCondition === undefined ? {} : { condition: input.actionCondition }),
+    ...(input.language === undefined ? {} : { language: input.language }),
+  };
 }
 
 /** A6: the content-free receipt of a reminder write (its id, `#N` and version). */

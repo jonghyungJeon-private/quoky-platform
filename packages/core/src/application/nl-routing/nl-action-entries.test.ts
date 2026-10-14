@@ -361,3 +361,24 @@ describe('round 4: compatibility forms fold to ASCII and any line separator refu
     }
   });
 });
+
+describe('round 5: TAB is a control, only a plain space pads, URLs and times are not keys', () => {
+  it.each([
+    ['leading TAB', '\t되돌리기'],
+    ['inner TAB', '1번\t완료해줘'],
+    ['leading NBSP', '\u00A01번 완료해줘'],
+    ['trailing ideographic space', '1번 완료해줘\u3000'],
+    ['trailing em space', '되돌려줘\u2003'],
+  ])('%s refuses as a hidden character', (_name, text) => {
+    expect(nlActionInputRefusal(text, text)).toBe('hidden-characters');
+  });
+
+  it('a URL scheme and an HH:MM time are not a key; a key before a URL and English labels still refuse (A6-D3a known refusals)', () => {
+    for (const text of ['할 일에 https://jira.example.com/browse/BE-12 확인 추가', '할 일에 HTTP://intra.example/a?b=c 보기 추가', '9:30 회의 준비 할 일로', '14:05에 회의 준비 할 일로', '  되돌려줘 ']) {
+      expect(nlActionInputRefusal(text, text), text).toBeUndefined();
+    }
+    for (const text of ['request: https://jira.example.com/BE-12', 'Q4: 예산 검토 할 일로', 'remind me: call mom', 'url: 9:30']) {
+      expect(nlActionInputRefusal(text, text), text).toBe('not-plain');
+    }
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WorkItemStatus, type Actor, type WorkItem } from '../../domain';
+import { ActionWriteStoppedError, WorkItemStatus, type Actor, type WorkItem } from '../../domain';
 import type { StorageProvider } from '../../ports';
 import { plainTextOf } from '../message-rendering';
 import type { NlSelectedCommand } from '../nl-routing/catalog';
@@ -228,5 +228,36 @@ describe('the kill switch is atomic with every to-do write (Codex round 3, A6-D3
       expect(outcome, `stop at await ${stopAt}/${points}`).toMatchObject({ action: { reason: 'stopped' } });
       expect([...w.rows.values()].map((item) => `${item.id}:${item.status}`).join(','), `stop at await ${stopAt}`).toBe(before);
     }
+  });
+});
+
+describe('CA P3: fail closed without an atomic store, and the stopped reply follows the turn language', () => {
+  it('a store without saveIf never takes a conditioned write; unconditioned writes still work', async () => {
+    const rows = new Map<string, WorkItem>();
+    const storage = {
+      actors: { get: async () => ({ ...owner, metadata: {} }) },
+      workItems: {
+        get: async (id: string) => rows.get(id) ?? null,
+        save: async (item: WorkItem) => {
+          rows.set(item.id, item);
+          return item;
+        },
+        listByActor: async () => [...rows.values()],
+        listByResource: async () => [],
+      },
+    } as unknown as StorageProvider;
+    const work = new WorkManager(storage);
+    await expect(work.create({ actorId: owner.id, title: '조건부' }, { actionSwitchOf: owner.id })).rejects.toBeInstanceOf(ActionWriteStoppedError);
+    expect(rows.size).toBe(0);
+    await work.create({ actorId: owner.id, title: '조건 없음' });
+    expect(rows.size).toBe(1);
+  });
+
+  it('English turn → English stopped reply', async () => {
+    const w = world();
+    w.actor.metadata = { 'quoky.actionSwitch': { state: 'stopped', at: 'x' } };
+    expect(text(await w.desk.handleAction(cmd('todo.add', { title: 'report' }, { language: 'en' }), owner, { actionSwitchOf: owner.id }))).toBe(
+      'Natural-language actions are stopped, so I did nothing. Exact commands still work.',
+    );
   });
 });

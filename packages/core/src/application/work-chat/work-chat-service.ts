@@ -463,7 +463,7 @@ export class WorkChatService implements WorkDesk {
           return { kind: 'none' };
       }
     } catch (error) {
-      if (error instanceof ActionWriteStoppedError) return stoppedOutcome(command.entryId);
+      if (error instanceof ActionWriteStoppedError) return stoppedOutcome(command.entryId, command.language);
       return reply(renderTodoFailure());
     }
   }
@@ -677,8 +677,8 @@ function reply(body: MessageBody): WorkChatOutcome {
 }
 
 /** The kill switch stopped a to-do action at its mutation (A6-D3): nothing changed. */
-function stoppedOutcome(entryId: NlSelectedCommand['entryId']): WorkChatOutcome {
-  return replyWith(renderActionStopped('ko'), { action: { entryId: entryId as NlActionReceipt['entryId'], result: 'refused', source: 'todo', reason: 'stopped' } });
+function stoppedOutcome(entryId: NlSelectedCommand['entryId'], language: NlSelectedCommand['language']): WorkChatOutcome {
+  return replyWith(renderActionStopped(language), { action: { entryId: entryId as NlActionReceipt['entryId'], result: 'refused', source: 'todo', reason: 'stopped' } });
 }
 
 /** A reply plus the A6 receipts (absent fields are simply not set, so a receipt-free reply equals `reply(body)`). */

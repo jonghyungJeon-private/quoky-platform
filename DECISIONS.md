@@ -22891,11 +22891,17 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
      (`InboundMessage.formatting.code`: a Telegram `code`/`pre` entity, whose markers are not in the text). The line
      check runs on the raw text before any trim: CR, LF, VT, FF, U+0085, U+2028 and U+2029 anywhere refuse;
   2. has **no hidden characters**: Unicode format characters (zero-width, bidi, tag characters), variation selectors, line
-     and paragraph separators, Hangul fillers, C0/C1 controls. U+FE0F and U+200D are allowed only inside an emoji
-     sequence (❤️, ☀️, 👨‍💻, keycaps);
+     and paragraph separators, Hangul fillers, every C0/C1 control (TAB included). U+FE0F and U+200D are allowed only
+     inside an emoji sequence (❤️, ☀️, 👨‍💻, keycaps). Only a plain space may lead or trail the line (no NBSP, ideographic
+     or em space);
   3. has **no structure markers**: `{` or `}`, a `[…]` whose content looks like data (a quote, a key with a colon, a
      comma list) or an unbalanced bracket, a backtick, `~~~`, a leading `>`, or an ASCII identifier key followed by a
-     colon and a value (`request: …`, YAML-like). An ordinary bracketed phrase ("[긴급] 보고서 쓰기") is allowed;
+     colon and a value (`request: …`, YAML-like). An ordinary bracketed phrase ("[긴급] 보고서 쓰기") is allowed, and so
+     are a URL scheme (`https://…`, any `[a-z][a-z0-9+.-]*://`) and an `HH:MM` time; a key before a URL
+     (`request: https://…`) is still refused. **Known refusals (trade-off for owner confirmation):** a message with an
+     English label and a colon, e.g. "Q4: 예산 검토 할 일로" or "remind me: call mom", is refused as YAML-like and gets
+     the one-sentence hint; the owner rephrases ("Q4 예산 검토 할 일로") or uses the exact command. Allowing such labels
+     would let `key: value` payloads through, so the rule stays fail closed;
   4. has **no exact-command form**: a to-do head with a colon ("할 일 추가:"), the Slack post head ("#채널에 게시:") or
      the Slack post execution phrase, each taken from its own grammar.
   Checks 2–4 also run on an NFKC-folded copy, so full-width and compatibility forms (`｛ ｝ ［ ］ ｀ ＞ ：`) count as

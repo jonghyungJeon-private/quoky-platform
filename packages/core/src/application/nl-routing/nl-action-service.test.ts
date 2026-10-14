@@ -326,6 +326,8 @@ describe('round 4: the anchored 되돌리기 meets the plain-line eligibility (C
     ['a trailing U+2028', { text: '되돌리기\u2028' }],
     ['a padded 305-character message', { text: `${' '.repeat(301)}되돌리기` }],
     ['a full-width brace wrapper', { text: '｛되돌리기｝' }],
+    ['a leading TAB', { text: '\t되돌리기' }],
+    ['a trailing NBSP', { text: '되돌리기\u00A0' }],
   ])('%s never undoes', async (_name, extra) => {
     const w = world({ script: [] });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));

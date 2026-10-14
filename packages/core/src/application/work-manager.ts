@@ -3,7 +3,6 @@ import { now } from '../util/clock';
 import {
   ActionWriteStoppedError,
   WorkItemStatus,
-  isActionSwitchRunning,
   assertResourceRefCapacity,
   correlateWorkItem,
   normalizeWorkItemTitle,
@@ -49,7 +48,7 @@ export class WorkManager {
   /**
    * ADR-0120 amendment A6-D3: the one write path of every A6 to-do mutation. With a `condition`, the store evaluates it
    * atomically with the write (`saveIf`, the same transaction) and nothing is written while the actor's switch is
-   * stopped (`ActionWriteStoppedError`). A store without `saveIf` falls back to a re-read right before the save.
+   * stopped (`ActionWriteStoppedError`). A store without `saveIf` cannot do that, so a conditioned write fails closed.
    */
   private async write(item: WorkItem, condition?: ActionWriteCondition): Promise<WorkItem> {
     if (condition === undefined) return this.storage.workItems.save(item);
@@ -58,9 +57,8 @@ export class WorkManager {
       if (saved === null) throw new ActionWriteStoppedError();
       return saved;
     }
-    const actor = await this.storage.actors.get(condition.actionSwitchOf);
-    if (actor === null || !isActionSwitchRunning(actor.metadata)) throw new ActionWriteStoppedError();
-    return this.storage.workItems.save(item);
+    // Fail closed: a store that cannot evaluate the condition atomically with the write never takes an A6 write.
+    throw new ActionWriteStoppedError();
   }
 
   async create(input: CreateWorkItemInput, condition?: ActionWriteCondition): Promise<WorkItem> {

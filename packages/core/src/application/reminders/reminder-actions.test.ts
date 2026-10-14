@@ -280,6 +280,26 @@ describe('the kill switch is atomic with every reminder write (Codex round 3, A6
     expect(repository.rows).toHaveLength(0);
   });
 
+  it('the stopped reply follows the turn language on every reminder write (CA P3)', async () => {
+    const { conversation, repository } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '물', when: '내일 9시' }), base());
+    await conversation.handleTurn({ ...base(), text: '알림 13 취소' });
+    const version = repository.rows[0]?.updatedAt as string;
+    repository.stopped = true;
+    const stop = { ...base(), actionCondition: condition };
+    const en = { language: 'en' as const };
+    const results = [
+      await conversation.handleAction(cmd('reminder.create', { body: '약', when: '내일 10시' }, en), stop),
+      await conversation.handleAction(cmd('reminder.create', { body: '약', when: '내일 10시' }), stop),
+      await conversation.handleAction(cmd('action.undo', {}, { ...en, target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version } }), stop),
+    ];
+    expect(results.map((result) => text(result))).toEqual([
+      'Natural-language actions are stopped, so I did nothing. Exact commands still work.',
+      '자연어 실행이 멈춰 있어서 아무것도 하지 않았어요. 정확한 명령은 그대로 동작해요.',
+      'Natural-language actions are stopped, so I did nothing. Exact commands still work.',
+    ]);
+  });
+
   it('create, cancel, undo-create (cancel) and undo-cancel (reactivate): the write carries the condition; anchored writes do not', async () => {
     const { conversation, repository } = service();
     await conversation.handleAction(cmd('reminder.create', { body: '물', when: '내일 9시' }), base());

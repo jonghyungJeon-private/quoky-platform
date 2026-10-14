@@ -682,6 +682,12 @@ class SqliteWorkItemRepository
   }
 
   override async save(item: WorkItem): Promise<WorkItem> {
+    this.upsert(item);
+    return item;
+  }
+
+  /** The one work-item upsert, shared by {@link save} and {@link saveIf}. */
+  private upsert(item: WorkItem): void {
     this.db
       .prepare(
         `INSERT INTO work_items (id, actor_id, project_id, status, origin, data)
@@ -690,15 +696,7 @@ class SqliteWorkItemRepository
            project_id = excluded.project_id, status = excluded.status,
            origin = excluded.origin, data = excluded.data`,
       )
-      .run(
-        item.id,
-        item.actorId,
-        item.projectId ?? null,
-        item.status,
-        item.origin,
-        JSON.stringify(item),
-      );
-    return item;
+      .run(item.id, item.actorId, item.projectId ?? null, item.status, item.origin, JSON.stringify(item));
   }
 
   override async list(): Promise<WorkItem[]> {
@@ -709,15 +707,7 @@ class SqliteWorkItemRepository
   async saveIf(item: WorkItem, condition: ActionWriteCondition): Promise<WorkItem | null> {
     const write = this.db.transaction((): WorkItem | null => {
       if (!actionWriteConditionHolds(this.db, condition)) return null;
-      this.db
-        .prepare(
-          `INSERT INTO work_items (id, actor_id, project_id, status, origin, data)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET actor_id = excluded.actor_id,
-             project_id = excluded.project_id, status = excluded.status,
-             origin = excluded.origin, data = excluded.data`,
-        )
-        .run(item.id, item.actorId, item.projectId ?? null, item.status, item.origin, JSON.stringify(item));
+      this.upsert(item);
       return item;
     });
     return write.immediate();
