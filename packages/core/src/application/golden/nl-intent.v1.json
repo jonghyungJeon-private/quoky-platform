@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) are PENDING the owner's batch approval under ADR-0120 D12. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) are PENDING the owner's batch approval under ADR-0120 D12.",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) are PENDING the owner's batch approval under ADR-0120 D12. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) are PENDING the owner's batch approval under ADR-0120 D12. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) are PENDING the owner's batch approval under ADR-0120 D12. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events); uat5ca-01..10 remain PENDING.",
   "cases": [
     {
       "id": "jira-001",
@@ -1854,13 +1854,16 @@
       "text": "오늘 회의 몇 시야?",
       "expect": {
         "entryId": "calendar.events",
-        "args": {}
+        "args": {
+          "timedOnly": true
+        }
       },
       "grammar": "calendar-question",
       "grammarAnswer": {
         "entryId": "calendar.events",
         "args": {}
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch (ADR-0120 A5 implementation note 3): was {}; a meeting word means timed events (owner decision T1)]"
     },
     {
       "id": "calendar-009",
@@ -1878,9 +1881,11 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {
-          "range": "tomorrow"
+          "range": "tomorrow",
+          "availability": true
         }
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch (ADR-0120 A5 implementation note 3): was {\"range\": \"tomorrow\"}; the A5 availability / partOfDay args]"
     },
     {
       "id": "calendar-011",
@@ -2021,6 +2026,7 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {
+          "timedOnly": true,
           "count": true
         }
       },
@@ -2028,7 +2034,8 @@
       "grammarAnswer": {
         "entryId": "calendar.events",
         "args": {}
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch (ADR-0120 A5 implementation note 3): was {\"count\": true}; a meeting word means timed events (owner decision T1)]"
     },
     {
       "id": "calendar-021",
@@ -2098,6 +2105,7 @@
         "entryId": "calendar.events",
         "args": {
           "remaining": true,
+          "timedOnly": true,
           "count": true
         }
       },
@@ -2107,7 +2115,8 @@
         "args": {
           "remaining": true
         }
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch (ADR-0120 A5 implementation note 3): was {\"remaining\": true, \"count\": true}; a meeting word means timed events (owner decision T1)]"
     },
     {
       "id": "calendar-026",
@@ -2115,9 +2124,12 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {
-          "range": "wed"
+          "range": "wed",
+          "partOfDay": "afternoon",
+          "availability": true
         }
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch (ADR-0120 A5 implementation note 3): was {\"range\": \"wed\"}; the A5 availability / partOfDay args]"
     },
     {
       "id": "calendar-027",
@@ -2168,9 +2180,11 @@
       "text": "안녕 쿼키~ 오늘 하루 회의 일정이 어떻게 되는지 좀 알려줄래?",
       "expect": {
         "entryId": "calendar.events",
-        "args": {}
+        "args": {
+          "timedOnly": true
+        }
       },
-      "note": "chatty"
+      "note": "chatty [Relabelled 2026-10-15 in the owner's D12 batch (ADR-0120 A5 implementation note 3): was {}; a meeting word means timed events (owner decision T1)]"
     },
     {
       "id": "calendar-031",
@@ -2243,9 +2257,11 @@
         "entryId": "calendar.events",
         "args": {
           "range": "this-week",
+          "timedOnly": true,
           "count": true
         }
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch (ADR-0120 A5 implementation note 3): was {\"range\": \"this-week\", \"count\": true}; a meeting word means timed events (owner decision T1)]"
     },
     {
       "id": "calendar-036",
@@ -2253,9 +2269,11 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {
-          "range": "fri"
+          "range": "fri",
+          "availability": true
         }
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch (ADR-0120 A5 implementation note 3): was {\"range\": \"fri\"}; the A5 availability / partOfDay args]"
     },
     {
       "id": "calendar-037",
@@ -5998,10 +6016,11 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {
-          "range": "this-week"
+          "range": "this-week",
+          "partOfDay": "afternoon"
         }
       },
-      "note": "follow-up 2, partial: no time-of-day filter exists, so the whole week is listed and the basis line says so (never a keyword or a wrong filter)"
+      "note": "follow-up 2, partial: no time-of-day filter exists, so the whole week is listed and the basis line says so (never a keyword or a wrong filter) [Relabelled 2026-10-15 in the owner's D12 batch (ADR-0120 A5 implementation note 3): was {\"range\": \"this-week\"}; the A5 availability / partOfDay args]"
     },
     {
       "id": "jira-066",
@@ -9135,6 +9154,101 @@
       "text": "금 시세 알려줘",
       "expect": "none",
       "note": "금 without a week anchor is gold, not Friday: no source to read [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-01",
+      "text": "금요일에 무슨 일정 있어?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "fri"
+        }
+      },
+      "grammar": "calendar-question",
+      "grammarAnswer": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "10-16"
+        }
+      },
+      "note": "a weekday with no week word is the bare symbol (this-fri on a Wednesday is the same day and canonicalised to fri) [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-02",
+      "text": "이번 주 목요일 일정 보여줘",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-thu"
+        }
+      },
+      "grammar": "calendar-question",
+      "grammarAnswer": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "10-15"
+        }
+      },
+      "note": "a Korean week anchor keeps its own form (thu on a Wednesday is canonicalised to this-thu) [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-03",
+      "text": "목요일 마감인 지라 일 있어?",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "window": "due",
+          "range": "thu"
+        }
+      },
+      "note": "no week word: never next-thu [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-04",
+      "text": "담주 금 일정 뭐 있어",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "next-fri"
+        }
+      },
+      "note": "a one-syllable weekday after a week word is that day, never a keyword [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-05",
+      "text": "금요일에 친구 만나기로 했어",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-06",
+      "text": "다음 주 수요일 생일이야",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-07",
+      "text": "월요일은 늘 피곤해",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-08",
+      "text": "수요일마다 운동해",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-09",
+      "text": "이번 주 금요일 휴가야",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-10",
+      "text": "토요일에 이사해",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
     }
   ]
 }

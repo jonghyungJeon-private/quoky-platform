@@ -63,7 +63,7 @@ import {
 import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput } from './selection-input';
 import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { nlSelectionMeaning } from './selection-meaning';
-import { buildSelectionPrompt } from './selection-prompt';
+import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   LAST_SELECTION_METADATA_KEY,
@@ -81,6 +81,7 @@ import {
   type StoredSelection,
 } from './selection-state';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
+import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
 
 /**
  * Natural-language capability selection (ADR-0120): the one owner of the catalog call, its validation, the clarification
@@ -229,7 +230,7 @@ export interface NlSelectionServiceDeps {
   readonly elapsed?: () => number;
   /**
    * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
-   * record is written and every prompt and reply is byte-identical to `nl-select.v18`. Any other level requires mode
+   * record is written and every prompt and reply is byte-identical to `nl-select.v20`. Any other level requires mode
    * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
    */
   readonly actions?: {
@@ -521,7 +522,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /**
    * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
    * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
-   * prompt is `nl-select.v18` byte for byte.
+   * prompt is `nl-select.v20` byte for byte.
    */
   actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
@@ -680,7 +681,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       }
     }
     // A6-D8/D3: action entries reach the selector only while the level allows and the kill switch is running; otherwise
-    // they are dropped here too (the runtime already drops them), so the prompt is v18 byte for byte.
+    // they are dropped here too (the runtime already drops them), so the prompt is v20 byte for byte.
     const actionsOn = this.actionsOffered(turn.actor) && turn.entries.some(isNlActionEntry);
     const effective: NlSelectionTurn = actionsOn ? turn : { ...turn, entries: turn.entries.filter((entry) => !isNlActionEntry(entry)) };
     const reference = actionsOn ? this.referenceState(turn) : undefined;
@@ -741,13 +742,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action
     // candidate is never a numbered option (only READ entries are stored as options).
     const options: NlValidatedSelection[] = [];
-    let weekdayRefused = !main.ok && main.reason === 'weekday';
+    let weekdayRefused = isWeekdayRefusal(main, output.args, ctx);
     for (const [index, candidate] of [{ entryId: output.entryId, args: output.args }, ...output.alternatives].entries()) {
       if (actionsOn && isNlActionEntryId(candidate.entryId)) continue;
       const repaired = validateWithRepair(candidate, ctx);
       // A repair that drops another arg and then loses the owner's weekday ("지난주 수" with a future mail range) is asked
       // with the weekday hint as well.
-      if (index === 0 && !repaired.ok && repaired.reason === 'weekday') weekdayRefused = true;
+      if (index === 0 && isWeekdayRefusal(repaired, candidate.args, ctx)) weekdayRefused = true;
       if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) options.push(repaired.value);
     }
     // A refusal reached through the repair path is not kept in the cache either.
@@ -766,7 +767,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
     await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
       pendingQuestionRecord(turn.actor.id, { kind: 'entry', at: turn.now, language, options: stored, groundingText: prepared.groundingText }),
     );
-    return { kind: 'ask', text: renderEntryQuestion(options, language) };
+    // A refused weekday stays visible when another candidate validated: the hint names the week and the day, then the
+    // numbered options follow (Codex review P2).
+    const refusedEntry = weekdayRefused && !main.ok && main.entryId !== undefined ? ctx.offered.get(main.entryId) : undefined;
+    const question = renderEntryQuestion(options, language);
+    return { kind: 'ask', text: refusedEntry !== undefined ? `${renderWeekdayQuestion(refusedEntry, language)}\n${question}` : question };
   }
 
   /** A validated selection: apply or ask the interpretation preference (D7), then execute. */
@@ -1352,12 +1357,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // output is never stored and never served, so a side-effecting choice always reflects this turn's state.
     const actionsOn = reference !== undefined;
     const bypass = actionsOn && hasReferenceRecord(reference);
-    const cacheKey = JSON.stringify([
-      turn.actor.id,
-      normalizeForMatch(prepared.text),
-      previous ?? null,
-      turn.entries.map((entry) => entry.id),
-    ]);
+    const cacheKey = nlSelectionCacheKey({
+      actorId: turn.actor.id,
+      text: prepared.text,
+      previous,
+      entryIds: turn.entries.map((entry) => entry.id),
+      promptVersion: actionsOn ? NL_ACTION_PROMPT_VERSION : NL_SELECTION_PROMPT_VERSION,
+    });
     const hit = bypass ? undefined : this.cache.get(cacheKey);
     if (hit !== undefined && clock() - hit.at < NL_SELECTION_CACHE_TTL_MS && !(actionsOn && !isCacheableOutput(hit.output))) {
       return { kind: 'output', output: hit.output, latencyMs: Math.max(0, clock() - started), cached: true, cacheKey };
@@ -1516,6 +1522,37 @@ function isAmbiguityValueGrounded(key: NlAmbiguityKey, value: string, groundingT
   if (known === undefined || groundingText.length === 0) return false;
   const text = normalizeForMatch(groundingText);
   return (known.grounding ?? []).some((word) => text.includes(normalizeForMatch(word)));
+}
+
+/**
+ * The selector-output cache key: the actor, the normalized text, the previous selection, the offered entries and the
+ * prompt version (the read prompt, or the A6 action prompt when actions are offered), so an output computed under one
+ * prompt is never served under another (Codex review P2).
+ */
+export function nlSelectionCacheKey(input: {
+  readonly actorId: string;
+  readonly text: string;
+  readonly previous: { readonly entryId: string; readonly args: NlArgs } | undefined;
+  readonly entryIds: readonly string[];
+  readonly promptVersion: string;
+}): string {
+  return JSON.stringify([input.promptVersion, input.actorId, normalizeForMatch(input.text), input.previous ?? null, input.entryIds]);
+}
+
+/**
+ * Whether a refusal is about the weekday the owner named, so the question asks for the week and the day (A5
+ * implementation note 2): a period that lost the weekday (`weekday`), or a refused time keyword that itself holds a
+ * weekday form, in a message that names a weekday ("다음 주 수 일정" read as next week with the keyword "수"). A refused
+ * keyword without one ("오후" in "다음 주 수요일 오후 일정") keeps the usage question: the owner already gave the day.
+ */
+function isWeekdayRefusal(result: NlValidationResult, args: NlArgs, ctx: NlValidationContext): boolean {
+  if (result.ok) return false;
+  if (result.reason === 'weekday') return true;
+  if (result.reason !== 'time-keyword' || result.entryId === undefined || result.arg === undefined) return false;
+  const entry = ctx.offered.get(result.entryId);
+  const keyword = args[result.arg];
+  if (entry === undefined || typeof keyword !== 'string' || !nlKeywordHasWeekdayForm(keyword)) return false;
+  return nlWeekdayMentions(ctx.groundingText, entry.aliases).length > 0;
 }
 
 /** Validation, then up to three retries with the failing optional argument removed (a clarification option). */

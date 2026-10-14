@@ -709,12 +709,14 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     const refused = await send('목요일 거는?', ctx);
     expect(selected.slice(start.selected)).toEqual([]);
     expect(refused.reply.text).not.toContain('"목요일"');
-    // The right answer is a period.
+    // The right answer is a period. The question cleared the previous selection, so the owner's "목요일" has no week
+    // word: this-thu is the same Thursday as thu on this clock and is stored in its canonical form (calendar-accuracy note).
     selectorAnswer = answer('calendar.events', { range: 'this-thu' });
     start = marks();
     await send('목요일 거는?', ctx);
-    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'this-thu' }]);
-    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ args: { range: 'this-thu' } });
+    expect(lastPrevious(start.requests)).toBe('Previous selection: none');
+    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'thu' }]);
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ args: { range: 'thu' } });
     // Next period: no keyword to carry.
     selectorAnswer = answer('calendar.events', { range: 'week-after-next' });
     start = marks();

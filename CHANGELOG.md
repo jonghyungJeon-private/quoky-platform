@@ -5,6 +5,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — calendar accuracy: the canonical weekday symbol, prompt `nl-select.v20`, the weekday question on every weekday refusal (ADR-0120 A5 implementation note 3, 2026-10-14)
+
+- **Why.** One Haiku run left `calendar.events` at 86% (D12 gate: 90%). Misses, classified: 1 same day spelled
+  differently (`this-fri` for `fri`), 1 selector error (keyword "정기" for "정기회의"), 4 gold labels that predate the A5
+  args (`availability`, `partOfDay`), and 5 `timedOnly` flags on plain meeting questions (owner decision).
+- **Canonical weekday symbol.** When the selector's weekday symbol names the same day as the form that matches the
+  owner's week word, Core keeps the owner's form ("금요일" → `fri`, "이번 주 금요일" → `this-fri`, "목요일 거는?" after a
+  week → that week's day). Never another day, never a new symbol. The exact `{entry, args}` scoring of D12 is unchanged:
+  it compares the validated args, which are now unique per day.
+- **Prompt `nl-select.v20`.** Three examples in the weekday lines of the range symbols (금요일 = fri, 이번 주 금요일 =
+  this-fri, 다음 주 수 = next-wed), nothing else. A longer first wording raised a wrong capture and was dropped. The A6
+  `off` golden moves to `golden/nl-select.v20.prompts.json` (the v18 bytes with exactly those two lines replaced); the A6
+  action prompt becomes `nl-select.v21`.
+- **Live fixes.** "다음 주 수 일정 있어?" read as next week plus the keyword "수" now gets the week-and-day question, not
+  the generic one, and the selector now answers `next-wed`. "이번 주 금요일까지 일정" showing only Friday is a vocabulary
+  gap (no "until <weekday>" symbol): stopped for an owner amendment decision, nothing changed.
+- **Corpus.** `uat5ca-01..10` (814 cases; 05-10 are weekday statements that stay `none`, 0/240 captures in probes on
+  v18 and v20), PENDING the owner's D12 batch. Relabels proposed, not applied.
+- **Eval.** 3 owner-approved Haiku runs on calendar, mail and Jira (418 cases): calendar 90.4%, 89.2%,
+  90.4% (baseline 86.3%; on the old 80 cases 72, 71, 72 vs 69), overall 94.1%, 93.7%, 95.0%, wrong captures 1, 0, 0 (`neg-042`, a
+  pre-existing flake also seen on v18). The remaining calendar misses are all owner-decision cases; with the proposed
+  relabels calendar is 92.8-94.0%. Full corpus (808 cases, 1 run each): v20 97.1% vs v18 96.0%, 0 wrong captures. After the owner's
+  D12 batch of 2026-10-15 (nine relabels, `timedOnly` T1), one run on the relabelled gold passes the gate: 96.2% overall,
+  calendar 95.2%, Jira 97.8%, mail 95.4%, 0/185 wrong captures (three stable runs still to do).
+
 ## Unreleased — The document-summary claim guard closes its three recorded gaps (ADR-0118 amendment implementation note, 2026-10-14)
 
 - **Security fix, stricter only.** The claim guard that withholds a mail, thread or Drive summary which says Quoky did

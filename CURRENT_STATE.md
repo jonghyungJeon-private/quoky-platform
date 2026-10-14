@@ -29,7 +29,8 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 - Egress `enforce`: after 7 clean ledger days; the owner ask is due around 2026-10-20.
 - A6 R1 batch: the red-team and relabel review of the drafted corpus, and the A6 clause confirmations (A6-D3a and the
   others under "A6 clauses pending owner confirmation"). `QUOKY_NL_ACTIONS` stays `off` until then.
-- D12 batch approval of the 23 `uat5r*` golden cases (A5) and the 7 `uat5wd-*` cases (A5 note 2). They gate no live behaviour.
+- D12 batch approval of the 23 `uat5r*` golden cases (A5), the 7 `uat5wd-*` cases (A5 note 2) and the 10 `uat5ca-*` cases
+  plus the proposed calendar relabels (A5 note 3). They gate no live behaviour.
 - Token rotation: deferred (ADR-0121 S0 owner decision, design Q5).
 - OS-level firewall for child processes: "not now" (ADR-0121 S0 owner decision, design Q10).
 
@@ -45,6 +46,25 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
   tracks' notes). Still pending from v4: the OpenAI and Gemini keys, the PRV-3 monthly DM, LRN-5 round trip.
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
+
+### v5 calendar accuracy (ADR-0120 A5 implementation note 3) — on branch `claude/v5-calendar-accuracy` (2026-10-14)
+
+- **What changed.** A weekday symbol that names the same day as the owner's own week word is stored in the owner's form
+  (`fri` for "금요일", `this-fri` for "이번 주 금요일"). Prompt `nl-select.v20` adds three examples to the weekday lines of
+  the range symbols; the A6 `off` golden is now `nl-select.v20.prompts.json` and the A6 action prompt is `nl-select.v21`. A
+  weekday read as a keyword ("다음 주" + "수") now gets the week-and-day question.
+- **Eval.** 3 owner-approved Haiku runs on calendar, mail and Jira (418 cases): calendar 90.4%, 89.2%,
+  90.4% (baseline 86.3%; on the old 80 cases 72, 71, 72 vs 69), overall 94.1%, 93.7%, 95.0%, wrong captures 1, 0, 0 (`neg-042`, a
+  pre-existing flake also seen on v18). The remaining calendar misses are all owner-decision cases; with the proposed
+  relabels calendar is 92.8-94.0%. Full corpus (808 cases, 1 run each): v20 97.1% vs v18 96.0%, 0 wrong captures. After the owner's
+  D12 batch of 2026-10-15 (nine relabels, `timedOnly` T1), one run on the relabelled gold passes the gate: 96.2% overall,
+  calendar 95.2%, Jira 97.8%, mail 95.4%, 0/185 wrong captures (three stable runs still to do).
+- **Owner decisions (2026-10-15).** A6 `off` = the current read prompt (v20), acknowledged; nine calendar relabels and
+  `timedOnly` T1 approved and applied.
+- **Open for the owner.** "이번 주 금요일까지" as today through Friday needs a new symbol or bound rule (amendment);
+  `uat5ca-01..10` await the D12 batch; `calendar-057` with or without `timedOnly`.
+
+Details: the A5 implementation note 3 in `DECISIONS.md`.
 
 ### v5 claim guard gaps closed (ADR-0118 amendment implementation note) — on branch `claude/v5-claim-guard` (2026-10-14)
 

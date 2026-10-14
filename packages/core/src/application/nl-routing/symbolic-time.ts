@@ -548,6 +548,49 @@ export function nlRangeKeepsWeekday(range: NlResolvedRange | undefined, expresse
 }
 
 /**
+ * The canonical spelling of a weekday symbol (calendar-accuracy implementation note): `fri`, `this-fri` and `next-fri`
+ * may name the same day ("금요일" said on a Wednesday is both `fri` and `this-fri`). When the selector's symbol and the
+ * symbol whose week word matches the owner's own words resolve to the SAME day at the turn's clock, the owner's form is
+ * kept: a Korean week anchor ("이번 주 금요일" = `this-fri`); else, for a follow-up that only names a day ("목요일 거는?"
+ * after this week), the anchored form whose day lies inside the previous selection's period (`this-thu`); else the bare
+ * weekday ("금요일" = `fri`). Anything else is returned unchanged: a symbol for another weekday, another day ("금요일"
+ * read as `next-fri` on a Wednesday stays wrong and visible), English anchors (they fix a direction, not a week) and the
+ * week after next. Never a new day, never a new symbol kind; pure.
+ */
+export function nlCanonicalWeekdaySymbol(
+  symbol: string,
+  expressed: NlExpressedWeekday | undefined,
+  previousRange: string | undefined,
+  now: IsoTimestamp,
+  timeZone: string,
+): string {
+  const match = /^(?:(this|next|last)-)?(mon|tue|wed|thu|fri|sat|sun)$/.exec(symbol);
+  if (match === null || expressed === undefined || WEEKDAY_INDEX[match[2] as string] !== expressed.weekday) return symbol;
+  const stem = match[2] as string;
+  let candidate: string | undefined;
+  if (expressed.week !== undefined) candidate = expressed.week === 'after-next' ? undefined : `${expressed.week}-${stem}`;
+  else if (expressed.direction === undefined) candidate = previousWeekForm(stem, previousRange, now, timeZone) ?? stem;
+  if (candidate === undefined || candidate === symbol) return symbol;
+  const given = resolveNlRange(symbol, now, timeZone);
+  const owned = resolveNlRange(candidate, now, timeZone);
+  return given !== undefined && owned !== undefined && given.from === owned.from && given.to === owned.to ? candidate : symbol;
+}
+
+/** The one anchored form of `stem` whose day lies inside the previous period (a week, a span), or `undefined`. */
+function previousWeekForm(stem: string, previousRange: string | undefined, now: IsoTimestamp, timeZone: string): string | undefined {
+  if (previousRange === undefined) return undefined;
+  const previous = resolveNlRange(previousRange, now, timeZone);
+  if (previous === undefined || previous.days < 2 || previous.upcoming === true) return undefined;
+  const inside = (['this', 'next', 'last'] as const)
+    .map((week) => `${week}-${stem}`)
+    .filter((form) => {
+      const day = resolveNlRange(form, now, timeZone);
+      return day !== undefined && Date.parse(day.from) >= Date.parse(previous.from) && Date.parse(day.to) <= Date.parse(previous.to);
+    });
+  return inside.length === 1 ? inside[0] : undefined;
+}
+
+/**
  * Whether a title keyword really carries a title around the weekday ("수요일 스터디", "sunday school") rather than hiding
  * the period in it ("수요일 회의", "수요일 일정"): after the time words and weekday forms are removed, a content word is
  * left that is not one of the entry's own source words.
@@ -563,6 +606,19 @@ export function nlKeywordIsTitle(keyword: string, weekday: number, sourceWords: 
       return token === source || (token.startsWith(source) && isNlParticleOnly(token.slice(source.length)));
     });
   });
+}
+
+/**
+ * Whether a keyword holds a weekday form: a full name anywhere ("수요일", "Friday") or a one-syllable weekday as a word of
+ * its own, optionally with one particle ("수", "금까지"). Used only to choose the question after a `time-keyword` refusal.
+ */
+export function nlKeywordHasWeekdayForm(keyword: string): boolean {
+  if (nlWeekdayMentions(keyword).length > 0) return true;
+  return keyword
+    .normalize('NFC')
+    .toLowerCase()
+    .split(/[\s\p{P}\p{S}]+/u)
+    .some((token) => KO_WEEKDAY_SYLLABLE[token] !== undefined || KO_WEEKDAY_SYLLABLE[token.replace(TIME_WORD_TAIL, '')] !== undefined);
 }
 
 /**

@@ -9,9 +9,9 @@ import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
 import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
 import { LAST_ACTION_METADATA_KEY, withLastAction } from './last-action';
 import { NL_ACTION_LOG_EVENT, NlActionCaps, type NlActionLevel } from './nl-action-policy';
-import { NlActionsConfigError, NlSelectionService, type NlSelectionDecision } from './nl-selection-service';
+import { NlActionsConfigError, NlSelectionService, nlSelectionCacheKey, type NlSelectionDecision } from './nl-selection-service';
 import { prepareSelectionInput } from './selection-input';
-import { buildSelectionPrompt } from './selection-prompt';
+import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
 import { INTERPRETATION_PREFERENCES_METADATA_KEY, LAST_SELECTION_METADATA_KEY, NL_PENDING_METADATA_KEY, type PendingQuestion } from './selection-state';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
@@ -228,6 +228,25 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     await w.decide('오늘 날씨 좋다', { now: at(1) });
     expect(w.calls).toHaveLength(3);
     expect(w.calls[1]?.prompt).toContain('Reference context: last listing: todo (2 items, 1 min ago)');
+  });
+
+  it('the cache key carries the prompt version: an output cached under the read prompt is never served under v21 (Codex P2)', async () => {
+    const base = { actorId: 'owner', text: '메일함', previous: undefined, entryIds: ['mail.list'] };
+    const keys = ['nl-select.v18', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
+    expect(new Set(keys).size).toBe(3);
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v20');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v21');
+    // The same turn entries every time; only the kill switch decides the prompt (stopped: v20, running: v21).
+    const w = world({ script: [NONE, NONE, NONE] });
+    await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
+    await w.decide('오늘 날씨 좋다', { entries: ALL });
+    await w.decide('오늘 날씨 좋다', { entries: ALL, now: at(1) });
+    expect(w.calls).toHaveLength(1);
+    await w.service.handleSwitchPhrase(w.actor(), '에이전트 재개', at(2));
+    await w.decide('오늘 날씨 좋다', { entries: ALL, now: at(2) });
+    expect(w.calls).toHaveLength(2);
+    expect(w.calls[0]?.prompt).not.toContain('8. Action entries');
+    expect(w.calls[1]?.prompt).toContain('8. Action entries');
   });
 
   it('every A6 turn clears lastSelection, so "그 중에 X만" after an action refines nothing stale', async () => {

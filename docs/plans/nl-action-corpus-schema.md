@@ -45,7 +45,7 @@ closed values, spans are verbatim.
 {
   "version": 1,
   "description": "…",
-  "promptVersion": "nl-select.v19",
+  "promptVersion": "nl-select.v21",
   "cases": [ /* NlActionCase */ ]
 }
 ```
