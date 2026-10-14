@@ -23293,6 +23293,119 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
 - **Not done.** No migration, new flag, `.env.local` change, provider or platform branch, prompt change (`nl-select.v18`)
   or classifier interface change.
 
+### ADR-0120 amendment A5 implementation note 3 — calendar accuracy: the canonical weekday symbol, prompt `nl-select.v20`, and the weekday question on every weekday refusal (2026-10-14)
+
+- **Goal.** Bring the Haiku selector's `calendar.events` score to the D12 gate (at least 90% per entry, 95% overall, 0
+  wrong captures) without regressing other entries, and explain two live Telegram observations (2026-10-14 16:48).
+- **Baseline (owner-approved, 1 run, Haiku, `nl-select.v18`, calendar, mail and Jira with negatives, 414 cases, plan
+  digest `0136cb8a…`).** Overall 221/235 (94.0%), calendar 69/80 (86.3%), Jira 87/90, mail 65/65, wrong captures 0/179,
+  p50 1280 ms, p95 2089 ms.
+- **The 11 calendar misses, classified.**
+  - (a) Same day, different spelling — 1: `calendar-017` "금요일 일정 뭐야?" gave `this-fri` for gold `fri` (both Friday
+    10/16 on the run day).
+  - (b) Selector errors against the prompt's own contract — 1: `calendar-53` keyword "정기" for "정기회의" (the model cut
+    the generic word 회의 out of the title word). Jira had two more (`role: either` added, `jira-014` and `jira-045`) and
+    `jira-030` "금요일 마감" read as `next-fri` (a different Friday).
+  - (d) Gold that predates the A5 args — 4: `calendar-010` "내일 바쁜가?" and `calendar-036` "am I busy on Friday?" got
+    `availability: true`, `calendar-026` "수요일 오후에 시간 비어?" got `partOfDay: afternoon` and `availability: true`,
+    `calendar-057` "이번 주 회의 중에 오후 거만" got `partOfDay: afternoon` (and `timedOnly`). Each output is what the A5
+    arg descriptions ask for; the gold was approved before those args existed.
+  - (b/d, owner decision) `timedOnly` on a plain meeting question — 5: `calendar-008`, `-020`, `-025`, `-030`, `-035`
+    ("오늘 회의 몇 시야?", "how many meetings do I have this week?"). The A5 rule 3 grounding ("a meeting word is in the
+    owner's text") accepts it; the arg description says "narrows to meetings" and the gold says no flag. Two prompt
+    variants that said so (a description line, then also an example) were probed on these five sentences and did not
+    move Haiku (it set the flag in 8 of 16 and then 16 of 16 calls), so no prompt change is made for it.
+  - (c) Vocabulary — none among the misses; one gap from the live run (below).
+- **D12 and scoring.** D12 says the evaluation "scores exact `{ entry, args }` matches, so no LLM judges". The scorer
+  therefore stays exact. What it compares is the args after Core's validation (`scoreOutput` uses
+  `validateSelection(...).value.args`, the same canonical form the runtime executes and stores). So class (a) is fixed by
+  making that canonical form unique, not by a looser scorer: the `mail.list` `today` → `range` normalization is the
+  precedent.
+- **(a) The canonical weekday symbol** (`nlCanonicalWeekdaySymbol`, `symbolic-time.ts`; applied in D4 step 4 of
+  `selection-validator.ts` before the range resolves). When the selector's weekday symbol and the form that matches the
+  owner's own week word resolve to the SAME day at the turn's clock, the owner's form is kept: a Korean week anchor
+  ("이번 주 금요일" → `this-fri`); else, for a follow-up that only names a day, the anchored form whose day lies inside
+  the previous selection's period ("목요일 거는?" after this week → `this-thu`); else the bare weekday ("금요일" →
+  `fri`). A symbol for another day is never rewritten ("금요일" read as `next-fri` on a Wednesday stays `next-fri`, and
+  `this-fri` said on a Saturday is yesterday, not `fri`); English anchors (a direction, not a week), the week after next
+  and dates are left alone. It is a spelling rule over the closed symbols: no new symbol kind, no new day, no phrase. The
+  A5 note 2 weekday guard still runs on the result. Visible effect: the basis line and the stored `lastSelection` use
+  the owner's spelling; the day shown is unchanged.
+- **(b) Prompt `nl-select.v20`.** The two weekday lines of the range symbols gain three examples and nothing else:
+  `mon..sun (the nearest such day: 금요일 = fri); this-mon..this-sun (that day of this week: 이번 주 금요일 = this-fri);` and
+  `… (that day of next / last week: 지난주 금요일 = last-fri, 다음 주 수 = next-wed);`. Probes on the run day (Haiku, 20
+  calls each, v18 → v20, after the canonical form): "금요일 일정 뭐야?" `fri` 20/20 → 20/20 (the raw output `this-fri` 10/20 →
+  0/20), "금요일 마감인 지라 이슈 알려줘" `fri` 16/20 → 20/20 (`next-fri` 4/20 → 0/20), "다음 주 수 일정 있어?" `next-wed`
+  16/20 → 20/20 (`next-week` + keyword "수" 4/20 → 0/20). The examples quote no corpus phrase (the golden test checks it).
+  A first, longer wording (four lines: "a weekday with no week word", "only with that week word", "never a keyword")
+  fixed the same three sentences but raised a wrong capture: "아이폰 알림 어떻게 꺼?" (`neg-012`) became `help.topic` in
+  9 of 32 calls (v18: 0 of 32) and once in the 3-run evaluation. It was dropped; the shorter wording gives 0 of 20. This
+  is an implementation note, not an amendment: no ratified text changes (the symbols and their meaning are A5's).
+- **A6 byte identity, updated consciously.** The A6 `off` path pinned the v18 bytes. The pin moves to v20:
+  `golden/nl-select.v18.prompts.json` is replaced by `golden/nl-select.v20.prompts.json`, generated from the v18 file by
+  replacing exactly those two lines in each of its 76 prompts (the git rename shows 76 changed prompt lines plus the
+  version and note); `NL_SELECTION_PROMPT_VERSION` = `nl-select.v20`. The A6 action prompt is built on the same lines, so its bytes
+  change too and it becomes `nl-select.v21` (`NL_ACTION_PROMPT_VERSION`; v19 = the A6 text on v18). The A6 rule itself is
+  unchanged: with `QUOKY_NL_ACTIONS=off` the prompt is the read prompt byte for byte, and the 808-case replay test still
+  requires identical prompts and decisions with and without A6 wiring. The A6 corpus files keep `promptVersion:
+  nl-select.v19` as metadata only (the loader uses the constant); the A6 eval plan digests change with the prompt, as
+  any prompt edit does.
+- **The weekday question on every weekday refusal (live observation 1).** "다음 주 수 일정 있어?" got the generic
+  "캘린더 일정 조회에서 무엇을 찾을지 정확히 모르겠어요" because the model answered `next-week` plus the keyword "수"
+  (4 of 20 probe calls on v18). The per-arg check refuses that keyword as `time-keyword` before the weekday check (step 4b)
+  runs, and only `weekday` chose the hint. Now `isWeekdayRefusal` (`nl-selection-service.ts`) chooses the weekday
+  question for `weekday`, and for `time-keyword` when the owner's text names a weekday, on the main output and on the
+  repaired first candidate. Other refusals keep the usage question. The prompt example above makes `next-wed` the selector's
+  answer (20 of 20 probe calls on v20).
+- **Live observation 2 — "이번 주 금요일까지 일정" showed only Friday 10/16 (a vocabulary gap, stopped).** The selector
+  answers `this-fri` (12 of 20 probe calls on v18, the live reply) or `this-week` (8 of 20); v20 is the same (6/6 of 12). Both validate: A5 note 2
+  requires a bound weekday ("금요일까지") to lie inside the period, and it does. Neither is "today through Friday": the
+  closed symbols have no "until <weekday>" form, and the model may not compute dates (D4 step 4), so `10-14..10-16` is
+  not available to it. `rest-of-month` is the same idea for a month. Closing the gap needs either a new symbol kind
+  (for example `until-fri`: today through the next such Friday) or a Core rule that reads a single-day period at an
+  inclusive end bound ("까지", "until", "by", "through") as today through that day. Both change what the owner sees for
+  a whole class of phrasings and add to the A5 symbol set or its meaning, so this is left for the owner as an amendment
+  decision. Nothing was changed for it.
+- **Golden cases.** `uat5ca-01..04` (808 cases): "금요일에 무슨 일정 있어?" → `fri`, "이번 주 목요일 일정 보여줘" →
+  `this-thu` (both with their calendar-grammar tags), "목요일 마감인 지라 일 있어?" → due `thu`, "담주 금 일정 뭐 있어" →
+  `next-fri`. Agent-drafted, PENDING the owner's D12 batch approval.
+- **Relabels proposed for the owner's D12 batch (not applied; the approved gold is unchanged).**
+  - `calendar-010` → `{range: tomorrow, availability: true}`; `calendar-036` → `{range: fri, availability: true}`;
+    `calendar-026` → `{range: wed, partOfDay: afternoon, availability: true}`; `calendar-057` →
+    `{range: this-week, partOfDay: afternoon}` (plus `timedOnly: true` if T1 below).
+  - The `timedOnly` question: T1 — a meeting word in a listing question means timed events (relabel `calendar-008`
+    `{timedOnly}`, `-020` `{timedOnly, count}`, `-025` `{remaining, timedOnly, count}`, `-030` `{timedOnly}`, `-035`
+    `{range: this-week, timedOnly, count}`; the prompt example "내일 미팅 있나?" → `{range: tomorrow}` would then change in a
+    later prompt version). T2 — the flag stays a narrowing ("회의만"); that needs a deterministic rule, because the
+    prompt does not move Haiku, and tightening the A5 rule 3 grounding is an amendment.
+- **Grammar-side numbers** (`scoreGrammarSide`, offline): the two new grammar-tagged cases (`uat5ca-01/02`, the
+  calendar grammar answers a date, the gold a weekday) move tagged 247 → 249 and positives 246 → 248; exact stays 209,
+  entry 241 → 243, user-visible 227 → 229, wrong captures 0.
+- **Eval after the fix (owner-approved, Strict, Haiku, `nl-select.v20`, calendar, mail and Jira with negatives, 418
+  cases, 3 runs, 6 s bound, plan digest `05d9d263…`, report `data/eval/nl-intent-2026-10-14T08-13-23-877Z-haiku.json`,
+  local).**
+  - Per run: overall 225/239 (94.1%), 224/239 (93.7%), 227/239 (95.0%); calendar 75/83 (90.4%), 74/83 (89.2%), 75/83
+    (90.4%); Jira 88/91, 89/91, 90/91; mail 62/65, 61/65, 62/65; wrong captures 1/179, 0/179, 0/179; p50 1322/1341/1327
+    ms, p95 2161/2134/2006 ms; timeouts 1, 5, 1 (run 2 is 1.2% over the bound).
+  - On the 414 cases of the baseline: calendar 72/80, 71/80, 72/80 (baseline 69/80); overall 221, 220, 223/235 (baseline
+    221). The four `uat5ca` cases hit in all three runs.
+  - Every remaining calendar miss is one of the eight cases of the owner decisions below (`calendar-008`, `-010`, `-020`,
+    `-025`, `-026`, `-030`, `-036`, `-057`); the (a) and (b) calendar misses are gone in all three runs.
+  - With the four (d) relabels applied to the same records (offline rescoring, no model call): calendar 78, 77, 78/83,
+    overall 95.4%, 95.0%, 96.2%. With the `timedOnly` relabels as well (T1): calendar 81, 78, 80/83, overall 96.7%,
+    95.4%, 97.1%.
+  - **The D12 gate does not pass yet**, on three counts: the calendar entry needs the owner's relabel or `timedOnly`
+    decision (it is at 89.2-90.4% on approved gold); the overall rate is 93.7-95.0% for the same reason plus mail
+    variance; and run 1 has one wrong capture, `neg-042` "어제 일정 있었는데 까먹었어 ㅠ" → calendar yesterday. That
+    capture is not caused by this change: on v18 the same sentence was captured in 5 of 12 probe calls, on v20 in 2 of
+    12. It is a selector error on a statement, below the threshold of this note; a fix is a separate decision (a prompt
+    rule for statements about the past, or a validator rule, both need their own probe).
+- **Read regression (owner-approved, 1 run each, the full `nl-intent.v1.json`, 808 cases, the same code, only the two
+  prompt lines swapped).** v20: 611/629 (97.1%), 0/179 wrong captures, p50 1322 ms, p95 2042 ms, 0 timeouts. v18: 604/629
+  (96.0%), 0/179 wrong captures, 3 timeouts. No entry drops by more than one case (help.topic 50 → 49, Jira 90 → 89; both
+  single-case variance: `help-045`, `jira-008`), and calendar rises 71 → 76/83. The mail misses in both prompts are the
+  selector adding `range: today` to "새 메일" (`mail-004`, `-009`), independent of this change.
+
 ## ADR-0112 amendment 1 — Slack channel-message delete: a narrow `ChannelMessageDeleteWriter`, only for a message Quoky posted, bound to that post's SENT receipt, only as the undo of a post (Proposed — owner decision pending) (2026-10-14)
 
 - **Status:** **Proposed (owner decision pending).**
