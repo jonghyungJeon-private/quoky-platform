@@ -81,7 +81,7 @@ import {
   type StoredSelection,
 } from './selection-state';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
-import { nlWeekdayMentions } from './symbolic-time';
+import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
 
 /**
  * Natural-language capability selection (ADR-0120): the one owner of the catalog call, its validation, the clarification
@@ -742,13 +742,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action
     // candidate is never a numbered option (only READ entries are stored as options).
     const options: NlValidatedSelection[] = [];
-    let weekdayRefused = isWeekdayRefusal(main, ctx);
+    let weekdayRefused = isWeekdayRefusal(main, output.args, ctx);
     for (const [index, candidate] of [{ entryId: output.entryId, args: output.args }, ...output.alternatives].entries()) {
       if (actionsOn && isNlActionEntryId(candidate.entryId)) continue;
       const repaired = validateWithRepair(candidate, ctx);
       // A repair that drops another arg and then loses the owner's weekday ("지난주 수" with a future mail range) is asked
       // with the weekday hint as well.
-      if (index === 0 && isWeekdayRefusal(repaired, ctx)) weekdayRefused = true;
+      if (index === 0 && isWeekdayRefusal(repaired, candidate.args, ctx)) weekdayRefused = true;
       if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) options.push(repaired.value);
     }
     // A refusal reached through the repair path is not kept in the cache either.
@@ -1521,16 +1521,18 @@ function isAmbiguityValueGrounded(key: NlAmbiguityKey, value: string, groundingT
 
 /**
  * Whether a refusal is about the weekday the owner named, so the question asks for the week and the day (A5
- * implementation note 2): a period that lost the weekday (`weekday`), or a time word taken as a keyword (`time-keyword`)
- * in a message that names a weekday ("다음 주 수 일정" read as next week with the keyword "수"). Every other refusal
- * keeps the usage question.
+ * implementation note 2): a period that lost the weekday (`weekday`), or a refused time keyword that itself holds a
+ * weekday form, in a message that names a weekday ("다음 주 수 일정" read as next week with the keyword "수"). A refused
+ * keyword without one ("오후" in "다음 주 수요일 오후 일정") keeps the usage question: the owner already gave the day.
  */
-function isWeekdayRefusal(result: NlValidationResult, ctx: NlValidationContext): boolean {
+function isWeekdayRefusal(result: NlValidationResult, args: NlArgs, ctx: NlValidationContext): boolean {
   if (result.ok) return false;
   if (result.reason === 'weekday') return true;
-  if (result.reason !== 'time-keyword' || result.entryId === undefined) return false;
+  if (result.reason !== 'time-keyword' || result.entryId === undefined || result.arg === undefined) return false;
   const entry = ctx.offered.get(result.entryId);
-  return entry !== undefined && nlWeekdayMentions(ctx.groundingText, entry.aliases).length > 0;
+  const keyword = args[result.arg];
+  if (entry === undefined || typeof keyword !== 'string' || !nlKeywordHasWeekdayForm(keyword)) return false;
+  return nlWeekdayMentions(ctx.groundingText, entry.aliases).length > 0;
 }
 
 /** Validation, then up to three retries with the failing optional argument removed (a clarification option). */

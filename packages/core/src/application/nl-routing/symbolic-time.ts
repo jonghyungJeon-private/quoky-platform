@@ -609,6 +609,19 @@ export function nlKeywordIsTitle(keyword: string, weekday: number, sourceWords: 
 }
 
 /**
+ * Whether a keyword holds a weekday form: a full name anywhere ("수요일", "Friday") or a one-syllable weekday as a word of
+ * its own, optionally with one particle ("수", "금까지"). Used only to choose the question after a `time-keyword` refusal.
+ */
+export function nlKeywordHasWeekdayForm(keyword: string): boolean {
+  if (nlWeekdayMentions(keyword).length > 0) return true;
+  return keyword
+    .normalize('NFC')
+    .toLowerCase()
+    .split(/[\s\p{P}\p{S}]+/u)
+    .some((token) => KO_WEEKDAY_SYLLABLE[token] !== undefined || KO_WEEKDAY_SYLLABLE[token.replace(TIME_WORD_TAIL, '')] !== undefined);
+}
+
+/**
  * Whether every word of `keyword` is a time word, or (when the owner's text names a weekday in any form) a one-syllable
  * weekday ("수" in "다음 주 수요일 일정"): such a keyword is a period, never a title word.
  */

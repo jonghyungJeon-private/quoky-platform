@@ -734,6 +734,15 @@ describe('ADR-0120 A5 implementation note 2: a period that loses the owner\'s we
     expect(h.calls).toHaveLength(2);
   });
 
+  it('a refused time keyword without a weekday form keeps the usage question, even when the message names the day', async () => {
+    const h = harness({ script: [out('calendar.events', { range: 'next-wed', keyword: '오후' })] });
+    const asked = await h.decide('다음 주 수요일 오후 일정');
+    expect(asked).toEqual({ kind: 'ask', text: '캘린더 일정 조회에서 무엇을 찾을지 정확히 모르겠어요. "오늘 일정"처럼 말씀해 주세요.' });
+    expect(h.logs.find((log) => log.event === 'nl_selection.validation_failed')?.fields).toMatchObject({ reason: 'time-keyword', arg: 'keyword' });
+    const full = harness({ script: [out('calendar.events', { range: 'next-week', keyword: '수요일' })] });
+    expect(await full.decide('다음 주 수요일 일정')).toMatchObject({ kind: 'ask', text: expect.stringContaining('주와 요일을 함께') });
+  });
+
   it('a time word taken as a keyword in a message that names no weekday keeps the usage question', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'tomorrow', keyword: '내일 오후' })] });
     expect(await h.decide('내일 오후 일정 알려줘')).toEqual({
