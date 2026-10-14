@@ -22311,15 +22311,26 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
        selects an entry.
    - **What a number means.**
      - **To-dos.** The shown label is the to-do's number as listed: its position in the list Quoky showed. An echo
-       ("할 일 7번으로 추가했어요") is recorded as a **one-item listing** with label 7. A number therefore always means
-       the item the owner saw under that number, never the current position.
+       ("할 일 7번으로 추가했어요") and a question's candidates are recorded as labels too, but they **never shrink a list
+       the owner is working down**:
+       - while a listing of the same source is fresh, the echo or question labels **merge** into it (an existing label
+         keeps its id unless the echo names the same label for a new item, which then wins);
+       - only when no listing of that source is fresh does the echo or question **become** the listing (a one-item
+         listing for an echo).
+
+       So "내 할 일" → "1번 완료" → "2번도 완료" completes the listed to-do 2 and never answers "목록에 1건만". A number
+       always means the item the owner saw under that number, never the current position.
      - **Reminders.** A reminder has a stable, repository-assigned **display number** (`#13`, `Reminder.displayNo`),
        which the list, the echo and `알림 13 취소` all show.
-       - Digits (`13번`, `알림 13`) mean the display number. They resolve to the reminder with that `displayNo`,
-         whether or not a listing is fresh.
+       - Digits (`13번`, `알림 13`) mean the display number **only when the turn is about reminders**: the owner's
+         text has a reminder noun (알림, 리마인더, reminder), or the most recent listing is a fresh reminder listing, or
+         the fresh `lastAction` is a reminder action. Then they resolve to the reminder with that `displayNo`.
+       - Otherwise bare digits never cancel a reminder: "13번 취소해줘" after a mail list gets a question
+         (resolution step 1, other source), never a cancel.
        - Ordinal words (첫 번째, 두 번째) mean the position in the most recent reminder listing.
    - **Resolution** (`nl-routing/item-reference.ts`, pure, in order):
-     1. **Most recent listing only.** `#n` (except reminder display numbers) and `last` resolve only against the most
+     1. **Most recent listing only.** `#n` (except reminder display numbers under the rule above) and `last` resolve
+        only against the most
         recently written listing slot. If its source differs from the entry's source, the reply asks a question, so an
         older mail listing is never used when a Drive list is newer, and an older mail body is never sent. A platform
         reply (GML-2 reply-to-pick) names its listing explicitly and is the only exception. Its window is the GML-2
@@ -22387,7 +22398,7 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
          questions).
        - The saving is at most one selector call on an identical repeated message, and the A3 bound covers that call.
    - **`lastSelection` never stores an action entry.** A turn that executes, previews or asks for an A6 entry **clears**
-     `lastSelection`, as the follow-up 2 rule already does for writes and previews. Action entries are not refinable, so
+     `lastSelection`, as the ADR-0120 follow-up rule ("stale `lastSelection` after a grammar-handled listing") already does for writes and previews. Action entries are not refinable, so
      "그 중에 X만" can never replay a write.
    - **Caps (per actor, `NlSelectionService`):**
      - LOCAL_WRITE executions by selection: at most 20 an hour and 100 a day;
@@ -22400,16 +22411,21 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
      - the resolution outcome (`resolved | out-of-range | expired | ambiguous | stale | other-source | none`);
      - the result (`executed | previewed | asked | refused | undone | capped`);
      - the latency and the correlation id;
-     - a **target id**: the local UUID for to-dos and reminders; for provider items, an HMAC-SHA-256 of the provider id
-       under a per-install key that never leaves the data directory, truncated to 16 hex characters.
+     - a **target reference**: the local UUID for to-dos and reminders; for provider items (mail, Drive, later Jira and
+       Slack), `{ source, listing label, listing at }`, the label the owner saw and the listing's timestamp. No
+       provider id and no hash is logged, so no key is needed (Core has no keyed hash: `util/hash.ts` is deliberately
+       free of `node:crypto`).
 
-     It never records text, titles or spans. The target id lets a labelled run measure wrong-target executes (A6-D7).
+     It never records text, titles or spans. The target reference lets a labelled run measure wrong-target executes
+     (A6-D7): the script labels each turn with the expected listing label or local id.
      External writes keep their approval and receipt records.
    - **Kill switch.** There is no `에이전트 중지` in code today (ADR-0121 D7 specifies it for S2). **NLA-5 builds it in
-     R0** as a persisted flag in the data directory, with owner control phrases `에이전트 중지` / `에이전트 재개` (Class
-     A), and A6 honours it from the start. While it is stopped, every A6 entry is withdrawn and the anchored grammars
-     still work. **`local` cannot be set until the switch exists and is tested.** ADR-0121 S2 later reuses the same
-     switch.
+     R0** and persists it in **`Actor.metadata`** (`quoky.actionSwitch` = `{ state: running | stopped, at }`) through the
+     existing `ActorRepository`, with the same re-read-and-merge write as the D7 preferences: no file flag, no new port.
+     Owner control phrases `에이전트 중지` / `에이전트 재개` (Class A, owner DM) flip it, and A6 honours it from the
+     start. Because ADR-0114 maps both platforms to one Actor, one stop covers Telegram and Discord. While it is stopped, every A6 entry is withdrawn and the anchored grammars
+     still work. **`local` cannot be set until the switch exists and is tested** (a release gate of R1). ADR-0121 D7
+     names a data-directory flag for S2; S2 may reuse this Actor-scoped switch instead, by its own note.
 4. **A6-D4 — External writes, and the relation to ADR-0121 S3.**
    - **The selector never decides to execute.** For `slack.post` and `calendar.create` its only effect is a
      `ConnectorWriteDraft`. The existing flow is unchanged: exact payload, CRITICAL hash-bound one-time approval,
@@ -22480,7 +22496,8 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
      `{ entryId, args, target }`. It contains:
      - the six live phrases verbatim;
      - at least 30 paraphrases per entry;
-     - at least 80 reference cases (labels, echoes, reminder `#N` versus ordinal, other-source listings, expiry, stale,
+     - at least 80 reference cases (labels, echoes merging into a fresh list ("1번 완료" → "2번도 완료"), bare digits
+       after a non-reminder listing, reminder `#N` versus ordinal, other-source listings, expiry, stale,
        reply-to-pick inside and outside 30 minutes);
      - at least 120 negatives, including "그거 완료했어", "알림 취소했어", "취소하지 마", "할 일 추가하는 법", quoted
        commands and deictic payloads.
@@ -22494,6 +22511,10 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
    - **Read-regression gate (Strict, same runs).** `nl-intent.v1.json`, including the A5 `uat5r*` cases, is re-run
      **with the A6 entries offered**. It must meet the ADR-0120 D12 gate as it stands, and **0 read cases may be
      captured by an action or `ITEM_READ` entry**.
+     - **Relabel first.** Some `nl-intent.v1.json` cases have the gold `none` only because of the A5 prompt rule that
+       item summaries ("그거 요약해줘") belong to this design. With A6 those cases are `item.summarize`. They are
+       relabelled in an **owner-approved batch** (ADR-0120 D12) before the gate runs; the read-regression gate counts
+       only cases whose gold is a READ entry or a `none` that A6 keeps.
      - With the flag `off`, the selector prompt is byte-identical to `nl-select.v18`, the prompt on `main` after A5
        (#199, Accepted), pinned by a golden test.
    - **Latency gate for yield turns.** On `external-write-unsupported` turns that yield, the added p95 is at most
@@ -22515,14 +22536,16 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
    - **Live measurement and its limit.**
      - Shadow runs from an **attended, labelled script**: the operator sends scripted turns in the owner DM, each
        labelled with its expected entry and target id, and the `nl_action.*` logs are joined to the labels.
-     - **Every undo within the window counts as a misparse.**
+     - **Every undo within the window counts as a misparse**, except an undo that the script itself labels as an
+       intended step (the undo turns of the UAT plan, U2 and U3).
      - **Statistical limit, stated plainly.** With 0 failures in n turns, the 95% upper bound on the error rate is about
        3/n. Thirty live turns bound wrong-target at only about 10%. The live gate is therefore a smoke check sized at
        **at least 100 labelled turns per stage** (about 3%). The statistical gate is the offline corpus (3 runs over
        hundreds of cases).
 8. **A6-D8 — Flag, stages, promotion.**
    - **The flag.** `QUOKY_NL_ACTIONS` = `off` | `shadow` | `local` | `external`, exact values, default `off`. It
-     requires `QUOKY_NL_INTENT_MODE=active` and the kill switch (A6-D3). A startup error is raised otherwise.
+     requires `QUOKY_NL_INTENT_MODE=active` (a startup error otherwise). `local` and `external` are release-gated on
+     the kill switch existing and being tested (A6-D3).
    - **Stages:**
      - **R1:** the LOCAL_WRITE entries, `action.undo` and `item.summarize` over mail and Drive; `shadow` (labelled
        script), then `local`.
@@ -22542,9 +22565,10 @@ incompatibly:
 - The `external-write-unsupported` reply gains an optional `yieldable` (a narrow ADR-0096 D1 extension, like A4).
 - `last-listing.ts` slots become labelled and gain `todo` / `reminder` (and later `jira` / `slack`).
 - New `Session.metadata` key: `quoky.lastAction`.
-- A persisted kill-switch flag in the data directory.
+- New `Actor.metadata` key: `quoky.actionSwitch` (the kill switch).
 
-There is no new port or token, no migration and no new runtime deps key.
+There is no new port or token, no migration and no new runtime deps key: the switch uses the existing
+`ActorRepository`, and audit lines carry local UUIDs or listing labels, so Core needs no keyed hash and no file.
 
 #### Amended clauses
 
@@ -22603,8 +22627,9 @@ There is no new port or token, no migration and no new runtime deps key.
    text goes to the chat-tier provider (possibly an HTTP API vendor). **Recommended: yes.**
 6. Jira create in R4 under its own ADR-0112 amendment; no NL Jira comment or transition in A6. **Recommended: yes.**
 7. External-write destinations come from the current turn only. **Recommended: yes.**
-8. Build the persisted kill switch (`에이전트 중지` / `에이전트 재개`) in R0, plus the anchored `되돌리기` as the
+8. Build the persisted kill switch (`에이전트 중지` / `에이전트 재개`, stored in `Actor.metadata`) in R0, plus the anchored `되돌리기` as the
    provider-down twin of `action.undo`. **Recommended: yes.**
 9. Live gate size: at least 100 labelled turns per stage, from an attended script, accepting a bound of about 3%.
    **Recommended: yes.**
-10. Corpus approval: the owner reviews at least the red-team batch. **Recommended: yes.**
+10. Corpus approval: the owner reviews at least the red-team batch and the relabel batch (summary-`none` cases in
+    `nl-intent.v1.json` become `item.summarize`). **Recommended: yes.**
