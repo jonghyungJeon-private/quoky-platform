@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — a one-syllable weekday after a week anchor, and a period never loses the owner's weekday (ADR-0120 A5 implementation note 2, 2026-10-14)
+
+- **Live fix.** "다음 주 수 일정 있어?" was answered with next Monday (10/19) instead of Wednesday 10/21. The selector
+  sometimes reads the abbreviated weekday as another day (`next-mon`) or drops it (`next-week`, keyword "수"), and nothing
+  checked the period against the weekday the owner wrote.
+- **Rule, no phrases.** A one-syllable weekday (월 화 수 목 금 토 일) is a weekday only as its own word right after a week
+  anchor (이번 주, 다음 주, 담주, 지난주, 다다음 주 …); elsewhere it keeps its other meaning ("할 일", "남은 수", "3월", "금
+  시세"). On calendar, mail and Jira, a period that drops or changes the one weekday the owner named fails validation with
+  the new reason `weekday`. It is never repaired, so the owner is asked instead of being shown another day. A bound
+  weekday ("금요일까지") must lie inside the period. The abbreviation is never a title keyword. "다음 주 일 많아?" accepts
+  the week or Sunday (일 is also "work").
+- **Unchanged.** Selector prompt `nl-select.v18` byte for byte (A6 `off` identity intact), no new symbol, flag, env,
+  migration or port change. "다다음 주 수요일" read as the whole week after next is now asked instead of listed.
+- **Corpus and eval.** `uat5wd-01..07` (804 cases, pending D12). One owner-approved Haiku run on calendar, mail and Jira
+  (414 cases): 93.6% overall, 0 wrong captures, new cases 6/7. The live sentence is now asked when the model drops the
+  weekday. The other misses are pre-existing exact-arg differences.
+
 ## Unreleased — Class B grammars yield what they cannot express (ADR-0120 A2 implementation note 2, 2026-10-14; acknowledged by the owner)
 
 - **Live fix.** Five Telegram sentences from the 2026-10-14 run after A5 were answered by a frozen grammar that dropped part of

@@ -22195,6 +22195,60 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
   `range: "today"` as its catalog equivalent, read back identically). Offline eval: `pnpm eval:nl -- --mode plan`, plan digest
   recorded in the PR; no model was called.
 
+### ADR-0120 amendment A5 implementation note 2 — a one-syllable weekday is a weekday only after a week anchor, and a period never loses the owner's weekday (2026-10-14, live Telegram)
+
+- **Live defect** (Telegram, 2026-10-14 15:52 KST; `active`, `c-shadow`, grammar yield on). "다음 주 수 일정 있어?" (수 =
+  수요일) was declined by the calendar grammar as designed (A2 note 2: "다음 주 수" is a noun before 수) and the selector ran,
+  but the reply was "10월 19일(월)", next Monday, instead of Wednesday 10/21.
+- **Root cause.** Not the resolver and not a missing symbol: `next-wed` exists and resolves to 10/21. The log line
+  `calendar.turn_handler.answered span=date` shows a single non-named day, which only a weekday or date symbol gives, and
+  the reply header shows Monday. A Haiku probe on the v18 prompt with this exact text gave `next-wed` on most calls but
+  also `next-mon` and, in the approved eval run, `next-week` plus the keyword "수". D4 step 4 checks only that a range symbol
+  resolves. Nothing compared the period with the weekday the owner had written, so a wrong or dropped weekday validated
+  and the owner silently got a different day.
+- **Rule (D4 step 4, additive; validation of the range VALUE, routes nothing).**
+  1. *Which weekday the owner named* (`nlExpressedWeekday`, `symbolic-time.ts`). A full name (수요일, Wednesday) counts
+     anywhere. A one-syllable abbreviation (월 화 수 목 금 토 일) counts only right after a week anchor, as a word of its
+     own: the anchor, whitespace, the syllable, then optionally one closed particle (에, 엔, 은, 는, 도, 만, 까지, 부터, 쯤,
+     랑 …), then the end of the word. The anchors are the ones the full names already take: 이번 주/이번주/금주, 다음
+     주/다음주/담주/차주, 지난주/저번 주, 다다음 주. Elsewhere 수 is a number, 일 work or a day, 금 gold and 월 a month, so
+     "할 일", "남은 수", "3월", "1일", "금 시세", "이번 주 수업" and "다음 주 월간 보고" name no weekday. Two different weekdays
+     ("토, 일", "월~수", "수요일이랑 목요일") name no single day, and the guard steps aside. A value of an arg that may be a
+     time word (a sender named "월요일") is removed before reading. English anchors never fix the week ("next Friday" may be
+     this coming Friday).
+  2. *The period must keep it* (`nlRangeKeepsWeekday`, new D4 failure `weekday`, `selection-validator.ts` step 4b). On an
+     entry with a `range` (calendar, mail, Jira), a single day must be that weekday, and in the anchored week when there is
+     an anchor. A bound weekday ("금요일까지", "금까지", "by Friday") must fall inside the period. Any other period, or no
+     period, is refused. "다음 주 수" read as next Monday, the whole next week, this Wednesday, `upcoming` or today is
+     therefore refused. Like `time-keyword` (A5 rule 6), it is never repaired by dropping the range
+     (`validateWithRepair`), so the owner gets the D7 usage question, never another day.
+  3. *A weekday abbreviation is a period, not a title keyword.* The A5 `time-keyword` rule also covers a keyword made of
+     the abbreviations this message uses as weekdays ("수" in "다음 주 수 일정").
+- **"다음 주 일 많아?" (decided).** 일 after an anchor is uncertain: it is also the commonest noun for work and day, and the
+  noun reading is the likelier one here. Core cannot tell the two apart structurally, so it does not force either. For
+  this one syllable it accepts Sunday of that week, or a period with no weekday (the whole week), and refuses any other
+  single day. An uncertain 일 is not added to the keyword time words.
+- **No prompt change.** The selector prompt stays `nl-select.v18` byte for byte (its golden pins it), so the A6 `off`
+  byte-identity rule and `nl-select.v19` are untouched. No new symbol kind: the existing `this-`, `next-` and `last-<weekday>`
+  symbols carry the answer. "다다음 주 수요일" has no weekday symbol, and its `week-after-next` reading is now refused (it
+  used to show the whole week). A date for that day (`MM-DD`) is accepted. Showing that day directly would need a new symbol
+  or prompt text, so it is left for the owner.
+- **Tests.** `nl-routing/weekday-abbreviation.test.ts` covers all 7 abbreviations × 12 anchor spellings (the right symbol
+  validates, a different day is refused), particles, the live defect (next-mon, next-week, this-wed, wed, next-7-days,
+  upcoming and no range all refused; next-wed and 10-21 valid), full names with and without anchors, bound weekdays, the
+  abbreviation as keyword, the negatives above and "다음 주 일 많아?". The service test checks that next-mon and next-week
+  ask the usage question, store no pending option and no `lastSelection`, and log `reason=weekday`. Every existing golden
+  expectation still validates unchanged.
+- **Corpus.** `uat5wd-01..07` in `nl-intent.v1.json` (804 cases): six anchored abbreviations across calendar and mail, and
+  "금 시세 알려줘" → none. They are agent-drafted and PENDING the owner's batch approval under D12.
+- **Eval (owner-approved, 1 run, Haiku, `nl-select.v18`, entries calendar.events, mail.list, jira.issues with negatives,
+  414 cases, 6 s bound, plan digest `0136cb8a…`).** Overall 220/235 (93.6%), wrong captures 0/179, calendar 69/80, Jira
+  89/90, mail 62/65, p50 1407 ms, p95 2143 ms, 0 timeouts. The new cases score 6/7. `uat5wd-01` (the live sentence)
+  answered `next-week` plus the keyword "수" this run; it is now refused and asked, where before it would have listed next
+  week filtered by "수". No other non-hit involves the new rule: the 13 misses are pre-existing exact-arg differences
+  (`this-fri` for `fri`, an extra `availability` or `timedOnly`), and the other 9 clarifications are the model's own
+  NEEDS_CLARIFICATION. Both are below the D12 gate on this subset and unchanged by this note.
+
 ### ADR-0120 amendment A6 — natural-language selection of ACTION and WRITE intents: local writes and item summaries act, external writes only preview (Accepted 2026-10-14 with the owner's amendments) (2026-10-14)
 
 - **Status:** **Accepted** by the Product Owner on 2026-10-14, **with amendments** (undo by per-action inverse,
