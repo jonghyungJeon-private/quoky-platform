@@ -33,6 +33,21 @@ function ctx(context: ConversationContext = DM): TurnHandlerContext {
   };
 }
 
+function threadReader(): { reader: MailReader; threads: string[] } {
+  const threads: string[] = [];
+  const base = mailReader('첫 메일 본문.').reader;
+  return {
+    threads,
+    reader: {
+      ...base,
+      getThread: async (id) => {
+        threads.push(id);
+        return { messages: [await base.getMessage(`${id}-a`), { ...(await base.getMessage(`${id}-b`)), bodyText: HOSTILE }], totalMessages: 2 };
+      },
+    },
+  };
+}
+
 function mailReader(body = HOSTILE): { reader: MailReader; gets: string[] } {
   const gets: string[] = [];
   const message = (id: string): MailMessage => ({
@@ -139,6 +154,18 @@ describe('item.summarize mode full: the owner-facing full text, no model call (r
     const outside = text.replace(/«markup:[^»]*»/gu, '');
     expect(outside).not.toContain('IGNORE');
     expect(outside).not.toContain('@everyone');
+  });
+
+  it('a thread with mode full is rendered for the owner, never summarized (Codex/CA review P1)', async () => {
+    const mail = threadReader();
+    const handler = createMailTurnHandler({ reader: mail.reader, timeZone: 'Asia/Seoul' });
+    const full = await handler.handleSelected(select('mail', 'full', { args: { source: 'mail', ref: '#1', scope: 'thread', mode: 'full' } }), ctx());
+    expect(full?.kind ?? 'reply').toBe('reply');
+    expect(rendered(full)).toContain('메일 스레드 1번 원문이에요');
+    expect(rendered(full)).not.toMatch(/https?:\/\//u);
+    expect(mail.threads).toEqual(['mail-id-1']);
+    const summary = await handler.handleSelected(select('mail', 'summary', { args: { source: 'mail', ref: '#1', scope: 'thread', mode: 'summary' } }), ctx());
+    expect(summary).toMatchObject({ kind: 'summarize', readout: { source: 'mail-thread' } });
   });
 
   it('withholds a credential-shaped item before anything is shown', async () => {

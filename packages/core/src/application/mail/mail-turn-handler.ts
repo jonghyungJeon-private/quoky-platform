@@ -428,16 +428,15 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       return this.reply(ctx, renderMailDmOnly(language), 'RESPONDED', language, 'not-read');
     }
     const mode = nlStringArg(selected.args, 'mode');
-    if (nlStringArg(selected.args, 'scope') === 'thread') {
-      // A thread has no full-text view: the owner asked for its summary or its content, and GML-2 summarizes it.
-      return this.summarizeThread(ctx, id, language);
-    }
-    if (mode !== 'full') return this.summarizeMessage(ctx, id, language);
-    const read = await this.readMessage(ctx, id, language);
+    const thread = nlStringArg(selected.args, 'scope') === 'thread';
+    // Record C: `full` (stated or stored) never reaches a model, for one mail or a whole thread.
+    if (mode !== 'full') return thread ? this.summarizeThread(ctx, id, language) : this.summarizeMessage(ctx, id, language);
+    const read = thread ? await this.readThread(ctx, id, language) : await this.readMessage(ctx, id, language);
     if ('reply' in read) return read.reply;
-    this.log('info', 'mail.turn_handler.full_text', { truncated: read.readout.truncated });
+    this.log('info', 'mail.turn_handler.full_text', { kind: thread ? 'thread' : 'message', truncated: read.readout.truncated });
     const shown = selected.target.label;
-    const label = shown === undefined ? (language === 'en' ? 'that mail' : '그 메일') : language === 'en' ? `mail #${shown}` : `메일 ${shown}번`;
+    const noun = thread ? (language === 'en' ? 'thread of mail' : '메일 스레드') : language === 'en' ? 'mail' : '메일';
+    const label = shown === undefined ? (language === 'en' ? `that ${noun}` : `그 ${noun}`) : language === 'en' ? `${noun} #${shown}` : `${noun} ${shown}번`;
     return {
       reply: outboundMessage(ctx.message.context, renderUntrustedDocumentFull(read.readout, { language, label, totalChars: read.totalChars }), { replyToMessageId: ctx.message.id }),
       status: 'RESPONDED',
@@ -451,10 +450,31 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     messageId: string,
     language: MailLanguage,
   ): Promise<TurnHandlerReply | TurnHandlerSummarizeReply> {
+    const read = await this.readThread(ctx, messageId, language);
+    if ('reply' in read) return read.reply;
+    const { readout, shown, total, withheld } = read;
+    this.log('info', 'mail.turn_handler.summarize', { kind: 'thread', shown, total, truncated: readout.truncated });
+    return {
+      kind: 'summarize',
+      readout,
+      fallbackText: renderMailThreadSummaryUnavailable(language),
+      footer: renderMailThreadSummaryFooter(shown, total, language, withheld),
+    };
+  }
+
+  /** GML-2: one thread read into the bounded, guarded readout, or the reply that says why not (shared by summary and A6 full). */
+  private async readThread(
+    ctx: TurnHandlerContext,
+    messageId: string,
+    language: MailLanguage,
+  ): Promise<
+    | { readonly reply: TurnHandlerReply }
+    | { readonly readout: UntrustedDocumentReadout; readonly totalChars: number; readonly shown: number; readonly total: number; readonly withheld: number }
+  > {
     const reader = this.deps.reader;
     if (typeof reader.getThread !== 'function') {
       this.log('info', 'mail.turn_handler.thread_unsupported', {});
-      return this.reply(ctx, renderMailThreadNotSupported(language), 'RESPONDED', language, 'not-read');
+      return { reply: this.reply(ctx, renderMailThreadNotSupported(language), 'RESPONDED', language, 'not-read') };
     }
     let thread: MailThread;
     try {
@@ -462,21 +482,15 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     } catch (error) {
       const failure = failureOf(error);
       this.log('warn', 'mail.turn_handler.read_failed', { kind: 'thread', reason: failure });
-      return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
+      return { reply: this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read') };
     }
     const { result, shown, total, withheld } = buildMailThreadReadout(thread);
     if (!result.ok) {
       this.log('info', 'mail.turn_handler.summary_refused', { kind: 'thread', refusal: result.refusal, withheld });
       const text = result.refusal === 'EMPTY' && withheld > 0 ? renderMailThreadWithheld(language) : renderMailThreadRefused(result.refusal, language);
-      return this.reply(ctx, text, 'RESPONDED', language, 'not-summarized');
+      return { reply: this.reply(ctx, text, 'RESPONDED', language, 'not-summarized') };
     }
-    this.log('info', 'mail.turn_handler.summarize', { kind: 'thread', shown, total, truncated: result.readout.truncated });
-    return {
-      kind: 'summarize',
-      readout: result.readout,
-      fallbackText: renderMailThreadSummaryUnavailable(language),
-      footer: renderMailThreadSummaryFooter(shown, total, language, withheld),
-    };
+    return { readout: result.readout, totalChars: thread.messages.reduce((sum, message) => sum + preparedBodyLength(message.bodyText), 0), shown, total, withheld };
   }
 
   /**
