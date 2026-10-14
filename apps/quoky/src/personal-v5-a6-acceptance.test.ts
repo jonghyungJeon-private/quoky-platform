@@ -60,7 +60,7 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
   let runtime: { handle(message: InboundMessage): Promise<TurnResult> };
   let storage: StorageProvider;
   let ownerActor: Actor;
-  let selectorAnswer: string = none;
+  let selectorAnswer: string | (() => Promise<string>) = none;
   const requests: AiRequest[] = [];
   const fetchedUrls: string[] = [];
   let seq = 0;
@@ -88,6 +88,7 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
       }
       if (parsed.origin === 'https://gmail.googleapis.com') {
         if (parsed.pathname === '/gmail/v1/users/me/messages') return json({ messages: MAILS.map((mail) => ({ id: mail.id })) });
+        if (parsed.pathname.startsWith('/gmail/v1/users/me/threads/')) return json({ id: parsed.pathname.split('/').pop(), messages: MAILS.map((mail) => ({ id: mail.id })) });
         const id = parsed.pathname.split('/').pop() as string;
         const mail = MAILS.find((entry) => entry.id === id);
         if (mail === undefined) return json({}, 404);
@@ -145,7 +146,7 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
         },
         async execute(request: AiRequest) {
           requests.push(request);
-          if (request.capability === SELECTION) return { text: selectorAnswer, artifacts: [] };
+          if (request.capability === SELECTION) return { text: typeof selectorAnswer === 'function' ? await selectorAnswer() : selectorAnswer, artifacts: [] };
           if (request.capability === SUMMARIZATION) return { text: SUMMARY, artifacts: [] };
           return { text: CHAT_REPLY, artifacts: [] };
         },
@@ -179,7 +180,7 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     return runtime.handle({ id: `a6-${seq}`, context: DM, text, receivedAt: new Date().toISOString(), ...extra });
   }
 
-  async function turn(text: string, selector: string = none, extra: Partial<InboundMessage> = {}) {
+  async function turn(text: string, selector: string | (() => Promise<string>) = none, extra: Partial<InboundMessage> = {}) {
     selectorAnswer = selector;
     const start = requests.length;
     const result = await send(text, extra);
@@ -276,6 +277,42 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect(reused.text).toContain('메일 2번 원문이에요');
   });
 
+  it('a thread asked in full is shown to the owner with 0 SUMMARIZATION requests (record C)', async () => {
+    await turn('안 읽은 메일 보여줘');
+    const full = await turn('1번 메일 스레드 전체 다 보여줘', answer('item.summarize', { source: 'mail', ref: '#1', scope: 'thread', mode: 'full' }));
+    expect(full.summaries).toHaveLength(0);
+    expect(full.text).toContain('메일 스레드 1번 원문이에요');
+  });
+
+  it('a selector-chosen reminder list refreshes the slot: "두 번째 거" is the second reminder SHOWN, never a stale one', async () => {
+    for (const text of ['모레 9시에 A 알림 알려줘', '모레 10시에 B 알림 알려줘', '모레 11시에 C 알림 알려줘']) await send(text);
+    const listed = await turn('알림 목록');
+    const shown = (await reminders()).filter((entry) => ['A 알림', 'B 알림', 'C 알림'].some((body) => entry.body.includes(body.split(' ')[0] as string)));
+    expect(listed.text).toContain(`#${shown[0]?.displayNo}`);
+    // The first one leaves the active list (as if it fired), then the selector picks the reminder list.
+    await storage.reminders?.cancel(ownerActor.id, shown[0]?.displayNo ?? 0, new Date().toISOString());
+    const relisted = await turn('잡아둔 리마인더들 좀 볼래', answer('reminder.list'));
+    expect(relisted.selects).toHaveLength(1);
+    expect(relisted.text).not.toContain(`#${shown[0]?.displayNo} `);
+    const active = await reminders();
+    const second = await turn('두 번째 거 취소해줘', answer('reminder.cancel', { ref: '#2' }));
+    expect(second.text).toContain(`알림 #${active[1]?.displayNo} 취소했어요`);
+    expect(await reminders()).not.toContainEqual(expect.objectContaining({ id: active[1]?.id }));
+    expect(await reminders()).toContainEqual(expect.objectContaining({ id: active[0]?.id }));
+  });
+
+  it('kill switch race: a stop saved while the selector runs wins at dispatch; nothing executes', async () => {
+    const count = (await todos()).length;
+    const result = await turn("할 일에 '경합 중' 추가", async () => {
+      const actor = (await storage.actors.get(ownerActor.id)) as Actor;
+      await storage.actors.save({ ...actor, metadata: { ...(actor.metadata ?? {}), 'quoky.actionSwitch': { state: 'stopped', at: new Date().toISOString() } } });
+      return answer('todo.add', { title: '경합 중' });
+    });
+    expect(result.text).toBe('자연어 실행이 멈춰 있어서 아무것도 하지 않았어요. 정확한 명령은 그대로 동작해요.');
+    expect((await todos()).length).toBe(count);
+    expect((await turn('에이전트 재개')).text).toBe('자연어 실행을 다시 켰어요.');
+  });
+
   it('canary: listed item text never reaches a later selector prompt', async () => {
     const result = await turn('고마워', none);
     for (const request of requests.filter((entry) => entry.capability === SELECTION)) expect(request.prompt).not.toContain(CANARY);
@@ -305,10 +342,10 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
   });
 
   it('negatives: a statement about an action acts on nothing', async () => {
-    const count = (await todos()).length;
+    const before = (await todos()).map((item) => `${item.id}:${item.status}`);
     const result = await turn('그거 완료했어', none);
     expect(result.text).not.toContain('완료 처리했어요');
-    expect((await todos()).filter((item) => item.status === 'ACTIVE').length).toBeLessThanOrEqual(count);
+    expect((await todos()).map((item) => `${item.id}:${item.status}`)).toEqual(before);
     expect(fetchedUrls.every((url) => url.startsWith('https://oauth2.googleapis.com') || url.startsWith('https://gmail.googleapis.com') || url.startsWith('https://www.googleapis.com'))).toBe(true);
   });
 });
