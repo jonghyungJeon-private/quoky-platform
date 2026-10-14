@@ -23277,9 +23277,13 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
      the A6 undo rule: the latest action within 10 minutes, or a platform reply to the post's echo within 30 minutes
      whose ids match `echoReplyIds`.
    - **`lastAction`.** `LastActionSource` gains `slack` (and `jira`, amendment 2; `calendar`, S9).
-     - A Slack post writes `lastAction` with `itemId` = the post receipt id, **only after its SENT receipt**.
-     - A post that ended `UNCERTAIN` or `NOT_SENT` records no undoable action. "되돌려줘" then says the post's ts is
-       unknown and asks the owner to check the channel.
+     - **Every Slack post outcome** writes `lastAction` with `itemId` = the post receipt id, so "되돌려줘" after a post
+       can never undo an older to-do or reminder instead. Only a `SENT` post is undoable:
+       - **`SENT`:** undoable (S2).
+       - **`UNCERTAIN`:** recorded as not undoable. "되돌려줘" says the post's ts is unknown and asks the owner to check
+         the channel.
+       - **`NOT_SENT`:** recorded as not undoable. "되돌려줘" says nothing was posted ("보낸 메시지가 없어서 되돌릴 게
+         없어요").
    - **Anchored posts too** (owner decision 3). A post made through `Slack #채널에 게시: …` also records `lastAction`.
    - **Levels of `QUOKY_NL_ACTIONS`:**
      - **`off`:** no `lastAction` is written at all (the existing rule), and the anchored `되돌리기` is ordinary text. No
@@ -23544,8 +23548,11 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
      - `ISSUE_CREATE`: the project key;
      - `ISSUE_DELETE`: the issue key;
      - the close (J7): the existing `ISSUE_TRANSITION` receipt, whose target is the issue key.
-     - Each payload hash is a deterministic function of its source receipt, so the existing `ConnectorWriteMatch`
-       identifies "the same delete" or "the same close".
+     - **The delete hash** covers `{ operation, issueKey, marker, createReceiptId }`. It is a deterministic function
+       of the create receipt (the key, and the marker = its idempotency key), so the existing `ConnectorWriteMatch`
+       identifies "the same delete".
+       - `updated` is **not** in the hash: it is re-checked at delete time (J6).
+       - **The close (J7)** keeps the existing transition hash (transition id and destination status id) unchanged.
    - **`IssueTransitionOption`** gains an optional `toStatusCategory` (`new` | `indeterminate` | `done`), read from the
      transitions response, for J7. Additive; the transition writer itself is unchanged.
 2. **J2 — What is created.** Only these: `project` (an allowlisted key), `issuetype` (by id), `summary`, and the
@@ -23612,8 +23619,8 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
        the minutes since `PREPARED` plus 2: a relative time, so no time zone or precision is assumed. It requests
        `properties=quoky.write` and at most 20 results. The JQL contains no owner text.
      - **Match:** exactly one issue with the marker. Two or more count as not found.
-     - **Found:** "만들어진 걸 확인했어요: BE-123". `lastAction` (source `jira`) records the **create receipt id** only,
-       never the found key. The receipt stays `UNCERTAIN`, because a terminal receipt never changes (ADR-0112 D3). The
+     - **Found:** "만들어진 걸 확인했어요: BE-123". `lastAction` holds the **create receipt id** only (J8), never the
+       found key. The receipt stays `UNCERTAIN`, because a terminal receipt never changes (ADR-0112 D3). The
        lookup is a separate, content-free audit line.
      - **Not found:** "아직 Jira에서 찾지 못했어요. 검색 반영이 늦을 수 있으니 잠시 뒤 확인해 주세요." Nothing is
        re-created.
@@ -23648,7 +23655,8 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
        is so.
    - **With *Delete issues*:**
      - a delete preview ("삭제하면 되살릴 수 없어요") with the amendment 1 banner variant;
-     - a CRITICAL approval bound to `{ operation, issueKey, marker, expectedUpdated }`;
+     - a CRITICAL approval bound to the J1 delete hash; `updated` (as `expectedUpdated`) is carried in the anchor for
+       the execution re-check, not hashed;
      - an `issueDelete` phrase.
      - **At execution** the writer re-reads the issue and the changelog count. It sends `DELETE …?deleteSubtasks=false`
        only if the key, marker, `updated` and the empty changelog are unchanged; otherwise `NOT_SENT('TARGET_CHANGED')`.
@@ -23667,8 +23675,15 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
    - **A workflow that needs a screen field** (for example a resolution) answers 400. That becomes
      `NOT_SENT('REJECTED')` and is said plainly.
    - **The reply never says the issue was removed:** "닫았어요. 이슈는 Jira에 남아 있어요."
+   - **After a successful close**, `lastAction` becomes a non-undoable `action.undo` record, as after a delete
+     (amendment 1 S6). "되돌려줘" then answers "되돌린 작업은 다시 되돌릴 수 없어요".
 8. **J8 — `lastAction` for Jira.**
    - `LastActionSource` gains `jira`, with `itemId` = the create receipt id.
+   - **Every create outcome writes `lastAction`** with the create receipt id. Otherwise "되돌려줘" after an `UNCERTAIN`
+     create that the lookup did not find could undo an older to-do or reminder instead.
+     - **`SENT`:** undoable.
+     - **`UNCERTAIN`:** undoable only through the J6 lookup, re-run at the preview; not exactly one match is refused.
+     - **`NOT_SENT`:** recorded as **not undoable**. "되돌려줘" says nothing was created.
    - **Anchored creates** (`Jira BE에 이슈 생성: …`) record it too (owner decision 13).
    - The `QUOKY_NL_ACTIONS` levels behave as in amendment 1 S3:
      - **`off`:** nothing is recorded, and there is no undo; the owner handles the issue in Jira.
@@ -23801,6 +23816,8 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   - whether `POST /issue` accepts `properties` with a classic API token (the fallback is in J5);
   - who can read or edit the `quoky.write` property (Browse/Edit; provenance only with the receipt binding);
   - create metadata at `/issue/createmeta/{project}/issuetypes`;
+  - whether creating with `properties` leaves the changelog empty. If it does not, every undo becomes a close, and the
+    J6 rule must ignore exactly that property entry;
   - `mypermissions` with `issueKey`;
   - the changelog and `remotelink` endpoints.
 - **Live (Strict, not authorised here):** in `BE` only.
