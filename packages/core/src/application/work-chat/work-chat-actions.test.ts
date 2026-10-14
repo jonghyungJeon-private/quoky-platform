@@ -5,6 +5,7 @@ import { plainTextOf } from '../message-rendering';
 import type { NlSelectedCommand } from '../nl-routing/catalog';
 import { WorkManager } from '../work-manager';
 import { detectWorkChatCommand } from './work-chat-command';
+import { renderedTodoRows } from './work-chat-renderer';
 import { WorkChatService, type WorkChatOutcome } from './work-chat-service';
 
 // ADR-0120 amendment A6 (NLA-3): natural-language to-do actions and their per-action inverses (ratification record A)
@@ -145,5 +146,20 @@ describe('per-action inverses (ratification record A)', () => {
     const other: Actor = { ...owner, id: 'someone-else' };
     expect(await desk.handleAction(cmd('action.undo', {}, { target: { source: 'todo', id }, undo: { entryId: 'todo.add' } }), other)).toMatchObject({ action: { result: 'refused', reason: 'not-found' } });
     expect(await desk.handleAction(cmd('todo.complete', { ref: '#1' }, { target: { source: 'todo', id, label: 1 } }), other)).toMatchObject({ action: { result: 'refused' } });
+  });
+});
+
+describe('the to-do listing receipt is capped at the rows certainly rendered (P3a)', () => {
+  it('records every row of a short list and fewer than shown never more for long titles; an empty list clears', async () => {
+    const { desk } = world();
+    await addThree(desk);
+    const list = detectWorkChatCommand('내 할 일 보여줘');
+    if (list === null) throw new Error('no command');
+    expect(await desk.handle(list, owner)).toMatchObject({ listing: { items: [{ label: 1 }, { label: 2 }, { label: 3 }] } });
+    const long = Array.from({ length: 15 }, (_, i) => ({ id: `w${i}`, actorId: 'o', title: '가'.repeat(80), resourceRefs: [], status: WorkItemStatus.ACTIVE, origin: 'conversation' as const, createdAt: 'x', updatedAt: 'x' }));
+    expect(renderedTodoRows(long)).toBeLessThan(15);
+    expect(renderedTodoRows(long.slice(0, 3))).toBe(3);
+    const empty = world();
+    expect(await empty.desk.handle(list, owner)).toMatchObject({ listing: { source: 'todo', items: [] } });
   });
 });

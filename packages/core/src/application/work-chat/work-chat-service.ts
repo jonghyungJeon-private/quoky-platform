@@ -66,6 +66,7 @@ import {
   renderTodoActionTransitioned,
   renderTodoActionWhich,
   renderTodoUndoRefused,
+  renderedTodoRows,
   todoNumberOf,
 } from './work-chat-renderer';
 import type { WorkChatLookupFailure } from './work-chat-renderer';
@@ -428,9 +429,10 @@ export class WorkChatService implements WorkDesk {
     return { action: { entryId: kind, result: 'executed', source: 'todo', itemId: item.id, ...(no !== undefined ? { label: no } : {}), version: item.updatedAt, undoable: true } };
   }
 
+  /** The to-do rows as rendered (an empty list clears the slot, so an older list is never picked from). */
   private listingReceipt(todos: readonly WorkItem[]): { readonly listing?: NlListingReceipt } {
-    if (!this.actionReceipts || todos.length === 0) return {};
-    return { listing: { source: 'todo', items: todos.slice(0, 15).map((item, index) => ({ label: index + 1, id: item.id })) } };
+    if (!this.actionReceipts) return {};
+    return { listing: { source: 'todo', items: todos.slice(0, renderedTodoRows(todos)).map((item, index) => ({ label: index + 1, id: item.id })) } };
   }
 
   /**

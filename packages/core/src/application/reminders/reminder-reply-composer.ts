@@ -274,8 +274,12 @@ export class ReminderReplyComposer {
   }
 
   /** Record A: an inverse that cannot run, said plainly; nothing changed. */
-  undoRefused(reason: 'fired' | 'changed' | 'event-gone' | 'in-flight' | 'not-found' | 'schedule'): string {
+  undoRefused(reason: 'fired' | 'changed' | 'event-gone' | 'event-moved' | 'event-unreadable' | 'in-flight' | 'not-found' | 'schedule'): string {
     switch (reason) {
+      case 'event-moved':
+        return '그 일정의 시간이 바뀌어서 알림을 다시 켜지 않았어요. 새 시간 기준 알림이 필요하면 다시 말씀해 주세요.';
+      case 'event-unreadable':
+        return '그 일정을 지금 확인할 수 없어서 알림을 다시 켜지 않았어요.';
       case 'fired':
         return '이미 알림이 나갔어요. 되돌릴 게 없어요.';
       case 'changed':
@@ -385,8 +389,16 @@ export class ReminderReplyComposer {
 
   /** `알림 목록`: number, local time, repeat label and body; bounded to one message. */
   list(reminders: readonly Reminder[], now: IsoTimestamp): MessageBody {
+    return this.listRendered(reminders, now).body;
+  }
+
+  /**
+   * {@link list} plus how many reminders it actually shows (the character budget can stop it early): ADR-0120 amendment
+   * A6 records exactly the rows the owner saw, never one the budget cut.
+   */
+  listRendered(reminders: readonly Reminder[], now: IsoTimestamp): { readonly body: MessageBody; readonly shown: number } {
     if (reminders.length === 0) {
-      return '예정된 알림이 없어요. 예: "내일 오전 9시에 회의 준비 알려줘"';
+      return { body: '예정된 알림이 없어요. 예: "내일 오전 9시에 회의 준비 알려줘"', shown: 0 };
     }
     const header = `예정된 알림 ${reminders.length}건`;
     const lines: MessagePart[] = [];
@@ -415,7 +427,7 @@ export class ReminderReplyComposer {
     }
     const omitted = reminders.length - lines.length;
     const tail = omitted > 0 ? [`외 ${omitted}건은 생략했어요.`] : [];
-    return joinBody([header, ...lines, ...tail]);
+    return { body: joinBody([header, ...lines, ...tail]), shown: lines.length };
   }
 
   canceled(reminder: Reminder): string {

@@ -101,6 +101,8 @@ export type PendingQuestion =
       readonly at: IsoTimestamp;
       readonly language: 'ko' | 'en';
       readonly target: NlItemTarget;
+      /** The canceled reminder's version (`updatedAt`): the reactivation is a compare-and-set against it. */
+      readonly version: string;
     };
 
 /** Whether a pending question belongs to A6 (answered before any grammar, only while actions are live). */
@@ -246,7 +248,8 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
   }
   if (record.kind === 'action-reschedule') {
     const target = targetOf(record.target);
-    return target === undefined || target.source !== 'reminder' ? undefined : { kind: 'action-reschedule', at, language, target };
+    const version = typeof record.version === 'string' && record.version.length > 0 && record.version.length <= 64 ? record.version : undefined;
+    return target === undefined || target.source !== 'reminder' || version === undefined ? undefined : { kind: 'action-reschedule', at, language, target, version };
   }
   if (record.kind === 'preference' && typeof record.key === 'string' && Array.isArray(record.values)) {
     const values = record.values.filter((value): value is string => typeof value === 'string' && value.length <= 40);
@@ -274,7 +277,7 @@ export function pendingQuestionRecord(actorId: Id, question: PendingQuestion): M
     case 'action-mode':
       return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target }, ...(question.scope !== undefined ? { scope: question.scope } : {}) };
     case 'action-reschedule':
-      return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target } };
+      return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target }, version: question.version };
     default:
       break;
   }

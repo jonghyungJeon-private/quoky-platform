@@ -399,6 +399,26 @@ export function renderExternalWorkList(readout: ExternalWorkReadout): MessageBod
 // ADR-0120 amendment A6: echo lines of natural-language to-do actions (never used by the anchored grammar)
 // ---------------------------------------------------------------------------------------------------------------------
 
+/**
+ * ADR-0120 amendment A6-D2: how many to-do rows `renderMyWork` certainly shows. The reply is fitted to its budget on the
+ * RENDERED text of the platform (droppable rows go from the end, the work-surface rows first), so this counts each row at
+ * twice its plain length (the worst escaping) against the budget minus a reserve for the fixed lines. It may record fewer
+ * labels than the owner sees (then a number asks), never one the budget cut.
+ */
+export function renderedTodoRows(todos: readonly WorkItem[]): number {
+  const budget = WORK_CHAT_REPLY_MAX_CHARS - 400;
+  let used = 0;
+  let shown = 0;
+  for (const [index, item] of todos.slice(0, TODO_LIST_MAX_ROWS).entries()) {
+    const refs = item.resourceRefs.slice(0, REFS_SHOWN).reduce((sum, ref) => sum + Array.from(ref.identity).length + 2, item.resourceRefs.length > 0 ? 12 : 0);
+    const length = `${index + 1}. `.length + 2 * (Array.from(clip(item.title ?? '(제목 없는 항목)', LIST_TITLE_MAX_CHARS)).length + refs) + 1;
+    if (used + length > budget) break;
+    used += length;
+    shown += 1;
+  }
+  return shown;
+}
+
 /** A6-D3: the undo hint of every A6 local write (the 10-minute `lastAction` window). */
 export const NL_ACTION_UNDO_HINT = '되돌리기: "되돌려줘" (10분)';
 

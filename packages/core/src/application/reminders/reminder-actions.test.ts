@@ -15,6 +15,7 @@ import type {
   ReminderRepository,
 } from '../../ports/reminder-repository.port';
 import type { Logger } from '../../ports/logger.port';
+import type { CalendarEvent, CalendarEventQuery } from '../../ports/calendar-reader.port';
 import { plainTextOf } from '../message-rendering';
 import type { NlSelectedCommand } from '../nl-routing/catalog';
 import { ReminderConversationService } from './reminder-conversation-service';
@@ -75,7 +76,7 @@ class MemoryRepository implements ReminderRepository {
   }
 }
 
-function service(actionReceipts = true) {
+function service(actionReceipts = true, events?: () => CalendarEvent[]) {
   const repository = new MemoryRepository();
   const conversation = new ReminderConversationService({
     repository,
@@ -84,6 +85,7 @@ function service(actionReceipts = true) {
     enabled: true,
     logger: silent,
     actionReceipts,
+    ...(events !== undefined ? { calendar: { listEvents: async (_query: CalendarEventQuery) => events() } } : {}),
     idGenerator: (() => {
       let n = 0;
       return () => `rem-${++n}`;
@@ -164,9 +166,12 @@ describe('reminder inverses (ratification record A)', () => {
     const canceled = await conversation.handleAction(cmd('reminder.cancel', { ref: '#13' }, { target: { source: 'reminder', label: 13 } }), base());
     const late = '2026-10-14T04:00:00.000Z';
     const ask = await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version: canceled.action?.version as string } }), base(late));
-    expect(ask.action).toMatchObject({ result: 'reschedule', itemId: 'rem-1', label: 13, reason: 'past-time' });
+    expect(ask.action).toMatchObject({ result: 'reschedule', itemId: 'rem-1', label: 13, reason: 'past-time', version: canceled.action?.version });
     expect(text(ask)).toBe('알림 #13의 시간이 이미 지났어요. 언제 다시 알려 드릴까요?');
-    const answered = await conversation.handleAction(cmd('action.undo', { when: '내일 9시' }, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel' } }), base(late));
+    // The answer carries the cancel's version: no version, or another one, is a lost compare-and-set.
+    const unversioned = await conversation.handleAction(cmd('action.undo', { when: '내일 9시' }, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel' } }), base(late));
+    expect(unversioned.action).toMatchObject({ result: 'refused', reason: 'changed' });
+    const answered = await conversation.handleAction(cmd('action.undo', { when: '내일 9시' }, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version: ask.action?.version as string } }), base(late));
     expect(answered.action).toMatchObject({ result: 'undone', label: 13 });
     expect(repository.rows[0]).toMatchObject({ displayNo: 13, status: ReminderStatus.SCHEDULED, schedule: { type: 'ONCE', at: '2026-10-15T00:00:00.000Z' } });
   });
@@ -183,5 +188,55 @@ describe('reminder inverses (ratification record A)', () => {
     }
     const limited = await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version } }), base());
     expect(limited.action).toMatchObject({ result: 'refused', reason: 'limit' });
+  });
+});
+
+describe('event-relative reminders (CA review P2)', () => {
+  const event = (start: string): CalendarEvent => ({ id: 'evt-1', title: '주간 회의', start, end: new Date(Date.parse(start) + 3_600_000).toISOString(), allDay: false, status: 'confirmed', calendarName: '기본' });
+
+  it('the NL path keeps the owner\'s words as the body; the anchored BRF-2 grammar keeps the event title', async () => {
+    const start = '2026-10-15T01:00:00.000Z';
+    const { conversation, repository } = service(true, () => [event(start)]);
+    const created = await conversation.handleAction(cmd('reminder.create', { body: '자료 출력', when: '주간 회의 10분 전' }), base());
+    expect(created.action).toMatchObject({ result: 'executed' });
+    expect(repository.rows[0]).toMatchObject({ body: '자료 출력', event: { eventId: 'evt-1', offsetMinutes: 10 } });
+    await conversation.handleTurn({ ...base(), text: '주간 회의 10분 전에 알려줘' });
+    expect(repository.rows[1]?.body).toBe('주간 회의');
+  });
+
+  it('undoing the cancel of a future event-relative reminder re-checks the event: moved or gone is said, nothing reactivates', async () => {
+    const start = '2026-10-15T01:00:00.000Z';
+    let events = [event(start)];
+    const { conversation, repository } = service(true, () => events);
+    await conversation.handleAction(cmd('reminder.create', { body: '자료 출력', when: '주간 회의 10분 전' }), base());
+    const canceled = await conversation.handleAction(cmd('reminder.cancel', { ref: '#13' }, { target: { source: 'reminder', label: 13 } }), base());
+    const undo = () => conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version: canceled.action?.version as string } }), base());
+    events = [event('2026-10-15T03:00:00.000Z')];
+    expect((await undo()).action).toMatchObject({ result: 'refused', reason: 'event-moved' });
+    events = [];
+    expect((await undo()).action).toMatchObject({ result: 'refused', reason: 'event-gone' });
+    expect(repository.rows[0]?.status).toBe(ReminderStatus.CANCELED);
+    events = [event(start)];
+    expect((await undo()).action).toMatchObject({ result: 'undone' });
+    expect(repository.rows[0]?.status).toBe(ReminderStatus.SCHEDULED);
+  });
+});
+
+describe('a selector-chosen reminder list records the listing as rendered (CA review P1)', () => {
+  it('listReplyDetailed reports the rows shown, capped at what the budget rendered', async () => {
+    const { conversation, repository } = service();
+    for (let i = 0; i < 3; i += 1) await conversation.handleAction(cmd('reminder.create', { body: `알림 ${i}`, when: '내일 9시' }), base());
+    expect((await conversation.listReplyDetailed(base())).listing).toEqual({ source: 'reminder', items: [{ label: 13, id: 'rem-1' }, { label: 14, id: 'rem-2' }, { label: 15, id: 'rem-3' }] });
+    repository.rows[0] = { ...(repository.rows[0] as Reminder), status: ReminderStatus.COMPLETED };
+    expect((await conversation.listReplyDetailed(base())).listing?.items.map((item) => item.label)).toEqual([14, 15]);
+    for (let i = 0; i < 40; i += 1) {
+      await conversation.handleAction(cmd('reminder.create', { body: '아주 긴 알림 본문입니다 '.repeat(8).trim().slice(0, 190), when: '내일 10시' }), base());
+    }
+    const many = await conversation.listReplyDetailed(base());
+    const shown = new ReminderReplyComposer().listRendered(await repository.listActiveByActor(ACTOR), NOW).shown;
+    expect(shown).toBeLessThan(42);
+    expect(many.listing?.items).toHaveLength(shown);
+    const off = service(false);
+    expect((await off.conversation.listReplyDetailed(base())).listing).toBeUndefined();
   });
 });

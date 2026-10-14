@@ -57,7 +57,7 @@ export const REMINDER_DISABLED_HELP_LINES: readonly string[] = [
 
 export interface ReminderTurnHandlerDeps {
   readonly conversation: Pick<ReminderConversationService, 'handleTurn'> &
-    Partial<Pick<ReminderConversationService, 'listReply' | 'handleTurnDetailed' | 'handleAction'>>;
+    Partial<Pick<ReminderConversationService, 'listReply' | 'listReplyDetailed' | 'handleTurnDetailed' | 'handleAction'>>;
   /** Fallback copy if the service ever throws (it is documented never to). */
   readonly composer: Pick<ReminderReplyComposer, 'storageFailure'>;
   /** `QUOKY_REMINDERS_ENABLED`; selects the help lines only (the service owns the disabled reply). */
@@ -98,6 +98,11 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
     const base = { context: ctx.message.context, actorId: ctx.actor.id, messageId: ctx.message.id, now: ctx.now };
     if (isNlActionEntryId(selected.entryId)) return this.handleAction(selected, ctx, base);
     if (selected.entryId === 'reminder.list') {
+      // A6: the detailed form also reports the listing as rendered (present only with QUOKY_NL_ACTIONS not off).
+      if (this.deps.conversation.listReplyDetailed !== undefined) {
+        const listed = await this.deps.conversation.listReplyDetailed(base);
+        return { reply: listed.reply, ...(listed.listing !== undefined ? { nlListing: listed.listing } : {}) };
+      }
       return this.deps.conversation.listReply === undefined ? null : { reply: await this.deps.conversation.listReply(base) };
     }
     if (selected.entryId !== 'brief.today' || this.deps.brief === undefined || !this.deps.enabled) return null;

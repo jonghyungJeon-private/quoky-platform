@@ -162,7 +162,8 @@ export class ReminderConversationService {
         return { body: composer.clarify(command.reason) };
       case 'LIST': {
         const active = await repository.listActiveByActor(input.actorId);
-        return { body: composer.list(active, input.now), ...listingOf(active) };
+        const rendered = composer.listRendered(active, input.now);
+        return { body: rendered.body, ...listingOf(active.slice(0, rendered.shown)) };
       }
       case 'CANCEL': {
         // OPS-2: chat goes through the same typed entry as the operations UI (replies byte-identical).
@@ -208,8 +209,9 @@ export class ReminderConversationService {
     offsetMinutes: number,
     target: EventReminderTarget,
     input: ReminderTurnInput,
+    ownerBody?: string,
   ): Promise<{ readonly body: MessageBody; readonly reminder?: Reminder }> {
-    const body = await this.createEventRelative(offsetMinutes, target, input);
+    const body = await this.createEventRelative(offsetMinutes, target, input, ownerBody);
     return typeof body === 'object' && body !== null && 'reminder' in body ? (body as { body: MessageBody; reminder: Reminder }) : { body: body as MessageBody };
   }
 
@@ -217,6 +219,7 @@ export class ReminderConversationService {
     offsetMinutes: number,
     target: EventReminderTarget,
     input: ReminderTurnInput,
+    ownerBody?: string,
   ): Promise<MessageBody | { readonly body: MessageBody; readonly reminder: Reminder }> {
     const { composer, repository } = this.deps;
     if (this.eventCalendar === undefined) return composer.eventCalendarUnavailable();
@@ -248,7 +251,9 @@ export class ReminderConversationService {
         actorId: input.actorId,
         kind: 'TEXT',
         // The event's title, single-line, bounded and credential-guarded (a credential-shaped title is never stored).
-        body: eventReminderStoredTitle(resolution.event.title),
+        // ADR-0120 A6 (CA review P2): a natural-language request stores the owner's own words when it has them; the
+        // anchored BRF-2 grammar never passes `ownerBody`, so its behaviour is unchanged.
+        body: ownerBody !== undefined && ownerBody.trim().length > 0 ? ownerBody : eventReminderStoredTitle(resolution.event.title),
         schedule: { type: 'ONCE', at: resolution.fireAt },
         timeZone: this.deps.timeZone,
         origin: input.context,
@@ -303,6 +308,19 @@ export class ReminderConversationService {
     }
   }
 
+  /** Whether the event an event-relative reminder names is still there at the start it was scheduled for. */
+  private async recheckEvent(reminder: Reminder, now: string): Promise<'same' | 'event-gone' | 'event-moved' | 'event-unreadable'> {
+    const ref = reminder.event;
+    if (ref === undefined || reminder.schedule.type !== 'ONCE') return 'event-unreadable';
+    if (this.eventCalendar === undefined) return 'event-unreadable';
+    const expectedStart = new Date(Date.parse(reminder.schedule.at) + ref.offsetMinutes * 60_000).toISOString();
+    const verdict = await this.eventCalendar.recheck(ref, expectedStart, now);
+    if (verdict.kind === 'gone') return 'event-gone';
+    if (verdict.kind === 'unreadable') return 'event-unreadable';
+    if (verdict.event.allDay) return 'event-gone';
+    return Date.parse(verdict.event.start) === Date.parse(expectedStart) ? 'same' : 'event-moved';
+  }
+
   // -- ADR-0120 amendment A6: natural-language reminder actions ---------------------------------------------------
 
   /**
@@ -339,8 +357,8 @@ export class ReminderConversationService {
     const when = parseReminderWhen(whenText, { now: input.now, timeZone: this.deps.timeZone });
     if (when.kind === 'clarify') return refuse(composer.clarify(when.reason), 'when-unparsed');
     if (when.kind === 'event') {
-      // BRF-2: an event-relative reminder stores the event's guarded title, exactly as the anchored grammar does.
-      const event = await this.createEventRelativeDetailed(when.offsetMinutes, when.target, input);
+      // BRF-2 resolves the event; the reminder keeps the owner's own words (the event title only when they are empty).
+      const event = await this.createEventRelativeDetailed(when.offsetMinutes, when.target, input, body);
       if (event.reminder === undefined) return { reply: this.reply(input, event.body), action: refusedReceipt(command, 'event') };
       return { reply: this.reply(input, event.body), action: { ...receiptOf('reminder.create', event.reminder), result: 'executed' } };
     }
@@ -406,9 +424,10 @@ export class ReminderConversationService {
     }
     if (undone !== 'reminder.cancel') return refuse('not-found');
     if (reminder.status !== ReminderStatus.CANCELED) return refuse('changed');
-    // A reschedule answer carries the owner's new time; otherwise the stored version must be unchanged.
-    const expected = command.undo?.version ?? reminder.updatedAt;
-    if (command.undo?.version !== undefined && command.undo.version !== reminder.updatedAt) return refuse('changed');
+    // The version recorded at the cancel (kept in lastAction, and in the reschedule question) must still be the stored
+    // one: the repository compares and sets against it, so a change in between is never overwritten.
+    const expected = command.undo?.version;
+    if (expected === undefined || expected !== reminder.updatedAt) return refuse('changed');
     let nextFireAt: string | null;
     let schedule: ReminderSchedule | undefined;
     const newTime = typeof command.args.when === 'string' ? command.args.when : undefined;
@@ -425,8 +444,14 @@ export class ReminderConversationService {
         if (reminder.event !== undefined) return refuse('event-gone');
         return {
           reply: this.reply(input, composer.undoAskTime(reminder.displayNo)),
-          action: { entryId: 'action.undo', result: 'reschedule', source: 'reminder', itemId: reminder.id, label: reminder.displayNo, reason: 'past-time' },
+          action: { entryId: 'action.undo', result: 'reschedule', source: 'reminder', itemId: reminder.id, label: reminder.displayNo, version: reminder.updatedAt, reason: 'past-time' },
         };
+      }
+      // ADR-0117 D6 / CA review P2: an event-relative reminder comes back only if its event is still there, at the same
+      // start; a moved, deleted, cancelled or unreadable event is said plainly and nothing is reactivated.
+      if (reminder.event !== undefined) {
+        const verdict = await this.recheckEvent(reminder, input.now);
+        if (verdict !== 'same') return refuse(verdict);
       }
       nextFireAt = new Date(at).toISOString();
     } else {
@@ -472,16 +497,27 @@ export class ReminderConversationService {
    * amended narrowly). Same copy as "알림 목록"; the disabled copy while reminders are off. Never throws.
    */
   async listReply(input: Omit<ReminderTurnInput, 'text'>): Promise<OutboundMessage> {
+    return (await this.listReplyDetailed(input)).reply;
+  }
+
+  /**
+   * {@link listReply} plus the A6 listing receipt (only with `actionReceipts`): the reminders exactly as rendered, so a
+   * selector-chosen list refreshes the reminder slot like "알림 목록" does (CA review P1). Never throws.
+   */
+  async listReplyDetailed(input: Omit<ReminderTurnInput, 'text'>): Promise<ReminderTurnResult> {
     const turn: ReminderTurnInput = { ...input, text: '' };
-    if (!this.deps.enabled) return this.reply(turn, this.deps.composer.disabled());
+    if (!this.deps.enabled) return { reply: this.reply(turn, this.deps.composer.disabled()) };
     try {
-      return this.reply(turn, this.deps.composer.list(await this.deps.repository.listActiveByActor(input.actorId), input.now));
+      const active = await this.deps.repository.listActiveByActor(input.actorId);
+      const rendered = this.deps.composer.listRendered(active, input.now);
+      const listing = this.deps.actionReceipts === true ? listingOf(active.slice(0, rendered.shown)).listing : undefined;
+      return { reply: this.reply(turn, rendered.body), ...(listing !== undefined ? { listing } : {}) };
     } catch (error) {
       this.deps.logger.error('reminder.conversation.failed', {
         operation: 'LIST',
         errorName: error instanceof Error ? error.name : 'unknown',
       });
-      return this.reply(turn, this.deps.composer.storageFailure());
+      return { reply: this.reply(turn, this.deps.composer.storageFailure()) };
     }
   }
 
@@ -500,7 +536,7 @@ function refusedReceipt(command: NlSelectedCommand, reason: string): NlActionRec
   return { entryId, result: 'refused', source: 'reminder', reason };
 }
 
-/** A6-D2: the reminder listing as shown (display numbers in list order). */
-function listingOf(active: readonly Reminder[]): { readonly listing?: NlListingReceipt } {
-  return active.length === 0 ? {} : { listing: { source: 'reminder', items: active.slice(0, 50).map((reminder) => ({ label: reminder.displayNo, id: reminder.id })) } };
+/** A6-D2: the reminder listing exactly as shown (display numbers in list order; an empty list clears the slot). */
+function listingOf(shown: readonly Reminder[]): { readonly listing: NlListingReceipt } {
+  return { listing: { source: 'reminder', items: shown.slice(0, 50).map((reminder) => ({ label: reminder.displayNo, id: reminder.id })) } };
 }

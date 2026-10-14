@@ -94,7 +94,7 @@ import {
 import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe } from './nl-routing/catalog';
 import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
-import { renderActionUnavailable, type NlActionAudit } from './nl-routing/nl-action-policy';
+import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from './nl-routing/nl-action-policy';
 import { LAST_SELECTION_METADATA_KEY, isActionPendingQuestion, type PendingQuestion } from './nl-routing/selection-state';
 import { codeGenerationDispatchOfError } from './code-generation-manager';
 import { RepositoryHostingBlockedError } from './repository-hosting-manager';
@@ -1074,6 +1074,7 @@ export interface ConversationRuntimeDeps {
         | 'answerActionPending'
         | 'recordActionReceipt'
         | 'logActionUnserved'
+        | 'actionsStillActing'
       >
     >;
   readonly logger: Logger;
@@ -3420,6 +3421,11 @@ export class ConversationRuntime {
     decision: Extract<NlSelectionDecision, { kind: 'execute' }>,
   ): Promise<TurnResult> {
     this.nlTurns.set(message, { sessionId: session.id, keep: false });
+    // A6-D3: the kill switch is re-read from the persisted Actor as the last check before anything runs.
+    if (this.deps.nlSelection?.actionsStillActing !== undefined && !(await this.deps.nlSelection.actionsStillActing(actor))) {
+      if (decision.action !== undefined) this.deps.nlSelection.logActionUnserved?.(decision.action, 'stopped', message.id);
+      return this.respondComposed(message, session, outboundMessage(message.context, renderActionStopped(decision.command.language)));
+    }
     const ctx = this.turnHandlerContext(message, session, actor, applyAnchor);
     let outcome: TurnHandlerOutcome | null = null;
     let handlerId: string | undefined;
@@ -3431,7 +3437,7 @@ export class ConversationRuntime {
       }
     }
     if (outcome === null) {
-      if (decision.action !== undefined) this.deps.nlSelection?.logActionUnserved?.(decision.action);
+      if (decision.action !== undefined) this.deps.nlSelection?.logActionUnserved?.(decision.action, 'unserved', message.id);
       return this.respondComposed(message, session, outboundMessage(message.context, renderActionUnavailable(decision.command.language)));
     }
     if (decision.action !== undefined) this.nlActionTurns.set(message, { audit: decision.action, language: decision.command.language });
@@ -3463,6 +3469,7 @@ export class ConversationRuntime {
       entries,
       route: 'chat' as const,
       ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}),
+      turnId: message.id,
     };
     let decision: NlSelectionDecision | undefined;
     try {
@@ -3509,6 +3516,7 @@ export class ConversationRuntime {
       ...(nlPending !== undefined ? { pending: nlPending } : {}),
       ...(grammar !== undefined ? { grammar } : {}),
       ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}),
+      turnId: message.id,
       text: message.text,
       attachmentCount: message.attachments?.length ?? 0,
       ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),

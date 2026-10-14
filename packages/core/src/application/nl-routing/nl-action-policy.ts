@@ -94,6 +94,9 @@ export interface NlActionAudit {
   readonly target?: NlItemTarget;
   /** A closed reason for an ask or refusal (never a value). */
   readonly reason?: string;
+  /** A6-D3 correlation: the session and the turn (inbound message) ids. */
+  readonly sessionId?: string;
+  readonly turnId?: string;
 }
 
 /**
@@ -111,6 +114,8 @@ export function nlActionLogFields(audit: NlActionAudit): LogFields {
     result: audit.result,
     ...(audit.reason !== undefined ? { reason: audit.reason } : {}),
     ...(audit.latencyMs !== undefined ? { latencyMs: audit.latencyMs } : {}),
+    ...(audit.sessionId !== undefined ? { sessionId: audit.sessionId } : {}),
+    ...(audit.turnId !== undefined ? { turnId: audit.turnId } : {}),
     ...(target === undefined ? {} : { targetSource: target.source }),
     ...(local && target.id !== undefined ? { targetId: target.id } : {}),
     ...(target !== undefined && target.label !== undefined ? { targetLabel: target.label } : {}),
@@ -201,6 +206,13 @@ export function renderCapped(language: Lang): string {
   return language === 'en'
     ? 'That is more natural-language actions than I run in this period. Please try again later; exact commands still work.'
     : '지금은 자연어로 실행할 수 있는 횟수를 넘었어요. 잠시 뒤에 다시 말씀해 주세요. 정확한 명령은 그대로 동작해요.';
+}
+
+/** The kill switch stopped an action at dispatch (A6-D3): nothing ran. */
+export function renderActionStopped(language: Lang): string {
+  return language === 'en'
+    ? 'Natural-language actions are stopped, so I did nothing. Exact commands still work.'
+    : '자연어 실행이 멈춰 있어서 아무것도 하지 않았어요. 정확한 명령은 그대로 동작해요.';
 }
 
 export function renderActionUnavailable(language: Lang): string {

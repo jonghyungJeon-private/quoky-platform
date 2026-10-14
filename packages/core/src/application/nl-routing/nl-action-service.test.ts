@@ -120,6 +120,7 @@ function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | 
         chatProviderId: 'scripted',
         ...(opts.pending !== undefined ? { pending: opts.pending } : {}),
         ...(opts.replyTo !== undefined ? { replyToMessageId: opts.replyTo } : {}),
+        turnId: 'turn-1',
       });
     },
   };
@@ -129,6 +130,21 @@ const todoListing = (labels: number[], minute = 0) => withLabelledListing(undefi
 const actionLogs = (w: World) => w.logs.filter((log) => log.event === NL_ACTION_LOG_EVENT);
 
 describe('startup refusals (A6-D8)', () => {
+  it('refuses external until R3', () => {
+    const actors = { get: async () => null, save: async (a: Actor) => a };
+    const logger = { info() {}, warn() {}, error() {} };
+    expect(() => new NlSelectionService({ mode: 'active', router: { select: async () => ({}) as AiProvider }, sessions: { updateMetadataEntry: async () => null }, actors, timeZone: 'Asia/Seoul', logger, actions: { level: 'external', killSwitch: new NlActionSwitch({ actors, logger }) } })).toThrow(/NL_ACTIONS_EXTERNAL_NOT_AVAILABLE/);
+  });
+
+  it('re-reads the persisted kill switch at dispatch: a stop saved after the turn began wins', async () => {
+    const w = world({ script: [] });
+    const snapshot = w.actor();
+    expect(await w.service.actionsStillActing(snapshot)).toBe(true);
+    await w.service.handleSwitchPhrase(snapshot, '에이전트 중지', T0);
+    expect(w.service.actionsActing(snapshot)).toBe(true);
+    expect(await w.service.actionsStillActing(snapshot)).toBe(false);
+  });
+
   it('refuses any level but off without mode active, and without the kill switch', () => {
     const base = { router: { select: async () => ({}) as AiProvider }, sessions: { updateMetadataEntry: async () => null }, actors: { get: async () => null, save: async (a: Actor) => a }, timeZone: 'Asia/Seoul', logger: { info() {}, warn() {}, error() {} } };
     expect(() => new NlSelectionService({ ...base, mode: 'shadow', actions: { level: 'local', killSwitch: new NlActionSwitch({ actors: base.actors, logger: base.logger }) } })).toThrow(NlActionsConfigError);
@@ -257,7 +273,7 @@ describe('references, questions and the audit line', () => {
     w.setMetadata(LAST_LISTING_METADATA_KEY, withListing(undefined, 'owner', 'mail', ['m1', 'm2'], at(0)));
     const decision = await w.decide('13번 취소해줘', { now: at(1) });
     expect(decision).toEqual({ kind: 'ask', text: '가장 최근에 보여 드린 건 메일 목록이에요. 어느 알림인지 다시 말씀해 주세요.' });
-    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.cancel', resolution: 'other-source', result: 'asked' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.cancel', resolution: 'other-source', result: 'asked', sessionId: 'sess-1', turnId: 'turn-1' });
   });
 
   it('an ambiguous "그거" asks under the shown labels, stores candidate ids only, and "3" answers it', async () => {

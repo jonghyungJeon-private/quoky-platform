@@ -173,6 +173,11 @@ export interface NlSelectionTurn {
    * reply to an echo names its action). Absent: not a reply.
    */
   readonly replyToMessageId?: string;
+  /**
+   * A6-D3: the turn's correlation id (the inbound message id), carried on every `nl_action.decided` line with the session
+   * id so a line joins its turn (the app's logger also appends the per-turn `cid`). Opaque; never content.
+   */
+  readonly turnId?: string;
 }
 
 export type NlSelectionSkipReason =
@@ -248,7 +253,7 @@ const ECHO_RECEIPT_TTL_MS = 5 * 60_000;
 
 /** A6 configuration errors (value-free codes; the app maps them to a startup refusal). */
 export class NlActionsConfigError extends Error {
-  constructor(readonly code: 'NL_ACTIONS_REQUIRES_ACTIVE' | 'NL_ACTIONS_REQUIRES_KILL_SWITCH') {
+  constructor(readonly code: 'NL_ACTIONS_REQUIRES_ACTIVE' | 'NL_ACTIONS_REQUIRES_KILL_SWITCH' | 'NL_ACTIONS_EXTERNAL_NOT_AVAILABLE') {
     super(code);
     this.name = 'NlActionsConfigError';
   }
@@ -295,6 +300,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // A6-D8: any level but `off` needs `active`; `local` / `external` are release-gated on the kill switch.
     if (this.actionLevelValue !== 'off' && deps.mode !== 'active') throw new NlActionsConfigError('NL_ACTIONS_REQUIRES_ACTIVE');
     if (this.actionLevelValue !== 'off' && deps.actions?.killSwitch === undefined) throw new NlActionsConfigError('NL_ACTIONS_REQUIRES_KILL_SWITCH');
+    // R3 (external previews, the banner, the yield) is not built: `external` is refused, never silently treated as local.
+    if (this.actionLevelValue === 'external') throw new NlActionsConfigError('NL_ACTIONS_EXTERNAL_NOT_AVAILABLE');
   }
 
   /**
@@ -511,6 +518,20 @@ export class NlSelectionService implements TurnDeliveryObserver {
     return this.deps.actions?.killSwitch?.state(actor) !== 'stopped';
   }
 
+  /**
+   * A6-D3 kill switch, the LAST check before an action runs (Codex review P1): the switch is re-read from the persisted
+   * Actor, so a stop saved while the selector was running wins over the turn's snapshot. A failed read refuses.
+   */
+  async actionsStillActing(actor: Pick<Actor, 'id' | 'metadata'>): Promise<boolean> {
+    if (this.mode !== 'active' || !actionLevelActs(this.actionLevelValue)) return false;
+    try {
+      const fresh = await this.deps.actors.get(actor.id);
+      return fresh !== null && this.actionsActing(fresh);
+    } catch {
+      return false;
+    }
+  }
+
   /** Whether an A6 decision may act for this actor (`local` / `external` and running); `shadow` only logs. */
   actionsActing(actor: Pick<Actor, 'metadata'>): boolean {
     return this.actionsOffered(actor) && actionLevelActs(this.actionLevelValue);
@@ -534,7 +555,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * Owner decision 8: the anchored `되돌리기`, the provider-down twin of `action.undo`. The same resolution as a selected
    * undo, with no selector call. `undefined` when the text is not the phrase or actions are not acting.
    */
-  async decideAnchoredUndo(turn: Pick<NlSelectionTurn, 'text' | 'session' | 'actor' | 'now' | 'entries' | 'replyToMessageId'>): Promise<NlSelectionDecision | undefined> {
+  async decideAnchoredUndo(turn: Pick<NlSelectionTurn, 'text' | 'session' | 'actor' | 'now' | 'entries' | 'replyToMessageId' | 'turnId'>): Promise<NlSelectionDecision | undefined> {
     if (!/^되돌리기[.!]?$/u.test(turn.text.normalize('NFC').trim())) return undefined;
     if (!this.actionsActing(turn.actor) || !turn.entries.some((entry) => entry.id === 'action.undo')) return undefined;
     const fullTurn: NlSelectionTurn = { ...turn, attachmentCount: 0, route: 'chat' };
@@ -586,9 +607,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
     }
   }
 
-  /** The audit line for an A6 dispatch no handler served (nothing ran). */
-  logActionUnserved(decided: NlActionAudit): void {
-    this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields({ ...decided, result: 'refused', reason: 'unserved' }));
+  /** The audit line for an A6 dispatch that did not run: no handler served it, or the switch stopped it at dispatch. */
+  logActionUnserved(decided: NlActionAudit, reason: 'unserved' | 'stopped' = 'unserved', correlationId?: string): void {
+    this.log('info', NL_ACTION_LOG_EVENT, { ...nlActionLogFields({ ...decided, result: 'refused', reason }), ...(correlationId !== undefined ? { turnId: correlationId } : {}) });
   }
 
   /**
@@ -891,7 +912,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => undefined);
     const ctx = this.validationContext(turn, prepared.groundingText, undefined, true);
     const validated = validateSelection({ entryId, args: output.args }, ctx);
-    const base = { entryId, risk: ctx.offered.get(entryId)?.risk ?? 'LOCAL_WRITE', refKind: refKindOf(output.args), latencyMs } as const;
+    const base = { entryId, risk: ctx.offered.get(entryId)?.risk ?? 'LOCAL_WRITE', refKind: refKindOf(output.args), latencyMs, ...correlationOf(turn) } as const;
     if (!validated.ok) {
       // An entry that is not offered (an external write before R3, an unconfigured source) is honest chat's to explain.
       if (validated.reason === 'not-offered' || validated.reason === 'unknown-entry' || validated.reason === 'not-read') return { kind: 'none' };
@@ -971,13 +992,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
 
   /** Ratification record A: which action "되돌려줘" (or the anchored `되돌리기`) undoes; never an undo of an undo. */
   private async decideUndo(
-    turn: Pick<NlSelectionTurn, 'session' | 'actor' | 'now' | 'replyToMessageId'>,
+    turn: Pick<NlSelectionTurn, 'session' | 'actor' | 'now' | 'replyToMessageId' | 'turnId'>,
     language: 'ko' | 'en',
     latencyMs: number,
     _resolution: NlResolutionOutcome,
     reference: NlReferenceState = this.referenceState(turn),
   ): Promise<NlSelectionDecision> {
-    const base = { entryId: 'action.undo', risk: 'LOCAL_WRITE' as NlCatalogRisk, refKind: 'none' as const, latencyMs };
+    const base = { entryId: 'action.undo', risk: 'LOCAL_WRITE' as NlCatalogRisk, refKind: 'none' as const, latencyMs, ...correlationOf(turn) };
     const resolved = resolveUndo(reference);
     if (resolved.kind === 'unresolved') {
       const audit: NlActionAudit = { ...base, resolution: resolved.outcome === 'stale' ? 'stale' : 'none', result: 'refused', reason: resolved.outcome };
@@ -1063,7 +1084,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         label: picked.label,
         ...(pending.listingAt !== undefined ? { listingAt: pending.listingAt } : {}),
       };
-      const audit: NlActionAudit = { entryId: pending.entryId, risk: entry.risk, refKind: 'index', resolution: 'resolved', target, result: 'executed' };
+      const audit: NlActionAudit = { entryId: pending.entryId, risk: entry.risk, refKind: 'index', resolution: 'resolved', target, result: 'executed', ...correlationOf(turn) };
       if (!this.actionCaps.allows(turn.actor.id, entry.risk, Date.parse(turn.now))) return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
       let args: NlArgs = pending.args;
       let basis: string | undefined;
@@ -1093,7 +1114,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       }
       const mode = ITEM_CONTENT_MODE.values[resolved.index]?.value;
       if (mode === undefined) return undefined;
-      const audit: NlActionAudit = { entryId: 'item.summarize', risk: 'ITEM_READ', refKind: 'index', resolution: 'resolved', target: pending.target, result: 'executed' };
+      const audit: NlActionAudit = { entryId: 'item.summarize', risk: 'ITEM_READ', refKind: 'index', resolution: 'resolved', target: pending.target, result: 'executed', ...correlationOf(turn) };
       if (!this.actionCaps.allows(turn.actor.id, 'ITEM_READ', Date.parse(turn.now))) return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
       await this.savePreference(turn, ITEM_CONTENT_MODE.key, mode);
       this.actionCaps.note(turn.actor.id, 'ITEM_READ', Date.parse(turn.now));
@@ -1108,12 +1129,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // action-reschedule: the owner's own words carry the new time (parsed by the deterministic grammar in the handler).
     if (!offered.has('action.undo') || !containsNlTimeExpression(answerText)) return undefined;
     const when = normalizeNlSpan(answerText);
-    const audit: NlActionAudit = { entryId: 'action.undo', risk: 'LOCAL_WRITE', refKind: 'none', resolution: 'resolved', target: pending.target, result: 'undone' };
+    const audit: NlActionAudit = { entryId: 'action.undo', risk: 'LOCAL_WRITE', refKind: 'none', resolution: 'resolved', target: pending.target, result: 'undone', ...correlationOf(turn) };
     if (!this.actionCaps.allows(turn.actor.id, 'LOCAL_WRITE', Date.parse(turn.now))) return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
     this.actionCaps.note(turn.actor.id, 'LOCAL_WRITE', Date.parse(turn.now));
     return {
       kind: 'execute',
-      command: { entryId: 'action.undo', args: { when }, language, target: pending.target, undo: { entryId: 'reminder.cancel' } },
+      command: { entryId: 'action.undo', args: { when }, language, target: pending.target, undo: { entryId: 'reminder.cancel', version: pending.version } },
       action: audit,
     };
   }
@@ -1126,9 +1147,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const write = (key: string, update: (current: unknown) => unknown) => this.writeSession(turnRef as NlSelectionTurn, key, update);
     let echo = false;
     let listed: ListingSource | undefined;
-    if (listing !== undefined && listing.items.length > 0) {
+    if (listing !== undefined) {
+      // An empty listing removes the slot: an older list of that source is never picked from after it.
       await write(LAST_LISTING_METADATA_KEY, (current) => withLabelledListing(current, actor.id, listing.source, listing.items, now, 'listing', message.id));
-      listed = listing.source;
+      if (listing.items.length > 0) listed = listing.source;
     }
     if (action !== undefined && (action.source === 'todo' || action.source === 'reminder')) {
       const source = action.source;
@@ -1162,9 +1184,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
         );
         await write(LAST_LISTING_METADATA_KEY, (current) => withLabelledListing(current, actor.id, source, candidates, now, 'merge', message.id));
         listed ??= source;
-      } else if (action.result === 'reschedule' && action.itemId !== undefined && source === 'reminder') {
+      } else if (action.result === 'reschedule' && action.itemId !== undefined && action.version !== undefined && source === 'reminder') {
         const target: NlItemTarget = { source, id: action.itemId, ...(action.label !== undefined ? { label: action.label } : {}) };
-        await write(NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(actor.id, { kind: 'action-reschedule', at: now, language, target }));
+        const version = action.version;
+        await write(NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(actor.id, { kind: 'action-reschedule', at: now, language, target, version }));
       }
     }
     if (decided !== undefined) {
@@ -1647,4 +1670,9 @@ function modeLabel(mode: string, language: 'ko' | 'en'): string {
 /** A6: one inbound message (platform message ids are unique only per conversation). */
 function echoKey(messageId: string, context: { readonly platform: string; readonly channelId: string }): string {
   return JSON.stringify([context.platform, context.channelId, messageId]);
+}
+
+/** A6-D3: the correlation fields of an audit line (session id and turn id), never content. */
+function correlationOf(turn: Pick<NlSelectionTurn, 'session' | 'turnId'>): { readonly sessionId: string; readonly turnId?: string } {
+  return { sessionId: turn.session.id, ...(turn.turnId !== undefined ? { turnId: turn.turnId } : {}) };
 }
