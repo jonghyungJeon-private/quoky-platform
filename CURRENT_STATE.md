@@ -48,8 +48,9 @@ Details and the review record for each item are in the matching notes in `DECISI
 
 ### v5 Class B grammar yield, part 2 (ADR-0120 A2 implementation note 2) — on branch `claude/v5-grammar-yield` (2026-10-14)
 
-**Owner acknowledgment required.** The note supersedes the A2 side-effect sentence on time-of-day words, extends the A2
-Change scope and clarifies A5 change 9 ("Phase A is unchanged").
+**Acknowledged by the owner on 2026-10-14** ("승인·배포"). This includes the selector-failure trade-offs. The note
+supersedes the A2 side-effect sentence on time-of-day words, extends the A2 Change scope and clarifies A5 change 9
+("Phase A is unchanged").
 
 - **What changed.** The five live Telegram sentences of 2026-10-14 that a frozen grammar answered by dropping part of the
   message now reach selection first when the A2 yield is on. One rule over every Class B grammar: leftover content (now

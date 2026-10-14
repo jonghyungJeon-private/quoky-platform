@@ -22941,10 +22941,10 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
 
 ### ADR-0120 amendment A2 implementation note 2 — every Class B grammar yields what it cannot express (2026-10-14, live Telegram after A5)
 
-- **Status: owner acknowledgment required (pending the owner's yes).** The code is behind the existing A2 gate
-  (`QUOKY_NL_GRAMMAR_YIELD=on`, `active`, no approval pending, the selector is the chat provider). It supersedes or
-  clarifies the ratified sentences listed under "Ratified text affected" below. Until the owner says yes, those sentences are
-  the record and this note is the proposal.
+- **Status: acknowledged by the owner on 2026-10-14** ("승인·배포"). This covers the supersessions and clarifications listed
+  under "Ratified text affected" below. It also covers the selector-failure trade-offs: a calendar part-of-day message gets
+  chat, and `todo-016`, `todo-020`, `brief-017` and `neg-219` fall back to the surface. The code is behind the existing A2
+  gate (`QUOKY_NL_GRAMMAR_YIELD=on`, `active`, no approval pending, the selector is the chat provider).
 - **Live evidence** (Telegram, 2026-10-14, after the A5 deploy; `QUOKY_NL_INTENT_MODE=active`, `QUOKY_NL_PHASE=c-shadow`,
   `QUOKY_NL_GRAMMAR_YIELD=on`). A frozen Class B grammar answered first in five cases while the logged shadow selection
   was right:
@@ -22966,9 +22966,16 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
 - **The rule** (only behind the A2 gate). A Class B grammar answers only when it expresses everything the message asks:
   - **(a) Leftover content.** After the grammar's own vocabulary and the closed grammatical classes are removed, no
     content word may remain. This now also covers the to-do list phrases (`TODO_LIST_EXPRESSED`,
-    `todoListLeavesUnexpressedContent`) and the classifier's surface clause (see the next bullet). A one-syllable word
-    counts like any other word ("할 일 앱 알려줘"). Only a syllable glued to a removed vocabulary word ("들" in "이슈들", "어"
-    in "뭐 있어") is treated as that word's ending. The dependent nouns 거/것/게 and the filler "다시" join the closed classes.
+    `todoListLeavesUnexpressedContent`) and the classifier's surface clause (see the surface-fallback bullet).
+    - A one-syllable word counts like any other word ("할 일 앱 알려줘"), unless it is in a closed one-syllable class
+      (`ONE_SYLLABLE_FUNCTION`):
+      - degree and frequency adverbs (다, 또, 더, 꼭, 잘, 딱, 좀, 막, 곧, 늘, 참, 꽤, 퍽, 쭉, 확, 싹, 푹);
+      - dependent nouns (수, 줄, 데, 거, 것, 게, 건, 걸, 바, 뿐, 때, 듯, 채, 지, 등).
+      The negating 안/못 are not in the class: they change the meaning.
+    - A fragment glued to a removed vocabulary word is that word's morphology only when it is in the closed ending class
+      (`GLUED_ENDING`: the plural 들, the particles and copula endings, and the verbal endings left by a removed stem,
+      such as "어" in "뭐 있어"). Anything else glued on is content ("할일앱 알려줘" declines, "할일들 보여줘" does not).
+    - The filler "다시" joins the closed classes.
   - **(b) A typed-arg word the grammar does not carry** never counts as expressed (`containsGroundingWord`, the selector's
     own grounding list, the `DRIVE_KIND_WORDS` precedent). The calendar spans stop before a time-of-day word, and a
     `CALENDAR_PART_OF_DAY_WORDS` word outside a clock time makes the grammar decline. A clock time keeps its part of day
@@ -22976,8 +22983,9 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   - **(c) A free-text slot must already be the catalog keyword** (`slotSwallowsClause` with `canonicalNlKeyword`, now
     in the leaf module `nl-routing/keyword-canonical.ts`). This applies to Slack/Confluence search slots and Jira
     keyword slots. A quoted keyword (one short quoted span, the `ONE_SHORT_QUOTED` shape) is the owner's exact literal
-    and is never cut (`슬랙에서 "온보딩 문서" 찾아줘` is still answered). A GitHub text search has no catalog equivalent
-    and is unchanged.
+    and is never cut (`슬랙에서 "온보딩 문서" 찾아줘` is still answered). For Jira, the role, status, date-field and period
+    words count only outside the quotes (`"진행중인 배포" 관련 지라 이슈` is a keyword; `진행중인 "배포" 관련 …` carries a status).
+    A GitHub text search has no catalog equivalent and is unchanged.
 - **The surface clause keeps its fallback (A5 change 9).** The classifier is unchanged. When the A2 gate is on and the
   surface clause matched a message that leaves content (a), the runtime uses the existing `work-surface` route at (C2) in
   Phase A too. If selection answers, the selected read runs. If the selector answers `none`, the turn is chat (A5
@@ -23008,7 +23016,9 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
     clause). This note extends the same rule to them.
   - A2 D10 interpretation, clarified: "The only word lists added are closed grammatical classes (particles, endings,
     interrogatives, request verbs, pronouns, English function words) plus each entry's own argument vocabularies". This
-    note adds the dependent nouns 거/것/게 and "다시" to the closed classes, and the to-do grammar's own words.
+    note names three more closed classes: the one-syllable degree/frequency adverbs and dependent nouns
+    (`ONE_SYLLABLE_FUNCTION`), the glued-ending class (`GLUED_ENDING`), and the filler "다시". It also adds the to-do
+    grammar's own words.
   - A5 change 9, clarified: "A skipped, failed, timed-out or disabled selector still leaves the surface as the fallback.
     Phase A is unchanged."
     - The fallback holds.
@@ -23030,16 +23040,22 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   - Metadata-only edits on 8 cases from already-approved batches (the 2026-10-12 delegated run and the S1 batch approved
     on 2026-10-13); they need the owner's D12 batch look:
     - `confluence-001`, `confluence-005`, `confluence-007`: the `grammar` tag is removed.
-    - `todo-016`, `todo-020`, `brief-017`, `neg-219`: re-tagged `work-surface`, with `grammarYieldOff: work-lookup.todo-list`.
+    - `todo-016`, `todo-020`, `brief-017`, `neg-219`: re-tagged `work-surface` (`grammarAnswer: null`), with
+      `grammarYieldOff: work-lookup.todo-list`.
     - `help-038`: re-tagged `help-intent`, with `grammarYieldOff: work-lookup.todo-list`.
   - Pending batches: `uat5r2-09`, `uat5r2-11`, `uat5r2-12`, `uat5r7-19` and `uat5r7-20` lose their tag (A5 batch, still
     pending). There are 6 new `uat5gy-01..06` cases (pending D12 approval).
   - The new optional field `grammarYieldOff` names the grammar that answers with the yield off when it differs. The
     dispatch test checks it strictly.
-- **Grammar-side numbers** (`scoreGrammarSide`): 250 → 247 tagged; exact 205/249 (82.3%) → 211/246 (85.8%); entry
-  246 → 244 (99.2%); user-visible 228 (91.6%) → 230 (93.5%); wrong captures 1 → 1 (`neg-219`, now under `work-surface`).
-  - The rate changes come from cases leaving or joining the denominator (re-tagged and new plain cases), not from better
-    grammar answers. No grammar answers a case it answered before any differently.
+- **Grammar-side numbers** (`scoreGrammarSide`). The five `work-surface` cases are scored with no catalog equivalent
+  (`grammarAnswer: null`), because the Jira/GitHub surface is not the to-do list.
+  - Tagged cases: 250 → 247.
+  - Exact: 205/249 (82.3%) → 209/246 (85.0%).
+  - Entry: 246 (98.8%) → 241 (98.0%).
+  - User-visible: 228 (91.6%) → 227 (92.3%).
+  - Wrong captures: 1 → 0.
+  - The rate changes come from cases leaving or joining the denominator (untagged, re-tagged and new plain cases), not
+    from better grammar answers.
   - Every entry keeps at least 25 tagged phrasings.
 - **The follow-on reference.** After the fix, case 5 searches "배포" and records `lastSelection`
   `slack.search {keyword: 배포}`. An intervening chat turn clears it (follow-up 2, by design). "아까 찾은 것 중 첫 번째 거
@@ -23047,8 +23063,8 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   Keeping a listing across a chat turn would reverse the follow-up 2 clause. "첫 번째 거 자세히" has no catalog equivalent
   for Slack or Confluence (no `item` arg and no listing slot, unlike mail in A5). Both need an owner decision.
 - **Tests.**
-  - `grammar-yield-table.test.ts`: grammars × residual kinds, yield on and off. It covers one-syllable words, quoted
-    literals and English clock times.
+  - `grammar-yield-table.test.ts`: grammars × residual kinds, yield on and off. It covers one-syllable words (the closed
+    classes, standalone and glued), quoted literals (search and Jira) and English clock times.
   - `grammar-residual.test.ts`; the calendar handler; `work-chat-command.test.ts` (the quoted-keyword tests with the yield
     on).
   - The INT-4 acceptance block "live Telegram (2026-10-14, after A5)": the five sentences, the chain, a failing selector
