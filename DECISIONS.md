@@ -20394,6 +20394,51 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
 - **Decision (revised after Codex review): the guard stays strict; the thread prompt avoids action verbs.** A first fix widened the Korean third-person exemption of `document-summary-claim-guard.ts` (whole-sentence subject, topic markers). Codex found a bypass family (a Quoky stand-in after or beside the third party; then spaced, zero-width or hyphenated `Quoky`, an implied assistant action `김철수님이 부탁하셔서 메일을 보내 드렸습니다`, and a cross-sentence split). A guard is a safety net where a false negative is far worse than a false positive, so the widening was reverted entirely: the guard and its tests are origin/main behavior, plus regression tests that keep the strict cases blocked. Three of the reported bypasses (`Quo-ky`, the implied action, the cross-sentence split) are already not blocked at origin/main; they are recorded as known gaps in the guard test, not fixed here (the fixed footer stating nothing was sent is the guarantee).
 - **Fix at the source.** The `mail-thread` task rule (`prompt-composer.ts`) no longer says to name the sender as the subject of each action. It says not to narrate mail actions with past-tense action verbs (보냈다, 답장했다, 전달했다, 보관했다, 삭제했다, 등록했다; sent, replied, forwarded), to write each message as `<보낸 사람>의 메일: <내용 요약>` or with noun phrases (`회신 내용`, `발송 안내`), and to avoid the past tense when describing what a product lets users do. The mail and Drive single-document prompts are byte-identical; a prompt test pins the thread rule.
 
+### ADR-0118 amendment implementation note — the claim guard closes its three recorded gaps (2026-10-14)
+
+- **Status:** Implementation note under the decision above ("the guard stays strict; the thread prompt avoids action
+  verbs"). It closes the three bypasses that note recorded as known gaps of the origin/main guard. The guard only gets
+  stricter: no exemption is widened, no flag, no migration, no prompt change, no Core provider or platform branch. The
+  footer stating that nothing was sent stays the guarantee; the guard stays a best-effort net.
+- **Gap 1, a split or disguised name.** `document-summary-claim-guard.ts` now checks the reply three times: as written,
+  and normalized with the invisible characters removed and replaced by a space. Normalizing (`normalizeForClaimCheck`)
+  removes format characters (Cf) and blank letters (Hangul fillers U+3164/U+FFA0/U+115F/U+1160, braille blank), applies
+  NFKD, drops combining marks, applies NFKC, folds Cyrillic, Greek and Armenian lookalikes to Latin (`Ԛuoky`, `Ι sent`),
+  and joins `Quoky` / `쿼키` / `퀴키` split by up to three non-letters per gap (`Quo-ky`, `Quo ky`, `Q.u.o.k.y`, `Qu0ky`).
+  A subject word is compared on its letters and digits only, and the name with a role glued to it (`Quoky봇`, `쿼키님`) is a
+  stand-in. `quoky-platform` is not.
+- **Gap 2, an implied assistant action.** A third-party subject exempts a Korean claim only when it governs the claim's
+  own verb. A predicate between them ends its scope. That is a word with a ㅆ-final syllable (`했`, `었`, `있`), an
+  honorific verb form (`하셔`, `하시`, `셨`), an `-아서/-어서` connective (`해서`, `셔서`; `에서` and `께서` stay particles),
+  a connective, adnominal or sentence ending (`-니까`, `-는데`, `-면`, `요청한`, `보낸`, `받은`, `하던`, `-니다`, `-어요`),
+  or an infinitive before a comma. An honorific subject (`님이`, `께서`, `…님`) never exempts a humble benefactive claim
+  (`드렸`), because an honoured subject's own act would take `-시-`. The benefactive and completed auxiliaries (`해 뒀`,
+  `해 놨`, `해 줬`, `보내 놓았`, `처리해 드렸`, `처리 완료했`) are claims, and with no subject they are first-person.
+- **Gap 3, a cross-sentence split.** Korean claims are judged with the reply around them. A first-person pronoun in
+  subject or topic form (`제가`, `저는`, `저희가`, `우리는`, …) or the name as an actor (`Quoky가`, `쿼키는`, `Quoky에서`,
+  `저희 측에서`) anywhere in the reply means no exemption. A generic stand-in (`비서`, `봇`, `AI`, `시스템`) counts in the
+  claim's sentence and the sentences on either side of it. In English, three forms are claims: a passive in a sentence
+  that says the act was for the owner (`… has been sent on your behalf`, `as you requested`); `Your reply was sent`; and a
+  sentence that opens with the bare past verb (`Quoky here. Sent the reply.`). `set` is excluded from that last form
+  because it is also an imperative.
+- **False-positive measurement.** The origin/main guard and this one were run over every string in the repository's
+  golden and fixture JSON files (6,008 strings, including the answer-quality fixtures and the Discord rendering golden),
+  every string literal in the non-guard test files (13,488, including the mail and Drive summary runtime tests) and every
+  line of `docs/uat/*.md` and `CURRENT_STATE.md` (4,348), for each of `mail`, `mail-thread` and `drive`. Newly withheld:
+  1 string, `사용자님이 요청하신 브랜치를 삭제했습니다.`, an implied assistant action, so it is a true positive. Lost: 0. In a
+  hand-written check of 16 legitimate summaries, 2 are newly withheld. They are recorded as fail-closed test rows: an
+  adjective adnominal read as a relative clause (`김철수 님이 급한 메일을 보냈어요`) and a generic stand-in in a
+  neighbouring sentence (`AI가 … 기사예요. 김철수 님이 이 기사를 메일로 보냈어요`). Plain third-party reports still pass
+  (`김철수님이 메일을 보냈습니다`, `the PR was merged by Alice`).
+- **Residual.** The guard is still a lexicon and can be evaded by a paraphrase. Specific residual cases:
+  - the adnominal of a non-하다 verb outside the ending set (`가진`, `찾은`);
+  - a zero-width character used both as a space and inside a word in the same claim;
+  - Hangul compatibility jamo spelling of the name;
+  - a misspelled name (`Quokky`);
+  - a Korean passive (`메일이 발송되었습니다`).
+  Also, a third-party subject followed by a second third-party subject still exempts the claim. That is the origin/main
+  rule and is unchanged.
+
 ### ADR-0118 amendment implementation note — DRV-2 shared drives and DRV-2b every sheet (2026-10-13)
 
 - **Status:** Implemented under the ratified ADR-0118 amendment of 2026-10-12, decisions (b) and (c) (v5 plan wave 3,

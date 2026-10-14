@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — The document-summary claim guard closes its three recorded gaps (ADR-0118 amendment implementation note, 2026-10-14)
+
+- **Security fix, stricter only.** The claim guard that withholds a mail, thread or Drive summary which says Quoky did
+  something (`메일을 보내 드렸습니다`) now also catches the three bypasses recorded as known gaps under the v5 W3 decision.
+  No flag, migration, prompt or provider change.
+- **A split or disguised name.** `Quo-ky`, `Quo ky`, a zero-width or Hangul-filler split, full-width letters, combining
+  marks and Cyrillic or Greek lookalikes (`Ԛuoky`) are read as Quoky (NFKC, format characters, lookalike fold, name join).
+- **An implied assistant action.** A third-party subject exempts only the claim of its own verb:
+  `김철수님이 부탁하셔서 메일을 보내 드렸습니다` and `김철수가 요청한 메일을 보냈어요` are withheld. An honorific subject never
+  exempts `… 보내 드렸습니다`. Benefactive and completed forms (`보내 놓았습니다`, `해 뒀어요`, `처리해 드렸습니다`) are claims.
+- **A cross-sentence split.** A Quoky actor anywhere in the reply, or a generic stand-in in a neighbouring sentence, means
+  no exemption. English passives done "on your behalf", `Your reply was sent`, and a dropped-subject `Sent the reply.`
+  are claims.
+- **Measured.** Over 23,844 repository strings in three sources, 1 is newly withheld, and it is a true positive. Two
+  fail-closed false positives are recorded as test rows. Tests: `document-summary-claim-guard.test.ts` turns the
+  known-gap note into blocking rows, adds adversarial rows and allow rows, and adds new CPU-bound hostile inputs.
+
 ## Unreleased — a one-syllable weekday after a week anchor, and a period never loses the owner's weekday (ADR-0120 A5 implementation note 2, 2026-10-14)
 
 - **Live fix.** "다음 주 수 일정 있어?" was answered with next Monday (10/19) instead of Wednesday 10/21. The selector

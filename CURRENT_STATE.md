@@ -46,6 +46,22 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
 
+### v5 claim guard gaps closed (ADR-0118 amendment implementation note) — on branch `claude/v5-claim-guard` (2026-10-14)
+
+- **What changed.** `document-summary-claim-guard.ts` closes the three gaps recorded under the v5 W3 "guard stays strict"
+  decision:
+  - a split or disguised `Quoky` (normalization);
+  - an implied assistant action under a third-party framing (the subject must govern the claim's own verb, and an
+    honorific subject never exempts `드렸`);
+  - a cross-sentence split (a Quoky actor anywhere in the reply, or a generic stand-in in a neighbouring sentence, means no
+    exemption; English passive "on your behalf" and dropped-subject forms).
+  The change is stricter only: no flag, migration or prompt change.
+- **Measured.** One newly withheld repository string out of 23,844, and it is a true positive. Known fail-closed false
+  positives: an adjective before the object (`급한 메일`) and `AI가` in a neighbouring sentence.
+- **Not run live.** The change has offline tests only.
+
+Details: the claim-guard gaps implementation note in `DECISIONS.md`.
+
 ### v5 one-syllable weekday guard (ADR-0120 A5 implementation note 2) — on branch `claude/v5-weekday-abbrev` (2026-10-14)
 
 - **What changed.** A live "다음 주 수 일정 있어?" got next Monday. A one-syllable weekday now counts as a weekday only
