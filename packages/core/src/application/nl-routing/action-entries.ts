@@ -545,20 +545,33 @@ export function looksLikeData(inner: string): boolean {
  * braces, a data-like square bracket, backticks, a tilde fence, a line-leading `>`, or an ASCII identifier key followed
  * by a colon and a value (`request: …`, YAML-like). An ordinary bracketed phrase ("[긴급] 보고서 쓰기") is not a marker.
  */
-function hasStructureMarker(text: string): boolean {
+function hasStructureMarker(rawText: string): boolean {
+  // Nothing is removed from the checked text: only the URL and time colons below are neutralised, character for character.
+  const text = neutraliseUrlAndTimeColons(rawText);
   if (/[{}`]/u.test(text) || /~~~/u.test(text) || /^\s*>/u.test(text)) return true;
   for (const match of text.matchAll(/\[([^[\]]*)\]/gu)) if (looksLikeData(match[1] ?? '')) return true;
   if (/[[\]]/u.test(text.replace(/\[[^[\]]*\]/gu, ''))) return true;
-  return /(?:^|[\s,(])[A-Za-z_][A-Za-z0-9_-]*\s*:\s*\S/u.test(withoutUrlsAndTimes(text));
+  // A key is an ASCII identifier not glued to a preceding letter ("12:00request:" and "x,request:" are keys).
+  return /(?<![A-Za-z_])[A-Za-z_][A-Za-z0-9_-]*\s*:\s*\S/u.test(text);
 }
 
 /**
- * The key-colon check ignores a URL scheme (`https://…`) and an `HH:MM` time: each becomes a neutral word, so a URL
- * after a key ("request: https://…") still reads as `key: value` and is refused. English labels ("Q4: …", "remind me:
- * …") stay refused (A6-D3a known refusals).
+ * An `http`/`https` URL token: whitespace-free, a hostname of letters, digits, dots and hyphens, an optional numeric
+ * port, an optional path/query/fragment, and not ending with `:`. Anything else with `://` is checked as written.
  */
-function withoutUrlsAndTimes(text: string): string {
-  return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s]*/giu, 'URL').replace(/\b\d{1,2}:\d{2}\b/gu, '0');
+const HTTP_URL_TOKEN = /(?<![^\s(\[,])https?:\/\/[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::\d{1,5})?(?:[/?#]\S*)?(?<!:)(?=\s|[)\],]|$)/giu;
+/** An `HH:MM` time followed by a word boundary or the end of the text ("9:30", "14:05에"; not "12:00request"). */
+const CLOCK_TIME = /(?<!\d)\d{1,2}:\d{2}(?![A-Za-z0-9_])/gu;
+
+/**
+ * The key-colon exemption (A6-D3a): in a valid http(s) URL token only the literal `://` (and a numeric port's colon)
+ * become dots, and an `HH:MM` time's colon becomes a dot. The string keeps every other character, so a key around a
+ * URL ("request: https://…", "https://request: …", "x://request: …") is still refused.
+ */
+function neutraliseUrlAndTimeColons(text: string): string {
+  return text
+    .replace(HTTP_URL_TOKEN, (token) => token.replace(/^(https?):\/\//iu, '$1...').replace(/^(https?\.\.\.[A-Za-z0-9.-]+):(\d{1,5})(?=[/?#]|$)/iu, '$1.$2'))
+    .replace(CLOCK_TIME, (time) => time.replace(':', '.'));
 }
 
 /**

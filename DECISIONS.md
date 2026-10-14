@@ -22897,8 +22897,10 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   3. has **no structure markers**: `{` or `}`, a `[…]` whose content looks like data (a quote, a key with a colon, a
      comma list) or an unbalanced bracket, a backtick, `~~~`, a leading `>`, or an ASCII identifier key followed by a
      colon and a value (`request: …`, YAML-like). An ordinary bracketed phrase ("[긴급] 보고서 쓰기") is allowed, and so
-     are a URL scheme (`https://…`, any `[a-z][a-z0-9+.-]*://`) and an `HH:MM` time; a key before a URL
-     (`request: https://…`) is still refused. **Known refusals (trade-off for owner confirmation):** a message with an
+     are the `://` (and a numeric port's colon) of a whitespace-free `http`/`https` URL token with a valid hostname that
+     does not end with `:`, and the colon of an `HH:MM` time followed by a word boundary or the end. Only those colons
+     are neutralised; no text is removed, so `request: https://…`, `https://request: …`, `x://request: …` and
+     `12:00request: …` are still refused. **Known refusals (trade-off for owner confirmation):** a message with an
      English label and a colon, e.g. "Q4: 예산 검토 할 일로" or "remind me: call mom", is refused as YAML-like and gets
      the one-sentence hint; the owner rephrases ("Q4 예산 검토 할 일로") or uses the exact command. Allowing such labels
      would let `key: value` payloads through, so the rule stays fail closed;

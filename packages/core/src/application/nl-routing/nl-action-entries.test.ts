@@ -382,3 +382,16 @@ describe('round 5: TAB is a control, only a plain space pads, URLs and times are
     }
   });
 });
+
+describe('round 6: the URL exemption neutralises only an http(s) `://`, never removes text', () => {
+  it.each(['x://request: buy milk', 'x://,request:add-a-todo', '12:00request: buy milk', 'https://request: buy milk', 'https://request:buy-milk', 'https://a.example/x,request:add', 'https://a.example/x request: add'])(
+    '%s refuses',
+    (text) => {
+      expect(nlActionInputRefusal(text, text)).toBe('not-plain');
+    },
+  );
+
+  it.each(['https://jira.example/BE-12', 'https://host:8080/x', '할 일에 https://jira.example.com/browse/BE-12 확인 추가', '(https://a.example/x) 확인 할 일로', '9:30 회의 준비 할 일로', '14:05에 회의 준비'])('%s is allowed', (text) => {
+    expect(nlActionInputRefusal(text, text)).toBeUndefined();
+  });
+});
