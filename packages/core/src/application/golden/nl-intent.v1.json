@@ -3303,7 +3303,13 @@
       "expect": {
         "entryId": "todo.list",
         "args": {}
-      }
+      },
+      "grammar": "work-surface",
+      "grammarAnswer": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammarYieldOff": "work-lookup.todo-list"
     },
     {
       "id": "todo-017",
@@ -3348,7 +3354,13 @@
         "args": {
           "count": true
         }
-      }
+      },
+      "grammar": "work-surface",
+      "grammarAnswer": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammarYieldOff": "work-lookup.todo-list"
     },
     {
       "id": "todo-021",
@@ -3826,7 +3838,13 @@
       "expect": {
         "entryId": "brief.today",
         "args": {}
-      }
+      },
+      "grammar": "work-surface",
+      "grammarAnswer": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammarYieldOff": "work-lookup.todo-list"
     },
     {
       "id": "brief-018",
@@ -7820,7 +7838,8 @@
           "topic": "todo"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]",
+      "grammarYieldOff": "work-lookup.todo-list"
     },
     {
       "id": "help-039",
@@ -8074,6 +8093,12 @@
       "id": "neg-219",
       "text": "할 일 관리하는 좋은 습관 알려줘",
       "expect": "none",
+      "grammar": "work-surface",
+      "grammarAnswer": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "grammarYieldOff": "work-lookup.todo-list",
       "note": "S1 Phase C negative; a Class B grammar captures it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
     },
     {
@@ -8978,7 +9003,12 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "an exclusion the personal-work surface clause cannot express: it declines and selection lists the to-dos [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+      "grammar": "work-surface",
+      "grammarAnswer": {
+        "entryId": "todo.list",
+        "args": {}
+      },
+      "note": "an exclusion the personal-work surface clause cannot express: with yield on it asks the selector first and keeps the surface as the fallback (A5 change 9) [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
     },
     {
       "id": "uat5gy-03",

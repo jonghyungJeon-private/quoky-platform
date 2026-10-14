@@ -387,7 +387,7 @@ function isNegatedMessage(text: string): boolean {
 const TODO_LIST_EXPRESSED: readonly RegExp[] = [
   /(?:해야\s*)?할\s*(?:일|작업)/,
   new RegExp(TODO_NOUN, 'i'),
-  /내가|제가|나는|나의|오늘|지금|현재|전체|남은|업무|작업|일감|목록|리스트/,
+  /내가|제가|나는|나의|오늘|지금|현재|전체|남은|업무|작업|목록|리스트/,
   /\b(?:to-?dos?|todos?|tasks?|list|work|need)\b/i,
 ];
 
@@ -485,6 +485,17 @@ const CONTENT_SHAPED = /[\r\n]|[:：`]/;
 const QUOTE_CLASS = '"\'“”‘’「」『』';
 const ANY_QUOTE = new RegExp(`[${QUOTE_CLASS}]`, 'u');
 const ONE_SHORT_QUOTED = new RegExp(`^[^${QUOTE_CLASS}]*[${QUOTE_CLASS}][^${QUOTE_CLASS}]{1,30}[${QUOTE_CLASS}][^${QUOTE_CLASS}]*$`, 'u');
+/**
+ * A keyword the owner quoted (one short quoted span, the {@link ONE_SHORT_QUOTED} shape, whose text is the keyword:
+ * `"배포 관련"`, `"온보딩 문서"`) is their exact literal: the A2 slot rule never cuts it.
+ */
+const QUOTED_SPAN = new RegExp(`[${QUOTE_CLASS}]([^${QUOTE_CLASS}]{1,30})[${QUOTE_CLASS}]`, 'u');
+function swallowsClause(rawSlot: string, slot: string): boolean {
+  const quoted = ONE_SHORT_QUOTED.test(rawSlot) ? QUOTED_SPAN.exec(rawSlot)?.[1] : undefined;
+  if (quoted !== undefined && cleanSearchText(quoted) === slot) return false;
+  return slotSwallowsClause(slot, canonicalNlKeyword);
+}
+
 function namesIssueOrIsContent(text: string): boolean {
   if (ISSUE_KEY_OR_URL.test(text) || CONTENT_SHAPED.test(text)) return true;
   return ANY_QUOTE.test(text) && !ONE_SHORT_QUOTED.test(text);
@@ -509,13 +520,13 @@ function searchCommand(sourceToken: string, rawText: string, whole: string, yiel
     if (yieldToSelection && jiraKeywordCarriesQualifier(text)) return null;
     const keyword = cleanSearchText(stripItemNoun(text));
     // ADR-0120 A2 (2026-10-14): a keyword slot that swallowed a clause is not the keyword the catalog would search.
-    if (yieldToSelection && keyword && slotSwallowsClause(keyword, canonicalNlKeyword)) return null;
+    if (yieldToSelection && keyword && swallowsClause(rawText, keyword)) return null;
     return keyword ? { kind: 'lookup', source, query: 'my-items', text: keyword } : { kind: 'lookup', source, query: 'my-items' };
   }
   // ADR-0120 A2 (2026-10-14): the search slot takes the rest of the sentence ("배포 얘기 나온 거"); when the catalog's own
   // keyword rule would cut it, the grammar would search words the owner did not mean, so it declines for selection. A
   // GitHub text search has no catalog equivalent, so it keeps its grammar.
-  if (yieldToSelection && (source === 'slack' || source === 'confluence') && slotSwallowsClause(text, canonicalNlKeyword)) return null;
+  if (yieldToSelection && (source === 'slack' || source === 'confluence') && swallowsClause(rawText, text)) return null;
   return { kind: 'lookup', source, query: 'search', text };
 }
 
@@ -705,7 +716,7 @@ function detectJiraListing(text: string, yieldToSelection: boolean): WorkChatCom
   if (keyword !== undefined) {
     const cleaned = cleanSearchText(keyword);
     if (cleaned.length === 0 || EMPTY_KEYWORD.test(cleaned)) return null;
-    if (yieldToSelection && (jiraKeywordCarriesQualifier(cleaned) || slotSwallowsClause(cleaned, canonicalNlKeyword))) return null;
+    if (yieldToSelection && (jiraKeywordCarriesQualifier(cleaned) || swallowsClause(keyword, cleaned))) return null;
     if (Array.from(cleaned).length > WORK_CHAT_SEARCH_TEXT_MAX_LENGTH) return { kind: 'usage', topic: 'search-too-long' };
     return { kind: 'lookup', source: 'jira', query: 'my-items', text: cleaned };
   }

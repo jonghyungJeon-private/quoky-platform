@@ -54,6 +54,11 @@ interface GoldenCase {
   readonly grammar?: string;
   /** S1: that grammar's own catalog equivalent (null: none), the eval's grammar-side scoring input. */
   readonly grammarAnswer?: { readonly entryId: string; readonly args: NlArgs } | null;
+  /**
+   * The Class B grammar that answers this case with QUOKY_NL_GRAMMAR_YIELD=off when it differs from `grammar` (an earlier
+   * grammar that the A2 yield makes decline; ADR-0120 A2 implementation note 2). Absent: `grammar`.
+   */
+  readonly grammarYieldOff?: string;
 }
 
 const CORPUS = JSON.parse(
@@ -466,10 +471,11 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
       if (selects > 1) failures.push(`${golden.id}: more than one selection call`);
       const hit = probes.slice(start.probes).find((probe) => probe.grammarId !== undefined);
       const workSurface = intents.slice(start.intents).at(-1)?.raw?.kind === 'personal-work-surface';
-      // The corpus `grammar` tag is exact for production (yield on); with yield off a grammar also takes qualifier cases,
-      // and an earlier grammar may take a tagged case before its own grammar (help-038: the to-do substring before help).
+      // The corpus `grammar` tag is exact for production (yield on); with yield off a grammar also takes qualifier cases.
+      // A case that a different, earlier grammar takes with yield off names it explicitly (`grammarYieldOff`).
       const probed = hit?.grammarId ?? (workSurface ? 'work-surface' : undefined);
-      if (yieldOn ? golden.grammar !== probed : golden.grammar !== undefined && probed === undefined) {
+      const yieldOffTag = golden.grammarYieldOff ?? golden.grammar;
+      if (yieldOn ? golden.grammar !== probed : yieldOffTag !== undefined && yieldOffTag !== probed) {
         failures.push(`${golden.id}: corpus grammar tag ${golden.grammar ?? '-'} but the probe says ${probed ?? '-'}`);
       }
       // The recorded grammar answer (the eval's grammar-side scoring) is what the probe says, by meaning (dates resolved).

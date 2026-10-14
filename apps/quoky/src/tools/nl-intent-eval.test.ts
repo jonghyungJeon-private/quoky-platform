@@ -230,14 +230,15 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
     expect(scoreSelectorSide(corpus, records, NOW)).toEqual({ positives: 3, exact: 2, entry: 2, userVisible: 2, wrongCaptures: 0 });
   });
 
-  it('the committed corpus: every grammar-tagged case records the grammar answer (242), and the grammar side is reproducible', () => {
+  it('the committed corpus: every grammar-tagged case records the grammar answer (247), and the grammar side is reproducible', () => {
     const { corpus: real } = loadCorpus();
     const tagged = real.cases.filter((golden) => golden.grammar !== undefined);
-    // ADR-0120 A2 implementation note 2 (2026-10-14): 12 cases a grammar used to answer while dropping part of the message
-    // (a part of day, a swallowed search clause, a to-do substring) are no longer grammar hits, help-038 is now answered by
-    // the help grammar, and 4 plain phrases were added; the one wrong capture (neg-219) is gone.
-    expect(tagged).toHaveLength(242);
+    // ADR-0120 A2 implementation note 2 (2026-10-14): 8 cases a grammar used to answer while dropping part of the message
+    // (a part of day, a swallowed search clause) are no longer grammar hits; 4 to-do substring captures and one live
+    // sentence are now the surface clause's (`work-surface`: selection first, the surface as the fallback); help-038 is the
+    // help grammar's; 4 plain phrases were added. The rate changes come from cases leaving or joining the denominator.
+    expect(tagged).toHaveLength(247);
     expect(tagged.every((golden) => golden.grammarAnswer !== undefined)).toBe(true);
-    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 242, exact: 209, entry: 241, userVisible: 227, wrongCaptures: 0 });
+    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 246, exact: 211, entry: 244, userVisible: 230, wrongCaptures: 1 });
   });
 });

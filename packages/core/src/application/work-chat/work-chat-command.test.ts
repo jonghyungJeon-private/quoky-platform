@@ -348,8 +348,19 @@ describe('unqualified and keyword-scoped Jira listings (live UAT)', () => {
       const expected = { ...mine, text: '위클리카' };
       expect(detectWorkChatCommand(`${quoted} 관련 jira 이슈 보여줘`)).toEqual(expected);
       expect(detectWorkChatCommand(`jira에서 ${quoted} 이슈 찾아줘`)).toEqual(expected);
+      // ADR-0120 A2 note 2: the same with the yield on (a quoted keyword is the owner's literal, never cut).
+      expect(detectWorkChatCommand(`${quoted} 관련 jira 이슈 보여줘`, { yieldToSelection: true })).toEqual(expected);
+      expect(detectWorkChatCommand(`jira에서 ${quoted} 이슈 찾아줘`, { yieldToSelection: true })).toEqual(expected);
     },
   );
+
+  it.each(['"온보딩 문서"', '“배포 관련”', "'결제 관련 내용'"])('keeps a quoted multi-word search literal whole with the yield on: %s', (quoted) => {
+    const text = quoted.slice(1, -1);
+    expect(detectWorkChatCommand(`슬랙에서 ${quoted} 찾아줘`, { yieldToSelection: true })).toEqual({ kind: 'lookup', source: 'slack', query: 'search', text });
+    expect(detectWorkChatCommand(`컨플루언스에서 ${quoted} 검색해줘`, { yieldToSelection: true })).toEqual({ kind: 'lookup', source: 'confluence', query: 'search', text });
+    // Unquoted, the catalog keyword rule would cut it, so the grammar declines for selection.
+    expect(detectWorkChatCommand(`슬랙에서 ${text} 찾아줘`, { yieldToSelection: true })).toBeNull();
+  });
 
   it('measures the quoted keyword in code points, not UTF-16 units', () => {
     const emoji = '🚗'.repeat(16);

@@ -95,8 +95,12 @@ const BARE_EN = new RegExp(
 const SPAN_KO_DAY = String.raw`(?:오늘|금일|내일|낼|모레|글피|어제|(?:이번|다음)\s*주말|(?:이번\s*주|금주|다음\s*주|담주|차주)(?:\s*(?:${DAY}|주말))?|주말|${DAY}|\d{1,2}\s*월\s*\d{1,2}\s*일|\d{1,2}\s*/\s*\d{1,2})`;
 const SPAN_EN_WORDS = String.raw`(?:day\s+after\s+tomorrow|tomorrow|tmrw|yesterday|today|this\s+week(?:end)?|(?:next|the)\s+week(?:end)?|(?:next\s+)?(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)|(?:jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?|weekend)`;
 const EN_CALENDAR_NOUN = String.raw`(?:calendar|schedule|agenda|plate|diary|meetings?|appointments?|events?|calls?|class(?:es)?|flights?|plans?|reservations?|bookings?|deadlines?)`;
-/** A clock time ("9시에", "오후 3시 반", "3pm"), with its part-of-day word. */
-const CLOCK_TIME = String.raw`(?:오전|오후|아침|저녁|밤|낮)?\s*\d{1,2}\s*(?:시(?:\s*\d{1,2}\s*분|\s*반)?|:\d{2})\s*(?:에|쯤|경)?|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b`;
+/**
+ * A clock time with the part-of-day word attached to it ("9시에", "오후 3시 반", "3pm", "3pm this afternoon", "this
+ * afternoon at 3"): the part of day only says which 3 o'clock, so it is not a filter.
+ */
+const EN_PART_OF_DAY = String.raw`(?:this\s+)?(?:morning|afternoon|evening)|tonight`;
+const CLOCK_TIME = String.raw`(?:오전|오후|아침|저녁|밤|낮)?\s*\d{1,2}\s*(?:시(?:\s*\d{1,2}\s*분|\s*반)?|:\d{2})\s*(?:에|쯤|경)?|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b(?:\s+(?:in\s+the\s+)?(?:${EN_PART_OF_DAY})\b)?|\b(?:${EN_PART_OF_DAY})\s+at\s+\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?\b`;
 export const CALENDAR_EXPRESSED: readonly RegExp[] = [
   new RegExp(SPAN_KO_DAY, 'u'),
   new RegExp(String.raw`(?<![가-힣])다음\s*(?=${SPAN_NOUN_KO})`, 'u'),

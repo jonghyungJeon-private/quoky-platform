@@ -36,9 +36,12 @@ const EXIST_VERBAL = new RegExp(`^${EXIST_STEM}${EXIST_END}$`, 'u');
 const COPULA_END = '(?:야|예요|에요|이에요|이야|입니다|입니까|인가요|인가|인지|죠|지요|지|였어요?|였지요?|였나요|이었나요|이죠|일까요?|이에요)';
 const WH_VERBAL = new RegExp(`^(?:뭐|뭘|뭔|무엇|언제|몇|시|개|건|어때|어떻|어떤)${COPULA_END}?$`, 'u');
 
-/** Korean closed-class words: interrogatives, request verbs and endings, existence and state endings, first person, fillers. */
+/**
+ * Korean closed-class words: interrogatives, request verbs and endings, existence and state endings, first person, fillers,
+ * and the dependent nouns 거/것/게 ("남은 거 있어").
+ */
 const KO_FUNCTION =
-  /^(?:나|내|제|저|저의|나의|우리|좀|뭐|뭘|뭐가|뭐야|뭐예요|뭐에요|뭐지|뭐였어|뭐였지|뭔지|무엇|무슨|어떤|어떻게|어때|어때요|돼|돼요|되나|되니|될까|되는지|많이|계속|몇|몇개|몇시|시야|시예요|개|개야|개예요|언제|언제야|언제예요|있어|있어요|있나|있나요|있니|있는지|있을까|있을텐데|있었지|있었어|있었나|있었어요|없어|없나|없니|없어요|알려줘|알려줘요|알려줄래|알려줄래요|알려주세요|알려|알려줄|보여줘|보여줘요|보여줄래|보여주세요|보여|확인|확인해줘|확인해주세요|확인해|조회|조회해줘|정리|정리해줘|정리해주세요|목록|리스트|줘|줘요|주세요|줄래|줄래요|해줘|해주세요|해|보기|봐|봐줘|있다|없다|맞아|맞나|그럼|그러면|그리고|근데|혹시|그냥|한번|다시|안녕|쿼키|쿼키야)$/u;
+  /^(?:나|내|제|저|저의|나의|우리|좀|뭐|뭘|뭐가|뭐야|뭐예요|뭐에요|뭐지|뭐였어|뭐였지|뭔지|무엇|무슨|어떤|어떻게|어때|어때요|돼|돼요|되나|되니|될까|되는지|많이|계속|몇|몇개|몇시|시야|시예요|개|개야|개예요|언제|언제야|언제예요|있어|있어요|있나|있나요|있니|있는지|있을까|있을텐데|있었지|있었어|있었나|있었어요|없어|없나|없니|없어요|알려줘|알려줘요|알려줄래|알려줄래요|알려주세요|알려|알려줄|보여줘|보여줘요|보여줄래|보여주세요|보여|확인|확인해줘|확인해주세요|확인해|조회|조회해줘|정리|정리해줘|정리해주세요|목록|리스트|줘|줘요|주세요|줄래|줄래요|해줘|해주세요|해|보기|봐|봐줘|있다|없다|맞아|맞나|그럼|그러면|그리고|근데|혹시|그냥|한번|다시|거|것|게|안녕|쿼키|쿼키야)$/u;
 
 const EN_FUNCTION = new Set([
   'a', 'an', 'the', 'my', 'me', 'i', 'we', 'our', 'do', 'does', 'did', 'have', 'has', 'had', 'am', 'are', 'is', 'was', 'were', 'be', 'been', 'will',
@@ -58,12 +61,15 @@ function stripMarks(text: string): string {
 function isContentToken(token: string): boolean {
   if (/^\d+$/u.test(token)) return false;
   if (HANGUL.test(token)) {
-    if (token.length < 2) return false;
+    // A one-syllable token counts too ("앱", "팁"): only the closed classes below make a token grammar, never its length.
     return !PARTICLE_ONLY.test(token) && !KO_FUNCTION.test(token) && !REQUEST_VERBAL.test(token) && !EXIST_VERBAL.test(token) && !WH_VERBAL.test(token);
   }
   if (token.length < 2) return false;
   return !EN_FUNCTION.has(token);
 }
+
+/** What an expressed match is replaced with: a non-letter that keeps the fragments around it in one token. */
+const REMOVED = '\u0001';
 
 /**
  * The content words of `text` that neither the grammar's own vocabulary (`expressed`, global-safe regexes of the forms it
@@ -74,12 +80,18 @@ export function unexpressedContentWords(text: string, expressed: readonly RegExp
   let rest = stripMarks(text);
   for (const pattern of expressed) {
     const flags = pattern.flags.replace(/[gy]/gu, '');
-    rest = rest.replace(new RegExp(pattern.source, `${flags}g`), ' ');
+    rest = rest.replace(new RegExp(pattern.source, `${flags}g`), REMOVED);
   }
   const out: string[] = [];
-  for (const token of rest.split(/[^\p{L}\p{N}'’-]+/u)) {
-    const word = token.replace(/^['’-]+|['’-]+$/gu, '');
-    if (word.length > 0 && isContentToken(word)) out.push(word);
+  for (const token of rest.split(/[^\p{L}\p{N}'’\u0001-]+/u)) {
+    // A syllable glued to an expressed word ("있어" after "뭐 있", "들" after "이슈") is that word's ending or particle; a
+    // standalone syllable ("할 일 앱 알려줘") is a word like any other.
+    const glued = token.includes(REMOVED);
+    for (const piece of token.split(REMOVED)) {
+      const word = piece.replace(/^['’-]+|['’-]+$/gu, '');
+      if (word.length === 0 || (glued && HANGUL.test(word) && Array.from(word).length === 1)) continue;
+      if (isContentToken(word)) out.push(word);
+    }
   }
   return out;
 }

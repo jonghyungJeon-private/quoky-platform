@@ -1250,15 +1250,24 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
       });
     });
 
-    it('with the selector down, the five sentences get honest chat (no wrong read); the plain phrases are still answered by their grammars', async () => {
+    it('with the selector failing: the calendar and search declines get honest chat (A2 R5); the surface clause falls back to the surface (A5 change 9); plain phrases keep their grammars', async () => {
       await withPhase('a', 'active', async () => {
         selectorAnswer = down;
-        for (const text of ['다음 주 수요일 오후에 뭐 있어', '내일 오후 일정', '캘린더는 보지 말고 할 일만 알려줘', '할 일 관리하는 좋은 습관 알려줘', '슬랙에서 배포 얘기 나온 거 찾아줘']) {
+        for (const text of ['다음 주 수요일 오후에 뭐 있어', '내일 오후 일정', '슬랙에서 배포 얘기 나온 거 찾아줘']) {
           const turn = await turnOf(text);
+          expect(turn.selects, text).toBe(1);
           expect(turn.claims, text).toEqual([]);
           expect(turn.connectors, text).toEqual([]);
           expect(turn.calendar, text).toEqual([]);
           expect(turn.result.reply.text, text).toBe(CHAT_REPLY);
+        }
+        // The personal-work surface clause yields only to a selector that answers: a failed selection leaves the surface
+        // as the fallback, exactly as before (ADR-0120 A5 change 9, "Phase A is unchanged").
+        for (const text of ['캘린더는 보지 말고 할 일만 알려줘', '할 일 관리하는 좋은 습관 알려줘', '이번 주 해야 할 일 알려줘']) {
+          const turn = await turnOf(text);
+          expect(turn.selects, text).toBe(1);
+          expect(turn.served, text).toEqual([]);
+          expect(turn.result.reply.text, text).toMatch(/^지금 확인할 작업이에요/u);
         }
         for (const [text, handlerId] of [['내일 일정', 'calendar'], ['내 할 일', 'work-chat.lookup'], ['슬랙에서 배포 찾아줘', 'work-chat.lookup']] as const) {
           const turn = await turnOf(text);
