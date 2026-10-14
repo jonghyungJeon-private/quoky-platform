@@ -5,6 +5,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — The document-summary claim guard closes its three recorded gaps (ADR-0118 amendment implementation note, 2026-10-14)
+
+- **Security fix, stricter only.** The claim guard that withholds a mail, thread or Drive summary which says Quoky did
+  something (`메일을 보내 드렸습니다`) now also catches the three bypasses recorded as known gaps under the v5 W3 decision.
+  No flag, migration, prompt or provider change.
+- **A split or disguised name.** `Quo-ky`, `Quo    ky`, a zero-width or Hangul-filler split, full-width letters,
+  combining marks, compatibility jamo and Cyrillic or Greek lookalikes (`Ԛuoky`) are read as Quoky.
+- **An implied assistant action.** A third-party subject exempts only the claim of its own verb. A causal or
+  conditional connective, a past verb, an honorific verb or a request adnominal ends its scope; a sequential connective
+  ends it only before a humble claim. So `김철수님이 부탁하셔서 메일을 보내 드렸습니다` and `김철수가 요청한 메일을 보냈어요`
+  are withheld, while `요청하는 메일`, `받은 피드백`, `정리해서 … 공유했어요` and `중요한 메일` pass. Every match in a
+  clause is judged, overlapping matches included.
+- **A cross-sentence split.** These are now claims:
+  - a claim in a reply where Quoky or the first person acts with an action verb;
+  - English "on your behalf" or "as requested" passives and bare participles (unless done `by` a named third party);
+  - `Reply sent.`, `Sent the reply.` (except bullets under a heading that names a third party, or with a trailing
+    `(Kim)`);
+  - `요청하신 대로 … 발송되었습니다`.
+- **Linear.** Each clause is read once and claims are judged by binary search. The DRV-1 timing test measures CPU time.
+- **Measured.** Against origin/main over 23,858 repository strings in three sources, 3 strings are newly withheld: one true
+  positive, plus a selector prompt and a code fragment that are not summaries. None are lost. A fuzz of 300,000 random
+  sequences, each checked as `mail` and as `drive`, found no case that origin/main withholds and this guard shows. 39
+  legitimate summaries pass. Tests:
+  `document-summary-claim-guard.test.ts` (345 rows, including the review rounds' bypass and false-positive rows and twelve
+  new CPU-bound hostile inputs).
+
 ## Unreleased — a one-syllable weekday after a week anchor, and a period never loses the owner's weekday (ADR-0120 A5 implementation note 2, 2026-10-14)
 
 - **Live fix.** "다음 주 수 일정 있어?" was answered with next Monday (10/19) instead of Wednesday 10/21. The selector

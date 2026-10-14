@@ -20394,6 +20394,110 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
 - **Decision (revised after Codex review): the guard stays strict; the thread prompt avoids action verbs.** A first fix widened the Korean third-person exemption of `document-summary-claim-guard.ts` (whole-sentence subject, topic markers). Codex found a bypass family (a Quoky stand-in after or beside the third party; then spaced, zero-width or hyphenated `Quoky`, an implied assistant action `김철수님이 부탁하셔서 메일을 보내 드렸습니다`, and a cross-sentence split). A guard is a safety net where a false negative is far worse than a false positive, so the widening was reverted entirely: the guard and its tests are origin/main behavior, plus regression tests that keep the strict cases blocked. Three of the reported bypasses (`Quo-ky`, the implied action, the cross-sentence split) are already not blocked at origin/main; they are recorded as known gaps in the guard test, not fixed here (the fixed footer stating nothing was sent is the guarantee).
 - **Fix at the source.** The `mail-thread` task rule (`prompt-composer.ts`) no longer says to name the sender as the subject of each action. It says not to narrate mail actions with past-tense action verbs (보냈다, 답장했다, 전달했다, 보관했다, 삭제했다, 등록했다; sent, replied, forwarded), to write each message as `<보낸 사람>의 메일: <내용 요약>` or with noun phrases (`회신 내용`, `발송 안내`), and to avoid the past tense when describing what a product lets users do. The mail and Drive single-document prompts are byte-identical; a prompt test pins the thread rule.
 
+### ADR-0118 amendment implementation note — the claim guard closes its three recorded gaps (2026-10-14)
+
+- **Status:** Implementation note under the decision above ("the guard stays strict; the thread prompt avoids action
+  verbs"). It closes the three bypasses that note recorded as known gaps of the origin/main guard, revised after the Chief
+  Architect review (CHANGES REQUIRED) and the Codex review (P1s). No flag, migration, prompt change, or Core provider or
+  platform branch. The footer stating that nothing was sent stays the guarantee; the guard stays a best-effort net.
+- **Every match counts (review P1).** Each Korean claim pattern runs over every match in a clause (`g` + `matchAll`). A
+  clause is a claim when any match is neither reported speech nor exempt. The first review round checked only the first
+  match per pattern, so an exempt early claim hid a later one (`김철수가 메일을 보냈어요, 답장도 보내 드렸어요`). Its new
+  benefactive forms also made that loosen origin/main: `김철수가 메일을 보내 줬는데 저가 답장을 보냈어요` and
+  `메일을 보내 뒀다는 내용을 확인했습니다, 메일을 보냈습니다` were withheld at origin/main and shown at that round's HEAD.
+  The round's "Lost: 0" corpus figure was true only of the corpus and missed these two; both are now blocking tests.
+- **Linear (review P1).** Each clause is read once (`ClauseReading`): its subjects, the first stand-in subject and a
+  next-predicate index over its tokens. Each claim match is then judged by binary search. Reported speech is read with a
+  sticky pattern at the claim's end, and token punctuation is trimmed by index. Who acts in the reply is read lazily, once
+  per text form, and only when a claim or a passive needs it. A normalized form identical to one already checked is
+  skipped. The 8,000-separator input that was quadratic (2.98 s) now runs in about 1 ms of CPU. The DRV-1 hostile input
+  takes about 33 ms of CPU against 10 ms at origin/main, and its test measures CPU time.
+- **CA re-review (final fix round).**
+  - **Overlapping matches (P1).** `matchAll` does not return overlapping matches, so a wider exempt match that starts
+    earlier swallowed a claim origin/main blocks (`김철수가 메일을 저가 답장을 보내줬는데 또 보냈어요`). Each pattern now
+    loops with `exec` and resumes one character after each match's start. Repetition is bounded, so it stays linear.
+  - **Fuzz.** 300,000 random fragment sequences were each checked as `mail` and as `drive`. None that origin/main
+    withholds is shown at HEAD; 14,891 checks are newly withheld.
+  - **Gap 2 narrowed to its safe core (P2).** A scope end is now graded:
+    - Strong: causal, contrastive or conditional connectives; a finite past verb; an honorific verb form; request-verb
+      past adnominals (`요청한`, `부탁하신`); `드린`, `시킨`; sentence ends.
+    - Weak: sequential connectives (`-아서/-어서`, `-하여`, `시켜`, bare `-해`). It ends the scope only before a humble
+      benefactive claim.
+    - None: adnominals and complements that describe the object: `요청하는` / `문의하는` / `부탁하는`, `논의했던`,
+      `참석하는지`, `제출하도록`, `받은`, `보낸`, and `확인해 달라는`. A `-해` before `달라/주/드리/보` is an auxiliary,
+      not a predicate.
+    So `김철수 님이 고객에게 받은 피드백을 전달했어요`, `김철수 님이 회의록을 정리해서 문서를 공유했어요` and
+    `김철수 님이 요청해서 답장을 보냈어요` pass, as at origin/main. `김철수님이 부탁하셔서 메일을 보내 드렸습니다`,
+    `김철수가 요청하여 메일을 보내 드렸습니다`, `김철수님이 요청하셔서 메일을 보냈습니다` and `김철수가 요청한 메일을
+    보냈어요` stay withheld.
+  - **English (P2).**
+    - A bullet is the third party's under any heading line whose first word is a name (`Kim wrote:`, `Kim (Sales):`,
+      `Kim's update:`, `Kim — key points:`); blank lines keep the heading. An item with a trailing `(Name)` attribution is
+      the third party's too.
+    - Request framing must be in the passive's own clause, split at `:` `;` and dashes.
+    - A first-person `we`/`I` after a reporting verb or a quote (`Kim says we …`), or a Korean `저는`/`저희는` inside a
+      quote or before `라고`/`다고`, is the third party's and does not make Quoky an actor.
+  - **Measurement.** 39 legitimate summaries, including every phrasing the re-review listed, were newly withheld 0
+    times. The repository corpus is unchanged from the previous round: 3 distinct strings are newly withheld, none of
+    them a legitimate summary, and none are lost. The hostile CPU suite passes, with overlapping claims, weak connectives
+    and whitespace runs added.
+- **CA approval follow-up (gap-closing only).**
+  - English clauses also split at `, but` / `, and` / `while` / `;`. A third-party agent (`by Alice`) exempts only its own
+    clause, so `… sent by Alice, but the email was deleted on your behalf` is withheld.
+  - A first person who only verified a third party's report (`I confirmed Alice's report that the email was sent`) does
+    not make Quoky the actor of the embedded passive.
+  - Korean reported speech is anchored at the word's end, so `제가 바라는 대로 처리했어요` is Quoky acting.
+  - A stand-in in trailing parentheses (`(제가)`, `(비서)`, `(Quoky)`) is not a third-party attribution.
+  - A heading counts as a third party's only when it names a person (`Kim:`, `From Kim:`, `Kim's …:`, `Kim wrote:`,
+    `Kim (Sales):`, `Kim — …:`) and holds no first-person token; `What I did:`, `My actions:` and `Completed tasks:` do
+    not count.
+  - The fuzz (300,000 sequences, each checked as `mail` and as `drive`) still finds no loosening against origin/main,
+    and the hostile timing stays linear.
+- **Gap 1, a split or disguised name.** Normalizing (`normalizeForClaimCheck`) does the following:
+  - removes, or turns into a space, format characters (Cf) and blank letters (Hangul fillers, braille blank);
+  - applies NFKD, drops combining marks, then applies NFKC (this also recomposes the compatibility jamo `ㅋㅝㅋㅣ`);
+  - folds Cyrillic, Greek and Armenian lookalikes to Latin;
+  - joins `Quoky` / `쿼키` / `퀴키` across any run of non-letters (`Quo    ky`, `Quo ~ - ky`, `Quo----ky`, `Qu0ky`).
+  The join is linear because each separator run is scanned only by the attempt that starts at the letter before it. A
+  subject word is compared on its letters and digits, and `Quoky봇` / `쿼키님` are stand-ins (`quoky-platform` is not).
+- **Gap 2, an implied assistant action.** A third-party subject exempts a Korean claim only when it governs the claim's
+  own verb, under the graded scope rule of the CA re-review bullet above. An honorific subject never exempts a humble
+  benefactive claim (`드렸`), because an honoured subject's own act would take `-시-`. The benefactive and completed
+  auxiliaries (`해 뒀`, `해 놨`, `해 줬`, `보내 놓았`, `처리해 드렸`, `처리 완료했`) are claims.
+- **Gap 3, a cross-sentence split.** The following remove the third-party exemption:
+  - A first-person pronoun (`제가`, `저는`, …) or the name as actor (`Quoky가`, `쿼키는`, `저희 측에서`), anywhere in the
+    reply, but only in a sentence with an action. An action is a claim stem, a benefactive, `대신`, or a past verb, so
+    `쿼키가 요약합니다` does not count.
+  - An English `I` / `we` / `Quoky` with a past verb.
+  - A generic stand-in (`비서`, `AI`, `시스템`), in its own sentence only.
+  The following are claims (the first two only without an explicit third-party agent such as `by Alice`):
+  - An English passive or a bare participle with request framing (`Message sent on your behalf`, `Email forwarded to
+    Kim as requested`).
+  - An agentless passive in a reply where Quoky acts (`Quoky handled your request. Your email has been sent.`).
+  - `Your reply was sent` and a bare `Reply sent.`.
+  - A dropped-subject `Sent the reply.`, except a bullet under a third-party heading (`Kim's email:`, `Kim:`).
+  - A Korean passive with request framing (`요청하신 대로 메일이 발송되었습니다`).
+- **False-positive measurement (second round, re-run against origin/main).** The corpus is every string in the golden and fixture JSON
+  files (6,008), every string literal in the non-guard test files (13,488) and every line of `docs/uat/*.md` and
+  `CURRENT_STATE.md` (4,361), run for each of `mail`, `mail-thread` and `drive`. Newly withheld: 3 distinct strings.
+  - `사용자님이 요청하신 브랜치를 삭제했습니다` is an implied action, a true positive.
+  - The NL selector prompt fixture (`nl-select.v18.prompts.json`, about 20k characters, not a summary) is withheld by
+    the English cross-sentence rule: "I reported/created/made" plus "issues were created".
+  - One code fragment that a template-literal extraction caught from a test file.
+  Lost: 0. All 18 hand-written legitimate summaries pass, including `급한 메일`, `AI가` in a neighbouring sentence, and
+  `요청하신 환불이 처리되었다는 안내`.
+- **Accepted residuals.**
+  - Misspelled or transliterated names (`Quokky`, `Qouky`, `쿠오키`, small-capital `Qᴜoky`).
+  - A bare Korean passive with no request framing (`메일이 발송되었습니다`).
+  - An implied action after a sequential connective or a describing adnominal, unless the claim is humble or a stand-in
+    is present (`김철수 님이 요청해서 답장을 보냈어요`, `김철수가 보낸 메일을 전달했어요`). This is the origin/main
+    behaviour, kept because the same forms are common in third-party reports.
+  - A zero-width character used both as a space and inside a word in the same claim.
+  - Two known fail-closed false positives, kept as tests: a third-party report split by a line break, and a first-person
+    sentence with a past verb anywhere in the reply (`제가 요약했어요. …`).
+  - A third-party subject followed by a second third-party subject still exempts the claim; that is the origin/main rule
+    and is unchanged.
+
 ### ADR-0118 amendment implementation note — DRV-2 shared drives and DRV-2b every sheet (2026-10-13)
 
 - **Status:** Implemented under the ratified ADR-0118 amendment of 2026-10-12, decisions (b) and (c) (v5 plan wave 3,

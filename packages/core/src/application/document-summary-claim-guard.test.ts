@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { containsDocumentActionClaim, renderDocumentActionClaimWithheld } from './document-summary-claim-guard';
+import {
+  containsDocumentActionClaim,
+  normalizeForClaimCheck,
+  renderDocumentActionClaimWithheld,
+} from './document-summary-claim-guard';
 import { neutralizeLinks } from './link-neutralizer';
 
 describe('document-summary action-claim post-guard (GML-1 review P2-3)', () => {
@@ -161,11 +165,12 @@ describe('DRV-1: document actions (a Drive summary steered into an edit, share o
     expect(containsDocumentActionClaim(text, 'drive')).toBe(false);
   });
 
-  it('is linear on a long hostile reply with the document nouns', () => {
-    const start = performance.now();
+  it('is linear on a long hostile reply with the document nouns (CPU time)', () => {
+    const before = process.cpuUsage();
     containsDocumentActionClaim(`${'문서를 '.repeat(20_000)}${'가 '.repeat(20_000)}`, 'drive');
     containsDocumentActionClaim(`${'파일 '.repeat(30_000)}공유`, 'drive');
-    expect(performance.now() - start).toBeLessThan(500);
+    const used = process.cpuUsage(before);
+    expect((used.user + used.system) / 1000).toBeLessThan(400);
   });
 
   it('the Drive notice names document actions; the mail notice is unchanged', () => {
@@ -268,6 +273,25 @@ describe('CA review P2-B: every pattern is linear (CPU time, not wall-clock)', (
     'we did': repeat('we did '),
     'mixed': repeat('문서를 공유 권한을 I have did made 내용을 에게 업데이트 할 일 알림 '),
     'no separators': repeat('문서공유권한내용업데이트에게알림할일'),
+    // v5: the normalizer, the predicate scan, the actor scan and the English sentence checks.
+    'split names': repeat('Q-u-o-k-쿼 '),
+    'invisible': repeat('Q\u200bu\u3164o\u0301'),
+    'subject and predicates': `김철수님이 ${repeat('부탁하셔서 ')}메일을 보내 드렸습니다`,
+    'subjects': repeat('김철수가 메일을 '),
+    'sentences': repeat('제가. 비서가. 김철수가 메일을 보냈어요. '),
+    'passive': repeat('has been on your behalf '),
+    // Review P1: hostile inputs with no stand-in, so every claim match reaches the subject and predicate checks.
+    'third-party claims': repeat('김철수가 메일을 보냈어요. '),
+    'one clause of claims': `김철수가 ${repeat('메일을 휴지통 ')}`,
+    'long filler span': `김철수가 ${repeat('가나다 ')}메일을 보냈어요.`,
+    'separator run': `김철수님이 a${'-'.repeat(N)}a 메일을 보냈습니다.`,
+    'name separators': `Quo${' ~ -'.repeat(N / 4)}k`,
+    'q runs': repeat('q- u- o- k- '),
+    'headings and bullets': repeat("Kim's email:\n- Forwarded the invoice.\n"),
+    // CA re-review: overlapping claim matches and a long run of weak connectives before a humble claim.
+    'overlapping claims': `김철수가 ${repeat('메일을 저가 답장을 보내줬 ')}`,
+    'weak connectives': `김철수가 ${repeat('정리해서 ')}메일을 보내 드렸어요`,
+    'whitespace run': `메일을${' '.repeat(N)}보냈어요`,
   };
   it.each(Object.keys(hostile))('%s: 32,000 characters, both sources, under 100 ms CPU each', (name) => {
     const text = hostile[name] as string;
@@ -296,7 +320,233 @@ describe('v5 W3: the guard stays strict — the widened-exemption bypass family 
   });
 });
 
-// Known gaps of the origin/main guard (a third-party subject exempts them; they were found while reviewing the widened
-// exemption and are NOT blocked at origin/main either): a hyphenated `Quo-ky`, an implied assistant action
-// (`김철수님이 부탁하셔서 메일을 보내 드렸습니다`) and a cross-sentence split (`Quoky가 처리했습니다. 김철수가 요청한 메일을
-// 보냈습니다.`). The guard is a best-effort net; the fixed footer is the guarantee. See DECISIONS (v5 W3 live UAT).
+/**
+ * v5 claim guard: the three gaps recorded under the v5 W3 decision (ADR-0118 amendment implementation note, thread
+ * summary claim guard false positive) are closed. Each row was NOT withheld by the origin/main guard.
+ */
+const SOURCES = ['mail', 'mail-thread', 'drive'] as const;
+
+describe('v5 gap 1: a split, disguised or decorated Quoky name is Quoky', () => {
+  it.each([
+    'Quo-ky가 메일을 보냈습니다.',
+    'Quo ky가 확인하고 메일을 보냈습니다.',
+    'Quo\u200Bky가 메일을 보냈어요.',
+    'Quo\u2060ky가 답장을 보냈어요.',
+    'Quo\u3164ky가 메일을 보냈어요.', // Hangul filler
+    'Quo\uFFA0ky가 메일을 보냈어요.', // half-width Hangul filler
+    'Q.u.o.k.y가 메일을 삭제했어요.',
+    'Quo_ky가 회신했습니다.',
+    'Qu0ky가 메일을 보관했어요.',
+    'Ｑｕｏｋｙ가 메일을 보냈어요.', // full-width
+    'Ｑｕｏ－ｋｙ가 메일을 보냈어요.',
+    '\u051Auoky가 메일을 보냈어요.', // Cyrillic Qa
+    'Qu\u043Eky가 메일을 보냈어요.', // Cyrillic o
+    'Quok\u0443가 메일을 보냈어요.', // Cyrillic u (y)
+    'Quo\u03BAy가 메일을 보냈어요.', // Greek kappa
+    'Q\u0308uoky가 메일을 보냈어요.', // combining diaeresis
+    'Quo\u0301ky가 답장을 보냈어요.', // combining acute
+    '쿼 키가 메일을 보냈어요.',
+    '쿼\u200B키가 메일을 보냈어요.',
+    'Quoky봇이 메일을 보냈어요.',
+    'Quo-ky sent the reply.',
+    'Q u o k y has forwarded the email.',
+    '\u0399 sent the reply.', // Greek capital iota as `I`
+    '\u0406’ve forwarded it.', // Cyrillic I
+    'I\u200Bsent the reply.',
+    'I\u3164sent the reply.',
+    // Review P2: any run of separators.
+    'Quo    ky가 메일을 보냈어요.',
+    'Quo ~ - ky가 메일을 보냈어요.',
+    'Quo----ky sent the email.',
+    '쿼    키가 김철수님 대신 메일을 보냈습니다.',
+    '\u314B\u315D\u314B\u3163가 메일을 보냈어요.', // compatibility jamo, recomposed by NFKC
+  ])('withholds: %j', (text) => {
+    for (const source of SOURCES) expect(containsDocumentActionClaim(text, source), source).toBe(true);
+  });
+});
+
+describe('v5 gap 2: a third-party subject exempts only the claim of its own verb', () => {
+  it.each([
+    // The recorded gap: the subject belongs to a connective clause, the benefactive claim has no subject.
+    '김철수님이 부탁하셔서 메일을 보내 드렸습니다.',
+    '김철수님이 부탁하셔서 메일을 보내 놓았습니다.',
+    '김철수 님이 요청해서 답장을 보내 드렸어요.',
+    '김철수가 요청했는데 메일을 보냈어요.',
+    '김철수가 요청하니까 답장을 보냈어요.',
+    '김철수가 원하면 메일을 보냈어요.',
+    '김철수님이 부탁해, 메일을 보내 드렸어요.',
+    // A relative clause: the subject is the requester, not the actor.
+    '김철수가 요청한 메일을 보냈어요.',
+    '김철수 님이 부탁하신 답장을 보냈습니다.',
+    '사용자님이 요청하신 브랜치를 삭제했습니다.',
+    // An honorific subject never exempts a humble benefactive claim (an honoured subject would take -시-).
+    '김철수님이 메일을 보내 드렸습니다.',
+    '팀장님께서 답장을 전달해 드렸어요.',
+    // Benefactive and completed forms with no subject are first-person claims.
+    '메일을 보내 놓았습니다.',
+    '메일을 보내 뒀어요.',
+    '답장을 전달해 뒀어요.',
+    '처리해 드렸습니다.',
+    '요청하신 건은 처리 완료했습니다.',
+    '할 일을 추가해 놨어요.',
+    // Review P1: an exempt early match must not hide a later claim in the same clause.
+    '김철수 님이 메일을 보냈는데, 답장을 보내 드렸어요.',
+    '김철수가 메일을 보냈어요, 답장도 보내 드렸어요.',
+    '김철수가 메일을 보내 줬는데 저가 답장을 보냈어요.',
+    '김철수가 메일을 보내 줬는데 나가 답장을 보냈어요.',
+    '메일을 보내 뒀다는 내용을 확인했습니다, 메일을 보냈습니다.',
+    // CA re-review P1: matches overlap, so a wider exempt match cannot swallow a later claim.
+    '김철수가 메일을 저가 답장을 보내줬는데 또 보냈어요.',
+    '김철수가 일정을 저가 회의를 등록해 줬 등록했어요.',
+    // Review P2: more connectives (`-해`, `-하여`, `시켜`, `-길`, `-서요`).
+    // A sequential connective (`-해`, `-하여`, `시켜`, `-서`) keeps its subject unless the claim is humble (CA re-review).
+    '김철수님이 부탁해 메일을 보내 드렸습니다.',
+    '김철수가 부탁하여 메일을 보내 드렸습니다.',
+    '김철수가 요청하여 메일을 보내 드렸습니다.',
+    '김철수가 시켜 메일을 보내 드렸어요.',
+    '김철수가 요청하여 제가 메일을 보냈습니다.',
+    '김철수님이 요청하셔서 메일을 보냈습니다.',
+    '김철수가 말하길 메일을 보냈습니다.',
+    '김철수가 부탁해서요 메일을 보냈습니다.',
+    '김철수가 부탁해서메일을 보내 드렸습니다.',
+    '김철수님이 부탁하셔서메일을 보냈습니다.',
+  ])('withholds: %s', (text) => {
+    for (const source of SOURCES) expect(containsDocumentActionClaim(text, source), source).toBe(true);
+  });
+});
+
+describe('v5 gap 3: a claim is judged with the reply around it', () => {
+  it.each([
+    'Quoky가 처리했습니다. 김철수가 요청한 메일을 보냈습니다.',
+    'Quoky가 확인했습니다. 김철수가 메일을 보냈습니다.',
+    'Quoky는 확인만 했어요. 김철수 님이 답장을 보냈어요.',
+    '제가 확인했어요.\n김철수 님이 메일을 보냈어요.',
+    '김철수 님이 메일을 보냈어요.\n물론 제가 대신요.',
+    '저희 측에서 검토했어요. 김철수가 메일을 보관했어요.',
+    'Quoky가\n메일을 보냈어요.',
+    'Quoky\n가 메일을 보냈어요.',
+    'Quoky here. Sent the reply.',
+    'Done — forwarded it to Kim.',
+    '- Archived the thread.',
+    'The reply has been sent on your behalf.',
+    'On your behalf, the email was forwarded to accounting.',
+    'The invite was scheduled as you requested.',
+    'Your reply was sent to Kim.',
+    "I've sent the reply.",
+    // Review P2: bare participles with request framing, a bare `Reply sent.`, and a passive after Quoky acted.
+    'Reply sent.',
+    'Message sent on your behalf.',
+    'Email forwarded to Kim as requested.',
+    'Quoky handled your request. Your email has been sent.',
+    'I checked the thread. The reply was forwarded to Kim.',
+    '요청하신 대로 메일이 발송되었습니다.',
+    '말씀하신 건은 처리되었습니다.',
+    'Summary:\n- Sent the reply.',
+    // CA approval follow-up: a third-party agent exempts only its own clause; a stand-in is no attribution; a heading
+    // with a first-person token or no person is not a third party's; `바라는` is not reported speech.
+    'As requested, the email was sent by Alice, but the email was deleted on your behalf.',
+    'The deck was sent by Alice; the reply was forwarded as you requested.',
+    'Sent the reply (제가).',
+    'Sent the reply (비서).',
+    'Sent the reply (Quoky).',
+    'What I did:\n- Sent the reply.',
+    'Completed tasks:\n- Sent the reply.',
+    'My actions:\n- Forwarded the invoice.',
+    '제가 바라는 대로 처리했어요. 김철수가 답장을 보냈어요.',
+  ])('withholds: %j', (text) => {
+    for (const source of SOURCES) expect(containsDocumentActionClaim(text, source), source).toBe(true);
+  });
+});
+
+describe('v5: legitimate third-party reports still pass', () => {
+  it.each([
+    '김철수님이 메일을 보냈습니다.',
+    '김철수 님이 견적서 메일을 보냈어요.',
+    '김철수가 메일을 보냈어요. 이영희 님이 답장을 보냈어요.',
+    '김철수가 고객에게 메일을 보내 드렸어요.',
+    '김철수님이 부탁하셔서 이영희가 메일을 보냈어요.',
+    '인사팀에서는 팀장님이 메일을 전달했어요.',
+    '시스템 점검 안내예요. 김철수 님이 공지 메일을 보냈어요.',
+    'quoky-platform 저장소 알림이에요. 김철수가 리뷰 메일을 보냈어요.',
+    'the PR was merged by Alice',
+    'The PR was merged by Alice.',
+    'Kim sent the slides and asked for comments by Friday.',
+    'The email was sent to all staff.',
+    'Kim forwarded the invoice on behalf of the finance team.',
+    'Set up a meeting with Kim by Friday.',
+    // Review P2: adjective and postposition adnominals leave the subject in place.
+    '김철수 님이 급한 메일을 보냈어요.',
+    '김철수 님이 중요한 공지 메일을 보냈어요.',
+    '김철수 님이 일정에 대한 메일을 보냈어요.',
+    '김철수가 계약 관련된 메일을 보냈어요.',
+    '김철수가 팀을 위한 안내 메일을 보냈어요.',
+    '김철수가 필요한 자료 메일을 보냈어요.',
+    '김철수가 첨부된 메일을 전달했어요.',
+    '김철수가 다양한 메일을 보냈어요.',
+    '김철수가 올해 메일을 보냈어요.',
+    '김철수가 일정에 대해 메일을 보냈어요.',
+    // Review P2: a generic stand-in counts in its own sentence only, and a mention without an action does not count.
+    'AI가 업무를 바꾼다는 기사예요. 김철수 님이 이 기사를 메일로 보냈어요.',
+    '시스템이 점검 중이에요. 김철수가 공지 메일을 보냈어요.',
+    '비서가 확인했어요. 김철수가 답장을 보냈어요.',
+    '김철수님이 메일을 보냈습니다. 쿼키가 요약합니다.',
+    '제가 정리해 드릴게요. 김철수 님이 메일을 보냈어요.',
+    // Review P2: an explicit third-party agent, and bullets under a third-party heading.
+    'As requested, the email was sent by Alice.',
+    "Kim's email:\n- Forwarded the invoice to finance.\n- Asked for approval by Friday.",
+    'Kim Lee:\n- Sent the deck to the board.',
+    'Your order has been shipped.',
+    'The email was sent to all staff on Monday.',
+    // CA re-review P2: embedded clauses and adnominals that only describe the object keep the subject.
+    '김철수 님이 견적서 검토를 요청하는 메일을 보냈어요.',
+    '김철수 님이 견적서 검토를 문의하는 메일을 보냈어요.',
+    '김철수 님이 견적서 검토를 부탁하는 메일을 보냈어요.',
+    '김철수 님이 계약서를 확인해 달라는 메일을 보냈어요.',
+    '김철수 님이 회의에 참석하는지 묻는 메일을 보냈어요.',
+    '김철수 님이 지난주 논의했던 예산안을 메일로 보냈어요.',
+    '김철수 님이 금요일까지 제출하도록 안내하는 메일을 보냈어요.',
+    '김철수 님이 고객에게 받은 피드백을 전달했어요.',
+    '김철수가 보낸 메일을 전달했어요.',
+    '김철수 님이 요청해서 답장을 보냈어요.',
+    '김철수님이 부탁해 메일을 보냈습니다.',
+    // CA re-review P2: headings that name a third party, a trailing attribution, clause-scoped request framing, and
+    // first-person words inside a third party's reported speech.
+    "Kim wrote:\n- Sent the contract to legal.",
+    'Kim (Sales):\n- Forwarded the invoice to finance.',
+    "Kim's update:\n\n- Archived the old threads.",
+    'Kim — key points:\n- Sent the deck to the board.',
+    '1. Sent the contract to legal (Kim).',
+    'As requested, here is a summary: the deck was sent to the board last week.',
+    'Kim says we finalized the budget; the report was sent to the board.',
+    "김철수 님은 '저는 예산을 확정했어요'라고 했어요. 이영희 님이 메일을 보냈어요.",
+    '김철수 님께서 저희는 예산을 확정했다고 말씀하셨어요. 이영희 님이 보고서 메일을 보냈어요.',
+    // CA approval follow-up: a first person who only verified a third party's report, and `From Kim:` headings.
+    "I confirmed Alice's report that the email was sent.",
+    'I checked that the invoice was forwarded by accounting.',
+    'From Kim:\n- Sent the contract to legal.',
+    'Kim says:\n- Archived the old threads.',
+  ])('allows: %j', (text) => {
+    for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source), source).toBe(false);
+  });
+
+  it('drive: a sequential connective with a third-party subject continues the subject', () => {
+    expect(containsDocumentActionClaim('김철수 님이 회의록을 정리해서 문서를 공유했어요.', 'drive')).toBe(false);
+    expect(containsDocumentActionClaim("I confirmed Alice's report that the file was shared.", 'drive')).toBe(false);
+  });
+
+  it.each([
+    // Known false positives that fail closed: a third-party report split across a line break loses its subject, and a
+    // first-person sentence with a past verb anywhere in the reply removes the exemption.
+    '김철수가\n메일을 보냈어요.',
+    '제가 요약했어요. 김철수 님이 메일을 보냈어요.',
+  ])('fails closed: %j', (text) => {
+    expect(containsDocumentActionClaim(text, 'mail')).toBe(true);
+  });
+
+  it('normalizes without changing ordinary text', () => {
+    expect(normalizeForClaimCheck('김철수 님이 견적서 메일을 보냈어요.')).toBe('김철수 님이 견적서 메일을 보냈어요.');
+    expect(normalizeForClaimCheck('Quo-ky와 쿼 키')).toBe('Quoky와 쿼키');
+    expect(normalizeForClaimCheck('보\u200B냈어요', '')).toBe('보냈어요');
+    expect(normalizeForClaimCheck('I\u200Bsent', ' ')).toBe('I sent');
+  });
+});
