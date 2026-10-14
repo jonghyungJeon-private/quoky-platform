@@ -22100,9 +22100,10 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
    - A grammar moves to `c` only where the combined evidence is clear and the owner agrees.
    - Grammars with too few live samples keep collecting data.
 
-### ADR-0120 amendment A5 — read-side typed args from the 2026-10-14 live edge-case UAT (Proposed — awaiting the owner's yes) (2026-10-14)
+### ADR-0120 amendment A5 — read-side typed args from the 2026-10-14 live edge-case UAT (Accepted) (2026-10-14)
 
-- **Status:** **Proposed.** The code is on branch `claude/v5-nl-uat-fixes` and is inert until the owner accepts; every change is an
+- **Status:** **Accepted** by the owner on 2026-10-14 ("승인·배포 (권장)"), after Codex PASS and a Chief Architect APPROVE. The 23
+  `uat5r*` corpus cases still await the owner's explicit D12 batch approval; they gate no live behaviour. Originally: every change is an
   additive typed arg of an existing wave-1 READ entry, a symbolic range symbol, a validation rule or a selector description,
   never a phrase list that routes. D1 says widening an entry needs an amendment plus corpus cases; this is that amendment and
   the cases are in `nl-intent.v1.json` (`uat5r*`, 23 cases, pending the owner's batch approval under D12).
