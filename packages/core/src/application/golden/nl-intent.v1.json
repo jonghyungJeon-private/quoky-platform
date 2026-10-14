@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) are PENDING the owner's batch approval under ADR-0120 D12. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) are PENDING the owner's batch approval under ADR-0120 D12. CA (2026-10-14, calendar-accuracy implementation note): 4 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주) are PENDING the owner's batch approval under ADR-0120 D12.",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) are PENDING the owner's batch approval under ADR-0120 D12. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) are PENDING the owner's batch approval under ADR-0120 D12. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) are PENDING the owner's batch approval under ADR-0120 D12.",
   "cases": [
     {
       "id": "jira-001",
@@ -9194,6 +9194,42 @@
         }
       },
       "note": "a one-syllable weekday after a week word is that day, never a keyword [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-05",
+      "text": "금요일에 친구 만나기로 했어",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-06",
+      "text": "다음 주 수요일 생일이야",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-07",
+      "text": "월요일은 늘 피곤해",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-08",
+      "text": "수요일마다 운동해",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-09",
+      "text": "이번 주 금요일 휴가야",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "uat5ca-10",
+      "text": "토요일에 이사해",
+      "expect": "none",
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
     }
   ]
 }
