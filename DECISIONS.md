@@ -22975,7 +22975,9 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
         grammar only right after a verbal adnominal form: a request or existence form ending in ㄴ/ㄹ ("알려줄 수", "있는
         거"), or an expressed match ending in an adnominal verbal syllable ("요청 온 거", "남은 거"). It is never grammar after
         a noun ("할 일 수", "내일 지도", "다음 주 수" decline). Orchestrator scope reduction after the 0d45216 regression:
-        this rule may only make declines more likely.
+        this rule may only make declines more likely. Negating forms are never grammar: 아니/아닌 left the existence
+        morphology and 없는 never binds a dependent noun ("리뷰 요청 아닌 거" declines). 수 is grammar only before a form
+        of 있/없 ("알려줄 수 있나요"); elsewhere it means "number" ("할 일 남은 수 알려줘" declines).
     - The request and existence morphology gains the adnominal forms 줄/드릴, 실 and 는 ("알려줄", "보여주실", "있는"). The
       hard-listed 알려줄 was removed from `KO_FUNCTION`.
     - A fragment glued to a removed vocabulary word is morphology only AFTER the word and only as one closed suffix

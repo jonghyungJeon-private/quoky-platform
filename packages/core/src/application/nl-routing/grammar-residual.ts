@@ -29,7 +29,8 @@ const REQUEST_END =
   '(?:|시|실|세요|십시오|시오|실래요?|실래|시겠어요|시겠습니까|시겠나요|시나요|시는지|실수|줘요?|줄래요?|줄까요?|주라|라|래요?|ㄹ래요?|' +
   '드릴까요|드릴게요|드릴래요|드립니다|드리겠습니다|드려요|립니다|릴까요|릴게요|겠어요|겠습니다|겠습니까|어요|아요|해요|해|요|ㅂ니다|습니다|습니까|ㅂ니까|니까|나요|ㄹ까요)';
 const REQUEST_VERBAL = new RegExp(`^${REQUEST_STEM}${GIVE}?${REQUEST_END}$`, 'u');
-const EXIST_STEM = '(?:있|없|되|돼|맞|아니|아닌|이|였|하)';
+// 아니/아닌 are not here: like 안/못 they negate, so a leftover "아닌" is content ("리뷰 요청 아닌 거").
+const EXIST_STEM = '(?:있|없|되|돼|맞|이|였|하)';
 const EXIST_END =
   '(?:|어|어요|아요|는|네|네요|죠|지|지요|군요|습니다|습니까|ㅂ니다|ㅂ니까|니까|나요|나|니|냐|는지|는가|은가|ㄴ가|ㄴ가요|을까요?|ㄹ까요?|을지|을텐데|' +
   '는데|던가요?|었어요?|었나요?|었나|었지요?|었습니까|었습니다|았어요?|았나요?|았나|였어요?|였나요?|였나|였지요?|시나요|시나|세요|십니까|실까요|으세요|으십니까|으시나요|으신가요|으신지|으실까요|으시죠)';
@@ -66,8 +67,14 @@ function endsInAdnominal(word: string): boolean {
   const final = code % 28;
   return final === 4 || final === 8; // ㄴ or ㄹ
 }
+/** 없는 negates ("없는 거"), so it never makes a dependent noun grammar. */
 function isVerbalAdnominal(word: string): boolean {
-  return endsInAdnominal(word) && (REQUEST_VERBAL.test(word) || EXIST_VERBAL.test(word));
+  return endsInAdnominal(word) && !word.startsWith('없') && (REQUEST_VERBAL.test(word) || EXIST_VERBAL.test(word));
+}
+/** 수 is "possibility" (grammar) only before a form of 있/없 ("알려줄 수 있나요"); elsewhere it is "number" ("남은 수"). */
+function boundDependentNoun(token: string, before: string, next: string): boolean {
+  if (!DEPENDENT_NOUN.test(token) || !(before.endsWith(REMOVED_ADNOMINAL) || isVerbalAdnominal(before))) return false;
+  return token !== '수' || (/^(?:있|없)/u.test(next) && EXIST_VERBAL.test(next));
 }
 
 /**
@@ -136,13 +143,10 @@ export function unexpressedContentWords(text: string, expressed: readonly RegExp
     });
   }
   const out: string[] = [];
-  let previous = '';
-  for (const token of rest.split(/[^\p{L}\p{N}'’\u0001\u0002-]+/u)) {
-    if (token.length === 0) continue;
-    const after = previous;
-    previous = token;
-    // A bare dependent noun right after a verbal adnominal form is grammar ("알려줄 수", "요청 온 거").
-    if (DEPENDENT_NOUN.test(token) && (after.endsWith(REMOVED_ADNOMINAL) || isVerbalAdnominal(after))) continue;
+  const tokens = rest.split(/[^\p{L}\p{N}'’\u0001\u0002-]+/u).filter((token) => token.length > 0);
+  tokens.forEach((token, position) => {
+    // A bare dependent noun right after a verbal adnominal form is grammar ("알려줄 수 있나요", "요청 온 거").
+    if (boundDependentNoun(token, tokens[position - 1] ?? '', tokens[position + 1] ?? '')) return;
     // Inside a token that held an expressed word: a fragment AFTER it is morphology only when it is one closed suffix
     // (`GLUED_SUFFIX`) or a closed word; a fragment BEFORE it ("아이할일") is a word of its own. A token with no expressed
     // word is judged as a whole.
@@ -158,7 +162,7 @@ export function unexpressedContentWords(text: string, expressed: readonly RegExp
       if (closed || (!HANGUL.test(word) && !isContentToken(word))) return;
       out.push(word);
     });
-  }
+  });
   return out;
 }
 
