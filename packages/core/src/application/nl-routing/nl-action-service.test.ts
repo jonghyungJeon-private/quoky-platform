@@ -385,3 +385,25 @@ describe('honest chat (A6-D6): no command phrases for offered action families, a
     expect(guardFalseIncapabilityClaims(reply, READS, 'ko')).toEqual({ text: reply, guarded: false });
   });
 });
+
+describe('round 2: pending answers meet the input guard (Codex review P2)', () => {
+  const pending = (version = at(0)): PendingQuestion => ({ kind: 'action-reschedule', at: at(1), language: 'ko', target: { source: 'reminder', id: 'rem-1', label: 13 }, version });
+
+  it('a reschedule answer with a separator character or over 300 characters never acts (decide and early paths)', async () => {
+    const w = world({ script: [NONE, NONE] });
+    for (const text of ['내일 9시\u2028알림 1 취소', `내일 9시 ${'가'.repeat(320)}`]) {
+      expect((await w.decide(text, { now: at(2), pending: pending() })).kind).not.toBe('execute');
+      const early = await w.service.answerActionPending({ text, attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(2), entries: ALL, route: 'chat', pending: pending() });
+      expect(early).toBeUndefined();
+    }
+    expect(actionLogs(w).filter((log) => log.fields?.reason === 'hidden-characters' || log.fields?.reason === 'too-long').length).toBe(4);
+    const ok = await w.service.answerActionPending({ text: '내일 9시', attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(2), entries: ALL, route: 'chat', pending: pending() });
+    expect(ok).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', args: { when: '내일 9시' }, undo: { entryId: 'reminder.cancel', version: at(0) } } });
+  });
+
+  it('a ref grounded only inside pasted JSON never executes against an existing listing', async () => {
+    const w = world({ script: [out('todo.complete', { ref: '#1' })] });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2]));
+    expect((await w.decide('{"request":"1번 완료해줘"}', { now: at(1) })).kind).not.toBe('execute');
+  });
+});

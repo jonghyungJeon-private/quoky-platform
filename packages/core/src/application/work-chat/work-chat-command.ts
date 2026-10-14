@@ -927,6 +927,12 @@ const POST_COLON_KO = new RegExp(
   String.raw`^${SLACK_WORD}${CHANNEL_TOKEN}${CHANNEL_NOUN}\s*에\s*${POST_VERB}\s*[:：]\s*([\s\S]*)$`,
   'iu',
 );
+
+/**
+ * ADR-0120 amendment A6 input guard: the head of the anchored Slack post ("#채널에 게시:"), unanchored, so a natural-language
+ * request that contains it (pasted, quoted or glued) is recognized from this grammar's own pieces (single source).
+ */
+export const SLACK_POST_COLON_HEAD = new RegExp(String.raw`${SLACK_WORD}${CHANNEL_TOKEN}${CHANNEL_NOUN}\s*에\s*${POST_VERB}\s*[:：]`, 'iu');
 const POST_QUOTED_KO = new RegExp(
   String.raw`^${SLACK_WORD}${CHANNEL_TOKEN}${CHANNEL_NOUN}\s*에\s*([\s\S]+?)\s*(?:이라고|라고)\s*(?:게시해|올려|보내|남겨|써|전송해)${REQUEST_ENDING}\s*[.!~]*$`,
   'iu',

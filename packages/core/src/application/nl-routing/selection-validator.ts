@@ -12,7 +12,7 @@ import {
 import {
   formatNlRef,
   isNlDeicticOnlyPayload,
-  isNlSpanInsideStructure,
+  withoutStructures,
   isNlRefGrounded,
   isNlSpanGrounded,
   normalizeNlSpan,
@@ -136,18 +136,21 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       if (rangeSpec.pastOnly === true && Date.parse(range.from) > Date.parse(ctx.now)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
     }
   }
-  // (5) grounding and (6) the credential guard, on every string arg. A6: the previous selection never grounds an action.
+  // (5) grounding and (6) the credential guard, on every string arg. A6: the previous selection never grounds an action,
+  // and every action argument (span, ref, enum and flag words, the entry check) is grounded only in the owner's prose:
+  // a pasted structure (JSON, data) grounds nothing (Codex review P1).
   const previousArgs = entry.risk === 'READ' ? ctx.previousArgs : undefined;
+  const groundingText = entry.risk === 'READ' ? ctx.groundingText : withoutStructures(ctx.groundingText);
   for (const spec of entry.args) {
     const value = args[spec.name];
     if (spec.kind === 'flag' && value === true && spec.flagGrounding !== undefined) {
-      const text = normalizeForMatch(ctx.groundingText);
+      const text = normalizeForMatch(groundingText);
       const stated = spec.flagGrounding.some((word) => groundingWordIn(text, normalizeForMatch(word)));
       if (!stated && previousArgs?.[spec.name] !== true) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
     }
     if (typeof value !== 'string') continue;
     if (spec.kind === 'enum' && spec.valueGrounding?.[value] !== undefined) {
-      const text = normalizeForMatch(ctx.groundingText);
+      const text = normalizeForMatch(groundingText);
       const stated = (spec.valueGrounding[value] ?? []).some((word) => groundingWordIn(text, normalizeForMatch(word)));
       if (!stated && previousArgs?.[spec.name] !== value) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
     }
@@ -155,23 +158,23 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       if (rangeSpec !== undefined && spec.allowsTimeWords !== true && isTimeExpression(value)) return { ok: false, reason: 'time-keyword', entryId, arg: spec.name };
       const previous = previousArgs?.[spec.name];
       const fromPrevious = typeof previous === 'string' && previous === value;
-      if (!fromPrevious && !isGroundedIn(value, ctx.groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
+      if (!fromPrevious && !isGroundedIn(value, groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
     }
     // A6-D3: a span is grounded ONLY in this turn's own words (never the previous selection), and is never only deictic.
     if (spec.kind === 'span') {
-      if (!isNlSpanGrounded(value, ctx.groundingText) || isNlSpanInsideStructure(value, ctx.groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
+      if (!isNlSpanGrounded(value, groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
       if (spec.allowsTimeWords !== true && isNlDeicticOnlyPayload(value)) return { ok: false, reason: 'deictic-payload', entryId, arg: spec.name };
     }
     // A6-D2: a ref needs a numeral, ordinal or deictic in this turn's own words.
     if (spec.kind === 'ref') {
       const ref = parseNlRef(value);
-      if (ref === undefined || !isNlRefGrounded(ref, ctx.groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
+      if (ref === undefined || !isNlRefGrounded(ref, groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
     }
     if (containsCredentialMaterial(value)) return { ok: false, reason: 'credential', entryId, arg: spec.name };
   }
   // A6: the entry's own check after the per-arg checks.
   if (entry.check !== undefined) {
-    const failure = entry.check(args, ctx.groundingText);
+    const failure = entry.check(args, groundingText);
     if (failure !== undefined) return { ok: false, reason: failure.reason, entryId, ...(failure.arg !== undefined ? { arg: failure.arg } : {}) };
   }
   const openAmbiguity = (entry.ambiguity ?? []).find((key) => key.openWhen(args) && args[key.arg] === undefined);

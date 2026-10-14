@@ -575,6 +575,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const answerInput = prepareSelectionInput(turn.text, 0, turn.quotedRanges ?? []);
     if ('skip' in answerInput) return undefined;
     const language = /\p{L}/u.test(answerInput.groundingText) ? languageOf(turn.text) : pending.language;
+    if (this.answerRefused(pending, turn, answerInput.groundingText)) return undefined;
     try {
       return await this.answerActionQuestion(pending, turn, answerInput.groundingText, language);
     } catch (error) {
@@ -657,7 +658,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
         const answerLanguage = /\p{L}/u.test(answerInput.groundingText) ? language : pending.language;
         const answered = isActionPendingQuestion(pending)
           ? this.actionsActing(turn.actor)
-            ? await this.answerActionQuestion(pending, turn, answerInput.groundingText, answerLanguage)
+            ? this.answerRefused(pending, turn, answerInput.groundingText)
+              ? undefined
+              : await this.answerActionQuestion(pending, turn, answerInput.groundingText, answerLanguage)
             : undefined
           : await this.answerPending(pending, turn, answerInput.groundingText, answerLanguage);
         if (answered !== undefined) return answered;
@@ -1068,6 +1071,23 @@ export class NlSelectionService implements TurnDeliveryObserver {
     await this.writeSession(turn, LAST_LISTING_METADATA_KEY, (current) =>
       withLabelledListing(current, turn.actor.id, source, candidates.slice(0, 10), turn.now, 'merge'),
     );
+  }
+
+  /**
+   * The A6 input guard on an answer to an A6 question (Codex review P2): a long paste, hidden characters or an embedded
+   * command form is never an answer, so it never acts through one; the turn then routes normally (where any action
+   * decision meets the same guard). Logs the refusal.
+   */
+  private answerRefused(
+    pending: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' }>,
+    turn: NlSelectionTurn,
+    groundingText: string,
+  ): boolean {
+    const refusal = nlActionInputRefusal(turn.text, groundingText);
+    if (refusal === undefined) return false;
+    const entryId = pending.kind === 'action-target' ? pending.entryId : pending.kind === 'action-mode' ? 'item.summarize' : 'action.undo';
+    this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields({ entryId, risk: entryId === 'item.summarize' ? 'ITEM_READ' : 'LOCAL_WRITE', refKind: 'none', resolution: 'none', result: 'refused', reason: refusal, ...correlationOf(turn) }));
+    return true;
   }
 
   /** A6: the owner's answer to an open A6 question; `undefined` when the text is not an answer. */
