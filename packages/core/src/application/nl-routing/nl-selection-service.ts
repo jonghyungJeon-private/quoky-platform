@@ -31,7 +31,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -50,6 +50,7 @@ import {
   renderBulk,
   renderCapped,
   renderDeicticPayload,
+  renderInputRefusal,
   renderReferenceQuestion,
   renderRestate,
   renderTimeInTitle,
@@ -913,6 +914,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const ctx = this.validationContext(turn, prepared.groundingText, undefined, true);
     const validated = validateSelection({ entryId, args: output.args }, ctx);
     const base = { entryId, risk: ctx.offered.get(entryId)?.risk ?? 'LOCAL_WRITE', refKind: refKindOf(output.args), latencyMs, ...correlationOf(turn) } as const;
+    // The A6 input guard (red team): a long paste, hidden characters or an embedded command form never act.
+    const inputRefusal = ctx.offered.has(entryId) ? nlActionInputRefusal(turn.text, prepared.groundingText) : undefined;
+    if (inputRefusal !== undefined) {
+      const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: inputRefusal };
+      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      return this.actionAnswer(audit, renderInputRefusal(language));
+    }
     if (!validated.ok) {
       // An entry that is not offered (an external write before R3, an unconfigured source) is honest chat's to explain.
       if (validated.reason === 'not-offered' || validated.reason === 'unknown-entry' || validated.reason === 'not-read') return { kind: 'none' };

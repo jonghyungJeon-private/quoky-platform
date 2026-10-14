@@ -1,6 +1,7 @@
 import type { NlActionEntryId, NlAmbiguityKey, NlArgs, NlCatalogEntry, NlEntryCheckFailure } from './catalog';
 import { normalizeForMatch } from './selection-input';
 import { isNlTimeWord } from './symbolic-time';
+import { ANCHORED_TODO_PREFIX_HEADS } from '../reminders/reminder-grammar';
 
 /**
  * The ADR-0120 amendment A6 action entries (A6-D1, as amended by the ratification record): local writes on Quoky's own
@@ -488,4 +489,65 @@ export function nlActionSourceOf(entryId: NlActionEntryId, args: NlArgs): 'todo'
     default:
       return undefined;
   }
+}
+
+// ── the A6 input guard (red-team review: unmarked pastes, hidden characters, look-alikes) ───────────────────────────
+
+/**
+ * An action request is one short instruction: a longer message (a pasted memo with a command at its end) never acts.
+ * The selection bound (600) still applies to reads.
+ */
+export const NL_ACTION_MAX_INPUT_CHARS = 300;
+
+/** Format, zero-width, bidi, variation-selector and line/paragraph-separator characters: never in an action request. */
+const HIDDEN = /[\p{Cf}\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180F\u2028\u2029\u3164\uFE00-\uFE0F\uFFA0]|[\u{E0100}-\u{E01EF}]|[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
+
+function escapeRegExp(source: string): string {
+  return source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The closed Class A command forms with a colon head (the ADR-0100 D1 heads, a connector-write head) and the write
+ * execution phrase: never inside a natural-language request. (A reminder number with 취소 is an ordinary request.)
+ */
+const COMMAND_FORMS: readonly RegExp[] = [
+  new RegExp(`(?:${ANCHORED_TODO_PREFIX_HEADS.map(escapeRegExp).join('|')})\\s*[:：]`, 'giu'),
+  /[#＃][\p{L}\p{N}_-]+\s*(?:채널)?\s*에\s*(?:게시|올려|보내)\s*[:：]/gu,
+  /(?:Slack|슬랙)\s*게시\s*실행/gu,
+];
+
+export type NlActionInputRefusal = 'too-long' | 'hidden-characters' | 'embedded-command';
+
+/**
+ * A6 refuses to act on a message (before any validation) when:
+ *  - it is longer than {@link NL_ACTION_MAX_INPUT_CHARS} (a long paste is not one instruction);
+ *  - it carries hidden characters (format, zero-width, bidi, variation selectors, separators, controls), which can make
+ *    what the owner sees differ from what is parsed;
+ *  - it contains a Class A command form anywhere (the exact commands are sent alone and run by their own grammar; one
+ *    inside a request, quoted, pasted or glued to other text, or a look-alike the grammar did not accept, is material,
+ *    not an instruction).
+ * These are value checks over closed sets (the existing command heads); nothing here routes a message.
+ */
+export function nlActionInputRefusal(rawText: string, groundingText: string): NlActionInputRefusal | undefined {
+  if (Array.from(rawText).length > NL_ACTION_MAX_INPUT_CHARS) return 'too-long';
+  if (HIDDEN.test(rawText)) return 'hidden-characters';
+  const folded = groundingText.normalize('NFKC');
+  for (const form of COMMAND_FORMS) {
+    form.lastIndex = 0;
+    if (form.test(folded)) return 'embedded-command';
+  }
+  return undefined;
+}
+
+/** A span that occurs only inside a bracketed structure (`{…}`, `[…]`) of the message is data, not the owner's prose. */
+export function isNlSpanInsideStructure(span: string, groundingText: string): boolean {
+  const text = groundingText.normalize('NFC').replace(/\s+/g, ' ');
+  // Innermost brackets first, until stable, so nested structures (JSON) are removed whole.
+  let outside = text;
+  for (let round = 0; round < 8; round += 1) {
+    const next = outside.replace(/\{[^{}]*\}|\[[^[\]]*\]/gu, ' ');
+    if (next === outside) break;
+    outside = next;
+  }
+  return text.includes(span) && !outside.replace(/\s+/g, ' ').includes(span);
 }

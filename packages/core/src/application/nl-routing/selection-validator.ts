@@ -12,6 +12,7 @@ import {
 import {
   formatNlRef,
   isNlDeicticOnlyPayload,
+  isNlSpanInsideStructure,
   isNlRefGrounded,
   isNlSpanGrounded,
   normalizeNlSpan,
@@ -158,7 +159,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     }
     // A6-D3: a span is grounded ONLY in this turn's own words (never the previous selection), and is never only deictic.
     if (spec.kind === 'span') {
-      if (!isNlSpanGrounded(value, ctx.groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
+      if (!isNlSpanGrounded(value, ctx.groundingText) || isNlSpanInsideStructure(value, ctx.groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
       if (spec.allowsTimeWords !== true && isNlDeicticOnlyPayload(value)) return { ok: false, reason: 'deictic-payload', entryId, arg: spec.name };
     }
     // A6-D2: a ref needs a numeral, ordinal or deictic in this turn's own words.
