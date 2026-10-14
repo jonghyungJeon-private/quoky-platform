@@ -288,6 +288,10 @@ describe('CA review P2-B: every pattern is linear (CPU time, not wall-clock)', (
     'name separators': `Quo${' ~ -'.repeat(N / 4)}k`,
     'q runs': repeat('q- u- o- k- '),
     'headings and bullets': repeat("Kim's email:\n- Forwarded the invoice.\n"),
+    // CA re-review: overlapping claim matches and a long run of weak connectives before a humble claim.
+    'overlapping claims': `김철수가 ${repeat('메일을 저가 답장을 보내줬 ')}`,
+    'weak connectives': `김철수가 ${repeat('정리해서 ')}메일을 보내 드렸어요`,
+    'whitespace run': `메일을${' '.repeat(N)}보냈어요`,
   };
   it.each(Object.keys(hostile))('%s: 32,000 characters, both sources, under 100 ms CPU each', (name) => {
     const text = hostile[name] as string;
@@ -366,16 +370,14 @@ describe('v5 gap 2: a third-party subject exempts only the claim of its own verb
     // The recorded gap: the subject belongs to a connective clause, the benefactive claim has no subject.
     '김철수님이 부탁하셔서 메일을 보내 드렸습니다.',
     '김철수님이 부탁하셔서 메일을 보내 놓았습니다.',
-    '김철수 님이 요청해서 답장을 보냈어요.',
+    '김철수 님이 요청해서 답장을 보내 드렸어요.',
     '김철수가 요청했는데 메일을 보냈어요.',
     '김철수가 요청하니까 답장을 보냈어요.',
     '김철수가 원하면 메일을 보냈어요.',
     '김철수님이 부탁해, 메일을 보내 드렸어요.',
     // A relative clause: the subject is the requester, not the actor.
     '김철수가 요청한 메일을 보냈어요.',
-    '김철수가 보낸 메일을 전달했어요.',
     '김철수 님이 부탁하신 답장을 보냈습니다.',
-    '김철수가 받은 메일을 삭제했어요.',
     '사용자님이 요청하신 브랜치를 삭제했습니다.',
     // An honorific subject never exempts a humble benefactive claim (an honoured subject would take -시-).
     '김철수님이 메일을 보내 드렸습니다.',
@@ -393,14 +395,21 @@ describe('v5 gap 2: a third-party subject exempts only the claim of its own verb
     '김철수가 메일을 보내 줬는데 저가 답장을 보냈어요.',
     '김철수가 메일을 보내 줬는데 나가 답장을 보냈어요.',
     '메일을 보내 뒀다는 내용을 확인했습니다, 메일을 보냈습니다.',
+    // CA re-review P1: matches overlap, so a wider exempt match cannot swallow a later claim.
+    '김철수가 메일을 저가 답장을 보내줬는데 또 보냈어요.',
+    '김철수가 일정을 저가 회의를 등록해 줬 등록했어요.',
     // Review P2: more connectives (`-해`, `-하여`, `시켜`, `-길`, `-서요`).
-    '김철수님이 부탁해 메일을 보냈습니다.',
-    '김철수님이 부탁하여 메일을 보냈습니다.',
-    '김철수가 요청하여 메일을 보냈습니다.',
-    '김철수가 시켜 메일을 보냈습니다.',
+    // A sequential connective (`-해`, `-하여`, `시켜`, `-서`) keeps its subject unless the claim is humble (CA re-review).
+    '김철수님이 부탁해 메일을 보내 드렸습니다.',
+    '김철수가 부탁하여 메일을 보내 드렸습니다.',
+    '김철수가 요청하여 메일을 보내 드렸습니다.',
+    '김철수가 시켜 메일을 보내 드렸어요.',
+    '김철수가 요청하여 제가 메일을 보냈습니다.',
+    '김철수님이 요청하셔서 메일을 보냈습니다.',
     '김철수가 말하길 메일을 보냈습니다.',
     '김철수가 부탁해서요 메일을 보냈습니다.',
-    '김철수가 부탁해서메일을 보냈습니다.',
+    '김철수가 부탁해서메일을 보내 드렸습니다.',
+    '김철수님이 부탁하셔서메일을 보냈습니다.',
   ])('withholds: %s', (text) => {
     for (const source of SOURCES) expect(containsDocumentActionClaim(text, source), source).toBe(true);
   });
@@ -477,8 +486,35 @@ describe('v5: legitimate third-party reports still pass', () => {
     'Kim Lee:\n- Sent the deck to the board.',
     'Your order has been shipped.',
     'The email was sent to all staff on Monday.',
+    // CA re-review P2: embedded clauses and adnominals that only describe the object keep the subject.
+    '김철수 님이 견적서 검토를 요청하는 메일을 보냈어요.',
+    '김철수 님이 견적서 검토를 문의하는 메일을 보냈어요.',
+    '김철수 님이 견적서 검토를 부탁하는 메일을 보냈어요.',
+    '김철수 님이 계약서를 확인해 달라는 메일을 보냈어요.',
+    '김철수 님이 회의에 참석하는지 묻는 메일을 보냈어요.',
+    '김철수 님이 지난주 논의했던 예산안을 메일로 보냈어요.',
+    '김철수 님이 금요일까지 제출하도록 안내하는 메일을 보냈어요.',
+    '김철수 님이 고객에게 받은 피드백을 전달했어요.',
+    '김철수가 보낸 메일을 전달했어요.',
+    '김철수 님이 요청해서 답장을 보냈어요.',
+    '김철수님이 부탁해 메일을 보냈습니다.',
+    // CA re-review P2: headings that name a third party, a trailing attribution, clause-scoped request framing, and
+    // first-person words inside a third party's reported speech.
+    "Kim wrote:\n- Sent the contract to legal.",
+    'Kim (Sales):\n- Forwarded the invoice to finance.',
+    "Kim's update:\n\n- Archived the old threads.",
+    'Kim — key points:\n- Sent the deck to the board.',
+    '1. Sent the contract to legal (Kim).',
+    'As requested, here is a summary: the deck was sent to the board last week.',
+    'Kim says we finalized the budget; the report was sent to the board.',
+    "김철수 님은 '저는 예산을 확정했어요'라고 했어요. 이영희 님이 메일을 보냈어요.",
+    '김철수 님께서 저희는 예산을 확정했다고 말씀하셨어요. 이영희 님이 보고서 메일을 보냈어요.',
   ])('allows: %j', (text) => {
     for (const source of ['mail', 'mail-thread'] as const) expect(containsDocumentActionClaim(text, source), source).toBe(false);
+  });
+
+  it('drive: a sequential connective with a third-party subject continues the subject', () => {
+    expect(containsDocumentActionClaim('김철수 님이 회의록을 정리해서 문서를 공유했어요.', 'drive')).toBe(false);
   });
 
   it.each([

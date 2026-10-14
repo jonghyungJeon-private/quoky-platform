@@ -17,12 +17,14 @@
  * v5 claim-guard gaps (closed structurally, never by widening an exemption): the reply is checked as written and
  * normalized ({@link normalizeForClaimCheck}: invisible characters, NFKD without combining marks, NFKC, lookalike letters,
  * and a `Quo-ky` / `쿼 키` split by any separator run joined), so a split name is the name. Every match of every claim
- * pattern is judged, so an exempt early claim never hides a later one. A third-party subject exempts a claim only when it
- * governs the claim's own verb: a connective or a request/transfer adnominal between them (`부탁하셔서`, `요청한`, `보낸`,
- * `했는데`) ends its scope, and an honorific subject never exempts a humble benefactive claim (`김철수님이 … 보내 드렸습니다`).
- * A first-person or named Quoky actor in a sentence with an action, anywhere in the reply, means no claim is exempt; a
- * generic stand-in (`비서가`) counts in its own sentence only. Each clause is read once and each claim is judged by
- * binary search, so the guard stays linear.
+ * pattern is judged, overlapping included, so an exempt claim never hides another. A third-party subject exempts a
+ * claim only when it governs the claim's own verb: a causal, contrastive or conditional connective, a finite past verb,
+ * an honorific verb form or a request-verb adnominal between them (`부탁하셔서`, `요청한`, `했는데`) ends its scope; a
+ * sequential connective (`정리해서`, `요청하여`) ends it only before a humble benefactive claim; an adnominal that only
+ * describes the object (`요청하는 메일`, `받은 피드백`) does not. An honorific subject never exempts a humble benefactive
+ * claim (`김철수님이 … 보내 드렸습니다`). A first-person or named Quoky actor (outside reported speech) in a sentence
+ * with an action, anywhere in the reply, means no claim is exempt; a generic stand-in (`비서가`) counts in its own
+ * sentence only. Each clause is read once and each claim is judged by binary search, so the guard stays linear.
  */
 
 import type { UntrustedDocumentSource } from './untrusted-document-readout';
@@ -237,33 +239,66 @@ interface SentenceActors {
   readonly generic: boolean;
 }
 
+/** Reported speech after a first-person word (`'저는 …'라고`, `…했다고 말씀하셨어요`): the third party's words. */
+const KO_REPORTED_SPEECH = /라고|다고|냐고|자고|라며|다며|라는|다는|래요|대요/u;
+const QUOTE_MARK = /["“”‘’'「」『』]/u;
+/** An English reporting verb or a quote before `we` / `I` (`Kim says we finalized …`): the third party's words. */
+const EN_REPORTING =
+  /\b(?:say|says|said|write|writes|wrote|mention|mentions|mentioned|tell|tells|told|ask|asks|asked|note|notes|noted|explain|explains|explained|report|reports|reported|claim|claims|claimed|add|adds|added|confirm|confirms|confirmed|according\s+to)\b|["“‘]/i;
+
 function actorsIn(sentence: string): SentenceActors {
-  const words = sentence.split(/\s+/u).map(wordOf).filter((word) => word.length > 0);
+  const tokens = sentence.split(/\s+/u).filter((token) => token.length > 0);
+  const words = tokens.map(wordOf);
+  // Reported speech after a word, read right to left once (linear).
+  const reportedAfter: boolean[] = new Array<boolean>(tokens.length + 1).fill(false);
+  for (let index = tokens.length - 1; index >= 0; index -= 1) {
+    reportedAfter[index] = reportedAfter[index + 1] === true || KO_REPORTED_SPEECH.test(tokens[index + 1] ?? '');
+  }
+  let quoted = false;
   let strong = false;
   let generic = false;
   for (let index = 0; index < words.length && !(strong && generic); index += 1) {
     const word = words[index] as string;
-    if (KO_FIRST_PERSON_ACTORS.has(word)) strong = true;
+    const ownWords = !quoted && reportedAfter[index] !== true && !KO_REPORTED_SPEECH.test(tokens[index] ?? '');
+    if (QUOTE_MARK.test(tokens[index] ?? '')) quoted = true;
+    if (word.length === 0) continue;
+    if (ownWords && KO_FIRST_PERSON_ACTORS.has(word)) strong = true;
     const stem = KO_ACTOR_FORM.exec(word)?.[1];
     const side = /^(?:측|쪽)(?:에서|이|가|은|는)?$/u.test(words[index + 1] ?? '');
     for (const candidate of [stem, side ? word : undefined]) {
       if (candidate === undefined) continue;
-      if (QUOKY_NAME_WORD.test(candidate) || (side && (candidate === '저희' || candidate === '우리'))) strong = true;
+      const pronoun = side && (candidate === '저희' || candidate === '우리');
+      if (QUOKY_NAME_WORD.test(candidate) || (ownWords && pronoun)) strong = true;
       if (KO_GENERIC_STAND_INS.has(candidate)) generic = true;
     }
   }
-  const acting = (strong && (KO_ACTION.test(sentence) || hasPastSyllable(sentence))) || EN_ACTOR.test(sentence);
+  const english = EN_ACTOR.exec(sentence);
+  const reporting = EN_REPORTING.exec(sentence);
+  const englishActor = english !== null && (reporting === null || reporting.index > english.index);
+  const acting = (strong && (KO_ACTION.test(sentence) || hasPastSyllable(sentence))) || englishActor;
   return { acting, generic };
 }
 
 /**
- * Word endings of a Korean predicate that is not the claim's own verb (v5 gap 2): connectives (`-니까`, `-면서`, `-는데`,
- * `-지만`, `-도록`, `-려고`, `-길래`, `-하여`, `시켜`, `말하길`), the adnominals of the request and transfer verbs
- * (`요청한`, `부탁하신`, `보낸`, `받은`, `드린`, `시킨`) and sentence ends (`-니다`, `-어요`, `-서요`). A bare adjective
- * adnominal (`중요한`, `관련된`, `에 대한`) is not one: it modifies the object and leaves the subject in place.
+ * How far a word between a subject and a claim ends the subject's scope (v5 gap 2, narrowed after the CA re-review).
+ * - `STRONG`: a new clause whose subject is likely someone else. These are the causal, contrastive and conditional
+ *   connectives (`-니까`, `-는데`, `-지만`, `-면`, `-길래`, `말하길`), a finite past verb (`했는데`, `했어요`), an honorific
+ *   verb form (`부탁하셔서`, `요청하셨는데`), the past adnominals of the request verbs (`요청한`, `부탁하신`, `드린`,
+ *   `시킨`), and sentence ends (`-니다`, `-어요`, `-서요`).
+ * - `WEAK`: a sequential connective whose subject usually continues (`정리해서 공유했어요`, `검토하여`, `부탁해`,
+ *   `시켜`). It ends the scope only for a humble benefactive claim (`… 보내 드렸습니다`).
+ * - `NONE`: everything else, including adnominal and complement forms that only describe the object (`요청하는 메일`,
+ *   `논의했던 예산안`, `참석하는지`, `제출하도록`, `받은 피드백`, `보낸 메일`, `확인해 달라는`, `중요한`, `에 대한`).
  */
-const KO_PREDICATE_END =
-  /(?:니까|으니|면서|[으하되시이]며|[으하되시]면|[는은던인한운]데|지만|도록|려고|려면|자마자|길래|기에|느라고?|므로|더니|다가|거든|[는은]지|하여|시켜|[하시라다]길|(?:요청|부탁|지시|문의|말씀|요구)(?:한|하신|하는|하시는|하던)|보낸|받은|드린|시킨|해준|니다|[어아해워와여에예세셔서]요|죠)$/u;
+const NONE = 0;
+const WEAK = 1;
+const STRONG = 2;
+type ScopeEnd = typeof NONE | typeof WEAK | typeof STRONG;
+
+const KO_CLAUSE_END =
+  /(?:니까|으니|[는은던인한운]데|지만|[으하되시]면|므로|길래|기에|더니|거든|자마자|[하시라다]길|(?:요청|부탁|지시|문의|말씀|요구)(?:한|하신)|드린|시킨|니다|[어아해워와여에예세셔서]요|죠)$/u;
+/** Adnominal and complement endings: a past or honorific form ending in one of these describes the object. */
+const KO_DESCRIBING_END = /(?:던|는|을|은|신|실|다는|단|는지|을지|도록|다고|다며|대)$/u;
 /** Honorific verb forms (`부탁하셔서`, `요청하셨는데`, `하시니`). */
 const KO_HONORIFIC_VERB = /하셔|하시|셨/u;
 /** Words ending like a predicate that are nouns or postpositions (`올해`, `피해`, `에 대해`, `위하여`, `통해`). */
@@ -271,27 +306,26 @@ const KO_NOT_A_PREDICATE = new Set([
   '해', '올해', '지난해', '새해', '매해', '한해', '이해', '피해', '손해', '방해', '재해', '오해', '견해', '침해', '동해', '서해', '남해',
   '대해', '위해', '관해', '통해', '의해', '인해', '대하여', '위하여', '관하여', '통하여', '의하여', '인하여',
 ]);
+/** The auxiliary after a `-해` infinitive (`확인해 달라는`, `검토해 주세요`, `보내 드리`, `해 보니`): one predicate. */
+const KO_AUXILIARY_START = /^(?:달라|달란|주|줘|줬|드리|드려|드렸|보|봐|봤|두|뒀|놓|놨)/u;
 
-/**
- * Whether a whitespace token is a predicate, so a subject before it belongs to another clause (v5 gap 2): a past form
- * (a ㅆ-final syllable), an honorific verb form, a predicate ending, an `-아서/-어서` connective (`해서`, `셔서`; `에서` and
- * `께서` stay particles), a bare `-해` connective (`부탁해`), or an infinitive before a comma. Linear in the token.
- */
-function isPredicate(token: string): boolean {
+/** The scope end of one whitespace token (`next` is the text after it, for the `-해` auxiliary). Linear in the token. */
+function scopeEnd(token: string, next: string): ScopeEnd {
   let start = 0;
   let end = token.length;
   while (start < end && !WORD_CHARACTER.test(token.charAt(start))) start += 1;
   while (end > start && !WORD_CHARACTER.test(token.charAt(end - 1))) end -= 1;
-  if (start === end) return false;
+  if (start === end) return NONE;
   const word = token.slice(start, end);
-  if (KO_NOT_A_PREDICATE.has(word)) return false;
-  if (hasPastSyllable(word) || KO_HONORIFIC_VERB.test(word)) return true;
+  if (KO_NOT_A_PREDICATE.has(word)) return NONE;
   const tail = word.slice(-8);
-  if (KO_PREDICATE_END.test(tail)) return true;
+  if (KO_CLAUSE_END.test(tail)) return STRONG;
+  if ((hasPastSyllable(word) || KO_HONORIFIC_VERB.test(word)) && !KO_DESCRIBING_END.test(tail)) return STRONG;
   const last = word.charAt(word.length - 1);
-  if (last === '서' && openInfinitive(word.charAt(word.length - 2))) return true;
-  if (last === '해') return true;
-  return /[,;:]/u.test(token.charAt(end)) && openInfinitive(last);
+  if (last === '서' && openInfinitive(word.charAt(word.length - 2))) return WEAK;
+  if (tail.endsWith('하여') || tail.endsWith('시켜')) return WEAK;
+  if (last === '해') return KO_AUXILIARY_START.test(next.trimStart()) ? NONE : WEAK;
+  return /[,;:]/u.test(token.charAt(end)) && openInfinitive(last) ? WEAK : NONE;
 }
 
 /** A humble benefactive (`보내 드렸습니다`): the speaker serving the listener, never an honoured third party's own act. */
@@ -315,13 +349,21 @@ interface ClauseSubject {
   readonly honorific: boolean;
 }
 
+interface ClauseToken {
+  readonly start: number;
+  readonly end: number;
+  readonly scope: ScopeEnd;
+}
+
 /**
- * One clause, read once (linear): its real subjects in order, the first stand-in subject's end, and the start of every
- * predicate token in order, so each claim match in the clause is judged by binary search, never by re-scanning.
+ * One clause, read once (linear): its real subjects in order, the first stand-in subject's end, and every token's scope
+ * end with "next weak / next strong" indexes, so each claim match in the clause is judged by binary search.
  */
 class ClauseReading {
   private subjectList: ClauseSubject[] | undefined;
-  private predicateList: Array<{ readonly start: number; readonly end: number; readonly predicate: boolean }> | undefined;
+  private tokenList: ClauseToken[] | undefined;
+  private nextAt: { readonly weak: Int32Array; readonly strong: Int32Array } | undefined;
+  private standInEnd: number | undefined;
 
   constructor(
     private readonly clause: string,
@@ -346,15 +388,14 @@ class ClauseReading {
     return list;
   }
 
-  private tokens(): Array<{ readonly start: number; readonly end: number; readonly predicate: boolean }> {
-    if (this.predicateList !== undefined) return this.predicateList;
-    const list: Array<{ readonly start: number; readonly end: number; readonly predicate: boolean }> = [];
-    for (const match of this.clause.matchAll(/\S+/gu)) {
+  private tokens(): ClauseToken[] {
+    if (this.tokenList !== undefined) return this.tokenList;
+    const found = [...this.clause.matchAll(/\S+/gu)];
+    this.tokenList = found.map((match, index) => {
       const start = match.index ?? 0;
-      list.push({ start, end: start + match[0].length, predicate: isPredicate(match[0]) });
-    }
-    this.predicateList = list;
-    return list;
+      return { start, end: start + match[0].length, scope: scopeEnd(match[0], found[index + 1]?.[0] ?? '') };
+    });
+    return this.tokenList;
   }
 
   /** The index of the first token that starts at or after `position` (binary search). */
@@ -364,49 +405,54 @@ class ClauseReading {
     let high = tokens.length;
     while (low < high) {
       const middle = (low + high) >> 1;
-      if ((tokens[middle] as { readonly start: number }).start < position) low = middle + 1;
+      if ((tokens[middle] as ClauseToken).start < position) low = middle + 1;
       else high = middle;
     }
     return low;
   }
 
-  /**
-   * Whether a predicate lies in `[from, to)`: a whole predicate token, or the part before the claim of a token that
-   * runs into it (`부탁해서메일을`, judged on at most its last 12 characters). O(log n) per claim after one linear pass.
-   */
-  private predicateBetween(from: number, to: number): boolean {
+  /** For each token index, the first token at or after it whose scope end is at least weak / strong (right to left). */
+  private next(): { readonly weak: Int32Array; readonly strong: Int32Array } {
+    if (this.nextAt !== undefined) return this.nextAt;
     const tokens = this.tokens();
-    const first = this.firstTokenFrom(from);
-    const next = this.nextPredicateIndex(first);
-    const predicate = tokens[next];
-    if (predicate !== undefined && predicate.end <= to) return true;
-    const cut = tokens[this.firstTokenFrom(to) - 1];
-    if (cut === undefined || cut.start < from || cut.end <= to) return false;
-    return isPredicate(this.clause.slice(Math.max(cut.start, to - 12), to));
+    const weak = new Int32Array(tokens.length + 1);
+    const strong = new Int32Array(tokens.length + 1);
+    weak[tokens.length] = tokens.length;
+    strong[tokens.length] = tokens.length;
+    for (let index = tokens.length - 1; index >= 0; index -= 1) {
+      const scope = (tokens[index] as ClauseToken).scope;
+      weak[index] = scope >= WEAK ? index : (weak[index + 1] as number);
+      strong[index] = scope === STRONG ? index : (strong[index + 1] as number);
+    }
+    this.nextAt = { weak, strong };
+    return this.nextAt;
   }
 
-  private nextPredicate: Int32Array | undefined;
-
-  /** The index of the first predicate token at or after `index` (computed once, right to left). */
-  private nextPredicateIndex(index: number): number {
+  /**
+   * The strongest scope end in `[from, to)`: whole tokens, and the part before the claim of a token that runs into it
+   * (`부탁하셔서메일을`, judged on at most its last 12 characters). O(log n) per claim after one linear pass.
+   */
+  private scopeBetween(from: number, to: number): ScopeEnd {
     const tokens = this.tokens();
-    if (this.nextPredicate === undefined) {
-      const next = new Int32Array(tokens.length + 1);
-      next[tokens.length] = tokens.length;
-      for (let position = tokens.length - 1; position >= 0; position -= 1) {
-        next[position] = (tokens[position] as { predicate: boolean }).predicate ? position : (next[position + 1] as number);
-      }
-      this.nextPredicate = next;
+    const first = this.firstTokenFrom(from);
+    const { weak, strong } = this.next();
+    const inside = (index: number): boolean => index < tokens.length && (tokens[index] as ClauseToken).end <= to;
+    let scope: ScopeEnd = inside(strong[first] as number) ? STRONG : inside(weak[first] as number) ? WEAK : NONE;
+    const cut = tokens[this.firstTokenFrom(to) - 1];
+    if (scope !== STRONG && cut !== undefined && cut.start >= from && cut.end > to) {
+      const part = scopeEnd(this.clause.slice(Math.max(cut.start, to - 12), to), this.clause.slice(to, to + 4));
+      if (part > scope) scope = part;
     }
-    return this.nextPredicate[index] as number;
+    return scope;
   }
 
   /**
    * Whether the claim at `claimAt` is exempt: the NEAREST real subject BEFORE it names someone other than Quoky
    * (`김철수가 메일을 보냈어요`). Fail closed (sign-off item 3): a Quoky stand-in subject anywhere before the claim in the
    * clause means no exemption (`제가 김철수가 요청한 답장을 보냈어요`); a subject after the claim, an adverb or a generic
-   * noun never exempts. v5 narrows it further: the subject must govern the claim's own verb (no predicate between them,
-   * gap 2), and an honorific subject never exempts a humble benefactive claim.
+   * noun never exempts. v5 narrows it further (gap 2): a strong scope end between the subject and the claim, or a weak
+   * one before a humble benefactive claim, means the subject is not the claim's; an honorific subject never exempts a
+   * humble benefactive claim.
    */
   exempt(claimAt: number, claim: string): boolean {
     const subjects = this.subjects();
@@ -421,11 +467,11 @@ class ClauseReading {
     if (low === 0) return false;
     if (this.firstStandInEnd() < claimAt) return false;
     const nearest = subjects[low - 1] as ClauseSubject;
-    if (this.predicateBetween(nearest.end, claimAt)) return false;
-    return !(nearest.honorific && KO_HUMBLE_BENEFACTIVE.test(claim));
+    const humble = KO_HUMBLE_BENEFACTIVE.test(claim);
+    const scope = this.scopeBetween(nearest.end, claimAt);
+    if (scope === STRONG || (scope === WEAK && humble)) return false;
+    return !(nearest.honorific && humble);
   }
-
-  private standInEnd: number | undefined;
 
   private firstStandInEnd(): number {
     if (this.standInEnd === undefined) {
@@ -439,13 +485,17 @@ const KO_MAIL_CLAIMS_ALL = KO_CLAIMS.map((pattern) => new RegExp(pattern.source,
 const KO_DRIVE_CLAIMS_ALL = [...KO_CLAIMS, ...KO_DRIVE_CLAIMS].map((pattern) => new RegExp(pattern.source, `${pattern.flags}g`));
 
 /**
- * A Korean clause claims an action when ANY match of ANY claim pattern is neither reported speech nor exempt (review
- * P1: an exempt early match must not hide a later one, `김철수가 메일을 보냈어요, 답장도 보내 드렸어요`).
+ * A Korean clause claims an action when ANY match of ANY claim pattern is neither reported speech nor exempt. Matches
+ * may overlap (CA re-review P1): after each match the search resumes one character after its start, so a wider exempt
+ * match that starts earlier (`메일을 저가 답장을 보내줬`) cannot swallow the claim inside it (`답장을 보내줬`, after the
+ * stand-in `저가`). Every pattern's repetition is bounded, so each match is short and the loop stays linear.
  */
 function koreanClaim(clause: string, source: UntrustedDocumentSource, standInInScope: () => boolean): boolean {
   const reading = new ClauseReading(clause, source);
   for (const pattern of source === 'drive' ? KO_DRIVE_CLAIMS_ALL : KO_MAIL_CLAIMS_ALL) {
-    for (const match of clause.matchAll(pattern)) {
+    pattern.lastIndex = 0;
+    for (let match = pattern.exec(clause); match !== null; match = pattern.exec(clause)) {
+      pattern.lastIndex = match.index + 1;
       if (reportedAt(clause, match.index + match[0].length)) continue;
       if (!standInInScope() && reading.exempt(match.index, match[0])) continue;
       return true;
@@ -522,44 +572,55 @@ const EN_BARE_DRIVE = enBareParticiple(
 );
 const EN_YOUR_REPLY_PASSIVE = enYourReplyPassive(EN_MAIL_VERBS);
 
-/** Heading words that are not a person (`Summary:`, `Done:`), and Quoky's own possessive (`My email:`). */
+/** First words of a heading that are not a person (`Summary:`, `Next steps:`, `The sender:`) or are Quoky's own. */
 const EN_HEADING_NOT_A_PERSON =
-  /^(?:i|we|me|my|our|us|quoky|assistant|the\s+assistant|done|ok|okay|summary|status|update|updates|action|actions|action\s+items|result|results|note|notes|next\s+steps|today|to-?do|reply|answer|response|요약|결과|완료)$/iu;
+  /^(?:i|we|me|my|our|us|quoky|assistant|the|this|that|these|those|here|done|ok|okay|summary|status|update|updates|action|actions|result|results|note|notes|next|key|main|highlights|today|todo|reply|answer|response|thread|email|message|subject|from|to|re|fwd|tl|요약|결과|완료|다음|참고|정리)$/iu;
+const HEADING_NAME = /^(?:[-*•>#]+\s*)?(\p{Lu}[\p{L}.-]{0,30}|[가-힣]{2,5})/u;
 
-/** A heading line that names a third party: `Kim's email:`, `Kim Lee:`, `김철수:`, `김철수 님의 메일:`. */
+/**
+ * A heading line that names a third party (CA re-review): any line ending in `:` whose first word is a name, not a
+ * heading word or Quoky (`Kim's email:`, `Kim wrote:`, `Kim (Sales):`, `Kim's update:`, `Kim — key points:`, `김철수:`).
+ */
 function thirdPartyHeading(line: string): boolean {
-  if (line.length > 120) return false;
-  const head = /^(?:[-*•>#]+\s*)?(.{1,60}?)\s*:$/u.exec(line)?.[1]?.trim();
-  if (head === undefined) return false;
-  const possessive =
-    /^(.{1,40}?)['’]s\s+(?:email|e-mail|mail|message|reply|note|thread)$/iu.exec(head)?.[1] ??
-    /^(.{1,20}?)(?:\s?님)?의\s?(?:메일|답장|회신|메시지)$/u.exec(head)?.[1];
-  const name =
-    possessive ??
-    (/^(?:\p{Lu}[\p{L}.'’-]{0,20}(?:\s+\p{Lu}[\p{L}.'’-]{0,20}){0,2}|[가-힣]{2,5}(?:\s?님)?)$/u.test(head) ? head : undefined);
-  return name !== undefined && !EN_HEADING_NOT_A_PERSON.test(name.trim());
+  if (line.length > 120 || !line.endsWith(':')) return false;
+  const name = HEADING_NAME.exec(line)?.[1];
+  return name !== undefined && !EN_HEADING_NOT_A_PERSON.test(name) && !QUOKY_NAME_WORD.test(name.toLowerCase());
 }
 
-/** The dropped-subject and bare-participle sentences, line by line, skipping bullets under a third-party heading. */
+/** An item attributed to a third party at its end: `Sent the contract to legal (Kim).`, `(by Kim Lee)`, `(김철수)`. */
+const EN_TRAILING_ATTRIBUTION =
+  /\((?:by\s+|from\s+|per\s+)?(\p{Lu}[\p{L}.'’-]{0,30}(?:\s+\p{Lu}[\p{L}.'’-]{0,30}){0,2}|[가-힣]{2,5}(?:\s?님)?)\)\s*[.!]?$/u;
+
+function attributedToThirdParty(line: string): boolean {
+  const name = EN_TRAILING_ATTRIBUTION.exec(line.length > 200 ? line.slice(-200) : line)?.[1];
+  if (name === undefined) return false;
+  const first = name.split(/\s/u)[0] ?? '';
+  return !EN_HEADING_NOT_A_PERSON.test(first) && !QUOKY_NAME_WORD.test(first.toLowerCase());
+}
+
+/**
+ * The dropped-subject and bare-participle sentences, line by line. Bullets under a third-party heading (blank lines
+ * keep the heading) and items attributed to a third party at their end are the third party's, not Quoky's.
+ */
 function droppedSubjectClaim(text: string): boolean {
   let thirdPartyBullets = false;
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
-    if (trimmed.length === 0) {
-      thirdPartyBullets = false;
-      continue;
-    }
+    if (trimmed.length === 0) continue;
     if (trimmed.endsWith(':')) {
       thirdPartyBullets = thirdPartyHeading(trimmed);
       continue;
     }
     const bullet = /^(?:[-*•>]|\d{1,3}[.)]\s)/u.test(trimmed);
     if (!bullet) thirdPartyBullets = false;
-    if (bullet && thirdPartyBullets) continue;
+    if ((bullet && thirdPartyBullets) || attributedToThirdParty(trimmed)) continue;
     if (sentences(trimmed).some((sentence) => EN_DROPPED_SUBJECT.test(sentence) || EN_BARE_DONE.test(sentence))) return true;
   }
   return false;
 }
+
+/** Clauses of an English sentence, so request framing must govern the passive's own clause (`As requested, here is …:`). */
+const EN_CLAUSE_SPLIT = /[:;—–]|\s-\s/u;
 
 function englishClaim(
   text: string,
@@ -573,9 +634,11 @@ function englishClaim(
   const passive = source === 'drive' ? EN_PASSIVE_DRIVE : EN_PASSIVE_MAIL;
   const bare = source === 'drive' ? EN_BARE_DRIVE : EN_BARE_MAIL;
   for (const sentence of all) {
-    const agentless = !EN_THIRD_PARTY_AGENT.test(sentence);
-    if (agentless && EN_ON_YOUR_BEHALF.test(sentence) && (passive.test(sentence) || bare.test(sentence))) return true;
-    if (agentless && passive.test(sentence) && actorInReply()) return true;
+    for (const clause of sentence.split(EN_CLAUSE_SPLIT)) {
+      if (EN_THIRD_PARTY_AGENT.test(clause) || !EN_ON_YOUR_BEHALF.test(clause)) continue;
+      if (passive.test(clause) || bare.test(clause)) return true;
+    }
+    if (!EN_THIRD_PARTY_AGENT.test(sentence) && passive.test(sentence) && actorInReply()) return true;
   }
   return droppedSubjectClaim(text);
 }
