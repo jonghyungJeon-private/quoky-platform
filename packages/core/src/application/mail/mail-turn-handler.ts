@@ -1,5 +1,6 @@
 import { nlFlagArg, nlLimitArg, nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
+import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlRangeLabel, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import type {
   ConversationTurnHandler,
@@ -37,7 +38,13 @@ import {
 } from '../last-listing';
 import type { SessionManager } from '../session-manager';
 import type { DeliveredTurn, TurnDeliveryObserver } from '../turn-delivery';
-import { buildUntrustedDocumentReadout } from '../untrusted-document-readout';
+import {
+  buildUntrustedDocumentReadout,
+  preparedBodyLength,
+  renderUntrustedDocumentFull,
+  untrustedDocumentFullHistoryNote,
+  type UntrustedDocumentReadout,
+} from '../untrusted-document-readout';
 import { parseMailQuestion, type MailLanguage, type MailQuestion } from './mail-question';
 import { buildMailThreadReadout } from './mail-thread-readout';
 import {
@@ -220,14 +227,18 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     return { grammarId: MAIL_LIST_GRAMMAR_ID, selection: mailGrammarSelection(question) };
   }
 
-  /** ADR-0120 D1: `mail.list`, offered whenever this handler is registered (Gmail is configured). */
-  readonly catalog: readonly NlCatalogEntry[] = Object.freeze([nlWave1Entry('mail.list')]);
+  /**
+   * ADR-0120 D1: `mail.list`, offered whenever this handler is registered (Gmail is configured). A6: `item.summarize`
+   * (offered by the runtime only while QUOKY_NL_ACTIONS allows).
+   */
+  readonly catalog: readonly NlCatalogEntry[] = Object.freeze([nlWave1Entry('mail.list'), nlActionEntry('item.summarize')]);
 
   /**
    * A validated `mail.list` selection (ADR-0120 interfaces): the same bounded listing as "안 읽은 메일" / "오늘 온 메일" /
    * "<보낸 사람> 메일", DM-only like every mail reply (ADR-0118 D5), no model.
    */
-  async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
+  async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerSummarizeReply | null> {
+    if (selected.entryId === 'item.summarize') return this.summarizeSelected(selected, ctx);
     if (selected.entryId !== 'mail.list') return null;
     const language: MailLanguage = selected.language;
     if (!isDirectConversation(ctx.message.context)) {
@@ -352,20 +363,41 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       return this.reply(ctx, outOfRange, 'RESPONDED', language, 'not-read');
     }
     if (question.scope === 'thread') return this.summarizeThread(ctx, id, language);
+    return this.summarizeMessage(ctx, id, language);
+  }
 
+  /** One listed message read by id and handed to the summary path (or refused); shared by the grammar and A6. */
+  private async summarizeMessage(ctx: TurnHandlerContext, id: string, language: MailLanguage): Promise<TurnHandlerReply | TurnHandlerSummarizeReply> {
+    const read = await this.readMessage(ctx, id, language);
+    if ('reply' in read) return read.reply;
+    this.log('info', 'mail.turn_handler.summarize', { truncated: read.readout.truncated });
+    return {
+      kind: 'summarize',
+      readout: read.readout,
+      fallbackText: renderMailSummaryUnavailable(language),
+      footer: renderMailSummaryFooter(language),
+    };
+  }
+
+  /** Read one message by id into the bounded, guarded readout, or the reply that says why not (nothing leaves the host). */
+  private async readMessage(
+    ctx: TurnHandlerContext,
+    id: string,
+    language: MailLanguage,
+  ): Promise<{ readonly reply: TurnHandlerReply } | { readonly readout: UntrustedDocumentReadout; readonly totalChars: number }> {
     let message: MailMessage;
     try {
       message = await this.withTimeout(this.deps.reader.getMessage(id));
     } catch (error) {
       const failure = failureOf(error);
       this.log('warn', 'mail.turn_handler.read_failed', { kind: 'summarize', reason: failure });
-      return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
+      return { reply: this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read') };
     }
     // GML-2 review rule: a body the reader could not hand over whole (empty and marked cut) was withheld before any guard
     // could read it; it is never summarized (and never called "empty").
     if (message.bodyText.trim().length === 0 && message.bodyTruncated) {
       this.log('info', 'mail.turn_handler.summary_refused', { refusal: 'WITHHELD' });
-      return this.reply(ctx, renderMailSummaryWithheld(language), 'RESPONDED', language, 'not-summarized');
+      return { reply: this.reply(ctx, renderMailSummaryWithheld(language), 'RESPONDED', language, 'not-summarized') };
     }
     const built = buildUntrustedDocumentReadout({
       source: 'mail',
@@ -377,14 +409,39 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     });
     if (!built.ok) {
       this.log('info', 'mail.turn_handler.summary_refused', { refusal: built.refusal });
-      return this.reply(ctx, renderMailSummaryRefused(built.refusal, language), 'RESPONDED', language, 'not-summarized');
+      return { reply: this.reply(ctx, renderMailSummaryRefused(built.refusal, language), 'RESPONDED', language, 'not-summarized') };
     }
-    this.log('info', 'mail.turn_handler.summarize', { truncated: built.readout.truncated });
+    return { readout: built.readout, totalChars: preparedBodyLength(message.bodyText) };
+  }
+
+  /**
+   * ADR-0120 amendment A6 `item.summarize` (source mail), the target resolved by Core against the most recent listing:
+   * `summary` is the existing summary path by id (thread with GML-2), `full` the owner-facing full text in PLT-1 untrusted
+   * spans with NO model call (ratification record C). DM-only; the item text is never stored.
+   */
+  private async summarizeSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerSummarizeReply | null> {
+    const id = selected.target?.id;
+    if (selected.target?.source !== 'mail' || id === undefined) return null;
+    const language: MailLanguage = selected.language;
+    if (!isDirectConversation(ctx.message.context)) {
+      this.log('info', 'mail.turn_handler.dm_only', { kind: 'item' });
+      return this.reply(ctx, renderMailDmOnly(language), 'RESPONDED', language, 'not-read');
+    }
+    const mode = nlStringArg(selected.args, 'mode');
+    if (nlStringArg(selected.args, 'scope') === 'thread') {
+      // A thread has no full-text view: the owner asked for its summary or its content, and GML-2 summarizes it.
+      return this.summarizeThread(ctx, id, language);
+    }
+    if (mode !== 'full') return this.summarizeMessage(ctx, id, language);
+    const read = await this.readMessage(ctx, id, language);
+    if ('reply' in read) return read.reply;
+    this.log('info', 'mail.turn_handler.full_text', { truncated: read.readout.truncated });
+    const shown = selected.target.label;
+    const label = shown === undefined ? (language === 'en' ? 'that mail' : '그 메일') : language === 'en' ? `mail #${shown}` : `메일 ${shown}번`;
     return {
-      kind: 'summarize',
-      readout: built.readout,
-      fallbackText: renderMailSummaryUnavailable(language),
-      footer: renderMailSummaryFooter(language),
+      reply: outboundMessage(ctx.message.context, renderUntrustedDocumentFull(read.readout, { language, label, totalChars: read.totalChars }), { replyToMessageId: ctx.message.id }),
+      status: 'RESPONDED',
+      history: { assistant: untrustedDocumentFullHistoryNote(language) },
     };
   }
 

@@ -455,3 +455,60 @@ export function renderUntrustedDocumentReplyWithheld(language: 'ko' | 'en'): str
     ? 'The summary looked like it contained a secret, so it was not shown or saved.'
     : '요약에 비밀값처럼 보이는 내용이 있어 보여 드리지 않았고 저장하지도 않았어요.';
 }
+
+// ── ADR-0120 amendment A6, ratification record C: the owner-facing full text (`item.summarize` mode `full`) ─────────
+
+/**
+ * The bound of the full-text reply in code points (the readout's body bound plus the fixed lines). The platform adapters
+ * split a long reply losslessly into messages of their own size, so this is the only length rule here.
+ */
+export const UNTRUSTED_DOCUMENT_FULL_MAX_CHARS = UNTRUSTED_DOCUMENT_BODY_MAX_CHARS + 600;
+
+export interface UntrustedDocumentFullOptions {
+  readonly language: 'ko' | 'en';
+  /** The item as the owner saw it in the list ("메일 1번"); fixed Quoky copy, never item text. */
+  readonly label: string;
+  /** The length of the whole prepared body before the clip (the "전체 N자" note). */
+  readonly totalChars?: number;
+}
+
+/**
+ * Record C `full`: the readout rendered to the OWNER (no model ever sees it). It reuses the readout exactly: normalized,
+ * link-neutralized, credential-guarded (a credential-shaped item was already withheld by the builder) and clipped to the
+ * body bound. Every item field is a PLT-1 untrusted span with the strictest guard (`markup`: formatting, mentions and
+ * links neutralized), so a hostile body can neither break out of its span nor carry a live link. A truncation note says
+ * that only the beginning is shown. Pure.
+ */
+export function renderUntrustedDocumentFull(readout: UntrustedDocumentReadout, options: UntrustedDocumentFullOptions): MessageBody {
+  if (!isSummarizableDocumentReadout(readout)) {
+    return options.language === 'en' ? 'I could not show that item safely, so I did not show it.' : '그 항목은 안전하게 보여 드릴 수 없어서 보여 드리지 않았어요.';
+  }
+  const en = options.language === 'en';
+  const head = en ? `Full text of ${options.label} (shown as is, no summary):` : `${options.label} 원문이에요 (요약 없이 그대로):`;
+  const parts: Array<string | ReturnType<typeof untrustedText>> = [head, '\n'];
+  if (readout.title.length > 0) parts.push(en ? 'Title: ' : '제목: ', untrustedText(readout.title), '\n');
+  if (readout.author.length > 0) parts.push(en ? 'From: ' : '보낸 사람: ', untrustedText(readout.author), '\n');
+  parts.push('\n', untrustedText(readout.body));
+  if (readout.truncated) {
+    const total = options.totalChars !== undefined && options.totalChars > 0 ? options.totalChars : undefined;
+    parts.push(
+      '\n\n',
+      en
+        ? `Only part is shown: the beginning and the end${total !== undefined ? ` (${total} characters in total)` : ''}.`
+        : `앞부분과 끝부분만 보여드려요${total !== undefined ? ` (전체 ${total}자)` : ''}.`,
+    );
+  }
+  return messageBody(clipMessage(messageBody(...parts), UNTRUSTED_DOCUMENT_FULL_MAX_CHARS, 'code-points'));
+}
+
+/** What SHORT_TERM history keeps instead of a full-text reply (the item text never reaches a later prompt). */
+export function untrustedDocumentFullHistoryNote(language: 'ko' | 'en'): string {
+  return language === 'en'
+    ? '[Quoky showed the full text of one listed item; its content is not kept in the conversation history.]'
+    : '[항목 원문 응답 — 내용은 대화 기록에 남기지 않아요.]';
+}
+
+/** The length of a body after the readout's preparation (before its clip), for the "전체 N자" note. */
+export function preparedBodyLength(body: string): number {
+  return Array.from(prepareUntrustedBody(body)).length;
+}

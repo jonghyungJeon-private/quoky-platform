@@ -1,5 +1,6 @@
 import { nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlSelectedCommand } from '../nl-routing/catalog';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
+import { nlActionEntry } from '../nl-routing/action-entries';
 import type {
   ConversationTurnHandler,
   TurnHandlerContext,
@@ -27,7 +28,13 @@ import { isDirectConversation, outboundMessage } from '../message-rendering';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { persistListing, readPersistedListing } from '../last-listing';
 import type { SessionManager } from '../session-manager';
-import { buildUntrustedDocumentReadout } from '../untrusted-document-readout';
+import {
+  buildUntrustedDocumentReadout,
+  preparedBodyLength,
+  renderUntrustedDocumentFull,
+  untrustedDocumentFullHistoryNote,
+  type UntrustedDocumentReadout,
+} from '../untrusted-document-readout';
 import { parseDriveQuestion, type DriveLanguage, type DriveQuestion, type DriveSummaryTarget } from './drive-question';
 import {
   renderDriveDmOnly,
@@ -180,14 +187,18 @@ export class DriveTurnHandler implements ConversationTurnHandler {
     return { grammarId: DRIVE_LIST_GRAMMAR_ID, selection: { entryId: 'drive.files', args: question.kind === 'search' ? { name: question.name } : {} } };
   }
 
-  /** ADR-0120 D1: `drive.files`, offered whenever this handler is registered (Drive is configured). */
-  readonly catalog: readonly NlCatalogEntry[] = Object.freeze([nlWave1Entry('drive.files')]);
+  /**
+   * ADR-0120 D1: `drive.files`, offered whenever this handler is registered (Drive is configured). A6: `item.summarize`
+   * (offered by the runtime only while QUOKY_NL_ACTIONS allows).
+   */
+  readonly catalog: readonly NlCatalogEntry[] = Object.freeze([nlWave1Entry('drive.files'), nlActionEntry('item.summarize')]);
 
   /**
    * A validated `drive.files` selection (ADR-0120 interfaces): the same bounded recent-files or name-search listing,
    * DM-only like every Drive reply (ADR-0118 D5), no model.
    */
-  async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
+  async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerSummarizeReply | null> {
+    if (selected.entryId === 'item.summarize') return this.summarizeSelected(selected, ctx);
     if (selected.entryId !== 'drive.files') return null;
     const language: DriveLanguage = selected.language;
     if (!isDirectConversation(ctx.message.context)) {
@@ -245,9 +256,76 @@ export class DriveTurnHandler implements ConversationTurnHandler {
     if (file === undefined) {
       return this.reply(ctx, renderDriveSummaryOutOfRange(index, files.length, language), 'RESPONDED', language, 'not-read');
     }
+    const read = await this.readFile(ctx, file, language);
+    if ('reply' in read) return read.reply;
+    this.log('info', 'drive.turn_handler.summarize', {
+      truncated: read.readout.truncated,
+      sections: read.sections,
+      ...(read.firstSheetOnly !== undefined ? { firstSheetOnly: read.firstSheetOnly } : {}),
+    });
+    return {
+      kind: 'summarize',
+      readout: read.readout,
+      fallbackText: renderDriveSummaryUnavailable(language),
+      footer: renderDriveSummaryFooter(language, read.firstSheetOnly, this.deps.copy, read.hiddenSheets),
+    };
+  }
+
+  /**
+   * ADR-0120 amendment A6 `item.summarize` (source drive), the target resolved by Core against the most recent listing:
+   * `summary` is the existing summary path by id (DRV-2b sheets included), `full` the owner-facing full text in PLT-1
+   * untrusted spans with NO model call (ratification record C). DM-only; the item text is never stored.
+   */
+  private async summarizeSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerSummarizeReply | null> {
+    const id = selected.target?.id;
+    if (selected.target?.source !== 'drive' || id === undefined) return null;
+    const language: DriveLanguage = selected.language;
+    if (!isDirectConversation(ctx.message.context)) {
+      this.log('info', 'drive.turn_handler.dm_only', { kind: 'item' });
+      return this.reply(ctx, renderDriveDmOnly(language), 'RESPONDED', language, 'not-read');
+    }
+    // The in-memory listing still knows the kind; a persisted one has ids only (the adapter re-checks at export).
+    const kind = this.currentListing(ctx)?.files.find((file) => file.id === id)?.kind;
+    const file = { id, ...(kind !== undefined ? { kind } : {}) };
+    const read = await this.readFile(ctx, file, language);
+    if ('reply' in read) return read.reply;
+    if (nlStringArg(selected.args, 'mode') !== 'full') {
+      this.log('info', 'drive.turn_handler.summarize', { truncated: read.readout.truncated, sections: read.sections });
+      return {
+        kind: 'summarize',
+        readout: read.readout,
+        fallbackText: renderDriveSummaryUnavailable(language),
+        footer: renderDriveSummaryFooter(language, read.firstSheetOnly, this.deps.copy, read.hiddenSheets),
+      };
+    }
+    this.log('info', 'drive.turn_handler.full_text', { truncated: read.readout.truncated, sections: read.sections });
+    const shown = selected.target.label;
+    const label = shown === undefined ? (language === 'en' ? 'that file' : '그 파일') : language === 'en' ? `file #${shown}` : `파일 ${shown}번`;
+    return {
+      reply: outboundMessage(ctx.message.context, renderUntrustedDocumentFull(read.readout, { language, label, totalChars: read.totalChars }), { replyToMessageId: ctx.message.id }),
+      status: 'RESPONDED',
+      history: { assistant: untrustedDocumentFullHistoryNote(language) },
+    };
+  }
+
+  /** One file read by id into the bounded, guarded readout, or the reply that says why not (nothing leaves the host). */
+  private async readFile(
+    ctx: TurnHandlerContext,
+    file: { readonly id: string; readonly kind?: DriveFileKind },
+    language: DriveLanguage,
+  ): Promise<
+    | { readonly reply: TurnHandlerReply }
+    | {
+        readonly readout: UntrustedDocumentReadout;
+        readonly totalChars: number;
+        readonly sections: number;
+        readonly firstSheetOnly?: ReturnType<typeof firstSheetOnlyOf>;
+        readonly hiddenSheets: ReturnType<typeof hiddenSheetsOf>;
+      }
+  > {
     if (file.kind !== undefined && !isDriveTextExportable(file.kind)) {
       this.log('info', 'drive.turn_handler.not_text', { kind: file.kind });
-      return this.reply(ctx, renderDriveSummaryNotText(file.kind, language), 'RESPONDED', language, 'not-read');
+      return { reply: this.reply(ctx, renderDriveSummaryNotText(file.kind, language), 'RESPONDED', language, 'not-read') };
     }
 
     let document: DriveDocument;
@@ -258,9 +336,9 @@ export class DriveTurnHandler implements ConversationTurnHandler {
       this.log('warn', 'drive.turn_handler.read_failed', { kind: 'summarize', reason: failure });
       // The adapter re-checks the kind at export time; a file that changed kind since the listing is not text.
       if (failure === 'UNSUPPORTED_QUERY') {
-        return this.reply(ctx, renderDriveSummaryNotText('other', language), 'RESPONDED', language, 'not-read');
+        return { reply: this.reply(ctx, renderDriveSummaryNotText('other', language), 'RESPONDED', language, 'not-read') };
       }
-      return this.reply(ctx, renderDriveReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
+      return { reply: this.reply(ctx, renderDriveReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read') };
     }
     const built = buildUntrustedDocumentReadout({
       source: 'drive',
@@ -284,23 +362,23 @@ export class DriveTurnHandler implements ConversationTurnHandler {
     // not be recognizable, so the whole item is withheld here, before anything leaves the host.
     if (document.credentialShaped === true) {
       this.log('info', 'drive.turn_handler.summary_refused', { refusal: 'CREDENTIAL_SHAPED', source: 'adapter' });
-      return this.reply(ctx, renderDriveSummaryRefused('CREDENTIAL_SHAPED', language), 'RESPONDED', language, 'not-summarized');
+      return { reply: this.reply(ctx, renderDriveSummaryRefused('CREDENTIAL_SHAPED', language), 'RESPONDED', language, 'not-summarized') };
     }
     if (!built.ok) {
       this.log('info', 'drive.turn_handler.summary_refused', { refusal: built.refusal });
-      return this.reply(ctx, renderDriveSummaryRefused(built.refusal, language), 'RESPONDED', language, 'not-summarized');
+      return { reply: this.reply(ctx, renderDriveSummaryRefused(built.refusal, language), 'RESPONDED', language, 'not-summarized') };
     }
-    const firstSheetOnly = isFirstSheetOnlyReason(document.firstSheetOnly) ? document.firstSheetOnly : undefined;
-    this.log('info', 'drive.turn_handler.summarize', {
-      truncated: built.readout.truncated,
+    const firstSheetOnly = firstSheetOnlyOf(document.firstSheetOnly);
+    const totalChars =
+      Array.isArray(document.sections) && document.sections.length > 0
+        ? document.sections.reduce((sum, section) => sum + preparedBodyLength(section.text), 0)
+        : preparedBodyLength(document.text);
+    return {
+      readout: built.readout,
+      totalChars,
       sections: Array.isArray(document.sections) ? Math.min(document.sections.length, DRIVE_SHEETS_MAX) : 0,
       ...(firstSheetOnly !== undefined ? { firstSheetOnly } : {}),
-    });
-    return {
-      kind: 'summarize',
-      readout: built.readout,
-      fallbackText: renderDriveSummaryUnavailable(language),
-      footer: renderDriveSummaryFooter(language, firstSheetOnly, this.deps.copy, hiddenSheetsOf(document.hiddenSheetsSkipped)),
+      hiddenSheets: hiddenSheetsOf(document.hiddenSheetsSkipped),
     };
   }
 
@@ -404,4 +482,9 @@ function hiddenSheetsOf(value: unknown): number {
 /** A closed reason only: an adapter value outside the list adds no note. */
 function isFirstSheetOnlyReason(value: unknown): value is DriveFirstSheetOnlyReason {
   return typeof value === 'string' && (DRIVE_FIRST_SHEET_ONLY_REASONS as readonly string[]).includes(value);
+}
+
+/** The DRV-2b first-sheet-only reason when it is one of the closed values. */
+function firstSheetOnlyOf(value: unknown) {
+  return isFirstSheetOnlyReason(value) ? value : undefined;
 }
