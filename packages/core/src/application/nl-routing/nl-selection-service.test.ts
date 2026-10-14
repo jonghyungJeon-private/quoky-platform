@@ -734,6 +734,24 @@ describe('ADR-0120 A5 implementation note 2: a period that loses the owner\'s we
     expect(h.calls).toHaveLength(2);
   });
 
+  it('a weekday refusal with a valid alternative keeps the weekday hint above the numbered options (Codex P2)', async () => {
+    const h = harness({
+      script: [out('calendar.events', { range: 'next-mon' }, { ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'calendar.events', args: { range: 'next-wed' } }] })],
+    });
+    const asked = await h.decide('다음 주 수 일정 있어?');
+    expect(asked).toMatchObject({ kind: 'ask' });
+    const text = (asked as { text: string }).text;
+    expect(text.startsWith('캘린더 일정 조회에서 어느 날을 볼지 정확히 모르겠어요. "다음 주 수요일"처럼 주와 요일을 함께 말씀해 주세요.\n')).toBe(true);
+    expect(text).toContain('1. ');
+    expect(text).not.toContain('2. ');
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeDefined();
+    // Without a weekday refusal the numbered question is unchanged.
+    const plain = harness({
+      script: [out('calendar.events', { range: 'tomorrow' }, { ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'jira.issues', args: {} }] })],
+    });
+    expect((await plain.decide('내일 일정 알려줘')) as { text: string }).toMatchObject({ text: expect.stringMatching(/^어떤 걸 찾으세요\?\n/) });
+  });
+
   it('a refused time keyword without a weekday form keeps the usage question, even when the message names the day', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'next-wed', keyword: '오후' })] });
     const asked = await h.decide('다음 주 수요일 오후 일정');
