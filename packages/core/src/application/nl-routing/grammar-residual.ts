@@ -23,14 +23,15 @@ const PARTICLE_ONLY = new RegExp(`^(?:${PARTICLES})+$`, 'u');
  * here, with no phrase listed.
  */
 const REQUEST_STEM = '(?:알려|보여|확인해|확인|조회해|조회|정리해|정리|말해|찾아|찾아봐|검색해|브리핑해|요약해|가르쳐|해|봐|보)';
-const GIVE = '(?:주|드리|드려|줘)';
+// 줄/드릴: the adnominal form before a dependent noun ("알려줄 수 있어").
+const GIVE = '(?:주|줄|드리|드릴|드려|줘)';
 const REQUEST_END =
-  '(?:|시|세요|십시오|시오|실래요?|실래|시겠어요|시겠습니까|시겠나요|시나요|시는지|실수|줘요?|줄래요?|줄까요?|주라|라|래요?|ㄹ래요?|' +
+  '(?:|시|실|세요|십시오|시오|실래요?|실래|시겠어요|시겠습니까|시겠나요|시나요|시는지|실수|줘요?|줄래요?|줄까요?|주라|라|래요?|ㄹ래요?|' +
   '드릴까요|드릴게요|드릴래요|드립니다|드리겠습니다|드려요|립니다|릴까요|릴게요|겠어요|겠습니다|겠습니까|어요|아요|해요|해|요|ㅂ니다|습니다|습니까|ㅂ니까|니까|나요|ㄹ까요)';
 const REQUEST_VERBAL = new RegExp(`^${REQUEST_STEM}${GIVE}?${REQUEST_END}$`, 'u');
 const EXIST_STEM = '(?:있|없|되|돼|맞|아니|아닌|이|였|하)';
 const EXIST_END =
-  '(?:|어|어요|아요|네|네요|죠|지|지요|군요|습니다|습니까|ㅂ니다|ㅂ니까|니까|나요|나|니|냐|는지|는가|은가|ㄴ가|ㄴ가요|을까요?|ㄹ까요?|을지|을텐데|' +
+  '(?:|어|어요|아요|는|네|네요|죠|지|지요|군요|습니다|습니까|ㅂ니다|ㅂ니까|니까|나요|나|니|냐|는지|는가|은가|ㄴ가|ㄴ가요|을까요?|ㄹ까요?|을지|을텐데|' +
   '는데|던가요?|었어요?|었나요?|었나|었지요?|었습니까|었습니다|았어요?|았나요?|았나|였어요?|였나요?|였나|였지요?|시나요|시나|세요|십니까|실까요|으세요|으십니까|으시나요|으신가요|으신지|으실까요|으시죠)';
 const EXIST_VERBAL = new RegExp(`^${EXIST_STEM}${EXIST_END}$`, 'u');
 /** Interrogative and copula endings that follow a wh-word or an agenda word ("뭐예요", "언제죠", "몇 시입니까"). */
@@ -39,23 +40,48 @@ const WH_VERBAL = new RegExp(`^(?:뭐|뭘|뭔|무엇|언제|몇|시|개|건|어�
 
 /** Korean closed-class words: interrogatives, request verbs and endings, existence and state endings, first person, fillers. */
 const KO_FUNCTION =
-  /^(?:나|내|제|저|저의|나의|우리|좀|뭐|뭘|뭐가|뭐야|뭐예요|뭐에요|뭐지|뭐였어|뭐였지|뭔지|무엇|무슨|어떤|어떻게|어때|어때요|돼|돼요|되나|되니|될까|되는지|많이|계속|몇|몇개|몇시|시야|시예요|개|개야|개예요|언제|언제야|언제예요|있어|있어요|있나|있나요|있니|있는지|있을까|있을텐데|있었지|있었어|있었나|있었어요|없어|없나|없니|없어요|알려줘|알려줘요|알려줄래|알려줄래요|알려주세요|알려|알려줄|보여줘|보여줘요|보여줄래|보여주세요|보여|확인|확인해줘|확인해주세요|확인해|조회|조회해줘|정리|정리해줘|정리해주세요|목록|리스트|줘|줘요|주세요|줄래|줄래요|해줘|해주세요|해|보기|봐|봐줘|있다|없다|맞아|맞나|그럼|그러면|그리고|근데|혹시|그냥|한번|다시|안녕|쿼키|쿼키야)$/u;
+  /^(?:나|내|제|저|저의|나의|우리|좀|뭐|뭘|뭐가|뭐야|뭐예요|뭐에요|뭐지|뭐였어|뭐였지|뭔지|무엇|무슨|어떤|어떻게|어때|어때요|돼|돼요|되나|되니|될까|되는지|많이|계속|몇|몇개|몇시|시야|시예요|개|개야|개예요|언제|언제야|언제예요|있어|있어요|있나|있나요|있니|있는지|있을까|있을텐데|있었지|있었어|있었나|있었어요|없어|없나|없니|없어요|알려줘|알려줘요|알려줄래|알려줄래요|알려주세요|알려|보여줘|보여줘요|보여줄래|보여주세요|보여|확인|확인해줘|확인해주세요|확인해|조회|조회해줘|정리|정리해줘|정리해주세요|목록|리스트|줘|줘요|주세요|줄래|줄래요|해줘|해주세요|해|보기|봐|봐줘|있다|없다|맞아|맞나|그럼|그러면|그리고|근데|혹시|그냥|한번|다시|안녕|쿼키|쿼키야)$/u;
 
 /**
- * The closed one-syllable classes (A2 implementation note 2): degree and frequency adverbs ("다 보여줘", "또 뭐 있어",
- * "좀 더", "꼭") and dependent nouns ("알려줄 수 있어", "남은 거", "할 때"). A one-syllable word outside these classes is
- * content ("할 일 앱 알려줘"). The negating adverbs 안/못 are not here: they change the meaning.
+ * The closed one-syllable degree and frequency adverbs (A2 implementation note 2): "다 보여줘", "또 보여줘", "더", "꼭". A
+ * one-syllable word outside the closed classes is content ("할 일 앱 알려줘"). The negating 안/못 are not here: they change
+ * the meaning. (좀 is in {@link KO_FUNCTION}.)
  */
-const ONE_SYLLABLE_ADVERB = '다|또|더|꼭|잘|딱|좀|막|곧|늘|참|꽤|퍽|쭉|확|싹|푹';
-const DEPENDENT_NOUN = '수|줄|데|거|것|게|건|걸|바|뿐|때|듯|채|지|등';
-const ONE_SYLLABLE_FUNCTION = new RegExp(`^(?:${ONE_SYLLABLE_ADVERB}|${DEPENDENT_NOUN})$`, 'u');
+const ONE_SYLLABLE_ADVERB = /^(?:다|또|더|꼭|잘|딱|막|곧|늘|참|꽤|퍽|쭉|확|싹|푹)$/u;
 
 /**
- * What may be glued to a removed vocabulary word and still be that word's morphology, not a word of its own: the plural
- * 들, particles and copula endings ({@link PARTICLE_ONLY}), and verbal endings left when a request or existence stem is
- * removed ("뭐 있|어", "있|어요"). Anything else glued on ("할일|앱") is content.
+ * Dependent nouns (수, 줄, 데, 거, 것, …) are grammar only after an adnominal word, a morphology rule rather than a list of
+ * phrases: the previous word ends in ㄴ or ㄹ ("알려줄 수", "남은 거", "있는 데"). Elsewhere the syllable is content ("다음 주
+ * 수 일정": 수 = 수요일).
  */
-const GLUED_ENDING = new RegExp(`^(?:들|${PARTICLES}|어|아|어요|아요|요|죠|지|네|니|나|냐|다|습니다|ㅂ니다|나요|니까)+$`, 'u');
+const DEPENDENT_NOUN_WORD = new RegExp(`^(?:수|줄|데|거|것|게|건|걸|바|뿐|때|듯|채|지|등)(?:${PARTICLES})?[?？.!~]*$`, 'u');
+function endsInAdnominal(word: string): boolean {
+  const last = word.replace(/[^\p{Script=Hangul}]+$/u, '').at(-1);
+  if (last === undefined) return false;
+  const code = last.charCodeAt(0) - 0xac00;
+  if (code < 0 || code > 11171) return false;
+  const final = code % 28;
+  return final === 4 || final === 8; // ㄴ or ㄹ
+}
+function withoutBoundDependentNouns(text: string): string {
+  const parts = text.split(/(\s+)/u);
+  let previous = '';
+  return parts
+    .map((part) => {
+      if (/^\s*$/u.test(part)) return part;
+      const bound = DEPENDENT_NOUN_WORD.test(part) && endsInAdnominal(previous);
+      previous = part;
+      return bound ? ' ' : part;
+    })
+    .join('');
+}
+
+/**
+ * What may follow a removed vocabulary word inside the same token and still be its morphology, in order: a noun's plural
+ * and ONE particle or copula ending ("할 일들을", "할일이랑", "이슈들"), or one verbal ending left by a removed stem ("뭐
+ * 있|어"). Particles may not repeat ("할일만나" is content), and nothing before the grammar word is morphology ("아이할일").
+ */
+const GLUED_SUFFIX = new RegExp(`^(?:들?(?:${PARTICLES})?|어|아|어요|아요|요|죠|지|네|니|나|냐|다|습니다|ㅂ니다|나요|니까)$`, 'u');
 
 const EN_FUNCTION = new Set([
   'a', 'an', 'the', 'my', 'me', 'i', 'we', 'our', 'do', 'does', 'did', 'have', 'has', 'had', 'am', 'are', 'is', 'was', 'were', 'be', 'been', 'will',
@@ -79,7 +105,7 @@ function isContentToken(token: string): boolean {
     return (
       !PARTICLE_ONLY.test(token) &&
       !KO_FUNCTION.test(token) &&
-      !ONE_SYLLABLE_FUNCTION.test(token) &&
+      !ONE_SYLLABLE_ADVERB.test(token) &&
       !REQUEST_VERBAL.test(token) &&
       !EXIST_VERBAL.test(token) &&
       !WH_VERBAL.test(token)
@@ -87,6 +113,11 @@ function isContentToken(token: string): boolean {
   }
   if (token.length < 2) return false;
   return !EN_FUNCTION.has(token);
+}
+
+/** A closed-class word other than a particle run (a glued fragment may not be a free run of particles). */
+function isClosedWord(token: string): boolean {
+  return KO_FUNCTION.test(token) || ONE_SYLLABLE_ADVERB.test(token) || REQUEST_VERBAL.test(token) || EXIST_VERBAL.test(token) || WH_VERBAL.test(token);
 }
 
 /** What an expressed match is replaced with: a non-letter that keeps the fragments around it in one token. */
@@ -98,21 +129,29 @@ const REMOVED = '\u0001';
  * message. Pure.
  */
 export function unexpressedContentWords(text: string, expressed: readonly RegExp[]): string[] {
-  let rest = stripMarks(text);
+  let rest = withoutBoundDependentNouns(stripMarks(text));
   for (const pattern of expressed) {
     const flags = pattern.flags.replace(/[gy]/gu, '');
-    rest = rest.replace(new RegExp(pattern.source, `${flags}g`), REMOVED);
+    // The whitespace a match swallowed stays, so only fragments really glued to the match share its token.
+    rest = rest.replace(new RegExp(pattern.source, `${flags}g`), (match) => `${/^\s*/u.exec(match)?.[0] ?? ''}${REMOVED}${/\s*$/u.exec(match)?.[0] ?? ''}`);
   }
   const out: string[] = [];
   for (const token of rest.split(/[^\p{L}\p{N}'’\u0001-]+/u)) {
-    // A fragment glued to an expressed word is that word's morphology only when it is a closed ending ("들" after "이슈",
-    // "어" after "뭐 있"); anything else glued on ("할일앱") is a word like any other.
-    const glued = token.includes(REMOVED);
-    for (const piece of token.split(REMOVED)) {
+    // Inside a token that held an expressed word: a fragment AFTER it is morphology only when it is one closed suffix
+    // (`GLUED_SUFFIX`) or a closed word; a fragment BEFORE it ("아이할일") is a word of its own. A token with no expressed
+    // word is judged as a whole.
+    const pieces = token.split(REMOVED);
+    pieces.forEach((piece, index) => {
       const word = piece.replace(/^['’-]+|['’-]+$/gu, '');
-      if (word.length === 0 || (glued && GLUED_ENDING.test(word))) continue;
-      if (isContentToken(word)) out.push(word);
-    }
+      if (word.length === 0) return;
+      if (pieces.length === 1) {
+        if (isContentToken(word)) out.push(word);
+        return;
+      }
+      const closed = index > 0 ? GLUED_SUFFIX.test(word) || isClosedWord(word) : isClosedWord(word);
+      if (closed || (!HANGUL.test(word) && !isContentToken(word))) return;
+      out.push(word);
+    });
   }
   return out;
 }
