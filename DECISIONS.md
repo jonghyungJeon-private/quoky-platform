@@ -22919,3 +22919,22 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   the persisted switch is stopped, nothing is written, whatever happened since dispatch. Anchored commands carry none.
 - **A6-D1a — the owner's words on event reminders.** A natural-language `reminder.create` with an event-relative `when`
   stores the owner's body span, and the event title only when the span is empty. The anchored BRF-2 grammar is unchanged.
+
+## Personal v5 closeout note (DOC-G) — 2026-10-14
+
+- **Scope.** Docs only. No ADR text was edited and no ADR was added or amended here. This note points to the records that
+  hold the v5 facts: `CURRENT_STATE.md` "Personal v5 — status (2026-10-14)", `CHANGELOG.md` "Personal v5 closeout (DOC-G)",
+  `ROADMAP.md` "Personal v5 — status", the quickstart "Personal v5 설정과 점검" and the operator guide section 0.9.
+- **Merged.** Waves 1-3 and INT-4 (#175-#198). A5 is #199. A6 is #200 (design), #201 (ratification) and #202 (R0, inert with
+  `QUOKY_NL_ACTIONS` off). The per-PR notes are in the sections named in the status record above.
+- **Owner items still open** (each has its own record; none is decided here):
+  - S1 per-grammar Phase C: the ADR-0120 S1 / Phase C note and the `nl_selection.agreement` data (ADR-0120 D10, D12).
+  - Egress `enforce`: the ADR-0121 S0 rollout residuals (7 clean ledger days, owner ask due around 2026-10-20).
+  - A6 R1 batch: the "A6 clauses pending owner confirmation" note (ADR-0120 A6-D3a and related clauses) and the corpus review.
+  - D12 approval of the 23 `uat5r*` cases (ADR-0120 A5). They gate no live behaviour.
+  - Token rotation (ADR-0121 S0 owner decision, design Q5): deferred.
+  - OS-level firewall for child processes (ADR-0121 S0 owner decision, design Q10): "not now".
+- **Known limits** (recorded in their own notes): the egress guard does not enforce child processes (ADR-0121 R1); other-language
+  messages never reach the selector (ADR-0098 D1 c; A5); the A6 live gate has limited statistical power (A6-D7, R-A4); undo
+  copies get new numbers (R-A2); Session and Actor metadata have no compare-and-set (ADR-0120 R3, R-A5); item text may reach an
+  HTTP API vendor only when the owner selected one (R-A3, ADR-0118 D7 widening).

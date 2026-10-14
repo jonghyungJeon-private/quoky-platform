@@ -536,6 +536,36 @@ as it is. Only code-change previews use the `<pre>` HTML subset.
 
 ---
 
+### 0.9 Personal v5 operator additions (DOC-G, 2026-10-14)
+
+Setup for users is in `docs/user/quickstart.md` ("Personal v5 설정과 점검"). Live state and known limits are in
+`CURRENT_STATE.md`. Keys are listed by name only; never paste a secret value into a chat or a document.
+
+| Variable | Default | Operator notes |
+|---|---|---|
+| `QUOKY_NL_INTENT_MODE` | `off` | `off` \| `shadow` \| `active`. Most NL features act only in `active`: grammar yield is ignored otherwise, `QUOKY_NL_PHASE=c-shadow` and `QUOKY_NL_ACTIONS` refuse to start without it; the model key also applies in `shadow` |
+| `QUOKY_NL_INTENT_MODEL` | `haiku` | Claude CLI model of the selection call (ADR-0120) |
+| `QUOKY_NL_PHASE` | `a` | `a` \| `c-shadow` \| `c`, exact. `c-shadow` needs `active`. `c` (selection before the Class B grammars, ADR-0121 S1) is a Strict per-grammar step |
+| `QUOKY_NL_GRAMMAR_YIELD` | `off` | Listing grammars yield to selection when leftover content words remain (amendment A2). Needs `active` |
+| `QUOKY_NL_ACTIONS` | `off` | `off` \| `shadow` \| `local` \| `external`. `external` is refused at startup until R3. Any level other than `off` needs `active` and the kill switch; each level is a Strict owner step |
+| `QUOKY_BRIEF_MAIL_ENABLED` | `false` | Unread-mail section of the daily brief (ADR-0117 amendment, BRF-3). Needs Gmail configured; DM-only; no body or snippet |
+| `QUOKY_EGRESS_GUARD` | `observe` | `off` \| `observe` \| `enforce`, exact. `observe` logs and never blocks. `enforce` is a separate owner yes after 7 clean ledger days (the ask is due around 2026-10-20) |
+| `QUOKY_EGRESS_LEDGER_MAX_FILE_MB` | `16` | Size cap of one daily ledger part (1-256; up to 4 parts a day) |
+| `QUOKY_EGRESS_LEDGER_RETENTION_DAYS` | `90` | Days the ledger files are kept (1-365) |
+
+- **Kill switch.** The owner's DM `에이전트 중지` stops agent actions and `에이전트 재개` resumes them. The state is persisted
+  in `Actor.metadata`. The phrases are recognised only while `QUOKY_NL_ACTIONS` is not `off`.
+- **Egress ledger.** Service path: `~/Library/Application Support/Quoky/audit/egress-YYYY-MM-DD.jsonl` (dev: `./data/audit/`).
+  Content-free: host, label, method, path template, status, bytes and latency. Never a header, token, query or body.
+  The guard covers Quoky's Node HTTP paths only; child processes (`claude -p`, `ollama`, `git`) are not enforced (ADR-0121 R1).
+- **Self-check and secret scan.** Read-only:
+  `ops/security/quoky-net-selfcheck.sh [--json] [--since 24h]` reports the Quoky process tree and its live connections against
+  the allowlist, and reads the ledger. `pnpm security:secret-scan` must show no new gating hit; it prints per-hit locations and fingerprints with the value masked, never the secret itself.
+- **Node 22.** The always-on service runs Node 22 LTS (`.nvmrc` 22.22.1; `engines.node` >=22.12). Pass the Node 22 binary
+  with `--node` when installing the launchd service; a Node 18 binary is end-of-life and is not used.
+- **Owner items still open.** S1 per-grammar Phase C; egress `enforce`; the A6 R1 batch (red-team, relabel, clause
+  confirmations); token rotation (deferred); the OS firewall ("not now"); D12 approval of the 23 `uat5r*` cases.
+
 ## 1. UAT purpose and scope
 
 **Purpose:** confirm that a trusted internal operator can drive Quoky Platform through the real conversation lifecycle
