@@ -59,7 +59,7 @@ migration, no new runtime deps key), `item.summarize` summary / full, the persis
 
 ### v5 NL read-side fixes (live UAT 2026-10-14) — on branch `claude/v5-nl-uat-fixes` (2026-10-14)
 
-ADR-0120 amendment A5 (**Proposed**, awaiting the owner's yes): typed args `mail.list` `range`/`item`, `calendar.events`
+ADR-0120 amendment A5 (**Accepted** by the owner 2026-10-14, #199): typed args `mail.list` `range`/`item`, `calendar.events`
 `partOfDay`/`timedOnly`/`availability`, `jira.issues` `sort`; symbols `last-<weekday>`, `this-<weekday>`,
 `week-after-next`, `rest-of-month`; time words refused as keywords; a Phase C selector `none` now beats the personal-work
 surface clause (the INT-4 BUG test is un-skipped); reminder titles keep the verb of a quotative ("물 마시기").
