@@ -11,6 +11,7 @@ import { NL_WAVE1_ENTRIES } from './wave1-entries';
 const TZ = 'Asia/Seoul';
 const NOW = '2026-10-14T06:52:00.000Z'; // Wednesday 2026-10-14 15:52 in Asia/Seoul (the live turn)
 const ALL: readonly NlCatalogEntry[] = Object.values(NL_WAVE1_ENTRIES);
+const CALENDAR_WORDS = NL_WAVE1_ENTRIES['calendar.events'].aliases;
 
 function ctx(groundingText: string, extra: Partial<NlValidationContext> = {}): NlValidationContext {
   return { offered: new Map(ALL.map((entry) => [entry.id, entry] as const)), groundingText, now: NOW, timeZone: TZ, ...extra };
@@ -54,13 +55,7 @@ describe('a one-syllable weekday after a week anchor names that weekday', () => 
   for (const [anchor, week] of ANCHORS) {
     it.each(ABBREVIATIONS)(`${anchor} %s 일정 있어?`, (syllable, index, stem) => {
       const text = `${anchor} ${syllable} 일정 있어?`;
-      expect(nlExpressedWeekday(text)).toEqual({
-        weekday: index,
-        certain: syllable !== '일',
-        bound: false,
-        week,
-        abbreviations: syllable === '일' ? [] : [syllable],
-      });
+      expect(nlExpressedWeekday(text, CALENDAR_WORDS)).toEqual({ weekday: index, certain: syllable !== '일', bound: false, week });
       const symbol = symbolFor(week, stem, index);
       const right = calendar(text, symbol);
       expect(right, symbol).toMatchObject({ ok: true });
@@ -150,7 +145,7 @@ describe('elsewhere 수, 일, 금 and 월 keep their other meanings', () => {
 
   it('"다음 주 일 많아?": 일 may be work or Sunday, so the week or Sunday are accepted, never another day', () => {
     const text = '다음 주 일 많아?';
-    expect(nlExpressedWeekday(text)).toMatchObject({ weekday: 0, certain: false, week: 'next', abbreviations: [] });
+    expect(nlExpressedWeekday(text, CALENDAR_WORDS)).toMatchObject({ weekday: 0, certain: false, week: 'next' });
     expect(calendar(text, 'next-week')).toMatchObject({ ok: true });
     expect(calendar(text, 'next-sun')).toMatchObject({ ok: true });
     expect(calendar(text, 'next-mon')).toMatchObject({ ok: false, reason: 'weekday' });
@@ -171,5 +166,92 @@ describe('elsewhere 수, 일, 금 and 월 keep their other meanings', () => {
   it('the resolver itself is unchanged: next-wed is 10/21 and next-mon is 10/19 from Wednesday 10/14', () => {
     expect(resolveNlRange('next-wed', NOW, TZ)).toMatchObject({ startDate: { month: 10, day: 21 }, days: 1 });
     expect(resolveNlRange('next-mon', NOW, TZ)).toMatchObject({ startDate: { month: 10, day: 19 }, days: 1 });
+  });
+});
+
+describe('review round: bounds, titles, names, colloquial forms, punctuation, ambiguous abbreviations, keywords, clocks', () => {
+  it('a bound weekday with a space or 날 before the particle is still a bound (CA P1)', () => {
+    expect(calendar('이번 주 금요일 까지 일정', 'this-week')).toMatchObject({ ok: true });
+    expect(calendar('다음 주 수요일날까지 일정', 'next-week')).toMatchObject({ ok: true });
+    expect(calendar('다음 주 수요일날부터 일정', 'next-week')).toMatchObject({ ok: true });
+    expect(calendar('이번 주 수요일 부터 3일 일정', '10-14..10-16')).toMatchObject({ ok: true });
+    expect(calendar('다음 주 수요일 이후 일정', '10-22..10-25')).toMatchObject({ ok: true });
+    expect(calendar('다음 주 수요일날까지 일정', 'last-week')).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+
+  it('a weekday inside a title keyword with other words is uncertain; another single day stays refused (CA P1)', () => {
+    const titled = (text: string, range: string, keyword: string) => validateSelection({ entryId: 'calendar.events', args: { range, keyword } }, ctx(text));
+    expect(titled('수요일 스터디 언제야', 'upcoming', '수요일 스터디')).toMatchObject({ ok: true });
+    expect(titled('when is sunday school', 'upcoming', 'sunday school')).toMatchObject({ ok: true });
+    expect(titled('다음 주 수요일 스터디', 'next-week', '수요일 스터디')).toMatchObject({ ok: true });
+    expect(titled('다음 주 수요일 스터디', 'next-mon', '수요일 스터디')).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+
+  it('a sender name is removed only as a whole word, so "Sun" never erases "Sunday" (Codex)', () => {
+    const mail = (range: string) => validateSelection({ entryId: 'mail.list', args: { from: 'Sun', range } }, ctx('Sun sent mail on Sunday'));
+    expect(mail('last-mon')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(mail('last-sun')).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'mail.list', args: { from: '월요일' } }, ctx('월요일이 보낸 메일'))).toMatchObject({ ok: true });
+  });
+
+  it('the colloquial 욜 forms are full weekday names (Codex)', () => {
+    for (const [syllable, index] of ABBREVIATIONS.map(([s, i]) => [s, i] as const)) expect(nlExpressedWeekday(`다음 주 ${syllable}욜 일정`)).toMatchObject({ weekday: index, certain: true, week: 'next' });
+    expect(calendar('다음 주 수욜 일정', 'next-mon')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar('다음 주 수욜 일정', 'next-wed')).toMatchObject({ ok: true });
+  });
+
+  it('punctuation ends an abbreviation (Codex)', () => {
+    expect(calendar('다음 주 수(오전) 일정', 'next-mon')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar('다음 주 수(오전) 일정', 'next-wed')).toMatchObject({ ok: true });
+    expect(calendar('다음 주 수? 일정 있나', 'next-week')).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+
+  it('an abbreviation before another content word is uncertain: the week or that day, never another day (Codex)', () => {
+    const text = '이번 주 금 시세 발표 일정';
+    expect(nlExpressedWeekday(text, CALENDAR_WORDS)).toMatchObject({ weekday: 5, certain: false, week: 'this' });
+    expect(calendar(text, 'this-week')).toMatchObject({ ok: true });
+    expect(calendar(text, 'this-fri')).toMatchObject({ ok: true });
+    expect(calendar(text, 'this-thu')).toMatchObject({ ok: false, reason: 'weekday' });
+    // Before the entry's own source word, a time word or a function word it stays certain.
+    for (const certain of ['다음 주 수 일정', '다음 주 수 미팅', '다음 주 수 오후에 뭐 있어', '다음 주 수 뭐 있어']) {
+      expect(nlExpressedWeekday(certain, CALENDAR_WORDS), certain).toMatchObject({ certain: true });
+    }
+    expect(validateSelection({ entryId: 'mail.list', args: { range: 'last-week' } }, ctx('지난주 목 메일'))).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+
+  it('English bound markers keep their anchor ("by this Friday", "through next Friday") (Codex)', () => {
+    const jira = (text: string, range: string) => validateSelection({ entryId: 'jira.issues', args: { window: 'due', range } }, ctx(text));
+    expect(jira('issues due by this Friday', 'this-week')).toMatchObject({ ok: true });
+    expect(jira('issues due through next Friday', 'next-week')).toMatchObject({ ok: true });
+    expect(jira('issues due until friday', 'next-7-days')).toMatchObject({ ok: true });
+    expect(jira('issues due on Friday', 'this-week')).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+
+  it('a one-syllable weekday is never a keyword when the message names a weekday in any form (Codex)', () => {
+    const keyword = (text: string, range: string, value: string) => validateSelection({ entryId: 'calendar.events', args: { range, keyword: value } }, ctx(text));
+    expect(keyword('다음 주 수요일 일정', 'next-wed', '수')).toMatchObject({ ok: false, reason: 'time-keyword' });
+    expect(keyword('수요일이랑 목요일 일정', '10-14..10-15', '목')).toMatchObject({ ok: false, reason: 'time-keyword' });
+    expect(keyword('다음 주 일 많아?', 'next-week', '일')).toMatchObject({ ok: false, reason: 'time-keyword' });
+    // Without any weekday in the message, a one-syllable word may be a title word.
+    expect(keyword('오늘 수 일정', 'today', '수')).toMatchObject({ ok: true });
+  });
+
+  it('English "next Wed" names Wednesday without fixing the week', () => {
+    expect(nlExpressedWeekday('anything next Wed?')).toEqual({ weekday: 3, certain: true, bound: false });
+    expect(calendar('anything next Wed?', 'next-wed')).toMatchObject({ ok: true });
+    expect(calendar('anything next Wed?', 'wed')).toMatchObject({ ok: true });
+    expect(calendar('anything next Wed?', 'next-mon')).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+
+  it('on a Sunday the anchored week is still Monday-based', () => {
+    const SUNDAY = '2026-10-18T03:00:00.000Z'; // Sunday 2026-10-18 12:00 in Asia/Seoul
+    const at = (text: string, range: string) => validateSelection({ entryId: 'calendar.events', args: { range } }, ctx(text, { now: SUNDAY }));
+    expect(at('이번 주 일요일 일정', 'this-sun')).toMatchObject({ ok: true, value: { range: { startDate: { month: 10, day: 18 } } } });
+    expect(at('이번 주 일요일 일정', 'today')).toMatchObject({ ok: true });
+    expect(at('다음 주 월 일정', 'next-mon')).toMatchObject({ ok: true, value: { range: { startDate: { month: 10, day: 19 } } } });
+    expect(at('다음 주 월 일정', 'mon')).toMatchObject({ ok: true });
+    expect(at('다음 주 월 일정', 'this-mon')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(at('이번 주 월 일정', 'this-mon')).toMatchObject({ ok: true, value: { range: { startDate: { month: 10, day: 12 } } } });
+    expect(at('이번 주 월 일정', 'mon')).toMatchObject({ ok: false, reason: 'weekday' });
   });
 });

@@ -700,4 +700,21 @@ describe('ADR-0120 A5 implementation note 2: a period that loses the owner\'s we
     const ok = harness({ script: [out('calendar.events', { range: 'next-wed' })] });
     expect(await ok.decide('다음 주 수 일정 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'next-wed' } } });
   });
+
+  it('the question names the week and the day, and an identical retry calls the selector again (no cached refusal)', async () => {
+    const h = harness({ script: [out('calendar.events', { range: 'next-mon' }), out('calendar.events', { range: 'next-wed' })] });
+    expect(await h.decide('다음 주 수 일정 있어?')).toEqual({
+      kind: 'ask',
+      text: '캘린더 일정 조회에서 어느 날을 볼지 정확히 모르겠어요. "다음 주 수요일"처럼 주와 요일을 함께 말씀해 주세요.',
+    });
+    expect(await h.decide('다음 주 수 일정 있어?', { now: at(1000) })).toMatchObject({ kind: 'execute', command: { args: { range: 'next-wed' } } });
+    expect(h.calls).toHaveLength(2);
+  });
+
+  it('a future mail range repaired by dropping it then loses the weekday: asked with the weekday hint, no option', async () => {
+    const h = harness({ script: [out('mail.list', { range: 'next-wed' })] });
+    const asked = await h.decide('지난주 수에 온 메일');
+    expect(asked).toMatchObject({ kind: 'ask', text: expect.stringContaining('주와 요일을 함께') });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+  });
 });
