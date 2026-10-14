@@ -5,24 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Unreleased — Class B grammars yield what they cannot express (ADR-0120 A2 implementation note 2, 2026-10-14)
+## Unreleased — Class B grammars yield what they cannot express (ADR-0120 A2 implementation note 2, 2026-10-14; owner acknowledgment required)
 
 - **Live fix.** Five Telegram sentences from the 2026-10-14 run after A5 were answered by a frozen grammar that dropped part of
   the message: "다음 주 수요일 오후에 뭐 있어" and "내일 오후 일정" (whole day), "캘린더는 보지 말고 할 일만 알려줘" (Jira/GitHub
   surface), "할 일 관리하는 좋은 습관 알려줘" (the to-do list), "슬랙에서 배포 얘기 나온 거 찾아줘" (searched the whole clause).
-  With `QUOKY_NL_GRAMMAR_YIELD=on` and `active` they now reach selection: `partOfDay`, the to-do list, chat, keyword "배포".
-- **One rule, no phrases.** When selection would run, a Class B grammar declines if (a) a content word is left after its own
-  vocabulary (now also the to-do list phrases and the classifier's personal-work surface clause), (b) a word grounds a typed
-  arg it does not carry (the calendar's part of day, outside a clock time), or (c) its free-text slot is not already the
-  catalog's canonical keyword (Slack/Confluence search, Jira keyword). `grammar-residual.ts` (`containsGroundingWord`,
-  `slotSwallowsClause`), `keyword-canonical.ts` (new leaf module), `IntentClassifyContext.grammarYield`.
-- **Unchanged.** With the yield off (flag off, mode off or shadow, selector not the chat provider, approval pending), the
-  grammars answer byte for byte as before: a 13-corpus replay shows 0 differences. "내일 일정", "내 할 일", "슬랙에서 배포 찾아줘"
-  and "내일 오후 3시에 뭐 있어" are still answered by their grammars, also with the selector down. No migration, flag, env,
-  prompt or provider change.
-- **Corpus and tests.** `nl-intent.v1.json` 791 → 797 (`uat5gy-01..06`, pending the owner's D12 approval); 12 grammar tags
-  removed, `help-038` re-tagged `help-intent`; grammar side 250 → 242 tagged, exact 82.3% → 86.4%, wrong captures 1 → 0.
-  New `grammar-yield-table.test.ts`; INT-4 acceptance block for the five sentences and the follow-on chain.
+  With `QUOKY_NL_GRAMMAR_YIELD=on` and `active`, selection now runs first: `partOfDay`, the to-do list, chat, keyword "배포".
+- **One rule, no phrases.** When selection would run, a Class B grammar declines when:
+  - (a) a content word is left after its own vocabulary. This now also covers the to-do list phrases and the classifier's
+    personal-work surface clause, and one-syllable words count;
+  - (b) a word grounds a typed arg it does not carry (the calendar's part of day outside a clock time);
+  - (c) its free-text slot is not already the catalog's canonical keyword (Slack/Confluence search, Jira keyword). Quoted
+    keywords are kept whole.
+- **Fallbacks.** The surface clause keeps the surface as the fallback when the selector is skipped, fails or times out
+  (A5 change 9). A declined calendar or search message gets honest chat when a selection call fails (A2 R5). With the yield
+  off, nothing changes (13-corpus replay: 0 differences).
+- **Corpus and tests.** `nl-intent.v1.json` grows from 791 to 797 cases (`uat5gy-01..06`, pending D12).
+  - Metadata-only tag edits on 8 cases from approved batches, and an optional `grammarYieldOff` tag.
+  - Grammar side: 250 → 247 tagged. Exact goes from 82.3% to 85.8%, but only because cases left or joined the
+    denominator; no grammar answer improved.
+  - Tests: new `grammar-yield-table.test.ts` and an INT-4 acceptance block.
 
 ## Unreleased — Personal v5 closeout (DOC-G, 2026-10-14)
 
