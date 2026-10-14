@@ -5,7 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Unreleased — NL actions R0, inert (ADR-0120 amendment A6, 2026-10-14)
+## Unreleased — Personal v5 closeout (DOC-G, 2026-10-14)
+
+- **Scope.** Docs only. Waves 1-3 and INT-4 are merged: W1 #175-#178; NL selection #179-#183 (A1-A4, A5 #199); ADR-0121 design
+  #184 and ratification #193; S0 security #185-#186; Node 22 #187; Telegram keep-alive #188; warm-up #189; BRF-3 #190; exit 78
+  #191; STO-1 migration v16 #192; S1 c-shadow #194; W3 DRV-2/2b #195, GML-2 #196, UAT fixes #197; INT-4 #198. A6 design #200,
+  ratification #201, R0 merged inert #202.
+- **Docs.** `CURRENT_STATE.md` "Personal v5 — status (2026-10-14)" (live flags, pending owner items, known limits); `ROADMAP.md`
+  v5 status and next items (A6 R1-R4, ADR-0121 S2, Phase C per grammar, egress enforce); the quickstart (Personal v5 settings,
+  the kill switch, the egress ledger, the self-check and secret scan, Node 22) and the operator guide (section 0.9);
+  `DECISIONS.md` "Personal v5 closeout note (DOC-G)".
+- **Not changed.** No code, no migration, no env default, no ADR text.
+
 
 - **Flag.** `QUOKY_NL_ACTIONS` = `off` (default) | `shadow` | `local` | `external`. With `off` the selector prompt is
   `nl-select.v18` byte for byte and every reply is unchanged; any other level needs `QUOKY_NL_INTENT_MODE=active` and the

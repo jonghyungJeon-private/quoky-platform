@@ -5,6 +5,47 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Personal v5 — status (2026-10-14)
+
+Personal v5 waves 1-3 and the INT-4 acceptance are merged, and this is the DOC-G closeout (plan `docs/plans/personal-v5-plan.md`).
+Merged PRs, checked in `git log` on `main`: W1 #175-#178; NL selection (ADR-0120) #179-#183, amendments A1-A4, A5 #199;
+ADR-0121 design #184 and ratification #193; S0 security #185-#186; Node 22 #187; Telegram keep-alive #188; warm-up #189;
+BRF-3 mail in the brief #190; exit 78 #191; STO-1 migration v16 #192; S1 c-shadow #194; W3 DRV-2/2b #195, GML-2 #196,
+UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 merged inert #202.
+
+**Live now (owner's service).** The env keys below are live:
+
+- `QUOKY_NL_INTENT_MODE=active`, `QUOKY_NL_INTENT_MODEL=haiku`, `QUOKY_NL_GRAMMAR_YIELD=on`, `QUOKY_NL_PHASE=c-shadow`
+  (selection runs in the background on grammar-answered turns and logs `nl_selection.agreement`; the replies are unchanged).
+- `QUOKY_BRIEF_MAIL_ENABLED=true` (the unread-mail section of the daily brief, DM-only).
+- `QUOKY_EGRESS_GUARD=observe` (the in-process egress ledger, `audit/egress-YYYY-MM-DD.jsonl`; logs only, never blocks).
+- `QUOKY_NL_ACTIONS` unset, which means `off`: the A6 natural-language actions are merged but inert (R0).
+- Also applied live: the STO-1 migration v16 on the service DB (#192). The Node 22 LTS runtime (#187) and the Telegram
+  keep-alive (#188) are merged; their live status is in the CHANGELOG entries.
+
+**Pending with the owner.**
+
+- S1 per-grammar Phase C decision: a grammar moves to `c` only on its own `nl_selection.agreement` data, with the owner's yes.
+- Egress `enforce`: after 7 clean ledger days; the owner ask is due around 2026-10-20.
+- A6 R1 batch: the red-team and relabel review of the drafted corpus, and the A6 clause confirmations (A6-D3a and the
+  others under "A6 clauses pending owner confirmation"). `QUOKY_NL_ACTIONS` stays `off` until then.
+- D12 batch approval of the 23 `uat5r*` golden cases (A5). They gate no live behaviour.
+- Token rotation: deferred (ADR-0121 S0 owner decision, design Q5).
+- OS-level firewall for child processes: "not now" (ADR-0121 S0 owner decision, design Q10).
+
+**Known limits (recorded in `DECISIONS.md`).**
+
+- The egress guard covers Quoky's own Node HTTP paths only. `claude -p`, `ollama` and `git` child processes are not enforced
+  (ADR-0121 R1). `c-shadow` therefore bounds its own selection calls (single flight, 60 per hour).
+- Messages in other languages never reach the selector (Class A, ADR-0098 D1 c; A5 note).
+- A6 live gate: statistical power is limited (A6-D7, R-A4). Undo copies get new numbers (R-A2). Session and Actor metadata have
+  no compare-and-set (ADR-0120 R3, R-A5). Item text may reach an HTTP API vendor only if the owner selected one (R-A3).
+- Quotative `…라고` reading has known gaps, for example "기다리라고" and "공항 택시라고" (A5/S1 notes).
+- Not run live: GML-2 long thread and reply pick after a restart; DRV-2 shared drive and multi-sheet spreadsheet (both
+  tracks' notes). Still pending from v4: the OpenAI and Gemini keys, the PRV-3 monthly DM, LRN-5 round trip.
+
+Details and the review record for each item are in the matching notes in `DECISIONS.md`.
+
 ### v5 NL actions R0 (ADR-0120 amendment A6) — on branch `claude/v5-a6-r0` (2026-10-14)
 
 The A6 code is merged-ready but inert: `QUOKY_NL_ACTIONS` defaults to `off`, and with `off` the selector prompt is

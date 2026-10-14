@@ -756,6 +756,39 @@ Discord와 같은 소유자로 Telegram 개인 대화에서도 Quoky와 이야�
 
   자세한 내용은 `docs/uat/operator-guide.md` 0.8에 있습니다.
 
+### Personal v5 설정과 점검 (선택)
+
+아래 키는 `.env.local`에 둡니다. 줄을 지우거나 `#`으로 막으면 기본값을 씁니다. 현재 운영 상태는 `CURRENT_STATE.md`를 봅니다.
+
+| 변수 | 기본값 | 뜻 |
+|---|---|---|
+| `QUOKY_NL_INTENT_MODE` | `off` | 자연어 기능 선택. `off`(끔), `shadow`(기록만), `active`(선택 결과로 응답). `active`여야 아래 키들이 동작 |
+| `QUOKY_NL_INTENT_MODEL` | `haiku` | 기능 선택에 쓰는 Claude 모델 |
+| `QUOKY_NL_PHASE` | `a` | `a`(기존 규칙 응답 먼저), `c-shadow`(규칙이 답한 뒤 뒤에서 선택만 실행하고 `nl_selection.agreement`로 기록, 답은 바뀌지 않음), `c`(선택을 먼저 실행). `c`는 소유자 승인 전에는 쓰지 않음 |
+| `QUOKY_NL_GRAMMAR_YIELD` | `off` | `on`이면 목록·조회 규칙이 남은 내용 단어가 있을 때 자연어 선택에 양보 (`active`에서만) |
+| `QUOKY_NL_ACTIONS` | `off` | 자연어 작업: 할 일·알림 추가, 완료, 취소, 되돌리기, 메일·Drive 항목 요약. `off`면 작업 기록을 남기지 않고 답도 바뀌지 않음. `shadow`/`local`은 소유자 승인 뒤에만 |
+| `QUOKY_BRIEF_MAIL_ENABLED` | `false` | `true`면 아침 브리핑에 "안 읽은 메일" 개수와 최대 3건(보낸 사람, 제목)을 DM으로 추가. 본문은 넣지 않음. Gmail 설정이 필요 |
+| `QUOKY_EGRESS_GUARD` | `observe` | 외부 연결 감시. `observe`(기록만 하고 막지 않음), `enforce`(허용 목록 밖이거나 사설 주소로 가는 연결을 거부). `off`는 끔 |
+| `QUOKY_EGRESS_LEDGER_RETENTION_DAYS` | `90` | 연결 기록 파일을 보관할 일수 (1-365) |
+
+**자연어 작업 멈추기와 재개.** 소유자 DM에 정확히 `에이전트 중지` 또는 `에이전트 재개`라고 보냅니다. 멈추면 작업이 실행되지
+않고, 재개할 때까지 유지됩니다. `QUOKY_NL_ACTIONS`가 `off`이면 이 문구는 인식하지 않습니다.
+
+**외부 연결 기록 (egress ledger).** 파일은 서비스 기준 `~/Library/Application Support/Quoky/audit/egress-YYYY-MM-DD.jsonl`에
+날짜별로 쌓입니다. 호스트, 연결 종류, 메서드, 경로 모양, 상태, 크기, 지연 시간만 기록하며 헤더, 토큰, 쿼리, 본문은 기록하지
+않습니다. 개발 실행(`pnpm dev`)은 `./data/audit/`에 씁니다.
+
+**점검 명령.** 파일이나 프로세스를 바꾸지 않습니다.
+
+```sh
+ops/security/quoky-net-selfcheck.sh          # 실행 중인 Quoky 프로세스의 연결과 허용 목록 점검 보고서
+ops/security/quoky-net-selfcheck.sh --json   # 같은 내용을 기계가 읽는 형식으로
+pnpm security:secret-scan                    # 저장소의 비밀 값 스캔. 새로 걸리는 항목이 없어야 함 (비밀 값 자체는 출력하지 않음)
+```
+
+**Node 22.** 상시 실행 서비스는 Node 22 LTS로 돌립니다 (`.nvmrc` 22.22.1, `engines.node` >=22.12). 설치할 때 `--node`에
+Node 22 실행 파일의 절대 경로를 지정하세요 (위 launchd 절 참고).
+
 ## 8. 처음 사용하기
 
 봇에게 DM을 보내거나 `QUOKY_DISCORD_CHANNEL_IDS`에 넣은 채널에 메시지를 보냅니다 (@멘션 불필요).
