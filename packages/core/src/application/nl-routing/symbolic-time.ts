@@ -299,3 +299,150 @@ export function isTimeExpression(text: string): boolean {
   const tokens = text.normalize('NFC').toLowerCase().replace(/(?<!\d)[,.;!?~]|[,.;!?~](?!\d)/gu, ' ').split(/\s+/u).filter((token) => token.length > 0);
   return tokens.length > 0 && tokens.every(isTimeWord);
 }
+
+// ── The weekday the owner's words name (ADR-0120 A5 implementation note 2) ───────────────────────────────────────────
+
+/** A week anchor attached to a weekday ("다음 주 수요일", "이번주 금"). */
+export type NlWeekAnchor = 'last' | 'this' | 'next' | 'after-next';
+
+/** The one weekday the owner's words name, read structurally (no phrase list; a validator of the range VALUE). */
+export interface NlExpressedWeekday {
+  /** 0 = Sunday … 6 = Saturday (`weekdayOf`). */
+  readonly weekday: number;
+  /**
+   * false only for the one-syllable 일 after a week anchor: 일 is also the commonest noun of the language (work, day:
+   * "다음 주 일 많아?"), so Core cannot tell; it then accepts that weekday or a period without a weekday, never another day.
+   */
+  readonly certain: boolean;
+  /** The weekday bounds a period ("금요일까지", "수요일부터", "by Friday"): the range must contain that day, not be it. */
+  readonly bound: boolean;
+  /** The Korean week anchor every mention carries, when they agree ("다음 주 수" = next). */
+  readonly week?: NlWeekAnchor;
+  /** The one-syllable abbreviations read as weekdays ("수"): a keyword made of them is a period, not a title word. */
+  readonly abbreviations: readonly string[];
+}
+
+const KO_WEEKDAY_SYLLABLE: Readonly<Record<string, number>> = { 일: 0, 월: 1, 화: 2, 수: 3, 목: 4, 금: 5, 토: 6 };
+const EN_WEEKDAY_INDEX: Readonly<Record<string, number>> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+/** The same week anchors the full weekday names already take (this, next, last, the week after next). */
+const KO_WEEK_ANCHOR = '(?<![가-힣])(다다음\\s*주|다음\\s*주|담\\s*주|차주|이번\\s*주|금주|지난\\s*주|저번\\s*주)';
+/** After a one-syllable abbreviation: the end of the word, or one closed particle and then the end of the word. */
+const ABBREVIATION_END = '(?:에는|에도|에만|이랑|하고|까지|부터|에|엔|은|는|도|만|쯤|랑)?(?=$|\\s|[?!.,~·/～-])';
+/** Joiners inside a list of abbreviations ("토, 일", "월~수", "수랑 목"). */
+const ABBREVIATION_JOIN = '\\s*(?:[,·/~～-]|이랑|하고|랑|와|과)?\\s*';
+/** A particle or word that makes the weekday a bound of a period rather than the period itself. */
+const KO_BOUND_TAIL = /^(?:까지|부터|전까지|이전|이후|\s*전에|\s*전까지|\s*후에|\s*이후|\s*이전|\s*~|～)/u;
+const EN_BOUND_HEAD = /(?:^|\s)(?:until|till|by|from|before|after|through|thru)\s+$/u;
+
+function anchorOf(word: string | undefined): NlWeekAnchor | undefined {
+  if (word === undefined) return undefined;
+  const compact = word.replace(/\s+/gu, '');
+  if (compact === '다다음주') return 'after-next';
+  if (compact === '다음주' || compact === '담주' || compact === '차주') return 'next';
+  if (compact === '이번주' || compact === '금주') return 'this';
+  return 'last';
+}
+
+interface WeekdayMention {
+  readonly weekday: number;
+  readonly certain: boolean;
+  readonly bound: boolean;
+  readonly week?: NlWeekAnchor;
+  readonly abbreviation?: string;
+}
+
+/**
+ * The one weekday the owner's text names, or `undefined` when it names none or more than one ("수요일이랑 목요일",
+ * "다음 주 토, 일"). A full name counts anywhere (수요일, Wednesday). A one-syllable abbreviation (월 화 수 목 금 토 일) counts
+ * ONLY right after a week anchor (다음 주 수, 이번주 금, 지난주 월) and only as a word of its own; elsewhere 수 is a number,
+ * 일 work or a day, 금 gold, 월 a month ("할 일", "남은 수", "3월", "1일", "금 시세" name no weekday).
+ */
+export function nlExpressedWeekday(text: string): NlExpressedWeekday | undefined {
+  const source = text.normalize('NFC').toLowerCase();
+  const mentions: WeekdayMention[] = [];
+  const full = new RegExp(`(?:${KO_WEEK_ANCHOR}\\s*)?([월화수목금토일])요일`, 'gu');
+  for (const match of source.matchAll(full)) {
+    const end = (match.index ?? 0) + match[0].length;
+    const week = anchorOf(match[1]);
+    mentions.push({
+      weekday: KO_WEEKDAY_SYLLABLE[match[2] as string] as number,
+      certain: true,
+      bound: KO_BOUND_TAIL.test(source.slice(end)),
+      ...(week !== undefined ? { week } : {}),
+    });
+  }
+  const anchored = new RegExp(`${KO_WEEK_ANCHOR}\\s+([월화수목금토일])${ABBREVIATION_END}`, 'gu');
+  const next = new RegExp(`${ABBREVIATION_JOIN}([월화수목금토일])${ABBREVIATION_END}`, 'uy');
+  for (const match of source.matchAll(anchored)) {
+    const week = anchorOf(match[1]);
+    let syllable = match[2] as string;
+    let end = (match.index ?? 0) + match[0].length;
+    for (;;) {
+      mentions.push({
+        weekday: KO_WEEKDAY_SYLLABLE[syllable] as number,
+        certain: syllable !== '일',
+        bound: /(?:까지|부터)$/u.test(source.slice(0, end)) || KO_BOUND_TAIL.test(source.slice(end)),
+        ...(week !== undefined ? { week } : {}),
+        abbreviation: syllable,
+      });
+      next.lastIndex = end;
+      const more = next.exec(source);
+      if (more === null) break;
+      syllable = more[1] as string;
+      end = next.lastIndex;
+    }
+  }
+  const english = /\b(?:(mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?|sun)day|(?:this|next|last)\s+(mon|tues?|wed|thu(?:rs?)?|fri|sat|sun))s?\b/gu;
+  for (const match of source.matchAll(english)) {
+    const stem = (match[1] ?? match[2] ?? '').slice(0, 3);
+    const weekday = EN_WEEKDAY_INDEX[stem];
+    if (weekday === undefined) continue;
+    // English "next Friday" may mean this coming Friday, so an English anchor never fixes the week.
+    mentions.push({ weekday, certain: true, bound: EN_BOUND_HEAD.test(source.slice(0, match.index ?? 0)) });
+  }
+  const weekdays = new Set(mentions.map((mention) => mention.weekday));
+  if (weekdays.size !== 1) return undefined;
+  const weeks = new Set(mentions.map((mention) => mention.week));
+  const week = weeks.size === 1 ? mentions[0]?.week : undefined;
+  return {
+    weekday: mentions[0]?.weekday as number,
+    certain: mentions.some((mention) => mention.certain),
+    bound: mentions.some((mention) => mention.bound),
+    ...(week !== undefined ? { week } : {}),
+    abbreviations: [...new Set(mentions.flatMap((mention) => (mention.abbreviation !== undefined && mention.certain ? [mention.abbreviation] : [])))],
+  };
+}
+
+/**
+ * Whether a resolved period keeps the weekday the owner named (`undefined`: the entry has no period). A single day must
+ * be that weekday (in the anchored week, when there is one); a bound weekday must fall inside the period; a period
+ * without the weekday ("다음 주 수" read as the whole next week, or as next Monday) is refused, so the owner is asked
+ * instead of being shown a different day. The uncertain 일 also accepts a period without a weekday.
+ */
+export function nlRangeKeepsWeekday(range: NlResolvedRange | undefined, expressed: NlExpressedWeekday, now: IsoTimestamp, timeZone: string): boolean {
+  if (range === undefined) return !expressed.certain;
+  const today = localDateOf(now, timeZone);
+  const monday = addLocalDays(today, -((weekdayOf(today) + 6) % 7));
+  const weekStart =
+    expressed.week === undefined ? undefined : addLocalDays(monday, { last: -7, this: 0, next: 7, 'after-next': 14 }[expressed.week]);
+  const inWeek = (date: LocalDate): boolean => {
+    if (weekStart === undefined) return true;
+    const offset = Math.round(compareLocalDates(date, weekStart) / 86_400_000);
+    return offset >= 0 && offset < 7;
+  };
+  const named = (date: LocalDate): boolean => weekdayOf(date) === expressed.weekday && inWeek(date);
+  if (range.days === 1) return named(range.startDate);
+  if (expressed.bound) return Array.from({ length: range.days }, (_, index) => addLocalDays(range.startDate, index)).some(named);
+  return !expressed.certain;
+}
+
+/** Whether every word of `keyword` is a time word or a weekday abbreviation the owner's text uses as one ("수"). */
+export function isWeekdayOrTimeKeyword(keyword: string, expressed: NlExpressedWeekday | undefined): boolean {
+  if (isTimeExpression(keyword)) return true;
+  if (expressed === undefined || expressed.abbreviations.length === 0) return false;
+  const tokens = keyword.normalize('NFC').toLowerCase().split(/\s+/u).filter((token) => token.length > 0);
+  return (
+    tokens.length > 0 &&
+    tokens.every((token) => isTimeWord(token) || expressed.abbreviations.includes(token) || expressed.abbreviations.includes(token.replace(TIME_WORD_TAIL, '')))
+  );
+}

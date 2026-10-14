@@ -20,7 +20,16 @@ import {
 } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
-import { isNlRangeSymbol, isTimeExpression, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from './symbolic-time';
+import {
+  isNlRangeSymbol,
+  isWeekdayOrTimeKeyword,
+  nlExpressedWeekday,
+  nlRangeKeepsWeekday,
+  normalizeNlRangeSymbol,
+  resolveNlRange,
+  type NlExpressedWeekday,
+  type NlResolvedRange,
+} from './symbolic-time';
 import { canonicalNlKeyword } from './keyword-canonical';
 
 export { canonicalNlKeyword } from './keyword-canonical';
@@ -30,7 +39,8 @@ export { canonicalNlKeyword } from './keyword-canonical';
  *  (1) closed ids and the argument schema (unknown args rejected, closed values only);
  *  (2) the entry is offered in this turn's catalog (registered and configured) and is a READ entry (D5);
  *  (3) bounds: limit 1..10, keyword 1..100 characters;
- *  (4) a range is a symbol Core resolves with the turn's clock and `QUOKY_TIMEZONE` (at most 31 days);
+ *  (4) a range is a symbol Core resolves with the turn's clock and `QUOKY_TIMEZONE` (at most 31 days), and keeps the one
+ *      weekday the owner's words name (A5 implementation note 2: "다음 주 수" is never next Monday nor the whole week);
  *  (5) grounding: a keyword appears verbatim in the owner's non-quoted text or in the previous selection's args, and an
  *      entry with a `range` never takes a time expression as a keyword; a grounded flag / enum value needs an owner word;
  *  (6) the credential guard runs on every string arg.
@@ -58,6 +68,11 @@ export type NlValidationFailureReason =
   | 'ungrounded'
   /** A keyword that is only a time expression ("목요일", "내일 오후"): a period belongs in `range` / `partOfDay`. */
   | 'time-keyword'
+  /**
+   * The period drops or changes the one weekday the owner named ("다음 주 수" read as next Monday or the whole week). Like
+   * `time-keyword`, never repaired by dropping the range: the owner is asked.
+   */
+  | 'weekday'
   | 'credential'
   /** A6-D3: a payload span made only of deictic, ordinal or time words ("그거", "첫 번째 거"). */
   | 'deictic-payload'
@@ -139,6 +154,8 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       if (rangeSpec.pastOnly === true && Date.parse(range.from) > Date.parse(ctx.now)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
     }
   }
+  // The one weekday the owner's words name, outside a value that may legitimately be one (a sender called "Sun").
+  const weekday: NlExpressedWeekday | undefined = rangeSpec !== undefined ? nlExpressedWeekday(withoutNameValues(entry, args, ctx.groundingText)) : undefined;
   // (5) grounding and (6) the credential guard, on every string arg. A6: the previous selection never grounds an action,
   // and every action argument (span, ref, enum and flag words, the entry check) is grounded only in the owner's prose:
   // a pasted structure (JSON, data) grounds nothing (Codex review P1).
@@ -158,7 +175,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       if (!stated && previousArgs?.[spec.name] !== value) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
     }
     if (spec.kind === 'keyword') {
-      if (rangeSpec !== undefined && spec.allowsTimeWords !== true && isTimeExpression(value)) return { ok: false, reason: 'time-keyword', entryId, arg: spec.name };
+      if (rangeSpec !== undefined && spec.allowsTimeWords !== true && isWeekdayOrTimeKeyword(value, weekday)) return { ok: false, reason: 'time-keyword', entryId, arg: spec.name };
       const previous = previousArgs?.[spec.name];
       const fromPrevious = typeof previous === 'string' && previous === value;
       if (!fromPrevious && !isGroundedIn(value, groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
@@ -175,6 +192,11 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     }
     if (containsCredentialMaterial(value)) return { ok: false, reason: 'credential', entryId, arg: spec.name };
   }
+  // (4b) the owner's weekday is a fact about the period: a period that drops or changes it never validates (after the
+  // per-arg checks, so a weekday keyword still fails as `time-keyword`).
+  if (rangeSpec !== undefined && weekday !== undefined && !nlRangeKeepsWeekday(range, weekday, ctx.now, ctx.timeZone)) {
+    return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
+  }
   // A6: the entry's own check after the per-arg checks.
   if (entry.check !== undefined) {
     const failure = entry.check(args, groundingText);
@@ -190,6 +212,17 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       ...(openAmbiguity !== undefined ? { openAmbiguity } : {}),
     },
   };
+}
+
+/** The owner's text without the values of args that may be made of time words (a sender named "Sun" or "월요일"). */
+function withoutNameValues(entry: NlCatalogEntry, args: Readonly<Record<string, NlArgValue>>, text: string): string {
+  let rest = text.normalize('NFC');
+  for (const spec of entry.args) {
+    const value = args[spec.name];
+    if (spec.allowsTimeWords !== true || typeof value !== 'string' || value.trim().length === 0) continue;
+    rest = rest.split(value.normalize('NFC')).join(' ');
+  }
+  return rest;
 }
 
 /** The args with every value equal to its spec default removed, except an ambiguity arg whose key is in force. */

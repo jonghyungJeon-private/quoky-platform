@@ -686,3 +686,18 @@ describe('NlSelectionService — warm-up cancellation and timer (ADR-0120 A3 fol
     }
   });
 });
+
+describe('ADR-0120 A5 implementation note 2: a period that loses the owner\'s weekday asks, never answers another day', () => {
+  it('"다음 주 수 일정 있어?" read as next Monday or the whole week asks with the usage (no repaired option); next-wed executes', async () => {
+    for (const range of ['next-mon', 'next-week']) {
+      const h = harness({ script: [out('calendar.events', { range })] });
+      const decision = await h.decide('다음 주 수 일정 있어?');
+      expect(decision, range).toMatchObject({ kind: 'ask' });
+      expect(h.session.metadata?.[NL_PENDING_METADATA_KEY], range).toBeUndefined();
+      expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY], range).toBeUndefined();
+      expect(h.logs.find((log) => log.event === 'nl_selection.validation_failed')?.fields, range).toMatchObject({ entryId: 'calendar.events', reason: 'weekday', arg: 'range' });
+    }
+    const ok = harness({ script: [out('calendar.events', { range: 'next-wed' })] });
+    expect(await ok.decide('다음 주 수 일정 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'next-wed' } } });
+  });
+});
