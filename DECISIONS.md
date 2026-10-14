@@ -20412,6 +20412,35 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   per text form, and only when a claim or a passive needs it. A normalized form identical to one already checked is
   skipped. The 8,000-separator input that was quadratic (2.98 s) now runs in about 1 ms of CPU. The DRV-1 hostile input
   takes about 33 ms of CPU against 10 ms at origin/main, and its test measures CPU time.
+- **CA re-review (final fix round).**
+  - **Overlapping matches (P1).** `matchAll` does not return overlapping matches, so a wider exempt match that starts
+    earlier swallowed a claim origin/main blocks (`김철수가 메일을 저가 답장을 보내줬는데 또 보냈어요`). Each pattern now
+    loops with `exec` and resumes one character after each match's start. Repetition is bounded, so it stays linear.
+  - **Fuzz.** 300,000 random fragment sequences were each checked as `mail` and as `drive`. None that origin/main
+    withholds is shown at HEAD; 14,891 checks are newly withheld.
+  - **Gap 2 narrowed to its safe core (P2).** A scope end is now graded:
+    - Strong: causal, contrastive or conditional connectives; a finite past verb; an honorific verb form; request-verb
+      past adnominals (`요청한`, `부탁하신`); `드린`, `시킨`; sentence ends.
+    - Weak: sequential connectives (`-아서/-어서`, `-하여`, `시켜`, bare `-해`). It ends the scope only before a humble
+      benefactive claim.
+    - None: adnominals and complements that describe the object: `요청하는` / `문의하는` / `부탁하는`, `논의했던`,
+      `참석하는지`, `제출하도록`, `받은`, `보낸`, and `확인해 달라는`. A `-해` before `달라/주/드리/보` is an auxiliary,
+      not a predicate.
+    So `김철수 님이 고객에게 받은 피드백을 전달했어요`, `김철수 님이 회의록을 정리해서 문서를 공유했어요` and
+    `김철수 님이 요청해서 답장을 보냈어요` pass, as at origin/main. `김철수님이 부탁하셔서 메일을 보내 드렸습니다`,
+    `김철수가 요청하여 메일을 보내 드렸습니다`, `김철수님이 요청하셔서 메일을 보냈습니다` and `김철수가 요청한 메일을
+    보냈어요` stay withheld.
+  - **English (P2).**
+    - A bullet is the third party's under any heading line whose first word is a name (`Kim wrote:`, `Kim (Sales):`,
+      `Kim's update:`, `Kim — key points:`); blank lines keep the heading. An item with a trailing `(Name)` attribution is
+      the third party's too.
+    - Request framing must be in the passive's own clause, split at `:` `;` and dashes.
+    - A first-person `we`/`I` after a reporting verb or a quote (`Kim says we …`), or a Korean `저는`/`저희는` inside a
+      quote or before `라고`/`다고`, is the third party's and does not make Quoky an actor.
+  - **Measurement.** 39 legitimate summaries, including every phrasing the re-review listed, were newly withheld 0
+    times. The repository corpus is unchanged from the previous round: 3 distinct strings are newly withheld, none of
+    them a legitimate summary, and none are lost. The hostile CPU suite passes, with overlapping claims, weak connectives
+    and whitespace runs added.
 - **Gap 1, a split or disguised name.** Normalizing (`normalizeForClaimCheck`) does the following:
   - removes, or turns into a space, format characters (Cf) and blank letters (Hangul fillers, braille blank);
   - applies NFKD, drops combining marks, then applies NFKC (this also recomposes the compatibility jamo `ㅋㅝㅋㅣ`);
@@ -20420,16 +20449,9 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   The join is linear because each separator run is scanned only by the attempt that starts at the letter before it. A
   subject word is compared on its letters and digits, and `Quoky봇` / `쿼키님` are stand-ins (`quoky-platform` is not).
 - **Gap 2, an implied assistant action.** A third-party subject exempts a Korean claim only when it governs the claim's
-  own verb. Any of the following between them ends its scope:
-  - a word with a ㅆ-final syllable other than `있`;
-  - an honorific verb form;
-  - an `-아서/-어서` connective;
-  - a bare `-해` connective (except the nouns and postpositions `올해`, `피해`, `에 대해`, `위해`, `통해`, …);
-  - the connective endings (`-니까`, `-는데`, `-면`, `-하여`, `시켜`, `말하길`, `-서요`, …);
-  - the adnominals of the request and transfer verbs (`요청한`, `부탁하신`, `보낸`, `받은`, `드린`, `시킨`).
-  A bare adjective or postposition adnominal (`중요한`, `관련된`, `에 대한`) no longer counts (review P2). An honorific
-  subject never exempts a humble benefactive claim (`드렸`). The benefactive and completed auxiliaries (`해 뒀`, `해 놨`,
-  `해 줬`, `보내 놓았`, `처리해 드렸`, `처리 완료했`) are claims.
+  own verb, under the graded scope rule of the CA re-review bullet above. An honorific subject never exempts a humble
+  benefactive claim (`드렸`), because an honoured subject's own act would take `-시-`. The benefactive and completed
+  auxiliaries (`해 뒀`, `해 놨`, `해 줬`, `보내 놓았`, `처리해 드렸`, `처리 완료했`) are claims.
 - **Gap 3, a cross-sentence split.** The following remove the third-party exemption:
   - A first-person pronoun (`제가`, `저는`, …) or the name as actor (`Quoky가`, `쿼키는`, `저희 측에서`), anywhere in the
     reply, but only in a sentence with an action. An action is a claim stem, a benefactive, `대신`, or a past verb, so
@@ -20443,7 +20465,7 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   - `Your reply was sent` and a bare `Reply sent.`.
   - A dropped-subject `Sent the reply.`, except a bullet under a third-party heading (`Kim's email:`, `Kim:`).
   - A Korean passive with request framing (`요청하신 대로 메일이 발송되었습니다`).
-- **False-positive measurement (re-run against origin/main).** The corpus is every string in the golden and fixture JSON
+- **False-positive measurement (second round, re-run against origin/main).** The corpus is every string in the golden and fixture JSON
   files (6,008), every string literal in the non-guard test files (13,488) and every line of `docs/uat/*.md` and
   `CURRENT_STATE.md` (4,361), run for each of `mail`, `mail-thread` and `drive`. Newly withheld: 3 distinct strings.
   - `사용자님이 요청하신 브랜치를 삭제했습니다` is an implied action, a true positive.
@@ -20455,7 +20477,9 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
 - **Accepted residuals.**
   - Misspelled or transliterated names (`Quokky`, `Qouky`, `쿠오키`, small-capital `Qᴜoky`).
   - A bare Korean passive with no request framing (`메일이 발송되었습니다`).
-  - The adnominal of a verb outside the request/transfer set (`작성한`, `가진`).
+  - An implied action after a sequential connective or a describing adnominal, unless the claim is humble or a stand-in
+    is present (`김철수 님이 요청해서 답장을 보냈어요`, `김철수가 보낸 메일을 전달했어요`). This is the origin/main
+    behaviour, kept because the same forms are common in third-party reports.
   - A zero-width character used both as a space and inside a word in the same claim.
   - Two known fail-closed false positives, kept as tests: a third-party report split by a line break, and a first-person
     sentence with a past verb anywhere in the reply (`제가 요약했어요. …`).

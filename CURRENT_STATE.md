@@ -51,12 +51,14 @@ Details and the review record for each item are in the matching notes in `DECISI
 - **What changed.** `document-summary-claim-guard.ts` closes the three gaps recorded under the v5 W3 "guard stays strict"
   decision. The change is stricter only: no flag, migration or prompt change.
   - A split or disguised `Quoky` is caught by normalization.
-  - An implied assistant action is withheld: the subject must govern the claim's own verb, and every match in a clause is
-    judged.
+  - An implied assistant action is withheld under a graded scope rule. Strong clause boundaries always end the
+    subject's scope; sequential connectives end it only before a humble claim; adnominals that describe the object keep
+    it. Every match in a clause is judged, overlapping matches included.
   - A cross-sentence split is caught: a Quoky actor with an action anywhere in the reply, or a generic stand-in in the
     claim's own sentence, removes the exemption. English request-framed passives and dropped-subject forms count too.
-  - The review round (CA CHANGES REQUIRED, Codex P1s) is addressed.
-- **Measured.** Against origin/main, 3 repository strings out of 23,857 are newly withheld: one true positive, plus a
+  - Both review rounds are addressed (CA CHANGES REQUIRED twice, Codex P1s). A fuzz against origin/main finds no
+    loosening.
+- **Measured.** All 39 legitimate summaries pass. Against origin/main, 3 repository strings out of 23,858 are newly withheld: one true positive, plus a
   selector prompt and a code fragment that are not summaries. None are lost. Accepted residuals: misspelled names
   (`Quokky`, `쿠오키`) and bare Korean passives (`메일이 발송되었습니다`).
 - **Not run live.** The change has offline tests only.
