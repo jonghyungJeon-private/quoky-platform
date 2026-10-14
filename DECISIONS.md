@@ -22790,3 +22790,59 @@ merged as Proposed in #200 before this record. The owner's words, where given, v
 | ADR-0101 D4 | `CANCELED` is terminal | Plus `CANCELED` → `SCHEDULED` through `reactivateReminder`, from the A6 undo path only, with a compare-and-set and the active limit |
 | ADR-0118 D7 (as widened by A6) | A content word counts as a summary request | Narrowed: only an explicit summary word, the owner's answer to the content-mode question, or the stored preference sends text to a model. `full` sends text to no model |
 | ADR-0112 D1 | Comment, transition and post | Unchanged by this record. R3 needs a Slack-delete amendment, and R4 a Jira create and delete amendment |
+
+### ADR-0120 amendment A6 implementation note — R0, the inert code (2026-10-14)
+
+- **Scope.** Stage R0 of the A6 plan (`docs/plans/nl-actions-a6-plan.md`): NLA-1, NLA-2, NLA-3, NLA-4, NLA-5, NLA-8 and
+  the tooling half of NLA-6 (plus the NLA-7 harness). Branch `claude/v5-a6-r0`. The corpus data (`nl-action.v1.json`) and
+  the red-team cases are drafted on `claude/v5-a6-corpus` against `docs/plans/nl-action-corpus-schema.md`.
+- **Inert by default.** `QUOKY_NL_ACTIONS` (`off` | `shadow` | `local` | `external`, default `off`). With `off`:
+  - no action entry reaches the catalog (`ConversationRuntime.nlCatalog` drops every non-READ entry and the service drops
+    them again), so the selector prompt is `nl-select.v18` byte for byte (`golden/nl-select.v18.prompts.json`, generated
+    from `origin/main` 35e882d before any change);
+  - no A6 record is written (no `quoky.lastAction`, no labelled slot, no receipt), the control phrases and `되돌리기` are
+    ordinary text, and the work-chat and reminder services attach no receipts;
+  - a test replays all 791 `nl-intent.v1.json` cases through the service with and without A6 wiring (also with action
+    entries leaking into the turn, and with `local` plus a stopped switch) and requires identical prompts and decisions.
+- **Startup.** Any level but `off` needs `QUOKY_NL_INTENT_MODE=active` (`NL_ACTIONS_REQUIRES_ACTIVE`) and the kill switch
+  (`NL_ACTIONS_REQUIRES_KILL_SWITCH`, thrown by `NlSelectionService`); the composition root always builds the switch.
+- **NLA-1.** `NL_ACTION_ENTRY_IDS` (nine closed ids; `slack.post` / `calendar.create` reserved, no entry before R3),
+  `ITEM_READ`, `span` and `ref` arg kinds, `nl-routing/action-entries.ts` (seven entries, word classes as value validators,
+  payload rules, time checks, bulk refusal, the `item.content-mode` key). `NlWave1EntryId` narrows `lastSelection`, the
+  numbered entry question and grammar selections to READ ids, so an action can never be stored there. Prompt
+  `nl-select.v19` adds rule 8, rewrites three v18 instruction lines and swaps three examples (header only; the owner's
+  message is never rewritten) and the "Reference context" line (kinds, counts, ages).
+- **NLA-2.** `last-listing.ts` gains the `todo` / `reminder` slots with labels (absent on mail/Drive records, so their stored
+  shape is unchanged), `withLabelledListing` (merge never shrinks a list), `readListingRecord` (most recent = latest `at`)
+  and `findAnyListingByReply`; `nl-routing/last-action.ts` (`quoky.lastAction`, fresh 10 min, kept 30 min for a reply to its
+  echo); `nl-routing/item-reference.ts` (pure resolution, every A6-D2 branch, undo resolution, the structural context);
+  pending A6 questions (`action-target` with candidate ids only, `action-mode`, `action-reschedule`).
+- **NLA-3.** `reopenWorkItem` / `WorkManager.reopen` and `reactivateReminder` (undo path only; the generic tables stay
+  closed) and one additive port method `ReminderRepository.reactivate` (SQLite: one IMMEDIATE transaction, CAS on
+  `CANCELED` and the version, the active limit, `display_no` untouched). No migration. `WorkChatService.handleAction` and
+  `ReminderConversationService.handleAction` execute the A6 commands with the per-action inverses of record A (recurring
+  resumes from the next occurrence; a past one-shot asks for a new time with only its id pending). `parseReminderWhen`
+  reads a `when` span with the ADR-0101 grammar itself (embedded in one fixed sentence), so schedules are identical.
+- **NLA-4.** `item.summarize` in the mail and Drive handlers by the resolved id: `summary` is the existing summary path,
+  `full` is `renderUntrustedDocumentFull` (the guarded readout in `markup` untrusted spans, bounded, a truncation note, a
+  fixed history note) with no model call.
+- **NLA-5.** Through the existing `nlSelection` slot (no new runtime deps key; baseline unchanged): the switch phrases,
+  early answers to A6 questions, the anchored `되돌리기`, dispatch by source to the handlers that declare the entry, the
+  receipts recorded in `respondTurnHandler`, the D9 fact change and the stale-command guard, the cache rule (no action
+  output stored or served; reference turns bypass), `lastSelection` cleared on every A6 turn, caps (20/h and 100/day local
+  writes, 30/h item reads), and `nl_action.decided` (ids, closed values, local UUIDs or `{source, label, listing at}`).
+- **NLA-6 / NLA-7 tooling.** `eval:nl -- --mode action` and `--mode read-regression` (offline plan and digest; Strict run
+  only with `--approved-plan-digest`), scoring through Core's own decision path; the A6 red-team harness with deterministic
+  success conditions. Seed fixtures `golden/nl-action.seed.v1.json` and `golden/agent-redteam.seed.v1.json` (not owner data).
+- **NLA-8.** `apps/quoky/src/personal-v5-a6-acceptance.test.ts` (real `AppModule`, SQLite, `local`): the six live phrases,
+  references, undo, the content-mode question, the anchored `되돌리기`, the kill switch and a canary.
+- **Interpretations recorded (reviewers please check).**
+  - Anchored commands report content-free receipts (`TurnHandlerReply.nlAction` / `nlListing`, additive optional fields
+    like `nlSelection`); the runtime records them only while the level is not `off`.
+  - "Which slot was written last" is the slot with the latest `at`; an empty mail/Drive listing drops its slot (as
+    before), so it does not become the most recent listing.
+  - An event-relative `when` creates the BRF-2 reminder, which stores the event title (as the anchored form does).
+  - The full-text note reads "앞부분과 끝부분만 보여드려요 (전체 N자)" because the readout clip keeps head and tail.
+  - `shadow` logs the A6 decision and answers as today (the D9 fact keeps its wording); it also needs the switch.
+- **Not done in R0 (by the plan).** External writes, the `external-write-unsupported` yield, the import scan of writers
+  (NLA-11), any model run, `.env.local` edit or live session (Strict, owner).
