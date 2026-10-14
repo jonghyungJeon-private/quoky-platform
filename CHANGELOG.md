@@ -13,8 +13,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   With `QUOKY_NL_GRAMMAR_YIELD=on` and `active`, selection now runs first: `partOfDay`, the to-do list, chat, keyword "배포".
 - **One rule, no phrases.** When selection would run, a Class B grammar declines when:
   - (a) a content word is left after its own vocabulary. This now also covers the to-do list phrases and the classifier's
-    personal-work surface clause. One-syllable words count, except the named closed classes (degree adverbs, dependent
-    nouns, glued endings);
+    personal-work surface clause. One-syllable words count, except the closed degree adverbs, a dependent noun after an
+    adnominal word, and one ordered suffix glued after a grammar word;
   - (b) a word grounds a typed arg it does not carry (the calendar's part of day outside a clock time);
   - (c) its free-text slot is not already the catalog's canonical keyword (Slack/Confluence search, Jira keyword). Quoted
     keywords are kept whole, and Jira qualifier words count only outside the quotes.

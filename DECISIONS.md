@@ -22967,14 +22967,20 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   - **(a) Leftover content.** After the grammar's own vocabulary and the closed grammatical classes are removed, no
     content word may remain. This now also covers the to-do list phrases (`TODO_LIST_EXPRESSED`,
     `todoListLeavesUnexpressedContent`) and the classifier's surface clause (see the surface-fallback bullet).
-    - A one-syllable word counts like any other word ("할 일 앱 알려줘"), unless it is in a closed one-syllable class
-      (`ONE_SYLLABLE_FUNCTION`):
-      - degree and frequency adverbs (다, 또, 더, 꼭, 잘, 딱, 좀, 막, 곧, 늘, 참, 꽤, 퍽, 쭉, 확, 싹, 푹);
-      - dependent nouns (수, 줄, 데, 거, 것, 게, 건, 걸, 바, 뿐, 때, 듯, 채, 지, 등).
-      The negating 안/못 are not in the class: they change the meaning.
-    - A fragment glued to a removed vocabulary word is that word's morphology only when it is in the closed ending class
-      (`GLUED_ENDING`: the plural 들, the particles and copula endings, and the verbal endings left by a removed stem,
-      such as "어" in "뭐 있어"). Anything else glued on is content ("할일앱 알려줘" declines, "할일들 보여줘" does not).
+    - A one-syllable word counts like any other word ("할 일 앱 알려줘"), with two exceptions:
+      - the closed class of degree and frequency adverbs (`ONE_SYLLABLE_ADVERB`: 다, 또, 더, 꼭, 잘, 딱, 막, 곧, 늘, 참, 꽤,
+        퍽, 쭉, 확, 싹, 푹; 좀 was already in `KO_FUNCTION`). The negating 안/못 are not in the class: they change the
+        meaning;
+      - a dependent noun (수, 줄, 데, 거, 것, 게, 건, 걸, 바, 뿐, 때, 듯, 채, 지, 등, with an optional particle), but only by
+        a morphology rule: the previous word ends in an adnominal ㄴ or ㄹ ("알려줄 수 있나요", "남은 거", "있는 데").
+        Elsewhere the syllable is content ("다음 주 수 일정 있어?" declines: 수 = 수요일).
+    - The request and existence morphology gains the adnominal forms 줄/드릴, 실 and 는 ("알려줄", "보여주실", "있는"). The
+      hard-listed 알려줄 was removed from `KO_FUNCTION`.
+    - A fragment glued to a removed vocabulary word is morphology only AFTER the word and only as one closed suffix
+      (`GLUED_SUFFIX`): a plural and one particle or copula ending ("할 일들을", "할일이랑", "할일도"), or one verbal ending
+      left by a removed stem ("뭐 있|어"). Particles may not repeat ("할일만나 보여줘" declines). A fragment BEFORE the word is
+      a word of its own ("아들할일 보여줘" and "아이할일 보여줘" decline; "할일앱 알려줘" and "할일지도 알려줘" decline). Whitespace
+      swallowed by a match stays, so only really glued fragments share the token.
     - The filler "다시" joins the closed classes.
   - **(b) A typed-arg word the grammar does not carry** never counts as expressed (`containsGroundingWord`, the selector's
     own grounding list, the `DRIVE_KIND_WORDS` precedent). The calendar spans stop before a time-of-day word, and a
@@ -22984,7 +22990,8 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
     in the leaf module `nl-routing/keyword-canonical.ts`). This applies to Slack/Confluence search slots and Jira
     keyword slots. A quoted keyword (one short quoted span, the `ONE_SHORT_QUOTED` shape) is the owner's exact literal
     and is never cut (`슬랙에서 "온보딩 문서" 찾아줘` is still answered). For Jira, the role, status, date-field and period
-    words count only outside the quotes (`"진행중인 배포" 관련 지라 이슈` is a keyword; `진행중인 "배포" 관련 …` carries a status).
+    words count only outside the quotes (`"진행중인 배포" 관련 지라 이슈` is a keyword; `진행중인 "배포" 관련 …` carries a
+    status).
     A GitHub text search has no catalog equivalent and is unchanged.
 - **The surface clause keeps its fallback (A5 change 9).** The classifier is unchanged. When the A2 gate is on and the
   surface clause matched a message that leaves content (a), the runtime uses the existing `work-surface` route at (C2) in
@@ -23016,9 +23023,9 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
     clause). This note extends the same rule to them.
   - A2 D10 interpretation, clarified: "The only word lists added are closed grammatical classes (particles, endings,
     interrogatives, request verbs, pronouns, English function words) plus each entry's own argument vocabularies". This
-    note names three more closed classes: the one-syllable degree/frequency adverbs and dependent nouns
-    (`ONE_SYLLABLE_FUNCTION`), the glued-ending class (`GLUED_ENDING`), and the filler "다시". It also adds the to-do
-    grammar's own words.
+    note names more closed classes: the one-syllable degree and frequency adverbs (`ONE_SYLLABLE_ADVERB`), the dependent
+    nouns (grammar only after an adnominal word, a morphology rule), the ordered glued suffix (`GLUED_SUFFIX`), and the
+    filler "다시". It also adds the to-do grammar's own words.
   - A5 change 9, clarified: "A skipped, failed, timed-out or disabled selector still leaves the surface as the fallback.
     Phase A is unchanged."
     - The fallback holds.
@@ -23063,12 +23070,18 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   Keeping a listing across a chat turn would reverse the follow-up 2 clause. "첫 번째 거 자세히" has no catalog equivalent
   for Slack or Confluence (no `item` arg and no listing slot, unlike mail in A5). Both need an owner decision.
 - **Tests.**
-  - `grammar-yield-table.test.ts`: grammars × residual kinds, yield on and off. It covers one-syllable words (the closed
-    classes, standalone and glued), quoted literals (search and Jira) and English clock times.
+  - `grammar-yield-table.test.ts`: grammars × residual kinds, yield on and off. It covers one-syllable words (the
+    adverb class, dependent nouns after and not after an adnominal word, glued suffixes and prefixes), quoted literals
+    (search and Jira) and English clock times.
   - `grammar-residual.test.ts`; the calendar handler; `work-chat-command.test.ts` (the quoted-keyword tests with the yield
     on).
   - The INT-4 acceptance block "live Telegram (2026-10-14, after A5)": the five sentences, the chain, a failing selector
     (calendar and search get chat; the surface falls back for "캘린더는 보지 말고 할 일만 알려줘", "할 일 관리하는 좋은 습관
     알려줘" and "이번 주 해야 할 일 알려줘"; the plain phrases keep their grammars), and mode off / yield off.
+- **Accepted residual (orchestrator decision under the fix-loop cap, 2026-10-14).** Any remaining case in which a grammar
+  declines a message it could have answered is over-yield only. It costs one extra selector call, and the selector answers
+  correctly. Examples are a one-syllable adverb outside the closed class, or a verbal adnominal form not listed in the
+  request or existence morphology. These are accepted as residual. Only a wrong capture (a grammar answering something it
+  drops) blocks.
 - **Not done.** No migration, new flag, `.env.local` change, provider or platform branch, prompt change (`nl-select.v18`)
   or classifier interface change.
