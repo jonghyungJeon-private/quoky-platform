@@ -4,9 +4,8 @@
   nothing to it. If they disagree, the ADR wins.
 - **Owner instruction:** "설계부터 진행", meaning design first, then review, then local writes and item actions, then
   external writes.
-- **Base:** `claude/v5-nl-uat-fixes` (Proposed A5). A6 code starts after A5 is accepted and merged, and this branch
-  is then rebased onto `origin/main`. Both A5 and A6 edit `nl-routing/*` and the selector prompt, and A6's
-  read-regression gate pins the prompt A5 ends at.
+- **Base:** `origin/main` after #199, which merged A5 (Accepted) with prompt `nl-select.v18`. Both A5 and A6 edit
+  `nl-routing/*` and the selector prompt, and A6's read-regression gate pins `nl-select.v18` for the flag `off`.
 - **Model tiers** (subagent tiering rule):
   - haiku: mechanical work, log reading, docs;
   - sonnet: well-specified implementation and tests;
@@ -17,7 +16,7 @@
 
 | Stage | Flag level | Entries | Gate to enter (A6-D7 / A6-D8) |
 |---|---|---|---|
-| R0 | `off` | none: code merged, inert | Offline suite green; `off` byte-identical (replies **and** the selector prompt, which equals the A5 end state); kill switch built and tested; reviews PASS |
+| R0 | `off` | none: code merged, inert | Offline suite green; `off` byte-identical (replies **and** the selector prompt, which equals `nl-select.v18` on `main`); kill switch built and tested; reviews PASS |
 | R1 | `shadow` → `local` | `todo.add`, `todo.complete` (+ `todo.cancel`, decision 3), `reminder.create`, `reminder.cancel`, `action.undo`, `item.summarize` (mail, drive) | Model gate and read-regression gate (3 runs); red-team local families 0 successes; owner batch approval; at least 100 labelled live shadow turns; owner yes |
 | R2 | `local` | `item.summarize` (jira, slack) | R1 live data: at least 100 labelled turns, 0 wrong-target executes, at most 1 undo per 20 executions (every undo in the window counts); gates on the new cases |
 | R3 | `external` | `slack.post`, `calendar.create` previews with the provenance banner; the `external-write-unsupported` yield | Full red-team A6 family 0 successes over 3 runs; model, read-regression and yield-latency gates; owner yes |
@@ -30,7 +29,7 @@ Paths: `core/` is `packages/core/src/`, `app/` is `apps/quoky/src/`. Owned files
 | Id | Stage | Task | Owned files (summary) | Model | Tests | Deps |
 |---|---|---|---|---|---|---|
 | NLA-0 | — | A6 amendment and this plan; the CA revisions | `DECISIONS.md`, this file | opus | docs only (a throwaway grammar probe, not committed, verified the Context claims) | owner "설계부터 진행" |
-| NLA-1 | R0 | Catalog types and validation: the A6 ids, `ITEM_READ`, the `span` / `ref` kinds; payload rules (current turn only, not made only of deictics, ordinals or time words, credential guard); `ref` grounding classes; the whole-message time check for `when` entries; time-in-title question for `todo.add`; one action per message; prompt `nl-select.v19` (action rules, the "Reference context" line), with the flag `off` emitting the A5 prompt byte for byte | `core/application/nl-routing/{catalog,selection-validator,selection-prompt,selection-output}.ts`, a new `nl-routing/action-entries.ts` | opus (design), sonnet (impl) | A property test: no span outside the current grounding text validates; deictic-only payloads refused for all five payload kinds; the time-outside-`when` question; a prompt golden for `off` = A5 | A5 merged; A6 accepted |
+| NLA-1 | R0 | Catalog types and validation: the A6 ids, `ITEM_READ`, the `span` / `ref` kinds; payload rules (current turn only, not made only of deictics, ordinals or time words, credential guard); `ref` grounding classes; the whole-message time check for `when` entries; time-in-title question for `todo.add`; one action per message; prompt `nl-select.v19` (action rules, the "Reference context" line), with the flag `off` emitting `nl-select.v18` byte for byte | `core/application/nl-routing/{catalog,selection-validator,selection-prompt,selection-output}.ts`, a new `nl-routing/action-entries.ts` | opus (design), sonnet (impl) | A property test: no span outside the current grounding text validates; deictic-only payloads refused for all five payload kinds; the time-outside-`when` question; a prompt golden for `off` = `nl-select.v18` | A6 accepted (A5 merged in #199) |
 | NLA-2 | R0 | References: labelled slots (`todo`, `reminder`) and the last-written-slot marker in `last-listing.ts`; `quoky.lastAction` per (Session, Actor) with `echoReplyIds`; `item-reference.ts` (most-recent-listing only, other-source question, the reminder display number versus ordinal rule, echo as a one-item listing, reply-to-pick 30 minutes for LOCAL_WRITE); questions using shown labels and storing candidate ids only; payload entries never resume | `core/application/last-listing.ts`, new `nl-routing/{item-reference,last-action}.ts`, `nl-routing/selection-state.ts` (pending candidates) | sonnet (opus review) | A table test of every A6-D2 branch; a property test over random states (never another source, never a stale item, never an older listing); label collisions; a 31-minute reply to a listing for a LOCAL_WRITE asks; payload entries never resume | NLA-1 |
 | NLA-3 | R0 | Local writes: `handleSelected` for `todo.*` (via `WorkChatService`, target by id) and `reminder.*` (`ReminderConversationService`; a pure `parseReminderWhen` extracted from the grammar, byte-identical); anchored executions record `lastAction` and the echo label; echo wording; undo per the A6-D3 table (fired or completed items, `DAILY` / `WEEKLY` kept, event-relative) and the `lastAction` after an undo (not undoable); "되돌려줘" as a reply to an older echo asks; the anchored `되돌리기` (decision 8) | `core/application/work-chat/{work-chat-service,work-chat-turn-handler,work-chat-renderer}.ts`, `core/application/reminders/{reminder-grammar,reminder-conversation-service,reminder-turn-handler,reminder-reply-composer}.ts` | sonnet (opus review) | Existing reminder and to-do suites unchanged; every undo row including "nothing to undo"; recurrence kept; undo of an undo refused; a stale-target no-op | NLA-2 |
 | NLA-4 | R0 | `item.summarize` (mail, Drive): mapped by resolved id to the existing summary commands; the content-word `flagGrounding`; mail `thread` via GML-2; DRV-2b unchanged; output never stored | `core/application/mail/mail-turn-handler.ts`, `core/application/drive/drive-turn-handler.ts` (`handleSelected` only) | sonnet | "첫 번째 거 요약해줘" after Drive; "아까 1번은 무슨 내용이었지" after mail; an older mail listing behind a newer Drive listing asks and reads nothing; the canary (fixture text never in the next selector input) | NLA-2 |
@@ -58,7 +57,7 @@ runtime deps key. A task that needs one stops and reports `NEEDS_SCOPE_EXPANSION
 | Negatives captured as an execution or a preview | **0** (a question counts as neither) |
 | Questions on positive reference cases | at most 10% |
 | Read regression (`nl-intent.v1` + A5 cases, A6 entries offered) | the ADR-0120 D12 gate as it stands; **0 read cases captured by an A6 entry** |
-| Prompt with the flag `off` | byte-identical to the A5 end state (`nl-select.v18` today) |
+| Prompt with the flag `off` | byte-identical to `nl-select.v18` (on `main` after A5, #199) |
 | Calls over the selection bound | at most 1% |
 | Added p95 on yield turns (R3) | at most 2.5 s |
 | Red team (local families before R1; full family before R3) | **0 successes** over 3 runs |

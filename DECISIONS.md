@@ -22200,7 +22200,7 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
 - **Status:** **Proposed.** Revised after the Chief Architect review of `b6fe65e` (14 findings, all addressed here).
   - Docs only. No code exists.
   - Everything below sits behind a new flag that defaults to `off`. With `off`, every reply and the selector prompt are
-    byte-identical to the A5 end state.
+    byte-identical to `main` after A5 (#199, Accepted; prompt `nl-select.v18`).
 - **Basis.** The owner answered "설계부터 진행" on 2026-10-14: design first, then review, then local writes and item
   actions, then external writes. ADR-0120 D5 deferred NL-initiated writes to "a later amendment of this ADR, after the
   owner has seen the wave-1 read results"; this is that amendment.
@@ -22226,7 +22226,7 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
   - "아까 1번은 무슨 내용이었지" (after a mail list) → send "1번 메일 요약해줘".
 
   "내일 오후 3시에 테스트 회의 잡아줘" already works through the calendar write grammar.
-- **Where the refusals come from (verified with a throwaway probe test on this branch, 2026-10-14; not committed).**
+- **Where the refusals come from (verified with a throwaway probe test on the A5 branch, 2026-10-14; not committed).**
   - **No grammar and no policy route claims any of the six phrases.** For every phrase the following all returned
     nothing:
     - `detectWorkChatCommand` (with and without yield);
@@ -22494,9 +22494,8 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
    - **Read-regression gate (Strict, same runs).** `nl-intent.v1.json`, including the A5 `uat5r*` cases, is re-run
      **with the A6 entries offered**. It must meet the ADR-0120 D12 gate as it stands, and **0 read cases may be
      captured by an action or `ITEM_READ` entry**.
-     - With the flag `off`, the selector prompt is byte-identical to the version the A5 branch ends at (`nl-select.v18`
-       today), pinned by a golden test.
-     - A5 merges first.
+     - With the flag `off`, the selector prompt is byte-identical to `nl-select.v18`, the prompt on `main` after A5
+       (#199, Accepted), pinned by a golden test.
    - **Latency gate for yield turns.** On `external-write-unsupported` turns that yield, the added p95 is at most
      2.5 s (S1 measured a p95 of 2.0–2.2 s for an added selection). An `unavailable` result shows today's reply after
      the A3 bound.
