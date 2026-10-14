@@ -237,9 +237,10 @@ describe('review round: bounds, titles, names, colloquial forms, punctuation, am
   });
 
   it('English "next Wed" names Wednesday without fixing the week', () => {
-    expect(nlExpressedWeekday('anything next Wed?')).toEqual({ weekday: 3, certain: true, bound: false });
+    expect(nlExpressedWeekday('anything next Wed?')).toEqual({ weekday: 3, certain: true, bound: false, direction: 'future' });
     expect(calendar('anything next Wed?', 'next-wed')).toMatchObject({ ok: true });
-    expect(calendar('anything next Wed?', 'wed')).toMatchObject({ ok: true });
+    // On a Wednesday, "next Wed" is never today.
+    expect(calendar('anything next Wed?', 'wed')).toMatchObject({ ok: false, reason: 'weekday' });
     expect(calendar('anything next Wed?', 'next-mon')).toMatchObject({ ok: false, reason: 'weekday' });
   });
 
@@ -253,5 +254,52 @@ describe('review round: bounds, titles, names, colloquial forms, punctuation, am
     expect(at('다음 주 월 일정', 'this-mon')).toMatchObject({ ok: false, reason: 'weekday' });
     expect(at('이번 주 월 일정', 'this-mon')).toMatchObject({ ok: true, value: { range: { startDate: { month: 10, day: 12 } } } });
     expect(at('이번 주 월 일정', 'mon')).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+});
+
+describe('final review round', () => {
+  it('CA-1: an uncertain anchored weekday accepts only a period inside that week or one containing the day', () => {
+    const text = '이번 주 금 시세 발표 일정';
+    expect(calendar(text, 'this-week')).toMatchObject({ ok: true });
+    expect(calendar(text, '10-15..10-16')).toMatchObject({ ok: true });
+    expect(calendar(text, 'last-week')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar(text, 'next-week')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar(text, '10-17..10-19')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar('다음 주 일 많아?', 'this-week')).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+
+  it('CA-2: a keyword that only hides the period is not a title', () => {
+    const titled = (text: string, range: string, keyword: string) => validateSelection({ entryId: 'calendar.events', args: { range, keyword } }, ctx(text));
+    expect(titled('다음 주 수요일 회의 있어?', 'next-week', '수요일 회의')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(titled('다음 주 수요일 일정 있어?', 'next-week', '수요일 일정')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(titled('다음 주 수요일 스터디', 'next-week', '수요일 스터디')).toMatchObject({ ok: true });
+  });
+
+  it('CA-3: inclusive bounds contain the day; only exclusive ones widen by one day, on their own side', () => {
+    expect(calendar('이번 주 금요일까지 일정', '10-14..10-15')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar('이번 주 금요일까지 일정', '10-14..10-16')).toMatchObject({ ok: true });
+    expect(calendar('다음 주 수요일 이후 일정', '10-22..10-25')).toMatchObject({ ok: true });
+    expect(calendar('다음 주 수요일 이후 일정', '10-19..10-20')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar('다음 주 금요일 전에 일정', '10-19..10-22')).toMatchObject({ ok: true });
+    expect(calendar('다음 주 금요일 전에 일정', '10-24..10-25')).toMatchObject({ ok: false, reason: 'weekday' });
+  });
+
+  it('Codex-1: a parenthesised gloss is read like the next word', () => {
+    const text = '이번 주 금(골드) 시세 발표 일정';
+    expect(nlExpressedWeekday(text, CALENDAR_WORDS)).toMatchObject({ weekday: 5, certain: false });
+    expect(calendar(text, 'this-week')).toMatchObject({ ok: true });
+    expect(nlExpressedWeekday('다음 주 수(오전) 일정', CALENDAR_WORDS)).toMatchObject({ weekday: 3, certain: true });
+  });
+
+  it('Codex-2: several weekdays across glosses and punctuation name no single day', () => {
+    expect(nlExpressedWeekday('다음 주 수(오전), 금(오후) 일정', CALENDAR_WORDS)).toBeUndefined();
+    expect(calendar('다음 주 수(오전), 금(오후) 일정', 'next-week')).toMatchObject({ ok: true });
+  });
+
+  it('Codex-3: an English bound keeps its anchor', () => {
+    expect(calendar('by this Friday calendar', 'last-week')).toMatchObject({ ok: false, reason: 'weekday' });
+    expect(calendar('by this Friday calendar', 'this-week')).toMatchObject({ ok: true });
+    expect(calendar('after last Friday calendar', '10-10..10-13')).toMatchObject({ ok: true });
+    expect(calendar('after last Friday calendar', 'next-week')).toMatchObject({ ok: false, reason: 'weekday' });
   });
 });

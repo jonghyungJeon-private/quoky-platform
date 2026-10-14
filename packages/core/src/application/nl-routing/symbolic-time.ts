@@ -318,19 +318,28 @@ export interface NlWeekdayMention {
   readonly certain: boolean;
   /** The weekday bounds a period ("금요일까지", "수요일 부터", "by this Friday"). */
   readonly bound: boolean;
-  /** The Korean week anchor attached to it ("다음 주 수" = next). */
+  /** An exclusive bound: the period starts the day `after` it ("수요일 이후") or ends the day `before` it ("금요일 전에"). */
+  readonly boundSide?: NlBoundSide;
+  /** The week anchor attached to it ("다음 주 수" = next, "this Friday" = this). */
   readonly week?: NlWeekAnchor;
+  /** English "next" / "last" without a fixed week: the day is after / before today. */
+  readonly direction?: NlWeekdayDirection;
   /** The one-syllable form, when the owner used it. */
   readonly abbreviation?: string;
 }
+
+export type NlBoundSide = 'after' | 'before';
+export type NlWeekdayDirection = 'future' | 'past';
 
 /** The one weekday the owner's text names (several mentions of the same weekday merged). */
 export interface NlExpressedWeekday {
   readonly weekday: number;
   readonly certain: boolean;
   readonly bound: boolean;
+  readonly boundSide?: NlBoundSide;
   /** The week anchor every mention carries, when they agree. */
   readonly week?: NlWeekAnchor;
+  readonly direction?: NlWeekdayDirection;
 }
 
 const KO_WEEKDAY_SYLLABLE: Readonly<Record<string, number>> = { 일: 0, 월: 1, 화: 2, 수: 3, 목: 4, 금: 5, 토: 6 };
@@ -344,9 +353,26 @@ const ABBREVIATION_PARTICLE = '(?:에는|에도|에만|이랑|하고|까지|부�
 /** Joiners inside a list of one-syllable weekdays ("토, 일", "월~수", "수랑 목"). */
 const ABBREVIATION_JOIN = '\\s*(?:[,·/~～-]|이랑|하고|랑|와|과)?\\s*';
 /** After a weekday: a particle or word that makes it a bound of a period ("까지", " 부터", "날까지", "전에"). */
-const KO_BOUND_TAIL = /^\s*(?:날\s*)?(?:까지|부터|전까지|이전|이후|전에|후에|~|～)/u;
-/** Before an English weekday: a bound marker, optionally with its anchor ("by this Friday", "through next Friday"). */
-const EN_BOUND_HEAD = /(?:^|\s)(?:until|till|by|from|since|before|after|through|thru)\s+(?:(?:this|next|last|the|coming)\s+)?$/u;
+const KO_BOUND_TAIL = /^\s*(?:날\s*)?(까지|부터|전까지|이전|이후|전에|후에|~|～)/u;
+/** Before an English weekday: a bound marker ("by", "through", "after"); its anchor is read with the weekday. */
+const EN_BOUND_HEAD = /(?:^|\s)(until|till|by|from|since|before|after|through|thru)\s+(?:the\s+|coming\s+)?$/u;
+
+/** The side of an exclusive bound word (이후, 후에, after; 전에, 이전, 전까지, before); inclusive words have none. */
+function boundSideOf(word: string | undefined): NlBoundSide | undefined {
+  if (word === undefined) return undefined;
+  if (word === '이후' || word === '후에' || word === 'after') return 'after';
+  if (word === '이전' || word === '전에' || word === '전까지' || word === 'before') return 'before';
+  return undefined;
+}
+
+/** The bound of a Korean weekday from the text after it (and its glued particle). */
+function koBound(particle: string | undefined, rest: string): { bound: boolean; boundSide?: NlBoundSide } {
+  if (particle === '까지' || particle === '부터') return { bound: true };
+  const tail = KO_BOUND_TAIL.exec(rest);
+  if (tail === null) return { bound: false };
+  const side = boundSideOf(tail[1]);
+  return { bound: true, ...(side !== undefined ? { boundSide: side } : {}) };
+}
 
 function anchorOf(word: string | undefined): NlWeekAnchor | undefined {
   if (word === undefined) return undefined;
@@ -364,8 +390,11 @@ function anchorOf(word: string | undefined): NlWeekAnchor | undefined {
  */
 function abbreviationIsCertain(particle: string | undefined, rest: string, sourceWords: readonly string[]): boolean {
   if (particle !== undefined && particle.length > 0) return true;
-  const next = /^\s*([^\s\p{P}\p{S}]+)/u.exec(rest)?.[1];
-  if (next === undefined || /^[\p{P}\p{S}]/u.test(rest.trimStart())) return true;
+  const trimmed = rest.trimStart();
+  // A parenthesised gloss is read like the next word ("수(오전)" certain, "금(골드)" uncertain); other punctuation ends it.
+  if (trimmed.length === 0 || (/^[\p{P}\p{S}]/u.test(trimmed) && !trimmed.startsWith('('))) return true;
+  const next = /^\(?\s*([^\s\p{P}\p{S}]+)/u.exec(trimmed)?.[1];
+  if (next === undefined) return true;
   if (KO_WEEKDAY_SYLLABLE[next] !== undefined || isTimeWord(next) || !isNlContentWord(next)) return true;
   return sourceWords.some((word) => {
     const source = word.normalize('NFC').toLowerCase();
@@ -389,12 +418,13 @@ export function nlWeekdayMentions(text: string, sourceWords: readonly string[] =
     mentions.push({
       weekday: KO_WEEKDAY_SYLLABLE[match[2] as string] as number,
       certain: true,
-      bound: KO_BOUND_TAIL.test(source.slice(end)),
+      ...koBound(undefined, source.slice(end)),
       ...(week !== undefined ? { week } : {}),
     });
   }
   const anchored = new RegExp(`${KO_WEEK_ANCHOR}\\s+([월화수목금토일])(${ABBREVIATION_PARTICLE})?${WORD_END}`, 'gu');
-  const next = new RegExp(`${ABBREVIATION_JOIN}([월화수목금토일])(${ABBREVIATION_PARTICLE})?${WORD_END}`, 'uy');
+  // A short parenthesised gloss may sit between list members ("수(오전), 금(오후)").
+  const next = new RegExp(`(?:\\s*\\([^()]{0,20}\\))?${ABBREVIATION_JOIN}([월화수목금토일])(${ABBREVIATION_PARTICLE})?${WORD_END}`, 'uy');
   for (const match of source.matchAll(anchored)) {
     const week = anchorOf(match[1]);
     let syllable = match[2] as string;
@@ -405,7 +435,7 @@ export function nlWeekdayMentions(text: string, sourceWords: readonly string[] =
       mentions.push({
         weekday: KO_WEEKDAY_SYLLABLE[syllable] as number,
         certain: syllable !== '일' && abbreviationIsCertain(particle, rest, sourceWords),
-        bound: particle === '까지' || particle === '부터' || KO_BOUND_TAIL.test(rest),
+        ...koBound(particle, rest),
         ...(week !== undefined ? { week } : {}),
         abbreviation: syllable,
       });
@@ -417,12 +447,24 @@ export function nlWeekdayMentions(text: string, sourceWords: readonly string[] =
       end = next.lastIndex;
     }
   }
-  const english = /\b(?:(mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?|sun)day|(?:this|next|last)\s+(mon|tues?|wed|thu(?:rs?)?|fri|sat|sun))s?\b/gu;
+  const english = /\b(?:(this|next|last)\s+)?(?:(mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?|sun)day|(mon|tues?|wed|thu(?:rs?)?|fri|sat|sun))s?\b/gu;
   for (const match of source.matchAll(english)) {
-    const weekday = EN_WEEKDAY_INDEX[(match[1] ?? match[2] ?? '').slice(0, 3)];
+    const anchor = match[1];
+    // A bare three-letter form ("sun", "wed") is a weekday only with its anchor ("next wed").
+    if (match[3] !== undefined && anchor === undefined) continue;
+    const weekday = EN_WEEKDAY_INDEX[(match[2] ?? match[3] ?? '').slice(0, 3)];
     if (weekday === undefined) continue;
-    // English "next Friday" may mean this coming Friday, so an English anchor never fixes the week.
-    mentions.push({ weekday, certain: true, bound: EN_BOUND_HEAD.test(source.slice(0, match.index ?? 0)) });
+    const head = EN_BOUND_HEAD.exec(source.slice(0, match.index ?? 0));
+    const side = boundSideOf(head?.[1]);
+    // "this Friday" is this week's; "next Friday" may be this coming Friday and "last Friday" this week's, so those only
+    // fix the direction from today.
+    mentions.push({
+      weekday,
+      certain: true,
+      bound: head !== null,
+      ...(side !== undefined ? { boundSide: side } : {}),
+      ...(anchor === 'this' ? { week: 'this' as const } : anchor === 'next' ? { direction: 'future' as const } : anchor === 'last' ? { direction: 'past' as const } : {}),
+    });
   }
   return mentions;
 }
@@ -431,13 +473,20 @@ export function nlWeekdayMentions(text: string, sourceWords: readonly string[] =
 export function nlSingleWeekday(mentions: readonly NlWeekdayMention[]): NlExpressedWeekday | undefined {
   const first = mentions[0];
   if (first === undefined || mentions.some((mention) => mention.weekday !== first.weekday)) return undefined;
-  const weeks = new Set(mentions.map((mention) => mention.week));
-  const week = weeks.size === 1 ? first.week : undefined;
+  const agreed = <T>(pick: (mention: NlWeekdayMention) => T): T | undefined => {
+    const values = new Set(mentions.map(pick));
+    return values.size === 1 ? pick(first) : undefined;
+  };
+  const week = agreed((mention) => mention.week);
+  const direction = agreed((mention) => mention.direction);
+  const boundSide = mentions.find((mention) => mention.bound)?.boundSide;
   return {
     weekday: first.weekday,
     certain: mentions.some((mention) => mention.certain),
     bound: mentions.some((mention) => mention.bound),
+    ...(boundSide !== undefined ? { boundSide } : {}),
     ...(week !== undefined ? { week } : {}),
+    ...(direction !== undefined ? { direction } : {}),
   };
 }
 
@@ -463,10 +512,41 @@ export function nlRangeKeepsWeekday(range: NlResolvedRange | undefined, expresse
     const offset = Math.round(compareLocalDates(date, weekStart) / 86_400_000);
     return offset >= 0 && offset < 7;
   };
-  const named = (date: LocalDate): boolean => weekdayOf(date) === expressed.weekday && inWeek(date);
-  if (range.days === 1) return named(range.startDate);
-  if (expressed.bound) return Array.from({ length: range.days + 2 }, (_, index) => addLocalDays(range.startDate, index - 1)).some(named);
-  return !expressed.certain;
+  const inDirection = (date: LocalDate): boolean =>
+    expressed.direction === undefined || (expressed.direction === 'future' ? compareLocalDates(date, today) > 0 : compareLocalDates(date, today) < 0);
+  const named = (date: LocalDate): boolean => weekdayOf(date) === expressed.weekday && inWeek(date) && inDirection(date);
+  const days = Array.from({ length: range.days }, (_, index) => addLocalDays(range.startDate, index));
+  const contains = days.some(named);
+  if (range.days === 1) return contains;
+  if (expressed.bound) {
+    // Inclusive bounds (까지, 부터, by, until, through) contain the day; an exclusive one may start right after it
+    // ("수요일 이후") or end right before it ("금요일 전에").
+    if (contains) return true;
+    if (expressed.boundSide === 'after') return named(addLocalDays(range.startDate, -1));
+    if (expressed.boundSide === 'before') return named(addLocalDays(range.startDate, range.days));
+    return false;
+  }
+  if (expressed.certain) return false;
+  // An uncertain weekday accepts a period without it, but only inside the anchored week, or one that contains the day.
+  return weekStart === undefined || contains || days.every(inWeek);
+}
+
+/**
+ * Whether a title keyword really carries a title around the weekday ("수요일 스터디", "sunday school") rather than hiding
+ * the period in it ("수요일 회의", "수요일 일정"): after the time words and weekday forms are removed, a content word is
+ * left that is not one of the entry's own source words.
+ */
+export function nlKeywordIsTitle(keyword: string, weekday: number, sourceWords: readonly string[]): boolean {
+  if (!nlWeekdayMentions(keyword).some((mention) => mention.weekday === weekday)) return false;
+  const tokens = keyword.normalize('NFC').toLowerCase().split(/[\s\p{P}\p{S}]+/u).filter((token) => token.length > 0);
+  return tokens.some((token) => {
+    if (isTimeWord(token) || /^[월화수목금토일](?:요일|욜)/u.test(token) || KO_WEEKDAY_SYLLABLE[token] !== undefined) return false;
+    if (!isNlContentWord(token)) return false;
+    return !sourceWords.some((word) => {
+      const source = word.normalize('NFC').toLowerCase();
+      return token === source || (token.startsWith(source) && isNlParticleOnly(token.slice(source.length)));
+    });
+  });
 }
 
 /**

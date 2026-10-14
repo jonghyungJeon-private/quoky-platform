@@ -24,6 +24,7 @@ import {
   isNlRangeSymbol,
   isWeekdayOrTimeKeyword,
   nlRangeKeepsWeekday,
+  nlKeywordIsTitle,
   nlSingleWeekday,
   nlWeekdayMentions,
   normalizeNlRangeSymbol,
@@ -199,9 +200,10 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   if (rangeSpec !== undefined && weekday !== undefined) {
     // A weekday inside a grounded title keyword with other words ("수요일 스터디", "sunday school") may be part of the
     // title (A5 rule 6: real title keywords stay), so it is uncertain: another single day is still refused.
+    // A keyword that only hides the period ("수요일 회의" with the whole next week) is not a title and stays refused.
     const titled = entry.args.some((spec) => {
       const value = args[spec.name];
-      return spec.kind === 'keyword' && typeof value === 'string' && nlWeekdayMentions(value).some((mention) => mention.weekday === weekday.weekday);
+      return spec.kind === 'keyword' && typeof value === 'string' && nlKeywordIsTitle(value, weekday.weekday, entry.aliases);
     });
     if (!nlRangeKeepsWeekday(range, titled ? { ...weekday, certain: false } : weekday, ctx.now, ctx.timeZone)) {
       return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };

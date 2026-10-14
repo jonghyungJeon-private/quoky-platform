@@ -750,6 +750,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (index === 0 && !repaired.ok && repaired.reason === 'weekday') weekdayRefused = true;
       if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) options.push(repaired.value);
     }
+    // A refusal reached through the repair path is not kept in the cache either.
+    if (weekdayRefused && cacheKey !== undefined) this.cache.delete(cacheKey);
     if (options.length === 0) {
       // An entry that is not offered (an unconfigured source) or not in the catalog is honest chat's to explain.
       if (!main.ok && (main.reason === 'unknown-entry' || main.reason === 'not-offered' || main.reason === 'not-read')) {

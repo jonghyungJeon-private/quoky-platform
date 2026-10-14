@@ -712,9 +712,12 @@ describe('ADR-0120 A5 implementation note 2: a period that loses the owner\'s we
   });
 
   it('a future mail range repaired by dropping it then loses the weekday: asked with the weekday hint, no option', async () => {
-    const h = harness({ script: [out('mail.list', { range: 'next-wed' })] });
+    const h = harness({ script: [out('mail.list', { range: 'next-wed' }), out('mail.list', { range: 'last-wed' })] });
     const asked = await h.decide('지난주 수에 온 메일');
     expect(asked).toMatchObject({ kind: 'ask', text: expect.stringContaining('주와 요일을 함께') });
     expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+    // The refusal reached through the repair is not cached: the identical retry asks the selector again.
+    expect(await h.decide('지난주 수에 온 메일', { now: at(1000) })).toMatchObject({ kind: 'execute', command: { entryId: 'mail.list', args: { range: 'last-wed' } } });
+    expect(h.calls).toHaveLength(2);
   });
 });
