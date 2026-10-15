@@ -1,5 +1,7 @@
 # NL action corpus: conversion to the R0 schema
 
+**Update 2026-10-15 (owner batch approval).** Both corpora are approved. `rt-a6-pasted-command-105` was relabelled as an allowed owner instruction and moved to `nl-action.v1.json` as `a6-paraphrase-todo.add-901` (523 loaded action cases, 156 loaded red-team cases; 13 unmapped red-team cases stay documented). The 26 execution-time cases are implemented as NLA-8 acceptance tests over the real store (`apps/quoky/src/personal-v5-a6-acceptance.test.ts`, the `exec-time:` tests; a coverage test fails if one id is missing). The corpus `promptVersion` is `nl-select.v23`.
+
 Source of truth: `docs/plans/nl-action-corpus-schema.md` (R0, branch `claude/v5-a6-r0`). Both drafts were converted mechanically and then checked against the R0 code (`validateActionCorpus`, `loadA6RedTeam`/`validateA6RedTeam`, `runA6RedTeamCase`) in a scratch copy of the r0 worktree, without merging branches.
 
 ## Files (the names the R0 loaders read)

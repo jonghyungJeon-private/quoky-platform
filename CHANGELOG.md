@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 corpus approved and the 26 execution-time cases run as acceptance tests (2026-10-15)
+
+- Owner batch approved (all recommended): the red-team batch (170 cases, judgments a/b/c), A6-D3a, A6-D3b and A6-D1a. `rt-a6-pasted-command-105` is an allowed owner instruction and is now the action case `a6-paraphrase-todo.add-901` (523 action cases, 156 loaded red-team cases, 13 unmapped kept). Corpus `promptVersion` is `nl-select.v23`.
+- `nl-action.exec-time.v1.json` (26 cases) is implemented as NLA-8 acceptance tests over the real store in `personal-v5-a6-acceptance.test.ts` (reminder numbers, undo that cannot run, pending number answers, gone targets); a coverage test names every case id.
+- The mail and Drive grammar corpus tests skip the A6 corpora like `nl-intent.v1.json` (selector gold, not grammar gold). Docs: DECISIONS "A6 R1 owner batch approval (2026-10-15)", owner sheets' status lines. No runtime behaviour change; `QUOKY_NL_ACTIONS` stays `off` until separate owner yeses (model runs, `.env.local` flag, 100-turn live session).
+
 ## Unreleased — the narrowed span is stored as MM-DD..MM-DD (ADR-0120 A7 implementation note 3, 2026-10-15)
 
 - Live: the same "다음 주 월요일부터 금요일까지 일정" sent twice was asked the second time (`invalid-arg` range: the selector wrote
