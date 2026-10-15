@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0122 Accepted; A9 P1 surface permission grants (inert by default, 2026-10-15)
+
+- **Decided.** ADR-0122 accepted by the owner ("모두 권장안"): channels are default deny for personal and connector
+  capabilities; a group works in a channel only with the owner's grant for that channel; DMs are unchanged.
+- **Added (security, off until the owner enables it).** One Core gate (`SurfaceGate`) before every handler, selection, A6
+  dispatch, route, state-bound code step, connector-write step and approval decision (chat and operations UI) in a
+  channel; every turn handler declares `surfaceClaim`. Denials are fixed copy, nothing is read, logs are content-free.
+  Closes the remaining channel exposures (to-do and reminder listings / actions, cross-conversation write hints) and
+  reaction feedback without `memory`.
+- **Added.** Owner phrases `이 채널 권한 보여줘`, `채널 권한 목록`, `… 허용 해제`, `이 채널 권한 모두 해제`, `모든 채널 권한
+  해제` (with a DM receipt); `에이전트 중지` suspends every channel grant. The grant phrase itself is P2 (answered "준비 중").
+- **Added.** `QUOKY_CHANNEL_GRANTS=enforce|off` (P1 default `off`) and `QUOKY_CHANNEL_GRANTS_SEED` (validated, applied once
+  per digest after the identity provisioner, logged, one owner DM line).
+- **Changed.** Every `Actor.metadata` writer (A6 kill switch, interpretation preferences, grants) goes through one
+  per-actor lock (`ActorMetadataStore`); a source test forbids other writes. Runtime deps baseline 36 → 37.
+- Tests: the gate decision table, codec / seed / map / phrase / service / lock suites, approval re-checks, and a
+  production-AppModule acceptance over 517 corpus cases (off == absent, DM unchanged, seeded channel unchanged except
+  writes, ungranted channel denied with nothing read) plus the owner flows.
+
 ## Unreleased — security hotfix: recall, curated examples and owner memory/learning commands are DM-only (P0 ahead of ADR-0122 D7, 2026-10-15)
 
 - **Fixed (security).** Durable recall was scoped by actor only, so a memory saved in a DM ("기억해: …") and the
