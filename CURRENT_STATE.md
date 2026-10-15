@@ -27,6 +27,7 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 learning commands and `피드백 요약` are DM-only (P0 ahead of ADR-0122 D7; DECISIONS "… owner memory/learning commands
 are DM-only"); `isDirectConversation` is fail-closed (`direct: true` only). The QA channel loses them until the ADR-0122
 grants exist. Still actor-wide in a channel, for ADR-0122: `reminder.list` and the to-do list.
+Remaining channel exposures (pre-existing; ADR-0122 P1 next): to-do list/status/complete/cancel replies and reminder listings/cancellations show DM-created titles in channels; cross-conversation connector-write hints show Jira keys/Slack channel names.
 
 **Pending with the owner.**
 

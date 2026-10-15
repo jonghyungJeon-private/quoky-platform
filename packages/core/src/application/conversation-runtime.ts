@@ -8282,7 +8282,10 @@ export class ConversationRuntime {
           const text = direct
             ? renderOwnMemoryNotFound(ownMemoryQuestion.language)
             : renderOwnMemoryDmOnly(ownMemoryQuestion.language);
-          await this.deps.tasks.completeRun(run, { artifactIds: [], metadata: { deterministicReply: 'own-memory-not-found' } });
+          await this.deps.tasks.completeRun(run, {
+            artifactIds: [],
+            metadata: { deterministicReply: direct ? 'own-memory-not-found' : 'own-memory-dm-only' },
+          });
           await this.deps.memory.recordAssistant(text, message.context, task.sessionId ?? session.id);
           await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
           // Content-free (no question or topic text).

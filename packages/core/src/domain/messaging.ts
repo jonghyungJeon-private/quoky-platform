@@ -20,7 +20,8 @@ export interface ConversationContext {
   userId: string;
   /**
    * Set by the adapter (PLT-0): true for a one-to-one conversation with the owner (a DM / private chat), false for a
-   * channel or group. Absent on contexts recorded earlier; Core then treats a context without a `spaceId` as direct.
+   * channel or group. A context is direct only when this is `true` (fail-closed): a missing flag, as on contexts
+   * recorded earlier, is treated as a channel.
    */
   direct?: boolean;
 }
