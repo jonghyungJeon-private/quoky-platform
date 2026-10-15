@@ -1,5 +1,6 @@
-import type { NlActionEntryId, NlAmbiguityKey, NlArgs, NlCatalogEntry, NlEntryCheckFailure } from './catalog';
+import type { NlActionEntryId, NlAmbiguityKey, NlArgs, NlCatalogEntry, NlEntryCheckFailure, NlItemSource, NlWave1EntryId } from './catalog';
 import { normalizeForMatch } from './selection-input';
+import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { isNlTimeWord } from './symbolic-time';
 import { ANCHORED_TODO_PREFIX_HEADS } from '../reminders/reminder-grammar';
 import { SLACK_POST_COLON_HEAD } from '../work-chat/work-chat-command';
@@ -54,6 +55,82 @@ export function formatNlRef(ref: NlRef): string {
 /** A6-D2: the closed deictics that ground `recent` / `this`. Korean words match inside a token (particles glued on). */
 const DEICTIC_KO = ['그거', '이거', '저거', '그것', '이것', '저것', '그건', '이건', '저건', '그걸', '이걸', '저걸', '방금', '아까'];
 const DEICTIC_EN = ['it', 'that', 'this', 'that one', 'this one'];
+/** Particles glued on a deictic, filler, time or item-source noun ("이 문서를", "그 메일에서는"). */
+const PARTICLE_WORDS = '(?:으로|에서|까지|부터|에는|이랑|하고|은|는|이|가|을|를|에|의|도|만|로|랑|요)';
+const PARTICLE_TAIL = new RegExp(`${PARTICLE_WORDS}$`, 'u');
+
+/**
+ * A6-D2 clarification (owner decision 2026-10-15, as recorded in DECISIONS): a demonstrative determiner 이 / 그 standing as
+ * its own word before a noun that names an item source ("이 문서", "그 메일") is a closed deictic exactly like 그거 / 이거.
+ * 저 also means "I" ("저 할 일 다 했어요"), so "저 + noun" grounds only `item.summarize` (a read), never a LOCAL_WRITE ref.
+ * The noun must be a whole word (particles may follow: "이 문서를"; "이 파일럿", "그 문서화" are not references) and must
+ * name the entry's own source ("그 알림" never grounds a to-do ref). The determiners are a closed set and the nouns are
+ * the catalog's own words for the item sources (the aliases and source names of the mail, Drive, to-do and reminder list
+ * entries), never a phrase list. English needs nothing new: "this document" and "that mail" already carry this / that.
+ * Like every deictic it only grounds a `ref`; which item it means is A6-D2 resolution.
+ */
+const DETERMINERS_KO = ['이', '그', '저'] as const;
+type NlDeterminer = (typeof DETERMINERS_KO)[number];
+/** 저 is also the first-person pronoun: it grounds a read reference only. */
+const READ_ONLY_DETERMINERS: ReadonlySet<NlDeterminer> = new Set(['저']);
+const ITEM_SOURCE_LIST_ENTRIES: Readonly<Record<NlItemSource, NlWave1EntryId>> = { mail: 'mail.list', drive: 'drive.files', todo: 'todo.list', reminder: 'reminder.list' };
+/** The catalog's Korean words for each item source (Latin aliases are left to this / that). */
+const ITEM_SOURCE_WORDS_KO: ReadonlyArray<readonly [string, NlItemSource]> = (Object.entries(ITEM_SOURCE_LIST_ENTRIES) as Array<[NlItemSource, NlWave1EntryId]>).flatMap(
+  ([source, id]) =>
+    [...NL_WAVE1_ENTRIES[id].aliases, ...(NL_WAVE1_ENTRIES[id].sourceNames ?? [])]
+      .map(normalizeForMatch)
+      .filter((noun) => !/^[a-z0-9 .-]+$/.test(noun))
+      .map((noun) => [noun, source] as const),
+);
+const nounKey = (noun: string): string => noun.replace(/\s+/g, '');
+/** Each noun (spaces removed) → the item sources it names. */
+const ITEM_SOURCE_NOUNS_KO: ReadonlyMap<string, ReadonlySet<NlItemSource>> = ITEM_SOURCE_WORDS_KO.reduce((nouns, [noun, source]) => {
+  nouns.set(nounKey(noun), new Set([...(nouns.get(nounKey(noun)) ?? []), source]));
+  return nouns;
+}, new Map<string, ReadonlySet<NlItemSource>>());
+const NOUN_ALTERNATION = [...new Set(ITEM_SOURCE_WORDS_KO.map(([noun]) => noun))]
+  .sort((a, b) => b.length - a.length)
+  .map((noun) => noun.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*'))
+  .join('|');
+/**
+ * Where a noun (or its particles) may end: the end of the text, whitespace, or a closed set of sentence punctuation. A
+ * letter, digit, `_` or any other word-joining character never ends it ("이 알림_봇", "그 문서화").
+ */
+const NOUN_END = '(?:$|\\s|[.,!?~…])';
+/** A determiner word, then an item-source noun that ends there or with particles (captures: determiner, noun). */
+const DETERMINER_NOUN_SOURCE = `(?<=^|\\s)(${DETERMINERS_KO.join('|')})\\s+(${NOUN_ALTERNATION})(?=${PARTICLE_WORDS}*${NOUN_END})`;
+const DETERMINER_NOUN_ALL = new RegExp(DETERMINER_NOUN_SOURCE, 'gu');
+
+/** The determiner references of the owner's words: which determiner, and which item sources its noun names. */
+function determinerReferences(groundingText: string): Array<{ readonly determiner: NlDeterminer; readonly sources: ReadonlySet<NlItemSource> }> {
+  const found: Array<{ determiner: NlDeterminer; sources: ReadonlySet<NlItemSource> }> = [];
+  for (const match of normalizeForMatch(groundingText).matchAll(DETERMINER_NOUN_ALL)) {
+    const sources = ITEM_SOURCE_NOUNS_KO.get(nounKey(match[2] as string));
+    if (sources !== undefined) found.push({ determiner: match[1] as NlDeterminer, sources });
+  }
+  return found;
+}
+
+/** Whether the owner's words point with a determiner at an item-source noun ("이 문서", "그 메일"), whatever the entry. */
+export function hasNlDeterminerReference(groundingText: string): boolean {
+  return determinerReferences(groundingText).length > 0;
+}
+
+/** What a `ref` is for: the entry and the item source it acts on (the determiner rule needs both). */
+export interface NlRefTarget {
+  readonly entryId: NlActionEntryId;
+  readonly source?: NlItemSource;
+}
+
+/** A determiner reference grounds `target` only for the noun of its own source; 저 only for a read (`item.summarize`). */
+function groundsByDeterminer(groundingText: string, target: NlRefTarget | undefined): boolean {
+  if (target?.source === undefined) return false;
+  const source = target.source;
+  return determinerReferences(groundingText).some(
+    (reference) => reference.sources.has(source) && (!READ_ONLY_DETERMINERS.has(reference.determiner) || target.entryId === 'item.summarize'),
+  );
+}
+
 /** `last` needs one of these. */
 const LAST_KO = ['마지막'];
 const LAST_EN = ['last', 'the last one'];
@@ -110,14 +187,17 @@ export function nlIndexWording(index: number, groundingText: string): 'digits' |
   return undefined;
 }
 
-/** A6-D2 grounding of a `ref`: `#n` needs that numeral or ordinal; `recent`/`this` a deictic; `last` 마지막/last. */
-export function isNlRefGrounded(ref: NlRef, groundingText: string): boolean {
+/**
+ * A6-D2 grounding of a `ref`: `#n` needs that numeral or ordinal; `recent`/`this` a deictic (or a determiner + noun of the
+ * target's own source, see above); `last` 마지막/last.
+ */
+export function isNlRefGrounded(ref: NlRef, groundingText: string, target?: NlRefTarget): boolean {
   switch (ref.kind) {
     case 'index':
       return nlIndexWording(ref.index, groundingText) !== undefined;
     case 'recent':
     case 'this':
-      return hasNlDeictic(groundingText);
+      return hasNlDeictic(groundingText) || groundsByDeterminer(groundingText, target);
     case 'last':
       return hasLastWord(groundingText);
   }
@@ -153,13 +233,12 @@ export function isNlSpanGrounded(span: string, groundingText: string): boolean {
 
 /** Filler words that carry no content on their own ("첫 번째 거", "the one"). */
 const FILLER = new Set(['거', '것', '걸', '건', '게', '번', '개', '그', '이', '저', '좀', '하나', 'the', 'one', 'a', 'an', 'item', 'thing', 'please']);
-/** Particles glued on a deictic, filler or time word. */
-const PARTICLE_TAIL = /(?:으로|에서|까지|부터|에는|이랑|하고|은|는|이|가|을|를|에|의|도|만|로|랑|요)$/u;
 
 function contentTokens(span: string): string[] {
   let text = normalizeForMatch(span);
   text = text.replace(KO_ORDINAL_PATTERN, ' ').replace(EN_ORDINAL_PATTERN, ' ');
   text = text.replace(/#?\d+\s*번\s*째?/gu, ' ');
+  text = text.replace(DETERMINER_NOUN_ALL, ' ');
   for (const word of [...DEICTIC_KO, ...LAST_KO].sort((a, b) => b.length - a.length)) text = text.split(word).join(' ');
   const tokens = text
     .replace(/[\p{P}\p{S}]+/gu, ' ')

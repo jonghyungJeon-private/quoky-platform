@@ -33,13 +33,12 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 - D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
   metadata edits, the calendar relabels and the T1 extension); the 148 S1 cases are marked with their 2026-10-13
   approval. They gate no live behaviour.
-- **Next owner batch:**
-  - the 41 INT-4 cases `v5int4-001..041` (still PENDING);
-  - `neg-099` "이 문서 요약해줘": A6 relabel HELD pending an A6-D2 decision (whether a bare determiner "이" + noun counts as a
-    deictic; today Core refuses `ref: this` for it as ungrounded);
-  - `uat5r6-07` "그거 요약해줘": A6 relabel HELD pending the owner's confirmation of the ref spelling (the approved sheet
-    says `recent`; A6-D2 treats `recent` and `this` alike; the v25 prompt example for this very sentence uses `this`, so the
-    case is contaminated for scoring: its text is verbatim a v24/v25 prompt example).
+- Next owner batch: the 2 agent-drafted A6 negatives `a6-negative-none-130` / `-131` (저 = "I", below). The INT-4 cases
+  `v5int4-001..041` were owner-approved on 2026-10-15 (D12), and the held relabels `neg-099` and `uat5r6-07` are applied
+  after the owner's A6-D2 clarification (below).
+- Owner follow-up question (Codex review of the A6-D2 clarification): should a newer listing override a fresh lastAction
+  for deictics? Today (A6-D2 step 3, ratified) "그거 완료해줘" and "그 할 일 완료해줘" after a newer to-do list [A, B]
+  act on the fresh lastAction A.
 - Owner follow-up (pre-existing, found in A6 acceptance): an anchored Class A command such as "1번 완료해줘" acts on the CURRENT numbered list, so if the list was renumbered since the owner last saw it (an item completed elsewhere), it completes a different to-do than the one shown. A6 selector-path references are bound to the shown label and refuse instead; whether the anchored form should do the same is the owner's call.
 - Token rotation: deferred (ADR-0121 S0 owner decision, design Q5).
 - OS-level firewall for child processes: "not now" (ADR-0121 S0 owner decision, design Q10).
@@ -56,6 +55,18 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
   tracks' notes). Still pending from v4: the OpenAI and Gemini keys, the PRV-3 monthly DM, LRN-5 round trip.
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
+
+### A6-D2 clarification: "이 / 그 / 저 + item-source noun" is a deictic — on branch `claude/v5-a6-deictic` (2026-10-15)
+
+- **Owner decision:** a determiner 이/그 before a whole catalog item-source noun of the entry's own source (이 문서, 그
+  메일) grounds `ref: this` / `recent` like 그거/이거; resolution is unchanged (one listed item or a fresh lastAction →
+  that item; several → ask; another source → the other-source question). 저 (also "I") grounds reads only (CA review,
+  orchestrator decision). Structural: closed determiners + the `mail.list` / `drive.files` / `todo.list` /
+  `reminder.list` aliases. A determiner + noun alone is also a deictic-only payload (asks).
+- **No prompt change** (`nl-select.v25` already writes `this`); model behaviour not measured (A6 model runs need their own yes).
+- **Corpus:** `neg-099` relabelled (`item.summarize {drive, this, summary}`, one-item Drive context); `uat5r6-07` un-held,
+  respelled `this`; `v5int4-001..041` marked owner-approved D12 2026-10-15.
+- **Inert live:** `QUOKY_NL_ACTIONS` stays `off`, so nothing changes in the owner's service.
 
 ### v5 owner batch of 2026-10-15 — ADR-0112 amendments, D12 approvals, A6 relabels, T1 and prompt `nl-select.v24` — on branch `claude/v5-d12-batch` (2026-10-15)
 

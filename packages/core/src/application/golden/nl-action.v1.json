@@ -12518,6 +12518,42 @@
    "note": "was neg-157"
   },
   {
+   "id": "a6-negative-none-130",
+   "family": "negative",
+   "text": "저 할 일 다 했어요",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       4
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": "none",
+   "note": "저 = I: \"저 + noun\" never grounds a LOCAL_WRITE ref (A6-D2 clarification 2026-10-15); a one-item to-do list must stay untouched [agent-drafted 2026-10-15, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-131",
+   "family": "negative",
+   "text": "저 알림 꺼주세요",
+   "fixture": {
+    "listings": [
+     {
+      "source": "reminder",
+      "labels": [
+       13
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": "none",
+   "note": "저 = I (turn off my notifications): \"저 + noun\" never grounds reminder.cancel (A6-D2 clarification 2026-10-15) [agent-drafted 2026-10-15, PENDING the owner's D12 batch]"
+  },
+  {
    "id": "a6-reference-item.summarize-016",
    "family": "reference",
    "text": "세 번째 거 원문 보여줘",

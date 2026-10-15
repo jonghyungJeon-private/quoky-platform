@@ -133,9 +133,9 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
     expect(cases.length).toBeGreaterThanOrEqual(646);
   });
 
-  it('the owner-approved A6 relabels (2026-10-15; neg-099 and uat5r6-07 held): read mode keeps `none`; the relabel is a canonical item.summarize Core executes against the case context', () => {
+  it('the owner-approved A6 relabels (2026-10-15; neg-099 after the A6-D2 determiner clarification, uat5r6-07 respelled `this`): read mode keeps `none`; the relabel is a canonical item.summarize Core executes against the case context', () => {
     const relabeled = cases.filter((golden) => golden.a6Relabel !== undefined);
-    expect(relabeled.map((golden) => golden.id).sort()).toEqual(['neg-098', 'neg-100']);
+    expect(relabeled.map((golden) => golden.id).sort()).toEqual(['neg-098', 'neg-099', 'neg-100', 'uat5r6-07']);
     const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
     for (const golden of relabeled) {
       const relabel = golden.a6Relabel!;
@@ -159,11 +159,24 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
         `Reference context: last listing: ${relabel.args.source as string} (${golden.context!.lastListing!.labels.length} items, 1 min ago)`,
       );
     }
-    // neg-099 ("이 문서 요약해줘") is not relabelled: a bare determiner 이 is no A6-D2 deictic, so `ref: this` is refused.
-    const neg099 = cases.find((golden) => golden.id === 'neg-099')!;
-    const prepared = prepareSelectionInput(neg099.text);
-    if ('skip' in prepared) throw new Error('neg-099 skipped');
-    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'drive', ref: 'this', mode: 'summary' } }, { offered, groundingText: prepared.groundingText, now: NOW, timeZone: 'Asia/Seoul', actions: true })).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'ref' });
+    // neg-099 ("이 문서 요약해줘") and uat5r6-07 ("그거 요약해줘") ground `ref: this` (a determiner + item-source noun, a closed
+    // deictic) and resolve against their one-item listing, while the same `this` with the several-item listing asks.
+    for (const id of ['neg-099', 'uat5r6-07']) {
+      const golden = relabeled.find((candidate) => candidate.id === id)!;
+      expect(golden.a6Relabel?.args.ref, id).toBe('this');
+      expect(golden.context?.lastListing?.labels, id).toEqual([1]);
+      // Read-regression scoring: the gold answer is a relabeled hit, a `recent` spelling is a miss (exact args), and a
+      // list re-read is still a wrong capture.
+      expect(scoreReadRegression(golden, answer('item.summarize', golden.a6Relabel!.args), NOW), id).toMatchObject({ outcome: 'hit', relabeled: true });
+      expect(scoreReadRegression(golden, answer('item.summarize', { ...golden.a6Relabel!.args, ref: 'recent' }), NOW), id).toMatchObject({ outcome: 'miss', relabeled: true });
+      const several = readRegressionReferenceState({ lastListing: { ...golden.context!.lastListing!, labels: [1, 2, 3] } }, NOW);
+      const prepared = prepareSelectionInput(golden.text);
+      if ('skip' in prepared) throw new Error(`${id} skipped`);
+      expect(
+        resolveItemReference({ entryId: 'item.summarize', source: golden.a6Relabel!.args.source as 'mail' | 'drive', ref: { kind: 'this' }, groundingText: prepared.groundingText, state: several }),
+        id,
+      ).toMatchObject({ kind: 'unresolved', outcome: 'ambiguous' });
+    }
   });
 
   it('a read case captured by an action or ITEM_READ entry is `action-capture` and fails the run; a relabeled case is scored apart', () => {
