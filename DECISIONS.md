@@ -15535,7 +15535,7 @@ connector-write request falls through to chat, the model may claim an action it 
    `personal-work-surface` branch stays unchanged as a fallback; `workSurface` is not widened; help lines are
    contributed by the handlers.
 3. **Combined "my work" view.** One view: the owner's ACTIVE local to-dos first, numbered by `createdAt` ascending
-   at read time (the same ordering resolves `완료 처리: N`; no session state), then Jira/GitHub personal work. *(Amended 2026-10-16, proposed, owner approval pending: a numbered to-do target resolves against the fresh listing the owner saw; see "ADR-0120 amendment A6-D2 clarification — numbered to-do commands resolve against the listing the owner saw" at the end of this file.)*
+   at read time (the same ordering resolves `완료 처리: N`; no session state), then Jira/GitHub personal work. *(Amended 2026-10-16, accepted by the owner: a numbered to-do target resolves against the fresh listing the owner saw; see "ADR-0120 amendment A6-D2 clarification — numbered to-do commands resolve against the listing the owner saw" at the end of this file.)*
    Unconfigured sources are named; a partial result is never presented as "no work".
 4. **WorkItem amendment (ADR-0075).** Optional `title` (trimmed, whitespace-collapsed, 1..200 chars), required for
    conversation-origin items; legacy rows stay valid. `WorkManager.correlate(id, refs)` for ACTIVE items only,
@@ -22606,7 +22606,7 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
      - These are value validators, like the A2 grammatical classes and the A5 time words. A deictic alone never
        selects an entry.
    - **What a number means.**
-     - **To-dos.** The shown label is the to-do's number as listed: its position in the list Quoky showed. *(Amended 2026-10-16, proposed, owner approval pending: a numbered to-do target resolves against the fresh listing the owner saw; see "ADR-0120 amendment A6-D2 clarification — numbered to-do commands resolve against the listing the owner saw" at the end of this file.)* An echo
+     - **To-dos.** The shown label is the to-do's number as listed: its position in the list Quoky showed. *(Amended 2026-10-16, accepted by the owner: a numbered to-do target resolves against the fresh listing the owner saw; see "ADR-0120 amendment A6-D2 clarification — numbered to-do commands resolve against the listing the owner saw" at the end of this file.)* An echo
        ("할 일 7번으로 추가했어요") and a question's candidates are recorded as labels too, but they **never shrink a list
        the owner is working down**:
        - while a listing of the same source is fresh, the echo or question labels **merge** into it (an existing label
@@ -26521,7 +26521,7 @@ the last round under the fix-loop cap.**
 
 ## ADR-0120 amendment A6-D2 clarification — numbered to-do commands resolve against the listing the owner saw (2026-10-16)
 
-- **Status: Proposed (2026-10-16), owner approval pending.**
+- **Status: Accepted (2026-10-16, owner approved).**
 - **Problem.** The anchored to-do grammar ("N번 완료", "할 일 N번 취소", "완료 처리: N", "할 일 N번에 … 연결") resolved
   N against the live open list on every call (ADR-0100 D3: "the same ordering resolves `완료 처리: N`; no session
   state"). After the list changed (a completion, a cancel, an undo, an add), the same words could hit a different to-do.
