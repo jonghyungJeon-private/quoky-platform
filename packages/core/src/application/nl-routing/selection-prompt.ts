@@ -19,15 +19,16 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * description saying "when the owner asks about meetings" instead of "only when the owner narrows to meetings" (its
  * examples unchanged), `timedOnly` in the two meeting examples ("내일 미팅 있나?", "다음 미팅이 몇 시더라"), and one
  * clause at the end of the range-symbols line (the weekend symbols are Saturday and Sunday together, 주말). v25 = the A6 text on top
- * of v24.
+ * of v24. (v26 is the A6 prompt of another branch.) v27 (ADR-0120 amendment A8) = v24 with six `jira.release` examples,
+ * shown only while that entry is offered; with it absent the text is v24 byte for byte. v28 = the A6 text on top of v27.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v24';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v27';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v24.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v27.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v25';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v28';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -86,6 +87,15 @@ const EXAMPLES: readonly PromptExample[] = [
   { text: '목요일 거는?', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-thu"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '그 중에 미팅 시간 있는 것만', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-week","timedOnly":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '가장 오래된 것부터 보여줘', previous: '{"entryId":"jira.issues","args":{"status":"in-progress"}}', output: '{"entryId":"jira.issues","args":{"status":"in-progress","sort":"oldest"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
+  // ADR-0120 amendment A8 (v27): a release for every assignee (stated), a release (the owner's own by default), a
+  // follow-up back to the owner's own, a project's release list, a pasted link, and every assignee with nothing that
+  // bounds it (asked).
+  { text: 'ABC 프로젝트 3.2.0 버전에 들어간 거 담당 상관없이 보여줘', output: '{"entryId":"jira.release","args":{"project":"ABC","release":"3.2.0","scope":"all"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
+  { text: '2.4.1 배포건 정리해줘', output: '{"entryId":"jira.release","args":{"release":"2.4.1"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
+  { text: '거기서 내 담당인 것만', previous: '{"entryId":"jira.release","args":{"release":"2.4.1","scope":"all"}}', output: '{"entryId":"jira.release","args":{"release":"2.4.1"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
+  { text: '결제팀 프로젝트 릴리스 뭐 있어?', output: '{"entryId":"jira.release","args":{"project":"결제팀"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
+  { text: 'https://example.atlassian.net/projects/ABC/versions/10001 이거 확인 좀', output: '{"entryId":"jira.release","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
+  { text: '지라 담당자 상관없이 다 보여줘', output: '{"entryId":"jira.release","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['jira.release'] },
   { text: '슬랙에 장애 관련 이야기 나온 거 있어?', output: '{"entryId":"slack.search","args":{"keyword":"장애"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['slack.search'] },
   { text: '지라 티켓 하나 새로 만들어줘', output: none, needs: [] },
   { text: '슬랙에서 장애 대응 얘기 나온 거 있나', output: '{"entryId":"slack.search","args":{"keyword":"장애 대응"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['slack.search'] },

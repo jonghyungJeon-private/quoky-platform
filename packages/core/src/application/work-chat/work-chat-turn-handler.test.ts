@@ -305,3 +305,33 @@ describe('WorkChatTurnHandler — completion hint (QA-V2-W7-03)', () => {
     expect(await handler.handle(ctxOf('점심 먹기 완료'))).toBeNull();
   });
 });
+
+describe('WorkChatTurnHandler — jira.release (ADR-0120 A8)', () => {
+  const LINK = 'https://example.atlassian.net/projects/OP26/versions/16555';
+
+  it('offers jira.release right after jira.issues when Jira is configured', () => {
+    const { desk } = fakeDesk(() => ({ kind: 'reply', text: 'x' }));
+    const handler = new WorkChatTurnHandler({ desk: { ...desk, configuredSources: () => ['jira', 'slack'] }, mode: 'lookup', summaryEnabled: true, logger });
+    expect(handler.catalog.map((entry) => entry.id)).toEqual(['jira.issues', 'jira.release', 'slack.search', 'todo.list']);
+  });
+
+  it('reads release links from the owner own words only: a quoted line is data and yields no link', async () => {
+    const { desk, commands } = fakeDesk(() => ({ kind: 'reply', text: 'report' }));
+    const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
+    await handler.handleSelected({ entryId: 'jira.release', args: {}, language: 'ko' }, ctxOf(`이거 봐줘 ${LINK}`));
+    await handler.handleSelected({ entryId: 'jira.release', args: { release: '20261015' }, language: 'ko' }, ctxOf(`> ${LINK}\n20261015 릴리스 보여줘`));
+    expect(commands).toEqual([
+      { kind: 'release', source: 'jira', scope: 'mine', links: [{ host: 'example.atlassian.net', projectKey: 'OP26', versionId: '16555' }] },
+      { kind: 'release', source: 'jira', release: '20261015', scope: 'mine', links: [] },
+    ]);
+  });
+
+  it('marks a release listing asked in a channel (owner decision 7)', async () => {
+    const { desk, commands } = fakeDesk(() => ({ kind: 'reply', text: 'report' }));
+    const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
+    const channel = ctxOf('20261015 릴리스 전체 담당');
+    const inChannel = { ...channel, message: { ...channel.message, context: { ...CTX, spaceId: 'guild-1', direct: false } } };
+    await handler.handleSelected({ entryId: 'jira.release', args: { release: '20261015', scope: 'all' }, language: 'ko' }, inChannel);
+    expect(commands.at(-1)).toMatchObject({ kind: 'release', scope: 'all', inChannel: true });
+  });
+});

@@ -19,12 +19,21 @@ export interface ConnectorItem {
   updatedAt?: string;
   /** Owning container (Jira project key, GitHub owner/repo, Slack #channel, Confluence space title). */
   container?: string;
+  /** ADR-0120 amendment A8: the assignee's display name (`release-items`); absent when unassigned or not exposed. */
+  assignee?: string;
+  /**
+   * ADR-0120 amendment A8: the provider-neutral status group of a work item (`release-items` only): to do, in progress
+   * or done. Absent when the source does not say. (A `releases` item carries `released` / `unreleased` in `status`.)
+   */
+  statusCategory?: 'todo' | 'in-progress' | 'done';
   raw?: Metadata;
 }
 
 export interface ConnectorResult {
   source: string;
   items: ConnectorItem[];
+  /** ADR-0120 amendment A8: true when the source has more items than were returned (the list is partial). */
+  truncated?: boolean;
 }
 
 /**

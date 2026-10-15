@@ -13,6 +13,8 @@ import type { NlResolvedRange } from './symbolic-time';
 /** The wave-1 entry ids (ADR-0120 D1): reads only. */
 export const NL_CATALOG_ENTRY_IDS = [
   'jira.issues',
+  // ADR-0120 amendment A8: the issues of one Jira release (any assignee) or a project's release list.
+  'jira.release',
   'github.items',
   'slack.search',
   'confluence.search',
@@ -200,6 +202,11 @@ export interface NlCatalogEntry {
 export interface NlEntryCheckFailure {
   readonly reason: 'invalid-arg' | 'missing-arg' | 'ungrounded' | 'deictic-payload' | 'time-in-title' | 'time-outside-when' | 'bulk';
   readonly arg?: string;
+  /**
+   * ADR-0120 A8: the offered entry whose usage question fits the owner's request better (`jira.issues` refusing "전체
+   * 담당" asks with `jira.release`'s usage). Only the clarification text changes; nothing is selected or run.
+   */
+  readonly askEntryId?: NlCatalogEntryId;
 }
 
 /** Where an A6 target lives (A6-D2): Quoky's own to-dos and reminders, or a listed mail / Drive item. */
