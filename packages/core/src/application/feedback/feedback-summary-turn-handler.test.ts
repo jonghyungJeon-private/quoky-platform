@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FeedbackSignalKind, IntentType } from '../../domain';
 import type { Actor, FeedbackSummary, InboundMessage, Session } from '../../domain';
 import type { TurnHandlerContext } from '../../ports';
+import { DM_ONLY_FEATURE_TEXT } from '../message-rendering';
 import { FEEDBACK_SUMMARY_UNAVAILABLE_TEXT } from './feedback-summary-composer';
 import {
   FEEDBACK_HELP_LINES,
@@ -9,11 +10,11 @@ import {
   FeedbackSummaryTurnHandler,
 } from './feedback-summary-turn-handler';
 
-const CTX = { platform: 'test', channelId: 'c1', userId: 'u1' };
+const CTX = { platform: 'test', channelId: 'c1', userId: 'u1', direct: true };
 const ACTOR = { id: 'actor-1' } as Actor;
 
-function ctxOf(text: string): TurnHandlerContext {
-  const message: InboundMessage = { id: 'm1', context: CTX, text, receivedAt: '2026-10-02T00:00:00.000Z' };
+function ctxOf(text: string, context: InboundMessage['context'] = CTX): TurnHandlerContext {
+  const message: InboundMessage = { id: 'm1', context, text, receivedAt: '2026-10-02T00:00:00.000Z' };
   return {
     message,
     session: { id: 's1' } as Session,
@@ -115,5 +116,20 @@ describe('FeedbackSummaryTurnHandler (ADR-0098 D6)', () => {
       feedback: { summarize, trend: vi.fn(async () => null) }, tasks: { get: async () => null },
     });
     expect((await noTrend.handle(ctxOf('피드백 요약')))?.reply.text).not.toContain('👎 비율 추이');
+  });
+});
+
+describe('FeedbackSummaryTurnHandler — DM-only (P0 ahead of ADR-0122 D7)', () => {
+  it.each([
+    ['a guild channel', { platform: 'test', spaceId: 'g1', channelId: 'qa', userId: 'u1', direct: false }],
+    ['a context without the direct flag', { platform: 'test', channelId: 'c1', userId: 'u1' }],
+  ])('in %s the summary is fixed copy and nothing is read', async (_label, context) => {
+    const summarize = vi.fn(async () => SUMMARY);
+    const get = vi.fn(async () => ({ description: 'DM에서 한 비밀 요청' }));
+    const handler = new FeedbackSummaryTurnHandler({ feedback: { summarize }, tasks: { get } });
+    const outcome = await handler.handle(ctxOf('피드백 요약', context));
+    expect(outcome).toEqual({ reply: { context, text: DM_ONLY_FEATURE_TEXT } });
+    expect(summarize).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
   });
 });

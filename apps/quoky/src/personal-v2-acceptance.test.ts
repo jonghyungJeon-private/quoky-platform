@@ -383,7 +383,7 @@ async function boot(): Promise<Harness> {
     freshContext() {
       contextSeq += 1;
       const n = String(contextSeq).padStart(4, '0');
-      return { platform: 'discord', channelId: `77777777777777${n}`, userId: n === '0001' ? OWNER_ID : `11111111111111${n}` };
+      return { platform: 'discord', channelId: `77777777777777${n}`, userId: n === '0001' ? OWNER_ID : `11111111111111${n}`, direct: true };
     },
     async turn(context, text) {
       const claimsBefore = claims.length;

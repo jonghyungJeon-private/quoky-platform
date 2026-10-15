@@ -52,8 +52,12 @@ describe('platform-neutral message content (PLT-0)', () => {
     expect(conversationRefOf({ platform: 'p', channelId: 'c', userId: 'u', direct: true }, labels)).toEqual({ kind: 'conversation', platform: 'p', direct: true, label: 'DM' });
     // A group without a space (e.g. a future platform) is not direct when the adapter says so.
     expect(isDirectConversation({ platform: 'p', channelId: 'c', userId: 'u', direct: false })).toBe(false);
-    // An older context (no flag) without a space is direct; an unsafe id is never referenced.
-    expect(isDirectConversation({ platform: 'p', channelId: 'c', userId: 'u' })).toBe(true);
+    // Fail-closed gate (P0 ahead of ADR-0122 D7): only `direct: true` is direct; a context without the flag is a
+    // channel for every DM-only gate, with or without a space. Its label keeps the older inference (below).
+    expect(isDirectConversation({ platform: 'p', channelId: 'c', userId: 'u', direct: true })).toBe(true);
+    expect(isDirectConversation({ platform: 'p', channelId: 'c', userId: 'u' })).toBe(false);
+    expect(isDirectConversation({ platform: 'p', spaceId: 's', channelId: 'c', userId: 'u' })).toBe(false);
+    // An unsafe id is never referenced.
     expect(conversationRefOf({ platform: 'p', spaceId: 's', channelId: 'a b', userId: 'u' }, labels)).toEqual({ kind: 'conversation', platform: 'p', direct: false, label: '채널' });
     expect(plainTextOf(messageContent(conversationRefOf({ platform: 'p', spaceId: 's', channelId: 'c', userId: 'u' }, labels)))).toBe('#c');
     expect(plainTextOf(messageContent(conversationRefOf({ platform: 'p', channelId: 'c', userId: 'u' }, labels)))).toBe('DM');

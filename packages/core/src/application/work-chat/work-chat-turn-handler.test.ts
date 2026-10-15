@@ -28,7 +28,7 @@ import {
   isSummarizableExternalWorkReadout,
 } from './work-chat-turn-handler';
 
-const CTX: ConversationContext = { platform: 'test', channelId: 'chan-1', userId: 'owner-user' };
+const CTX: ConversationContext = { platform: 'test', channelId: 'chan-1', userId: 'owner-user', direct: true };
 const OWNER: Actor = { id: 'owner-actor', displayName: 'Owner', identities: [], createdAt: '2026-10-01T00:00:00.000Z' };
 const T0 = '2026-10-02T09:00:00.000Z';
 const SECRET = 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789';

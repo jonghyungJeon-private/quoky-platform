@@ -320,8 +320,8 @@ describe('DiscordPlatformAdapter — reaction feedback (ADR-0098 D3)', () => {
     await fire('add', { guildId: null, channelId: DM_CHANNEL }, fetches);
     await fire('add', { channelId: THREAD, thread: { parentId: ALLOWED_CHANNEL } }, fetches);
     expect(signals.map((s) => s.context)).toEqual([
-      { platform: 'discord', channelId: DM_CHANNEL, userId: OWNER },
-      { platform: 'discord', channelId: ALLOWED_CHANNEL, userId: OWNER, spaceId: GUILD, threadId: THREAD },
+      { platform: 'discord', channelId: DM_CHANNEL, userId: OWNER, direct: true },
+      { platform: 'discord', channelId: ALLOWED_CHANNEL, userId: OWNER, spaceId: GUILD, threadId: THREAD, direct: false },
     ]);
     expect(fetches).toEqual([]);
     expect(channelFetches).toEqual([]);

@@ -32,6 +32,9 @@ const taskWith = (
     platform?: string;
     requestText?: string;
     capability?: Capability;
+    /** The adapter's conversation kind; defaults to a DM (`true`), `null` omits the flag (a channel, fail-closed). */
+    direct?: boolean | null;
+    spaceId?: string;
   } = {},
 ): Task => ({
   id: 't1',
@@ -50,6 +53,8 @@ const taskWith = (
     platform: opts.platform ?? 'discord',
     channelId: 'c',
     userId: 'u',
+    ...(opts.spaceId !== undefined ? { spaceId: opts.spaceId } : {}),
+    ...(opts.direct === null ? {} : { direct: opts.direct ?? true }),
   },
   ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
   ...(opts.projectId ? { projectId: opts.projectId } : {}),
@@ -1491,4 +1496,79 @@ describe('ContextBuilder — curated examples (ADR-0107 D5)', () => {
     expect(bundle).not.toHaveProperty('curatedExamples');
     expect(bundle.conversationTranscript).toHaveLength(1);
   });
+});
+
+describe('ContextBuilder — DM-only durable recall and curated examples (P0 hotfix ahead of ADR-0122 D7)', () => {
+  const memory = {
+    recentShortTerm: async () => [rec('1', 'user', 'channel transcript')],
+    projectMemory: async () => undefined,
+  } as unknown as MemoryManager;
+  const example: CuratedExampleEntry = {
+    requestText: '회의록 요약해줘',
+    idealAnswer: '세 줄로 요약했어요',
+    egress: 'LOCAL_ONLY',
+    provenance: 'OWNER_CURATED_EXAMPLE',
+    epistemicStatus: 'NON_AUTHORITATIVE_EXAMPLE',
+    learningItemId: 'item-1',
+  };
+  const fixture = () => {
+    const retrievals: MemoryRetrievalRequest[] = [];
+    const selections: Task[] = [];
+    const retriever: MemoryRetriever = {
+      async retrieve(request) {
+        retrievals.push(request);
+        return [durable('dm-secret', 'DM에서 기억해 둔 비밀 메모')];
+      },
+    };
+    const source: CuratedExampleSource = {
+      async select(task) {
+        selections.push(task);
+        return [example];
+      },
+    };
+    return { retriever, source, retrievals, selections };
+  };
+  const configs = [{}, { rankingEnabled: true, maxTokens: 1000 }];
+
+  it.each([
+    ['direct: false', { direct: false, spaceId: 'guild-1' }],
+    ['direct: false without a spaceId', { direct: false }],
+    ['a context with a spaceId and no direct flag', { spaceId: 'guild-1', direct: null }],
+    ['a context with neither direct nor spaceId (fail-closed)', { direct: null }],
+  ] as const)('a channel turn (%s) gets neither recall nor examples, and neither source is asked', async (_label, surface) => {
+    for (const config of configs) {
+      const f = fixture();
+      const bundle = await new ContextBuilder(memory, config, f.retriever, f.source).build(
+        taskWith({ sessionId: 's1', ...surface }),
+      );
+      expect(bundle).not.toHaveProperty('durableRecall');
+      expect(bundle).not.toHaveProperty('curatedExamples');
+      expect(JSON.stringify(bundle)).not.toContain('DM에서 기억해 둔 비밀 메모');
+      expect(f.retrievals).toHaveLength(0);
+      expect(f.selections).toHaveLength(0);
+      // The channel's own transcript is unchanged.
+      expect(bundle.conversationTranscript.map((entry) => entry.content)).toEqual(['channel transcript']);
+      // The composed prompt context carries no recall or example layer.
+      const prompt = new PromptComposer().compose(taskWith({ sessionId: 's1', ...surface }), bundle);
+      expect(prompt.context).not.toContain('DM에서 기억해 둔 비밀 메모');
+      expect(prompt.context).not.toContain('세 줄로 요약했어요');
+    }
+  });
+
+  it.each([
+    ['direct: true', { direct: true }],
+    ['direct: true with a spaceId', { direct: true, spaceId: 'space-1' }],
+  ] as const)('a DM turn (%s) is unchanged: recall and examples are present', async (_label, surface) => {
+    for (const config of configs) {
+      const f = fixture();
+      const bundle = await new ContextBuilder(memory, config, f.retriever, f.source).build(
+        taskWith({ sessionId: 's1', ...surface }),
+      );
+      expect(bundle.durableRecall?.map((entry) => entry.content)).toEqual(['DM에서 기억해 둔 비밀 메모']);
+      expect(bundle.curatedExamples).toEqual([example]);
+      expect(f.retrievals).toHaveLength(1);
+      expect(f.selections).toHaveLength(1);
+    }
+  });
+
 });

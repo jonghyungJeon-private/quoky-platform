@@ -117,10 +117,17 @@ export function messageLink(url: string): LinkNode {
 /** The same safe-id rule as everywhere a raw id reaches chat text: letters, digits, `_` and `-` only. */
 const REFERENCEABLE_ID = /^[A-Za-z0-9_-]{1,64}$/u;
 
-/** Whether a context is a one-to-one conversation (the adapter's `direct`; for an older context, no `spaceId`). */
+/**
+ * Whether a context is a one-to-one conversation: only when the adapter said so (`direct: true`). Fail-closed (P0 ahead
+ * of ADR-0122 D7, channels default-deny): a producer that omits `direct` is treated as a channel, whether or not it set
+ * a `spaceId`. Every platform adapter sets `direct` on the inbound context (PLT-0).
+ */
 export function isDirectConversation(context: ConversationContext): boolean {
-  return context.direct ?? context.spaceId === undefined;
+  return context.direct === true;
 }
+
+/** The fixed reply of an owner command that works only in a direct conversation (P0 ahead of ADR-0122 D7). */
+export const DM_ONLY_FEATURE_TEXT = '이 기능은 DM에서만 쓸 수 있어요';
 
 /**
  * A reference to the conversation of `context`: its platform, whether it is direct, and (for a channel or thread with a
@@ -130,7 +137,9 @@ export function conversationRefOf(
   context: ConversationContext,
   labels: { readonly direct: string; readonly channel: string },
 ): ConversationRefNode {
-  const direct = isDirectConversation(context);
+  // A label, not a privacy gate: a context stored before PLT-0 (no `direct`) keeps the old inference (no `spaceId` =
+  // direct), so an earlier DM approval is still named as the DM rather than referenced as a channel id.
+  const direct = context.direct ?? context.spaceId === undefined;
   const id = context.threadId ?? context.channelId;
   const referenceable = !direct && REFERENCEABLE_ID.test(id);
   return sealNode({

@@ -554,6 +554,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
         userId: user.id,
         ...(message.guildId ? { spaceId: message.guildId } : {}),
         ...(isThread ? { threadId: message.channelId } : {}),
+        direct: !message.guildId,
       };
       await handler({
         platform: this.platform,

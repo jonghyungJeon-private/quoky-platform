@@ -5,6 +5,7 @@ import { guardInternalActionClaims } from './chat-policy/internal-action-claim-g
 import {
   detectOwnMemoryRecallQuestion,
   hasOwnMemoryRecallHit,
+  renderOwnMemoryDmOnly,
   renderOwnMemoryNotFound,
 } from './chat-policy/own-memory-recall';
 import {
@@ -8276,8 +8277,15 @@ export class ConversationRuntime {
       ) {
         const ownMemoryQuestion = detectOwnMemoryRecallQuestion(message.text);
         if (ownMemoryQuestion && !hasOwnMemoryRecallHit(ownMemoryQuestion, bundle)) {
-          const text = renderOwnMemoryNotFound(ownMemoryQuestion.language);
-          await this.deps.tasks.completeRun(run, { artifactIds: [], metadata: { deterministicReply: 'own-memory-not-found' } });
+          // P0 ahead of ADR-0122 D7: outside a DM no durable memory is recalled, so "not in my memory" would be untrue.
+          const direct = isDirectConversation(message.context);
+          const text = direct
+            ? renderOwnMemoryNotFound(ownMemoryQuestion.language)
+            : renderOwnMemoryDmOnly(ownMemoryQuestion.language);
+          await this.deps.tasks.completeRun(run, {
+            artifactIds: [],
+            metadata: { deterministicReply: direct ? 'own-memory-not-found' : 'own-memory-dm-only' },
+          });
           await this.deps.memory.recordAssistant(text, message.context, task.sessionId ?? session.id);
           await this.deps.tasks.transition(task, TaskStatus.COMPLETED);
           // Content-free (no question or topic text).

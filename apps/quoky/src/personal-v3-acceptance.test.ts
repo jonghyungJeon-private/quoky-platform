@@ -388,7 +388,7 @@ async function boot(): Promise<Harness> {
     freshContext(userId?: string) {
       contextSeq += 1;
       const n = String(contextSeq).padStart(4, '0');
-      return { platform: 'discord', channelId: `88888888888888${n}`, userId: userId ?? `22222222222222${n}` };
+      return { platform: 'discord', channelId: `88888888888888${n}`, userId: userId ?? `22222222222222${n}`, direct: true };
     },
     async turn(context, text, attachments) {
       const claimsBefore = claims.length;
@@ -746,7 +746,7 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
 
   it('live QA 2026-10-07: approved in the ops UI for a guild channel, "Slack 게시 실행" in the DM runs nothing and names the channel', async () => {
     const dm = harness.freshContext();
-    const guild: ConversationContext = { ...harness.freshContext(dm.userId), spaceId: '777777777777777777' };
+    const guild: ConversationContext = { ...harness.freshContext(dm.userId), spaceId: '777777777777777777', direct: false };
     // An earlier, unrelated post of the same owner in the DM (the link the bot wrongly returned live).
     await det(dm, `#${SLACK_CHANNEL_NAME}에 게시: INT-2 지난 게시물`);
     await det(dm, '승인');

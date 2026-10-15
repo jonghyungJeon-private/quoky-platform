@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — security hotfix: recall, curated examples and owner memory/learning commands are DM-only (P0 ahead of ADR-0122 D7, 2026-10-15)
+
+- **Fixed (security).** Durable recall was scoped by actor only, so a memory saved in a DM ("기억해: …") and the
+  owner-curated examples could reach a reply in a shared channel. `ContextBuilder` now queries recall and curated
+  examples only for a direct conversation (`ConversationContext.direct`, platform-neutral).
+- **Fixed (security).** Memory commands (lists, views, status, confirmation previews), learning commands (candidates,
+  examples) and `피드백 요약` answer "이 기능은 DM에서만 쓸 수 있어요" outside a DM and read nothing, so no listing
+  enters a channel or its history. An own-memory question in a channel gets "개인 기억은 DM에서만 확인할 수 있어요"
+  (no provider call) instead of the untrue "기억에 없어요".
+- **Changed.** `isDirectConversation` is fail-closed: only `direct: true` is a DM (a context without the flag is a
+  channel); the conversation label keeps the older inference for stored contexts. Both adapters set the flag; DM turns
+  are byte-identical. The QA channel loses these features until the ADR-0122 grants exist.
+- Tests: per-handler channel rows, ContextBuilder rows, runtime tests on the provider prompt, the own-memory reply and
+  the channel history; DM fixtures now set `direct: true`.
+
 ## Unreleased — A8 fix: project key inside the release words (2026-10-15)
 
 - **Fixed:** "OP26 20261015 릴리스 …" put the key in the release name and reported 0 issues. Core moves a visible project key

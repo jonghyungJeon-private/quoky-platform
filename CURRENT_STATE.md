@@ -23,6 +23,12 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 - Also applied live: the STO-1 migration v16 on the service DB (#192). The Node 22 LTS runtime (#187) and the Telegram
   keep-alive (#188) are merged; their live status is in the CHANGELOG entries.
 
+**Security hotfix (2026-10-15, branch `claude/v5-recall-dm-only`).** Durable recall, curated examples, the memory and
+learning commands and `피드백 요약` are DM-only (P0 ahead of ADR-0122 D7; DECISIONS "… owner memory/learning commands
+are DM-only"); `isDirectConversation` is fail-closed (`direct: true` only). The QA channel loses them until the ADR-0122
+grants exist. Still actor-wide in a channel, for ADR-0122: `reminder.list` and the to-do list.
+Remaining channel exposures (pre-existing; ADR-0122 P1 next): to-do list/status/complete/cancel replies and reminder listings/cancellations show DM-created titles in channels; cross-conversation connector-write hints show Jira keys/Slack channel names.
+
 **Pending with the owner.**
 
 - S1 per-grammar Phase C decision: a grammar moves to `c` only on its own `nl_selection.agreement` data, with the owner's yes.
