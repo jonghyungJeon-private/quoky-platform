@@ -740,33 +740,40 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
   });
 
   it('live UAT R4/R5: a weekday follow-up is a period, never a title keyword; a time-word keyword never sticks to the next period; "회의만" keeps the period', async () => {
-    const ctx = context();
-    await send('이번 주 일정 알려줘', ctx);
-    // The selector wrongly returns the weekday as a keyword: validation refuses it, nothing is served, no keyword is stored.
-    selectorAnswer = answer('calendar.events', { range: 'this-week', keyword: '목요일' });
-    let start = marks();
-    const refused = await send('목요일 거는?', ctx);
-    expect(selected.slice(start.selected)).toEqual([]);
-    expect(refused.reply.text).not.toContain('"목요일"');
-    // The right answer is a period. The question cleared the previous selection, so the owner's "목요일" has no week
-    // word: this-thu is the same Thursday as thu on this clock and is stored in its canonical form (calendar-accuracy note).
-    selectorAnswer = answer('calendar.events', { range: 'this-thu' });
-    start = marks();
-    await send('목요일 거는?', ctx);
-    expect(lastPrevious(start.requests)).toBe('Previous selection: none');
-    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'thu' }]);
-    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ args: { range: 'thu' } });
-    // Next period: no keyword to carry.
-    selectorAnswer = answer('calendar.events', { range: 'week-after-next' });
-    start = marks();
-    await send('아니 다다음 주', ctx);
-    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'week-after-next' }]);
-    // "회의만": the flag is grounded in the owner's word and drops all-day entries.
-    await send('이번 주 일정 알려줘', ctx);
-    selectorAnswer = answer('calendar.events', { range: 'this-week', timedOnly: true });
-    start = marks();
-    await send('그 중에 회의만', ctx);
-    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'this-week', timedOnly: true }]);
+    // Pin the clock to a Thursday: the weekday case below asserts that "thu" and "this-thu" are the same day on this clock.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-15T10:00:00+09:00'));
+    try {
+      const ctx = context();
+      await send('이번 주 일정 알려줘', ctx);
+      // The selector wrongly returns the weekday as a keyword: validation refuses it, nothing is served, no keyword is stored.
+      selectorAnswer = answer('calendar.events', { range: 'this-week', keyword: '목요일' });
+      let start = marks();
+      const refused = await send('목요일 거는?', ctx);
+      expect(selected.slice(start.selected)).toEqual([]);
+      expect(refused.reply.text).not.toContain('"목요일"');
+      // The right answer is a period. The question cleared the previous selection, so the owner's "목요일" has no week
+      // word: this-thu is the same Thursday as thu on this clock and is stored in its canonical form (calendar-accuracy note).
+      selectorAnswer = answer('calendar.events', { range: 'this-thu' });
+      start = marks();
+      await send('목요일 거는?', ctx);
+      expect(lastPrevious(start.requests)).toBe('Previous selection: none');
+      expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'thu' }]);
+      expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ args: { range: 'thu' } });
+      // Next period: no keyword to carry.
+      selectorAnswer = answer('calendar.events', { range: 'week-after-next' });
+      start = marks();
+      await send('아니 다다음 주', ctx);
+      expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'week-after-next' }]);
+      // "회의만": the flag is grounded in the owner's word and drops all-day entries.
+      await send('이번 주 일정 알려줘', ctx);
+      selectorAnswer = answer('calendar.events', { range: 'this-week', timedOnly: true });
+      start = marks();
+      await send('그 중에 회의만', ctx);
+      expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'this-week', timedOnly: true }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('review P2: a mail item pick is transient — it is not stored, so "안 읽은 것만" refines the listing, not the pick', async () => {
