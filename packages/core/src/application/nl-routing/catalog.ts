@@ -202,6 +202,11 @@ export interface NlCatalogEntry {
 export interface NlEntryCheckFailure {
   readonly reason: 'invalid-arg' | 'missing-arg' | 'ungrounded' | 'deictic-payload' | 'time-in-title' | 'time-outside-when' | 'bulk';
   readonly arg?: string;
+  /**
+   * ADR-0120 A8: the offered entry whose usage question fits the owner's request better (`jira.issues` refusing "전체
+   * 담당" asks with `jira.release`'s usage). Only the clarification text changes; nothing is selected or run.
+   */
+  readonly askEntryId?: NlCatalogEntryId;
 }
 
 /** Where an A6 target lives (A6-D2): Quoky's own to-dos and reminders, or a listed mail / Drive item. */

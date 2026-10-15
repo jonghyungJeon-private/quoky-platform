@@ -765,9 +765,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (!main.ok && (main.reason === 'unknown-entry' || main.reason === 'not-offered' || main.reason === 'not-read')) {
         return { kind: 'none' };
       }
-      const entry = main.ok ? main.value.entry : main.entryId !== undefined ? ctx.offered.get(main.entryId) : undefined;
-      if (entry === undefined) return { kind: 'none' };
-      this.log('info', 'nl_selection.validation_failed', { entryId: entry.id, reason: main.ok ? 'ambiguous' : main.reason, ...(main.ok || main.arg === undefined ? {} : { arg: main.arg }) });
+      const failed = main.ok ? main.value.entry : main.entryId !== undefined ? ctx.offered.get(main.entryId) : undefined;
+      if (failed === undefined) return { kind: 'none' };
+      // ADR-0120 A8: an entry check may point the question at a better-fitting offered entry (its usage text only).
+      const entry = (!main.ok && main.askEntryId !== undefined ? ctx.offered.get(main.askEntryId) : undefined) ?? failed;
+      this.log('info', 'nl_selection.validation_failed', { entryId: failed.id, reason: main.ok ? 'ambiguous' : main.reason, ...(main.ok || main.arg === undefined ? {} : { arg: main.arg }) });
       return { kind: 'ask', text: weekdayRefused ? renderWeekdayQuestion(entry, language) : renderUsageQuestion(entry, language) };
     }
     const stored = options.map((option): StoredSelection => ({ entryId: option.entry.id as StoredSelection['entryId'], args: option.args }));

@@ -681,6 +681,15 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(selected.slice(linkStart.selected).map((entry) => entry.command.entryId)).toEqual(['jira.release']);
     expect(connectorQueries.slice(linkStart.connectors)).toHaveLength(0);
     expect(linked.reply.text).toContain('그 링크는 열지 않았어요');
+
+    // Every assignee with nothing that bounds it: a jira.issues capture (6/20 in the Haiku probe) is refused and the owner
+    // is asked with the release usage, never answered with their own items.
+    selectorAnswer = answer('jira.issues', { role: 'either' });
+    const allStart = marks();
+    const asked = await send('jira 전체 담당 이슈 다 보여줘');
+    expect(selected.length).toBe(allStart.selected);
+    expect(connectorQueries.length).toBe(allStart.connectors);
+    expect(asked.reply.text).toContain('Jira 릴리스 조회에서 무엇을 찾을지 정확히 모르겠어요.');
   });
 
   /** The `Previous selection:` line of the last selector call since `from` (the prompt's own examples carry others). */

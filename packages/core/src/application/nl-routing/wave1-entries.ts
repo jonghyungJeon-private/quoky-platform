@@ -139,7 +139,7 @@ const jiraIssues: NlCatalogEntry = {
   sourceNames: ['jira', '지라'],
   check(_args: NlArgs, groundingText: string) {
     // ADR-0120 A8: the owner's own items cannot answer a request for every assignee ("전체 담당"): asked, never narrowed.
-    return containsGroundingWord(groundingText.normalize('NFC').toLowerCase(), JIRA_ALL_ASSIGNEE_WORDS) ? { reason: 'invalid-arg', arg: 'role' } : undefined;
+    return containsGroundingWord(groundingText.normalize('NFC').toLowerCase(), JIRA_ALL_ASSIGNEE_WORDS) ? { reason: 'invalid-arg', arg: 'role', askEntryId: 'jira.release' } : undefined;
   },
   normalize(args: Record<string, NlArgValue>): void {
     // A period needs a date field: without one the period word only means "now" ("오늘 나한테 할당된 이슈") and is

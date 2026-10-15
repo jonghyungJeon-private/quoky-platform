@@ -110,6 +110,8 @@ export type NlValidationResult =
       readonly entryId?: NlCatalogEntryId;
       /** The failing argument's name (never its value). */
       readonly arg?: string;
+      /** ADR-0120 A8: the entry whose usage question the clarification uses instead (an entry check's hint). */
+      readonly askEntryId?: NlCatalogEntryId;
     };
 
 export interface NlValidationContext {
@@ -263,7 +265,15 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // A6: the entry's own check after the per-arg checks.
   if (entry.check !== undefined) {
     const failure = entry.check(args, groundingText);
-    if (failure !== undefined) return { ok: false, reason: failure.reason, entryId, ...(failure.arg !== undefined ? { arg: failure.arg } : {}) };
+    if (failure !== undefined) {
+      return {
+        ok: false,
+        reason: failure.reason,
+        entryId,
+        ...(failure.arg !== undefined ? { arg: failure.arg } : {}),
+        ...(failure.askEntryId !== undefined ? { askEntryId: failure.askEntryId } : {}),
+      };
+    }
   }
   const openAmbiguity = (entry.ambiguity ?? []).find((key) => key.openWhen(args) && args[key.arg] === undefined);
   return {
