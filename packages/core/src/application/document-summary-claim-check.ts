@@ -200,7 +200,9 @@ export function checkDocumentSummaryClaims(
   const display = neutralizeLinks(text, 'display');
   const stripped = strippedOfMarkup(text);
   // Main's checks first, exactly as on main (raw text; the document guard also on the display form).
-  const forms = [text, display, stripped, joinedWrappedLines(text), joinedWrappedLines(stripped)];
+  // Identical forms are read once (the ADR-0104 guard's own quote scan is main's code and is not linear on a line of
+  // unmatched quotes; the 8,000-character bound limits it, and it runs at most once per distinct form).
+  const forms = [...new Set([text, display, stripped, joinedWrappedLines(text), joinedWrappedLines(stripped)])];
   for (const form of forms) {
     const internal = guardInternalActionClaims(form, currentUserMessage, replyPolicy);
     if (internal.guarded) return { kind: 'claim', notice: internal.text };

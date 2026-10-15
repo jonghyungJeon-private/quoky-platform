@@ -20577,7 +20577,8 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   - The marker and completion lists are backstops. A document that itself narrates with them may be regenerated or
     replaced. This fails closed.
   - DET-1's own quote regex is main's code and is not linear on a line of unmatched smart quotes. The 8,000-character
-    bound limits it; it is not changed here.
+    bound limits it, and the check reads each distinct form once (`new Set`), so it runs at most once per form. A
+    CPU-time test runs the complete checker on 8,000 `“`. It is not changed here.
   - Quoted values are not rendered distinguishably (left for later).
 
 ### ADR-0118 amendment implementation note — DRV-2 shared drives and DRV-2b every sheet (2026-10-13)

@@ -30,6 +30,7 @@ import { StatelessApprovalFlow } from './stateless-approval-flow';
 import { renderUntrustedDocumentHistoryNote, renderUntrustedDocumentReplyWithheld } from './untrusted-document-readout';
 import { renderInternalActionClaimNotice } from './chat-policy/internal-action-vocabulary';
 import { renderDocumentActionClaimWithheld } from './document-summary-claim-guard';
+import { checkDocumentSummaryClaims } from './document-summary-claim-check';
 import { DOCUMENT_ATTRIBUTION_RETRY_RULE, DOCUMENT_ATTRIBUTION_RULE } from './prompt-composer';
 import { createDriveTurnHandler } from './drive/drive-turn-handler';
 import {
@@ -543,11 +544,14 @@ describe('Drive on the real runtime (ADR-0118 D4–D8, DRV-1)', () => {
       expect(summarizePrompts(h)).toHaveLength(2);
     });
 
-    it('a credential-shaped first draft is withheld, never regenerated', async () => {
-      const h = harness({ provider: 'secret' });
+    it('a credential-shaped first draft is withheld, never regenerated, even when it is also a claim', async () => {
+      const draft = `제가 Jira 티켓을 생성했어요. 새 토큰은 ${SECRET} 입니다`;
+      expect(checkDocumentSummaryClaims(draft, '1번 문서 요약해줘', 'drive', 'ko').kind).toBe('claim');
+      const h = harness({ summaries: [draft, ATTRIBUTED] });
       await h.send('최근 문서');
-      await h.send('1번 문서 요약해줘');
+      const result = await h.send('1번 문서 요약해줘');
       expect(summarizePrompts(h)).toHaveLength(1);
+      expect(result.reply?.text).toBe(`${renderUntrustedDocumentReplyWithheld('ko')}\n\n${renderDriveSummaryFooter('ko')}`);
     });
   });
 

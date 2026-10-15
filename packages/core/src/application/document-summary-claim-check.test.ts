@@ -246,6 +246,8 @@ describe('checkDocumentSummaryClaims (owner decision 2026-10-15)', () => {
       '- Kim sent the deck and asked for comments.',
     ].join('\n');
     const text = (chars: number) => `${block}\n`.repeat(Math.ceil(chars / (block.length + 1))).slice(0, chars);
+    // The complete checker on a bounded line of unmatched quotes (main's quote scan is the residual; generous bound).
+    expect(cpuMs(() => checkDocumentSummaryClaims('“'.repeat(DOCUMENT_SUMMARY_GUARD_MAX_CHARS), ASK, 'drive', 'ko'))).toBeLessThan(2000);
     const half = cpuMs(() => checkDocumentSummaryClaims(text(DOCUMENT_SUMMARY_GUARD_MAX_CHARS / 2), ASK, 'drive', 'ko'));
     const full = cpuMs(() => checkDocumentSummaryClaims(text(DOCUMENT_SUMMARY_GUARD_MAX_CHARS), ASK, 'drive', 'ko'));
     expect(full).toBeLessThan(half * 3 + 5);
