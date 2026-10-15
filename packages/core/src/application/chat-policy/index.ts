@@ -51,6 +51,7 @@ export {
   OWN_MEMORY_SEMANTIC_HIT_FLOOR,
   detectOwnMemoryRecallQuestion,
   hasOwnMemoryRecallHit,
+  renderOwnMemoryDmOnly,
   renderOwnMemoryNotFound,
 } from './own-memory-recall';
 export type { OwnMemoryRecallContext, OwnMemoryRecallQuestion, OwnMemoryRelation } from './own-memory-recall';

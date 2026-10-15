@@ -67,9 +67,9 @@ const DM_CHANNEL = '777777777777777777';
 const GUILD_ID = '333333333333333333';
 const ALLOWED_CHANNEL = '444444444444444444';
 
-const dmContext: ConversationContext = { platform: 'discord', channelId: DM_CHANNEL, userId: OWNER_ID };
+const dmContext: ConversationContext = { platform: 'discord', channelId: DM_CHANNEL, userId: OWNER_ID, direct: true };
 const channelContext: ConversationContext = {
-  platform: 'discord', channelId: ALLOWED_CHANNEL, userId: OWNER_ID, spaceId: GUILD_ID,
+  platform: 'discord', channelId: ALLOWED_CHANNEL, userId: OWNER_ID, spaceId: GUILD_ID, direct: false,
 };
 
 let messageSequence = 0;

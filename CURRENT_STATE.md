@@ -23,10 +23,10 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 - Also applied live: the STO-1 migration v16 on the service DB (#192). The Node 22 LTS runtime (#187) and the Telegram
   keep-alive (#188) are merged; their live status is in the CHANGELOG entries.
 
-**Security hotfix (2026-10-15, branch `claude/v5-recall-dm-only`).** Durable recall and curated examples are DM-only
-(P0 ahead of ADR-0122 D7; DECISIONS "durable recall and curated examples are DM-only"): a channel turn, including the QA
-channel, gets no recall and no examples until the ADR-0122 memory grant exists. Open for ADR-0122: owner-invoked
-listings (memory list, learning lists, `reminder.list`, to-do list) still show actor-wide data in a channel.
+**Security hotfix (2026-10-15, branch `claude/v5-recall-dm-only`).** Durable recall, curated examples, the memory and
+learning commands and `피드백 요약` are DM-only (P0 ahead of ADR-0122 D7; DECISIONS "… owner memory/learning commands
+are DM-only"); `isDirectConversation` is fail-closed (`direct: true` only). The QA channel loses them until the ADR-0122
+grants exist. Still actor-wide in a channel, for ADR-0122: `reminder.list` and the to-do list.
 
 **Pending with the owner.**
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Actor, InboundMessage, Session } from '../../domain';
 import type { Logger, TurnHandlerContext } from '../../ports';
+import { DM_ONLY_FEATURE_TEXT } from '../message-rendering';
 import { LEARNING_FAILURE_TEXT } from './learning-service';
 import {
   LEARNING_HELP_LINES, LEARNING_TURN_HANDLER_ID, LEARNING_TURN_HANDLER_ORDER, LearningTurnHandler,
@@ -8,10 +9,14 @@ import {
 
 const NOW = '2026-10-06T00:00:00.000Z';
 
-function ctxOf(text: string, threadId?: string): TurnHandlerContext {
+function ctxOf(text: string, threadId?: string, direct: boolean | null = true): TurnHandlerContext {
   const message: InboundMessage = {
     id: 'm1', text, receivedAt: NOW,
-    context: { platform: 'discord', channelId: 'c1', userId: 'u1', ...(threadId ? { threadId } : {}) },
+    context: {
+      platform: 'discord', channelId: 'c1', userId: 'u1',
+      ...(threadId ? { threadId } : {}),
+      ...(direct === null ? {} : { direct }),
+    },
   };
   return {
     message, session: { id: 's1' } as Session, actor: { id: 'actor-1' } as Actor, now: NOW, applyAnchor: null,
@@ -55,7 +60,7 @@ describe('LearningTurnHandler (ADR-0107 D3)', () => {
       NOW,
     );
     expect(reply).toEqual({
-      reply: { context: { platform: 'discord', channelId: 'c1', userId: 'u1', threadId: 'th-1' }, text: '저장했어요' },
+      reply: { context: { platform: 'discord', channelId: 'c1', userId: 'u1', threadId: 'th-1', direct: true }, text: '저장했어요' },
       status: 'RESPONDED',
     });
   });
@@ -70,5 +75,18 @@ describe('LearningTurnHandler (ADR-0107 D3)', () => {
     expect(reply).toMatchObject({ reply: { text: LEARNING_FAILURE_TEXT }, status: 'FAILED' });
     expect(logger.warn).toHaveBeenCalledWith('learning command failed', { command: 'candidate-note', errorName: 'TypeError' });
     expect(JSON.stringify((logger.warn as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('비밀 메모');
+  });
+});
+
+describe('LearningTurnHandler — DM-only (P0 ahead of ADR-0122 D7)', () => {
+  it.each([false, null])('outside a DM (direct=%s, null = flag omitted) every learning command gets fixed copy and nothing is read', async (direct) => {
+    const execute = vi.fn();
+    const handler = new LearningTurnHandler({ service: { execute } });
+    for (const text of ['피드백 후보', '예시 목록', '후보 1 메모: 비밀', '후보 1 예시로 저장', '예시 1 수정: 답변', '예시 1 삭제']) {
+      const outcome = await handler.handle(ctxOf(text, undefined, direct));
+      expect(outcome, text).toMatchObject({ reply: { text: DM_ONLY_FEATURE_TEXT } });
+      expect(outcome).not.toHaveProperty('status');
+    }
+    expect(execute).not.toHaveBeenCalled();
   });
 });

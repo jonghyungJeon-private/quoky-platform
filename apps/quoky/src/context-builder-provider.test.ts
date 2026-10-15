@@ -39,7 +39,7 @@ const task: Task = {
     summary: 'project formatter preference',
   },
   riskLevel: RiskLevel.LOW,
-  context: { platform: 'discord', channelId: 'channel-1', userId: 'user-1' },
+  context: { platform: 'discord', channelId: 'channel-1', userId: 'user-1', direct: true },
   sessionId: 'session-1',
   projectId: 'project-1',
   actorId: 'actor-1',

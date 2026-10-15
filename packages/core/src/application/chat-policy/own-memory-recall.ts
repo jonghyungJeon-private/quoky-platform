@@ -433,6 +433,16 @@ export function hasOwnMemoryRecallHit(question: OwnMemoryRecallQuestion, context
   return false;
 }
 
+/**
+ * The fixed reply for an own-memory question outside a direct conversation with no hit in that conversation (no
+ * provider is called; P0 ahead of ADR-0122 D7). Durable memories are recalled only in a DM, so "not in my memory" would
+ * be untrue there, and inviting "기억해: …" would ask the owner to retype a private fact in a shared channel.
+ */
+export function renderOwnMemoryDmOnly(language: 'ko' | 'en'): string {
+  if (language === 'en') return 'Personal memories can be checked only in a direct message.';
+  return '개인 기억은 DM에서만 확인할 수 있어요';
+}
+
 /** The fixed truthful reply for an own-memory question with no recall hit (no provider is called). */
 export function renderOwnMemoryNotFound(language: 'ko' | 'en'): string {
   if (language === 'en') {

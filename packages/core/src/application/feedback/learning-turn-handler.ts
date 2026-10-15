@@ -1,5 +1,5 @@
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
-import { outboundBody, outboundMessage } from '../message-rendering';
+import { DM_ONLY_FEATURE_TEXT, isDirectConversation, outboundBody, outboundMessage } from '../message-rendering';
 import { parseLearningCommand } from './learning-commands';
 import { LEARNING_FAILURE_TEXT } from './learning-service';
 import type { LearningService } from './learning-service';
@@ -34,6 +34,9 @@ export class LearningTurnHandler implements ConversationTurnHandler {
     const command = parseLearningCommand(ctx.message.text);
     if (!command) return null;
     const context = ctx.message.context;
+    // P0 ahead of ADR-0122 D7 (channels default-deny): candidates and examples carry private request excerpts, so
+    // outside a DM nothing is read or changed and the reply is fixed copy.
+    if (!isDirectConversation(context)) return { reply: outboundMessage(context, DM_ONLY_FEATURE_TEXT) };
     try {
       const result = await this.deps.service.execute(command, {
         actorId: ctx.actor.id,

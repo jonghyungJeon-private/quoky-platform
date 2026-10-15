@@ -32,7 +32,7 @@ import {
 } from './conversation-runtime-provider';
 
 const timestamp = '2026-08-25T00:00:00.000Z';
-const context = { platform: 'test', channelId: 'channel-1', userId: 'user-1' };
+const context = { platform: 'test', channelId: 'channel-1', userId: 'user-1', direct: true };
 
 function inbound(text: string): InboundMessage {
   return { id: `message-${text}`, context, text, receivedAt: timestamp };

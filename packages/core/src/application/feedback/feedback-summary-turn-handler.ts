@@ -1,6 +1,6 @@
 import type { FeedbackSummary, Id, Task } from '../../domain';
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
-import { outboundMessage } from '../message-rendering';
+import { DM_ONLY_FEATURE_TEXT, isDirectConversation, outboundMessage } from '../message-rendering';
 import type { FeedbackCapabilityTrend } from './feedback-recorder';
 import { composeFeedbackSummaryText, FEEDBACK_SUMMARY_UNAVAILABLE_TEXT } from './feedback-summary-composer';
 import { detectFeedbackTurnControl } from './implicit-feedback';
@@ -52,6 +52,9 @@ export class FeedbackSummaryTurnHandler implements ConversationTurnHandler {
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     if (detectFeedbackTurnControl(ctx.message.text) !== 'feedback-summary') return null;
     const context = ctx.message.context;
+    // P0 ahead of ADR-0122 D7 (channels default-deny): the actor-wide summary quotes DM request text, so outside a DM
+    // nothing is read and the reply is fixed copy.
+    if (!isDirectConversation(context)) return { reply: outboundMessage(context, DM_ONLY_FEATURE_TEXT) };
     try {
       const summary = await this.deps.feedback.summarize(ctx.actor.id);
       const excerpts = new Map<Id, string>();

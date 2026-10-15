@@ -65,7 +65,7 @@ import { PLAIN_TEXT_MARKUP, outboundBody, plainTextOf, renderMessageContent } fr
 // ConversationRuntime over the real WorkChatService, WorkManager, PromptComposer and PromptRenderer. Only storage,
 // the connector, the provider and the Task bookkeeping are fakes. Composition-root registration is WORK-T5.
 
-const CTX: ConversationContext = { platform: 'test', channelId: 'chan-1', userId: 'owner-user' };
+const CTX: ConversationContext = { platform: 'test', channelId: 'chan-1', userId: 'owner-user', direct: true };
 const OWNER: Actor = {
   id: 'owner-actor',
   displayName: 'Owner',

@@ -72,7 +72,8 @@ import { CURATED_EXAMPLES_SECTION_TITLE, PromptComposer } from './prompt-compose
 import { PromptRenderer } from './prompt-renderer';
 import { readGeneralChatReplyPolicy } from './chat-policy/chat-response-policy';
 import { renderInternalActionClaimNotice, renderInternalActionNotDone } from './chat-policy/internal-action-vocabulary';
-import { renderOwnMemoryNotFound } from './chat-policy/own-memory-recall';
+import { renderOwnMemoryDmOnly, renderOwnMemoryNotFound } from './chat-policy/own-memory-recall';
+import { DM_ONLY_FEATURE_TEXT } from './message-rendering';
 import { imageUnderstandingPolicyOf, renderImageUnderstandingUnavailable } from './image-understanding';
 import { ATTACHED_FILES_SECTION_TITLE, renderAttachmentReplyWithheld, renderAttachmentsNotRead } from './attachment-context';
 import { DefaultMemoryRetriever } from './memory-retriever';
@@ -123,7 +124,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
 });
-const CTX: ConversationContext = { platform: 'test', channelId: 'c1', userId: 'u1' };
+const CTX: ConversationContext = { platform: 'test', channelId: 'c1', userId: 'u1', direct: true };
 const ACTOR: Actor = { id: 'actor-1' } as Actor;
 const WORKSPACE: WorkspaceRef = { id: 'ws-1', rootPath: '/repo', kind: 'local-clone' };
 const silentLogger: Logger = { info: () => undefined, warn: () => undefined, error: () => undefined };
@@ -11364,6 +11365,33 @@ describe('W3-L01 — own-memory recall question with no recall hit (ADR-0104 D3,
     expect(active.providerTouches()).toBeGreaterThan(0);
   });
 
+  // P0 ahead of ADR-0122 D7 (CA review): outside a DM no durable memory is recalled, so "그 내용은 기억에 없어요" would be
+  // untrue and would invite retyping a private fact in a shared channel.
+  it.each([
+    ['a guild channel', { platform: 'test', spaceId: 'g1', channelId: 'qa', userId: 'u1', direct: false }],
+    ['a context without the direct flag', { platform: 'test', channelId: 'c9', userId: 'u1' }],
+  ] as const)('in %s an own-memory question gets the fixed DM-only reply with zero provider calls', async (_label, context) => {
+    for (const [text, language] of [[QUESTION, 'ko'], ['what did I say my favourite fruit was?', 'en']] as const) {
+      const h = ownMemoryRuntime({ routed: true });
+      const result = await h.runtime.handle({ ...messageOf(text), context: { ...context } });
+      expect(result.status).toBe('RESPONDED');
+      expect(result.reply.text).toBe(renderOwnMemoryDmOnly(language));
+      expect(result.reply.text).not.toBe(renderOwnMemoryNotFound(language));
+      expect(h.providerTouches()).toBe(0);
+      expect(h.compose).not.toHaveBeenCalled();
+      expect(h.recorded).toEqual([renderOwnMemoryDmOnly(language)]);
+    }
+    expect(renderOwnMemoryDmOnly('ko')).toBe('개인 기억은 DM에서만 확인할 수 있어요');
+  });
+
+  it('in a channel, the channel\'s own earlier turn is still a hit (the provider answers from that transcript)', async () => {
+    const h = ownMemoryRuntime({
+      bundle: { conversationTranscript: [{ role: 'user', content: '나는 과일 중에 귤이 제일 좋아', provenance: 'USER', epistemicStatus: 'USER_CLAIM_OR_INTENT' }] },
+    });
+    const channel = { platform: 'test', spaceId: 'g1', channelId: 'qa', userId: 'u1', direct: false };
+    expect((await h.runtime.handle({ ...messageOf(QUESTION), context: channel })).reply.text).toBe('provider answer');
+  });
+
   it('Codex P2 regression: a semantically recalled memory with no shared word ("나는 철수야" for "내 이름이 뭐였지?") is a hit at a very high score', async () => {
     const record: MemoryRecord = {
       id: 'durable-name',
@@ -12859,5 +12887,49 @@ describe('Codex re-review of 63ab7a0 — review nouns and verb-first merge forms
     expect(calls.classify).toBe(0);
     expect(calls.hostingMergePR).toBe(0);
     expect(mutationCalls(calls)).toBe(0);
+  });
+});
+
+describe('P0 ahead of ADR-0122 D7 — owner learning replies never enter a channel\'s history', () => {
+  it('a learning command in a channel reads nothing and records only the fixed DM-only copy; in a DM the reply is recorded as before', async () => {
+    const PRIVATE = '예시 1: "DM에서 물어본 이직 상담" → 답변';
+    const channel: ConversationContext = { platform: 'test', spaceId: 'g1', channelId: 'qa', userId: 'u1', direct: false };
+    const run = async (context: ConversationContext) => {
+      const executed: LearningCommand[] = [];
+      const recorded: Array<{ text: string; context: ConversationContext }> = [];
+      const { deps } = makeDeps();
+      const handler = new LearningTurnHandler({
+        service: {
+          async execute(command) {
+            executed.push(command);
+            return { text: PRIVATE, status: 'RESPONDED' as const };
+          },
+        },
+      });
+      const runtime = new ConversationRuntime({
+        ...deps,
+        turnHandlers: [handler],
+        memory: {
+          ...deps.memory,
+          async recordAssistant(text: string, ctx: ConversationContext) {
+            recorded.push({ text, context: ctx });
+            return undefined;
+          },
+        },
+      });
+      const result = await runtime.handle({ ...messageOf('예시 목록'), context });
+      return { result, executed, recorded };
+    };
+
+    const inChannel = await run(channel);
+    expect(inChannel.result.reply.text).toBe(DM_ONLY_FEATURE_TEXT);
+    expect(inChannel.executed).toHaveLength(0);
+    expect(inChannel.recorded).toEqual([{ text: DM_ONLY_FEATURE_TEXT, context: channel }]);
+    expect(JSON.stringify(inChannel.recorded)).not.toContain('이직 상담');
+
+    const inDm = await run(CTX);
+    expect(inDm.result.reply.text).toBe(PRIVATE);
+    expect(inDm.executed).toHaveLength(1);
+    expect(inDm.recorded.map((entry) => entry.text)).toEqual([PRIVATE]);
   });
 });

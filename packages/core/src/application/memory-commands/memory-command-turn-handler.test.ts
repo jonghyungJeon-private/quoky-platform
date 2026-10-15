@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TurnHandlerContext } from '../../ports';
+import { DM_ONLY_FEATURE_TEXT } from '../message-rendering';
 import { MAX_CONTRIBUTED_HELP_LINE_CHARS } from '../response-composer';
 import { createVectorRemovalCascade } from './memory-removal-cascade';
 import {
@@ -9,12 +10,12 @@ import {
   createMemoryCommandTurnHandler,
 } from './memory-command-turn-handler';
 
-function ctx(text: string): TurnHandlerContext {
+function ctx(text: string, context: Record<string, unknown> = { platform: 'discord', channelId: 'channel-1', userId: 'user-1', direct: true }): TurnHandlerContext {
   return {
     message: {
       id: 'message-1',
       text,
-      context: { platform: 'discord', channelId: 'channel-1', userId: 'user-1' },
+      context,
       receivedAt: '2026-10-06T03:00:00.000Z',
     },
     session: { id: 'session-1' },
@@ -108,5 +109,22 @@ describe('createVectorRemovalCascade', () => {
       history: { user: '기억 1 수정: (내용은 대화 기록에 남기지 않아요)' },
     });
     expect(await throwing.handle(ctx('기억 목록'))).not.toHaveProperty('history');
+  });
+});
+
+describe('MemoryCommandTurnHandler — DM-only (P0 ahead of ADR-0122 D7)', () => {
+  it.each([
+    ['a guild channel', { platform: 'discord', spaceId: 'g1', channelId: 'qa', userId: 'user-1', direct: false }],
+    ['a context without the direct flag', { platform: 'test', channelId: 'c1', userId: 'user-1' }],
+  ])('in %s every memory command is claimed with fixed copy and the service is never called', async (_label, context) => {
+    const execute = vi.fn();
+    const handler = createMemoryCommandTurnHandler({ service: { execute } });
+    for (const text of ['기억 목록', '기억 1 보여줘', '기억 1 수정: 새 내용', '기억 1 잊어줘', '기억 확인 ABC123', '보관함']) {
+      const outcome = await handler.handle(ctx(text, context));
+      expect(outcome, text).toEqual({ reply: { context, text: DM_ONLY_FEATURE_TEXT, replyToMessageId: 'message-1' } });
+    }
+    expect(execute).not.toHaveBeenCalled();
+    // A non-command still falls through in a channel.
+    expect(await handler.handle(ctx('안녕', context))).toBeNull();
   });
 });

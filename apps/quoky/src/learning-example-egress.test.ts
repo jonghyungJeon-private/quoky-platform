@@ -67,7 +67,7 @@ const chatTask = (sessionId: string): Task => ({
   status: TaskStatus.RUNNING,
   intent: { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: true, summary: QUESTION },
   riskLevel: RiskLevel.LOW,
-  context: { platform: 'discord', channelId: 'c-lrn5', userId: TEST_OWNER },
+  context: { platform: 'discord', channelId: 'c-lrn5', userId: TEST_OWNER, direct: true },
   sessionId,
   actorId: ACTOR,
   createdAt: NOW,

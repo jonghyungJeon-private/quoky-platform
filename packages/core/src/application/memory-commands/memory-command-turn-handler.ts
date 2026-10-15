@@ -1,5 +1,5 @@
 import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
-import { outboundBody, outboundMessage } from '../message-rendering';
+import { DM_ONLY_FEATURE_TEXT, isDirectConversation, outboundBody, outboundMessage } from '../message-rendering';
 import { parseMemoryCommand } from './memory-command-grammar';
 import { renderMemoryCommandFailed } from './memory-command-renderer';
 import { memoryCommandHistory, type MemoryCommandService } from './memory-command-service';
@@ -28,6 +28,7 @@ export interface MemoryCommandTurnHandlerDeps {
  * whole-message memory command (`parseMemoryCommand`); everything else falls through (`null`) unchanged. Provider-
  * free, creates no Task, TaskRun or ApprovalRequest (D4: the explicit `기억 확인 <code>` is the consent), and acts
  * only for the turn's own actor. A claimed command whose execution throws is answered with fixed copy (never chat).
+ * DM-only: outside a direct conversation a claimed command reads nothing and gets {@link DM_ONLY_FEATURE_TEXT}.
  */
 export class MemoryCommandTurnHandler implements ConversationTurnHandler {
   readonly id = MEMORY_COMMAND_TURN_HANDLER_ID;
@@ -41,6 +42,11 @@ export class MemoryCommandTurnHandler implements ConversationTurnHandler {
     const command = parseMemoryCommand(ctx.message.text);
     if (command === null) return null;
     const context = ctx.message.context;
+    // P0 ahead of ADR-0122 D7 (channels default-deny): lists, views, status and confirmation previews show the actor's
+    // memories, so outside a DM nothing is read or changed and the reply is fixed copy.
+    if (!isDirectConversation(context)) {
+      return { reply: outboundMessage(context, DM_ONLY_FEATURE_TEXT, { replyToMessageId: ctx.message.id }) };
+    }
     try {
       const result = await this.deps.service.execute(command, {
         actorId: ctx.actor.id,

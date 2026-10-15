@@ -32,8 +32,8 @@ const taskWith = (
     platform?: string;
     requestText?: string;
     capability?: Capability;
-    /** The adapter's conversation kind; omitted (with no spaceId) is a direct conversation, as before. */
-    direct?: boolean;
+    /** The adapter's conversation kind; defaults to a DM (`true`), `null` omits the flag (a channel, fail-closed). */
+    direct?: boolean | null;
     spaceId?: string;
   } = {},
 ): Task => ({
@@ -54,7 +54,7 @@ const taskWith = (
     channelId: 'c',
     userId: 'u',
     ...(opts.spaceId !== undefined ? { spaceId: opts.spaceId } : {}),
-    ...(opts.direct !== undefined ? { direct: opts.direct } : {}),
+    ...(opts.direct === null ? {} : { direct: opts.direct ?? true }),
   },
   ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
   ...(opts.projectId ? { projectId: opts.projectId } : {}),
@@ -1533,7 +1533,8 @@ describe('ContextBuilder — DM-only durable recall and curated examples (P0 hot
   it.each([
     ['direct: false', { direct: false, spaceId: 'guild-1' }],
     ['direct: false without a spaceId', { direct: false }],
-    ['a legacy context with a spaceId and no direct flag', { spaceId: 'guild-1' }],
+    ['a context with a spaceId and no direct flag', { spaceId: 'guild-1', direct: null }],
+    ['a context with neither direct nor spaceId (fail-closed)', { direct: null }],
   ] as const)('a channel turn (%s) gets neither recall nor examples, and neither source is asked', async (_label, surface) => {
     for (const config of configs) {
       const f = fixture();
@@ -1556,7 +1557,7 @@ describe('ContextBuilder — DM-only durable recall and curated examples (P0 hot
 
   it.each([
     ['direct: true', { direct: true }],
-    ['a legacy context without a spaceId', {}],
+    ['direct: true with a spaceId', { direct: true, spaceId: 'space-1' }],
   ] as const)('a DM turn (%s) is unchanged: recall and examples are present', async (_label, surface) => {
     for (const config of configs) {
       const f = fixture();
@@ -1570,11 +1571,4 @@ describe('ContextBuilder — DM-only durable recall and curated examples (P0 hot
     }
   });
 
-  it('a DM bundle is byte-identical with or without the explicit direct flag', async () => {
-    const f = fixture();
-    const builder = new ContextBuilder(memory, {}, f.retriever, f.source);
-    const legacy = await builder.build(taskWith({ sessionId: 's1' }));
-    const flagged = await builder.build(taskWith({ sessionId: 's1', direct: true }));
-    expect(flagged).toEqual(legacy);
-  });
 });

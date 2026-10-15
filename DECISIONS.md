@@ -24969,40 +24969,60 @@ scripted selector; the Drive fixture's name and text say "이 문서 요약해�
 - **Prompt versions.** `nl-select.v27` / `v28` are this branch's numbers. Whichever of this branch and the A6 v26 branch
   lands second takes the next free numbers on rebase and re-pins the goldens (`nl-select.v*.prompts.json`).
 
-## ADR-0073 amendment implementation note — durable recall and curated examples are DM-only (P0 hotfix ahead of ADR-0122 D7, 2026-10-15)
+## ADR-0073 amendment implementation note — durable recall, curated examples and owner memory/learning commands are DM-only (P0 hotfix ahead of ADR-0122 D7, 2026-10-15)
 
-**Status:** Implemented (security hotfix; Chief Architect finding, confirmed). Narrows the ADR-0073 amendment
-(actor-scoped recall) and ADR-0107 D5 (curated examples) until ADR-0122 (Proposed, surface permission grants) D7 lands.
+**Status:** Implemented (security hotfix; Chief Architect finding, confirmed; extended after the Codex review of the
+first hotfix commit and the CA review). Narrows the ADR-0073 amendment (actor-scoped recall), ADR-0106 (memory commands),
+ADR-0107 D3/D5 (learning commands, curated examples) and ADR-0098 D6 (feedback summary) until the ADR-0122 surface
+grants exist. ADR-0122 (channels default-deny) was ratified by the owner on 2026-10-15; this note ships the minimal
+part now. These handlers stay DM-only until the ADR-0122 grants exist.
 
 **Finding.** `ContextBuilder` scoped durable recall by actor only, so a memory the owner saved in a DM ("기억해: …") and
 the owner-curated examples could be recalled into a reply in a shared channel (the QA channel), where other people read
-the reply.
+the reply. The Codex review found the same exposure in owner-invoked commands: memory lists, full views, status and
+confirmation previews; learning candidates and examples with private request excerpts; the actor-wide feedback summary
+with DM task descriptions; and those replies then entered the channel's short-term history.
 
 **Decision (minimal part of D7).**
 
-1. `ContextBuilder` asks the `MemoryRetriever` for durable recall, and the `CuratedExampleSource` for curated examples,
-   only when the task's conversation is direct: `isDirectConversation(task.context)`, i.e. the adapter-set,
-   platform-neutral `ConversationContext.direct` (for an older context without the flag, no `spaceId` means direct, the
-   same rule the mail, Drive, brief and A6 DM-only gates use). No platform branch in Core.
-2. A non-direct turn gets neither the `durableRecall` nor the `curatedExamples` key, and neither source is queried (no
-   embedding call either). Its short-term transcript (session = this conversation) and the active project's memory are
-   unchanged.
-3. A DM turn is byte-identical to before.
-4. **Consequence.** The QA channel loses durable recall and curated examples until the memory grant of ADR-0122 D7
-   exists; an own-memory question there ("내가 좋아하는 과일이 뭐였지?") gets the fixed not-found reply (W3-L01), because
-   no recall reaches the bundle. Saving a memory in a channel still works; it is recalled only in a DM.
+1. **One fail-closed gate.** `isDirectConversation(context)` is now `context.direct === true`: a producer that omits
+   `direct` is treated as a channel, with or without a `spaceId` (before: no `spaceId` meant direct). Safe for the
+   current adapters, which always set `direct` on the inbound context (PLT-0; the Telegram adapter admits only the
+   owner's private chat, `direct: true`). The mail, Drive, brief, reminder and A6 DM-only gates use the same helper and
+   become fail-closed too. Only the conversation *label* (`conversationRefOf`) keeps the older inference, because a
+   context stored before PLT-0 (a pending approval) must still be named as the DM; it is not a privacy gate. No platform
+   branch in Core.
+2. **Recall and examples.** `ContextBuilder` asks the `MemoryRetriever` and the `CuratedExampleSource` only for a
+   direct conversation. A non-direct turn gets neither the `durableRecall` nor the `curatedExamples` key, and neither
+   source is queried (no embedding call either). Its short-term transcript (session = this conversation) and the active
+   project's memory are unchanged.
+3. **Owner commands.** `MemoryCommandTurnHandler` (all memory commands, incl. confirm and the archive),
+   `LearningTurnHandler` (all learning commands) and `FeedbackSummaryTurnHandler` (`피드백 요약`) still claim their
+   command outside a DM, but read and change nothing and reply with the fixed `DM_ONLY_FEATURE_TEXT` "이 기능은 DM에서만
+   쓸 수 있어요". That fixed copy is what enters the channel's history, never a listing.
+4. **Own-memory question in a channel.** With no hit in that conversation, the reply is the fixed
+   `renderOwnMemoryDmOnly` "개인 기억은 DM에서만 확인할 수 있어요" (EN: "Personal memories can be checked only in a direct
+   message."), no provider call, instead of the W3-L01 "그 내용은 기억에 없어요 … '기억해: …'로 저장해 둘게요", which
+   would be untrue there and would invite retyping a private fact in a shared channel. A hit in the channel's own
+   transcript still reaches the provider.
+5. A DM turn (`direct: true`) is byte-identical to before.
+6. **Consequence.** The QA channel loses durable recall, curated examples and the memory / learning / feedback-summary
+   commands until the ADR-0122 grants exist. Saving a memory with "기억해:" in a channel still works; it is recalled
+   only in a DM. A test or tool that builds a context without `direct` is now a channel.
 
 **Other DM-private context sources checked (not changed here).** Short-term transcript and `lastSelection` /
 `nlPending` are per-session, and a session is per platform conversation (channel/thread), so they do not cross
-surfaces. The daily / on-demand brief and the A6 actions are already DM-only. Owner-invoked explicit listings are
-actor-scoped and not DM-gated: the memory commands ("기억 목록", view), the learning lists ("피드백 후보", "예시
-목록"), `reminder.list` and the to-do list; and `Actor.metadata` interpretation preferences cross surfaces (routing
-only, never prompt text). These are owner commands, not implicit recall; whether they become DM-only is part of ADR-0122.
+surfaces. The daily / on-demand brief and the A6 actions are already DM-only. Still actor-wide in a channel and left for
+the ADR-0122 grants: `reminder.list` and the to-do list (owner-invoked listings), and `Actor.metadata` interpretation
+preferences (routing only, never prompt text).
 
-Tests: `context-builder.test.ts` (channel turn — `direct: false`, with or without a `spaceId`, and a legacy context
-with a `spaceId` — gets no recall or examples, neither source is asked, the composed prompt carries neither; DM turn —
-`direct: true` and a legacy context without a `spaceId` — unchanged and identical), `conversation-runtime.test.ts`
-(real `ContextBuilder`, `PromptComposer`, `PromptRenderer`: a memory saved with "기억해:" in a DM and the curated
-example never reach the provider prompt of a channel turn; a later DM turn's prompt carries both),
-`first-release-acceptance.test.ts` (the Personal v1 row "a DM memory is recalled in a channel" is inverted: never in a
-channel, still in a fresh DM session).
+Tests: `context-builder.test.ts` (channel rows — `direct: false` with or without a `spaceId`, and contexts without the
+flag — get no recall or examples, neither source is asked, the composed prompt carries neither; DM rows unchanged),
+`message-rendering.test.ts` (fail-closed gate, label inference kept), `memory-command-turn-handler.test.ts`,
+`learning-turn-handler.test.ts`, `feedback-summary-turn-handler.test.ts` (channel and flag-less contexts: fixed copy,
+the service / store never called), `conversation-runtime.test.ts` (real `ContextBuilder`, `PromptComposer`,
+`PromptRenderer`: a memory saved with "기억해:" in a DM and the curated example never reach a channel provider prompt, a
+later DM prompt carries both; an own-memory question in a channel gets the DM-only reply with zero provider calls; a
+learning command in a channel records only the fixed copy in the channel's history), `first-release-acceptance.test.ts`
+(the Personal v1 row "a DM memory is recalled in a channel" is inverted: never in a channel, still in a fresh DM
+session). Test fixtures that meant a DM now set `direct: true`.
