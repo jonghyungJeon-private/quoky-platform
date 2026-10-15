@@ -643,6 +643,28 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
       ['2번 완료할필요없어', 'todo.complete', complete],
       ['don’t mark 2 complete', 'todo.complete', complete],
       ['2 is done', 'todo.complete', complete],
+      // CA delta (4ab11e1..cc81b2f): done-statement auxiliaries, retractions, reported speech, examples, 그만
+      ['2번 완료해 뒀어', 'todo.complete', complete],
+      ['2번 취소해 놨어', 'todo.cancel', complete],
+      ['알림 꺼 놨어', 'reminder.cancel', { ref: 'this' }],
+      ['2번 완료해 둘게', 'todo.complete', complete],
+      ['2번 완료해 줘서 고마워', 'todo.complete', complete],
+      ['2번 완료해줘 아냐', 'todo.complete', complete],
+      ['2번 완료해줘 아님', 'todo.complete', complete],
+      ['2번 완료해줘 ㄴㄴ', 'todo.complete', complete],
+      ['2번 완료해줘 노노', 'todo.complete', complete],
+      ['2번 완료해줘 됐어', 'todo.complete', complete],
+      ['2번 완료해줘 아 잠깐', 'todo.complete', complete],
+      ['complete 2 nope', 'todo.complete', complete],
+      ['please complete 2, nah', 'todo.complete', complete],
+      ['2번 완료해줘 취소', 'todo.complete', complete],
+      ['2번 완료해줘 취소', 'todo.cancel', complete],
+      ['2번 완료해줘 했던 거 되돌려줘', 'todo.complete', complete],
+      ['2번 완료해줘 했던 거 되돌려줘', 'action.undo', {}],
+      ['2번 완료해줘 하면 돼', 'todo.complete', complete],
+      ['undo 해줘 했더니 이상해', 'action.undo', {}],
+      ['예를 들어 2번 완료해줘', 'todo.complete', complete],
+      ['2번 취소 그만해', 'todo.cancel', complete],
     ];
     for (const [text, entryId, args] of never) expect((await run(text, entryId, args)).kind, text).not.toBe('execute');
     const genuine: Array<[string, string, Record<string, unknown>]> = [

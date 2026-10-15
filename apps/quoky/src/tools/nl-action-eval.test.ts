@@ -105,7 +105,7 @@ describe('scoring (A6-D7): a wrong target is never a question; negatives capture
     // The owner wrote 3 too, so #3 is grounded and Core would act on another item than the gold one: a wrong target.
     expect(await score({ ...twoTodos, text: '2번 3번 완료해줘' }, answer('todo.complete', { ref: '#3' }))).toBe('wrong-target');
     expect(await score(twoTodos, answer('todo.complete', { ref: '#7' }))).toBe('question');
-    const negative: NlActionCase = { id: 'a6-t-2', family: 'negative', text: '할 일에 보고서 넣어 놨어', expect: 'none' };
+    const negative: NlActionCase = { id: 'a6-t-2', family: 'negative', text: '할 일에 보고서 넣어줘', expect: 'none' };
     expect(await score(negative, answer('todo.add', { title: '보고서' }))).toBe('negative-capture');
     expect(await score(negative, answer('none'))).toBe('none');
   });

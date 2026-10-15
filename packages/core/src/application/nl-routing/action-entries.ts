@@ -429,7 +429,8 @@ export function isNlBulkRequest(groundingText: string): boolean {
 // 끝 only in its completion forms (끝냈 / 끝났 / 끝내 / 끝마치): "언제 끝나?" is a question, not a completion. No 처리 or 체크:
 // "처리 방법", "체크해봐" are not completions (CA review).
 const TODO_COMPLETE_WORDS: readonly string[] = ['완료', '끝냈', '끝났', '끝내', '끝마', '마쳤', '마치', '마무리', '다 했', '다했', '해치웠', 'done', 'complete', 'completed', 'finish', 'finished', 'check off'];
-const CANCEL_WORDS: readonly string[] = ['취소', '캔슬', '삭제', '지워', '지우', '지운', '없애', '없던 걸로', '없던걸로', '제거', '제외', '그만', '필요 없', '필요없', 'cancel', 'remove', 'delete', 'drop', 'scrap'];
+// No 그만 (CA delta: "2번 취소 그만해" means stop, not cancel) and no negation-shaped words.
+const CANCEL_WORDS: readonly string[] = ['취소', '캔슬', '삭제', '지워', '지우', '지운', '없애', '없던 걸로', '없던걸로', '제거', '제외', 'cancel', 'remove', 'delete', 'drop', 'scrap'];
 // No negation-shaped words ("안 할", "안 해도"): a negation in the clause voids grounding (CA review), so they cannot ground.
 const TODO_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '빼'];
 const REMINDER_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '꺼', '끄', '끈', '멈춰', 'stop', 'turn off', 'disable'];
@@ -452,8 +453,22 @@ const CLAUSE_END = /말고|[,.!?。;:~\n]/u;
  * A negation anywhere in the WHOLE message vetoes every write (Codex and CA reviews: a later retraction such as "완료해줄래?
  * 아니 하지마" counts): "-지 마/말아/않", "-진 마", a standalone or glued 안/못, 금지, 아니, 필요 없, 싫, 말고.
  */
-const NEGATION_KO = /[지진]\s*(?:마|말|않)|(?:^|\s)(?:안|못)(?=\s|$|되|돼|됐|해|했|하|할)|안\s*(?:해|하|되|돼|됐|할|함)|(?<!잘)못\s*(?:해|하|했|함)|금지|아니|필요\s*없|싫|말아|말고/u;
-const NEGATION_EN = /(?:^|\s)(?:don't|dont|do not|doesn't|didn't|shouldn't|won't|wouldn't|can't|cannot|never|not|no)(?=\s|$|[,.!?])/u;
+const NEGATION_KO = /[지진]\s*(?:마|말|않)|(?:^|\s)(?:안|못)(?=\s|$|되|돼|됐|해|했|하|할)|안\s*(?:해|하|되|돼|됐|할|함)|(?<!잘)못\s*(?:해|하|했|함)|금지|아니|아냐|아님|ㄴㄴ|노노|됐어|됐다|잠깐|필요\s*없|싫|말아|말고/u;
+const NEGATION_EN = /(?:^|\s)(?:don't|dont|do not|doesn't|didn't|shouldn't|won't|wouldn't|can't|cannot|never|not|no|nope|nah)(?=\s|$|[,.!?])/u;
+/**
+ * After a request, a cancel / undo / stop word retracts it ("2번 완료해줘 취소", "2번 취소 그만해"), CA delta: the request
+ * does not ground.
+ */
+const RETRACTION_AFTER = /취소|캔슬|되돌|그만|undo|cancel|nope|nah/u;
+/**
+ * Reported speech or an example: a request form followed by 했던 / 했잖아 / 라고 / 하면 / 하고 / 했더니 / 그랬 quotes a
+ * request instead of making one ("2번 완료해줘 했던 거", "undo 해줘 했더니"); 예를 들어 / 예컨대 frame an example.
+ */
+const REPORTED_AFTER_REQUEST = /^\s*(?:했던|했잖아|했는데|했더니|라고|이라고|하면|하고|그랬|란|래서)/u;
+const QUOTED_REQUEST = /(?:줘|주세요|줄래|해)\s*(?:했던|했잖아|했는데|했더니|라고|이라고|하면|하고|그랬)/u;
+const EXAMPLE_FRAME = /예를\s*들어|예컨대|for example|e\.g\./u;
+/** A bare 해 / 꺼 / 지워 + space + an auxiliary is a done-statement or a thank-you, not a request ("완료해 뒀어", "꺼 놨어"). */
+const AUXILIARY_AFTER_BARE = /^\s+(?:줘서|줬|놨|놓|뒀|둔|둘|버렸|봤)/u;
 /**
  * Non-request modalities in the clause (veto): a deliberation (할까, 할지), an obligation (해야), an intention (하려고,
  * 할게), a supposition (겠지, 려나): "2번 취소할까 해", "완료해야 해", "취소하려고 해".
@@ -539,7 +554,8 @@ function negatedClauseNamesTheAction(text: string, words: readonly string[]): bo
 export function nlActionWordGrounded(prose: string, words: readonly string[]): boolean {
   const text = normalizeForMatch(prose).replace(/[’‘`´]/gu, "'");
   // English: a negation anywhere vetoes. Korean: see koreanVeto (a reason clause such as "필요 없어 취소해줘" is not one).
-  if (NEGATION_EN.test(text)) return false;
+  // A quoted or reported request anywhere ("2번 완료해줘 했던 거 되돌려줘") or an example frame refuses the message.
+  if (NEGATION_EN.test(text) || EXAMPLE_FRAME.test(text) || QUOTED_REQUEST.test(text)) return false;
   if (negatedClauseNamesTheAction(text, words)) return false;
   for (const raw of words) {
     const word = normalizeForMatch(raw);
@@ -557,8 +573,12 @@ export function nlActionWordGrounded(prose: string, words: readonly string[]): b
         const nominal = /^[\s.!~]*(?:please)?[\s.!~]*$/u.test(after) && !EN_STATEMENT.test(text);
         const headed = body.startsWith(match[0]) || EN_CARRIER.test(body) || nominal;
         // A Latin action word inside a Korean request ("1번 done 처리해줘", "아까 거 undo 해줘").
-        const koreanRequest = KO_HEAD_REQUEST.exec(after) !== null && !NEGATION_KO.test(after) && end?.[0] !== '?';
+        const korean = KO_HEAD_REQUEST.exec(after);
+        const koreanRequest =
+          korean !== null && !NEGATION_KO.test(after) && end?.[0] !== '?' && !RETRACTION_AFTER.test(after.slice(korean[0].length)) && !REPORTED_AFTER_REQUEST.test(after.slice(korean[0].length));
         if (koreanRequest) return true;
+        // A Korean request form was there but refused (quoted, retracted): the English reading does not rescue it.
+        if (korean !== null || RETRACTION_AFTER.test(after)) continue;
         if (!headed || NEGATION_KO.test(text)) continue;
         if (end?.[0] === '?' ? polite : true) return true;
       }
@@ -576,8 +596,12 @@ export function nlActionWordGrounded(prose: string, words: readonly string[]): b
       // A bare imperative: a stem with its own ending ("만들어", "되돌려"), or a stem that is already one ("지워", "빼").
       const bare = request === null && KO_IMPERATIVE_STEMS.test(word) ? KO_BARE_IMPERATIVE.exec(after) : null;
       const bareOk = bare !== null && (bare[0] !== '' || KO_COMPLETE_IMPERATIVES.test(word));
-      const nominal = KO_VERBAL_NOUN.test(word) && KO_NOMINAL_COMMAND_TAIL.test(after);
+      // A nominal command never follows another request ("2번 완료해줘 취소" retracts the first, it cancels nothing).
+      const nominal = KO_VERBAL_NOUN.test(word) && KO_NOMINAL_COMMAND_TAIL.test(after) && !/(?:줘|주세요|줄래|해)(?=\s|$|[~!.?,])/u.test(text.slice(0, at));
       if (request === null && !bareOk && !nominal) continue;
+      // What follows the request decides too: a retraction, reported speech or a done-statement auxiliary refuses (CA).
+      const following = after.slice((request ?? bare)?.[0].length ?? 0);
+      if (RETRACTION_AFTER.test(following) || REPORTED_AFTER_REQUEST.test(following) || AUXILIARY_AFTER_BARE.test(following)) continue;
       if (end?.[0] === '?' && !(request !== null && KO_POLITE_QUESTION.test(request[0]))) continue;
       return true;
     }

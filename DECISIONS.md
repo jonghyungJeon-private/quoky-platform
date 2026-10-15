@@ -24957,6 +24957,15 @@ the 51 `help.topic` read cases 2× each keep their outcome (101/102; the one mis
   grammar ("1번 완료") use that form. Removing it is one line plus the U4/U8c acceptance expectations; owner's call.
 - **Cost.** Owner-approved golds that name the action without a request form stay as approved and count as misses
   (`isRequestFormCost`), measured in the Haiku run below.
+- **Closed for R1 (orchestrator decision, 2026-10-15, after the CA delta 4ab11e1..cc81b2f).** Three last holes were fixed:
+  a bare 해 / 꺼 / 지워 followed by an auxiliary (줘서, 줬, 놨, 놓, 뒀, 둔, 둘, 버렸, 봤: "완료해 뒀어", "꺼 놨어") is a
+  done-statement; a retraction after a request (아냐, 아님, ㄴㄴ, 노노, 됐어, 잠깐, nope, nah, or a cancel / undo / stop word:
+  "2번 완료해줘 취소", "2번 취소 그만해") vetoes it, and 그만 left the cancel vocabulary; a quoted or reported request
+  (…해줘 했던 / 라고 / 하면 / 하고 / 했더니 / 그랬) or an example frame (예를 들어, 예컨대) refuses the message. With that
+  the request-form backstop is CLOSED for R1: further edge strings are recorded as accepted residual risk, because the
+  writes are local and undoable, the selector must also err for one to run, and the attended labelled live session of at
+  least 100 turns is the empirical check.
+
 
 
 ### ADR-0120 amendment A8 — Jira release listings: a `jira.release` READ entry (one fix version for every assignee, or a project's release list), three named read queries, and release links only on the configured Jira site (Proposed — awaiting the owner's yes) (2026-10-15)
