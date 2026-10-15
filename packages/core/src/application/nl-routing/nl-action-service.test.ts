@@ -232,11 +232,11 @@ describe('cache rule and lastSelection (A6-D3)', () => {
 
   it('the cache key carries the prompt version: an output cached under the read prompt is never served under the action prompt (Codex P2)', async () => {
     const base = { actorId: 'owner', text: '메일함', previous: undefined, entryIds: ['mail.list'] };
-    const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
-    expect(new Set(keys).size).toBe(5);
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v22');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v23');
-    // The same turn entries every time; only the kill switch decides the prompt (stopped: v22, running: v23).
+    const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
+    expect(new Set(keys).size).toBe(7);
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v24');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v25');
+    // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
     await w.decide('오늘 날씨 좋다', { entries: ALL });

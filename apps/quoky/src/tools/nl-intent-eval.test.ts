@@ -251,7 +251,9 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
     expect(tagged.every((golden) => golden.grammarAnswer !== undefined)).toBe(true);
     // `work-surface` has no catalog equivalent (the Jira/GitHub surface is not the to-do list), so its answer is null.
     // The owner's D12 batch of 2026-10-15 relabelled calendar-008/-020/-025 (timedOnly), which the calendar grammar answers
-    // without the flag: exact 209 → 208, user-visible 229 → 226.
-    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 248, exact: 208, entry: 243, userVisible: 226, wrongCaptures: 0 });
+    // without the flag: exact 209 → 208, user-visible 229 → 226. The T1 extension of the same day (calendar-005, -016,
+    // -018, -029, -032, -034, -057 gain timedOnly; five are grammar-tagged) moves exact 208 → 204 (-016, -029, -032, -034;
+    // -018 was already not exact) and user-visible 226 → 221.
+    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 248, exact: 204, entry: 243, userVisible: 221, wrongCaptures: 0 });
   });
 });

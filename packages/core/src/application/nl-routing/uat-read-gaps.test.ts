@@ -47,7 +47,7 @@ describe('R3 symbolic time: last-<weekday>, this-<weekday>, week-after-next, res
 
   it('shows the selector the new symbols', () => {
     const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v22');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v24');
     expect(prompt).toContain('week-after-next');
     expect(prompt).toContain('rest-of-month');
     expect(prompt).toContain('last-mon..last-sun');
@@ -149,6 +149,18 @@ describe('R2/R5 calendar part of day and timed-only are grounded in the owner wo
     expect(calendar({ range: 'this-week', timedOnly: true }, '이번 주 일정')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'timedOnly' });
     expect(calendar({ range: 'next-week', timedOnly: true }, '다음 주는?', { timedOnly: true })).toMatchObject({ ok: true });
     expect(calendar({ range: 'this-week', timedOnly: false }, '이번 주 일정')).toMatchObject({ ok: true, value: { args: { range: 'this-week' } } });
+  });
+
+  it('T1 (owner, 2026-10-15; prompt nl-select.v24): a meeting word means timed events in the arg description and the meeting examples', () => {
+    const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v24');
+    expect(prompt).toContain('timedOnly: true. true when the owner asks about meetings/timed events and away from all-day entries such as leave or holidays ("회의만", "미팅만", "only meetings").');
+    expect(prompt).not.toContain('true only when the owner narrows');
+    expect(prompt).toContain('Output: {"entryId":"calendar.events","args":{"range":"tomorrow","timedOnly":true}');
+    expect(prompt).toContain('Output: {"entryId":"calendar.events","args":{"range":"upcoming","timedOnly":true}');
+    // The grounding is unchanged: a plain schedule question cannot carry the flag.
+    expect(calendar({ range: 'tomorrow', timedOnly: true }, '내일 회의 있어?')).toMatchObject({ ok: true });
+    expect(calendar({ range: 'this-week', timedOnly: true }, '이번 주 일정 다 보여줘')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'timedOnly' });
   });
 
   it('the basis line names the part of day and the timed-only narrowing', () => {

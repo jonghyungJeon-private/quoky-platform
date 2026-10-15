@@ -30,8 +30,16 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 - A6 R1: the batch review is APPROVED (2026-10-15; DECISIONS "A6 R1 owner batch approval"). Still needing a separate owner
   yes each: the A6 model runs (3 runs), the `.env.local` `QUOKY_NL_ACTIONS` flag (stays `off`), and the labelled live session
   of at least 100 turns.
-- D12 batch approval of the 23 `uat5r*` golden cases (A5), the 7 `uat5wd-*` cases (A5 note 2) and the 10 `uat5ca-*` cases
-  plus the proposed calendar relabels (A5 note 3). They gate no live behaviour.
+- D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
+  metadata edits, the calendar relabels and the T1 extension); the 148 S1 cases are marked with their 2026-10-13
+  approval. They gate no live behaviour.
+- **Next owner batch:**
+  - the 41 INT-4 cases `v5int4-001..041` (still PENDING);
+  - `neg-099` "이 문서 요약해줘": A6 relabel HELD pending an A6-D2 decision (whether a bare determiner "이" + noun counts as a
+    deictic; today Core refuses `ref: this` for it as ungrounded);
+  - `uat5r6-07` "그거 요약해줘": A6 relabel HELD pending the owner's confirmation of the ref spelling (the approved sheet
+    says `recent`; A6-D2 treats `recent` and `this` alike; the v25 prompt example for this very sentence uses `this`, so the
+    case is contaminated for scoring: its text is verbatim a v24/v25 prompt example).
 - Owner follow-up (pre-existing, found in A6 acceptance): an anchored Class A command such as "1번 완료해줘" acts on the CURRENT numbered list, so if the list was renumbered since the owner last saw it (an item completed elsewhere), it completes a different to-do than the one shown. A6 selector-path references are bound to the shown label and refuse instead; whether the anchored form should do the same is the owner's call.
 - Token rotation: deferred (ADR-0121 S0 owner decision, design Q5).
 - OS-level firewall for child processes: "not now" (ADR-0121 S0 owner decision, design Q10).
@@ -48,6 +56,21 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
   tracks' notes). Still pending from v4: the OpenAI and Gemini keys, the PRV-3 monthly DM, LRN-5 round trip.
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
+
+### v5 owner batch of 2026-10-15 — ADR-0112 amendments, D12 approvals, A6 relabels, T1 and prompt `nl-select.v24` — on branch `claude/v5-d12-batch` (2026-10-15)
+
+- **Accepted:** ADR-0112 amendments 1 (Slack delete) and 2 (Jira create and undo), all 20 decisions as recommended;
+  implementation stays at A6 R3 / R4.
+- **Corpus:** 46 cases and the 8 #204 metadata edits owner-approved (and the 148 S1 cases marked with their 2026-10-13 approval); `neg-098`, `neg-100` relabelled to
+  `item.summarize` for the A6 read-regression mode only (`neg-099` and `uat5r6-07` held, see "Next owner batch"); T1
+  extended to 7 more calendar cases.
+- **Prompt:** read `nl-select.v24` (A6 `off` pin `golden/nl-select.v24.prompts.json`), A6 `nl-select.v25`; v24 also
+  defines the weekend symbols as Saturday and Sunday together (the `calendar-023` drift fix).
+- **Measured (final v24, the gate evidence):** Haiku 3 runs: overall 96.1-97.3%, calendar 93.7-95.8%, wrong captures
+  0/0/0, p95 2.1-2.3 s; D12 and S1 gates pass in all three runs (v22: 95.7-96.5%, 92.4-96.7%, 0). The earlier 3-run eval
+  of the pre-weekend-clause v24 (prompt `d5002b58…`, wrong 1/0/0) is superseded. Not merged; not live.
+
+Details: the A5 note 3 addendum and the two ADR-0112 ratification records in `DECISIONS.md`.
 
 ### v5 document summaries: attribution, one regeneration, never looser than main (ADR-0104 D1 amendment, owner-approved 2026-10-15) — on branch `claude/v5-sheet-summary-guard`
 

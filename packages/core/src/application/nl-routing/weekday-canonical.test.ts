@@ -82,7 +82,8 @@ describe('a weekday symbol is spelled the way the owner named the week, when it 
 describe('prompt nl-select.v20: the weekday lines of the range symbols carry three examples', () => {
   it('a bare weekday, a this-week weekday, and a one-syllable weekday after a week word', () => {
     const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
-    expect(prompt).toContain('mon..sun (the nearest such day: 금요일 = fri); this-mon..this-sun (that day of this week: 이번 주 금요일 = this-fri);\n');
+    // v24 appends the weekend clause to the same line (T1 addendum, the "다음 주말" probe).
+    expect(prompt).toContain('mon..sun (the nearest such day: 금요일 = fri); this-mon..this-sun (that day of this week: 이번 주 금요일 = this-fri); this-weekend / next-weekend: Saturday and Sunday together (주말), never one day;\n');
     expect(prompt).toContain('(that day of next / last week: 지난주 금요일 = last-fri, 다음 주 수 = next-wed);\n');
   });
 });

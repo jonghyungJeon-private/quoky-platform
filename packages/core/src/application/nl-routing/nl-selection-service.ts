@@ -231,7 +231,7 @@ export interface NlSelectionServiceDeps {
   readonly elapsed?: () => number;
   /**
    * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
-   * record is written and every prompt and reply is byte-identical to `nl-select.v22`. Any other level requires mode
+   * record is written and every prompt and reply is byte-identical to `nl-select.v24`. Any other level requires mode
    * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
    */
   readonly actions?: {
@@ -523,7 +523,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /**
    * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
    * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
-   * prompt is `nl-select.v22` byte for byte.
+   * prompt is `nl-select.v24` byte for byte.
    */
   actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
@@ -682,7 +682,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       }
     }
     // A6-D8/D3: action entries reach the selector only while the level allows and the kill switch is running; otherwise
-    // they are dropped here too (the runtime already drops them), so the prompt is v22 byte for byte.
+    // they are dropped here too (the runtime already drops them), so the prompt is v24 byte for byte.
     const actionsOn = this.actionsOffered(turn.actor) && turn.entries.some(isNlActionEntry);
     const effective: NlSelectionTurn = actionsOn ? turn : { ...turn, entries: turn.entries.filter((entry) => !isNlActionEntry(entry)) };
     const reference = actionsOn ? this.referenceState(turn) : undefined;

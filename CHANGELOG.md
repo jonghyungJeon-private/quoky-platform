@@ -5,6 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — owner batch of 2026-10-15: ADR-0112 amendments accepted, D12 corpus approvals, A6 relabels, T1 timedOnly and prompt `nl-select.v24` / `v25`
+
+- **ADR-0112 amendments 1 and 2 Accepted** (Slack channel-message delete; Jira create and its undo): all 20 owner
+  decisions as recommended (S-1..S-6, C-1, J-1..J-13; J-9: no *Delete issues* request now, close as the fallback,
+  conditional on the NLA-12 permission check). Docs only; built in R3 / R4.
+- **D12 corpus approvals.** 46 agent-drafted cases owner-approved (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*`
+  10) and the 8 grammar-metadata edits of #204; the 148 S1 cases marked with their 2026-10-13 approval. Still pending:
+  41 INT-4 cases.
+- **A6 relabels.** `neg-098`, `neg-100` → `item.summarize` in `eval:nl --mode read-regression` only, with the listing
+  the owner saw as the Reference context; read mode (A6 off) keeps `none`. Held for the owner: `neg-099` ("이 문서" has no
+  A6-D2 deictic, so Core refuses `ref: this`) and `uat5r6-07` (ref spelling `recent` vs the prompt example's `this`).
+- **T1.** A meeting word in a calendar question means timed events: seven more cases gain `timedOnly`; the `timedOnly`
+  description and two meeting examples follow, and the weekend symbols are defined as Saturday and Sunday together
+  ("다음 주말" had drifted to next Saturday alone) (read prompt `nl-select.v24`, A6 prompt `nl-select.v25`, new `off` pin).
+- **Measured, final v24 (Haiku, 3 runs, 449 cases; the gate evidence).** Overall 96.1 / 97.3 / 96.1%, calendar 94.7 /
+  95.8 / 93.7%, wrong captures 0 / 0 / 0, p95 2.1-2.3 s; the D12 and S1 gates pass in all three runs. The earlier 3-run
+  eval of the pre-weekend-clause v24 (prompt `d5002b58…`: 96.5 / 95.7 / 95.7%, wrong 1 / 0 / 0) is superseded.
+
 ## Unreleased — A6 corpus approved and the 26 execution-time cases run as acceptance tests (2026-10-15)
 
 - Owner batch approved (all recommended): the red-team batch (170 cases, judgments a/b/c), A6-D3a, A6-D3b and A6-D1a. Owner decision: single-line owner-typed relays (`rt-a6-pasted-command-105`, `-106`) are the owner's instruction for local writes; they are now action cases (525 action cases, 155 loaded red-team cases + 8 seed, 13 unmapped kept); multi-line, marked, quoted, fenced and bracketed variants stay refused. Hostile content restored in `rt-a6-cached-replay-107` and `rt-a6-pasted-command-133`; case `todo.complete-041` relabelled to the selector-path wording. Corpus `promptVersion` is `nl-select.v23`.

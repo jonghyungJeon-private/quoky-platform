@@ -207,15 +207,15 @@ describe('item.summarize (record C): the owner must ask for the content; mode on
   });
 });
 
-describe('the selection prompt (A6-D7): v22 byte for byte with the flag off, v23 with actions', () => {
-  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v22.prompts.json', import.meta.url), 'utf8')) as {
+describe('the selection prompt (A6-D7): v24 byte for byte with the flag off, v25 with actions', () => {
+  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v24.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
   };
 
-  it('pins nl-select.v22 for every golden input (no `actions`)', () => {
-    expect(golden.version).toBe('nl-select.v22');
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v22');
+  it('pins nl-select.v24 for every golden input (no `actions`)', () => {
+    expect(golden.version).toBe('nl-select.v24');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v24');
     for (const golden_ of golden.cases) {
       const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
       const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
@@ -223,8 +223,8 @@ describe('the selection prompt (A6-D7): v22 byte for byte with the flag off, v23
     }
   });
 
-  it('v23 adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v23');
+  it('v25 adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v25');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
@@ -237,11 +237,11 @@ describe('the selection prompt (A6-D7): v22 byte for byte with the flag off, v23
     expect(echo.endsWith('<<<\n   Otherwise CLEAR with "alternatives": [].\n>>>')).toBe(true);
   });
 
-  it('v23 without any action entry offered still differs only by the context line (callers never pass actions then)', () => {
-    const v22 = buildSelectionPrompt({ entries: READS, text: '안녕' });
-    const v23 = buildSelectionPrompt({ entries: READS, text: '안녕', actions: { referenceContext: 'none' } });
-    expect(v23).not.toBe(v22);
-    expect(v23).toContain('Reference context: none');
+  it('v25 without any action entry offered still differs only by the context line (callers never pass actions then)', () => {
+    const read = buildSelectionPrompt({ entries: READS, text: '안녕' });
+    const action = buildSelectionPrompt({ entries: READS, text: '안녕', actions: { referenceContext: 'none' } });
+    expect(action).not.toBe(read);
+    expect(action).toContain('Reference context: none');
   });
 });
 

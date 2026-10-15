@@ -228,7 +228,7 @@ const calendarEvents: NlCatalogEntry = {
     { name: 'range', kind: 'range', default: 'today', allowUpcoming: true, description: 'The period; upcoming for "the next meeting/event" (다음 회의 언제). Default today.' },
     { name: 'remaining', kind: 'flag', default: false, description: 'true only for events still left (남은 일정, remaining).' },
     { name: 'partOfDay', kind: 'enum', values: [...CALENDAR_PART_OF_DAY_VALUES], valueGrounding: CALENDAR_PART_OF_DAY_WORDS, description: 'Only when the owner names a part of the day: morning (오전, 아침), afternoon (오후, 점심 이후), evening (저녁, 밤). The events are filtered to that part of the day; the day itself stays in `range`. A follow-up "오후만" keeps the previous range and adds it.' },
-    { name: 'timedOnly', kind: 'flag', default: false, flagGrounding: CALENDAR_TIMED_ONLY_WORDS, description: 'true only when the owner narrows to meetings/timed events and away from all-day entries such as leave or holidays ("회의만", "미팅만", "only meetings").' },
+    { name: 'timedOnly', kind: 'flag', default: false, flagGrounding: CALENDAR_TIMED_ONLY_WORDS, description: 'true when the owner asks about meetings/timed events and away from all-day entries such as leave or holidays ("회의만", "미팅만", "only meetings").' },
     { name: 'availability', kind: 'flag', default: false, description: 'true when the owner asks whether they are free, busy or available ("시간 비어?", "한가해?", "바빠?", "am I free"); an empty answer then says they are free.' },
     { name: 'keyword', kind: 'keyword', description: 'A word of the event title the owner wants the events narrowed to ("스크럼만", "스크럼 일정"), copied verbatim; omit for all events. Never a weekday, date, part of day or period word ("목요일", "오후"): those are `range` / `partOfDay`.' },
     COUNT,

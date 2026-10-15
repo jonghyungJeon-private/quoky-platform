@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSelectionPrompt, Capability, type AiProvider, type AiRequest } from '@quoky/core';
+import { buildSelectionPrompt, Capability, isNlActionEntryId, parseNlRef, prepareSelectionInput, resolveItemReference, validateSelection, type AiProvider, type AiRequest, type NlActionEntryId } from '@quoky/core';
 import {
   NL_ACTION_EVAL_ENTRIES,
   buildActionPlan,
@@ -8,6 +8,7 @@ import {
   loadActionCorpus,
   loadReadRegressionCorpus,
   readRegressionPrompt,
+  readRegressionReferenceState,
   runActionEvaluation,
   scoreActionDecision,
   scoreActionGrammarSide,
@@ -126,10 +127,43 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
   const { cases } = loadReadRegressionCorpus();
 
   it('builds the v21 prompt with every entry offered for each read case', () => {
-    const prompt = readRegressionPrompt({ id: 'r', text: '오늘 메일 보여줘', expect: { entryId: 'mail.list', args: { range: 'today' } } }) ?? '';
+    const prompt = readRegressionPrompt({ id: 'r', text: '오늘 메일 보여줘', expect: { entryId: 'mail.list', args: { range: 'today' } } }, NOW) ?? '';
     expect(prompt).toContain('- item.summarize: ');
     expect(prompt).toContain('Reference context: none');
     expect(cases.length).toBeGreaterThanOrEqual(646);
+  });
+
+  it('the owner-approved A6 relabels (2026-10-15; neg-099 and uat5r6-07 held): read mode keeps `none`; the relabel is a canonical item.summarize Core executes against the case context', () => {
+    const relabeled = cases.filter((golden) => golden.a6Relabel !== undefined);
+    expect(relabeled.map((golden) => golden.id).sort()).toEqual(['neg-098', 'neg-100']);
+    const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
+    for (const golden of relabeled) {
+      const relabel = golden.a6Relabel!;
+      // With A6 off (the D12 read evaluation) item.summarize is not offered, so the read-mode gold stays `none`.
+      expect(golden.expect, golden.id).toBe('none');
+      expect(golden.context?.lastListing?.source, golden.id).toBe(relabel.args.source);
+      const prepared = prepareSelectionInput(golden.text);
+      if ('skip' in prepared) throw new Error(`${golden.id} skipped`);
+      const validated = validateSelection(relabel, { offered, groundingText: prepared.groundingText, now: NOW, timeZone: 'Asia/Seoul', actions: true });
+      expect(validated.ok && validated.value.args, golden.id).toEqual(relabel.args);
+      expect(isNlActionEntryId(relabel.entryId)).toBe(true);
+      const resolution = resolveItemReference({
+        entryId: relabel.entryId as NlActionEntryId,
+        source: relabel.args.source as 'mail' | 'drive',
+        ref: parseNlRef(relabel.args.ref)!,
+        groundingText: prepared.groundingText,
+        state: readRegressionReferenceState(golden.context, NOW),
+      });
+      expect(resolution.kind, golden.id).toBe('resolved');
+      expect(readRegressionPrompt(golden, NOW), golden.id).toContain(
+        `Reference context: last listing: ${relabel.args.source as string} (${golden.context!.lastListing!.labels.length} items, 1 min ago)`,
+      );
+    }
+    // neg-099 ("이 문서 요약해줘") is not relabelled: a bare determiner 이 is no A6-D2 deictic, so `ref: this` is refused.
+    const neg099 = cases.find((golden) => golden.id === 'neg-099')!;
+    const prepared = prepareSelectionInput(neg099.text);
+    if ('skip' in prepared) throw new Error('neg-099 skipped');
+    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'drive', ref: 'this', mode: 'summary' } }, { offered, groundingText: prepared.groundingText, now: NOW, timeZone: 'Asia/Seoul', actions: true })).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'ref' });
   });
 
   it('a read case captured by an action or ITEM_READ entry is `action-capture` and fails the run; a relabeled case is scored apart', () => {

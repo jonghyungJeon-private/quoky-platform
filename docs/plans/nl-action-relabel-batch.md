@@ -1,6 +1,6 @@
 # A6 재라벨 배치 (소유자 검토용)
 
-- **상태: 소유자 승인 완료 (2026-10-15, 전부 권장대로).** `nl-intent.v1.json` 4건 재라벨의 반영은 별도 브랜치에서 처리합니다(이 브랜치는 파일을 건드리지 않습니다).
+- **상태: 소유자 승인 완료 (2026-10-15, 전부 권장대로).** `nl-intent.v1.json` 4건 재라벨의 반영은 별도 브랜치에서 처리합니다(이 브랜치는 파일을 건드리지 않습니다). **반영 결과(브랜치 `claude/v5-d12-batch`):** neg-098, neg-100 반영. neg-099는 보류("이 문서"의 "이"는 A6-D2 지시어가 아니어서 Core가 `ref: this`를 거부함, A6-D2 결정 필요). uat5r6-07도 보류(아래 표 비고).
 
 - 근거: A6 비준 기록 결정 10. A5의 "요약은 이 설계(this design)" 규칙 때문에만 gold가 `none`이던 `nl-intent.v1` 케이스를 `item.summarize`로 바꾸는 안입니다.
 - **`nl-intent.v1.json`은 아직 수정하지 않았습니다.** 소유자 승인 후에 반영합니다.
@@ -15,7 +15,7 @@
 | neg-098 | 1번 메일 요약해줘 | none (prior mail.list today) | `item.summarize` `{source: mail, ref: "#1", mode: summary}` | 직전 목록 = 메일 (번호 1 존재) | 요약 단어가 명시되어 mode는 summary |
 | neg-099 | 이 문서 요약해줘 | none (prior drive.files) | `item.summarize` `{source: drive, ref: "this", mode: summary}` | 직전 목록 = Drive 1건, 또는 lastAction이 Drive 항목 | 목록이 여러 건이면 질문이 정답이므로, 목록 1건으로 고정해야 gold가 확정됩니다 |
 | neg-100 | summarize document 1 | none (prior drive.files) | `item.summarize` `{source: drive, ref: "#1", mode: summary}` | 직전 목록 = Drive (번호 1 존재) | 영어 표현 |
-| uat5r6-07 | 그거 요약해줘 | none (prior mail.list) | `item.summarize` `{source: mail, ref: "recent", mode: summary}` | 직전 목록 = 메일 1건 (그 외에는 질문) | 2026-10-14 실사용에서 나온 문장. "그거" 단독은 지시어만으로 선택하지 않으므로, 목록이 1건일 때만 실행으로 gold 처리 |
+| uat5r6-07 | 그거 요약해줘 | none (prior mail.list) | `item.summarize` `{source: mail, ref: "recent", mode: summary}` | 직전 목록 = 메일 1건 (그 외에는 질문) | 2026-10-14 실사용에서 나온 문장. "그거" 단독은 지시어만으로 선택하지 않으므로, 목록이 1건일 때만 실행으로 gold 처리. **보류(2026-10-15):** ref 표기 확인 필요. A6-D2는 `recent`와 `this`를 똑같이 다루는데, v24/v25 프롬프트 예시가 바로 이 문장("그거 요약해줘")에 `this`를 씁니다. 그 예시와 문장이 같아서 채점용으로도 오염된 케이스입니다. |
 
 ## 재라벨하지 않는 근접 케이스 (none 유지)
 

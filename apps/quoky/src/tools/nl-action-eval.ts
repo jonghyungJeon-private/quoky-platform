@@ -13,7 +13,10 @@
  *  - `question`: Core asked on a positive (the question rate on positive reference cases, at most 10%);
  *  - `miss`, `none`, `timeout`, `error`, `skipped` as in the intent evaluation.
  * Per read-regression case: the D12 outcomes plus `action-capture` (a read case captured by an action or ITEM_READ entry;
- * gate 0). A case carrying an owner-approved `a6Relabel` is scored against the relabel and reported apart.
+ * gate 0). A case carrying an owner-approved `a6Relabel` is scored against the relabel and reported apart. Its `context`
+ * (the listing the owner saw, content-free) becomes the prompt's "Reference context" line, as the runtime renders it.
+ * The read-mode D12 evaluation (`--mode run`, A6 off) offers no A6 entry, so it scores the same case against `expect`
+ * (`none`): with actions off, chat is the defined answer and a list read is a wrong capture.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -45,6 +48,8 @@ import {
   parseSelectionOutput,
   pendingQuestionRecord,
   prepareSelectionInput,
+  readListingRecord,
+  renderReferenceContext,
   validateSelection,
   withLabelledListing,
   withLastAction,
@@ -54,6 +59,7 @@ import {
   type IsoTimestamp,
   type NlArgs,
   type NlCatalogEntry,
+  type NlReferenceState,
   type NlSelectionDecision,
   type Session,
 } from '@quoky/core';
@@ -541,6 +547,19 @@ export interface NlReadRegressionCase {
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
   /** Owner-approved relabel of a summary-`none` case (ratification decision 10). */
   readonly a6Relabel?: { readonly entryId: string; readonly args: NlArgs; readonly batch: string };
+  /** The content-free reference state before the turn (read-regression only): the listing the owner just saw. */
+  readonly context?: NlReadRegressionContext;
+}
+
+export interface NlReadRegressionContext {
+  readonly lastListing?: { readonly source: 'mail' | 'drive'; readonly labels: readonly number[]; readonly ageMinutes: number };
+}
+
+/** The reference state a read-regression case's `context` describes at `now` (the action fixtures' own builder). */
+export function readRegressionReferenceState(context: NlReadRegressionContext | undefined, now: IsoTimestamp): NlReferenceState {
+  const listing = context?.lastListing;
+  const world = fixtureWorld(listing !== undefined ? { listings: [listing] } : undefined, now);
+  return { listings: readListingRecord(world.session.metadata?.[LAST_LISTING_METADATA_KEY], world.session.actorId, now), now };
 }
 
 export type NlReadRegressionOutcome = 'hit' | 'miss' | 'clarify' | 'none' | 'wrong-capture' | 'action-capture' | 'timeout' | 'error' | 'skipped';
@@ -573,14 +592,17 @@ export function loadReadRegressionCorpus(path: string = NL_INTENT_CORPUS_PATH): 
   return { cases: (JSON.parse(text) as { cases: NlReadRegressionCase[] }).cases, sha256: createHash('sha256').update(text).digest('hex') };
 }
 
-/** The read-regression prompt of one case: v19, every entry offered, the case's prior as the previous selection. */
-export function readRegressionPrompt(golden: NlReadRegressionCase): string | undefined {
+/**
+ * The read-regression prompt of one case: the A6 action prompt, every entry offered, the case's prior as the previous
+ * selection and its `context` as the Reference context (`none` without one).
+ */
+export function readRegressionPrompt(golden: NlReadRegressionCase, now: IsoTimestamp): string | undefined {
   const prepared = prepareSelectionInput(golden.text);
   if ('skip' in prepared) return undefined;
   return buildSelectionPrompt({
     entries: NL_ACTION_EVAL_ENTRIES,
     text: prepared.text,
-    actions: { referenceContext: 'none' },
+    actions: { referenceContext: golden.context === undefined ? 'none' : renderReferenceContext(readRegressionReferenceState(golden.context, now)) },
     ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId) ? { previous: { entryId: golden.prior.entryId, args: golden.prior.args } } : {}),
   });
 }
@@ -599,7 +621,7 @@ export async function runReadRegression(input: {
     const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is NlReadRegressionCase => golden !== undefined);
     const worker = async (): Promise<void> => {
       for (let golden = queue.shift(); golden !== undefined; golden = queue.shift()) {
-        const prompt = readRegressionPrompt(golden);
+        const prompt = readRegressionPrompt(golden, input.now());
         if (prompt === undefined) {
           records.push({ run, id: golden.id, outcome: 'skipped', relabeled: golden.a6Relabel !== undefined, latencyMs: 0 });
           continue;
