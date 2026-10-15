@@ -1,5 +1,6 @@
 import type { GitBranchResult, GitStatus, MessageBody, RepositoryInfo } from '../../domain';
-import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
+import type { ConversationTurnHandler, Logger, SurfaceClaim, TurnHandlerContext, TurnHandlerProbeContext, TurnHandlerReply } from '../../ports';
+import { surfaceClaimOf } from '../surface-grants/surface-group-map';
 import { isGitTopicOnlyMention } from '../git-request-shape';
 import { isNegated, unnegatedMatch } from '../intent-negation';
 import { messageContent, outboundMessage, untrustedText } from '../message-rendering';
@@ -336,6 +337,19 @@ export class GitBranchTurnHandler implements ConversationTurnHandler {
   readonly helpLines: readonly string[] = [GIT_BRANCH_HELP_LINE];
 
   constructor(private readonly deps: GitBranchTurnHandlerDeps) {}
+
+  /**
+   * ADR-0122 D2.1: a branch create / switch (and its usage and refusals) is `code`; the fixed branch-delete refusal reads
+   * nothing (`help`, which `handle` may still decline inside the cleanup chain).
+   */
+  surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
+    try {
+      if (detectGitBranchCommand(ctx.message.text)) return surfaceClaimOf(['code']);
+      return detectGitBranchDeleteRequest(ctx.message.text) ? surfaceClaimOf(['help'], 'skip') : null;
+    } catch {
+      return null;
+    }
+  }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     const command = detectGitBranchCommand(ctx.message.text);

@@ -19,6 +19,8 @@ import type { UntrustedDocumentReadout } from '../application/untrusted-document
 import type { ConnectorWriteDraft } from '../application/connector-writes/connector-write-draft';
 // Type-only, like the readouts above: the closed natural-language catalog and a validated selection (ADR-0120), plain data.
 import type { NlActionReceipt, NlCatalogEntry, NlClassBProbe, NlGrammarSelection, NlListingReceipt, NlSelectedCommand } from '../application/nl-routing/catalog';
+// Type-only, like the catalog above: the closed ADR-0122 capability groups (plain string ids).
+import type { SurfaceGroupId } from '../application/surface-grants/surface-groups';
 
 /**
  * The three fixed dispatch points in `ConversationRuntime.handleInner` (ADR-0096 D3):
@@ -75,6 +77,17 @@ export interface TurnHandlerContext {
  * yield flag. No session, actor, anchor or workspace, so a probe cannot depend on (or touch) conversation state.
  */
 export type TurnHandlerProbeContext = Pick<TurnHandlerContext, 'message' | 'now' | 'grammarYield'>;
+
+/**
+ * ADR-0122 D2.1: the capability groups a handler would answer this message under. Every listed group must pass the
+ * surface gate before `handle()` runs (a connector write lists `writes` and the service's read group).
+ * `onDeny: 'reply'` ends the turn with the fixed denial copy; `'skip'` (hint-only claims such as `todo.hint`, or a claim
+ * `handle()` may still decline) lets the turn continue to the next handler as if this one returned `null`.
+ */
+export interface SurfaceClaim {
+  readonly groups: readonly [SurfaceGroupId, ...SurfaceGroupId[]];
+  readonly onDeny: 'reply' | 'skip';
+}
 
 /** A deterministic reply: the handler's text is the turn's reply (the default variant, `kind` may be omitted). */
 export interface TurnHandlerReply {
@@ -188,4 +201,12 @@ export interface ConversationTurnHandler {
    * `handle` answers them exactly as before. Absent: the handler has no Class B grammar.
    */
   classBProbe?(ctx: TurnHandlerProbeContext): NlClassBProbe | null;
+  /**
+   * ADR-0122 D2.1: the twin of `classBProbe` — synchronous and pure (no read, no write, no provider): the groups this
+   * handler would answer the message under, or `null` when it would not claim it. Reuses the handler's own pure parser.
+   * The runtime asks it before `handle()` in a channel while `QUOKY_CHANNEL_GRANTS=enforce`; a denied claim never reaches
+   * `handle()`. Fail closed: in a channel a non-null outcome without a claim is replaced by the denial copy and logged as a
+   * defect. Every registered handler implements it (registry test).
+   */
+  surfaceClaim?(ctx: TurnHandlerProbeContext): SurfaceClaim | null;
 }

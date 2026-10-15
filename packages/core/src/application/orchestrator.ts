@@ -1,5 +1,5 @@
 import { NotImplementedError } from '../errors';
-import type { ApprovalDecision, InboundMessage, IsoTimestamp } from '../domain';
+import type { ApprovalDecision, ConversationContext, InboundMessage, IsoTimestamp } from '../domain';
 import type { Logger, OutboundDeliveryReceipt, PlatformAdapter, PlatformFeedbackSignal } from '../ports';
 import { now } from '../util/clock';
 import type { ConversationRuntime, TurnResult } from './conversation-runtime';
@@ -30,6 +30,13 @@ export interface QuokyCoreDeps {
   deliveryObservers?: readonly TurnDeliveryObserver[];
   /** Shared clock; defaults to `util/clock.now`. */
   clock?: () => IsoTimestamp;
+  /**
+   * ADR-0122 D1 (`memory`, ADR-0098 D3): whether a feedback reaction in this conversation may be recorded. Wired by the
+   * composition root only while `QUOKY_CHANNEL_GRANTS=enforce` (the surface gate with the owner Actor's grants); a
+   * `false` drops the reaction before anything is stored (the gate logs it, content-free). Absent: every admitted
+   * reaction is recorded as before.
+   */
+  reactionAllowed?: (context: ConversationContext) => Promise<boolean>;
 }
 
 /** Narrow an adapter's `sendMessage` result to a receipt (`void` from adapters that report no ids). */
@@ -125,6 +132,7 @@ export class QuokyCore {
     const feedback = this.deps.feedback;
     if (!feedback) return;
     try {
+      if (this.deps.reactionAllowed !== undefined && !(await this.deps.reactionAllowed(signal.context))) return;
       await feedback.recordReaction({
         platform: signal.platform,
         platformUserId: signal.context.userId,

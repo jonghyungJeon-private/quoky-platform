@@ -1,5 +1,6 @@
 import type { FeedbackSummary, Id, Task } from '../../domain';
-import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
+import type { ConversationTurnHandler, Logger, SurfaceClaim, TurnHandlerContext, TurnHandlerProbeContext, TurnHandlerReply } from '../../ports';
+import { surfaceClaimOf } from '../surface-grants/surface-group-map';
 import { DM_ONLY_FEATURE_TEXT, isDirectConversation, outboundMessage } from '../message-rendering';
 import type { FeedbackCapabilityTrend } from './feedback-recorder';
 import { composeFeedbackSummaryText, FEEDBACK_SUMMARY_UNAVAILABLE_TEXT } from './feedback-summary-composer';
@@ -48,6 +49,15 @@ export class FeedbackSummaryTurnHandler implements ConversationTurnHandler {
   readonly helpLines = FEEDBACK_HELP_LINES;
 
   constructor(private readonly deps: FeedbackSummaryTurnHandlerDeps) {}
+
+  /** ADR-0122 D2.1: the owner's memory and learning commands are `memory` (the P0 DM-only rule stays as the second layer). */
+  surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
+    try {
+      return detectFeedbackTurnControl(ctx.message.text) === 'feedback-summary' ? surfaceClaimOf(['memory']) : null;
+    } catch {
+      return null;
+    }
+  }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     if (detectFeedbackTurnControl(ctx.message.text) !== 'feedback-summary') return null;

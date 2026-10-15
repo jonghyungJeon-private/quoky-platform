@@ -29,6 +29,7 @@ import { startEgressGuard } from './security/egress-wiring';
 import { loadLocalEnvironment } from './env-loader';
 import { serializeError } from './error-diagnostics';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
+import { SURFACE_GRANTS, type SurfaceGrantsComposition } from './features/surface-grants.providers';
 import {
   STARTUP_BANNER,
   assertDiscordTokenConfigured,
@@ -194,6 +195,11 @@ async function bootstrap(): Promise<void> {
   await ops.ensurePreMigrationBackup();
   await storage.init();
   await actorIdentityProvisioner.provision();
+  // ADR-0122 D6: the deploy seed (QUOKY_CHANNEL_GRANTS_SEED) is merged once per digest AFTER the identity provisioner
+  // saved the identities (so this save cannot lose them) and before the platform starts; only while enforce. Logged and
+  // one owner DM line per seeded channel (delivered below once Discord is up; a failed DM never stops the start).
+  const surfaceGrants = app.get<SurfaceGrantsComposition>(SURFACE_GRANTS);
+  await surfaceGrants.applySeed(new Date().toISOString());
   await vector.init();
   await queue.start();
   await platform.start();
@@ -215,6 +221,7 @@ async function bootstrap(): Promise<void> {
   // ADR-0102 D6/D7: the daily backup chain, and the crash-loop OPS_NOTICE when the launcher counted >=3 starts in 10
   // minutes (owner DM only, fixed text, at most 3 per day; sent without delaying the start).
   ops.start();
+  await surfaceGrants.deliverSeedReceipts();
   // Released on Discord READY (bounded attempts, read-only), whether or not the startup identity check ran.
   const haltRelease = telegramComposed
     ? releaseWhenPlatformReady(platform, telegramHalts, { readyTimeoutMs: DEFAULT_IDENTITY_READY_TIMEOUT_MS, logger: log })

@@ -122,6 +122,15 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.NL_ACTIONS_EXTERNAL_NOT_AVAILABLE]: 'QUOKY_NL_ACTIONS=external is not available before stage R3; use off, shadow or local.',
   [QuokyConfigErrorCode.NL_INTENT_TIMEOUT_INVALID]:
     'QUOKY_NL_INTENT_TIMEOUT_MS must be unset or a whole number of milliseconds from 2000 to 8000.',
+  // ADR-0122 channel grants. Names and shapes only, never a value.
+  [QuokyConfigErrorCode.CHANNEL_GRANTS_INVALID]: 'QUOKY_CHANNEL_GRANTS must be unset (off), "enforce", or "off" (exactly, lowercase).',
+  [QuokyConfigErrorCode.CHANNEL_GRANTS_SEED_INVALID]:
+    'QUOKY_CHANNEL_GRANTS_SEED must be discord:<guild id>:<channel id>=<group>,<group> (several channels separated by ";", each once, at least one group).',
+  [QuokyConfigErrorCode.CHANNEL_GRANTS_SEED_GROUP_INVALID]:
+    'QUOKY_CHANNEL_GRANTS_SEED names a group that is not grantable (use jira-mine, jira-project, github, slack-search, confluence, calendar, todo, reminder, memory, code, writes).',
+  [QuokyConfigErrorCode.CHANNEL_GRANTS_SEED_CHANNEL_NOT_ALLOWED]: 'Every QUOKY_CHANNEL_GRANTS_SEED channel must also be listed in QUOKY_DISCORD_CHANNEL_IDS.',
+  [QuokyConfigErrorCode.CHANNEL_GRANTS_SEED_GUILD_MISMATCH]: 'Every QUOKY_CHANNEL_GRANTS_SEED guild id must equal DISCORD_GUILD_ID (which must be set).',
+  [QuokyConfigErrorCode.CHANNEL_GRANTS_SEED_TOO_MANY_CHANNELS]: 'QUOKY_CHANNEL_GRANTS_SEED may name at most 16 channels.',
   // ADR-0121 S0 egress guard and traffic ledger. Names and shapes only, never a value.
   [QuokyConfigErrorCode.EGRESS_GUARD_INVALID]:
     'QUOKY_EGRESS_GUARD must be unset (observe), "off", "observe", or "enforce" (exactly, lowercase).',

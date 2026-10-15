@@ -4,6 +4,7 @@ import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import type { SessionManager } from '../session-manager';
+import { ActorMetadataStore } from '../actor-metadata-store';
 import {
   LAST_LISTING_METADATA_KEY,
   findAnyListingByReply,
@@ -305,7 +306,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
   private shadowInFlight = false;
   private readonly shadowStarts: number[] = [];
 
+  /** ADR-0122 D3: the one per-actor metadata writer (preferences go through its lock). */
+  private readonly actorMetadata: ActorMetadataStore;
+
   constructor(private readonly deps: NlSelectionServiceDeps) {
+    this.actorMetadata = new ActorMetadataStore(deps.actors);
     this.mode = deps.mode;
     this.actionLevelValue = deps.actions?.level ?? 'off';
     this.actionCaps = deps.actions?.caps ?? new NlActionCaps();
@@ -1444,15 +1449,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /** Re-read the Actor, replace only the preferences key, save (ADR-0120 D7 wave-1 storage). */
   private async savePreference(turn: NlSelectionTurn, key: string, value: string): Promise<boolean> {
     try {
-      const actor = (await this.deps.actors.get(turn.actor.id)) ?? turn.actor;
-      const metadata = { ...(actor.metadata ?? {}) };
-      metadata[INTERPRETATION_PREFERENCES_METADATA_KEY] = withInterpretationPreference(
-        metadata[INTERPRETATION_PREFERENCES_METADATA_KEY],
-        key,
-        value,
-        turn.now,
+      // ADR-0122 D3: through the one per-actor metadata lock; only the preferences key changes on the live actor.
+      await this.actorMetadata.updateMetadataEntry(
+        turn.actor.id,
+        INTERPRETATION_PREFERENCES_METADATA_KEY,
+        (current) => withInterpretationPreference(current, key, value, turn.now),
+        turn.actor,
       );
-      await this.deps.actors.save({ ...actor, metadata });
       this.log('info', 'nl_selection.preference_saved', { key });
       return true;
     } catch (error) {

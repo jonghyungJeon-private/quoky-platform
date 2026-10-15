@@ -1,7 +1,9 @@
-import { parseModelSelectionCommand } from '@quoky/core';
+import { parseModelSelectionCommand, surfaceClaimOf } from '@quoky/core';
 import { OPENAI_MODEL_ALLOW_LIST } from '@quoky/ai-openai-api';
 import { GEMINI_MODEL_ALLOW_LIST } from '@quoky/ai-gemini-api';
 import type {
+  SurfaceClaim,
+  TurnHandlerProbeContext,
   ConversationTurnHandler,
   Id,
   Logger,
@@ -208,6 +210,15 @@ export class ModelSelectionTurnHandler implements ConversationTurnHandler {
   private readonly listings = new Map<string, Listing>();
 
   constructor(private readonly deps: ModelSelectionTurnHandlerDeps) {}
+
+  /** ADR-0122 D2.1: `모델 상태` / `모델 변경:` are `help` (always allowed, D1). */
+  surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
+    try {
+      return parseModelSelectionCommand(ctx.message.text) === null ? null : surfaceClaimOf(['help']);
+    } catch {
+      return null;
+    }
+  }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     const command = parseModelSelectionCommand(ctx.message.text);

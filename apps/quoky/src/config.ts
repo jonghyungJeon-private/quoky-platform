@@ -15,6 +15,7 @@ import { parseReminderConfig, ReminderConfigErrorCode } from './reminders/remind
 import { NlSelectionConfigErrorCode, parseNlSelectionConfig } from './nl-selection/nl-selection-config';
 import type { NlSelectionConfig } from './nl-selection/nl-selection-config';
 import { EgressConfigErrorCode, parseEgressConfig } from './security/egress-config';
+import { ChannelGrantsConfigErrorCode, parseChannelGrantsConfig, type ChannelGrantsConfig } from './surface-grants/channel-grants-config';
 import type { EgressGuardConfig } from './security/egress-config';
 import { MAX_GITHUB_REPOSITORIES, parseRepositoryEntry } from './repository-allowlist';
 import type { ReminderConfig } from './reminders/reminder-config';
@@ -121,6 +122,11 @@ export interface QuokyConfig {
    * default 90). See `security/egress-config.ts`. Consumed only by the composition root (`security/egress-wiring.ts`).
    */
   egress: EgressGuardConfig;
+  /**
+   * ADR-0122 surface permission grants: `QUOKY_CHANNEL_GRANTS` (`enforce` | `off`; P1 default `off`) and the one-time
+   * deploy seed `QUOKY_CHANNEL_GRANTS_SEED`. See `surface-grants/channel-grants-config.ts`.
+   */
+  channelGrants: ChannelGrantsConfig;
   /**
    * Opt-in local embedding recall (ADR-0098 D8). `model` is a bounded token and never a cloud-served model.
    * `timeoutMs` bounds one embedding call; `maxNewPerTurn` is fixed at 4.
@@ -311,6 +317,7 @@ export const QuokyConfigErrorCode = {
   ...TelegramConfigErrorCode,
   ...NlSelectionConfigErrorCode,
   ...EgressConfigErrorCode,
+  ...ChannelGrantsConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
   DISCORD_EXPECTED_BOT_ID_INVALID: 'DISCORD_EXPECTED_BOT_ID_INVALID',
   DISCORD_EXPECTED_BOT_ID_REQUIRED: 'DISCORD_EXPECTED_BOT_ID_REQUIRED',
@@ -575,6 +582,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const telegram = parseTelegramConfig(env, ownerIds);
   const nlSelection = parseNlSelectionConfig(env);
   const egress = parseEgressConfig(env);
+  const discordGuildId = env.DISCORD_GUILD_ID;
+  const discordChannelIds = parseDiscordIdList(env.QUOKY_DISCORD_CHANNEL_IDS, QuokyConfigErrorCode.DISCORD_CHANNEL_IDS_INVALID);
+  const channelGrants = parseChannelGrantsConfig(env, {
+    ...(discordGuildId !== undefined && discordGuildId !== '' ? { guildId: discordGuildId } : {}),
+    channelIds: discordChannelIds,
+  });
 
   return {
     discord: {
@@ -617,6 +630,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     reminders,
     nlSelection,
     egress,
+    channelGrants,
     embedding: {
       enabled: parseExactBoolean(env.QUOKY_EMBEDDING_ENABLED, false, QuokyConfigErrorCode.EMBEDDING_ENABLED_INVALID),
       model: parseEmbeddingModel(env.QUOKY_EMBEDDING_MODEL),

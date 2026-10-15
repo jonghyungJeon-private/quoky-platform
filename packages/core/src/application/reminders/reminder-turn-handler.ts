@@ -1,10 +1,14 @@
 import type {
   ConversationTurnHandler,
+  SurfaceClaim,
   TurnHandlerContext,
+  TurnHandlerProbeContext,
   TurnHandlerReply,
 } from '../../ports/conversation-turn-handler.port';
 import type { Logger } from '../../ports/logger.port';
 import { isDirectConversation, outboundMessage } from '../message-rendering';
+import { surfaceClaimOf } from '../surface-grants/surface-group-map';
+import { parseReminderMessage } from './reminder-grammar';
 import { isNlActionEntryId, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
 import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
@@ -146,6 +150,18 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
       ...(reply.content !== undefined ? { history: { assistant: REMINDER_EVENT_HISTORY_NOTE } } : {}),
       ...(result.action !== undefined ? { nlAction: result.action } : {}),
     };
+  }
+
+  /**
+   * ADR-0122 D2.1: every reminder grammar hit (create, cancel, list, clarify, the disabled reply) is `reminder`. The same
+   * whole-message grammar the service reads; nothing is read or written.
+   */
+  surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
+    try {
+      return parseReminderMessage(ctx.message.text, { now: ctx.now }).kind === 'NOT_REMINDER' ? null : surfaceClaimOf(['reminder']);
+    } catch {
+      return null;
+    }
   }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {

@@ -171,6 +171,11 @@ const APPROVAL_REFUSALS: Readonly<Record<ApprovalSurfaceRefusal, OpsActionOutcom
     message: '확인 코드가 여러 번 틀려서 이 승인 요청은 30분 동안 운영 화면에서 승인할 수 없어요. 채팅에서는 그대로 결정할 수 있어요.',
     ok: false,
   },
+  SURFACE_DENIED: {
+    code: 'SURFACE_DENIED',
+    message: '이 승인 요청이 나온 채널에는 지금 그 권한이 없어서 승인하지 않았어요(권한 해제 또는 에이전트 중지). 거절은 여기서도 돼요.',
+    ok: false,
+  },
 };
 
 const NOTICE_LABEL: Readonly<Record<NotificationSinkOutcome['status'] | 'FAILED', string>> = {

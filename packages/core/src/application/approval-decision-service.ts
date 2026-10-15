@@ -41,6 +41,7 @@ import type {
 import type { ExecutionReplyStatus } from './response-composer';
 import type { ExecutionOutcome, ExecutionRequest } from './execution-orchestrator';
 import { SESSION_WRITE_LOCK, type SessionLockHold, type SessionWriteLock } from './session-write-lock';
+import { surfaceGroupsOfApproval } from './surface-grants/surface-group-map';
 import { KeyedMutex } from '../util/keyed-mutex';
 
 /**
@@ -393,7 +394,12 @@ export type ApprovalSurfaceRefusal =
   | 'REFERENCE_REQUIRED'
   | 'REFERENCE_MISMATCH'
   /** Five wrong references in this window: UI approve is disabled for this approval until the window ends. */
-  | 'REFERENCE_LOCKED';
+  | 'REFERENCE_LOCKED'
+  /**
+   * ADR-0122 D2.5: the approval's origin conversation is a channel that no longer holds the approval's group (revoked, or
+   * every grant suspended by the kill switch). Nothing is approved; rejecting still works.
+   */
+  | 'SURFACE_DENIED';
 
 export type ApprovalSurfaceLocate =
   | { readonly status: 'FOUND'; readonly view: ApprovalSurfaceView }
@@ -456,6 +462,7 @@ export type ApprovalDecisionServiceDeps = Pick<
   | 'connectorWriteFlow'
   | 'composer'
   | 'logger'
+  | 'surfaceGrants'
 > & {
   readonly memory: Pick<ConversationRuntimeDeps['memory'], 'recordAssistant'>;
   /** The reset closes the session under the same locks as the decision it races (ADR-0093). */
@@ -1621,6 +1628,13 @@ export class ApprovalDecisionService {
       if (!UI_APPROVABLE_KINDS.has(kind)) return refused('APPROVE_IN_CHAT');
       const check = this.checkReference(approval, lookup, input.actor.id, input.reference);
       if (check !== null) return refused(check);
+      // ADR-0122 D2.5: the group is re-checked against the approval's origin conversation at this decision step (the
+      // owner Actor as the UI read it fresh: a revoke or a stop saved since the chat preview wins).
+      const gate = this.deps.surfaceGrants?.gate;
+      if (gate !== undefined && gate.enforced) {
+        const groups = surfaceGroupsOfApproval(kind, lookup.connectorWrite?.anchor.family);
+        if (!gate.decide(session.context, input.actor, groups, { path: 'approval' }).allow) return refused('SURFACE_DENIED');
+      }
     }
     const verdict: ApprovalDecisionVerdict = input.decision === 'approve' ? 'approve' : 'deny';
 

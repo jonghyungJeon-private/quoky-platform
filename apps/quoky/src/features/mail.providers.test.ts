@@ -219,7 +219,7 @@ describe('mail feature composition (ADR-0096 D7)', () => {
     }
     const source = readFileSync(new URL('../app.module.ts', import.meta.url), 'utf8');
     // ADR-0120 amendment A6: the selection service joins as an explicit observer too (only with QUOKY_NL_ACTIONS not off).
-    expect(source).toMatch(/inject: \[ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder, \{ token: MAIL_DELIVERY_OBSERVERS, optional: true \}, \{ token: NL_SELECTION, optional: true \}\]/);
+    expect(source.replace(/\s+/g, ' ')).toMatch(/inject: \[ ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder, \{ token: MAIL_DELIVERY_OBSERVERS, optional: true \}, \{ token: NL_SELECTION, optional: true \}, \{ token: SURFACE_GRANTS, optional: true \}, \]/);
     expect(source).not.toMatch(/isTurnDeliveryObserver|observeDelivery/);
   });
 
