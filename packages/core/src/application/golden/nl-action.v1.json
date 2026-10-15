@@ -1155,18 +1155,8 @@
      }
     ]
    },
-   "expect": {
-    "entryId": "todo.complete",
-    "args": {
-     "ref": "#3"
-    },
-    "outcome": "execute",
-    "target": {
-     "source": "todo",
-     "id": "todo-3"
-    }
-   },
-   "note": "was act-todo-complete-018"
+   "expect": "none",
+   "note": "was act-todo-complete-018 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): the typo 완룐 is no completion word of the closed action vocabulary (actionGrounding), so nothing is written and the turn is chat; was execute todo.complete #3]"
   },
   {
    "id": "a6-paraphrase-todo.complete-019",
@@ -11593,12 +11583,8 @@
    "id": "a6-negative-todo.list-007",
    "family": "negative",
    "text": "취소된 할 일도 보여줘",
-   "expect": {
-    "entryId": "todo.list",
-    "args": {},
-    "outcome": "execute"
-   },
-   "note": "was neg-095"
+   "expect": "none",
+   "note": "was neg-095 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): todo.list / reminder.list cannot show canceled items, so none (chat) is the correct outcome; was a READ gold]"
   },
   {
    "id": "a6-negative-reminder.list-001",
@@ -11648,12 +11634,8 @@
    "id": "a6-negative-reminder.list-005",
    "family": "negative",
    "text": "취소된 알림 보여줘",
-   "expect": {
-    "entryId": "reminder.list",
-    "args": {},
-    "outcome": "execute"
-   },
-   "note": "was neg-100"
+   "expect": "none",
+   "note": "was neg-100 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): todo.list / reminder.list cannot show canceled items, so none (chat) is the correct outcome; was a READ gold]"
   },
   {
    "id": "a6-negative-reminder.list-006",
