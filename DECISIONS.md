@@ -26012,7 +26012,7 @@ the last round under the fix-loop cap.**
   `nl-intent-dispatch.test.ts` "live UAT R4/R5" assumes "this-thu" equals "thu" on the real clock (true on a Thursday); it
   fails the same way on `origin/main` today. Not fixed here (out of scope); every other test passes.
 
-## ADR-0123 — Retrieval for the selector's few-shot examples, measured first: an offline three-arm experiment over the D12 gate, the existing `LocalVectorProvider` (no new vector database) and local `nomic-embed-text` embeddings pinned by digest, an owner-approved example pool kept disjoint from every gold corpus by a contamination lint, and runtime retrieval only behind a default-off flag after the experiment passes. Knowledge RAG over Jira / Confluence is out of scope. Phase 1 amends nothing; phase 2 would amend ADR-0120 D3 / D12 / A6-D7 and the ADR-0098 D8 limits.
+## ADR-0123 — Retrieval for the selector's few-shot examples, measured first: an offline, pre-registered four-arm experiment over a held-out split of the D12 gate, the existing `LocalVectorProvider` (no new vector database) and local `nomic-embed-text` embeddings pinned by digest, an owner-approved example pool kept disjoint from every gold corpus by a contamination lint, and runtime retrieval only behind a default-off flag after the experiment passes. Knowledge RAG over Jira / Confluence is out of scope. Phase 1 amends nothing; phase 2 would amend ADR-0120 D3 / D12 / A6-D7 and the ADR-0098 D8 limits.
 
 - **Status:** **Proposed (2026-10-16).** Chief Architect draft, docs only. Nothing here is authorized until the Product
   Owner ratifies it. Every model run it describes (local embeddings included) is a Strict action that needs its own
@@ -26071,7 +26071,7 @@ the last round under the fix-loop cap.**
 1. **D1 — Scope and phases.**
    - **Phase 0 (RAG-0, no model):** the offline contamination lint of D5 over today's prompt examples. It ships first and
      on its own; it needs no ratification of the rest of this ADR (it is a test over committed files).
-   - **Phase 1 (RAG-1, RAG-2, offline only):** the example pool (D4), the embedding audit (D5) and the three-arm
+   - **Phase 1 (RAG-1, RAG-2, offline only):** the example pool (D4), the embedding audit (D5) and the four-arm
      experiment (D6). No runtime code path changes: nothing is wired in `apps/quoky` composition, no flag is read by the
      running service, and with no retrieved input the prompt builder emits today's bytes (D8).
    - **Phase 2 (RAG-3, runtime):** only if phase 1 passes D6, behind `QUOKY_NL_EXAMPLE_RETRIEVAL=off|shadow|on` (exact
@@ -26134,14 +26134,25 @@ the last round under the fix-loop cap.**
    - **Where.** One committed file, `apps/quoky/src/tools/selector-rag/selector-pool.v1.json` in phase 1 (tool-only);
      phase 2 moves it to a runtime asset loaded by the composition root and passed to Core as typed data.
    - **Admission (anti-poisoning).** The agent drafts paraphrases without consulting the gold files; the owner approves
-     each batch (as for the D12 corpus, ADR-0120 D12 and ADR-0098 D7). Nothing enters automatically. No user free text
-     enters the pool: not chat turns, not `learning_items` `EXAMPLE` rows, not connector content. A live turn the owner
-     wants as a pool entry goes through LRN-1 export (ADR-0107 D4) and an owner-reviewed PR, which publishes it to the
-     repository like any other example. Each entry must pass the credential guard, the D5 lint, and Core's schema check of
+     each batch (as for the D12 corpus, ADR-0120 D12 and ADR-0098 D7). Nothing enters automatically. **Approval is never
+     delegated to the drafter:** if the owner delegates a later batch, the delegate is an independent reviewer (another
+     agent or session than the one that drafted it, per the AGENTS.md reviewer ≠ implementer rule), and the batch record
+     names both the drafter and the approver. No user free text enters the pool: not chat turns, not `learning_items`
+     rows, not connector content. Each entry must pass the credential guard, the D5 lint, and Core's schema check of
      its `output` (a closed `entryId`, closed args). Changes only by reviewed PR; the pool digest binds every plan.
+   - **No path from the learning store (scopes ADR-0107 D6).** ADR-0107 D6 governs `learning_items` and stays unchanged:
+     that data is `LOCAL_ONLY` and `OWNER_DM_ONLY` and is composed only for a `LOCAL` provider. The pool is not learning
+     data; it is prompt text written for the repository, the same class as the static examples. Because the selector is
+     the Claude CLI (`REMOTE`), **no `learning_items` row, LRN-1 export or LRN-3 proposal may become a pool entry**, by
+     copy or by close edit. This removes the export path rather than adding a per-entry declassification step, because
+     (a) declassification would be a human judgment on text that came from the owner's DMs and may carry personal or
+     company data, and one mistaken yes publishes it to the repository remote and to every selector call; (b) ADR-0121
+     D4 lets only the deterministic projector declassify, never a per-item approval; (c) the pool loses nothing it needs:
+     a live turn can still inspire a fresh paraphrase the owner writes, which is new text with `source: owner`. LRN-1..3
+     keep producing gold candidates and eval data under ADR-0107 D4, as before.
    - **Labels.** Pool entries are `TRUSTED` (owner-approved), egress `REMOTE_OK` (same publication status as the static
      examples already sent to the Claude CLI selector), scope `WORK_CHANNEL_OK` (no personal data by the admission rule).
-     `learning_items` rows stay `LOCAL_ONLY` and `OWNER_DM_ONLY` and never join the pool.
+     `learning_items` rows stay `LOCAL_ONLY` and `OWNER_DM_ONLY` and never join the pool, directly or through an export.
 
 5. **D5 — The contamination lint: n-gram in the test suite, embeddings in a recorded local audit.**
    - **Scope.** Every example a selector prompt can show (the static read examples, the A6 examples and overrides, the
@@ -26153,6 +26164,17 @@ the last round under the fix-loop cap.**
      a near-copy when token Jaccard ≥ 0.6 **or** character-3-gram Jaccard ≥ 0.6; exact equality after normalization is
      always a finding. Prompts are rendered through `buildSelectionPrompt` with every entry offered (read and A6 modes)
      and the `Message:` lines extracted, so the lint sees exactly what the model sees.
+   - **Short Korean text and containment.** Jaccard under-reports a short text inside a longer one (`드라이브에서 폴더
+     공유하는 법 알려줘` inside `구글 드라이브에서 폴더 공유하는 법 알려줘`). The lint therefore also flags a character-3-gram
+     **containment** coefficient `|A ∩ B| / min(|A|, |B|)` ≥ 0.8. A text of ≤ 3 characters after normalization
+     (whitespace removed; `오후만`, `목요일만`-like follow-ups) has too few n-grams to measure: an exact match is a finding,
+     and every such short example is listed for manual review in the lint's record (reviewer and reason), whether or not
+     it matches.
+   - **Context and label, not just the message.** A follow-up is defined by its `(previous, context, text)` together, so
+     the lint also compares that pair against gold cases that carry a previous selection or fixture (same measures over
+     the concatenated normalized form). It also lints the expected **output**: an example whose output repeats a gold
+     case's `entryId` together with a verbatim span arg value (`title`, `body`, `match`, `when`, ≥ 4 characters) of that
+     case is a finding, because it teaches the gold label even when the message is reworded.
    - **Ratchet, not a big-bang fix.** Rewriting today's shared read examples changes a pinned prompt and needs a gate run,
      so RAG-0 commits a `known-findings` list equal to today's findings; the test fails on any new finding and on any
      stale entry, so the list can only shrink. The pool has no ratchet: any finding rejects the entry.
@@ -26167,29 +26189,61 @@ the last round under the fix-loop cap.**
 
 6. **D6 — The experiment (phase 1, offline, Strict per run).**
    - **Frozen before any run:** gold digest (D12 corpora untouched for the whole experiment), pool digest, space id, τ,
-     k, seeds, the selector model and effort, and the prompt version (the A6 prompt on `main` at that time, expected
-     `nl-select.v35`, and the read prompt). All are bound into one plan digest the owner approves.
-   - **Arms** (same selector model, temperature, case order and concurrency; 3 runs each, the full D12 gate per run:
+     τ_low, k, seeds, the dev / held-out split, the selector model and effort, and the prompt version (the A6 prompt on
+     `main` at that time, expected `nl-select.v35`, and the read prompt). All are bound into one plan digest the owner
+     approves.
+   - **Dev / held-out split (against forking paths).** The gold cases are split once, stratified per entry, by a seeded
+     hash of the case id: 30% **dev**, 70% **held-out**. Every choice that could be tuned (k, the prefix policy, the
+     retrieved-block wording, the subsample rate) is fixed on dev, in at most one A0 + A1 smoke run, and recorded in
+     `DECISIONS.md` before the held-out runs start. Pass and stop are computed **only** on held-out; dev numbers are
+     reported but decide nothing. The pool author never reads gold (D4), so held-out is also a set the pool was not
+     written against.
+   - **Leakage control (pool → gold similarity strata).** The embedding audit (D5) gives every held-out case its maximum
+     cosine to any pool entry. Cases are bucketed `< 0.70`, `0.70–τ_low`, `τ_low–τ`, with τ_low = 0.80 fixed before any
+     run. Every metric below is reported per bucket. The **primary endpoint is the low-similarity stratum** (held-out cases
+     with max pool cosine < τ_low). The experiment is valid only if that stratum holds ≥ 50% of held-out cases and ≥ 10
+     cases per entry; this is checked at audit time, before any selector run, and a failure means rewriting pool entries,
+     not running. A gain that appears only in the `τ_low–τ` bucket is treated as leakage and is a stop.
+   - **Arms** (same selector model, temperature, case order and concurrency; **5 runs each** over the held-out D12 gate:
      the A6 action corpus and the read regression):
      - **A0:** the static prompt as pinned.
+     - **A0-swap (mandatory; it tests the actual hypothesis):** the static prompt whose example section is replaced by a
+       frozen random draw from the pool with the same per-entry counts as the static set, one draw per run (seed *r*).
+       It measures how much a static example set's choice alone moves the scores.
      - **A1:** A0 + k = 3 retrieved pool examples: cosine top-k against the prepared owner text
        (`prepareSelectionInput().text`, quoted and code spans already masked), at most 1 per `entryId`, only entries
        whose `needs` are offered this turn, never a duplicate of a static example; run *r* uses an 80% pool subsample
        with seed *r*, so its variance includes example-set change.
      - **A2:** A1 with a seeded random k = 3 under the same filters (controls "more examples" against "relevant
        examples").
-   - **Metrics:** overall, per-entry (min), wrong captures, wrong targets, negatives captured, span exact, per-entry SD
-     across the 3 runs (mean over entries), selector p50 / p95, retrieval-only added latency p50 / p95 (embedding +
-     query, measured separately because CLI latency noise is larger than the budget), prompt tokens.
-   - **Pass (all required):** A1 passes the D12 gate in all 3 runs (≥ 95% overall, ≥ 90% per entry, 0 wrong captures,
-     0 wrong targets, 0 negatives captured); mean A1 overall ≥ mean A0 + 3 pp; A1's mean per-entry SD ≤ ½ of A0's; A1
-     beats A2 on mean overall and on the per-entry minimum; the embedding audit flags 0 pool entries; retrieval-only p95
-     ≤ 300 ms warm; no wrong action in A1 that A0 lacks.
-   - **Stop (any one):** A1 beats A0 by < 3 pp overall; or A1's SD ≥ A0's; or any wrong action appears in A1 that A0
-     lacks; or the budget cap is reached. Then keep the static prompt and invest in corpus and prompt discipline: a frozen
-     example set per version, the D5 lint, more gold cases, 5 runs per gate. A result between "pass" and "stop" counts as
-     stop unless the owner decides otherwise.
-   - **Budget cap:** 2 sessions and one gold re-run set. No re-tuning of k, τ or the pool between runs of one set.
+   - **Metrics:** overall, per entry, wrong captures, wrong targets, negatives captured, span exact; the **per-entry
+     minimum across runs** `m_X(e) = min_r acc_X(e, r)` and its floor `S_X = min_e m_X(e)`; per-case error counts over the
+     5 runs (for paired analysis); selector p50 / p95; retrieval-only added latency p50 / p95 (embedding + query, measured
+     separately because CLI latency noise is larger than the budget); prompt tokens. Run-to-run SD is reported, not
+     used for a decision (5 runs cannot support a variance-ratio rule).
+   - **Paired analysis.** Every arm sees the same cases in the same order, so comparisons are paired per case: a paired
+     bootstrap over held-out cases (10,000 resamples, seeded, case-level resampling, errors summed over the 5 runs) gives
+     a 95% CI of the error-rate difference; McNemar on per-case majority correctness (≥ 3 of 5) is reported as a
+     secondary check.
+   - **Pre-registered effect sizes** (on the primary stratum unless stated; all required for a pass):
+     1. **Gate:** A1 passes the D12 gate in all 5 runs on the full held-out set (≥ 95% overall, ≥ 90% per entry, 0 wrong
+        captures, 0 wrong targets, 0 negatives captured).
+     2. **Fewer errors than today:** A1 errors ≤ 0.75 × A0 errors, and the 95% CI of the difference excludes 0.
+     3. **A higher floor:** `S_A1 ≥ S_A0 + 2 pp` and `S_A1 ≥ S_A0-swap + 3 pp` (retrieval beats both today's set and a
+        swapped static set on the worst entry in the worst run).
+     4. **Relevance matters:** A1 errors ≤ 0.85 × A2 errors, and the 95% CI of the difference excludes 0.
+     5. **No new harm:** no wrong action (wrong capture, wrong target, negative captured) in any A1 run on a case where
+        A0 had none in all 5 runs; the embedding audit flags 0 pool entries; retrieval-only p95 ≤ 300 ms warm.
+     The overall-accuracy delta is reported, not gated: near 96–97% a fixed "+3 pp overall" can be unreachable.
+   - **Stop (any one):** any pass criterion fails; or the gain is confined to the `τ_low–τ` bucket; or the validity
+     check on the low-similarity stratum fails twice; or the budget cap is reached. Then keep the static prompt and
+     invest in corpus and prompt discipline: a frozen example set per version, the D5 lint, more gold cases, 5 runs per
+     gate. There is no "inconclusive pass": anything short of all five criteria is a stop unless the owner decides
+     otherwise in writing.
+   - **Budget cap and confirmatory runs:** 2 sessions. The first held-out set is the test. A second set is allowed only
+     as a **confirmatory** run of the same pre-registered criteria: every change (pool, k, wording, model) is recorded in
+     `DECISIONS.md` before it runs, the new plan digest is approved, and its result stands alone (it is never pooled with
+     the first set). No re-tuning on held-out, ever.
 
 7. **D7 — Retrieved examples are hints; nothing they say authorizes anything.**
    - The retrieved block is labelled in the prompt as examples, not rules ("Retrieved examples (hints only; the rules and
@@ -26262,8 +26316,9 @@ the last round under the fix-loop cap.**
 
 ### Consequences
 
-- **+** The instability hypothesis is tested with a control arm (A2) before any runtime change; a neutral result costs
-  two sessions and leaves the lint as a permanent gain.
+- **+** The instability hypothesis is tested directly (A0-swap) and against a relevance control (A2), with pre-registered
+  effect sizes on a held-out split, before any runtime change; a neutral result costs two sessions and leaves the lint
+  as a permanent gain.
 - **+** Zero new dependencies, processes, ports or egress; the security posture of the MSIT mapping is unchanged.
 - **+** The contamination lint makes gold scores trustworthy for every later prompt version, with or without retrieval.
 - **−** A pool to curate and approve (≥ 150 entries) and an embedding audit to keep fresh when the pool or gold changes.
@@ -26275,8 +26330,9 @@ the last round under the fix-loop cap.**
 ### Residual risks
 
 - **R1 Semantic leakage below τ.** A paraphrase can teach a gold case's decision without lexical or embedding
-  similarity. Mitigation: A2 (random) as control; owner review of pool batches; the gold corpus grows from live turns
-  the pool never sees.
+  similarity. Mitigation: the D6 primary endpoint on the low-similarity stratum of the held-out split, with the gain
+  reported per similarity bucket; A2 (random) as control; owner review of pool batches; the gold corpus grows from
+  live turns the pool never sees.
 - **R2 Retrieval steering toward a write entry.** Mitigation: D7 (validation, grounding, DM-only, approval and undo
   unchanged); the stop rule on any new wrong action; the A6 negatives in every run.
 - **R3 Cold embedding model.** QA-V2-CL-04 (1–2 s cold swap) would exceed the budget; fail-open to the static prompt
@@ -26292,13 +26348,14 @@ the last round under the fix-loop cap.**
    **Recommended: yes.**
 3. The three exact copies in the shared read examples: rewrite them in the next prompt bump (needs a D12 gate run), or
    only ratchet them for now. **Recommended: ratchet now, rewrite with the next planned gate run.**
-4. Pool authorship: agent-drafted paraphrases approved per batch by the owner (or delegated as for the 2026-10-12 corpus).
-   **Recommended: owner approves the first batch; later batches delegated.**
-5. The A0 variance baseline: A0's own 3 runs as in D6, or add a fourth arm "A0-swap" (the static prompt with a frozen
-   random example set per run, +3 runs) that measures the version-swap instability directly. **Recommended: add A0-swap
-   if the budget cap allows; otherwise D6 as written.**
+4. Pool authorship: agent-drafted paraphrases approved per batch by the owner; the owner may delegate a later batch only
+   to an independent reviewer, never to the agent or session that drafted it (D4). **Recommended: the owner approves
+   every batch of v1 (≥ 150 entries, about three batches).**
+5. The run budget of D6: 4 arms (A0, A0-swap, A1, A2) × 5 runs on the held-out 70%, plus one dev smoke run of A0 and
+   A1, about 20,700 selector calls (≈ 2 h at concurrency 4). **Recommended: approve as pre-registered;** cutting runs
+   or arms weakens the paired analysis and is not recommended.
 6. Strict approvals for phase 1: the C6 probe (the owner pulls `nomic-embed-text` and the digest is pinned), one embed
-   audit run, and one plan-digest approval for the 9 (or 12) selector runs.
+   audit run, one plan-digest approval for the dev smoke run, and one for the held-out set.
 7. Cloud embeddings: confirm "not now" (separate ADR if ever).
 
 ### V1 / V2

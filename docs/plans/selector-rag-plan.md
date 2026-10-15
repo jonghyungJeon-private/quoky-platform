@@ -29,7 +29,7 @@
 |---|---|---|---|---|
 | **RAG-0** | Contamination lint, n-gram half, with a ratchet over today's findings (ADR-0123 D5) | none | standing delegation (test + docs) once the owner says yes to decision 2 | S |
 | **RAG-1** | Pool v1 (≥ 150 entries, owner-approved batches), the embedding audit and τ calibration, C6 probe | local embeddings only | Strict: C6 probe (owner pulls the model, digest pinned); one embed-audit run | M |
-| **RAG-2** | Three-arm experiment (A0 / A1 / A2, 3 runs each; optional A0-swap) and the decision record | selector (Claude CLI) + local embeddings | Strict: one plan-digest approval for the whole set | M |
+| **RAG-2** | Pre-registered four-arm experiment (A0 / A0-swap / A1 / A2, 5 runs each on the held-out 70%, after one dev smoke run) and the decision record | selector (Claude CLI) + local embeddings | Strict: one plan-digest approval for the whole set | M |
 | **RAG-3** | Runtime retrieval behind `QUOKY_NL_EXAMPLE_RETRIEVAL=off|shadow|on` (default `off`) | — | only after an RAG-2 pass; its own ADR-0120 amendment and Chief Architect review | M |
 
 Order and dependencies: RAG-0 → RAG-1 → RAG-2 → (pass) RAG-3. RAG-0 is useful on its own and does not wait for the rest.
@@ -40,16 +40,21 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
 - **Files.**
   - `packages/core/src/application/nl-routing/example-contamination.ts`: pure functions. `normalize` (NFC, lower case,
     whitespace), `shapeTokens` (the v35 test's tokenizer: punctuation as tokens; a token with a digit, `/` or `~` → `#`),
-    `charNgrams(n = 3)`, `jaccard`, `nearestGold(text, gold) → { id, tokenJ, charJ }`, and
-    `NEAR_COPY = { token: 0.6, char3: 0.6 }`. No I/O, no dependency.
+    `charNgrams(n = 3)`, `jaccard`, `containment` (`|A ∩ B| / min(|A|, |B|)` on character 3-grams),
+    `nearestGold(text, gold) → { id, tokenJ, charJ, contain }`, `isShortText` (≤ 3 characters without whitespace), and
+    `NEAR_COPY = { token: 0.6, char3: 0.6, contain3: 0.8 }`. No I/O, no dependency.
   - `packages/core/src/application/nl-routing/example-contamination.test.ts`: renders `buildSelectionPrompt` for the
     read prompt (all read entries) and the A6 prompt (all read + action entries, `referenceContext: 'none'`), extracts
     every `Message:` line, and compares each with every case of `nl-intent.v1.json`, `nl-action.v1.json`,
     `nl-action.seed.v1.json` and `nl-action.exec-time.v1.json`. Fails on a finding not in the known list and on a
     known entry that no longer occurs (so the list only shrinks). Includes the calibration case (the measure flags the
-    examples removed in v33–v35).
+    examples removed in v33–v35). Also: short texts (exact match is a finding; every short example listed for manual
+    review), the `(previous, context, text)` pair against gold cases with a previous selection or fixture, and the
+    expected output (same `entryId` plus a verbatim span arg value of ≥ 4 characters from a gold case is a finding)
+    (ADR-0123 D5).
   - `packages/core/src/application/nl-routing/example-contamination.known.v1.json`: today's findings
-    `{ example, goldId, tokenJ, charJ, kind: exact|near }`.
+    `{ example, goldId, tokenJ, charJ, contain, kind: exact|near|pair|output }` and the short-text review list
+    `{ example, reviewer, reason }`.
   - When the A6 gate branch merges, its v35 overlap test can call the shared helper instead of its own copy.
 - **Expected first result** (scratch measurement 2026-10-16 over the source literals; the real test decides): 3 exact
   copies (`오후만` = `uat5r2-10`, `목요일 거는?` = `uat5r4-16`, `그거 요약해줘` = `uat5r6-07`) and 6–7 more pairs at token
@@ -75,7 +80,8 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
   - CLI: `apps/quoky/src/tools/selector-rag-cli.ts`, script `eval:rag` in the root `package.json`.
     `pnpm eval:rag -- --mode lint` (offline), `--mode embed-audit --approved-plan-digest <sha256>` (Strict, local model).
 - **Pool authoring.** The agent drafts batches of ~50 paraphrases per round without reading the gold files; the lint
-  rejects near-copies before the owner sees them; the owner approves each batch (ADR-0123 owner decision 4).
+  rejects near-copies before the owner sees them; the owner approves each batch (ADR-0123 owner decision 4). Approval is
+  never delegated to the drafting agent or session. No `learning_items` row or LRN export becomes a pool entry (D4).
 - **AC.** ≥ 150 entries, coverage met, 0 n-gram findings, 0 embedding findings at the calibrated τ, audit record fresh.
 
 ### RAG-2 — the experiment
@@ -92,24 +98,33 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
     `nl-intent-eval.ts` scoring (no new scorer): for each case, embeds the prepared text (A1, A2 use the same embedding
     so latency is comparable), builds the prompt for the arm, runs the selector through the existing Claude CLI path,
     scores exact `{ entry, args, target }`, and records retrieval-only latency separately. Plan digest binds: arm list,
-    runs, seeds, k, pool digest, gold digest, space id, prompt versions, selector model and effort.
+    runs, seeds, k, τ, τ_low, the dev / held-out split, pool digest, gold digest, space id, prompt versions, selector
+    model and effort.
+  - `apps/quoky/src/tools/selector-rag/split.ts`: the stratified 30 / 70 dev / held-out split by a seeded hash of the
+    case id, and the similarity strata (`< 0.70`, `0.70–τ_low`, `τ_low–τ`) from the audit; the validity check of the
+    low-similarity stratum (≥ 50% of held-out, ≥ 10 per entry) runs here, before any selector run.
+  - `apps/quoky/src/tools/selector-rag/analysis.ts`: per-entry minimum across runs and the floor `S_X`, paired bootstrap
+    over cases (10,000 seeded resamples) for error-rate differences, McNemar on per-case majority correctness, and the
+    five pre-registered criteria of ADR-0123 D6, per stratum.
   - Modes: `pnpm eval:rag -- --mode plan` (offline: prints plan and digest), `--mode run --approved-plan-digest <sha>`
-    (Strict), `--mode compare` (offline: reads the records and prints the pass / stop verdict of ADR-0123 D6).
+    (Strict; `--split dev|heldout`, dev = one A0 + A1 smoke run), `--mode compare` (offline: reads the held-out records and
+    prints the pass / stop verdict of ADR-0123 D6, per similarity stratum).
   - Output: `data/eval/selector-rag/<arm>-run<r>-<ts>.json` and one `compare-<ts>.json`; a decision record appended to
     `DECISIONS.md` as an ADR-0123 note (numbers only, no owner text).
-- **Arms.** A0 static; A1 static + top-3 retrieved; A2 static + random-3; each 3 runs over the full D12 gate (A6 action
-  corpus + read regression). Optional A0-swap (owner decision 5): the static prompt whose example section is a frozen
-  random draw from the pool, one draw per run.
+- **Arms.** A0 static; A0-swap (mandatory) = the static prompt whose example section is a frozen random draw from the
+  pool with the static set's per-entry counts, one draw per run; A1 static + top-3 retrieved; A2 static + random-3.
+  Each 5 runs over the held-out 70% of the D12 gate (A6 action corpus + read regression). Tuning happens only on dev
+  and is recorded in `DECISIONS.md` before the held-out runs; a second held-out set is confirmatory only (ADR-0123 D6).
 
 ## 2. Cost and latency estimate
 
 | Item | Estimate | Basis |
 |---|---|---|
-| Cases per run | ~1,418 (A6 action 544 incl. seed + read 874) | current corpus files |
-| Selector calls | 3 arms × 3 runs × 1,418 ≈ 12,800 (≈ 17,000 with A0-swap) | D6 |
-| Wall time | ≈ 75–90 min for the 9 runs at concurrency 4 (≈ 2 h with A0-swap): two sessions | recorded selector p50 ≈ 1.35 s, p95 ≈ 2.1 s |
+| Cases | ~1,418 in all (A6 action 544 incl. seed + read 874): dev ≈ 425, held-out ≈ 993 | current corpus files, 30 / 70 split |
+| Selector calls | held-out 4 arms × 5 runs × 993 ≈ 19,900, plus the dev smoke 2 × 425 ≈ 850: ≈ 20,700 | D6 |
+| Wall time | ≈ 2 h at concurrency 4 (dev smoke ≈ 5 min, held-out ≈ 2 h): two sessions | recorded selector p50 ≈ 1.35 s, p95 ≈ 2.1 s |
 | Prompt size | ~23k characters (~6k tokens) with the full catalog; retrieved block +120–200 tokens (+2–3%) | `nl-select.v30.prompts.json` largest case |
-| Input tokens | ≈ 80M over the 9 runs, most of it the repeated static prefix (kept cacheable by placing the block after the static examples) | above |
+| Input tokens | ≈ 130M over all runs, most of it the repeated static prefix (kept cacheable by placing the block after the static examples) | above |
 | Money | Runs on the owner's Claude CLI login like every D12 gate; the CLI-reported cost is stored in each record. No price is quoted here | existing eval path |
 | Embeddings | ~1,600 audit + ~1,400 query embeddings per set, local, a few minutes warm; 0 bytes egress | ADR-0098 D8 |
 | Store | pool ≤ 2,000 × 768 Float32 ≈ 6 MB in memory; top-k brute force < 10 ms | `LocalVectorProvider` |
