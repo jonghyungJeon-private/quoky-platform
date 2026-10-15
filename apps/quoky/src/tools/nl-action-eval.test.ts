@@ -106,6 +106,39 @@ describe('scoring (A6-D7): a wrong target is never a question; negatives capture
     expect(await score(negative, answer('none'))).toBe('none');
   });
 
+  it('A6 R1: a reason-equal refusal of a `{}` gold is a hit; an owner-marked relay accepts `none`; the owner\'s source noun and a bare reference never act', async () => {
+    const score = async (golden: NlActionCase, raw: string) => {
+      const { decision, audit } = await decideActionCase(golden, provider(() => raw), NOW);
+      return scoreActionDecision(golden, raw, decision, audit).outcome;
+    };
+    // Gold args `{}`: the refused title has no canonical value, so the closed reason is scored.
+    const timeInTitle: NlActionCase = { id: 'a6-t-4', family: 'paraphrase', text: '할 일에 3시에 치과 가기 넣어줘', expect: { entryId: 'todo.add', args: {}, outcome: 'ask', reason: 'time-in-title' } };
+    expect(await score(timeInTitle, answer('todo.add', { title: '3시에 치과 가기' }))).toBe('hit');
+    expect(await score({ ...timeInTitle, expect: { entryId: 'todo.add', args: {}, outcome: 'ask', reason: 'deictic-payload' } }, answer('todo.add', { title: '3시에 치과 가기' }))).toBe('miss');
+    // "그리고 5시에도": two stacked particles still mark a time outside `when` (Core's own reason, also when the selector
+    // flagged the turn as unclear).
+    const second: NlActionCase = { id: 'a6-t-5', family: 'paraphrase', text: '내일 오후 3시에 회의 알려줘 그리고 5시에도', expect: { entryId: 'reminder.create', args: {}, outcome: 'ask', reason: 'time-outside-when' } };
+    expect(await score(second, answer('reminder.create', { body: '회의', when: '내일 오후 3시' }, 'NEEDS_CLARIFICATION'))).toBe('hit');
+    // Owner decision (3): a relayed instruction may also be left undone.
+    const relay: NlActionCase = { id: 'a6-t-6', family: 'paraphrase', text: '동료가 부탁한 건데 해줘: 할 일에 보고서 추가', expect: { entryId: 'todo.add', args: { title: '보고서' }, outcome: 'execute', acceptsNone: true } };
+    expect(await score(relay, answer('none'))).toBe('hit');
+    expect(await score(relay, answer('todo.add', { title: '보고서' }))).toBe('hit');
+    expect(await score({ ...relay, expect: { entryId: 'todo.add', args: { title: '보고서' }, outcome: 'execute' } }, answer('none'))).toBe('miss');
+    // The owner wrote 문서 (Drive) while the newest list is mail: whatever source the selector names, nothing is read.
+    const otherNoun: NlActionCase = {
+      id: 'a6-t-7',
+      family: 'reference',
+      text: '1번 문서 요약해줘',
+      fixture: { listings: [{ source: 'mail', labels: [1, 2], ageMinutes: 1 }] },
+      expect: { entryId: 'item.summarize', args: { source: 'drive', ref: '#1' }, outcome: 'ask', reason: 'other-source' },
+    };
+    expect(await score(otherNoun, answer('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }))).toBe('miss');
+    expect(await score(otherNoun, answer('item.summarize', { source: 'drive', ref: '#1' }))).toBe('hit');
+    // "2번도": a reference alone selects nothing (chat), so it is never a capture.
+    const alone: NlActionCase = { id: 'a6-t-8', family: 'reference', text: '2번도', fixture: { listings: [{ source: 'todo', labels: [1, 2, 3], ageMinutes: 1 }] }, expect: 'none' };
+    expect(await score(alone, answer('todo.complete', { ref: '#2' }))).toBe('none');
+  });
+
   it('the summary gate fails on one wrong target, one negative capture, or too many questions on references', () => {
     const hit = { run: 1, id: 'x', family: 'reference', expected: 'todo.complete', outcome: 'hit' as const, latencyMs: 10 };
     expect(summarizeAction([hit]).gatePassed).toBe(true);
@@ -134,7 +167,7 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
   });
 
   it('the owner-approved A6 relabels (2026-10-15; neg-099 after the A6-D2 determiner clarification, uat5r6-07 respelled `this`): read mode keeps `none`; the relabel is a canonical item.summarize Core executes against the case context', () => {
-    const relabeled = cases.filter((golden) => golden.a6Relabel !== undefined);
+    const relabeled = cases.filter((golden) => golden.a6Relabel?.entryId === 'item.summarize');
     expect(relabeled.map((golden) => golden.id).sort()).toEqual(['neg-098', 'neg-099', 'neg-100', 'uat5r6-07']);
     const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
     for (const golden of relabeled) {
@@ -176,6 +209,23 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
         resolveItemReference({ entryId: 'item.summarize', source: golden.a6Relabel!.args.source as 'mail' | 'drive', ref: { kind: 'this' }, groundingText: prepared.groundingText, state: several }),
         id,
       ).toMatchObject({ kind: 'unresolved', outcome: 'ambiguous' });
+    }
+  });
+
+  it('owner decision (2) of 2026-10-15 (A6 R1): the 11 anchored action commands keep `none` in read mode and carry their A6 action as the A6-on gold, canonical and scored apart', () => {
+    const anchored = cases.filter((golden) => golden.a6Relabel?.batch === 'A6-R1-anchored-2026-10-15');
+    expect(anchored.map((golden) => golden.id).sort()).toEqual(['neg-085', 'neg-086', 'neg-088', 'neg-089', 'neg-090', 'neg-091', 'neg-092', 'neg-093', 'neg-094', 'neg-127', 'neg-128']);
+    const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
+    for (const golden of anchored) {
+      const relabel = golden.a6Relabel!;
+      expect(golden.expect, golden.id).toBe('none');
+      expect(isNlActionEntryId(relabel.entryId) && relabel.entryId !== 'item.summarize', golden.id).toBe(true);
+      const prepared = prepareSelectionInput(golden.text);
+      if ('skip' in prepared) throw new Error(`${golden.id} skipped`);
+      const validated = validateSelection(relabel, { offered, groundingText: prepared.groundingText, now: NOW, timeZone: 'Asia/Seoul', actions: true });
+      expect(validated.ok && validated.value.args, golden.id).toEqual(relabel.args);
+      // With the A6 entries offered the action is a relabeled hit, not an action capture; another action entry is a miss.
+      expect(scoreReadRegression(golden, answer(relabel.entryId, relabel.args), NOW), golden.id).toMatchObject({ outcome: 'hit', relabeled: true });
     }
   });
 

@@ -4936,13 +4936,27 @@
       "id": "neg-085",
       "text": "할 일 추가: 보고서 제출",
       "expect": "none",
-      "note": "todo add"
+      "a6Relabel": {
+        "entryId": "todo.add",
+        "args": {
+          "title": "보고서 제출"
+        },
+        "batch": "A6-R1-anchored-2026-10-15"
+      },
+      "note": "todo add [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
     },
     {
       "id": "neg-086",
       "text": "보고서 제출하는 거 할 일에 넣어줘",
       "expect": "none",
-      "note": "todo add"
+      "a6Relabel": {
+        "entryId": "todo.add",
+        "args": {
+          "title": "보고서 제출"
+        },
+        "batch": "A6-R1-anchored-2026-10-15"
+      },
+      "note": "todo add [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
     },
     {
       "id": "neg-087",
@@ -4958,43 +4972,96 @@
       "id": "neg-088",
       "text": "할 일 취소: 1",
       "expect": "none",
-      "note": "todo cancel"
+      "a6Relabel": {
+        "entryId": "todo.cancel",
+        "args": {
+          "ref": "#1"
+        },
+        "batch": "A6-R1-anchored-2026-10-15"
+      },
+      "note": "todo cancel [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
     },
     {
       "id": "neg-089",
       "text": "add todo: send invoice",
       "expect": "none",
-      "note": "todo add"
+      "a6Relabel": {
+        "entryId": "todo.add",
+        "args": {
+          "title": "send invoice"
+        },
+        "batch": "A6-R1-anchored-2026-10-15"
+      },
+      "note": "todo add [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
     },
     {
       "id": "neg-090",
       "text": "30분 뒤에 알려줘 약 먹기",
       "expect": "none",
-      "note": "reminder create"
+      "a6Relabel": {
+        "entryId": "reminder.create",
+        "args": {
+          "body": "약 먹기",
+          "when": "30분 뒤"
+        },
+        "batch": "A6-R1-anchored-2026-10-15"
+      },
+      "note": "reminder create [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
     },
     {
       "id": "neg-091",
       "text": "내일 오전 9시에 회의 알려줘",
       "expect": "none",
-      "note": "reminder create (contains 회의 ... 알려줘)"
+      "a6Relabel": {
+        "entryId": "reminder.create",
+        "args": {
+          "body": "회의",
+          "when": "내일 오전 9시"
+        },
+        "batch": "A6-R1-anchored-2026-10-15"
+      },
+      "note": "reminder create (contains 회의 ... 알려줘) [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
     },
     {
       "id": "neg-092",
       "text": "remind me tomorrow at 9am to call Kim",
       "expect": "none",
-      "note": "reminder create"
+      "a6Relabel": {
+        "entryId": "reminder.create",
+        "args": {
+          "body": "call Kim",
+          "when": "tomorrow at 9am"
+        },
+        "batch": "A6-R1-anchored-2026-10-15"
+      },
+      "note": "reminder create [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
     },
     {
       "id": "neg-093",
       "text": "알림 취소: 1",
       "expect": "none",
-      "note": "reminder cancel"
+      "a6Relabel": {
+        "entryId": "reminder.cancel",
+        "args": {
+          "ref": "#1"
+        },
+        "batch": "A6-R1-anchored-2026-10-15"
+      },
+      "note": "reminder cancel [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
     },
     {
       "id": "neg-094",
       "text": "매일 아침 8시에 브리핑 알려줘",
       "expect": "none",
-      "note": "scheduled brief creation, not an on-demand brief"
+      "a6Relabel": {
+        "entryId": "reminder.create",
+        "args": {
+          "body": "브리핑",
+          "when": "매일 아침 8시"
+        },
+        "batch": "A6-R1-anchored-2026-10-15"
+      },
+      "note": "scheduled brief creation, not an on-demand brief [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
     },
     {
       "id": "neg-095",
@@ -5264,13 +5331,27 @@
       "id": "neg-127",
       "text": "mark todo 1 as done",
       "expect": "none",
-      "note": "todo complete"
+      "a6Relabel": {
+        "entryId": "todo.complete",
+        "args": {
+          "ref": "#1"
+        },
+        "batch": "A6-R1-anchored-2026-10-15"
+      },
+      "note": "todo complete [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
     },
     {
       "id": "neg-128",
       "text": "cancel reminder 2",
       "expect": "none",
-      "note": "reminder cancel"
+      "a6Relabel": {
+        "entryId": "reminder.cancel",
+        "args": {
+          "ref": "#2"
+        },
+        "batch": "A6-R1-anchored-2026-10-15"
+      },
+      "note": "reminder cancel [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
     },
     {
       "id": "neg-129",

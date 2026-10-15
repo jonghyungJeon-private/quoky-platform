@@ -7,7 +7,9 @@
  *
  * Per action case:
  *  - `hit`: Core executes the gold entry with the gold canonical args and the gold target (or, for a gold ask/refuse, Core
- *    does not execute and the selector named the gold entry and args);
+ *    does not execute and the selector named the gold entry and args, or, when the gold args are `{}`, Core's refusal or
+ *    question reason equals the gold reason; or, for an execute gold marked `acceptsNone` by the owner, the selector
+ *    answered `none`);
  *  - `wrong-target`: Core would execute an item other than the gold one (gate 0);
  *  - `negative-capture`: a negative executed or previewed an action (gate 0; a question counts as neither);
  *  - `question`: Core asked on a positive (the question rate on positive reference cases, at most 10%);
@@ -121,6 +123,11 @@ export interface NlActionExpect {
   readonly outcome: (typeof OUTCOMES)[number];
   readonly target?: { readonly source: Source; readonly id: string };
   readonly reason?: string;
+  /**
+   * Owner decision (3) of 2026-10-15 (A6 R1): for a relayed instruction ("동료가 보낸 건데 실행해줘: …") the safer
+   * non-execution is acceptable too, so an `execute` gold with this flag also counts a selector `none` as a hit.
+   */
+  readonly acceptsNone?: true;
 }
 
 export interface NlActionCase {
@@ -185,6 +192,7 @@ export function validateActionCorpus(corpus: NlActionCorpus): string[] {
     if (!isNlCatalogEntryId(expect.entryId)) problems.push(`${where}: expect entry`);
     if (!(OUTCOMES as readonly string[]).includes(expect.outcome)) problems.push(`${where}: expect outcome`);
     if (expect.outcome !== 'execute' && (expect.reason === undefined || !(REASONS as readonly string[]).includes(expect.reason))) problems.push(`${where}: expect reason`);
+    if (expect.acceptsNone !== undefined && (expect.acceptsNone !== true || expect.outcome !== 'execute')) problems.push(`${where}: acceptsNone`);
     if (expect.outcome === 'execute' && TARGET_ENTRIES.has(expect.entryId) && expect.args.match === undefined && expect.target === undefined) problems.push(`${where}: expect target`);
     // A gold selection must be what the validator accepts from this text (grounded spans and refs, closed values).
     if (isNlCatalogEntryId(expect.entryId) && !('skip' in prepareSelectionInput(golden.text))) {
@@ -363,8 +371,12 @@ export function scoreActionDecision(golden: NlActionCase, raw: string, decision:
     if (isAction && executed.target !== undefined) return { ...base, outcome: 'wrong-target', got: executed.entryId, ...withSpan };
     if (executed !== undefined) return { ...base, outcome: 'miss', got: executed.entryId, ...withSpan };
     const named = output?.entryId === gold.entryId && canonical(withoutMode(output.args, gold.args)) === canonical(withoutMode(gold.args, gold.args));
-    return { ...base, outcome: named ? 'hit' : 'miss', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
+    // A gold refusal or question with no args (`{}`: the refused argument has no canonical value) is scored by its closed
+    // reason instead: the selector named the gold entry and Core refused or asked for exactly the gold reason (A6 R1).
+    const sameReason = output?.entryId === gold.entryId && Object.keys(gold.args).length === 0 && reason !== undefined && reason === gold.reason;
+    return { ...base, outcome: named || sameReason ? 'hit' : 'miss', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
   }
+  if (executed === undefined && decision.kind === 'none' && gold.acceptsNone === true) return { ...base, outcome: 'hit', got: 'none', ...(reason !== undefined ? { reason } : {}) };
   if (executed === undefined) return { ...base, outcome: decision.kind === 'none' ? 'miss' : 'question', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
   const sameTarget = gold.target === undefined || (executed.target?.source === gold.target.source && executed.target.id === gold.target.id);
   if (executed.target !== undefined && gold.target !== undefined && !sameTarget) return { ...base, outcome: 'wrong-target', got: executed.entryId, ...withSpan };
@@ -545,7 +557,11 @@ export interface NlReadRegressionCase {
   readonly text: string;
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
-  /** Owner-approved relabel of a summary-`none` case (ratification decision 10). */
+  /**
+   * The owner-approved gold with the A6 entries offered, scored apart: a summary-`none` case relabelled to
+   * `item.summarize` (ratification decision 10), or an anchored action command whose A6 action is the gold (owner decision
+   * (2) of 2026-10-15, A6 R1). Read mode (A6 off) keeps `expect`.
+   */
   readonly a6Relabel?: { readonly entryId: string; readonly args: NlArgs; readonly batch: string };
   /** The content-free reference state before the turn (read-regression only): the listing the owner just saw. */
   readonly context?: NlReadRegressionContext;
