@@ -8,7 +8,7 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
 import { NL_WAVE1_ENTRIES, jiraKeywordCarriesQualifier, nlWave1Entry } from '../nl-routing/wave1-entries';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { hasJiraReleaseLink, normalizeSiteHost, parseJiraReleaseLinks, releaseLinkOnSite } from './jira-release-link';
-import { lookupJiraRelease, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
+import { lookupJiraRelease, splitKeyFromRelease, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
 import { renderReleaseIssues } from './jira-release-renderer';
 import { detectWorkChatCommand } from './work-chat-command';
 import { workChatCommandForSelection } from './work-chat-selection';
@@ -202,7 +202,7 @@ describe('lookupJiraRelease (A8): resolve what the owner named, read the release
     const partial = await run({ release: '20261015' }, { items: () => ({ source: 'jira', items: ISSUES, truncated: true }) });
     expect(partial.text).toContain('이슈 3건 이상');
     expect(partial.text).toContain('일부만 표시');
-    const empty = await run({ release: '20261015' }, { items: () => ({ source: 'jira', items: [] }) });
+    const empty = await run({ project: 'OP26', release: '20261015' }, { items: () => ({ source: 'jira', items: [] }) });
     expect(empty.text).toContain('이 릴리스에 포함된 이슈가 없어요.');
     const denied = await run({ release: '20261015' }, { items: () => { throw new ConnectorQueryError('UNAUTHORIZED'); } });
     expect(denied.text).toBe('FAILURE UNAUTHORIZED');

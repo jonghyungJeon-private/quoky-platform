@@ -73,7 +73,7 @@ export async function lookupJiraRelease(input: {
    */
   readonly inChannel?: boolean;
 }): Promise<ReleaseLookupResult> {
-  const { command } = input;
+  let command = input.command;
   const connector = guarded(input.connector, input.signal);
   const onSite = releaseLinkOnSite(command.links, input.siteHost);
   const ignoredLink = command.links.length > 0 && onSite === undefined;
@@ -83,6 +83,11 @@ export async function lookupJiraRelease(input: {
   if (command.scope === 'mine' && (input.identity === undefined || input.identity.length === 0)) return { kind: 'failure', reason: 'IDENTITY_MISSING' };
   try {
     if (!(await connector.isAvailable())) return { kind: 'failure', reason: 'UNAVAILABLE' };
+    // 0. A project key the selector left inside the release words ("OP26 20261015"): moved to `project` when it is a visible key.
+    if (onSite === undefined && command.project === undefined && command.release !== undefined && splitKeyToken(command.release) !== undefined) {
+      const split = splitKeyFromRelease(itemsOf(await connector.query({ query: ConnectorQueryName.CONTAINERS })), command.release);
+      if (split !== undefined) command = { ...command, project: split.project, release: split.release };
+    }
     // 1. The project.
     let project: ReleaseProjectRef | undefined;
     let preResolved: ConnectorItem | undefined;
@@ -156,6 +161,8 @@ export async function lookupJiraRelease(input: {
       listed = await itemsOfRelease(release.raw);
       release = { name: release.raw };
     }
+    // No version resolved (no project to list releases from) and nothing came back: not proven to exist, so not "no issues".
+    if (release.id === undefined && itemsOf(listed).length === 0) return body(renderReleaseNotFound(command.release ?? '', project, []));
     const items = itemsOf(listed).slice(0, CONNECTOR_QUERY_MAX_LIMIT);
     const truncated = listed.truncated === true || itemsOf(listed).length > items.length;
     // The page link is the adapter's own release URL (Core builds no Jira URL); unknown when the release was not listed.
@@ -182,6 +189,36 @@ export async function lookupJiraRelease(input: {
     if (isConnectorQueryError(error)) return { kind: 'failure', reason: error.reason };
     throw error;
   }
+}
+
+/** The project-key part of one whitespace token: "OP26", or "OP26-20261015" (key, hyphen, rest). */
+function splitKeyToken(text: string): string | undefined {
+  return text.split(/\s+/).some((token) => keyOfToken(token) !== undefined) ? text : undefined;
+}
+
+function keyOfToken(token: string): { readonly key: string; readonly rest: string } | undefined {
+  const [head = '', ...tail] = token.split('-');
+  if (!CONNECTOR_CONTAINER_KEY.test(head)) return undefined;
+  return { key: head, rest: tail.join('-') };
+}
+
+/**
+ * The visible project key inside the release words, moved out of the release name. Only a token spelled exactly as a
+ * visible key (upper case), alone or joined by a hyphen to the rest, and only when exactly one visible key is named and
+ * a release name remains. Anything else stays as written: a key is never guessed.
+ */
+export function splitKeyFromRelease(projects: readonly ConnectorItem[], releaseText: string): { readonly project: string; readonly release: string } | undefined {
+  const visible = new Set(projects.map((item) => item.id));
+  const tokens = releaseText.trim().split(/\s+/);
+  const hits = tokens.flatMap((token, index) => {
+    const parsed = keyOfToken(token);
+    return parsed !== undefined && visible.has(parsed.key) ? [{ index, ...parsed }] : [];
+  });
+  if (new Set(hits.map((hit) => hit.key)).size !== 1 || hits.length !== 1) return undefined;
+  const hit = hits[0]!;
+  const rest = tokens.flatMap((token, index) => (index === hit.index ? (hit.rest.length > 0 ? [hit.rest] : []) : [token]));
+  const release = rest.join(' ').trim();
+  return release.length > 0 ? { project: hit.key, release } : undefined;
 }
 
 /** The project to name in a not-found answer: a link's key or a key-shaped owner value (never a guessed name). */

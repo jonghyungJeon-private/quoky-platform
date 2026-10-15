@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A8 fix: project key inside the release words (2026-10-15)
+
+- **Fixed:** "OP26 20261015 릴리스 …" put the key in the release name and reported 0 issues. Core moves a visible project key
+  out of the release words into `project`; an unresolved release without a project now says "릴리스를 찾지 못했어요".
+
 ## Unreleased — ADR-0120 amendment A8 Accepted: default scope mine, channel rule, review fixes, live probe (2026-10-15)
 
 - **Owner decisions:** release listings default to the owner's own items ("default로는 당연히 내 담당 기준"); every
