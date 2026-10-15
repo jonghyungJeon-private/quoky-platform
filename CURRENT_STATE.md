@@ -34,7 +34,8 @@ gate for every channel turn (default deny, per-channel grants in `Actor.metadata
 list / revoke phrases, kill-switch suspension, the deploy seed. Code default `QUOKY_CHANNEL_GRANTS=off` (inert,
 byte-identical); enabling needs the owner's yes for the live `.env.local` values `QUOKY_CHANNEL_GRANTS=enforce` and
 `QUOKY_CHANNEL_GRANTS_SEED=discord:1520835639103324181:1520835639904309350=jira-mine,jira-project,github,slack-search,confluence,calendar,todo,reminder,memory,code`
-(Strict), plus the deploy check of `quoky.actionSwitch` (a stopped switch suspends the seed from the first turn). P2
+(Strict), plus the deploy checks: `quoky.actionSwitch` (a stopped switch suspends the seed from the first turn) and
+`QUOKY_REMINDERS_CHANNEL_DELIVERY` false or unset until P2's send-time check (unset live, checked 2026-10-15). P2
 next: the grant phrase with `허용 실행`, the audience line, the composite permit, reminder channel delivery, grant
 receipts, recall in channels holding `memory`, help lines, code default `enforce`. Chief Architect review required
 before merge (port and runtime dispatch change).

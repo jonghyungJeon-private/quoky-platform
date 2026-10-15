@@ -25613,3 +25613,32 @@ help, control) or the denial with zero provider calls, calendar reads and desk c
 unchanged; the env seed (once, the DM line), revoke with thread inheritance, the kill switch, `기억해:`, a revoke between
 `PUSH_APPROVED` and the exact push phrase (no git call, anchor unchanged), PR status needing `github`, the reaction gate,
 and the claim conformance of every registered handler over the corpora. Config: the switch and seed validation.
+
+**P1 review round (Chief Architect APPROVE WITH CHANGES and Codex, 2026-10-15), fixed on the same branch.**
+
+- **Deploy packet (D2.6 is P2).** Until P2 builds the send-time check, `QUOKY_CHANNEL_GRANTS=enforce` requires
+  `QUOKY_REMINDERS_CHANNEL_DELIVERY=false` (or unset): with channel delivery on, a reminder created in a granted channel
+  would still be delivered there after a revoke. Checked read-only on 2026-10-15: the key is not set in the live
+  `.env.local` nor in the launchd plist (default `false`). The deploy check now has two items: `quoky.actionSwitch` and
+  this key. The decision-14 code default (`off` in P1) is with the owner separately.
+- **A6 and selection questions are gated.** `NlSelectionDecision.ask` carries the `entryId` it is about (usage,
+  preference and every A6 question); the runtime gates it like that entry, answers a denied A6 question with the A6
+  DM-only copy and closes the pending question it saved (Phase A, Phase C and the early A6 path).
+- **c-shadow.** A denied turn is not a grammar answer: no background selection is queued on its text and no S1
+  agreement line is written. **Phase C:** a grammar whose `reply` claim is denied answers with the denial before any
+  selector call on the text.
+- **Connector-write execution (Codex P1).** The exact execution phrase re-reads the live grants (the owner Actor through
+  the `ActorMetadataStore`, `ConversationRuntimeDeps.surfaceGrants.freshActor`, no new deps key) inside the execution
+  claim, under the approval → session locks and before the grant is consumed; a revoke that completed after the turn read
+  its snapshot wins (`SurfaceDeniedError`, nothing consumed or sent, the denial copy). Unconditional in a channel with
+  `enforce`.
+- **Event-relative reminders (Codex P1).** "회의 10분 전에 알려줘" reads the calendar, so the reminder claim is
+  `reminder` + `calendar` for `CREATE_EVENT_RELATIVE`.
+- **Seed DM precision (P3).** The record keeps an additive, content-free `revoked: { "<channel key>": [groups] }` (the
+  owner's revokes not granted again since); a changed seed reports as "해제하셨던 … 다시 허용" only those groups, new
+  groups get the plain line.
+- **Tests added.** A source rule that fails on any unwrapped `return` of the state-bound section (and checks the
+  pending-intercept gate set); the channel pass of the claim conformance test; an `enforce` ungranted-channel run of the
+  nl-intent corpus with a stub selector in Phase A, Phase C and c-shadow (identical to `off` or the denial with nothing
+  read and nothing queued; c-shadow jobs proven to run with the gate off); an A6 question in a channel; the execution
+  race (revoke while the execution turn is paused); the event-relative reminder; the seed DM lines.
