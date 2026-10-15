@@ -25029,9 +25029,11 @@ session). Test fixtures that meant a DM now set `direct: true`.
 
 ## ADR-0122 — Surface permission grants: in a channel, personal and connector capabilities are denied unless the owner granted their group in that channel; one Core gate keyed by (platform, channel, group) runs before every grammar, selected entry, anchored command and runtime route; grants live in `Actor.metadata` (no migration); anchored owner-only phrases with a confirmation step; an explicit, logged seed for the QA channel. Amends ADR-0096 D1/D3, ADR-0100 D2, ADR-0101 D8, ADR-0110 D3, the ADR-0110 amendment, ADR-0112 D5, ADR-0120 D1/D4/A6-D3, the ADR-0073 amendment, ADR-0107 D5 and ADR-0032 (M3 deps baseline +1).
 
-- **Status:** **Proposed** (2026-10-15), revised the same day after the Chief Architect design review (APPROVE WITH
-  CHANGES, eleven points, folded in below). Nothing of A9 is built until the Product Owner ratifies it, except D7,
-  which ships ahead as a P0 hotfix (see D7). Plan track A9.
+- **Status:** **Accepted 2026-10-15.** The Product Owner ratified it with "모두 권장안 (권장)": the recommended option of
+  owner decisions 1–11, 13 and 14 (decision 12 is moot: A8 shipped `jira.release` with `scope=mine` as the default). See
+  "ADR-0122 ratification record and P1 implementation note" below. Proposed earlier the same day and revised after the
+  Chief Architect design review (APPROVE WITH CHANGES, eleven points, folded in below). D7 shipped ahead as the P0
+  hotfix (#219). Plan track A9.
 - **Date:** 2026-10-15
 - **Owner sheet:** `docs/plans/a9-surface-grants-owner-sheet.md` (Korean, plain words, the decision list of this ADR).
 - **Reaffirms unchanged:** ADR-0091 (owner-only Discord admission, channel allowlist), ADR-0114 (Telegram: the
