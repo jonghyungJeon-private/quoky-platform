@@ -34,7 +34,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, isNlDeicticOnlyPayload, nlActionInputRefusal, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -729,7 +729,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     }
     const decision =
       reference !== undefined && selected.output.entryId !== null && isNlActionEntryId(selected.output.entryId)
-        ? await this.decideAction(selected.output, effective, prepared, language, reference, selected.latencyMs)
+        ? await this.decideAction(selected.output, effective, prepared, language, reference, selected.latencyMs, isActionPendingQuestion(pending) ? pending : undefined)
         : await this.fromOutput(selected.output, effective, prepared, last, language, reference !== undefined, selected.cacheKey);
     this.logAgreement(turn, {
       outcome: decision.kind,
@@ -968,10 +968,40 @@ export class NlSelectionService implements TurnDeliveryObserver {
     language: 'ko' | 'en',
     reference: NlReferenceState,
     latencyMs: number,
+    openQuestion?: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' }>,
+  ): Promise<NlSelectionDecision> {
+    const decision = await this.decideActionOutcome(output, turn, prepared, language, reference, latencyMs, openQuestion);
+    // A6-D3: a turn that executes, previews or asks for an A6 entry clears `lastSelection` (never refinable); a turn that
+    // ends as chat (`none`, shadow) keeps it (CA review).
+    if (decision.kind !== 'none') await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => undefined);
+    return decision;
+  }
+
+  /** Whether a selector-path action may run while an A6 question is open: only the questioned entry on a candidate. */
+  private allowedWhileAsked(
+    openQuestion: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' }> | undefined,
+    entryId: NlActionEntryId,
+    target: NlItemTarget | undefined,
+  ): boolean {
+    if (openQuestion === undefined) return true;
+    return (
+      openQuestion.kind === 'action-target' &&
+      openQuestion.entryId === entryId &&
+      target?.id !== undefined &&
+      openQuestion.candidates.some((candidate) => candidate.id === target.id)
+    );
+  }
+
+  private async decideActionOutcome(
+    output: NlSelectionOutput,
+    turn: NlSelectionTurn,
+    prepared: PreparedSelectionInput,
+    language: 'ko' | 'en',
+    reference: NlReferenceState,
+    latencyMs: number,
+    openQuestion: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' }> | undefined,
   ): Promise<NlSelectionDecision> {
     const entryId = output.entryId as NlActionEntryId;
-    // A6-D3: a turn that executes, previews or asks for an A6 entry clears `lastSelection` (never refinable).
-    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => undefined);
     const ctx = this.validationContext(turn, prepared.groundingText, undefined, true);
     const validated = validateSelection({ entryId, args: output.args }, ctx);
     const base = { entryId, risk: ctx.offered.get(entryId)?.risk ?? 'LOCAL_WRITE', refKind: refKindOf(output.args), latencyMs, ...correlationOf(turn) } as const;
@@ -982,20 +1012,19 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
       return this.actionAnswer(audit, renderInputRefusal(language));
     }
-    // A6-D2 "a deictic alone never selects an entry" (A6 R1 fix): a message that is only a reference (a deictic, a number
-    // or an ordinal with particles: "2번도", "그거", "1") carries no request of the owner's, so no action is selected and,
-    // like a selector `none`, the turn is chat. The same word classes as the payload rule; no phrase list. While an A6
-    // target question is open the bare number is an answer to it (its own path asked; a label it lacks reaches here).
-    const openQuestion = turn.pending !== undefined ? turn.pending ?? undefined : readPendingQuestion(turn.session, turn.actor.id, turn.now);
-    if (isNlDeicticOnlyPayload(prepared.groundingText) && !isActionPendingQuestion(openQuestion)) {
-      this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields({ ...base, resolution: 'none', result: 'refused', reason: 'no-request' }));
-      return { kind: 'none' };
-    }
     if (!validated.ok) {
       // An entry that is not offered (an external write before R3, an unconfigured source) is honest chat's to explain.
       if (validated.reason === 'not-offered' || validated.reason === 'unknown-entry' || validated.reason === 'not-read') return { kind: 'none' };
       // `item.summarize` without a content word: the owner did not ask for the content (record C) — nothing is read.
       if (entryId === 'item.summarize' && validated.reason === 'ungrounded' && validated.arg === 'mode') return { kind: 'none' };
+      // A6 R1 review: the owner did not say this entry's action ("2번도", "그걸로요", "13번 알림"): nothing is written and,
+      // like a selector `none`, the turn is chat.
+      if (validated.reason === 'ungrounded' && validated.arg === 'action') {
+        const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'no-action-word' };
+        if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+        this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
+        return { kind: 'none' };
+      }
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: validated.reason };
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
       return this.actionAnswer(audit, validationReply(validated.reason, language));
@@ -1007,7 +1036,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
       return this.actionAnswer(audit, isNlBulkRequest(prepared.groundingText) ? renderBulk(language) : renderRestate(language));
     }
-    if (entryId === 'action.undo') return this.decideUndo(turn, language, latencyMs, 'none', reference);
+    if (entryId === 'action.undo') {
+      if (!this.allowedWhileAsked(openQuestion, entryId, undefined)) return this.blockedWhileAsked({ ...base, risk: entry.risk });
+      return this.decideUndo(turn, language, latencyMs, 'none', reference);
+    }
     // A6-D2: resolve the target in code (most recent listing only, display numbers, lastAction).
     let target: NlItemTarget | undefined;
     let resolution: NlResolutionOutcome = 'none';
@@ -1034,6 +1066,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
       target = resolved.target;
       resolution = 'resolved';
     }
+    // A6 R1 review: while an A6 question is open, only the questioned entry on one of its candidates runs.
+    if (!this.allowedWhileAsked(openQuestion, entryId, target)) return this.blockedWhileAsked({ ...base, risk: entry.risk });
     const audit: NlActionAudit = { ...base, risk: entry.risk, resolution, ...(target !== undefined ? { target } : {}), result: 'executed' };
     if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
     if (!this.actionCaps.allows(turn.actor.id, entry.risk, Date.parse(turn.now))) {
@@ -1060,6 +1094,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
     this.actionCaps.note(turn.actor.id, entry.risk, Date.parse(turn.now));
     const command: NlSelectedCommand = { entryId, args, language, ...(target !== undefined ? { target } : {}) };
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}), action: audit };
+  }
+
+  /** An action the open A6 question does not ask for: nothing runs and the turn is chat (logged, content-free). */
+  private blockedWhileAsked(base: Omit<NlActionAudit, 'resolution' | 'result'>): NlSelectionDecision {
+    const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'pending-question' };
+    if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+    this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
+    return { kind: 'none' };
   }
 
   /** A6 (D8) `shadow`: the decision is logged and nothing acts; the turn continues as today (honest chat). */
@@ -1168,8 +1210,18 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (pending.kind === 'action-target') {
       const entry = offered.get(pending.entryId);
       if (entry === undefined) return undefined;
-      const choice = resolveLabelChoice(answerText, pending.candidates.map((candidate) => candidate.label));
+      const labels = pending.candidates.map((candidate) => candidate.label);
+      const choice = resolveLabelChoice(answerText, labels);
       if (choice.kind === 'none') return undefined;
+      // A6 R1 review: a bare number or ordinal that is none of the offered labels asks the same question again; it never
+      // reaches the selector (where it could become another entry or item).
+      if (choice.kind === 'unlisted') {
+        await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, { ...pending, at: turn.now }));
+        return this.actionAnswer(
+          { entryId: pending.entryId, risk: entry.risk, refKind: 'index', resolution: 'out-of-range', result: 'asked', reason: 'out-of-range', ...correlationOf(turn) },
+          renderReferenceQuestion('ambiguous', pending.source, language, { labels }),
+        );
+      }
       if (choice.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
       const picked = pending.candidates[choice.index];
       if (picked === undefined) return undefined;

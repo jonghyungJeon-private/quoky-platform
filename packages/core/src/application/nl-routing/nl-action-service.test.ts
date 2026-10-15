@@ -475,19 +475,73 @@ describe('round 3: an argument-free undo from pasted JSON never executes', () =>
   });
 });
 
-describe('A6 R1 fix: a reference alone never selects an action (A6-D2)', () => {
-  it('"2번도" after a to-do list is chat, logged as no-request; an open target question keeps the bare number an answer', async () => {
+describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings)', () => {
+  const reminderAction = (minute = 0) => withLastAction(undefined, 'owner', { entryId: 'reminder.create', source: 'reminder', itemId: 'reminder-13', label: 13, at: at(minute), undoable: true, undone: false, echoReplyIds: [] }, at(minute));
+  const todoAction = (minute = 0) => withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-2', label: 2, at: at(minute), undoable: true, undone: false, echoReplyIds: [] }, at(minute));
+
+  it('a reference without the entry\'s own action word is chat: "2번도", "2번만요", "그걸로요", "13번 알림"', async () => {
+    const cases: Array<[string, string, Record<string, unknown>]> = [
+      ['2번도', 'todo.complete', { ref: '#2' }],
+      ['2번만요', 'todo.complete', { ref: '#2' }],
+      ['2번만요', 'todo.cancel', { ref: '#2' }],
+      ['그걸로요', 'todo.cancel', { ref: 'this' }],
+      ['13번 알림', 'reminder.cancel', { ref: '#13' }],
+      ['그거', 'action.undo', {}],
+    ];
+    for (const [text, entryId, args] of cases) {
+      const w = world({ level: 'local', script: () => out(entryId, args) });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      w.setMetadata(LAST_ACTION_METADATA_KEY, entryId === 'reminder.cancel' ? reminderAction() : todoAction());
+      const decision = await w.decide(text, { now: at(1) });
+      expect(decision.kind, `${text} ${entryId}`).toBe('none');
+      expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === 'no-action-word'), text).toBe(true);
+    }
+    // With the action word the same reference acts as before.
     const w = world({ level: 'local', script: () => out('todo.complete', { ref: '#2' }) });
     w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
-    expect((await w.decide('2번도', { now: at(1) })).kind).toBe('none');
-    expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === 'no-request')).toBe(true);
-    expect((await w.decide('그거', { now: at(1) })).kind).toBe('none');
-    // The same words with a request word act as before.
     expect((await w.decide('2번도 완료', { now: at(1) })).kind).toBe('execute');
-    const open = world({ level: 'local', script: () => out('todo.complete', { ref: '#2' }) });
-    open.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
-    const pending: PendingQuestion = { kind: 'action-target', at: at(1), language: 'ko', entryId: 'todo.complete', source: 'todo', candidates: [{ label: 3, id: 'todo-3' }], args: {} };
-    const decision = await open.decide('2번도', { now: at(1), pending });
-    expect(decision.kind).not.toBe('none');
+  });
+
+  it('"9" against an open question with candidates 2 and 3 asks again; a selector-chosen undo or another entry never runs', async () => {
+    const pending: PendingQuestion = { kind: 'action-target', at: at(1), language: 'ko', entryId: 'todo.complete', source: 'todo', candidates: [{ label: 2, id: 'todo-2' }, { label: 3, id: 'todo-3' }], args: {} };
+    const w = world({ level: 'local', script: () => out('action.undo') });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, todoAction());
+    const nine = await w.decide('9', { now: at(1), pending });
+    expect(nine.kind).toBe('ask');
+    expect(w.calls).toHaveLength(0);
+    // A full request for another entry while the question is open: the selector runs, nothing is written (chat).
+    const other = world({ level: 'local', script: () => out('action.undo') });
+    other.setMetadata(LAST_ACTION_METADATA_KEY, todoAction());
+    expect((await other.decide('방금 거 되돌려줘', { now: at(1), pending })).kind).toBe('none');
+    expect(other.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === 'pending-question')).toBe(true);
+    // The questioned entry on a candidate still runs.
+    const same = world({ level: 'local', script: () => out('todo.complete', { ref: '#3' }) });
+    same.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([2, 3], 0));
+    expect((await same.decide('3번 완료해줘 그걸로', { now: at(1), pending })).kind).toBe('execute');
+  });
+
+  it('a second or another source noun asks: "할 일 말고 2번 메일 취소해줘", "2번 (메일) 취소해줘", "메일2번 취소해줘"', async () => {
+    for (const text of ['할 일 말고 2번 메일 취소해줘', '2번 (메일) 취소해줘', '메일2번 취소해줘']) {
+      const w = world({ level: 'local', script: () => out('todo.cancel', { ref: '#2' }) });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      const decision = await w.decide(text, { now: at(1) });
+      expect(decision.kind, text).toBe('ask');
+      expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === 'other-source'), text).toBe(true);
+    }
+  });
+
+  it('shadow logs `shadow` for the new refusals, and a turn that ends as chat keeps lastSelection (CA review)', async () => {
+    const shadow = world({ level: 'shadow', script: () => out('todo.complete', { ref: '#2' }) });
+    shadow.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    expect((await shadow.decide('2번만요', { now: at(1) })).kind).toBe('none');
+    expect(shadow.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.result === 'shadow' && log.fields?.reason === 'no-action-word')).toBe(true);
+    const w = world({ level: 'local', script: () => out('todo.complete', { ref: '#2' }) });
+    const selection = { actorId: 'owner', entryId: 'mail.list', args: {}, at: at(0) };
+    w.setMetadata(LAST_SELECTION_METADATA_KEY, selection);
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    await w.decide('2번만요', { now: at(1) });
+    expect(w.session().metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual(selection);
+    await w.decide('2번 완료', { now: at(1) });
+    expect(w.session().metadata?.[LAST_SELECTION_METADATA_KEY]).toBeUndefined();
   });
 });

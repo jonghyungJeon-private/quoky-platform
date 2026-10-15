@@ -86,7 +86,6 @@ export type NlValidationFailureReason =
   | 'credential'
   /** A6-D3: a payload span made only of deictic, ordinal or time words ("그거", "첫 번째 거"). */
   | 'deictic-payload'
-
   /** A6-D1: a to-do title with a time expression (to-do or reminder?). */
   | 'time-in-title'
   /** A6-D1: a reminder message with a time expression outside `when`. */
@@ -152,6 +151,12 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     args[name] = checked;
   }
   entry.normalize?.(args);
+  // A6 R1 review: an entry that acts on an existing item needs its own action word in the owner's prose (`actionGrounding`,
+  // a closed catalog vocabulary like `flagGrounding`); a reference alone ("2번도", "그걸로요") never selects the action.
+  if (entry.actionGrounding !== undefined) {
+    const prose = normalizeForMatch(withoutStructures(ctx.groundingText));
+    if (!entry.actionGrounding.some((word) => groundingWordIn(prose, normalizeForMatch(word)))) return { ok: false, reason: 'ungrounded', entryId, arg: 'action' };
+  }
   // A6-D3 (A6 R1 fix): a payload made only of deictic, ordinal or time words gets its fixed reply ("내용을 직접 적어
   // 주세요") before any missing argument is named: "그거 알림으로 만들어줘" has no time either, and the content is the problem.
   for (const spec of entry.args) {

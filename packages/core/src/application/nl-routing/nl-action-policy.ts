@@ -125,7 +125,12 @@ export function nlActionLogFields(audit: NlActionAudit): LogFields {
 
 // ── answering a target question by label (A6-D2) ──────────────────────────────────────────────────────────────────
 
-export type NlLabelChoice = { readonly kind: 'pick'; readonly index: number } | { readonly kind: 'cancel' } | { readonly kind: 'none' };
+export type NlLabelChoice =
+  | { readonly kind: 'pick'; readonly index: number }
+  | { readonly kind: 'cancel' }
+  /** A bare number or ordinal answer that names none of the offered labels (A6 R1 review: asked again, never routed). */
+  | { readonly kind: 'unlisted' }
+  | { readonly kind: 'none' };
 
 const CANCEL = /^(?:취소|그만|됐어(?:요)?|아니(?:야|요)?|아뇨|안\s?해|no|nope|cancel|never\s*mind)$/u;
 const ANSWER_FILLER = /(?:#|번|째|이요|에요|예요|요|으로|로|거|것|그거|이거|걸로|해\s*줘|해\s*주세요|할게|선택|그럼|음|알림|할\s?일|the|one|number|please|,|\.)/gu;
@@ -150,13 +155,13 @@ export function resolveLabelChoice(reply: string, labels: readonly number[]): Nl
   if (leftover.length > 0) return { kind: 'none' };
   if (numbers.length === 1 && ordinals.length === 0) {
     const index = labels.indexOf(numbers[0] as number);
-    return index >= 0 ? { kind: 'pick', index } : { kind: 'none' };
+    return index >= 0 ? { kind: 'pick', index } : { kind: 'unlisted' };
   }
   if (ordinals.length === 1 && numbers.length === 0) {
     const index = (ordinals[0] as number) - 1;
-    return index >= 0 && index < labels.length ? { kind: 'pick', index } : { kind: 'none' };
+    return index >= 0 && index < labels.length ? { kind: 'pick', index } : { kind: 'unlisted' };
   }
-  return { kind: 'none' };
+  return numbers.length + ordinals.length > 0 ? { kind: 'unlisted' } : { kind: 'none' };
 }
 
 // ── fixed copy ───────────────────────────────────────────────────────────────────────────────────────────────────

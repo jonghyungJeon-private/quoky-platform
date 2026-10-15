@@ -136,7 +136,13 @@ const ITEM_SOURCE_WORDS_LATIN: ReadonlyArray<readonly [string, NlItemSource]> = 
  * item of another source. The nouns are the catalog's own aliases and source names, never a phrase list.
  */
 export function nlNamedItemSources(groundingText: string): ReadonlySet<NlItemSource> {
-  const text = normalizeForMatch(groundingText);
+  // Brackets and other punctuation, and a digit glued to a letter ("메일2번", "2번메일", "mail2"), are word boundaries
+  // here, so "2번 (메일)" and "메일2번" name the mail source too (Codex review).
+  const text = normalizeForMatch(groundingText)
+    .replace(/[\p{P}\p{S}]+/gu, ' ')
+    .replace(/(\p{N})(?=\p{L})|(\p{L})(?=\p{N})/gu, '$1$2 ')
+    .replace(/\s+/g, ' ')
+    .trim();
   const named = new Set<NlItemSource>();
   for (const match of text.matchAll(NAMED_NOUN_ALL)) for (const source of ITEM_SOURCE_NOUNS_KO.get(nounKey(match[1] as string)) ?? []) named.add(source);
   for (const [word, source] of ITEM_SOURCE_WORDS_LATIN) if (latinWordIn(text, word)) named.add(source);
@@ -418,10 +424,22 @@ const todoAdd: NlCatalogEntry = {
   },
 };
 
+/**
+ * The closed action vocabularies of the A6 entries that act on an existing item (A6 R1 review, `actionGrounding`): the
+ * owner must say the action itself. Stems match inside a word (Korean endings follow: 완료해줘, 지워줘, 꺼줘, 되돌려
+ * 놔); Latin words are whole words. A message with only a reference ("2번도", "그걸로요", "13번 알림") grounds none.
+ */
+const TODO_COMPLETE_WORDS: readonly string[] = ['완료', '처리', '끝', '마쳤', '마치', '마무리', '다 했', '다했', '해치웠', '체크', 'done', 'complete', 'completed', 'finish', 'finished', 'check off'];
+const CANCEL_WORDS: readonly string[] = ['취소', '캔슬', '삭제', '지워', '지우', '지운', '없애', '없던 걸로', '없던걸로', '제거', '제외', '그만', '필요 없', '필요없', 'cancel', 'remove', 'delete', 'drop', 'scrap'];
+const TODO_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '빼', '안 할', '안할'];
+const REMINDER_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '꺼', '끄', '끈', '멈춰', '안 해도', '안해도', 'stop', 'turn off', 'disable'];
+const UNDO_WORDS: readonly string[] = ['되돌', '돌려', '원래대로', '원상', '원복', '롤백', '무르', '물러', '취소', 'undo', 'revert', 'roll back', 'rollback'];
+
 function transitionEntry(id: 'todo.complete' | 'todo.cancel'): NlCatalogEntry {
   const complete = id === 'todo.complete';
   return {
     id,
+    actionGrounding: complete ? TODO_COMPLETE_WORDS : TODO_CANCEL_WORDS,
     risk: 'LOCAL_WRITE',
     dmOnly: true,
     label: complete ? { ko: '할 일 완료 처리', en: 'Complete a to-do' } : { ko: '할 일 목록에서 빼기', en: 'Take a to-do off the list' },
@@ -493,6 +511,7 @@ const reminderCreate: NlCatalogEntry = {
 
 const reminderCancel: NlCatalogEntry = {
   id: 'reminder.cancel',
+  actionGrounding: REMINDER_CANCEL_WORDS,
   risk: 'LOCAL_WRITE',
   dmOnly: true,
   label: { ko: '알림 취소', en: 'Cancel a reminder' },
@@ -511,6 +530,7 @@ const reminderCancel: NlCatalogEntry = {
 
 const actionUndo: NlCatalogEntry = {
   id: 'action.undo',
+  actionGrounding: UNDO_WORDS,
   risk: 'LOCAL_WRITE',
   dmOnly: true,
   label: { ko: '방금 한 작업 되돌리기', en: 'Undo the last action' },

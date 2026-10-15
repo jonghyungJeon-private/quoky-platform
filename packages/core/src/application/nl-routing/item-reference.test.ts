@@ -306,7 +306,10 @@ describe('a target question is answered by the SHOWN label (A6-D2)', () => {
     expect(resolveLabelChoice('7번', [2, 3, 7])).toEqual({ kind: 'pick', index: 2 });
     expect(resolveLabelChoice('#13', [11, 13])).toEqual({ kind: 'pick', index: 1 });
     expect(resolveLabelChoice('첫 번째 거', [2, 3, 7])).toEqual({ kind: 'pick', index: 0 });
-    expect(resolveLabelChoice('1', [2, 3, 7])).toEqual({ kind: 'none' });
+    // A bare number that is none of the labels is asked again (A6 R1 review), never routed as a new request.
+    expect(resolveLabelChoice('1', [2, 3, 7])).toEqual({ kind: 'unlisted' });
+    expect(resolveLabelChoice('네 번째 거', [2, 3, 7])).toEqual({ kind: 'unlisted' });
+    expect(resolveLabelChoice('열 번째', [2, 3, 7])).toEqual({ kind: 'unlisted' });
     expect(resolveLabelChoice('취소', [2, 3])).toEqual({ kind: 'cancel' });
     expect(resolveLabelChoice('3번 메일 요약해줘', [2, 3])).toEqual({ kind: 'none' });
   });

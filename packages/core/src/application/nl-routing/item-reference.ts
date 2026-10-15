@@ -22,8 +22,9 @@ import { normalizeForMatch } from './selection-input';
  *     source and exactly one item; otherwise ask.
  *  4. A fresh `lastAction` item that differs from a fresh single-item listing of the same source asks.
  * Before all of them (A6 R1 fix, "Same source only"): when the owner's words name item sources with the catalog's nouns
- * ("1번 문서", "2번 메일", "그 알림") and none of them is the entry's source, the reply asks (other-source), for every ref
- * kind, so a selector `source` that disagrees with the owner's noun never reads or changes another source's item.
+ * ("1번 문서", "2번 메일", "그 알림") and that is another source than the entry's, or more than one source (negations such
+ * as "할 일 말고 메일" are not parsed: fail closed), the reply asks (other-source), for every ref kind, so a selector
+ * `source` that disagrees with the owner's noun never reads or changes another source's item.
  * The execution-time check (5: re-read by id, owned, actionable) belongs to the handler.
  */
 
@@ -113,9 +114,10 @@ function pickInSlot(input: NlReferenceInput, slot: ListingSlot): NlReferenceReso
 export function resolveItemReference(input: NlReferenceInput): NlReferenceResolution {
   const { state, ref, source } = input;
   const localWrite = input.entryId !== 'item.summarize';
-  // Same source only: the owner's own source noun wins over the selector's `source` (and entry), for every ref kind.
+  // Same source only: the owner's own source noun wins over the selector's `source` (and entry), for every ref kind. Fail
+  // closed (A6 R1 review): a message naming more than one source ("할 일 말고 2번 메일 취소해줘") or another source asks.
   const named = nlNamedItemSources(input.groundingText);
-  if (named.size > 0 && !named.has(source)) {
+  if (named.size > 1 || (named.size === 1 && !named.has(source))) {
     const meant = named.size === 1 ? [...named][0] : undefined;
     const found = state.replyTo?.listing?.kind === 'listing' ? state.replyTo.listing.slot.source : state.listings.mostRecent?.source;
     return unresolved(input, 'other-source', { ...(meant !== undefined ? { source: meant } : {}), ...(found !== undefined && found !== meant ? { found } : {}) });

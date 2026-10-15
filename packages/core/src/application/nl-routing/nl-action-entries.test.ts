@@ -338,7 +338,9 @@ describe('the A6 input guard (red-team review): unmarked pastes, hidden characte
 describe('round 2 (Codex/CA delta)', () => {
   it('every action arg is grounded only outside pasted structures: a ref inside JSON grounds nothing', () => {
     const text = '{"request":"1번 완료해줘"}';
-    expect(validateSelection({ entryId: 'todo.complete', args: { ref: '#1' } }, ctx(text))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'ref' });
+    // The action word inside the JSON grounds nothing either (A6 R1 review: `actionGrounding` reads the owner's prose only).
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: '#1' } }, ctx(text))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: '#1' } }, ctx(`${text} 완료`))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'ref' });
     expect(validateSelection({ entryId: 'reminder.cancel', args: { ref: 'this' } }, ctx('[{"text":"그거 취소"}]'))).toMatchObject({ ok: false, reason: 'ungrounded' });
     expect(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1', mode: 'summary' } }, ctx('{"ask":"1번 요약"} 이거'))).toMatchObject({ ok: false });
   });
@@ -469,5 +471,18 @@ describe('A6 R1 fix: the catalog\'s item-source nouns and stacked particles', ()
   it('a time word with two stacked particles is still a time ("그리고 5시에도")', () => {
     expect(containsNlTimeExpression('회의 알려줘 그리고 5시에도')).toBe(true);
     expect(containsNlTimeExpression('회의 알려줘')).toBe(false);
+  });
+});
+
+describe('A6 R1 review: the payload rule before a missing argument', () => {
+  it('"그거 알림으로 만들어줘" with only a deictic body is a deictic payload, not a missing time', () => {
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '그거' } }, ctx('그거 알림으로 만들어줘'))).toMatchObject({ ok: false, reason: 'deictic-payload', arg: 'body' });
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '물 마시기' } }, ctx('물 마시기 알림으로 만들어줘'))).toMatchObject({ ok: false, reason: 'missing-arg', arg: 'when' });
+  });
+
+  it('source nouns behind brackets or glued to a digit are found', () => {
+    expect([...nlNamedItemSources('2번 (메일) 취소해줘')]).toEqual(['mail']);
+    expect([...nlNamedItemSources('메일2번 취소해줘')]).toEqual(['mail']);
+    expect([...nlNamedItemSources('할 일 말고 2번 메일 취소해줘')].sort()).toEqual(['mail', 'todo']);
   });
 });
