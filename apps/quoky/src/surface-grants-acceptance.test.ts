@@ -10,6 +10,8 @@ import {
   Capability,
   CapabilityRouter,
   NL_PENDING_METADATA_KEY,
+  LAST_LISTING_METADATA_KEY,
+  withLabelledListing,
   NlActionSwitch,
   NlSelectionService,
   SessionManager,
@@ -540,6 +542,34 @@ describe('owner flows in the production composition', () => {
     expect(await anchorStatus(pr)).toBe('PR_CREATED');
   });
 
+  it('a revoke that lands after the turn read its actor (Codex P1 race): the exact push phrase runs nothing', async () => {
+    setMode('enforce');
+    const deps = depsOf();
+    const actors = deps.actors as { resolveFromContext(context: ConversationContext): Promise<unknown> };
+    const original = actors.resolveFromContext.bind(actors);
+    for (const phrase of ['푸시 실행해줘', '머지 실행'] as const) {
+      const context = freshContext('seeded');
+      await grant(context, ['code', 'github']);
+      await seedAnchor(context, phrase === '머지 실행' ? 'MERGE_APPROVED' : 'PUSH_APPROVED');
+      const status = await anchorStatus(context);
+      gitCalls = [];
+      // The owner's revoke (another turn, in the DM) completes right after this turn took its actor snapshot.
+      actors.resolveFromContext = async (ctx) => {
+        const snapshot = await original(ctx);
+        await grant(context, []);
+        return snapshot;
+      };
+      try {
+        const run = await send(context, phrase);
+        expect(run.text, phrase).toBe("이 채널에서는 '코드 작업' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+      } finally {
+        actors.resolveFromContext = original;
+      }
+      expect(gitCalls, phrase).toEqual([]);
+      expect(await anchorStatus(context), phrase).toBe(status);
+    }
+  });
+
   it('an event-relative reminder reads the calendar: it needs `calendar` as well as `reminder` (Codex P1)', async () => {
     setMode('enforce');
     const reminderOnly = freshContext('seeded');
@@ -628,7 +658,7 @@ describe('selection in a channel without grants (stub selector over the nl-inten
   }
 
 
-  it('an A6 question (which to-do?) in a channel is the A6 DM-only copy; the question is not kept', async () => {
+  it('an A6 target question saved during the turn: kept with the gate off, dropped (and the A6 copy) with it on', async () => {
     const deps = depsOf();
     const previous = deps.nlSelection;
     const actors = { get: (id: string) => storage.actors.get(id), save: (actor: Parameters<typeof storage.actors.save>[0]) => storage.actors.save(actor) };
@@ -642,25 +672,29 @@ describe('selection in a channel without grants (stub selector over the nl-inten
       logger,
       actions: { level: 'local', killSwitch: new NlActionSwitch({ actors, logger }) },
     });
-    // NEEDS_CLARIFICATION: the A6 service asks (a question tagged with the entry) instead of acting.
-    selectorScript = () => JSON.stringify({ entryId: 'todo.complete', args: { match: '보고서' }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [] });
+    // "그거" over a fresh two-item to-do listing: the service saves an `action-target` question DURING the turn.
+    selectorScript = () => JSON.stringify({ entryId: 'todo.complete', args: { ref: 'this' }, ambiguity: 'CLEAR', alternatives: [] });
     try {
-      const results: Record<string, string> = {};
+      const results: Record<string, { text: string; pending: unknown }> = {};
       for (const mode of ['off', 'enforce'] as const) {
         vi.setSystemTime(CASE_START);
         const channel = freshContext('channel');
-        const dm: ConversationContext = { platform: 'discord', channelId: `dm-${channel.userId}`, userId: channel.userId, direct: true };
         setMode('enforce');
-        await send(dm, '할 일 추가: 보고서 초안');
-        vi.setSystemTime(CASE_START + 1000);
-        await send(dm, '할 일 추가: 보고서 검토');
+        await send(channel, '도움말'); // opens the channel session (help is always allowed)
+        const session = (await storage.sessions.findActiveByContext(channel.platform, channel.channelId, channel.threadId))!;
+        const actorId = await ensureActor(channel);
+        await sessionManager.updateMetadataEntry({ id: session.id }, LAST_LISTING_METADATA_KEY, () =>
+          withLabelledListing(undefined, actorId, 'todo', [{ label: 1, id: 'todo-a' }, { label: 2, id: 'todo-b' }], new Date().toISOString(), 'listing'),
+        );
         setMode(mode);
-        results[mode] = (await send(channel, '보고서 그거 완료 처리해줘')).text;
-        const session = await storage.sessions.findActiveByContext(channel.platform, channel.channelId, channel.threadId);
-        if (mode === 'enforce') expect(session?.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+        const text = (await send(channel, '그거 완료 처리해줘')).text;
+        const live = await storage.sessions.get(session.id);
+        results[mode] = { text, pending: live?.metadata?.[NL_PENDING_METADATA_KEY] };
       }
-      expect(results.enforce).toBe('이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.');
-      expect(results.off).not.toBe(results.enforce);
+      expect(results.off!.text).toContain('1번, 2번');
+      expect(results.off!.pending).toMatchObject({ kind: 'action-target', entryId: 'todo.complete' });
+      expect(results.enforce!.text).toBe('이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.');
+      expect(results.enforce!.pending).toBeUndefined();
     } finally {
       deps.nlSelection = previous;
       selectorScript = undefined;
