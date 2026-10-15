@@ -71,6 +71,8 @@ Details: the ADR-0104 D1 amendment note in `DECISIONS.md`.
 - **Eval.** Final v22 after the CA/Codex review round, 3 Haiku runs (446 cases): 96.5%, 95.7%, 96.5%, calendar 92.4-96.7%,
   0 wrong captures, D12/S1 gates pass 3 of 3; v20 baseline 92.4%. `neg-042` probe captures 6/20 → 0/20. The A6 action
   corpus was not re-evaluated on `nl-select.v23`.
+- **Follow-up (branch `claude/v5-span-canon`, A7 implementation note):** "X부터 Y까지" with both bounds explicit shows the one
+  allowed span inside the selected period (live: "다음 주 월요일부터 금요일까지" read as next week → 10/19-10/23).
 - **Owner-approved:** the seven A7 decisions and the D12 batch `a7u-01..10`, `a7s-01..15` (2026-10-15).
 
 ### v5 calendar accuracy (ADR-0120 A5 implementation note 3) — on branch `claude/v5-calendar-accuracy` (2026-10-14)

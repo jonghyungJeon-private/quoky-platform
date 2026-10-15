@@ -796,6 +796,14 @@ describe('ADR-0120 amendment A7: until-<weekday> and the clear past-tense statem
     expect(h.logs.find((log) => log.event === 'nl_selection.shadow')?.fields).toMatchObject({ entryId: 'calendar.events', agree: true, outcome: 'none' });
   });
 
+  it('A7 span canonical form: "다음 주 월요일부터 금요일까지" read as next week executes Monday..Friday (live 2026-10-15)', async () => {
+    const h = harness({ script: [out('calendar.events', { range: 'next-week' })] });
+    expect(await h.decide('다음 주 월요일부터 금요일까지 일정')).toMatchObject({
+      kind: 'execute',
+      command: { entryId: 'calendar.events', args: { range: '2026-10-19..2026-10-23' }, range: { days: 5 } },
+    });
+  });
+
   it('a past-tense question still executes', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'yesterday' })] });
     expect(await h.decide('어제 일정 뭐 있었지?')).toMatchObject({ kind: 'execute', command: { args: { range: 'yesterday' } } });
