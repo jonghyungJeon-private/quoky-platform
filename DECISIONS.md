@@ -23786,7 +23786,9 @@ bound, run on Thursday 2026-10-15 (Asia/Seoul). Reports are local under `data/ev
   10/19-10/25); A7 decision 4 requires a two-weekday span to equal exactly [start day, end day], and the closed symbols
   have no Monday-Friday form, while the model must not compute dates (D4 step 4).
 - **Rule (Core-computed, the same mechanism as the `until-*` canonical form of decision 4; no ratified text changes).**
-  When both bounds are explicit (부터 / from / since and 까지 / until / through …), each resolves per the existing A7
+  When the message has exactly one start-bounded and one end-bounded weekday and no other weekday mention (one 부터 /
+  from / since and one 까지 / until / through …; "이번 주 월요일부터 금요일까지, 다음 주 월요일부터 금요일까지" is not
+  narrowed, Codex review), each resolves per the existing A7
   rules, and the selected period CONTAINS exactly one allowed [start day, end day] span, the period is spelled as that
   explicit span, `YYYY-MM-DD..YYYY-MM-DD` (Core's dates). It is never wider than the selected period. A period that
   contains no allowed span, or two (English "from this Wednesday through Friday" may be 10/14 or 10/21), is still asked;

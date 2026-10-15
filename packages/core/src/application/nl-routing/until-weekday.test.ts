@@ -215,6 +215,9 @@ describe('A7 canonical form: a period holding the end-bounded day but not ending
       ['다음 주 월요일부터 금요일까지 일정', 'this-week', refused],
       // Two allowed spans inside the period ("from this Wednesday" may be 10/14 or 10/21): never pick, ask.
       ['show my calendar from this Wednesday through Friday', '10-12..10-25', refused],
+      // More than one start / end pair or weekday mention: no narrowing (Codex on 9d7905e).
+      ['이번 주 월요일부터 금요일까지, 다음 주 월요일부터 금요일까지 일정', '10-12..10-25', refused],
+      ['다음 주 월요일부터 금요일까지, 월요일 오전 일정', 'next-week', refused],
       // Not both bounds explicit (no 부터 / from): only the exact span passes.
       ['this Wednesday through Friday', 'this-week', refused],
       ['this Wednesday through Friday', '10-12..10-16', refused],

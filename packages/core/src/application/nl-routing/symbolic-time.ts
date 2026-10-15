@@ -749,7 +749,9 @@ function multiWeekdaySpans(mentions: readonly NlWeekdayMention[], now: IsoTimest
     const endDay = addLocalDays(today, (end.weekday - weekdayOf(today) + 7) % 7);
     spans.push([addLocalDays(endDay, -gap), endDay]);
   }
-  return { spans, grounded: marked.length > 0 };
+  // Narrowing needs exactly one start-bounded and one end-bounded weekday and nothing else ("이번 주 월요일부터 금요일까지,
+  // 다음 주 월요일부터 금요일까지" has more bounds: no narrowing, asked).
+  return { spans, grounded: mentions.length === 2 && marked.length === 1 && ends.length === 1 && marked[0] !== ends[0] };
 }
 
 /** The two `until-*` forms of the owner's weekday, the owner's own spelling first (다음 주 → until-next-*). */
