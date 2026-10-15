@@ -688,37 +688,44 @@ export function nlMultiWeekdayBoundKeeps(range: NlResolvedRange | undefined, men
   const ends = mentions.filter((mention) => mention.until === true);
   if (ends.length === 0) return undefined;
   if (range === undefined || new Set(ends.map((mention) => mention.weekday)).size > 1) return false;
-  const starts = mentions.filter((mention) => mention.start === true);
-  if (new Set(starts.map((mention) => mention.weekday)).size > 1) return false;
-  // Each bound resolves to ONE day. An anchored bound is its anchored day: a Korean week word places it in that Monday-based
-  // week; an English direction alone takes the nearest such day that way ("next Monday" on a Thursday is 10/19, never
-  // 10/26), "this" the day of the current week. A bound without either is placed from the other bound: the end is the
-  // first such day on or after the start (the same week, or the next when it comes earlier in the week), the start the
-  // last such day on or before the end. With neither anchored, the end is the nearest such day from today (today included).
+  const end = ends[0] as NlWeekdayMention;
+  // The start is the start-bounded weekday (부터, from, since), or else the one other weekday named ("this Wednesday
+  // through Friday"); more than one candidate start is no single span.
+  const marked = mentions.filter((mention) => mention.start === true);
+  const startPool = marked.length > 0 ? marked : mentions.filter((mention) => mention.weekday !== end.weekday);
+  if (new Set(startPool.map((mention) => mention.weekday)).size !== 1) return false;
+  const start = startPool[0] as NlWeekdayMention;
+  // The span must EXACTLY equal [startDay, endDay]: startDay an allowed resolution of the start bound, endDay the first
+  // end weekday on or after it. An anchored bound's allowed days: a Korean week word gives that week's day; an English
+  // direction "next" / "last" the nearest such day that way; "this" the day of the current week or of the next seven days
+  // (the A5 note 2 rule). An unanchored start is the last such day on or before an anchored end; with neither anchored, the
+  // end is the nearest such day from today (today included).
   const today = localDateOf(now, timeZone);
   const monday = addLocalDays(today, -((weekdayOf(today) + 6) % 7));
-  const anchoredDay = (mention: NlWeekdayMention): LocalDate | undefined => {
-    if (mention.week !== undefined) return addLocalDays(monday, { last: -7, this: 0, next: 7, 'after-next': 14 }[mention.week] + ((mention.weekday + 6) % 7));
-    if (mention.direction === 'future') return addLocalDays(today, (mention.weekday - weekdayOf(today) + 7) % 7 || 7);
-    if (mention.direction === 'past') return addLocalDays(today, -((weekdayOf(today) - mention.weekday + 7) % 7 || 7));
-    if (mention.direction === 'this') return addLocalDays(monday, (mention.weekday + 6) % 7);
-    return undefined;
+  const anchoredDays = (mention: NlWeekdayMention): LocalDate[] => {
+    if (mention.week !== undefined) return [addLocalDays(monday, { last: -7, this: 0, next: 7, 'after-next': 14 }[mention.week] + ((mention.weekday + 6) % 7))];
+    if (mention.direction === 'future') return [addLocalDays(today, (mention.weekday - weekdayOf(today) + 7) % 7 || 7)];
+    if (mention.direction === 'past') return [addLocalDays(today, -((weekdayOf(today) - mention.weekday + 7) % 7 || 7))];
+    if (mention.direction === 'this') return [addLocalDays(monday, (mention.weekday + 6) % 7), addLocalDays(today, (mention.weekday - weekdayOf(today) + 7) % 7)];
+    return [];
   };
-  const end = ends[0] as NlWeekdayMention;
-  const start = starts[0];
-  const first = range.startDate;
-  const last = lastDayOf(range);
-  const same = (left: LocalDate, right: LocalDate | undefined) => right !== undefined && compareLocalDates(left, right) === 0;
-  const gap = start === undefined ? 0 : (end.weekday - start.weekday + 7) % 7;
-  const endDay = anchoredDay(end);
-  const startDay = start === undefined ? undefined : anchoredDay(start);
-  if (endDay !== undefined) {
-    if (!same(last, endDay)) return false;
-    return start === undefined || same(first, startDay ?? addLocalDays(endDay, -gap));
+  const same = (left: LocalDate, right: LocalDate) => compareLocalDates(left, right) === 0;
+  const gap = (end.weekday - start.weekday + 7) % 7;
+  const endDays = anchoredDays(end);
+  const startDays = anchoredDays(start);
+  const spans: Array<readonly [LocalDate, LocalDate]> = [];
+  if (startDays.length > 0) {
+    for (const day of startDays) {
+      const endDay = addLocalDays(day, gap);
+      if (endDays.length === 0 || endDays.some((candidate) => same(candidate, endDay))) spans.push([day, endDay]);
+    }
+  } else if (endDays.length > 0) {
+    for (const endDay of endDays) spans.push([addLocalDays(endDay, -gap), endDay]);
+  } else {
+    const endDay = addLocalDays(today, (end.weekday - weekdayOf(today) + 7) % 7);
+    spans.push([addLocalDays(endDay, -gap), endDay]);
   }
-  if (start !== undefined && startDay !== undefined) return same(first, startDay) && same(last, addLocalDays(startDay, gap));
-  if (weekdayOf(last) !== end.weekday || !same(last, addLocalDays(today, (end.weekday - weekdayOf(today) + 7) % 7))) return false;
-  return start === undefined || same(first, addLocalDays(last, -gap));
+  return spans.some(([from, to]) => same(range.startDate, from) && same(lastDayOf(range), to));
 }
 
 /** The two `until-*` forms of the owner's weekday, the owner's own spelling first (다음 주 → until-next-*). */

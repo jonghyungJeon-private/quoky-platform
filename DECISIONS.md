@@ -23532,7 +23532,9 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
      day (부터, from, since; when one is given) to the end-bounded day, each in its own anchor (a bound without a week word
      is placed from the other bound's resolved day — the first such day on or after the start, never a bare direction:
      "다음 주 월요일부터 금요일까지" and "from next Monday through Friday" = 10/19..10/23 only; an English direction alone
-     takes the nearest such day that way), and without any week word the nearest such
+     takes the nearest such day that way, English "this" the current week's or the coming one per A5 note 2). The span
+     must EXACTLY equal [start day, first end weekday on or after it], no superset or subset; without a "부터"/from word
+     the one other weekday named is the start ("this Wednesday through Friday"). Without any week word, the nearest such
      span (on Thursday 10/15 "목요일부터 토요일까지" is only 10/15..10/17); otherwise it is refused.
      No symbol names such a span except an `until-*` that starts today, so this mostly asks; it never lets an unrelated
      period through. Several weekdays without an end bound are unchanged (the A5 guard steps aside), but take no
