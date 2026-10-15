@@ -24763,10 +24763,11 @@ scripted selector; the Drive fixture's name and text say "이 문서 요약해�
 
 ### ADR-0120 amendment A8 — Jira release listings: a `jira.release` READ entry (one fix version for every assignee, or a project's release list), three named read queries, and release links only on the configured Jira site (Proposed — awaiting the owner's yes) (2026-10-15)
 
-- **Status:** **Proposed.** The owner approved the work on 2026-10-15 ("응 진행해": design, review, ratification,
-  implementation, deployment today). Implemented on branch `claude/v5-jira-release`, not merged, not deployed. Owner
-  sheet: `docs/plans/a8-jira-release-owner-sheet.md`. No new flag: the entry is offered whenever the Jira connector is
-  configured, so ratification is the gate for the merge.
+- **Status:** **Accepted by the owner on 2026-10-15** with two changes (decisions 2 and 7; see "ADR-0120 amendment A8
+  ratification record" below, which supersedes the default scope and the channel rule written here). Originally
+  Proposed; the owner approved the work on 2026-10-15 ("응 진행해"). Implemented on branch `claude/v5-jira-release`.
+  Owner sheet: `docs/plans/a8-jira-release-owner-sheet.md`. No new flag: the entry is offered whenever the Jira
+  connector is configured.
 - **Amends:** D1 (the catalog gains one READ entry, with corpus cases, the D1 rule); ADR-0100 D7 (three additive named
   queries; `ConnectorItem` gains optional `assignee` and `statusCategory`, `ConnectorResult` an optional `truncated`); the
   A2 yield rule (the Jira keyword forms also yield a release or every-assignee qualifier); the prompt follows the A5 note 3
@@ -24902,3 +24903,47 @@ scripted selector; the Drive fixture's name and text say "이 문서 요약해�
   corpus dispatch runs every `a8*` case through the real runtime with the yield on and off.
 - **Not run:** the D12 evaluation gate over the whole corpus (Strict, needs a plan digest and the owner's yes), and any
   live Jira call (the version list of OP26 was not probed).
+
+### ADR-0120 amendment A8 ratification record, review fixes and live probe (2026-10-15)
+
+- **Status change:** A8 goes from Proposed to **Accepted**. All nine owner decisions as recommended, except:
+  - **Decision 2 (default scope), verbatim: "default로는 당연히 내 담당 기준".** `jira.release` defaults to `scope: mine`;
+    `scope: all` is a grounded value (`valueGrounding`) that counts only with the owner's explicit words (전체, 모든 담당,
+    담당 상관없이, 담당자 상관없이, all assignees …, `JIRA_SCOPE_ALL_WORDS`) or carried from the previous selection. An
+    ungrounded `all` is dropped by the existing repair path, which leaves the default `mine` (never widened silently).
+  - **Decision 7 (channels).** The owner wants a general per-surface permission model (DM vs per-channel grants,
+    channels default-deny), to be designed separately as **A9**. Until then: every-assignee scope, the project list
+    (the ambiguity candidates) and the release list (and the nearby release names) are DM-only; in a channel the reply
+    is "전체 담당 릴리스 조회는 DM에서만 할 수 있어요." (or the list refusal) and nothing is read for the refused part. The
+    owner's own items of a named release in a channel follow `jira.issues` (not DM-only).
+  - **Decision 8 (D12).** The 35 `a8*` cases are approved; the gold of every case changed by decision 2 was adjusted
+    (`a8-02`, `-15`, `-19`, `-21` now `scope: all`; `a8-13`, `-14`, `-28` the default; priors of `a8-02`, `-14`, `-15`).
+- **Chief Architect review (APPROVE WITH CHANGES), fixed:**
+  - the lookup deadline now stops the chain: an `AbortSignal` is checked before every query (a request in flight is
+    not cancelled; the result is `TIMEOUT`), and ambiguous projects are narrowed on the first page (50) of each release
+    list (`ReleasesQueryParams.limit`);
+  - an HTTP 400 of `release-items` is `NOT_FOUND` only when its error body names the fix version; any other 400 is
+    `INVALID_RESPONSE` (the body is inspected, never kept);
+  - without a project, the closed release words are stripped before querying ("20261015 배포건" → 20261015), and the
+    words as written are tried once when the stripped name is unknown ("Release 1.0");
+  - the count line says the counts cover the shown items when the page is partial (`표시한 N건 기준 … 일부만 표시`); the
+    order stays `key ASC` (an order by status category was not adopted: it is unverified on this site);
+  - the port comment on `statusCategory` is corrected.
+- **Rule question (Core and Jira URL formats).** `siteReleaseUrl` is removed: the release page link is only the
+  adapter's own release URL (none when the release was not listed). The link **parser** stays in Core, on precedent:
+  ADR-0100 D6 already parses Jira browse URLs and GitHub issue/PR URLs in the Core work grammar
+  (`work-chat-command.ts`, `JIRA_BROWSE_URL`); A8 parses the owner's words the same way and only the validated key and
+  id leave Core.
+- **Live probe (owner-approved, read-only, the service's own `.env.local` Jira config and identity mapping; GET only, the
+  configured host; nothing written; only keys, names, ids and counts printed).** 39 visible projects; the project is
+  `OP26` "차란차 플랫폼 운영 2026" (also OP21/OP24/OP25 "차란차 플랫폼 운영 20xx"); 31 OP26 versions; the release is
+  `16555` "배포일_20261015(목)" (unreleased). The first matcher found neither ("차란차 운영 2026" is not a substring of the
+  name; "20261015" is not the whole version name), so matching gained two deterministic steps: a project whose name
+  holds all of the owner's words as whole words (→ OP26; "차란차 운영" → OP21, OP24, OP25, OP26, narrowed by the release
+  to OP26), and the one release whose name holds the owner's words as whole tokens (→ 16555; two such releases →
+  not found with nearby names, never a guess). Scripted dry run of "OP26 20261015": `scope: mine` 0 issues;
+  `scope: all` 17 issues (완료 1 · 진행 중 16 · 할 일 0), not partial. Without a project the quoted name "20261015" is not a
+  Jira version name on this site, so a bare release needs the project (or the previous selection's project) — the reply
+  says so.
+- **Prompt versions.** `nl-select.v27` / `v28` are this branch's numbers. Whichever of this branch and the A6 v26 branch
+  lands second takes the next free numbers on rebase and re-pins the goldens (`nl-select.v*.prompts.json`).

@@ -5,7 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Unreleased — ADR-0120 amendment A8 (Proposed): Jira release listings, `jira.release`, prompt `nl-select.v27` / `v28` (2026-10-15)
+## Unreleased — ADR-0120 amendment A8 Accepted: default scope mine, channel rule, review fixes, live probe (2026-10-15)
+
+- **Owner decisions:** release listings default to the owner's own items ("default로는 당연히 내 담당 기준"); every
+  assignee only on explicit words. Every-assignee scope and the project / release lists are DM-only until A9.
+- **Review fixes:** deadline checked before every query; first-page narrowing; 400 → NOT_FOUND only for the fix version;
+  release words stripped (raw retried); partial counts labelled; no Jira URL built in Core.
+- **Live probe (read-only):** OP26 "차란차 플랫폼 운영 2026", release "배포일_20261015(목)"; matching now uses whole words
+  and whole tokens. Dry run: mine 0, all 17 (완료 1 · 진행 중 16 · 할 일 0).
+- D12: the 35 `a8*` cases approved, gold adjusted for the default scope.
+
+## Unreleased — ADR-0120 amendment A8 (as first proposed): Jira release listings, `jira.release`, prompt `nl-select.v27` / `v28` (2026-10-15)
 
 - **New READ entry `jira.release`** (the owner's live request of 2026-10-15): the issues of one Jira release (fix version)
   for every assignee by default, grouped like Jira's release report (완료 / 진행 중 / 할 일 with counts; key, summary,
