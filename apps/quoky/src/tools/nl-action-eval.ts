@@ -91,6 +91,11 @@ const REASONS = [
   'no-action', 'undo-of-undo', 'already-final', 'changed', 'fired', 'past-time', 'event-gone', 'limit', 'echo-mismatch',
   'bulk', 'not-dm', 'capped', 'stopped',
 ] as const;
+/**
+ * The reasons of a clarification question (which item, which list, which mode, restate the item): `acceptsAnyQuestion`
+ * counts only these, never a refusal (input guard, cap, kill switch, payload or time rule; CA review).
+ */
+const CLARIFICATION_REASONS: ReadonlySet<string> = new Set(['out-of-range', 'expired', 'ambiguous', 'stale', 'other-source', 'none', 'conflict', 'content-mode', 'missing-arg', 'invalid-arg', 'ungrounded']);
 const SOURCES = ['todo', 'reminder', 'mail', 'drive'] as const;
 type Source = (typeof SOURCES)[number];
 
@@ -207,7 +212,8 @@ export function validateActionCorpus(corpus: NlActionCorpus): string[] {
       const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
       const result = validateSelection({ entryId: expect.entryId, args: expect.args }, { offered, groundingText: prepared.groundingText, now: '2026-10-14T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true, ...(golden.fixture?.prior !== undefined ? { previousArgs: golden.fixture.prior.args } : {}) });
       const refusedByRule = expect.outcome !== 'execute' && ['deictic-payload', 'time-in-title', 'time-outside-when', 'bulk', 'credential'].includes(expect.reason ?? '');
-      if (!result.ok && !refusedByRule) problems.push(`${where}: gold does not validate (${result.reason} ${result.arg ?? ''})`);
+      // An `acceptsAnyQuestion` gold scores the question, not its args (owner D12 batch 2026-10-15).
+      if (!result.ok && !refusedByRule && expect.acceptsAnyQuestion !== true) problems.push(`${where}: gold does not validate (${result.reason} ${result.arg ?? ''})`);
       else if (result.ok && canonical(result.value.args) !== canonical(expect.args)) problems.push(`${where}: gold args not canonical`);
     }
   }
@@ -377,7 +383,7 @@ export function scoreActionDecision(golden: NlActionCase, raw: string, decision:
   if (gold.outcome !== 'execute') {
     if (isAction && executed.target !== undefined) return { ...base, outcome: 'wrong-target', got: executed.entryId, ...withSpan };
     if (executed !== undefined) return { ...base, outcome: 'miss', got: executed.entryId, ...withSpan };
-    if (gold.acceptsAnyQuestion === true && decision.kind === 'ask') return { ...base, outcome: 'hit', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
+    if (gold.acceptsAnyQuestion === true && decision.kind === 'ask' && reason !== undefined && CLARIFICATION_REASONS.has(reason)) return { ...base, outcome: 'hit', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
     const named = output?.entryId === gold.entryId && canonical(withoutMode(output.args, gold.args)) === canonical(withoutMode(gold.args, gold.args));
     // A gold refusal or question with no args (`{}`: the refused argument has no canonical value) is scored by its closed
     // reason instead: the selector named the gold entry and Core refused or asked for exactly the gold reason (A6 R1).
@@ -575,6 +581,11 @@ export interface NlReadRegressionCase {
    * (2) of 2026-10-15, A6 R1). Read mode (A6 off) keeps `expect`.
    */
   readonly a6Relabel?: { readonly entryId: string; readonly args: NlArgs; readonly batch: string };
+  /**
+   * A6-on scoring skips this case: an anchored grammar owns the message, so the selector never sees it at runtime, and the
+   * A6 action it could name would not be the grammar's outcome (A6 R1 CA review: `neg-094`, a daily brief schedule).
+   */
+  readonly a6Skip?: { readonly reason: 'grammar-owned'; readonly batch: string };
   /** The content-free reference state before the turn (read-regression only): the listing the owner just saw. */
   readonly context?: NlReadRegressionContext;
 }
@@ -649,7 +660,7 @@ export async function runReadRegression(input: {
     const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is NlReadRegressionCase => golden !== undefined);
     const worker = async (): Promise<void> => {
       for (let golden = queue.shift(); golden !== undefined; golden = queue.shift()) {
-        const prompt = readRegressionPrompt(golden, input.now());
+        const prompt = golden.a6Skip !== undefined ? undefined : readRegressionPrompt(golden, input.now());
         if (prompt === undefined) {
           records.push({ run, id: golden.id, outcome: 'skipped', relabeled: golden.a6Relabel !== undefined, latencyMs: 0 });
           continue;

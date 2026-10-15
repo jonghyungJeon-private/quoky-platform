@@ -5053,15 +5053,11 @@
       "id": "neg-094",
       "text": "매일 아침 8시에 브리핑 알려줘",
       "expect": "none",
-      "a6Relabel": {
-        "entryId": "reminder.create",
-        "args": {
-          "body": "브리핑",
-          "when": "매일 아침 8시"
-        },
-        "batch": "A6-R1-anchored-2026-10-15"
+      "a6Skip": {
+        "reason": "grammar-owned",
+        "batch": "A6-R1-review-2026-10-15"
       },
-      "note": "scheduled brief creation, not an on-demand brief [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none]"
+      "note": "scheduled brief creation, not an on-demand brief [owner decision (2) 2026-10-15, A6 R1: an anchored action command; with the A6 entries offered (eval:nl --mode read-regression) the A6 action is the correct gold (a6Relabel, scored apart); read mode (A6 off) keeps expect none] [A6 R1 CA review: the anchored reminder grammar parses it as a DAILY BRIEF reminder (bodyKind BRIEF) before any selection; an A6 reminder.create would store a TEXT reminder, so the A6-on run neither rewards nor scores it (a6Skip); for the owner]"
     },
     {
       "id": "neg-095",

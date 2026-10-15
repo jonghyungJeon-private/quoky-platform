@@ -3,6 +3,7 @@ import { buildSelectionPrompt, Capability, isNlActionEntryId, parseNlRef, prepar
 import {
   NL_ACTION_EVAL_ENTRIES,
   buildActionPlan,
+  runReadRegression,
   computeActionPlanDigest,
   decideActionCase,
   loadActionCorpus,
@@ -156,6 +157,9 @@ describe('scoring (A6-D7): a wrong target is never a question; negatives capture
     };
     expect(await score(clarify, answer('todo.cancel', { ref: '#13' }, 'NEEDS_CLARIFICATION'))).toBe('hit');
     expect(await score(clarify, answer('none'))).toBe('miss');
+    // Only a clarification counts, never a refusal (CA review): a deictic payload is refused, not asked.
+    const refused: NlActionCase = { id: 'a6-t-12', family: 'paraphrase', text: '그거 알림으로 만들어줘', expect: { entryId: 'reminder.create', args: {}, outcome: 'ask', reason: 'ambiguous', acceptsAnyQuestion: true } };
+    expect(await score(refused, answer('reminder.create', { body: '그거' }))).toBe('miss');
     const undoToo: NlActionCase = {
       id: 'a6-t-11',
       family: 'reference',
@@ -243,7 +247,7 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
 
   it('owner decision (2) of 2026-10-15 (A6 R1): the 11 anchored action commands keep `none` in read mode and carry their A6 action as the A6-on gold, canonical and scored apart', () => {
     const anchored = cases.filter((golden) => golden.a6Relabel?.batch === 'A6-R1-anchored-2026-10-15');
-    expect(anchored.map((golden) => golden.id).sort()).toEqual(['neg-085', 'neg-086', 'neg-088', 'neg-089', 'neg-090', 'neg-091', 'neg-092', 'neg-093', 'neg-094', 'neg-127', 'neg-128']);
+    expect(anchored.map((golden) => golden.id).sort()).toEqual(['neg-085', 'neg-086', 'neg-088', 'neg-089', 'neg-090', 'neg-091', 'neg-092', 'neg-093', 'neg-127', 'neg-128']);
     const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
     for (const golden of anchored) {
       const relabel = golden.a6Relabel!;
@@ -256,6 +260,17 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
       // With the A6 entries offered the action is a relabeled hit, not an action capture; another action entry is a miss.
       expect(scoreReadRegression(golden, answer(relabel.entryId, relabel.args), NOW), golden.id).toMatchObject({ outcome: 'hit', relabeled: true });
     }
+  });
+
+  it('a grammar-owned case (`a6Skip`, neg-094) is not sent to the selector in A6-on scoring', async () => {
+    const golden = cases.find((candidate) => candidate.id === 'neg-094')!;
+    expect(golden.a6Skip?.reason).toBe('grammar-owned');
+    expect(golden.a6Relabel).toBeUndefined();
+    let calls = 0;
+    const plan = buildActionPlan('nl-read-regression', ['neg-094'], 'sha', { model: 'haiku', runs: 1, concurrency: 1 });
+    const records = await runReadRegression({ cases: [golden], plan, provider: provider(() => { calls += 1; return answer('reminder.create', { body: '브리핑', when: '매일 아침 8시' }); }), now: () => NOW });
+    expect(calls).toBe(0);
+    expect(records.map((record) => record.outcome)).toEqual(['skipped']);
   });
 
   it('a read case captured by an action or ITEM_READ entry is `action-capture` and fails the run; a relabeled case is scored apart', () => {

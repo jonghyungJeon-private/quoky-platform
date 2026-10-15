@@ -9101,9 +9101,10 @@
      "ref": "#1"
     },
     "outcome": "ask",
-    "reason": "out-of-range"
+    "reason": "out-of-range",
+    "acceptsAnyQuestion": true
    },
-   "note": "was ref-080 [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): the open question also wrote its candidates as the most recent to-do listing (labels 2, 3), as the runtime does]"
+   "note": "was ref-080 [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): the open question also wrote its candidates as the most recent to-do listing (labels 2, 3), as the runtime does] [A6 R1 review: a bare number that is none of the open question's labels is asked again by the answer path (acceptsAnyQuestion); for the owner]"
   },
   {
    "id": "a6-reference-none-003",
