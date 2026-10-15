@@ -2,7 +2,12 @@ import {
   ConnectorQueryError,
   ConnectorQueryName,
   connectorQueryErrorReasonForStatus,
+  CONNECTOR_CATALOG_MAX_ITEMS,
+  CONNECTOR_CONTAINER_KEY,
+  CONNECTOR_RELEASE_ID,
   parsePersonalWorkParams,
+  parseReleaseItemsParams,
+  parseReleasesParams,
   resolveConnectorQueryTimeoutMs,
   toConnectorDueDate,
   toConnectorTimestamp,
@@ -12,6 +17,7 @@ import {
   type ConnectorResult,
   type Metadata,
   type ParsedPersonalWorkParams,
+  type ParsedReleaseItemsParams,
   type PersonalWorkSort,
   type PersonalWorkWindowField,
 } from '@quoky/core';
@@ -20,6 +26,11 @@ const DESCRIPTION_LIMIT = 500;
 const RAW_JSON_LIMIT = 20_000;
 const STATUS_LIMIT = 100;
 const SEARCH_FIELDS = 'summary,status,duedate,updated,description';
+/** ADR-0120 A8: the fields of a release listing (no description: a release report shows key, summary, assignee, status). */
+const RELEASE_ITEM_FIELDS = 'summary,status,assignee';
+/** One page of the project / version listings; at most CONNECTOR_CATALOG_MAX_ITEMS items in all. */
+const CATALOG_PAGE_SIZE = 50;
+const NAME_LIMIT = 200;
 
 export interface JiraConnectorConfig {
   /** Jira Cloud host, with or without an https:// prefix (for example, example.atlassian.net). */
@@ -110,17 +121,131 @@ export class JiraConnectorProvider implements ConnectorProvider {
   }
 
   async query(input: ConnectorQuery): Promise<ConnectorResult> {
-    // Named queries only: Jira never receives caller-supplied JQL (ADR-0100 D7).
-    if (input?.query !== ConnectorQueryName.PERSONAL_WORK) {
-      throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported query');
+    // Named queries only: Jira never receives caller-supplied JQL (ADR-0100 D7, ADR-0120 A8).
+    switch (input?.query) {
+      case ConnectorQueryName.PERSONAL_WORK:
+        return this.personalWork(input.params);
+      case ConnectorQueryName.CONTAINERS:
+        return this.containers();
+      case ConnectorQueryName.RELEASES:
+        return this.releases(input.params);
+      case ConnectorQueryName.RELEASE_ITEMS:
+        return this.releaseItems(input.params);
+      default:
+        throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported query');
     }
-    const parsed = parsePersonalWorkParams(input.params, 'jira connector');
+  }
+
+  private async personalWork(params: Metadata | undefined): Promise<ConnectorResult> {
+    const parsed = parsePersonalWorkParams(params, 'jira connector');
     const { limit } = parsed;
     const url = new URL('/rest/api/3/search/jql', this.baseUrl);
     url.searchParams.set('jql', personalWorkJql(parsed, this.now()));
     url.searchParams.set('fields', SEARCH_FIELDS);
     url.searchParams.set('maxResults', String(limit));
+    const payload = await this.getJson(url);
+    if (!isRecord(payload) || !Array.isArray(payload.issues)) {
+      throw new JiraConnectorResponseError();
+    }
+    const items = payload.issues.slice(0, limit).map((issue) => this.mapIssue(issue));
+    return { source: this.source, items };
+  }
 
+  /**
+   * ADR-0120 A8: the projects this account can see (`/rest/api/3/project/search`, read-only), as key and name only, at
+   * most CONNECTOR_CATALOG_MAX_ITEMS. No owner text is sent: Core matches a project name against this list.
+   */
+  private async containers(): Promise<ConnectorResult> {
+    const items: ConnectorItem[] = [];
+    let truncated = false;
+    for (let startAt = 0; ; startAt += CATALOG_PAGE_SIZE) {
+      const url = new URL('/rest/api/3/project/search', this.baseUrl);
+      url.searchParams.set('startAt', String(startAt));
+      url.searchParams.set('maxResults', String(CATALOG_PAGE_SIZE));
+      url.searchParams.set('orderBy', 'key');
+      const page = pageOf(await this.getJson(url));
+      for (const value of page.values) {
+        if (!isRecord(value) || typeof value.key !== 'string' || !CONNECTOR_CONTAINER_KEY.test(value.key)) continue;
+        const name = typeof value.name === 'string' && value.name.trim().length > 0 ? value.name : value.key;
+        items.push({ id: value.key, title: this.redactToken(name).slice(0, NAME_LIMIT), container: value.key });
+      }
+      if (page.last || page.values.length === 0) break;
+      if (items.length >= CONNECTOR_CATALOG_MAX_ITEMS || startAt + CATALOG_PAGE_SIZE >= CONNECTOR_CATALOG_MAX_ITEMS) {
+        truncated = true;
+        break;
+      }
+    }
+    return { source: this.source, items: items.slice(0, CONNECTOR_CATALOG_MAX_ITEMS), ...(truncated ? { truncated } : {}) };
+  }
+
+  /**
+   * ADR-0120 A8: the released and unreleased (not archived) versions of one project, newest first
+   * (`/rest/api/3/project/{key}/version`, read-only), at most CONNECTOR_CATALOG_MAX_ITEMS.
+   */
+  private async releases(params: Metadata | undefined): Promise<ConnectorResult> {
+    const { container } = parseReleasesParams(params, 'jira connector');
+    const items: ConnectorItem[] = [];
+    let truncated = false;
+    for (let startAt = 0; ; startAt += CATALOG_PAGE_SIZE) {
+      const url = new URL(`/rest/api/3/project/${encodeURIComponent(container)}/version`, this.baseUrl);
+      url.searchParams.set('startAt', String(startAt));
+      url.searchParams.set('maxResults', String(CATALOG_PAGE_SIZE));
+      url.searchParams.set('orderBy', '-sequence');
+      url.searchParams.set('status', 'released,unreleased');
+      const page = pageOf(await this.getJson(url));
+      for (const value of page.values) {
+        if (!isRecord(value) || typeof value.id !== 'string' || !CONNECTOR_RELEASE_ID.test(value.id) || typeof value.name !== 'string') continue;
+        if (value.archived === true) continue;
+        const item: ConnectorItem = {
+          id: value.id,
+          title: this.redactToken(value.name).slice(0, NAME_LIMIT),
+          status: value.released === true ? 'released' : 'unreleased',
+          container,
+          url: `${this.baseUrl}/projects/${encodeURIComponent(container)}/versions/${value.id}/tab/release-report-all-issues`,
+        };
+        const releaseDate = toConnectorDueDate(value.releaseDate);
+        if (releaseDate) item.dueDate = releaseDate;
+        items.push(item);
+      }
+      if (page.last || page.values.length === 0) break;
+      if (items.length >= CONNECTOR_CATALOG_MAX_ITEMS || startAt + CATALOG_PAGE_SIZE >= CONNECTOR_CATALOG_MAX_ITEMS) {
+        truncated = true;
+        break;
+      }
+    }
+    return { source: this.source, items: items.slice(0, CONNECTOR_CATALOG_MAX_ITEMS), ...(truncated ? { truncated } : {}) };
+  }
+
+  /**
+   * ADR-0120 A8: the issues of one release (fix version), any assignee unless `assignee` is set. The JQL is built from
+   * a validated project key, a numeric version id or a quoted, escaped version name, and a quoted identity; nothing else.
+   * A 400 for a version name or id means Jira does not know that version for this account: `NOT_FOUND`.
+   */
+  private async releaseItems(params: Metadata | undefined): Promise<ConnectorResult> {
+    const parsed = parseReleaseItemsParams(params, 'jira connector');
+    const url = new URL('/rest/api/3/search/jql', this.baseUrl);
+    url.searchParams.set('jql', releaseItemsJql(parsed));
+    url.searchParams.set('fields', RELEASE_ITEM_FIELDS);
+    url.searchParams.set('maxResults', String(parsed.limit));
+    let payload: unknown;
+    try {
+      payload = await this.getJson(url);
+    } catch (error) {
+      if (error instanceof JiraConnectorHttpError && error.status === 400) {
+        throw new ConnectorQueryError('NOT_FOUND', 'jira connector: release not found');
+      }
+      throw error;
+    }
+    if (!isRecord(payload) || !Array.isArray(payload.issues)) throw new JiraConnectorResponseError();
+    const items = payload.issues.slice(0, parsed.limit).map((issue) => this.mapReleaseIssue(issue));
+    const more =
+      payload.issues.length > parsed.limit ||
+      payload.isLast === false ||
+      (typeof payload.nextPageToken === 'string' && payload.nextPageToken.length > 0);
+    return { source: this.source, items, ...(more ? { truncated: true } : {}) };
+  }
+
+  private async getJson(url: URL): Promise<unknown> {
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
@@ -137,19 +262,37 @@ export class JiraConnectorProvider implements ConnectorProvider {
 
     if (!response.ok) throw mapHttpError(response.status);
 
-    let payload: unknown;
     try {
-      payload = await response.json();
+      return await response.json();
     } catch {
       throw new JiraConnectorResponseError();
     }
+  }
 
-    if (!isRecord(payload) || !Array.isArray(payload.issues)) {
+  private mapReleaseIssue(value: unknown): ConnectorItem {
+    if (!isRecord(value) || typeof value.key !== 'string' || value.key.trim().length === 0) {
       throw new JiraConnectorResponseError();
     }
-
-    const items = payload.issues.slice(0, limit).map((issue) => this.mapIssue(issue));
-    return { source: this.source, items };
+    const key = value.key;
+    const fields = isRecord(value.fields) ? value.fields : undefined;
+    const rawTitle = typeof fields?.summary === 'string' && fields.summary.trim().length > 0 ? fields.summary : key;
+    const item: ConnectorItem = {
+      id: key,
+      title: this.redactToken(rawTitle),
+      url: `${this.baseUrl}/browse/${encodeURIComponent(key)}`,
+    };
+    const status = isRecord(fields?.status) ? fields.status : undefined;
+    if (status !== undefined && typeof status.name === 'string' && status.name.trim().length > 0) {
+      item.status = this.redactToken(status.name.trim()).slice(0, STATUS_LIMIT);
+    }
+    const category = isRecord(status?.statusCategory) ? status.statusCategory.key : undefined;
+    const group = typeof category === 'string' ? STATUS_CATEGORY_GROUP[category] : undefined;
+    if (group !== undefined) item.statusCategory = group;
+    const assignee = isRecord(fields?.assignee) && typeof fields.assignee.displayName === 'string' ? fields.assignee.displayName.trim() : '';
+    if (assignee.length > 0) item.assignee = this.redactToken(assignee).slice(0, NAME_LIMIT);
+    const container = projectKey(key, undefined);
+    if (container) item.container = container;
+    return item;
   }
 
   private mapIssue(value: unknown): ConnectorItem {
@@ -243,6 +386,40 @@ function relativeMinutes(instant: string, nowMs: number, bound: 'from' | 'to'): 
   return minutes < 0 ? `-${-minutes}m` : `${minutes}m`;
 }
 
+/**
+ * ADR-0120 A8: the JQL of a release listing. Every value is either a closed shape re-validated by the port parser (a
+ * project key, a numeric version id) or a quoted, escaped string literal (a version name, an identity); owner text never
+ * reaches JQL unquoted. The order is constant.
+ */
+export function releaseItemsJql(params: ParsedReleaseItemsParams): string {
+  const parts: string[] = [];
+  if (params.container !== undefined) {
+    if (!CONNECTOR_CONTAINER_KEY.test(params.container)) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: invalid container key');
+    parts.push(`project = ${jqlString(params.container)}`);
+  }
+  if ('id' in params.release) {
+    if (!CONNECTOR_RELEASE_ID.test(params.release.id)) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: invalid release id');
+    parts.push(`fixVersion = ${params.release.id}`);
+  } else {
+    parts.push(`fixVersion = ${jqlString(params.release.name)}`);
+  }
+  if (params.assignee !== undefined) parts.push(`assignee = ${jqlString(params.assignee)}`);
+  return `${parts.join(' AND ')} ORDER BY key ASC`;
+}
+
+/** Jira's status category keys as the neutral groups (a closed lookup, own properties only). */
+const STATUS_CATEGORY_GROUP: Readonly<Record<string, 'todo' | 'in-progress' | 'done'>> = Object.assign(Object.create(null) as Record<string, 'todo' | 'in-progress' | 'done'>, {
+  new: 'todo',
+  indeterminate: 'in-progress',
+  done: 'done',
+});
+
+/** One page of a Jira paginated listing (`values`, `isLast`); anything else is an unexpected response. */
+function pageOf(payload: unknown): { readonly values: readonly unknown[]; readonly last: boolean } {
+  if (!isRecord(payload) || !Array.isArray(payload.values)) throw new JiraConnectorResponseError();
+  return { values: payload.values, last: payload.isLast !== false };
+}
+
 /** The closed sort names as constant ORDER BY clauses (live UAT R8): owner text is never interpolated into them. */
 const JQL_SORT_ORDER: Readonly<Record<PersonalWorkSort, string>> = {
   oldest: 'created ASC',
@@ -258,7 +435,7 @@ const JQL_WINDOW_FIELD: Readonly<Record<PersonalWorkWindowField, string>> = {
 };
 
 /** A quoted, escaped JQL string literal. */
-function jqlString(value: string): string {
+export function jqlString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 

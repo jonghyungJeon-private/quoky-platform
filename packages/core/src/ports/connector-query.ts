@@ -12,6 +12,15 @@ import type { Metadata } from '../domain';
 export const ConnectorQueryName = {
   PERSONAL_WORK: 'personal-work',
   SEARCH: 'search',
+  /**
+   * ADR-0120 amendment A8: the containers (Jira projects) the configured account can see, as `{ id: key, title: name }`
+   * items, at most {@link CONNECTOR_CATALOG_MAX_ITEMS}. No params; owner text is never sent.
+   */
+  CONTAINERS: 'containers',
+  /** ADR-0120 amendment A8: the releases (Jira fix versions) of one container ({@link ReleasesQueryParams}). */
+  RELEASES: 'releases',
+  /** ADR-0120 amendment A8: the items in one release, any assignee unless `assignee` is set ({@link ReleaseItemsQueryParams}). */
+  RELEASE_ITEMS: 'release-items',
 } as const;
 export type ConnectorQueryName = (typeof ConnectorQueryName)[keyof typeof ConnectorQueryName];
 
@@ -75,6 +84,36 @@ export interface SearchQueryParams {
   text: string;
   limit?: number;
 }
+
+/**
+ * ADR-0120 amendment A8: `ConnectorQuery.params` for `releases`. `container` is a container key (a Jira project key,
+ * `^[A-Z][A-Z0-9_]+$`, at most 20 characters) that Core resolved against the `containers` listing or read from a link on
+ * the configured site; the adapter re-validates it and never interpolates anything else.
+ */
+export interface ReleasesQueryParams {
+  container: string;
+}
+
+/**
+ * ADR-0120 amendment A8: `ConnectorQuery.params` for `release-items`. Exactly one of `releaseId` (digits only) and
+ * `releaseName` (1..100 characters, no control characters; the adapter quotes and escapes it). `container` bounds the
+ * release to one container. `assignee` (an actor external id) limits the items to that assignee; absent = any assignee.
+ */
+export interface ReleaseItemsQueryParams {
+  container?: string;
+  releaseId?: string;
+  releaseName?: string;
+  assignee?: string;
+  limit?: number;
+}
+
+/** The most `containers` / `releases` items an adapter returns (names only, for Core's deterministic matching). */
+export const CONNECTOR_CATALOG_MAX_ITEMS = 200;
+export const CONNECTOR_RELEASE_NAME_MAX_LENGTH = 100;
+/** A container key: a Jira project key (an upper-case letter, then upper-case letters, digits or `_`). */
+export const CONNECTOR_CONTAINER_KEY = /^[A-Z][A-Z0-9_]{1,19}$/;
+/** A release id: a positive decimal integer (a Jira version id). */
+export const CONNECTOR_RELEASE_ID = /^[1-9][0-9]{0,17}$/;
 
 export const CONNECTOR_QUERY_DEFAULT_LIMIT = 20;
 export const CONNECTOR_QUERY_MAX_LIMIT = 20;
@@ -270,6 +309,63 @@ export function parseSearchParams(params: Metadata | undefined, source = 'connec
     );
   }
   return { text, limit: resolveConnectorQueryLimit(params?.limit, source) };
+}
+
+export interface ParsedReleasesParams {
+  container: string;
+}
+
+/** Validates `releases` params (ADR-0120 A8). Failures are value-free `UNSUPPORTED_QUERY` errors. */
+export function parseReleasesParams(params: Metadata | undefined, source = 'connector'): ParsedReleasesParams {
+  const container = params?.container;
+  if (typeof container !== 'string' || !CONNECTOR_CONTAINER_KEY.test(container)) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: a valid container key is required`);
+  }
+  return { container };
+}
+
+export interface ParsedReleaseItemsParams {
+  container?: string;
+  release: { readonly id: string } | { readonly name: string };
+  assignee?: string;
+  limit: number;
+}
+
+/**
+ * Validates `release-items` params (ADR-0120 A8): a container key of the closed shape, exactly one of a numeric release
+ * id and a release name (1..100 characters, no control characters), an optional assignee identity, the usual limit.
+ */
+export function parseReleaseItemsParams(params: Metadata | undefined, source = 'connector'): ParsedReleaseItemsParams {
+  const container = params?.container;
+  if (container !== undefined && (typeof container !== 'string' || !CONNECTOR_CONTAINER_KEY.test(container))) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: invalid container key`);
+  }
+  const id = params?.releaseId;
+  const name = params?.releaseName;
+  if ((id === undefined) === (name === undefined)) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: exactly one release id or name is required`);
+  }
+  let release: ParsedReleaseItemsParams['release'];
+  if (id !== undefined) {
+    if (typeof id !== 'string' || !CONNECTOR_RELEASE_ID.test(id)) throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: invalid release id`);
+    release = { id };
+  } else {
+    const trimmed = typeof name === 'string' ? name.replace(/\s+/g, ' ').trim() : '';
+    if (trimmed.length === 0 || Array.from(trimmed).length > CONNECTOR_RELEASE_NAME_MAX_LENGTH || hasControlCharacters(String(name))) {
+      throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: invalid release name`);
+    }
+    release = { name: trimmed };
+  }
+  const assignee = params?.assignee;
+  if (assignee !== undefined && (typeof assignee !== 'string' || assignee.trim().length === 0 || assignee.trim().length > ACTOR_EXTERNAL_ID_MAX_LENGTH || hasControlCharacters(assignee))) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: invalid assignee identity`);
+  }
+  return {
+    ...(container !== undefined ? { container } : {}),
+    release,
+    ...(assignee !== undefined ? { assignee: assignee.trim() } : {}),
+    limit: resolveConnectorQueryLimit(params?.limit, source),
+  };
 }
 
 /** Normalizes a provider timestamp to an ISO-8601 string; returns undefined when it cannot be parsed. */
