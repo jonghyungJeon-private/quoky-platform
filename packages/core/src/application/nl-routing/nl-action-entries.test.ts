@@ -471,4 +471,3 @@ describe('A6 R1 fix: the catalog\'s item-source nouns and stacked particles', ()
     expect(containsNlTimeExpression('회의 알려줘')).toBe(false);
   });
 });
-
