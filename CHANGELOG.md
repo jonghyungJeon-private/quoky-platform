@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6-D2 clarification: "이 / 그 / 저 + noun" is a deictic; held relabels applied; INT-4 cases approved (2026-10-15)
+
+- **A6-D2 (owner-approved clarification).** A determiner 이/그/저 before an item-source noun of the catalog ("이 문서",
+  "그 메일", "저 알림") grounds `ref: this` / `recent` exactly like 그거/이거, and a payload made only of one asks like
+  "그거". The nouns are derived from the mail, Drive, to-do and reminder list entries' aliases; no phrase list, no
+  prompt change. Resolution is unchanged: one listed item reads it, several ask, another source asks.
+- **Corpus.** `neg-099` → `item.summarize {source: drive, ref: this, mode: summary}` with a one-item Drive listing;
+  `uat5r6-07` un-held and respelled `ref: this` (one-item mail listing); both in `eval:nl --mode read-regression` only.
+  The 41 INT-4 cases `v5int4-001..041` are marked owner-approved (D12 batch 2026-10-15).
+- Tests: grounding and resolver rows, A6 acceptance through `AppModule` (scripted selector, incl. a red-team check that
+  listed content never grounds a reference), read-regression scoring of both relabels. `QUOKY_NL_ACTIONS` stays `off`.
+
 ## Unreleased — owner batch of 2026-10-15: ADR-0112 amendments accepted, D12 corpus approvals, A6 relabels, T1 timedOnly and prompt `nl-select.v24` / `v25`
 
 - **ADR-0112 amendments 1 and 2 Accepted** (Slack channel-message delete; Jira create and its undo): all 20 owner

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases were owner-approved on 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) were owner-approved in the D12 batch of 2026-10-15. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) were owner-approved in the D12 batch of 2026-10-15. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) were owner-approved in the D12 batch of 2026-10-15. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events). D12 owner batch 2026-10-15 (second part, through the orchestrator): approved uat5r1..r9 (23 cases from the 2026-10-14 live edge-case run), uat5gy-01..06, uat5wd-01..07, uat5ca-01..10 and the 8 grammar-metadata-only edits of ADR-0120 A2 implementation note 2 (confluence-001, -005, -007, todo-016, -020, brief-017, neg-219, help-038). Still PENDING the owner's batch approval: the 41 INT-4 cases (v5int4-001..041). T1 extension (owner-approved 2026-10-15): calendar-005, -016, -018, -029, -032, -034 and -057 gain timedOnly (a meeting word in a listing question means timed events), the earlier gold kept in each note.",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases were owner-approved on 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) were owner-approved in the D12 batch of 2026-10-15 (ADR-0120 D12). GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) were owner-approved in the D12 batch of 2026-10-15. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) were owner-approved in the D12 batch of 2026-10-15. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) were owner-approved in the D12 batch of 2026-10-15. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events). D12 owner batch 2026-10-15 (second part, through the orchestrator): approved uat5r1..r9 (23 cases from the 2026-10-14 live edge-case run), uat5gy-01..06, uat5wd-01..07, uat5ca-01..10 and the 8 grammar-metadata-only edits of ADR-0120 A2 implementation note 2 (confluence-001, -005, -007, todo-016, -020, brief-017, neg-219, help-038). Still PENDING the owner's batch approval: the 41 INT-4 cases (v5int4-001..041). T1 extension (owner-approved 2026-10-15): calendar-005, -016, -018, -029, -032, -034 and -057 gain timedOnly (a meeting word in a listing question means timed events), the earlier gold kept in each note.",
   "cases": [
     {
       "id": "jira-001",
@@ -5054,7 +5054,25 @@
         "args": {}
       },
       "expect": "none",
-      "note": "single document summary, not drive.files [A6 relabel to item.summarize {source: drive, ref: this, mode: summary} approved by the owner 2026-10-15 but NOT applied: the A6-D2 closed deictics have no bare determiner 이 (\"이 문서\"), so Core refuses ref this as ungrounded and the gold could never be produced; needs an A6-D2 decision]"
+      "note": "single document summary, not drive.files [A6 relabel, owner-approved 2026-10-15 (A6 ratification decision 10, docs/plans/nl-action-relabel-batch.md); applied after the owner's A6-D2 clarification of 2026-10-15 (\"이/그/저 + item-source noun\" is a closed deictic, DECISIONS.md): with the A6 entries offered (eval:nl --mode read-regression) the gold is a6Relabel, item.summarize, scored apart, with context.lastListing as the Reference context; read mode (A6 off, eval:nl --mode run) keeps expect none: item.summarize is not offered there]",
+      "a6Relabel": {
+        "entryId": "item.summarize",
+        "args": {
+          "source": "drive",
+          "ref": "this",
+          "mode": "summary"
+        },
+        "batch": "A6-relabel-2026-10-15"
+      },
+      "context": {
+        "lastListing": {
+          "source": "drive",
+          "labels": [
+            1
+          ],
+          "ageMinutes": 1
+        }
+      }
     },
     {
       "id": "neg-100",
@@ -8331,7 +8349,7 @@
           "range": "today"
         }
       },
-      "note": "spacing error 지라이슈 [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "spacing error 지라이슈 [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-002",
@@ -8345,7 +8363,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "English-Korean mix, casual [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "English-Korean mix, casual [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-003",
@@ -8356,7 +8374,7 @@
           "status": "in-progress"
         }
       },
-      "note": "word order: source last [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "word order: source last [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-004",
@@ -8369,7 +8387,7 @@
           "range": "yesterday"
         }
       },
-      "note": "role + window + symbolic day in one casual phrase [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "role + window + symbolic day in one casual phrase [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-005",
@@ -8378,7 +8396,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "indirect ask for the to-do list [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "indirect ask for the to-do list [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-006",
@@ -8389,7 +8407,7 @@
           "range": "tomorrow"
         }
       },
-      "note": "banmal and a typo [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "banmal and a typo [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-007",
@@ -8400,7 +8418,7 @@
           "range": "this-week"
         }
       },
-      "note": "period after the verb [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "period after the verb [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-008",
@@ -8418,7 +8436,7 @@
           "range": "this-week"
         }
       },
-      "note": "English [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "English [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-009",
@@ -8429,7 +8447,7 @@
           "unread": true
         }
       },
-      "note": "no spaces, clipped question [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "no spaces, clipped question [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-010",
@@ -8440,7 +8458,7 @@
           "from": "김과장"
         }
       },
-      "note": "sender without honorific [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "sender without honorific [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-011",
@@ -8452,7 +8470,7 @@
           "from": "Kim"
         }
       },
-      "note": "English, two args [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "English, two args [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-012",
@@ -8463,7 +8481,7 @@
           "kind": "spreadsheet"
         }
       },
-      "note": "kind word, no drive word [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "kind word, no drive word [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-013",
@@ -8475,7 +8493,7 @@
           "kind": "pdf"
         }
       },
-      "note": "name and kind [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "name and kind [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-014",
@@ -8486,7 +8504,7 @@
           "keyword": "장애"
         }
       },
-      "note": "imperative banmal [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "imperative banmal [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-015",
@@ -8497,7 +8515,7 @@
           "keyword": "온보딩 가이드"
         }
       },
-      "note": "noun-final request [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "noun-final request [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-016",
@@ -8508,7 +8526,7 @@
           "query": "review-requests"
         }
       },
-      "note": "colloquial 깃헙 [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "colloquial 깃헙 [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-017",
@@ -8517,7 +8535,7 @@
         "entryId": "github.items",
         "args": {}
       },
-      "note": "English, default query [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "English, default query [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-018",
@@ -8526,7 +8544,7 @@
         "entryId": "reminder.list",
         "args": {}
       },
-      "note": "indirect ask for reminders [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "indirect ask for reminders [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-019",
@@ -8535,7 +8553,7 @@
         "entryId": "brief.today",
         "args": {}
       },
-      "note": "noun-final request [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "noun-final request [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-020",
@@ -8544,7 +8562,7 @@
         "entryId": "brief.today",
         "args": {}
       },
-      "note": "compound request across two sources: the single cross-source entry, never two reads [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "compound request across two sources: the single cross-source entry, never two reads [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-021",
@@ -8558,7 +8576,7 @@
         "entryId": "help.topic",
         "args": {}
       },
-      "note": "capability question [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "capability question [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-022",
@@ -8572,7 +8590,7 @@
           "keyword": "로그인"
         }
       },
-      "note": "follow-up without spacing [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "note": "follow-up without spacing [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]",
       "prior": {
         "entryId": "jira.issues",
         "args": {
@@ -8592,7 +8610,7 @@
           "keyword": "스크럼"
         }
       },
-      "note": "narrowing follow-up, no 그 중에 [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "note": "narrowing follow-up, no 그 중에 [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]",
       "prior": {
         "entryId": "calendar.events",
         "args": {
@@ -8609,7 +8627,7 @@
           "range": "today"
         }
       },
-      "note": "follow-up replaces the unread flag [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "note": "follow-up replaces the unread flag [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]",
       "prior": {
         "entryId": "mail.list",
         "args": {
@@ -8626,7 +8644,7 @@
           "kind": "spreadsheet"
         }
       },
-      "note": "kind follow-up with a synonym [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "note": "kind follow-up with a synonym [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]",
       "prior": {
         "entryId": "drive.files",
         "args": {}
@@ -8641,7 +8659,7 @@
           "range": "next-week"
         }
       },
-      "note": "correction follow-up [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "note": "correction follow-up [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]",
       "prior": {
         "entryId": "calendar.events",
         "args": {
@@ -8658,7 +8676,7 @@
           "query": "review-requests"
         }
       },
-      "note": "follow-up switches the query [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]",
+      "note": "follow-up switches the query [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]",
       "prior": {
         "entryId": "github.items",
         "args": {}
@@ -8668,85 +8686,85 @@
       "id": "v5int4-028",
       "text": "지라라는 이름 어디서 왔어?",
       "expect": "none",
-      "note": "chit-chat that names a capability word: no lookup [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "chit-chat that names a capability word: no lookup [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-029",
       "text": "투두 앱 갈아탈까 고민인데 뭐가 나아?",
       "expect": "none",
-      "note": "advice about to-dos, not the owner's list [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "advice about to-dos, not the owner's list [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-030",
       "text": "일정 관리 앱 하나 추천해줘",
       "expect": "none",
-      "note": "product recommendation, not the owner's calendar [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "product recommendation, not the owner's calendar [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-031",
       "text": "메일 쓸 때 인사말 어떻게 시작하는 게 좋아?",
       "expect": "none",
-      "note": "writing advice, not mail access [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "writing advice, not mail access [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-032",
       "text": "슬랙이랑 디스코드 차이가 뭐야",
       "expect": "none",
-      "note": "comparison question [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "comparison question [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-033",
       "text": "구글 드라이브 용량 늘리는 법 알려줘",
       "expect": "none",
-      "note": "how-to about the product itself [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "how-to about the product itself [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-034",
       "text": "깃허브 가입하는 방법 알려줘",
       "expect": "none",
-      "note": "how-to about the service [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "how-to about the service [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-035",
       "text": "confluence가 뭐하는 툴이야?",
       "expect": "none",
-      "note": "definition question [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "definition question [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-036",
       "text": "알림 소리 끄는 법 알려줘 아이폰에서",
       "expect": "none",
-      "note": "phone setting, not Quoky reminders [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "phone setting, not Quoky reminders [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-037",
       "text": "이슈 트래킹 도입하면 뭐가 좋아?",
       "expect": "none",
-      "note": "general question [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "general question [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-038",
       "text": "tell me a joke about jira",
       "expect": "none",
-      "note": "English chit-chat naming a source [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "English chit-chat naming a source [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-039",
       "text": "how do I write a good email subject line?",
       "expect": "none",
-      "note": "English writing advice [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "English writing advice [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-040",
       "text": "스프린트 회의 진행 팁 좀",
       "expect": "none",
-      "note": "meeting advice, not the calendar [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "meeting advice, not the calendar [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-041",
       "text": "어제 본 영화 이야기 해줄까 오늘 일정 얘기는 말고",
       "expect": "none",
-      "note": "explicitly not a calendar request [INT-4 batch: agent-drafted edge case, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "explicitly not a calendar request [INT-4 batch: agent-drafted edge case, owner-approved D12 batch 2026-10-15 (ADR-0120 D12)]"
     },
     {
       "id": "uat5r1-01",
@@ -8833,7 +8851,25 @@
         "entryId": "mail.list",
         "args": {}
       },
-      "note": "summarizing a listed mail is not a list request [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15] [A6 relabel HELD (not applied): the owner-approved relabel batch (2026-10-15, docs/plans/nl-action-relabel-batch.md) gives item.summarize {source: mail, ref: recent, mode: summary} with a one-item mail listing; held pending the owner's confirmation of the ref spelling, because A6-D2 grounds and resolves recent and this alike while the v24/v25 prompt example for this very sentence (\"그거 요약해줘\", verbatim) uses this, which also makes the case contaminated for scoring. Read mode keeps expect none]"
+      "note": "summarizing a listed mail is not a list request [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15] [A6 relabel, owner-approved 2026-10-15 (A6 ratification decision 10, docs/plans/nl-action-relabel-batch.md); ref respelled recent -> this by the owner on 2026-10-15 (matches the v25 prompt example and the A6 corpus); the text is verbatim a v24/v25 prompt example, so its score is contaminated and reported apart: with the A6 entries offered (eval:nl --mode read-regression) the gold is a6Relabel, item.summarize, scored apart, with context.lastListing as the Reference context; read mode (A6 off, eval:nl --mode run) keeps expect none: item.summarize is not offered there]",
+      "a6Relabel": {
+        "entryId": "item.summarize",
+        "args": {
+          "source": "mail",
+          "ref": "this",
+          "mode": "summary"
+        },
+        "batch": "A6-relabel-2026-10-15"
+      },
+      "context": {
+        "lastListing": {
+          "source": "mail",
+          "labels": [
+            1
+          ],
+          "ageMinutes": 1
+        }
+      }
     },
     {
       "id": "uat5r2-08",
