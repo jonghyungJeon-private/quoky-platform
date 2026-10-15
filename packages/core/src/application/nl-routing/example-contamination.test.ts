@@ -27,6 +27,11 @@ import { NL_WAVE1_ENTRIES } from './wave1-entries';
 // then read `git diff` of the baseline: new entries carry reason "UNREVIEWED" and must be replaced with a real reason (or,
 // better, the example must be rewritten so the entry disappears). A baseline may only shrink in a normal change; growth is
 // accepted only with an owner-approved reason (a prompt-text change also needs its own gate run).
+//
+// Documented deviation (owner-accepted 2026-10-16; ADR-0123 D5 note, selector-rag-plan RAG-0): the pair measure alone gave
+// 58 pair findings, nearly all from a shared previous-selection JSON dominating the concatenated text. A pair finding now also
+// needs the message alone to be >= PAIR_TEXT_FLOOR (0.3) close to the gold message and not already a text-level finding for
+// that gold case (58 -> 8 on the v30 baseline).
 
 const KNOWN_URL = new URL('./example-contamination.known.v1.json', import.meta.url);
 const REGEN = process.env.QUOKY_RAG0_REGEN === '1';

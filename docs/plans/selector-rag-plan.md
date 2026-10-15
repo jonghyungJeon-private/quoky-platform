@@ -56,6 +56,10 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
     `{ example, goldId, tokenJ, charJ, contain, kind: exact|near|pair|output }` and the short-text review list
     `{ example, reviewer, reason }`.
   - When the A6 gate branch merges, its v35 overlap test can call the shared helper instead of its own copy.
+- **Implementation note (deviation, owner-accepted 2026-10-16).** The pair measure as written gave 58 pair findings, almost all
+  from the shared previous-selection JSON dominating the concatenated text. A pair finding also requires the message alone to be
+  >= 0.3 close (token or char-3 Jaccard) to the gold message and not already a text-level finding for that gold case: 58 -> 8.
+  Regenerate the baseline with `pnpm rag0:regen` and review every new reason by hand.
 - **Expected first result** (scratch measurement 2026-10-16 over the source literals; the real test decides): 3 exact
   copies (`오후만` = `uat5r2-10`, `목요일 거는?` = `uat5r4-16`, `그거 요약해줘` = `uat5r6-07`) and 6–7 more pairs at token
   Jaccard ≥ 0.6 (for example `드라이브에서 폴더 공유하는 법 알려줘` vs `neg-014`, `오늘까지 마감인 지라 일 있어?` vs

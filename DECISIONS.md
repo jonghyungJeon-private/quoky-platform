@@ -26299,6 +26299,10 @@ the last round under the fix-loop cap.**
      defined there. Recorded with the calibration set. The audit writes a small committed record (pool digest, gold digest, space id, τ,
      the flagged pairs, which must be empty for the pool); a suite test fails when the record's digests no longer match
      the committed pool and gold files, so a pool or gold change without a fresh audit cannot merge.
+   - **Implementation note (RAG-0, owner-accepted 2026-10-16).** The pair comparison also requires the message alone to be
+     >= 0.3 close (token or character-3-gram Jaccard) to the gold message and not already a text-level finding for that gold
+     case, because a shared previous-selection JSON otherwise dominates the concatenation (58 pair findings became 8). The
+     thresholds above are unchanged.
    - **Calibration test.** As in v35, a test asserts the measure flags the known near-copies, so a weaker tokenizer cannot
      silently pass everything.
 
