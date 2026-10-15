@@ -17,8 +17,9 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * symbols (one example: 금요일까지 = until-fri) and two rule-2 lines on remarks about the past. v23 = the A6 text on top
  * of v22. v24 (the owner's T1 extension of 2026-10-15, A5 implementation note 3) = v22 with the calendar `timedOnly` arg
  * description saying "when the owner asks about meetings" instead of "only when the owner narrows to meetings" (its
- * examples unchanged), and `timedOnly` in the two meeting examples
- * ("내일 미팅 있나?", "다음 미팅이 몇 시더라"). v25 = the A6 text on top of v24.
+ * examples unchanged), `timedOnly` in the two meeting examples ("내일 미팅 있나?", "다음 미팅이 몇 시더라"), and one
+ * clause at the end of the range-symbols line (the weekend symbols are Saturday and Sunday together, 주말). v25 = the A6 text on top
+ * of v24.
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v24';
 /**
@@ -29,6 +30,9 @@ export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v24';
 export const NL_ACTION_PROMPT_VERSION = 'nl-select.v25';
 
 const DESCRIPTION_MAX_CHARS = 320;
+
+/** v24: what a weekend symbol covers (a calendar question about "다음 주말" was read as next Saturday alone). */
+const WEEKEND_NOTE = 'this-weekend / next-weekend: Saturday and Sunday together (주말), never one day';
 
 export interface NlSelectionPromptInput {
   readonly entries: readonly NlCatalogEntry[];
@@ -246,7 +250,7 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '7. ambiguity is NEEDS_CLARIFICATION only when two entries fit equally well; list them in alternatives (at most 2).',
     '   Otherwise CLEAR with "alternatives": [].',
     '',
-    `Range symbols: ${NL_RANGE_SYMBOLS.join(', ')}; mon..sun (the nearest such day: 금요일 = fri); this-mon..this-sun (that day of this week: 이번 주 금요일 = this-fri);`,
+    `Range symbols: ${NL_RANGE_SYMBOLS.join(', ')}; mon..sun (the nearest such day: 금요일 = fri); this-mon..this-sun (that day of this week: 이번 주 금요일 = this-fri); ${WEEKEND_NOTE};`,
     'next-mon..next-sun and last-mon..last-sun (that day of next / last week: 지난주 금요일 = last-fri, 다음 주 수 = next-wed);',
     'MM-DD for a date the owner names (10월 20일 -> 10-20); MM-DD..MM-DD for a span of at most 31 days.',
     'until-mon..until-sun (from today through the nearest such day: 금요일까지 = until-fri); until-next-mon..until-next-sun (from today through that day of next week);',
