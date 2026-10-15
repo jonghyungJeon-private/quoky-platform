@@ -14,7 +14,7 @@ Source of truth: `docs/plans/nl-action-corpus-schema.md` (R0, branch `claude/v5-
 | `.../nl-action.unmapped.v1.json` | 4 | not loaded; draft shape |
 | `.../agent-redteam.a6-unmapped.v1.json` | 13 | not loaded; draft shape |
 
-Totals: 522 + 26 + 4 = 552 action cases (the 544 drafted plus 8 reference cases added to keep at least 80 loaded reference cases); 157 + 13 = 170 red-team cases. No case was dropped.
+Totals: 525 + 26 + 4 = 555 action cases (pre-relabel: 522 + 26 + 4 = 552, the 544 drafted plus 8 reference cases, plus the 3 allowed owner-relay cases 901/901/902 added 2026-10-15); 155 + 2 relabelled + 13 = 170 red-team cases. No case was dropped.
 
 ## Ids
 - Action ids became `a6-<family>-<entry or topic>-<nnn>`; red-team ids became `rt-a6-<attack>-<nnn>` (numbers start at 101, the seed uses 001..). The old draft id is in each case `note` (`was act-todo-add-001`).
