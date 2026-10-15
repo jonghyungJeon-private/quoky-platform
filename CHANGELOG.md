@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 prompt `nl-select.v36` (2026-10-16)
+
+- **Changed (inert, `QUOKY_NL_ACTIONS` off).** A6 prompt rules 3 and 8 made consistent: a how-to or method question about a
+  Quoky feature in any form is help.topic, a how-to about other software is none, a command-shaped message (imperative or
+  "label: value") is never help.topic. Read prompt v30 unchanged. Golden fixtures and pins bumped to `nl-select.v36`.
+- **Gate (Haiku 3+3), not a pass.** Action 1 of 3, read 0 of 3 (as v35). help.topic 5/5 every run; colon-command captures
+  (neg-110 / neg-111) 0 of 3 (v35: 2 of 3); wrong captures 0 / 1 / 1 (neg-051). See DECISIONS.
+
 ## Unreleased — ADR-0120 selector cold-start bound (2026-10-16)
 
 - **Changed.** The NL selector bound is 8000 ms (the configured upper limit, never more) while the process is younger than

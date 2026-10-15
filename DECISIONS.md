@@ -26002,6 +26002,27 @@ connector-write reconcile (no send).
 - **Routing.** The gate instability (the A6-off read baseline also passes only 1 of 3) is routed to ADR-0123 (RAG-0
   contamination lint first; merged as Proposed in #224).
   Stopped: no further prompt iteration (orchestrator).
+- **A6 prompt `nl-select.v36` (2026-10-16), inert (`QUOKY_NL_ACTIONS` stays off; read prompt v30 byte-identical).** Closes the
+  v35 known residual. Rules 3 and 8 are consistent and stated as rules, with no new examples: a how-to or method question about a
+  Quoky feature in any form (full question, "...하는 법/방법", clipped "방법 좀") is help.topic; the same about other software is
+  none; a command-shaped message (an imperative, or a "label: value" colon form) is never help.topic. Rule 8 no longer lists
+  "...하는 법" forms as none. The RAG-0 example-contamination lint and the rule-8 overlap test pass with no new finding.
+  **Gate (Haiku 3+3, `data/eval/a6-gate-v36-run*`, local; action plan digest `9b286115...`, read-regression `6bd06b04...`):**
+  action overall 0.946 / 0.953 / 0.956 (v35 0.955 / 0.960 / 0.953); wrong targets 0 and negative captures 0 in all runs.
+  Action gate passed 1 of 3 (run 2), same as v35. Run 1 failed on `todo.list` 0.857 and `reminder.list` 0.833 (neg-007 and
+  reminder.list-006 answered as a question once each; spanExact 0.936), run 3 on spanExact 0.949. `help.topic` is 5/5 every run
+  (v35: 2/2, 1/2, 2/2, on the two golds). Read-regression overall 0.954 / 0.951 / 0.956 (v35 0.951 / 0.948 / 0.956), A6 captures
+  0, wrong captures 0 / 1 / 1 (v35 0 / 2 / 3); read gate passed 0 of 3, as v35.
+  **Targets.** none-028 / -030 / -033: 0 -> 3 of 3 help.topic (v35 0, 0 to 1, 0), none-029 3 -> 3, none-032 2 -> 3. neg-110 and
+  neg-111 (colon commands): captured 0, 2, 2 times in v35, now 0 / 0 / 0 (none 3 of 3). neg-051: v35 captured 1 of 3 (run 3), v36
+  2 of 3 (runs 2 and 3, to help.topic, read-only). New: none-031 "문서 요약 명령어가 뭐야" (what the summary command is) went
+  from none 3 of 3 to help.topic 2 of 3; it is a question about a Quoky command, so this is the same rule applied, but the
+  gold is still none and is left for the owner. Other per-case flips are run-to-run noise at this sample size (reminder.create
+  019 3 -> 1, 033 / 035 / 037 3 -> 2, item.summarize-031 3 -> 1, reminder.cancel-027 1 -> 3, calendar and confluence both
+  ways).
+  **Result: not a pass.** Both corpora still fail the full 3-of-3 gate (action 1 of 3, read 0 of 3, where the read failures
+  are the jira.release and confluence->slack misses that the A6-off baseline also has). The v35 targeted regressions (colon
+  command captures, how-to golds) are fixed. No further prompt iteration; the flag stays off.
 
 ### ADR-0122 P2 implementation note (2026-10-15)
 

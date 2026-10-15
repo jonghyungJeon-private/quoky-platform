@@ -265,7 +265,7 @@ describe('item.summarize (record C): the owner must ask for the content; mode on
   });
 });
 
-describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v35 with actions', () => {
+describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v36 with actions', () => {
   const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v30.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
@@ -281,8 +281,8 @@ describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v35
     }
   });
 
-  it('the A6 prompt (v35) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v35');
+  it('the A6 prompt (v36) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v36');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
@@ -533,7 +533,7 @@ describe('A6 R1 gate (v32): the canonical `when`; ㄱㄱ / 고고 are not reques
   });
 });
 
-describe('A6 prompt v35 (CA review): the rule-8 lines and examples teach the rule, never a scored corpus case', () => {
+describe('A6 prompt v36 (CA review): the rule-8 lines and examples teach the rule, never a scored corpus case', () => {
   const corpusTexts = ['nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-intent.v1.json'].flatMap((file) =>
     (JSON.parse(readFileSync(new URL(`../golden/${file}`, import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string }> }).cases.map((c) => ({ id: `${file}:${c.id}`, text: c.text })),
   );
@@ -551,8 +551,10 @@ describe('A6 prompt v35 (CA review): the rule-8 lines and examples teach the rul
   // Every example the A6 prompt shows differently from the read prompt: the action examples and the overridden ones.
   const a6Examples = actionPrompt.split('\nMessage: ').slice(1).map((block) => `Message: ${block.split('\n').slice(0, 2).join('\n')}`).filter((block) => !readPrompt.includes(`\n${block}\n`)).map((block) => block.split('\n')[0]!.slice('Message: '.length));
 
-  it('keeps the rule-8 help.topic lines and the v35 examples', () => {
-    expect(actionPrompt).toContain('   help.topic needs a question form ("어떻게 …?", "…돼?", "…할 수 있어?"): a message with none, such as a bare command or a');
+  it('keeps the rule-8 help.topic lines and the v35 examples (unchanged in v36)', () => {
+    expect(actionPrompt).toContain('   A how-to or method question about one of Quoky\'s own features is help.topic in every form: a full question, a noun');
+    expect(actionPrompt).toContain('   The same how-to about any other software is none.');
+    expect(actionPrompt).toContain('   A command-shaped message is never help.topic: an imperative that asks Quoky to do or change something, or a');
     expect(actionPrompt).toContain('   A question form is needed but not enough: help.topic is only a question whose subject is Quoky itself (you, or one of');
     expect(actionPrompt).toContain('   is none, even when it shares a word with a Quoky feature.');
     expect(actionPrompt).toContain('   Only the args listed for the chosen entry exist: reminder.list has no range or count arg, so a day or 몇 개 word with it');
