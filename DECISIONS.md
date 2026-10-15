@@ -23530,7 +23530,9 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
      포함해서"), no reading is inferred: every period is refused and the owner is asked.
    - **Several weekdays with an end bound** ("목요일부터 토요일까지"): the period must run exactly from the start-bounded
      day (부터, from, since; when one is given) to the end-bounded day, each in its own anchor (a bound without a week word
-     takes the other bound's: "다음 주 월요일부터 금요일까지" = 10/19..10/23), and without any week word the nearest such
+     is placed from the other bound's resolved day — the first such day on or after the start, never a bare direction:
+     "다음 주 월요일부터 금요일까지" and "from next Monday through Friday" = 10/19..10/23 only; an English direction alone
+     takes the nearest such day that way), and without any week word the nearest such
      span (on Thursday 10/15 "목요일부터 토요일까지" is only 10/15..10/17); otherwise it is refused.
      No symbol names such a span except an `until-*` that starts today, so this mostly asks; it never lets an unrelated
      period through. Several weekdays without an end bound are unchanged (the A5 guard steps aside), but take no

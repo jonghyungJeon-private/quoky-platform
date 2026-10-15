@@ -177,6 +177,18 @@ describe('A7 canonical form: a period holding the end-bounded day but not ending
     }
     expect(argsOf('calendar.events', '이번 주 수요일부터 금요일까지 일정', { range: '10-14..10-16' })).toEqual({ range: '10-14..10-16' });
     expect(argsOf('calendar.events', '이번 주 수요일부터 금요일까지 일정', { range: 'this-week' })).toBe('refused:weekday');
+    // English and Korean: the unanchored end follows the start's resolved day, never a bare direction (Codex on 88809cd).
+    for (const text of ['show my calendar from next Monday through Friday', '다음 주 월요일부터 금요일까지 일정']) {
+      expect(argsOf('calendar.events', text, { range: '10-19..10-23' }), text).toEqual({ range: '10-19..10-23' });
+      for (const range of ['10-19..10-30', '10-26..10-30', '10-12..10-16']) expect(argsOf('calendar.events', text, { range }), `${text} ${range}`).toBe('refused:weekday');
+    }
+    // ("to" is not in the closed A5 bound set, so "from this Wednesday to Friday" names no end bound and is not this rule's.)
+    for (const text of ['show my calendar from this Wednesday through Friday', '이번 주 수요일부터 금요일까지 일정']) {
+      expect(argsOf('calendar.events', text, { range: '10-14..10-16' }), text).toEqual({ range: '10-14..10-16' });
+      for (const range of ['10-21..10-23', '10-14..10-23']) expect(argsOf('calendar.events', text, { range }), `${text} ${range}`).toBe('refused:weekday');
+    }
+    // An end earlier in the week than the start is in the following week ("다음 주 금요일부터 월요일까지" = 10/23..10/26).
+    expect(argsOf('calendar.events', '다음 주 금요일부터 월요일까지 일정', { range: '10-23..10-26' })).toEqual({ range: '10-23..10-26' });
     // No week word: the nearest Friday and the Monday before it.
     expect(argsOf('calendar.events', '월요일부터 금요일까지 일정', { range: '10-12..10-16' })).toEqual({ range: '10-12..10-16' });
     expect(argsOf('calendar.events', '월요일부터 금요일까지 일정', { range: '10-19..10-23' })).toBe('refused:weekday');
