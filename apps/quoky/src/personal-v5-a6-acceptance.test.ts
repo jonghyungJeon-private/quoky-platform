@@ -237,6 +237,37 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect((await storage.workItems.get(open[2]?.id ?? ''))?.status).toBe('ACTIVE');
   });
 
+  it('A6-D2 amendment (S4 regression): list → NL completes one → the anchored "N번 완료" completes the SHOWN N; shown labels never move', async () => {
+    const titles = ['스냅샷 가', '스냅샷 나', '스냅샷 다'];
+    for (const title of titles) await send(`할 일 추가: ${title}`);
+    await turn('내 할 일 보여줘');
+    const open = (await todos()).filter((item) => item.status === 'ACTIVE');
+    const [a, b, c] = titles.map((title) => open.find((item) => item.title === title)!);
+    const label = (id: string) => open.findIndex((item) => item.id === id) + 1;
+    const first = await turn(`${label(a.id)}번도 완료해줘`, answer('todo.complete', { ref: `#${label(a.id)}` }));
+    expect(first.selects).toHaveLength(1);
+    expect((await storage.workItems.get(a.id))?.status).toBe('COMPLETED');
+    // The anchored grammar (no selector call): the live list moved up by one, the shown number did not.
+    const anchored = await turn(`${label(b.id)}번 완료`);
+    expect(anchored.selects).toHaveLength(0);
+    expect(anchored.text).toBe('할 일을 완료 처리했어요: "스냅샷 나"');
+    expect((await storage.workItems.get(b.id))?.status).toBe('COMPLETED');
+    expect((await storage.workItems.get(c.id))?.status).toBe('ACTIVE');
+    // The snapshot still names what the owner saw (no live index merged over a label).
+    const session = await storage.sessions.findActiveByContext(DM.platform, DM.channelId, DM.threadId);
+    const slot = core.readListingRecord(session?.metadata?.[core.LAST_LISTING_METADATA_KEY], ownerActor.id, new Date().toISOString()).slots.todo;
+    for (const item of [a, b, c]) expect(slot?.items).toContainEqual({ label: label(item.id), id: item.id });
+    // So the NL follow-up on the third shown number reaches the third shown item.
+    const third = await turn(`${label(c.id)}번도 완료해줘`, answer('todo.complete', { ref: `#${label(c.id)}` }));
+    expect(third.text).toContain(`할 일 ${label(c.id)}번을 완료 처리했어요: "스냅샷 다"`);
+    // A shown number whose item is no longer open is refused with the current list; nothing changes.
+    const before = (await todos()).map((item) => `${item.id}:${item.status}`).join(',');
+    const again = await turn(`${label(b.id)}번 완료`);
+    expect(again.text).toContain(`${label(b.id)}번 "스냅샷 나"는 이미 완료된 할 일이라 아무것도 바꾸지 않았어요.`);
+    expect(again.text).toContain('지금 열린 할 일이에요');
+    expect((await todos()).map((item) => `${item.id}:${item.status}`).join(',')).toBe(before);
+  });
+
   it('live phrase 1: a grammar-made reminder, then "방금 거 취소해줘" cancels that #N; "되돌려줘" schedules the same #N again', async () => {
     const created = await turn('내일 9시에 물 마시라고 알려줘');
     expect(created.selects).toHaveLength(0);

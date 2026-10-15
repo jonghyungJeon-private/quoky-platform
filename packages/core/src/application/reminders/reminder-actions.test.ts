@@ -320,3 +320,32 @@ describe('the kill switch is atomic with every reminder write (Codex round 3, A6
     expect(repository.rows[0]?.status).toBe(ReminderStatus.CANCELED);
   });
 });
+
+// A6-D2 amendment (2026-10-16) regression guard: the to-do snapshot rule does not touch reminders. A reminder's `#N` is
+// its stable, never-reused display number, so a list that changed since it was shown never renumbers a reminder.
+describe('anchored reminder numbers stay stable when the list changes (A6-D2 amendment guard)', () => {
+  it('after #13 fired, "알림 14 취소" still cancels the reminder shown as #14, and "알림 13 취소" changes nothing', async () => {
+    const { conversation, repository } = service();
+    for (const text of ['내일 9시에 물 마시기 알려줘', '내일 10시에 약 먹기 알려줘', '내일 11시에 스트레칭 알려줘']) {
+      await conversation.handleTurnDetailed({ ...base(), text });
+    }
+    const listed = await conversation.handleTurnDetailed({ ...base(), text: '알림 목록' });
+    expect(listed?.listing?.items).toEqual([
+      { label: 13, id: 'rem-1' },
+      { label: 14, id: 'rem-2' },
+      { label: 15, id: 'rem-3' },
+    ]);
+    repository.rows[0] = { ...(repository.rows[0] as Reminder), status: ReminderStatus.COMPLETED };
+    const canceled = await conversation.handleTurnDetailed({ ...base(), text: '알림 14 취소' });
+    expect(canceled?.action).toMatchObject({ entryId: 'reminder.cancel', result: 'executed', itemId: 'rem-2', label: 14 });
+    expect(repository.rows.map((row) => [row.displayNo, row.status])).toEqual([
+      [13, ReminderStatus.COMPLETED],
+      [14, ReminderStatus.CANCELED],
+      [15, ReminderStatus.SCHEDULED],
+    ]);
+    const fired = await conversation.handleTurnDetailed({ ...base(), text: '알림 13 취소' });
+    expect(fired?.action?.result).not.toBe('executed');
+    expect(repository.rows[0]?.status).toBe(ReminderStatus.COMPLETED);
+    expect((await conversation.handleTurnDetailed({ ...base(), text: '알림 목록' }))?.listing?.items).toEqual([{ label: 15, id: 'rem-3' }]);
+  });
+});

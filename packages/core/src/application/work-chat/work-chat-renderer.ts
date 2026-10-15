@@ -102,17 +102,31 @@ export function renderTodoAdded(item: WorkItem, reminderShaped = false): Message
   ]);
 }
 
-/** Answer to a status question about one to-do (QA-V2-W7-05); `no` is its list number when it is still open. */
-export function renderTodoStatusAnswer(item: WorkItem, no: number): MessageBody {
+/**
+ * Answer to a status question about one to-do (QA-V2-W7-05); `no` is its list number when it is still open. `undefined`
+ * (A6-D2 amendment, 2026-10-16): the owner's fresh to-do listing does not show it, so no number is named that the
+ * numbered command would resolve differently.
+ */
+export function renderTodoStatusAnswer(item: WorkItem, no: number | undefined): MessageBody {
   const title = titleOf(item, 120);
   if (item.status === WorkItemStatus.COMPLETED) return fit([{ text: messageContent('"', title, '"는 완료 처리된 할 일이에요.') }]);
   if (item.status === WorkItemStatus.CANCELED) return fit([{ text: messageContent('"', title, '"는 취소된 할 일이에요.') }]);
+  if (no === undefined) return fit([{ text: messageContent('"', title, `"는 아직 열린 할 일이에요. 번호는 "내 할 일"로 확인해 주세요.`) }]);
   return fit([{ text: messageContent('"', title, `"는 아직 열린 할 일이에요 (${no}번). 완료하려면 "완료 처리: ${no}"라고 보내 주세요.`) }]);
 }
 
-/** Hint for an unanchored "<title> 완료" statement (QA-V2-W7-03): nothing was changed; the exact command is named. */
-export function renderTodoCompletionHint(action: 'complete' | 'cancel', no: number, item: WorkItem): MessageBody {
+/**
+ * Hint for an unanchored "<title> 완료" statement (QA-V2-W7-03): nothing was changed; the exact command is named.
+ * `no` undefined (A6-D2 amendment, 2026-10-16): the fresh listing does not show the item, so the command names no number.
+ */
+export function renderTodoCompletionHint(action: 'complete' | 'cancel', no: number | undefined, item: WorkItem): MessageBody {
   const verb = action === 'complete' ? '완료 처리' : '취소';
+  if (no === undefined) {
+    const form = action === 'complete' ? '완료 처리: 번호' : '할 일 취소: 번호';
+    return fit([
+      { text: messageContent('"', titleOf(item, 120), `" 할 일을 ${verb}하려면 "내 할 일"로 번호를 확인한 뒤 "${form}"라고 보내 주세요. 아직 아무것도 바꾸지 않았어요.`) },
+    ]);
+  }
   const command = action === 'complete' ? `완료 처리: ${no}` : `할 일 취소: ${no}`;
   return fit([
     { text: messageContent('"', titleOf(item, 120), `" 할 일을 ${verb}하려면 "${command}"라고 보내 주세요. 아직 아무것도 바꾸지 않았어요.`) },
@@ -161,6 +175,36 @@ export function renderTodoNotFound(target: WorkChatTarget, activeCount: number):
   const what = 'index' in target ? `${target.index}번 할 일` : messageContent('"', display(target.text, 60), '"와 일치하는 할 일');
   const hint = activeCount === 0 ? '열린 할 일이 없어요.' : `열린 할 일은 ${activeCount}건이에요. "내 할 일"로 번호를 확인해 주세요.`;
   return fit([{ text: messageContent(what, `을 찾지 못해서 아무것도 바꾸지 않았어요. ${hint}`) }]);
+}
+
+/**
+ * A6-D2 amendment (2026-10-16): a numbered command named a number of the owner's fresh to-do listing that no longer
+ * points at an open to-do (`gone`: completed, canceled or deleted since) or that the listing never showed (`unlisted`).
+ * Nothing changed; the current open list follows, numbered as the next listing snapshot records it (`shown` rows).
+ */
+export function renderTodoSnapshotDrift(
+  drift: { readonly kind: 'gone'; readonly label: number; readonly item?: WorkItem } | { readonly kind: 'unlisted'; readonly label: number },
+  todos: readonly WorkItem[],
+  shown: number,
+): MessageBody {
+  let head: MessagePart;
+  if (drift.kind === 'unlisted') {
+    head = `아까 보여드린 할 일 목록에는 ${drift.label}번이 없어서 아무것도 바꾸지 않았어요.`;
+  } else if (drift.item === undefined) {
+    head = `아까 보여드린 할 일 목록의 ${drift.label}번은 지금 찾을 수 없어서 아무것도 바꾸지 않았어요.`;
+  } else {
+    const state = drift.item.status === WorkItemStatus.COMPLETED ? '이미 완료된' : '이미 취소된';
+    head = messageContent(`아까 보여드린 할 일 목록의 ${drift.label}번 "`, titleOf(drift.item, 120), `"는 ${state} 할 일이라 아무것도 바꾸지 않았어요.`);
+  }
+  const lines: Array<{ text: MessagePart; droppable?: boolean }> = [{ text: head }];
+  if (todos.length === 0) {
+    lines.push({ text: '지금 열린 할 일이 없어요.' });
+  } else {
+    lines.push({ text: `지금 열린 할 일이에요 (${todos.length}건). 번호를 확인하고 다시 보내 주세요.` });
+    todos.slice(0, shown).forEach((item, index) => lines.push({ text: messageContent(`${index + 1}. `, titleOf(item)) }));
+    if (todos.length > shown) lines.push({ text: `외 ${todos.length - shown}건` });
+  }
+  return fit(lines);
 }
 
 export function renderTodoEmptyTitle(): string {
