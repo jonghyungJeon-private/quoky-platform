@@ -93,7 +93,7 @@ resolution into a question, or keeps today's result.
 | Words | Resolves to | If it cannot |
 |---|---|---|
 | 1. Platform reply-to | The listing or echo it points at (unchanged) | ask |
-| 2. **Explicit number or ordinal** ("2번", "두 번째", "마지막") | **The listing the number belongs to.** The entry's source slot, as long as the owner's words give no other source. Never `lastAction` | `out-of-range`, `other-source`, `none` (unchanged) |
+| 2. **Explicit number or ordinal** ("2번", "두 번째", "마지막") | **The listing the number belongs to: the most recent listing (`mostRecent`), and only when it is the entry's source.** Another source asks `other-source` (O1, kept). The one exception is the documented reminder display number `#N`. Never `lastAction` | `out-of-range`, `other-source`, `none` (unchanged) |
 | 3. **Recency word** ("방금 거", "아까 거", "just now") | The fresh `lastAction` of the entry's source (unchanged). If a **newer listing of another source** is the owner's latest view, ask | `conflict` |
 | 4. **Plain deictic** ("그거", "이거", "그 중에서") | The most recent salient thing **by timestamp** (§2.1). Equal or unordered ties ask | `conflict` or `ambiguous` |
 | 5. **Undo** ("되돌려줘", "취소 취소", `되돌리기`) | **Always `lastAction`**, by the per-action inverse on the same item. Never a listing, never a newer item | `stale`, `no-action`, `undo-of-undo`, `echo-mismatch` (unchanged) |
@@ -103,8 +103,11 @@ resolution into a question, or keeps today's result.
 Let `A` be the fresh, not-undone `lastAction` of the entry's source, and `L` the most recent listing slot of **any** source.
 
 - Ignore the slot that the action's own echo wrote. It is `L.source === A.source && L.requestId === A.requestId`
-  (`last-action.ts` already stores `requestId`; the slot has one, `last-listing.ts:491-497`). Without this the echo's
-  `merge` always ties with `A` (§1.1).
+  `last-action.ts` already stores `requestId`, and the persisted listing entry has one (`last-listing.ts:491-497`), but the
+  resolver's `ListingSlot` does not: `readListingRecord` builds slots from `source`, `at` and `items` only
+  (`last-listing.ts:517-527`). So this needs an **implementation step**: add an optional `requestId` to `ListingSlot`,
+  populate it in `readListingRecord`, and carry it through `referenceState` (`nl-routing/nl-selection-service.ts:963-976`).
+  Without it the echo's `merge` always ties with `A` (§1.1).
 - `A` is newer than `L` (or `L` is absent or the echo): resolve to `A.itemId`, as today.
 - `L` is newer than `A`:
   - `L` is the same source and has one item: resolve to that item. If it differs from `A.itemId`, `conflict` (as today).
@@ -150,6 +153,9 @@ behaviour and is consistent with the rule: a recency word needs a fresh action.
    asks; **no newer listing** resolves to `lastAction` (unchanged).
 5. `this` with `lastAction` newer than the listing: resolves to `lastAction`.
 6. Echo exclusion: `lastAction` and its own merged slot (same `requestId`, same `at`) resolve to `lastAction`, not a tie.
+   Build this through the real path, not hand-built fixtures: `withLastAction` plus `withLabelledListing(..., 'merge', requestId)`
+   into session metadata, then `readListingRecord` / `referenceState`, then `resolveItemReference`. A fixture that sets
+   `requestId` on the slot by hand would pass while the read path drops it.
 7. Tie within one second, listing not the echo: asks.
 8. Number rules: "2번" with `lastAction` newer than the to-do listing resolves from the listing; a newer other-source listing
    gives `other-source`; "2번" is never taken from `lastAction`.
@@ -211,6 +217,6 @@ Golden corpus: add rows with fixture state for 1, 2 and 11 to `golden/nl-action.
 1. **Approve §2.1** (a newer listing makes "그거" ask, a tie asks, "되돌려줘" stays lastAction-only). Recommended: yes.
 2. **O1:** keep "most recent listing only" for numbers even when the owner's noun names an older source. Recommended: keep.
 3. Whether to add `newest` to the selector line (§2.3). Recommended: later, after the Core rule is live.
-4. Implementation: one small PR (`reference-recency.ts`, `resolveItemReference` step 4, tests 1-13). It touches no prompt
+4. Implementation: one small PR (`ListingSlot.requestId` through `readListingRecord` and `referenceState`, `reference-recency.ts`, `resolveItemReference` step 4, tests 1-13). It touches no prompt
    unless decision 3 is yes. It needs `QUOKY_NL_ACTIONS` on to be observable, and a Codex review (the resolver is the
    write-safety boundary).
