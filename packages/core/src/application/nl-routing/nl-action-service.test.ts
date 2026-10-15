@@ -665,6 +665,11 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
       ['undo 해줘 했더니 이상해', 'action.undo', {}],
       ['예를 들어 2번 완료해줘', 'todo.complete', complete],
       ['2번 취소 그만해', 'todo.cancel', complete],
+      // Codex at 186a94d: first-person volition, particle negations and 철회
+      ['내가 2번 완료할래', 'todo.complete', complete],
+      ['제가 2번 완료해요', 'todo.complete', complete],
+      ['2번 완료해줘. 아직 실행하지는 마', 'todo.complete', complete],
+      ['2번 완료해줘. 방금 요청 철회할게', 'todo.complete', complete],
     ];
     for (const [text, entryId, args] of never) expect((await run(text, entryId, args)).kind, text).not.toBe('execute');
     const genuine: Array<[string, string, Record<string, unknown>]> = [

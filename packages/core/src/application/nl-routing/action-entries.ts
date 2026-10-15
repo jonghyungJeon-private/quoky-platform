@@ -453,13 +453,15 @@ const CLAUSE_END = /말고|[,.!?。;:~\n]/u;
  * A negation anywhere in the WHOLE message vetoes every write (Codex and CA reviews: a later retraction such as "완료해줄래?
  * 아니 하지마" counts): "-지 마/말아/않", "-진 마", a standalone or glued 안/못, 금지, 아니, 필요 없, 싫, 말고.
  */
-const NEGATION_KO = /[지진]\s*(?:마|말|않)|(?:^|\s)(?:안|못)(?=\s|$|되|돼|됐|해|했|하|할)|안\s*(?:해|하|되|돼|됐|할|함)|(?<!잘)못\s*(?:해|하|했|함)|금지|아니|아냐|아님|ㄴㄴ|노노|됐어|됐다|잠깐|필요\s*없|싫|말아|말고/u;
+const NEGATION_KO = /[지진](?:는|도|만)?\s*(?:마|말|않)|(?:^|\s)(?:안|못)(?=\s|$|되|돼|됐|해|했|하|할)|안\s*(?:해|하|되|돼|됐|할|함)|(?<!잘)못\s*(?:해|하|했|함)|금지|아니|아냐|아님|ㄴㄴ|노노|됐어|됐다|잠깐|필요\s*없|싫|말아|말고/u;
 const NEGATION_EN = /(?:^|\s)(?:don't|dont|do not|doesn't|didn't|shouldn't|won't|wouldn't|can't|cannot|never|not|no|nope|nah)(?=\s|$|[,.!?])/u;
 /**
  * After a request, a cancel / undo / stop word retracts it ("2번 완료해줘 취소", "2번 취소 그만해"), CA delta: the request
  * does not ground.
  */
-const RETRACTION_AFTER = /취소|캔슬|되돌|그만|undo|cancel|nope|nah/u;
+const RETRACTION_AFTER = /취소|캔슬|되돌|그만|철회|undo|cancel|nope|nah/u;
+/** A first-person subject makes the sentence the owner's own statement or volition, not a request ("내가 2번 완료할래"). */
+const FIRST_PERSON_KO = /(?:^|\s)(?:내가|제가|나는|저는|나도|저도)(?=\s)/u;
 /**
  * Reported speech or an example: a request form followed by 했던 / 했잖아 / 라고 / 하면 / 하고 / 했더니 / 그랬 quotes a
  * request instead of making one ("2번 완료해줘 했던 거", "undo 해줘 했더니"); 예를 들어 / 예컨대 frame an example.
@@ -555,7 +557,7 @@ export function nlActionWordGrounded(prose: string, words: readonly string[]): b
   const text = normalizeForMatch(prose).replace(/[’‘`´]/gu, "'");
   // English: a negation anywhere vetoes. Korean: see koreanVeto (a reason clause such as "필요 없어 취소해줘" is not one).
   // A quoted or reported request anywhere ("2번 완료해줘 했던 거 되돌려줘") or an example frame refuses the message.
-  if (NEGATION_EN.test(text) || EXAMPLE_FRAME.test(text) || QUOTED_REQUEST.test(text)) return false;
+  if (NEGATION_EN.test(text) || EXAMPLE_FRAME.test(text) || QUOTED_REQUEST.test(text) || FIRST_PERSON_KO.test(text)) return false;
   if (negatedClauseNamesTheAction(text, words)) return false;
   for (const raw of words) {
     const word = normalizeForMatch(raw);

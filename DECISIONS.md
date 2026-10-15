@@ -24965,6 +24965,12 @@ the 51 `help.topic` read cases 2× each keep their outcome (101/102; the one mis
   the request-form backstop is CLOSED for R1: further edge strings are recorded as accepted residual risk, because the
   writes are local and undoable, the selector must also err for one to run, and the attended labelled live session of at
   least 100 turns is the empirical check.
+  Codex at 186a94d: two strings from this round's own rules were fixed (a first-person subject 내가 / 제가 / 나는 / 저는
+  makes the message a statement or volition: "내가 2번 완료할래", "제가 2번 완료해요"; a particle negation "-지는 마" and
+  철회 retract a request: "2번 완료해줘. 아직 실행하지는 마", "2번 완료해줘. 방금 요청 철회할게"). Recorded as ACCEPTED
+  RESIDUAL RISK, not fixed: "can you tell me how to mark 2 complete", "I used to mark 2 complete", "I wish I could mark 2
+  complete", "2번 완료해줘 라는 말은 예시야".
+
 
 
 
