@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) were owner-approved in the D12 batch of 2026-10-15. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) were owner-approved in the D12 batch of 2026-10-15. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) were owner-approved in the D12 batch of 2026-10-15. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events). D12 owner batch 2026-10-15 (second part, through the orchestrator): approved uat5r1..r9 (23 cases from the 2026-10-14 live edge-case run), uat5gy-01..06, uat5wd-01..07, uat5ca-01..10 and the 8 grammar-metadata-only edits of ADR-0120 A2 implementation note 2 (confluence-001, -005, -007, todo-016, -020, brief-017, neg-219, help-038; neg-219 and help-038 themselves stay in the S1 batch). Still PENDING the owner's batch approval: the 148 S1 cases and the 41 INT-4 cases (v5int4-001..041). T1 extension (owner-approved 2026-10-15): calendar-005, -016, -018, -029, -032, -034 and -057 gain timedOnly (a meeting word in a listing question means timed events), the earlier gold kept in each note.",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases were owner-approved on 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) were owner-approved in the D12 batch of 2026-10-15. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) were owner-approved in the D12 batch of 2026-10-15. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) were owner-approved in the D12 batch of 2026-10-15. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events). D12 owner batch 2026-10-15 (second part, through the orchestrator): approved uat5r1..r9 (23 cases from the 2026-10-14 live edge-case run), uat5gy-01..06, uat5wd-01..07, uat5ca-01..10 and the 8 grammar-metadata-only edits of ADR-0120 A2 implementation note 2 (confluence-001, -005, -007, todo-016, -020, brief-017, neg-219, help-038). Still PENDING the owner's batch approval: the 41 INT-4 cases (v5int4-001..041). T1 extension (owner-approved 2026-10-15): calendar-005, -016, -018, -029, -032, -034 and -057 gain timedOnly (a meeting word in a listing question means timed events), the earlier gold kept in each note.",
   "cases": [
     {
       "id": "jira-001",
@@ -6093,7 +6093,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-067",
@@ -6107,7 +6107,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-068",
@@ -6121,7 +6121,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-069",
@@ -6135,7 +6135,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-070",
@@ -6153,7 +6153,7 @@
           "keyword": "결제"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-071",
@@ -6171,7 +6171,7 @@
           "keyword": "로그인"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-072",
@@ -6189,7 +6189,7 @@
           "keyword": "위클리카"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-073",
@@ -6207,7 +6207,7 @@
           "keyword": "정산"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-074",
@@ -6225,7 +6225,7 @@
           "keyword": "배포"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-075",
@@ -6239,7 +6239,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-076",
@@ -6253,7 +6253,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-077",
@@ -6273,7 +6273,7 @@
           "range": "this-week"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-078",
@@ -6287,7 +6287,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-079",
@@ -6301,7 +6301,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-080",
@@ -6321,7 +6321,7 @@
           "range": "this-week"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-036",
@@ -6339,7 +6339,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-037",
@@ -6357,7 +6357,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-038",
@@ -6375,7 +6375,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-039",
@@ -6386,7 +6386,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-040",
@@ -6404,7 +6404,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-041",
@@ -6418,7 +6418,7 @@
         "entryId": "github.items",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-042",
@@ -6432,7 +6432,7 @@
         "entryId": "github.items",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-043",
@@ -6446,7 +6446,7 @@
         "entryId": "github.items",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-044",
@@ -6460,7 +6460,7 @@
         "entryId": "github.items",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-045",
@@ -6474,7 +6474,7 @@
         "entryId": "github.items",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-046",
@@ -6488,7 +6488,7 @@
         "entryId": "github.items",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-047",
@@ -6499,7 +6499,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-048",
@@ -6510,7 +6510,7 @@
           "keyword": "결제"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-049",
@@ -6521,7 +6521,7 @@
           "keyword": "배포"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A only with QUOKY_NL_GRAMMAR_YIELD=off (it swallows the qualifier) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-050",
@@ -6539,7 +6539,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-051",
@@ -6557,7 +6557,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-052",
@@ -6571,7 +6571,7 @@
         "entryId": "github.items",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-053",
@@ -6589,7 +6589,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-033",
@@ -6607,7 +6607,7 @@
           "keyword": "회의록"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-034",
@@ -6625,7 +6625,7 @@
           "keyword": "릴리즈 노트"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-035",
@@ -6636,7 +6636,7 @@
           "keyword": "점심 메뉴"
         }
       },
-      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-036",
@@ -6654,7 +6654,7 @@
           "keyword": "결제 오류"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-037",
@@ -6672,7 +6672,7 @@
           "keyword": "온보딩"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-038",
@@ -6690,7 +6690,7 @@
           "keyword": "코드리뷰"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-039",
@@ -6708,7 +6708,7 @@
           "keyword": "서버 점검"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-040",
@@ -6726,7 +6726,7 @@
           "keyword": "휴가 공지"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-041",
@@ -6744,7 +6744,7 @@
           "keyword": "release"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-042",
@@ -6762,7 +6762,7 @@
           "keyword": "outage report"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-043",
@@ -6780,7 +6780,7 @@
           "keyword": "hotfix"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-044",
@@ -6798,7 +6798,7 @@
           "keyword": "QA 일정"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-045",
@@ -6816,7 +6816,7 @@
           "keyword": "인증서 만료"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-046",
@@ -6834,7 +6834,7 @@
           "keyword": "디자인 리뷰"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "slack-047",
@@ -6852,7 +6852,7 @@
           "keyword": "KPI"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-032",
@@ -6870,7 +6870,7 @@
           "keyword": "API 가이드"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-033",
@@ -6888,7 +6888,7 @@
           "keyword": "배포 절차"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-034",
@@ -6899,7 +6899,7 @@
           "keyword": "휴가 정책"
         }
       },
-      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-035",
@@ -6917,7 +6917,7 @@
           "keyword": "온콜 가이드"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-036",
@@ -6935,7 +6935,7 @@
           "keyword": "회고"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-037",
@@ -6953,7 +6953,7 @@
           "keyword": "아키텍처"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-038",
@@ -6971,7 +6971,7 @@
           "keyword": "보안 점검"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-039",
@@ -6989,7 +6989,7 @@
           "keyword": "신규 입사자 안내"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-040",
@@ -7007,7 +7007,7 @@
           "keyword": "장애 보고서"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-041",
@@ -7025,7 +7025,7 @@
           "keyword": "릴리즈 노트"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-042",
@@ -7043,7 +7043,7 @@
           "keyword": "데이터 사전"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-043",
@@ -7061,7 +7061,7 @@
           "keyword": "코딩 컨벤션"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-044",
@@ -7079,7 +7079,7 @@
           "keyword": "release process"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-045",
@@ -7097,7 +7097,7 @@
           "keyword": "security policy"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-046",
@@ -7115,7 +7115,7 @@
           "keyword": "the onboarding guide"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-047",
@@ -7133,7 +7133,7 @@
           "keyword": "비용 정산 방법"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-048",
@@ -7151,7 +7151,7 @@
           "keyword": "API 가이드"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-049",
@@ -7169,7 +7169,7 @@
           "keyword": "온보딩 체크리스트"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-050",
@@ -7187,7 +7187,7 @@
           "keyword": "운영 매뉴얼"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "confluence-051",
@@ -7205,7 +7205,7 @@
           "keyword": "incident postmortem"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-038",
@@ -7214,7 +7214,7 @@
         "entryId": "mail.list",
         "args": {}
       },
-      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-039",
@@ -7232,7 +7232,7 @@
           "unread": true
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-040",
@@ -7250,7 +7250,7 @@
           "unread": true
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-041",
@@ -7268,7 +7268,7 @@
           "range": "today"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-042",
@@ -7286,7 +7286,7 @@
           "range": "today"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-043",
@@ -7297,7 +7297,7 @@
           "from": "김부장님"
         }
       },
-      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-044",
@@ -7315,7 +7315,7 @@
           "from": "이대리"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-045",
@@ -7331,7 +7331,7 @@
           "unread": true
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-046",
@@ -7350,7 +7350,7 @@
           "unread": true
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-047",
@@ -7366,7 +7366,7 @@
           "unread": true
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-048",
@@ -7375,7 +7375,7 @@
         "entryId": "mail.list",
         "args": {}
       },
-      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-049",
@@ -7393,7 +7393,7 @@
           "unread": true
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-050",
@@ -7411,7 +7411,7 @@
           "from": "Kim"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-051",
@@ -7430,7 +7430,7 @@
           "range": "today"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-052",
@@ -7448,7 +7448,7 @@
           "unread": true
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-053",
@@ -7464,7 +7464,7 @@
           "unread": true
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "mail-054",
@@ -7473,7 +7473,7 @@
         "entryId": "mail.list",
         "args": {}
       },
-      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-044",
@@ -7487,7 +7487,7 @@
         "entryId": "drive.files",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-045",
@@ -7505,7 +7505,7 @@
           "name": "예산안"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-046",
@@ -7523,7 +7523,7 @@
           "name": "계약서"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-047",
@@ -7541,7 +7541,7 @@
           "name": "회고록"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-048",
@@ -7559,7 +7559,7 @@
           "name": "마케팅 계획"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-049",
@@ -7577,7 +7577,7 @@
           "name": "매뉴얼"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-050",
@@ -7591,7 +7591,7 @@
         "entryId": "drive.files",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-051",
@@ -7609,7 +7609,7 @@
           "name": "budget"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-052",
@@ -7627,7 +7627,7 @@
           "name": "invoice"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-053",
@@ -7645,7 +7645,7 @@
           "name": "주간 보고"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-054",
@@ -7659,7 +7659,7 @@
         "entryId": "drive.files",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "drive-055",
@@ -7677,7 +7677,7 @@
           "name": "견적서"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-031",
@@ -7691,7 +7691,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-032",
@@ -7705,7 +7705,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-033",
@@ -7719,7 +7719,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-034",
@@ -7733,7 +7733,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-035",
@@ -7747,7 +7747,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-036",
@@ -7761,7 +7761,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-037",
@@ -7775,7 +7775,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-038",
@@ -7784,7 +7784,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-039",
@@ -7798,7 +7798,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-040",
@@ -7807,7 +7807,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-041",
@@ -7823,7 +7823,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-042",
@@ -7839,7 +7839,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "todo-043",
@@ -7853,7 +7853,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-036",
@@ -7871,7 +7871,7 @@
           "topic": "reminder"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-037",
@@ -7889,7 +7889,7 @@
           "topic": "todo.complete"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-038",
@@ -7907,7 +7907,7 @@
           "topic": "todo"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12] [Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): re-tagged `help-intent` with grammarYieldOff `work-lookup.todo-list`; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15 (the case itself stays in the pending S1 batch)]",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)] [Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): re-tagged `help-intent` with grammarYieldOff `work-lookup.todo-list`; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15]",
       "grammarYieldOff": "work-lookup.todo-list"
     },
     {
@@ -7926,7 +7926,7 @@
           "topic": "memory"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-040",
@@ -7937,7 +7937,7 @@
           "topic": "commit"
         }
       },
-      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-041",
@@ -7948,7 +7948,7 @@
           "topic": "project"
         }
       },
-      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: near-grammar phrasing (no grammar hit) [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-042",
@@ -7966,7 +7966,7 @@
           "topic": "branch"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-043",
@@ -7984,7 +7984,7 @@
           "topic": "feedback"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-044",
@@ -8002,7 +8002,7 @@
           "topic": "model"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-045",
@@ -8020,7 +8020,7 @@
           "topic": "reminder"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-046",
@@ -8038,7 +8038,7 @@
           "topic": "todo"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-047",
@@ -8052,7 +8052,7 @@
         "entryId": "help.topic",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-048",
@@ -8066,7 +8066,7 @@
         "entryId": "help.topic",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-049",
@@ -8084,7 +8084,7 @@
           "topic": "reminder"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "help-050",
@@ -8102,61 +8102,61 @@
           "topic": "todo"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-210",
       "text": "그 중에 위클리카만",
       "expect": "none",
-      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-211",
       "text": "그 중에 스크럼만",
       "expect": "none",
-      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-212",
       "text": "그 중에 pdf만",
       "expect": "none",
-      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-213",
       "text": "그중에 진행중인 것만",
       "expect": "none",
-      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-214",
       "text": "among those, only the urgent ones",
       "expect": "none",
-      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-215",
       "text": "그 중에 제일 급한 거만 보여줘",
       "expect": "none",
-      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1: narrowing follow-up with no previous selection -> clarification (not wrong), never a capture [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-216",
       "text": "슬랙 검색이 요즘 잘 안 되네",
       "expect": "none",
-      "note": "S1 Phase C negative [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C negative [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-217",
       "text": "지라 이슈 보여주지 마",
       "expect": "none",
-      "note": "S1 Phase C negative [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C negative [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-218",
       "text": "드라이브에 이 파일 올려줘",
       "expect": "none",
-      "note": "S1 Phase C negative [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C negative [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-219",
@@ -8165,37 +8165,37 @@
       "grammar": "work-surface",
       "grammarAnswer": null,
       "grammarYieldOff": "work-lookup.todo-list",
-      "note": "S1 Phase C negative; a Class B grammar captures it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12] [Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): re-tagged `work-surface` (grammarAnswer null) with grammarYieldOff `work-lookup.todo-list`; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15 (the case itself stays in the pending S1 batch)]"
+      "note": "S1 Phase C negative; a Class B grammar captures it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)] [Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): re-tagged `work-surface` (grammarAnswer null) with grammarYieldOff `work-lookup.todo-list`; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15]"
     },
     {
       "id": "neg-220",
       "text": "깃허브 리뷰 요청 거절하는 법",
       "expect": "none",
-      "note": "S1 Phase C negative [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C negative [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-221",
       "text": "컨플루언스에 회의록 페이지 하나 만들어줘",
       "expect": "none",
-      "note": "S1 Phase C negative [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C negative [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-222",
       "text": "> 슬랙에서 배포 검색해줘\n이 문장 영어로 번역해줘",
       "expect": "none",
-      "note": "S1 Phase C negative [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C negative [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-223",
       "text": "> 드라이브에서 기획서 찾아줘\n이거 누가 보낸 거야?",
       "expect": "none",
-      "note": "S1 Phase C negative [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C negative [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "neg-224",
       "text": "메일 답장 정중하게 쓰는 법",
       "expect": "none",
-      "note": "S1 Phase C negative [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C negative [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-081",
@@ -8209,7 +8209,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-082",
@@ -8223,7 +8223,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "jira-083",
@@ -8237,7 +8237,7 @@
         "entryId": "jira.issues",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-054",
@@ -8255,7 +8255,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-055",
@@ -8269,7 +8269,7 @@
         "entryId": "github.items",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-056",
@@ -8287,7 +8287,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-057",
@@ -8301,7 +8301,7 @@
         "entryId": "github.items",
         "args": {}
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "github-058",
@@ -8319,7 +8319,7 @@
           "query": "review-requests"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: owner-approved 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2 under ADR-0120 amendment A4 (ADR-0120 D12)]"
     },
     {
       "id": "v5int4-001",
@@ -8833,12 +8833,12 @@
         "entryId": "mail.list",
         "args": {}
       },
-      "note": "summarizing a listed mail is not a list request [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15] [A6 relabel, owner-approved 2026-10-15 (A6 ratification decision 10, docs/plans/nl-action-relabel-batch.md): with the A6 entries offered (eval:nl --mode read-regression) the gold is a6Relabel, item.summarize, scored apart, with context.lastListing as the Reference context (a one-item listing: with several items Core asks, the nl-action reference cases cover that); read mode (A6 off, eval:nl --mode run) keeps expect none: item.summarize is not offered there]",
+      "note": "summarizing a listed mail is not a list request [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15] [A6 relabel, owner-approved 2026-10-15 (A6 ratification decision 10, docs/plans/nl-action-relabel-batch.md): with the A6 entries offered (eval:nl --mode read-regression) the gold is a6Relabel, item.summarize, scored apart, with context.lastListing as the Reference context (a one-item listing: with several items Core asks, the nl-action reference cases cover that); read mode (A6 off, eval:nl --mode run) keeps expect none: item.summarize is not offered there] [ref spelling: \"this\", not the batch sheet's \"recent\". A6-D2 grounds both on any closed deictic (그거 included) and resolves them identically (step 3), so it does not choose; the v25 prompt example for this sentence and all 15 \"그거\" cases of the A6 action corpus use \"this\" (방금/아까 use \"recent\"). The owner approved the relabel direction, not a ref spelling (orchestrator, 2026-10-15)]",
       "a6Relabel": {
         "entryId": "item.summarize",
         "args": {
           "source": "mail",
-          "ref": "recent",
+          "ref": "this",
           "mode": "summary"
         },
         "batch": "A6-relabel-2026-10-15"
