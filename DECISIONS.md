@@ -23512,7 +23512,8 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
      (`CALENDAR_TIMED_ONLY_WORDS`) already accepts it.
      - **Open owner question for the D12 batch (not relabelled):** the other cases with a meeting word and no
        `timedOnly` in their gold — `calendar-005`, `-016`, `-018`, `-029`, `-032`, `-034` and `-057` — keep their gold
-       until the owner says whether T1 covers them.
+       until the owner says whether T1 covers them. *(Answered yes on 2026-10-15 and applied, with the deferred prompt
+       alignment as `nl-select.v24` / `v25`: see the addendum below.)*
      - **Not applied:** the 2026-10-14 proposal "calendar-057 … (plus `timedOnly: true` if T1 below)". The approved
        relabel of `calendar-057` is `{range: this-week, partOfDay: afternoon}` only; adding `timedOnly` needs the owner's
        confirmation.
@@ -23538,6 +23539,83 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
 
   "회의 중에" arguably carries it; the owner may want to add it to the gold).
 
+
+### ADR-0120 amendment A5 implementation note 3, addendum — the owner's T1 extension, prompt `nl-select.v24` / `v25`, and the D12 batch of 2026-10-15 (2026-10-15)
+
+- **Owner decisions (2026-10-15, through the orchestrator; owner-approved, an implementation note of A5 note 3, not an
+  amendment: no ratified text changes, the A5 rule 3 grounding `CALENDAR_TIMED_ONLY_WORDS` is unchanged).**
+  1. *T1 covers the open cases.* The open owner question of note 3 is answered yes: `calendar-005`, `-016`, `-018`,
+     `-029`, `-032`, `-034` gain `timedOnly: true`, and `calendar-057` becomes `{range: this-week, partOfDay: afternoon,
+     timedOnly: true}`. The prior gold is kept in each case's note. Not covered (not in the owner's list, gold unchanged):
+     `calendar-046` "다음 주 주간회의 일정 보여줘" and `calendar-53` "이번 주 정기회의 일정 있어?" (the meeting word is part
+     of a title keyword).
+  2. *Prompt alignment (the deferred item of note 3).* The `timedOnly` arg description (`wave1-entries.ts:231`) now reads
+     "true when the owner asks about meetings/timed events and away from all-day entries such as leave or holidays
+     ("회의만", "미팅만", "only meetings")" (was "true only when the owner narrows to meetings/timed events …"); the
+     examples "내일 미팅 있나?" → `{range: tomorrow, timedOnly: true}` and "다음 미팅이 몇 시더라" → `{range: upcoming,
+     timedOnly: true}` (the second also contradicted the T1 gold of `calendar-016` / `-034`).
+  3. *D12 batch approved:* `uat5r1..r9` (23), `uat5gy-01..06` (6), `uat5wd-01..07` (7), `uat5ca-01..10` (10), marked
+     "owner-approved D12 batch 2026-10-15" in their notes; and the 8 grammar-metadata-only edits of the A2 implementation
+     note 2 (`confluence-001`, `-005`, `-007`, `todo-016`, `-020`, `brief-017`, `neg-219`, `help-038`), marked in their
+     notes. `neg-219` and `help-038` themselves stay in the S1 batch. **Still PENDING:** the 148 S1 cases and the 41 INT-4
+     cases (`v5int4-001..041`). Discrepancy found: the A2 implementation note 2 says "the S1 batch approved on 2026-10-13",
+     but the corpus, the INT-4 note and the S1 note all record the S1 batch as pending; it is left pending here.
+  4. *A6 relabel batch (A6 ratification decision 10, `docs/plans/nl-action-relabel-batch.md`).* `neg-098`, `neg-100` and
+     `uat5r6-07` gain `a6Relabel: item.summarize` (`{source: mail, ref: "#1", mode: summary}`, `{source: drive, ref:
+     "#1", mode: summary}`, `{source: mail, ref: recent, mode: summary}`, batch `A6-relabel-2026-10-15`) and
+     `context.lastListing` (mail or Drive, labels 1-3, 1 minute old; a one-item mail listing for `uat5r6-07`).
+     - **Read mode is defined, not changed.** With A6 off (`QUOKY_NL_ACTIONS=off`, the D12 evaluation `eval:nl --mode
+       run`) no A6 entry is offered, so `expect` stays `none` (chat, and a list read is a wrong capture). The relabel is
+       scored only by `eval:nl --mode read-regression` (A6 entries offered), apart from the D12 gate, as the A6-D7 tooling
+       already did for `a6Relabel`. That mode now renders the case's `context` as the prompt's "Reference context" line
+       through the action fixtures' own builder (`readRegressionReferenceState`, `nl-action-eval.ts`); a test checks that
+       each relabel is a canonical selection Core accepts with actions on and resolves against its context.
+     - **`neg-099` "이 문서 요약해줘" is not relabelled.** Its proposed gold `ref: this` is refused by the validator
+       (`ungrounded`, arg `ref`): the A6-D2 closed deictics are 그거/이거/그것/방금/아까/… and a bare determiner 이 is not
+       one. A gold Core can never produce would only fail; making "이 + noun" a deictic changes A6-D2 and needs its own
+       owner decision. (The GML-2 anchored grammar still answers it for a one-item list.)
+     - **Not run:** no read-regression run (not in this approval). Two expected effects for when it runs: the v25
+       example "그거 요약해줘" (A6 override) writes `ref: this` while `uat5r6-07`'s approved gold is `recent`; Core resolves
+       both the same way (A6-D2 step 3), but the scorer compares exact args. And that example quotes `uat5r6-07`'s text
+       (7 characters, under the leak check's 8-character floor).
+- **Prompt versions (the note 3 / A7 convention).** Read prompt `nl-select.v22` → `nl-select.v24`; the A6 `off` pin
+  `golden/nl-select.v22.prompts.json` becomes `golden/nl-select.v24.prompts.json`, generated from the v22 file by
+  replacing exactly those three lines in each of the 31 prompts that offer the calendar entry (93 lines plus the version
+  and note). The A6 action prompt `nl-select.v23` → `nl-select.v25` (the A6 text on v24; the seed label follows). The
+  selector cache key carries the version (tests: v18, v20-v25 give 7 distinct keys).
+- **Grammar side** (`scoreGrammarSide`, offline): five of the seven relabelled cases are calendar-grammar-tagged and the
+  grammar answers them without the flag: exact 208 → 204/248, user-visible 226 → 221, entry 243, wrong 0.
+- **Probes (owner-approved, Haiku, 20 calls each unless stated; v22 rebuilt byte for byte from v24 and checked against
+  the v22 pin, 76/76 prompts).**
+  - "오늘 미팅 있어요?": v22 `{}` 20/20 → v24 `{timedOnly}` 20/20. "내일 회의 몇 개야": v22 `{tomorrow, count}` 18,
+    with the flag 2 → v24 with the flag 20/20. "이번 주 일정 다 보여줘": `{this-week}` 20/20 on both (never the flag).
+    "when is my next meeting?": v22 `{upcoming}` 20/20 → with the flag 20/20.
+  - Title keywords: "이번 주 정기회의 일정 있어?" v22 `keyword 정기회의` 17/20 → final v24 19/20 (1 `{this-week,
+    timedOnly}` without the keyword); "다음 주 주간회의 일정 보여줘" 20/20 on both.
+  - **A first v24 wording, rejected** (eval report `nl-intent-2026-10-15T02-31-59-929Z-haiku.json`, plan digest
+    `c215a54a…`). It replaced the description's first example "회의만" by "회의 있어?" and was chosen over two longer
+    variants that named title keywords (both kept the flag on titles and dropped the keyword "정기회의" in up to 8 of 20
+    calls). Its 3 runs: overall 96.9% / 94.6% / 96.5%, calendar 96.8% / 93.7% / 95.8%, wrong captures 1, 1, 0 (`neg-208`
+    "그거 몇 개야" → Jira, CLEAR); probes put `neg-208` at 3/60 CLEAR captures (v22: 0/120) and `calendar-53` at 12/20.
+    Keeping "회의만" (the final wording) restored `calendar-53` (19/20); `neg-208` CLEAR captures 1/40, 0/20 (it mostly
+    becomes `NEEDS_CLARIFICATION`, which is a clarification, not a capture). Every edit of these lines moved `neg-208`
+    toward a clarification; v22 answers `none` in 78 of 120 probe calls and never captures it CLEAR (0/120).
+- **Eval (owner-approved, Strict, Haiku, `nl-select.v24` final, calendar, mail and Jira with every negative, 449 cases, 3
+  runs, 6 s bound, plan digest `937c1a43…`, report `data/eval/nl-intent-2026-10-15T02-45-01-175Z-haiku.json`, local).**
+  - Per run: overall 248/257 (96.5%), 246/257 (95.7%), 246/257 (95.7%); calendar 90/95 (94.7%), 92/95 (96.8%), 88/95
+    (92.6%); Jira 89/92, 89/92, 90/92; mail 69/70, 65/70, 68/70; wrong captures 1/192, 0/192, 0/192; p50 1377/1372/1364
+    ms, p95 2119/2172/2172 ms; 0 timeouts. **The D12 gate passes in runs 2 and 3; run 1 fails on one wrong capture,
+    `neg-037`**, the pre-existing capture recorded in the A7 note (3/20 probe calls on both v20 and v22, once in the
+    superseded v22 3-run evaluation).
+  - Against v22 (A7 final, 3 runs on the gold before this batch: overall 95.7-96.5%, calendar 92.4-96.7%, wrong 0): the
+    same overall band and calendar band, on gold that now asks for the flag in 12 cases.
+  - The T1 cases: `-005`, `-018`, `-029`, `-032`, `-008`, `-020`, `-025`, `-030` hit 3/3; `-016` and `-034` 2/3 (flag
+    omitted once); `-057` 2/3 (once NEEDS_CLARIFICATION); `-035` "how many meetings do I have this week?" 0/3 (the flag
+    is omitted; probe: v22 2/20, v24 0/20 set it). `calendar-046` and `-53` hit 3/3.
+  - Other calendar misses: `calendar-023` "다음 주말에 잡힌 일정 있어?" → `next-sat` 3/3 (gold `next-weekend`; probe v22
+    14/20 → v24 8/20 hits, a drift to watch, not a wrong capture); `calendar-004` once, `uat5r2-12` once.
+- **Residuals.** `neg-037` (pre-existing) keeps the D12 gate at 2 of 3 runs; `calendar-035` (English count) and
+  `calendar-023` are prompt-sensitive misses, left as corpus cases (D10, D12; no phrase is added).
 
 ### ADR-0120 amendment A7 — "until <weekday>": an open-start period that ends on the weekday the owner bounds, and a clear past-tense statement is not a read (Accepted 2026-10-15) (2026-10-15)
 

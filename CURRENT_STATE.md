@@ -27,6 +27,12 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 
 - S1 per-grammar Phase C decision: a grammar moves to `c` only on its own `nl_selection.agreement` data, with the owner's yes.
 - Egress `enforce`: after 7 clean ledger days; the owner ask is due around 2026-10-20.
+- A6 R1 batch: the red-team review of the drafted corpus (the relabel batch was approved on 2026-10-15), and the A6 clause confirmations (A6-D3a and the
+  others under "A6 clauses pending owner confirmation"). `QUOKY_NL_ACTIONS` stays `off` until then.
+- D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
+  metadata edits, the calendar relabels and the T1 extension). Still pending: the 148 S1 cases and the 41 INT-4 cases
+  (`v5int4-*`), and the A6 relabel of `neg-099` (not applicable under A6-D2, see the A5 note 3 addendum).
+
 - A6 R1: the batch review is APPROVED (2026-10-15; DECISIONS "A6 R1 owner batch approval"). Still needing a separate owner
   yes each: the A6 model runs (3 runs), the `.env.local` `QUOKY_NL_ACTIONS` flag (stays `off`), and the labelled live session
   of at least 100 turns.
@@ -48,6 +54,19 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
   tracks' notes). Still pending from v4: the OpenAI and Gemini keys, the PRV-3 monthly DM, LRN-5 round trip.
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
+
+### v5 owner batch of 2026-10-15 — ADR-0112 amendments, D12 approvals, A6 relabels, T1 and prompt `nl-select.v24` — on branch `claude/v5-d12-batch` (2026-10-15)
+
+- **Accepted:** ADR-0112 amendments 1 (Slack delete) and 2 (Jira create and undo), all 20 decisions as recommended;
+  implementation stays at A6 R3 / R4.
+- **Corpus:** 46 cases and the 8 #204 metadata edits owner-approved; `neg-098`, `neg-100`, `uat5r6-07` relabelled to
+  `item.summarize` for the A6 read-regression mode only (`neg-099` held, A6-D2 has no "이" deictic); T1 extended to 7
+  more calendar cases.
+- **Prompt:** read `nl-select.v24` (A6 `off` pin `golden/nl-select.v24.prompts.json`), A6 `nl-select.v25`.
+- **Measured:** Haiku 3 runs: overall 95.7-96.5%, calendar 92.6-96.8%, wrong captures 1/0/0 (`neg-037`, pre-existing);
+  D12 gate in runs 2 and 3. Not merged; not live.
+
+Details: the A5 note 3 addendum and the two ADR-0112 ratification records in `DECISIONS.md`.
 
 ### v5 document summaries: attribution, one regeneration, never looser than main (ADR-0104 D1 amendment, owner-approved 2026-10-15) — on branch `claude/v5-sheet-summary-guard`
 
