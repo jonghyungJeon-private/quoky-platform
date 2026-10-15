@@ -13,10 +13,9 @@ import type { SurfaceGroupId } from './surface-groups';
  * family or state-bound step is a type error until it is mapped here. Every listed group must pass.
  */
 
-/** A handler's claim over `groups` (at least one; an empty list would be `unclassified`, so it falls back to `help`-free deny). */
+/** A handler's claim over `groups` (every map returns at least one group; an empty list fails closed to `code`). */
 export function surfaceClaimOf(groups: readonly SurfaceGroupId[], onDeny: SurfaceClaim['onDeny'] = 'reply'): SurfaceClaim {
   const [first, ...rest] = groups;
-  // Never empty in practice (every map returns at least one group); fail closed to the strongest code group if it were.
   return { groups: [first ?? 'code', ...rest], onDeny };
 }
 
