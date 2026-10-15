@@ -26091,7 +26091,7 @@ the last round under the fix-loop cap.**
    | Ops burden, new process / port | None | None, but a schema migration of the production DB (Strict apply) | None (in-process) | A new long-running server, ports 6333 / 6334 on loopback, its own restart and crash-loop watch |
    | Dependency / supply chain | 0 new dependencies (Node `fs` only) | A new native extension per platform (0.x releases when last checked; re-verify), loaded with `loadExtension` into the DB connection (extension loading enabled on the connection that holds every owner table) | A large prebuilt Rust/N-API module per platform plus Arrow | A server binary or container image plus a client; telemetry is on by default and must be disabled |
    | Durability and backup | Atomic rename writes; verified snapshot exists; the pool collection is rebuildable from the repo, so it needs no backup | Transactional with `learning_items`; SQLite backup | Versioned dataset files; own backup | Snapshot API; own backup and restore runbook |
-   | Deletion and undo | Hard delete by id (file rewritten atomically); undo = restore the pool row, deterministic re-embed gives the same id and vector | Row delete; old bytes stay in free pages until `VACUUM` unless `secure_delete` | Deletes are tombstones until compaction and old-version cleanup: a "deleted" vector stays readable on disk (conflicts with ADR-0106 forget semantics) | Delete is immediate in the API; WAL and snapshots keep data until optimised or rotated |
+   | Deletion and undo | Hard delete by id (file rewritten atomically); pool changes are reverted through git (revert the PR), not the owner-action undo, and a re-embed of the same text gives the same record id but not a guaranteed-identical vector | Row delete; old bytes stay in free pages until `VACUUM` unless `secure_delete` | Deletes are tombstones until compaction and old-version cleanup: a "deleted" vector stays readable on disk (irrelevant for the pool, which holds no memories) | Delete is immediate in the API; WAL and snapshots keep data until optimised or rotated |
    | Query latency (≤ 300 ms p95 added) | Store share < 10 ms at this scale; the budget is the embedding call (D10) | < 10 ms | < 10 ms | < 10 ms plus a loopback HTTP hop |
    | Egress / MSIT | None | None | None | A loopback HTTP client the ADR-0121 D8 guard does not allow today (plain http only for the exact Ollama binding): an allowlist amendment |
 
@@ -26115,8 +26115,8 @@ the last round under the fix-loop cap.**
    - Default and only allowed path: the existing `OllamaCliEmbeddingProvider` with `nomic-embed-text` (or another local
      Ollama embedding model chosen by measurement under ADR-0105). The owner pulls the model manually (C6 probe); the
      provider never pulls.
-   - **Pinning.** The pin is `name:tag` **and** the Ollama manifest digest the owner's host reports (`ollama list` id).
-     The space id becomes `<sanitized name>@<digest, 12 hex>`; the harness and (phase 2) the composition root refuse to
+   - **Pinning.** The pin is `name:tag`, the Ollama manifest digest the owner's host reports (`ollama list` id) **and** the Ollama runtime version (`ollama --version`), because the same digest can produce slightly different vectors under a different runtime; a changed runtime version is a changed space.
+     The space id becomes `<sanitized name>@<digest, 12 hex>` and the record also stores the runtime version; the harness and (phase 2) the composition root refuse to
      use a collection whose space id differs from the configured pin. The embedding prefix policy (nomic
      `search_query:` for both sides, because pool texts and owner messages are the same kind of text) is part of the pin
      and recorded in every run record.
@@ -26138,8 +26138,12 @@ the last round under the fix-loop cap.**
      delegated to the drafter:** if the owner delegates a later batch, the delegate is an independent reviewer (another
      agent or session than the one that drafted it, per the AGENTS.md reviewer ≠ implementer rule), and the batch record
      names both the drafter and the approver. No user free text enters the pool: not chat turns, not `learning_items`
-     rows, not connector content. Each entry must pass the credential guard, the D5 lint, and Core's schema check of
-     its `output` (a closed `entryId`, closed args). Changes only by reviewed PR; the pool digest binds every plan.
+     rows, not connector content. Each entry must pass the credential guard, the identifier rule, the D5 lint, and Core's schema check of
+     its `output` (a closed `entryId`, closed args). **Identifier rule:** an entry (text, previous, context, output) contains
+     no real identifier: no Jira issue keys, real channel names, people's names, emails or URLs to internal hosts; it uses
+     placeholders (`ABC-123`-style keys, `#channel-a`, `<person>`, `user@example.com`, `https://example.invalid/...`) so a
+     retrieved example cannot bias a target. The same scan runs in the pool loader beside the credential guard, and the
+     credential guard (also applied to the query text, D7) rejects an entry, never redacts it. Changes only by reviewed PR; the pool digest binds every plan.
    - **No path from the learning store (scopes ADR-0107 D6).** ADR-0107 D6 governs `learning_items` and stays unchanged:
      that data is `LOCAL_ONLY` and `OWNER_DM_ONLY` and is composed only for a `LOCAL` provider. The pool is not learning
      data; it is prompt text written for the repository, the same class as the static examples. Because the selector is
@@ -26179,15 +26183,20 @@ the last round under the fix-loop cap.**
      so RAG-0 commits a `known-findings` list equal to today's findings; the test fails on any new finding and on any
      stale entry, so the list can only shrink. The pool has no ratchet: any finding rejects the entry.
    - **Embedding half (local model, Strict per run, phase 1).** `--mode embed-audit` embeds pool and gold texts in the
-     pinned space and flags cosine ≥ τ. τ is calibrated, not guessed: the smallest value that flags every known near-copy
-     (the examples removed in v33–v35 and the three exact copies above) — expected near 0.90 for `nomic-embed-text` —
-     recorded with the calibration set. The audit writes a small committed record (pool digest, gold digest, space id, τ,
+     pinned space and flags cosine ≥ τ. τ is calibrated, not guessed: τ is the largest threshold that still flags every calibration near-copy (the minimum cosine among the
+     positive calibration pairs: the examples removed in v33–v35 and the three exact copies above), minus a stated margin
+     (0.02). ("Smallest value that flags everything" would be trivially 0.) The calibration set also holds negative pairs
+     (unrelated sentences of the same feature) and the false-positive rate at τ is reported with it. τ_low (D6) stays as
+     defined there. Recorded with the calibration set. The audit writes a small committed record (pool digest, gold digest, space id, τ,
      the flagged pairs, which must be empty for the pool); a suite test fails when the record's digests no longer match
      the committed pool and gold files, so a pool or gold change without a fresh audit cannot merge.
    - **Calibration test.** As in v35, a test asserts the measure flags the known near-copies, so a weaker tokenizer cannot
      silently pass everything.
 
 6. **D6 — The experiment (phase 1, offline, Strict per run).**
+   - **Known contaminated cases are excluded.** The 3 exact copies (`오후만`, `목요일 거는?`, `그거 요약해줘`) and the 6–7
+     ratcheted near-copies (D5 known-findings list) are removed from the pass / stop scoring and reported separately, so the
+     static prompt's own contamination cannot inflate A0 or deflate the gain.
    - **Frozen before any run:** gold digest (D12 corpora untouched for the whole experiment), pool digest, space id, τ,
      τ_low, k, seeds, the dev / held-out split, the selector model and effort, and the prompt version (the A6 prompt on
      `main` at that time, expected `nl-select.v35`, and the read prompt). All are bound into one plan digest the owner
@@ -26212,7 +26221,7 @@ the last round under the fix-loop cap.**
        It measures how much a static example set's choice alone moves the scores.
      - **A1:** A0 + k = 3 retrieved pool examples: cosine top-k against the prepared owner text
        (`prepareSelectionInput().text`, quoted and code spans already masked), at most 1 per `entryId`, only entries
-       whose `needs` are offered this turn, never a duplicate of a static example; run *r* uses an 80% pool subsample
+       whose `needs` are offered this turn **and whose `entryId` the prompt mode offers** (read or A6 mode), never a duplicate of a static example; run *r* uses an 80% pool subsample
        with seed *r*, so its variance includes example-set change.
      - **A2:** A1 with a seeded random k = 3 under the same filters (controls "more examples" against "relevant
        examples").
@@ -26240,6 +26249,10 @@ the last round under the fix-loop cap.**
      invest in corpus and prompt discipline: a frozen example set per version, the D5 lint, more gold cases, 5 runs per
      gate. There is no "inconclusive pass": anything short of all five criteria is a stop unless the owner decides
      otherwise in writing.
+   - **Traffic (ADR-0121 D8, MSIT minimal-traffic rule).** The experiment makes about 20,700 Claude CLI selector calls. The
+     plan digest states a traffic-ledger budget of 21,500 calls (a small reserve) and a rate cap of 4 concurrent, ≤ 1 call/s
+     sustained; the harness stops at the budget. Arms are interleaved within each run / session (same case, all arms, in
+     rotation), so model drift across sessions does not confound arms. Embeddings are local and add no egress.
    - **Budget cap and confirmatory runs:** 2 sessions. The first held-out set is the test. A second set is allowed only
      as a **confirmatory** run of the same pre-registered criteria: every change (pool, k, wording, model) is recorded in
      `DECISIONS.md` before it runs, the new plan digest is approved, and its result stands alone (it is never pooled with
@@ -26302,8 +26315,8 @@ the last round under the fix-loop cap.**
 ### Alternatives considered
 
 - **A new vector database now (sqlite-vec, LanceDB, Qdrant).** Rejected for this scope (D2): no measured need, new
-  native code or a new server, and for LanceDB and Qdrant deletion semantics that need extra work to honour "forgotten
-  means gone". sqlite-vec is the recorded migration path.
+  native code or a new server, and and for LanceDB tombstone deletion (not a pool concern: the pool holds no memories, and since the ADR-0106 amendment forget
+  is an archive with the vector removed on archive). sqlite-vec is the recorded migration path.
 - **A "Vector + RAG platform" (general retrieval over memory, examples and connector content).** Rejected: no measured
   need, and indexing connector content is an information-flow problem that needs its own ADR (D1).
 - **Fix instability only by prompt discipline (no retrieval).** Kept as the stop-rule fallback and partly adopted now:

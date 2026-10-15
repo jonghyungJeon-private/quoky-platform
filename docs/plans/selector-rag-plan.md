@@ -68,13 +68,13 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
   - `apps/quoky/src/tools/selector-rag/selector-pool.v1.json`: `{ version, description, approvedBatches[], entries[] }`;
     entry = `{ id, text, previous?, context?, output, needs[], source: drafted|owner, approvedBatch, language }`.
   - `apps/quoky/src/tools/selector-rag/pool.ts`: load, schema check (closed `entryId` and args through Core's catalog
-    types), credential guard, n-gram lint against gold via the RAG-0 helper, coverage report (per entry ≥ 5, negatives ≥
+    types), credential guard, identifier rule (no Jira keys, real channel names, people's names, emails, internal URLs; placeholders only), n-gram lint against gold via the RAG-0 helper, coverage report (per entry ≥ 5, negatives ≥
     20%), pool digest.
   - `apps/quoky/src/tools/selector-rag/embed-audit.ts`: embeds pool and gold through `OllamaCliEmbeddingProvider` in the
     pinned space into a store under `data/eval/selector-rag/store/` (its own `LocalVectorProvider` directory), computes
-    max cosine per pool entry against gold, and τ calibration on the known near-copies.
+    max cosine per pool entry against gold, and τ calibration (τ = minimum positive cosine minus 0.02, plus negative pairs and the reported false-positive rate).
   - `apps/quoky/src/tools/selector-rag/selector-pool.audit.v1.json` (committed): pool digest, gold digest, space id
-    (`nomic-embed-text@<digest12>`), prefix policy, τ, calibration set and scores, flagged pairs (must be empty).
+    (`nomic-embed-text@<digest12>`), Ollama runtime version, prefix policy, τ, calibration set and scores, flagged pairs (must be empty).
   - `apps/quoky/src/tools/selector-rag/pool.test.ts`: pool schema and coverage, n-gram lint with zero findings, and
     "the audit record's digests equal the committed pool and gold" (a stale audit fails the suite).
   - CLI: `apps/quoky/src/tools/selector-rag-cli.ts`, script `eval:rag` in the root `package.json`.
@@ -91,7 +91,7 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
     `NlSelectionPromptInput`, rendered after the static `Examples:` block under a fixed header; absent = byte-identical.
     Tests: the v30 golden and A6 goldens unchanged; a prefix test; a new
     `golden/nl-select.retrieved-block.v1.json` pinning the block for a fixed pool slice.
-  - `apps/quoky/src/tools/selector-rag/retrieve.ts`: `retrieveTopK` (cosine top-k, ≤ 1 per `entryId`, `needs` ⊆ offered,
+  - `apps/quoky/src/tools/selector-rag/retrieve.ts`: `retrieveTopK` (cosine top-k, ≤ 1 per `entryId`, `needs` ⊆ offered and `entryId` offered by the prompt mode,
     no duplicate of a static example, deterministic tie-break by id) and `retrieveRandomK` (seeded, same filters), both
     over a pool subsample `(seed r, 80%)`.
   - `apps/quoky/src/tools/selector-rag/selector-rag-eval.ts`: wraps the existing `nl-action-eval.ts` /
@@ -113,7 +113,7 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
     `DECISIONS.md` as an ADR-0123 note (numbers only, no owner text).
 - **Arms.** A0 static; A0-swap (mandatory) = the static prompt whose example section is a frozen random draw from the
   pool with the static set's per-entry counts, one draw per run; A1 static + top-3 retrieved; A2 static + random-3.
-  Each 5 runs over the held-out 70% of the D12 gate (A6 action corpus + read regression). Tuning happens only on dev
+  Each 5 runs over the held-out 70% of the D12 gate (A6 action corpus + read regression). The known contaminated cases (3 exact copies, 6–7 ratcheted near-copies) are excluded from pass / stop scoring and reported separately. Arms are interleaved within each run / session. Tuning happens only on dev
   and is recorded in `DECISIONS.md` before the held-out runs; a second held-out set is confirmatory only (ADR-0123 D6).
 
 ## 2. Cost and latency estimate
@@ -125,6 +125,7 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
 | Wall time | ≈ 2 h at concurrency 4 (dev smoke ≈ 5 min, held-out ≈ 2 h): two sessions | recorded selector p50 ≈ 1.35 s, p95 ≈ 2.1 s |
 | Prompt size | ~23k characters (~6k tokens) with the full catalog; retrieved block +120–200 tokens (+2–3%) | `nl-select.v30.prompts.json` largest case |
 | Input tokens | ≈ 130M over all runs, most of it the repeated static prefix (kept cacheable by placing the block after the static examples) | above |
+| Traffic (ADR-0121 D8) | Ledger budget 21,500 Claude CLI calls (≈ 20,700 + reserve); rate cap 4 concurrent, ≤ 1 call/s sustained; stated in the plan digest; the harness stops at the budget | MSIT minimal-traffic rule |
 | Money | Runs on the owner's Claude CLI login like every D12 gate; the CLI-reported cost is stored in each record. No price is quoted here | existing eval path |
 | Embeddings | ~1,600 audit + ~1,400 query embeddings per set, local, a few minutes warm; 0 bytes egress | ADR-0098 D8 |
 | Store | pool ≤ 2,000 × 768 Float32 ≈ 6 MB in memory; top-k brute force < 10 ms | `LocalVectorProvider` |
