@@ -58,6 +58,10 @@ const DEICTIC_EN = ['it', 'that', 'this', 'that one', 'this one'];
 /** Particles glued on a deictic, filler, time or item-source noun ("이 문서를", "그 메일에서는"). */
 const PARTICLE_WORDS = '(?:으로|에서|까지|부터|에는|이랑|하고|은|는|이|가|을|를|에|의|도|만|로|랑|요)';
 const PARTICLE_TAIL = new RegExp(`${PARTICLE_WORDS}$`, 'u');
+/** A token without its trailing particles: up to two stacked ones ("5시에도", "메일에서는"). */
+function withoutParticles(token: string): string {
+  return token.replace(PARTICLE_TAIL, '').replace(PARTICLE_TAIL, '');
+}
 
 /**
  * A6-D2 clarification (owner decision 2026-10-15, as recorded in DECISIONS): a demonstrative determiner 이 / 그 standing as
@@ -111,6 +115,34 @@ function determinerReferences(groundingText: string): Array<{ readonly determine
   return found;
 }
 
+/**
+ * A Korean item-source noun standing as its own word: after the start, whitespace or a number word ("1번 문서", "두 번째
+ * 메일", "13번알림"), ending at a whole-noun end (particles allowed: "문서를", "메일에서는"). "이메일" is its own noun.
+ */
+const NAMED_NOUN_ALL = new RegExp(`(?<=^|\\s|\\d|번|째)(${NOUN_ALTERNATION})(?=${PARTICLE_WORDS}*${NOUN_END})`, 'gu');
+/** The catalog's Latin words for each item source ("mail", "inbox", "drive", "todo", "reminder"), whole words only. */
+const ITEM_SOURCE_WORDS_LATIN: ReadonlyArray<readonly [string, NlItemSource]> = (Object.entries(ITEM_SOURCE_LIST_ENTRIES) as Array<[NlItemSource, NlWave1EntryId]>).flatMap(
+  ([source, id]) =>
+    [...NL_WAVE1_ENTRIES[id].aliases, ...(NL_WAVE1_ENTRIES[id].sourceNames ?? [])]
+      .map(normalizeForMatch)
+      .filter((noun) => /^[a-z0-9 .-]+$/.test(noun))
+      .map((noun) => [noun, source] as const),
+);
+
+/**
+ * ADR-0120 A6-D2 "Same source only" (A6 R1 fix): the item sources the owner's own words name with the catalog's words
+ * for them ("1번 문서" names drive, "2번 메일" mail, "그 알림" a reminder). Core cross-checks a `ref` against them for every
+ * ref kind, so a selector `source` (or entry) that disagrees with the noun the owner wrote can never read or change an
+ * item of another source. The nouns are the catalog's own aliases and source names, never a phrase list.
+ */
+export function nlNamedItemSources(groundingText: string): ReadonlySet<NlItemSource> {
+  const text = normalizeForMatch(groundingText);
+  const named = new Set<NlItemSource>();
+  for (const match of text.matchAll(NAMED_NOUN_ALL)) for (const source of ITEM_SOURCE_NOUNS_KO.get(nounKey(match[1] as string)) ?? []) named.add(source);
+  for (const [word, source] of ITEM_SOURCE_WORDS_LATIN) if (latinWordIn(text, word)) named.add(source);
+  return named;
+}
+
 /** Whether the owner's words point with a determiner at an item-source noun ("이 문서", "그 메일"), whatever the entry. */
 export function hasNlDeterminerReference(groundingText: string): boolean {
   return determinerReferences(groundingText).length > 0;
@@ -141,7 +173,8 @@ const KO_ORDINAL_PATTERN = /(첫|두|세|네|다섯|여섯|일곱|여덟|아홉|
 const EN_ORDINAL_PATTERN = /\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|(\d{1,2})(?:st|nd|rd|th))\b/giu;
 
 function latinWordIn(text: string, word: string): boolean {
-  const escaped = word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s+');
+  // `-` stays literal outside a class (escaping it is invalid under the `u` flag: "e-mail").
+  const escaped = word.replace(/[/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s+');
   return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'u').test(text);
 }
 
@@ -275,7 +308,8 @@ export function containsNlTimeExpression(text: string): boolean {
     .split(/\s+/u)
     .filter((token) => token.length > 0);
   for (const token of tokens) {
-    const bare = token.replace(PARTICLE_TAIL, '');
+    // Up to two stacked particles (A6 R1: "그리고 5시에도" is a time outside `when`).
+    const bare = withoutParticles(token);
     if (WEAK_TIME_WORDS.has(token) || WEAK_TIME_WORDS.has(bare)) continue;
     if (EXTRA_TIME_TOKEN.test(bare) || EXTRA_TIME_TOKEN.test(token)) return true;
     if (/^(?:매일|평일|주말|매주|매일매일|daily|weekly|everyday|tonight|tomorrow|today)/u.test(bare)) return true;
@@ -335,7 +369,7 @@ export const ITEM_CONTENT_MODE: NlAmbiguityKey = Object.freeze({
 // ── the entries ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 const REF_DESCRIPTION =
-  'The item: "#N" for a number or ordinal the owner wrote (3번 / 세 번째 -> "#3"); "recent" or "this" for 그거/이거/방금/아까/it/that; "last" for 마지막/the last one. Never an id or a title.';
+  'The item: "#N" for a number or ordinal the owner wrote (3번 / 세 번째 / item 3 -> "#3"); "this" for 그거/이거/저거/it/that/this (also the last action\'s item); "recent" only for 방금/아까 (just now); "last" for 마지막/the last one. Never an id or a title.';
 
 function exactlyOneTarget(args: NlArgs): NlEntryCheckFailure | undefined {
   const hasRef = args.ref !== undefined;
@@ -438,7 +472,7 @@ const reminderCreate: NlCatalogEntry = {
       // The time span itself: the payload rule (not only time words) does not apply to it.
       allowsTimeWords: true,
       maxChars: NL_WHEN_MAX_CHARS,
-      description: 'Only the time words, verbatim ("내일 9시", "매일 아침 8시", "30분 뒤"). Never compute a date.',
+      description: 'Only the time words, verbatim, without a trailing particle such as 에 ("내일 9시", "매일 아침 8시", "30분 뒤"). Never compute a date.',
     },
   ],
   usage: { ko: '"내일 오전 9시에 회의 준비 알려줘"', en: '"remind me tomorrow at 9am to prepare the meeting"' },

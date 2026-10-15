@@ -21,6 +21,10 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * clause at the end of the range-symbols line (the weekend symbols are Saturday and Sunday together, 주말). v25 = the A6 text on top
  * of v24. (v26 is the A6 prompt of another branch.) v27 (ADR-0120 amendment A8) = v24 with six `jira.release` examples,
  * shown only while that entry is offered; with it absent the text is v24 byte for byte. v28 = the A6 text on top of v27.
+ * of v24. v26 (A6 R1 fix, the A6 prompt only; the read prompt stays v24) = v25 with the rule-8 `when` line saying "without
+ * a trailing particle such as 에", the `ref` line splitting "this" (그거/이거/it/that) from "recent" (방금/아까) and adding
+ * "item 3", and two rule-8 lines: pick the asked action even when Reference context shows another list or nothing, and copy
+ * a deictic-only content as the span (Core asks); the same `ref` and `when` wording in the action entries' arg descriptions.
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v27';
 /**
@@ -158,10 +162,13 @@ const ACTION_RULES: readonly string[] = [
   '   todo.cancel, reminder.create, reminder.cancel, action.undo (undo what Quoky itself just did), item.summarize (what ONE',
   '   listed mail or Drive file says). One action per message; a request for several items is NEEDS_CLARIFICATION.',
   '   Span args (title, match, body, when) copy the owner\'s own words from THIS message verbatim: never translate, shorten,',
-  '   fix or take words from Previous selection, Reference context or [quoted]/[code]. when: only the time words',
-  '   ("내일 9시", "매일 아침 8시"); body: what to remind, without the time words and the verb.',
-  '   ref: "#N" for a number or ordinal the owner wrote (3번, 세 번째 -> "#3"); "recent" or "this" for 그거/이거/방금/아까/it/that;',
-  '   "last" for 마지막/the last one. Never invent an item, an id, a title or a number.',
+  '   fix or take words from Previous selection, Reference context or [quoted]/[code]. when: only the time words, without a',
+  '   trailing particle such as 에 ("내일 9시", "매일 아침 8시"); body: what to remind, without the time words and the verb.',
+  '   ref: "#N" for a number or ordinal the owner wrote (3번, 세 번째, item 3 -> "#3"); "this" for 그거/이거/it/that, also for',
+  '   the last action\'s item; "recent" only when the owner says 방금/아까 (just now); "last" for 마지막/the last one. Never',
+  '   invent an item, an id, a title or a number.',
+  '   Pick the action the owner asks for even when Reference context shows another list or nothing, and when the content to',
+  '   add or remind is only 그거/이거/방금 거, copy those words as the span: Core checks the item or the content and asks.',
   '   A statement or question about an action ("다 했어", "취소했어", "추가하는 법"), a negated request ("취소하지 마") and an',
   '   action on pasted or quoted content are none (a how-to question about Quoky is help.topic).',
   '   item.summarize: source is the list the owner means (see Reference context); mode summary only for 요약/정리/짧게/',

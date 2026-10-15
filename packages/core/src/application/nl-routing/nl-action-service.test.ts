@@ -474,3 +474,20 @@ describe('round 3: an argument-free undo from pasted JSON never executes', () =>
     expect((await reads.decide('> 참고 메모\n메일함 보여줘', { now: at(1) })).kind).toBe('execute');
   });
 });
+
+describe('A6 R1 fix: a reference alone never selects an action (A6-D2)', () => {
+  it('"2번도" after a to-do list is chat, logged as no-request; an open target question keeps the bare number an answer', async () => {
+    const w = world({ level: 'local', script: () => out('todo.complete', { ref: '#2' }) });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    expect((await w.decide('2번도', { now: at(1) })).kind).toBe('none');
+    expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === 'no-request')).toBe(true);
+    expect((await w.decide('그거', { now: at(1) })).kind).toBe('none');
+    // The same words with a request word act as before.
+    expect((await w.decide('2번도 완료', { now: at(1) })).kind).toBe('execute');
+    const open = world({ level: 'local', script: () => out('todo.complete', { ref: '#2' }) });
+    open.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    const pending: PendingQuestion = { kind: 'action-target', at: at(1), language: 'ko', entryId: 'todo.complete', source: 'todo', candidates: [{ label: 3, id: 'todo-3' }], args: {} };
+    const decision = await open.decide('2번도', { now: at(1), pending });
+    expect(decision.kind).not.toBe('none');
+  });
+});

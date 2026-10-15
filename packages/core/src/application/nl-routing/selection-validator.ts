@@ -86,6 +86,7 @@ export type NlValidationFailureReason =
   | 'credential'
   /** A6-D3: a payload span made only of deictic, ordinal or time words ("그거", "첫 번째 거"). */
   | 'deictic-payload'
+
   /** A6-D1: a to-do title with a time expression (to-do or reminder?). */
   | 'time-in-title'
   /** A6-D1: a reminder message with a time expression outside `when`. */
@@ -151,6 +152,12 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     args[name] = checked;
   }
   entry.normalize?.(args);
+  // A6-D3 (A6 R1 fix): a payload made only of deictic, ordinal or time words gets its fixed reply ("내용을 직접 적어
+  // 주세요") before any missing argument is named: "그거 알림으로 만들어줘" has no time either, and the content is the problem.
+  for (const spec of entry.args) {
+    const value = args[spec.name];
+    if (spec.kind === 'span' && spec.allowsTimeWords !== true && typeof value === 'string' && isNlDeicticOnlyPayload(value)) return { ok: false, reason: 'deictic-payload', entryId, arg: spec.name };
+  }
   for (const spec of entry.args) {
     if (spec.required === true && args[spec.name] === undefined) return { ok: false, reason: 'missing-arg', entryId, arg: spec.name };
   }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NL_ACTION_ENTRIES,
   containsNlTimeExpression,
+  nlNamedItemSources,
   hasNlDeterminerReference,
   isNlBulkRequest,
   isNlDeicticOnlyPayload,
@@ -452,3 +453,22 @@ describe('round 6: the URL exemption neutralises only an http(s) `://`, never re
     expect(nlActionInputRefusal(text, text)).toBeUndefined();
   });
 });
+
+describe('A6 R1 fix: the catalog\'s item-source nouns and stacked particles', () => {
+  it('names the item sources the owner wrote with the catalog\'s own words, whole words only', () => {
+    expect([...nlNamedItemSources('1번 문서 요약해줘요')]).toEqual(['drive']);
+    expect([...nlNamedItemSources('2번 메일에서는 뭐래')]).toEqual(['mail']);
+    expect([...nlNamedItemSources('13번알림 꺼줘')]).toEqual(['reminder']);
+    expect([...nlNamedItemSources('mail 5 summary please')]).toEqual(['mail']);
+    expect([...nlNamedItemSources('e-mail 2')]).toEqual(['mail']);
+    expect([...nlNamedItemSources('두 번째 거 요약해줘')]).toEqual([]);
+    expect([...nlNamedItemSources('회의 알림장 1번')]).toEqual([]);
+    expect([...nlNamedItemSources('그 문서화 작업')]).toEqual([]);
+  });
+
+  it('a time word with two stacked particles is still a time ("그리고 5시에도")', () => {
+    expect(containsNlTimeExpression('회의 알려줘 그리고 5시에도')).toBe(true);
+    expect(containsNlTimeExpression('회의 알려줘')).toBe(false);
+  });
+});
+

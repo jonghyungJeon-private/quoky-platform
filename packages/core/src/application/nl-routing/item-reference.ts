@@ -2,7 +2,7 @@ import type { IsoTimestamp } from '../../domain';
 import type { AnyListingReplyMatch, ListingItem, ListingRecord, ListingSlot, ListingSource } from '../last-listing';
 import { LISTING_REPLY_TTL_MS } from '../last-listing';
 import type { NlActionEntryId, NlItemSource, NlItemTarget, NlUndoSpec } from './catalog';
-import { nlIndexWording, type NlRef } from './action-entries';
+import { nlIndexWording, nlNamedItemSources, type NlRef } from './action-entries';
 import type { LastActionView } from './last-action';
 import { normalizeForMatch } from './selection-input';
 
@@ -21,6 +21,9 @@ import { normalizeForMatch } from './selection-input';
  *  3. `recent` / `this`: the fresh `lastAction` of the entry's source; otherwise the most recent listing when it has that
  *     source and exactly one item; otherwise ask.
  *  4. A fresh `lastAction` item that differs from a fresh single-item listing of the same source asks.
+ * Before all of them (A6 R1 fix, "Same source only"): when the owner's words name item sources with the catalog's nouns
+ * ("1번 문서", "2번 메일", "그 알림") and none of them is the entry's source, the reply asks (other-source), for every ref
+ * kind, so a selector `source` that disagrees with the owner's noun never reads or changes another source's item.
  * The execution-time check (5: re-read by id, owned, actionable) belongs to the handler.
  */
 
@@ -83,9 +86,9 @@ function targetFrom(slot: ListingSlot, item: ListingItem): NlItemTarget {
 function unresolved(
   input: NlReferenceInput,
   outcome: Exclude<NlResolutionOutcome, 'resolved'>,
-  extra: Omit<Extract<NlReferenceResolution, { kind: 'unresolved' }>, 'kind' | 'outcome' | 'source'> = {},
+  extra: Partial<Omit<Extract<NlReferenceResolution, { kind: 'unresolved' }>, 'kind' | 'outcome'>> = {},
 ): NlReferenceResolution {
-  return { kind: 'unresolved', outcome, source: input.source, ...extra };
+  return { kind: 'unresolved', outcome, ...extra, source: extra.source ?? input.source };
 }
 
 /** Pick within one slot of the entry's source (`#n` by shown label or position, `last`, a single-item `this`). */
@@ -110,6 +113,13 @@ function pickInSlot(input: NlReferenceInput, slot: ListingSlot): NlReferenceReso
 export function resolveItemReference(input: NlReferenceInput): NlReferenceResolution {
   const { state, ref, source } = input;
   const localWrite = input.entryId !== 'item.summarize';
+  // Same source only: the owner's own source noun wins over the selector's `source` (and entry), for every ref kind.
+  const named = nlNamedItemSources(input.groundingText);
+  if (named.size > 0 && !named.has(source)) {
+    const meant = named.size === 1 ? [...named][0] : undefined;
+    const found = state.replyTo?.listing?.kind === 'listing' ? state.replyTo.listing.slot.source : state.listings.mostRecent?.source;
+    return unresolved(input, 'other-source', { ...(meant !== undefined ? { source: meant } : {}), ...(found !== undefined && found !== meant ? { found } : {}) });
+  }
   // 0. reply-to-pick names its listing explicitly.
   const reply = state.replyTo?.listing;
   if (reply !== undefined) {

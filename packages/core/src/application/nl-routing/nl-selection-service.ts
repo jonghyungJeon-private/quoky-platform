@@ -34,7 +34,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, isNlDeicticOnlyPayload, nlActionInputRefusal, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -982,6 +982,15 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
       return this.actionAnswer(audit, renderInputRefusal(language));
     }
+    // A6-D2 "a deictic alone never selects an entry" (A6 R1 fix): a message that is only a reference (a deictic, a number
+    // or an ordinal with particles: "2번도", "그거", "1") carries no request of the owner's, so no action is selected and,
+    // like a selector `none`, the turn is chat. The same word classes as the payload rule; no phrase list. While an A6
+    // target question is open the bare number is an answer to it (its own path asked; a label it lacks reaches here).
+    const openQuestion = turn.pending !== undefined ? turn.pending ?? undefined : readPendingQuestion(turn.session, turn.actor.id, turn.now);
+    if (isNlDeicticOnlyPayload(prepared.groundingText) && !isActionPendingQuestion(openQuestion)) {
+      this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields({ ...base, resolution: 'none', result: 'refused', reason: 'no-request' }));
+      return { kind: 'none' };
+    }
     if (!validated.ok) {
       // An entry that is not offered (an external write before R3, an unconfigured source) is honest chat's to explain.
       if (validated.reason === 'not-offered' || validated.reason === 'unknown-entry' || validated.reason === 'not-read') return { kind: 'none' };
@@ -1014,7 +1023,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         }
         return this.actionAnswer(
           audit,
-          renderReferenceQuestion(resolved.outcome, source, language, {
+          renderReferenceQuestion(resolved.outcome, resolved.source, language, {
             ...(resolved.found !== undefined ? { found: resolved.found as NlItemSource } : {}),
             ...(resolved.count !== undefined ? { count: resolved.count } : {}),
             ...(resolved.index !== undefined ? { index: resolved.index } : {}),
