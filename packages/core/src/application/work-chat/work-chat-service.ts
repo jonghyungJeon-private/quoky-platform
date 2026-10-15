@@ -75,6 +75,7 @@ import {
   renderTodoUndoRefused,
   renderedTodoRows,
   todoNumberOf,
+  TODO_AMBIGUOUS_MAX_ROWS,
 } from './work-chat-renderer';
 import type { WorkChatLookupFailure } from './work-chat-renderer';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
@@ -527,7 +528,7 @@ export class WorkChatService implements WorkDesk {
     const resolution = resolveListedTarget(todos, target, listing);
     if (resolution.kind === 'gone' || resolution.kind === 'unlisted') return this.driftRefusal(resolution, todos, actor);
     if (resolution.kind === 'none') return { body: renderTodoNotFound(target, todos.length) };
-    if (resolution.kind === 'ambiguous') return { body: renderTodoAmbiguous(action, resolution.candidates) };
+    if (resolution.kind === 'ambiguous') return { body: renderTodoAmbiguous(action, resolution.candidates), extra: this.candidatesReceipt(resolution.candidates) };
     const updated = await this.deps.work.transition(resolution.item.id, status);
     return { body: status === WorkItemStatus.COMPLETED ? renderTodoCompleted(updated) : renderTodoCanceled(updated), updated };
   }
@@ -573,6 +574,15 @@ export class WorkChatService implements WorkDesk {
   private transitionReceipt(kind: 'todo.complete' | 'todo.cancel', item: WorkItem, no: number | undefined): { readonly action?: NlActionReceipt } {
     if (!this.actionReceipts) return {};
     return { action: { entryId: kind, result: 'executed', source: 'todo', itemId: item.id, ...(no !== undefined ? { label: no } : {}), version: item.updatedAt, undoable: true } };
+  }
+
+  /**
+   * A6-D2 amendment: the numbered candidates an ambiguous anchored command showed ("번호로 지정해 주세요") become the
+   * listing, so the numbered follow-up resolves against exactly the numbers on screen, never an older snapshot.
+   */
+  private candidatesReceipt(candidates: ReadonlyArray<{ no: number; item: WorkItem }>): { readonly listing?: NlListingReceipt } {
+    if (!this.actionReceipts) return {};
+    return { listing: { source: 'todo', items: candidates.slice(0, TODO_AMBIGUOUS_MAX_ROWS).map(({ no, item }) => ({ label: no, id: item.id })) } };
   }
 
   /** The to-do rows as rendered (an empty list clears the slot, so an older list is never picked from). */
@@ -694,7 +704,7 @@ export class WorkChatService implements WorkDesk {
     const resolution = resolveListedTarget(todos, target, listing);
     if (resolution.kind === 'gone' || resolution.kind === 'unlisted') return this.driftRefusal(resolution, todos, actor);
     if (resolution.kind === 'none') return { body: renderTodoNotFound(target, todos.length) };
-    if (resolution.kind === 'ambiguous') return { body: renderTodoAmbiguous('link', resolution.candidates) };
+    if (resolution.kind === 'ambiguous') return { body: renderTodoAmbiguous('link', resolution.candidates), extra: this.candidatesReceipt(resolution.candidates) };
     const known = new Set(resolution.item.resourceRefs.map((ref) => ref.identity));
     const added = refs.filter((ref, index) => !known.has(ref.identity) && refs.findIndex((r) => r.identity === ref.identity) === index);
     if (known.size + added.length > WORK_ITEM_MAX_RESOURCE_REFS) return { body: renderTodoTooManyRefs(WORK_ITEM_MAX_RESOURCE_REFS) };

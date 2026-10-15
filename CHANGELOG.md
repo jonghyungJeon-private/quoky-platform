@@ -14,7 +14,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   shows the current open list, which becomes the new listing.
 - **Fixed.** A deterministic to-do command no longer merges a live number over a listing label (the A6 snapshot could end
   up naming a different item under a label the owner had seen). Its receipt carries the shown label, or no label.
-  An anchored add's live number is recorded only when it extends the fresh listing without renaming a label.
+  An anchored add's live number is recorded only when it extends the fresh listing without renaming a label. An
+  ambiguous title prompt ("번호로 지정해 주세요") records the numbered candidates it shows as the listing, so the follow-up
+  "N번 완료" hits the item shown as N (Codex P1).
 - **Unchanged.** Without a fresh listing (never listed, expired, or `QUOKY_NL_ACTIONS=off`, which writes no listings), N is
   the live number as before and the reply still names the item. Undo still reopens the same item id. Reminder numbers
   (`#N`, stable `display_no`) are unaffected. Read-only hints and status answers name only a number that the numbered
