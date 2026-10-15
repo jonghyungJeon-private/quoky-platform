@@ -496,3 +496,39 @@ describe('A6 R1 review: the completion vocabulary is closed (CA delta)', () => {
     for (const text of ['2번 끝내줘', '2번 완료해줘', '2번 완료 처리 부탁드립니다', '2번 완료로 표시해줘']) expect(complete(text).ok, text).toBe(true);
   });
 });
+
+describe('A6 R1 gate (v32): the canonical `when` and the ㄱㄱ / 고고 go-ahead', () => {
+  it('a `when` with its trailing 에 validates as the canonical time words (gold a6-paraphrase-reminder.create-027)', () => {
+    const create = (text: string, when: string) => validateSelection({ entryId: 'reminder.create', args: { body: '스프린트 데모 준비', when } }, ctx(text));
+    const text = "20분 후에 '스프린트 데모 준비' 알려줘";
+    expect(create(text, '20분 후에')).toMatchObject({ ok: true, value: { args: { body: '스프린트 데모 준비', when: '20분 후' } } });
+    expect(create(text, '20분 후')).toMatchObject({ ok: true, value: { args: { when: '20분 후' } } });
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '점심 약속', when: '내일 낮 12시에' } }, ctx('내일 낮 12시에 점심 약속 알려주세요'))).toMatchObject({ ok: true, value: { args: { when: '내일 낮 12시' } } });
+    // Only a trailing 에, and only when time words remain: never another time, never a cut time expression.
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '회의', when: '내일까지' } }, ctx('내일까지 회의 알려줘'))).toMatchObject({ ok: true, value: { args: { when: '내일까지' } } });
+  });
+
+  it('ㄱㄱ / 고고 after an action noun is an affirmative request (gold a6-paraphrase-todo.add-025)', () => {
+    const add = (text: string) => validateSelection({ entryId: 'todo.add', args: { title: '회의실 정리' } }, ctx(text));
+    for (const text of ['투두에 "회의실 정리" 추가 ㄱㄱ', '투두에 회의실 정리 추가 ㄱㄱㄱ', '할 일에 회의실 정리 추가 고고', '할 일에 회의실 정리 추가 ㄱㄱ!', '할 일에 회의실 정리 넣어 ㄱㄱ']) {
+      expect(add(text), text).toMatchObject({ ok: true });
+    }
+  });
+
+  it('ㄱㄱ never grounds after a negation, as a question, reported, retracted or first-person', () => {
+    const add = (text: string) => validateSelection({ entryId: 'todo.add', args: { title: '회의실 정리' } }, ctx(text));
+    for (const text of [
+      '할 일에 회의실 정리 추가하지 마 ㄱㄱ',
+      '할 일에 회의실 정리 추가 ㄱㄱ?',
+      '할 일에 회의실 정리 추가 안 해 ㄱㄱ',
+      '할 일에 회의실 정리 추가 ㄱㄱ 했더니',
+      '할 일에 회의실 정리 추가 ㄱㄱ 아니 취소',
+      '할 일에 회의실 정리 추가 ㄱㄱ 취소',
+      '내가 할 일에 회의실 정리 추가 ㄱㄱ',
+      '할 일에 회의실 정리 추가 ㄱㄱ할까',
+      '할 일에 회의실 정리 추가 고고학',
+    ]) {
+      expect(add(text), text).toMatchObject({ ok: false });
+    }
+  });
+});
