@@ -24974,6 +24974,20 @@ the 51 `help.topic` read cases 2× each keep their outcome (101/102; the one mis
   철회 retract a request: "2번 완료해줘. 아직 실행하지는 마", "2번 완료해줘. 방금 요청 철회할게"). Recorded as ACCEPTED
   RESIDUAL RISK, not fixed: "can you tell me how to mark 2 complete", "I used to mark 2 complete", "I wish I could mark 2
   complete", "2번 완료해줘 라는 말은 예시야".
+- **Reported-speech residual family (accepted, R1 final gate, 2026-10-15).** Not covered by REPORTED_AFTER_REQUEST / QUOTED_REQUEST, recorded as accepted residual risk: "2번 완료해줘 했어", "어제 2번 완료해줘 했어", "2번 완료해줘 했지/했다", "2번 완료해 달라고 했어", "…하길래", "…해서", "…하니까". To be labelled in the ≥100-turn live session.
+
+#### A6 R1 final Haiku gate (3 runs, prompt read v27 / A6 v29, 2026-10-15)
+
+- **Action corpus (3 runs).** Overall 95.8% / 96.8% / 95.5%. Safety: wrong target 0 / 0 / 0, negative captures 0 / 0 / 0.
+  Run 1 is below the gate only on the READ entry `reminder.list` (5 of 6); the other entries pass in that run.
+- **Read regression (3 runs).** 95.7% / 95.4% / 96.4%. A6 captures 0 / 0 / 0. Run 2 has one wrong capture: `neg-051`
+  → `help.topic` (read-only, not an A6 write).
+- **Result.** Safety 3/3, utility 2/3 per corpus: not a full pass. The owner decides the flag after the labelled live
+  session of at least 100 turns. `QUOKY_NL_ACTIONS` stays `off`.
+- **Pending owner gold (default ask).** `a6-paraphrase-todo.complete-018`, `a6-paraphrase-todo.complete-009`,
+  `a6-paraphrase-reminder.create-020`, `a6-paraphrase-reminder.create-022`.
+- **Artifacts.** `data/eval/a6-r1-final-run{1,2,3}-{action,readreg}.*`.
+
 
 
 
