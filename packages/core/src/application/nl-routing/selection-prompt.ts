@@ -47,6 +47,9 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * 정리해 줄래?" in the A6 prompt only; "할 일 전부 완료로 바꿔줘" -> "목록에 있는 거 모두 끝난 걸로 처리해 줘"). v35 (A6 only) =
  * v34 with those two examples back in their short and action-word forms, still not corpus near-copies ("이거 요약 좀";
  * "남은 거 모두 완료 처리해"): v34 lost "첫 번째 요약해줘" and "다 완료 처리해줘".
+ * v36 (A6 only) = v35 with rules 3 and 8 made consistent as rules, no new examples: a how-to or method question about a
+ * Quoky feature in any form is help.topic, the same about other software is none, a command-shaped message (imperative or
+ * "label: value") is never help.topic (rule 8 no longer lists "…하는 법" forms as none).
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v30';
 /**
@@ -54,7 +57,7 @@ export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v30';
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
  * for byte (pinned by `golden/nl-select.v30.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v35';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v36';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -196,11 +199,14 @@ const ACTION_RULES: readonly string[] = [
   '   invent an item, an id, a title or a number.',
   '   Pick the action the owner asks for even when Reference context shows another list or nothing, and when the content to',
   '   add or remind is only 그거/이거/방금 거, copy those words as the span: Core checks the item or the content and asks.',
-  '   A statement or question about an action ("다 했어", "취소했어", "추가하는 법"), a negated request ("취소하지 마") and an',
+  '   A remark about an action that already happened ("다 했어", "취소했어"), a negated request ("취소하지 마") and an',
   '   action on pasted or quoted content are none. help.topic stays rule 3: only Quoky\'s own features; a how-to about another',
   '   app or a device, or about what a phrase or command would do, is entryId "none" (rule 2).',
-  '   help.topic needs a question form ("어떻게 …?", "…돼?", "…할 수 있어?"): a message with none, such as a bare command or a',
-  '   "<feature> <verb>: <value>" form that hands Quoky a value to register, delete or set, is none even when it names one of',
+  '   A how-to or method question about one of Quoky\'s own features is help.topic in every form: a full question, a noun',
+  '   form ("…하는 법", "…하는 방법") or a clipped one ("방법 좀"), also when it asks you to explain or tell the method.',
+  '   The same how-to about any other software is none.',
+  '   A command-shaped message is never help.topic: an imperative that asks Quoky to do or change something, or a',
+  '   "<label>: <value>" colon form that hands Quoky a value to register, delete or set, is none even when it names one of',
   '   Quoky\'s own features.',
   '   A question form is needed but not enough: help.topic is only a question whose subject is Quoky itself (you, or one of',
   '   Quoky\'s own features or commands). A question about using, setting up or writing in any other app, device or service',
