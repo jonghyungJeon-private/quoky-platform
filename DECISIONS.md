@@ -26148,6 +26148,27 @@ the last round under the fix-loop cap.**
   `nl-intent-dispatch.test.ts` "live UAT R4/R5" assumes "this-thu" equals "thu" on the real clock (true on a Thursday); it
   fails the same way on `origin/main` today. Not fixed here (out of scope); every other test passes.
 
+## Owner decisions on A6 gold, ADR-0123 and the A6 proposals (2026-10-16)
+
+The owner decided the items below on 2026-10-16. They are approvals and gold relabels only; no runtime behaviour changes
+here, and `QUOKY_NL_ACTIONS` stays `off`. The owner may revise the gold relabels after testing the phrases personally.
+
+- **Gold relabels (`golden/nl-action.v1.json`).** The PENDING markers on these cases are removed.
+  - `a6-paraphrase-todo.complete-018` ("3번 완룐 처리해줘"): was none, now `todo.complete` `{ref: "#3"}`, target `todo-3`, execute.
+  - `a6-paraphrase-todo.complete-009` ("1번 할일 체크해줘"): was none, now `todo.complete` `{ref: "#1"}`, target `todo-1`, execute.
+  - `a6-paraphrase-reminder.create-020`, `-022` and `-024`: now ask (`reason: "ambiguous"`, `acceptsAnyQuestion: true`, args `{}`), as the
+    existing terse-form asks are written. `-024` was execute.
+  - `a6-paraphrase-todo.add-009`, `-016` and `-025`: now ask (same shape). They were execute.
+  - `a6-negative-none-031` ("문서 요약 명령어가 뭐야"): now `help.topic` with args `{}`, execute (was none). `NL_HELP_TOPICS` has no
+    summary topic, and `all` is the default, so `{}` is the canonical form.
+- **ADR-0123 (the owner's Q labels as stated).** Approved: Q3 (pool batches are drafted by the agent and approved by the owner per
+  batch), Q4 (the experiment run), Q6 (cloud embeddings: not now). Still under owner review: Q1 (JSON store) and Q5 (model install).
+  Q2 (rewriting the 3 exact-copy read examples) is approved, subject to a detailed Codex review first.
+- **A6 R5a deictic write proposal (`docs/plans/a6-deictic-write-proposal.md`).** Decisions 1a and 2-9 approved; 1b deferred, as
+  recommended.
+- **A6 reference priority proposal (`docs/plans/a6-reference-priority-proposal.md`).** Approved.
+- **ADR-0100 D3 amendment.** Approved (PR #230).
+
 ## ADR-0123 — Retrieval for the selector's few-shot examples, measured first: an offline, pre-registered four-arm experiment over a held-out split of the D12 gate, the existing `LocalVectorProvider` (no new vector database) and local `nomic-embed-text` embeddings pinned by digest, an owner-approved example pool kept disjoint from every gold corpus by a contamination lint, and runtime retrieval only behind a default-off flag after the experiment passes. Knowledge RAG over Jira / Confluence is out of scope. Phase 1 amends nothing; phase 2 would amend ADR-0120 D3 / D12 / A6-D7 and the ADR-0098 D8 limits.
 
 - **Status:** **Proposed (2026-10-16).** Chief Architect draft, docs only. Nothing here is authorized until the Product

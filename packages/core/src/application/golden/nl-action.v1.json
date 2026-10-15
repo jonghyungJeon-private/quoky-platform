@@ -155,12 +155,12 @@
    "text": "할 일 하나 추가할게. 도서관 책 반납",
    "expect": {
     "entryId": "todo.add",
-    "args": {
-     "title": "도서관 책 반납"
-    },
-    "outcome": "execute"
+    "args": {},
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
    },
-   "note": "was act-todo-add-009"
+   "note": "was act-todo-add-009 [owner gold decision 2026-10-16: ask; was execute]"
   },
   {
    "id": "a6-paraphrase-todo.add-010",
@@ -246,12 +246,12 @@
    "text": "todo 추가: 프린터 토너 주문",
    "expect": {
     "entryId": "todo.add",
-    "args": {
-     "title": "프린터 토너 주문"
-    },
-    "outcome": "execute"
+    "args": {},
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
    },
-   "note": "was act-todo-add-016"
+   "note": "was act-todo-add-016 [owner gold decision 2026-10-16: ask; was execute]"
   },
   {
    "id": "a6-paraphrase-todo.add-017",
@@ -363,12 +363,12 @@
    "text": "투두에 \"회의실 정리\" 추가 ㄱㄱ",
    "expect": {
     "entryId": "todo.add",
-    "args": {
-     "title": "회의실 정리"
-    },
-    "outcome": "execute"
+    "args": {},
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
    },
-   "note": "was act-todo-add-025"
+   "note": "was act-todo-add-025 [owner gold decision 2026-10-16: ask; was execute]"
   },
   {
    "id": "a6-paraphrase-todo.add-026",
@@ -876,8 +876,18 @@
      }
     ]
    },
-   "expect": "none",
-   "note": "was act-todo-complete-009 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): 체크 is not in the closed completion vocabulary (\"체크해봐\" means look), so \"체크해줘\" alone writes nothing and the turn is chat; was execute todo.complete #1]"
+   "expect": {
+    "entryId": "todo.complete",
+    "args": {
+     "ref": "#1"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "todo",
+     "id": "todo-1"
+    }
+   },
+   "note": "was act-todo-complete-009 [owner gold decision 2026-10-16: execute todo.complete #1 (체크해줘 read as 완료); was none, PENDING owner approval]"
   },
   {
    "id": "a6-paraphrase-todo.complete-010",
@@ -1145,8 +1155,18 @@
      }
     ]
    },
-   "expect": "none",
-   "note": "was act-todo-complete-018 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): the typo 완룐 is no completion word of the closed action vocabulary (actionGrounding), so nothing is written and the turn is chat; was execute todo.complete #3]"
+   "expect": {
+    "entryId": "todo.complete",
+    "args": {
+     "ref": "#3"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "todo",
+     "id": "todo-3"
+    }
+   },
+   "note": "was act-todo-complete-018 [owner gold decision 2026-10-16: execute todo.complete #3 (typo 완룐 read as 완료); was none, PENDING owner approval]"
   },
   {
    "id": "a6-paraphrase-todo.complete-019",
@@ -2848,7 +2868,7 @@
     "reason": "ambiguous",
     "acceptsAnyQuestion": true
    },
-   "note": "was act-reminder-create-020 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): reminder.create grounds only on a remind / notify verb, never the noun 알림 / 리마인더 alone, so this terse form asks to restate; was execute]"
+   "note": "was act-reminder-create-020 [owner gold decision 2026-10-16: ask (terse form asks to restate); was execute, PENDING owner approval (A6 R1 CA delta, 2026-10-15)]"
   },
   {
    "id": "a6-paraphrase-reminder.create-021",
@@ -2875,7 +2895,7 @@
     "reason": "ambiguous",
     "acceptsAnyQuestion": true
    },
-   "note": "was act-reminder-create-022 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): reminder.create grounds only on a remind / notify verb, never the noun 알림 / 리마인더 alone, so this terse form asks to restate; was execute]"
+   "note": "was act-reminder-create-022 [owner gold decision 2026-10-16: ask (terse form asks to restate); was execute, PENDING owner approval (A6 R1 CA delta, 2026-10-15)]"
   },
   {
    "id": "a6-paraphrase-reminder.create-023",
@@ -2897,13 +2917,12 @@
    "text": "알림 설정: 모레 아침 8시 이사 업체 전화",
    "expect": {
     "entryId": "reminder.create",
-    "args": {
-     "body": "이사 업체 전화",
-     "when": "모레 아침 8시"
-    },
-    "outcome": "execute"
+    "args": {},
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
    },
-   "note": "was act-reminder-create-024"
+   "note": "was act-reminder-create-024 [owner gold decision 2026-10-16: ask; was execute]"
   },
   {
    "id": "a6-paraphrase-reminder.create-025",
@@ -10175,8 +10194,12 @@
      "ageMinutes": 1
     }
    },
-   "expect": "none",
-   "note": "was neg-031"
+   "expect": {
+    "entryId": "help.topic",
+    "args": {},
+    "outcome": "execute"
+   },
+   "note": "was neg-031 [owner gold decision 2026-10-16: help.topic with args {} (NL_HELP_TOPICS has no summary topic; 'all' is the default, so {} is canonical); was none]"
   },
   {
    "id": "a6-negative-none-032",
