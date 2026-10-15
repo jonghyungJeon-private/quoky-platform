@@ -85,6 +85,10 @@ Details and the review record for each item are in the matching notes in `DECISI
   targets, 0 negative captures, gate passed in that run (with four golds relabelled to `none`, PENDING owner approval:
   `todo.list-007`, `reminder.list-005`, `todo.complete-018`, `-009`); read regression passed (0 action, 0 wrong captures).
   Next: the orchestrator's 3-run gate. `QUOKY_NL_ACTIONS` stays `off`.
+- **Status filter (owner decision 2026-10-15):** `todo.list` / `reminder.list` take `status` (canceled, completed / done,
+  all; default the open ones), read-only; read prompt `nl-select.v27`, A6 prompt `nl-select.v28`. With Codex round 2 the
+  latest Haiku runs (1 each): action 97.3%, 0 wrong targets, 0 negative captures, gate passed; read regression passed.
+  `complete-018` and `-009` relabels stay PENDING owner approval.
 - **For the owner:** `neg-094` is grammar-owned (a daily brief schedule) and skipped in A6-on scoring.
 - **Backlog (owner request 2026-10-15, not R1):** a separate safe design proposal for "그거로 추가해줘", bringing earlier
   reply content into a to-do: a preview showing the exact text, explicit approval, and defenses against content-borne

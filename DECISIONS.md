@@ -24899,6 +24899,47 @@ the 51 `help.topic` read cases 2× each keep their outcome (101/102; the one mis
   ≥ 92.5% (`todo.cancel` 37/40, `item.summarize` 90/95), span 97.5%, 0 wrong targets, 0 negative captures, 0 over the
   bound: the run's gate passed. The 3-run gate is the orchestrator's.
 
+#### A6 R1 Codex round 2 (2026-10-15)
+
+- **Payload entries need their own action words.** `todo.add` (추가, 넣어, 올려, 적어, 등록, 기록, 메모, add, put, note, jot)
+  and `reminder.create` (알려, 알림, 알람, 리마인드, 리마인더, 깨워, 상기, remind, reminder, alert, ping, notify) declare
+  `actionGrounding` too; a payload without one ("내일 9시 우유") asks to restate. Checked against every execute gold.
+- **Payload rule.** Particles glued to a reference go with it, and an item-source noun is no content: "2번만요", "그걸로요",
+  "13번 알림" are deictic-only payloads.
+- **Negation and adnominal forms.** An action word followed by the closed negation "-지 마/말아/않" or preceded by 안/못
+  ("2번을 완료하지 말아줘", "취소하지 마"), or in an adnominal form in the same word ("제외된 거", "취소된 알림", "완료한
+  할 일"), grounds nothing; another occurrence still can ("완료하지 말고 취소해줘" grounds the cancel only).
+- **Glued source nouns.** A source noun glued to a following action or content word of the catalog's vocabularies counts
+  ("2번 메일취소해줘", "2번 알림취소해줘", "문서요약해줘"); glued to anything else it does not ("알림장").
+- **Match spans.** The source cross-check covers `match`: the prose outside the span must not name another source and the
+  whole prose not two ("할 일 말고 2번 메일 취소해줘" with match "메일" asks; "메일 답장 완료해줘" with match "메일 답장"
+  runs).
+
+### ADR-0120 amendment A6 note — the to-do and reminder list status filter (owner-approved 2026-10-15)
+
+- **Owner decision (2026-10-15, "지금 추가").** The `todo.list` and `reminder.list` READ entries gain a `status` arg so
+  "취소된 할 일 보여줘" / "취소된 알림 보여줘" have a read answer.
+- **Values (closed, from the domain lifecycles).** `todo.list`: `active` (default, `ACTIVE`) | `canceled` | `completed` |
+  `all`. `reminder.list`: `active` (default, `SCHEDULED` and `FIRING`) | `canceled` | `done` (already fired: `COMPLETED`,
+  `FAILED`, `DELIVERY_UNCERTAIN`) | `all`. Value words through `valueGrounding` (취소된/뺀/끈, 완료된/끝난, 지난/울린,
+  전체/전부/모든); the default needs none and is omitted from canonical args.
+- **Read only, no migration.** Rows keep their status. `ReminderRepository.listByActorStatuses(actorId, statuses)` is
+  additive (SQLite: one `SELECT … status IN (…) ORDER BY display_no`); to-dos filter `WorkManager.listByActor`.
+- **Rendering.** A status view shows each item's status ("(취소)", " · 보냄"); to-dos are unnumbered and neither view records
+  an A6 listing, so "N번 완료/취소" keeps meaning the open list (reminder `#N` display numbers are shown, they are stable).
+- **Prompts.** The read prompt's catalog text changes, so the read prompt is `nl-select.v27` and the A6 `off` pin moves to
+  `golden/nl-select.v27.prompts.json` (25 of the 76 inputs change, only the two list entries' lines); the A6 prompt is
+  `nl-select.v28` (the v26 A6 text on v27). No instruction line changes.
+- **Grammar.** The anchored work-chat grammar yields "취소된 할 일도 보여줘" to selection under `QUOKY_NL_GRAMMAR_YIELD=on`
+  (A2: unexpressed content); "전체 할 일" stays the grammar's open list (전체 is an expressed word of that grammar).
+- **Corpus.** `a6-negative-todo.list-007` and `a6-negative-reminder.list-005` return to their list golds with
+  `status: canceled` (the pending relabel to `none` is reverted). `a6-paraphrase-todo.complete-018` ("완룐") and `-009`
+  ("체크해줘") stay relabelled to `none`, PENDING owner approval.
+- **Haiku check (owner-approved, 1 run each, after Codex round 2 and the status filter).** Action: overall 97.3% (391/402),
+  every entry ≥ 94.7% (`item.summarize` 90/95, `reminder.create` 39/41), span 97.5%, 0 wrong targets, 0 negative captures,
+  0 over the bound, gate passed in the run. Read regression: D12 96.8%, 0 action captures, 0 wrong captures, relabeled
+  14/14, gate passed.
+
 
 ### ADR-0120 amendment A8 — Jira release listings: a `jira.release` READ entry (one fix version for every assignee, or a project's release list), three named read queries, and release links only on the configured Jira site (Proposed — awaiting the owner's yes) (2026-10-15)
 

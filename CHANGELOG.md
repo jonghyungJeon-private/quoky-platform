@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — to-do and reminder list status filter; A6 R1 Codex round 2 (2026-10-15)
+
+- **Status filter (owner decision 2026-10-15).** `todo.list` `status`: active (default) | canceled | completed | all;
+  `reminder.list` `status`: active (default) | canceled | done | all. Read-only views with each item's status, no
+  migration; `ReminderRepository.listByActorStatuses` (additive). Read prompt `nl-select.v27` (A6 `off` pin regenerated),
+  A6 prompt `nl-select.v28`.
+- **Codex round 2.** `todo.add` / `reminder.create` need their own add / remind words; reference payloads ("2번만요",
+  "13번 알림") are deictic-only; negated or adnominal action words ground nothing; glued source nouns ("메일취소해줘") and
+  `match` spans are cross-checked.
+
 ## Unreleased — A6 R1 gate fixes: same-source cross-check, bare references, A6 prompt `nl-select.v26` (2026-10-15)
 
 - **Wrong target closed.** The owner's item-source nouns (catalog aliases) are cross-checked against the entry's source
