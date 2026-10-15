@@ -24870,3 +24870,35 @@ scripted selector; the Drive fixture's name and text say "이 문서 요약해�
   page link gives the full report.
 - **R-A8-4 — selector.** A wrong but valid capture is bounded by grounding (both names verbatim) and the entry check;
   measured by the probe below and the D12 gate.
+
+### ADR-0120 amendment A8 implementation note — `jira.release` on branch `claude/v5-jira-release` (2026-10-15)
+
+- **Where.** Port: `ports/connector-query.ts` (`CONTAINERS` / `RELEASES` / `RELEASE_ITEMS`, `parseReleasesParams`,
+  `parseReleaseItemsParams`), `ports/connector-provider.port.ts` (optional `assignee`, `statusCategory`, `truncated`).
+  Adapter: `connector-jira/src/index.ts` (`containers`, `releases`, `releaseItems`, `releaseItemsJql`). Core:
+  `work-chat/jira-release-link.ts` (link parser, site-host check), `work-chat/jira-release-lookup.ts` (resolution),
+  `work-chat/jira-release-renderer.ts` (release report), the `release` command in `work-chat-command.ts`,
+  `WorkChatService.release`, `workChatCommandForSelection` (`jira.release`), the lookup handler's catalog and link
+  reading (owner's non-quoted words only), `nl-routing/wave1-entries.ts` (`jiraRelease`, the vocabularies, the
+  `jira.issues` check), `catalog.ts` / `selection-validator.ts` / `nl-selection-service.ts` (an entry check may name the
+  entry whose usage question is asked: `jira.issues` refusing "전체 담당" asks with the `jira.release` usage),
+  `selection-prompt.ts` (v27 / v28). App: `features/work-chat.providers.ts` hands `connectors.jira.host` to the desk.
+- **Prompt detail.** The `project` arg description says "copied verbatim and whole (every word of a multi-word name …)":
+  with the first wording Haiku cut "차란차 운영" to "차란차" in 6 of 20 calls of the owner's sentence 1.
+- **Probe (owner-approved model runs for this feature; Haiku, the read prompt v27 with every wave-1 entry, 6 s bound,
+  concurrency 4, 20 calls per case, final prompt).** Owner sentence 1 20/20 `{release: 20261015, project: 차란차 운영}`;
+  sentence 2 (after that selection) 20/20 same args; sentence 3 20/20 `{release: 20261015}`; sentence 4 20/20
+  `{project: 차란차 운영 2026}`; the release-report link 20/20 `{}`: 100/100 exact. "jira 전체 담당 이슈 다 보여줘": 20/20
+  asked, 0 wrong captures (14 `jira.release` NEEDS_CLARIFICATION, 6 `jira.issues` refused by its check). Latency p50
+  1.5-2.6 s, p95 ≤ 3.1 s. Earlier wording (before the `project` fix): sentence 1 14/20, link 19/20 (one `release:
+  16555`, which the link would have overridden), the negative 20/20 asked.
+- **Tests (offline, no live Jira).** `connector-jira/src/release-queries.test.ts` (JQL escaping and injection: quotes,
+  backslashes, `" OR project != X`; refused keys, ids and names send nothing; paging and the 200 cap; archived versions;
+  status categories; 400 → NOT_FOUND), `work-chat/jira-release.test.ts` (link parsing edge cases and the host rule,
+  every resolution branch with a scripted connector, the 1,800-character budget, validation, grounding, the basis line,
+  the A2 yield, the v27 examples), the handler test (catalog order; a quoted link is data),
+  `features/work-chat.providers.test.ts` (the site host gates links), and the `AppModule` dispatch scenario (basis
+  line, named queries only, no summary, a link off the configured site never read, the redirected question). The
+  corpus dispatch runs every `a8*` case through the real runtime with the yield on and off.
+- **Not run:** the D12 evaluation gate over the whole corpus (Strict, needs a plan digest and the owner's yes), and any
+  live Jira call (the version list of OP26 was not probed).

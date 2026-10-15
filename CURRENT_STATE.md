@@ -56,6 +56,20 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
 
+### ADR-0120 amendment A8: Jira release listings (`jira.release`) — Proposed, on branch `claude/v5-jira-release` (2026-10-15)
+
+- **Owner request (live, 2026-10-15):** "20261015 배포건" of project "차란차 운영 2026" for every assignee, like Jira's
+  release report. Work approved ("응 진행해"); A8 itself awaits the owner's yes (sheet
+  `docs/plans/a8-jira-release-owner-sheet.md`, 9 decisions with recommendations).
+- **Built:** new READ entry `jira.release` (release / project / scope / count), three named read queries (`containers`,
+  `releases`, `release-items`), Core resolution (project and release names against what the account sees; ambiguous →
+  ask; not found → nearby names), release links on the configured site only, the grouped release-report renderer (never
+  summarised), the A2 yield vocabulary, and `jira.issues` refusing every-assignee words.
+- **Prompt:** read `nl-select.v27` (v24 bytes when `jira.release` is not offered), A6 `nl-select.v28`.
+- **No new host, scope, env key or dependency;** read-only GET on the configured Jira host with the existing token.
+- **Pending:** owner ratification, the D12 batch of 35 `a8*` cases, review, merge and deploy (service restart). Rebase
+  over `claude/v5-a6-r1-fix` (A6 prompt v26) before merge: the A6 prompt then becomes v28 = their v26 text on top of v27.
+
 ### A6-D2 clarification: "이 / 그 / 저 + item-source noun" is a deictic — on branch `claude/v5-a6-deictic` (2026-10-15)
 
 - **Owner decision:** a determiner 이/그 before a whole catalog item-source noun of the entry's own source (이 문서, 그

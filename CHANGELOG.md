@@ -5,6 +5,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0120 amendment A8 (Proposed): Jira release listings, `jira.release`, prompt `nl-select.v27` / `v28` (2026-10-15)
+
+- **New READ entry `jira.release`** (the owner's live request of 2026-10-15): the issues of one Jira release (fix version)
+  for every assignee by default, grouped like Jira's release report (완료 / 진행 중 / 할 일 with counts; key, summary,
+  assignee, status and link per line; the release page link), `mine` only on the owner's words; a project's release list
+  when no release is named; release links (`/projects/<KEY>/versions/<id>`, `/browse/<KEY>/fixforversion/<id>`) used only
+  when the host equals the configured Jira site, any other link ignored and never fetched. Never summarised by a model.
+- **Connector port (additive).** Named queries `containers`, `releases`, `release-items` with validating parsers;
+  `ConnectorItem.assignee` / `statusCategory`, `ConnectorResult.truncated`. The Jira adapter reads
+  `/rest/api/3/project/search`, `/rest/api/3/project/{key}/version` and `/rest/api/3/search/jql` (GET, same host, same
+  token); `release-items` JQL uses a validated project key, a numeric version id or a quoted, escaped name, and a constant
+  order (injection tests). A 400 for a version is `NOT_FOUND`.
+- **Validation.** `jira.release` needs a release, a project or a release link (else the usage question); `jira.issues`
+  refuses every-assignee words (asks instead of answering with the owner's own items). Jira keyword grammar forms yield a
+  release or every-assignee qualifier (A2 rule; yield off is byte-identical).
+- **Prompt.** `nl-select.v27` = v24 plus six `jira.release` examples shown only while the entry is offered (byte-identical
+  otherwise; golden renamed `nl-select.v27.prompts.json`, 3 new pinned cases); A6 prompt `nl-select.v28`.
+- **Corpus.** 28 `a8-*` positives (the four live sentences and the release link verbatim) and 7 `a8n-*` negatives,
+  PENDING the owner's D12 batch.
+- **Probe (owner-approved model runs, Haiku, 20 calls each, final prompt):** the four live sentences and the release
+  link 100/100 exact; "jira 전체 담당 이슈 다 보여줘" 20/20 asked, 0 wrong captures; p95 ≤ 3.1 s.
+- Composition: the work-chat desk receives the configured Jira site host (`QUOKY_JIRA_BASE_URL`); no new env key.
+
 ## Unreleased — A6-D2 clarification: "이 / 그 / 저 + noun" is a deictic; held relabels applied; INT-4 cases approved (2026-10-15)
 
 - **A6-D2 (owner-approved clarification).** A determiner 이/그 before a whole item-source noun of the catalog naming the
