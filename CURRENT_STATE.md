@@ -81,9 +81,10 @@ Details and the review record for each item are in the matching notes in `DECISI
   check; deictic payload reply first; A6 prompt `nl-select.v26` (read prompt v24 unchanged); owner decisions (2), (3),
   the owner D12 gold-fix batch and the reason-equal scoring rule (owner-ratified). Details: DECISIONS "A6 implementation
   note — R1 gate fixes" and its addenda.
-- **Haiku check (1 run each, after the review fixes):** action 96.0%, every A6 entry ≥ 90.2%, 0 wrong targets, 0 negative
-  captures (gate short only on `todo.list` 6/7 and `reminder.list` 5/6, Haiku `none` on canceled-item lists); read
-  regression passed (0 action, 0 wrong captures). Next: the orchestrator's 3-run gate. `QUOKY_NL_ACTIONS` stays `off`.
+- **Haiku check (1 run each, after the review fixes and the CA delta):** action 96.3%, every entry ≥ 92.5%, 0 wrong
+  targets, 0 negative captures, gate passed in that run (with four golds relabelled to `none`, PENDING owner approval:
+  `todo.list-007`, `reminder.list-005`, `todo.complete-018`, `-009`); read regression passed (0 action, 0 wrong captures).
+  Next: the orchestrator's 3-run gate. `QUOKY_NL_ACTIONS` stays `off`.
 - **For the owner:** `neg-094` is grammar-owned (a daily brief schedule) and skipped in A6-on scoring.
 - **Backlog (owner request 2026-10-15, not R1):** a separate safe design proposal for "그거로 추가해줘", bringing earlier
   reply content into a to-do: a preview showing the exact text, explicit approval, and defenses against content-borne

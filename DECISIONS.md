@@ -24856,17 +24856,28 @@ the 51 `help.topic` read cases 2× each keep their outcome (101/102; the one mis
   `flagGrounding` / `valueGrounding`: completion words; cancel/delete words, plus 빼/안 할 for to-dos and 꺼/끄/멈춰 for
   reminders; undo words). A selection whose prose (pasted structures removed) holds none of them writes nothing and the
   turn is chat (`nl_action.decided` reason `no-action-word`): "2번도", "2번만요", "그걸로요", "13번 알림". `todo.add` and
-  `reminder.create` keep their payload grounding, `item.summarize` its content words. The vocabulary was checked against
-  the corpus positives: six dictionary synonyms were added (제외, 없던 걸로, 캔슬, 롤백, 원복; 처리 for completion, so the
-  typo case "3번 완룐 처리해줘" still grounds); a held-out phrasing outside the class fails closed to chat.
+  `reminder.create` keep their payload grounding, `item.summarize` its content words. Dictionary synonyms checked against
+  the corpus positives were added (제외, 없던 걸로, 캔슬, 롤백, 원복); a phrasing outside the class fails closed to chat.
+  *CA delta:* no 처리 or 체크 ("2번 처리 방법 알려줘", "2번 체크해봐" are not completions), and 끝 only in its completion
+  forms (끝냈 / 끝났 / 끝내 / 끝마치; "2번 언제 끝나?" grounds nothing), so the typo "3번 완룐 처리해줘" and "1번 할일
+  체크해줘" are chat.
 - **An open A6 question (Codex P1 2).** While an A6 question is open, a selector-path action runs only for the questioned
   entry on one of its candidates; anything else writes nothing (chat, reason `pending-question`). A bare number or ordinal
   that is none of the offered labels ("9" against 2 and 3) is asked again by the answer path and never reaches the
-  selector. Known consequence: for the question's 5 minutes another action request is chat; the reply ends the question.
+  selector. The lock lasts one turn: any reply ends the question (D7), so only the turn that answers it is affected, and
+  a blocked action gets the fixed reply "질문이 열려 있어 실행하지 않았어요. 다시 말씀해 주세요." (CA delta; not silent chat).
 - **Source nouns fail closed (Codex P1 3/4, CA P2).** A message naming another source noun than the entry's, or more than
   one ("할 일 말고 2번 메일 취소해줘": negation is not parsed), asks (other-source). Brackets, punctuation and digit-letter
   joins are noun boundaries ("2번 (메일)", "메일2번"). A ref sentence whose title words hold a source noun ("2번 문서 작업
   완료") asks too; `match` spans are not checked.
+- **Undo checks the owner's number and source (CA delta).** On the selector path `action.undo` asks (restate) when the
+  prose names another source noun than the last action's (or two), or a number or ordinal other than its shown label:
+  "2번 취소해줘" / "2번 메일 취소해줘" after "할 일 5번으로 추가했어요" never undo to-do 5; "5번 되돌려줘", "그 할 일 되돌려줘"
+  and "방금 거 되돌려줘" do.
+- **Golds relabelled to `none`, PENDING owner approval (separate commits):** `a6-negative-todo.list-007` "취소된 할 일도
+  보여줘" and `a6-negative-reminder.list-005` "취소된 알림 보여줘" (the list entries cannot show canceled items);
+  `a6-paraphrase-todo.complete-018` "3번 완룐 처리해줘" and `-009` "1번 할일 체크해줘" (no completion word of the closed
+  vocabulary).
 - **CA P2s.** Shadow logs the new refusals as `shadow`; `lastSelection` is cleared only when an A6 turn executes or asks
   (A6-D3), not when it ends as chat; `acceptsAnyQuestion` counts only clarification reasons (resolution outcomes,
   content-mode, missing/invalid/ungrounded arg), never a refusal (input guard, caps, kill switch, payload or time rules);
@@ -24884,6 +24895,10 @@ the 51 `help.topic` read cases 2× each keep their outcome (101/102; the one mis
   captures, 0 over the bound; the run's gate fails only on two READ entries where Haiku answers `none` (`todo.list` 6/7:
   "취소된 할 일도 보여줘"; `reminder.list` 5/6: "취소된 알림 보여줘"). Read regression: D12 96.6%, 0 action captures,
   0 wrong captures, relabeled 14/14: **gate passed**.
+- **Haiku check after the CA delta (1 action run, with the four pending relabels):** overall 96.3% (385/400), every entry
+  ≥ 92.5% (`todo.cancel` 37/40, `item.summarize` 90/95), span 97.5%, 0 wrong targets, 0 negative captures, 0 over the
+  bound: the run's gate passed. The 3-run gate is the orchestrator's.
+
 
 ### ADR-0120 amendment A8 — Jira release listings: a `jira.release` READ entry (one fix version for every assignee, or a project's release list), three named read queries, and release links only on the configured Jira site (Proposed — awaiting the owner's yes) (2026-10-15)
 
