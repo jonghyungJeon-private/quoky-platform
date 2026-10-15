@@ -64,6 +64,7 @@ import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput }
 import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { nlSelectionMeaning } from './selection-meaning';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
+import { nlIsPastStatement } from './statement-guard';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   LAST_SELECTION_METADATA_KEY,
@@ -230,7 +231,7 @@ export interface NlSelectionServiceDeps {
   readonly elapsed?: () => number;
   /**
    * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
-   * record is written and every prompt and reply is byte-identical to `nl-select.v20`. Any other level requires mode
+   * record is written and every prompt and reply is byte-identical to `nl-select.v22`. Any other level requires mode
    * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
    */
   readonly actions?: {
@@ -522,7 +523,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /**
    * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
    * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
-   * prompt is `nl-select.v20` byte for byte.
+   * prompt is `nl-select.v22` byte for byte.
    */
   actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
@@ -681,7 +682,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       }
     }
     // A6-D8/D3: action entries reach the selector only while the level allows and the kill switch is running; otherwise
-    // they are dropped here too (the runtime already drops them), so the prompt is v20 byte for byte.
+    // they are dropped here too (the runtime already drops them), so the prompt is v22 byte for byte.
     const actionsOn = this.actionsOffered(turn.actor) && turn.entries.some(isNlActionEntry);
     const effective: NlSelectionTurn = actionsOn ? turn : { ...turn, entries: turn.entries.filter((entry) => !isNlActionEntry(entry)) };
     const reference = actionsOn ? this.referenceState(turn) : undefined;
@@ -735,6 +736,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
     cacheKey?: string,
   ): Promise<NlSelectionDecision> {
     if (output.entryId === null) return { kind: 'none' };
+    // A7: a clear past-tense statement is not a request, whatever read the selector named (message-level, once,
+    // before any candidate is validated): like a selector `none`, the turn is chat, never a question.
+    if (!isNlActionEntryId(output.entryId) && nlIsPastStatement(prepared.groundingText)) {
+      this.log('info', 'nl_selection.statement', { entryId: output.entryId });
+      return { kind: 'none' };
+    }
     const ctx = this.validationContext(turn, prepared.groundingText, last?.args);
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
     this.forgetRefusedPeriod(cacheKey, main);
@@ -1293,7 +1300,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const output = selected.output;
     let outcome = output.entryId === null ? 'none' : output.ambiguity;
     let executable: NlGrammarSelection | undefined;
-    if (output.entryId !== null) {
+    // A7: the shadow sees what active would do: a clear past-tense statement is `none`.
+    if (output.entryId !== null && !isNlActionEntryId(output.entryId) && nlIsPastStatement(prepared.groundingText)) outcome = 'none';
+    else if (output.entryId !== null) {
       const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args));
       this.forgetRefusedPeriod(selected.cacheKey, validated);
       if (!validated.ok) outcome = 'INVALID';
@@ -1301,7 +1310,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     }
     if (turn.grammar !== undefined) {
       this.logAgreement(turn, {
-        outcome: executable !== undefined ? 'execute' : output.entryId === null ? 'none' : 'ask',
+        outcome: executable !== undefined ? 'execute' : output.entryId === null || outcome === 'none' ? 'none' : 'ask',
         ...(executable !== undefined ? { selection: executable } : {}),
         latencyMs: selected.latencyMs,
         cached: selected.cached,
@@ -1313,7 +1322,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     this.log('info', 'nl_selection.shadow', {
       entryId: output.entryId ?? 'none',
       grammarId: turn.route,
-      agree: output.entryId === null,
+      agree: output.entryId === null || outcome === 'none',
       outcome,
       latencyMs: selected.latencyMs,
       cached: selected.cached,

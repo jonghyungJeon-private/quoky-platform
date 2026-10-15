@@ -769,3 +769,35 @@ describe('ADR-0120 A5 implementation note 2: a period that loses the owner\'s we
     });
   });
 });
+
+describe('ADR-0120 amendment A7: until-<weekday> and the clear past-tense statement', () => {
+  it('"이번 주 금요일까지 일정" read as Friday alone executes today through Friday, stored as until-fri', async () => {
+    const h = harness({ script: [out('calendar.events', { range: 'this-fri' })] });
+    const decision = await h.decide('이번 주 금요일까지 일정');
+    expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'until-fri' }, range: { days: 5 } } });
+    expect(JSON.stringify(h.session.metadata?.[LAST_SELECTION_METADATA_KEY])).toContain('until-fri');
+  });
+
+  it('a clear past-tense statement is chat: no question, no lastSelection, a content-free log line', async () => {
+    const h = harness({ script: [out('calendar.events', { range: 'yesterday' }), out('calendar.events', { range: 'yesterday' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
+    expect(await h.decide('어제 일정 있었는데 까먹었어 ㅠ')).toEqual({ kind: 'none' });
+    expect(await h.decide('오늘 일정 꽉 찼었어', { now: at(1000) })).toEqual({ kind: 'none' });
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+    const lines = h.logs.filter((log) => log.event === 'nl_selection.statement');
+    expect(lines.map((log) => log.fields)).toEqual([{ entryId: 'calendar.events' }, { entryId: 'calendar.events' }]);
+    expect(JSON.stringify(h.logs)).not.toMatch(/까먹|꽉/);
+  });
+
+  it('shadow sees what active does: a statement is none and agrees with chat', async () => {
+    const h = harness({ mode: 'shadow', script: [out('calendar.events', { range: 'yesterday' })] });
+    expect(await h.decide('어제 일정 있었는데 까먹었어 ㅠ')).toEqual({ kind: 'skip', reason: 'shadow' });
+    await h.service.lastShadowRun;
+    expect(h.logs.find((log) => log.event === 'nl_selection.shadow')?.fields).toMatchObject({ entryId: 'calendar.events', agree: true, outcome: 'none' });
+  });
+
+  it('a past-tense question still executes', async () => {
+    const h = harness({ script: [out('calendar.events', { range: 'yesterday' })] });
+    expect(await h.decide('어제 일정 뭐 있었지?')).toMatchObject({ kind: 'execute', command: { args: { range: 'yesterday' } } });
+  });
+});

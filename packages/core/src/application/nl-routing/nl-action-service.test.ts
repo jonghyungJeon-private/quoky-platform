@@ -230,13 +230,13 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     expect(w.calls[1]?.prompt).toContain('Reference context: last listing: todo (2 items, 1 min ago)');
   });
 
-  it('the cache key carries the prompt version: an output cached under the read prompt is never served under v21 (Codex P2)', async () => {
+  it('the cache key carries the prompt version: an output cached under the read prompt is never served under the action prompt (Codex P2)', async () => {
     const base = { actorId: 'owner', text: '메일함', previous: undefined, entryIds: ['mail.list'] };
-    const keys = ['nl-select.v18', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
-    expect(new Set(keys).size).toBe(3);
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v20');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v21');
-    // The same turn entries every time; only the kill switch decides the prompt (stopped: v20, running: v21).
+    const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
+    expect(new Set(keys).size).toBe(5);
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v22');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v23');
+    // The same turn entries every time; only the kill switch decides the prompt (stopped: v22, running: v23).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
     await w.decide('오늘 날씨 좋다', { entries: ALL });

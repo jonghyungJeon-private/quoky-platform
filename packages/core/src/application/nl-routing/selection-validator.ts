@@ -27,6 +27,9 @@ import {
   nlRangeKeepsWeekday,
   nlKeywordIsTitle,
   nlSingleWeekday,
+  nlMultiWeekdayBoundKeeps,
+  nlUntilBound,
+  nlUntilSymbolWeekday,
   nlWeekdayMentions,
   normalizeNlRangeSymbol,
   resolveNlRange,
@@ -44,6 +47,8 @@ export { canonicalNlKeyword } from './keyword-canonical';
  *  (3) bounds: limit 1..10, keyword 1..100 characters;
  *  (4) a range is a symbol Core resolves with the turn's clock and `QUOKY_TIMEZONE` (at most 31 days), and keeps the one
  *      weekday the owner's words name (A5 implementation note 2: "다음 주 수" is never next Monday nor the whole week);
+ *      an `until-*` period is grounded by the owner's inclusive end bound on that weekday, and a period holding such a
+ *      bounded day without ending on it is spelled as the `until-*` symbol ending on that day (A7);
  *  (5) grounding: a keyword appears verbatim in the owner's non-quoted text or in the previous selection's args, and an
  *      entry with a `range` never takes a time expression as a keyword; a grounded flag / enum value needs an owner word;
  *  (6) the credential guard runs on every string arg.
@@ -205,6 +210,34 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // (4b) the owner's weekday is a fact about the period: a period that drops or changes it never validates (after the
   // per-arg checks, so a weekday keyword still fails as `time-keyword`).
   const weekday = nlSingleWeekday(mentions);
+  // (4b, A7) an `until-*` period needs the owner's inclusive end bound on that weekday and ends on that day; a
+  // period that holds such a bounded day but does not end on it ("금요일까지" read as `fri` or `this-week`) is spelled as
+  // the grounded `until-*` symbol ending on that day, else refused. Several weekdays with an end bound ("목요일부터
+  // 토요일까지") need a period from the start-bounded day to the end-bounded day. A period that looks back (mail, Jira
+  // created / updated) never takes an `until-*` symbol and keeps the A5 rule unchanged.
+  const rangeValue = rangeSpec !== undefined ? args[rangeSpec.name] : undefined;
+  if (rangeSpec !== undefined) {
+    const lookingBack = rangeSpec.pastOnly === true || rangeSpec.pastWindow?.(args) === true;
+    if (lookingBack) {
+      if (typeof rangeValue === 'string' && nlUntilSymbolWeekday(rangeValue) !== undefined) return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
+    } else if (weekday?.boundConflict === true) {
+      // The mentions disagree on the bound or, with a bound, on the week: no reading is inferred, every period asks.
+      return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
+    } else if (weekday === undefined && nlMultiWeekdayBoundKeeps(range, mentions, ctx.now, ctx.timeZone) === false) {
+      return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
+    } else if (typeof rangeValue === 'string' && (weekday !== undefined || mentions.length === 0)) {
+      const previousRange = ctx.previousArgs?.[rangeSpec.name];
+      const until = nlUntilBound(rangeValue, range, weekday, typeof previousRange === 'string' ? previousRange : undefined, ctx.now, ctx.timeZone);
+      if (until === 'refuse') return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
+      if (until !== 'keep') {
+        args[rangeSpec.name] = until.canonical;
+        range = resolveNlRange(until.canonical, ctx.now, ctx.timeZone);
+      }
+    } else if (typeof rangeValue === 'string' && nlUntilSymbolWeekday(rangeValue) !== undefined && nlMultiWeekdayBoundKeeps(range, mentions, ctx.now, ctx.timeZone) !== true) {
+      // Several weekdays without one end-bounded span: an `until-*` symbol has nothing to stand on.
+      return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
+    }
+  }
   if (rangeSpec !== undefined && weekday !== undefined) {
     // A weekday inside a grounded title keyword with other words ("수요일 스터디", "sunday school") may be part of the
     // title (A5 rule 6: real title keywords stay), so it is uncertain: another single day is still refused.

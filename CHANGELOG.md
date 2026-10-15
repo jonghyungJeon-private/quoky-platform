@@ -5,6 +5,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — "until <weekday>" periods and the past-tense statement check, prompt `nl-select.v22` (ADR-0120 amendment A7, Accepted 2026-10-15)
+
+- **Why.** "이번 주 금요일까지 일정" showed only Friday: the closed range symbols had no "today through <weekday>", and the
+  model may not compute dates. "어제 일정 있었는데 까먹었어 ㅠ" (a statement, `neg-042`) was sometimes read as a calendar
+  lookup (v20 probe: 6/20).
+- **Symbols.** `until-mon..until-sun` (today through the nearest such day) and `until-next-mon..until-next-sun` (today
+  through that day of next week), placed by Core. They validate only when the owner's words bound that weekday with an
+  inclusive end word from the existing closed bound set (까지, by, until, till, through, thru) on every mention and the
+  period ends on the day the words name; "이번 주 금요일까지" after that Friday is asked, never rolled. Any period holding
+  such a day without ending on it (`fri`, `this-fri`, `this-week`) becomes the grounded `until-*` symbol ending there,
+  else it is asked; several weekdays need the exact span; mail and Jira created/updated keep the A5 rule. With grammar
+  yield on, the calendar grammar declines an end-bounded weekday so selection answers it.
+- **Statement check.** A read on a clear past-tense statement (past 았/었/였/했 + 다 / 습니다, 더라 / 던데, or an informal
+  past with a double past or a background clause; no question mark, no request, wh-form or wish; never 겠 or the present
+  있/없) becomes chat, message-level in active, shadow and the evaluation. Grammar only, no phrase list.
+- **Prompt `nl-select.v22`** (A6 `off` pin, `golden/nl-select.v22.prompts.json`) = v20 + one `until-*` line after the date
+  line + two rule-2 lines on past remarks; the A6 action prompt is `nl-select.v23`. A first layout regressed "다다음 주 일정"
+  and was dropped (probes recorded in A7).
+- **Eval (owner-approved Haiku, calendar/mail/Jira + negatives).** v20 baseline 1 run (441 cases): 92.4% overall, calendar
+  86.5%, 0 wrong captures. Final v22 after the review round, 3 runs (446 cases): 96.5%, 95.7%, 96.5%; calendar 96.7%,
+  92.4%, 95.7%; 0 wrong captures in every run; the D12 and S1 gates pass 3 of 3; p50 1.3-1.7 s, p95 2.1-2.8 s. On the
+  239 older positives 231, 228, 231 vs 226 on v20. Probes (20 calls): `neg-042` 6/20 → 0/20 captures, the six new
+  statement negatives 0/20 on both; the live sentence → `until-fri` 17/20 (3 timeouts).
+- **Review round** (Chief Architect, Codex): fixes above; the A6 seed label is `nl-select.v23`; the A6 action corpus was
+  not re-evaluated on v23.
+- **Final delta round** (no prompt change): without a week word only the nearest bounded day counts for any period;
+  mixed bounded/unbounded mentions accept only a period ending on that day; quoted requests (…달라고) and wishes with
+  any ending are requests.
+- **CA final check:** conflicting mentions of a weekday ask for every period; "다음 주 월요일부터 금요일까지" takes the week
+  word for both bounds.
+- **Corpus.** `a7u-01..10`, `a7s-01..15` (839 cases), owner-approved D12 batch 2026-10-15. Owner sheet:
+  `docs/plans/a7-until-weekday-owner-sheet.md`.
+
 ## Unreleased — calendar accuracy: the canonical weekday symbol, prompt `nl-select.v20`, the weekday question on every weekday refusal (ADR-0120 A5 implementation note 3, 2026-10-14)
 
 - **Why.** One Haiku run left `calendar.events` at 86% (D12 gate: 90%). Misses, classified: 1 same day spelled

@@ -14,3 +14,4 @@ export * from './action-switch';
 export * from './item-reference';
 export * from './last-action';
 export * from './nl-action-policy';
+export * from './statement-guard';

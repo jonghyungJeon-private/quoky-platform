@@ -21,6 +21,7 @@ import {
   NL_WAVE1_ENTRIES,
   buildSelectionPrompt,
   isNlWave1EntryId,
+  nlIsPastStatement,
   nlSelectionMeaning,
   parseSelectionOutput,
   prepareSelectionInput,
@@ -155,6 +156,8 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   const output = parseSelectionOutput(raw);
   if (output === null) return { id: golden.id, expected, outcome: 'error', error: 'malformed' };
   if (output.entryId === null) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
+  // A7: the runtime answers a clear past-tense statement as `none` (chat), message-level, before validation.
+  if (nlIsPastStatement(prepared.groundingText)) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   const offered = new Map(ALL_ENTRIES.map((entry) => [entry.id, entry] as const));
   const validated = validateSelection(
     { entryId: output.entryId, args: output.args },
