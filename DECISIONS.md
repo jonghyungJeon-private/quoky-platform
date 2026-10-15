@@ -23802,6 +23802,23 @@ bound, run on Thursday 2026-10-15 (Asia/Seoul). Reports are local under `data/ev
   the live sentence executes with a five-day range.
 - **No prompt change** (`nl-select.v22` / `v23` byte for byte), so no evaluation run; no corpus change.
 
+### ADR-0120 amendment A7 implementation note 2 — a single-day pick of one bound of the span (2026-10-15, live Telegram)
+
+- **Live defect** (after #211). "다음 주 월요일부터 금요일까지 일정" (Thursday 10/15 10:37) was still asked
+  (`validation_failed reason=weekday arg=range`). The log records no args, so the selector was probed (owner-approved,
+  Haiku, `nl-select.v22`, the exact sentence): with no previous selection 20 of 20 calls execute (`next-week` 18 →
+  2026-10-19..2026-10-23, `10-19..10-23` 2); with a previous calendar selection in the prompt (`until-fri`, `this-week`,
+  `{}`; 10 calls each) the selector answered `next-mon` in 4, 2 and 2 calls, and that single day was refused. With a
+  previous `next-week` 0 of 10.
+- **Rule (no ratified text changes; the span canonical form of implementation note 1).** When the span is fully grounded
+  (exactly one start-bounded and one end-bounded weekday, nothing else) and the selected period is a single day that is
+  the start or the end day of exactly one allowed span, the period is spelled as that span. It is what the owner named,
+  so it is never wider than their words; another single day ("next-wed", "this-mon") is still asked, and so is a day
+  shared by two allowed spans. `symbolic-time.ts` `nlMultiWeekdayBound` (:699).
+- **Tests.** `until-weekday.test.ts` (`next-mon`, `next-fri`, `mon`, English "from next Monday", `this-wed` for "from
+  this Wednesday through Friday" → the one span it bounds; `next-wed`, `this-mon` asked) and a service test with a
+  previous selection and a `next-mon` pick. No prompt or corpus change.
+
 ## ADR-0112 amendment 1 — Slack channel-message delete: a narrow `ChannelMessageDeleteWriter`, only for a message Quoky posted, bound to that post's SENT receipt, only as the undo of a post (Proposed — owner decision pending) (2026-10-14)
 
 - **Status:** **Proposed (owner decision pending).**

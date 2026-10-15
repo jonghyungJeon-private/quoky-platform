@@ -682,8 +682,9 @@ export function nlUntilBound(
  * when the rule does not apply (fewer than two weekdays, or no end bound). Otherwise the period must EXACTLY equal one
  * allowed [start day, first end weekday on or after it] span (`'keep'`), or it is refused. A7 implementation note
  * (span canonical form): when both bounds are explicit (부터 / from and 까지 / through) and the selected period CONTAINS
- * exactly one allowed span ("다음 주 월요일부터 금요일까지" read as `next-week`), it is spelled as that explicit span
- * (`YYYY-MM-DD..YYYY-MM-DD`, Core's dates), never wider than the selected period; two contained spans are asked.
+ * exactly one allowed span ("다음 주 월요일부터 금요일까지" read as `next-week`), or is a single day that is one bound of
+ * exactly one allowed span (read as `next-mon`), it is spelled as that explicit span (`YYYY-MM-DD..YYYY-MM-DD`, Core's
+ * dates); never wider than the selected period or the owner's two bounds; two candidate spans are asked.
  */
 export function nlMultiWeekdayBound(range: NlResolvedRange | undefined, mentions: readonly NlWeekdayMention[], now: IsoTimestamp, timeZone: string): 'n/a' | NlUntilBoundOutcome {
   const result = multiWeekdaySpans(mentions, now, timeZone);
@@ -693,7 +694,11 @@ export function nlMultiWeekdayBound(range: NlResolvedRange | undefined, mentions
   const last = lastDayOf(range);
   if (result.spans.some(([from, to]) => same(range.startDate, from) && same(last, to))) return 'keep';
   if (!result.grounded || range.upcoming === true) return 'refuse';
-  const inside = result.spans.filter(([from, to]) => compareLocalDates(from, range.startDate) >= 0 && compareLocalDates(to, last) <= 0);
+  // A single day that is one of the owner's two bounded days ("다음 주 월요일부터 금요일까지" read as `next-mon`, live probe
+  // 2026-10-15) is that span: the owner named both bounds, so the span is exactly what they said, never wider.
+  const bounding =
+    range.days === 1 ? result.spans.filter(([from, to]) => same(range.startDate, from) || same(range.startDate, to)) : [];
+  const inside = bounding.length > 0 ? bounding : result.spans.filter(([from, to]) => compareLocalDates(from, range.startDate) >= 0 && compareLocalDates(to, last) <= 0);
   const unique = inside.filter(([from, to], index) => inside.findIndex(([f, t]) => same(f, from) && same(t, to)) === index);
   if (unique.length !== 1) return 'refuse';
   const [from, to] = unique[0] as readonly [LocalDate, LocalDate];
