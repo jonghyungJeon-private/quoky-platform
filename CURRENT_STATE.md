@@ -51,12 +51,6 @@ byte-identical. Chief Architect review required before merge (port and runtime d
   Haiku final gate runs, which ran on 2026-10-15 (`data/eval/a6-r1-final-run{1,2,3}-{action,readreg}.*`). Still needing a
   separate owner yes each: the `.env.local` `QUOKY_NL_ACTIONS` flag (stays `off`) and the labelled live session of at
   least 100 turns.
-- Owner gold decisions (asked on Discord 2026-10-15; recommended for `reminder.create-020` / `-022`: ask). Still listed as
-  PENDING in `nl-action.v1.json`: `a6-paraphrase-todo.complete-018` ("완룐", now `none`), `a6-paraphrase-todo.complete-009`
-  ("체크해줘", now `none`), `a6-paraphrase-reminder.create-020` and `a6-paraphrase-reminder.create-022` (now `ask`).
-- Owner gold decision (new, 2026-10-16; recommended: ask/refuse, consistent with A6-D3a and the first-person rule):
-  `a6-paraphrase-todo.add-009` ("할 일 하나 추가할게. …"), `-016` ("todo 추가: …"), `-025` ("… 추가 ㄱㄱ") and
-  `a6-paraphrase-reminder.create-024` ("알림 설정: …"); they now fail every run by design.
 - A6 prompt `nl-select.v33` gate (3+3 Haiku, 2026-10-16): action passed 1 of 3, read-regression 0 of 3 (help.topic captures
   of neg-012 / neg-025 / neg-110; `reminder.create-014` now `none` 3 of 3). DECISIONS "A6 prompt `nl-select.v33`".
 - A6 prompt `nl-select.v34` gate (3+3 Haiku, 2026-10-16): action passed 2 of 3, read-regression 0 of 3 (`jira.release` < 0.9
@@ -111,7 +105,7 @@ Details and the review record for each item are in the matching notes in `DECISI
 - **Status filter (owner decision 2026-10-15):** `todo.list` / `reminder.list` take `status` (canceled, completed / done,
   all; default the open ones), read-only; read prompt `nl-select.v27`, A6 prompt `nl-select.v28`. With Codex round 2 the
   latest Haiku runs (1 each): action 97.3%, 0 wrong targets, 0 negative captures, gate passed; read regression passed.
-  The `complete-018` and `-009` relabels are the owner gold decisions listed under "Pending with the owner".
+  The `complete-018` and `-009` relabels were decided by the owner on 2026-10-16 (DECISIONS "Owner decisions on A6 gold").
 - **Final Haiku gate (3 runs, read v27 / A6 v29, 2026-10-15).** Action 95.8% / 96.8% / 95.5%, wrong target 0/0/0, negative captures 0/0/0; run 1 below gate only on the READ entry `reminder.list` 5/6. Read regression 95.7% / 95.4% / 96.4%, A6 captures 0/0/0; run 2 has 1 wrong capture (`neg-051` → `help.topic`, read-only). Summary: safety 3/3, utility 2/3 per corpus; not a full pass. The owner decides the flag after the 100-turn live session. Reported-speech residuals ("…완료해줘 했어", "…하길래", "…해서", "…하니까") are recorded in DECISIONS as accepted.
 - **R1 gate re-run on the merged prompts (2026-10-16; read v30, A6 v31 -> v32).** v31 regressed (`reminder.list` 0.667 x3, one
   `help.topic` wrong capture per read run). Root causes: the new `status` arg made Haiku add `range` / `count` to

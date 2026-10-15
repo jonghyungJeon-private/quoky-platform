@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — owner gold decisions and approvals (2026-10-16)
+
+- **Changed (gold only, no runtime change).** `golden/nl-action.v1.json`: `a6-paraphrase-todo.complete-018` and `-009` are
+  `todo.complete` execute (`#3` and `#1`); `a6-paraphrase-reminder.create-020`, `-022`, `-024` and `a6-paraphrase-todo.add-009`,
+  `-016`, `-025` are ask (`ambiguous`, any question); `a6-negative-none-031` is `help.topic` with args `{}`. PENDING markers removed.
+- **Approved (DECISIONS "Owner decisions on A6 gold, ADR-0123 and the A6 proposals").** ADR-0123 Q3, Q4, Q6 and Q2 (Q2 after a
+  Codex review); the A6 R5a deictic write proposal (1a and 2-9; 1b deferred); the A6 reference priority proposal; the ADR-0100 D3
+  amendment (PR #230). ADR-0123 Q1 and Q5 remain under owner review.
+
 ## Unreleased — A6 prompt `nl-select.v36` (2026-10-16)
 
 - **Changed (inert, `QUOKY_NL_ACTIONS` off).** A6 prompt rules 3 and 8 made consistent: a how-to or method question about a
