@@ -936,6 +936,8 @@ export class ApprovalDecisionService {
           if (surfaceRecheck !== undefined) await surfaceRecheck();
           return work(held);
         }),
+      // And once more as the last step before the writer is called.
+      ...(surfaceRecheck !== undefined ? { beforeSend: surfaceRecheck } : {}),
     });
   }
 

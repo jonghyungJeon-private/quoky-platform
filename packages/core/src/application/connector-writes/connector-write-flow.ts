@@ -556,6 +556,11 @@ export interface FlowInput {
 export interface ConnectorWriteExecuteInput extends FlowInput {
   readonly view: ConnectorWriteAnchorView;
   readonly claim?: <T>(work: (held: SessionLockHold) => Promise<T>) => Promise<T>;
+  /**
+   * ADR-0122 D2.5: run as the last step before the writer is called (after the claim and the reconcile); a throw means
+   * nothing is sent (recorded NOT_SENT, never retried).
+   */
+  readonly beforeSend?: () => Promise<unknown>;
 }
 
 /** The execution gate (EXECUTION_PHRASES) of each operation. */
@@ -1221,6 +1226,9 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       return send();
     };
     try {
+      // ADR-0122 D2.5: the last check before the request is prepared and the writer called; a refusal here is provably
+      // nothing sent (NOT_SENT, no receipt).
+      if (input.beforeSend !== undefined) await input.beforeSend();
       const result = await executor.executeOnce(
         { actorId: input.actor.id, idempotencyKey: `cwr:${approvalId}`, connector, operation, target, payloadSha256 },
         sendOnce,

@@ -6486,7 +6486,7 @@ export class ConversationRuntime {
   private async handlePushExecutionTurn(
     message: InboundMessage,
     session: Session,
-    _actor: Actor,
+    actor: Actor,
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
     // 1. Complete approved push context, else safe failure (pre-push, no push). Log never throws.
@@ -6585,6 +6585,10 @@ export class ConversationRuntime {
     //     unchanged"). KEEP PUSH_APPROVED, preserve context, NO GIT_PUSHED (CA #2/#11).
     let result: GitPushResult;
     try {
+      // ADR-0122 D2.5: the live grant is re-read as the last statement before this external call (after every awaited
+      // preflight above), so a revoke that landed during them wins.
+      const surfaceRevoked = await this.surfaceRecheckBeforeCall(message, session, actor, 'push');
+      if (surfaceRevoked) return surfaceRevoked;
       result = await this.deps.git.pushApprovedCommit({
         rootPath: anchor.workspaceRef.rootPath,
         remote: anchor.pushRemote,
@@ -6939,6 +6943,10 @@ export class ConversationRuntime {
     }
     let result: PullRequestResult;
     try {
+      // ADR-0122 D2.5: the live grant is re-read as the last statement before this external call (after every awaited
+      // preflight above), so a revoke that landed during them wins.
+      const surfaceRevoked = await this.surfaceRecheckBeforeCall(message, session, actor, 'pr-create');
+      if (surfaceRevoked) return surfaceRevoked;
       result = await manager.createPullRequest({
         identity,
         headBranch: anchor.prHeadBranch,
@@ -7284,6 +7292,10 @@ export class ConversationRuntime {
     }
     let result: PullRequestMergeResult;
     try {
+      // ADR-0122 D2.5: the live grant is re-read as the last statement before this external call (after every awaited
+      // preflight above), so a revoke that landed during them wins.
+      const surfaceRevoked = await this.surfaceRecheckBeforeCall(message, session, actor, 'merge');
+      if (surfaceRevoked) return surfaceRevoked;
       result = await manager.mergePullRequest({
         identity,
         pullRequestRef: ref,
@@ -7752,6 +7764,10 @@ export class ConversationRuntime {
     }
     let result: RemoteBranchCleanupResult;
     try {
+      // ADR-0122 D2.5: the live grant is re-read as the last statement before this external call (after every awaited
+      // preflight above), so a revoke that landed during them wins.
+      const surfaceRevoked = await this.surfaceRecheckBeforeCall(message, session, actor, 'remote-cleanup');
+      if (surfaceRevoked) return surfaceRevoked;
       result = await manager.deleteRemoteBranch({
         identity,
         pullRequestRef: ref,
@@ -9219,6 +9235,18 @@ export class ConversationRuntime {
     const decision = gate.decide(context, fresh ?? {}, groups, { path: 'approval' });
     if (decision.allow) return true;
     throw new SurfaceDeniedError(decision);
+  }
+
+  /** D2.5: a strong side effect's last-moment check on the live grants; the denial turn, or `null` to proceed. */
+  private async surfaceRecheckBeforeCall(message: InboundMessage, session: Session, actor: Actor, step: StateBoundStep): Promise<TurnResult | null> {
+    if (this.channelGate(message.context) === undefined) return null;
+    try {
+      await this.surfaceStillAllows(message.context, actor, [surfaceGroupOfStateStep(step)]);
+      return null;
+    } catch (error) {
+      if (!(error instanceof SurfaceDeniedError)) throw error;
+      return this.surfaceDeniedTurn(message, session, error.decision);
+    }
   }
 
   /** D2.2: the groups of a validated selection (a `jira.release` link in the owner's own non-quoted words counts). */
