@@ -1,0 +1,373 @@
+{
+  "version": 1,
+  "description": "RAG-0 baseline (ADR-0123 D5): the contamination findings of the selector prompt examples against the D12 gold corpora as of the commit that added it. Ratchet: a new finding fails the test, a finding that no longer occurs must be deleted, so the list can only shrink. Regenerate with `pnpm rag0:regen` after a prompt or gold change and REVIEW the diff: new entries are written with reason UNREVIEWED and the test fails until each has a real reason.",
+  "findings": [
+    {
+      "example": "어제 새로 생긴 지라 이슈 몇 개야",
+      "goldId": "jira-023",
+      "kind": "containment",
+      "tokenJ": 0.44,
+      "charJ": 0.47,
+      "contain": 0.82,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "오늘까지 마감인 지라 일 있어?",
+      "goldId": "uat5ca-03",
+      "kind": "near",
+      "tokenJ": 0.71,
+      "charJ": 0.61,
+      "contain": 0.79,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Near-copy by token or character-3-gram Jaccard >= 0.6; to be reworded in a gated prompt change."
+    },
+    {
+      "example": "그 중에 스프린트 건만",
+      "previous": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"this-week\"}}",
+      "goldId": "jira-057",
+      "kind": "near",
+      "tokenJ": 0.6,
+      "charJ": 0.29,
+      "contain": 0.5,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Near-copy by token or character-3-gram Jaccard >= 0.6; to be reworded in a gated prompt change."
+    },
+    {
+      "example": "그 중에 스프린트 건만",
+      "previous": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"this-week\"}}",
+      "goldId": "calendar-041",
+      "kind": "pair",
+      "tokenJ": 0.84,
+      "charJ": 0.87,
+      "contain": 0.95,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. The (previous, context, text) pair of a follow-up example is a near-copy of a gold follow-up with its previous selection."
+    },
+    {
+      "example": "그 중에 스프린트 건만",
+      "previous": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"this-week\"}}",
+      "goldId": "calendar-045",
+      "kind": "pair",
+      "tokenJ": 0.63,
+      "charJ": 0.54,
+      "contain": 0.85,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. The (previous, context, text) pair of a follow-up example is a near-copy of a gold follow-up with its previous selection."
+    },
+    {
+      "example": "그 중에 스프린트 건만",
+      "previous": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"this-week\"}}",
+      "goldId": "calendar-049",
+      "kind": "pair",
+      "tokenJ": 0.8,
+      "charJ": 0.81,
+      "contain": 0.9,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. The (previous, context, text) pair of a follow-up example is a near-copy of a gold follow-up with its previous selection."
+    },
+    {
+      "example": "그 중에 스프린트 건만",
+      "previous": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"this-week\"}}",
+      "goldId": "neg-137",
+      "kind": "pair",
+      "tokenJ": 0.8,
+      "charJ": 0.81,
+      "contain": 0.91,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. The (previous, context, text) pair of a follow-up example is a near-copy of a gold follow-up with its previous selection."
+    },
+    {
+      "example": "그 중에 스프린트 건만",
+      "previous": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"this-week\"}}",
+      "goldId": "uat5r5-18",
+      "kind": "pair",
+      "tokenJ": 0.84,
+      "charJ": 0.86,
+      "contain": 0.95,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. The (previous, context, text) pair of a follow-up example is a near-copy of a gold follow-up with its previous selection."
+    },
+    {
+      "example": "구글 드라이브에서 엑셀 파일만 최근 순으로",
+      "goldId": "drive-042",
+      "kind": "containment",
+      "tokenJ": 0,
+      "charJ": 0.1,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "드라이브 폴더 뭐 있어?",
+      "goldId": "drive-042",
+      "kind": "containment",
+      "tokenJ": 0.2,
+      "charJ": 0.18,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "어제 도착한 메일 보여줘",
+      "goldId": "mail-038",
+      "kind": "containment",
+      "tokenJ": 0.5,
+      "charJ": 0.36,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "어제 도착한 메일 보여줘",
+      "goldId": "uat5r1-01",
+      "kind": "near",
+      "tokenJ": 0.6,
+      "charJ": 0.43,
+      "contain": 0.67,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Near-copy by token or character-3-gram Jaccard >= 0.6; to be reworded in a gated prompt change."
+    },
+    {
+      "example": "그거 요약해줘",
+      "previous": "{\"entryId\":\"mail.list\",\"args\":{}}",
+      "goldId": "neg-054",
+      "kind": "containment",
+      "tokenJ": 0.06,
+      "charJ": 0.08,
+      "contain": 0.8,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "그거 요약해줘",
+      "previous": "{\"entryId\":\"mail.list\",\"args\":{}}",
+      "goldId": "neg-098",
+      "kind": "pair",
+      "tokenJ": 0.69,
+      "charJ": 0.53,
+      "contain": 0.85,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. The (previous, context, text) pair of a follow-up example is a near-copy of a gold follow-up with its previous selection."
+    },
+    {
+      "example": "그거 요약해줘",
+      "previous": "{\"entryId\":\"mail.list\",\"args\":{}}",
+      "goldId": "uat5r6-07",
+      "kind": "exact",
+      "tokenJ": 1,
+      "charJ": 1,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Exact copy of a gold message (ADR-0123 D6: excluded from experiment scoring)."
+    },
+    {
+      "example": "그거 요약해줘",
+      "previous": "{\"entryId\":\"mail.list\",\"args\":{}}",
+      "goldId": "a6-paraphrase-item.summarize-020",
+      "kind": "containment",
+      "tokenJ": 0,
+      "charJ": 0.36,
+      "contain": 0.8,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "그거 요약해줘",
+      "previous": "{\"entryId\":\"mail.list\",\"args\":{}}",
+      "goldId": "a6-reference-item.summarize-001",
+      "kind": "exact",
+      "tokenJ": 1,
+      "charJ": 1,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Exact copy of a gold message (ADR-0123 D6: excluded from experiment scoring)."
+    },
+    {
+      "example": "그거 요약해줘",
+      "previous": "{\"entryId\":\"mail.list\",\"args\":{}}",
+      "goldId": "a6-reference-item.summarize-002",
+      "kind": "near",
+      "tokenJ": 0.33,
+      "charJ": 0.67,
+      "contain": 0.8,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Near-copy by token or character-3-gram Jaccard >= 0.6; to be reworded in a gated prompt change."
+    },
+    {
+      "example": "그거 요약해줘",
+      "previous": "{\"entryId\":\"mail.list\",\"args\":{}}",
+      "goldId": "a6-reference-item.summarize-009",
+      "kind": "near",
+      "tokenJ": 0.33,
+      "charJ": 0.83,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Near-copy by token or character-3-gram Jaccard >= 0.6; to be reworded in a gated prompt change."
+    },
+    {
+      "example": "그거 요약해줘",
+      "previous": "{\"entryId\":\"mail.list\",\"args\":{}}",
+      "goldId": "a6-reference-item.summarize-014",
+      "kind": "containment",
+      "tokenJ": 0,
+      "charJ": 0.36,
+      "contain": 0.8,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "그거 요약해줘",
+      "previous": "{\"entryId\":\"mail.list\",\"args\":{}}",
+      "goldId": "a6-reference-item.summarize-015",
+      "kind": "near",
+      "tokenJ": 0.33,
+      "charJ": 0.83,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Near-copy by token or character-3-gram Jaccard >= 0.6; to be reworded in a gated prompt change."
+    },
+    {
+      "example": "그거 요약해줘",
+      "previous": "{\"entryId\":\"mail.list\",\"args\":{}}",
+      "goldId": "a6-negative-none-093",
+      "kind": "containment",
+      "tokenJ": 0.06,
+      "charJ": 0.08,
+      "contain": 0.8,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "그거 요약해줘",
+      "previous": "{\"entryId\":\"mail.list\",\"args\":{}}",
+      "goldId": "a6-seed-live-004",
+      "kind": "containment",
+      "tokenJ": 0.2,
+      "charJ": 0.4,
+      "contain": 0.8,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "오후만",
+      "previous": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"day-after-tomorrow\"}}",
+      "goldId": "uat5r2-10",
+      "kind": "exact",
+      "tokenJ": 1,
+      "charJ": 1,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Exact copy of a gold message (ADR-0123 D6: excluded from experiment scoring)."
+    },
+    {
+      "example": "다다음 주는?",
+      "previous": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"next-week\"}}",
+      "goldId": "calendar-028",
+      "kind": "pair",
+      "tokenJ": 0.68,
+      "charJ": 0.61,
+      "contain": 0.77,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. The (previous, context, text) pair of a follow-up example is a near-copy of a gold follow-up with its previous selection."
+    },
+    {
+      "example": "다다음 주는?",
+      "previous": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"next-week\"}}",
+      "goldId": "uat5r4-17",
+      "kind": "pair",
+      "tokenJ": 0.79,
+      "charJ": 0.89,
+      "contain": 0.95,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. The (previous, context, text) pair of a follow-up example is a near-copy of a gold follow-up with its previous selection."
+    },
+    {
+      "example": "목요일 거는?",
+      "previous": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"this-week\"}}",
+      "goldId": "uat5r4-16",
+      "kind": "exact",
+      "tokenJ": 1,
+      "charJ": 1,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Exact copy of a gold message (ADR-0123 D6: excluded from experiment scoring)."
+    },
+    {
+      "example": "https://example.atlassian.net/projects/ABC/versions/10001 이거 확인 좀",
+      "goldId": "a8-25",
+      "kind": "near",
+      "tokenJ": 0.63,
+      "charJ": 0.24,
+      "contain": 0.4,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Near-copy by token or character-3-gram Jaccard >= 0.6; to be reworded in a gated prompt change."
+    },
+    {
+      "example": "너 구글 드라이브도 볼 줄 알아?",
+      "goldId": "drive-042",
+      "kind": "containment",
+      "tokenJ": 0,
+      "charJ": 0.13,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "깃허브 액션이 뭐야?",
+      "goldId": "github-033",
+      "kind": "containment",
+      "tokenJ": 0.25,
+      "charJ": 0.11,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "드라이브에서 폴더 공유하는 법 알려줘",
+      "goldId": "neg-014",
+      "kind": "near",
+      "tokenJ": 0.83,
+      "charJ": 0.86,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Near-copy by token or character-3-gram Jaccard >= 0.6; to be reworded in a gated prompt change."
+    },
+    {
+      "example": "드라이브에서 폴더 공유하는 법 알려줘",
+      "goldId": "drive-042",
+      "kind": "containment",
+      "tokenJ": 0,
+      "charJ": 0.11,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "깃허브 PR 리뷰 잘하는 팁 좀",
+      "goldId": "github-033",
+      "kind": "containment",
+      "tokenJ": 0.17,
+      "charJ": 0.07,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "can you add a todo for me: buy milk",
+      "goldId": "a6-negative-none-050",
+      "kind": "containment",
+      "tokenJ": 0.45,
+      "charJ": 0.47,
+      "contain": 0.94,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "깃허브 리뷰 요청도 볼 수 있어?",
+      "goldId": "help-019",
+      "kind": "near",
+      "tokenJ": 0.63,
+      "charJ": 0.4,
+      "contain": 0.67,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Near-copy by token or character-3-gram Jaccard >= 0.6; to be reworded in a gated prompt change."
+    },
+    {
+      "example": "깃허브 리뷰 요청도 볼 수 있어?",
+      "goldId": "github-033",
+      "kind": "containment",
+      "tokenJ": 0.14,
+      "charJ": 0.06,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    },
+    {
+      "example": "\"주간 리포트 초안\" 할 일 목록에 넣어둬",
+      "goldId": "a6-negative-todo.list-002",
+      "kind": "containment",
+      "tokenJ": 0.22,
+      "charJ": 0.19,
+      "contain": 1,
+      "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
+    }
+  ],
+  "shortReview": [
+    {
+      "example": "메일함",
+      "reviewer": "RAG-0 implementer (Claude), owner review pending",
+      "reason": "Short follow-up or bare source name (<= 3 characters): too few n-grams to measure, listed for manual review; exact match against gold is a finding when present."
+    },
+    {
+      "example": "오후만",
+      "previous": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"day-after-tomorrow\"}}",
+      "reviewer": "RAG-0 implementer (Claude), owner review pending",
+      "reason": "Short follow-up or bare source name (<= 3 characters): too few n-grams to measure, listed for manual review; exact match against gold is a finding when present."
+    }
+  ]
+}

@@ -27,6 +27,18 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   with three examples. The read prompt stays `nl-select.v30` (A6-off golden unchanged); A6 prompt `nl-select.v32`, cache-key
   pins updated. Record: DECISIONS "A6 R1 gate re-run on the merged prompts".
 
+## Unreleased — RAG-0 example contamination lint: prompt examples vs the D12 gold, with a ratchet (test only, 2026-10-16)
+
+- **Lint (ADR-0123 D5).** `application/nl-routing/example-contamination.ts` (pure) and `example-contamination.test.ts` render the read
+  and A6 selector prompts through `buildSelectionPrompt`, extract the `Message:` examples and compare them with every case of
+  `nl-intent.v1.json`, `nl-action.v1.json`, `nl-action.seed.v1.json` and `nl-action.exec-time.v1.json`: exact match, token or
+  character-3-gram Jaccard >= 0.6, character-3-gram containment >= 0.8, short texts (<= 3 characters) by exact match plus a manual
+  review list, the `(previous, context, text)` pair, and the output's verbatim span args. No model, no network.
+- **Ratchet.** Today's findings are in `example-contamination.known.v1.json`, each with a reason; the test fails on a new finding, on
+  a stale entry and on an unreviewed reason, so the list only shrinks. After a prompt or gold change run `pnpm rag0:regen` and review
+  the diff by hand.
+- No prompt text, gold data or runtime behavior changes.
+
 ## Unreleased — A9 P2 surface permission grants: grant by phrase, composite permit, channel reminder check (inert by default, 2026-10-15)
 
 - **Grant by phrase (ADR-0122 D4).** With `QUOKY_CHANNEL_GRANTS=enforce`, the owner's `이 채널에 <그룹> 허용` in a channel
