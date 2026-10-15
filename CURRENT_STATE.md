@@ -36,6 +36,9 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 - Next owner batch: the 2 agent-drafted A6 negatives `a6-negative-none-130` / `-131` (저 = "I", below). The INT-4 cases
   `v5int4-001..041` were owner-approved on 2026-10-15 (D12), and the held relabels `neg-099` and `uat5r6-07` are applied
   after the owner's A6-D2 clarification (below).
+- Owner follow-up question (Codex review of the A6-D2 clarification): should a newer listing override a fresh lastAction
+  for deictics? Today (A6-D2 step 3, ratified) "그거 완료해줘" and "그 할 일 완료해줘" after a newer to-do list [A, B]
+  act on the fresh lastAction A.
 - Owner follow-up (pre-existing, found in A6 acceptance): an anchored Class A command such as "1번 완료해줘" acts on the CURRENT numbered list, so if the list was renumbered since the owner last saw it (an item completed elsewhere), it completes a different to-do than the one shown. A6 selector-path references are bound to the shown label and refuse instead; whether the anchored form should do the same is the owner's call.
 - Token rotation: deferred (ADR-0121 S0 owner decision, design Q5).
 - OS-level firewall for child processes: "not now" (ADR-0121 S0 owner decision, design Q10).

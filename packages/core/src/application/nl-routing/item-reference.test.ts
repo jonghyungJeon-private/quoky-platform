@@ -188,11 +188,27 @@ describe('A6-D2 clarification (owner 2026-10-15): "이 / 그 / 저 + noun" resol
     // A ref that is not grounded never reaches resolution: the validator refuses it as `ungrounded` (no write, no read).
     expect(isNlRefGrounded({ kind: 'this' }, '저 할 일 다 했어요', { entryId: 'todo.complete', source: 'todo' })).toBe(false);
     expect(isNlRefGrounded({ kind: 'this' }, '이 파일럿 요약해줘', { entryId: 'item.summarize', source: 'drive' })).toBe(false);
+    // A word-joining character is no noun end (Codex review): "알림_봇", "알림-봇", "알림2", "알림·봇" are other words.
+    for (const text of ['이 알림_봇 취소해줘', '이 알림-봇 취소해줘', '이 알림2 취소해줘', '이 알림·봇 취소해줘', '그 메일_요약해줘']) {
+      expect(isNlRefGrounded({ kind: 'this' }, text, { entryId: 'reminder.cancel', source: 'reminder' }), text).toBe(false);
+      expect(isNlRefGrounded({ kind: 'this' }, text, { entryId: 'item.summarize', source: 'mail' }), text).toBe(false);
+    }
+    // Sentence punctuation and particles do end it.
+    for (const text of ['이 알림, 취소해줘', '이 알림을 취소해줘', '이 알림!', '이 알림']) expect(isNlRefGrounded({ kind: 'this' }, text, { entryId: 'reminder.cancel', source: 'reminder' }), text).toBe(true);
     expect(isNlRefGrounded({ kind: 'this' }, '그 알림 취소해줘', { entryId: 'todo.cancel', source: 'todo' })).toBe(false);
     // The same words with the matching entry do ground, and then resolve by the ordinary rules (another source asks).
     const todos = listings([{ source: 'todo', labels: [4], minute: 0 }]);
     expect(isNlRefGrounded({ kind: 'this' }, '그 알림 취소해줘', { entryId: 'reminder.cancel', source: 'reminder' })).toBe(true);
     expect(resolve('reminder.cancel', 'reminder', 'this', '그 알림 취소해줘', state(todos, 1))).toMatchObject({ kind: 'unresolved', outcome: 'other-source', found: 'todo' });
+  });
+
+  it('known, ratified (A6-D2 step 3): a fresh lastAction wins over a newer listing for 그거 and for 이/그 + noun alike', () => {
+    // Owner follow-up question in CURRENT_STATE: should a newer listing override a fresh lastAction for deictics?
+    const last = action('todo.add', 'todo', 'todo-a', 0, { label: 1 });
+    const newer = listings([{ source: 'todo', labels: [1, 2], minute: 1 }]);
+    for (const text of ['그거 완료해줘', '그 할 일 완료해줘']) {
+      expect(resolve('todo.complete', 'todo', 'this', text, state(newer, 2, { lastAction: last })), text).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-a', label: 1 } });
+    }
   });
 
   it('a fresh lastAction of the source wins over the listing, exactly as for 그거', () => {

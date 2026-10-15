@@ -92,8 +92,13 @@ const NOUN_ALTERNATION = [...new Set(ITEM_SOURCE_WORDS_KO.map(([noun]) => noun))
   .sort((a, b) => b.length - a.length)
   .map((noun) => noun.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*'))
   .join('|');
+/**
+ * Where a noun (or its particles) may end: the end of the text, whitespace, or a closed set of sentence punctuation. A
+ * letter, digit, `_` or any other word-joining character never ends it ("이 알림_봇", "그 문서화").
+ */
+const NOUN_END = '(?:$|\\s|[.,!?~…])';
 /** A determiner word, then an item-source noun that ends there or with particles (captures: determiner, noun). */
-const DETERMINER_NOUN_SOURCE = `(?<=^|\\s)(${DETERMINERS_KO.join('|')})\\s+(${NOUN_ALTERNATION})(?=${PARTICLE_WORDS}*(?:$|[\\s\\p{P}\\p{S}]))`;
+const DETERMINER_NOUN_SOURCE = `(?<=^|\\s)(${DETERMINERS_KO.join('|')})\\s+(${NOUN_ALTERNATION})(?=${PARTICLE_WORDS}*${NOUN_END})`;
 const DETERMINER_NOUN_ALL = new RegExp(DETERMINER_NOUN_SOURCE, 'gu');
 
 /** The determiner references of the owner's words: which determiner, and which item sources its noun names. */

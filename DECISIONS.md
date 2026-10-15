@@ -24718,8 +24718,12 @@ extends the closed deictic set; the resolution steps, the most-recent-listing ru
    - **The noun names the entry's own source.** When the only deictic is a determiner phrase, its noun must name the
      source the entry acts on (`todo.*` → to-do, `reminder.cancel` → reminder, `item.summarize` → its `source` arg): "그
      알림 취소해줘" never grounds a to-do ref.
-   - **A whole noun.** The noun ends the word or is followed only by particles ("이 문서를", "그 메일에서는"): "이 파일럿",
-     "그 문서화", "그 알림장" are not references.
+   - **A whole noun.** The noun ends the word or is followed only by particles ("이 문서를", "그 메일에서는"), then the
+     end of the text, whitespace or sentence punctuation (. , ! ? ~ …): "이 파일럿", "그 문서화", "그 알림장" are not
+     references, and a letter, digit, `_` or other word-joining character never ends the noun ("이 알림_봇", Codex review).
+   - **Known, ratified behaviour (Codex review).** A6-D2 step 3 uses a fresh `lastAction` of the entry's source before
+     the most recent listing, even when that listing is newer: "그 할 일 완료해줘" (like "그거 완료해줘") after a newer
+     listing [A, B] resolves to the fresh `lastAction` A. Unchanged here; an owner follow-up question in CURRENT_STATE.
 2. **Structural, no phrase list.** The determiners are a closed set of three. The nouns are the catalog's own words for
    the item sources: the Korean aliases and source names of the `mail.list`, `drive.files`, `todo.list` and
    `reminder.list` entries (`ITEM_SOURCE_NOUNS_KO` in `nl-routing/action-entries.ts`, derived, never listed by hand). A
