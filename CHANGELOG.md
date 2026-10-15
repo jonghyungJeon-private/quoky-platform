@@ -7,13 +7,14 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 ## Unreleased — A6-D2 clarification: "이 / 그 / 저 + noun" is a deictic; held relabels applied; INT-4 cases approved (2026-10-15)
 
-- **A6-D2 (owner-approved clarification).** A determiner 이/그/저 before an item-source noun of the catalog ("이 문서",
-  "그 메일", "저 알림") grounds `ref: this` / `recent` exactly like 그거/이거, and a payload made only of one asks like
-  "그거". The nouns are derived from the mail, Drive, to-do and reminder list entries' aliases; no phrase list, no
+- **A6-D2 (owner-approved clarification).** A determiner 이/그 before a whole item-source noun of the catalog naming the
+  entry's own source ("이 문서", "그 메일"; not "이 파일럿", not "그 알림" for a to-do) grounds `ref: this` / `recent`
+  exactly like 그거/이거; 저 (also "I") grounds reads only. A payload made only of one asks like "그거". The nouns are derived from the mail, Drive, to-do and reminder list entries' aliases; no phrase list, no
   prompt change. Resolution is unchanged: one listed item reads it, several ask, another source asks.
 - **Corpus.** `neg-099` → `item.summarize {source: drive, ref: this, mode: summary}` with a one-item Drive listing;
   `uat5r6-07` un-held and respelled `ref: this` (one-item mail listing); both in `eval:nl --mode read-regression` only.
-  The 41 INT-4 cases `v5int4-001..041` are marked owner-approved (D12 batch 2026-10-15).
+  The 41 INT-4 cases `v5int4-001..041` are marked owner-approved (D12 batch 2026-10-15). Two agent-drafted A6
+  negatives for "저 + noun" (`a6-negative-none-130`, `-131`) await the owner's D12 batch.
 - Tests: grounding and resolver rows, A6 acceptance through `AppModule` (scripted selector, incl. a red-team check that
   listed content never grounds a reference), read-regression scoring of both relabels. `QUOKY_NL_ACTIONS` stays `off`.
 

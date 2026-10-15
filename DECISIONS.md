@@ -22595,8 +22595,8 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
    - **Grounding of a `ref`.**
      - `#n` needs a numeral or ordinal in the owner's text: digits, `N번`, 첫/두/세 번째, first/second.
      - `recent`, `this` and `last` need a closed deictic: 그거, 이거, 저거, 그것, 방금, 아까, 마지막, it, that, this, the
-       last one. *(Clarified 2026-10-15, owner-approved: 이 / 그 / 저 + an item-source noun of the catalog is a closed
-       deictic too; see "ADR-0120 amendment A6-D2 clarification" at the end of this file.)*
+       last one. *(Clarified 2026-10-15, owner-approved: 이 / 그 + an item-source noun of the entry's own source is a closed
+       deictic too, 저 + noun for reads only; see "ADR-0120 amendment A6-D2 clarification" at the end of this file.)*
      - These are value validators, like the A2 grammatical classes and the A5 time words. A deictic alone never
        selects an entry.
    - **What a number means.**
@@ -24702,23 +24702,32 @@ Not approved by this record, each needing its own owner yes: the A6 model runs (
 
 Implementation notes of the acceptance conversion: the corpus labels (11..14) are placeholders, so the tests use the real display numbers. Gold reasons that differ from the real wording without changing the outcome class (nothing acts, nothing is written): cancel-016 (a bare number after a to-do action) replies "가장 최근에 보여 드린 건 할 일 목록이에요. 어느 알림인지 다시 말씀해 주세요." (`other-source`, not `out-of-range`); cancel-020 (a reminder number the store lacks) replies "알림 #49를 찾지 못했어요" (not-found). The exact anchored "1번 완료해줘" is a Class A command that WRITES against the current numbered list, so case todo.complete-041 was relabelled to the selector-path wording "2번도 완료해줘" (the already-gone refusal). The anchored command acting on a list that was renumbered behind the owner's back is a pre-existing risk, recorded as an owner follow-up in CURRENT_STATE.
 
-## ADR-0120 amendment A6-D2 clarification — "이 / 그 / 저 + item-source noun" is a closed deictic (owner-approved 2026-10-15)
+## ADR-0120 amendment A6-D2 clarification — "이 / 그 + item-source noun" is a closed deictic (owner-approved 2026-10-15)
 
 Status: **owner-approved** (2026-10-15, through the orchestrator). A clarification of A6-D2 "Grounding of a `ref`" that
 extends the closed deictic set; the resolution steps, the most-recent-listing rule and every other A6 clause are unchanged.
 
-1. **Rule.** A demonstrative determiner 이, 그 or 저, standing as its own word before a noun that names an item source
-   ("이 문서", "그 메일", "저 알림", "그 할 일"), grounds `ref: recent` / `this` exactly like 그거 / 이거. It never grounds
-   `#n` or `last`. Which item it means is the unchanged A6-D2 resolution: the fresh `lastAction` of the entry's source,
+1. **Rule.** A demonstrative determiner 이 or 그, standing as its own word before a noun that names an item source
+   ("이 문서", "그 메일", "그 할 일"), grounds `ref: recent` / `this` exactly like 그거 / 이거. It never grounds `#n` or
+   `last`. Which item it means is the unchanged A6-D2 resolution: the fresh `lastAction` of the entry's source,
    otherwise the most recent listing when it has that source and exactly one item; several items ask; another source
    than the most recent listing ("이 메일" after a Drive list) gets the existing other-source question.
+   - **Which determiners (CA review, orchestrator decision 2026-10-15).** The owner approved "이" (with the 그거 / 이거
+     rule); 그 follows the same demonstrative rule. 저 also means "I" ("저 할 일 다 했어요", "저 알림 꺼주세요"), so
+     "저 + noun" grounds only a read (`item.summarize`), never a LOCAL_WRITE ref.
+   - **The noun names the entry's own source.** When the only deictic is a determiner phrase, its noun must name the
+     source the entry acts on (`todo.*` → to-do, `reminder.cancel` → reminder, `item.summarize` → its `source` arg): "그
+     알림 취소해줘" never grounds a to-do ref.
+   - **A whole noun.** The noun ends the word or is followed only by particles ("이 문서를", "그 메일에서는"): "이 파일럿",
+     "그 문서화", "그 알림장" are not references.
 2. **Structural, no phrase list.** The determiners are a closed set of three. The nouns are the catalog's own words for
    the item sources: the Korean aliases and source names of the `mail.list`, `drive.files`, `todo.list` and
    `reminder.list` entries (`ITEM_SOURCE_NOUNS_KO` in `nl-routing/action-entries.ts`, derived, never listed by hand). A
    glued form ("이메일", "그메일") is not a determiner. English needs nothing new: "this document" and "that mail" already
-   carry this / that.
+   carry this / that. A deictic word of the closed set (그거, 이거, …) keeps grounding any entry as before.
 3. **Payload rule (A6-D3), for consistency.** Because the set of deictics grows, a payload made only of a determiner and
-   an item-source noun ("그 메일" as a to-do title) is deictic-only and asks, like "그거".
+   an item-source noun ("그 메일" as a to-do title; 저 included, asking is the safe side) is deictic-only and asks, like
+   "그거".
 4. **Prompt unchanged.** The v25 A6 prompt (`nl-select.v25`) already tells the selector to write `this` for a deictic
    reference and the A6 corpus spells determiner phrases that way ("that reminder, cancel it" → `this`); the only blocker
    was Core's grounding check, which refused `ref: this` for "이 문서". No prompt text, version or pin changes. Model
@@ -24734,12 +24743,16 @@ extends the closed deictic set; the resolution steps, the most-recent-listing ru
    non-quoted words of this turn (`prepareSelectionInput().groundingText`, structures removed for actions). Listed
    connector content (a mail body, a document) never enters it nor the selector prompt (the Reference context carries
    kinds, counts and ages only), so a determiner inside connector content cannot ground or choose a target. Acceptance
-   test: after a Drive list, "내용 정리해줄래" with a scripted `ref: this` reads nothing.
-7. **Known consequence.** Statements with a determiner ("그 알림 취소하면 안 돼", `a6-negative-none-044`) now rely on the
-   selector answering `none`, exactly like their 그거 twins ("그거 완료했어"); before, Core refused the ref. Measured only
-   in an approved A6 model run.
+   test: the listed document's name and text say "이 문서 요약해줘"; "내용 정리해줄래" with a scripted `ref: this` reads
+   nothing.
+7. **Known consequence.** Statements with 이 / 그 + noun ("그 알림 취소하면 안 돼", `a6-negative-none-044`) now rely on
+   the selector answering `none`, exactly like their 그거 twins ("그거 완료했어"); before, Core refused the ref. Measured
+   only in an approved A6 model run. Two agent-drafted A6 negatives pin the 저 restriction (`a6-negative-none-130` "저 할 일
+   다 했어요", `-131` "저 알림 꺼주세요", one-item listings), PENDING the owner's D12 batch.
 
-Tests: `nl-action-entries.test.ts` (grounding, glued forms, other nouns, payload), `item-reference.test.ts` (resolver
-rows: 이 문서 one-item Drive → item 1; several → ask; 이 메일 after Drive → other-source; 그 메일 one-item mail → item;
-English this / that), `personal-v5-a6-acceptance.test.ts` (production `AppModule`, `QUOKY_NL_ACTIONS=local`, scripted
-selector), `nl-action-eval.test.ts` (read-regression scoring of `neg-099` and `uat5r6-07`).
+Tests: `nl-action-entries.test.ts` (grounding, glued and partial nouns, other sources, 저 for writes, payload),
+`item-reference.test.ts` (resolver rows: 이 문서 one-item Drive → item 1; several → ask; 이 메일 after Drive →
+other-source; 그 메일 one-item mail → item; 그 할 일 with several to-dos → ask; English this / that; 저 할 일, 이 파일럿 and
+그 알림 for a to-do never ground), `personal-v5-a6-acceptance.test.ts` (production `AppModule`, `QUOKY_NL_ACTIONS=local`,
+scripted selector; the Drive fixture's name and text say "이 문서 요약해줘" and nothing is read), `nl-action-eval.test.ts`
+(read-regression scoring of `neg-099` and `uat5r6-07`).
