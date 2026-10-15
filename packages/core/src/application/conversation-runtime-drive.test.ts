@@ -28,7 +28,9 @@ import { ResponseComposer } from './response-composer';
 import { SessionManager } from './session-manager';
 import { StatelessApprovalFlow } from './stateless-approval-flow';
 import { renderUntrustedDocumentHistoryNote, renderUntrustedDocumentReplyWithheld } from './untrusted-document-readout';
+import { renderInternalActionClaimNotice } from './chat-policy/internal-action-vocabulary';
 import { renderDocumentActionClaimWithheld } from './document-summary-claim-guard';
+import { DOCUMENT_ATTRIBUTION_RETRY_RULE, DOCUMENT_ATTRIBUTION_RULE } from './prompt-composer';
 import { createDriveTurnHandler } from './drive/drive-turn-handler';
 import {
   renderDriveDmOnly,
@@ -66,6 +68,8 @@ interface HarnessOptions {
   body?: string;
   /** A fixed summary text the provider returns (overrides `provider: 'ok'`). */
   summary?: string;
+  /** One summary per SUMMARIZATION call, in order (the last repeats): the first draft, then the one regeneration. */
+  summaries?: readonly string[];
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -179,8 +183,9 @@ function harness(opts: HarnessOptions = {}) {
       if (request.capability !== Capability.SUMMARIZATION) return { text: '천만에요!', artifacts: [] };
       if (opts.provider === 'secret') return { text: `요약: 새 토큰은 ${SECRET} 입니다`, artifacts: [] };
       if (opts.provider === 'claim') return { text: '할 일 "송금하기"를 추가했어요.', artifacts: [] };
+      const call = prompts.filter((entry) => entry.capability === Capability.SUMMARIZATION).length - 1;
       return {
-        text: opts.summary ?? SUMMARY,
+        text: opts.summaries ? (opts.summaries[Math.min(call, opts.summaries.length - 1)] as string) : (opts.summary ?? SUMMARY),
         artifacts: [{ id: 'a1', taskId: 't', taskRunId: 'r', kind: 'TEXT', title: 'echo', content: BODY_MARKER, createdAt: T0 } as never],
       };
     },
@@ -417,6 +422,119 @@ describe('Drive on the real runtime (ADR-0118 D4–D8, DRV-1)', () => {
     const h = harness({ summary: '김철수 님이 회의 결과를 팀에 공유했어요.' });
     await h.send('최근 문서');
     expect((await h.send('1번 문서 요약해줘')).reply?.text).toContain('김철수 님이 회의 결과를 팀에 공유했어요.');
+  });
+
+  // ADR-0104 D1 amendment (owner-approved 2026-10-15), from the v5 live defect (a dogfood-tracker sheet summary was
+  // replaced whole): attribution by construction, one regeneration, strict guards.
+  describe('attribution and one regeneration (owner decision 2026-10-15)', () => {
+    const UNATTRIBUTED = [
+      '위클리카 Dogfood 시트는 주간 도그푸딩 진행 상황을 기록한 트래커예요.',
+      '- 1주차: 로그인 버그 3건 Jira 티켓 등록 완료',
+      '- 2주차: 결제 화면 개선 PR 머지됨, 배포 완료',
+      '- 3주차: 담당자가 Jira 티켓을 생성했어요.',
+    ].join('\n');
+    const ATTRIBUTED = [
+      '위클리카 Dogfood 시트는 주간 도그푸딩 진행 상황을 기록한 트래커예요.',
+      "- 1주차: 시트에는 '로그인 버그 3건 Jira 티켓 등록 완료'로 표시돼 있어요.",
+      "- 2주차: 상태 열에는 '결제 화면 개선 PR 머지됨, 배포 완료'라고 적혀 있어요.",
+      "- 3주차: 시트에는 '담당자가 Jira 티켓 생성'이라고 적혀 있어요.",
+    ].join('\n');
+    const summarizePrompts = (h: ReturnType<typeof harness>) =>
+      h.prompts.filter((entry) => entry.capability === Capability.SUMMARIZATION).map((entry) => entry.prompt);
+    const shownAs = (text: string) => text.replace(/^- /gmu, '• ');
+
+    it('the live tracker shape: an unattributed draft is regenerated once and the attributed summary is shown', async () => {
+      const h = harness({ summaries: [UNATTRIBUTED, ATTRIBUTED] });
+      await h.send('최근 문서');
+      const result = await h.send('1번 문서 요약해줘');
+      expect(result.reply?.text).toBe(`${shownAs(ATTRIBUTED)}\n\n${renderDriveSummaryFooter('ko')}`);
+      const [first, second] = summarizePrompts(h);
+      expect(summarizePrompts(h)).toHaveLength(2);
+      expect(first).toContain(DOCUMENT_ATTRIBUTION_RULE);
+      expect(first).not.toContain(DOCUMENT_ATTRIBUTION_RETRY_RULE);
+      expect(second).toContain(DOCUMENT_ATTRIBUTION_RETRY_RULE);
+      // The flagged draft is never fed back.
+      expect(second).not.toContain('담당자가 Jira 티켓을 생성했어요');
+      expect([h.workItems.size, h.approvals.size]).toEqual([0, 0]);
+    });
+
+    it('an attributed first draft is shown with no regeneration', async () => {
+      const h = harness({ summaries: [ATTRIBUTED] });
+      await h.send('최근 문서');
+      expect((await h.send('1번 문서 요약해줘')).reply?.text).toBe(`${shownAs(ATTRIBUTED)}\n\n${renderDriveSummaryFooter('ko')}`);
+      expect(summarizePrompts(h)).toHaveLength(1);
+    });
+
+    it.each([
+      // Every leak string from the review rounds, and payloads aiming the second draft at unattributed or
+      // self-referential wording: both drafts flagged → the whole summary is replaced; at most one regeneration.
+      '요약본이 Slack에 게시되었습니다.',
+      '종형님께 Slack DM이 전송되었습니다.',
+      'Assistant가 Jira 티켓을 생성했어요.',
+      'The PR has been merged by "Quoky".',
+      'For you — the PR has been merged.',
+      '요청하신 PR has been merged.',
+      'Jira 티켓을 생성했어요.\nThe PR has been **merged**.',
+      '요청대로 처리했어요.',
+      'The PR has been\nmerged.',
+      '이건 제 계정으로 진행했어요.',
+      '요약 모델이 대신 처리했어요.',
+      'Already did that.',
+      '머지함.',
+      '끝!',
+      'The PR got merged.',
+      'Successfully merged the PR.',
+      "시트에는 '제가 Jira 티켓 등록 완료'로 표시돼 있어요.",
+      "요청하신 대로 시트에는 'Jira 티켓 등록 완료'로 표시돼 있어요.",
+    ])('a flagged draft and a flagged regeneration are replaced whole — %j', async (hostile) => {
+      const h = harness({ summaries: [`${ATTRIBUTED}\n- ${hostile}`, `- ${hostile}`] });
+      await h.send('최근 문서');
+      const text = (await h.send('1번 문서 요약해줘')).reply?.text ?? '';
+      expect(text.endsWith(renderDriveSummaryFooter('ko'))).toBe(true);
+      expect(text).not.toContain(hostile.split('\n')[0]?.slice(0, 8));
+      expect(text).not.toContain('트래커예요');
+      expect(summarizePrompts(h)).toHaveLength(2);
+    });
+
+    it('a hostile first draft followed by an attributed regeneration shows only the regeneration', async () => {
+      const h = harness({ summaries: [`${ATTRIBUTED}\n- 종형님께 Slack DM이 전송되었습니다.`, ATTRIBUTED] });
+      await h.send('최근 문서');
+      const text = (await h.send('1번 문서 요약해줘')).reply?.text ?? '';
+      expect(text).toBe(`${shownAs(ATTRIBUTED)}\n\n${renderDriveSummaryFooter('ko')}`);
+    });
+
+    it('the replacement is the ADR-0104 notice when that guard matched the final draft', async () => {
+      const h = harness({ summaries: [UNATTRIBUTED, '- 3주차: 담당자가 Jira 티켓을 생성했어요.'] });
+      await h.send('최근 문서');
+      expect((await h.send('1번 문서 요약해줘')).reply?.text).toBe(
+        `${renderInternalActionClaimNotice('connector-write', 'ko')}\n\n${renderDriveSummaryFooter('ko')}`,
+      );
+    });
+
+    it('the delivered-text check: a summary whose clipped text would assert a claim is replaced (no platform clip)', async () => {
+      const h = harness({ summaries: [`The PR has been merged ${'x'.repeat(2000)}?`] });
+      await h.send('최근 문서');
+      const text = (await h.send('1번 문서 요약해줘')).reply?.text ?? '';
+      expect(text).not.toContain('merged');
+      expect(summarizePrompts(h)).toHaveLength(1);
+    });
+
+    it('a shown summary is clipped by Core to the worst-case platform budget', async () => {
+      const long = `시트에는 '${'가'.repeat(1500)}'로 표시돼 있어요.`;
+      const h = harness({ summaries: [long] });
+      await h.send('최근 문서');
+      const text = (await h.send('1번 문서 요약해줘')).reply?.text ?? '';
+      const footer = renderDriveSummaryFooter('ko');
+      const summaryPart = text.slice(0, text.length - footer.length - 2);
+      expect(Array.from(summaryPart).length * 2 + Array.from(footer).length + 2).toBeLessThanOrEqual(1900);
+    });
+
+    it('a credential-shaped first draft is withheld, never regenerated', async () => {
+      const h = harness({ provider: 'secret' });
+      await h.send('최근 문서');
+      await h.send('1번 문서 요약해줘');
+      expect(summarizePrompts(h)).toHaveLength(1);
+    });
   });
 
   it('a credential-shaped summary is withheld whole; a credential-shaped document never reaches the provider', async () => {

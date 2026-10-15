@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readRunUsage, runUsageRecord } from './provider-usage-record';
+import { combinedUsage, readRunUsage, runUsageRecord } from './provider-usage-record';
 
 describe('provider usage record (ADR-0115 D8)', () => {
   it('normalises reported counts and keeps the provider total', () => {
@@ -36,5 +36,17 @@ describe('provider usage record (ADR-0115 D8)', () => {
     expect(readRunUsage('x')).toBeUndefined();
     expect(readRunUsage([])).toBeUndefined();
     expect(readRunUsage({ label: 5 })).toBeUndefined();
+  });
+});
+
+describe('combinedUsage (a document summary\'s one regeneration, owner decision 2026-10-15)', () => {
+  it('sums the counts both executions report under one label, and never estimates the rest', () => {
+    expect(combinedUsage({ label: 'claude-cli', inputTokens: 10, outputTokens: 5 }, { label: 'claude-cli', inputTokens: 12, totalTokens: 20 })).toEqual({
+      label: 'claude-cli',
+      inputTokens: 22,
+    });
+    expect(combinedUsage(undefined, { label: 'x', outputTokens: 1 })).toEqual({ label: 'x', outputTokens: 1 });
+    expect(combinedUsage({ label: 'a', outputTokens: 1 }, { label: 'b', outputTokens: 2 })).toEqual({ label: 'b', outputTokens: 2 });
+    expect(combinedUsage(undefined, undefined)).toBeUndefined();
   });
 });

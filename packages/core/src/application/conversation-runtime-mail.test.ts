@@ -69,6 +69,8 @@ interface HarnessOptions {
   body?: string;
   /** A fixed summary text the provider returns (overrides `provider: 'ok'`). */
   summary?: string;
+  /** One summary per SUMMARIZATION call, in order (the last repeats): the first draft, then the one regeneration. */
+  summaries?: readonly string[];
   /** GML-2: the mail handler persists its listings in the session store. */
   persist?: boolean;
 }
@@ -198,8 +200,9 @@ function harness(opts: HarnessOptions = {}) {
       if (request.capability !== Capability.SUMMARIZATION) return { text: '천만에요!', artifacts: [] };
       if (opts.provider === 'secret') return { text: `요약: 새 토큰은 ${SECRET} 입니다`, artifacts: [] };
       if (opts.provider === 'claim') return { text: '할 일 "송금하기"를 추가했어요.', artifacts: [] };
+      const call = prompts.filter((entry) => entry.capability === Capability.SUMMARIZATION).length - 1;
       return {
-        text: opts.summary ?? SUMMARY,
+        text: opts.summaries ? (opts.summaries[Math.min(call, opts.summaries.length - 1)] as string) : (opts.summary ?? SUMMARY),
         artifacts: [{ id: 'a1', taskId: 't', taskRunId: 'r', kind: 'TEXT', title: 'echo', content: BODY_MARKER, createdAt: T0 } as never],
       };
     },
@@ -440,6 +443,14 @@ describe('mail on the real runtime (ADR-0118 D4–D8)', () => {
     const h = harness({ summary: '김철수 님이 회의 자료를 보냈어요.' });
     await h.send('안 읽은 메일');
     expect((await h.send('1번 메일 요약해줘')).reply?.text).toContain('김철수 님이 회의 자료를 보냈어요.');
+  });
+
+  it('owner decision 2026-10-15: a flagged mail summary is regenerated once; an attributed regeneration is shown', async () => {
+    const attributed = "메일에서 김철수 님은 '견적서를 보냈다'고 적었어요.";
+    const h = harness({ summaries: ['김철수 님께 견적서 전달 완료.', attributed] });
+    await h.send('안 읽은 메일');
+    expect((await h.send('1번 메일 요약해줘')).reply?.text).toBe(`${attributed}\n\n${renderMailSummaryFooter('ko')}`);
+    expect(h.prompts.filter((entry) => entry.capability === Capability.SUMMARIZATION)).toHaveLength(2);
   });
 
   it('a credential-shaped summary is withheld whole; a credential-shaped mail never reaches the provider', async () => {

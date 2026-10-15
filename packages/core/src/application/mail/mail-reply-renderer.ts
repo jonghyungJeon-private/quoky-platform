@@ -375,8 +375,8 @@ export function renderMailSummaryUnavailable(language: MailLanguage): string {
 /** The deterministic disclosure appended to a successful summary. */
 export function renderMailSummaryFooter(language: MailLanguage): string {
   return language === 'en'
-    ? '(This email\'s body was sent to the chat model to summarize it · the mailbox was only read; nothing was sent or changed)'
-    : '(메일 1건의 본문을 대화 모델에 보내 요약했어요 · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았어요)';
+    ? '(This email\'s body was sent to the chat model to summarize it · the mailbox was only read; nothing was sent or changed, and nothing was written to Jira, Slack or GitHub)'
+    : '(메일 1건의 본문을 대화 모델에 보내 요약했어요 · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았으며 Jira·Slack·GitHub에도 쓰지 않았어요)';
 }
 
 /** What a mail reply did, for its history note (review P3-7): listed mail, read nothing, or read but showed nothing. */
@@ -471,9 +471,9 @@ export function renderMailThreadSummaryFooter(shown: number, total: number, lang
   if (language === 'en') {
     const read = partial ? `the first and the latest ${shown - 1} of its ${total} emails` : `its ${shown} email${shown === 1 ? '' : 's'}`;
     const skipped = withheld > 0 ? ` · ${withheld} body${withheld === 1 ? ' was' : 'ies were'} too long to check safely and not summarized` : '';
-    return `(One thread — ${read} — was sent to the chat model to summarize it${skipped} · the mailbox was only read; nothing was sent or changed)`;
+    return `(One thread — ${read} — was sent to the chat model to summarize it${skipped} · the mailbox was only read; nothing was sent or changed, and nothing was written to Jira, Slack or GitHub)`;
   }
   const read = partial ? `${total}통 중 첫 메일과 최근 ${shown - 1}통` : `메일 ${shown}통`;
   const skipped = withheld > 0 ? ` · ${withheld}통은 본문이 너무 길어 안전하게 요약하지 않았어요` : '';
-  return `(스레드 1개의 ${read} 본문을 대화 모델에 보내 요약했어요${skipped} · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았어요)`;
+  return `(스레드 1개의 ${read} 본문을 대화 모델에 보내 요약했어요${skipped} · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았으며 Jira·Slack·GitHub에도 쓰지 않았어요)`;
 }

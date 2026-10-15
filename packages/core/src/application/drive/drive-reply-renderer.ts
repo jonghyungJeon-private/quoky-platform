@@ -341,8 +341,8 @@ export function renderDriveSummaryFooter(
 ): string {
   const disclosure =
     language === 'en'
-      ? "(This document's text was sent to the chat model to summarize it · the drive was only read; nothing was changed or shared)"
-      : '(문서 1건의 텍스트를 대화 모델에 보내 요약했어요 · 드라이브는 읽기만 했고 아무것도 바꾸거나 공유하지 않았어요)';
+      ? "(This document's text was sent to the chat model to summarize it · the drive was only read; nothing was changed or shared, and nothing was written to Jira, Slack or GitHub)"
+      : '(문서 1건의 텍스트를 대화 모델에 보내 요약했어요 · 드라이브는 읽기만 했고 아무것도 바꾸거나 공유하지 않았으며 Jira·Slack·GitHub에도 쓰지 않았어요)';
   const notes = [
     ...(firstSheetOnly === undefined ? [] : [renderDriveFirstSheetOnlyNote(firstSheetOnly, language, copy)]),
     ...(hiddenSheetsSkipped > 0 ? [renderDriveHiddenSheetsNote(hiddenSheetsSkipped, language)] : []),

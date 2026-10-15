@@ -1,6 +1,6 @@
 import { clipHeadAndTail } from './attachment-context';
 import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
-import { clipMessage, messageBody, untrustedText } from './message-rendering';
+import { clipMessage, messageBody, plainTextOf, untrustedText } from './message-rendering';
 import type { MessageBody } from '../domain';
 import { LINK_PLACEHOLDER, containsLink, neutralizeLinks } from './link-neutralizer';
 import { normalizePromptContextContent } from './prompt-content-normalizer';
@@ -42,6 +42,13 @@ export const UNTRUSTED_DOCUMENT_AUTHOR_MAX_CHARS = 100;
  * bound as a work summary, defined here so the readout does not depend on the work-chat handler (re-review item 4).
  */
 export const DOCUMENT_SUMMARY_REPLY_MAX_CHARS = 1900;
+/**
+ * CA P1-3 (owner decision 2026-10-15): a platform escapes an untrusted span before it clips (a chat platform may turn
+ * `*`, `_`, `@`, `<` into two characters), so a platform clip could cut the summary somewhere other than Core's. Core clips the summary
+ * text itself so that even the worst case — every code point rendered as two — fits the budget with the footer: no
+ * platform ever clips or splits it, and the text the claim check reads is the text every platform shows.
+ */
+export const DOCUMENT_SUMMARY_WORST_CASE_EXPANSION = 2;
 
 export interface UntrustedDocumentReadout {
   readonly kind: typeof UNTRUSTED_DOCUMENT_READOUT_KIND;
@@ -441,9 +448,13 @@ export function documentSummaryReplyBody(summaryText: string, footer: MessageBod
   // half-eaten by the stripper; neutralizing an already neutralized text is a no-op.
   // Codex delta P2 (round 4): only leading blank LINES and trailing whitespace are trimmed. Removing a first line's
   // indentation could turn it into markup (`         1. item` → `1. item`), so indentation is kept.
-  const text = neutralizeLinks(stripMarkdownEmphasis(neutralizeLinks(summaryText, 'display')), 'display')
+  const rendered = neutralizeLinks(stripMarkdownEmphasis(neutralizeLinks(summaryText, 'display')), 'display')
     .replace(/^(?:[ \t]*\n)+/u, '')
     .trimEnd();
+  const footerChars = Array.from(plainTextOf(messageBody('\n\n', footer))).length;
+  const budget = Math.max(1, Math.floor((DOCUMENT_SUMMARY_REPLY_MAX_CHARS - footerChars) / DOCUMENT_SUMMARY_WORST_CASE_EXPANSION));
+  const points = Array.from(rendered);
+  const text = points.length <= budget ? rendered : `${points.slice(0, budget - 1).join('').trimEnd()}…`;
   return messageBody(
     clipMessage(untrustedText(text, 'markup'), DOCUMENT_SUMMARY_REPLY_MAX_CHARS, 'code-points', { after: messageBody('\n\n', footer) }),
   );
