@@ -585,7 +585,21 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
       ['알림장 챙기기 내일 9시', 'reminder.create', { body: '알림장 챙기기', when: '내일 9시' }],
       ['메모장 열어줘', 'todo.add', { title: '메모장 열어줘' }],
     ];
+    // Codex (through 0e93136): glued, 말고 and English clause negations, for item writes and payload writes alike.
+    writes.push(
+      ['2번 완료 안 해도 돼', 'todo.complete', { ref: '#2' }],
+      ['2번완료안해도돼', 'todo.complete', { ref: '#2' }],
+      ['2번 완료 말고 보여줘', 'todo.complete', { ref: '#2' }],
+      ["don't mark 2 complete", 'todo.complete', { ref: '#2' }],
+      ['do not mark 2 complete', 'todo.complete', { ref: '#2' }],
+      ['do not cancel the second one', 'todo.cancel', { ref: '#2' }],
+      ['우유 사기 할 일에 추가하지 마', 'todo.add', { title: '우유 사기' }],
+      ['우유 사기 추가 안 해도 돼', 'todo.add', { title: '우유 사기' }],
+      ['내일 9시에 물 마시라고 알려주지 마', 'reminder.create', { body: '물 마시라고', when: '내일 9시' }],
+      ["don't remind me tomorrow at 9am to call Kim", 'reminder.create', { body: 'call Kim', when: 'tomorrow at 9am' }],
+    );
     for (const [text, entryId, args] of writes) expect((await run(text, entryId, args)).kind, text).not.toBe('execute');
+    expect((await run('not now, mark 2 complete', 'todo.complete', { ref: '#2' })).kind).toBe('execute');
     // A polite request in question form still acts.
     expect((await run('2번 완료해줄래?', 'todo.complete', { ref: '#2' })).kind).toBe('execute');
     expect((await run('2번 취소해 줄 수 있어?', 'todo.cancel', { ref: '#2' })).kind).toBe('execute');

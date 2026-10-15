@@ -187,4 +187,3 @@ describe('the reminder status view is DM-only (owner: channels default-deny unti
     expect(calls).toEqual(['canceled']);
   });
 });
-

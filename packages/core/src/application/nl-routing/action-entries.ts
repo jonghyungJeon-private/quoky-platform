@@ -452,7 +452,7 @@ const CLAUSE_END = /말고|[,.!?。;~\n]/u;
  * A negation anywhere later in the same clause (CA review): "-지 마/말아/않" ("취소는 하지 마", "완료하지 말아줘"), a
  * standalone 안/못 ("취소 안 해도 돼", "완료 안 됐어", "취소하면 안 돼"), 금지.
  */
-const NEGATED_IN_CLAUSE = /지\s*(?:마|말|않)|(?:^|\s)(?:안|못)(?=\s|$|되|돼|됐|해|했|하|할)|금지/u;
+const NEGATED_IN_CLAUSE = /지\s*(?:마|말|않)|(?:^|\s)(?:안|못)(?=\s|$|되|돼|됐|해|했|하|할)|안\s*(?:해|하|되|돼|됐|할|함)|못\s*(?:해|하|했|함)|금지/u;
 /** A negation word right before it: "안 지워도 돼", "못 끝냈어". */
 const NEGATED_BEFORE = /(?:^|\s)(?:안|못)\s*$/u;
 /**
@@ -464,7 +464,10 @@ const ADNOMINAL_REST = /^(?:된|됐던|되었던|되는|됨|한|했던|하는|�
 const REQUEST_IN_QUESTION = /줘|주세요|줄래|줄 ?수|주실|주시|주겠|please|can you|could you|would you/u;
 /** An interrogative clause ending without a question mark ("취소할까", "완료했니"). */
 const INTERROGATIVE_END = /(?:까|니|냐|나요)\s*$/u;
-const NEGATED_BEFORE_EN = /(?:^|\s)(?:don't|dont|do not|never|not|no)\s+(?:\S+\s+)?$/u;
+/** An English negation earlier in the same clause ("don't mark 2 complete", "do not cancel the second one"). */
+const NEGATED_BEFORE_EN = /(?:^|\s)(?:don't|dont|do not|never|not|no)\s/u;
+/** Where an English clause starts before a word: sentence punctuation, but / instead. */
+const CLAUSE_START_EN = /.*(?:[,.!?;]|\bbut\b|\binstead\b)/su;
 
 /**
  * A6 R1 review: whether one of an entry's action words occurs in the owner's prose in a requesting form. An occurrence
@@ -478,7 +481,11 @@ export function nlActionWordGrounded(prose: string, words: readonly string[]): b
     const word = normalizeForMatch(raw);
     if (/^[a-z0-9][a-z0-9 -]*$/.test(word)) {
       const pattern = new RegExp(`(?<![a-z0-9])${word.replace(/ /g, '\\s+')}s?(?![a-z0-9])`, 'gu');
-      for (const match of text.matchAll(pattern)) if (!NEGATED_BEFORE_EN.test(text.slice(0, match.index))) return true;
+      for (const match of text.matchAll(pattern)) {
+        const before = text.slice(0, match.index);
+        const clause = before.replace(CLAUSE_START_EN, '');
+        if (!NEGATED_BEFORE_EN.test(` ${clause}`)) return true;
+      }
       continue;
     }
     for (let at = text.indexOf(word); at >= 0; at = text.indexOf(word, at + 1)) {
@@ -486,7 +493,8 @@ export function nlActionWordGrounded(prose: string, words: readonly string[]): b
       const end = CLAUSE_END.exec(after);
       const clause = end === null ? after : after.slice(0, end.index);
       const rest = /^\S*/u.exec(after)?.[0] ?? '';
-      if (NEGATED_IN_CLAUSE.test(clause) || ADNOMINAL_REST.test(rest.replace(/[?!.,~]+$/u, ''))) continue;
+      // "X 말고" negates X itself ("2번 완료 말고 보여줘", "완료하지 말고 취소해줘").
+      if (end?.[0] === '말고' || NEGATED_IN_CLAUSE.test(clause) || ADNOMINAL_REST.test(rest.replace(/[?!.,~]+$/u, ''))) continue;
       if (NEGATED_BEFORE.test(text.slice(0, at))) continue;
       // A question about the item ("2번 끝냈어?", "취소할까?") never grounds a write; a polite request in question form does.
       const question = end?.[0] === '?' || INTERROGATIVE_END.test(clause);
