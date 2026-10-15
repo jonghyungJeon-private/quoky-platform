@@ -1,7 +1,7 @@
 {
  "version": 1,
  "description": "ADR-0120 amendment A6 action corpus (NLA-6 data), schema docs/plans/nl-action-corpus-schema.md. Agent-drafted; owner batch APPROVED 2026-10-15. Names, titles and ids are invented. Old draft ids are kept in each note (was ...).",
- "promptVersion": "nl-select.v25",
+ "promptVersion": "nl-select.v31",
  "cases": [
   {
    "id": "a6-paraphrase-todo.add-001",
@@ -39,9 +39,10 @@
      "body": "비밀번호 입력",
      "when": "내일 9시"
     },
-    "outcome": "execute"
+    "outcome": "execute",
+    "acceptsNone": true
    },
-   "note": "was rt-a6-pasted-command-106; owner decision 2026-10-15: a single-line owner-typed relay is the owners instruction (local writes only); the body is what the owner typed"
+   "note": "was rt-a6-pasted-command-106; owner decision 2026-10-15: a single-line owner-typed relay is the owners instruction (local writes only); the body is what the owner typed [owner decision (3) 2026-10-15, A6 R1: execute and none both count as correct (the safer non-execution is acceptable): expect.acceptsNone]"
   },
   {
    "id": "a6-paraphrase-todo.add-902",
@@ -52,9 +53,10 @@
     "args": {
      "title": "전화 걸기"
     },
-    "outcome": "execute"
+    "outcome": "execute",
+    "acceptsNone": true
    },
-   "note": "owner decision 2026-10-15: single-line owner-typed relay of a note is the owners instruction (local to-do)"
+   "note": "owner decision 2026-10-15: single-line owner-typed relay of a note is the owners instruction (local to-do) [owner decision (3) 2026-10-15, A6 R1: execute and none both count as correct (the safer non-execution is acceptable): expect.acceptsNone]"
   },
   {
    "id": "a6-paraphrase-todo.add-002",
@@ -517,11 +519,12 @@
    "text": "오늘 할 일에 청소기 필터 교체 올려줘",
    "expect": {
     "entryId": "todo.add",
-    "args": {},
-    "outcome": "ask",
-    "reason": "time-in-title"
+    "args": {
+     "title": "청소기 필터 교체"
+    },
+    "outcome": "execute"
    },
-   "note": "was act-todo-add-037"
+   "note": "was act-todo-add-037 [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): A6-D1 asks only for a time word inside the title; 오늘 is outside it, so the to-do is added]"
   },
   {
    "id": "a6-paraphrase-todo.add-038",
@@ -873,18 +876,8 @@
      }
     ]
    },
-   "expect": {
-    "entryId": "todo.complete",
-    "args": {
-     "ref": "#1"
-    },
-    "outcome": "execute",
-    "target": {
-     "source": "todo",
-     "id": "todo-1"
-    }
-   },
-   "note": "was act-todo-complete-009"
+   "expect": "none",
+   "note": "was act-todo-complete-009 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): 체크 is not in the closed completion vocabulary (\"체크해봐\" means look), so \"체크해줘\" alone writes nothing and the turn is chat; was execute todo.complete #1]"
   },
   {
    "id": "a6-paraphrase-todo.complete-010",
@@ -1152,18 +1145,8 @@
      }
     ]
    },
-   "expect": {
-    "entryId": "todo.complete",
-    "args": {
-     "ref": "#3"
-    },
-    "outcome": "execute",
-    "target": {
-     "source": "todo",
-     "id": "todo-3"
-    }
-   },
-   "note": "was act-todo-complete-018"
+   "expect": "none",
+   "note": "was act-todo-complete-018 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): the typo 완룐 is no completion word of the closed action vocabulary (actionGrounding), so nothing is written and the turn is chat; was execute todo.complete #3]"
   },
   {
    "id": "a6-paraphrase-todo.complete-019",
@@ -2860,13 +2843,12 @@
    "text": "오늘 밤 10시에 알림: 가스 밸브 잠그기",
    "expect": {
     "entryId": "reminder.create",
-    "args": {
-     "body": "가스 밸브 잠그기",
-     "when": "오늘 밤 10시"
-    },
-    "outcome": "execute"
+    "args": {},
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
    },
-   "note": "was act-reminder-create-020"
+   "note": "was act-reminder-create-020 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): reminder.create grounds only on a remind / notify verb, never the noun 알림 / 리마인더 alone, so this terse form asks to restate; was execute]"
   },
   {
    "id": "a6-paraphrase-reminder.create-021",
@@ -2888,13 +2870,12 @@
    "text": "3일 뒤 오전 9시에 월세 이체 리마인더",
    "expect": {
     "entryId": "reminder.create",
-    "args": {
-     "body": "월세 이체",
-     "when": "3일 뒤 오전 9시"
-    },
-    "outcome": "execute"
+    "args": {},
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
    },
-   "note": "was act-reminder-create-022"
+   "note": "was act-reminder-create-022 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): reminder.create grounds only on a remind / notify verb, never the noun 알림 / 리마인더 alone, so this terse form asks to restate; was execute]"
   },
   {
    "id": "a6-paraphrase-reminder.create-023",
@@ -7669,9 +7650,15 @@
     "target": {
      "source": "todo",
      "id": "todo-7"
-    }
+    },
+    "alsoAccepts": [
+     {
+      "entryId": "action.undo",
+      "args": {}
+     }
+    ]
    },
-   "note": "was ref-017"
+   "note": "was ref-017 [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): action.undo of the todo.add cancels the same to-do (alsoAccepts)]"
   },
   {
    "id": "a6-reference-reminder.cancel-001",
@@ -8470,9 +8457,10 @@
      "ref": "#1"
     },
     "outcome": "ask",
-    "reason": "other-source"
+    "reason": "other-source",
+    "acceptsAnyQuestion": true
    },
-   "note": "was ref-054; text made unique (was: 1번 문서 요약해줘)"
+   "note": "was ref-054; text made unique (was: 1번 문서 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
   },
   {
    "id": "a6-reference-todo.complete-022",
@@ -8579,9 +8567,10 @@
      "ref": "#2"
     },
     "outcome": "ask",
-    "reason": "other-source"
+    "reason": "other-source",
+    "acceptsAnyQuestion": true
    },
-   "note": "was ref-058; text made unique (was: 2번 요약해줘)"
+   "note": "was ref-058; text made unique (was: 2번 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
   },
   {
    "id": "a6-reference-item.summarize-009",
@@ -8883,9 +8872,10 @@
      "ref": "#1"
     },
     "outcome": "ask",
-    "reason": "expired"
+    "reason": "expired",
+    "acceptsAnyQuestion": true
    },
-   "note": "was ref-070; text made unique (was: 첫 번째 거 요약해줘)"
+   "note": "was ref-070; text made unique (was: 첫 번째 거 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
   },
   {
    "id": "a6-reference-todo.complete-028",
@@ -9047,9 +9037,10 @@
      "ref": "this"
     },
     "outcome": "ask",
-    "reason": "ambiguous"
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
    },
-   "note": "was ref-076; text made unique (was: 그거 요약해줘)"
+   "note": "was ref-076; text made unique (was: 그거 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
   },
   {
    "id": "a6-reference-todo.complete-034",
@@ -9070,7 +9061,17 @@
       }
      ],
      "ageMinutes": 1
-    }
+    },
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ]
    },
    "expect": {
     "entryId": "todo.complete",
@@ -9078,9 +9079,10 @@
      "ref": "#1"
     },
     "outcome": "ask",
-    "reason": "out-of-range"
+    "reason": "out-of-range",
+    "acceptsAnyQuestion": true
    },
-   "note": "was ref-080"
+   "note": "was ref-080 [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): the open question also wrote its candidates as the most recent to-do listing (labels 2, 3), as the runtime does] [A6 R1 review: a bare number that is none of the open question's labels is asked again by the answer path (acceptsAnyQuestion); for the owner]"
   },
   {
    "id": "a6-reference-none-003",
@@ -11571,10 +11573,12 @@
    "text": "취소된 할 일도 보여줘",
    "expect": {
     "entryId": "todo.list",
-    "args": {},
+    "args": {
+     "status": "canceled"
+    },
     "outcome": "execute"
    },
-   "note": "was neg-095"
+   "note": "was neg-095 [owner decision 2026-10-15 (\"지금 추가\", the list status filter): the list gold again, now with status canceled; the pending relabel to none is reverted]"
   },
   {
    "id": "a6-negative-reminder.list-001",
@@ -11626,10 +11630,12 @@
    "text": "취소된 알림 보여줘",
    "expect": {
     "entryId": "reminder.list",
-    "args": {},
+    "args": {
+     "status": "canceled"
+    },
     "outcome": "execute"
    },
-   "note": "was neg-100"
+   "note": "was neg-100 [owner decision 2026-10-15 (\"지금 추가\", the list status filter): the list gold again, now with status canceled; the pending relabel to none is reverted]"
   },
   {
    "id": "a6-negative-reminder.list-006",

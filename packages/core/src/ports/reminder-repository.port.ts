@@ -1,4 +1,4 @@
-import type { ActionWriteCondition, Id, IsoTimestamp, Reminder, ReminderDraft, ReminderFiringCompletion } from '../domain';
+import type { ActionWriteCondition, Id, IsoTimestamp, Reminder, ReminderDraft, ReminderFiringCompletion, ReminderStatus } from '../domain';
 
 /**
  * PORT: owner reminder persistence (ADR-0101 D4/D9; DI token `REMINDER_REPOSITORY`).
@@ -54,6 +54,11 @@ export interface ReminderRepository {
   createWithinLimit(draft: ReminderDraft, maxActive: number, condition?: ActionWriteCondition): Promise<CreateReminderResult>;
   /** The actor's SCHEDULED and FIRING reminders, ordered by `displayNo` ascending. */
   listActiveByActor(actorId: Id): Promise<Reminder[]>;
+  /**
+   * ADR-0120 A6 R1 status filter (owner-approved 2026-10-15): the actor's reminders whose status is one of `statuses`,
+   * ordered by `displayNo` ascending. Read-only; owner-scoped.
+   */
+  listByActorStatuses(actorId: Id, statuses: readonly ReminderStatus[]): Promise<Reminder[]>;
   /** The actor's reminder with that number in any status, or null. Owner-scoped: never another actor's. */
   getByDisplayNo(actorId: Id, displayNo: number): Promise<Reminder | null>;
   /** Conditional SCHEDULED → CANCELED for the actor's reminder `displayNo`. */

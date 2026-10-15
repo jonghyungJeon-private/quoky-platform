@@ -276,6 +276,27 @@ export function renderMyWork(todos: readonly WorkItem[], surface: WorkSurface | 
   return fit(lines);
 }
 
+const TODO_STATUS_VIEW_TITLE: Readonly<Record<'canceled' | 'completed' | 'all', string>> = {
+  canceled: '취소된 할 일',
+  completed: '완료한 할 일',
+  all: '전체 할 일',
+};
+const TODO_STATUS_LABEL: Readonly<Record<string, string>> = { ACTIVE: '진행 중', COMPLETED: '완료', CANCELED: '취소' };
+
+/**
+ * A read-only status view of the owner's to-dos (owner-approved 2026-10-15): bullets with each item's status, never
+ * numbered (the numbers of the open list are the ones "N번 완료" refers to).
+ */
+export function renderTodoStatusList(todos: readonly WorkItem[], status: 'canceled' | 'completed' | 'all'): MessageBody {
+  const lines: Array<{ text: MessagePart; droppable?: boolean }> = [{ text: `**${TODO_STATUS_VIEW_TITLE[status]}** (${todos.length}건)` }];
+  if (todos.length === 0) lines.push({ text: `${TODO_STATUS_VIEW_TITLE[status]}이 없어요.` });
+  for (const item of todos.slice(0, TODO_LIST_MAX_ROWS)) {
+    lines.push({ text: messageContent('- ', titleOf(item), ` (${TODO_STATUS_LABEL[item.status] ?? item.status})`), droppable: true });
+  }
+  if (todos.length > TODO_LIST_MAX_ROWS) lines.push({ text: `외 ${todos.length - TODO_LIST_MAX_ROWS}건`, droppable: true });
+  return fit(lines);
+}
+
 /** A connector URL safe to show as a link span (http(s), no whitespace or quoting characters, ≤ 300 characters). */
 export function safeLinkUrl(url: string | undefined): string | undefined {
   if (!url || url.length > 300) return undefined;

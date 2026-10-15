@@ -170,3 +170,20 @@ describe('ReminderTurnHandler selection entries (ADR-0120)', () => {
     expect(await make(false).handleSelected(selected, context('오늘 브리핑'))).toBeNull();
   });
 });
+
+describe('the reminder status view is DM-only (owner: channels default-deny until ADR-0122 P1)', () => {
+  it('a channel gets the fixed reply and nothing is read; a DM reads the view', async () => {
+    const calls: Array<string | undefined> = [];
+    const conversation = { handleTurn: async () => null, listReply: async (_input: unknown, status?: string) => { calls.push(status); return { context: CONTEXT, text: '취소된 알림이 없어요.' }; } };
+    const handler = new ReminderTurnHandler({ conversation, composer: new ReminderReplyComposer(), enabled: true, logger: new RecordingLogger() });
+    const selected = { entryId: 'reminder.list' as const, args: { status: 'canceled' }, language: 'ko' as const };
+    const base = context('취소된 알림 보여줘');
+    const channel = { ...base, message: { ...base.message, context: { ...CONTEXT, spaceId: 'guild-1', direct: false } } };
+    const refused = await handler.handleSelected(selected, channel);
+    expect(refused?.reply.text).toBe('취소·완료·지난 항목이나 전체 목록은 DM에서만 보여 드려요.');
+    expect(calls).toEqual([]);
+    const dm = { ...base, message: { ...base.message, context: { ...CONTEXT, spaceId: undefined, direct: true } } };
+    await handler.handleSelected(selected, dm as never);
+    expect(calls).toEqual(['canceled']);
+  });
+});

@@ -335,3 +335,18 @@ describe('WorkChatTurnHandler — jira.release (ADR-0120 A8)', () => {
     expect(commands.at(-1)).toMatchObject({ kind: 'release', scope: 'all', inChannel: true });
   });
 });
+
+describe('the to-do status view is DM-only (owner: channels default-deny until ADR-0122 P1)', () => {
+  it('a channel gets the fixed reply and the desk reads nothing; a DM reads the view', async () => {
+    const { desk, commands } = fakeDesk(() => ({ kind: 'reply', text: '취소된 할 일 (0건)' }) as WorkChatOutcome);
+    const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
+    const selected = { entryId: 'todo.list' as const, args: { status: 'canceled' }, language: 'ko' as const };
+    const dm = ctxOf('취소된 할 일 보여줘');
+    const channel = { ...dm, message: { ...dm.message, context: { ...CTX, spaceId: 'guild-1', direct: false } } };
+    const refused = await handler.handleSelected(selected, channel);
+    expect(refused?.reply.text).toBe('취소·완료·지난 항목이나 전체 목록은 DM에서만 보여 드려요.');
+    expect(commands).toEqual([]);
+    await handler.handleSelected(selected, dm);
+    expect(commands).toEqual([{ kind: 'todo.list', status: 'canceled' }]);
+  });
+});

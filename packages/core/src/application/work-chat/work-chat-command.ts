@@ -80,9 +80,13 @@ export type WorkChatUsageTopic =
   | 'search'
   | 'search-too-long';
 
+/** The non-default to-do list views (the `todo.list` `status` arg). */
+export type TodoListStatusFilter = 'canceled' | 'completed' | 'all';
+
 export type WorkChatCommand =
   | { readonly kind: 'todo.add'; readonly title: string; readonly refs: readonly ResourceRef[] }
-  | { readonly kind: 'todo.list' }
+  /** `status` (owner-approved 2026-10-15): a read-only view of the canceled, completed or all to-dos; absent = open ones. */
+  | { readonly kind: 'todo.list'; readonly status?: TodoListStatusFilter }
   | { readonly kind: 'todo.complete'; readonly target: WorkChatTarget }
   | { readonly kind: 'todo.cancel'; readonly target: WorkChatTarget }
   | { readonly kind: 'todo.link'; readonly target: WorkChatTarget; readonly refs: readonly ResourceRef[] }

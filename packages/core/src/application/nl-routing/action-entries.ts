@@ -58,6 +58,10 @@ const DEICTIC_EN = ['it', 'that', 'this', 'that one', 'this one'];
 /** Particles glued on a deictic, filler, time or item-source noun ("이 문서를", "그 메일에서는"). */
 const PARTICLE_WORDS = '(?:으로|에서|까지|부터|에는|이랑|하고|은|는|이|가|을|를|에|의|도|만|로|랑|요)';
 const PARTICLE_TAIL = new RegExp(`${PARTICLE_WORDS}$`, 'u');
+/** A token without its trailing particles: up to two stacked ones ("5시에도", "메일에서는"). */
+function withoutParticles(token: string): string {
+  return token.replace(PARTICLE_TAIL, '').replace(PARTICLE_TAIL, '');
+}
 
 /**
  * A6-D2 clarification (owner decision 2026-10-15, as recorded in DECISIONS): a demonstrative determiner 이 / 그 standing as
@@ -111,6 +115,54 @@ function determinerReferences(groundingText: string): Array<{ readonly determine
   return found;
 }
 
+/**
+ * A Korean item-source noun standing as its own word: after the start, whitespace or a number word ("1번 문서", "두 번째
+ * 메일", "13번알림"), ending at a whole-noun end (particles allowed: "문서를", "메일에서는"). "이메일" is its own noun.
+ */
+const NAMED_NOUN_ALL = new RegExp(`(?<=^|\\s|\\d|번|째)(${NOUN_ALTERNATION})(?=${PARTICLE_WORDS}*${NOUN_END})`, 'gu');
+/** The catalog's Latin words for each item source ("mail", "inbox", "drive", "todo", "reminder"), whole words only. */
+const ITEM_SOURCE_WORDS_LATIN: ReadonlyArray<readonly [string, NlItemSource]> = (Object.entries(ITEM_SOURCE_LIST_ENTRIES) as Array<[NlItemSource, NlWave1EntryId]>).flatMap(
+  ([source, id]) =>
+    [...NL_WAVE1_ENTRIES[id].aliases, ...(NL_WAVE1_ENTRIES[id].sourceNames ?? [])]
+      .map(normalizeForMatch)
+      .filter((noun) => /^[a-z0-9 .-]+$/.test(noun))
+      .map((noun) => [noun, source] as const),
+);
+
+/**
+ * ADR-0120 A6-D2 "Same source only" (A6 R1 fix): the item sources the owner's own words name with the catalog's words
+ * for them ("1번 문서" names drive, "2번 메일" mail, "그 알림" a reminder). Core cross-checks a `ref` against them for every
+ * ref kind, so a selector `source` (or entry) that disagrees with the noun the owner wrote can never read or change an
+ * item of another source. The nouns are the catalog's own aliases and source names, never a phrase list.
+ */
+export function nlNamedItemSources(groundingText: string): ReadonlySet<NlItemSource> {
+  // Brackets and other punctuation, and a digit glued to a letter ("메일2번", "2번메일", "mail2"), are word boundaries
+  // here, so "2번 (메일)" and "메일2번" name the mail source too (Codex review).
+  const text = normalizeForMatch(groundingText)
+    .replace(/[\p{P}\p{S}]+/gu, ' ')
+    .replace(/(\p{N})(?=\p{L})|(\p{L})(?=\p{N})/gu, '$1$2 ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const named = new Set<NlItemSource>();
+  for (const match of text.matchAll(NAMED_NOUN_ALL)) for (const source of ITEM_SOURCE_NOUNS_KO.get(nounKey(match[1] as string)) ?? []) named.add(source);
+  // A noun glued to a following action or content word of the catalog's own vocabularies ("메일취소해줘", "알림취소해줘",
+  // "문서요약해줘"; A6 R1 review); a noun glued to anything else ("알림장") is still no source.
+  for (const match of text.matchAll(gluedNounPattern())) for (const source of ITEM_SOURCE_NOUNS_KO.get(nounKey(match[1] as string)) ?? []) named.add(source);
+  for (const [word, source] of ITEM_SOURCE_WORDS_LATIN) if (latinWordIn(text, word)) named.add(source);
+  return named;
+}
+
+let gluedNoun: RegExp | undefined;
+/** Built on first use: the vocabularies are declared further down this module. */
+function gluedNounPattern(): RegExp {
+  if (gluedNoun !== undefined) return gluedNoun;
+  const verbs = [...new Set([...ACTION_VOCABULARY_KO, ...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS].map(normalizeForMatch).filter((word) => !/^[a-z0-9 .;-]+$/.test(word)))]
+    .sort((a, b) => b.length - a.length)
+    .map((word) => word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*'));
+  gluedNoun = new RegExp(`(?<=^|\\s|\\d|번|째)(${NOUN_ALTERNATION})(?=${verbs.join('|')})`, 'gu');
+  return gluedNoun;
+}
+
 /** Whether the owner's words point with a determiner at an item-source noun ("이 문서", "그 메일"), whatever the entry. */
 export function hasNlDeterminerReference(groundingText: string): boolean {
   return determinerReferences(groundingText).length > 0;
@@ -141,7 +193,8 @@ const KO_ORDINAL_PATTERN = /(첫|두|세|네|다섯|여섯|일곱|여덟|아홉|
 const EN_ORDINAL_PATTERN = /\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|(\d{1,2})(?:st|nd|rd|th))\b/giu;
 
 function latinWordIn(text: string, word: string): boolean {
-  const escaped = word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s+');
+  // `-` stays literal outside a class (escaping it is invalid under the `u` flag: "e-mail").
+  const escaped = word.replace(/[/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s+');
   return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'u').test(text);
 }
 
@@ -234,12 +287,22 @@ export function isNlSpanGrounded(span: string, groundingText: string): boolean {
 /** Filler words that carry no content on their own ("첫 번째 거", "the one"). */
 const FILLER = new Set(['거', '것', '걸', '건', '게', '번', '개', '그', '이', '저', '좀', '하나', 'the', 'one', 'a', 'an', 'item', 'thing', 'please']);
 
+/** Particles glued on a reference go with it ("2번만요", "그걸로요"; A6 R1 review). */
+const GLUED_PARTICLES = `${PARTICLE_WORDS}*`;
+const KO_ORDINAL_WITH_PARTICLES = new RegExp(`(?:첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\\s*(?:번\\s*)?째${GLUED_PARTICLES}`, 'gu');
+const NUMBER_WITH_PARTICLES = new RegExp(`#?\\d+\\s*번\\s*째?${GLUED_PARTICLES}`, 'gu');
+const DEICTIC_WITH_PARTICLES = new RegExp(`(?:${[...DEICTIC_KO, ...LAST_KO].sort((a, b) => b.length - a.length).join('|')})${GLUED_PARTICLES}`, 'gu');
+/** An item-source noun of the catalog standing as its own word, with its particles ("13번 알림", "메일을"). */
+const SOURCE_NOUN_WITH_PARTICLES = new RegExp(`(?<=^|\\s)(?:${NOUN_ALTERNATION})${GLUED_PARTICLES}(?=${NOUN_END})`, 'gu');
+
 function contentTokens(span: string): string[] {
   let text = normalizeForMatch(span);
-  text = text.replace(KO_ORDINAL_PATTERN, ' ').replace(EN_ORDINAL_PATTERN, ' ');
-  text = text.replace(/#?\d+\s*번\s*째?/gu, ' ');
+  text = text.replace(KO_ORDINAL_WITH_PARTICLES, ' ').replace(EN_ORDINAL_PATTERN, ' ');
+  text = text.replace(NUMBER_WITH_PARTICLES, ' ');
   text = text.replace(DETERMINER_NOUN_ALL, ' ');
-  for (const word of [...DEICTIC_KO, ...LAST_KO].sort((a, b) => b.length - a.length)) text = text.split(word).join(' ');
+  text = text.replace(DEICTIC_WITH_PARTICLES, ' ');
+  // A6 R1 review: an item-source noun names where an item lives, never what a to-do or reminder says ("13번 알림").
+  text = text.replace(SOURCE_NOUN_WITH_PARTICLES, ' ');
   const tokens = text
     .replace(/[\p{P}\p{S}]+/gu, ' ')
     .split(/\s+/u)
@@ -253,7 +316,10 @@ function contentTokens(span: string): string[] {
   });
 }
 
-/** A6-D3: a payload made only of deictic, ordinal, number or time words ("그거", "첫 번째 거", "내일"). */
+/**
+ * A6-D3: a payload made only of deictic, ordinal, number, time or item-source words, with their particles ("그거", "첫 번째
+ * 거", "내일", "2번만요", "13번 알림").
+ */
 export function isNlDeicticOnlyPayload(span: string): boolean {
   return contentTokens(span).length === 0;
 }
@@ -275,7 +341,8 @@ export function containsNlTimeExpression(text: string): boolean {
     .split(/\s+/u)
     .filter((token) => token.length > 0);
   for (const token of tokens) {
-    const bare = token.replace(PARTICLE_TAIL, '');
+    // Up to two stacked particles (A6 R1: "그리고 5시에도" is a time outside `when`).
+    const bare = withoutParticles(token);
     if (WEAK_TIME_WORDS.has(token) || WEAK_TIME_WORDS.has(bare)) continue;
     if (EXTRA_TIME_TOKEN.test(bare) || EXTRA_TIME_TOKEN.test(token)) return true;
     if (/^(?:매일|평일|주말|매주|매일매일|daily|weekly|everyday|tonight|tomorrow|today)/u.test(bare)) return true;
@@ -335,7 +402,7 @@ export const ITEM_CONTENT_MODE: NlAmbiguityKey = Object.freeze({
 // ── the entries ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 const REF_DESCRIPTION =
-  'The item: "#N" for a number or ordinal the owner wrote (3번 / 세 번째 -> "#3"); "recent" or "this" for 그거/이거/방금/아까/it/that; "last" for 마지막/the last one. Never an id or a title.';
+  'The item: "#N" for a number or ordinal the owner wrote (3번 / 세 번째 / item 3 -> "#3"); "this" for 그거/이거/저거/it/that/this (also the last action\'s item); "recent" only for 방금/아까 (just now); "last" for 마지막/the last one. Never an id or a title.';
 
 function exactlyOneTarget(args: NlArgs): NlEntryCheckFailure | undefined {
   const hasRef = args.ref !== undefined;
@@ -354,8 +421,205 @@ export function isNlBulkRequest(groundingText: string): boolean {
   return BULK_KO.test(text) || BULK_EN.test(text);
 }
 
+/**
+ * The closed action vocabularies of the A6 entries that act on an existing item (A6 R1 review, `actionGrounding`): the
+ * owner must say the action itself. Stems match inside a word (Korean endings follow: 완료해줘, 지워줘, 꺼줘, 되돌려
+ * 놔); Latin words are whole words. A message with only a reference ("2번도", "그걸로요", "13번 알림") grounds none.
+ */
+// 끝 only in its completion forms (끝냈 / 끝났 / 끝내 / 끝마치): "언제 끝나?" is a question, not a completion. No 처리 or 체크:
+// "처리 방법", "체크해봐" are not completions (CA review).
+const TODO_COMPLETE_WORDS: readonly string[] = ['완료', '끝냈', '끝났', '끝내', '끝마', '마쳤', '마치', '마무리', '다 했', '다했', '해치웠', 'done', 'complete', 'completed', 'finish', 'finished', 'check off'];
+// No 그만 (CA delta: "2번 취소 그만해" means stop, not cancel) and no negation-shaped words.
+const CANCEL_WORDS: readonly string[] = ['취소', '캔슬', '삭제', '지워', '지우', '지운', '없애', '없던 걸로', '없던걸로', '제거', '제외', 'cancel', 'remove', 'delete', 'drop', 'scrap'];
+// No negation-shaped words ("안 할", "안 해도"): a negation in the clause voids grounding (CA review), so they cannot ground.
+const TODO_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '빼'];
+const REMINDER_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '꺼', '끄', '끈', '멈춰', 'stop', 'turn off', 'disable'];
+// Verbs only, never a source noun (CA review: "메모장 열어줘", "알림 설정 어떻게 해?" must not ground a write).
+const TODO_ADD_WORDS: readonly string[] = ['추가', '넣어', '넣자', '넣기', '올려', '적어', '등록', 'add', 'put', 'jot down'];
+const REMINDER_CREATE_WORDS: readonly string[] = [
+  '알려', '리마인드', '깨워', '상기시켜',
+  // A reminder noun only together with its verb ("알림해줘", "리마인더 설정해줘", "알림 부탁해"), never the noun alone.
+  '알림해', '알림 해', '알림 줘', '알림 걸', '알림 만들', '알림으로 만들', '알림 설정', '알림 맞춰', '알림 부탁',
+  '리마인더 설정', '리마인더 만들', '리마인더 걸', '리마인더 부탁', '알람 맞춰', '알람 걸', '알람 설정',
+  'remind', 'set a reminder', 'notify', 'alert me', 'ping me',
+];
+const UNDO_WORDS: readonly string[] = ['원상복구', '되돌리기', '되돌', '돌려', '원래대로', '원상', '원복', '롤백', '무르', '물러', '취소', 'undo', 'revert', 'roll back', 'rollback'];
+/** Every Korean action word of the vocabularies above (for the glued-noun boundary of {@link nlNamedItemSources}). */
+const ACTION_VOCABULARY_KO: readonly string[] = [...TODO_COMPLETE_WORDS, ...TODO_CANCEL_WORDS, ...REMINDER_CANCEL_WORDS, ...UNDO_WORDS, ...TODO_ADD_WORDS, ...REMINDER_CREATE_WORDS];
+
+/** Where a clause ends after an action word: 말고, sentence punctuation or a line break. */
+const CLAUSE_END = /말고|[,.!?。;:~\n]/u;
+/**
+ * A negation anywhere in the WHOLE message vetoes every write (Codex and CA reviews: a later retraction such as "완료해줄래?
+ * 아니 하지마" counts): "-지 마/말아/않", "-진 마", a standalone or glued 안/못, 금지, 아니, 필요 없, 싫, 말고.
+ */
+const NEGATION_KO = /[지진](?:는|도|만)?\s*(?:마|말|않)|(?:^|\s)(?:안|못)(?=\s|$|되|돼|됐|해|했|하|할)|안\s*(?:해|하|되|돼|됐|할|함)|(?<!잘)못\s*(?:해|하|했|함)|금지|아니|아냐|아님|ㄴㄴ|노노|됐어|됐다|잠깐|필요\s*없|싫|말아|말고/u;
+const NEGATION_EN = /(?:^|\s)(?:don't|dont|do not|doesn't|didn't|shouldn't|won't|wouldn't|can't|cannot|never|not|no|nope|nah)(?=\s|$|[,.!?])/u;
+/**
+ * After a request, a cancel / undo / stop word retracts it ("2번 완료해줘 취소", "2번 취소 그만해"), CA delta: the request
+ * does not ground.
+ */
+const RETRACTION_AFTER = /취소|캔슬|되돌|그만|철회|undo|cancel|nope|nah/u;
+/** A first-person subject makes the sentence the owner's own statement or volition, not a request ("내가 2번 완료할래"). */
+const FIRST_PERSON_KO = /(?:^|\s)(?:내가|제가|나는|저는|나도|저도)(?=\s)/u;
+/**
+ * Reported speech or an example: a request form followed by 했던 / 했잖아 / 라고 / 하면 / 하고 / 했더니 / 그랬 quotes a
+ * request instead of making one ("2번 완료해줘 했던 거", "undo 해줘 했더니"); 예를 들어 / 예컨대 frame an example.
+ */
+const REPORTED_AFTER_REQUEST = /^\s*(?:했던|했잖아|했는데|했더니|라고|이라고|하면|하고|그랬|란|래서)/u;
+const QUOTED_REQUEST = /(?:줘|주세요|줄래|해)\s*(?:했던|했잖아|했는데|했더니|라고|이라고|하면|하고|그랬)/u;
+const EXAMPLE_FRAME = /예를\s*들어|예컨대|for example|e\.g\./u;
+/** A bare 해 / 꺼 / 지워 + space + an auxiliary is a done-statement or a thank-you, not a request ("완료해 뒀어", "꺼 놨어"). */
+const AUXILIARY_AFTER_BARE = /^\s+(?:줘서|줬|놨|놓|뒀|둔|둘|버렸|봤)/u;
+/**
+ * Non-request modalities in the clause (veto): a deliberation (할까, 할지), an obligation (해야), an intention (하려고,
+ * 할게), a supposition (겠지, 려나): "2번 취소할까 해", "완료해야 해", "취소하려고 해".
+ */
+const NON_REQUEST_IN_CLAUSE = /(?:할|될|볼|줄|을|일|걸)까(?=\s|$|요)|(?:할|될|을)지(?=\s|$)|(?:해|돼|되어|줘|어)야(?=\s|$)|려고|할게|겠지|려나/u;
+/**
+ * The POSITIVE request-form rule (orchestrator decision under the fix-loop cap, CA round 3): the action word must be the
+ * head of an affirmative request — right after it (its own verb ending, an optional 처리 / 좀) comes a request ending from
+ * this closed grammatical set (해줘, 해 주세요, 해줄래, 해 줄 수 있어, 해주실래요, 해 주시겠어요, 하자, 해, 해라, 놔, 둬,
+ * 부탁해 …), or the word is itself a bare imperative (지워, 빼, 꺼, 넣어, 만들어 …). A request whose head is another verb
+ * ("완료됐는지 보여줄래?") does not ground the action. A question grounds only in a polite request form (해줄래?, 해 줄 수
+ * 있어?, 해 주시겠어요?). Anything else — a question, a wish, a statement, a bare noun ("2번 완료") — grounds nothing.
+ */
+const KO_REQUEST_ENDING = '(?:할래요|할래|줘요|줘라|줘|주라|주세요|주십시오|줄래요|줄래|줄\\s*수\\s*있어요|줄\\s*수\\s*있어|줄\\s*수\\s*있나요|주실래요|주시겠어요|주실\\s*수\\s*있어요|주시겠습니까|놔요|놔|둬요|둬|두세요|해요|해라|하자|합시다|하세요|해|부탁해요|부탁해|부탁드려요|부탁드립니다|부탁합니다|부탁)';
+/**
+ * Between the action word and the request ending only this closed light-verb material may stand: the word's own verb
+ * ending, a complement marker (로, 다고: "완료로 바꿔줘", "끝냈다고 처리해줘"), a light noun (처리, 표시, 기록, 복구), 좀,
+ * and a carrier verb (해, 바꿔, 옮겨, 시켜, 돌려: "완료시켜줘").
+ */
+const KO_HEAD_REQUEST = new RegExp(
+  `^(?:려|어|아|워)?(?:으로|로|했다고|다고)?\\s*(?:처리|표시|기록|복구)?\\s*(?:좀\\s*)?(?:(?:해|바꿔|옮겨|시켜|돌려)\\s*)?${KO_REQUEST_ENDING}요*(?=$|\\s|[~!.?,:ㅎㅋ])`,
+  'u',
+);
+/** A bare imperative of a verb stem ("만들어", "되돌려", "지워"): the word's own ending, then the end of the word. */
+const KO_BARE_IMPERATIVE = /^(?:려|어|아|워)?(?=$|\s|[~!.,:ㅎㅋ])/u;
+const KO_IMPERATIVE_STEMS = /(?:지워|빼|꺼|끝내|없애|돌려|되돌|넣어|올려|적어|깨워|알려|만들)$/u;
+/**
+ * The nominal command (명사형 종결): a verbal-noun action word that ENDS the whole message, only 처리 / 요 / 좀 / 부탁 after
+ * it ("할 일에 'UAT 결과 정리' 추가", "2번도 완료", "13번 알림 취소"). Kept because the ratified A6 live phrases U4 and
+ * U8c are in this form and the anchored Class A grammar already acts on it ("1번 완료"); questions and negations stay
+ * vetoed. (A deliberate deviation from the stricter "bare noun never writes" proposal, reported for the owner.)
+ */
+const KO_VERBAL_NOUN = /(?:완료|취소|삭제|추가|제거|제외|캔슬|등록|롤백|원복|원상복구|리마인드|되돌리기|원래대로)$/u;
+const KO_NOMINAL_COMMAND_TAIL = /^\s*(?:처리)?\s*(?:요|좀|부탁(?:해요|해|드려요|드립니다|합니다)?)?[\s~!.ㅎㅋ^]*$/u;
+/** The stems that are complete imperatives on their own (만들 and 되돌 need their ending). */
+const KO_COMPLETE_IMPERATIVES = /(?:지워|빼|꺼|끝내|없애|돌려|넣어|올려|적어|깨워|알려)$/u;
+const KO_POLITE_QUESTION = /줄래|줄\s*수\s*있|주실래요|주시겠|주실\s*수/u;
+/** English: the action word heads the clause, after "please" / "can-could-would-will you", or a carrier verb leads it. */
+const EN_REQUEST_LEAD = /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?/u;
+const EN_CARRIER = /^(?:mark|set|make|turn|put)\b/u;
+/** A statement or question verb that makes a message not a command ("2 is done", "did you cancel 2"). */
+const EN_STATEMENT = /(?:^|\s)(?:is|are|was|were|did|does|do|has|have|had|be|been|it's|i'm|i've)(?=\s|$)/u;
+const CLAUSE_START_EN = /.*(?:[,.!?;]|\bbut\b|\binstead\b)/su;
+const CLAUSE_END_EN = /[,.!?;]|\bbut\b|\binstead\b/u;
+
+/**
+ * Where a Korean clause ends: sentence punctuation, 말고, or a word ending in a sentence-final or connective ending
+ * followed by a space ("필요 없어 취소해줘", "안 할 거야 삭제해줘", "아니 되돌려줘", "까먹지 않게 적어둬").
+ */
+const KO_CLAUSE_BOUNDARY = /[,.!?。;:~\n]|말고|(?:야|어|요|다|래|니|게|지|음|함|돼|대)(?=\s)/gu;
+
+/** The part of `before` that belongs to the same clause as the word right after it. */
+function ownClauseBefore(before: string): string {
+  let start = 0;
+  for (const match of before.matchAll(KO_CLAUSE_BOUNDARY)) start = (match.index ?? 0) + match[0].length;
+  return before.slice(start);
+}
+
+/**
+ * A negated clause that itself names this entry's action vetoes every write of the entry ("2번 취소하지 마 3번 빼줘"):
+ * the owner refused that action somewhere in the message.
+ */
+function negatedClauseNamesTheAction(text: string, words: readonly string[]): boolean {
+  const clauses: string[] = [];
+  let start = 0;
+  for (const match of text.matchAll(KO_CLAUSE_BOUNDARY)) {
+    const end = (match.index ?? 0) + match[0].length;
+    clauses.push(text.slice(start, end));
+    start = end;
+  }
+  clauses.push(text.slice(start));
+  // A clause ending in 말고 / -지 마 negates the words it holds; the next clause holds the negation of a "말고" pair too.
+  return clauses.some((clause, index) => {
+    const negated = NEGATION_KO.test(clause) || (index + 1 < clauses.length && /^\s*(?:마|말|않)/u.test(clauses[index + 1] ?? ''));
+    return negated && words.some((word) => clause.includes(normalizeForMatch(word)));
+  });
+}
+
+/**
+ * A6 R1 review: whether one of an entry's action words occurs in the owner's prose as the head of an affirmative request
+ * (the positive rule above). Any negation in the whole message vetoes every write.
+ */
+export function nlActionWordGrounded(prose: string, words: readonly string[]): boolean {
+  const text = normalizeForMatch(prose).replace(/[’‘`´]/gu, "'");
+  // English: a negation anywhere vetoes. Korean: see koreanVeto (a reason clause such as "필요 없어 취소해줘" is not one).
+  // A quoted or reported request anywhere ("2번 완료해줘 했던 거 되돌려줘") or an example frame refuses the message.
+  if (NEGATION_EN.test(text) || EXAMPLE_FRAME.test(text) || QUOTED_REQUEST.test(text) || FIRST_PERSON_KO.test(text)) return false;
+  if (negatedClauseNamesTheAction(text, words)) return false;
+  for (const raw of words) {
+    const word = normalizeForMatch(raw);
+    if (/^[a-z0-9][a-z0-9 -]*$/.test(word)) {
+      const pattern = new RegExp(`(?<![a-z0-9])${word.replace(/ /g, '\\s+')}s?(?![a-z0-9])`, 'gu');
+      for (const match of text.matchAll(pattern)) {
+        const head = text.slice(0, match.index).replace(CLAUSE_START_EN, '').trim();
+        const after = text.slice((match.index ?? 0) + match[0].length);
+        const end = CLAUSE_END_EN.exec(after);
+        const clause = `${head} ${match[0]}`.trim();
+        const lead = EN_REQUEST_LEAD.exec(clause)?.[0] ?? '';
+        const body = clause.slice(lead.length);
+        const polite = /(?:can|could|would|will)\s+you/u.test(lead) || /please/u.test(lead);
+        // A nominal command: the action word ends the whole message with no statement verb ("reminder 12 cancel").
+        const nominal = /^[\s.!~]*(?:please)?[\s.!~]*$/u.test(after) && !EN_STATEMENT.test(text);
+        const headed = body.startsWith(match[0]) || EN_CARRIER.test(body) || nominal;
+        // A Latin action word inside a Korean request ("1번 done 처리해줘", "아까 거 undo 해줘").
+        const korean = KO_HEAD_REQUEST.exec(after);
+        const koreanRequest =
+          korean !== null && !NEGATION_KO.test(after) && end?.[0] !== '?' && !RETRACTION_AFTER.test(after.slice(korean[0].length)) && !REPORTED_AFTER_REQUEST.test(after.slice(korean[0].length));
+        if (koreanRequest) return true;
+        // A Korean request form was there but refused (quoted, retracted): the English reading does not rescue it.
+        if (korean !== null || RETRACTION_AFTER.test(after)) continue;
+        if (!headed || NEGATION_KO.test(text)) continue;
+        if (end?.[0] === '?' ? polite : true) return true;
+      }
+      continue;
+    }
+    for (let at = text.indexOf(word); at >= 0; at = text.indexOf(word, at + 1)) {
+      const after = text.slice(at + word.length);
+      const end = CLAUSE_END.exec(after);
+      const clause = end === null ? after : after.slice(0, end.index);
+      // A negation after the word anywhere in the message (a retraction: "완료해줄래? 아니 하지마"), or before it in its
+      // own clause ("2번 안 완료"), vetoes; a negation in an earlier clause is a reason ("필요 없어 취소해줘").
+      if (NEGATION_KO.test(after) || NEGATION_KO.test(ownClauseBefore(text.slice(0, at)))) continue;
+      if (NON_REQUEST_IN_CLAUSE.test(clause)) continue;
+      const request = KO_HEAD_REQUEST.exec(after);
+      // A bare imperative: a stem with its own ending ("만들어", "되돌려"), or a stem that is already one ("지워", "빼").
+      const bare = request === null && KO_IMPERATIVE_STEMS.test(word) ? KO_BARE_IMPERATIVE.exec(after) : null;
+      const bareOk = bare !== null && (bare[0] !== '' || KO_COMPLETE_IMPERATIVES.test(word));
+      // A nominal command never follows another request ("2번 완료해줘 취소" retracts the first, it cancels nothing).
+      const nominal = KO_VERBAL_NOUN.test(word) && KO_NOMINAL_COMMAND_TAIL.test(after) && !/(?:줘|주세요|줄래|해)(?=\s|$|[~!.?,])/u.test(text.slice(0, at));
+      if (request === null && !bareOk && !nominal) continue;
+      // What follows the request decides too: a retraction, reported speech or a done-statement auxiliary refuses (CA).
+      const following = after.slice((request ?? bare)?.[0].length ?? 0);
+      if (RETRACTION_AFTER.test(following) || REPORTED_AFTER_REQUEST.test(following) || AUXILIARY_AFTER_BARE.test(following)) continue;
+      if (end?.[0] === '?' && !(request !== null && KO_POLITE_QUESTION.test(request[0]))) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Whether an entry's action word occurs at all (in any form): the service then asks for a request instead of chatting. */
+export function nlActionWordPresent(prose: string, words: readonly string[]): boolean {
+  const text = normalizeForMatch(prose);
+  return words.some((word) => text.includes(normalizeForMatch(word)));
+}
+
 const todoAdd: NlCatalogEntry = {
   id: 'todo.add',
+  actionGrounding: TODO_ADD_WORDS,
   risk: 'LOCAL_WRITE',
   dmOnly: true,
   label: { ko: '할 일 추가', en: 'Add a to-do' },
@@ -388,6 +652,7 @@ function transitionEntry(id: 'todo.complete' | 'todo.cancel'): NlCatalogEntry {
   const complete = id === 'todo.complete';
   return {
     id,
+    actionGrounding: complete ? TODO_COMPLETE_WORDS : TODO_CANCEL_WORDS,
     risk: 'LOCAL_WRITE',
     dmOnly: true,
     label: complete ? { ko: '할 일 완료 처리', en: 'Complete a to-do' } : { ko: '할 일 목록에서 빼기', en: 'Take a to-do off the list' },
@@ -415,6 +680,7 @@ function transitionEntry(id: 'todo.complete' | 'todo.cancel'): NlCatalogEntry {
 
 const reminderCreate: NlCatalogEntry = {
   id: 'reminder.create',
+  actionGrounding: REMINDER_CREATE_WORDS,
   risk: 'LOCAL_WRITE',
   dmOnly: true,
   label: { ko: '알림 만들기', en: 'Create a reminder' },
@@ -438,7 +704,7 @@ const reminderCreate: NlCatalogEntry = {
       // The time span itself: the payload rule (not only time words) does not apply to it.
       allowsTimeWords: true,
       maxChars: NL_WHEN_MAX_CHARS,
-      description: 'Only the time words, verbatim ("내일 9시", "매일 아침 8시", "30분 뒤"). Never compute a date.',
+      description: 'Only the time words, verbatim, without a trailing particle such as 에 ("내일 9시", "매일 아침 8시", "30분 뒤"). Never compute a date.',
     },
   ],
   usage: { ko: '"내일 오전 9시에 회의 준비 알려줘"', en: '"remind me tomorrow at 9am to prepare the meeting"' },
@@ -459,6 +725,7 @@ const reminderCreate: NlCatalogEntry = {
 
 const reminderCancel: NlCatalogEntry = {
   id: 'reminder.cancel',
+  actionGrounding: REMINDER_CANCEL_WORDS,
   risk: 'LOCAL_WRITE',
   dmOnly: true,
   label: { ko: '알림 취소', en: 'Cancel a reminder' },
@@ -477,6 +744,7 @@ const reminderCancel: NlCatalogEntry = {
 
 const actionUndo: NlCatalogEntry = {
   id: 'action.undo',
+  actionGrounding: UNDO_WORDS,
   risk: 'LOCAL_WRITE',
   dmOnly: true,
   label: { ko: '방금 한 작업 되돌리기', en: 'Undo the last action' },

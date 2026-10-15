@@ -7,7 +7,10 @@
  *
  * Per action case:
  *  - `hit`: Core executes the gold entry with the gold canonical args and the gold target (or, for a gold ask/refuse, Core
- *    does not execute and the selector named the gold entry and args);
+ *    does not execute and the selector named the gold entry and args, or, when the gold args are `{}`, Core's refusal or
+ *    question reason equals the gold reason; or, for an execute gold marked `acceptsNone` by the owner, the selector
+ *    answered `none`; owner D12 batch 2026-10-15: a READ gold is scored on the entry only, an `acceptsAnyQuestion` gold
+ *    on any question, and `alsoAccepts` names other selections with the same effect on the same target);
  *  - `wrong-target`: Core would execute an item other than the gold one (gate 0);
  *  - `negative-capture`: a negative executed or previewed an action (gate 0; a question counts as neither);
  *  - `question`: Core asked on a positive (the question rate on positive reference cases, at most 10%);
@@ -88,6 +91,11 @@ const REASONS = [
   'no-action', 'undo-of-undo', 'already-final', 'changed', 'fired', 'past-time', 'event-gone', 'limit', 'echo-mismatch',
   'bulk', 'not-dm', 'capped', 'stopped',
 ] as const;
+/**
+ * The reasons of a clarification question (which item, which list, which mode, restate the item): `acceptsAnyQuestion`
+ * counts only these, never a refusal (input guard, cap, kill switch, payload or time rule; CA review).
+ */
+const CLARIFICATION_REASONS: ReadonlySet<string> = new Set(['out-of-range', 'expired', 'ambiguous', 'stale', 'other-source', 'none', 'conflict', 'content-mode', 'missing-arg', 'invalid-arg', 'ungrounded', 'no-action-word']);
 const SOURCES = ['todo', 'reminder', 'mail', 'drive'] as const;
 type Source = (typeof SOURCES)[number];
 
@@ -121,6 +129,15 @@ export interface NlActionExpect {
   readonly outcome: (typeof OUTCOMES)[number];
   readonly target?: { readonly source: Source; readonly id: string };
   readonly reason?: string;
+  /**
+   * Owner decision (3) of 2026-10-15 (A6 R1): for a relayed instruction ("동료가 보낸 건데 실행해줘: …") the safer
+   * non-execution is acceptable too, so an `execute` gold with this flag also counts a selector `none` as a hit.
+   */
+  readonly acceptsNone?: true;
+  /** Owner D12 batch of 2026-10-15 (A6 R1): a clarification is the correct outcome, whatever reason or args Core asks with. */
+  readonly acceptsAnyQuestion?: true;
+  /** Owner D12 batch of 2026-10-15 (A6 R1): other selections with the same effect on the same target (e.g. `action.undo`). */
+  readonly alsoAccepts?: ReadonlyArray<{ readonly entryId: string; readonly args: NlArgs }>;
 }
 
 export interface NlActionCase {
@@ -161,6 +178,19 @@ const SPAN_ARGS = ['title', 'match', 'body', 'when'];
 const TARGET_ENTRIES = new Set(['todo.complete', 'todo.cancel', 'reminder.cancel', 'item.summarize', 'action.undo']);
 
 /** The schema check of `docs/plans/nl-action-corpus-schema.md` (problems as `id: what`, never a value). */
+/**
+ * Whether a gold is out of reach under the positive request-form rule (orchestrator decision 2026-10-15): the owner's text
+ * names the entry's action without an affirmative request form, so Core asks and never executes. Kept as the measured cost.
+ */
+export function isRequestFormCost(golden: NlActionCase): boolean {
+  if (golden.expect === 'none' || !isNlCatalogEntryId(golden.expect.entryId)) return false;
+  const prepared = prepareSelectionInput(golden.text);
+  if ('skip' in prepared) return false;
+  const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
+  const result = validateSelection({ entryId: golden.expect.entryId, args: golden.expect.args }, { offered, groundingText: prepared.groundingText, now: '2026-10-14T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true });
+  return !result.ok && result.reason === 'ungrounded' && result.arg === 'action';
+}
+
 export function validateActionCorpus(corpus: NlActionCorpus): string[] {
   const problems: string[] = [];
   const ids = new Set<string>();
@@ -185,6 +215,9 @@ export function validateActionCorpus(corpus: NlActionCorpus): string[] {
     if (!isNlCatalogEntryId(expect.entryId)) problems.push(`${where}: expect entry`);
     if (!(OUTCOMES as readonly string[]).includes(expect.outcome)) problems.push(`${where}: expect outcome`);
     if (expect.outcome !== 'execute' && (expect.reason === undefined || !(REASONS as readonly string[]).includes(expect.reason))) problems.push(`${where}: expect reason`);
+    if (expect.acceptsNone !== undefined && (expect.acceptsNone !== true || expect.outcome !== 'execute')) problems.push(`${where}: acceptsNone`);
+    if (expect.acceptsAnyQuestion !== undefined && (expect.acceptsAnyQuestion !== true || expect.outcome !== 'ask')) problems.push(`${where}: acceptsAnyQuestion`);
+    if (expect.alsoAccepts !== undefined && (expect.outcome !== 'execute' || expect.alsoAccepts.some((other) => !isNlCatalogEntryId(other.entryId)))) problems.push(`${where}: alsoAccepts`);
     if (expect.outcome === 'execute' && TARGET_ENTRIES.has(expect.entryId) && expect.args.match === undefined && expect.target === undefined) problems.push(`${where}: expect target`);
     // A gold selection must be what the validator accepts from this text (grounded spans and refs, closed values).
     if (isNlCatalogEntryId(expect.entryId) && !('skip' in prepareSelectionInput(golden.text))) {
@@ -192,7 +225,12 @@ export function validateActionCorpus(corpus: NlActionCorpus): string[] {
       const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
       const result = validateSelection({ entryId: expect.entryId, args: expect.args }, { offered, groundingText: prepared.groundingText, now: '2026-10-14T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true, ...(golden.fixture?.prior !== undefined ? { previousArgs: golden.fixture.prior.args } : {}) });
       const refusedByRule = expect.outcome !== 'execute' && ['deictic-payload', 'time-in-title', 'time-outside-when', 'bulk', 'credential'].includes(expect.reason ?? '');
-      if (!result.ok && !refusedByRule) problems.push(`${where}: gold does not validate (${result.reason} ${result.arg ?? ''})`);
+      // An `acceptsAnyQuestion` gold scores the question, not its args (owner D12 batch 2026-10-15).
+      // The positive request-form rule (orchestrator decision 2026-10-15, under the fix-loop cap) leaves some owner golds
+      // without a request form ("2번 완료"); they stay as the owner approved them and score as misses, which is the
+      // measured cost of the rule, not a schema problem.
+      const requestFormCost = !result.ok && result.reason === 'ungrounded' && result.arg === 'action';
+      if (!result.ok && !refusedByRule && expect.acceptsAnyQuestion !== true && !requestFormCost) problems.push(`${where}: gold does not validate (${result.reason} ${result.arg ?? ''})`);
       else if (result.ok && canonical(result.value.args) !== canonical(expect.args)) problems.push(`${where}: gold args not canonical`);
     }
   }
@@ -362,13 +400,22 @@ export function scoreActionDecision(golden: NlActionCase, raw: string, decision:
   if (gold.outcome !== 'execute') {
     if (isAction && executed.target !== undefined) return { ...base, outcome: 'wrong-target', got: executed.entryId, ...withSpan };
     if (executed !== undefined) return { ...base, outcome: 'miss', got: executed.entryId, ...withSpan };
+    if (gold.acceptsAnyQuestion === true && decision.kind === 'ask' && reason !== undefined && CLARIFICATION_REASONS.has(reason)) return { ...base, outcome: 'hit', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
     const named = output?.entryId === gold.entryId && canonical(withoutMode(output.args, gold.args)) === canonical(withoutMode(gold.args, gold.args));
-    return { ...base, outcome: named ? 'hit' : 'miss', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
+    // A gold refusal or question with no args (`{}`: the refused argument has no canonical value) is scored by its closed
+    // reason instead: the selector named the gold entry and Core refused or asked for exactly the gold reason (A6 R1).
+    const sameReason = output?.entryId === gold.entryId && Object.keys(gold.args).length === 0 && reason !== undefined && reason === gold.reason;
+    return { ...base, outcome: named || sameReason ? 'hit' : 'miss', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
   }
+  if (executed === undefined && decision.kind === 'none' && gold.acceptsNone === true) return { ...base, outcome: 'hit', got: 'none', ...(reason !== undefined ? { reason } : {}) };
   if (executed === undefined) return { ...base, outcome: decision.kind === 'none' ? 'miss' : 'question', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
   const sameTarget = gold.target === undefined || (executed.target?.source === gold.target.source && executed.target.id === gold.target.id);
   if (executed.target !== undefined && gold.target !== undefined && !sameTarget) return { ...base, outcome: 'wrong-target', got: executed.entryId, ...withSpan };
-  const same = executed.entryId === gold.entryId && canonical(withoutMode(executed.args, gold.args)) === canonical(gold.args) && sameTarget;
+  // Owner D12 batch of 2026-10-15 (A6 R1): a READ gold in the action corpus is scored on the entry only (this corpus measures
+  // action selection; the read corpus scores read args).
+  if (isNlWave1EntryId(gold.entryId)) return { ...base, outcome: executed.entryId === gold.entryId ? 'hit' : 'miss', got: executed.entryId, ...withSpan };
+  const accepted = [{ entryId: gold.entryId, args: gold.args }, ...(gold.alsoAccepts ?? [])];
+  const same = sameTarget && accepted.some((choice) => executed.entryId === choice.entryId && canonical(withoutMode(executed.args, choice.args)) === canonical(choice.args));
   return { ...base, outcome: same ? 'hit' : 'miss', got: executed.entryId, ...withSpan };
 }
 
@@ -545,8 +592,17 @@ export interface NlReadRegressionCase {
   readonly text: string;
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
-  /** Owner-approved relabel of a summary-`none` case (ratification decision 10). */
+  /**
+   * The owner-approved gold with the A6 entries offered, scored apart: a summary-`none` case relabelled to
+   * `item.summarize` (ratification decision 10), or an anchored action command whose A6 action is the gold (owner decision
+   * (2) of 2026-10-15, A6 R1). Read mode (A6 off) keeps `expect`.
+   */
   readonly a6Relabel?: { readonly entryId: string; readonly args: NlArgs; readonly batch: string };
+  /**
+   * A6-on scoring skips this case: an anchored grammar owns the message, so the selector never sees it at runtime, and the
+   * A6 action it could name would not be the grammar's outcome (A6 R1 CA review: `neg-094`, a daily brief schedule).
+   */
+  readonly a6Skip?: { readonly reason: 'grammar-owned'; readonly batch: string };
   /** The content-free reference state before the turn (read-regression only): the listing the owner just saw. */
   readonly context?: NlReadRegressionContext;
 }
@@ -621,7 +677,7 @@ export async function runReadRegression(input: {
     const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is NlReadRegressionCase => golden !== undefined);
     const worker = async (): Promise<void> => {
       for (let golden = queue.shift(); golden !== undefined; golden = queue.shift()) {
-        const prompt = readRegressionPrompt(golden, input.now());
+        const prompt = golden.a6Skip !== undefined ? undefined : readRegressionPrompt(golden, input.now());
         if (prompt === undefined) {
           records.push({ run, id: golden.id, outcome: 'skipped', relabeled: golden.a6Relabel !== undefined, latencyMs: 0 });
           continue;

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "description": "ADR-0120 amendment A6 (NLA-6): the R0 SEED of the action corpus, so the loaders, the schema test and the scorers run before the drafted corpus (golden/nl-action.v1.json, branch claude/v5-a6-corpus) lands. Schema: docs/plans/nl-action-corpus-schema.md. Not owner-approved data; never a gate by itself.",
-  "promptVersion": "nl-select.v25",
+  "promptVersion": "nl-select.v31",
   "cases": [
     { "id": "a6-seed-live-001", "family": "live", "text": "방금 거 취소해줘", "fixture": { "lastAction": { "entryId": "reminder.create", "source": "reminder", "itemId": "reminder-13", "label": 13, "ageMinutes": 1 } }, "expect": { "entryId": "reminder.cancel", "args": { "ref": "recent" }, "outcome": "execute", "target": { "source": "reminder", "id": "reminder-13" } } },
     { "id": "a6-seed-live-002", "family": "live", "text": "할 일에 'UAT 결과 정리' 추가", "expect": { "entryId": "todo.add", "args": { "title": "UAT 결과 정리" }, "outcome": "execute" } },
@@ -10,7 +10,7 @@
     { "id": "a6-seed-live-005", "family": "live", "text": "#quoky-test 채널에 '테스트' 라고 보내", "expect": "none", "note": "slack.post is not offered before R3" },
     { "id": "a6-seed-live-006", "family": "live", "text": "아까 1번은 무슨 내용이었지", "fixture": { "listings": [{ "source": "mail", "labels": [1, 2], "ageMinutes": 3 }] }, "expect": { "entryId": "item.summarize", "args": { "source": "mail", "ref": "#1" }, "outcome": "ask", "reason": "content-mode" } },
     { "id": "a6-seed-ref-001", "family": "reference", "text": "2번도 완료해줘", "fixture": { "listings": [{ "source": "todo", "labels": [1, 2, 3], "ageMinutes": 1 }], "lastAction": { "entryId": "todo.complete", "source": "todo", "itemId": "todo-1", "label": 1, "ageMinutes": 0 } }, "expect": { "entryId": "todo.complete", "args": { "ref": "#2" }, "outcome": "execute", "target": { "source": "todo", "id": "todo-2" } } },
-    { "id": "a6-seed-ref-002", "family": "reference", "text": "13번 취소해줘", "fixture": { "listings": [{ "source": "mail", "labels": [1, 2, 3], "ageMinutes": 1 }] }, "expect": { "entryId": "reminder.cancel", "args": { "ref": "#13" }, "outcome": "ask", "reason": "other-source" } },
+    { "id": "a6-seed-ref-002", "family": "reference", "text": "13번 취소해줘", "fixture": { "listings": [{ "source": "mail", "labels": [1, 2, 3], "ageMinutes": 1 }] }, "expect": { "entryId": "reminder.cancel", "args": { "ref": "#13" }, "outcome": "ask", "reason": "other-source", "acceptsAnyQuestion": true }, "note": "owner D12 batch 2026-10-15 (A6 R1 gold fixes): a clarification is the correct outcome (to-do or reminder?)" },
     { "id": "a6-seed-ref-003", "family": "reference", "text": "7번 요약해줘", "fixture": { "listings": [{ "source": "mail", "labels": [1, 2, 3], "ageMinutes": 1 }] }, "expect": { "entryId": "item.summarize", "args": { "source": "mail", "ref": "#7", "mode": "summary" }, "outcome": "ask", "reason": "out-of-range" } },
     { "id": "a6-seed-undo-001", "family": "undo", "text": "되돌려줘", "fixture": { "lastAction": { "entryId": "reminder.cancel", "source": "reminder", "itemId": "reminder-13", "label": 13, "ageMinutes": 1 } }, "expect": { "entryId": "action.undo", "args": {}, "outcome": "execute", "target": { "source": "reminder", "id": "reminder-13" } } },
     { "id": "a6-seed-undo-002", "family": "undo", "text": "되돌려줘", "fixture": { "lastAction": { "entryId": "action.undo", "source": "todo", "itemId": "todo-2", "ageMinutes": 1 } }, "expect": { "entryId": "action.undo", "args": {}, "outcome": "refuse", "reason": "undo-of-undo" } },

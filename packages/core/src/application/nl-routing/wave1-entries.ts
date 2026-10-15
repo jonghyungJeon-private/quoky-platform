@@ -12,6 +12,39 @@ import { nlRangeLabel, type NlResolvedRange } from './symbolic-time';
 const SEARCH_LIMIT = { name: 'limit', kind: 'limit', description: 'Only when the owner asks for at most N results (1-10).' } as const;
 const COUNT = { name: 'count', kind: 'flag', default: false, description: 'true only when the owner asks how many ("몇 개", "how many").' } as const;
 
+/**
+ * ADR-0120 A6 R1 status filter (owner-approved 2026-10-15, "지금 추가"): which to-dos or reminders a list shows. Closed
+ * values from the domain lifecycles (WorkItemStatus; ReminderStatus with `done` = already fired); default the open ones.
+ * The value words are value validators (`valueGrounding`), never routing.
+ */
+export const TODO_LIST_STATUS_VALUES = ['active', 'canceled', 'completed', 'all'] as const;
+export const REMINDER_LIST_STATUS_VALUES = ['active', 'canceled', 'done', 'all'] as const;
+const ALL_STATUS_WORDS = ['전체', '전부', '모든', '모두', '다 보여', 'all', 'every'];
+const TODO_STATUS = {
+  name: 'status',
+  kind: 'enum',
+  values: TODO_LIST_STATUS_VALUES,
+  default: 'active',
+  valueGrounding: {
+    canceled: ['취소된', '취소한', '취소했던', '취소 된', '뺀', '빠진', '삭제된', 'canceled', 'cancelled'],
+    completed: ['완료된', '완료한', '완료했던', '완료 된', '끝난', '끝낸', '마친', '다 한', 'completed', 'done', 'finished'],
+    all: ALL_STATUS_WORDS,
+  },
+  description: 'Omit for the open to-dos. canceled (취소된/뺀), completed (완료된/끝난) or all (전체/전부) only when the owner asks for those.',
+} as const;
+const REMINDER_STATUS = {
+  name: 'status',
+  kind: 'enum',
+  values: REMINDER_LIST_STATUS_VALUES,
+  default: 'active',
+  valueGrounding: {
+    canceled: ['취소된', '취소한', '취소했던', '취소 된', '꺼진', '끈', '삭제된', 'canceled', 'cancelled'],
+    done: ['지난', '지나간', '울린', '보낸', '끝난', '완료된', 'past', 'sent', 'fired', 'done'],
+    all: ALL_STATUS_WORDS,
+  },
+  description: 'Omit for the scheduled reminders. canceled (취소된/끈), done (지난/울린, already sent) or all (전체/전부) only when the owner asks for those.',
+} as const;
+
 function quoted(value: string): string {
   return `"${value}"`;
 }
@@ -406,7 +439,7 @@ const todoList: NlCatalogEntry = {
     en: "The owner's own to-do list in Quoky, also called 업무 목록 or 투두 (what is left, how many). Reading only: adding, finishing or cancelling a to-do is not this entry.",
     ko: 'Quoky 할 일(업무 목록, 투두) 보기(남은 것, 몇 개). 추가·완료·취소는 아님.',
   },
-  args: [COUNT],
+  args: [COUNT, TODO_STATUS],
   usage: { ko: '"내 할 일 보여줘"', en: '"내 할 일 보여줘"' },
 };
 
@@ -417,10 +450,10 @@ const reminderList: NlCatalogEntry = {
   label: { ko: '예정된 알림 목록', en: 'Scheduled reminders' },
   aliases: ['알림', '리마인더', 'reminder', '알람'],
   description: {
-    en: "The owner's scheduled Quoky reminders. Listing only: creating or cancelling a reminder is not this entry.",
-    ko: '예정된 알림(리마인더) 목록 보기. 만들기·취소는 아님.',
+    en: "The owner's Quoky reminders (scheduled ones unless the owner asks for canceled or past ones). Listing only: creating or cancelling a reminder is not this entry.",
+    ko: '알림(리마인더) 목록 보기(기본은 예정된 것, 취소된·지난 알림은 물을 때만). 만들기·취소는 아님.',
   },
-  args: [],
+  args: [REMINDER_STATUS],
   usage: { ko: '"알림 목록"', en: '"알림 목록"' },
 };
 

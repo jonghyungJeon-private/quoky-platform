@@ -192,6 +192,13 @@ export interface NlCatalogEntry {
    */
   check?(args: NlArgs, groundingText: string): NlEntryCheckFailure | undefined;
   /**
+   * A6 LOCAL_WRITE entries that act on an existing item (A6 R1 review): the entry's own closed action vocabulary
+   * (completion words for `todo.complete`, cancel/delete words for the cancels, undo words for `action.undo`). Like
+   * `flagGrounding` / `valueGrounding` it is a value validator, never routing: a selection of this entry whose owner text
+   * holds none of these words is not a request for this action, and nothing is written.
+   */
+  readonly actionGrounding?: readonly string[];
+  /**
    * A6-D6 (D9 stale-command guard): output patterns of this family's own fixed command phrases. A chat reply that quotes
    * one while the family is offered is replaced. Never used for routing.
    */

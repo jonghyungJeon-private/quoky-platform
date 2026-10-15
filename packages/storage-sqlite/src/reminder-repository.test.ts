@@ -142,6 +142,22 @@ describe('SqliteReminderRepository — create, list, get (ADR-0101 D4/D9)', () =
     db.close();
   });
 
+  it('lists the actor\'s reminders of the asked statuses, ordered by number (owner-approved status filter, 2026-10-15)', async () => {
+    const { db, repository } = repo();
+    await created(repository, draft('r1'));
+    await created(repository, draft('r2'));
+    await created(repository, draft('r3'));
+    await created(repository, draft('o1', { actorId: 'actor-2' }));
+    await repository.cancel('actor-1', 3, T0);
+    await repository.cancel('actor-1', 1, T0);
+    await repository.cancel('actor-2', 1, T0);
+    expect((await repository.listByActorStatuses('actor-1', [ReminderStatus.CANCELED])).map((r) => r.displayNo)).toEqual([1, 3]);
+    expect((await repository.listByActorStatuses('actor-1', [ReminderStatus.SCHEDULED, ReminderStatus.CANCELED])).map((r) => r.displayNo)).toEqual([1, 2, 3]);
+    expect(await repository.listByActorStatuses('actor-1', [])).toEqual([]);
+    expect(await repository.listByActorStatuses('actor-1', [ReminderStatus.COMPLETED])).toEqual([]);
+    db.close();
+  });
+
   it('gets a reminder by number in any status, owner-scoped', async () => {
     const { db, repository } = repo();
     await created(repository, draft('r1'));

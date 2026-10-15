@@ -306,8 +306,38 @@ describe('a target question is answered by the SHOWN label (A6-D2)', () => {
     expect(resolveLabelChoice('7번', [2, 3, 7])).toEqual({ kind: 'pick', index: 2 });
     expect(resolveLabelChoice('#13', [11, 13])).toEqual({ kind: 'pick', index: 1 });
     expect(resolveLabelChoice('첫 번째 거', [2, 3, 7])).toEqual({ kind: 'pick', index: 0 });
-    expect(resolveLabelChoice('1', [2, 3, 7])).toEqual({ kind: 'none' });
+    // A bare number that is none of the labels is asked again (A6 R1 review), never routed as a new request.
+    expect(resolveLabelChoice('1', [2, 3, 7])).toEqual({ kind: 'unlisted' });
+    expect(resolveLabelChoice('네 번째 거', [2, 3, 7])).toEqual({ kind: 'unlisted' });
+    expect(resolveLabelChoice('열 번째', [2, 3, 7])).toEqual({ kind: 'unlisted' });
     expect(resolveLabelChoice('취소', [2, 3])).toEqual({ kind: 'cancel' });
     expect(resolveLabelChoice('3번 메일 요약해줘', [2, 3])).toEqual({ kind: 'none' });
+  });
+});
+
+describe('A6 R1 fix: the owner\'s source noun is cross-checked for every ref kind ("Same source only")', () => {
+  const mail = state(listings([{ source: 'mail', labels: [1, 2], minute: 0 }]), 1);
+  const drive = state(listings([{ source: 'drive', labels: [1, 2, 3], minute: 0 }]), 1);
+
+  it('"1번 문서" after a mail list never reads a mail, whatever source the selector named', () => {
+    expect(resolve('item.summarize', 'mail', '#1', '1번 문서 요약해줘요', mail)).toMatchObject({ kind: 'unresolved', outcome: 'other-source', source: 'drive', found: 'mail' });
+    // With the owner's own source the existing rule asks too (the newest list is mail).
+    expect(resolve('item.summarize', 'drive', '#1', '1번 문서 요약해줘요', mail)).toMatchObject({ kind: 'unresolved', outcome: 'other-source', found: 'mail' });
+  });
+
+  it('"2번 메일" after a Drive list never reads a Drive file; a matching noun resolves as before', () => {
+    expect(resolve('item.summarize', 'drive', '#2', '2번 메일 요약해줘', drive)).toMatchObject({ kind: 'unresolved', outcome: 'other-source', source: 'mail', found: 'drive' });
+    expect(resolve('item.summarize', 'drive', '#2', '2번 파일 요약해줘', drive)).toMatchObject({ kind: 'resolved', target: { source: 'drive', id: 'drive-2' } });
+    expect(resolve('item.summarize', 'drive', '#2', '두 번째 거 요약해줘', drive)).toMatchObject({ kind: 'resolved', target: { id: 'drive-2' } });
+  });
+
+  it('applies to this / last / display numbers and to local writes (a reminder noun never completes a to-do)', () => {
+    const todos = state(listings([{ source: 'todo', labels: [1, 2], minute: 0 }]), 1, { lastAction: action('todo.add', 'todo', 'todo-2', 0) });
+    expect(resolve('todo.complete', 'todo', 'this', '그거 알림 완료해줘', todos)).toMatchObject({ kind: 'unresolved', outcome: 'other-source', source: 'reminder' });
+    expect(resolve('todo.complete', 'todo', 'last', '마지막 메일 완료해줘', todos)).toMatchObject({ kind: 'unresolved', outcome: 'other-source', source: 'mail' });
+    expect(resolve('reminder.cancel', 'reminder', '#13', '13번 할 일 취소해줘', todos)).toMatchObject({ kind: 'unresolved', outcome: 'other-source', source: 'todo' });
+    expect(resolve('todo.complete', 'todo', '#2', '2번 할 일 완료해줘', todos)).toMatchObject({ kind: 'resolved', target: { id: 'todo-2' } });
+    // A noun inside another word is not a source ("알림장").
+    expect(resolve('todo.complete', 'todo', '#2', '2번 알림장 챙기기 완료', todos)).toMatchObject({ kind: 'resolved' });
   });
 });

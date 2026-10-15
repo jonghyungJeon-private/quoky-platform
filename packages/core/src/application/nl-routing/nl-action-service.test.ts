@@ -234,8 +234,8 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     const base = { actorId: 'owner', text: '메일함', previous: undefined, entryIds: ['mail.list'] };
     const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', 'nl-select.v24', 'nl-select.v25', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
     expect(new Set(keys).size).toBe(9);
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v27');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v28');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v30');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v31');
     // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
@@ -472,5 +472,260 @@ describe('round 3: an argument-free undo from pasted JSON never executes', () =>
     // Reads still work on the same kind of text.
     const reads = world({ script: [out('mail.list')] });
     expect((await reads.decide('> 참고 메모\n메일함 보여줘', { now: at(1) })).kind).toBe('execute');
+  });
+});
+
+describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings)', () => {
+  const reminderAction = (minute = 0) => withLastAction(undefined, 'owner', { entryId: 'reminder.create', source: 'reminder', itemId: 'reminder-13', label: 13, at: at(minute), undoable: true, undone: false, echoReplyIds: [] }, at(minute));
+  const todoAction = (minute = 0) => withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-2', label: 2, at: at(minute), undoable: true, undone: false, echoReplyIds: [] }, at(minute));
+
+  it('a reference without the entry\'s own action word is chat: "2번도", "2번만요", "그걸로요", "13번 알림"', async () => {
+    const cases: Array<[string, string, Record<string, unknown>]> = [
+      ['2번도', 'todo.complete', { ref: '#2' }],
+      ['2번만요', 'todo.complete', { ref: '#2' }],
+      ['2번만요', 'todo.cancel', { ref: '#2' }],
+      ['그걸로요', 'todo.cancel', { ref: 'this' }],
+      ['13번 알림', 'reminder.cancel', { ref: '#13' }],
+      ['그거', 'action.undo', {}],
+    ];
+    for (const [text, entryId, args] of cases) {
+      const w = world({ level: 'local', script: () => out(entryId, args) });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      w.setMetadata(LAST_ACTION_METADATA_KEY, entryId === 'reminder.cancel' ? reminderAction() : todoAction());
+      const decision = await w.decide(text, { now: at(1) });
+      expect(decision.kind, `${text} ${entryId}`).toBe('none');
+      expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === 'no-action-word'), text).toBe(true);
+    }
+    // With the action word the same reference acts as before.
+    const w = world({ level: 'local', script: () => out('todo.complete', { ref: '#2' }) });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    expect((await w.decide('2번도 완료', { now: at(1) })).kind).toBe('execute');
+  });
+
+  it('"9" against an open question with candidates 2 and 3 asks again; a selector-chosen undo or another entry never runs', async () => {
+    const pending: PendingQuestion = { kind: 'action-target', at: at(1), language: 'ko', entryId: 'todo.complete', source: 'todo', candidates: [{ label: 2, id: 'todo-2' }, { label: 3, id: 'todo-3' }], args: {} };
+    const w = world({ level: 'local', script: () => out('action.undo') });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, todoAction());
+    const nine = await w.decide('9', { now: at(1), pending });
+    expect(nine.kind).toBe('ask');
+    expect(w.calls).toHaveLength(0);
+    // A full request for another entry while the question is open: the selector runs, nothing is written, and a short
+    // fixed reply says so (the lock lasts this one turn: the reply ends the question).
+    const other = world({ level: 'local', script: () => out('action.undo') });
+    other.setMetadata(LAST_ACTION_METADATA_KEY, todoAction());
+    const blocked = await other.decide('방금 거 되돌려줘', { now: at(1), pending });
+    expect(blocked).toMatchObject({ kind: 'ask', text: '질문이 열려 있어 실행하지 않았어요. 다시 말씀해 주세요.' });
+    expect(other.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === 'pending-question')).toBe(true);
+    // The questioned entry on a candidate still runs.
+    const same = world({ level: 'local', script: () => out('todo.complete', { ref: '#3' }) });
+    same.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([2, 3], 0));
+    expect((await same.decide('3번 완료해줘 그걸로', { now: at(1), pending })).kind).toBe('execute');
+  });
+
+  it('a selector undo never undoes another item than the owner names: "2번 취소해줘", "2번 메일 취소해줘" after "할 일 5번" ask', async () => {
+    const added = withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-5', label: 5, at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0));
+    for (const [text, reason] of [['2번 취소해줘', 'ambiguous'], ['2번 메일 취소해줘', 'other-source'], ['그 알림 되돌려줘', 'other-source'], ['두 번째 거 되돌려줘', 'ambiguous']] as const) {
+      const w = world({ level: 'local', script: () => out('action.undo') });
+      w.setMetadata(LAST_ACTION_METADATA_KEY, added);
+      const decision = await w.decide(text, { now: at(1) });
+      expect(decision.kind, text).toBe('ask');
+      expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === reason), text).toBe(true);
+    }
+    // Its own label, its own source noun, or no number: the undo runs.
+    for (const text of ['5번 되돌려줘', '그 할 일 되돌려줘', '방금 거 되돌려줘']) {
+      const w = world({ level: 'local', script: () => out('action.undo') });
+      w.setMetadata(LAST_ACTION_METADATA_KEY, added);
+      expect((await w.decide(text, { now: at(1) })).kind, text).toBe('execute');
+    }
+  });
+
+  it('Codex P1 (round 2): reference payloads, terse payloads, negations, adnominals, glued nouns and match spans never write', async () => {
+    const run = async (text: string, entryId: string, args: Record<string, unknown>) => {
+      const w = world({ level: 'local', script: () => out(entryId, args) });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      w.setMetadata(LAST_ACTION_METADATA_KEY, todoAction());
+      return w.decide(text, { now: at(1) });
+    };
+    for (const text of ['2번만요', '그걸로요', '13번 알림']) expect((await run(text, 'todo.add', { title: text })).kind, text).not.toBe('execute');
+    expect((await run('2번만요 추가해줘', 'todo.add', { title: '2번만요' })).kind).toBe('ask');
+    expect((await run('13번 알림 추가해줘', 'todo.add', { title: '13번 알림' })).kind).toBe('ask');
+    expect((await run('내일 9시 우유', 'reminder.create', { body: '우유', when: '내일 9시' })).kind).toBe('ask');
+    expect((await run('내일 9시에 우유 사라고 알려줘', 'reminder.create', { body: '우유 사라고', when: '내일 9시' })).kind).toBe('execute');
+    // The action word without a request form asks for the request ("실행할까요?") and writes nothing.
+    expect((await run('2번을 완료하지 말아줘', 'todo.complete', { ref: '#2' })).kind).not.toBe('execute');
+    expect((await run('취소하지 마', 'todo.cancel', { ref: 'this' })).kind).not.toBe('execute');
+    expect((await run('그거 제외된 거 뭐야', 'todo.cancel', { ref: 'this' })).kind).not.toBe('execute');
+    for (const text of ['2번 메일취소해줘', '2번 알림취소해줘']) expect((await run(text, 'todo.cancel', { ref: '#2' })).kind, text).toBe('ask');
+    expect((await run('할 일 말고 2번 메일 취소해줘', 'todo.cancel', { match: '메일' })).kind).toBe('ask');
+    // A source noun inside the matched title alone is the title's own word.
+    expect((await run('메일 답장 완료해줘', 'todo.complete', { match: '메일 답장' })).kind).toBe('execute');
+  });
+
+  it('CA delta: clause negations, questions and source nouns never write (scripted wrong selector)', async () => {
+    const run = async (text: string, entryId: string, args: Record<string, unknown>) => {
+      const w = world({ level: 'local', script: () => out(entryId, args) });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      return w.decide(text, { now: at(1) });
+    };
+    const writes: Array<[string, string, Record<string, unknown>]> = [
+      ['2번 취소는 하지 마', 'todo.cancel', { ref: '#2' }],
+      ['2번 삭제는 하지 말아줘', 'todo.cancel', { ref: '#2' }],
+      ['2번 완료는 하지 마', 'todo.complete', { ref: '#2' }],
+      ['2번 취소하면 안 돼', 'todo.cancel', { ref: '#2' }],
+      ['2번 취소 안 해도 돼', 'todo.cancel', { ref: '#2' }],
+      ['2번 취소 금지', 'todo.cancel', { ref: '#2' }],
+      ['2번 아직 완료 안 됐어', 'todo.complete', { ref: '#2' }],
+      ['2번 끝냈어?', 'todo.complete', { ref: '#2' }],
+      ['2번 완료됐어?', 'todo.complete', { ref: '#2' }],
+      ['2번 취소했어?', 'todo.cancel', { ref: '#2' }],
+      ['2번 취소할까?', 'todo.cancel', { ref: '#2' }],
+      ['취소된거 뭐야', 'todo.cancel', { ref: 'this' }],
+      ['2번 완료된거 맞아', 'todo.complete', { ref: '#2' }],
+      ['알림 설정 어떻게 해?', 'reminder.create', { body: '설정', when: '내일 9시' }],
+      ['알림 왜 안 왔어?', 'reminder.create', { body: '왜', when: '내일 9시' }],
+      ['알림장 챙기기 내일 9시', 'reminder.create', { body: '알림장 챙기기', when: '내일 9시' }],
+      ['메모장 열어줘', 'todo.add', { title: '메모장 열어줘' }],
+    ];
+    // Codex (through 0e93136): glued, 말고 and English clause negations, for item writes and payload writes alike.
+    writes.push(
+      ['2번 완료 안 해도 돼', 'todo.complete', { ref: '#2' }],
+      ['2번완료안해도돼', 'todo.complete', { ref: '#2' }],
+      ['2번 완료 말고 보여줘', 'todo.complete', { ref: '#2' }],
+      ["don't mark 2 complete", 'todo.complete', { ref: '#2' }],
+      ['do not mark 2 complete', 'todo.complete', { ref: '#2' }],
+      ['do not cancel the second one', 'todo.cancel', { ref: '#2' }],
+      ['우유 사기 할 일에 추가하지 마', 'todo.add', { title: '우유 사기' }],
+      ['우유 사기 추가 안 해도 돼', 'todo.add', { title: '우유 사기' }],
+      ['내일 9시에 물 마시라고 알려주지 마', 'reminder.create', { body: '물 마시라고', when: '내일 9시' }],
+      ["don't remind me tomorrow at 9am to call Kim", 'reminder.create', { body: 'call Kim', when: 'tomorrow at 9am' }],
+    );
+    for (const [text, entryId, args] of writes) expect((await run(text, entryId, args)).kind, text).not.toBe('execute');
+    // A negation anywhere in the message vetoes (Codex: a later retraction counts), so this fails closed.
+    expect((await run('not now, mark 2 complete', 'todo.complete', { ref: '#2' })).kind).not.toBe('execute');
+    // A polite request in question form still acts.
+    expect((await run('2번 완료해줄래?', 'todo.complete', { ref: '#2' })).kind).toBe('execute');
+    expect((await run('2번 취소해 줄 수 있어?', 'todo.cancel', { ref: '#2' })).kind).toBe('execute');
+  });
+
+  it('positive request-form rule (fix-loop cap): only an affirmative request writes; CA round 3 and Codex strings never do', async () => {
+    const run = async (text: string, entryId: string, args: Record<string, unknown>) => {
+      const w = world({ level: 'local', script: () => out(entryId, args) });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      w.setMetadata(LAST_ACTION_METADATA_KEY, todoAction());
+      return w.decide(text, { now: at(1) });
+    };
+    const complete = { ref: '#2' };
+    const never: Array<[string, string, Record<string, unknown>]> = [
+      // CA round 3
+      ['2번 취소할지 모르겠어', 'todo.cancel', complete],
+      ['2번 완료해줘야 할까?', 'todo.complete', complete],
+      ['2번 완료해야 하나', 'todo.complete', complete],
+      ['2번 완료해야 해', 'todo.complete', complete],
+      ['2번 취소할까 해', 'todo.cancel', complete],
+      ['2번 취소 필요 없어', 'todo.cancel', complete],
+      ['2번 취소 싫어', 'todo.cancel', complete],
+      ['2번 완료 아니고 3번', 'todo.complete', complete],
+      ['is 2 done?', 'todo.complete', complete],
+      ['did you cancel 2?', 'todo.cancel', complete],
+      ['I shouldn’t cancel 2', 'todo.cancel', complete],
+      ['we won’t cancel 2', 'todo.cancel', complete],
+      ['추가 질문 있어', 'todo.add', { title: '질문' }],
+      ['2번 완료할게', 'todo.complete', complete],
+      ['2번 완료해?', 'todo.complete', complete],
+      // Codex (on 4ab11e1)
+      ['2번 완료해줄래? 아니 하지마', 'todo.complete', complete],
+      ['2번완료해줄래?아니하지마', 'todo.complete', complete],
+      ['2번 완료됐는지 보여줄래?', 'todo.complete', complete],
+      ['2번 취소인지 확인해줄래?', 'todo.cancel', complete],
+      ['can you tell me if 2 is complete?', 'todo.complete', complete],
+      ['mark 2 complete 안 해도 돼', 'todo.complete', complete],
+      ['2번완료하진마', 'todo.complete', complete],
+      ['2번 완료할필요없어', 'todo.complete', complete],
+      ['don’t mark 2 complete', 'todo.complete', complete],
+      ['2 is done', 'todo.complete', complete],
+      // CA delta (4ab11e1..cc81b2f): done-statement auxiliaries, retractions, reported speech, examples, 그만
+      ['2번 완료해 뒀어', 'todo.complete', complete],
+      ['2번 취소해 놨어', 'todo.cancel', complete],
+      ['알림 꺼 놨어', 'reminder.cancel', { ref: 'this' }],
+      ['2번 완료해 둘게', 'todo.complete', complete],
+      ['2번 완료해 줘서 고마워', 'todo.complete', complete],
+      ['2번 완료해줘 아냐', 'todo.complete', complete],
+      ['2번 완료해줘 아님', 'todo.complete', complete],
+      ['2번 완료해줘 ㄴㄴ', 'todo.complete', complete],
+      ['2번 완료해줘 노노', 'todo.complete', complete],
+      ['2번 완료해줘 됐어', 'todo.complete', complete],
+      ['2번 완료해줘 아 잠깐', 'todo.complete', complete],
+      ['complete 2 nope', 'todo.complete', complete],
+      ['please complete 2, nah', 'todo.complete', complete],
+      ['2번 완료해줘 취소', 'todo.complete', complete],
+      ['2번 완료해줘 취소', 'todo.cancel', complete],
+      ['2번 완료해줘 했던 거 되돌려줘', 'todo.complete', complete],
+      ['2번 완료해줘 했던 거 되돌려줘', 'action.undo', {}],
+      ['2번 완료해줘 하면 돼', 'todo.complete', complete],
+      ['undo 해줘 했더니 이상해', 'action.undo', {}],
+      ['예를 들어 2번 완료해줘', 'todo.complete', complete],
+      ['2번 취소 그만해', 'todo.cancel', complete],
+      // Codex at 186a94d: first-person volition, particle negations and 철회
+      ['내가 2번 완료할래', 'todo.complete', complete],
+      ['제가 2번 완료해요', 'todo.complete', complete],
+      ['2번 완료해줘. 아직 실행하지는 마', 'todo.complete', complete],
+      ['2번 완료해줘. 방금 요청 철회할게', 'todo.complete', complete],
+    ];
+    for (const [text, entryId, args] of never) expect((await run(text, entryId, args)).kind, text).not.toBe('execute');
+    const genuine: Array<[string, string, Record<string, unknown>]> = [
+      ['2번 완료해줘', 'todo.complete', complete],
+      ['그거 취소해 줄래', 'todo.cancel', { ref: 'this' }],
+      ['그거 취소해 줄 수 있어?', 'todo.cancel', { ref: 'this' }],
+      ['그거 완료해줄래?', 'todo.complete', { ref: 'this' }],
+      ['내일 9시에 회의 알려줘', 'reminder.create', { body: '회의', when: '내일 9시' }],
+      ['please complete 2', 'todo.complete', complete],
+      ['can you cancel 2', 'todo.cancel', complete],
+      ["할 일에 '보고서' 추가해줘", 'todo.add', { title: '보고서' }],
+      // Kept nominal commands (ratified A6 live phrases U4 / U8c; reported for the owner).
+      ["할 일에 'UAT 결과 정리' 추가", 'todo.add', { title: 'UAT 결과 정리' }],
+      ['2번도 완료', 'todo.complete', complete],
+    ];
+    for (const [text, entryId, args] of genuine) expect((await run(text, entryId, args)).kind, text).toBe('execute');
+    // Post-rule extension (Haiku cost analysis): a reason clause before the request, 할래, a Latin action word in a Korean
+    // request, the undo nouns; a negated clause naming the same action still vetoes.
+    const extended: Array<[string, string, Record<string, unknown>]> = [
+      ['3번 할 일은 필요 없어졌어 빼줘', 'todo.cancel', { ref: '#3' }],
+      ['1번은 안 할 거야 삭제해줘', 'todo.cancel', { ref: '#1' }],
+      ['알림 취소할래 2번', 'reminder.cancel', { ref: '#2' }],
+      ['1번 done 처리해줘', 'todo.complete', { ref: '#1' }],
+      ['아니 방금 거 되돌려줘', 'action.undo', {}],
+      ['방금 한 거 롤백', 'action.undo', {}],
+    ];
+    for (const [text, entryId, args] of extended) expect((await run(text, entryId, args)).kind, text).toBe('execute');
+    for (const [text, entryId, args] of [
+      ['2번 취소하지 마 3번 빼줘', 'todo.cancel', { ref: '#2' }],
+      ['2번 취소할래?', 'todo.cancel', { ref: '#2' }],
+      ['완료하지 말고 2번 처리해줘', 'todo.complete', { ref: '#2' }],
+    ] as const) expect((await run(text, entryId, args)).kind, text).not.toBe('execute');
+  });
+
+  it('a second or another source noun asks: "할 일 말고 2번 메일 취소해줘", "2번 (메일) 취소해줘", "메일2번 취소해줘"', async () => {
+    for (const text of ['할 일 말고 2번 메일 취소해줘', '2번 (메일) 취소해줘', '메일2번 취소해줘']) {
+      const w = world({ level: 'local', script: () => out('todo.cancel', { ref: '#2' }) });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      const decision = await w.decide(text, { now: at(1) });
+      expect(decision.kind, text).toBe('ask');
+      expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === 'other-source'), text).toBe(true);
+    }
+  });
+
+  it('shadow logs `shadow` for the new refusals, and a turn that ends as chat keeps lastSelection (CA review)', async () => {
+    const shadow = world({ level: 'shadow', script: () => out('todo.complete', { ref: '#2' }) });
+    shadow.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    expect((await shadow.decide('2번만요', { now: at(1) })).kind).toBe('none');
+    expect(shadow.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.result === 'shadow' && log.fields?.reason === 'no-action-word')).toBe(true);
+    const w = world({ level: 'local', script: () => out('todo.complete', { ref: '#2' }) });
+    const selection = { actorId: 'owner', entryId: 'mail.list', args: {}, at: at(0) };
+    w.setMetadata(LAST_SELECTION_METADATA_KEY, selection);
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    await w.decide('2번만요', { now: at(1) });
+    expect(w.session().metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual(selection);
+    await w.decide('2번 완료', { now: at(1) });
+    expect(w.session().metadata?.[LAST_SELECTION_METADATA_KEY]).toBeUndefined();
   });
 });

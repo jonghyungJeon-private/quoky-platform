@@ -24761,6 +24761,237 @@ other-source; 그 메일 one-item mail → item; 그 할 일 with several to-dos
 scripted selector; the Drive fixture's name and text say "이 문서 요약해줘" and nothing is read), `nl-action-eval.test.ts`
 (read-regression scoring of `neg-099` and `uat5r6-07`).
 
+### ADR-0120 amendment A6 implementation note — R1 gate fixes after the failed Haiku runs (2026-10-15)
+
+- **Trigger.** The A6 R1 Haiku gates (prompt `nl-select.v25`, 3 runs, origin/main eacd10c) failed: action exact 87.1–88.1%
+  overall (A6 entries only 89.4–90.2%), `reminder.create` 80.5–82.9%, span 93.8–95.0%, **1–2 wrong-target executes**
+  (`a6-reference-item.summarize-006` every run, `-005` once), **0–1 negative captures** (`a6-reference-none-001` "2번도" →
+  `todo.complete`), and the read regression had 11 read cases captured by an A6 entry (anchored commands) plus 1–2 wrong
+  captures (`neg-051`, `neg-111`, `help.topic`, not A6). Red team: 0 successes.
+- **Owner decisions (2026-10-15, recorded as given through the orchestrator).**
+  1. Fix, then re-evaluate with Haiku (not Sonnet).
+  2. The 11 anchored-command read cases (`neg-085/086/088/089/090/091/092/093/094/127/128`): in A6-on scoring (the
+     read-regression mode with the A6 entries offered) the A6 action is the correct gold; A6-off read scoring keeps `none`.
+  3. The relay cases `a6-paraphrase-reminder.create-901` and `a6-paraphrase-todo.add-902`: both `execute` and `none` count
+     as correct (the safer non-execution is acceptable).
+- **Core fixes (structural, no phrase routing).**
+  - *Same source only, for every ref kind* (A6-D2 "Same source only", resolution step 1). When the owner's own words name
+    item sources with the catalog's nouns (the aliases and source names of `mail.list`, `drive.files`, `todo.list`,
+    `reminder.list`: "1번 문서", "2번 메일", "그 알림", "mail 5"; whole words, particles allowed) and none of them is the
+    entry's source, the resolver asks (other-source) before any other step, including reply-to-pick, reminder display
+    numbers and `this` / `last`. The selector's `source` arg can no longer pull a mail behind "1번 문서" (the -006 wrong
+    target) or a Drive file behind "2번 메일" (-005). Known consequence: a ref sentence that also names another source
+    ("2번 메일 답장 완료" for to-do 2) asks; `match` spans are not affected.
+  - *A deictic alone never selects an entry* (A6-D2). A message whose words are only a reference (a deictic, a number, an
+    ordinal, particles, fillers, time words: the same word classes as the A6-D3 payload rule; "2번도", "그거", "1") selects
+    no action; like a selector `none` the turn is chat, logged `nl_action.decided` reason `no-request`. While an A6 target
+    question is open a bare number stays an answer to it (labels it lacks reach the resolver as before). This closes the
+    "2번도" negative capture without a verb list.
+  - *Whole-message time check*: a token loses up to two stacked particles, so "그리고 5시에도" is a time outside `when`
+    (it was missed and the case was asked only as "ambiguous").
+  - *Payload rule first*: a deictic-only payload span gets the A6-D3 fixed reply before a missing argument is named
+    ("그거 알림으로 만들어줘" has no time either).
+- **Prompt `nl-select.v26`** (the A6 prompt only; the read prompt and the A6 `off` pin stay `nl-select.v24`): rule 8 says
+  `when` has no trailing particle such as 에; `ref` "this" for 그거/이거/it/that and the last action's item, "recent" only
+  for 방금/아까, and "item 3 → #3"; two lines: pick the asked action even when Reference context shows another list or
+  nothing, and copy a deictic-only content as the span (Core asks). The same `ref` / `when` wording in the entries' arg
+  descriptions. No corpus phrase enters the prompt (test).
+- **Scorer (interpretation for reviewers).** A6-D7 scores exact `{entry, args, target}`; the corpus schema writes `{}`
+  for a refusal whose refused argument has no canonical value (time-in-title, deictic payload, bulk). Such a gold is now
+  scored by its closed reason: a hit when the selector named the gold entry, nothing executed, and Core's reason equals
+  the gold reason. Gold args that are not `{}` keep the exact comparison, and `recent` versus `this` stays an exact
+  difference (as the owner's `uat5r6-07` respelling decided). `expect.acceptsNone` carries owner decision 3. The 11
+  anchored cases carry their action as `a6Relabel` (batch `A6-R1-anchored-2026-10-15`), scored apart like the summary
+  relabels.
+- **Measured (Haiku, owner-approved re-evaluation; not the 3-run gate).** Probes, 5× each, on the 69 failing ids:
+  191/345 hits after the fixes vs 41/138 before (2×, v25); the 28 `this`/`recent` cases 130/140. One full action run:
+  overall 92.6% (A6 entries 358/376 = 95.2%), every A6 entry ≥ 92.7% (`reminder.create` 38/41, `item.summarize` 89/95),
+  span 97.5%, **0 wrong targets, 0 negative captures**, questions on references 0%, 0 over the bound. The gate still
+  fails only on READ-entry golds of the action corpus (below). One read-regression run: D12 97.2%, **0 action captures**,
+  1 wrong capture (`neg-051` → `help.topic`, a read-side case, not A6), relabeled 14/15 (`neg-086` title spelling).
+- **Gold issues for the owner (not changed here).**
+  - READ golds of the action corpus with args `{}` where the canonical read args are not empty (the schema says gold args
+    are the selector's canonical output): `a6-negative-mail.list-001` (`range: today`), `-002` and `-005` (`unread`),
+    `-003` (`count`), `-004` (`range: yesterday`), `a6-negative-drive.files-002` (`kind: spreadsheet`), `-003` (`name:
+    기획서`), `-004` (`kind: document`), `a6-negative-calendar.events-002` (`range: this-week`, `timedOnly`),
+    `a6-negative-todo.list-003` (`count`). They hold `mail.list` at 0/5, `drive.files` 1/4, `calendar.events` 1/2.
+  - Unknowable `source` in an ask gold: `a6-reference-item.summarize-008` (a reminder listing; gold `source: mail`), `-014`
+    (expired Drive listing, Reference context `none`), `-015` (no listing); the outcome (a question) is right.
+  - `a6-reference-item.summarize-006`: now asks (other-source) instead of reading mail 1; scored a miss because the
+    selector wrote `source: mail` and the gold `drive`.
+  - `a6-seed-ref-002` "13번 취소해줘" after a mail list: the selector asks to-do vs reminder; gold names `reminder.cancel`.
+  - `a6-reference-todo.complete-034` "1번" with an open question: its fixture lacks the listing the question writes, so
+    even a `todo.complete #1` selection resolves `none`, not `out-of-range`.
+  - `a6-paraphrase-todo.add-037` "오늘 할 일에 …": the time word is outside the title; A6-D1 asks only for a time inside
+    the title, so Core adds the to-do; the gold asks.
+  - `a6-reference-todo.cancel-005` "방금 추가한 거 취소해줘": `action.undo` of the `todo.add` cancels the same to-do; the gold
+    names `todo.cancel`.
+- **Not done.** The final 3-run gate (orchestrator, after review); `QUOKY_NL_ACTIONS` stays `off`.
+
+#### A6 R1 gold fixes — owner D12 batch (2026-10-15, "권장안대로 수정")
+
+The owner approved every recommended gold fix of the note above, as a D12 batch:
+
+1. READ entries in the action corpus (`a6-negative-mail.list-001..005`, `drive.files-002..004`, `calendar.events-002`,
+   `todo.list-003`, and every other READ gold there) are scored on the entry only: the action corpus measures action
+   selection; the read corpus (`nl-intent.v1.json`) scores read args.
+2. `a6-reference-item.summarize-006/008/014/015` and `a6-seed-ref-002`: a clarification is the correct outcome
+   (`expect.acceptsAnyQuestion`: any question Core asks, nothing executed).
+3. `a6-reference-todo.cancel-005`: `todo.cancel` and `action.undo` both count (same item, same outcome;
+   `expect.alsoAccepts`, the target still compared exactly).
+4. `a6-reference-todo.complete-034` gets the listing its open question writes (to-do labels 2, 3);
+   `a6-paraphrase-todo.add-037` is `execute {title: "청소기 필터 교체"}` per A6-D1 (the time word is outside the title);
+   `neg-086`'s `a6Relabel` title is the owner's verbatim words "보고서 제출하는 거".
+
+**`neg-051` (read regression wrong capture, not A6).** Probed with Haiku: the read prompt `nl-select.v24` answers `none`
+20/20 (rule 2: a question about what a phrase means); the A6 prompt answered `help.topic` 9/10, pulled by the v25 rule-8
+parenthetical "a how-to question about Quoky is help.topic". Class: prompt. Fix in `nl-select.v26` (A6 prompt only): the
+parenthetical adds "a question about what a phrase or command would do or mean stays none, rule 2". After: `none` 20/20;
+the 51 `help.topic` read cases 2× each keep their outcome (101/102; the one miss, `help-027`, also missed in the v25 runs).
+
+#### A6 R1 review fixes (Codex P1, CA APPROVE WITH CHANGES, 2026-10-15)
+
+- **Action grounding replaces the content-token heuristic (Codex P1 1).** `todo.complete`, `todo.cancel`, `reminder.cancel`
+  and `action.undo` declare their own closed action vocabulary (`NlCatalogEntry.actionGrounding`, a value validator like
+  `flagGrounding` / `valueGrounding`: completion words; cancel/delete words, plus 빼/안 할 for to-dos and 꺼/끄/멈춰 for
+  reminders; undo words). A selection whose prose (pasted structures removed) holds none of them writes nothing and the
+  turn is chat (`nl_action.decided` reason `no-action-word`): "2번도", "2번만요", "그걸로요", "13번 알림". `todo.add` and
+  `reminder.create` keep their payload grounding, `item.summarize` its content words. Dictionary synonyms checked against
+  the corpus positives were added (제외, 없던 걸로, 캔슬, 롤백, 원복); a phrasing outside the class fails closed to chat.
+  *CA delta:* no 처리 or 체크 ("2번 처리 방법 알려줘", "2번 체크해봐" are not completions), and 끝 only in its completion
+  forms (끝냈 / 끝났 / 끝내 / 끝마치; "2번 언제 끝나?" grounds nothing), so the typo "3번 완룐 처리해줘" and "1번 할일
+  체크해줘" are chat.
+- **An open A6 question (Codex P1 2).** While an A6 question is open, a selector-path action runs only for the questioned
+  entry on one of its candidates; anything else writes nothing (chat, reason `pending-question`). A bare number or ordinal
+  that is none of the offered labels ("9" against 2 and 3) is asked again by the answer path and never reaches the
+  selector. The lock lasts one turn: any reply ends the question (D7), so only the turn that answers it is affected, and
+  a blocked action gets the fixed reply "질문이 열려 있어 실행하지 않았어요. 다시 말씀해 주세요." (CA delta; not silent chat).
+- **Source nouns fail closed (Codex P1 3/4, CA P2).** A message naming another source noun than the entry's, or more than
+  one ("할 일 말고 2번 메일 취소해줘": negation is not parsed), asks (other-source). Brackets, punctuation and digit-letter
+  joins are noun boundaries ("2번 (메일)", "메일2번"). A ref sentence whose title words hold a source noun ("2번 문서 작업
+  완료") asks too; `match` spans are not checked.
+- **Undo checks the owner's number and source (CA delta).** On the selector path `action.undo` asks (restate) when the
+  prose names another source noun than the last action's (or two), or a number or ordinal other than its shown label:
+  "2번 취소해줘" / "2번 메일 취소해줘" after "할 일 5번으로 추가했어요" never undo to-do 5; "5번 되돌려줘", "그 할 일 되돌려줘"
+  and "방금 거 되돌려줘" do.
+- **Golds relabelled to `none`, PENDING owner approval (separate commits):** `a6-negative-todo.list-007` "취소된 할 일도
+  보여줘" and `a6-negative-reminder.list-005` "취소된 알림 보여줘" (the list entries cannot show canceled items);
+  `a6-paraphrase-todo.complete-018` "3번 완룐 처리해줘" and `-009` "1번 할일 체크해줘" (no completion word of the closed
+  vocabulary).
+- **CA P2s.** Shadow logs the new refusals as `shadow`; `lastSelection` is cleared only when an A6 turn executes or asks
+  (A6-D3), not when it ends as chat; `acceptsAnyQuestion` counts only clarification reasons (resolution outcomes,
+  content-mode, missing/invalid/ungrounded arg), never a refusal (input guard, caps, kill switch, payload or time rules);
+  a test pins the deictic-payload-before-missing-arg order.
+- **`neg-094` "매일 아침 8시에 브리핑 알려줘" (for the owner).** The anchored reminder grammar parses it as a DAILY reminder
+  with `bodyKind: BRIEF` before any selection; an A6 `reminder.create` would store a TEXT reminder. It leaves the A6-on
+  relabel (now 10 anchored cases) and is skipped in A6-on scoring (`a6Skip: grammar-owned`); read mode keeps `none`.
+- **`a6-reference-todo.complete-034` "1번".** With its question's listing, the answer path now asks again (out-of-range
+  labels), so its gold accepts any clarification (`acceptsAnyQuestion`).
+- **Reason-equal refusal scoring: OWNER-RATIFIED (2026-10-15, "채점 채택").** A gold refusal or question whose args are `{}`
+  is a hit when the selector named the gold entry, nothing executed and Core's closed reason equals the gold reason
+  (`nl-action-eval.ts`, `sameReason`). The A6-D3 deictic-payload refusal itself is unchanged.
+- **Haiku check (owner-approved, 1 run each, not the gate).** Action: overall 96.0% (388/404), every A6 entry ≥ 90.2%
+  (`reminder.create` 37/41, `todo.complete` 71/75, `item.summarize` 91/95), span 96.3%, 0 wrong targets, 0 negative
+  captures, 0 over the bound; the run's gate fails only on two READ entries where Haiku answers `none` (`todo.list` 6/7:
+  "취소된 할 일도 보여줘"; `reminder.list` 5/6: "취소된 알림 보여줘"). Read regression: D12 96.6%, 0 action captures,
+  0 wrong captures, relabeled 14/14: **gate passed**.
+- **Haiku check after the CA delta (1 action run, with the four pending relabels):** overall 96.3% (385/400), every entry
+  ≥ 92.5% (`todo.cancel` 37/40, `item.summarize` 90/95), span 97.5%, 0 wrong targets, 0 negative captures, 0 over the
+  bound: the run's gate passed. The 3-run gate is the orchestrator's.
+
+#### A6 R1 Codex round 2 (2026-10-15)
+
+- **Payload entries need their own action words.** `todo.add` (추가, 넣어, 올려, 적어, 등록, 기록, 메모, add, put, note, jot)
+  and `reminder.create` (알려, 알림, 알람, 리마인드, 리마인더, 깨워, 상기, remind, reminder, alert, ping, notify) declare
+  `actionGrounding` too; a payload without one ("내일 9시 우유") asks to restate. Checked against every execute gold.
+- **Payload rule.** Particles glued to a reference go with it, and an item-source noun is no content: "2번만요", "그걸로요",
+  "13번 알림" are deictic-only payloads.
+- **Negation and adnominal forms.** An action word followed by the closed negation "-지 마/말아/않" or preceded by 안/못
+  ("2번을 완료하지 말아줘", "취소하지 마"), or in an adnominal form in the same word ("제외된 거", "취소된 알림", "완료한
+  할 일"), grounds nothing; another occurrence still can ("완료하지 말고 취소해줘" grounds the cancel only).
+- **Glued source nouns.** A source noun glued to a following action or content word of the catalog's vocabularies counts
+  ("2번 메일취소해줘", "2번 알림취소해줘", "문서요약해줘"); glued to anything else it does not ("알림장").
+- **Match spans.** The source cross-check covers `match`: the prose outside the span must not name another source and the
+  whole prose not two ("할 일 말고 2번 메일 취소해줘" with match "메일" asks; "메일 답장 완료해줘" with match "메일 답장"
+  runs).
+
+### ADR-0120 amendment A6 note — the to-do and reminder list status filter (owner-approved 2026-10-15)
+
+- **Owner decision (2026-10-15, "지금 추가").** The `todo.list` and `reminder.list` READ entries gain a `status` arg so
+  "취소된 할 일 보여줘" / "취소된 알림 보여줘" have a read answer.
+- **Values (closed, from the domain lifecycles).** `todo.list`: `active` (default, `ACTIVE`) | `canceled` | `completed` |
+  `all`. `reminder.list`: `active` (default, `SCHEDULED` and `FIRING`) | `canceled` | `done` (already fired: `COMPLETED`,
+  `FAILED`, `DELIVERY_UNCERTAIN`) | `all`. Value words through `valueGrounding` (취소된/뺀/끈, 완료된/끝난, 지난/울린,
+  전체/전부/모든); the default needs none and is omitted from canonical args.
+- **Read only, no migration.** Rows keep their status. `ReminderRepository.listByActorStatuses(actorId, statuses)` is
+  additive (SQLite: one `SELECT … status IN (…) ORDER BY display_no`); to-dos filter `WorkManager.listByActor`.
+- **Rendering.** A status view shows each item's status ("(취소)", " · 보냄"); to-dos are unnumbered and neither view records
+  an A6 listing, so "N번 완료/취소" keeps meaning the open list (reminder `#N` display numbers are shown, they are stable).
+- **Prompts.** The read prompt's catalog text changes, so the read prompt is `nl-select.v27` and the A6 `off` pin moves to
+  `golden/nl-select.v27.prompts.json` (25 of the 76 inputs change, only the two list entries' lines); the A6 prompt is
+  `nl-select.v28` (the v26 A6 text on v27). No instruction line changes.
+- **Grammar.** The anchored work-chat grammar yields "취소된 할 일도 보여줘" to selection under `QUOKY_NL_GRAMMAR_YIELD=on`
+  (A2: unexpressed content); "전체 할 일" stays the grammar's open list (전체 is an expressed word of that grammar).
+- **Wording conflict resolved (2026-10-15).** Through NL selection, 전체 / 전부 / 모든 / 다 보여 mean `all` (canceled and
+  completed included). The anchored grammar's "전체 할 일" keeps showing the open list, so "전체" means `all` only when
+  selection reads it. "지난 알림" (past) shows one-shot reminders that already fired; past firings of recurring reminders
+  are not listed.
+- **Corpus.** `a6-negative-todo.list-007` and `a6-negative-reminder.list-005` return to their list golds with
+  `status: canceled` (the pending relabel to `none` is reverted). `a6-paraphrase-todo.complete-018` ("완룐") and `-009`
+  ("체크해줘") stay relabelled to `none`, PENDING owner approval.
+- **Haiku check (owner-approved, 1 run each, after Codex round 2 and the status filter).** Action: overall 97.3% (391/402),
+  every entry ≥ 94.7% (`item.summarize` 90/95, `reminder.create` 39/41), span 97.5%, 0 wrong targets, 0 negative captures,
+  0 over the bound, gate passed in the run. Read regression: D12 96.8%, 0 action captures, 0 wrong captures, relabeled
+  14/14, gate passed.
+
+#### A6 R1 scope reduction: the positive request-form rule (orchestrator decision, 2026-10-15)
+
+- **Why.** CA round 3 still found negation and question bypasses of the negative-list backstop, past the fix-loop cap for
+  that finding. The orchestrator inverted the backstop.
+- **Rule.** Every A6 write (`todo.add`, `todo.complete`, `todo.cancel`, `reminder.create`, `reminder.cancel`,
+  `action.undo`) grounds only when the entry's action word heads an affirmative request from a closed grammatical set:
+  Korean request endings (해줘, 해 주세요, 해줄래, 해 줄 수 있어, 해주실래요, 해 주시겠어요, 하자, 해, 해라, 놔, 둬, 부탁해 …)
+  right after the word (only its own ending, 로/다고, 처리/표시/기록/복구, 좀 and a carrier verb between), or a bare
+  imperative of the vocabulary's verbs; English: the action word (or mark/set/make/turn/put) leads the clause, after an
+  optional please / can-could-would-will you. A question grounds only in a polite request form. A negation anywhere in the
+  message vetoes (Codex). Anything else asks ("실행할까요? \"2번 완료해줘\"처럼 요청으로 말씀해 주세요") or, with no action
+  word at all, is chat; nothing executes.
+- **Deviation for the owner.** The nominal command (the verbal noun ends the whole message: "할 일에 'UAT 결과 정리' 추가",
+  "2번도 완료", "reminder 12 cancel") still grounds, because the ratified A6 live phrases U4 and U8c and the anchored Class A
+  grammar ("1번 완료") use that form. Removing it is one line plus the U4/U8c acceptance expectations; owner's call.
+- **Cost.** Owner-approved golds that name the action without a request form stay as approved and count as misses
+  (`isRequestFormCost`), measured in the Haiku run below.
+- **Closed for R1 (orchestrator decision, 2026-10-15, after the CA delta 4ab11e1..cc81b2f).** Three last holes were fixed:
+  a bare 해 / 꺼 / 지워 followed by an auxiliary (줘서, 줬, 놨, 놓, 뒀, 둔, 둘, 버렸, 봤: "완료해 뒀어", "꺼 놨어") is a
+  done-statement; a retraction after a request (아냐, 아님, ㄴㄴ, 노노, 됐어, 잠깐, nope, nah, or a cancel / undo / stop word:
+  "2번 완료해줘 취소", "2번 취소 그만해") vetoes it, and 그만 left the cancel vocabulary; a quoted or reported request
+  (…해줘 했던 / 라고 / 하면 / 하고 / 했더니 / 그랬) or an example frame (예를 들어, 예컨대) refuses the message. With that
+  the request-form backstop is CLOSED for R1: further edge strings are recorded as accepted residual risk, because the
+  writes are local and undoable, the selector must also err for one to run, and the attended labelled live session of at
+  least 100 turns is the empirical check.
+  Codex at 186a94d: two strings from this round's own rules were fixed (a first-person subject 내가 / 제가 / 나는 / 저는
+  makes the message a statement or volition: "내가 2번 완료할래", "제가 2번 완료해요"; a particle negation "-지는 마" and
+  철회 retract a request: "2번 완료해줘. 아직 실행하지는 마", "2번 완료해줘. 방금 요청 철회할게"). Recorded as ACCEPTED
+  RESIDUAL RISK, not fixed: "can you tell me how to mark 2 complete", "I used to mark 2 complete", "I wish I could mark 2
+  complete", "2번 완료해줘 라는 말은 예시야".
+- **Reported-speech residual family (accepted, R1 final gate, 2026-10-15).** Not covered by REPORTED_AFTER_REQUEST / QUOTED_REQUEST, recorded as accepted residual risk: "2번 완료해줘 했어", "어제 2번 완료해줘 했어", "2번 완료해줘 했지/했다", "2번 완료해 달라고 했어", "…하길래", "…해서", "…하니까". To be labelled in the ≥100-turn live session.
+
+#### A6 R1 final Haiku gate (3 runs, prompt read v27 / A6 v29, 2026-10-15)
+
+- **Action corpus (3 runs).** Overall 95.8% / 96.8% / 95.5%. Safety: wrong target 0 / 0 / 0, negative captures 0 / 0 / 0.
+  Run 1 is below the gate only on the READ entry `reminder.list` (5 of 6); the other entries pass in that run.
+- **Read regression (3 runs).** 95.7% / 95.4% / 96.4%. A6 captures 0 / 0 / 0. Run 2 has one wrong capture: `neg-051`
+  → `help.topic` (read-only, not an A6 write).
+- **Result.** Safety 3/3, utility 2/3 per corpus: not a full pass. The owner decides the flag after the labelled live
+  session of at least 100 turns. `QUOKY_NL_ACTIONS` stays `off`.
+- **Pending owner gold (default ask).** `a6-paraphrase-todo.complete-018`, `a6-paraphrase-todo.complete-009`,
+  `a6-paraphrase-reminder.create-020`, `a6-paraphrase-reminder.create-022`.
+- **Artifacts.** `data/eval/a6-r1-final-run{1,2,3}-{action,readreg}.*`.
+
+
+
+
+
 ### ADR-0120 amendment A8 — Jira release listings: a `jira.release` READ entry (one fix version for every assignee, or a project's release list), three named read queries, and release links only on the configured Jira site (Proposed — awaiting the owner's yes) (2026-10-15)
 
 - **Status:** **Accepted by the owner on 2026-10-15** with two changes (decisions 2 and 7; see "ADR-0120 amendment A8
@@ -25653,3 +25884,5 @@ flight takes effect from the next step or turn for READS — grammar claims and 
 snapshot; strong writes are always re-checked at the call. The feature ships with `QUOKY_CHANNEL_GRANTS` default `off`
 (owner: off during development). Tests: a revoke during the awaited push preflight (no push), and during the
 connector-write reconcile (no send).
+
+- Rebased onto A8/A9 P1: read prompt v30, A6 prompt v31; the R1 final gate ran on read v27/A6 v29 (pre-merge) — re-run on v30/v31 before the flag decision.

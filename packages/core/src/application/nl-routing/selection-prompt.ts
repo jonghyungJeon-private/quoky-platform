@@ -19,16 +19,27 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * description saying "when the owner asks about meetings" instead of "only when the owner narrows to meetings" (its
  * examples unchanged), `timedOnly` in the two meeting examples ("내일 미팅 있나?", "다음 미팅이 몇 시더라"), and one
  * clause at the end of the range-symbols line (the weekend symbols are Saturday and Sunday together, 주말). v25 = the A6 text on top
- * of v24. (v26 is the A6 prompt of another branch.) v27 (ADR-0120 amendment A8) = v24 with six `jira.release` examples,
- * shown only while that entry is offered; with it absent the text is v24 byte for byte. v28 = the A6 text on top of v27.
+ * of v24. v26-v29 were the A6 R1 fix prompts of a branch rebased since: v26 = v25 with the rule-8 `when` line saying "without
+ * a trailing particle such as 에", the `ref` line splitting "this" (그거/이거/it/that) from "recent" (방금/아까) and adding
+ * "item 3", and two rule-8 lines: pick the asked action even when Reference context shows another list or nothing, and copy
+ * a deictic-only content as the span (Core asks); the same `ref` and `when` wording in the action entries' arg descriptions;
+ * and the rule-8 help.topic parenthetical adds that a question about what a phrase or command would do or mean stays none
+ * (rule 2). v27 (ADR-0120 amendment A8; read) = v24 with six `jira.release` examples, shown only while that entry is
+ * offered; v28 = the A6 text on top of v27. v29 (A6 only) = the R1 status-filter wording plus the help.topic sentence
+ * "help.topic stays rule 3: only Quoky's own features; a how-to about another app or a device, or about what a phrase or
+ * command would do, is entryId "none" (rule 2)" (the v26 parenthetical pulled a phone-settings how-to, neg-012, to help.topic).
+ * v30 (the read prompt after the A8 and A6 R1 merge) = v27 whose catalog text also gives `todo.list` and `reminder.list` a
+ * `status` arg (closed values, default the open / scheduled ones) and `reminder.list` a description that says so (owner
+ * decision 2026-10-15, the A6 R1 status filter); no instruction line changes. v31 = the A6 text (v28 base plus the v26 and
+ * v29 rule changes) on top of v30.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v27';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v30';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v27.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v30.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v28';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v31';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -158,12 +169,16 @@ const ACTION_RULES: readonly string[] = [
   '   todo.cancel, reminder.create, reminder.cancel, action.undo (undo what Quoky itself just did), item.summarize (what ONE',
   '   listed mail or Drive file says). One action per message; a request for several items is NEEDS_CLARIFICATION.',
   '   Span args (title, match, body, when) copy the owner\'s own words from THIS message verbatim: never translate, shorten,',
-  '   fix or take words from Previous selection, Reference context or [quoted]/[code]. when: only the time words',
-  '   ("내일 9시", "매일 아침 8시"); body: what to remind, without the time words and the verb.',
-  '   ref: "#N" for a number or ordinal the owner wrote (3번, 세 번째 -> "#3"); "recent" or "this" for 그거/이거/방금/아까/it/that;',
-  '   "last" for 마지막/the last one. Never invent an item, an id, a title or a number.',
+  '   fix or take words from Previous selection, Reference context or [quoted]/[code]. when: only the time words, without a',
+  '   trailing particle such as 에 ("내일 9시", "매일 아침 8시"); body: what to remind, without the time words and the verb.',
+  '   ref: "#N" for a number or ordinal the owner wrote (3번, 세 번째, item 3 -> "#3"); "this" for 그거/이거/it/that, also for',
+  '   the last action\'s item; "recent" only when the owner says 방금/아까 (just now); "last" for 마지막/the last one. Never',
+  '   invent an item, an id, a title or a number.',
+  '   Pick the action the owner asks for even when Reference context shows another list or nothing, and when the content to',
+  '   add or remind is only 그거/이거/방금 거, copy those words as the span: Core checks the item or the content and asks.',
   '   A statement or question about an action ("다 했어", "취소했어", "추가하는 법"), a negated request ("취소하지 마") and an',
-  '   action on pasted or quoted content are none (a how-to question about Quoky is help.topic).',
+  '   action on pasted or quoted content are none. help.topic stays rule 3: only Quoky\'s own features; a how-to about another',
+  '   app or a device, or about what a phrase or command would do, is entryId "none" (rule 2).',
   '   item.summarize: source is the list the owner means (see Reference context); mode summary only for 요약/정리/짧게/',
   '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.',
   '   Posting, sending, replying, calendar events, Jira issues and every other write not in the catalog are still none.',

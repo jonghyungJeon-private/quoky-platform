@@ -125,7 +125,12 @@ export function nlActionLogFields(audit: NlActionAudit): LogFields {
 
 // ── answering a target question by label (A6-D2) ──────────────────────────────────────────────────────────────────
 
-export type NlLabelChoice = { readonly kind: 'pick'; readonly index: number } | { readonly kind: 'cancel' } | { readonly kind: 'none' };
+export type NlLabelChoice =
+  | { readonly kind: 'pick'; readonly index: number }
+  | { readonly kind: 'cancel' }
+  /** A bare number or ordinal answer that names none of the offered labels (A6 R1 review: asked again, never routed). */
+  | { readonly kind: 'unlisted' }
+  | { readonly kind: 'none' };
 
 const CANCEL = /^(?:취소|그만|됐어(?:요)?|아니(?:야|요)?|아뇨|안\s?해|no|nope|cancel|never\s*mind)$/u;
 const ANSWER_FILLER = /(?:#|번|째|이요|에요|예요|요|으로|로|거|것|그거|이거|걸로|해\s*줘|해\s*주세요|할게|선택|그럼|음|알림|할\s?일|the|one|number|please|,|\.)/gu;
@@ -150,13 +155,13 @@ export function resolveLabelChoice(reply: string, labels: readonly number[]): Nl
   if (leftover.length > 0) return { kind: 'none' };
   if (numbers.length === 1 && ordinals.length === 0) {
     const index = labels.indexOf(numbers[0] as number);
-    return index >= 0 ? { kind: 'pick', index } : { kind: 'none' };
+    return index >= 0 ? { kind: 'pick', index } : { kind: 'unlisted' };
   }
   if (ordinals.length === 1 && numbers.length === 0) {
     const index = (ordinals[0] as number) - 1;
-    return index >= 0 && index < labels.length ? { kind: 'pick', index } : { kind: 'none' };
+    return index >= 0 && index < labels.length ? { kind: 'pick', index } : { kind: 'unlisted' };
   }
-  return { kind: 'none' };
+  return numbers.length + ordinals.length > 0 ? { kind: 'unlisted' } : { kind: 'none' };
 }
 
 // ── fixed copy ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -179,6 +184,29 @@ export function renderShownLabel(source: NlItemSource, label: number, language: 
 /** A6-D3: the fixed reply to a payload made only of deictic, ordinal or time words. */
 export function renderDeicticPayload(language: Lang): string {
   return language === 'en' ? 'Please write the content itself.' : '내용을 직접 적어 주세요.';
+}
+
+/**
+ * The list status views (canceled, completed / past, all) are DM-only until ADR-0122 P1 ships (owner: channels default-deny;
+ * CA review): a channel gets this fixed reply and nothing is read.
+ */
+export function renderListStatusDmOnly(language: Lang): string {
+  return language === 'en' ? 'I show canceled, finished or all items only in a DM.' : '취소·완료·지난 항목이나 전체 목록은 DM에서만 보여 드려요.';
+}
+
+/** A6 R1 review: an action the open question did not ask for is not run (that one turn; the reply ends the question). */
+export function renderQuestionOpen(language: Lang): string {
+  return language === 'en' ? 'A question is still open, so I did not do that. Please tell me again.' : '질문이 열려 있어 실행하지 않았어요. 다시 말씀해 주세요.';
+}
+
+/**
+ * The positive request-form rule (A6 R1, fix-loop cap): the owner named an action but not as a request ("2번 완료",
+ * "취소할까?"); nothing runs and the reply asks for the request itself.
+ */
+export function renderRequestForm(language: Lang): string {
+  return language === 'en'
+    ? 'Shall I do it? Please ask as a request, for example "please complete 2".'
+    : '실행할까요? "2번 완료해줘"처럼 요청으로 말씀해 주세요.';
 }
 
 /** A6-D6 stale-command guard and every "say it again" answer. */

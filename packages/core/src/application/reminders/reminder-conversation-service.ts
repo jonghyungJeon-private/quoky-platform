@@ -526,18 +526,24 @@ export class ReminderConversationService {
    * The reminder list as a typed entry (ADR-0120: a `reminder.list` selection maps to the existing LIST, ADR-0101 D2
    * amended narrowly). Same copy as "알림 목록"; the disabled copy while reminders are off. Never throws.
    */
-  async listReply(input: Omit<ReminderTurnInput, 'text'>): Promise<OutboundMessage> {
-    return (await this.listReplyDetailed(input)).reply;
+  async listReply(input: Omit<ReminderTurnInput, 'text'>, status?: ReminderListStatusFilter): Promise<OutboundMessage> {
+    return (await this.listReplyDetailed(input, status)).reply;
   }
 
   /**
    * {@link listReply} plus the A6 listing receipt (only with `actionReceipts`): the reminders exactly as rendered, so a
    * selector-chosen list refreshes the reminder slot like "알림 목록" does (CA review P1). Never throws.
    */
-  async listReplyDetailed(input: Omit<ReminderTurnInput, 'text'>): Promise<ReminderTurnResult> {
+  async listReplyDetailed(input: Omit<ReminderTurnInput, 'text'>, status?: ReminderListStatusFilter): Promise<ReminderTurnResult> {
     const turn: ReminderTurnInput = { ...input, text: '' };
     if (!this.deps.enabled) return { reply: this.reply(turn, this.deps.composer.disabled()) };
     try {
+      if (status !== undefined) {
+        // A read-only status view (owner-approved 2026-10-15): never an A6 listing, so "N번 취소" keeps meaning the
+        // scheduled list (and a display number, which is stable anyway).
+        const reminders = await this.deps.repository.listByActorStatuses(input.actorId, REMINDER_STATUS_VIEW[status]);
+        return { reply: this.reply(turn, this.deps.composer.statusListRendered(reminders, status, input.now).body) };
+      }
       const active = await this.deps.repository.listActiveByActor(input.actorId);
       const rendered = this.deps.composer.listRendered(active, input.now);
       const listing = this.deps.actionReceipts === true ? listingOf(active.slice(0, rendered.shown)).listing : undefined;
@@ -555,6 +561,14 @@ export class ReminderConversationService {
     return outboundMessage(input.context, body, { replyToMessageId: input.messageId });
   }
 }
+
+/** The non-default reminder list views (the `reminder.list` `status` arg, owner-approved 2026-10-15). */
+export type ReminderListStatusFilter = 'canceled' | 'done' | 'all';
+const REMINDER_STATUS_VIEW: Readonly<Record<ReminderListStatusFilter, readonly ReminderStatus[]>> = {
+  canceled: [ReminderStatus.CANCELED],
+  done: [ReminderStatus.COMPLETED, ReminderStatus.FAILED, ReminderStatus.DELIVERY_UNCERTAIN],
+  all: Object.values(ReminderStatus),
+};
 
 /** The A6 write condition of a turn, as a cancel input field. */
 function conditionOf(input: { readonly actionCondition?: ActionWriteCondition; readonly language?: 'ko' | 'en' }): { readonly condition?: ActionWriteCondition; readonly language?: 'ko' | 'en' } {

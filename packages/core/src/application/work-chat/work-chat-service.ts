@@ -33,6 +33,7 @@ import {
   WORK_CHAT_SOURCE_QUERIES,
 } from './work-chat-command';
 import type {
+  TodoListStatusFilter,
   WorkChatCommand,
   WorkChatLookupQuery,
   WorkChatSource,
@@ -45,6 +46,7 @@ import {
   renderLookupUnsupported,
   renderMyWork,
   renderSearchCredentialRefused,
+  renderTodoStatusList,
   renderTodoAdded,
   renderTodoAmbiguous,
   renderTodoCanceled,
@@ -293,6 +295,9 @@ export class WorkChatService implements WorkDesk {
           return replyWith(added.body, added.item === undefined ? {} : await this.addReceipt(added.item, actor));
         }
         case 'todo.list':
+          // A status view (owner-approved 2026-10-15): read-only, unnumbered, never an A6 listing (numbers stay the open list's).
+          if (command.kind === 'todo.list' && command.status !== undefined) return reply(await this.listTodosByStatus(command.status, actor));
+        // falls through
         // ADR-0104 D3 (DET-2): a status question about the whole list is answered with the same store-backed view.
         case 'todo.summary': {
           const listed = await this.listWorkWithItems(actor);
@@ -371,6 +376,14 @@ export class WorkChatService implements WorkDesk {
   }
 
   // -- to-do commands (WorkManager only) --------------------------------------------------------------------------------
+
+  /** The actor's to-dos of one status view (read-only; rows keep their status, no migration). */
+  private async listTodosByStatus(status: TodoListStatusFilter, actor: Actor): Promise<MessageBody> {
+    const wanted: ReadonlySet<WorkItemStatus> =
+      status === 'canceled' ? new Set([WorkItemStatus.CANCELED]) : status === 'completed' ? new Set([WorkItemStatus.COMPLETED]) : new Set(Object.values(WorkItemStatus));
+    const todos = (await this.deps.work.listByActor(actor.id)).filter((item) => wanted.has(item.status));
+    return renderTodoStatusList([...todos].sort(compareTodos), status);
+  }
 
   private async activeTodos(actor: Actor): Promise<WorkItem[]> {
     return [...(await this.deps.work.listActiveByActor(actor.id))].sort(compareTodos);

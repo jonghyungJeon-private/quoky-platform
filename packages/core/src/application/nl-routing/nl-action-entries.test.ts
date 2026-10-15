@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NL_ACTION_ENTRIES,
   containsNlTimeExpression,
+  nlNamedItemSources,
   hasNlDeterminerReference,
   isNlBulkRequest,
   isNlDeicticOnlyPayload,
@@ -264,15 +265,15 @@ describe('item.summarize (record C): the owner must ask for the content; mode on
   });
 });
 
-describe('the selection prompt (A6-D7): v27 byte for byte with the flag off, v28 with actions', () => {
-  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v27.prompts.json', import.meta.url), 'utf8')) as {
+describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v31 with actions', () => {
+  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v30.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
   };
 
-  it('pins nl-select.v27 for every golden input (no `actions`)', () => {
-    expect(golden.version).toBe('nl-select.v27');
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v27');
+  it('pins nl-select.v30 for every golden input (no `actions`)', () => {
+    expect(golden.version).toBe('nl-select.v30');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v30');
     for (const golden_ of golden.cases) {
       const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
       const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
@@ -280,8 +281,8 @@ describe('the selection prompt (A6-D7): v27 byte for byte with the flag off, v28
     }
   });
 
-  it('v28 adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v28');
+  it('v31 adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v31');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
@@ -337,7 +338,9 @@ describe('the A6 input guard (red-team review): unmarked pastes, hidden characte
 describe('round 2 (Codex/CA delta)', () => {
   it('every action arg is grounded only outside pasted structures: a ref inside JSON grounds nothing', () => {
     const text = '{"request":"1번 완료해줘"}';
-    expect(validateSelection({ entryId: 'todo.complete', args: { ref: '#1' } }, ctx(text))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'ref' });
+    // The action word inside the JSON grounds nothing either (A6 R1 review: `actionGrounding` reads the owner's prose only).
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: '#1' } }, ctx(text))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: '#1' } }, ctx(`${text} 완료`))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'ref' });
     expect(validateSelection({ entryId: 'reminder.cancel', args: { ref: 'this' } }, ctx('[{"text":"그거 취소"}]'))).toMatchObject({ ok: false, reason: 'ungrounded' });
     expect(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1', mode: 'summary' } }, ctx('{"ask":"1번 요약"} 이거'))).toMatchObject({ ok: false });
   });
@@ -450,5 +453,46 @@ describe('round 6: the URL exemption neutralises only an http(s) `://`, never re
 
   it.each(['https://jira.example/BE-12', 'https://host:8080/x', '할 일에 https://jira.example.com/browse/BE-12 확인 추가', '(https://a.example/x) 확인 할 일로', '9:30 회의 준비 할 일로', '14:05에 회의 준비'])('%s is allowed', (text) => {
     expect(nlActionInputRefusal(text, text)).toBeUndefined();
+  });
+});
+
+describe('A6 R1 fix: the catalog\'s item-source nouns and stacked particles', () => {
+  it('names the item sources the owner wrote with the catalog\'s own words, whole words only', () => {
+    expect([...nlNamedItemSources('1번 문서 요약해줘요')]).toEqual(['drive']);
+    expect([...nlNamedItemSources('2번 메일에서는 뭐래')]).toEqual(['mail']);
+    expect([...nlNamedItemSources('13번알림 꺼줘')]).toEqual(['reminder']);
+    expect([...nlNamedItemSources('mail 5 summary please')]).toEqual(['mail']);
+    expect([...nlNamedItemSources('e-mail 2')]).toEqual(['mail']);
+    expect([...nlNamedItemSources('두 번째 거 요약해줘')]).toEqual([]);
+    expect([...nlNamedItemSources('회의 알림장 1번')]).toEqual([]);
+    expect([...nlNamedItemSources('그 문서화 작업')]).toEqual([]);
+  });
+
+  it('a time word with two stacked particles is still a time ("그리고 5시에도")', () => {
+    expect(containsNlTimeExpression('회의 알려줘 그리고 5시에도')).toBe(true);
+    expect(containsNlTimeExpression('회의 알려줘')).toBe(false);
+  });
+});
+
+describe('A6 R1 review: the payload rule before a missing argument', () => {
+  it('"그거 알림으로 만들어줘" with only a deictic body is a deictic payload, not a missing time', () => {
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '그거' } }, ctx('그거 알림으로 만들어줘'))).toMatchObject({ ok: false, reason: 'deictic-payload', arg: 'body' });
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '물 마시기' } }, ctx('물 마시기 알림으로 만들어줘'))).toMatchObject({ ok: false, reason: 'missing-arg', arg: 'when' });
+  });
+
+  it('source nouns behind brackets or glued to a digit are found', () => {
+    expect([...nlNamedItemSources('2번 (메일) 취소해줘')]).toEqual(['mail']);
+    expect([...nlNamedItemSources('메일2번 취소해줘')]).toEqual(['mail']);
+    expect([...nlNamedItemSources('할 일 말고 2번 메일 취소해줘')].sort()).toEqual(['mail', 'todo']);
+  });
+});
+
+describe('A6 R1 review: the completion vocabulary is closed (CA delta)', () => {
+  it('처리, 체크 and a bare 끝 ground no completion; statements do not either (positive request-form rule)', () => {
+    const complete = (text: string) => validateSelection({ entryId: 'todo.complete', args: { ref: '#2' } }, ctx(text));
+    for (const text of ['2번 처리 방법 알려줘', '2번 체크해봐', '1번 할일 체크해줘', '2번 언제 끝나?', '3번 완룐 처리해줘', '2번 끝냈어', '2번 해치웠어']) {
+      expect(complete(text), text).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    }
+    for (const text of ['2번 끝내줘', '2번 완료해줘', '2번 완료 처리 부탁드립니다', '2번 완료로 표시해줘']) expect(complete(text).ok, text).toBe(true);
   });
 });
