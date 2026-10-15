@@ -25642,3 +25642,13 @@ and the claim conformance of every registered handler over the corpora. Config: 
   nl-intent corpus with a stub selector in Phase A, Phase C and c-shadow (identical to `off` or the denial with nothing
   read and nothing queued; c-shadow jobs proven to run with the gate off); an A6 question in a channel; the execution
   race (revoke while the execution turn is paused); the event-relative reminder; the seed DM lines.
+
+**P1 revoke races — final narrow fix and accepted residual (orchestrator decision, 2026-10-15).** Strong side effects
+re-read the live grants (the owner Actor through the `ActorMetadataStore`) as the last statement before the external
+call, after every awaited preflight: git push, PR creation, merge, remote branch delete, and the connector-write send
+(before the request is prepared; a refusal there is recorded NOT_SENT). The state-bound step entry and the connector-write
+execution claim keep their live re-read too. **Residual (accepted):** a revoke that lands while a turn is already in
+flight takes effect from the next step or turn for READS — grammar claims and selections use the turn-start actor
+snapshot; strong writes are always re-checked at the call. The feature ships with `QUOKY_CHANNEL_GRANTS` default `off`
+(owner: off during development). Tests: a revoke during the awaited push preflight (no push), and during the
+connector-write reconcile (no send).
