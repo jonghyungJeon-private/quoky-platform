@@ -1,7 +1,7 @@
 {
  "version": 1,
  "description": "ADR-0120 amendment A6 action corpus (NLA-6 data), schema docs/plans/nl-action-corpus-schema.md. Agent-drafted; owner batch APPROVED 2026-10-15. Names, titles and ids are invented. Old draft ids are kept in each note (was ...).",
- "promptVersion": "nl-select.v26",
+ "promptVersion": "nl-select.v28",
  "cases": [
   {
    "id": "a6-paraphrase-todo.add-001",
@@ -11573,8 +11573,14 @@
    "id": "a6-negative-todo.list-007",
    "family": "negative",
    "text": "취소된 할 일도 보여줘",
-   "expect": "none",
-   "note": "was neg-095 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): todo.list / reminder.list cannot show canceled items, so none (chat) is the correct outcome; was a READ gold]"
+   "expect": {
+    "entryId": "todo.list",
+    "args": {
+     "status": "canceled"
+    },
+    "outcome": "execute"
+   },
+   "note": "was neg-095 [owner decision 2026-10-15 (\"지금 추가\", the list status filter): the list gold again, now with status canceled; the pending relabel to none is reverted]"
   },
   {
    "id": "a6-negative-reminder.list-001",
@@ -11624,8 +11630,14 @@
    "id": "a6-negative-reminder.list-005",
    "family": "negative",
    "text": "취소된 알림 보여줘",
-   "expect": "none",
-   "note": "was neg-100 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): todo.list / reminder.list cannot show canceled items, so none (chat) is the correct outcome; was a READ gold]"
+   "expect": {
+    "entryId": "reminder.list",
+    "args": {
+     "status": "canceled"
+    },
+    "outcome": "execute"
+   },
+   "note": "was neg-100 [owner decision 2026-10-15 (\"지금 추가\", the list status filter): the list gold again, now with status canceled; the pending relabel to none is reverted]"
   },
   {
    "id": "a6-negative-reminder.list-006",
