@@ -47,6 +47,20 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
 
+### v5 document summaries: attribution, one regeneration, never looser than main (ADR-0104 D1 amendment, owner-approved 2026-10-15) — on branch `claude/v5-sheet-summary-guard`
+
+- **What changed.**
+  - Mail, thread and Drive summaries quote and attribute the document's words.
+  - A flagged first draft is regenerated once; a second flagged draft (or a failed regeneration) is replaced whole.
+  - No new exemption: the guards are main's and read more forms.
+  - The delivered lines are checked on every path and taken whole per platform.
+  - Footers say Quoky wrote or sent nothing anywhere. Chat is unchanged.
+- **Measured (stub).** Legitimate tracker lines: 240 of 240 after one regeneration (main: 6). Hostile shown by HEAD but
+  not by main: 0. Review-round leak strings: 0 of 28.
+- **Not run live.** Offline tests plus one owner-approved model probe on a synthetic sheet.
+
+Details: the ADR-0104 D1 amendment note in `DECISIONS.md`.
+
 ### v5 "until <weekday>" and the past-tense statement check (ADR-0120 amendment A7, Accepted 2026-10-15) — on branch `claude/v5-until-weekday` (2026-10-15)
 
 - **Ratified** by the owner on 2026-10-15 (all seven decisions as recommended; owner sheet

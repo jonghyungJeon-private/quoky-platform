@@ -43,3 +43,20 @@ export function readRunUsage(raw: unknown): RunUsageRecord | undefined {
   const counts = countsOf(record);
   return { label: record.label, reported: Object.keys(counts).length > 0, ...counts };
 }
+
+/**
+ * The usage of two executions of one run (a document summary's one regeneration, owner decision 2026-10-15): with the
+ * same label, each count both report is summed and a count only one reports is dropped (never estimated); with
+ * different labels, the later execution's usage. Undefined when neither reports one.
+ */
+export function combinedUsage(first: AiUsage | undefined, second: AiUsage | undefined): AiUsage | undefined {
+  if (first === undefined) return second;
+  if (second === undefined || first.label !== second.label) return second ?? first;
+  const counts: Record<string, number> = {};
+  for (const key of COUNT_KEYS) {
+    const a = countOf(first[key]);
+    const b = countOf(second[key]);
+    if (a !== undefined && b !== undefined) counts[key] = a + b;
+  }
+  return { label: second.label, ...counts };
+}

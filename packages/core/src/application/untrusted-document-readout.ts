@@ -1,6 +1,7 @@
 import { clipHeadAndTail } from './attachment-context';
 import { containsCredentialFileContent, containsCredentialMaterial } from './credential-guard';
-import { clipMessage, messageBody, untrustedText } from './message-rendering';
+import { joinedWrappedLines } from './document-summary-lines';
+import { clipMessage, messageBody, plainTextOf, takeLines, untrustedText } from './message-rendering';
 import type { MessageBody } from '../domain';
 import { LINK_PLACEHOLDER, containsLink, neutralizeLinks } from './link-neutralizer';
 import { normalizePromptContextContent } from './prompt-content-normalizer';
@@ -42,6 +43,16 @@ export const UNTRUSTED_DOCUMENT_AUTHOR_MAX_CHARS = 100;
  * bound as a work summary, defined here so the readout does not depend on the work-chat handler (re-review item 4).
  */
 export const DOCUMENT_SUMMARY_REPLY_MAX_CHARS = 1900;
+/**
+ * CA P1-3 (owner decision 2026-10-15): a platform renders an untrusted span with its own escaping before it measures, so
+ * a summary is shown as whole lines (joined wrapped lines, {@link joinedWrappedLines}) that each platform takes while
+ * they fit its rendering of the budget, with the footer as the fixed tail. No platform cuts a line: each line is capped
+ * in Core first, to the worst case (every code point rendered as two) of the budget left by the footer. The text the
+ * claim check reads is the capped lines; a clean text has only clean line prefixes, so whatever a platform takes is clean.
+ */
+export const DOCUMENT_SUMMARY_WORST_CASE_EXPANSION = 2;
+/** Room kept for the "… (+N)" line a platform adds when it leaves lines out. */
+const DOCUMENT_SUMMARY_OMITTED_RESERVE = 16;
 
 export interface UntrustedDocumentReadout {
   readonly kind: typeof UNTRUSTED_DOCUMENT_READOUT_KIND;
@@ -435,18 +446,48 @@ export function stripMarkdownEmphasis(text: string): string {
  * (no `format: 'model-reply'`, so no adapter Markdown adaptation applies). Bounded like a work summary.
  */
 export function documentSummaryReplyBody(summaryText: string, footer: MessageBody): MessageBody {
+  return documentSummaryReply(summaryText, footer).body;
+}
+
+/** A summary reply: the body every platform renders, and `shown`, the plain text of all its capped lines (Quoky copy excluded). */
+export interface DocumentSummaryReply {
+  readonly body: MessageBody;
+  readonly shown: string;
+}
+
+export function documentSummaryReply(summaryText: string, footer: MessageBody): DocumentSummaryReply {
   // Strip emphasis/heading markers (the `markup` guard would show them literally), then neutralize AGAIN: removing a
   // character can join two fragments into a link (`evil**.**com`, `[x]**(**https://evil)`), so the LAST step is
   // always the neutralizer — a link can never come out of this function. The first pass keeps masked links from being
   // half-eaten by the stripper; neutralizing an already neutralized text is a no-op.
   // Codex delta P2 (round 4): only leading blank LINES and trailing whitespace are trimmed. Removing a first line's
   // indentation could turn it into markup (`         1. item` → `1. item`), so indentation is kept.
-  const text = neutralizeLinks(stripMarkdownEmphasis(neutralizeLinks(summaryText, 'display')), 'display')
+  // Wrapped lines are joined on the text as written (its headings and list markers still mark where a line starts).
+  const text = neutralizeLinks(stripMarkdownEmphasis(neutralizeLinks(joinedWrappedLines(summaryText), 'display')), 'display')
     .replace(/^(?:[ \t]*\n)+/u, '')
     .trimEnd();
-  return messageBody(
-    clipMessage(untrustedText(text, 'markup'), DOCUMENT_SUMMARY_REPLY_MAX_CHARS, 'code-points', { after: messageBody('\n\n', footer) }),
+  const budget = DOCUMENT_SUMMARY_REPLY_MAX_CHARS - DOCUMENT_SUMMARY_OMITTED_RESERVE;
+  const footerChars = Array.from(plainTextOf(messageBody(footer))).length + 2;
+  const cap = Math.max(2, Math.floor((budget - footerChars) / DOCUMENT_SUMMARY_WORST_CASE_EXPANSION));
+  const lines = text
+    .split('\n')
+    .map((line) => {
+      const points = Array.from(line);
+      return points.length <= cap ? line : `${points.slice(0, cap - 1).join('').trimEnd()}…`;
+    });
+  const body = messageBody(
+    takeLines({
+      unit: 'code-points',
+      maxChars: budget,
+      // The "\n" between the last line and the blank tail line; each taken line counts its own.
+      baseChars: 1,
+      head: [],
+      tail: ['', footer],
+      lines: lines.map((line) => (line.trim() === '' ? { content: '' } : { content: untrustedText(line, 'markup'), item: true })),
+      omitted: { hidden: 0, before: '… (+', after: ')' },
+    }),
   );
+  return { body, shown: lines.join('\n') };
 }
 
 /** The fixed reply when the provider's summary itself is credential-shaped (never shown, never stored). */

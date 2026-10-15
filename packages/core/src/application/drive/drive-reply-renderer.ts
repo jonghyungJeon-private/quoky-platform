@@ -341,8 +341,8 @@ export function renderDriveSummaryFooter(
 ): string {
   const disclosure =
     language === 'en'
-      ? "(This document's text was sent to the chat model to summarize it · the drive was only read; nothing was changed or shared)"
-      : '(문서 1건의 텍스트를 대화 모델에 보내 요약했어요 · 드라이브는 읽기만 했고 아무것도 바꾸거나 공유하지 않았어요)';
+      ? "(This document's text was sent to the chat model to summarize it · the drive was only read; nothing was changed or shared · nothing was written or sent anywhere by Quoky in this reply)"
+      : '(문서 1건의 텍스트를 대화 모델에 보내 요약했어요 · 드라이브는 읽기만 했고 아무것도 바꾸거나 공유하지 않았어요 · Quoky는 이 답변에서 아무 곳에도 쓰거나 보내지 않았어요)';
   const notes = [
     ...(firstSheetOnly === undefined ? [] : [renderDriveFirstSheetOnlyNote(firstSheetOnly, language, copy)]),
     ...(hiddenSheetsSkipped > 0 ? [renderDriveHiddenSheetsNote(hiddenSheetsSkipped, language)] : []),

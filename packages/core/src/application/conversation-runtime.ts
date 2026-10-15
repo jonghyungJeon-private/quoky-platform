@@ -187,6 +187,7 @@ import {
   type AiExecutionLocality,
   type ProviderSelectionContext,
   type ResolvedProviderSelection,
+  type AiExecutionResult,
   type AiProvider,
   type AiRequest,
   type ConnectorWriteOperation,
@@ -230,14 +231,22 @@ import {
 } from './prompt-composer';
 import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from './work-chat/work-chat-turn-handler';
 import {
+  documentSummaryReply,
   documentSummaryReplyBody,
   isSummarizableDocumentReadout,
   isUntrustedDocumentReadout,
   renderUntrustedDocumentHistoryNote,
   renderUntrustedDocumentReplyWithheld,
   type UntrustedDocumentReadout,
+  type UntrustedDocumentSource,
 } from './untrusted-document-readout';
-import { containsDocumentActionClaim, renderDocumentActionClaimWithheld } from './document-summary-claim-guard';
+import { renderDocumentActionClaimWithheld } from './document-summary-claim-guard';
+import {
+  checkDocumentSummaryClaims,
+  isFixedDocumentSummaryNotice,
+  renderDocumentSummaryTooLong,
+} from './document-summary-claim-check';
+import { combinedUsage } from './provider-usage-record';
 import { neutralizeLinks } from './link-neutralizer';
 import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
 import {
@@ -1211,6 +1220,15 @@ function frozenPlainSnapshot<T>(value: T): T {
 
 // Approve/deny/cancel decision phrases for pending approvals live in ./approval-decision (whole-token,
 // negation-aware); "APPROVE_WORDS" in the comments below refers to that approve phrase set.
+/**
+ * ADR-0118 D7 (final sign-off W-1) and the owner decision of 2026-10-15: the one credential check of a document summary
+ * draft — the raw reply and every artifact, then the display-normalized reply. It decides both that a draft is withheld
+ * and that a flagged draft is not regenerated.
+ */
+function documentSummaryCredentialShaped(text: string, artifacts: readonly Artifact[]): boolean {
+  return isAttachmentReplyWithheld(text, artifacts) || isAttachmentReplyWithheld(neutralizeLinks(text, 'display'), []);
+}
+
 const CANCEL_WORDS = ['취소', '중단', '그만'];
 
 /** Explicit apply-only phrases (Sprint 2s, ADR-0040) — "좋아"/"오케이"/"확인"/"괜찮네" must NEVER match;
@@ -4071,7 +4089,17 @@ export class ConversationRuntime {
     }
     if (result.status !== 'RESPONDED') return fallback();
     // Review P2-4: links neutralized, the provider text an untrusted span, the fixed footer appended.
-    return { ...result, reply: withOutboundBody(result.reply, documentSummaryReplyBody(result.reply.text, summary.footer)) };
+    const reply = documentSummaryReply(result.reply.text, summary.footer);
+    // ADR-0104 D1 amendment (owner, 2026-10-15; CA P1-2): the exact lines the owner is shown — rendered, capped, built
+    // from the body's own parts (the fixed footer is Quoky copy) — pass the claim check, whichever path produced them;
+    // otherwise the whole summary is replaced by the fixed notice. A fixed notice is Quoky copy as written.
+    if (isFixedDocumentSummaryNotice(result.reply.text, readout.source)) return { ...result, reply: withOutboundBody(result.reply, reply.body) };
+    const language = noticeLanguage(undefined, message.text);
+    const verdict = checkDocumentSummaryClaims(reply.shown, message.text, readout.source, language, generalChatReplyPolicy(message.text));
+    if (verdict.kind === 'clean') return { ...result, reply: withOutboundBody(result.reply, reply.body) };
+    this.deps.logger.info('document summary replaced after the delivered-text check', { messageId: message.id });
+    const notice = verdict.kind === 'claim' ? verdict.notice : renderDocumentSummaryTooLong(language);
+    return { ...result, reply: withOutboundBody(result.reply, documentSummaryReplyBody(notice, summary.footer)) };
   }
 
   // ── ADR-0112 / ADR-0110 amendment: connector writes behind exact-payload one-time approvals (CWR-2) ──────────
@@ -8374,27 +8402,30 @@ export class ConversationRuntime {
             )
           : aiRequest;
       await this.deps.dispatchCommit.commit(run.id, run.id);
-      const executed = await provider.execute(executionRequest);
+      const firstExecution = await provider.execute(executionRequest);
       // ADR-0104 D1: the internal-action claim guard runs on every chat reply, whichever provider produced it.
       // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
-      // ADR-0118 D7/D8: a document summary gets both — the credential check (its own notice) and the claim guard, so a
-      // summary an injected item steered toward "I added a to-do / set a reminder" is replaced by the not-done notice.
+      // ADR-0118 D7/D8: a document summary gets both — the credential check (its own notice) and the claim check
+      // (`checkDocumentSummaryClaims`: the ADR-0104 guard and the summary guard, read more strictly), so a summary an
+      // injected item steered toward "I added a to-do / set a reminder" is never shown. ADR-0104 D1 amendment (owner,
+      // 2026-10-15): a flagged first draft is regenerated ONCE with the stricter attribution rule (the flagged text is
+      // never fed back); a second flagged draft is replaced whole by the fixed notice.
       const documentSummary = isUntrustedDocumentReadout(readout);
+      const summaryCheck = documentSummary
+        ? await this.documentSummaryWithOneRegeneration(
+            firstExecution,
+            message,
+            task,
+            readout.source,
+            () => provider.execute(this.deps.promptRenderer.render(this.deps.promptComposer.compose(task, bundle, readout, { ...composition, documentSummaryRetry: true }), renderOptions)),
+          )
+        : undefined;
+      const executed = summaryCheck?.executed ?? firstExecution;
       const withheld = documentSummary
         ? this.withheldDocumentSummaryReply(message, executed.text, executed.artifacts ?? [], task.id)
         : this.withheldAttachmentReply(bundle, message, executed.text, executed.artifacts ?? [], task.id);
-      const chatGuard = withheld
-        ? null
-        : this.guardChatReply(documentSummary ? Capability.GENERAL_CHAT : capability, executed.text, task.description, task.id, nlFacts);
-      // Review P2-3: a document summary also gets the mail-action post-guard ("답장을 보냈어요", "I forwarded the email").
-      const guard =
-        documentSummary &&
-        !withheld &&
-        chatGuard?.guarded !== true &&
-        // Final sign-off W-1: checked on the text the owner is shown (format characters removed, NFKC), not only the raw one.
-        (containsDocumentActionClaim(executed.text, readout.source) || containsDocumentActionClaim(neutralizeLinks(executed.text, 'display'), readout.source))
-          ? this.documentActionClaimWithheld(message, task.id, readout.source)
-          : chatGuard;
+      const chatGuard = withheld || documentSummary ? null : this.guardChatReply(capability, executed.text, task.description, task.id, nlFacts);
+      const guard = documentSummary ? (withheld ? null : (summaryCheck?.guard ?? null)) : chatGuard;
       // Review P3-1: a document summary keeps no provider artifacts (they could carry mail-derived text into storage).
       const result = withheld
         ? { ...executed, ...withheld }
@@ -8524,14 +8555,49 @@ export class ConversationRuntime {
     return { text: renderAttachmentReplyWithheld(noticeLanguage(undefined, message.text)), artifacts: [] };
   }
 
-  /** Review P2-3: the fixed notice replacing a summary that claims a mail or Quoky action (content-free log). */
-  private documentActionClaimWithheld(
+  /**
+   * ADR-0104 D1 amendment (owner, 2026-10-15): the claim check of a document summary with at most one regeneration.
+   * A credential-shaped first draft is not regenerated (the credential check withholds it). A flagged first draft is
+   * regenerated once with the stricter attribution rule; the second draft is final: shown when clean, replaced by the
+   * fixed notice otherwise. `guard` is the replacement (`null` when the draft is shown). Content-free counters only.
+   */
+  private async documentSummaryWithOneRegeneration(
+    first: AiExecutionResult,
     message: InboundMessage,
-    taskId: Id,
-    source: UntrustedDocumentReadout['source'],
-  ): { readonly text: string; readonly guarded: boolean } {
-    this.deps.logger.info('document summary action claim replaced', { taskId });
-    return { text: renderDocumentActionClaimWithheld(noticeLanguage(undefined, message.text), source), guarded: true };
+    task: Task,
+    source: UntrustedDocumentSource,
+    regenerate: () => Promise<AiExecutionResult>,
+  ): Promise<{ readonly executed: AiExecutionResult; readonly guard: { readonly text: string; readonly guarded: boolean } | null }> {
+    const language = noticeLanguage(undefined, message.text);
+    const replyPolicy = generalChatReplyPolicy(task.description);
+    const check = (text: string) => checkDocumentSummaryClaims(text, task.description, source, language, replyPolicy);
+    let executed = first;
+    let verdict = check(first.text);
+    this.deps.logger.info('document summary claim check', { taskId: task.id, attempt: 1, outcome: verdict.kind });
+    if (verdict.kind === 'claim' && !documentSummaryCredentialShaped(first.text, first.artifacts ?? [])) {
+      let second: AiExecutionResult;
+      try {
+        second = await regenerate();
+      } catch (err) {
+        // The first call's usage is kept; with no second draft the flagged first one is replaced (fail closed).
+        this.deps.logger.warn('document summary claim check', {
+          taskId: task.id,
+          attempt: 2,
+          outcome: 'regeneration-failed',
+          errorName: err instanceof Error ? err.name : typeof err,
+        });
+        return { executed: first, guard: { text: verdict.notice, guarded: true } };
+      }
+      const usage = combinedUsage(first.usage, second.usage);
+      executed = { ...second, ...(usage ? { usage } : {}) };
+      verdict = check(second.text);
+      this.deps.logger.info('document summary claim check', { taskId: task.id, attempt: 2, outcome: verdict.kind });
+    }
+    if (verdict.kind === 'clean') return { executed, guard: null };
+    return {
+      executed,
+      guard: { text: verdict.kind === 'too-long' ? renderDocumentSummaryTooLong(language) : verdict.notice, guarded: true },
+    };
   }
 
   /**
@@ -8546,7 +8612,7 @@ export class ConversationRuntime {
     taskId: Id,
   ): { text: string; artifacts: Artifact[] } | null {
     // Final sign-off W-1: the credential check also runs on the normalized text the owner would be shown.
-    if (!isAttachmentReplyWithheld(text, artifacts) && !isAttachmentReplyWithheld(neutralizeLinks(text, 'display'), [])) return null;
+    if (!documentSummaryCredentialShaped(text, artifacts)) return null;
     this.deps.logger.info('document summary reply withheld', { taskId });
     return { text: renderUntrustedDocumentReplyWithheld(noticeLanguage(undefined, message.text)), artifacts: [] };
   }
