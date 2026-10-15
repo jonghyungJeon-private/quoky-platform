@@ -699,6 +699,11 @@ describe('ADR-0122 D2.6 (P2): the send-time channel check', () => {
           asked.push({ origin, actorId, groups });
           return allows(origin, actorId, groups);
         },
+        async sendIfAllowed(origin, actorId, groups, send) {
+          asked.push({ origin, actorId, groups });
+          if (!(await allows(origin, actorId, groups))) return { sent: false };
+          return { sent: true, value: await send() };
+        },
       },
     });
     return { repository, sink, logger, service, asked };
@@ -713,10 +718,12 @@ describe('ADR-0122 D2.6 (P2): the send-time channel check', () => {
     const delivered = sink.delivered[0]!;
     expect(delivered).toMatchObject({ target: ORIGIN, kind: 'TEXT', text: '알림 #1: 회의 준비' });
     expect(delivered.channelRecheck?.dm).toEqual({ text: '알림 #1: 회의 준비\n(이 알림을 만든 채널에 지금 알림 권한이 없어 DM으로 보냈어요.)' });
-    // The sink calls it after resolving the channel: it re-reads the live grants each time.
-    expect(await delivered.channelRecheck!.allows()).toBe(true);
+    // The sink sends through it after resolving the channel: the live grants are re-read and the send runs only if allowed.
+    let sends = 0;
+    expect(await delivered.channelRecheck!.sendIfAllowed(async () => (sends += 1))).toEqual({ sent: true, value: 1 });
     live = false;
-    expect(await delivered.channelRecheck!.allows()).toBe(false);
+    expect(await delivered.channelRecheck!.sendIfAllowed(async () => (sends += 1))).toEqual({ sent: false });
+    expect(sends).toBe(1);
     expect(asked).toHaveLength(3);
     expect(logger.lines).toContainEqual({ level: 'info', message: 'reminder.dispatch.channel_withheld', fields: { platform: 'discord', channelId: 'c1', groups: 'reminder', at: 'send' } });
   });

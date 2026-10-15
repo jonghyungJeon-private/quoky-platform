@@ -15,7 +15,7 @@ import {
   type WorkItem,
 } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
-import type { NotificationSink, OwnerNotification } from '../../ports/notification-sink.port';
+import type { ChannelRecheckResult, NotificationSink, OwnerNotification } from '../../ports/notification-sink.port';
 import type { ReminderRepository } from '../../ports/reminder-repository.port';
 import { newId } from '../../util/id';
 import { isDirectConversation, messageBody, messageFields } from '../message-rendering';
@@ -70,6 +70,11 @@ export interface ReminderDispatchDeps {
    */
   readonly surfaceDelivery?: {
     allows(origin: ConversationContext, actorId: Id, groups: readonly SurfaceGroupId[]): Promise<boolean>;
+    /**
+     * The last-moment form (Codex P1): check the live grants and run `send` while holding the per-actor metadata lock, so
+     * a revoke or a kill switch waits until the channel send returns; `{sent: false}` when refused.
+     */
+    sendIfAllowed<T>(origin: ConversationContext, actorId: Id, groups: readonly SurfaceGroupId[], send: () => Promise<T>): Promise<ChannelRecheckResult<T>>;
   };
 }
 
@@ -426,15 +431,10 @@ export class ReminderDispatchService {
         target: origin,
         text,
         channelRecheck: {
-          async allows() {
-            let still = false;
-            try {
-              still = await check.allows(origin, reminder.actorId, groups);
-            } catch {
-              still = false;
-            }
-            if (!still) logger.info('reminder.dispatch.channel_withheld', { platform: origin.platform, channelId: origin.channelId, groups: groups.join(','), at: 'send' });
-            return still;
+          async sendIfAllowed<T>(send: () => Promise<T>): Promise<ChannelRecheckResult<T>> {
+            const result = await check.sendIfAllowed(origin, reminder.actorId, groups, send);
+            if (!result.sent) logger.info('reminder.dispatch.channel_withheld', { platform: origin.platform, channelId: origin.channelId, groups: groups.join(','), at: 'send' });
+            return result;
           },
           dm: messageFields(dmText),
         },

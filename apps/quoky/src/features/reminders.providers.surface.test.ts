@@ -26,10 +26,11 @@ function surfaceDeliveryOf(config: ReminderConfig, surfaceGrants: Partial<Surfac
 
 describe('reminder dispatch wiring of the channel check', () => {
   const deliveryAllowed = async () => true;
+  const deliverIfAllowed = async () => ({ sent: false as const });
 
   it('wired only with channel delivery on and the gate enforced', () => {
-    expect(surfaceDeliveryOf({ ...CONFIG, channelDelivery: true }, { deliveryAllowed })).toEqual({ allows: deliveryAllowed });
-    expect(surfaceDeliveryOf({ ...CONFIG, channelDelivery: false }, { deliveryAllowed })).toBeUndefined();
+    expect(surfaceDeliveryOf({ ...CONFIG, channelDelivery: true }, { deliveryAllowed, deliverIfAllowed })).toEqual({ allows: deliveryAllowed, sendIfAllowed: deliverIfAllowed });
+    expect(surfaceDeliveryOf({ ...CONFIG, channelDelivery: false }, { deliveryAllowed, deliverIfAllowed })).toBeUndefined();
     expect(surfaceDeliveryOf({ ...CONFIG, channelDelivery: true }, {})).toBeUndefined(); // the gate `off`
     expect(surfaceDeliveryOf({ ...CONFIG, channelDelivery: true }, undefined)).toBeUndefined();
   });

@@ -72,7 +72,13 @@ export interface SurfaceGrantPending {
    * Any grant change since (e.g. "모든 채널 권한 해제" in the DM) or a switch flip ("에이전트 중지") voids the confirmation.
    */
   readonly grantsDigest: string;
-  readonly switchState: 'running' | 'stopped';
+  /** The digest of the stored kill-switch value: any switch write since (a stop, or a stop then a resume) voids it. */
+  readonly switchDigest: string;
+}
+
+/** The digest of the stored kill-switch value (absent → its own digest), for the pending grant's basis. */
+export function surfaceSwitchDigest(metadata: Actor['metadata']): string {
+  return sha256Canonical('quoky.actionSwitch.basis.v1', metadata?.[ACTION_SWITCH_METADATA_KEY] ?? null);
 }
 
 /** The digest of a grants record as stored (canonical serialization), for the pending grant's basis. */
@@ -92,7 +98,7 @@ export function readSurfaceGrantPending(raw: unknown): SurfaceGrantPending | und
   if (groups.length === 0 || listed.some((id) => !isSurfaceGroupId(id) || !isGrantableSurfaceGroup(id))) return undefined;
   if (typeof value.userId !== 'string' || value.userId.length === 0) return undefined;
   if (typeof value.grantsDigest !== 'string' || !/^[0-9a-f]{64}$/.test(value.grantsDigest)) return undefined;
-  if (value.switchState !== 'running' && value.switchState !== 'stopped') return undefined;
+  if (typeof value.switchDigest !== 'string' || !/^[0-9a-f]{64}$/.test(value.switchDigest)) return undefined;
   return {
     v: 1,
     id: value.id,
@@ -101,7 +107,7 @@ export function readSurfaceGrantPending(raw: unknown): SurfaceGrantPending | und
     expiresAt: value.expiresAt as IsoTimestamp,
     userId: value.userId,
     grantsDigest: value.grantsDigest,
-    switchState: value.switchState,
+    switchDigest: value.switchDigest,
   };
 }
 
@@ -190,7 +196,7 @@ export class SurfaceGrantService {
           this.log('info', 'surface_grant.refused', { reason: 'grant-not-available' });
           return renderSurfaceGrantNotYet(language);
         }
-        return this.askToConfirm(message, record, phrase.groups, session, now, suspended, language);
+        return this.askToConfirm(message, actor, record, phrase.groups, session, now, suspended, language);
       }
       case 'revoke': {
         if (direct) return renderSurfaceGrantChannelOnly(language);
@@ -291,7 +297,14 @@ export class SurfaceGrantService {
     session: Pick<Session, 'id' | 'metadata'>,
     actor: Actor,
     now: IsoTimestamp,
-    options: { readonly cancelOnly?: boolean } = {},
+    options: {
+      readonly cancelOnly?: boolean;
+      /**
+       * Codex P2 (final round): the raw pending value of the turn's FIRST session read (before the activity touch), so
+       * the confirmation is bound to what existed when the turn began. Absent: `session.metadata`.
+       */
+      readonly seenPending?: unknown;
+    } = {},
   ): Promise<SurfaceGrantPendingResult | undefined> {
     let confirm: boolean;
     try {
@@ -300,7 +313,8 @@ export class SurfaceGrantService {
     } catch {
       confirm = false;
     }
-    const hasPending = session.metadata?.[SURFACE_GRANT_PENDING_METADATA_KEY] !== undefined;
+    const seen = 'seenPending' in options ? options.seenPending : session.metadata?.[SURFACE_GRANT_PENDING_METADATA_KEY];
+    const hasPending = seen !== undefined;
     if (!hasPending && options.cancelOnly === true) return undefined;
     const direct = isSurfaceDirect(message.context);
     if (!hasPending) {
@@ -319,7 +333,7 @@ export class SurfaceGrantService {
     // save leaves the pending in place, so nothing is granted on it — no replay window).
     // Codex P2: bound to the pending grant this turn saw when it began (its nonce). A pending grant that replaced it since
     // (a newer question) is neither consumed nor dropped by this turn.
-    const expectedId = readSurfaceGrantPending(session.metadata?.[SURFACE_GRANT_PENDING_METADATA_KEY])?.id;
+    const expectedId = readSurfaceGrantPending(seen)?.id;
     let consumed: SurfaceGrantPending | undefined;
     let committed = false;
     let removed = false;
@@ -352,12 +366,9 @@ export class SurfaceGrantService {
       this.log('info', 'surface_grant.refused', { reason: 'confirmation-expired' });
       return { reply: renderSurfaceGrantExpired(language) };
     }
-    // CA suggestion: a kill-switch flip since the question voids it (the grants digest is re-checked inside the lock).
-    if (readActionSwitch(actor).state !== consumed.switchState) {
-      this.log('info', 'surface_grant.refused', { reason: 'basis-changed' });
-      return { reply: renderSurfaceGrantStale(language) };
-    }
-    return { reply: await this.grant(actor, message.context, consumed.groups, now, language, consumed.grantsDigest) };
+    // CA suggestion / Codex P2: the kill-switch state and the grants digest are compared on the LIVE actor inside the
+    // per-actor lock (a concurrent stop, or a stop → resume, voids the confirmation).
+    return { reply: await this.grant(actor, message.context, consumed.groups, now, language, consumed) };
   }
 
   // ── internals ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -365,6 +376,7 @@ export class SurfaceGrantService {
   /** D4.1–D4.3: save the pending grant in this session and answer with the confirmation. Nothing is granted yet. */
   private async askToConfirm(
     message: InboundMessage,
+    actor: Pick<Actor, 'metadata'>,
     record: SurfaceGrantRecord,
     groups: readonly SurfaceGroupId[],
     session: Pick<Session, 'id'>,
@@ -388,7 +400,7 @@ export class SurfaceGrantService {
       expiresAt: new Date(Date.parse(now) + SURFACE_GRANT_CONFIRM_TTL_MS).toISOString() as IsoTimestamp,
       userId: message.context.userId,
       grantsDigest: surfaceGrantsDigest(record),
-      switchState: suspended ? 'stopped' : 'running',
+      switchDigest: surfaceSwitchDigest(actor.metadata),
     };
     let saved: Session | null = null;
     try {
@@ -416,17 +428,18 @@ export class SurfaceGrantService {
     groups: readonly SurfaceGroupId[],
     now: IsoTimestamp,
     language: SurfaceCopyLanguage,
-    expectedDigest: string,
+    basis: Pick<SurfaceGrantPending, 'grantsDigest' | 'switchDigest'>,
   ): Promise<string> {
     const key = surfaceChannelKey(context);
     let changed: readonly SurfaceGroupId[] = [];
     let limited = false;
     let stale = false;
     let suspended = false;
-    const ok = await this.write(actor, (record) => {
-      // CA suggestion: any grant change since the question (a revoke, "모든 채널 권한 해제", a seed) voids the confirmation;
-      // compared on the live record inside the per-actor lock.
-      if (surfaceGrantsDigest(record) !== expectedDigest) {
+    const ok = await this.write(actor, (record, live) => {
+      // Any grant change since the question (a revoke, "모든 채널 권한 해제", a seed) or a kill-switch state other than the
+      // question's (stopped since, or stopped and resumed) voids the confirmation; both read on the live actor inside the
+      // per-actor lock, where the switch and every revoke are written too.
+      if (surfaceGrantsDigest(record) !== basis.grantsDigest || surfaceSwitchDigest(live.metadata) !== basis.switchDigest) {
         stale = true;
         return record;
       }
@@ -471,14 +484,14 @@ export class SurfaceGrantService {
 
   private async write(
     actor: Actor,
-    change: (record: SurfaceGrantRecord) => SurfaceGrantRecord,
+    change: (record: SurfaceGrantRecord, live: Actor) => SurfaceGrantRecord,
     observe?: (savedMetadata: Actor['metadata']) => void,
   ): Promise<boolean> {
     try {
       const saved = await this.deps.metadata.updateMetadataEntry(
         actor.id,
         SURFACE_GRANTS_METADATA_KEY,
-        (current) => serializeSurfaceGrants(change(readSurfaceGrants(current))),
+        (current, live) => serializeSurfaceGrants(change(readSurfaceGrants(current), live)),
         actor,
       );
       if (saved !== null) observe?.(saved.metadata);

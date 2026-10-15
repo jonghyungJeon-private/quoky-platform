@@ -31,15 +31,20 @@ export interface OwnerNotification {
   content?: MessageContent;
   /**
    * ADR-0122 D2.6 (P2, Codex P1): a last-moment check for a CHANNEL send. An adapter that delivers to the originating
-   * channel MUST call `allows()` as the last step before the channel send — after resolving the channel — and, when it
-   * returns false or throws, send nothing to the channel and deliver `dm` (text, and `content` when present) to the owner
-   * DM instead. Absent: unchanged. Never consulted for a DM send.
+   * channel MUST perform the channel send only through `sendIfAllowed(send)` — after resolving the channel — which checks
+   * the live grants and runs `send` while holding the caller's lock (a revoke waits until the send returns). When it
+   * resolves `{sent: false}`, rejects before `send` started, or does not start `send` within the adapter's send deadline,
+   * nothing goes to the channel and the adapter delivers `dm` (text, and `content` when present) to the owner DM instead.
+   * Absent: unchanged. Never consulted for a DM send.
    */
   channelRecheck?: {
-    allows(): Promise<boolean>;
+    sendIfAllowed<T>(send: () => Promise<T>): Promise<ChannelRecheckResult<T>>;
     readonly dm: { readonly text: string; readonly content?: MessageContent };
   };
 }
+
+/** The outcome of {@link OwnerNotification.channelRecheck}: the send ran (its value), or the channel was refused. */
+export type ChannelRecheckResult<T> = { readonly sent: true; readonly value: T } | { readonly sent: false };
 
 /**
  * Re-exported name of the delivery-outcome contract (defined in the domain because reminder transitions consume

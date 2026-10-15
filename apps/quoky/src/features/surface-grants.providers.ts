@@ -17,6 +17,7 @@ import {
   type StorageProvider,
   type SurfaceGrantSeedResult,
   type SurfaceGroupId,
+  type ChannelRecheckResult,
 } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
 import type { ChannelGrantsConfig } from '../surface-grants/channel-grants-config';
@@ -51,6 +52,11 @@ export interface SurfaceGrantsComposition {
    * owner Actor's grants hold `groups` there (fail closed on a missing actor or a failed read).
    */
   readonly deliveryAllowed?: (origin: ConversationContext, actorId: string, groups: readonly SurfaceGroupId[]) => Promise<boolean>;
+  /**
+   * Present only while `enforce` (D2.6, Codex P1): the last-moment form — the live grants are checked and `send` runs
+   * under the per-actor metadata lock, so a revoke or the kill switch waits for the channel send.
+   */
+  readonly deliverIfAllowed?: <T>(origin: ConversationContext, actorId: string, groups: readonly SurfaceGroupId[], send: () => Promise<T>) => Promise<ChannelRecheckResult<T>>;
   /** D6: apply the configured seed once per digest (only while `enforce`); a no-op without a seed. */
   applySeed(now: string): Promise<readonly SurfaceGrantSeedResult[]>;
   /** D6: the owner DM line of each channel the last `applySeed` added groups to (call once the platform is up). */
@@ -121,9 +127,17 @@ export function createSurfaceGrantsComposition(
         }
       }
     : undefined;
+  const deliverIfAllowed = enforced
+    ? <T>(origin: ConversationContext, actorId: string, groups: readonly SurfaceGroupId[], send: () => Promise<T>): Promise<ChannelRecheckResult<T>> =>
+        metadata.whileLocked(actorId, async (live): Promise<ChannelRecheckResult<T>> => {
+          if (live === null || !gate.decide(origin, live, groups, { path: 'delivery' }).allow) return { sent: false };
+          return { sent: true, value: await send() };
+        })
+    : undefined;
   return {
     gate,
     service,
+    ...(deliverIfAllowed !== undefined ? { deliverIfAllowed } : {}),
     freshActor: (actorId) => metadata.get(actorId),
     ...(reactionAllowed !== undefined ? { reactionAllowed } : {}),
     ...(deliveryAllowed !== undefined ? { deliveryAllowed } : {}),

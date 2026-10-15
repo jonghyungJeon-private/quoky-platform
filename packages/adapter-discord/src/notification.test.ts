@@ -493,15 +493,26 @@ describe('deliverOwnerNotification: neutral content (PLT-0 wiring)', () => {
 
 describe('deliverOwnerNotification: the caller\'s last-moment channel check (ADR-0122 D2.6, Codex P1)', () => {
   const DM_TEXT = '알림 #4: 약 먹기\n(이 알림을 만든 채널에 지금 알림 권한이 없어 DM으로 보냈어요.)';
+  /** A caller-side check: `allowed()` read inside `sendIfAllowed`, which runs `send` only when allowed. */
+  const recheck = (allowed: () => Promise<boolean>, events: string[] = []) => ({
+    async sendIfAllowed<T>(send: () => Promise<T>) {
+      events.push('check');
+      if (!(await allowed())) return { sent: false as const };
+      const value = await send();
+      events.push('sent');
+      return { sent: true as const, value };
+    },
+    dm: { text: DM_TEXT },
+  });
 
-  it('asked after the channel is resolved, right before the send; allowed → the channel as before', async () => {
-    const order: string[] = [];
+  it('the channel send runs only through the check, after the channel is resolved; allowed → the channel as before', async () => {
+    const events: string[] = [];
     const h = harness({ channelDelivery: true });
     const fetch = h.deps.fetchChannel;
-    h.deps = { ...h.deps, fetchChannel: async (id) => { order.push('resolve'); return fetch(id); } };
-    const out = await deliverOwnerNotification(note({ channelRecheck: { allows: async () => { order.push('recheck'); return true; }, dm: { text: DM_TEXT } } }), h.deps);
+    h.deps = { ...h.deps, fetchChannel: async (id) => { events.push('resolve'); return fetch(id); } };
+    const out = await deliverOwnerNotification(note({ channelRecheck: recheck(async () => true, events) }), h.deps);
     expect(out).toEqual({ status: 'SENT', via: 'channel' });
-    expect(order).toEqual(['resolve', 'recheck']);
+    expect(events).toEqual(['resolve', 'check', 'sent']);
     expect((h.channels.get(CHANNEL) as FakeChannel).sent).toHaveLength(1);
     expect(h.dm.sent).toHaveLength(0);
   });
@@ -510,14 +521,8 @@ describe('deliverOwnerNotification: the caller\'s last-moment channel check (ADR
     let granted = true;
     const h = harness({ channelDelivery: true });
     const fetch = h.deps.fetchChannel;
-    h.deps = {
-      ...h.deps,
-      fetchChannel: async (id) => {
-        granted = false; // the owner's revoke (or 에이전트 중지) completes while the channel is being resolved
-        return fetch(id);
-      },
-    };
-    const out = await deliverOwnerNotification(note({ channelRecheck: { allows: async () => granted, dm: { text: DM_TEXT } } }), h.deps);
+    h.deps = { ...h.deps, fetchChannel: async (id) => { granted = false; return fetch(id); } };
+    const out = await deliverOwnerNotification(note({ channelRecheck: recheck(async () => granted) }), h.deps);
     expect(out).toEqual({ status: 'SENT', via: 'dm' });
     expect((h.channels.get(CHANNEL) as FakeChannel).sent).toHaveLength(0);
     expect(h.dm.sent).toEqual([expect.objectContaining({ content: DM_TEXT })]);
@@ -525,10 +530,38 @@ describe('deliverOwnerNotification: the caller\'s last-moment channel check (ADR
 
   it('a check that throws is a refusal (fail closed); without a check nothing changes', async () => {
     const h = harness({ channelDelivery: true });
-    const out = await deliverOwnerNotification(note({ channelRecheck: { allows: async () => { throw new Error('db down'); }, dm: { text: DM_TEXT } } }), h.deps);
+    const out = await deliverOwnerNotification(note({ channelRecheck: recheck(async () => { throw new Error('db down'); }) }), h.deps);
     expect(out).toEqual({ status: 'SENT', via: 'dm' });
     expect((h.channels.get(CHANNEL) as FakeChannel).sent).toHaveLength(0);
     const plain = harness({ channelDelivery: true });
     expect(await deliverOwnerNotification(note(), plain.deps)).toEqual({ status: 'SENT', via: 'channel' });
+  });
+
+  it('a check that cannot start the send within the send deadline (its lock is held): the DM, and the late send never happens', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const h = harness({ channelDelivery: true, sendTimeoutMs: 20 });
+    const slow = {
+      async sendIfAllowed<T>(send: () => Promise<T>) {
+        await held; // the caller's lock is busy (e.g. a revoke being saved)
+        return { sent: true as const, value: await send() };
+      },
+      dm: { text: DM_TEXT },
+    };
+    const out = await deliverOwnerNotification(note({ channelRecheck: slow }), h.deps);
+    expect(out).toEqual({ status: 'SENT', via: 'dm' });
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect((h.channels.get(CHANNEL) as FakeChannel).sent).toHaveLength(0);
+  });
+
+  it('a send that started and then failed keeps the old classification (no DM fallback for an uncertain send)', async () => {
+    const h = harness({ channelDelivery: true });
+    h.channels.set(CHANNEL, new FakeChannel(CHANNEL, Object.assign(new Error('socket'), { name: 'Error' })));
+    const out = await deliverOwnerNotification(note({ channelRecheck: recheck(async () => true) }), h.deps);
+    const plain = harness({ channelDelivery: true });
+    plain.channels.set(CHANNEL, new FakeChannel(CHANNEL, Object.assign(new Error('socket'), { name: 'Error' })));
+    expect(out).toEqual(await deliverOwnerNotification(note(), plain.deps));
+    expect(h.dm.sent).toHaveLength(plain.dm.sent.length);
   });
 });

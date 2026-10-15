@@ -82,3 +82,51 @@ describe('the reminder delivery check (D2.6, P2)', () => {
     expect(await enforced.deliveryAllowed!(channel, 'owner', ['reminder'])).toBe(false);
   });
 });
+
+describe('the last-moment reminder channel send under the per-actor lock (D2.6, Codex P1 final round)', () => {
+  const channel: ConversationContext = { platform: 'discord', spaceId: GUILD, channelId: QA, userId: OWNER_ID, direct: false };
+  const revokeMessage: InboundMessage = { id: 'r', context: channel, text: '이 채널 권한 모두 해제', receivedAt: '2026-10-15T00:00:00.000Z' };
+
+  it('a revoke issued while the check and the send run waits for the send; the next send is refused', async () => {
+    const w = world();
+    const composition = w.composition(['reminder']);
+    expect(w.composition([], 'off').deliverIfAllowed).toBeUndefined();
+    await composition.applySeed('2026-10-15T00:00:00.000Z');
+    let release!: () => void;
+    const inFlight = new Promise<void>((resolve) => (release = resolve));
+    const events: string[] = [];
+    const sending = composition.deliverIfAllowed!(channel, 'owner', ['reminder'], async () => {
+      events.push('send-start');
+      await inFlight;
+      events.push('send-end');
+      return 'sent';
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const revoking = composition.service.handlePhrase(revokeMessage, w.actor(), '2026-10-15T00:00:00.000Z').then((reply) => {
+      events.push('revoked');
+      return reply;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).toEqual(['send-start']); // the revoke is waiting for the lock
+    release();
+    expect(await sending).toEqual({ sent: true, value: 'sent' });
+    expect(await revoking).toBe('이 채널의 권한을 모두 해제했어요.');
+    expect(events).toEqual(['send-start', 'send-end', 'revoked']);
+    let sent = false;
+    expect(await composition.deliverIfAllowed!(channel, 'owner', ['reminder'], async () => (sent = true))).toEqual({ sent: false });
+    expect(sent).toBe(false);
+  });
+
+  it('a revoke that committed first: the check refuses and the send never runs; a missing actor refuses', async () => {
+    const w = world();
+    const composition = w.composition(['reminder']);
+    await composition.applySeed('2026-10-15T00:00:00.000Z');
+    const revoking = composition.service.handlePhrase(revokeMessage, w.actor(), '2026-10-15T00:00:00.000Z');
+    let sent = false;
+    const sending = composition.deliverIfAllowed!(channel, 'owner', ['reminder'], async () => (sent = true));
+    await revoking;
+    expect(await sending).toEqual({ sent: false });
+    expect(sent).toBe(false);
+    expect(await composition.deliverIfAllowed!(channel, 'nobody', ['reminder'], async () => (sent = true))).toEqual({ sent: false });
+  });
+});

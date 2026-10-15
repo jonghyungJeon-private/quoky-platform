@@ -244,7 +244,7 @@ describe('the grant phrase and its `허용 실행` confirmation (D4.1–D4.3, P2
       expiresAt: later(120_000),
       userId: OWNER_ID,
       grantsDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
-      switchState: 'running',
+      switchDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     expect(w.receipts).toEqual([]);
     expect(await w.turn(CHANNEL, '허용 실행', later(119_000))).toBe('이 채널에 허용했어요: 캘린더 조회, 할 일.');
@@ -462,5 +462,46 @@ describe('the grant phrase and its `허용 실행` confirmation (D4.1–D4.3, P2
     expect(w.granted()).toEqual([]);
     expect(w.pending(CHANNEL)).toBeUndefined();
     expect(await w.service.handleGrantPending(message, w.sessionOf(CHANNEL), w.actor(), T0, { cancelOnly: true })).toBeUndefined();
+  });
+
+  it('Codex P2 (final): the pending grant is bound to the turn\'s FIRST read, not to a touched (refreshed) session', async () => {
+    const w = world();
+    await w.say(CHANNEL, '이 채널에 캘린더 허용');
+    const firstRead = w.pending(CHANNEL); // the delayed turn's openForContext saw this
+    await w.say(CHANNEL, '이 채널에 기억 허용'); // replaced before that turn's touch
+    const replacement = w.pending(CHANNEL);
+    const touched = w.sessionOf(CHANNEL); // the touch returns the live row with the replacement
+    const message: InboundMessage = { id: 'late', context: CHANNEL, text: '허용 실행', receivedAt: T0 };
+    expect(await w.service.handleGrantPending(message, touched, w.actor(), T0, { seenPending: firstRead })).toEqual({ reply: NO_PENDING });
+    expect(w.granted()).toEqual([]);
+    expect(w.pending(CHANNEL)).toEqual(replacement);
+    // Nothing pending at the first read: a confirmation answers "nothing pending" even if the touch shows one.
+    expect(await w.service.handleGrantPending(message, touched, w.actor(), T0, { seenPending: undefined })).toEqual({ reply: NO_PENDING });
+    expect(w.pending(CHANNEL)).toEqual(replacement);
+  });
+
+  it('CA / Codex P2 (final): the kill switch is compared on the LIVE actor inside the lock — a stop that lands while the confirmation waits, and stop → resume, both void it', async () => {
+    const concurrent = world();
+    await concurrent.say(CHANNEL, '이 채널에 캘린더 허용');
+    const snapshot = concurrent.actor(); // the confirmation turn's actor snapshot: still running
+    let release!: () => void;
+    concurrent.armSlowRead(new Promise<void>((resolve) => (release = resolve)));
+    // The stop takes the lock first (its read waits); the grant's locked save queues behind it.
+    const stopping = concurrent.service.handleSwitchPhrase(snapshot, { id: 'k', context: DM, text: '에이전트 중지', receivedAt: T0 }, T0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const confirming = concurrent.service.handleGrantPending({ id: 'c', context: CHANNEL, text: '허용 실행', receivedAt: T0 }, concurrent.sessionOf(CHANNEL), snapshot, T0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    release();
+    await stopping;
+    expect(await confirming).toEqual({ reply: STALE });
+    expect(concurrent.granted()).toEqual([]);
+
+    const flipped = world();
+    await flipped.say(CHANNEL, '이 채널에 캘린더 허용');
+    await flipped.service.handleSwitchPhrase(flipped.actor(), { id: 'k1', context: DM, text: '에이전트 중지', receivedAt: T0 }, T0);
+    await flipped.service.handleSwitchPhrase(flipped.actor(), { id: 'k2', context: DM, text: '에이전트 재개', receivedAt: T0 }, T0);
+    // "running" again, but the switch was written since (stop → resume): the confirmation is void.
+    expect(await flipped.turn(CHANNEL, '허용 실행')).toBe(STALE);
+    expect(flipped.granted()).toEqual([]);
   });
 });

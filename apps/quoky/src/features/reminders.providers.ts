@@ -193,7 +193,9 @@ export function createRemindersProviders(
         // ADR-0122 D2.6 (P2): the send-time channel check, only when a reminder can reach a channel at all
         // (QUOKY_REMINDERS_CHANNEL_DELIVERY on) and the gate is enforced; otherwise delivery is exactly as before.
         const surfaceDelivery =
-          config.channelDelivery === true && surfaceGrants?.deliveryAllowed !== undefined ? { allows: surfaceGrants.deliveryAllowed } : undefined;
+          config.channelDelivery === true && surfaceGrants?.deliveryAllowed !== undefined && surfaceGrants.deliverIfAllowed !== undefined
+            ? { allows: surfaceGrants.deliveryAllowed, sendIfAllowed: surfaceGrants.deliverIfAllowed }
+            : undefined;
         const briefSources = createBriefSources({
           calendar,
           connectors,

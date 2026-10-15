@@ -2365,6 +2365,9 @@ export class ConversationRuntime {
   private async handleInner(message: InboundMessage): Promise<TurnResult> {
     const actor = await this.deps.actors.resolveFromContext(message.context);
     let session = await this.deps.sessions.openForContext(message.context, actor.id);
+    // ADR-0122 D4.2 (Codex P2): the pending channel grant as this turn's FIRST read saw it, before the touch below returns
+    // the live row — a confirmation is bound to the question that existed when the turn began.
+    const grantPendingSeen = session.metadata?.[SURFACE_GRANT_PENDING_METADATA_KEY];
     // ADR-0113 D7: the activity touch runs under the shared session write lock, field-scoped on the live row, so this
     // turn's snapshot never overwrites an operations-UI decision's re-anchor; the turn continues on the touched copy.
     session = (await this.deps.sessions.touch(session)) ?? session;
@@ -2438,7 +2441,7 @@ export class ConversationRuntime {
     const surfaceService = this.surfaceGate()?.enforced === true ? this.deps.surfaceGrants?.service : undefined;
     // CA P2: a turn that answers an approval expiry still ends a pending grant ("any other message"); it never confirms.
     if (surfaceService?.handleGrantPending !== undefined && expiryNotice) {
-      const ended = await surfaceService.handleGrantPending(message, session, actor, this.clock(), { cancelOnly: true });
+      const ended = await surfaceService.handleGrantPending(message, session, actor, this.clock(), { cancelOnly: true, seenPending: grantPendingSeen });
       if (ended?.cleared === true) session = withoutSessionMetadataKey(session, SURFACE_GRANT_PENDING_METADATA_KEY);
     }
     if (surfaceService !== undefined && !expiryNotice) {
@@ -2446,7 +2449,7 @@ export class ConversationRuntime {
       if (switched !== undefined) return this.responded(session, outboundMessage(message.context, switched));
       // D4.2 (P2): `허용 실행` saves a pending grant of this channel; any other message ends it and routes as before.
       if (surfaceService.handleGrantPending !== undefined) {
-        const pendingGrant = await surfaceService.handleGrantPending(message, session, actor, this.clock());
+        const pendingGrant = await surfaceService.handleGrantPending(message, session, actor, this.clock(), { seenPending: grantPendingSeen });
         if (pendingGrant?.reply !== undefined) return this.responded(session, outboundMessage(message.context, pendingGrant.reply));
         if (pendingGrant?.cleared === true) session = withoutSessionMetadataKey(session, SURFACE_GRANT_PENDING_METADATA_KEY);
       }

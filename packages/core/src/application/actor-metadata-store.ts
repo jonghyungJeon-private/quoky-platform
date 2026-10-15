@@ -29,6 +29,15 @@ export class ActorMetadataStore {
     private readonly lock: KeyedMutex = ACTOR_METADATA_LOCK,
   ) {}
 
+  /**
+   * Run `work` on the live actor (null when absent) under the per-actor lock, writing nothing: a writer of any metadata key
+   * waits until it finishes (ADR-0122 D2.6: a channel reminder's last-moment grant check and its send). `work` must be
+   * bounded by its caller.
+   */
+  whileLocked<T>(actorId: Id, work: (live: Actor | null) => Promise<T>): Promise<T> {
+    return this.lock.run(`actor:${actorId}`, async () => work(await this.actors.get(actorId)));
+  }
+
   /** The live actor (no lock: a read). */
   get(actorId: Id): Promise<Actor | null> {
     return this.actors.get(actorId);
@@ -43,14 +52,15 @@ export class ActorMetadataStore {
   async updateMetadataEntry(
     actorId: Id,
     key: string,
-    update: (current: unknown) => unknown,
+    update: (current: unknown, live: Actor) => unknown,
     fallback?: Actor,
   ): Promise<Actor | null> {
     return this.lock.run(`actor:${actorId}`, async () => {
       const live = (await this.actors.get(actorId)) ?? fallback ?? null;
       if (live === null) return null;
       const metadata: Metadata = { ...(live.metadata ?? {}) };
-      const next = update(metadata[key]);
+      // `live` (read-only): the whole live actor inside the lock, for an update that must check another key (ADR-0122 P2).
+      const next = update(metadata[key], live);
       if (next === undefined) delete metadata[key];
       else metadata[key] = next;
       return this.actors.save({ ...live, metadata });

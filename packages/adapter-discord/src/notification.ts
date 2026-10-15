@@ -229,6 +229,57 @@ function isAdmittedGuildTarget(n: OwnerNotification, deps: OwnerNotificationDeps
 /** `tryChannel`: the caller's last-moment channel check refused (ADR-0122 D2.6). */
 const WITHHELD = Symbol('channel-withheld');
 
+class RecheckDeadlineError extends Error {
+  override readonly name = 'RecheckDeadlineError';
+}
+
+/**
+ * Run the channel `send` through the caller's check. The deadline (`timeoutMs`) bounds the wait for the caller's lock and
+ * the check: if `send` has not started by then it never starts (WITHHELD → DM). Once started, `send` is bounded by its own
+ * timeout and its errors propagate (classified as before: UNCERTAIN is terminal, never a DM fallback). A check that
+ * refuses or throws before `send` started is WITHHELD (fail closed).
+ */
+async function sendThroughRecheck(
+  recheck: NonNullable<OwnerNotification['channelRecheck']>,
+  send: () => Promise<void>,
+  timeoutMs: number,
+): Promise<'sent' | typeof WITHHELD> {
+  let started = false;
+  let expired = false;
+  const attempt = Promise.resolve().then(() =>
+    recheck.sendIfAllowed(async () => {
+      if (expired) throw new RecheckDeadlineError('the check did not start the send in time');
+      started = true;
+      await send();
+    }),
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<'deadline'>((resolve) => {
+    timer = setTimeout(() => resolve('deadline'), timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    const first = await Promise.race([attempt.then((result) => ({ result }), (error: unknown) => ({ error })), deadline]);
+    let settled = first;
+    if (first === 'deadline') {
+      if (!started) {
+        expired = true;
+        attempt.catch(() => undefined);
+        return WITHHELD;
+      }
+      settled = await attempt.then((result) => ({ result }), (error: unknown) => ({ error }));
+    }
+    const outcome = settled as { result?: Awaited<ReturnType<typeof recheck.sendIfAllowed>>; error?: unknown };
+    if ('error' in outcome) {
+      if (!started) return WITHHELD;
+      throw outcome.error;
+    }
+    return outcome.result?.sent === true ? 'sent' : WITHHELD;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function tryChannel(
   n: OwnerNotification,
   text: string,
@@ -250,19 +301,17 @@ async function tryChannel(
 
   const content = `<@${ownerId}> ${text}`;
   if (content.length > DISCORD_MESSAGE_LIMIT) return notSent('TEXT_TOO_LONG', false);
-  // ADR-0122 D2.6 (Codex P1): the caller's last-moment check, after the awaited channel resolution and right before the
-  // send, so a revoke (or a kill switch) that landed meanwhile keeps the text out of the channel. Fail closed.
-  if (n.channelRecheck !== undefined) {
-    let allowed = false;
-    try {
-      allowed = await n.channelRecheck.allows();
-    } catch {
-      allowed = false;
-    }
-    if (!allowed) return WITHHELD;
-  }
+  const options: NotificationSendOptions = { content, allowedMentions: { parse: [], users: [ownerId] } };
   try {
-    await sendWithTimeout(channel, { content, allowedMentions: { parse: [], users: [ownerId] } }, timeoutMs);
+    if (n.channelRecheck === undefined) {
+      await sendWithTimeout(channel, options, timeoutMs);
+    } else {
+      // ADR-0122 D2.6 (Codex P1): the channel send runs only through the caller's last-moment check, after the awaited
+      // channel resolution; the caller holds its grant lock from the check through the send (a revoke waits). Refused,
+      // failed, or not started within the send deadline → nothing reaches the channel; the DM gets the caller's DM text.
+      const checked = await sendThroughRecheck(n.channelRecheck, () => sendWithTimeout(channel, options, timeoutMs), timeoutMs);
+      if (checked === WITHHELD) return WITHHELD;
+    }
     return { status: 'SENT', via: 'channel' };
   } catch (err) {
     const c = classifyDiscordError(err);
