@@ -14,6 +14,7 @@ import {
   nlIndexWording,
   normalizeNlSpan,
   parseNlRef,
+  type NlRefTarget,
 } from './action-entries';
 import {
   NL_ACTION_ENTRY_IDS,
@@ -164,23 +165,49 @@ describe('`ref` (A6-D2): closed forms, grounded by a numeral, ordinal or deictic
     expect(nlIndexWording(1, '첫 번째 거 취소해줘')).toBe('ordinal');
   });
 
-  it('A6-D2 clarification (owner 2026-10-15): a determiner 이/그/저 before an item-source noun of the catalog is a deictic', () => {
-    for (const text of ['이 문서 요약해줘', '그 메일 무슨 내용이야', '저 알림 취소해줘', '그 할 일 완료해줘', '이 파일을 요약해줘', '그 드라이브 문서 요약', '이 이메일 원문 보여줘']) {
+  it('A6-D2 clarification (owner 2026-10-15): 이/그 before an item-source noun of the catalog is a deictic for that source', () => {
+    const rows: ReadonlyArray<readonly [string, NlRefTarget]> = [
+      ['이 문서 요약해줘', { entryId: 'item.summarize', source: 'drive' }],
+      ['그 메일 무슨 내용이야', { entryId: 'item.summarize', source: 'mail' }],
+      ['그 할 일 완료해줘', { entryId: 'todo.complete', source: 'todo' }],
+      ['이 알림 취소해줘', { entryId: 'reminder.cancel', source: 'reminder' }],
+      ['이 파일을 요약해줘', { entryId: 'item.summarize', source: 'drive' }],
+      ['그 메일에서는 뭐래', { entryId: 'item.summarize', source: 'mail' }],
+      ['그 드라이브 문서 요약', { entryId: 'item.summarize', source: 'drive' }],
+      ['이 이메일 원문 보여줘', { entryId: 'item.summarize', source: 'mail' }],
+      // 저 grounds a read only (it also means "I").
+      ['저 메일 요약해줘', { entryId: 'item.summarize', source: 'mail' }],
+    ];
+    for (const [text, target] of rows) {
       expect(hasNlDeterminerReference(text), text).toBe(true);
-      expect(isNlRefGrounded({ kind: 'this' }, text), text).toBe(true);
-      expect(isNlRefGrounded({ kind: 'recent' }, text), text).toBe(true);
+      expect(isNlRefGrounded({ kind: 'this' }, text, target), text).toBe(true);
+      expect(isNlRefGrounded({ kind: 'recent' }, text, target), text).toBe(true);
+      // Without a target (no source known) a determiner grounds nothing.
+      expect(isNlRefGrounded({ kind: 'this' }, text), text).toBe(false);
     }
     // English already carries this / that.
     for (const text of ['summarize this document', 'what does that mail say']) expect(isNlRefGrounded({ kind: 'this' }, text), text).toBe(true);
-    // Not a determiner token (이메일, 그메일), not an item-source noun (그 사람, 이 회의), or no determiner at all.
-    for (const text of ['이메일 요약해줘', '그메일 요약해줘', '그 사람 요약해줘', '이 회의 요약해줘', '문서 요약해줘', '메일 요약해줘']) {
+    // Not a determiner token (이메일, 그메일), not a whole noun (파일럿, 문서화, 알림장), not an item-source noun, or no determiner.
+    for (const text of ['이메일 요약해줘', '그메일 요약해줘', '이 파일럿 요약해줘', '그 문서화 요약해줘', '그 알림장 요약해줘', '그 사람 요약해줘', '이 회의 요약해줘', '문서 요약해줘']) {
       expect(hasNlDeterminerReference(text), text).toBe(false);
-      expect(isNlRefGrounded({ kind: 'this' }, text), text).toBe(false);
+      for (const source of ['mail', 'drive', 'todo', 'reminder'] as const) expect(isNlRefGrounded({ kind: 'this' }, text, { entryId: 'item.summarize', source }), text).toBe(false);
     }
+    // The noun must name the entry's own source: "그 알림" never grounds a to-do ref, "이 메일" never a Drive one.
+    expect(isNlRefGrounded({ kind: 'this' }, '그 알림 취소해줘', { entryId: 'todo.cancel', source: 'todo' })).toBe(false);
+    expect(isNlRefGrounded({ kind: 'this' }, '이 메일 요약해줘', { entryId: 'item.summarize', source: 'drive' })).toBe(false);
+    // 저 + noun never grounds a LOCAL_WRITE ref ("저 할 일 다 했어요", "저 알림 꺼주세요").
+    expect(isNlRefGrounded({ kind: 'this' }, '저 할 일 다 했어요', { entryId: 'todo.complete', source: 'todo' })).toBe(false);
+    expect(isNlRefGrounded({ kind: 'this' }, '저 알림 꺼주세요', { entryId: 'reminder.cancel', source: 'reminder' })).toBe(false);
     // A determiner never grounds a number or `last`.
-    expect(isNlRefGrounded({ kind: 'index', index: 1 }, '이 문서 요약해줘')).toBe(false);
-    expect(isNlRefGrounded({ kind: 'last' }, '그 메일 요약해줘')).toBe(false);
+    expect(isNlRefGrounded({ kind: 'index', index: 1 }, '이 문서 요약해줘', { entryId: 'item.summarize', source: 'drive' })).toBe(false);
+    expect(isNlRefGrounded({ kind: 'last' }, '그 메일 요약해줘', { entryId: 'item.summarize', source: 'mail' })).toBe(false);
+    // Through the validator: the entry's own source comes from the entry (or item.summarize's `source` arg).
     expect(validateSelection({ entryId: 'item.summarize', args: { source: 'drive', ref: 'this', mode: 'summary' } }, ctx('이 문서 요약해줘'))).toMatchObject({ ok: true, value: { args: { source: 'drive', ref: 'this', mode: 'summary' } } });
+    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: 'this', mode: 'summary' } }, ctx('저 메일 요약해줘'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: 'this' } }, ctx('그 할 일 완료해줘'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'todo.cancel', args: { ref: 'this' } }, ctx('그 알림 취소해줘'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'ref' });
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: 'this' } }, ctx('저 할 일 다 했어요'))).toMatchObject({ ok: false });
+    expect(validateSelection({ entryId: 'reminder.cancel', args: { ref: 'this' } }, ctx('저 알림 꺼주세요'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'ref' });
     // The nouns come from the catalog itself: every Korean alias of the item sources' list entries.
     for (const id of ['mail.list', 'drive.files', 'todo.list', 'reminder.list'] as const) {
       for (const noun of NL_WAVE1_ENTRIES[id].aliases.filter((alias) => !/^[a-z ]+$/.test(alias))) expect(hasNlDeterminerReference(`그 ${noun} 요약`), noun).toBe(true);

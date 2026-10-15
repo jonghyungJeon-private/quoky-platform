@@ -175,12 +175,24 @@ describe('A6-D2 clarification (owner 2026-10-15): "이 / 그 / 저 + noun" resol
     { text: '그 메일 무슨 내용이야', source: 'mail', slots: [{ source: 'mail', labels: [1], minute: 0 }], expected: { kind: 'resolved', target: { source: 'mail', id: 'mail-1', label: 1 } } },
     { text: 'summarize this document', source: 'drive', slots: [{ source: 'drive', labels: [1], minute: 0 }], expected: { kind: 'resolved', target: { source: 'drive', id: 'drive-1', label: 1 } } },
     { text: 'what does that mail say', source: 'mail', slots: [{ source: 'mail', labels: [1, 2], minute: 0 }], expected: { kind: 'unresolved', outcome: 'ambiguous' } },
-    { text: '저 알림 취소해줘', source: 'reminder', slots: [{ source: 'reminder', labels: [13], minute: 0 }], expected: { kind: 'resolved', target: { source: 'reminder', id: 'reminder-13', label: 13 } } },
+    { text: '이 알림 취소해줘', source: 'reminder', slots: [{ source: 'reminder', labels: [13], minute: 0 }], expected: { kind: 'resolved', target: { source: 'reminder', id: 'reminder-13', label: 13 } } },
+    { text: '그 할 일 완료해줘', source: 'todo', slots: [{ source: 'todo', labels: [1, 2, 3], minute: 0 }], expected: { kind: 'unresolved', outcome: 'ambiguous', candidates: items('todo', [1, 2, 3]) } },
   ];
   it.each(rows)('$text ($source; most recent listing $slots.length slot(s))', ({ text, source, slots, expected }) => {
-    expect(isNlRefGrounded({ kind: 'this' }, text)).toBe(true);
-    const entryId: NlActionEntryId = source === 'reminder' ? 'reminder.cancel' : 'item.summarize';
+    const entryId: NlActionEntryId = source === 'reminder' ? 'reminder.cancel' : source === 'todo' ? 'todo.complete' : 'item.summarize';
+    expect(isNlRefGrounded({ kind: 'this' }, text, { entryId, source })).toBe(true);
     expect(resolve(entryId, source, 'this', text, state(listings(slots), 2))).toMatchObject(expected);
+  });
+
+  it('never a reference: 저 + noun for a write, a noun that is not whole, a noun of another source (nothing to resolve)', () => {
+    // A ref that is not grounded never reaches resolution: the validator refuses it as `ungrounded` (no write, no read).
+    expect(isNlRefGrounded({ kind: 'this' }, '저 할 일 다 했어요', { entryId: 'todo.complete', source: 'todo' })).toBe(false);
+    expect(isNlRefGrounded({ kind: 'this' }, '이 파일럿 요약해줘', { entryId: 'item.summarize', source: 'drive' })).toBe(false);
+    expect(isNlRefGrounded({ kind: 'this' }, '그 알림 취소해줘', { entryId: 'todo.cancel', source: 'todo' })).toBe(false);
+    // The same words with the matching entry do ground, and then resolve by the ordinary rules (another source asks).
+    const todos = listings([{ source: 'todo', labels: [4], minute: 0 }]);
+    expect(isNlRefGrounded({ kind: 'this' }, '그 알림 취소해줘', { entryId: 'reminder.cancel', source: 'reminder' })).toBe(true);
+    expect(resolve('reminder.cancel', 'reminder', 'this', '그 알림 취소해줘', state(todos, 1))).toMatchObject({ kind: 'unresolved', outcome: 'other-source', found: 'todo' });
   });
 
   it('a fresh lastAction of the source wins over the listing, exactly as for 그거', () => {

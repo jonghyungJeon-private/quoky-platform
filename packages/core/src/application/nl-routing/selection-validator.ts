@@ -1,6 +1,7 @@
 import type { IsoTimestamp } from '../../domain';
 import { containsCredentialMaterial } from '../credential-guard';
 import {
+  isNlActionEntryId,
   isNlCatalogEntryId,
   type NlAmbiguityKey,
   type NlArgs,
@@ -15,6 +16,7 @@ import {
   withoutStructures,
   isNlRefGrounded,
   isNlSpanGrounded,
+  nlActionSourceOf,
   normalizeNlSpan,
   parseNlRef,
 } from './action-entries';
@@ -200,10 +202,12 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       if (!isNlSpanGrounded(value, groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
       if (spec.allowsTimeWords !== true && isNlDeicticOnlyPayload(value)) return { ok: false, reason: 'deictic-payload', entryId, arg: spec.name };
     }
-    // A6-D2: a ref needs a numeral, ordinal or deictic in this turn's own words.
+    // A6-D2: a ref needs a numeral, ordinal or deictic in this turn's own words (a determiner + noun only for the entry's
+    // own source, and 저 only for a read).
     if (spec.kind === 'ref') {
       const ref = parseNlRef(value);
-      if (ref === undefined || !isNlRefGrounded(ref, groundingText)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
+      const target = isNlActionEntryId(entryId) ? { entryId, source: nlActionSourceOf(entryId, args) } : undefined;
+      if (ref === undefined || !isNlRefGrounded(ref, groundingText, target)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
     }
     if (containsCredentialMaterial(value)) return { ok: false, reason: 'credential', entryId, arg: spec.name };
   }
