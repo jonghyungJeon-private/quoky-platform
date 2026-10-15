@@ -265,7 +265,7 @@ describe('caps (A6-D3)', () => {
     const w = world({ script: Array.from({ length: 21 }, () => out('todo.add', { title: '물 마시기' })) });
     for (let i = 0; i < 20; i += 1) expect((await w.decide('할 일에 물 마시기 추가', { now: at(i) })).kind).toBe('execute');
     const capped = await w.decide('할 일에 물 마시기 추가', { now: at(20) });
-    expect(capped).toEqual({ kind: 'ask', text: '지금은 자연어로 실행할 수 있는 횟수를 넘었어요. 잠시 뒤에 다시 말씀해 주세요. 정확한 명령은 그대로 동작해요.' });
+    expect(capped).toEqual({ kind: 'ask', entryId: expect.any(String), text: '지금은 자연어로 실행할 수 있는 횟수를 넘었어요. 잠시 뒤에 다시 말씀해 주세요. 정확한 명령은 그대로 동작해요.' });
     expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'todo.add', result: 'capped' });
   });
 
@@ -292,14 +292,14 @@ describe('references, questions and the audit line', () => {
     const w = world({ script: [out('reminder.cancel', { ref: '#13' })] });
     w.setMetadata(LAST_LISTING_METADATA_KEY, withListing(undefined, 'owner', 'mail', ['m1', 'm2'], at(0)));
     const decision = await w.decide('13번 취소해줘', { now: at(1) });
-    expect(decision).toEqual({ kind: 'ask', text: '가장 최근에 보여 드린 건 메일 목록이에요. 어느 알림인지 다시 말씀해 주세요.' });
+    expect(decision).toEqual({ kind: 'ask', entryId: expect.any(String), text: '가장 최근에 보여 드린 건 메일 목록이에요. 어느 알림인지 다시 말씀해 주세요.' });
     expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.cancel', resolution: 'other-source', result: 'asked', sessionId: 'sess-1', turnId: 'turn-1' });
   });
 
   it('an ambiguous "그거" asks under the shown labels, stores candidate ids only, and "3" answers it', async () => {
     const w = world({ script: [out('todo.complete', { ref: 'this' })] });
     w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3]));
-    expect(await w.decide('그거 완료 처리해줘', { now: at(1) })).toEqual({ kind: 'ask', text: '어느 할 일인가요? 1번, 2번, 3번 중에서 번호로 답해 주세요.' });
+    expect(await w.decide('그거 완료 처리해줘', { now: at(1) })).toEqual({ kind: 'ask', entryId: expect.any(String), text: '어느 할 일인가요? 1번, 2번, 3번 중에서 번호로 답해 주세요.' });
     const pending = w.session().metadata?.[NL_PENDING_METADATA_KEY] as Record<string, unknown>;
     expect(pending).toMatchObject({ kind: 'action-target', entryId: 'todo.complete', candidates: [{ label: 1, id: 'todo-1' }, { label: 2, id: 'todo-2' }, { label: 3, id: 'todo-3' }], args: {} });
     expect(JSON.stringify(pending)).not.toContain('그거');
@@ -310,7 +310,7 @@ describe('references, questions and the audit line', () => {
 
   it('a payload entry never resumes and a deictic payload gets the fixed reply', async () => {
     const w = world({ script: [out('todo.add', { title: '그거' })] });
-    expect(await w.decide('그거 할 일로 추가해줘')).toEqual({ kind: 'ask', text: '내용을 직접 적어 주세요.' });
+    expect(await w.decide('그거 할 일로 추가해줘')).toEqual({ kind: 'ask', entryId: expect.any(String), text: '내용을 직접 적어 주세요.' });
     expect(w.session().metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
   });
 
@@ -319,7 +319,7 @@ describe('references, questions and the audit line', () => {
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.complete', source: 'todo', itemId: 'todo-2', label: 2, version: at(0), at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
     expect(await w.decide('되돌려줘', { now: at(1) })).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { source: 'todo', id: 'todo-2' }, undo: { entryId: 'todo.complete', version: at(0) } } });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'action.undo', undoOf: 'todo.complete', source: 'todo', itemId: 'todo-2', at: at(1), undoable: false, undone: false, echoReplyIds: [] }, at(1)));
-    expect(await w.decide('되돌려줘', { now: at(2) })).toEqual({ kind: 'ask', text: '되돌린 작업은 다시 되돌릴 수 없어요.' });
+    expect(await w.decide('되돌려줘', { now: at(2) })).toEqual({ kind: 'ask', entryId: expect.any(String), text: '되돌린 작업은 다시 되돌릴 수 없어요.' });
   });
 
   it('"되돌려줘" as a reply to an older echo asks, never undoes something else', async () => {
@@ -376,7 +376,7 @@ describe('item.summarize content mode (ratification record C)', () => {
     const w = world({ script: [out('item.summarize', { source: 'mail', ref: '#1' }), out('item.summarize', { source: 'mail', ref: '#2' }), out('item.summarize', { source: 'mail', ref: '#1', mode: 'full' })] });
     w.setMetadata(LAST_LISTING_METADATA_KEY, withListing(undefined, 'owner', 'mail', ['m1', 'm2', 'm3'], at(0)));
     const asked = await w.decide('아까 1번은 무슨 내용이었지', { now: at(1) });
-    expect(asked).toEqual({ kind: 'ask', text: '요약해서 볼까요, 전체를 볼까요? 한 번 정하면 30일 동안 같은 방식으로 보여 드릴게요.\n1. 요약해서 보기\n2. 전체 보기\n번호로 답해 주세요.' });
+    expect(asked).toEqual({ kind: 'ask', entryId: expect.any(String), text: '요약해서 볼까요, 전체를 볼까요? 한 번 정하면 30일 동안 같은 방식으로 보여 드릴게요.\n1. 요약해서 보기\n2. 전체 보기\n번호로 답해 주세요.' });
     const answered = await w.decide('요약', { now: at(2) });
     expect(answered).toMatchObject({ kind: 'execute', command: { entryId: 'item.summarize', args: { mode: 'summary' }, target: { source: 'mail', id: 'm1' } } });
     expect((w.actor().metadata?.[INTERPRETATION_PREFERENCES_METADATA_KEY] as Record<string, { value: string }>)['item.content-mode']?.value).toBe('summary');
@@ -467,7 +467,7 @@ describe('round 3: an argument-free undo from pasted JSON never executes', () =>
     const w = world({ script: [out('action.undo')] });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
     const decision = await w.decide('{"request":"되돌려줘"}', { now: at(1) });
-    expect(decision).toEqual({ kind: 'ask', text: '아무것도 실행하지 않았어요. 동작 요청은 한 문장으로 말씀해 주세요 (붙여넣은 내용, 인용, 명령문 없이).' });
+    expect(decision).toEqual({ kind: 'ask', entryId: expect.any(String), text: '아무것도 실행하지 않았어요. 동작 요청은 한 문장으로 말씀해 주세요 (붙여넣은 내용, 인용, 명령문 없이).' });
     expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'not-plain' });
     // Reads still work on the same kind of text.
     const reads = world({ script: [out('mail.list')] });
