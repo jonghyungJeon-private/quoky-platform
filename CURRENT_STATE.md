@@ -76,13 +76,18 @@ Details and the review record for each item are in the matching notes in `DECISI
 ### A6 R1 gate fixes — on branch `claude/v5-a6-r1-fix` (2026-10-15)
 
 - **Why:** the Haiku R1 gates (v25, 3 runs) failed: 1–2 wrong targets, a "2번도" capture, 11 anchored read captures.
-- **Fixed:** source-noun cross-check for every ref kind; a bare reference selects no action; stacked-particle time check;
-  deictic payload reply first; A6 prompt `nl-select.v26` (read prompt v24 unchanged); scorer `{}`-reason rule; owner
-  decisions (2) and (3) in the corpora. Details: DECISIONS "A6 implementation note — R1 gate fixes".
-- **Owner D12 gold fixes applied (2026-10-15)** and `neg-051` fixed in the v26 wording (DECISIONS addendum).
-- **Haiku check (1 run, before the gold fixes):** action 92.6% (A6 95.2%), 0 wrong targets, 0 negative captures; read regression 0 action
-  captures, 1 non-A6 wrong capture (`neg-051`). Pending: the owner's call on the READ-entry gold args and the other gold
-  issues listed in DECISIONS, then the orchestrator's 3-run gate. `QUOKY_NL_ACTIONS` stays `off`.
+- **Fixed:** source nouns cross-checked for every ref kind (another or a second noun asks); item writes need their own
+  action word (`actionGrounding`); an open A6 question admits only its own entry and candidates; stacked-particle time
+  check; deictic payload reply first; A6 prompt `nl-select.v26` (read prompt v24 unchanged); owner decisions (2), (3),
+  the owner D12 gold-fix batch and the reason-equal scoring rule (owner-ratified). Details: DECISIONS "A6 implementation
+  note — R1 gate fixes" and its addenda.
+- **Haiku check (1 run each, after the review fixes):** action 96.0%, every A6 entry ≥ 90.2%, 0 wrong targets, 0 negative
+  captures (gate short only on `todo.list` 6/7 and `reminder.list` 5/6, Haiku `none` on canceled-item lists); read
+  regression passed (0 action, 0 wrong captures). Next: the orchestrator's 3-run gate. `QUOKY_NL_ACTIONS` stays `off`.
+- **For the owner:** `neg-094` is grammar-owned (a daily brief schedule) and skipped in A6-on scoring.
+- **Backlog (owner request 2026-10-15, not R1):** a separate safe design proposal for "그거로 추가해줘", bringing earlier
+  reply content into a to-do: a preview showing the exact text, explicit approval, and defenses against content-borne
+  injection (ADR-0121 S3 territory). Until then the A6-D3 deictic-payload refusal stays.
 
 ### ADR-0120 amendment A8: Jira release listings (`jira.release`) — Accepted 2026-10-15, on branch `claude/v5-jira-release`
 

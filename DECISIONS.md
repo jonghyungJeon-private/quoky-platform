@@ -24849,6 +24849,42 @@ parenthetical "a how-to question about Quoky is help.topic". Class: prompt. Fix 
 parenthetical adds "a question about what a phrase or command would do or mean stays none, rule 2". After: `none` 20/20;
 the 51 `help.topic` read cases 2× each keep their outcome (101/102; the one miss, `help-027`, also missed in the v25 runs).
 
+#### A6 R1 review fixes (Codex P1, CA APPROVE WITH CHANGES, 2026-10-15)
+
+- **Action grounding replaces the content-token heuristic (Codex P1 1).** `todo.complete`, `todo.cancel`, `reminder.cancel`
+  and `action.undo` declare their own closed action vocabulary (`NlCatalogEntry.actionGrounding`, a value validator like
+  `flagGrounding` / `valueGrounding`: completion words; cancel/delete words, plus 빼/안 할 for to-dos and 꺼/끄/멈춰 for
+  reminders; undo words). A selection whose prose (pasted structures removed) holds none of them writes nothing and the
+  turn is chat (`nl_action.decided` reason `no-action-word`): "2번도", "2번만요", "그걸로요", "13번 알림". `todo.add` and
+  `reminder.create` keep their payload grounding, `item.summarize` its content words. The vocabulary was checked against
+  the corpus positives: six dictionary synonyms were added (제외, 없던 걸로, 캔슬, 롤백, 원복; 처리 for completion, so the
+  typo case "3번 완룐 처리해줘" still grounds); a held-out phrasing outside the class fails closed to chat.
+- **An open A6 question (Codex P1 2).** While an A6 question is open, a selector-path action runs only for the questioned
+  entry on one of its candidates; anything else writes nothing (chat, reason `pending-question`). A bare number or ordinal
+  that is none of the offered labels ("9" against 2 and 3) is asked again by the answer path and never reaches the
+  selector. Known consequence: for the question's 5 minutes another action request is chat; the reply ends the question.
+- **Source nouns fail closed (Codex P1 3/4, CA P2).** A message naming another source noun than the entry's, or more than
+  one ("할 일 말고 2번 메일 취소해줘": negation is not parsed), asks (other-source). Brackets, punctuation and digit-letter
+  joins are noun boundaries ("2번 (메일)", "메일2번"). A ref sentence whose title words hold a source noun ("2번 문서 작업
+  완료") asks too; `match` spans are not checked.
+- **CA P2s.** Shadow logs the new refusals as `shadow`; `lastSelection` is cleared only when an A6 turn executes or asks
+  (A6-D3), not when it ends as chat; `acceptsAnyQuestion` counts only clarification reasons (resolution outcomes,
+  content-mode, missing/invalid/ungrounded arg), never a refusal (input guard, caps, kill switch, payload or time rules);
+  a test pins the deictic-payload-before-missing-arg order.
+- **`neg-094` "매일 아침 8시에 브리핑 알려줘" (for the owner).** The anchored reminder grammar parses it as a DAILY reminder
+  with `bodyKind: BRIEF` before any selection; an A6 `reminder.create` would store a TEXT reminder. It leaves the A6-on
+  relabel (now 10 anchored cases) and is skipped in A6-on scoring (`a6Skip: grammar-owned`); read mode keeps `none`.
+- **`a6-reference-todo.complete-034` "1번".** With its question's listing, the answer path now asks again (out-of-range
+  labels), so its gold accepts any clarification (`acceptsAnyQuestion`).
+- **Reason-equal refusal scoring: OWNER-RATIFIED (2026-10-15, "채점 채택").** A gold refusal or question whose args are `{}`
+  is a hit when the selector named the gold entry, nothing executed and Core's closed reason equals the gold reason
+  (`nl-action-eval.ts`, `sameReason`). The A6-D3 deictic-payload refusal itself is unchanged.
+- **Haiku check (owner-approved, 1 run each, not the gate).** Action: overall 96.0% (388/404), every A6 entry ≥ 90.2%
+  (`reminder.create` 37/41, `todo.complete` 71/75, `item.summarize` 91/95), span 96.3%, 0 wrong targets, 0 negative
+  captures, 0 over the bound; the run's gate fails only on two READ entries where Haiku answers `none` (`todo.list` 6/7:
+  "취소된 할 일도 보여줘"; `reminder.list` 5/6: "취소된 알림 보여줘"). Read regression: D12 96.6%, 0 action captures,
+  0 wrong captures, relabeled 14/14: **gate passed**.
+
 ### ADR-0120 amendment A8 — Jira release listings: a `jira.release` READ entry (one fix version for every assignee, or a project's release list), three named read queries, and release links only on the configured Jira site (Proposed — awaiting the owner's yes) (2026-10-15)
 
 - **Status:** **Accepted by the owner on 2026-10-15** with two changes (decisions 2 and 7; see "ADR-0120 amendment A8

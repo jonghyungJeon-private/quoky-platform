@@ -19,6 +19,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Owner D12 gold fixes (2026-10-15):** READ golds of the action corpus scored on the entry only; `acceptsAnyQuestion`
   (item.summarize-006/008/014/015, seed-ref-002); `alsoAccepts` (`todo.cancel-005`: `action.undo`); complete-034 listing,
   todo.add-037 execute, `neg-086` verbatim title. `neg-051` (A6 prompt pulled it to `help.topic`): v26 rule-8 wording.
+- **Review fixes:** `actionGrounding` (each item write needs its own action word), the open-question rule, fail-closed
+  source nouns (another or a second noun asks; brackets and digit joins), shadow and `lastSelection` fixes,
+  clarification-only `acceptsAnyQuestion`, `neg-094` grammar-owned (`a6Skip`); the reason-equal scoring rule is
+  owner-ratified. After them (1 run each): action 96.0%, 0 wrong targets, 0 negative captures; read regression passed.
 - **Haiku check (1 run each, not the gate):** action 92.6% (A6 entries 95.2%), 0 wrong targets, 0 negative captures,
   span 97.5%; read regression 0 action captures. Remaining gate blockers are READ-entry gold args (owner list in
   DECISIONS). `QUOKY_NL_ACTIONS` stays `off`.
