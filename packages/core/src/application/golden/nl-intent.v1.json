@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) were owner-approved in the D12 batch of 2026-10-15. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) were owner-approved in the D12 batch of 2026-10-15. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) were owner-approved in the D12 batch of 2026-10-15. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events). D12 owner batch 2026-10-15 (second part, through the orchestrator): approved uat5r1..r9 (23 cases from the 2026-10-14 live edge-case run), uat5gy-01..06, uat5wd-01..07, uat5ca-01..10 and the 8 grammar-metadata-only edits of ADR-0120 A2 implementation note 2 (confluence-001, -005, -007, todo-016, -020, brief-017, neg-219, help-038; neg-219 and help-038 themselves stay in the S1 batch). Still PENDING the owner's batch approval: the 148 S1 cases and the 41 INT-4 cases (v5int4-001..041).",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) were owner-approved in the D12 batch of 2026-10-15. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) were owner-approved in the D12 batch of 2026-10-15. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) were owner-approved in the D12 batch of 2026-10-15. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events). D12 owner batch 2026-10-15 (second part, through the orchestrator): approved uat5r1..r9 (23 cases from the 2026-10-14 live edge-case run), uat5gy-01..06, uat5wd-01..07, uat5ca-01..10 and the 8 grammar-metadata-only edits of ADR-0120 A2 implementation note 2 (confluence-001, -005, -007, todo-016, -020, brief-017, neg-219, help-038; neg-219 and help-038 themselves stay in the S1 batch). Still PENDING the owner's batch approval: the 148 S1 cases and the 41 INT-4 cases (v5int4-001..041). T1 extension (owner-approved 2026-10-15): calendar-005, -016, -018, -029, -032, -034 and -057 gain timedOnly (a meeting word in a listing question means timed events), the earlier gold kept in each note.",
   "cases": [
     {
       "id": "jira-001",
@@ -1820,9 +1820,11 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {
-          "range": "last-week"
+          "range": "last-week",
+          "timedOnly": true
         }
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch, T1 extension (ADR-0120 A5 implementation note 3): was {\"range\": \"last-week\"}; a meeting word in a listing question means timed events (timedOnly)]"
     },
     {
       "id": "calendar-006",
@@ -1967,7 +1969,8 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {
-          "range": "upcoming"
+          "range": "upcoming",
+          "timedOnly": true
         }
       },
       "grammar": "calendar-question",
@@ -1976,7 +1979,8 @@
         "args": {
           "range": "upcoming"
         }
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch, T1 extension (ADR-0120 A5 implementation note 3): was {\"range\": \"upcoming\"}; a meeting word in a listing question means timed events (timedOnly)]"
     },
     {
       "id": "calendar-017",
@@ -2001,7 +2005,8 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {
-          "range": "next-mon"
+          "range": "next-mon",
+          "timedOnly": true
         }
       },
       "grammar": "calendar-question",
@@ -2010,7 +2015,8 @@
         "args": {
           "range": "10-19"
         }
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch, T1 extension (ADR-0120 A5 implementation note 3): was {\"range\": \"next-mon\"}; a meeting word in a listing question means timed events (timedOnly)]"
     },
     {
       "id": "calendar-019",
@@ -2169,13 +2175,16 @@
       "channel": true,
       "expect": {
         "entryId": "calendar.events",
-        "args": {}
+        "args": {
+          "timedOnly": true
+        }
       },
       "grammar": "calendar-question",
       "grammarAnswer": {
         "entryId": "calendar.events",
         "args": {}
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch, T1 extension (ADR-0120 A5 implementation note 3): was {}; a meeting word in a listing question means timed events (timedOnly)]"
     },
     {
       "id": "calendar-030",
@@ -2207,7 +2216,8 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {
-          "range": "tomorrow"
+          "range": "tomorrow",
+          "timedOnly": true
         }
       },
       "grammar": "calendar-question",
@@ -2216,7 +2226,8 @@
         "args": {
           "range": "tomorrow"
         }
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch, T1 extension (ADR-0120 A5 implementation note 3): was {\"range\": \"tomorrow\"}; a meeting word in a listing question means timed events (timedOnly)]"
     },
     {
       "id": "calendar-033",
@@ -2241,7 +2252,8 @@
       "expect": {
         "entryId": "calendar.events",
         "args": {
-          "range": "upcoming"
+          "range": "upcoming",
+          "timedOnly": true
         }
       },
       "grammar": "calendar-question",
@@ -2250,7 +2262,8 @@
         "args": {
           "range": "upcoming"
         }
-      }
+      },
+      "note": "[Relabelled 2026-10-15 in the owner's D12 batch, T1 extension (ADR-0120 A5 implementation note 3): was {\"range\": \"upcoming\"}; a meeting word in a listing question means timed events (timedOnly)]"
     },
     {
       "id": "calendar-035",
@@ -6062,10 +6075,11 @@
         "entryId": "calendar.events",
         "args": {
           "range": "this-week",
-          "partOfDay": "afternoon"
+          "partOfDay": "afternoon",
+          "timedOnly": true
         }
       },
-      "note": "follow-up 2, partial: no time-of-day filter exists, so the whole week is listed and the basis line says so (never a keyword or a wrong filter) [Relabelled 2026-10-15 in the owner's D12 batch (ADR-0120 A5 implementation note 3): was {\"range\": \"this-week\"}; the A5 availability / partOfDay args]"
+      "note": "follow-up 2, partial: no time-of-day filter exists, so the whole week is listed and the basis line says so (never a keyword or a wrong filter) [Relabelled 2026-10-15 in the owner's D12 batch (ADR-0120 A5 implementation note 3): was {\"range\": \"this-week\"}; the A5 availability / partOfDay args] [Relabelled 2026-10-15 in the owner's D12 batch, T1 extension (ADR-0120 A5 implementation note 3): was {\"range\": \"this-week\", \"partOfDay\": \"afternoon\"}; a meeting word in a listing question means timed events (timedOnly)]"
     },
     {
       "id": "jira-066",
