@@ -24932,6 +24932,10 @@ the 51 `help.topic` read cases 2× each keep their outcome (101/102; the one mis
   `nl-select.v28` (the v26 A6 text on v27). No instruction line changes.
 - **Grammar.** The anchored work-chat grammar yields "취소된 할 일도 보여줘" to selection under `QUOKY_NL_GRAMMAR_YIELD=on`
   (A2: unexpressed content); "전체 할 일" stays the grammar's open list (전체 is an expressed word of that grammar).
+- **Wording conflict resolved (2026-10-15).** Through NL selection, 전체 / 전부 / 모든 / 다 보여 mean `all` (canceled and
+  completed included). The anchored grammar's "전체 할 일" keeps showing the open list, so "전체" means `all` only when
+  selection reads it. "지난 알림" (past) shows one-shot reminders that already fired; past firings of recurring reminders
+  are not listed.
 - **Corpus.** `a6-negative-todo.list-007` and `a6-negative-reminder.list-005` return to their list golds with
   `status: canceled` (the pending relabel to `none` is reverted). `a6-paraphrase-todo.complete-018` ("완룐") and `-009`
   ("체크해줘") stay relabelled to `none`, PENDING owner approval.

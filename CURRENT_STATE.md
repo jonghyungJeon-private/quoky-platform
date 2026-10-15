@@ -44,9 +44,13 @@ before merge (port and runtime dispatch change).
 
 - S1 per-grammar Phase C decision: a grammar moves to `c` only on its own `nl_selection.agreement` data, with the owner's yes.
 - Egress `enforce`: after 7 clean ledger days; the owner ask is due around 2026-10-20.
-- A6 R1: the batch review is APPROVED (2026-10-15; DECISIONS "A6 R1 owner batch approval"). Still needing a separate owner
-  yes each: the A6 model runs (3 runs), the `.env.local` `QUOKY_NL_ACTIONS` flag (stays `off`), and the labelled live session
-  of at least 100 turns.
+- A6 R1: the batch review is APPROVED (2026-10-15; DECISIONS "A6 R1 owner batch approval"). The owner approved the 3+3
+  Haiku final gate runs, which ran on 2026-10-15 (`data/eval/a6-r1-final-run{1,2,3}-{action,readreg}.*`). Still needing a
+  separate owner yes each: the `.env.local` `QUOKY_NL_ACTIONS` flag (stays `off`) and the labelled live session of at
+  least 100 turns.
+- Owner gold decisions (asked on Discord 2026-10-15; recommended for `reminder.create-020` / `-022`: ask). Still listed as
+  PENDING in `nl-action.v1.json`: `a6-paraphrase-todo.complete-018` ("완룐", now `none`), `a6-paraphrase-todo.complete-009`
+  ("체크해줘", now `none`), `a6-paraphrase-reminder.create-020` and `a6-paraphrase-reminder.create-022` (now `ask`).
 - D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
   metadata edits, the calendar relabels and the T1 extension); the 148 S1 cases are marked with their 2026-10-13
   approval. They gate no live behaviour.
@@ -84,11 +88,11 @@ Details and the review record for each item are in the matching notes in `DECISI
 - **Haiku check (1 run each, after the review fixes and the CA delta):** action 96.3%, every entry ≥ 92.5%, 0 wrong
   targets, 0 negative captures, gate passed in that run (with four golds relabelled to `none`, PENDING owner approval:
   `todo.list-007`, `reminder.list-005`, `todo.complete-018`, `-009`); read regression passed (0 action, 0 wrong captures).
-  Next: the orchestrator's 3-run gate. `QUOKY_NL_ACTIONS` stays `off`.
+  The 3-run final gate ran after this round (`data/eval/a6-r1-final-run*`). `QUOKY_NL_ACTIONS` stays `off`.
 - **Status filter (owner decision 2026-10-15):** `todo.list` / `reminder.list` take `status` (canceled, completed / done,
   all; default the open ones), read-only; read prompt `nl-select.v27`, A6 prompt `nl-select.v28`. With Codex round 2 the
   latest Haiku runs (1 each): action 97.3%, 0 wrong targets, 0 negative captures, gate passed; read regression passed.
-  `complete-018` and `-009` relabels stay PENDING owner approval.
+  The `complete-018` and `-009` relabels are the owner gold decisions listed under "Pending with the owner".
 - **For the owner:** `neg-094` is grammar-owned (a daily brief schedule) and skipped in A6-on scoring.
 - **Backlog (owner request 2026-10-15, not R1):** a separate safe design proposal for "그거로 추가해줘", bringing earlier
   reply content into a to-do: a preview showing the exact text, explicit approval, and defenses against content-borne
