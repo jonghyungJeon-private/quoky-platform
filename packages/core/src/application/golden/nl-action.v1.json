@@ -519,11 +519,12 @@
    "text": "오늘 할 일에 청소기 필터 교체 올려줘",
    "expect": {
     "entryId": "todo.add",
-    "args": {},
-    "outcome": "ask",
-    "reason": "time-in-title"
+    "args": {
+     "title": "청소기 필터 교체"
+    },
+    "outcome": "execute"
    },
-   "note": "was act-todo-add-037"
+   "note": "was act-todo-add-037 [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): A6-D1 asks only for a time word inside the title; 오늘 is outside it, so the to-do is added]"
   },
   {
    "id": "a6-paraphrase-todo.add-038",
@@ -7671,9 +7672,15 @@
     "target": {
      "source": "todo",
      "id": "todo-7"
-    }
+    },
+    "alsoAccepts": [
+     {
+      "entryId": "action.undo",
+      "args": {}
+     }
+    ]
    },
-   "note": "was ref-017"
+   "note": "was ref-017 [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): action.undo of the todo.add cancels the same to-do (alsoAccepts)]"
   },
   {
    "id": "a6-reference-reminder.cancel-001",
@@ -8472,9 +8479,10 @@
      "ref": "#1"
     },
     "outcome": "ask",
-    "reason": "other-source"
+    "reason": "other-source",
+    "acceptsAnyQuestion": true
    },
-   "note": "was ref-054; text made unique (was: 1번 문서 요약해줘)"
+   "note": "was ref-054; text made unique (was: 1번 문서 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
   },
   {
    "id": "a6-reference-todo.complete-022",
@@ -8581,9 +8589,10 @@
      "ref": "#2"
     },
     "outcome": "ask",
-    "reason": "other-source"
+    "reason": "other-source",
+    "acceptsAnyQuestion": true
    },
-   "note": "was ref-058; text made unique (was: 2번 요약해줘)"
+   "note": "was ref-058; text made unique (was: 2번 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
   },
   {
    "id": "a6-reference-item.summarize-009",
@@ -8885,9 +8894,10 @@
      "ref": "#1"
     },
     "outcome": "ask",
-    "reason": "expired"
+    "reason": "expired",
+    "acceptsAnyQuestion": true
    },
-   "note": "was ref-070; text made unique (was: 첫 번째 거 요약해줘)"
+   "note": "was ref-070; text made unique (was: 첫 번째 거 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
   },
   {
    "id": "a6-reference-todo.complete-028",
@@ -9049,9 +9059,10 @@
      "ref": "this"
     },
     "outcome": "ask",
-    "reason": "ambiguous"
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
    },
-   "note": "was ref-076; text made unique (was: 그거 요약해줘)"
+   "note": "was ref-076; text made unique (was: 그거 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
   },
   {
    "id": "a6-reference-todo.complete-034",
@@ -9072,7 +9083,17 @@
       }
      ],
      "ageMinutes": 1
-    }
+    },
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ]
    },
    "expect": {
     "entryId": "todo.complete",
@@ -9082,7 +9103,7 @@
     "outcome": "ask",
     "reason": "out-of-range"
    },
-   "note": "was ref-080"
+   "note": "was ref-080 [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): the open question also wrote its candidates as the most recent to-do listing (labels 2, 3), as the runtime does]"
   },
   {
    "id": "a6-reference-none-003",

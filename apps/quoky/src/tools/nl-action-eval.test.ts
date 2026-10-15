@@ -139,6 +139,35 @@ describe('scoring (A6-D7): a wrong target is never a question; negatives capture
     expect(await score(alone, answer('todo.complete', { ref: '#2' }))).toBe('none');
   });
 
+  it('owner D12 batch 2026-10-15: a READ gold is scored on the entry only; acceptsAnyQuestion; alsoAccepts with the same target', async () => {
+    const score = async (golden: NlActionCase, raw: string) => {
+      const { decision, audit } = await decideActionCase(golden, provider(() => raw), NOW);
+      return scoreActionDecision(golden, raw, decision, audit).outcome;
+    };
+    const read: NlActionCase = { id: 'a6-t-9', family: 'negative', text: '안 읽은 메일 알려줘', expect: { entryId: 'mail.list', args: {}, outcome: 'execute' } };
+    expect(await score(read, answer('mail.list', { unread: true }))).toBe('hit');
+    expect(await score(read, answer('drive.files'))).toBe('miss');
+    const clarify: NlActionCase = {
+      id: 'a6-t-10',
+      family: 'reference',
+      text: '13번 취소해줘',
+      fixture: { listings: [{ source: 'mail', labels: [1, 2, 3], ageMinutes: 1 }] },
+      expect: { entryId: 'reminder.cancel', args: { ref: '#13' }, outcome: 'ask', reason: 'other-source', acceptsAnyQuestion: true },
+    };
+    expect(await score(clarify, answer('todo.cancel', { ref: '#13' }, 'NEEDS_CLARIFICATION'))).toBe('hit');
+    expect(await score(clarify, answer('none'))).toBe('miss');
+    const undoToo: NlActionCase = {
+      id: 'a6-t-11',
+      family: 'reference',
+      text: '방금 추가한 거 취소해줘',
+      fixture: { lastAction: { entryId: 'todo.add', source: 'todo', itemId: 'todo-7', ageMinutes: 1 } },
+      expect: { entryId: 'todo.cancel', args: { ref: 'recent' }, outcome: 'execute', target: { source: 'todo', id: 'todo-7' }, alsoAccepts: [{ entryId: 'action.undo', args: {} }] },
+    };
+    expect(await score(undoToo, answer('todo.cancel', { ref: 'recent' }))).toBe('hit');
+    expect(await score(undoToo, answer('action.undo'))).toBe('hit');
+    expect(await score({ ...undoToo, expect: { ...(undoToo.expect as object), alsoAccepts: undefined } as NlActionCase['expect'] }, answer('action.undo'))).toBe('miss');
+  });
+
   it('the summary gate fails on one wrong target, one negative capture, or too many questions on references', () => {
     const hit = { run: 1, id: 'x', family: 'reference', expected: 'todo.complete', outcome: 'hit' as const, latencyMs: 10 };
     expect(summarizeAction([hit]).gatePassed).toBe(true);

@@ -24,7 +24,9 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * of v24. v26 (A6 R1 fix, the A6 prompt only; the read prompt stays v24) = v25 with the rule-8 `when` line saying "without
  * a trailing particle such as 에", the `ref` line splitting "this" (그거/이거/it/that) from "recent" (방금/아까) and adding
  * "item 3", and two rule-8 lines: pick the asked action even when Reference context shows another list or nothing, and copy
- * a deictic-only content as the span (Core asks); the same `ref` and `when` wording in the action entries' arg descriptions.
+ * a deictic-only content as the span (Core asks); the same `ref` and `when` wording in the action entries' arg descriptions;
+ * and the rule-8 help.topic parenthetical adds that a question about what a phrase or command would do or mean stays none
+ * (rule 2; the v25 parenthetical pulled "\"…\" 라고 말하면 뭐가 되는지 설명해줘" to help.topic, which v24 never does).
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v27';
 /**
@@ -170,7 +172,8 @@ const ACTION_RULES: readonly string[] = [
   '   Pick the action the owner asks for even when Reference context shows another list or nothing, and when the content to',
   '   add or remind is only 그거/이거/방금 거, copy those words as the span: Core checks the item or the content and asks.',
   '   A statement or question about an action ("다 했어", "취소했어", "추가하는 법"), a negated request ("취소하지 마") and an',
-  '   action on pasted or quoted content are none (a how-to question about Quoky is help.topic).',
+  '   action on pasted or quoted content are none (a how-to question about Quoky is help.topic; a question about what a',
+  '   phrase or command would do or mean stays none, rule 2).',
   '   item.summarize: source is the list the owner means (see Reference context); mode summary only for 요약/정리/짧게/',
   '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.',
   '   Posting, sending, replying, calendar events, Jira issues and every other write not in the catalog are still none.',

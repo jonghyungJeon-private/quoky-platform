@@ -9,7 +9,8 @@
  *  - `hit`: Core executes the gold entry with the gold canonical args and the gold target (or, for a gold ask/refuse, Core
  *    does not execute and the selector named the gold entry and args, or, when the gold args are `{}`, Core's refusal or
  *    question reason equals the gold reason; or, for an execute gold marked `acceptsNone` by the owner, the selector
- *    answered `none`);
+ *    answered `none`; owner D12 batch 2026-10-15: a READ gold is scored on the entry only, an `acceptsAnyQuestion` gold
+ *    on any question, and `alsoAccepts` names other selections with the same effect on the same target);
  *  - `wrong-target`: Core would execute an item other than the gold one (gate 0);
  *  - `negative-capture`: a negative executed or previewed an action (gate 0; a question counts as neither);
  *  - `question`: Core asked on a positive (the question rate on positive reference cases, at most 10%);
@@ -128,6 +129,10 @@ export interface NlActionExpect {
    * non-execution is acceptable too, so an `execute` gold with this flag also counts a selector `none` as a hit.
    */
   readonly acceptsNone?: true;
+  /** Owner D12 batch of 2026-10-15 (A6 R1): a clarification is the correct outcome, whatever reason or args Core asks with. */
+  readonly acceptsAnyQuestion?: true;
+  /** Owner D12 batch of 2026-10-15 (A6 R1): other selections with the same effect on the same target (e.g. `action.undo`). */
+  readonly alsoAccepts?: ReadonlyArray<{ readonly entryId: string; readonly args: NlArgs }>;
 }
 
 export interface NlActionCase {
@@ -193,6 +198,8 @@ export function validateActionCorpus(corpus: NlActionCorpus): string[] {
     if (!(OUTCOMES as readonly string[]).includes(expect.outcome)) problems.push(`${where}: expect outcome`);
     if (expect.outcome !== 'execute' && (expect.reason === undefined || !(REASONS as readonly string[]).includes(expect.reason))) problems.push(`${where}: expect reason`);
     if (expect.acceptsNone !== undefined && (expect.acceptsNone !== true || expect.outcome !== 'execute')) problems.push(`${where}: acceptsNone`);
+    if (expect.acceptsAnyQuestion !== undefined && (expect.acceptsAnyQuestion !== true || expect.outcome !== 'ask')) problems.push(`${where}: acceptsAnyQuestion`);
+    if (expect.alsoAccepts !== undefined && (expect.outcome !== 'execute' || expect.alsoAccepts.some((other) => !isNlCatalogEntryId(other.entryId)))) problems.push(`${where}: alsoAccepts`);
     if (expect.outcome === 'execute' && TARGET_ENTRIES.has(expect.entryId) && expect.args.match === undefined && expect.target === undefined) problems.push(`${where}: expect target`);
     // A gold selection must be what the validator accepts from this text (grounded spans and refs, closed values).
     if (isNlCatalogEntryId(expect.entryId) && !('skip' in prepareSelectionInput(golden.text))) {
@@ -370,6 +377,7 @@ export function scoreActionDecision(golden: NlActionCase, raw: string, decision:
   if (gold.outcome !== 'execute') {
     if (isAction && executed.target !== undefined) return { ...base, outcome: 'wrong-target', got: executed.entryId, ...withSpan };
     if (executed !== undefined) return { ...base, outcome: 'miss', got: executed.entryId, ...withSpan };
+    if (gold.acceptsAnyQuestion === true && decision.kind === 'ask') return { ...base, outcome: 'hit', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
     const named = output?.entryId === gold.entryId && canonical(withoutMode(output.args, gold.args)) === canonical(withoutMode(gold.args, gold.args));
     // A gold refusal or question with no args (`{}`: the refused argument has no canonical value) is scored by its closed
     // reason instead: the selector named the gold entry and Core refused or asked for exactly the gold reason (A6 R1).
@@ -380,7 +388,11 @@ export function scoreActionDecision(golden: NlActionCase, raw: string, decision:
   if (executed === undefined) return { ...base, outcome: decision.kind === 'none' ? 'miss' : 'question', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
   const sameTarget = gold.target === undefined || (executed.target?.source === gold.target.source && executed.target.id === gold.target.id);
   if (executed.target !== undefined && gold.target !== undefined && !sameTarget) return { ...base, outcome: 'wrong-target', got: executed.entryId, ...withSpan };
-  const same = executed.entryId === gold.entryId && canonical(withoutMode(executed.args, gold.args)) === canonical(gold.args) && sameTarget;
+  // Owner D12 batch of 2026-10-15 (A6 R1): a READ gold in the action corpus is scored on the entry only (this corpus measures
+  // action selection; the read corpus scores read args).
+  if (isNlWave1EntryId(gold.entryId)) return { ...base, outcome: executed.entryId === gold.entryId ? 'hit' : 'miss', got: executed.entryId, ...withSpan };
+  const accepted = [{ entryId: gold.entryId, args: gold.args }, ...(gold.alsoAccepts ?? [])];
+  const same = sameTarget && accepted.some((choice) => executed.entryId === choice.entryId && canonical(withoutMode(executed.args, choice.args)) === canonical(choice.args));
   return { ...base, outcome: same ? 'hit' : 'miss', got: executed.entryId, ...withSpan };
 }
 
