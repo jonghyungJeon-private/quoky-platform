@@ -59,6 +59,9 @@ byte-identical. Chief Architect review required before merge (port and runtime d
   `a6-paraphrase-reminder.create-024` ("알림 설정: …"); they now fail every run by design.
 - A6 prompt `nl-select.v33` gate (3+3 Haiku, 2026-10-16): action passed 1 of 3, read-regression 0 of 3 (help.topic captures
   of neg-012 / neg-025 / neg-110; `reminder.create-014` now `none` 3 of 3). DECISIONS "A6 prompt `nl-select.v33`".
+- A6 prompt `nl-select.v34` gate (3+3 Haiku, 2026-10-16): action passed 2 of 3, read-regression 0 of 3 (`jira.release` < 0.9
+  every run since v32, confluence->slack, help.topic run 3). Owner gold decision proposed: `a6-negative-none-029/-032/-124`
+  -> help.topic. DECISIONS "A6 prompt `nl-select.v34`".
 - D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
   metadata edits, the calendar relabels and the T1 extension); the 148 S1 cases are marked with their 2026-10-13
   approval. They gate no live behaviour.

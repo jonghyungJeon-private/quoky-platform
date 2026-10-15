@@ -25943,6 +25943,28 @@ connector-write reconcile (no send).
   `reminder.create-014` ("금요일 오후 6시에 주간 회고 작성 알려줘") is now `none` 3 of 3 (it hit 7 of 7 before). Not fixed
   here: no further prompt loop was authorized.
 
+- **A6 prompt `nl-select.v34` (one more iteration, owner blanket approval for follow-ups, 2026-10-16).** Three changes.
+  (1) Rule 8 now says a question form is needed but not enough: help.topic is only a question about Quoky itself, and a
+  question about any other app, device or service is none. (2) The "…설정해 둬" none example is replaced by "대화 모델은
+  소네트로 고정해". Probe: with it, `reminder.create-014` went to none 3 of 5; without it, 0 of 10. (3) The two older A6
+  near-copies are rewritten: "그 메일 내용 짧게 정리해 줄래?" (A6 prompt only; the read prompt keeps v30) and "목록에 있는
+  거 모두 끝난 걸로 처리해 줘". The overlap test now covers every A6 example. Its measure is shape-aware (numbers and paths
+  are one token, punctuation counts) with a 0.6 threshold, calibrated so that all five removed examples are flagged.
+  **Gate (Haiku 3+3, `data/eval/a6-gate-v34-run*`):** action overall 0.960 / 0.965 / 0.948, `todo.add` 0.915 / 0.936 /
+  0.915, `reminder.create` 0.927 / 0.976 / 0.902, `reminder.list` 1 / 1 / 1, spanExact 0.987 / 0.987 / 0.962; wrong targets
+  and negative captures 0. Action gate passed 2 of 3. Read overall 0.953 / 0.961 / 0.947, A6 captures 0, wrong captures
+  0 / 1 / 3. Read gate passed 0 of 3: `jira.release` is below 0.9 in every run (it has been below 0.9 since v32),
+  `confluence.search` 48/54 in two runs (misread as `slack.search` 13 times, against 5-6 on v32/v33), and `help.topic` 44/51
+  in run 3. **Flips vs v33.** Fixed: `reminder.create-014` 0 -> 3, `-033` 1 -> 3, neg-012 / neg-025 1 -> 3 (other apps'
+  how-tos), `calendar-018`, `uat5ca-03`. Regressed: `a6-negative-none-029` "리마인더 만드는 법" / `-032` "할 일 빼는 방법 좀"
+  / `-124` (gold none, now help.topic: rule 3 already makes a how-to about Quoky's own feature help.topic, so the gold and
+  the rule disagree); `item.summarize-007` "첫 번째 요약해줘" 2 -> 0 (the rewritten summarize example lost the short form);
+  `todo.complete-032` "다 완료 처리해줘" 2 -> 0 (the rewritten bulk example lost the action word); neg-110 2 -> 0;
+  `calendar-025` 3 -> 0; `confluence-004/-018/-027` 3 -> 1. **Stopped here (no further iteration).** Recommendation.
+  *Fix* in a later prompt: restore a short "<ordinal/deictic> 요약해" form and a bulk example that names the action, both in
+  a non-corpus form. *Owner gold decision:* none-029/-032/-124 -> help.topic (consistent with rule 3). *Residual:*
+  `jira.release` (an A8 read-side weakness that predates v32), confluence->slack and neg-110 / neg-037 / neg-051 (model noise).
+
 ### ADR-0122 P2 implementation note (2026-10-15)
 
 **Status:** Implemented on branch `claude/v5-surface-grants-p2` (the phasing table's P2 row). No migration, no new OAuth

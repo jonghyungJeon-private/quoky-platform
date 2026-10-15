@@ -5,12 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Unreleased — A6 R1 gate: A6 prompt `nl-select.v33`, canonical reminder `when` (2026-10-16)
+## Unreleased — A6 R1 gate: A6 prompt `nl-select.v34`, canonical reminder `when` (2026-10-16)
 
 - **Fixed.** `reminder.create` drops one trailing locative 에 from `when` when time words remain ("20분 후에" -> "20분 후").
   This is its documented canonical form, and the grammar reads both as the same time. `reminder.create-027` was an exact-args
   miss, not a grounding refusal.
-- **Changed.** A6 prompt `nl-select.v33`: the three v32 rule-8 examples near-copied scored corpus cases (CA review). They are
+- **Changed.** A6 prompt `nl-select.v34`: rule 8 limits help.topic to questions about Quoky itself (other apps' how-tos
+  are none); the remaining A6 near-copies are rewritten and the overlap test covers every A6 example. Before it, `nl-select.v33`: the three v32 rule-8 examples near-copied scored corpus cases (CA review). They are
   replaced by other features and sentence shapes, and a test now checks example/corpus overlap. Cache-key pins updated.
 - **Not changed.** ㄱㄱ / 고고 as request endings were tried and reverted (Codex P1: reports and how-to text grounded). They
   are must-not-ground tests. `todo.add-009/-016/-025` and `reminder.create-024` await an owner gold decision (recommended:
