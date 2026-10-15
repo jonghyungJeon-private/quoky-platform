@@ -109,7 +109,9 @@ function renderedExamples(): RenderedExample[] {
   const seen = new Set<string>();
   const unique: RenderedExample[] = [];
   for (const example of [...read, ...action]) {
-    const key = exampleKey(example);
+    // The output is part of the dedupe identity: a read and an A6 variant with the same (previous, context, text) but a
+    // different output are both kept, so the A6 action outputs are output-linted too.
+    const key = `${exampleKey(example)}|${example.output}`;
     if (seen.has(key)) continue;
     seen.add(key);
     unique.push(example);
@@ -133,6 +135,13 @@ function parseJson(text: string): { entryId?: unknown; args?: unknown } | undefi
 /** Every finding today's examples have against the gold (without reasons). */
 function lint(examples: readonly RenderedExample[], gold: readonly GoldCase[]): Array<Omit<Finding, 'reason'>> {
   const found: Array<Omit<Finding, 'reason'>> = [];
+  const added = new Set<string>();
+  const push = (finding: Omit<Finding, 'reason'>): void => {
+    const key = findingKey(finding);
+    if (added.has(key)) return;
+    added.add(key);
+    found.push(finding);
+  };
   for (const example of examples) {
     const base = { example: example.text, ...(example.previous !== undefined ? { previous: example.previous } : {}), ...(example.context !== undefined ? { context: example.context } : {}) };
     const output = parseJson(example.output);
@@ -142,7 +151,7 @@ function lint(examples: readonly RenderedExample[], gold: readonly GoldCase[]): 
       const metrics = { tokenJ: round(c.tokenJ), charJ: round(c.charJ), contain: round(c.contain) };
       // A short text has too few n-grams to measure: only an exact match is a finding; the rest is the manual review list.
       const kind = short ? (c.exact ? 'exact' : undefined) : findingKind(c);
-      if (kind !== undefined) found.push({ ...base, goldId: g.id, kind, ...metrics });
+      if (kind !== undefined) push({ ...base, goldId: g.id, kind, ...metrics });
       // The (previous, context, text) pair against gold cases that carry a previous selection or fixture.
       if ((example.previous !== undefined || example.context !== undefined) && g.previous !== undefined) {
         const pair = closeness(pairText(example.previous, example.context, example.text), pairText(g.previous, undefined, g.text));
@@ -151,11 +160,11 @@ function lint(examples: readonly RenderedExample[], gold: readonly GoldCase[]): 
         // a shared previous-selection JSON dominates the concatenation, so without the floor every follow-up that
         // merely shares a previous selection would match.
         const textRelated = c.tokenJ >= PAIR_TEXT_FLOOR || c.charJ >= PAIR_TEXT_FLOOR;
-        if (pairKind !== undefined && !short && textRelated && kind === undefined) found.push({ ...base, goldId: g.id, kind: 'pair', tokenJ: round(pair.tokenJ), charJ: round(pair.charJ), contain: round(pair.contain) });
+        if (pairKind !== undefined && !short && textRelated && kind === undefined) push({ ...base, goldId: g.id, kind: 'pair', tokenJ: round(pair.tokenJ), charJ: round(pair.charJ), contain: round(pair.contain) });
       }
       // The output: the same entry and a verbatim span arg value.
       if (output !== undefined && g.expect !== undefined && sharedSpanArg(output, g.expect) !== undefined) {
-        found.push({ ...base, goldId: g.id, kind: 'output', ...metrics });
+        push({ ...base, goldId: g.id, kind: 'output', ...metrics });
       }
     }
   }
@@ -194,7 +203,7 @@ describe('RAG-0 example contamination lint (ADR-0123 D5)', () => {
   const examples = renderedExamples();
   const gold = loadGold();
   const findings = lint(examples, gold);
-  const shorts = examples.filter((e) => isShortText(e.text));
+  const shorts = examples.filter((e, i) => isShortText(e.text) && examples.findIndex((o) => exampleKey(o) === exampleKey(e)) === i);
 
   if (REGEN) {
     it('regenerates the baseline (QUOKY_RAG0_REGEN=1); review the diff before committing', () => {
@@ -227,6 +236,15 @@ describe('RAG-0 example contamination lint (ADR-0123 D5)', () => {
     expect(sharedSpanArg({ entryId: 'todo.add', args: { title: '보고서 쓰기' } }, { entryId: 'todo.add', args: { title: '보고서 쓰기' } })).toBe('title');
     expect(sharedSpanArg({ entryId: 'todo.add', args: { title: '쓰기' } }, { entryId: 'todo.add', args: { title: '쓰기' } })).toBeUndefined();
     expect(sharedSpanArg({ entryId: 'todo.add', args: { title: '보고서 쓰기' } }, { entryId: 'reminder.create', args: { title: '보고서 쓰기' } })).toBeUndefined();
+  });
+
+  it('output lint: an A6 override output that copies a gold span value is flagged, even when read and A6 share the message', () => {
+    const goldCase: GoldCase = { id: 'g-1', text: '완전히 다른 문장 하나', expect: { entryId: 'todo.add', args: { title: '분기 보고서 작성' } } };
+    const read: RenderedExample = { text: 'can you add a todo for me: x', output: '{"entryId":"none","args":{}}' };
+    const action: RenderedExample = { text: 'can you add a todo for me: x', output: '{"entryId":"todo.add","args":{"title":"분기 보고서 작성"}}' };
+    const result = lint([read, action], [goldCase]);
+    expect(result.filter((f) => f.kind === 'output').map((f) => f.goldId)).toEqual(['g-1']);
+    expect(lint([read], [goldCase])).toEqual([]);
   });
 
   it('has no new finding (every finding is in the known list)', () => {
