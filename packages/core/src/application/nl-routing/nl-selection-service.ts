@@ -969,6 +969,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const replyId = turn.replyToMessageId;
     const listing = replyId === undefined ? undefined : findAnyListingByReply(listingValue, turn.actor.id, replyId, turn.now);
     return {
+      // Each slot carries the `requestId` of the turn that wrote it, so the resolver can tell the action's own echo slot
+      // from a newer listing (A6 reference priority, owner 2026-10-16).
       listings: readListingRecord(listingValue, turn.actor.id, turn.now),
       ...(lastAction !== undefined ? { lastAction } : {}),
       ...(replyId !== undefined ? { replyTo: { messageId: replyId, ...(listing !== undefined ? { listing } : {}) } } : {}),

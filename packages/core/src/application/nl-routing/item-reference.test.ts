@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  LAST_LISTING_METADATA_KEY,
   findAnyListingByReply,
   readListingRecord,
   withLabelledListing,
@@ -11,7 +12,16 @@ import {
 import { isNlRefGrounded, parseNlRef } from './action-entries';
 import type { NlActionEntryId, NlItemSource } from './catalog';
 import { hasReferenceRecord, renderReferenceContext, resolveItemReference, resolveUndo, type NlReferenceState } from './item-reference';
-import { LAST_ACTION_TTL_MS, readLastAction, withLastAction, withLastActionEcho, type LastActionRecord } from './last-action';
+import {
+  LAST_ACTION_METADATA_KEY,
+  LAST_ACTION_TTL_MS,
+  readLastAction,
+  readSessionLastAction,
+  withLastAction,
+  withLastActionEcho,
+  type LastActionRecord,
+} from './last-action';
+import { newestReference } from './reference-recency';
 import { resolveLabelChoice } from './nl-action-policy';
 
 // ADR-0120 amendment A6-D2 (NLA-2): labelled listings, the most recent slot, `quoky.lastAction` and the pure reference
@@ -202,12 +212,11 @@ describe('A6-D2 clarification (owner 2026-10-15): "이 / 그 / 저 + noun" resol
     expect(resolve('reminder.cancel', 'reminder', 'this', '그 알림 취소해줘', state(todos, 1))).toMatchObject({ kind: 'unresolved', outcome: 'other-source', found: 'todo' });
   });
 
-  it('known, ratified (A6-D2 step 3): a fresh lastAction wins over a newer listing for 그거 and for 이/그 + noun alike', () => {
-    // Owner follow-up question in CURRENT_STATE: should a newer listing override a fresh lastAction for deictics?
+  it('A6 reference priority (owner 2026-10-16): a newer multi-item listing makes 그거 and 이/그 + noun ask alike', () => {
     const last = action('todo.add', 'todo', 'todo-a', 0, { label: 1 });
     const newer = listings([{ source: 'todo', labels: [1, 2], minute: 1 }]);
     for (const text of ['그거 완료해줘', '그 할 일 완료해줘']) {
-      expect(resolve('todo.complete', 'todo', 'this', text, state(newer, 2, { lastAction: last })), text).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-a', label: 1 } });
+      expect(resolve('todo.complete', 'todo', 'this', text, state(newer, 2, { lastAction: last })), text).toMatchObject({ kind: 'unresolved', outcome: 'ambiguous', candidates: items('todo', [1, 2]) });
     }
   });
 
@@ -339,5 +348,159 @@ describe('A6 R1 fix: the owner\'s source noun is cross-checked for every ref kin
     expect(resolve('todo.complete', 'todo', '#2', '2번 할 일 완료해줘', todos)).toMatchObject({ kind: 'resolved', target: { id: 'todo-2' } });
     // A noun inside another word is not a source ("알림장").
     expect(resolve('todo.complete', 'todo', '#2', '2번 알림장 챙기기 완료', todos)).toMatchObject({ kind: 'resolved' });
+  });
+});
+
+// ── A6 reference priority (owner-approved 2026-10-16; docs/plans/a6-reference-priority-proposal.md §2-§3) ──────────
+
+describe('A6 reference priority: a newer listing vs a fresh lastAction (proposal §3 tests 1-10, 14)', () => {
+  const sec = (seconds: number) => seconds / 60;
+  const reqAction = (entryId: NlActionEntryId, source: 'todo' | 'reminder', itemId: string, minute: number, extra: Partial<LastActionRecord> = {}) =>
+    action(entryId, source, itemId, minute, { requestId: `req-${itemId}`, ...extra });
+
+  it('1. this: a todo lastAction, then a newer multi-item todo listing asks with the listing\'s candidates (B1 same source)', () => {
+    const last = reqAction('todo.complete', 'todo', 'todo-a', 0, { label: 3 });
+    const newer = listings([{ source: 'todo', labels: [1, 2, 4, 5, 6], minute: 1 }]);
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(newer, 2, { lastAction: last }))).toMatchObject({
+      kind: 'unresolved',
+      outcome: 'ambiguous',
+      candidates: items('todo', [1, 2, 4, 5, 6]),
+      found: 'todo',
+      listingAt: at(1),
+    });
+  });
+
+  it('2. this: a todo lastAction, then a reminder listing, entry todo.cancel asks other-source (B1 case a)', () => {
+    const last = reqAction('todo.complete', 'todo', 'todo-a', 0, { label: 3 });
+    const reminders = listings([{ source: 'reminder', labels: [11, 12], minute: 2 }]);
+    expect(resolve('todo.cancel', 'todo', 'this', '그거 취소해', state(reminders, 3, { lastAction: last }))).toMatchObject({ kind: 'unresolved', outcome: 'other-source', source: 'todo', found: 'reminder' });
+  });
+
+  it('3. the same state with entry reminder.cancel: one listed reminder resolves, several ask', () => {
+    const last = reqAction('todo.complete', 'todo', 'todo-a', 0, { label: 3 });
+    const one = listings([{ source: 'reminder', labels: [11], minute: 2 }]);
+    expect(resolve('reminder.cancel', 'reminder', 'this', '그거 취소해', state(one, 3, { lastAction: last }))).toEqual({ kind: 'resolved', target: { source: 'reminder', id: 'reminder-11', label: 11 } });
+    const several = listings([{ source: 'reminder', labels: [11, 12], minute: 2 }]);
+    expect(resolve('reminder.cancel', 'reminder', 'this', '그거 취소해', state(several, 3, { lastAction: last }))).toMatchObject({ kind: 'unresolved', outcome: 'ambiguous', candidates: items('reminder', [11, 12]) });
+  });
+
+  it('4. recent (방금 거): a newer same-source multi-item or cross-source listing asks; no newer listing stays on lastAction', () => {
+    const last = reqAction('todo.complete', 'todo', 'todo-a', 0, { label: 3 });
+    const sameSource = listings([{ source: 'todo', labels: [1, 2, 4], minute: 1 }]);
+    expect(resolve('todo.cancel', 'todo', 'recent', '방금 거 취소해', state(sameSource, 2, { lastAction: last }))).toMatchObject({ kind: 'unresolved', outcome: 'ambiguous', candidates: items('todo', [1, 2, 4]) });
+    const crossSource = listings([{ source: 'reminder', labels: [11], minute: 1 }]);
+    expect(resolve('todo.cancel', 'todo', 'recent', '방금 거 취소해', state(crossSource, 2, { lastAction: last }))).toMatchObject({ kind: 'unresolved', outcome: 'other-source', found: 'reminder' });
+    expect(resolve('todo.cancel', 'todo', 'recent', '방금 거 취소해', state(undefined, 2, { lastAction: last }))).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-a', label: 3 } });
+    // A recency word is never rebound to a listing item: one newer item that is another to-do asks (conflict).
+    const otherOne = listings([{ source: 'todo', labels: [9], minute: 1 }]);
+    expect(resolve('todo.cancel', 'todo', 'recent', '방금 거 취소해', state(otherOne, 2, { lastAction: last }))).toMatchObject({ kind: 'unresolved', outcome: 'conflict' });
+  });
+
+  it('5. this with lastAction newer than the listing resolves to lastAction', () => {
+    const older = listings([{ source: 'todo', labels: [1, 2, 3], minute: 0 }]);
+    const last = reqAction('todo.add', 'todo', 'todo-x', 2, { label: 7 });
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(older, 3, { lastAction: last }))).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-x', label: 7 } });
+    const otherSource = listings([{ source: 'reminder', labels: [11, 12], minute: 0 }]);
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(otherSource, 3, { lastAction: last }))).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-x', label: 7 } });
+  });
+
+  it('6. echo exclusion through the real record/read path: the action\'s own merged slot is not a newer listing', () => {
+    // A listing at T, then the write at T+2 records quoky.lastAction AND merges its echo label into the to-do slot under
+    // the same requestId (exactly as recordReceipt does); then the session metadata is read back.
+    const record: LastActionRecord = { entryId: 'todo.add', source: 'todo', itemId: 'todo-new', label: 4, at: at(2), undoable: true, undone: false, requestId: 'req-add', echoReplyIds: [] };
+    const build = (echoRequestId: string) => {
+      const listing = withLabelledListing(
+        withLabelledListing(undefined, ACTOR, 'todo', items('todo', [1, 2, 3]), at(0), 'listing', 'req-list'),
+        ACTOR,
+        'todo',
+        [{ label: 4, id: 'todo-new' }],
+        at(2),
+        'merge',
+        echoRequestId,
+      );
+      const metadata = { [LAST_LISTING_METADATA_KEY]: listing, [LAST_ACTION_METADATA_KEY]: withLastAction(undefined, ACTOR, record, at(2)) };
+      const lastAction = readSessionLastAction({ metadata }, ACTOR, at(3));
+      const s: NlReferenceState = { listings: readListingRecord(metadata[LAST_LISTING_METADATA_KEY], ACTOR, at(3)), ...(lastAction !== undefined ? { lastAction } : {}), now: at(3) };
+      return s;
+    };
+    const echoed = build('req-add');
+    expect(echoed.listings.slots.todo?.requestId).toBe('req-add');
+    expect(echoed.listings.slots.todo?.at).toBe(echoed.lastAction?.record.at);
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', echoed)).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-new', label: 4 } });
+    expect(resolve('todo.complete', 'todo', 'recent', '방금 거 완료', echoed)).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-new', label: 4 } });
+    // Control: the same slot written by ANOTHER request ties with the action and asks, so the read path really keeps it.
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', build('req-other'))).toMatchObject({ kind: 'unresolved', outcome: 'ambiguous' });
+  });
+
+  it('7. a tie within one second with a listing that is not the echo asks', () => {
+    const last = reqAction('todo.add', 'todo', 'todo-a', 2, { label: 4 });
+    const sameSource = withLabelledListing(undefined, ACTOR, 'todo', items('todo', [1, 2]), at(2 + sec(0.5)), 'listing', 'req-list');
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(sameSource, 3, { lastAction: last }))).toMatchObject({
+      kind: 'unresolved',
+      outcome: 'ambiguous',
+      candidates: items('todo', [1, 2]),
+    });
+    // A tied single item asks too: as a conflict when it is another to-do, as a question even when it is the same one.
+    const otherOne = withLabelledListing(undefined, ACTOR, 'todo', [{ label: 5, id: 'todo-b' }], at(2 + sec(0.5)), 'listing', 'req-list');
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(otherOne, 3, { lastAction: last }))).toMatchObject({ kind: 'unresolved', outcome: 'conflict' });
+    const sameOne = withLabelledListing(undefined, ACTOR, 'todo', [{ label: 4, id: 'todo-a' }], at(2 + sec(0.5)), 'listing', 'req-list');
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(sameOne, 3, { lastAction: last }))).toMatchObject({ kind: 'unresolved', outcome: 'ambiguous', candidates: [{ label: 4, id: 'todo-a' }] });
+    const before = withLabelledListing(undefined, ACTOR, 'reminder', items('reminder', [11]), at(2 - sec(0.5)), 'listing', 'req-list');
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(before, 3, { lastAction: last }))).toMatchObject({ kind: 'unresolved', outcome: 'other-source', found: 'reminder' });
+    // A recency word asks only for a strictly newer listing (rule 3): a tie keeps it on the action.
+    expect(resolve('todo.complete', 'todo', 'recent', '방금 거 완료', state(before, 3, { lastAction: last }))).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-a', label: 4 } });
+    expect(resolve('todo.complete', 'todo', 'recent', '방금 거 완료', state(sameSource, 3, { lastAction: last }))).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-a', label: 4 } });
+    expect(newestReference(readLastAction(last, ACTOR, at(3))!.record, readListingRecord(sameSource, ACTOR, at(3))).kind).toBe('tie');
+    // One full second apart is ordered again.
+    const apart = withLabelledListing(undefined, ACTOR, 'todo', items('todo', [1, 2]), at(2 - sec(1)), 'listing', 'req-list');
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(apart, 3, { lastAction: last }))).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-a', label: 4 } });
+  });
+
+  it('8. numbers: the listing, never lastAction; a newer other-source listing asks other-source', () => {
+    const todoList = listings([{ source: 'todo', labels: [1, 2, 3], minute: 0 }]);
+    const last = reqAction('todo.add', 'todo', 'todo-x', 2, { label: 2 });
+    expect(resolve('todo.complete', 'todo', '#2', '2번 완료', state(todoList, 3, { lastAction: last }))).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-2', label: 2 } });
+    const withReminders = listings([{ source: 'todo', labels: [1, 2, 3], minute: 0 }, { source: 'reminder', labels: [11, 12], minute: 2 }]);
+    expect(resolve('todo.complete', 'todo', '#2', '2번 완료', state(withReminders, 3, { lastAction: last }))).toMatchObject({ kind: 'unresolved', outcome: 'other-source', found: 'reminder' });
+    expect(resolve('todo.complete', 'todo', '#2', '2번 완료', state(undefined, 3, { lastAction: last }))).toMatchObject({ kind: 'unresolved', outcome: 'none' });
+    // The one exception: a reminder display number.
+    const reminderLast = reqAction('reminder.create', 'reminder', 'rem-uuid', 2, { label: 13 });
+    expect(resolve('reminder.cancel', 'reminder', '#13', '알림 13 취소', state(todoList, 3, { lastAction: reminderLast }))).toEqual({ kind: 'resolved', target: { source: 'reminder', label: 13 } });
+  });
+
+  it('9. undo stays on lastAction: newer listings, another actor\'s action and a firing reminder change nothing', () => {
+    const record: LastActionRecord = { entryId: 'todo.complete', source: 'todo', itemId: 'todo-a', label: 3, at: at(0), undoable: true, undone: false, requestId: 'req-a', echoReplyIds: ['echo-a'] };
+    let value = withLastAction(undefined, ACTOR, record, at(0));
+    value = withLastAction(value, 'actor-2', { ...record, itemId: 'todo-b', requestId: 'req-b', at: at(1) }, at(1));
+    const expected = { kind: 'resolved', target: { source: 'todo', id: 'todo-a', label: 3 }, undo: { entryId: 'todo.complete' } };
+    // A newer listing of any source is never read by undo (resolveUndo does not even take one).
+    const newer = listings([{ source: 'reminder', labels: [11, 12], minute: 2 }, { source: 'todo', labels: [1, 2], minute: 3 }]);
+    expect(resolveUndo(state(newer, 4, { lastAction: value }))).toEqual(expected);
+    expect(resolveUndo(state(undefined, 9, { lastAction: value }))).toEqual(expected);
+    expect(resolveUndo(state(newer, 11, { lastAction: value }))).toEqual({ kind: 'unresolved', outcome: 'stale' });
+    expect(resolveUndo(state(newer, 29, { lastAction: value, replyTo: 'echo-a' }))).toMatchObject(expected);
+    const undone = withLastAction(value, ACTOR, { ...record, entryId: 'action.undo', undoOf: 'todo.complete', undoable: false, at: at(5) }, at(5));
+    expect(resolveUndo(state(newer, 6, { lastAction: undone }))).toEqual({ kind: 'unresolved', outcome: 'undo-of-undo' });
+  });
+
+  it('10. expiry boundaries: lastAction 9:59 / 10:01 against a listing 29:59 / 30:01', () => {
+    const now = 40;
+    const listingAt = (age: number) => withLabelledListing(undefined, ACTOR, 'todo', items('todo', [1, 2]), at(now - age), 'listing', 'req-list');
+    const lastAt = (age: number) => reqAction('todo.add', 'todo', 'todo-x', now - age, { label: 9 });
+    const fresh = listingAt(29 + sec(59));
+    const gone = listingAt(30 + sec(1));
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(fresh, now, { lastAction: lastAt(9 + sec(59)) }))).toMatchObject({ kind: 'resolved', target: { id: 'todo-x' } });
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(fresh, now, { lastAction: lastAt(10 + sec(1)) }))).toMatchObject({ kind: 'unresolved', outcome: 'ambiguous', candidates: items('todo', [1, 2]) });
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(gone, now, { lastAction: lastAt(9 + sec(59)) }))).toMatchObject({ kind: 'resolved', target: { id: 'todo-x' } });
+    expect(resolve('todo.complete', 'todo', 'this', '그거 완료', state(gone, now, { lastAction: lastAt(10 + sec(1)) }))).toMatchObject({ kind: 'unresolved', outcome: 'stale' });
+  });
+
+  it('14. the Reference context line stays structure only with the slot requestId (no id, label, title or request id)', () => {
+    let value = withLabelledListing(undefined, ACTOR, 'todo', items('todo', [1, 2, 3]), at(0), 'listing', 'req-list-secret');
+    value = withLabelledListing(value, ACTOR, 'todo', [{ label: 4, id: 'todo-secret-id' }], at(2), 'merge', 'req-add-secret');
+    const s = state(value, 3, { lastAction: reqAction('todo.add', 'todo', 'todo-secret-id', 2, { label: 4, requestId: 'req-add-secret' }) });
+    const line = renderReferenceContext(s);
+    expect(line).toBe('last listing: todo (4 items, 1 min ago); last action: todo.add (1 min ago, undoable)');
+    for (const secret of ['todo-secret-id', 'req-add-secret', 'req-list-secret', 'todo-1']) expect(line).not.toContain(secret);
   });
 });

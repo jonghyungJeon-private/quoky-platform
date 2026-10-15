@@ -618,6 +618,9 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
       const title = `바뀔 일 ${verb}`;
       await turn(`할 일에 '${title}' 추가`, answer('todo.add', { title }));
       const target = (await todos()).find((item) => item.title === title);
+      // A6 reference priority (owner 2026-10-16): a listing within the same second as the add ties and "그거" asks, so
+      // the earlier listings are moved back as a real conversation's would be (the add's own echo slot is excluded).
+      await ageListing(1);
       await turn(phrase, answer(entry, { ref: 'this' }));
       const final = await storage.workItems.get(target?.id ?? '');
       expect(final?.status, verb).toBe(entry === 'todo.complete' ? 'COMPLETED' : 'CANCELED');
@@ -700,6 +703,77 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     const again = await turn(`${gone.displayNo}번 알림 취소`, answer('reminder.cancel', { ref: `#${gone.displayNo}` }));
     expect(again.text).toContain('이미 취소됐어요');
     expect(await reminders()).toEqual([]);
+  });
+
+  // -- A6 reference priority (owner-approved 2026-10-16; docs/plans/a6-reference-priority-proposal.md §3 tests 11-13) --
+
+  const sessionState = async (key: string): Promise<unknown> => (await storage.sessions.findActiveByContext(DM.platform, DM.channelId))?.metadata?.[key];
+  const actionLines = (from: number): string[] =>
+    vi.mocked(console.log).mock.calls.slice(from).map((call) => String(call[0])).filter((line) => line.includes('nl_action.decided'));
+
+  it('reference priority (a): complete a to-do, list reminders, then "그거 취소해" for todo.cancel asks; nothing is written', async () => {
+    await resetNlState();
+    await clearReminders();
+    await seedReminder('우선순위 확인 알림', DAY);
+    await send('할 일 추가: 우선순위 확인');
+    const item = (await todos()).find((entry) => entry.title === '우선순위 확인' && entry.status === 'ACTIVE');
+    // The add's own echo slot is not a newer listing (same requestId): "그거" is the to-do just added.
+    const done = await turn('그거 완료 처리해줘', answer('todo.complete', { ref: 'this' }));
+    expect(done.text).toContain('완료 처리했어요: "우선순위 확인"');
+    expect((await storage.workItems.get(item?.id ?? ''))?.status).toBe('COMPLETED');
+    const listed = await turn('알림 목록');
+    expect(listed.text).toContain('우선순위 확인 알림');
+    const lastAction = JSON.stringify(await sessionState('quoky.lastAction'));
+    const before = (await todos()).map((entry) => `${entry.id}:${entry.status}:${entry.updatedAt}`).join(',');
+    const asked = await turn('그거 취소해', answer('todo.cancel', { ref: 'this' }));
+    expect(asked.selects).toHaveLength(1);
+    expect(asked.text).toMatch(/^가장 최근에 보여 드린 건 .+ 목록이에요\. 어느 할 일인지 다시 말씀해 주세요\.$/u);
+    expect((await todos()).map((entry) => `${entry.id}:${entry.status}:${entry.updatedAt}`).join(',')).toBe(before);
+    expect(JSON.stringify(await sessionState('quoky.lastAction'))).toBe(lastAction);
+  });
+
+  it('reference priority (b): list to-dos, an unrelated reminder fires, "2번도 완료해줘" completes the to-do shown as 2', async () => {
+    await resetNlState();
+    await clearReminders();
+    for (const title of ['번호 가', '번호 나']) await send(`할 일 추가: ${title}`);
+    await turn('내 할 일 보여줘');
+    const slot = core.readListingRecord(await sessionState(core.LAST_LISTING_METADATA_KEY), ownerActor.id, new Date().toISOString()).slots.todo;
+    const shownTwo = slot?.items.find((entry) => entry.label === 2);
+    expect(shownTwo).toBeDefined();
+    const listing = JSON.stringify(await sessionState(core.LAST_LISTING_METADATA_KEY));
+    // A reminder firing (claimed by the scheduler path) writes no listing.
+    await seedReminder('상관없는 알림', 1);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const claimed = (await storage.reminders?.claimDue(new Date().toISOString(), 10, 'a6-priority-fire')) ?? [];
+    expect(claimed.map((entry) => entry.body)).toContain('상관없는 알림');
+    expect(JSON.stringify(await sessionState(core.LAST_LISTING_METADATA_KEY))).toBe(listing);
+    const done = await turn('2번도 완료해줘', answer('todo.complete', { ref: '#2' }));
+    expect(done.selects).toHaveLength(1);
+    expect(done.text).toContain('할 일 2번을 완료 처리했어요');
+    expect((await storage.workItems.get(shownTwo?.id ?? ''))?.status).toBe('COMPLETED');
+  });
+
+  it('reference priority (c): complete, list reminders, "되돌려줘" reopens the SAME to-do id (no copy); the audit target is the lastAction item', async () => {
+    await resetNlState();
+    await clearReminders();
+    await seedReminder('되돌리기 확인 알림', DAY);
+    await send('할 일 추가: 되돌림 대상');
+    const item = (await todos()).find((entry) => entry.title === '되돌림 대상' && entry.status === 'ACTIVE');
+    await turn('그거 완료 처리해줘', answer('todo.complete', { ref: 'this' }));
+    expect((await storage.workItems.get(item?.id ?? ''))?.status).toBe('COMPLETED');
+    const recorded = (await sessionState('quoky.lastAction')) as { byActor: Record<string, { itemId: string }> };
+    expect(recorded.byActor[ownerActor.id]?.itemId).toBe(item?.id);
+    await turn('알림 목록');
+    const count = (await todos()).length;
+    const logFrom = vi.mocked(console.log).mock.calls.length;
+    const undo = await turn('되돌려줘', answer('action.undo'));
+    expect(undo.text).toContain('다시 열었어요: "되돌림 대상"');
+    expect((await storage.workItems.get(item?.id ?? ''))?.status).toBe('ACTIVE');
+    expect((await todos()).length).toBe(count);
+    expect((await todos()).filter((entry) => entry.title === '되돌림 대상')).toHaveLength(1);
+    const undoLines = actionLines(logFrom).filter((line) => line.includes('entryId=action.undo'));
+    expect(undoLines.length).toBeGreaterThan(0);
+    for (const line of undoLines) expect(line).toContain(`targetId=${item?.id}`);
   });
 
   it('owner decision (2026-10-15): single-line owner-typed relays are the owner\'s instruction (local writes); marked forwards, quotes, fences and multi-line pastes stay refused', async () => {

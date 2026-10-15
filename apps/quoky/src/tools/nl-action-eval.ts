@@ -267,6 +267,10 @@ export function fixtureWorld(fixture: NlActionFixture | undefined, now: IsoTimes
   const last = fixture?.lastAction;
   if (last !== undefined && isNlActionEntryId(last.entryId)) {
     const echo = last.echoReplyIds ?? (fixture?.replyTo?.kind === 'echo' ? ['echo-current'] : []);
+    // A listing of the action's source written at the action's own age is its echo (the label merged in the same turn),
+    // so it carries the action's request id (A6 reference priority, owner 2026-10-16: the echo slot is never a newer
+    // listing). Any other listing keeps its own request id and is ordered by age.
+    const echoed = listings.some((slot) => slot.source === last.source && slot.ageMinutes === last.ageMinutes);
     metadata[LAST_ACTION_METADATA_KEY] = withLastAction(
       undefined,
       ACTOR_ID,
@@ -280,6 +284,7 @@ export function fixtureWorld(fixture: NlActionFixture | undefined, now: IsoTimes
         undoable: last.entryId !== 'action.undo',
         undone: last.undone === true,
         ...(last.entryId === 'action.undo' ? { undoOf: 'todo.complete' as const } : {}),
+        ...(echoed ? { requestId: `req-${last.source}` } : {}),
         echoReplyIds: echo,
       },
       minus(last.ageMinutes),

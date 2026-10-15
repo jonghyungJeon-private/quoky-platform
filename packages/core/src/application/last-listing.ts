@@ -323,10 +323,16 @@ export function withListingReplies(
   return { next: found ? next : current, found };
 }
 
+/** The current slot entry of this source for this Actor within the TTL; else `undefined`. */
+function freshEntry(value: unknown, actorId: Id, source: ListingSource, now: IsoTimestamp): Entry | undefined {
+  const listing = entryOf(recordOf(recordOf(recordOf(value).byActor)[actorId])[source], source);
+  return listing !== undefined && fresh(listing.at, now) ? listing : undefined;
+}
+
 /** The current listing of this source for this Actor within the TTL, from a listing-state value; else `undefined`. */
 export function readListing(value: unknown, actorId: Id, source: ListingSource, now: IsoTimestamp): PersistedListing | undefined {
-  const listing = entryOf(recordOf(recordOf(recordOf(value).byActor)[actorId])[source], source);
-  return listing !== undefined && fresh(listing.at, now)
+  const listing = freshEntry(value, actorId, source, now);
+  return listing !== undefined
     ? { at: listing.at, ids: [...listing.ids], ...(listing.labels !== undefined ? { labels: [...listing.labels] } : {}) }
     : undefined;
 }
@@ -505,6 +511,11 @@ export interface ListingSlot {
   readonly source: ListingSource;
   readonly at: IsoTimestamp;
   readonly items: readonly ListingItem[];
+  /**
+   * The inbound message whose turn wrote the slot last (A6 reference priority, owner 2026-10-16): a slot with the same
+   * source and `requestId` as `quoky.lastAction` is that action's own echo, never a newer listing. Opaque; never shown.
+   */
+  readonly requestId?: string;
 }
 
 /** A6-D2: every fresh slot of this Actor and the most recently written one (the latest `at`). */
@@ -518,9 +529,10 @@ export function readListingRecord(value: unknown, actorId: Id, now: IsoTimestamp
   const slots: Partial<Record<ListingSource, ListingSlot>> = {};
   let mostRecent: ListingSlot | undefined;
   for (const source of SLOTS) {
-    const listing = readListing(value, actorId, source, now);
-    if (listing === undefined) continue;
-    const slot: ListingSlot = { source, at: listing.at, items: listingItems(listing) };
+    const entry = freshEntry(value, actorId, source, now);
+    if (entry === undefined) continue;
+    const listing: PersistedListing = { at: entry.at, ids: entry.ids, ...(entry.labels !== undefined ? { labels: entry.labels } : {}) };
+    const slot: ListingSlot = { source, at: entry.at, items: listingItems(listing), ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}) };
     slots[source] = slot;
     if (mostRecent === undefined || Date.parse(slot.at) > Date.parse(mostRecent.at)) mostRecent = slot;
   }

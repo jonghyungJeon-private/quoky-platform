@@ -4,6 +4,7 @@ import { LISTING_REPLY_TTL_MS } from '../last-listing';
 import type { NlActionEntryId, NlItemSource, NlItemTarget, NlUndoSpec } from './catalog';
 import { nlIndexWording, nlNamedItemSources, type NlRef } from './action-entries';
 import type { LastActionView } from './last-action';
+import { newestReference } from './reference-recency';
 import { normalizeForMatch } from './selection-input';
 
 /**
@@ -19,7 +20,12 @@ import { normalizeForMatch } from './selection-input';
  *  2. `#n` and `last` resolve ONLY against the most recently written listing; another source asks (an older mail listing
  *     behind a newer Drive listing is never used); a missing number answers "목록에 K건만 있어요" and nothing runs.
  *  3. `recent` / `this`: the fresh `lastAction` of the entry's source; otherwise the most recent listing when it has that
- *     source and exactly one item; otherwise ask.
+ *     source and exactly one item; otherwise ask. A6 reference priority (owner-approved 2026-10-16, A6-D2 clarification):
+ *     the action and the listings are ordered by timestamp, the action's own echo slot excluded
+ *     (`reference-recency.ts`). A listing newer than the action asks when it is another source or has several items
+ *     (`recent` and `this` alike); one newer item of the same source resolves to it when it is the action's item and asks
+ *     (conflict) otherwise. A tie within one second asks for `this` (a tie never favours the write); `recent` asks only
+ *     for a strictly newer listing. A recency word is never rebound to a listing item.
  *  4. A fresh `lastAction` item that differs from a fresh single-item listing of the same source asks.
  * Before all of them (A6 R1 fix, "Same source only"): when the owner's words name item sources with the catalog's nouns
  * ("1번 문서", "2번 메일", "그 알림") and that is another source than the entry's, or more than one source (negations such
@@ -153,6 +159,28 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
     const lastItem = last !== undefined && last.fresh && last.record.source === source && !last.record.undone ? last.record : undefined;
     const single = mostRecent !== undefined && mostRecent.source === source && mostRecent.items.length === 1 ? mostRecent.items[0] : undefined;
     if (lastItem !== undefined) {
+      // A6 reference priority (owner 2026-10-16, B1): a listing the owner saw AFTER the action (its own echo excluded)
+      // outranks it. It only turns a resolution into a question, or keeps it: never a wider write.
+      // A recency word ("방금 거") is about Quoky's action: only a strictly newer listing makes it ask; a plain deictic
+      // ("그거") also asks on a tie.
+      const order = newestReference(lastItem, state.listings);
+      if (order.kind === 'listing' || (order.kind === 'tie' && ref.kind === 'this')) {
+        const newer = order.slot;
+        // Another source is the owner's latest view: never guess the words meant the older action (both ref kinds).
+        if (newer.source !== source) return unresolved(input, 'other-source', { found: newer.source });
+        // A newer (or tied) multi-item list of the same source: ask with its shown labels (both ref kinds).
+        if (newer.items.length > 1) return unresolved(input, 'ambiguous', { candidates: newer.items.slice(0, 10), found: source, listingAt: newer.at });
+        const shown = newer.items[0] as ListingItem;
+        if (shown.id !== lastItem.itemId) {
+          return unresolved(input, 'conflict', { candidates: [shown, { label: lastItem.label ?? 0, id: lastItem.itemId }].filter((item) => item.label > 0), found: source });
+        }
+        // The one newer item is the action's item: `this` names it as shown (a tie still asks: it is never broken in
+        // favour of the write); a recency word stays on the action.
+        if (ref.kind === 'this') {
+          if (order.kind === 'tie') return unresolved(input, 'ambiguous', { candidates: [shown], found: source, listingAt: newer.at });
+          return { kind: 'resolved', target: targetFrom(newer, shown) };
+        }
+      }
       // 4. conflict with a fresh single-item listing of the same source.
       if (single !== undefined && single.id !== lastItem.itemId) {
         return unresolved(input, 'conflict', { candidates: [single, { label: lastItem.label ?? 0, id: lastItem.itemId }].filter((item) => item.label > 0), found: source });
