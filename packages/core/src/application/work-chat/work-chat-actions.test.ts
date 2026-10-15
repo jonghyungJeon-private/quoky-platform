@@ -462,6 +462,38 @@ describe('numbered to-do commands resolve against the fresh listing snapshot (A6
     expect(await say(off.desk, '완료 처리: 보고서')).not.toHaveProperty('listing');
   });
 
+  it('CA4: ambiguous candidates record only the rows the budget leaves, so a hidden number is refused as unlisted', async () => {
+    const { desk, rows } = world();
+    for (let n = 1; n <= 15; n += 1) {
+      await say(desk, `할 일 추가: 보고서${'_'.repeat(77)}`);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    const asked = await say(desk, `완료 처리: 보고서${'_'.repeat(77)}`);
+    const shownRows = text(asked).split('\n').filter((line) => /^\d+\. /.test(line));
+    const items = (asked as { listing?: { items: ListingSlot['items'] } }).listing?.items ?? [];
+    expect(shownRows.length).toBeLessThan(15);
+    expect(items.map((entry) => entry.label)).toEqual(shownRows.map((_, index) => index + 1));
+    const slot: ListingSlot = { source: 'todo', at: NOW, items };
+    const refused = await say(desk, '15번 완료', slot);
+    expect(text(refused)).toContain('15번이 없어서 아무것도 바꾸지 않았어요');
+    expect([...rows.values()].every((item) => item.status === WorkItemStatus.ACTIVE)).toBe(true);
+  });
+
+  it('CA5: a hint or status question for a gone or never-shown listed number answers with the drift notice and writes nothing', async () => {
+    const { desk, rows, work } = world();
+    await addThree(desk);
+    const snapshot = await listed(desk);
+    await work.transition(byTitle(rows, '회의록 공유').id, WorkItemStatus.COMPLETED);
+    const before = [...rows.values()].map((item) => item.status);
+    for (const phrase of ['3번 완료했어', '3번 할 일 완료됐어?', '9번 완료했어', '9번 할 일 완료됐어?']) {
+      const outcome = await say(desk, phrase, snapshot);
+      expect(outcome.kind, phrase).toBe('reply');
+      expect(text(outcome), phrase).toContain('아무것도 바꾸지 않았어요');
+      expect(outcome, phrase).toMatchObject({ listing: { source: 'todo' } });
+    }
+    expect([...rows.values()].map((item) => item.status)).toEqual(before);
+  });
+
   it('a status answer for an open item the fresh listing does not show names no number', async () => {
     const { desk } = world();
     await addThree(desk);
@@ -481,9 +513,9 @@ describe('numbered to-do commands resolve against the fresh listing snapshot (A6
     // By title: the shown number (3), not the live one (2).
     expect(text(await say(desk, '회의록 공유 완료', snapshot))).toBe('"회의록 공유" 할 일을 완료 처리하려면 "완료 처리: 3"라고 보내 주세요. 아직 아무것도 바꾸지 않았어요.');
     expect(text(await say(desk, '회의록 공유 완료했나?', snapshot))).toBe('"회의록 공유"는 아직 열린 할 일이에요 (3번). 완료하려면 "완료 처리: 3"라고 보내 주세요.');
-    // By number: the shown item; a shown item that is no longer open falls through.
+    // By number: the shown item; a shown item that is no longer open gets the drift notice (CA5).
     expect(text(await say(desk, '2번 할 일 완료됐어?', snapshot))).toContain('"UAT 결과 정리"는 아직 열린 할 일이에요 (2번)');
-    expect(await say(desk, '1번 할 일 완료됐어?', snapshot)).toEqual({ kind: 'none' });
+    expect(text(await say(desk, '1번 할 일 완료됐어?', snapshot))).toContain('1번 "보고서 쓰기"는 이미 완료된 할 일이라 아무것도 바꾸지 않았어요');
     // An open item the listing does not show: no number is named.
     await desk.handleAction(cmd('todo.add', { title: '목록 밖 일' }), owner);
     expect(text(await say(desk, '목록 밖 일 완료', snapshot))).toBe(

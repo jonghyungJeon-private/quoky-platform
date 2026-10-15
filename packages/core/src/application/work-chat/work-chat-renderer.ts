@@ -156,16 +156,35 @@ export function renderTodoLinked(item: WorkItem, added: readonly ResourceRef[]):
 
 const ACTION_LABEL = { complete: '완료 처리', cancel: '취소', link: '연결' } as const;
 
+/**
+ * How many candidate rows `renderTodoAmbiguous` certainly shows (and so records as the listing): the same conservative
+ * rendered-budget count as `renderedTodoRows` (each row at twice its plain length, the worst escaping).
+ */
+export function renderedAmbiguousRows(candidates: ReadonlyArray<{ no: number; item: WorkItem }>): number {
+  const budget = WORK_CHAT_REPLY_MAX_CHARS - 400;
+  let used = 0;
+  let shown = 0;
+  for (const { no, item } of candidates.slice(0, TODO_AMBIGUOUS_MAX_ROWS)) {
+    const title = Array.from(clip(item.title ?? '(제목 없는 항목)', LIST_TITLE_MAX_CHARS)).length;
+    const length = `${no}. `.length + 2 * title + 1;
+    if (used + length > budget) break;
+    used += length;
+    shown += 1;
+  }
+  return shown;
+}
+
 /** Several to-dos match: nothing changed; the candidates are listed with their list numbers. */
 export function renderTodoAmbiguous(
   action: keyof typeof ACTION_LABEL,
   candidates: ReadonlyArray<{ no: number; item: WorkItem }>,
 ): MessageBody {
-  const rows = candidates.slice(0, TODO_AMBIGUOUS_MAX_ROWS).map(({ no, item }) => ({
+  const shown = renderedAmbiguousRows(candidates);
+  const rows = candidates.slice(0, shown).map(({ no, item }) => ({
     text: messageContent(`${no}. `, titleOf(item)),
     droppable: true,
   }));
-  const more = candidates.length > TODO_AMBIGUOUS_MAX_ROWS ? candidates.length - TODO_AMBIGUOUS_MAX_ROWS : 0;
+  const more = candidates.length - shown;
   return fit([
     { text: `일치하는 할 일이 여러 개라 아무것도 ${ACTION_LABEL[action]}하지 않았어요. 번호로 지정해 주세요.` },
     ...rows,

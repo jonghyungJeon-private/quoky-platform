@@ -12,7 +12,8 @@ import type { ExternalWorkReadout } from './external-work-readout';
 import { WORK_CHAT_ANCHORED_TODO_HEADS, detectWorkChatCommand, workChatCommandMode } from './work-chat-command';
 import type { WorkChatCommand } from './work-chat-command';
 import { renderLookupFailure, renderTodoFailure, renderTodoListFailure } from './work-chat-renderer';
-import type { WorkChatOutcome } from './work-chat-service';
+import { WorkChatService, type WorkChatOutcome } from './work-chat-service';
+import { WorkItemStatus, type WorkItem } from '../../domain';
 import { plainTextOf } from '../message-rendering';
 import { LAST_LISTING_METADATA_KEY, LAST_LISTING_TTL_MS, withLabelledListing } from '../last-listing';
 import {
@@ -458,6 +459,39 @@ describe('the to-do listing snapshot reaches the desk (A6-D2 amendment)', () => 
     const ctx = withListing('2번 완료', T0);
     await handler.handle({ ...ctx, actor: { ...OWNER, id: 'someone-else' } });
     expect(calls[0]?.options).toBeUndefined();
+  });
+});
+
+describe('QUOKY_NL_ACTIONS off ignores a fresh listing snapshot in metadata (A6-D2 amendment)', () => {
+  it('"1번 완료" resolves against the live numbering and nothing else is written', async () => {
+    const mk = (id: string, title: string, createdAt: string): WorkItem =>
+      ({ id, actorId: OWNER.id, title, status: WorkItemStatus.ACTIVE, resourceRefs: [], origin: 'conversation', createdAt, updatedAt: createdAt }) as unknown as WorkItem;
+    const open = [mk('live-1', '첫째', '2026-10-01T00:00:00.000Z'), mk('live-2', '둘째', '2026-10-01T00:00:01.000Z')];
+    const transitions: string[] = [];
+    const work = {
+      listActiveByActor: async () => open,
+      listByActor: async () => open,
+      transition: async (id: string, status: WorkItemStatus) => {
+        transitions.push(`${id}:${status}`);
+        return { ...(open.find((item) => item.id === id) as WorkItem), status };
+      },
+      create: async () => {
+        throw new Error('no create');
+      },
+      correlate: async () => {
+        throw new Error('no correlate');
+      },
+    };
+    const desk = new WorkChatService(
+      { workSurface: { forActor: async () => ({ items: [], status: 'COMPLETE', sources: [] }) as never }, connectors: { list: () => [] }, work: work as never },
+      { summaryEnabled: false, actionReceipts: false },
+    );
+    const handler = new WorkChatTurnHandler({ desk, mode: 'mutation', summaryEnabled: false, logger });
+    const ctx = ctxOf('1번 완료');
+    const metadata = { [LAST_LISTING_METADATA_KEY]: withLabelledListing(undefined, OWNER.id, 'todo', [{ label: 1, id: 'stale-x' }], T0, 'listing') };
+    const result = await handler.handle({ ...ctx, session: { ...ctx.session, metadata } });
+    expect(JSON.stringify(result)).toContain('첫째');
+    expect(transitions).toEqual([`live-1:${WorkItemStatus.COMPLETED}`]);
   });
 });
 

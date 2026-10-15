@@ -75,7 +75,7 @@ import {
   renderTodoUndoRefused,
   renderedTodoRows,
   todoNumberOf,
-  TODO_AMBIGUOUS_MAX_ROWS,
+  renderedAmbiguousRows,
 } from './work-chat-renderer';
 import type { WorkChatLookupFailure } from './work-chat-renderer';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
@@ -415,8 +415,17 @@ export class WorkChatService implements WorkDesk {
       let item: WorkItem | undefined;
       if ('index' in target) {
         // A6-D2 amendment: with a fresh listing, the number is the one the owner saw (an item no longer open falls through).
-        const shown = listing?.items.find((entry) => entry.label === target.index);
-        item = listing === undefined ? active[target.index - 1] : shown === undefined ? undefined : active.find((candidate) => candidate.id === shown.id);
+        if (listing !== undefined) {
+          const drift = resolveListedTarget(active, target, listing);
+          // A listed item no longer open, or a number never shown: the same drift notice as the anchored write (no write).
+          if (drift.kind === 'gone' || drift.kind === 'unlisted') {
+            const refusal = await this.driftRefusal(drift, active, actor);
+            return replyWith(refusal.body, refusal.extra);
+          }
+          item = drift.kind === 'found' ? drift.item : undefined;
+        } else {
+          item = active[target.index - 1];
+        }
       } else {
         const wanted = hintKey(target.text);
         const matches = wanted.length === 0 ? [] : all.filter((candidate) => candidate.title !== undefined && hintKey(candidate.title) === wanted);
@@ -447,7 +456,13 @@ export class WorkChatService implements WorkDesk {
       const resolved =
         'index' in command.target && listing !== undefined ? resolveListedHint(todos, command.target.index, listing) : resolveHintTarget(todos, command.target);
       if (resolved) return reply(renderTodoCompletionHint(command.action, hintNumber(listing, resolved.item.id, resolved.no), resolved.item));
-      if ('index' in command.target) return { kind: 'none' };
+      if ('index' in command.target) {
+        if (listing === undefined) return { kind: 'none' };
+        const drift = resolveListedTarget(todos, command.target, listing);
+        if (drift.kind !== 'gone' && drift.kind !== 'unlisted') return { kind: 'none' };
+        const refusal = await this.driftRefusal(drift, todos, actor);
+        return replyWith(refusal.body, refusal.extra);
+      }
       const wanted = hintKey(command.target.text);
       if (wanted.length === 0) return { kind: 'none' };
       const closed = (await this.deps.work.listByActor(actor.id)).filter(
@@ -582,7 +597,7 @@ export class WorkChatService implements WorkDesk {
    */
   private candidatesReceipt(candidates: ReadonlyArray<{ no: number; item: WorkItem }>): { readonly listing?: NlListingReceipt } {
     if (!this.actionReceipts) return {};
-    return { listing: { source: 'todo', items: candidates.slice(0, TODO_AMBIGUOUS_MAX_ROWS).map(({ no, item }) => ({ label: no, id: item.id })) } };
+    return { listing: { source: 'todo', items: candidates.slice(0, renderedAmbiguousRows(candidates)).map(({ no, item }) => ({ label: no, id: item.id })) } };
   }
 
   /** The to-do rows as rendered (an empty list clears the slot, so an older list is never picked from). */
