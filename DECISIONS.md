@@ -25912,6 +25912,20 @@ connector-write reconcile (no send).
   are model noise at the margin and the owner's flag decision, not a structural regression. `nl-intent-dispatch.test.ts`
   "목요일 거는?" (`thu` vs `this-thu`) fails on `origin/main` too: it depends on the wall-clock weekday (today is a Friday).
 
+- **A6 R1 gate note: the five fixed `todo.add` / `reminder.create` golds (2026-10-16).** Correction to the note above:
+  `reminder.create-027` ("20분 후에 '스프린트 데모 준비' 알려줘") was never refused by the request-form rule. Core grounded
+  and executed it, but Haiku's `when` was "20분 후에" (raw output seen in an earlier diagnostic), and the scorer compares exact
+  args. `-019` missed the same way in one run (the selector picks `calendar.events` in most runs). Fix: `reminder.create`
+  `normalize` drops one trailing locative 에 from `when` when time words remain. This is the canonical form its own arg
+  description names, and the grammar reads both as the same time. `todo.add-025` ("… 추가 ㄱㄱ"): ㄱㄱ / 고고 join the closed
+  request endings. Every veto still applies: negation, question, retraction, reported speech and first person
+  ("추가하지 마 ㄱㄱ" and "추가 ㄱㄱ?" never write). **Unchanged, owner gold decision:** `todo.add-009` ("…
+  추가할게.", first-person promise) plus `todo.add-016` and `reminder.create-024` (exact-command colon heads, A6-D3a). The
+  recommendation is gold = ask/refuse. One Haiku action run (A6 v32, `data/eval/nl-action-2026-10-15T16-18-28-659Z.json`):
+  027 and 025 hit; `todo.add` 0.957, `reminder.create` 0.854 (024; 019 → `calendar.events`; 033/035/037/039 intermittent
+  selector arg misses seen in earlier runs too); overall 0.948, spanExact 0.962, wrong targets 0, negative captures 0; gate
+  not passed.
+
 ### ADR-0122 P2 implementation note (2026-10-15)
 
 **Status:** Implemented on branch `claude/v5-surface-grants-p2` (the phasing table's P2 row). No migration, no new OAuth
