@@ -25960,3 +25960,26 @@ audience, `허용 실행`, receipt, use, cancel, expiry, non-owner), and the com
 for a permission test, and back to `off` afterwards; the deploy check of `quoky.actionSwitch`. Live UAT in the QA channel:
 grant by phrase with `허용 실행`, the audience line, the composite view with `todo` alone, a reminder after a revoke (with
 channel delivery on), recall with and without `memory`.
+
+**P2 review round (Chief Architect APPROVE WITH CHANGES and Codex, 2026-10-15), fixed on the same branch.**
+
+- **Thread audience (CA P1).** A grant made in a thread applies to the whole parent channel (the grant key has no thread),
+  so the Discord audience is always the parent's (a private thread no longer reads "비공개 채널: 예"), and a question asked
+  in a thread adds "상위 채널 전체(모든 스레드 포함)에 적용돼요".
+- **Consume only on commit (CA P2 / Codex P2).** The pending grant counts as taken only after its removal is saved; a
+  failed save grants nothing, keeps the pending grant and answers the write-failed copy (no replay window).
+- **Approval-expiry turns (CA P2).** A turn answered with an approval-expiry notice still ends a pending grant
+  (`handleGrantPending(…, {cancelOnly: true})`); it never confirms.
+- **Bound to the requester and the question (CA P2, Codex P2, CA suggestion).** The pending grant stores a nonce `id`, the
+  requesting `userId`, the digest of the whole grants record and the kill-switch state. A confirmation consumes only the
+  pending grant its turn saw when it began (a newer question is neither consumed nor dropped by a delayed turn); only the
+  same owner account can confirm; any grant change since the question (e.g. "모든 채널 권한 해제", a revoke, a seed —
+  compared inside the per-actor lock) or a kill-switch flip ("에이전트 중지") voids it with "허용을 기다리는 사이에 채널 권한이
+  바뀌었어요".
+- **Reminder send race (Codex P1).** `OwnerNotification.channelRecheck` (optional port field): the Discord sink calls it as
+  the last step before a channel send — after the awaited channel resolution — and on a refusal (or a throw) sends nothing
+  to the channel and delivers the dispatcher's DM text (with the note) to the owner DM. The dispatcher's first check stays.
+- **Tests added.** Audience from the parent (private thread in a public channel, uncached parent), the thread line, a failed
+  session save, a second owner account, DM clear-all and kill switch after the question, a replaced pending grant under a
+  delayed confirmation (and a delayed other message), the cancel-only path and the runtime expiry turn, the sink's recheck
+  order, a revoke during channel resolution, a throwing recheck, and the dispatcher's live recheck.
