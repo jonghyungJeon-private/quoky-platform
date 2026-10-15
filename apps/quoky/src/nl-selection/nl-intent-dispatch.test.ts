@@ -662,6 +662,27 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(requests.slice(start.requests).filter((request) => request.capability !== SELECTION)).toHaveLength(0);
   });
 
+  it('ADR-0120 A8: an owner release sentence reaches jira.release with the basis line, reads through named queries only and is never summarised; a link off the configured site is never fetched', async () => {
+    selectorAnswer = answer('jira.release', { release: '20261015', project: '차란차 운영' });
+    const start = marks();
+    const result = await send('jira에서 20261015 배포건 뭐 있는지 확인해줘 차란차 운영');
+    expect(selected.slice(start.selected).map((entry) => entry.command.entryId)).toEqual(['jira.release']);
+    expect(result.reply.text.split('\n')[0]).toBe('기준: 릴리스 "20261015" / 프로젝트 "차란차 운영" / 전체 담당');
+    // The fake Jira has no such project: one `containers` read, then the honest not-found answer.
+    expect(connectorQueries.slice(start.connectors).map((entry) => entry.query.query)).toEqual(['containers']);
+    expect(result.reply.text).toContain('Jira 프로젝트를 찾지 못했어요');
+    expect(requests.slice(start.requests).filter((request) => request.capability !== SELECTION)).toHaveLength(0);
+    expect(requests.slice(start.requests).find((request) => request.capability === SELECTION)?.prompt).toContain('- jira.release: ');
+
+    // This app configures no Jira site host, so even the owner's real-looking release link is not on it: ignored, nothing read.
+    selectorAnswer = answer('jira.release', {});
+    const linkStart = marks();
+    const linked = await send('https://charancha.atlassian.net/projects/OP26/versions/16555/tab/release-report-all-issues');
+    expect(selected.slice(linkStart.selected).map((entry) => entry.command.entryId)).toEqual(['jira.release']);
+    expect(connectorQueries.slice(linkStart.connectors)).toHaveLength(0);
+    expect(linked.reply.text).toContain('그 링크는 열지 않았어요');
+  });
+
   /** The `Previous selection:` line of the last selector call since `from` (the prompt's own examples carry others). */
   const lastPrevious = (from: number): string | undefined =>
     requests

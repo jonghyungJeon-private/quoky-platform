@@ -12,6 +12,7 @@ import { clipMessage, messageBody, outboundBody, outboundMessage, plainTextOf, w
 import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlSelectedCommand } from '../nl-routing/catalog';
 import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
+import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { isDirectConversation } from '../message-rendering';
 import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
 import {
@@ -113,7 +114,11 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
         : [nlActionEntry('todo.add'), nlActionEntry('todo.complete'), nlActionEntry('todo.cancel'), nlActionEntry('action.undo')];
     }
     const configured = this.deps.desk.configuredSources?.() ?? [];
-    return [...configured.map((source) => nlWave1Entry(WORK_CHAT_SOURCE_ENTRY[source])), nlWave1Entry('todo.list')];
+    // ADR-0120 A8: a configured Jira source also offers its release listing, right after `jira.issues`.
+    return [
+      ...configured.flatMap((source) => (source === 'jira' ? [nlWave1Entry('jira.issues'), nlWave1Entry('jira.release')] : [nlWave1Entry(WORK_CHAT_SOURCE_ENTRY[source])])),
+      nlWave1Entry('todo.list'),
+    ];
   }
 
   /**
@@ -122,7 +127,9 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
    */
   async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
     if (this.deps.mode !== 'lookup') return this.handleAction(selected, ctx);
-    const command = workChatCommandForSelection(selected);
+    // ADR-0120 A8: a release link is read from the owner's own non-quoted words only (quoted or fenced text is data).
+    const prepared = selected.entryId === 'jira.release' ? prepareSelectionInput(ctx.message.text, 0, ctx.message.quotedRanges ?? []) : undefined;
+    const command = workChatCommandForSelection(selected, prepared === undefined || 'skip' in prepared ? '' : prepared.groundingText);
     if (command === null) return null;
     const { outcome, listed } = await this.run(command, ctx);
     if (command.kind !== 'lookup' || command.listOnly !== true || listed === undefined || outcome === null) return outcome;
@@ -256,6 +263,7 @@ function backstopText(command: WorkChatCommand): string {
     case 'todo.summary':
       return renderTodoListFailure();
     case 'lookup':
+    case 'release':
     case 'external-write-unsupported':
     case 'connector-write':
       return renderLookupFailure(command.source, 'UNAVAILABLE');

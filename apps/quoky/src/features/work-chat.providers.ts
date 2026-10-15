@@ -36,6 +36,11 @@ export interface WorkChatCompositionOptions {
   readonly logger?: Logger;
   /** ADR-0120 amendment A6: content-free action receipts on to-do replies (`QUOKY_NL_ACTIONS` not `off`). */
   readonly actionReceipts?: () => boolean;
+  /**
+   * ADR-0120 amendment A8: the configured Jira site host, so a Jira release link in the owner's words is used only when
+   * it points at that site (any other link is ignored and never fetched).
+   */
+  readonly jiraSiteHost?: () => string | undefined;
 }
 
 export function createWorkChatProviders(
@@ -52,11 +57,17 @@ export function createWorkChatProviders(
         workSurface: WorkSurfaceQuery,
         connectors: ConnectorManager,
         work: WorkManager,
-      ) =>
-        new WorkChatService(
+      ) => {
+        const jiraSiteHost = options.jiraSiteHost?.();
+        return new WorkChatService(
           { workSurface, connectors, work },
-          { summaryEnabled: config.summaryEnabled, ...(options.actionReceipts?.() === true ? { actionReceipts: true } : {}) },
-        ),
+          {
+            summaryEnabled: config.summaryEnabled,
+            ...(options.actionReceipts?.() === true ? { actionReceipts: true } : {}),
+            ...(jiraSiteHost !== undefined ? { linkHosts: { jira: jiraSiteHost } } : {}),
+          },
+        );
+      },
       inject: [WORK_CHAT_FEATURE_CONFIG, WorkSurfaceQuery, ConnectorManager, WorkManager],
     },
     {
@@ -70,4 +81,5 @@ export function createWorkChatProviders(
 
 export const workChatProviders: Provider[] = createWorkChatProviders(() => loadConfig().work, {
   actionReceipts: () => loadConfig().nlSelection.actions !== 'off',
+  jiraSiteHost: () => loadConfig().connectors.jira?.host,
 });

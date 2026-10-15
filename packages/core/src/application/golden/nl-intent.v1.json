@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases were owner-approved on 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) were owner-approved in the D12 batch of 2026-10-15 (ADR-0120 D12). GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) were owner-approved in the D12 batch of 2026-10-15. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) were owner-approved in the D12 batch of 2026-10-15. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) were owner-approved in the D12 batch of 2026-10-15. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events). D12 owner batch 2026-10-15 (second part, through the orchestrator): approved uat5r1..r9 (23 cases from the 2026-10-14 live edge-case run), uat5gy-01..06, uat5wd-01..07, uat5ca-01..10 and the 8 grammar-metadata-only edits of ADR-0120 A2 implementation note 2 (confluence-001, -005, -007, todo-016, -020, brief-017, neg-219, help-038). Still PENDING the owner's batch approval: the 41 INT-4 cases (v5int4-001..041). T1 extension (owner-approved 2026-10-15): calendar-005, -016, -018, -029, -032, -034 and -057 gain timedOnly (a meeting word in a listing question means timed events), the earlier gold kept in each note.",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases were owner-approved on 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) were owner-approved in the D12 batch of 2026-10-15 (ADR-0120 D12). GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) were owner-approved in the D12 batch of 2026-10-15. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) were owner-approved in the D12 batch of 2026-10-15. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) were owner-approved in the D12 batch of 2026-10-15. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events). D12 owner batch 2026-10-15 (second part, through the orchestrator): approved uat5r1..r9 (23 cases from the 2026-10-14 live edge-case run), uat5gy-01..06, uat5wd-01..07, uat5ca-01..10 and the 8 grammar-metadata-only edits of ADR-0120 A2 implementation note 2 (confluence-001, -005, -007, todo-016, -020, brief-017, neg-219, help-038). Still PENDING the owner's batch approval: the 41 INT-4 cases (v5int4-001..041). T1 extension (owner-approved 2026-10-15): calendar-005, -016, -018, -029, -032, -034 and -057 gain timedOnly (a meeting word in a listing question means timed events), the earlier gold kept in each note. A8 (2026-10-15, ADR-0120 amendment A8, Proposed): 28 agent-drafted jira.release cases (a8-01..28: the owner's four live sentences of 2026-10-15 and the release-report link verbatim, release and project names, follow-ups, counts, links) and 7 negatives (a8n-01..07), PENDING the owner's D12 batch approval.",
   "cases": [
     {
       "id": "jira-001",
@@ -9582,6 +9582,394 @@
         }
       },
       "note": "the nearest Friday; a span ending on another Friday is refused [A7: agent-drafted for the A7 CA delta (2026-10-15): a longer period that ends on a non-nearest weekday must not pass, owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
+    },
+    {
+      "id": "a8-01",
+      "text": "jira에서 20261015 배포건 뭐 있는지 확인해줘 차란차 운영",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015",
+          "project": "차란차 운영"
+        }
+      },
+      "note": "owner live sentence 1, 2026-10-15 Telegram; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-02",
+      "text": "내 담당 말고 전체 담당은?",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015",
+          "project": "차란차 운영"
+        }
+      },
+      "prior": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015",
+          "project": "차란차 운영"
+        }
+      },
+      "note": "owner live sentence 2 (a follow-up); every assignee is the default scope; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-03",
+      "text": "20261015 릴리스 배포항목 확인해줘",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015"
+        }
+      },
+      "note": "owner live sentence 3; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-04",
+      "text": "jira > 차란차 운영 2026 > 릴리스",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "project": "차란차 운영 2026"
+        }
+      },
+      "note": "owner live sentence 4: the project release list; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-05",
+      "text": "https://charancha.atlassian.net/projects/OP26/versions/16555/tab/release-report-all-issues",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {}
+      },
+      "note": "owner release-report link; Core reads the link, the selector copies nothing; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-06",
+      "text": "이 릴리스 이슈 정리해줘 https://charancha.atlassian.net/projects/OP26/versions/16555/tab/release-report-all-issues",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {}
+      },
+      "note": "link with a request; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-07",
+      "text": "차란차 운영 2026 프로젝트 20261015 릴리스 이슈 보여줘",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "project": "차란차 운영 2026",
+          "release": "20261015"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-08",
+      "text": "OP26 20261015 버전에 뭐 들어갔어?",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "project": "OP26",
+          "release": "20261015"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-09",
+      "text": "20261022 배포 예정 항목 알려줘",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261022"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-10",
+      "text": "이번 1.4.0 릴리즈에 포함된 지라 티켓 다 보여줘",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "1.4.0"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-11",
+      "text": "OP26 프로젝트 릴리스 목록 보여줘",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "project": "OP26"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-12",
+      "text": "차란차 운영 2026 릴리스 뭐뭐 있어?",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "project": "차란차 운영 2026"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-13",
+      "text": "20261015 배포건 중에 내 담당만 보여줘",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015",
+          "scope": "mine"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-14",
+      "text": "그 중에 내 거만",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015",
+          "scope": "mine"
+        }
+      },
+      "prior": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015"
+        }
+      },
+      "note": "follow-up narrows to the owner's own; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-15",
+      "text": "다시 전체 담당으로 보여줘",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015"
+        }
+      },
+      "prior": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015",
+          "scope": "mine"
+        }
+      },
+      "note": "follow-up back to every assignee; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-16",
+      "text": "몇 개야?",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015",
+          "count": true
+        }
+      },
+      "prior": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015"
+        }
+      },
+      "note": "count follow-up; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-17",
+      "text": "2.3.0 버전 이슈 몇 개나 돼?",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "2.3.0",
+          "count": true
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-18",
+      "text": "what's in the 2.3.0 release on jira?",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "2.3.0"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-19",
+      "text": "show me all issues in release 20261015 of OP26",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015",
+          "project": "OP26"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-20",
+      "text": "list the releases of project OP26",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "project": "OP26"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-21",
+      "text": "20261015 배포에 들어가는 거 전체 담당자 기준으로 보여줘",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-22",
+      "text": "차란차 운영 20261015 릴리스 완료 안 된 거 있어?",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "project": "차란차 운영",
+          "release": "20261015"
+        }
+      },
+      "note": "no status filter on a release: the grouped report answers it; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-23",
+      "text": "지라 릴리스 20261015 확인",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-24",
+      "text": "배포 버전 20261015 항목 쭉 보여줘",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-25",
+      "text": "https://charancha.atlassian.net/browse/OP26/fixforversion/16555",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {}
+      },
+      "note": "the older release page link; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-26",
+      "text": "OP26 다음 배포 버전 뭐 있어?",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "project": "OP26"
+        }
+      },
+      "note": "the project release list; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-27",
+      "text": "20261015 거 보여줘",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "project": "OP26",
+          "release": "20261015"
+        }
+      },
+      "prior": {
+        "entryId": "jira.release",
+        "args": {
+          "project": "OP26"
+        }
+      },
+      "note": "picks a release from the listed project; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8-28",
+      "text": "20261015 릴리스에서 나한테 할당된 것만",
+      "expect": {
+        "entryId": "jira.release",
+        "args": {
+          "release": "20261015",
+          "scope": "mine"
+        }
+      },
+      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8n-01",
+      "text": "jira 전체 담당 이슈 다 보여줘",
+      "expect": "none",
+      "note": "every assignee with no release, project or link: asked (jira.issues refuses it); PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8n-02",
+      "text": "릴리스 노트 잘 쓰는 법 알려줘",
+      "expect": "none",
+      "note": "how-to; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8n-03",
+      "text": "다음 배포 언제 하는 게 좋을까?",
+      "expect": "none",
+      "note": "opinion; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8n-04",
+      "text": "지라에서 릴리스 만드는 방법",
+      "expect": "none",
+      "note": "how-to about another app; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8n-05",
+      "text": "20261015 배포 무사히 끝났어",
+      "expect": "none",
+      "note": "statement; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8n-06",
+      "text": "20261015 릴리스 버전 하나 만들어줘",
+      "expect": "none",
+      "note": "write request; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+    },
+    {
+      "id": "a8n-07",
+      "text": "모든 담당자 이슈 보여줘",
+      "expect": "none",
+      "note": "every assignee with nothing that bounds it: asked; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
     }
   ]
 }

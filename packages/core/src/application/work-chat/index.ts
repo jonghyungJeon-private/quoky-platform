@@ -13,3 +13,7 @@ export * from './work-chat-renderer';
 export * from './work-chat-service';
 export * from './work-chat-turn-handler';
 export * from './work-chat-selection';
+// ADR-0120 amendment A8: Jira release listings (link parser, deterministic lookup, renderer).
+export * from './jira-release-link';
+export * from './jira-release-lookup';
+export * from './jira-release-renderer';

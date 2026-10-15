@@ -7,6 +7,7 @@ import { leavesUnexpressedContent, slotSwallowsClause } from '../nl-routing/gram
 import { canonicalNlKeyword } from '../nl-routing/keyword-canonical';
 import { jiraKeywordCarriesQualifier } from '../nl-routing/wave1-entries';
 import type { ConnectorWriteDraft } from '../connector-writes/connector-write-draft';
+import type { JiraReleaseLink } from './jira-release-link';
 
 /**
  * Deterministic KO/EN work-chat grammar (ADR-0100 D1/D6). Pure: no clock, id, IO, connector or model call.
@@ -112,6 +113,19 @@ export type WorkChatCommand =
       readonly limit?: number;
       /** ADR-0120 (selection only, a count question): answer with the deterministic list, never a summary. */
       readonly listOnly?: true;
+    }
+  /**
+   * ADR-0120 amendment A8 (selection only; no grammar produces it): the issues of one Jira release, any assignee unless
+   * `scope` is `mine`, or a project's release list when no release is named. `links` are the Jira-shaped links of the
+   * owner's own words (any host; the desk uses only one on the configured site).
+   */
+  | {
+      readonly kind: 'release';
+      readonly source: 'jira';
+      readonly release?: string;
+      readonly project?: string;
+      readonly scope: 'mine' | 'all';
+      readonly links: readonly JiraReleaseLink[];
     }
   | { readonly kind: 'external-write-unsupported'; readonly source: WorkChatSource }
   /**

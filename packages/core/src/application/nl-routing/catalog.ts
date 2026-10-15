@@ -13,6 +13,8 @@ import type { NlResolvedRange } from './symbolic-time';
 /** The wave-1 entry ids (ADR-0120 D1): reads only. */
 export const NL_CATALOG_ENTRY_IDS = [
   'jira.issues',
+  // ADR-0120 amendment A8: the issues of one Jira release (any assignee) or a project's release list.
+  'jira.release',
   'github.items',
   'slack.search',
   'confluence.search',

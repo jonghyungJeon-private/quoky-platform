@@ -1,5 +1,6 @@
 import type { NlAmbiguityKey, NlArgs, NlArgValue, NlCatalogEntry, NlWave1EntryId } from './catalog';
 import { containsGroundingWord } from './grammar-residual';
+import { hasJiraReleaseLink } from '../work-chat/jira-release-link';
 import { nlRangeLabel, type NlResolvedRange } from './symbolic-time';
 
 /**
@@ -43,6 +44,19 @@ export const JIRA_IN_PROGRESS_WORDS: readonly string[] = ['진행', 'in progress
 export const JIRA_WINDOW_WORDS: readonly string[] = ['등록', '생성', '올라온', '업데이트', '수정', '변경', '마감', '기한', 'created', 'updated', 'due'];
 /** Words of a status the owner can state besides in-progress: finished or all. */
 export const JIRA_STATUS_WORDS: readonly string[] = ['완료', '종료', '닫힌', 'closed', 'resolved', 'done', 'finished', 'open'];
+/**
+ * ADR-0120 amendment A8: words that name a release (fix version). A Jira keyword slot carrying one is for `jira.release`,
+ * so the frozen grammar yields it (the A2 rule, derived from the entry's own vocabulary; it routes nothing by itself).
+ */
+export const JIRA_RELEASE_WORDS: readonly string[] = ['릴리스', '릴리즈', '배포건', '배포 건', '배포항목', '배포 항목', '배포 버전', '수정 버전', 'release', 'fix version', 'fixversion'];
+/**
+ * ADR-0120 amendment A8: words that ask for every assignee. `jira.issues` (the owner's own items) cannot express them:
+ * its validator refuses a selection whose text carries one, and the frozen Jira grammar yields it.
+ */
+export const JIRA_ALL_ASSIGNEE_WORDS: readonly string[] = ['전체 담당', '모든 담당', '담당 상관없이', '담당자 상관없이', '담당자 전체', '전체 담당자', '모든 담당자', '다른 사람 담당', '팀 전체', 'all assignees', 'any assignee', 'everyone'];
+/** ADR-0120 amendment A8: words that limit a release listing to the owner's own items (`scope: mine`). */
+export const JIRA_MINE_WORDS: readonly string[] = ['내 담당', '내가 담당', '제 담당', '내 것', '내 거', '내꺼', '내 이슈', '나한테', '내게 할당', '나에게', 'mine', 'my own', 'assigned to me', 'my issues'];
+
 /** Period words (relative days, weeks, months): a keyword carrying one is a period, not a topic. */
 export const NL_PERIOD_WORDS: readonly string[] = ['오늘', '어제', '내일', '모레', '이번', '지난', '다음', '금주', '최근', '요즘', 'today', 'yesterday', 'tomorrow', 'week', 'month', 'recent'];
 
@@ -59,6 +73,8 @@ export function jiraKeywordCarriesQualifier(keyword: string): boolean {
     ...JIRA_WINDOW_WORDS,
     ...NL_PERIOD_WORDS,
     ...JIRA_CREATED_SCOPE.values.flatMap((value) => value.grounding ?? []),
+    ...JIRA_RELEASE_WORDS,
+    ...JIRA_ALL_ASSIGNEE_WORDS,
     '내가',
     '제가',
     '담당',
@@ -121,6 +137,10 @@ const jiraIssues: NlCatalogEntry = {
   ambiguity: [JIRA_CREATED_SCOPE],
   usage: { ko: '"내 Jira 이슈 보여줘"', en: '"내 Jira 이슈 보여줘"' },
   sourceNames: ['jira', '지라'],
+  check(_args: NlArgs, groundingText: string) {
+    // ADR-0120 A8: the owner's own items cannot answer a request for every assignee ("전체 담당"): asked, never narrowed.
+    return containsGroundingWord(groundingText.normalize('NFC').toLowerCase(), JIRA_ALL_ASSIGNEE_WORDS) ? { reason: 'invalid-arg', arg: 'role' } : undefined;
+  },
   normalize(args: Record<string, NlArgValue>): void {
     // A period needs a date field: without one the period word only means "now" ("오늘 나한테 할당된 이슈") and is
     // dropped; a date field without a period gets the field's natural window (due → this week, else today).
@@ -143,6 +163,48 @@ const jiraIssues: NlCatalogEntry = {
     const keyword = typeof args.keyword === 'string' ? (language === 'en' ? `matching ${quoted(args.keyword)}` : `${quoted(args.keyword)} 포함`) : undefined;
     const sort = typeof args.sort === 'string' ? JIRA_SORT_LABEL[args.sort]?.[language] : undefined;
     return joinBasis([role?.[language], when, status, keyword, sort]);
+  },
+};
+
+/**
+ * ADR-0120 amendment A8: one Jira release (fix version) the way Jira's release report shows it, any assignee unless the
+ * owner limits it to their own; or the release list of a project when no release is named. A link to a release page on
+ * the configured Jira site is read by Core itself (the selector never copies it). Read-only; the list is never summarised.
+ */
+const jiraRelease: NlCatalogEntry = {
+  id: 'jira.release',
+  risk: 'READ',
+  dmOnly: false,
+  label: { ko: 'Jira 릴리스 조회', en: 'Jira release' },
+  aliases: ['릴리스', '릴리즈', '배포', 'release', '버전'],
+  description: {
+    en: "The issues in one Jira release (fix version) of a project, for every assignee unless the owner asks for only their own, grouped by status like Jira's release report; or a project's release list when no release is named. Also a pasted Jira release link.",
+    ko: 'Jira 릴리스(배포 버전)에 포함된 이슈, 기본은 전체 담당, 상태별. 릴리스 이름 없이 프로젝트만 말하면 그 프로젝트의 릴리스 목록. Jira 릴리스 링크도.',
+  },
+  args: [
+    { name: 'release', kind: 'keyword', description: 'The release (fix version) name copied verbatim from the owner\'s words (e.g. 3.2.0), without words like 배포/배포건/릴리스/버전. Omit for a pasted link: Quoky reads the link itself.' },
+    { name: 'project', kind: 'keyword', description: 'The Jira project name or key copied verbatim and whole from the owner\'s words (every word of a multi-word name, e.g. 모바일 앱 운영, never just 모바일), without 프로젝트. Omit when none is named.' },
+    { name: 'scope', kind: 'enum', values: ['all', 'mine'], default: 'all', valueGrounding: { mine: JIRA_MINE_WORDS }, description: 'mine ONLY when the owner limits it to their own issues (내 담당만, 나한테 할당된 것만); default all = every assignee. Every assignee (전체 담당) with no release, project or link named: NEEDS_CLARIFICATION.' },
+    COUNT,
+  ],
+  usage: { ko: '"ABC 프로젝트 1.2.0 릴리스 보여줘"', en: '"ABC 프로젝트 1.2.0 릴리스 보여줘"' },
+  sourceNames: ['jira', '지라'],
+  check(args: NlArgs, groundingText: string) {
+    // A release listing is bounded by what the owner named: a release, a project or a release link (any host here;
+    // the desk uses only a link on the configured site and says so when it ignores one).
+    if (typeof args.release === 'string' || typeof args.project === 'string' || hasJiraReleaseLink(groundingText)) return undefined;
+    return { reason: 'missing-arg', arg: 'release' };
+  },
+  describe(args: NlArgs, _range, language): string | undefined {
+    const release = typeof args.release === 'string'
+      ? (language === 'en' ? `release ${quoted(args.release)}` : `릴리스 ${quoted(args.release)}`)
+      : typeof args.project === 'string' ? undefined : (language === 'en' ? 'the linked release' : '링크의 릴리스');
+    const project = typeof args.project === 'string' ? (language === 'en' ? `project ${quoted(args.project)}` : `프로젝트 ${quoted(args.project)}`) : undefined;
+    const what = typeof args.release === 'string' || typeof args.project !== 'string' ? undefined : (language === 'en' ? 'release list' : '릴리스 목록');
+    const scope = typeof args.release === 'string' || typeof args.project !== 'string'
+      ? (args.scope === 'mine' ? (language === 'en' ? 'assigned to me' : '내 담당') : (language === 'en' ? 'every assignee' : '전체 담당'))
+      : undefined;
+    return joinBasis([release, project, what, scope]);
   },
 };
 
@@ -416,6 +478,7 @@ const helpTopic: NlCatalogEntry = {
 
 export const NL_WAVE1_ENTRIES: Readonly<Record<NlWave1EntryId, NlCatalogEntry>> = Object.freeze({
   'jira.issues': jiraIssues,
+  'jira.release': jiraRelease,
   'github.items': githubItems,
   'slack.search': searchEntry('slack.search', 'Slack', ['slack', '슬랙'], '슬랙에서 키워드 검색.'),
   'confluence.search': searchEntry('confluence.search', 'Confluence', ['confluence', '컨플루언스', '컨플', '위키'], '컨플루언스(위키)에서 키워드로 문서 검색.'),

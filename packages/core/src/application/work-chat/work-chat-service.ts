@@ -26,6 +26,7 @@ import {
   renderExternalWorkFooter,
 } from './external-work-readout';
 import type { ExternalWorkReadout } from './external-work-readout';
+import { lookupJiraRelease } from './jira-release-lookup';
 import {
   WORK_CHAT_SEARCH_TEXT_MAX_LENGTH,
   WORK_CHAT_SOURCES,
@@ -135,6 +136,11 @@ export interface WorkChatServiceOptions {
    * `off`). False (the default): every reply, read and write is exactly as before A6.
    */
   readonly actionReceipts?: boolean;
+  /**
+   * ADR-0120 amendment A8: the configured site host of each work source (`jira`: the Jira Cloud host). A Jira release
+   * link in the owner's words is used only when its host equals this one; any other link is ignored and never fetched.
+   */
+  readonly linkHosts?: { readonly jira?: string };
 }
 
 export const WORK_CHAT_DEFAULT_LOOKUP_DEADLINE_MS = 15_000;
@@ -256,6 +262,7 @@ export class WorkChatService implements WorkDesk {
   private readonly summaryEnabled: boolean;
   private readonly lookupDeadlineMs: number;
   private readonly actionReceipts: boolean;
+  private readonly jiraSiteHost: string | undefined;
 
   constructor(
     private readonly deps: WorkChatServiceDeps,
@@ -264,6 +271,7 @@ export class WorkChatService implements WorkDesk {
     this.summaryEnabled = options.summaryEnabled;
     this.lookupDeadlineMs = options.lookupDeadlineMs ?? WORK_CHAT_DEFAULT_LOOKUP_DEADLINE_MS;
     this.actionReceipts = options.actionReceipts === true;
+    this.jiraSiteHost = options.linkHosts?.jira;
   }
 
   forActor(actor: Actor): Promise<WorkSurface> {
@@ -300,6 +308,8 @@ export class WorkChatService implements WorkDesk {
           return reply(await this.linkTodo(command.target, command.refs, actor));
         case 'lookup':
           return await this.lookup(command.source, command.query, command.text, actor, command);
+        case 'release':
+          return await this.release(command, actor);
         case 'external-write-unsupported':
         // ADR-0112 D5: the turn handler hands an exact write request to the runtime's write flow; reaching the desk
         // (no handler in between) still answers with the fixed refusal — the desk never writes.
@@ -582,6 +592,38 @@ export class WorkChatService implements WorkDesk {
 
   // -- connector lookups (named read-only queries only) --------------------------------------------------------------
 
+  /**
+   * ADR-0120 amendment A8: one Jira release (or a project's release list), read-only through the `containers`,
+   * `releases` and `release-items` named queries, under the same lookup deadline. Always the deterministic list: a
+   * release report is never summarised by a model (no item text leaves the host).
+   */
+  private async release(command: Extract<WorkChatCommand, { kind: 'release' }>, actor: Actor): Promise<WorkChatOutcome> {
+    const connector = this.deps.connectors.list().find((candidate) => candidate.source === 'jira');
+    if (!connector) return reply(renderLookupFailure('jira', 'NOT_CONFIGURED'));
+    const identity = actor.identities
+      .filter((candidate) => candidate.platform === 'jira')
+      .map((candidate) => candidate.externalId.trim())
+      .filter(Boolean)
+      .sort()[0];
+    let result: Awaited<ReturnType<typeof lookupJiraRelease>>;
+    try {
+      result = await withDeadline(
+        () =>
+          lookupJiraRelease({
+            connector,
+            command,
+            ...(identity !== undefined ? { identity } : {}),
+            ...(this.jiraSiteHost !== undefined ? { siteHost: this.jiraSiteHost } : {}),
+          }),
+        this.lookupDeadlineMs,
+      );
+    } catch (error) {
+      return reply(renderLookupFailure('jira', failureReason(error)));
+    }
+    if (result.kind === 'failure') return reply(renderLookupFailure('jira', result.reason));
+    return { ...messageFields(result.body), kind: 'reply', ...(result.listed !== undefined ? { listed: result.listed } : {}) };
+  }
+
   private async lookup(
     source: WorkChatSource,
     query: WorkChatLookupQuery,
@@ -702,7 +744,7 @@ function isTodoCommand(command: WorkChatCommand): boolean {
 }
 
 function lookupSource(command: WorkChatCommand): WorkChatSource {
-  return command.kind === 'lookup' || command.kind === 'external-write-unsupported' || command.kind === 'connector-write'
+  return command.kind === 'lookup' || command.kind === 'release' || command.kind === 'external-write-unsupported' || command.kind === 'connector-write'
     ? command.source
     : 'jira';
 }

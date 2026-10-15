@@ -3,6 +3,7 @@ import { addLocalDays } from '../reminders/zoned-time';
 import { isoDateOf } from '../nl-routing/symbolic-time';
 import type { PersonalWorkRole, PersonalWorkSort, PersonalWorkStatus, PersonalWorkWindowField } from '../../ports/connector-query';
 import type { WorkChatCommand, WorkChatPersonalWorkOptions, WorkChatSource } from './work-chat-command';
+import { parseJiraReleaseLinks } from './jira-release-link';
 
 /**
  * ADR-0120 interfaces: a validated natural-language selection mapped to the existing typed work-chat commands. The
@@ -23,8 +24,11 @@ const STATUSES: readonly string[] = ['open', 'all', 'in-progress'];
 const WINDOWS: readonly string[] = ['created', 'updated', 'due'];
 const SORTS: readonly string[] = ['oldest', 'newest', 'recently-updated'];
 
-/** The typed command for a selection, or `null` when the entry is not a work-chat read. */
-export function workChatCommandForSelection(selected: NlSelectedCommand): WorkChatCommand | null {
+/**
+ * The typed command for a selection, or `null` when the entry is not a work-chat read. `groundingText` is the owner's own
+ * non-quoted words of this turn: `jira.release` reads Jira release links from it (ADR-0120 A8), nothing else does.
+ */
+export function workChatCommandForSelection(selected: NlSelectedCommand, groundingText = ''): WorkChatCommand | null {
   const args = selected.args;
   const keyword = nlStringArg(args, 'keyword');
   const limit = nlLimitArg(args);
@@ -41,6 +45,18 @@ export function workChatCommandForSelection(selected: NlSelectedCommand): WorkCh
         ...(personalWork !== undefined ? { personalWork } : {}),
         ...bounded,
         ...listOnly,
+      };
+    }
+    case 'jira.release': {
+      const release = nlStringArg(args, 'release');
+      const project = nlStringArg(args, 'project');
+      return {
+        kind: 'release',
+        source: 'jira',
+        ...(release !== undefined ? { release } : {}),
+        ...(project !== undefined ? { project } : {}),
+        scope: nlStringArg(args, 'scope') === 'mine' ? 'mine' : 'all',
+        links: parseJiraReleaseLinks(groundingText),
       };
     }
     case 'github.items':
