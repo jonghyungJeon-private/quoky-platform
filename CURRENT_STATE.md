@@ -47,6 +47,21 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
 
+### v5 document summaries: attribution, one regeneration, strict guards (ADR-0104 D1 amendment, owner-approved 2026-10-15) — on branch `claude/v5-sheet-summary-guard`
+
+- **What changed.**
+  - Mail, thread and Drive summaries attribute every action or status to the item, with its words quoted.
+  - A flagged first draft is regenerated once; a second flagged draft is replaced whole.
+  - The guards are unchanged and read more forms on summaries. One narrow exemption: a closed quote attributed in its
+    own sentence, with no assistant marker.
+  - The exact delivered text is checked. Core clips summaries to a worst-case platform budget, about 850 code points.
+  - Footers name Jira, Slack and GitHub. Chat is unchanged.
+- **Measured.** Stub model: 240 of 240 legitimate tracker lines shown after one regeneration (before: 6); 0 of 92
+  hostile samples shown. Real model (sonnet): 4 of 4 tracker drafts attributed and shown.
+- **Not run live.** Offline tests plus one owner-approved model probe on a synthetic sheet.
+
+Details: the ADR-0104 D1 amendment note in `DECISIONS.md`.
+
 ### v5 "until <weekday>" and the past-tense statement check (ADR-0120 amendment A7, Accepted 2026-10-15) — on branch `claude/v5-until-weekday` (2026-10-15)
 
 - **Ratified** by the owner on 2026-10-15 (all seven decisions as recommended; owner sheet

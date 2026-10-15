@@ -5,6 +5,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Document summaries: attribution by construction, one regeneration, strict guards (ADR-0104 D1 amendment, owner-approved 2026-10-15)
+
+- **Live fix.** `1번 문서 요약해줘` on a dogfood-tracker Google Sheet was replaced whole by the not-done notice. The sheet's
+  own status lines read as Quoky's claims.
+- **Prompt.** Mail, thread and Drive summaries attribute every action or status to the item and quote its words
+  (`시트에는 'Jira 티켓 등록 완료'로 표시돼 있어요`). They never state a completed action unattributed, never use the first
+  person and never address the reader.
+- **One regeneration.** A flagged first draft is regenerated once with a stricter attribution rule; the flagged text is
+  never fed back. A second flagged draft is replaced whole, as before.
+- **Strict check.** The two guards are unchanged and read more forms on a summary:
+  - rendered without markup, with wrapped lines joined, with unattributed quotes unwrapped;
+  - request-carried-out and bare or owner-directed completions;
+  - over 8,000 characters is withheld.
+
+  The one narrow exemption: a closed quote attributed in its own sentence to the item, a field of it or a named
+  person, with no assistant marker. The exact delivered text is checked on every path. Core clips the summary to a
+  worst-case platform budget, so no platform clips it again. Chat replies are unchanged.
+- **Footers.** Mail, thread and Drive summary footers also say nothing was written to Jira, Slack or GitHub.
+- **Measured.**
+  - Stub model: 240 of 240 legitimate tracker lines shown after the one regeneration (before: 6); 0 of 92 hostile
+    samples shown, including every review-round leak string.
+  - Real model: sonnet on the tracker prompt, 4 of 4 drafts attributed and shown.
+- **Tests.** `document-summary-claim-check.test.ts`, the Drive and mail runtime tests and `provider-usage-record.test.ts`.
+
 ## Unreleased — "until <weekday>" periods and the past-tense statement check, prompt `nl-select.v22` (ADR-0120 amendment A7, Accepted 2026-10-15)
 
 - **Why.** "이번 주 금요일까지 일정" showed only Friday: the closed range symbols had no "today through <weekday>", and the
