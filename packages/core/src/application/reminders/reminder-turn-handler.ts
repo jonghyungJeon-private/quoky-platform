@@ -102,6 +102,9 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
     const base = { context: ctx.message.context, actorId: ctx.actor.id, messageId: ctx.message.id, now: ctx.now };
     if (isNlActionEntryId(selected.entryId)) return this.handleAction(selected, ctx, base);
     if (selected.entryId === 'reminder.list') {
+      const status = selected.args.status === 'canceled' || selected.args.status === 'done' || selected.args.status === 'all' ? selected.args.status : undefined;
+      // The status view (owner-approved 2026-10-15) is read-only and never an A6 listing.
+      if (status !== undefined && this.deps.conversation.listReply !== undefined) return { reply: await this.deps.conversation.listReply(base, status) };
       // A6: the detailed form also reports the listing as rendered (present only with QUOKY_NL_ACTIONS not off).
       if (this.deps.conversation.listReplyDetailed !== undefined) {
         const listed = await this.deps.conversation.listReplyDetailed(base);

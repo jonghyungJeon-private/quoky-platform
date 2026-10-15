@@ -76,3 +76,14 @@ describe('nlSelectionForWorkChatCommand — the reverse mapping of a grammar lis
     }
   });
 });
+
+describe('todo.list status (owner-approved status filter, 2026-10-15)', () => {
+  it('maps a non-default status to the read-only status view and back; the open list and its count are unchanged', () => {
+    expect(workChatCommandForSelection({ entryId: 'todo.list', args: { status: 'canceled' }, language: 'ko' })).toEqual({ kind: 'todo.list', status: 'canceled' });
+    expect(workChatCommandForSelection({ entryId: 'todo.list', args: { status: 'all', count: true }, language: 'ko' })).toEqual({ kind: 'todo.list', status: 'all' });
+    expect(workChatCommandForSelection({ entryId: 'todo.list', args: {}, language: 'ko' })).toEqual({ kind: 'todo.list' });
+    expect(workChatCommandForSelection({ entryId: 'todo.list', args: { count: true }, language: 'ko' })).toEqual({ kind: 'todo.summary' });
+    expect(nlSelectionForWorkChatCommand({ kind: 'todo.list', status: 'completed' })).toEqual({ entryId: 'todo.list', args: { status: 'completed' } });
+  });
+});
+

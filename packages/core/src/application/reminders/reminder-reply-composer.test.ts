@@ -221,3 +221,15 @@ describe('reminderRepeatLabel', () => {
     expect(reminderRepeatLabel(schedule)).toBe(label);
   });
 });
+
+describe('the reminder status view (owner-approved status filter, 2026-10-15)', () => {
+  it('lists canceled or past reminders with their #N and status, and says so when there are none', () => {
+    const canceled = composer.statusListRendered([reminder({ displayNo: 4, status: ReminderStatus.CANCELED })], 'canceled', '2026-10-02T00:00:00.000Z');
+    expect(String(canceled.body)).toContain('취소된 알림 1건');
+    expect(String(canceled.body)).toContain('#4 ');
+    expect(String(canceled.body)).toContain(' · 취소');
+    expect(canceled.shown).toBe(1);
+    expect(composer.statusListRendered([], 'done', '2026-10-02T00:00:00.000Z')).toEqual({ body: '지난 알림이 없어요.', shown: 0 });
+  });
+});
+

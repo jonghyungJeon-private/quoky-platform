@@ -82,6 +82,12 @@ class FakeReminderRepository implements ReminderRepository {
     throw new Error('not used by dispatch');
   }
 
+  async listByActorStatuses(actorId: string, statuses: readonly ReminderStatus[]): Promise<Reminder[]> {
+
+    return [...this.rows.values()].filter((r) => r.actorId === actorId && statuses.includes(r.status)).sort((a, b) => a.displayNo - b.displayNo);
+
+  }
+
   async listActiveByActor(actorId: string): Promise<Reminder[]> {
     if (this.failListActive) throw new Error('db down');
     return [...this.rows.values()]

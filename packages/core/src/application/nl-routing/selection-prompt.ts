@@ -27,6 +27,9 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * a deictic-only content as the span (Core asks); the same `ref` and `when` wording in the action entries' arg descriptions;
  * and the rule-8 help.topic parenthetical adds that a question about what a phrase or command would do or mean stays none
  * (rule 2; the v25 parenthetical pulled "\"…\" 라고 말하면 뭐가 되는지 설명해줘" to help.topic, which v24 never does).
+ * v27 (the read prompt; owner decision 2026-10-15, the A6 R1 status filter) = v24 whose catalog text gives `todo.list` and
+ * `reminder.list` a `status` arg (closed values, default the open / scheduled ones) and `reminder.list` a description that
+ * says so; no instruction line changes. v28 = the v26 A6 text on top of v27.
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v27';
 /**

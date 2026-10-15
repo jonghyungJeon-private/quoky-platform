@@ -92,6 +92,14 @@ export class SqliteReminderRepository implements ReminderRepository {
     return rows.map(toReminder);
   }
 
+  async listByActorStatuses(actorId: Id, statuses: readonly ReminderStatus[]): Promise<Reminder[]> {
+    if (statuses.length === 0) return [];
+    const rows = this.db.prepare(
+      `SELECT * FROM reminders WHERE actor_id = ? AND status IN (${statuses.map(() => '?').join(', ')}) ORDER BY display_no ASC`,
+    ).all(actorId, ...statuses) as ReminderRow[];
+    return rows.map(toReminder);
+  }
+
   async getByDisplayNo(actorId: Id, displayNo: number): Promise<Reminder | null> {
     const row = this.findByDisplayNo(actorId, displayNo);
     return row ? toReminder(row) : null;

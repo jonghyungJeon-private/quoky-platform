@@ -80,8 +80,12 @@ export function workChatCommandForSelection(selected: NlSelectedCommand, groundi
         ...bounded,
         ...listOnly,
       };
-    case 'todo.list':
+    case 'todo.list': {
+      // The status view (owner-approved 2026-10-15) is read-only and shows its own count line.
+      const status = args.status === 'canceled' || args.status === 'completed' || args.status === 'all' ? args.status : undefined;
+      if (status !== undefined) return { kind: 'todo.list', status };
       return nlFlagArg(args, 'count') ? { kind: 'todo.summary' } : { kind: 'todo.list' };
+    }
     default:
       return null;
   }
@@ -95,6 +99,7 @@ export function workChatCommandForSelection(selected: NlSelectedCommand, groundi
 export function nlSelectionForWorkChatCommand(command: WorkChatCommand): NlGrammarSelection | null {
   switch (command.kind) {
     case 'todo.list':
+      return { entryId: 'todo.list', args: command.status !== undefined ? { status: command.status } : {} };
     case 'todo.summary':
       return { entryId: 'todo.list', args: {} };
     case 'lookup': {

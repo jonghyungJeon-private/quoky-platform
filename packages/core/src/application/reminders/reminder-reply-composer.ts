@@ -32,6 +32,15 @@ const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'] as const;
 
 /** Entries beyond what fits one reply are summarized as a count. */
 const LIST_REPLY_MAX_CHARS = 1_800;
+/** The status words of the reminder status view (owner-approved 2026-10-15). */
+const REMINDER_STATUS_LABEL: Readonly<Record<ReminderStatus, string>> = {
+  [ReminderStatus.SCHEDULED]: '예정',
+  [ReminderStatus.FIRING]: '전달 중',
+  [ReminderStatus.COMPLETED]: '보냄',
+  [ReminderStatus.CANCELED]: '취소',
+  [ReminderStatus.FAILED]: '전달 실패',
+  [ReminderStatus.DELIVERY_UNCERTAIN]: '전달 확인 안 됨',
+};
 const LIST_BODY_PREVIEW_CHARS = 60;
 
 const CLARIFY_COPY: Readonly<Record<ReminderClarifyReason, string>> = {
@@ -423,6 +432,37 @@ export class ReminderReplyComposer {
       const length = Array.from(`${prefix}${bodyText}${state}${last}`).length + 1;
       if (used + length > LIST_REPLY_MAX_CHARS - 40 - (event !== undefined ? EVENT_REMINDER_TITLE_DISPLAY_MAX_CHARS : 0)) break;
       lines.push(event !== undefined ? messageBody(prefix, eventTitlePart(reminder.body), `${state}${last}`) : `${prefix}${bodyText}${state}${last}`);
+      used += length;
+    }
+    const omitted = reminders.length - lines.length;
+    const tail = omitted > 0 ? [`외 ${omitted}건은 생략했어요.`] : [];
+    return { body: joinBody([header, ...lines, ...tail]), shown: lines.length };
+  }
+
+  /**
+   * A read-only status view (owner-approved 2026-10-15): the canceled, already sent or all reminders, each with its `#N`
+   * and its status. Same character budget as {@link listRendered}.
+   */
+  statusListRendered(reminders: readonly Reminder[], status: 'canceled' | 'done' | 'all', now: IsoTimestamp): { readonly body: MessageBody; readonly shown: number } {
+    const viewName = status === 'canceled' ? '취소된 알림' : status === 'done' ? '지난 알림' : '전체 알림';
+    if (reminders.length === 0) return { body: `${viewName}이 없어요.`, shown: 0 };
+    const header = `${viewName} ${reminders.length}건`;
+    const lines: MessagePart[] = [];
+    let used = Array.from(header).length;
+    for (const reminder of reminders) {
+      const event = reminder.event;
+      const bodyText =
+        reminder.kind === 'BRIEF'
+          ? '오늘의 브리핑(DM)'
+          : preview(event !== undefined ? eventReminderStoredTitle(reminder.body) : reminder.body, event !== undefined ? EVENT_REMINDER_TITLE_DISPLAY_MAX_CHARS : LIST_BODY_PREVIEW_CHARS);
+      const next = reminder.status === ReminderStatus.SCHEDULED || reminder.status === ReminderStatus.FIRING ? reminder.nextFireAt ?? reminder.occurrenceAt : undefined;
+      const when = next === undefined ? '' : `${formatAbsolute(next, reminder.timeZone, now)} `;
+      const label = event !== undefined ? eventRepeatLabel(event.offsetMinutes) : reminderRepeatLabel(reminder.schedule);
+      const prefix = `#${reminder.displayNo} ${when}[${label}] `;
+      const state = ` · ${REMINDER_STATUS_LABEL[reminder.status]}`;
+      const length = Array.from(`${prefix}${bodyText}${state}`).length + 1;
+      if (used + length > LIST_REPLY_MAX_CHARS - 40 - (event !== undefined ? EVENT_REMINDER_TITLE_DISPLAY_MAX_CHARS : 0)) break;
+      lines.push(event !== undefined ? messageBody(prefix, eventTitlePart(reminder.body), state) : `${prefix}${bodyText}${state}`);
       used += length;
     }
     const omitted = reminders.length - lines.length;

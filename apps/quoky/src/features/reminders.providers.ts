@@ -95,6 +95,7 @@ export function lazyReminderRepository(storage: ReminderStorageSeam): ReminderRe
   return {
     createWithinLimit: (draft, maxActive, condition) => liveReminders(storage).createWithinLimit(draft, maxActive, condition),
     listActiveByActor: (actorId) => liveReminders(storage).listActiveByActor(actorId),
+    listByActorStatuses: (actorId, statuses) => liveReminders(storage).listByActorStatuses(actorId, statuses),
     getByDisplayNo: (actorId, displayNo) => liveReminders(storage).getByDisplayNo(actorId, displayNo),
     cancel: (actorId, displayNo, at, condition) => liveReminders(storage).cancel(actorId, displayNo, at, condition),
     claimDue: (now, limit, attemptId) => liveReminders(storage).claimDue(now, limit, attemptId),

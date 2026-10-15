@@ -92,6 +92,9 @@ class FakeRepository implements ReminderRepository {
     this.rows.set(reminder.id, reminder);
     return { status: 'CREATED', reminder };
   }
+  async listByActorStatuses(actorId: string, statuses: readonly ReminderStatus[]): Promise<Reminder[]> {
+    return [...this.rows.values()].filter((r) => r.actorId === actorId && statuses.includes(r.status)).sort((a, b) => a.displayNo - b.displayNo);
+  }
   async listActiveByActor(actorId: string): Promise<Reminder[]> {
     return [...this.rows.values()]
       .filter((r) => r.actorId === actorId && (r.status === ReminderStatus.SCHEDULED || r.status === ReminderStatus.FIRING))

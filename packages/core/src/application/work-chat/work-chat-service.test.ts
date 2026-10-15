@@ -889,3 +889,23 @@ describe('whole-list status questions and the wrong-state hint (ADR-0104 D3, DET
     expect(await say('주간 보고서 쓰기 완료', other)).toEqual({ kind: 'none' });
   });
 });
+
+describe('the to-do status view (owner-approved status filter, 2026-10-15)', () => {
+  it('lists canceled, completed or all to-dos read-only, unnumbered and without an A6 listing; the open list is unchanged', async () => {
+    const { service, say } = harness();
+    await say('할 일 추가: 보고서 쓰기');
+    await say('할 일 추가: 우유 사기');
+    await say('할 일 추가: 회의 준비');
+    await say('1번 완료');
+    await say('할 일 1번 취소');
+    const canceled = await service.handle({ kind: 'todo.list', status: 'canceled' }, owner);
+    expect(textOf(canceled)).toContain('취소된 할 일');
+    expect(textOf(canceled)).toContain('(취소)');
+    expect(textOf(canceled)).not.toMatch(/\d+\. /);
+    expect(canceled.kind === 'reply' ? canceled.nlListing : undefined).toBeUndefined();
+    expect(textOf(await service.handle({ kind: 'todo.list', status: 'completed' }, owner))).toContain('(완료)');
+    const all = textOf(await service.handle({ kind: 'todo.list', status: 'all' }, owner));
+    expect(all).toContain('**전체 할 일** (3건)');
+    expect(textOf(await service.handle({ kind: 'todo.list' }, owner))).toContain('**내 할 일** (1건)');
+  });
+});
