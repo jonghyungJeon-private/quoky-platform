@@ -32,7 +32,7 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
     expect(scoreOutput(CASES[4]!, 'I would create it', NOW).outcome).toBe('error');
   });
 
-  it('A7 (Proposed): a capture of a clear past-tense statement scores as the runtime answers it, `none`', () => {
+  it('A7: a capture of a clear past-tense statement scores as the runtime answers it, `none`', () => {
     const statement: NlEvalCase = { id: 'neg-s', text: '어제 일정 있었는데 까먹었어 ㅠ', expect: 'none' };
     expect(scoreOutput(statement, answer('calendar.events', { range: 'yesterday' }), NOW)).toMatchObject({ outcome: 'none', got: 'none' });
     const positive: NlEvalCase = { id: 'pos-s', text: '회의 끝났다', expect: { entryId: 'calendar.events', args: {} } };

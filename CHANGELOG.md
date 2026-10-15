@@ -5,7 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Unreleased — "until <weekday>" periods and the past-tense statement check, prompt `nl-select.v22` (ADR-0120 amendment A7, Proposed — merge held for the owner's ratification, 2026-10-15)
+## Unreleased — "until <weekday>" periods and the past-tense statement check, prompt `nl-select.v22` (ADR-0120 amendment A7, Accepted 2026-10-15)
 
 - **Why.** "이번 주 금요일까지 일정" showed only Friday: the closed range symbols had no "today through <weekday>", and the
   model may not compute dates. "어제 일정 있었는데 까먹었어 ㅠ" (a statement, `neg-042`) was sometimes read as a calendar
@@ -33,7 +33,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Final delta round** (no prompt change): without a week word only the nearest bounded day counts for any period;
   mixed bounded/unbounded mentions accept only a period ending on that day; quoted requests (…달라고) and wishes with
   any ending are requests.
-- **Corpus.** `a7u-01..10`, `a7s-01..15` (839 cases), PENDING the owner's D12 batch. Owner sheet:
+- **CA final check:** conflicting mentions of a weekday ask for every period; "다음 주 월요일부터 금요일까지" takes the week
+  word for both bounds.
+- **Corpus.** `a7u-01..10`, `a7s-01..15` (839 cases), owner-approved D12 batch 2026-10-15. Owner sheet:
   `docs/plans/a7-until-weekday-owner-sheet.md`.
 
 ## Unreleased — calendar accuracy: the canonical weekday symbol, prompt `nl-select.v20`, the weekday question on every weekday refusal (ADR-0120 A5 implementation note 3, 2026-10-14)

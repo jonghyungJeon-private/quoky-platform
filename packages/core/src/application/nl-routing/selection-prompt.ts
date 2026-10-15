@@ -13,7 +13,7 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
 /**
  * Bumped whenever the instruction text changes (the eval plan digest binds it). v20 = v18 with three examples in the
  * weekday lines of the range symbols (금요일 = fri, 이번 주 금요일 = this-fri, 다음 주 수 = next-wed). v21 = the A6 v19 text
- * on top of v20. v22 (ADR-0120 amendment A7, Proposed) = v20 with one `until-*` line after the date line of the range
+ * on top of v20. v22 (ADR-0120 amendment A7) = v20 with one `until-*` line after the date line of the range
  * symbols (one example: 금요일까지 = until-fri) and two rule-2 lines on remarks about the past. v23 = the A6 text on top
  * of v22.
  */

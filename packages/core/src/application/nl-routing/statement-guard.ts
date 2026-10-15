@@ -1,7 +1,7 @@
 import { isNlRequestOrWhWord } from './grammar-residual';
 
 /**
- * ADR-0120 amendment A7 (Proposed): a clear past-tense statement is not a request to read (neg-042, "어제 일정 있었는데
+ * ADR-0120 amendment A7: a clear past-tense statement is not a request to read (neg-042, "어제 일정 있었는데
  * 까먹었어 ㅠ"). D2 rule 2 already tells the selector that statements of fact are `none`; this is the deterministic
  * second check after it, message-level and for READ entries only. It reads grammar, never topics: the sentence-final
  * ending, the closed request / interrogative forms of `grammar-residual.ts`, the closed wh-word stems and a connective

@@ -770,7 +770,7 @@ describe('ADR-0120 A5 implementation note 2: a period that loses the owner\'s we
   });
 });
 
-describe('ADR-0120 amendment A7 (Proposed): until-<weekday> and the clear past-tense statement', () => {
+describe('ADR-0120 amendment A7: until-<weekday> and the clear past-tense statement', () => {
   it('"이번 주 금요일까지 일정" read as Friday alone executes today through Friday, stored as until-fri', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'this-fri' })] });
     const decision = await h.decide('이번 주 금요일까지 일정');

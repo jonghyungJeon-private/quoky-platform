@@ -9259,7 +9259,7 @@
           "range": "until-fri"
         }
       },
-      "note": "the live sentence: today through Friday, never Friday alone [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "the live sentence: today through Friday, never Friday alone [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7u-02",
@@ -9270,7 +9270,7 @@
           "range": "until-sun"
         }
       },
-      "note": "an inclusive end bound on a bare weekday: today through the nearest Sunday [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "an inclusive end bound on a bare weekday: today through the nearest Sunday [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7u-03",
@@ -9281,7 +9281,7 @@
           "range": "until-next-wed"
         }
       },
-      "note": "a next-week anchor with an end bound [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a next-week anchor with an end bound [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7u-04",
@@ -9292,7 +9292,7 @@
           "range": "until-fri"
         }
       },
-      "note": "English inclusive bound (through) [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "English inclusive bound (through) [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7u-05",
@@ -9304,7 +9304,7 @@
           "range": "until-next-tue"
         }
       },
-      "note": "a due window through next Tuesday [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a due window through next Tuesday [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7u-06",
@@ -9316,49 +9316,49 @@
           "count": true
         }
       },
-      "note": "count over today through Saturday [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "count over today through Saturday [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7u-07",
       "text": "금요일까지 보고서 내야 해",
       "expect": "none",
-      "note": "a statement with a bound weekday is not a request to read anything [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a statement with a bound weekday is not a request to read anything [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-01",
       "text": "지난주 회의 진짜 길었어",
       "expect": "none",
-      "note": "a past-tense statement about the owner's own week [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a past-tense statement about the owner's own week [A7: agent-drafted for the neg-042 statement fix (2026-10-15), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-02",
       "text": "어제 메일 너무 많이 왔더라",
       "expect": "none",
-      "note": "a retrospective statement (더라) [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a retrospective statement (더라) [A7: agent-drafted for the neg-042 statement fix (2026-10-15), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-03",
       "text": "아까 슬랙 봤는데 별거 없더라",
       "expect": "none",
-      "note": "a retrospective statement after a background clause [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a retrospective statement after a background clause [A7: agent-drafted for the neg-042 statement fix (2026-10-15), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-04",
       "text": "오늘 일정 꽉 찼었어",
       "expect": "none",
-      "note": "a past-tense statement about today's calendar [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a past-tense statement about today's calendar [A7: agent-drafted for the neg-042 statement fix (2026-10-15), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-05",
       "text": "회의 끝났다",
       "expect": "none",
-      "note": "a plain past declarative (다) [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a plain past declarative (다) [A7: agent-drafted for the neg-042 statement fix (2026-10-15), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-06",
       "text": "드라이브 정리 다 했어",
       "expect": "none",
-      "note": "a past-tense statement about the owner's own work [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a past-tense statement about the owner's own work [A7: agent-drafted for the neg-042 statement fix (2026-10-15), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-07",
@@ -9369,7 +9369,7 @@
           "range": "yesterday"
         }
       },
-      "note": "a past-tense QUESTION still reads the calendar [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a past-tense QUESTION still reads the calendar [A7: agent-drafted for the neg-042 statement fix (2026-10-15), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-08",
@@ -9380,7 +9380,7 @@
           "range": "yesterday"
         }
       },
-      "note": "a bare noun phrase still lists mail [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a bare noun phrase still lists mail [A7: agent-drafted for the neg-042 statement fix (2026-10-15), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-09",
@@ -9391,7 +9391,7 @@
           "range": "last-week"
         }
       },
-      "note": "past tense without a question mark but with a wh-word still lists mail [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "past tense without a question mark but with a wh-word still lists mail [A7: agent-drafted for the neg-042 statement fix (2026-10-15), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-10",
@@ -9402,7 +9402,7 @@
           "range": "yesterday"
         }
       },
-      "note": "a retrospective self-question (더라?) still lists mail [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a retrospective self-question (더라?) still lists mail [A7: agent-drafted for the neg-042 statement fix (2026-10-15), owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-11",
@@ -9411,7 +9411,7 @@
         "entryId": "calendar.events",
         "args": {}
       },
-      "note": "겠 is an intention, not the past [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "겠 is an intention, not the past [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-12",
@@ -9420,7 +9420,7 @@
         "entryId": "mail.list",
         "args": {}
       },
-      "note": "겠 is an intention, not the past [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "겠 is an intention, not the past [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-13",
@@ -9431,7 +9431,7 @@
           "range": "tomorrow"
         }
       },
-      "note": "a wish (…면 좋겠다) is a polite request [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a wish (…면 좋겠다) is a polite request [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-14",
@@ -9442,7 +9442,7 @@
           "range": "yesterday"
         }
       },
-      "note": "a wish (…으면 했어요) is a polite request [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a wish (…으면 했어요) is a polite request [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7s-15",
@@ -9453,7 +9453,7 @@
           "range": "yesterday"
         }
       },
-      "note": "an informal past with no second marker stays with the selector [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "an informal past with no second marker stays with the selector [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7u-08",
@@ -9464,7 +9464,7 @@
           "range": "until-sun"
         }
       },
-      "note": "the nearest Sunday; next-week (ending next week's Sunday) is refused [A7: agent-drafted for the A7 CA delta (2026-10-15): a longer period that ends on a non-nearest weekday must not pass, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "the nearest Sunday; next-week (ending next week's Sunday) is refused [A7: agent-drafted for the A7 CA delta (2026-10-15): a longer period that ends on a non-nearest weekday must not pass, owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7u-09",
@@ -9475,7 +9475,7 @@
           "range": "until-next-sun"
         }
       },
-      "note": "anchored: next-week ends on that Sunday and is spelled until-next-sun [A7: agent-drafted for the A7 CA delta (2026-10-15): a longer period that ends on a non-nearest weekday must not pass, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "anchored: next-week ends on that Sunday and is spelled until-next-sun [A7: agent-drafted for the A7 CA delta (2026-10-15): a longer period that ends on a non-nearest weekday must not pass, owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     },
     {
       "id": "a7u-10",
@@ -9486,7 +9486,7 @@
           "range": "until-fri"
         }
       },
-      "note": "the nearest Friday; a span ending on another Friday is refused [A7: agent-drafted for the A7 CA delta (2026-10-15): a longer period that ends on a non-nearest weekday must not pass, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "the nearest Friday; a span ending on another Friday is refused [A7: agent-drafted for the A7 CA delta (2026-10-15): a longer period that ends on a non-nearest weekday must not pass, owner-approved D12 batch 2026-10-15 (A7 ratification, decision 7)]"
     }
   ]
 }

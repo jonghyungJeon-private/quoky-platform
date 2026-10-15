@@ -125,7 +125,7 @@ function namesUncarriedPartOfDay(message: string): boolean {
 }
 
 /**
- * ADR-0120 amendment A7 (Proposed): whether the owner's one weekday carries an inclusive end bound ("일요일까지", "through
+ * ADR-0120 amendment A7: whether the owner's one weekday carries an inclusive end bound ("일요일까지", "through
  * Friday"). The grammar can place only that single day, and the period the owner means (today through that day) is a
  * typed `until-*` range it cannot carry, so with yield on it declines (the A2 rule; it adds no phrase).
  */

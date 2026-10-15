@@ -50,7 +50,7 @@ export type NlRangeSymbol = (typeof NL_RANGE_SYMBOLS)[number];
 export const NL_WEEKDAY_SYMBOLS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 
 /**
- * ADR-0120 amendment A7 (Proposed): an open-start period that ends on a weekday the owner bounds ("금요일까지").
+ * ADR-0120 amendment A7: an open-start period that ends on a weekday the owner bounds ("금요일까지").
  * `until-fri` = today through the nearest Friday (today included, the same day `fri` names, 1-7 days); `until-next-fri` =
  * today through Friday of next (Monday-based) week (2-14 days). Core places both; the selector only names the symbol, and it validates only
  * when the owner's words carry an inclusive end bound on that weekday (`selection-validator.ts` step 4b).
@@ -372,10 +372,10 @@ export interface NlExpressedWeekday {
   /** A7: every mention carries an inclusive end bound ("까지", "by", "until", "till", "through"). */
   readonly until?: true;
   /**
-   * A7: SOME but not all mentions carry the end bound ("이번 주 금요일까지 … 금요일도 포함해서"): only a period that ends on
-   * that weekday (the day itself or the matching `until-*`) is accepted.
+   * A7: the mentions disagree on the end bound (some carry it, some not: "보고서는 금요일까지야, 금요일 일정 알려줘") or, with
+   * an end bound, on the week word ("다음 주 금요일까지 … 금요일도"). No reading is inferred: every period is asked.
    */
-  readonly mixedUntil?: true;
+  readonly boundConflict?: true;
   /** The week anchor every mention carries, when they agree. */
   readonly week?: NlWeekAnchor;
   readonly direction?: NlWeekdayDirection;
@@ -546,7 +546,10 @@ export function nlSingleWeekday(mentions: readonly NlWeekdayMention[]): NlExpres
     // A7: an end bound counts only when EVERY mention of the weekday carries it ("금요일 일정 알려줘, 보고서는 금요일까지야"
     // names Friday itself, not a period up to it).
     ...(mentions.every((mention) => mention.until === true) ? { until: true as const } : {}),
-    ...(mentions.some((mention) => mention.until === true) && !mentions.every((mention) => mention.until === true) ? { mixedUntil: true as const } : {}),
+    ...(mentions.some((mention) => mention.until === true) &&
+    (!mentions.every((mention) => mention.until === true) || new Set(mentions.map((mention) => mention.week)).size > 1 || new Set(mentions.map((mention) => mention.direction)).size > 1)
+      ? { boundConflict: true as const }
+      : {}),
     ...(week !== undefined ? { week } : {}),
     ...(direction !== undefined ? { direction } : {}),
   };
@@ -617,7 +620,7 @@ function weekdayPlacement(
 export type NlUntilBoundOutcome = 'keep' | 'refuse' | { readonly canonical: string };
 
 /**
- * ADR-0120 amendment A7 (Proposed), D4 step 4b. Grounding of the open-start `until-*` symbols, and the one reading of a
+ * ADR-0120 amendment A7, D4 step 4b. Grounding of the open-start `until-*` symbols, and the one reading of a
  * single day at an inclusive end bound. Pure; it routes nothing: the selector chose the entry and the symbol, and the
  * only words read are the closed bound set of A5 implementation note 2 (까지, by, until, till, through, thru).
  *  - An `until-<weekday>` symbol needs the owner's words to bound THAT weekday with an inclusive end bound, and the
@@ -640,8 +643,7 @@ export function nlUntilBound(
   const until = nlUntilSymbolWeekday(symbol);
   if (until !== undefined) {
     if (expressed === undefined && previousRange === symbol) return 'keep';
-    const bounded = expressed !== undefined && (expressed.until === true || expressed.mixedUntil === true);
-    if (range === undefined || expressed === undefined || !bounded || !expressed.certain || expressed.weekday !== until.weekday) return 'refuse';
+    if (range === undefined || expressed === undefined || expressed.until !== true || expressed.boundConflict === true || !expressed.certain || expressed.weekday !== until.weekday) return 'refuse';
     if (!weekdayPlacement(expressed, now, timeZone).named(lastDayOf(range))) return 'refuse';
     // Without a week word or an English direction the weekday is the nearest one (as for the bare `fri`).
     if (expressed.week === undefined && expressed.direction === undefined) {
@@ -653,10 +655,8 @@ export function nlUntilBound(
     const owned = preferred === symbol ? undefined : resolveNlRange(preferred, now, timeZone);
     return owned !== undefined && owned.from === range.from && owned.to === range.to ? { canonical: preferred } : 'keep';
   }
-  if (range === undefined || range.upcoming === true || expressed === undefined || !expressed.certain) return 'keep';
-  // Mixed mentions: the day itself (the A5 rule checks which day) or the matching `until-*` only; any longer period asks.
-  if (expressed.mixedUntil === true) return range.days === 1 ? 'keep' : 'refuse';
-  if (expressed.until !== true) return 'keep';
+  if (expressed?.boundConflict === true) return 'refuse';
+  if (range === undefined || range.upcoming === true || expressed === undefined || expressed.until !== true || !expressed.certain) return 'keep';
   const { named } = weekdayPlacement(expressed, now, timeZone);
   const days = Array.from({ length: range.days }, (_, index) => addLocalDays(range.startDate, index));
   // A single day that is another day is the A5 rule's to refuse; a longer period without the day is refused here.
@@ -678,7 +678,7 @@ export function nlUntilBound(
 }
 
 /**
- * ADR-0120 amendment A7 (Proposed): a period when the owner names SEVERAL weekdays with bounds ("목요일부터 토요일까지").
+ * ADR-0120 amendment A7: a period when the owner names SEVERAL weekdays with bounds ("목요일부터 토요일까지").
  * `undefined` when the rule does not apply (fewer than two weekdays, or no end bound); otherwise whether the period runs
  * exactly from the start-bounded weekday (when one is given) to the end-bounded weekday, each in its own week anchor and
  * direction. No symbol names such a span, so this mostly asks; it never lets an unrelated period through.
@@ -691,7 +691,12 @@ export function nlMultiWeekdayBoundKeeps(range: NlResolvedRange | undefined, men
   const starts = mentions.filter((mention) => mention.start === true);
   if (new Set(starts.map((mention) => mention.weekday)).size > 1) return false;
   const placed = (mention: NlWeekdayMention) => weekdayPlacement(nlSingleWeekday([mention]) as NlExpressedWeekday, now, timeZone).named;
-  const end = ends[0] as NlWeekdayMention;
+  // A bound without a week word of its own takes the other bound's ("다음 주 월요일부터 금요일까지" = next Monday..Friday).
+  const withWeek = (mention: NlWeekdayMention, other: NlWeekdayMention | undefined): NlWeekdayMention =>
+    mention.week !== undefined || mention.direction !== undefined || other === undefined
+      ? mention
+      : { ...mention, ...(other.week !== undefined ? { week: other.week } : {}), ...(other.direction !== undefined ? { direction: other.direction } : {}) };
+  const end = withWeek(ends[0] as NlWeekdayMention, starts[0]);
   const last = lastDayOf(range);
   if (!placed(end)(last)) return false;
   // Without a week word or an English direction the end is the nearest such day (today included), and the start the
@@ -699,7 +704,7 @@ export function nlMultiWeekdayBoundKeeps(range: NlResolvedRange | undefined, men
   const today = localDateOf(now, timeZone);
   const unanchored = (mention: NlWeekdayMention) => mention.week === undefined && mention.direction === undefined;
   if (unanchored(end) && compareLocalDates(last, addLocalDays(today, (end.weekday - weekdayOf(today) + 7) % 7)) !== 0) return false;
-  const start = starts[0];
+  const start = starts[0] === undefined ? undefined : withWeek(starts[0], ends[0]);
   if (start === undefined) return true;
   if (!placed(start)(range.startDate)) return false;
   return !unanchored(start) || compareLocalDates(range.startDate, addLocalDays(last, -((weekdayOf(last) - start.weekday + 7) % 7))) === 0;

@@ -23456,10 +23456,11 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   "회의 중에" arguably carries it; the owner may want to add it to the gold).
 
 
-### ADR-0120 amendment A7 — "until <weekday>": an open-start period that ends on the weekday the owner bounds, and a clear past-tense statement is not a read (Proposed — owner ratification pending) (2026-10-15)
+### ADR-0120 amendment A7 — "until <weekday>": an open-start period that ends on the weekday the owner bounds, and a clear past-tense statement is not a read (Accepted 2026-10-15) (2026-10-15)
 
-- **Status:** **Proposed — owner ratification pending.** Implemented on branch `claude/v5-until-weekday` with no new
-  flag, so the merge is held until the owner ratifies. Owner sheet: `docs/plans/a7-until-weekday-owner-sheet.md`. Both
+- **Status:** **Accepted** by the owner on 2026-10-15 ("7개 모두 권장안대로": all seven owner decisions below as
+  recommended, including the D12 batch of the 25 cases `a7u-01..10` and `a7s-01..15`). Originally Proposed;
+  implemented on branch `claude/v5-until-weekday` with no new flag. Owner sheet: `docs/plans/a7-until-weekday-owner-sheet.md`. Both
   tasks were approved for work by the owner on 2026-10-15, with the explicit condition that no hardcoded phrase routing is
   introduced.
 - **Amends:** D4 step 4 (the A5 change 5 symbol set gains one family) and the A5 implementation note 2 rule for a bound
@@ -23524,12 +23525,13 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
    Sunday `next-sun` on a Thursday) is never widened into `until-next-sun`, and a longer period without the day
    (`next-week` for "이번 주 금요일까지") is refused. A single day that is another day stays the A5 rule's refusal. An
    uncertain weekday ("다음 주 일까지") is left to the A5 rule.
-   - **Mixed mentions** (one bounded, one not: "이번 주 금요일까지 … 금요일도 포함해서", "보고서는 금요일까지야, 금요일 일정
-     알려줘"): only a period ending on that weekday is accepted — the day itself (the A5 rule checks which) or the
-     matching `until-*`; Core never rewrites to `until-*` here; any longer period is refused.
+   - **Conflicting mentions** (CA final check, a scope reduction): when mentions of the same weekday disagree on the end
+     bound ("보고서는 금요일까지야, 금요일 일정 알려줘") or, with an end bound, on the week word ("다음 주 금요일까지 … 금요일도
+     포함해서"), no reading is inferred: every period is refused and the owner is asked.
    - **Several weekdays with an end bound** ("목요일부터 토요일까지"): the period must run exactly from the start-bounded
-     day (부터, from, since; when one is given) to the end-bounded day, each in its own anchor, and without a week word the
-     nearest such span (on Thursday 10/15 only 10/15..10/17); otherwise it is refused.
+     day (부터, from, since; when one is given) to the end-bounded day, each in its own anchor (a bound without a week word
+     takes the other bound's: "다음 주 월요일부터 금요일까지" = 10/19..10/23), and without any week word the nearest such
+     span (on Thursday 10/15 "목요일부터 토요일까지" is only 10/15..10/17); otherwise it is refused.
      No symbol names such a span except an `until-*` that starts today, so this mostly asks; it never lets an unrelated
      period through. Several weekdays without an end bound are unchanged (the A5 guard steps aside), but take no
      `until-*`.
@@ -23624,6 +23626,9 @@ decline a read. A miss stays a corpus case (D10, D12).
 - **Final delta round (CA P1/P2, Codex; validator and statement check only, no prompt byte changed, so no re-run).**
   The nearest-day rule for longer periods and for several weekdays, the mixed-mentions rule, the quoted-request and
   any-ending wish forms; golden `a7u-08..10` (839 cases) with periods a selector may end on a non-nearest weekday.
+- **CA final check (orchestrator: fix-loop cap, scope reduction).** Conflicting mentions ask for every period; a
+  several-weekday bound without its own week word inherits the other bound's. CA item 4 (non-blocking) is recorded as a
+  residual. No prompt byte changed, so no re-run.
 
 #### Corpus
 
@@ -23633,7 +23638,7 @@ execute ("어제 일정 뭐 있었지?", "어제 온 메일", "지난주 메일 
 `uat5gy-06`), and five review positives (`a7s-11..15`: 겠 "오늘 일정 확인해야겠다", "메일 좀 봐야겠다"; wishes "내일 일정 알면
 좋겠다", "어제 메일 좀 보여주셨으면 했어요"; "어제 일정 궁금했어"). Note: `a7s-01` and `a7s-06` ("지난주 회의 진짜 길었어",
 "드라이브 정리 다 했어") are no longer caught by the statement check; they rely on the prompt (0/20 captures in the
-probes). Agent-drafted, PENDING the owner's D12 batch approval.
+probes). Agent-drafted; all 25 owner-approved in the D12 batch of 2026-10-15 (A7 ratification, decision 7).
 
 #### Eval
 

@@ -736,7 +736,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     cacheKey?: string,
   ): Promise<NlSelectionDecision> {
     if (output.entryId === null) return { kind: 'none' };
-    // A7 (Proposed): a clear past-tense statement is not a request, whatever read the selector named (message-level, once,
+    // A7: a clear past-tense statement is not a request, whatever read the selector named (message-level, once,
     // before any candidate is validated): like a selector `none`, the turn is chat, never a question.
     if (!isNlActionEntryId(output.entryId) && nlIsPastStatement(prepared.groundingText)) {
       this.log('info', 'nl_selection.statement', { entryId: output.entryId });
@@ -1300,7 +1300,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const output = selected.output;
     let outcome = output.entryId === null ? 'none' : output.ambiguity;
     let executable: NlGrammarSelection | undefined;
-    // A7 (Proposed): the shadow sees what active would do: a clear past-tense statement is `none`.
+    // A7: the shadow sees what active would do: a clear past-tense statement is `none`.
     if (output.entryId !== null && !isNlActionEntryId(output.entryId) && nlIsPastStatement(prepared.groundingText)) outcome = 'none';
     else if (output.entryId !== null) {
       const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args));

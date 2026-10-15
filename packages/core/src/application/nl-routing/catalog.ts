@@ -91,7 +91,7 @@ export interface NlArgSpec {
   /** `range` only: the period must have started already (mail received in a future period is meaningless). */
   readonly pastOnly?: boolean;
   /**
-   * `range` only (ADR-0120 A7, Proposed): the period looks back for these args (Jira created / updated). Like `pastOnly`,
+   * `range` only (ADR-0120 A7): the period looks back for these args (Jira created / updated). Like `pastOnly`,
    * an `until-*` period is refused and an end-bounded weekday is left to the A5 rule. It changes nothing else.
    */
   readonly pastWindow?: (args: NlArgs) => boolean;
