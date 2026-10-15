@@ -23842,11 +23842,11 @@ bound, run on Thursday 2026-10-15 (Asia/Seoul). Reports are local under `data/ev
 - **Residual.** If the selector again writes a non-symbol range on such a repeat, the owner is asked (D7), never shown a
   guessed period; the log keeps `reason=invalid-arg`.
 
-## ADR-0112 amendment 1 — Slack channel-message delete: a narrow `ChannelMessageDeleteWriter`, only for a message Quoky posted, bound to that post's SENT receipt, only as the undo of a post (Proposed — owner decision pending) (2026-10-14)
+## ADR-0112 amendment 1 — Slack channel-message delete: a narrow `ChannelMessageDeleteWriter`, only for a message Quoky posted, bound to that post's SENT receipt, only as the undo of a post (Accepted 2026-10-15) (2026-10-14)
 
-- **Status:** **Proposed (owner decision pending).**
-  - Docs only; no code exists.
-  - To be decided by the owner on 2026-10-15 (afternoon), together with the A6 R1 batch.
+- **Status:** **Accepted 2026-10-15** by the owner ("all recommended": S-1..S-6 and C-1 yes, see the ratification record
+  at the end of this amendment). Originally Proposed (2026-10-14).
+  - Docs only; no code exists. Implementation stays at stage R3 (NLA-11); nothing is built now.
   - Revised after the Chief Architect review of `71f046a` (APPROVE WITH CHANGES, no Critical).
   - Owner sheet: `docs/plans/adr-0112-a6-writes-owner-sheet.md`.
 - **Why now.** The A6 ratification record (Amended A6 text A and B) makes the undo of `slack.post` "delete that
@@ -24127,11 +24127,27 @@ bound, run on Thursday 2026-10-15 (Asia/Seoul). Reports are local under `data/ev
 - **C-1** (R3, calendar). The undo of `calendar.create` deletes only the event in its own SENT receipt (same actor, same
   session), with approval. **Recommended: yes.**
 
-## ADR-0112 amendment 2 — Jira issue create and its undo: `IssueCreateWriter` / `ISSUE_CREATE`, `IssueDeleteWriter` / `ISSUE_DELETE`, a `jira.create` catalog entry, a close fallback through the existing transition writer (Proposed — owner decision pending) (2026-10-14)
+### Ratification record (amendment 1, 2026-10-15)
 
-- **Status:** **Proposed (owner decision pending).**
-  - Docs only; no code exists.
-  - To be decided by the owner on 2026-10-15 (afternoon), with the A6 R1 batch and amendment 1.
+- **Decision.** The owner accepted amendment 1 on 2026-10-15, through the orchestrator ("all recommended", the owner sheet
+  `docs/plans/adr-0112-a6-writes-owner-sheet.md`, section 1). Every decision above is **yes** as recommended:
+  - **S-1** (decision 1): a separate narrow port `ChannelMessageDeleteWriter` and operation `CHANNEL_MESSAGE_DELETE`.
+  - **S-2** (decision 2): delete only as the undo of Quoky's own post, same session; no free delete command.
+  - **S-3** (decision 3): posts made with the exact command `Slack #채널에 게시:` are undoable too.
+  - **S-4** (decision 4): the bot token stays at `chat:write`; no history scope; thread replies stay under a "deleted"
+    placeholder.
+  - **S-5** (decision 5): no separate delete flag (Slack posting enabled and `QUOKY_NL_ACTIONS=external`).
+  - **S-6** (decision 6): CRITICAL approval and `Slack 삭제 실행` / `슬랙 삭제 실행`; no bare `삭제 실행`.
+  - **C-1**: the undo of `calendar.create` deletes only the event of its own SENT receipt (same actor, same session), with
+    approval.
+- **Scope of this record.** Docs only. The code is built in stage R3 (NLA-11, UAT U21b) with its own review; no runtime,
+  token, scope, allowlist or live action is authorised by it (Strict steps keep their own approvals).
+
+## ADR-0112 amendment 2 — Jira issue create and its undo: `IssueCreateWriter` / `ISSUE_CREATE`, `IssueDeleteWriter` / `ISSUE_DELETE`, a `jira.create` catalog entry, a close fallback through the existing transition writer (Accepted 2026-10-15) (2026-10-14)
+
+- **Status:** **Accepted 2026-10-15** by the owner ("all recommended": J-1..J-13 yes, J-3 = `Task`, J-9 = no *Delete
+  issues* request now, see the ratification record at the end of this amendment). Originally Proposed (2026-10-14).
+  - Docs only; no code exists. Implementation stays at stage R4 (NLA-12); nothing is built now.
   - Revised after the Chief Architect review of `71f046a`.
   - Owner sheet: `docs/plans/adr-0112-a6-writes-owner-sheet.md`.
 - **Why.**
@@ -24528,6 +24544,30 @@ bound, run on Thursday 2026-10-15 (Asia/Seoul). Reports are local under `data/ev
     `삭제 실행`). **Recommended: yes.**
 13. Issues created with the exact command `Jira BE에 이슈 생성:` are undoable too. **Recommended: yes.**
 
+### Ratification record (amendment 2, 2026-10-15)
+
+- **Decision.** The owner accepted amendment 2 on 2026-10-15, through the orchestrator ("all recommended", the owner sheet
+  `docs/plans/adr-0112-a6-writes-owner-sheet.md`, section 2). Every decision above is **yes** as recommended:
+  - **J-1**: new narrow ports `IssueCreateWriter` / `IssueDeleteWriter`, operations `ISSUE_CREATE` / `ISSUE_DELETE`.
+  - **J-2**: R4 sets only project, issue type and summary.
+  - **J-3**: one configured issue type, default `Task`.
+  - **J-4**: the project must be named in the owner's sentence; no default project.
+  - **J-5**: the anchored twin `Jira BE에 이슈 생성: <요약>`.
+  - **J-6**: the invisible issue property `quoky.write` as a second check beside the receipt (never to choose a target).
+  - **J-7**: after an `UNCERTAIN` create: no retry, no undo, one read-only marker lookup shown as information only.
+  - **J-8**: delete only an unchanged issue; otherwise offer close.
+  - **J-9**: **no** request for the *Delete issues* permission now; close is the fallback. Conditional on the NLA-12
+    read-only permission check (`mypermissions`): if the permission is absent, a Jira undo closes the issue and never
+    restores the original state, U22 cannot exercise a real delete, and UAT issues stay closed in `BE`. The owner accepted
+    this consequence as stated on the sheet.
+  - **J-10**: close = the unique transition to a `done`-category status; several or none means the owner picks.
+  - **J-11**: keep the current Atlassian classic API token for R4; a scoped token later carries the complete
+    endpoint-specific scope list (Strict).
+  - **J-12**: CRITICAL approval with `Jira 이슈 생성 실행` / `Jira 이슈 삭제 실행` (지라 variants; no bare `삭제 실행`).
+  - **J-13**: issues created with the exact command `Jira BE에 이슈 생성:` are undoable too.
+- **Scope of this record.** Docs only. The code is built in stage R4 (NLA-12, UAT U22) with its own review; the new
+  setting `QUOKY_CONNECTOR_WRITE_JIRA_ISSUE_TYPE`, any `.env.local` change, a Jira permission request, token changes and
+  live writes keep their own Strict approvals.
 
 ## A6 R1 owner batch approval (2026-10-15)
 
