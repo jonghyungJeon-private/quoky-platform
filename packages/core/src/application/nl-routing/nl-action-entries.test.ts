@@ -494,4 +494,3 @@ describe('A6 R1 review: the completion vocabulary is closed (CA delta)', () => {
     for (const text of ['2번 끝냈어', '2번 끝났으니 완료해줘', '2번 완료해줘', '2번 해치웠어']) expect(complete(text).ok, text).toBe(true);
   });
 });
-
