@@ -10146,9 +10146,7 @@
    },
    "expect": {
     "entryId": "help.topic",
-    "args": {
-     "topic": "all"
-    },
+    "args": {},
     "outcome": "execute"
    },
    "note": "was neg-030 [owner-delegated relabel 2026-10-16 (\"후속작업 전부 승인\"): a how-to question about Quoky's own undo (no undo topic in NL_HELP_TOPICS; closest general index) is help.topic by prompt rule 3; was none]"
