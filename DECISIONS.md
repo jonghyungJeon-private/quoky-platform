@@ -25515,6 +25515,7 @@ policy for non-owner actors through the ADR-0009 seam.
   decisions 1–11, 13 and 14 (decision 12 moot). The QA seed value of decision 11 is
   `QUOKY_CHANNEL_GRANTS_SEED=discord:1520835639103324181:1520835639904309350=jira-mine,jira-project,github,slack-search,confluence,calendar,todo,reminder,memory,code`
   (no `writes`). Setting it, and `QUOKY_CHANNEL_GRANTS=enforce`, in the live `.env.local` stays Strict (owner's yes).
+- **Owner amendment to decision 14 (2026-10-15, Discord):** "개발 기간에는 상시 오픈으로 해두자 다만 테스트 시에 권한 테스트가 있으면 그때 off 테스트 하는걸로" — `QUOKY_CHANNEL_GRANTS` stays `off` during development (code default `off`); it is switched to `enforce` only for permission tests, each time with the owner's yes, and switched back afterwards.
 - **P1 status:** Implemented on branch `claude/v5-surface-grants` (the phasing table's P1 row). P2 (grant phrase with
   `허용 실행`, strong warnings, Discord `audience`, the composite permit, the reminder channel-delivery check, receipts of
   owner grants, D7 narrowed to "without `memory`", help lines) is not built.

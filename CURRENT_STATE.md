@@ -32,7 +32,7 @@ Remaining channel exposures (pre-existing): to-do list/status/complete/cancel re
 **ADR-0122 (A9) surface permission grants — Accepted 2026-10-15; P1 on branch `claude/v5-surface-grants`.** One Core
 gate for every channel turn (default deny, per-channel grants in `Actor.metadata`, one per-actor metadata lock), owner
 list / revoke phrases, kill-switch suspension, the deploy seed. Code default `QUOKY_CHANNEL_GRANTS=off` (inert,
-byte-identical); enabling needs the owner's yes for the live `.env.local` values `QUOKY_CHANNEL_GRANTS=enforce` and
+byte-identical; owner amendment 2026-10-15: stays `off` during development, switched to `enforce` only for permission tests with the owner's yes and back to `off` afterwards); enabling needs the owner's yes for the live `.env.local` values `QUOKY_CHANNEL_GRANTS=enforce` and
 `QUOKY_CHANNEL_GRANTS_SEED=discord:1520835639103324181:1520835639904309350=jira-mine,jira-project,github,slack-search,confluence,calendar,todo,reminder,memory,code`
 (Strict), plus the deploy checks: `quoky.actionSwitch` (a stopped switch suspends the seed from the first turn) and
 `QUOKY_REMINDERS_CHANNEL_DELIVERY` false or unset until P2's send-time check (unset live, checked 2026-10-15). P2
