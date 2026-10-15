@@ -9,6 +9,7 @@ import {
 import { ActionWriteStoppedError, WorkItemReopenError } from '../../domain';
 import type { ActionWriteCondition, Actor, MessageBody, MessageContent, ResourceRef, WorkItem } from '../../domain';
 import type { NlActionReceipt, NlListingReceipt, NlSelectedCommand } from '../nl-routing/catalog';
+import type { ListingSlot } from '../last-listing';
 import { renderActionStopped } from '../nl-routing/nl-action-policy';
 import {
   CONNECTOR_QUERY_MAX_LIMIT,
@@ -60,6 +61,7 @@ import {
   renderTodoLinked,
   renderTodoNotActive,
   renderTodoNotFound,
+  renderTodoSnapshotDrift,
   renderTodoStatusAnswer,
   renderTodoTitleTooLong,
   renderTodoTooManyRefs,
@@ -73,6 +75,7 @@ import {
   renderTodoUndoRefused,
   renderedTodoRows,
   todoNumberOf,
+  renderedAmbiguousRows,
 } from './work-chat-renderer';
 import type { WorkChatLookupFailure } from './work-chat-renderer';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
@@ -127,6 +130,13 @@ export interface WorkDesk {
 
 export interface WorkDeskHandleOptions {
   readonly permit?: SurfacePermit;
+  /**
+   * ADR-0120 amendment A6-D2 amendment note (2026-10-16): the owner's fresh (unexpired) to-do listing slot of this
+   * (Session, Actor) — the labels and ids the owner last saw. Read only with `actionReceipts`. When present, a numbered
+   * to-do command ("N번 완료", "할 일 N번 취소", "완료 처리: N", "할 일 N번에 … 연결") resolves N by the slot's item id and
+   * never by the live order; absent (no listing, or it expired), N is the live open-list number as before.
+   */
+  readonly todoListing?: ListingSlot;
 }
 
 export interface WorkChatServiceDeps {
@@ -230,6 +240,13 @@ function resolveHintTarget(todos: readonly WorkItem[], target: WorkChatTarget): 
   return partial.length === 1 ? (partial[0] as { no: number; item: WorkItem }) : null;
 }
 
+/** A6-D2 amendment: the open to-do the fresh listing showed under `label` (its live number kept for the receipt-free hint). */
+function resolveListedHint(todos: readonly WorkItem[], label: number, listing: ListingSlot): { no: number; item: WorkItem } | null {
+  const shown = listing.items.find((entry) => entry.label === label);
+  const index = shown === undefined ? -1 : todos.findIndex((candidate) => candidate.id === shown.id);
+  return index < 0 ? null : { no: index + 1, item: todos[index] as WorkItem };
+}
+
 /** A fixed instant: only "is this reminder-shaped at all" matters, never the resolved time. */
 const REMINDER_SHAPE_PROBE_NOW = '2026-01-01T00:00:00.000Z';
 
@@ -248,6 +265,46 @@ type Resolution =
   | { readonly kind: 'found'; readonly no: number; readonly item: WorkItem }
   | { readonly kind: 'ambiguous'; readonly candidates: ReadonlyArray<{ no: number; item: WorkItem }> }
   | { readonly kind: 'none' };
+
+/** A numbered target the owner's fresh listing cannot act on (A6-D2 amendment): nothing is written. */
+type SnapshotDrift =
+  /** The listing showed `label` for `id`, but that to-do is no longer open (or no longer exists). */
+  | { readonly kind: 'gone'; readonly label: number; readonly id: string }
+  /** The listing never showed `label` (out of range, or a row beyond what was rendered). */
+  | { readonly kind: 'unlisted'; readonly label: number };
+
+/**
+ * A6-D2 amendment (2026-10-16): with a fresh listing, a numbered target is the item the owner SAW under that number,
+ * found by id among the open to-dos — never the live ordinal. Title targets, and every target without a fresh listing,
+ * resolve exactly as before (`resolveTarget`).
+ */
+function resolveListedTarget(todos: readonly WorkItem[], target: WorkChatTarget, listing: ListingSlot | undefined): Resolution | SnapshotDrift {
+  if (!('index' in target) || listing === undefined) return resolveTarget(todos, target);
+  const shown = listing.items.find((entry) => entry.label === target.index);
+  if (shown === undefined) return { kind: 'unlisted', label: target.index };
+  const item = todos.find((candidate) => candidate.id === shown.id);
+  return item === undefined ? { kind: 'gone', label: target.index, id: shown.id } : { kind: 'found', no: target.index, item };
+}
+
+/**
+ * The label a deterministic receipt may carry (A6-D2 amendment): the number the owner saw for this item in the fresh
+ * listing, or — for an add (`liveNo`) — its live number only when the listing does not use that label for another item.
+ * Without a fresh listing: none, so a deterministic reply (which shows no number) never writes a label the owner did not
+ * see, and never turns into a partial listing that would later stop the live numbering.
+ */
+function receiptLabel(listing: ListingSlot | undefined, id: string, liveNo?: number): number | undefined {
+  if (listing === undefined) return undefined;
+  const own = listing.items.find((entry) => entry.id === id);
+  if (own !== undefined) return own.label;
+  if (liveNo === undefined || listing.items.some((entry) => entry.label === liveNo)) return undefined;
+  return liveNo;
+}
+
+/** The number to name for an open to-do in a read-only hint: the listing's label, or the live number without one. */
+function hintNumber(listing: ListingSlot | undefined, id: string, liveNo: number): number | undefined {
+  if (listing === undefined) return liveNo;
+  return listing.items.find((entry) => entry.id === id)?.label;
+}
 
 /** The owner's ACTIVE to-dos, `createdAt` ascending: the same order the combined view numbers them in. */
 function resolveTarget(todos: readonly WorkItem[], target: WorkChatTarget): Resolution {
@@ -295,13 +352,15 @@ export class WorkChatService implements WorkDesk {
   }
 
   async handle(command: WorkChatCommand, actor: Actor, options: WorkDeskHandleOptions = {}): Promise<WorkChatOutcome> {
-    if (command.kind === 'todo.hint') return this.completionHint(command, actor);
-    if (command.kind === 'todo.status') return this.statusAnswer(command, actor);
+    // A6-D2 amendment: the listing snapshot is honoured only while receipts (and so snapshots) are on.
+    const listing = this.actionReceipts ? options.todoListing : undefined;
+    if (command.kind === 'todo.hint') return this.completionHint(command, actor, listing);
+    if (command.kind === 'todo.status') return this.statusAnswer(command, actor, listing);
     try {
       switch (command.kind) {
         case 'todo.add': {
           const added = await this.addTodoItem(command.title, command.refs, actor);
-          return replyWith(added.body, added.item === undefined ? {} : await this.addReceipt(added.item, actor));
+          return replyWith(added.body, added.item === undefined ? {} : await this.addReceipt(added.item, actor, listing));
         }
         case 'todo.list':
           // A status view (owner-approved 2026-10-15): read-only, unnumbered, never an A6 listing (numbers stay the open list's).
@@ -315,11 +374,13 @@ export class WorkChatService implements WorkDesk {
         case 'todo.complete':
         case 'todo.cancel': {
           const status = command.kind === 'todo.complete' ? WorkItemStatus.COMPLETED : WorkItemStatus.CANCELED;
-          const moved = await this.transitionTodoItem(command.target, status, actor);
-          return replyWith(moved.body, moved.updated === undefined ? {} : this.transitionReceipt(command.kind, moved.updated, moved.no));
+          const moved = await this.transitionTodoItem(command.target, status, actor, listing);
+          return replyWith(moved.body, moved.updated === undefined ? { ...moved.extra } : this.transitionReceipt(command.kind, moved.updated, receiptLabel(listing, moved.updated.id)));
         }
-        case 'todo.link':
-          return reply(await this.linkTodo(command.target, command.refs, actor));
+        case 'todo.link': {
+          const linked = await this.linkTodo(command.target, command.refs, actor, listing);
+          return replyWith(linked.body, linked.extra ?? {});
+        }
         case 'lookup':
           return await this.lookup(command.source, command.query, command.text, actor, command);
         case 'release':
@@ -342,21 +403,36 @@ export class WorkChatService implements WorkDesk {
    * Read-only status question (QA-V2-W7-05): exactly one of the actor's to-dos (open or closed) by exact normalised
    * title, or an open to-do by list number. Anything else is `none` and the turn falls through unchanged.
    */
-  private async statusAnswer(command: Extract<WorkChatCommand, { kind: 'todo.status' }>, actor: Actor): Promise<WorkChatOutcome> {
+  private async statusAnswer(
+    command: Extract<WorkChatCommand, { kind: 'todo.status' }>,
+    actor: Actor,
+    listing?: ListingSlot,
+  ): Promise<WorkChatOutcome> {
     try {
       const all = [...(await this.deps.work.listByActor(actor.id))].sort(compareTodos);
       const active = all.filter((item) => item.status === WorkItemStatus.ACTIVE);
       const target = command.target;
       let item: WorkItem | undefined;
       if ('index' in target) {
-        item = active[target.index - 1];
+        // A6-D2 amendment: with a fresh listing, the number is the one the owner saw (an item no longer open falls through).
+        if (listing !== undefined) {
+          const drift = resolveListedTarget(active, target, listing);
+          // A listed item no longer open, or a number never shown: the same drift notice as the anchored write (no write).
+          if (drift.kind === 'gone' || drift.kind === 'unlisted') {
+            const refusal = await this.driftRefusal(drift, active, actor);
+            return replyWith(refusal.body, refusal.extra);
+          }
+          item = drift.kind === 'found' ? drift.item : undefined;
+        } else {
+          item = active[target.index - 1];
+        }
       } else {
         const wanted = hintKey(target.text);
         const matches = wanted.length === 0 ? [] : all.filter((candidate) => candidate.title !== undefined && hintKey(candidate.title) === wanted);
         if (matches.length === 1) item = matches[0];
       }
       if (!item) return { kind: 'none' };
-      const no = active.indexOf(item) + 1;
+      const no = item.status === WorkItemStatus.ACTIVE ? hintNumber(listing, item.id, active.indexOf(item) + 1) : 0;
       return reply(renderTodoStatusAnswer(item, no));
     } catch {
       return { kind: 'none' };
@@ -368,11 +444,25 @@ export class WorkChatService implements WorkDesk {
    * Wrong state (ADR-0104 D3, DET-2): when no open to-do matches but exactly one closed to-do has exactly that title
    * ("주간 보고서 쓰기 완료" after "완료 처리: 1"), the reply says it is already completed or canceled.
    */
-  private async completionHint(command: Extract<WorkChatCommand, { kind: 'todo.hint' }>, actor: Actor): Promise<WorkChatOutcome> {
+  private async completionHint(
+    command: Extract<WorkChatCommand, { kind: 'todo.hint' }>,
+    actor: Actor,
+    listing?: ListingSlot,
+  ): Promise<WorkChatOutcome> {
     try {
-      const resolved = resolveHintTarget(await this.activeTodos(actor), command.target);
-      if (resolved) return reply(renderTodoCompletionHint(command.action, resolved.no, resolved.item));
-      if ('index' in command.target) return { kind: 'none' };
+      const todos = await this.activeTodos(actor);
+      // A6-D2 amendment: a numbered hint names the item the owner saw under that number (none still open: fall through),
+      // and any hint names only a number the numbered command would resolve to the same item.
+      const resolved =
+        'index' in command.target && listing !== undefined ? resolveListedHint(todos, command.target.index, listing) : resolveHintTarget(todos, command.target);
+      if (resolved) return reply(renderTodoCompletionHint(command.action, hintNumber(listing, resolved.item.id, resolved.no), resolved.item));
+      if ('index' in command.target) {
+        if (listing === undefined) return { kind: 'none' };
+        const drift = resolveListedTarget(todos, command.target, listing);
+        if (drift.kind !== 'gone' && drift.kind !== 'unlisted') return { kind: 'none' };
+        const refusal = await this.driftRefusal(drift, todos, actor);
+        return replyWith(refusal.body, refusal.extra);
+      }
       const wanted = hintKey(command.target.text);
       if (wanted.length === 0) return { kind: 'none' };
       const closed = (await this.deps.work.listByActor(actor.id)).filter(
@@ -437,28 +527,59 @@ export class WorkChatService implements WorkDesk {
     }
   }
 
-  /** The anchored complete / cancel, plus the updated item and its shown number (A6 receipts). Copy unchanged. */
+  /**
+   * The anchored complete / cancel, plus the updated item (A6 receipts). Copy unchanged. With a fresh listing a numbered
+   * target is the listed item by id; a listed item no longer open, or a number the listing never showed, writes nothing
+   * and answers with the current list (A6-D2 amendment).
+   */
   private async transitionTodoItem(
     target: WorkChatTarget,
     status: WorkItemStatus,
     actor: Actor,
-  ): Promise<{ readonly body: MessageBody; readonly updated?: WorkItem; readonly no?: number }> {
+    listing: ListingSlot | undefined,
+  ): Promise<{ readonly body: MessageBody; readonly updated?: WorkItem; readonly extra?: { readonly listing?: NlListingReceipt } }> {
     const todos = await this.activeTodos(actor);
     const action = status === WorkItemStatus.COMPLETED ? 'complete' : 'cancel';
-    const resolution = resolveTarget(todos, target);
+    const resolution = resolveListedTarget(todos, target, listing);
+    if (resolution.kind === 'gone' || resolution.kind === 'unlisted') return this.driftRefusal(resolution, todos, actor);
     if (resolution.kind === 'none') return { body: renderTodoNotFound(target, todos.length) };
-    if (resolution.kind === 'ambiguous') return { body: renderTodoAmbiguous(action, resolution.candidates) };
+    if (resolution.kind === 'ambiguous') return { body: renderTodoAmbiguous(action, resolution.candidates), extra: this.candidatesReceipt(resolution.candidates) };
     const updated = await this.deps.work.transition(resolution.item.id, status);
-    return { body: status === WorkItemStatus.COMPLETED ? renderTodoCompleted(updated) : renderTodoCanceled(updated), updated, no: resolution.no };
+    return { body: status === WorkItemStatus.COMPLETED ? renderTodoCompleted(updated) : renderTodoCanceled(updated), updated };
+  }
+
+  /**
+   * A6-D2 amendment: the refusal of a numbered command whose listed item drifted. It names what happened (the listed
+   * item's title only when it is the actor's own) and shows the current open list, which becomes the new listing.
+   */
+  private async driftRefusal(
+    drift: SnapshotDrift,
+    todos: readonly WorkItem[],
+    actor: Actor,
+  ): Promise<{ readonly body: MessageBody; readonly extra: { readonly listing?: NlListingReceipt } }> {
+    let item: WorkItem | undefined;
+    if (drift.kind === 'gone' && this.deps.work.get !== undefined) {
+      const found = await this.deps.work.get(drift.id);
+      if (found !== null && found.actorId === actor.id && found.status !== WorkItemStatus.ACTIVE) item = found;
+    }
+    const shown = renderedTodoRows(todos);
+    const body = renderTodoSnapshotDrift(
+      drift.kind === 'unlisted' ? drift : { kind: 'gone', label: drift.label, ...(item !== undefined ? { item } : {}) },
+      todos,
+      shown,
+    );
+    return { body, extra: this.listingReceipt(todos) };
   }
 
   // -- ADR-0120 amendment A6: receipts and natural-language to-do actions ---------------------------------------------
 
-  private async addReceipt(item: WorkItem, actor: Actor): Promise<{ readonly action?: NlActionReceipt }> {
+  private async addReceipt(item: WorkItem, actor: Actor, listing: ListingSlot | undefined): Promise<{ readonly action?: NlActionReceipt }> {
     if (!this.actionReceipts) return {};
     let no: number | undefined;
     try {
-      no = todoNumberOf(await this.activeTodos(actor), item.id);
+      // A6-D2 amendment: the anchored add shows no number, so its live number is a label only when it extends the fresh
+      // listing without renaming one of its labels.
+      no = listing === undefined ? undefined : receiptLabel(listing, item.id, todoNumberOf(await this.activeTodos(actor), item.id));
     } catch {
       no = undefined;
     }
@@ -468,6 +589,15 @@ export class WorkChatService implements WorkDesk {
   private transitionReceipt(kind: 'todo.complete' | 'todo.cancel', item: WorkItem, no: number | undefined): { readonly action?: NlActionReceipt } {
     if (!this.actionReceipts) return {};
     return { action: { entryId: kind, result: 'executed', source: 'todo', itemId: item.id, ...(no !== undefined ? { label: no } : {}), version: item.updatedAt, undoable: true } };
+  }
+
+  /**
+   * A6-D2 amendment: the numbered candidates an ambiguous anchored command showed ("번호로 지정해 주세요") become the
+   * listing, so the numbered follow-up resolves against exactly the numbers on screen, never an older snapshot.
+   */
+  private candidatesReceipt(candidates: ReadonlyArray<{ no: number; item: WorkItem }>): { readonly listing?: NlListingReceipt } {
+    if (!this.actionReceipts) return {};
+    return { listing: { source: 'todo', items: candidates.slice(0, renderedAmbiguousRows(candidates)).map(({ no, item }) => ({ label: no, id: item.id })) } };
   }
 
   /** The to-do rows as rendered (an empty list clears the slot, so an older list is never picked from). */
@@ -578,18 +708,24 @@ export class WorkChatService implements WorkDesk {
     });
   }
 
-  private async linkTodo(target: WorkChatTarget, refs: readonly ResourceRef[], actor: Actor): Promise<MessageBody> {
-    if (refs.length === 0) return renderWorkChatUsage('todo-link');
+  private async linkTodo(
+    target: WorkChatTarget,
+    refs: readonly ResourceRef[],
+    actor: Actor,
+    listing: ListingSlot | undefined,
+  ): Promise<{ readonly body: MessageBody; readonly extra?: { readonly listing?: NlListingReceipt } }> {
+    if (refs.length === 0) return { body: renderWorkChatUsage('todo-link') };
     const todos = await this.activeTodos(actor);
-    const resolution = resolveTarget(todos, target);
-    if (resolution.kind === 'none') return renderTodoNotFound(target, todos.length);
-    if (resolution.kind === 'ambiguous') return renderTodoAmbiguous('link', resolution.candidates);
+    const resolution = resolveListedTarget(todos, target, listing);
+    if (resolution.kind === 'gone' || resolution.kind === 'unlisted') return this.driftRefusal(resolution, todos, actor);
+    if (resolution.kind === 'none') return { body: renderTodoNotFound(target, todos.length) };
+    if (resolution.kind === 'ambiguous') return { body: renderTodoAmbiguous('link', resolution.candidates), extra: this.candidatesReceipt(resolution.candidates) };
     const known = new Set(resolution.item.resourceRefs.map((ref) => ref.identity));
     const added = refs.filter((ref, index) => !known.has(ref.identity) && refs.findIndex((r) => r.identity === ref.identity) === index);
-    if (known.size + added.length > WORK_ITEM_MAX_RESOURCE_REFS) return renderTodoTooManyRefs(WORK_ITEM_MAX_RESOURCE_REFS);
+    if (known.size + added.length > WORK_ITEM_MAX_RESOURCE_REFS) return { body: renderTodoTooManyRefs(WORK_ITEM_MAX_RESOURCE_REFS) };
     // No connector call at link time (ADR-0100 D6).
     const updated = await this.deps.work.correlate(resolution.item.id, refs);
-    return renderTodoLinked(updated, added);
+    return { body: renderTodoLinked(updated, added) };
   }
 
   private todoFailureText(error: unknown): string {

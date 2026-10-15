@@ -79,7 +79,7 @@ byte-identical. Chief Architect review required before merge (port and runtime d
 - Owner follow-up question (Codex review of the A6-D2 clarification): should a newer listing override a fresh lastAction
   for deictics? Today (A6-D2 step 3, ratified) "그거 완료해줘" and "그 할 일 완료해줘" after a newer to-do list [A, B]
   act on the fresh lastAction A.
-- Owner follow-up (pre-existing, found in A6 acceptance): an anchored Class A command such as "1번 완료해줘" acts on the CURRENT numbered list, so if the list was renumbered since the owner last saw it (an item completed elsewhere), it completes a different to-do than the one shown. A6 selector-path references are bound to the shown label and refuse instead; whether the anchored form should do the same is the owner's call.
+- Owner follow-up (pre-existing, found in A6 acceptance): an anchored Class A command such as "1번 완료해줘" acts on the CURRENT numbered list, so if the list was renumbered since the owner last saw it (an item completed elsewhere), it completes a different to-do than the one shown. A6 selector-path references are bound to the shown label and refuse instead; the owner accepted the anchored form doing the same (ADR-0120 amendment A6-D2 clarification, Accepted 2026-10-16, owner approved).
 - Token rotation: deferred (ADR-0121 S0 owner decision, design Q5).
 - OS-level firewall for child processes: "not now" (ADR-0121 S0 owner decision, design Q10).
 

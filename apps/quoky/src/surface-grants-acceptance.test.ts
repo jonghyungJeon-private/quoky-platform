@@ -333,6 +333,11 @@ const EXTRA_CASES: readonly Case[] = [
   { id: 'x-calendar', text: '오늘 일정 알려줘' },
   { id: 'x-todo-add', text: '할 일 추가: A9 보고서' },
   { id: 'x-todo-list', text: '내 할 일 보여줘' },
+  // A6-D2 amendment cross-surface check: the numbered to-do writes are grant-gated in a channel (`todo`), not DM-only.
+  { id: 'x-todo-complete-n', text: '2번 완료', ctx: { openTodos: ['A9 첫째', 'A9 둘째'] } },
+  { id: 'x-todo-cancel-n', text: '할 일 2번 취소', ctx: { openTodos: ['A9 첫째', 'A9 둘째'] } },
+  { id: 'x-todo-done-anchored', text: '완료 처리: 2', ctx: { openTodos: ['A9 첫째', 'A9 둘째'] } },
+  { id: 'x-todo-link-n', text: '할 일 2번에 Jira PROJ-1 연결', ctx: { openTodos: ['A9 첫째', 'A9 둘째'] } },
   { id: 'x-reminder', text: '내일 9시에 회의 알려줘' },
   { id: 'x-reminder-list', text: '알림 목록' },
   { id: 'x-memory', text: '기억해: 나는 아메리카노를 좋아해' },
@@ -469,8 +474,14 @@ describe(`surface grants over the routing corpora (${CORPUS.length} cases)`, () 
     expect(diffs(ungranted, off, (id) => denied.includes(id) || fellThrough.includes(id))).toEqual([]);
     for (const id of fellThrough) expect(off.get(id)!.deskCalls, id).toBe(1);
     const extra = (id: string) => ungranted.get(id)!.text;
-    for (const id of ['x-jira', 'x-github', 'x-slack', 'x-confluence', 'x-calendar', 'x-todo-add', 'x-todo-list', 'x-reminder', 'x-reminder-list', 'x-memory', 'x-memory-list', 'x-learning', 'x-feedback', 'x-jira-comment', 'x-slack-post', 'x-calendar-create', 'x-branch', 'x-code']) {
+    for (const id of ['x-jira', 'x-github', 'x-slack', 'x-confluence', 'x-calendar', 'x-todo-add', 'x-todo-list', 'x-todo-complete-n', 'x-todo-cancel-n', 'x-todo-done-anchored', 'x-todo-link-n', 'x-reminder', 'x-reminder-list', 'x-memory', 'x-memory-list', 'x-learning', 'x-feedback', 'x-jira-comment', 'x-slack-post', 'x-calendar-create', 'x-branch', 'x-code']) {
       expect(DENIALS.has(extra(id)), id).toBe(true);
+    }
+    // The numbered to-do writes: denied as `todo` (grantable), not as a DM-only group; with the gate `off` they run in a
+    // channel (the P1 deploy default — an owner decision, not changed by the A6-D2 amendment).
+    for (const id of ['x-todo-complete-n', 'x-todo-cancel-n', 'x-todo-done-anchored', 'x-todo-link-n']) {
+      expect(extra(id), id).toBe(renderSurfaceDenied({ allow: false, reason: 'not-granted', group: 'todo' }, 'ko'));
+      expect(off.get(id)!.deskCalls, id).toBe(1);
     }
     expect(extra('x-calendar')).toBe("이 채널에서는 '캘린더 조회' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이 채널에 허용하려면 \"이 채널에 캘린더 조회 허용\"이라고 보내 주세요.");
     for (const id of ['x-help', 'x-model', 'x-chat']) expect(DENIALS.has(extra(id)), id).toBe(false);

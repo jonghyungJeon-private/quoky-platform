@@ -13,6 +13,26 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Gate (Haiku 3+3), not a pass.** Action 1 of 3, read 0 of 3 (as v35). help.topic 5/5 every run; colon-command captures
   (neg-110 / neg-111) 0 of 3 (v35: 2 of 3); wrong captures 0 / 1 / 1 (neg-051). See DECISIONS.
 
+## Unreleased — A6-D2 amendment: numbered to-do commands use the listing the owner saw (2026-10-16)
+
+- **Fixed.** "N번 완료", "할 일 N번 취소", "완료 처리: N" and "할 일 N번에 … 연결" resolved N against the live open list on
+  every call. If the list had changed since it was shown, they could act on a different to-do. With a fresh (30-minute)
+  to-do listing in this session, N is now the item the owner saw under that number, looked up by id. If that item is no
+  longer open (or no longer exists), or the listing never showed N, nothing is written. The reply says what happened and
+  shows the current open list, which becomes the new listing.
+- **Fixed.** A deterministic to-do command no longer merges a live number over a listing label (the A6 snapshot could end
+  up naming a different item under a label the owner had seen). Its receipt carries the shown label, or no label.
+  An anchored add's live number is recorded only when it extends the fresh listing without renaming a label. An
+  ambiguous title prompt ("번호로 지정해 주세요") records the numbered candidates it shows as the listing, so the follow-up
+  "N번 완료" hits the item shown as N (Codex P1).
+- **Unchanged.** Without a fresh listing (never listed, expired, or `QUOKY_NL_ACTIONS=off`, which writes no listings), N is
+  the live number as before and the reply still names the item. Undo still reopens the same item id. Reminder numbers
+  (`#N`, stable `display_no`) are unaffected. Read-only hints and status answers name only a number that the numbered
+  command would resolve to the same item.
+- **Channels.** Numbered to-do writes stay in the grantable `todo` group (ADR-0122): denied in a channel without a `todo`
+  grant under `QUOKY_CHANNEL_GRANTS=enforce`, allowed with the gate `off`. No DM-only rule was added.
+  Record: DECISIONS "ADR-0120 amendment A6-D2 amendment note — numbered to-do commands resolve against the listing".
+
 ## Unreleased — ADR-0120 selector cold-start bound (2026-10-16)
 
 - **Changed.** The NL selector bound is 8000 ms (the configured upper limit, never more) while the process is younger than
