@@ -24968,3 +24968,41 @@ scripted selector; the Drive fixture's name and text say "이 문서 요약해�
   says so.
 - **Prompt versions.** `nl-select.v27` / `v28` are this branch's numbers. Whichever of this branch and the A6 v26 branch
   lands second takes the next free numbers on rebase and re-pins the goldens (`nl-select.v*.prompts.json`).
+
+## ADR-0073 amendment implementation note — durable recall and curated examples are DM-only (P0 hotfix ahead of ADR-0122 D7, 2026-10-15)
+
+**Status:** Implemented (security hotfix; Chief Architect finding, confirmed). Narrows the ADR-0073 amendment
+(actor-scoped recall) and ADR-0107 D5 (curated examples) until ADR-0122 (Proposed, surface permission grants) D7 lands.
+
+**Finding.** `ContextBuilder` scoped durable recall by actor only, so a memory the owner saved in a DM ("기억해: …") and
+the owner-curated examples could be recalled into a reply in a shared channel (the QA channel), where other people read
+the reply.
+
+**Decision (minimal part of D7).**
+
+1. `ContextBuilder` asks the `MemoryRetriever` for durable recall, and the `CuratedExampleSource` for curated examples,
+   only when the task's conversation is direct: `isDirectConversation(task.context)`, i.e. the adapter-set,
+   platform-neutral `ConversationContext.direct` (for an older context without the flag, no `spaceId` means direct, the
+   same rule the mail, Drive, brief and A6 DM-only gates use). No platform branch in Core.
+2. A non-direct turn gets neither the `durableRecall` nor the `curatedExamples` key, and neither source is queried (no
+   embedding call either). Its short-term transcript (session = this conversation) and the active project's memory are
+   unchanged.
+3. A DM turn is byte-identical to before.
+4. **Consequence.** The QA channel loses durable recall and curated examples until the memory grant of ADR-0122 D7
+   exists; an own-memory question there ("내가 좋아하는 과일이 뭐였지?") gets the fixed not-found reply (W3-L01), because
+   no recall reaches the bundle. Saving a memory in a channel still works; it is recalled only in a DM.
+
+**Other DM-private context sources checked (not changed here).** Short-term transcript and `lastSelection` /
+`nlPending` are per-session, and a session is per platform conversation (channel/thread), so they do not cross
+surfaces. The daily / on-demand brief and the A6 actions are already DM-only. Owner-invoked explicit listings are
+actor-scoped and not DM-gated: the memory commands ("기억 목록", view), the learning lists ("피드백 후보", "예시
+목록"), `reminder.list` and the to-do list; and `Actor.metadata` interpretation preferences cross surfaces (routing
+only, never prompt text). These are owner commands, not implicit recall; whether they become DM-only is part of ADR-0122.
+
+Tests: `context-builder.test.ts` (channel turn — `direct: false`, with or without a `spaceId`, and a legacy context
+with a `spaceId` — gets no recall or examples, neither source is asked, the composed prompt carries neither; DM turn —
+`direct: true` and a legacy context without a `spaceId` — unchanged and identical), `conversation-runtime.test.ts`
+(real `ContextBuilder`, `PromptComposer`, `PromptRenderer`: a memory saved with "기억해:" in a DM and the curated
+example never reach the provider prompt of a channel turn; a later DM turn's prompt carries both),
+`first-release-acceptance.test.ts` (the Personal v1 row "a DM memory is recalled in a channel" is inverted: never in a
+channel, still in a fresh DM session).

@@ -11562,6 +11562,81 @@ describe('LRN-2 curated examples follow the resolved provider\'s declared locali
     expect(turn.prompts[0]).not.toContain('OWNER_CURATED_EXAMPLE');
   });
 
+  // P0 hotfix ahead of ADR-0122 D7: durable recall and curated examples reach the provider only in a direct conversation.
+  it('a memory saved in a DM, and the curated examples, never reach a channel prompt; a later DM prompt still has both', async () => {
+    const SECRET = '내 이직 계획은 아직 비밀이야';
+    const turn = exampleTurn({ locality: 'LOCAL' });
+    const saved: MemoryRecord[] = [];
+    const retrievals: string[] = [];
+    turn.deps.memoryWriter = {
+      ...turn.deps.memoryWriter,
+      async promote(candidate) {
+        const record: MemoryRecord = {
+          id: `durable-${saved.length + 1}`,
+          type: MemoryType.LONG_TERM,
+          scope: { userId: ACTOR.id },
+          content: candidate.content,
+          metadata: { kind: candidate.kind, provenance: candidate.provenance, authorityLevel: candidate.authorityLevel },
+          createdAt: TS,
+          updatedAt: TS,
+        };
+        saved.push(record);
+        return {
+          outcome: 'PROMOTED',
+          memory: {
+            id: record.id,
+            content: candidate.content,
+            memoryType: MemoryType.LONG_TERM,
+            kind: candidate.kind,
+            provenance: candidate.provenance,
+            authorityLevel: candidate.authorityLevel,
+            scope: candidate.scope,
+            createdAt: TS,
+            updatedAt: TS,
+            metadata: candidate.metadata,
+          },
+          policyReason: 'accepted',
+        };
+      },
+    };
+    turn.deps.contextBuilder = new ContextBuilder(
+      {
+        async recentShortTerm() { return []; },
+        async projectMemory() { return undefined; },
+      } as unknown as MemoryManager,
+      {},
+      new DefaultMemoryRetriever({
+        async findDurableCandidates() {
+          retrievals.push('asked');
+          return saved;
+        },
+      } as never),
+      { async select() { return [example]; } },
+    );
+    const runtime = new ConversationRuntime(turn.deps);
+    const dm: ConversationContext = { platform: 'test', channelId: 'dm-1', userId: 'u1', direct: true };
+    const channel: ConversationContext = { platform: 'test', spaceId: 'guild-1', channelId: 'qa-1', userId: 'u1', direct: false };
+    const on = (context: ConversationContext, text: string): InboundMessage => ({ id: `m-${text.length}`, context, text, receivedAt: TS });
+
+    expect((await runtime.handle(on(dm, `기억해: ${SECRET}`))).reply.text).toBe('요청한 내용을 기억해 둘게요.');
+    expect(saved.map((record) => record.content)).toEqual([SECRET]);
+
+    const channelResult = await runtime.handle(on(channel, '회의록 요약 형식 알려줘'));
+    expect(channelResult.status).toBe('RESPONDED');
+    expect(turn.prompts).toHaveLength(1);
+    expect(turn.prompts[0]).not.toContain(SECRET);
+    expect(turn.prompts[0]).not.toContain(EXAMPLE_ANSWER);
+    expect(turn.prompts[0]).not.toContain(CURATED_EXAMPLES_SECTION_TITLE);
+    expect(retrievals).toHaveLength(0);
+    expect(succeededRunMetadata(turn.runSaves)).toEqual([{ providerAuditFact: 'kept' }]);
+
+    await runtime.handle(on(dm, '회의록 요약 형식 알려줘'));
+    expect(turn.prompts).toHaveLength(2);
+    expect(turn.prompts[1]).toContain(SECRET);
+    expect(turn.prompts[1]).toContain(EXAMPLE_ANSWER);
+    expect(retrievals).toHaveLength(1);
+  });
+
   // ADR-0116 (LRN-5): the selection source travels from the router to the composer with the resolved provider.
   const OWNER_REMOTE = 'LOCAL_OR_OWNER_SELECTED_REMOTE' as const;
   const withoutTaskIds = (prompt: string | undefined) => (prompt ?? '').replace(/[0-9a-f-]{36}/g, '<id>');

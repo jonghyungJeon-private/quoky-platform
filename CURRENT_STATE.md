@@ -23,6 +23,11 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 - Also applied live: the STO-1 migration v16 on the service DB (#192). The Node 22 LTS runtime (#187) and the Telegram
   keep-alive (#188) are merged; their live status is in the CHANGELOG entries.
 
+**Security hotfix (2026-10-15, branch `claude/v5-recall-dm-only`).** Durable recall and curated examples are DM-only
+(P0 ahead of ADR-0122 D7; DECISIONS "durable recall and curated examples are DM-only"): a channel turn, including the QA
+channel, gets no recall and no examples until the ADR-0122 memory grant exists. Open for ADR-0122: owner-invoked
+listings (memory list, learning lists, `reminder.list`, to-do list) still show actor-wide data in a channel.
+
 **Pending with the owner.**
 
 - S1 per-grammar Phase C decision: a grammar moves to `c` only on its own `nl_selection.agreement` data, with the owner's yes.

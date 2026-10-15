@@ -299,7 +299,8 @@ describe('first-release offline acceptance — composed Personal v1 properties',
     expect(h.longTermRecords()).toHaveLength(1);
   });
 
-  it('memory saved in a DM-context session is recalled in a channel-context session for the same actor', async () => {
+  // P0 hotfix ahead of ADR-0122 D7: actor-scoped recall reaches only a direct conversation, never a shared channel.
+  it('memory saved in a DM-context session is never recalled in a channel-context session; a DM still recalls it', async () => {
     const h = harness();
     const runtime = h.runtime();
 
@@ -308,6 +309,15 @@ describe('first-release offline acceptance — composed Personal v1 properties',
 
     expect(answered.status).toBe('RESPONDED');
     expect(answered.sessionId).not.toBe(saved.sessionId);
+    expect(h.prompts.join('\n')).not.toContain(FACT);
+    expect(answered.reply.text).not.toContain(FACT);
+
+    // A fresh DM session (no transcript of the save): the fact can come only from durable recall.
+    await runtime.handle(inbound('새 대화', dmContext));
+    const callsBeforeDm = h.providerCalls();
+    const dmAnswered = await runtime.handle(inbound(QUESTION, dmContext));
+    expect(dmAnswered.sessionId).not.toBe(saved.sessionId);
+    expect(h.providerCalls()).toBe(callsBeforeDm + 1);
     expect(h.prompts.at(-1)).toContain(FACT);
   });
 

@@ -22,6 +22,7 @@ import { containsCredentialMaterial } from './credential-guard';
 import type { CuratedExampleSource } from './feedback/curated-example-selector';
 import type { MemoryManager } from './memory-manager';
 import type { MemoryRetriever } from './memory-retriever';
+import { isDirectConversation } from './message-rendering';
 import { scoreSemanticRelevance } from './semantic-relevance';
 
 /** Default number of recent turns to include (ADR-0017). */
@@ -223,6 +224,8 @@ export class ContextBuilder {
    */
   private async selectCuratedExamples(task: Task): Promise<CuratedExampleEntry[]> {
     if (!this.curatedExamples || task.intent.capability !== Capability.GENERAL_CHAT || !task.actorId) return [];
+    // P0 hotfix ahead of ADR-0122 D7: curated examples are owner-private learning context; never outside a DM.
+    if (!isDirectConversation(task.context)) return [];
     try {
       const selected = await this.curatedExamples.select(task);
       return Array.isArray(selected) ? selected : [];
@@ -239,6 +242,10 @@ export class ContextBuilder {
 
     // ADR-0073 amendment: durable recall is actor-scoped; no session/project filter.
     if (!task.actorId) return [];
+    // P0 hotfix ahead of ADR-0122 D7: actor-scoped recall would carry memories saved in a DM into a shared channel.
+    // Until the surface memory grant exists, a non-direct conversation (`ConversationContext.direct`, platform-neutral)
+    // gets no durable recall, and the retriever is not even queried.
+    if (!isDirectConversation(task.context)) return [];
     const scope: DurableMemoryScope = { actorId: task.actorId };
 
     try {

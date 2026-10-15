@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — security hotfix: durable recall and curated examples are DM-only (P0 ahead of ADR-0122 D7, 2026-10-15)
+
+- **Fixed (security).** Durable recall was scoped by actor only, so a memory saved in a DM ("기억해: …") and the
+  owner-curated examples could reach a reply in a shared channel. `ContextBuilder` now queries recall and curated
+  examples only for a direct conversation (`ConversationContext.direct`, platform-neutral; a context without the flag
+  and without a `spaceId` counts as direct, as before). Channel turns keep their own transcript and project memory; DM
+  turns are byte-identical. The QA channel loses recall until the ADR-0122 D7 memory grant exists.
+- Tests: ContextBuilder channel/DM/legacy-context rows and a runtime test asserting on the provider prompt (a memory
+  saved in a DM never appears in a channel prompt; a later DM prompt still has it).
+
 ## Unreleased — A8 fix: project key inside the release words (2026-10-15)
 
 - **Fixed:** "OP26 20261015 릴리스 …" put the key in the release name and reported 0 issues. Core moves a visible project key
