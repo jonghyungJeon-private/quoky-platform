@@ -5011,7 +5011,27 @@
         }
       },
       "expect": "none",
-      "note": "single mail summary, not mail.list"
+      "note": "single mail summary, not mail.list [A6 relabel, owner-approved 2026-10-15 (A6 ratification decision 10, docs/plans/nl-action-relabel-batch.md): with the A6 entries offered (eval:nl --mode read-regression) the gold is a6Relabel, item.summarize, scored apart, with context.lastListing as the Reference context; read mode (A6 off, eval:nl --mode run) keeps expect none: item.summarize is not offered there]",
+      "a6Relabel": {
+        "entryId": "item.summarize",
+        "args": {
+          "source": "mail",
+          "ref": "#1",
+          "mode": "summary"
+        },
+        "batch": "A6-relabel-2026-10-15"
+      },
+      "context": {
+        "lastListing": {
+          "source": "mail",
+          "labels": [
+            1,
+            2,
+            3
+          ],
+          "ageMinutes": 1
+        }
+      }
     },
     {
       "id": "neg-099",
@@ -5021,7 +5041,7 @@
         "args": {}
       },
       "expect": "none",
-      "note": "single document summary, not drive.files"
+      "note": "single document summary, not drive.files [A6 relabel to item.summarize {source: drive, ref: this, mode: summary} approved by the owner 2026-10-15 but NOT applied: the A6-D2 closed deictics have no bare determiner 이 (\"이 문서\"), so Core refuses ref this as ungrounded and the gold could never be produced; needs an A6-D2 decision]"
     },
     {
       "id": "neg-100",
@@ -5031,7 +5051,27 @@
         "args": {}
       },
       "expect": "none",
-      "note": "single document summary"
+      "note": "single document summary [A6 relabel, owner-approved 2026-10-15 (A6 ratification decision 10, docs/plans/nl-action-relabel-batch.md): with the A6 entries offered (eval:nl --mode read-regression) the gold is a6Relabel, item.summarize, scored apart, with context.lastListing as the Reference context; read mode (A6 off, eval:nl --mode run) keeps expect none: item.summarize is not offered there]",
+      "a6Relabel": {
+        "entryId": "item.summarize",
+        "args": {
+          "source": "drive",
+          "ref": "#1",
+          "mode": "summary"
+        },
+        "batch": "A6-relabel-2026-10-15"
+      },
+      "context": {
+        "lastListing": {
+          "source": "drive",
+          "labels": [
+            1,
+            2,
+            3
+          ],
+          "ageMinutes": 1
+        }
+      }
     },
     {
       "id": "neg-101",
@@ -8779,7 +8819,25 @@
         "entryId": "mail.list",
         "args": {}
       },
-      "note": "summarizing a listed mail is not a list request [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
+      "note": "summarizing a listed mail is not a list request [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15] [A6 relabel, owner-approved 2026-10-15 (A6 ratification decision 10, docs/plans/nl-action-relabel-batch.md): with the A6 entries offered (eval:nl --mode read-regression) the gold is a6Relabel, item.summarize, scored apart, with context.lastListing as the Reference context (a one-item listing: with several items Core asks, the nl-action reference cases cover that); read mode (A6 off, eval:nl --mode run) keeps expect none: item.summarize is not offered there]",
+      "a6Relabel": {
+        "entryId": "item.summarize",
+        "args": {
+          "source": "mail",
+          "ref": "recent",
+          "mode": "summary"
+        },
+        "batch": "A6-relabel-2026-10-15"
+      },
+      "context": {
+        "lastListing": {
+          "source": "mail",
+          "labels": [
+            1
+          ],
+          "ageMinutes": 1
+        }
+      }
     },
     {
       "id": "uat5r2-08",
