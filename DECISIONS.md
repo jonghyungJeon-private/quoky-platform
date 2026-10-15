@@ -25976,10 +25976,38 @@ channel delivery on), recall with and without `memory`.
   same owner account can confirm; any grant change since the question (e.g. "모든 채널 권한 해제", a revoke, a seed —
   compared inside the per-actor lock) or a kill-switch flip ("에이전트 중지") voids it with "허용을 기다리는 사이에 채널 권한이
   바뀌었어요".
-- **Reminder send race (Codex P1).** `OwnerNotification.channelRecheck` (optional port field): the Discord sink calls it as
-  the last step before a channel send — after the awaited channel resolution — and on a refusal (or a throw) sends nothing
-  to the channel and delivers the dispatcher's DM text (with the note) to the owner DM. The dispatcher's first check stays.
+- **Reminder send race (Codex P1).** `OwnerNotification.channelRecheck` (optional port field): the Discord sink sends to
+  the channel only through it, after the awaited channel resolution; on a refusal (or a throw) nothing goes to the channel
+  and the dispatcher's DM text (with the note) goes to the owner DM. The dispatcher's first check stays.
 - **Tests added.** Audience from the parent (private thread in a public channel, uncached parent), the thread line, a failed
   session save, a second owner account, DM clear-all and kill switch after the question, a replaced pending grant under a
   delayed confirmation (and a delayed other message), the cancel-only path and the runtime expiry turn, the sink's recheck
   order, a revoke during channel resolution, a throwing recheck, and the dispatcher's live recheck.
+
+**P2 final review round (CA APPROVE with two suggestions; Codex verification of `64569c35` / `677207d8`, 2026-10-16) —
+the last round under the fix-loop cap.**
+
+- **Check and send under one lock (Codex P1, CA suggestion).** `channelRecheck.sendIfAllowed(send)`: the composition
+  (`deliverIfAllowed`) reads the live owner Actor and decides `reminder` (+ `calendar`) inside
+  `ActorMetadataStore.whileLocked` — the same per-actor lock every revoke, clear-all and kill-switch write takes — and
+  runs the channel send in that critical section, so a revoke issued meanwhile waits for the send and the next send is
+  refused. The sink's send deadline bounds the wait for the lock and the check: a send not started by then never starts
+  (the owner DM instead); a send that started keeps its own timeout and the old classification (UNCERTAIN stays terminal).
+- **Bound to the turn's first read (Codex P2).** The runtime keeps the pending grant as `openForContext` returned it,
+  before the activity touch refreshes the session (`seenPending`); a confirmation consumes only that nonce, so a
+  replacement saved before the touch is never consumed.
+- **Live basis inside the lock (Codex P2, CA).** The grants digest and the digest of the stored kill-switch value are
+  compared on the live actor inside the grant's locked save (`updateMetadataEntry` now hands the update the live actor):
+  a stop that lands while the confirmation waits, and a stop followed by a resume, both void the confirmation.
+- **Tests.** A revoke issued during the locked check-and-send waits for the send (order pinned) and the next send is
+  refused; a revoke committed first refuses without sending; a lock held past the deadline → the DM and the late send never
+  runs; a started send that fails keeps the old outcome; the first-read binding under a touched session; a concurrent stop
+  while the confirmation waits; stop → resume.
+- **Residual (accepted, recorded).** Any remaining timing window is accepted: (a) a revoke can commit while a channel
+  reminder's send that already started is in flight (the revoke waits for it, at most the send deadline); (b) the
+  dispatcher's own first check and the turn-start actor snapshots for READS keep the P1 residual (a revoke takes effect
+  from the next step or turn); (c) another process writing the same SQLite file is out of scope (R4). The feature stays
+  `off` during development (owner amendment to decision 14) and is switched to `enforce` only for permission tests.
+- **Gate note.** On 2026-10-16 (a Friday) the full gate shows one failure outside this change:
+  `nl-intent-dispatch.test.ts` "live UAT R4/R5" assumes "this-thu" equals "thu" on the real clock (true on a Thursday); it
+  fails the same way on `origin/main` today. Not fixed here (out of scope); every other test passes.
