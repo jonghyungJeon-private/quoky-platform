@@ -1221,7 +1221,16 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     // Whether the writer was ever called: the executor validates the request and writes the PREPARED receipt first,
     // so a throw before this flips is provably "nothing was sent".
     let sendStarted = false;
-    const sendOnce = (): Promise<ConnectorWriteOutcome> => {
+    const sendOnce = async (): Promise<ConnectorWriteOutcome> => {
+      // ADR-0122 D2.5 (Codex): once more after the receipt was prepared and immediately before the writer is called; a
+      // refusal completes the prepared receipt NOT_SENT and the writer is never called.
+      if (input.beforeSend !== undefined) {
+        try {
+          await input.beforeSend();
+        } catch {
+          return connectorWriteNotSent('REJECTED');
+        }
+      }
       sendStarted = true;
       return send();
     };
