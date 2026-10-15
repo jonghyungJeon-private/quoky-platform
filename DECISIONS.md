@@ -23456,6 +23456,191 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   "회의 중에" arguably carries it; the owner may want to add it to the gold).
 
 
+### ADR-0120 amendment A7 — "until <weekday>": an open-start period that ends on the weekday the owner bounds, and a clear past-tense statement is not a read (Proposed — owner ratification pending) (2026-10-15)
+
+- **Status:** **Proposed — owner ratification pending.** Implemented on branch `claude/v5-until-weekday` with no new
+  flag, so the merge is held until the owner ratifies. Owner sheet: `docs/plans/a7-until-weekday-owner-sheet.md`. Both
+  tasks were approved for work by the owner on 2026-10-15, with the explicit condition that no hardcoded phrase routing is
+  introduced.
+- **Amends:** D4 step 4 (the A5 change 5 symbol set gains one family) and the A5 implementation note 2 rule for a bound
+  weekday; the last sentence of D4 ("A failure leads to D7 clarification, never to a guess and never to chat") for one new
+  reason, `statement`; the A2 implementation note 2 yield rule (the calendar grammar yields one more thing it cannot
+  carry). The prompt follows the A5 note 3 convention (`nl-select.v22` read, `nl-select.v23` with A6 actions).
+- **Reaffirms unchanged:** D1-D3, D5-D14; A5 changes 1-9; the A5 note 2 weekday guard (it still runs on every result);
+  the A5 note 3 canonical weekday symbol; A6 and its ratification record (A6 `off` = the current read prompt).
+
+#### Evidence
+
+- **Live (2026-10-14 16:48, Telegram).** "이번 주 금요일까지 일정" showed only Friday 10/16 (A5 note 3, live observation 2).
+- **Probe today (owner-approved, Haiku, `nl-select.v20`, 20 calls, Thursday 10/15).** `this-fri` 7, `this-week` 10,
+  `this-week` + `remaining` 1, and `10-15..10-16` 2. The last one is the right period but the model computed the dates,
+  which D4 step 4 forbids and the validator cannot tell from a date the owner wrote. v18 on 10/14: `this-fri` 12/20,
+  `this-week` 8/20.
+- **The v20 baseline below.** Every new "까지" case misses: "일요일까지 일정 뭐 있어?" → `this-week`, "다음 주 수요일까지 일정
+  보여줘" → `next-wed` (that day alone), "what's on my calendar through Friday?" → `next-fri` (a different Friday),
+  "다음 주 화요일까지 마감인 지라 이슈" → due `next-tue`.
+- **The frozen calendar grammar** (A2 yield on, the live setting) answers "일요일까지 일정 뭐 있어?", "다음 주 수요일까지
+  일정 보여줘" and "토요일까지 일정 몇 개야?" with that single day (the dispatch probe of `nl-intent-dispatch.test.ts`),
+  because 까지 is a particle it counts as expressed.
+- **neg-042** "어제 일정 있었는데 까먹었어 ㅠ" (a statement) was captured as a calendar read on v18 (5/12 probe calls), in one
+  of the three v20 evaluation runs, and today in 6/20 v20 probe calls.
+
+#### Decision (proposed)
+
+1. **Symbols (D4 step 4).** Two families, nothing else:
+   - `until-mon` … `until-sun`: today through the nearest such day, today included (1-7 days; it ends on the day the bare
+     `fri` names);
+   - `until-next-mon` … `until-next-sun`: today through that day of next (Monday-based) week (2-13 days).
+   Each is justified by the evidence above: the live sentence and its "이번 주" form need the first; "다음 주 수요일까지"
+   and the Jira "다음 주 화요일까지 마감" need the second. **Not added:** `until-this-*` (the "이번 주" anchor is checked
+   by the A5 guard instead), `until-last-*` (its end is before its start), "다다음 주 X까지", and `from-<weekday>`
+   ("금요일부터 일정": no live or corpus evidence, and the sentence names no end, so Core would have to invent one; owner
+   decision 4).
+2. **Resolution and a passed day.** Pure date math in Core with the turn's clock and `QUOKY_TIMEZONE` (Asia/Seoul),
+   Monday-based weeks, at most 13 days, so the D4 31-day bound always holds. When the owner anchored the week ("이번 주
+   금요일까지") and that day has passed (said on a Saturday or Sunday), the period is **refused and the owner is asked**
+   (the existing A5 weekday question); it is never rolled into next week, because that would silently show a week the
+   owner did not name, the failure class A5 note 2 closed. Without a week word the nearest weekday is meant, as for the
+   bare `fri`: "금요일까지" on a Saturday is today through next Friday.
+3. **Grounding (validation of the value; it routes nothing).** An `until-*` value validates only when the owner's words
+   name exactly one weekday, as a certain weekday (A5 note 2), with an inclusive END bound attached to it. The bound
+   words are the closed bound set of A5 note 2 restricted to its end words: 까지 (also spaced and with 날: "금요일 까지",
+   "수요일날까지"), by, until, till, through, thru. Not 부터, from, since or `~` (a start) and not 전까지 or before
+   (exclusive). The period must end on the day those words name: their week anchor, their English direction, and with
+   no week word the nearest such day. A follow-up that names no weekday may carry the previous selection's identical
+   symbol ("오후만" after it). Anything else is refused as `weekday` and gets the A5 weekday question. When `until-wed`
+   and `until-next-wed` cover the same days, the owner's spelling is kept ("다음 주 수요일까지" = `until-next-wed`), like
+   the A5 note 3 canonical weekday symbol.
+4. **A single day at an end bound is spelled as `until-*` (canonicalised, not refused).** When the owner's certain
+   weekday carries an inclusive end bound and the selector answers a single day that is exactly that weekday (`fri`,
+   `this-fri`, `next-wed`, a date `10-16`, or `today`), Core rewrites it to the `until-*` symbol that ends on the SAME day,
+   and only when that symbol itself passes decision 3. Otherwise it is refused and asked: a passed day ("지난주 금요일까지")
+   has no such symbol, and a day that is not the one the owner bounds ("일요일까지" read as next week's Sunday `next-sun`
+   on a Thursday) is never widened into `until-next-sun`. A multi-day period that contains
+   the day is left as the selector chose it (`this-week` shows more, never less). An uncertain weekday ("다음 주 일까지")
+   is left to the A5 rule. **Why canonicalise rather than refuse:** a single day is never what an end bound means (it
+   hides every day before it); the end day is the owner's own and never moves; the only added fact is "from today", the
+   meaning `rest-of-month` already has; and refusing would ask on 7 of today's 20 live probe outputs. **Why this is in
+   the amendment:** unlike the A5 note 3 spelling rule it changes the period shown, not only its spelling.
+5. **The calendar grammar yields an end-bounded weekday (A2 yield rule).** With `QUOKY_NL_GRAMMAR_YIELD` on,
+   `parseCalendarQuestion` declines a message whose one weekday carries an inclusive end bound
+   (`nlExpressedWeekday(...).until`): the grammar can place only that day, and the `until-*` period is a typed range it
+   cannot carry, exactly the A2 principle "a grammar yields what it cannot express". No phrase is added; with yield off
+   the grammar is byte-identical.
+6. **A clear past-tense statement is not a read (D4 step 2b, new reason `statement`).** For a READ entry only, before any
+   arg check: when the owner's non-quoted text is a clear past-tense statement, validation fails with `statement`, and,
+   **unlike every other D4 failure, the turn is `none` (chat), not a D7 question**: a statement has no request to
+   clarify. This is the one change to the D4 sentence above. The check (`statement-guard.ts`) reads grammar only, never
+   a topic, source or phrase, and it can only turn a capture into chat, never select an entry. All of these hold:
+   - the text has Korean and no question mark;
+   - no word is a request or interrogative form: the A2 closed request verbals and wh-forms of `grammar-residual.ts`
+     (a bare noun stem such as 정리 or 확인 is not a request), the closed wh-stems (뭐, 무슨, 언제, 몇, 어떤, 어디, 누가,
+     누구, 얼마, 왜) and the closed request endings (…줘, …주세요, …줄래, …할래, …볼래, …할까);
+   - the last word (emoticon jamo such as ㅠ, ㅋㅋ and emoji ignored) ends in a past or retrospective declarative: past +
+     다 or 습니다 ("끝났다"), or 더라 / 던데 ("왔더라"), alone; or the informal past 어 / 어요 / 네 ("했어") with one more
+     statement marker: the owner's own 했어 form, a double past ("찼었어"), a background clause before it ("있었는데
+     까먹었어") or a closed degree adverb (진짜, 정말, 너무, 엄청, 완전, 되게, 무척, 아주, 꽤 …).
+   Deliberately not covered (left to the prompt, D2 rule 2): an informal past with no second marker ("어제 회의 길었어",
+   "메일 왔어", "어제 일정 있었어"), because without its question mark it is also a casual question; and English. A6
+   action entries are unaffected (A6 rule 8 already covers statements about actions). The evaluation scores a capture that
+   the check turns into chat as `none`, exactly what the runtime does.
+7. **Prompt `nl-select.v22` / `nl-select.v23`.** Two edits to the read prompt, nothing else:
+   - one line after the date line of the range symbols: `until-mon..until-sun (from today through the nearest such day:
+     금요일까지 = until-fri); until-next-mon..until-next-sun (from today through that day of next week);` — one example;
+   - two rule-2 lines: a remark about what already happened or how it went ("…했어", "…끝났다", "…더라", "…었는데 …") is
+     none even when it names a source or a day; a past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup.
+   **Probed alternatives (owner-approved Haiku probes, recorded so the choice is visible).** A first v22 placed the line
+   right after the weekday lines and also changed the Jira example "이번 주 금요일까지인 이슈들 알려줄래" from `this-week`
+   to `until-fri`. Its 3-run evaluation regressed two old cases: "다다음 주 일정 알려줘" (`uat5r3-14`) became `next-week` in
+   3 of 3 runs (probe: 17/20; v20: 2/20), and "Jira 이슈 제목 쓰는 좋은 방법이 있을까?" (`neg-025`) became `help.topic` once
+   (probe: 5/20; v20: 0/20). Each edit alone was clean; their combination was not. Reverting the Jira example left
+   "다다음 주" at 4/20 `next-week`; moving the line after the date line removed it (30/30 `week-after-next`, `neg-025`
+   30/30 `none`, "다음 주 수요일까지" 30/30 `until-next-wed`). So the Jira example stays byte-identical (`this-week`): for a
+   due window a whole week is a defensible reading of "이번 주 금요일까지", it validates (it contains the day, decision 4
+   touches only single days), and the probe answers "다음 주 화요일까지 마감인 지라 이슈" with `until-next-tue` 20/20 anyway.
+   `golden/nl-select.v20.prompts.json` becomes `golden/nl-select.v22.prompts.json`, generated from the v20 file by inserting
+   exactly those three lines into each of its 76 prompts (78 changed lines with the version and note). With
+   `QUOKY_NL_ACTIONS=off` the prompt is v22 byte for byte (the owner's 2026-10-15 wording "A6 off = the current read
+   prompt"); the A6 action prompt is the A6 text on top of v22, `nl-select.v23`. The selector-output cache key carries the
+   prompt version (A5 note 3), so no v20/v21 output is served under v22/v23.
+
+#### Why this is not hardcoding
+
+The model still chooses the entry and the symbol; no message, phrase or verb is mapped to anything. Core only places
+the dates of a closed symbol and checks that the owner's own words ground it, with the bound words A5 note 2 already
+uses. The statement check reads sentence endings and the closed grammatical classes A2 already uses, and it can only
+decline a read. A miss stays a corpus case (D10, D12).
+
+#### Implementation
+
+- `packages/core/src/application/nl-routing/symbolic-time.ts`: `UNTIL_SYMBOL` / `nlUntilSymbolWeekday` (:58, :61), the
+  resolver branch (:183), the end-bound flag `until` on weekday mentions with `UNTIL_WORDS` (:400), `weekdayPlacement`
+  (:569, factored out of `nlRangeKeepsWeekday`), `nlUntilBound` (:612).
+- `selection-validator.ts`: step 2b `statement` (:146), step 4b `nlUntilBound` (:220-231).
+- `statement-guard.ts` (new): `nlIsPastStatement` (:45); `grammar-residual.ts`: `isNlRequestOrWhWord` (:135).
+- `nl-selection-service.ts`: a `statement` refusal is `none` with a content-free `nl_selection.statement` log line (:743).
+- `calendar/calendar-question.ts`: `namesUncarriedEndBound` (:132) in the yield condition (:226).
+- `selection-prompt.ts`: v22/v23 (:20, :26), rule 2 (:202), the range line (:249).
+- `apps/quoky/src/tools/nl-intent-eval.ts`: a `statement` refusal scores as `none` (:164).
+- Tests: `until-weekday.test.ts` (symbols, bounds, grounding, canonical form, passed days, follow-ups, statement cases,
+  prompt), service tests (execute `until-fri`, statement → chat with no question and no `lastSelection`),
+  `calendar-question.test.ts` (yield on/off), the eval scoring test, and the v22/v23 version pins.
+
+#### Corpus
+
+`a7u-01..07` and `a7s-01..10` in `nl-intent.v1.json` (831 cases): six "까지" positives (calendar ×5, Jira ×1), the
+statement "금요일까지 보고서 내야 해", the six statement negatives of the owner's request, and four positives that must
+still execute ("어제 일정 뭐 있었지?", "어제 온 메일", "지난주 메일 뭐 왔었어", "어제 무슨 메일 왔더라?"; "내일 일정" is
+already `uat5gy-06`). Agent-drafted, PENDING the owner's D12 batch approval.
+
+#### Eval
+
+All owner-approved, Strict, Haiku, entries `calendar.events`, `mail.list`, `jira.issues` with every negative, 441 cases
+(the 17 A7 cases included), 6 s bound, run on Thursday 2026-10-15 (Asia/Seoul). Reports are local under `data/eval/`.
+
+- **Baseline, `nl-select.v20` and `main`'s validator, 1 run** (plan digest `7157f46f…`, report
+  `nl-intent-2026-10-14T23-32-51-465Z-haiku.json`): overall 230/249 (92.4%); calendar 77/89 (86.5%), Jira 88/92 (95.7%),
+  mail 65/68 (95.6%); wrong captures 0/192; p50 1338 ms, p95 2070 ms; 0 timeouts. On the 239 positives that predate A7:
+  226/239 (94.6%). All six "까지" positives miss (`this-week` ×3 including the count case, `next-wed`, `next-fri`, due
+  `next-tue`); the four statement-boundary positives hit; every new negative is `none`.
+- **`nl-select.v22`, 3 runs** (plan digest `0a5a482b…`, report `nl-intent-2026-10-15T00-01-34-195Z-haiku.json`):
+  - overall 238/249 (95.6%), 238/249 (95.6%), 241/249 (96.8%); calendar 82/89 (92.1%), 83/89 (93.3%), 85/89 (95.5%); Jira
+    89/92, 91/92, 90/92; mail 67/68, 64/68, 66/68; wrong captures 1/192, 0/192, 0/192; p50 1401/1448/1441 ms, p95
+    2202/2316/2362 ms; 0 timeouts. The D12 gate passes in runs 2 and 3; run 1 fails only on the wrong capture.
+  - On the 239 older positives: 230, 230, 231 (96.2%, 96.2%, 96.7%; baseline 226).
+  - New cases: `a7u-01/03/05/06` hit 3 of 3; `a7u-02` ("일요일까지 일정 뭐 있어?") and `a7u-04` ("… through Friday?") hit 1
+    of 3. In the other runs the model answered `next-sun` / `next-fri`, which the first version of decision 4 widened into
+    `until-next-*` (shown as a miss). That was a bug (a wrong day must not be widened); it is fixed and tested, and the raw
+    outputs were rescored offline with the fixed validator: those four records become clarifications, the totals above are
+    unchanged. Every statement negative is `none` and every statement-boundary positive hits in 3 of 3.
+  - The run-1 wrong capture is `neg-037` "내 이슈가 뭐 있는지 몰라서 답답해" → Jira: pre-existing and unrelated (probe, 20 calls:
+    v20 3/20, v22 3/20; the baseline run asked).
+- **A first v22 layout, 3 runs** (plan digest `0011cbe8…`, rejected, see decision 7): 97.6%, 96.4%, 97.6%, but `uat5r3-14`
+  "다다음 주 일정 알려줘" → `next-week` in 3 of 3 runs and one `neg-025` capture.
+- **Probes, 20 calls each, v20 → v22 (the v20 prompt rebuilt byte for byte from v22, checked against the v20 golden):**
+  - `neg-042`: raw captures 6/20 → 0/20 (and the statement check refuses any capture). The six new statement negatives:
+    0/20 → 0/20 each.
+  - "이번 주 금요일까지 일정": `this-fri` 7, `this-week` 10, `this-week` + `remaining` 1, model-computed `10-15..10-16` 2 →
+    `until-fri` 15, `until-fri` + `remaining` 2, 3 timeouts.
+  - "일요일까지 일정 뭐 있어?": `this-week` 17, `10-15..10-18` 2, `next-sun` 1 → `until-sun` 17, `next-sun` 3 (now asked).
+  - "다다음 주 일정 알려줘": `week-after-next` 18/20 → 20/20. `neg-025`: 0/20 → 0/20.
+  - English "what's on my calendar through Friday?" on v22: `next-fri` 13 (now asked; on v20 it validated and showed
+    another Friday), `until-fri` 4, `next-7-days` 3. English end bounds stay weak; a corpus case, no prompt change.
+
+#### Owner decisions requested (A7)
+
+1. Ratify A7 (the `until-*` symbols, the single-day canonical form, the calendar grammar yield, the statement check).
+   Recommended: ratify.
+2. "이번 주 금요일까지" said after that Friday: ask (recommended) or roll into next week.
+3. A single day at "까지": rewrite to today through that day (recommended) or ask.
+4. `from-<weekday>` ("금요일부터"): not now (recommended).
+5. Jira "이번 주 금요일까지 마감": the prompt example keeps `this-week` (changing it destabilised other phrases); both
+   `this-week` and `until-fri` validate. Recommended: accept as is.
+6. Statement check scope: clear past statements only (recommended); short informal past without "?" stays with the
+   prompt.
+7. D12 batch: `a7u-01..07`, `a7s-01..10`. Recommended: approve.
+
+
 ## ADR-0112 amendment 1 — Slack channel-message delete: a narrow `ChannelMessageDeleteWriter`, only for a message Quoky posted, bound to that post's SENT receipt, only as the undo of a post (Proposed — owner decision pending) (2026-10-14)
 
 - **Status:** **Proposed (owner decision pending).**

@@ -29,6 +29,8 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 - Egress `enforce`: after 7 clean ledger days; the owner ask is due around 2026-10-20.
 - A6 R1 batch: the red-team and relabel review of the drafted corpus, and the A6 clause confirmations (A6-D3a and the
   others under "A6 clauses pending owner confirmation"). `QUOKY_NL_ACTIONS` stays `off` until then.
+- ADR-0120 amendment A7 (Proposed, 2026-10-15): "until <weekday>" periods and the past-tense statement check; branch
+  `claude/v5-until-weekday`, merge held for ratification.
 - D12 batch approval of the 23 `uat5r*` golden cases (A5), the 7 `uat5wd-*` cases (A5 note 2) and the 10 `uat5ca-*` cases
   plus the proposed calendar relabels (A5 note 3). They gate no live behaviour.
 - Token rotation: deferred (ADR-0121 S0 owner decision, design Q5).
@@ -46,6 +48,16 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
   tracks' notes). Still pending from v4: the OpenAI and Gemini keys, the PRV-3 monthly DM, LRN-5 round trip.
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
+
+### v5 "until <weekday>" and the past-tense statement check (ADR-0120 amendment A7, Proposed) — on branch `claude/v5-until-weekday` (2026-10-15)
+
+- **Not merged:** held for the owner's ratification of A7 (owner sheet `docs/plans/a7-until-weekday-owner-sheet.md`).
+- **What changes.** "금요일까지" periods (`until-<weekday>`, `until-next-<weekday>`) grounded by the owner's end bound; a
+  single day at such a bound shown as today through that day; the calendar grammar yields such messages; a clear past-tense
+  statement is chat, not a read. Prompt `nl-select.v22` (A6 `off` pin) and `nl-select.v23` (A6 actions).
+- **Eval.** v22, 3 Haiku runs (441 cases): 95.6%, 95.6%, 96.8%, calendar 92.1-95.5%, wrong captures 1, 0, 0 (`neg-037`,
+  pre-existing); v20 baseline 92.4%. `neg-042` probe captures 6/20 → 0/20.
+- **Pending with the owner:** the seven A7 decisions and the D12 batch `a7u-01..07`, `a7s-01..10`.
 
 ### v5 calendar accuracy (ADR-0120 A5 implementation note 3) — on branch `claude/v5-calendar-accuracy` (2026-10-14)
 
