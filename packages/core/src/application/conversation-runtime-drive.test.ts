@@ -70,6 +70,8 @@ interface HarnessOptions {
   summary?: string;
   /** One summary per SUMMARIZATION call, in order (the last repeats): the first draft, then the one regeneration. */
   summaries?: readonly string[];
+  /** The regeneration (the second SUMMARIZATION call) throws. */
+  retryThrows?: boolean;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -184,6 +186,7 @@ function harness(opts: HarnessOptions = {}) {
       if (opts.provider === 'secret') return { text: `요약: 새 토큰은 ${SECRET} 입니다`, artifacts: [] };
       if (opts.provider === 'claim') return { text: '할 일 "송금하기"를 추가했어요.', artifacts: [] };
       const call = prompts.filter((entry) => entry.capability === Capability.SUMMARIZATION).length - 1;
+      if (opts.retryThrows && call === 1) throw new Error('provider crashed on the regeneration');
       return {
         text: opts.summaries ? (opts.summaries[Math.min(call, opts.summaries.length - 1)] as string) : (opts.summary ?? SUMMARY),
         artifacts: [{ id: 'a1', taskId: 't', taskRunId: 'r', kind: 'TEXT', title: 'echo', content: BODY_MARKER, createdAt: T0 } as never],
@@ -484,8 +487,10 @@ describe('Drive on the real runtime (ADR-0118 D4–D8, DRV-1)', () => {
       '끝!',
       'The PR got merged.',
       'Successfully merged the PR.',
-      "시트에는 '제가 Jira 티켓 등록 완료'로 표시돼 있어요.",
       "요청하신 대로 시트에는 'Jira 티켓 등록 완료'로 표시돼 있어요.",
+      "상태는 'Slack'에 요약을 게시했어요.",
+      "이 답변의 상태는 '요약본을 Slack에 보냈어요'예요.",
+      '방금 PR을 머지했어요.',
     ])('a flagged draft and a flagged regeneration are replaced whole — %j', async (hostile) => {
       const h = harness({ summaries: [`${ATTRIBUTED}\n- ${hostile}`, `- ${hostile}`] });
       await h.send('최근 문서');
@@ -527,6 +532,15 @@ describe('Drive on the real runtime (ADR-0118 D4–D8, DRV-1)', () => {
       const footer = renderDriveSummaryFooter('ko');
       const summaryPart = text.slice(0, text.length - footer.length - 2);
       expect(Array.from(summaryPart).length * 2 + Array.from(footer).length + 2).toBeLessThanOrEqual(1900);
+    });
+
+    it('a failed regeneration replaces the flagged first draft (fail closed) and the turn still responds', async () => {
+      const h = harness({ summaries: [UNATTRIBUTED], retryThrows: true });
+      await h.send('최근 문서');
+      const result = await h.send('1번 문서 요약해줘');
+      expect(result.status).toBe('RESPONDED');
+      expect(result.reply?.text).toBe(`${renderInternalActionClaimNotice('connector-write', 'ko')}\n\n${renderDriveSummaryFooter('ko')}`);
+      expect(summarizePrompts(h)).toHaveLength(2);
     });
 
     it('a credential-shaped first draft is withheld, never regenerated', async () => {

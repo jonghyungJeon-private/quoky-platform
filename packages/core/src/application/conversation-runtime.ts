@@ -231,6 +231,7 @@ import {
 } from './prompt-composer';
 import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from './work-chat/work-chat-turn-handler';
 import {
+  documentSummaryReply,
   documentSummaryReplyBody,
   isSummarizableDocumentReadout,
   isUntrustedDocumentReadout,
@@ -1219,6 +1220,15 @@ function frozenPlainSnapshot<T>(value: T): T {
 
 // Approve/deny/cancel decision phrases for pending approvals live in ./approval-decision (whole-token,
 // negation-aware); "APPROVE_WORDS" in the comments below refers to that approve phrase set.
+/**
+ * ADR-0118 D7 (final sign-off W-1) and the owner decision of 2026-10-15: the one credential check of a document summary
+ * draft — the raw reply and every artifact, then the display-normalized reply. It decides both that a draft is withheld
+ * and that a flagged draft is not regenerated.
+ */
+function documentSummaryCredentialShaped(text: string, artifacts: readonly Artifact[]): boolean {
+  return isAttachmentReplyWithheld(text, artifacts) || isAttachmentReplyWithheld(neutralizeLinks(text, 'display'), []);
+}
+
 const CANCEL_WORDS = ['취소', '중단', '그만'];
 
 /** Explicit apply-only phrases (Sprint 2s, ADR-0040) — "좋아"/"오케이"/"확인"/"괜찮네" must NEVER match;
@@ -4079,16 +4089,14 @@ export class ConversationRuntime {
     }
     if (result.status !== 'RESPONDED') return fallback();
     // Review P2-4: links neutralized, the provider text an untrusted span, the fixed footer appended.
-    const delivered = withOutboundBody(result.reply, documentSummaryReplyBody(result.reply.text, summary.footer));
-    // ADR-0104 D1 amendment (owner, 2026-10-15; CA P1-2): the exact text the owner is shown — rendered, clipped for every
-    // platform, before the fixed footer (Quoky copy) — passes the claim check, whichever path produced it; otherwise
-    // the whole summary is replaced by the fixed notice.
-    const footerText = withOutboundBody(result.reply, summary.footer).text;
-    const shown = delivered.text.endsWith(footerText) ? delivered.text.slice(0, delivered.text.length - footerText.length) : delivered.text;
+    const reply = documentSummaryReply(result.reply.text, summary.footer);
+    // ADR-0104 D1 amendment (owner, 2026-10-15; CA P1-2): the exact lines the owner is shown — rendered, capped, built
+    // from the body's own parts (the fixed footer is Quoky copy) — pass the claim check, whichever path produced them;
+    // otherwise the whole summary is replaced by the fixed notice. A fixed notice is Quoky copy as written.
+    if (isFixedDocumentSummaryNotice(result.reply.text, readout.source)) return { ...result, reply: withOutboundBody(result.reply, reply.body) };
     const language = noticeLanguage(undefined, message.text);
-    if (isFixedDocumentSummaryNotice(result.reply.text, readout.source)) return { ...result, reply: delivered };
-    const verdict = checkDocumentSummaryClaims(shown, message.text, readout.source, language, generalChatReplyPolicy(message.text));
-    if (verdict.kind === 'clean') return { ...result, reply: delivered };
+    const verdict = checkDocumentSummaryClaims(reply.shown, message.text, readout.source, language, generalChatReplyPolicy(message.text));
+    if (verdict.kind === 'clean') return { ...result, reply: withOutboundBody(result.reply, reply.body) };
     this.deps.logger.info('document summary replaced after the delivered-text check', { messageId: message.id });
     const notice = verdict.kind === 'claim' ? verdict.notice : renderDocumentSummaryTooLong(language);
     return { ...result, reply: withOutboundBody(result.reply, documentSummaryReplyBody(notice, summary.footer)) };
@@ -8566,10 +8574,22 @@ export class ConversationRuntime {
     let executed = first;
     let verdict = check(first.text);
     this.deps.logger.info('document summary claim check', { taskId: task.id, attempt: 1, outcome: verdict.kind });
-    const credentialShaped = isAttachmentReplyWithheld(first.text, first.artifacts ?? []);
-    if (verdict.kind === 'claim' && !credentialShaped) {
-      const second = await regenerate();
-      executed = { ...second, ...(combinedUsage(first.usage, second.usage) ? { usage: combinedUsage(first.usage, second.usage) } : {}) };
+    if (verdict.kind === 'claim' && !documentSummaryCredentialShaped(first.text, first.artifacts ?? [])) {
+      let second: AiExecutionResult;
+      try {
+        second = await regenerate();
+      } catch (err) {
+        // The first call's usage is kept; with no second draft the flagged first one is replaced (fail closed).
+        this.deps.logger.warn('document summary claim check', {
+          taskId: task.id,
+          attempt: 2,
+          outcome: 'regeneration-failed',
+          errorName: err instanceof Error ? err.name : typeof err,
+        });
+        return { executed: first, guard: { text: verdict.notice, guarded: true } };
+      }
+      const usage = combinedUsage(first.usage, second.usage);
+      executed = { ...second, ...(usage ? { usage } : {}) };
       verdict = check(second.text);
       this.deps.logger.info('document summary claim check', { taskId: task.id, attempt: 2, outcome: verdict.kind });
     }
@@ -8592,7 +8612,7 @@ export class ConversationRuntime {
     taskId: Id,
   ): { text: string; artifacts: Artifact[] } | null {
     // Final sign-off W-1: the credential check also runs on the normalized text the owner would be shown.
-    if (!isAttachmentReplyWithheld(text, artifacts) && !isAttachmentReplyWithheld(neutralizeLinks(text, 'display'), [])) return null;
+    if (!documentSummaryCredentialShaped(text, artifacts)) return null;
     this.deps.logger.info('document summary reply withheld', { taskId });
     return { text: renderUntrustedDocumentReplyWithheld(noticeLanguage(undefined, message.text)), artifacts: [] };
   }
