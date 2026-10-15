@@ -16,8 +16,8 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * on top of v20. v22 (ADR-0120 amendment A7) = v20 with one `until-*` line after the date line of the range
  * symbols (one example: 금요일까지 = until-fri) and two rule-2 lines on remarks about the past. v23 = the A6 text on top
  * of v22. v24 (the owner's T1 extension of 2026-10-15, A5 implementation note 3) = v22 with the calendar `timedOnly` arg
- * description saying "asks about meetings" instead of "only when the owner narrows to meetings" (example "회의 있어?"
- * instead of "회의만"), and `timedOnly` in the two meeting examples
+ * description saying "when the owner asks about meetings" instead of "only when the owner narrows to meetings" (its
+ * examples unchanged), and `timedOnly` in the two meeting examples
  * ("내일 미팅 있나?", "다음 미팅이 몇 시더라"). v25 = the A6 text on top of v24.
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v24';

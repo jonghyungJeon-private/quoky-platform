@@ -154,8 +154,8 @@ describe('R2/R5 calendar part of day and timed-only are grounded in the owner wo
   it('T1 (owner, 2026-10-15; prompt nl-select.v24): a meeting word means timed events in the arg description and the meeting examples', () => {
     const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v24');
-    expect(prompt).toContain('timedOnly: true. true when the owner asks about meetings/timed events and away from all-day entries such as leave or holidays ("회의 있어?", "미팅만", "only meetings").');
-    expect(prompt).not.toContain('true only when the owner narrows to meetings');
+    expect(prompt).toContain('timedOnly: true. true when the owner asks about meetings/timed events and away from all-day entries such as leave or holidays ("회의만", "미팅만", "only meetings").');
+    expect(prompt).not.toContain('true only when the owner narrows');
     expect(prompt).toContain('Output: {"entryId":"calendar.events","args":{"range":"tomorrow","timedOnly":true}');
     expect(prompt).toContain('Output: {"entryId":"calendar.events","args":{"range":"upcoming","timedOnly":true}');
     // The grounding is unchanged: a plain schedule question cannot carry the flag.
