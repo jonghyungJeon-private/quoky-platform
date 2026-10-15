@@ -314,6 +314,29 @@ describe('NlSelectionService — modes and the D3 call contract', () => {
       }
     });
 
+    it('a provider-reported TIMEOUT rejection does not reset the idle clock', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(0);
+        let mode: 'ok' | 'timeout' | 'hang' = 'ok';
+        const h = harness({
+          elapsed: () => Date.now(),
+          execute: () => (mode === 'ok' ? Promise.resolve({ text: NONE }) : mode === 'timeout' ? Promise.reject(new AiProviderError(AiFailureKind.TIMEOUT, 'slow')) : new Promise(() => undefined)),
+        });
+        vi.setSystemTime(10 * MIN);
+        expect(await h.decide('안녕 하나')).toEqual({ kind: 'none' });
+        mode = 'timeout';
+        vi.setSystemTime(41 * MIN); // idle 31 min: cold
+        expect(await h.decide('지라 이슈')).toEqual({ kind: 'unavailable' });
+        expect(h.calls.at(-1)!.timeoutMs).toBe(NL_SELECTION_COLD_TIMEOUT_MS);
+        mode = 'hang';
+        vi.setSystemTime(41 * MIN + 1_000); // still 31 min since the last COMPLETED call
+        expect(await boundAt(h, () => undefined)).toBe(NL_SELECTION_COLD_TIMEOUT_MS);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('a configured bound below 6 s stays as configured outside the windows; a bound of 8000 stays 8000', async () => {
       vi.useFakeTimers();
       try {

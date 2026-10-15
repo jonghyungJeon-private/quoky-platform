@@ -1,4 +1,5 @@
-import { Capability, type Actor, type ConversationContext, type InboundQuotedRange, type IsoTimestamp, type Session } from '../../domain';
+import { AiProviderError } from '../../errors';
+import { AiFailureKind, Capability, type Actor, type ConversationContext, type InboundQuotedRange, type IsoTimestamp, type Session } from '../../domain';
 import { executionLocalityOf, type AiExecutionLocality, type AiProvider } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
@@ -1537,7 +1538,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
       );
       rawText = result.text;
     } catch (error) {
-      const timedOut = error instanceof SelectionTimeout;
+      // A provider-reported timeout is not a completed call either (it must not reset the idle clock).
+      const timedOut = error instanceof SelectionTimeout || (error instanceof AiProviderError && error.kind === AiFailureKind.TIMEOUT);
       if (!timedOut) this.lastCompletedAtMs = clock();
       return { kind: 'unavailable', cause: timedOut ? 'timeout' : 'failed', latencyMs: Math.max(0, clock() - started), call };
     }
