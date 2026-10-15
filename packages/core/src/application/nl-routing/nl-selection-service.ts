@@ -1,4 +1,5 @@
-import { Capability, type Actor, type ConversationContext, type InboundQuotedRange, type IsoTimestamp, type Session } from '../../domain';
+import { AiProviderError } from '../../errors';
+import { AiFailureKind, Capability, type Actor, type ConversationContext, type InboundQuotedRange, type IsoTimestamp, type Session } from '../../domain';
 import { executionLocalityOf, type AiExecutionLocality, type AiProvider } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
@@ -121,7 +122,21 @@ export const NL_INTENT_MODES: readonly NlIntentMode[] = ['off', 'shadow', 'activ
 export type NlPhase = 'a' | 'c' | 'c-shadow';
 export const NL_PHASES: readonly NlPhase[] = ['a', 'c', 'c-shadow'];
 
+/** Content-free timing of one selector call (never prompt text): size, process age, idle time and the bound applied. */
+export interface SelectionCallMeta {
+  readonly promptChars: number;
+  readonly sinceStartMs: number;
+  readonly idleMs: number;
+  readonly boundMs: number;
+}
+
 export const NL_SELECTION_TIMEOUT_MS = 6_000;
+/** Cold-start bound: the configured upper limit of `QUOKY_NL_INTENT_TIMEOUT_MS`; never exceeded. */
+export const NL_SELECTION_COLD_TIMEOUT_MS = 8_000;
+/** The cold window: the first 180 s after the process starts. */
+export const NL_SELECTION_COLD_START_MS = 180_000;
+/** The cold window after idling: more than 30 min since the last completed selector call. */
+export const NL_SELECTION_COLD_IDLE_MS = 1_800_000;
 
 /** S1 `c-shadow` (W2): at most this many background selections start per rolling hour; further hits are dropped. */
 export const NL_SHADOW_MAX_PER_HOUR = 60;
@@ -284,12 +299,13 @@ type SelectOutcome =
       readonly output: NlSelectionOutput;
       readonly latencyMs: number;
       readonly cached: boolean;
+      readonly call?: SelectionCallMeta;
       /** Where the output is cached (absent: not cached), so a refused period can be forgotten. */
       readonly cacheKey?: string;
     }
   /** D6/D8: the selector is not the provider this turn's chat would reach; nothing was sent. */
   | { readonly kind: 'egress-refused'; readonly reason: 'chat-provider-differs' | 'chat-locality-differs' | 'chat-provider-unknown' }
-  | { readonly kind: 'unavailable'; readonly cause: 'no-provider' | 'timeout' | 'failed' | 'malformed'; readonly latencyMs: number };
+  | { readonly kind: 'unavailable'; readonly cause: 'no-provider' | 'timeout' | 'failed' | 'malformed'; readonly latencyMs: number; readonly call?: SelectionCallMeta };
 
 class SelectionTimeout extends Error {
   constructor() {
@@ -317,7 +333,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /** ADR-0122 D3: the one per-actor metadata writer (preferences go through its lock). */
   private readonly actorMetadata: ActorMetadataStore;
 
+  /** Process start (service construction) and the end of the last completed selector call, on the injected clock. */
+  private readonly startedAtMs: number;
+  private lastCompletedAtMs: number | undefined;
+
   constructor(private readonly deps: NlSelectionServiceDeps) {
+    this.startedAtMs = (deps.elapsed ?? Date.now)();
     this.actorMetadata = new ActorMetadataStore(deps.actors);
     this.mode = deps.mode;
     this.actionLevelValue = deps.actions?.level ?? 'off';
@@ -456,7 +477,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const job = new AbortController();
     const stop = (): void => job.abort();
     this.background.signal.addEventListener('abort', stop, { once: true });
-    const timeoutMs = this.deps.timeoutMs ?? NL_SELECTION_TIMEOUT_MS;
+    const timeoutMs = this.selectionBound(clock()).boundMs;
     const work = (async () => {
       const chat = await resolveChat();
       if (job.signal.aborted) return;
@@ -725,7 +746,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       return { kind: 'skip', reason: selected.reason };
     }
     if (selected.kind === 'unavailable') {
-      this.log('info', 'nl_selection.decided', { outcome: 'unavailable', cause: selected.cause, route: turn.route, latencyMs: selected.latencyMs });
+      this.log('info', 'nl_selection.decided', { outcome: 'unavailable', cause: selected.cause, route: turn.route, latencyMs: selected.latencyMs, ...(selected.call ?? {}) });
       this.logAgreement(turn, { outcome: 'fallback', reason: selected.cause, latencyMs: selected.latencyMs });
       return { kind: 'unavailable' };
     }
@@ -746,6 +767,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       route: turn.route,
       latencyMs: selected.latencyMs,
       cached: selected.cached,
+      ...(selected.call ?? {}),
       ...(selected.output.confidence !== undefined ? { confidence: selected.output.confidence } : {}),
     });
     return decision;
@@ -1413,7 +1435,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       return;
     }
     if (selected.kind === 'unavailable') {
-      this.log('info', 'nl_selection.shadow', { outcome: 'unavailable', cause: selected.cause, grammarId: turn.route, latencyMs: selected.latencyMs });
+      this.log('info', 'nl_selection.shadow', { outcome: 'unavailable', cause: selected.cause, grammarId: turn.route, latencyMs: selected.latencyMs, ...(selected.call ?? {}) });
       this.logAgreement(turn, { outcome: 'fallback', reason: selected.cause, latencyMs: selected.latencyMs, shadow: true });
       return;
     }
@@ -1446,6 +1468,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       outcome,
       latencyMs: selected.latencyMs,
       cached: selected.cached,
+      ...(selected.call ?? {}),
       ...(output.confidence !== undefined ? { confidence: output.confidence } : {}),
     });
   }
@@ -1498,13 +1521,15 @@ export class NlSelectionService implements TurnDeliveryObserver {
       return { kind: 'output', output: hit.output, latencyMs: Math.max(0, clock() - started), cached: true, cacheKey };
     }
     if (hit !== undefined) this.cache.delete(cacheKey);
-    const timeoutMs = this.deps.timeoutMs ?? NL_SELECTION_TIMEOUT_MS;
     const prompt = buildSelectionPrompt({
       entries: turn.entries,
       text: prepared.text,
       ...(previous !== undefined ? { previous } : {}),
       ...(reference !== undefined ? { actions: { referenceContext: renderReferenceContext(reference) } } : {}),
     });
+    const bound = this.selectionBound(clock());
+    const timeoutMs = bound.boundMs;
+    const call: SelectionCallMeta = { promptChars: prompt.length, ...bound };
     let rawText: string;
     try {
       const result = await withTimeout(
@@ -1513,11 +1538,15 @@ export class NlSelectionService implements TurnDeliveryObserver {
       );
       rawText = result.text;
     } catch (error) {
-      return { kind: 'unavailable', cause: error instanceof SelectionTimeout ? 'timeout' : 'failed', latencyMs: Math.max(0, clock() - started) };
+      // A provider-reported timeout is not a completed call either (it must not reset the idle clock).
+      const timedOut = error instanceof SelectionTimeout || (error instanceof AiProviderError && error.kind === AiFailureKind.TIMEOUT);
+      if (!timedOut) this.lastCompletedAtMs = clock();
+      return { kind: 'unavailable', cause: timedOut ? 'timeout' : 'failed', latencyMs: Math.max(0, clock() - started), call };
     }
+    this.lastCompletedAtMs = clock();
     const latencyMs = Math.max(0, clock() - started);
     const output = parseSelectionOutput(rawText);
-    if (output === null) return { kind: 'unavailable', cause: 'malformed', latencyMs };
+    if (output === null) return { kind: 'unavailable', cause: 'malformed', latencyMs, call };
     const cacheable = !bypass && (!actionsOn || isCacheableOutput(output));
     if (cacheable) {
       this.cache.set(cacheKey, { at: clock(), output });
@@ -1527,7 +1556,20 @@ export class NlSelectionService implements TurnDeliveryObserver {
         this.cache.delete(oldest);
       }
     }
-    return { kind: 'output', output, latencyMs, cached: false, ...(cacheable ? { cacheKey } : {}) };
+    return { kind: 'output', output, latencyMs, cached: false, call, ...(cacheable ? { cacheKey } : {}) };
+  }
+
+  /**
+   * The selector bound at `nowMs`: the configured bound (default 6 s), raised to 8 s (the configured upper limit, never
+   * more) while the process is younger than 180 s or the last completed selector call is more than 30 min old.
+   * Content-free; sends nothing.
+   */
+  private selectionBound(nowMs: number): { readonly boundMs: number; readonly sinceStartMs: number; readonly idleMs: number } {
+    const configured = this.deps.timeoutMs ?? NL_SELECTION_TIMEOUT_MS;
+    const sinceStartMs = Math.max(0, nowMs - this.startedAtMs);
+    const idleMs = Math.max(0, nowMs - (this.lastCompletedAtMs ?? this.startedAtMs));
+    const cold = sinceStartMs < NL_SELECTION_COLD_START_MS || idleMs > NL_SELECTION_COLD_IDLE_MS;
+    return { boundMs: cold ? Math.max(configured, NL_SELECTION_COLD_TIMEOUT_MS) : configured, sinceStartMs, idleMs };
   }
 
   /**

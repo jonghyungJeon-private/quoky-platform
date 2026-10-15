@@ -21712,6 +21712,12 @@ These are Q1–Q10 of the design §7. The defaults are:
   - A slow or failed selection now takes at most 2 s longer before the turn falls back. Normal turns are unchanged.
 - **Follow-up:** reducing the latency itself (a warm process, a smaller prompt) belongs to the ADR-0121 design.
 
+### ADR-0120 A3 operational tuning: cold-start-aware bound (2026-10-16)
+
+- **Evidence (live, 3 days):** 5 of 140 selections timed out at 6 s, all within 10 minutes of a restart or after a long idle; 0 of 60 in steady state.
+- **Change:** the selection bound is 8000 ms (the A3 upper limit, never more) while the process is under 180 s old or more than 30 min have passed since the last completed selector call; otherwise the configured bound (default 6 s) applies. A configured 8000 ms or more is unchanged. D3 is unchanged: one call, no retry, timeout falls back to chat, nothing is written, and no extra traffic is sent.
+- **Observability:** `nl_selection.decided` and `nl_selection.shadow` log `promptChars`, `sinceStartMs`, `idleMs` and `boundMs` (numbers only).
+
 ### ADR-0120 A3 follow-up: startup warm-up (2026-10-13)
 
 - **Problem (live):** right after a restart the first one or two selections hit the 6 s bound (`nl_selection.decided outcome=unavailable cause=timeout latencyMs≈6100`) because of a cold `claude -p` start; later calls take 1.2–2 s. The first owner question fell through to honest chat.

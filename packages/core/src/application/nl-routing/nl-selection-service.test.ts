@@ -4,7 +4,7 @@ import { AiFailureKind, Capability, type Actor, type IsoTimestamp, type Session 
 import type { AiProvider, AiRequest, LogFields, Logger } from '../../ports';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
 import { buildSelectionPrompt } from './selection-prompt';
-import { NL_SELECTION_TIMEOUT_MS, NL_WARMUP_TIMEOUT_MS, NL_WARMUP_PROBE_TEXT, nlWarmupPrompt, NlSelectionService, choiceIndex, resolveChoice, type NlIntentMode, type NlSelectionDecision } from './nl-selection-service';
+import { NL_SELECTION_COLD_TIMEOUT_MS, NL_SELECTION_TIMEOUT_MS, NL_WARMUP_TIMEOUT_MS, NL_WARMUP_PROBE_TEXT, nlWarmupPrompt, NlSelectionService, choiceIndex, resolveChoice, type NlIntentMode, type NlSelectionDecision } from './nl-selection-service';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   INTERPRETATION_PREFERENCE_TTL_MS,
@@ -44,6 +44,7 @@ function harness(options: {
   execute?: (request: AiRequest) => Promise<{ text: string }>;
   select?: () => Promise<AiProvider>;
   timeoutMs?: number;
+  elapsed?: () => number;
 } = {}): Harness {
   const calls: AiRequest[] = [];
   const logs: Harness['logs'] = [];
@@ -104,6 +105,7 @@ function harness(options: {
     timeZone: 'Asia/Seoul',
     logger,
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.elapsed !== undefined ? { elapsed: options.elapsed } : {}),
   });
   return {
     service,
@@ -185,7 +187,7 @@ describe('NlSelectionService — modes and the D3 call contract', () => {
     const h = harness({ script: [out('jira.issues')] });
     await h.decide('오늘 나한테 할당된 jira 이슈가 있을텐데 ?');
     expect(h.calls).toHaveLength(1);
-    expect(h.calls[0]).toMatchObject({ capability: Capability.INTENT_SELECTION, timeoutMs: NL_SELECTION_TIMEOUT_MS });
+    expect(h.calls[0]).toMatchObject({ capability: Capability.INTENT_SELECTION, timeoutMs: NL_SELECTION_COLD_TIMEOUT_MS });
     expect(h.calls[0]!.prompt).toContain('<<<\n오늘 나한테 할당된 jira 이슈가 있을텐데 ?\n>>>');
     expect(Object.keys(h.calls[0]!)).toEqual(['capability', 'prompt', 'timeoutMs']);
   });
@@ -255,13 +257,114 @@ describe('NlSelectionService — modes and the D3 call contract', () => {
     expect(h.calls).toHaveLength(0);
   });
 
+  describe('cold-start-aware selector bound', () => {
+    const MIN = 60_000;
+    /** A call that never returns, so only the bound ends it; returns the bound the service used. */
+    async function boundAt(h: Harness, advance: (ms: number) => void): Promise<number> {
+      const pending = h.decide('지라 이슈');
+      await vi.advanceTimersByTimeAsync(0);
+      const bound = h.calls.at(-1)!.timeoutMs!;
+      advance(0);
+      await vi.advanceTimersByTimeAsync(bound);
+      expect(await pending).toEqual({ kind: 'unavailable' });
+      return bound;
+    }
+    function timed(timeoutMs?: number) {
+      const h = harness({ ...(timeoutMs !== undefined ? { timeoutMs } : {}), elapsed: () => Date.now(), execute: () => new Promise(() => undefined) });
+      return h;
+    }
+
+    it('uses 8000 ms during the first 180 s, then the configured bound; timeout still falls back with no retry and logs content-free timing', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(1_000_000);
+        const h = timed();
+        vi.setSystemTime(1_000_000 + 60_000);
+        expect(await boundAt(h, () => undefined)).toBe(8_000);
+        expect(h.calls).toHaveLength(1);
+        const line = h.logs.find((log) => log.event === 'nl_selection.decided')!;
+        expect(line.fields).toMatchObject({ outcome: 'unavailable', cause: 'timeout', boundMs: 8_000, sinceStartMs: 60_000, idleMs: 60_000 });
+        expect(typeof line.fields!.promptChars).toBe('number');
+        expect(JSON.stringify(line.fields)).not.toContain('지라');
+        // The timeout is not a completed call: idle still counts from start. 200 s after start with no completed call is
+        // idle 200 s (< 30 min) and past the start window: the configured 6 s.
+        vi.setSystemTime(1_000_000 + 200_000);
+        expect(await boundAt(h, () => undefined)).toBe(NL_SELECTION_TIMEOUT_MS);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('uses 8000 ms after more than 30 min since the last completed call, 6000 ms just inside it', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(0);
+        let hang = false;
+        const h = harness({ elapsed: () => Date.now(), execute: () => (hang ? new Promise(() => undefined) : Promise.resolve({ text: NONE })) });
+        vi.setSystemTime(10 * MIN);
+        expect(await h.decide('안녕 하나')).toEqual({ kind: 'none' }); // completes at 10 min
+        hang = true;
+        vi.setSystemTime(10 * MIN + 30 * MIN); // exactly 30 min idle: not more than
+        expect(await boundAt(h, () => undefined)).toBe(NL_SELECTION_TIMEOUT_MS);
+        // The timed-out call did not complete, so idle keeps counting from the 10 min mark.
+        vi.setSystemTime(10 * MIN + 30 * MIN + 1_000 + 6_000 + 1);
+        expect(await boundAt(h, () => undefined)).toBe(NL_SELECTION_COLD_TIMEOUT_MS);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a provider-reported TIMEOUT rejection does not reset the idle clock', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(0);
+        let mode: 'ok' | 'timeout' | 'hang' = 'ok';
+        const h = harness({
+          elapsed: () => Date.now(),
+          execute: () => (mode === 'ok' ? Promise.resolve({ text: NONE }) : mode === 'timeout' ? Promise.reject(new AiProviderError(AiFailureKind.TIMEOUT, 'slow')) : new Promise(() => undefined)),
+        });
+        vi.setSystemTime(10 * MIN);
+        expect(await h.decide('안녕 하나')).toEqual({ kind: 'none' });
+        mode = 'timeout';
+        vi.setSystemTime(41 * MIN); // idle 31 min: cold
+        expect(await h.decide('지라 이슈')).toEqual({ kind: 'unavailable' });
+        expect(h.calls.at(-1)!.timeoutMs).toBe(NL_SELECTION_COLD_TIMEOUT_MS);
+        mode = 'hang';
+        vi.setSystemTime(41 * MIN + 1_000); // still 31 min since the last COMPLETED call
+        expect(await boundAt(h, () => undefined)).toBe(NL_SELECTION_COLD_TIMEOUT_MS);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a configured bound below 6 s stays as configured outside the windows; a bound of 8000 stays 8000', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(0);
+        const small = timed(3_000);
+        vi.setSystemTime(200_000);
+        expect(await boundAt(small, () => undefined)).toBe(3_000);
+        const max = timed(8_000);
+        vi.setSystemTime(400_000);
+        expect(await boundAt(max, () => undefined)).toBe(8_000);
+        const cold = timed(3_000);
+        vi.setSystemTime(400_000 + 1_000);
+        expect(await boundAt(cold, () => undefined)).toBe(8_000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it('provider down, failure, timeout and malformed output are `unavailable` with no retry', async () => {
     const down = harness({ select: async () => { throw new Error('no provider'); } });
     expect(await down.decide('지라 이슈')).toEqual({ kind: 'unavailable' });
     const failing = harness({ execute: async () => { throw new AiProviderError(AiFailureKind.UNAVAILABLE, 'down'); } });
     expect(await failing.decide('지라 이슈')).toEqual({ kind: 'unavailable' });
     expect(failing.calls).toHaveLength(1);
-    const slow = harness({ timeoutMs: 20, execute: () => new Promise((resolve) => setTimeout(() => resolve({ text: NONE }), 200)) });
+    let clock = 0;
+    const slow = harness({ timeoutMs: 20, elapsed: () => clock, execute: () => new Promise((resolve) => setTimeout(() => resolve({ text: NONE }), 200)) });
+    clock = 200_000;
     expect(await slow.decide('지라 이슈')).toEqual({ kind: 'unavailable' });
     const malformed = harness({ script: ['I think you mean Jira.'] });
     expect(await malformed.decide('지라 이슈')).toEqual({ kind: 'unavailable' });

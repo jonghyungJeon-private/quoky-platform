@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0120 selector cold-start bound (2026-10-16)
+
+- **Changed.** The NL selector bound is 8000 ms (the configured upper limit, never more) while the process is younger than
+  180 s or more than 30 min have passed since the last completed selector call. Otherwise the configured bound applies
+  (default 6 s). A configured bound of 8000 ms or more is unchanged. Timeout still falls back to chat with no write and no
+  retry, and no extra call is sent. Reason: 5 of 140 selections timed out in three days, all in the first 10 minutes after a
+  restart or after a long idle.
+- **Logging.** `nl_selection.decided` and `nl_selection.shadow` lines now carry `promptChars`, `sinceStartMs`, `idleMs` and
+  `boundMs` (numbers only, no prompt text).
+
 ## Unreleased — A6 R1 gate: A6 prompt `nl-select.v35`, canonical reminder `when` (2026-10-16)
 
 - **Fixed.** `reminder.create` drops one trailing locative 에 from `when` when time words remain ("20분 후에" -> "20분 후").

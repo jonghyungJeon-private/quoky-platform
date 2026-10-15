@@ -708,9 +708,14 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
     });
 
     it('A3 timeout: a selector slower than the bound costs one bounded wait, then the grammar answers exactly as in Phase A', async () => {
-      const service = (runtime as unknown as { deps: { nlSelection: { deps: { timeoutMs?: number } } } }).deps.nlSelection;
+      const service = (runtime as unknown as { deps: { nlSelection: { deps: { timeoutMs?: number }; startedAtMs: number; lastCompletedAtMs?: number } } }).deps.nlSelection;
       const saved = service.deps.timeoutMs;
       service.deps.timeoutMs = 300;
+      // Leave the cold-start window (180 s after start, 30 min idle) so the configured bound applies.
+      const savedStart = service.startedAtMs;
+      const savedLast = service.lastCompletedAtMs;
+      service.startedAtMs = Date.now() - 600_000;
+      service.lastCompletedAtMs = Date.now();
       try {
         const phaseA = await withPhase('a', 'active', () => turnOf('다음 주 일정 보여줘'));
         selectorAnswer = () => new Promise<string>((resolve) => setTimeout(() => resolve(answer('calendar.events', { range: 'next-week' })), 1500).unref());
@@ -723,6 +728,8 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
         expect(slow.result.reply.text).toBe(phaseA.result.reply.text);
       } finally {
         service.deps.timeoutMs = saved;
+        service.startedAtMs = savedStart;
+        service.lastCompletedAtMs = savedLast;
       }
       // The configured bound is an integer 2000..8000 ms; anything else is a startup error.
       expect(parseNlSelectionConfig({ QUOKY_NL_INTENT_TIMEOUT_MS: '2000' }).timeoutMs).toBe(2000);
