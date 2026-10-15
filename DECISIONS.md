@@ -26518,3 +26518,43 @@ the last round under the fix-loop cap.**
 - `[RESERVE]` the optional `retrievedExamples` prompt input (absent = byte-identical).
 - `[LATER]` phase 2 runtime retrieval (after a pass, by amendment); sqlite-vec migration (on trigger); knowledge RAG
   (own ADR); cloud embeddings (own ADR).
+
+## ADR-0120 amendment A6-D2 amendment note — numbered to-do commands resolve against the listing the owner saw (2026-10-16)
+
+- **Problem.** The anchored to-do grammar ("N번 완료", "할 일 N번 취소", "완료 처리: N", "할 일 N번에 … 연결") resolved
+  N against the live open list on every call (ADR-0100 D3: "the same ordering resolves `완료 처리: N`; no session
+  state"). After the list changed (a completion, a cancel, an undo, an add), the same words could hit a different to-do.
+  Its receipt also carried that live index as the echo label, and the A6-D2 merge ("the same label now naming another
+  item wins") wrote it over the owner's shown label. So a later "2번도" or "그거" pointed at the wrong item. This broke
+  A6-D2's own rule: "A number always means the item the owner saw under that number, never the current position."
+- **Rule (amends A6-D2 "What a number means" for the anchored grammar, and the ADR-0100 D3 "no session state" clause
+  for numbered to-do targets).**
+  1. When the turn's session holds a fresh to-do listing slot for this Actor (`quoky.lastListing`, the A6-D2 30-minute
+     TTL), a numbered target resolves to the slot's item id for that label. If that id is not an ACTIVE to-do of the
+     Actor, or the slot has no such label, nothing is written. The reply says what happened (it names the listed item
+     only when it is the Actor's own) and shows the current open list. That list is recorded as the new listing.
+     The live index is never used as a fallback.
+  2. With no fresh slot (never listed, expired, another Actor's slot) the live number applies as before. The owner has
+     not just seen a numbered list, so the live order is their only reference. The reply names the item, as before.
+  3. A deterministic receipt carries the shown label (resolved through the slot), or no label at all. An anchored add
+     carries its live number only when that extends the fresh slot without renaming an existing label. No deterministic
+     command changes which item a shown label names, and without a fresh slot none creates a one-item listing that would
+     stop the live numbering of the next command. The A6-D2 merge rule itself is unchanged. NL echoes show their number,
+     so the owner saw it.
+  4. Read-only hints and status answers ("2번 완료했어", "X 완료했나?") name only a number that the numbered command would
+     resolve to the same item. With a fresh slot that does not show the item, no number is named.
+  5. Undo is unchanged: the per-action inverse on the same item id (record A).
+  6. Title targets ("완료 처리: 보고서") are unchanged.
+- **Scope.** Snapshots exist only while `QUOKY_NL_INTENT_MODE=active` and `QUOKY_NL_ACTIONS` is not `off`, and the desk
+  honours one only with `actionReceipts`. With actions `off` the anchored grammar is byte-identical to before. No new
+  port, storage or migration. The turn handler reads the slot from `TurnHandlerContext.session.metadata`, and
+  `WorkDeskHandleOptions.todoListing` carries it to the desk.
+- **Cross-surface (ADR-0122, checked, unchanged).** The numbered forms claim the grantable `todo` group with `onDeny:
+  'reply'`. Under `QUOKY_CHANNEL_GRANTS=enforce` a channel without a `todo` grant is denied before the desk runs. With
+  the gate `off` (the P1 deploy default) they run in a channel against that channel session's own listing (or live
+  without one). They are not DM-only; whether they should be is an owner decision and is not made here.
+- **Tests.** `work-chat-actions.test.ts` (drift by completion and by add, gone, out of range, link, no-listing live
+  fallback, undo of the same id, S4 label regression, hints), `work-chat-turn-handler.test.ts` (fresh vs expired slot
+  plumbing, the `todo` claim under the gate), `reminder-actions.test.ts` (stable `#N` after a reminder fired),
+  `personal-v5-a6-acceptance.test.ts` (list → NL → anchored end to end on the production composition) and
+  `surface-grants-acceptance.test.ts` (numbered writes in an ungranted channel).

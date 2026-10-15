@@ -14,6 +14,16 @@ import type { WorkChatCommand } from './work-chat-command';
 import { renderLookupFailure, renderTodoFailure, renderTodoListFailure } from './work-chat-renderer';
 import type { WorkChatOutcome } from './work-chat-service';
 import { plainTextOf } from '../message-rendering';
+import { LAST_LISTING_METADATA_KEY, LAST_LISTING_TTL_MS, withLabelledListing } from '../last-listing';
+import {
+  EMPTY_SURFACE_GRANT_RECORD,
+  SURFACE_GRANTS_METADATA_KEY,
+  decideSurface,
+  serializeSurfaceGrants,
+  surfaceChannelKey,
+  withSurfaceGroupsGranted,
+} from '../surface-grants';
+import type { WorkDeskHandleOptions } from './work-chat-service';
 import {
   WORK_CHAT_LOOKUP_TURN_HANDLER_ID,
   WORK_CHAT_LOOKUP_TURN_HANDLER_ORDER,
@@ -401,5 +411,74 @@ describe('ADR-0122 P2: the channel permit lifts the second-layer rules and filte
     await lookup.handle(ctxOf('내 할 일 보여줘'));
     await todo.handle(inChannel('할 일 추가: 보고서', ['todo']));
     expect(calls).toEqual([[{ permit: { allowed: ['todo'] } }], [], [], []]);
+  });
+});
+
+
+// ADR-0120 amendment A6-D2 amendment note (2026-10-16): the numbered to-do grammar gets the fresh to-do listing of this
+// (Session, Actor) from the session snapshot; an expired or absent one is not passed (live numbering, as before).
+describe('the to-do listing snapshot reaches the desk (A6-D2 amendment)', () => {
+  const ITEMS = [
+    { label: 1, id: 'todo-a' },
+    { label: 2, id: 'todo-b' },
+  ];
+  function withListing(text: string, listedAt: string): TurnHandlerContext {
+    const ctx = ctxOf(text);
+    const metadata = { [LAST_LISTING_METADATA_KEY]: withLabelledListing(undefined, OWNER.id, 'todo', ITEMS, listedAt, 'listing') };
+    return { ...ctx, session: { ...ctx.session, metadata } };
+  }
+  function capturing() {
+    const calls: Array<{ command: WorkChatCommand; options: WorkDeskHandleOptions | undefined }> = [];
+    const desk = {
+      async handle(command: WorkChatCommand, _actor: Actor, options?: WorkDeskHandleOptions): Promise<WorkChatOutcome> {
+        calls.push({ command, options });
+        return { kind: 'reply', text: 'ok' };
+      },
+    };
+    return { calls, handler: new WorkChatTurnHandler({ desk, mode: 'mutation', summaryEnabled: false, logger }) };
+  }
+  const PHRASES = ['2번 완료', '할 일 2번 취소', '완료 처리: 2', '할 일 2번에 Jira PROJ-1 연결', '할 일 추가: 새 일', '보고서 완료', '2번 할 일 완료됐어?'];
+
+  it.each(PHRASES)('%s: a fresh listing is passed to the desk', async (phrase) => {
+    const { calls, handler } = capturing();
+    await handler.handle(withListing(phrase, new Date(Date.parse(T0) - 60_000).toISOString()));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.options).toEqual({ todoListing: { source: 'todo', at: new Date(Date.parse(T0) - 60_000).toISOString(), items: ITEMS } });
+  });
+
+  it.each(PHRASES)('%s: an expired listing (or none) is not passed, so the desk keeps the live numbering', async (phrase) => {
+    const { calls, handler } = capturing();
+    await handler.handle(withListing(phrase, new Date(Date.parse(T0) - LAST_LISTING_TTL_MS - 1).toISOString()));
+    await handler.handle(ctxOf(phrase));
+    expect(calls.map((call) => call.options)).toEqual([undefined, undefined]);
+  });
+
+  it("another actor's listing in the same session is never used", async () => {
+    const { calls, handler } = capturing();
+    const ctx = withListing('2번 완료', T0);
+    await handler.handle({ ...ctx, actor: { ...OWNER, id: 'someone-else' } });
+    expect(calls[0]?.options).toBeUndefined();
+  });
+});
+
+// ADR-0122 (cross-surface check for the numbered to-do grammar): every numbered write claims the grantable `todo` group
+// with `reply` on denial. With QUOKY_CHANNEL_GRANTS=enforce a channel without a `todo` grant is denied before the desk
+// runs; a DM, a granted channel, and the gate `off` (the P1 deploy default) allow it. No DM-only rule applies to these
+// anchored forms (only the A6 NL action entries are DM-only, A6-D1).
+describe('numbered to-do writes in a channel are grant-gated, not DM-only (ADR-0122)', () => {
+  const CHANNEL: ConversationContext = { platform: 'discord', spaceId: 'g-1', channelId: 'c-9', userId: 'owner-user', direct: false };
+  const handler = new WorkChatTurnHandler({ desk: { handle: async () => ({ kind: 'none' }) }, mode: 'mutation', summaryEnabled: false, logger });
+  const granted = withSurfaceGroupsGranted(EMPTY_SURFACE_GRANT_RECORD, surfaceChannelKey(CHANNEL), ['todo'], 'owner', T0);
+  if (!granted.ok) throw new Error('grant refused');
+  const grantedActor = { metadata: { [SURFACE_GRANTS_METADATA_KEY]: serializeSurfaceGrants(granted.record) } };
+
+  it.each(['2번 완료', '할 일 2번 취소', '완료 처리: 2', '할 일 2번에 Jira PROJ-1 연결'])('%s', (phrase) => {
+    const claim = handler.surfaceClaim({ message: { id: 'm', context: CHANNEL, text: phrase, receivedAt: T0 }, now: T0 });
+    expect(claim).toEqual({ groups: ['todo'], onDeny: 'reply' });
+    const groups = claim?.groups ?? [];
+    expect(decideSurface({ mode: 'enforce', context: CHANNEL, actor: {}, groups })).toEqual({ allow: false, reason: 'not-granted', group: 'todo' });
+    expect(decideSurface({ mode: 'enforce', context: CHANNEL, actor: grantedActor, groups })).toEqual({ allow: true });
+    expect(decideSurface({ mode: 'enforce', context: CTX, actor: {}, groups })).toEqual({ allow: true });
+    expect(decideSurface({ mode: 'off', context: CHANNEL, actor: {}, groups })).toEqual({ allow: true });
   });
 });

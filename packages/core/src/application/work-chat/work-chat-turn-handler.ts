@@ -16,6 +16,7 @@ import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { renderListStatusDmOnly } from '../nl-routing/nl-action-policy';
 import { isDirectConversation } from '../message-rendering';
+import { LAST_LISTING_METADATA_KEY, readListingRecord } from '../last-listing';
 import { surfaceClaimOf, surfaceGroupsOfWorkChatCommand } from '../surface-grants/surface-group-map';
 import { surfaceChannelHolds } from '../surface-grants/surface-permit';
 import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
@@ -45,7 +46,7 @@ import {
   renderTodoFailure,
   renderTodoListFailure,
 } from './work-chat-renderer';
-import type { WorkChatOutcome, WorkDesk } from './work-chat-service';
+import type { WorkChatOutcome, WorkDesk, WorkDeskHandleOptions } from './work-chat-service';
 
 /**
  * Work chat as two ADR-0096 `pre-classify` turn handlers over WORK-T3's `WorkDesk` (ADR-0100 D2, WORK-T4).
@@ -238,10 +239,8 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     }
     let outcome: WorkChatOutcome;
     try {
-      // ADR-0122 D2.4: the combined view filters its Jira / GitHub sections by the channel's permit (absent: unchanged).
-      outcome = ctx.surfacePermit !== undefined && (command.kind === 'todo.list' || command.kind === 'todo.summary')
-        ? await this.deps.desk.handle(command, ctx.actor, { permit: ctx.surfacePermit })
-        : await this.deps.desk.handle(command, ctx.actor);
+      const options = handleOptionsOf(command, ctx);
+      outcome = options === undefined ? await this.deps.desk.handle(command, ctx.actor) : await this.deps.desk.handle(command, ctx.actor, options);
     } catch (error) {
       // The desk catches its own failures; this is the handler-contract backstop. The message was a recognized work
       // command, so it must not fall through to chat (a model could claim the change). Failure class only, no text.
@@ -282,6 +281,33 @@ export function createWorkChatTurnHandlers(
   deps: Omit<WorkChatTurnHandlerDeps, 'mode'>,
 ): readonly [WorkChatTurnHandler, WorkChatTurnHandler] {
   return [new WorkChatTurnHandler({ ...deps, mode: 'mutation' }), new WorkChatTurnHandler({ ...deps, mode: 'lookup' })];
+}
+
+/**
+ * What the desk needs besides the command, or `undefined` (the call is exactly as before):
+ *  - ADR-0122 D2.4: the combined view filters its Jira / GitHub sections by the channel's permit.
+ *  - ADR-0120 A6-D2 amendment (2026-10-16): a to-do command that names or may name a list number gets the fresh to-do
+ *    listing of this (Session, Actor) — what the owner last saw — so the number resolves against it, not the live order.
+ */
+function handleOptionsOf(command: WorkChatCommand, ctx: TurnHandlerContext): WorkDeskHandleOptions | undefined {
+  if (command.kind === 'todo.list' || command.kind === 'todo.summary') return ctx.surfacePermit !== undefined ? { permit: ctx.surfacePermit } : undefined;
+  if (
+    command.kind !== 'todo.add' &&
+    command.kind !== 'todo.complete' &&
+    command.kind !== 'todo.cancel' &&
+    command.kind !== 'todo.link' &&
+    command.kind !== 'todo.hint' &&
+    command.kind !== 'todo.status'
+  ) {
+    return undefined;
+  }
+  let todoListing: WorkDeskHandleOptions['todoListing'];
+  try {
+    todoListing = readListingRecord(ctx.session.metadata?.[LAST_LISTING_METADATA_KEY], ctx.actor.id, ctx.now).slots.todo;
+  } catch {
+    todoListing = undefined;
+  }
+  return todoListing === undefined ? undefined : { todoListing };
 }
 
 /** A6-D1: every action entry is DM-only. */
