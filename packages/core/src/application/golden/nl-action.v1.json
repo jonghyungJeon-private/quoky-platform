@@ -10078,8 +10078,14 @@
      "ageMinutes": 1
     }
    },
-   "expect": "none",
-   "note": "was neg-028"
+   "expect": {
+    "entryId": "help.topic",
+    "args": {
+     "topic": "todo"
+    },
+    "outcome": "execute"
+   },
+   "note": "was neg-028 [owner-delegated relabel 2026-10-16 (\"후속작업 전부 승인\"): a how-to question about Quoky's own to-dos (할 일 완료) is help.topic by prompt rule 3; was none]"
   },
   {
    "id": "a6-negative-none-029",
@@ -10138,8 +10144,14 @@
      "ageMinutes": 1
     }
    },
-   "expect": "none",
-   "note": "was neg-030"
+   "expect": {
+    "entryId": "help.topic",
+    "args": {
+     "topic": "all"
+    },
+    "outcome": "execute"
+   },
+   "note": "was neg-030 [owner-delegated relabel 2026-10-16 (\"후속작업 전부 승인\"): a how-to question about Quoky's own undo (no undo topic in NL_HELP_TOPICS; closest general index) is help.topic by prompt rule 3; was none]"
   },
   {
    "id": "a6-negative-none-031",
@@ -10225,8 +10237,14 @@
      "ageMinutes": 1
     }
    },
-   "expect": "none",
-   "note": "was neg-033"
+   "expect": {
+    "entryId": "help.topic",
+    "args": {
+     "topic": "reminder"
+    },
+    "outcome": "execute"
+   },
+   "note": "was neg-033 [owner-delegated relabel 2026-10-16 (\"후속작업 전부 승인\"): a how-to question about Quoky's own reminders (알림 반복) is help.topic by prompt rule 3; was none]"
   },
   {
    "id": "a6-negative-none-034",

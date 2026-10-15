@@ -25965,12 +25965,17 @@ connector-write reconcile (no send).
   a non-corpus form. *Owner gold decision:* none-029/-032/-124 -> help.topic (consistent with rule 3). *Residual:*
   `jira.release` (an A8 read-side weakness that predates v32), confluence->slack and neg-110 / neg-037 / neg-051 (model noise).
 
-- **Gold relabel, owner-delegated ("후속작업 전부 승인", Discord 2026-10-16; orchestrator decision under that approval).**
-  `a6-negative-none-029` "리마인더 만드는 법" -> help.topic `{topic: reminder}`, `a6-negative-none-032` "할 일 빼는 방법 좀"
-  -> help.topic `{topic: todo}`. Reason: prompt rule 3 makes a how-to question about one of Quoky's own features help.topic,
-  so the gold `none` contradicted the rule the selector is taught. `a6-negative-none-124` "the undo button is missing in
-  this app" stays `none`, a deliberate deviation from the orchestrator list. It is a statement, not a question, and rule
-  8 (v32+) says help.topic needs a question form, so relabelling it would contradict the same rule-consistency reason.
+- **Gold relabel, owner-delegated ("후속작업 전부 승인", 2026-10-16; orchestrator decision under that approval).** Five how-to
+  golds move from `none` to help.topic: `a6-negative-none-028` "할 일을 완료하는 방법이 궁금해" -> `{topic: todo}`, `-029`
+  "리마인더 만드는 법" -> `{topic: reminder}`, `-030` "undo 하는 방법 알려줘" -> `{topic: all}` (no undo topic in
+  `NL_HELP_TOPICS`; `all` is the closest general index), `-032` "할 일 빼는 방법 좀" -> `{topic: todo}`, `-033` "알림 반복
+  설정은 어떻게 해?" -> `{topic: reminder}`. They match the existing D12 help golds (help-038 "할 일 추가하는 법 알려줘" todo,
+  help-043 feedback, help-045 "리마인더 설정하는 방법" reminder). Rationale: the D12 help-gold convention, and prompt rule 3
+  makes a how-to question about one of Quoky's own features help.topic, so the gold `none` contradicted the rule the selector
+  is taught. `a6-negative-none-124` "the undo button is missing in this app" stays `none`, a deliberate deviation from the
+  orchestrator list: it is a statement, not a question, and rule 8 (v32+) says help.topic needs a question form.
+  **Known residual:** prompt rule 8 still lists "...하는 법" forms as none, which contradicts rule 3 and these golds. It is to
+  be fixed in the next A6 prompt version (inert: no prompt change in this step).
 - **A6 prompt `nl-select.v35`, the last iteration (2026-10-16).** v34 plus two examples back in their short and
   action-word forms, in non-corpus wording ("이거 요약 좀" -> item.summarize this/summary; "남은 거 모두 완료 처리해" ->
   todo.complete NEEDS_CLARIFICATION). The overlap test covers them. **Gate (Haiku 3+3, `data/eval/a6-gate-v35-run*`):**
@@ -25988,6 +25993,8 @@ connector-write reconcile (no send).
   `todo.add-042` 1 -> 3, `confluence-018/-027/-037`, `jira-047`. Regressed: `reference-todo.complete-005` "first one done"
   3 -> 0, `item.summarize-015` and `reminder.cancel-027` 3 -> 1, neg-111 3 -> 1, `calendar-018` 3 -> 0, `calendar-005`,
   `drive-003/-054` 2 -> 0, `help-027` 2 -> 0. Most of these move in both directions between runs at this sample size.
+- **Routing.** The gate instability (the A6-off read baseline also passes only 1 of 3) is routed to ADR-0123 (RAG-0
+  contamination lint first; merged as Proposed in #224).
   Stopped: no further prompt iteration (orchestrator).
 
 ### ADR-0122 P2 implementation note (2026-10-15)

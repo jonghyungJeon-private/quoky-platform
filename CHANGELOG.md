@@ -10,8 +10,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Fixed.** `reminder.create` drops one trailing locative 에 from `when` when time words remain ("20분 후에" -> "20분 후").
   This is its documented canonical form, and the grammar reads both as the same time. `reminder.create-027` was an exact-args
   miss, not a grounding refusal.
+- **Not passed.** Gate not passed (action 1/3, read 0/3); `QUOKY_NL_ACTIONS` stays off.
 - **Changed.** A6 prompt `nl-select.v35`: the short summarize and named-action bulk examples are back in non-corpus wording;
-  golds `a6-negative-none-029/-032` relabelled to help.topic (owner-delegated, rule 3). Before it, `nl-select.v34`: rule 8 limits help.topic to questions about Quoky itself (other apps' how-tos
+  golds `a6-negative-none-028/-029/-030/-032/-033` relabelled to help.topic (owner-delegated, rule 3). Before it, `nl-select.v34`: rule 8 limits help.topic to questions about Quoky itself (other apps' how-tos
   are none); the remaining A6 near-copies are rewritten and the overlap test covers every A6 example. Before it, `nl-select.v33`: the three v32 rule-8 examples near-copied scored corpus cases (CA review). They are
   replaced by other features and sentence shapes, and a test now checks example/corpus overlap. Cache-key pins updated.
 - **Not changed.** ㄱㄱ / 고고 as request endings were tried and reverted (Codex P1: reports and how-to text grounded). They

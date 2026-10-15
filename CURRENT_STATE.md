@@ -64,7 +64,9 @@ byte-identical. Chief Architect review required before merge (port and runtime d
   -> help.topic. DECISIONS "A6 prompt `nl-select.v34`".
 - A6 prompt `nl-select.v35` (last iteration, 2026-10-16): action gate 1 of 3, read 0 of 3. The A6-off baseline also fails
   the read gate on `jira.release` 2 of 3, so that miss predates A6. The A6-only read misses are help.topic captures of colon
-  commands (neg-110 / neg-111). Golds none-029/-032 relabelled to help.topic (owner-delegated); none-124 stays none.
+  commands (neg-110 / neg-111). Golds none-028/-029/-030/-032/-033 relabelled to help.topic (owner-delegated); none-124 stays none.
+  The gate instability (the A6-off read baseline also passes only 1 of 3) is routed to ADR-0123 (RAG-0 contamination lint
+  first; merged as Proposed in #224).
 - D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
   metadata edits, the calendar relabels and the T1 extension); the 148 S1 cases are marked with their 2026-10-13
   approval. They gate no live behaviour.
