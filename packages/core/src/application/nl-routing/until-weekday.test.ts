@@ -210,6 +210,16 @@ describe('A7 canonical form: a period holding the end-bounded day but not ending
       ['이번 주 수요일부터 금요일까지 일정', '10-14..10-23', { range: '2026-10-14..2026-10-16' }],
       ['목요일부터 토요일까지 일정', 'this-week', { range: '2026-10-15..2026-10-17' }],
       ['월요일부터 금요일까지 일정', 'this-week', { range: '2026-10-12..2026-10-16' }],
+      // A single-day pick of one of the two bounded days is that span (live probe 2026-10-15: next-mon 8 of 40 calls
+      // with a previous selection); another single day is still asked.
+      ['다음 주 월요일부터 금요일까지 일정', 'next-mon', { range: '2026-10-19..2026-10-23' }],
+      ['다음 주 월요일부터 금요일까지 일정', 'next-fri', { range: '2026-10-19..2026-10-23' }],
+      ['show my calendar from next Monday through Friday', 'next-mon', { range: '2026-10-19..2026-10-23' }],
+      ['다음 주 월요일부터 금요일까지 일정', 'next-wed', refused],
+      ['다음 주 월요일부터 금요일까지 일정', 'mon', { range: '2026-10-19..2026-10-23' }],
+      ['다음 주 월요일부터 금요일까지 일정', 'this-mon', refused],
+      // "this Wednesday" allows 10/14 and 10/21; the single day 10/14 bounds only the first span:
+      ['show my calendar from this Wednesday through Friday', 'this-wed', { range: '2026-10-14..2026-10-16' }],
       // Never wider than the selected period: a period that does not contain the span is asked.
       ['다음 주 월요일부터 금요일까지 일정', '10-19..10-22', refused],
       ['다음 주 월요일부터 금요일까지 일정', 'this-week', refused],

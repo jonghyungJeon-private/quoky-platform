@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — a single-day pick of one bound of "X부터 Y까지" (ADR-0120 A7 implementation note 2, 2026-10-15)
+
+- Live: "다음 주 월요일부터 금요일까지 일정" was still asked; a probe showed the selector answers `next-mon` when a previous
+  calendar selection is in the prompt (8 of 30 calls). That single bound day now shows the owner's span
+  (2026-10-19..2026-10-23); any other single day is still asked. No prompt change.
+
 ## Unreleased — "X부터 Y까지" span canonical form (ADR-0120 A7 implementation note, 2026-10-15)
 
 - Live: "다음 주 월요일부터 금요일까지 일정" was asked because the selector named next week. When both bounds are explicit
