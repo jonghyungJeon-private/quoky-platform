@@ -153,12 +153,16 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
   }
 
   /**
-   * ADR-0122 D2.1: every reminder grammar hit (create, cancel, list, clarify, the disabled reply) is `reminder`. The same
+   * ADR-0122 D2.1: every reminder grammar hit (create, cancel, list, clarify, the disabled reply) is `reminder`, and an
+   * event-relative create also `calendar` (it reads the calendar). The same
    * whole-message grammar the service reads; nothing is read or written.
    */
   surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
     try {
-      return parseReminderMessage(ctx.message.text, { now: ctx.now }).kind === 'NOT_REMINDER' ? null : surfaceClaimOf(['reminder']);
+      const kind = parseReminderMessage(ctx.message.text, { now: ctx.now }).kind;
+      if (kind === 'NOT_REMINDER') return null;
+      // An event-relative reminder ("회의 10분 전에 알려줘") reads the calendar to place itself (Codex P1): both groups.
+      return surfaceClaimOf(kind === 'CREATE_EVENT_RELATIVE' ? ['reminder', 'calendar'] : ['reminder']);
     } catch {
       return null;
     }
