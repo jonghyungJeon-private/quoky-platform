@@ -79,7 +79,8 @@ Details and the review record for each item are in the matching notes in `DECISI
 - **Fixed:** source-noun cross-check for every ref kind; a bare reference selects no action; stacked-particle time check;
   deictic payload reply first; A6 prompt `nl-select.v26` (read prompt v24 unchanged); scorer `{}`-reason rule; owner
   decisions (2) and (3) in the corpora. Details: DECISIONS "A6 implementation note — R1 gate fixes".
-- **Haiku check (1 run):** action 92.6% (A6 95.2%), 0 wrong targets, 0 negative captures; read regression 0 action
+- **Owner D12 gold fixes applied (2026-10-15)** and `neg-051` fixed in the v26 wording (DECISIONS addendum).
+- **Haiku check (1 run, before the gold fixes):** action 92.6% (A6 95.2%), 0 wrong targets, 0 negative captures; read regression 0 action
   captures, 1 non-A6 wrong capture (`neg-051`). Pending: the owner's call on the READ-entry gold args and the other gold
   issues listed in DECISIONS, then the orchestrator's 3-run gate. `QUOKY_NL_ACTIONS` stays `off`.
 

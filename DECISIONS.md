@@ -24828,6 +24828,27 @@ scripted selector; the Drive fixture's name and text say "이 문서 요약해�
     names `todo.cancel`.
 - **Not done.** The final 3-run gate (orchestrator, after review); `QUOKY_NL_ACTIONS` stays `off`.
 
+#### A6 R1 gold fixes — owner D12 batch (2026-10-15, "권장안대로 수정")
+
+The owner approved every recommended gold fix of the note above, as a D12 batch:
+
+1. READ entries in the action corpus (`a6-negative-mail.list-001..005`, `drive.files-002..004`, `calendar.events-002`,
+   `todo.list-003`, and every other READ gold there) are scored on the entry only: the action corpus measures action
+   selection; the read corpus (`nl-intent.v1.json`) scores read args.
+2. `a6-reference-item.summarize-006/008/014/015` and `a6-seed-ref-002`: a clarification is the correct outcome
+   (`expect.acceptsAnyQuestion`: any question Core asks, nothing executed).
+3. `a6-reference-todo.cancel-005`: `todo.cancel` and `action.undo` both count (same item, same outcome;
+   `expect.alsoAccepts`, the target still compared exactly).
+4. `a6-reference-todo.complete-034` gets the listing its open question writes (to-do labels 2, 3);
+   `a6-paraphrase-todo.add-037` is `execute {title: "청소기 필터 교체"}` per A6-D1 (the time word is outside the title);
+   `neg-086`'s `a6Relabel` title is the owner's verbatim words "보고서 제출하는 거".
+
+**`neg-051` (read regression wrong capture, not A6).** Probed with Haiku: the read prompt `nl-select.v24` answers `none`
+20/20 (rule 2: a question about what a phrase means); the A6 prompt answered `help.topic` 9/10, pulled by the v25 rule-8
+parenthetical "a how-to question about Quoky is help.topic". Class: prompt. Fix in `nl-select.v26` (A6 prompt only): the
+parenthetical adds "a question about what a phrase or command would do or mean stays none, rule 2". After: `none` 20/20;
+the 51 `help.topic` read cases 2× each keep their outcome (101/102; the one miss, `help-027`, also missed in the v25 runs).
+
 ### ADR-0120 amendment A8 — Jira release listings: a `jira.release` READ entry (one fix version for every assignee, or a project's release list), three named read queries, and release links only on the configured Jira site (Proposed — awaiting the owner's yes) (2026-10-15)
 
 - **Status:** **Accepted by the owner on 2026-10-15** with two changes (decisions 2 and 7; see "ADR-0120 amendment A8

@@ -16,6 +16,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   pick the asked action with another list shown, copy a deictic content as the span.
 - **Eval and corpus (owner decisions 2026-10-15).** `{}` refusal golds scored by their closed reason; `acceptsNone` on
   the relay cases 901/902; the 11 anchored read cases carry their A6 action as `a6Relabel` (A6-on gold, scored apart).
+- **Owner D12 gold fixes (2026-10-15):** READ golds of the action corpus scored on the entry only; `acceptsAnyQuestion`
+  (item.summarize-006/008/014/015, seed-ref-002); `alsoAccepts` (`todo.cancel-005`: `action.undo`); complete-034 listing,
+  todo.add-037 execute, `neg-086` verbatim title. `neg-051` (A6 prompt pulled it to `help.topic`): v26 rule-8 wording.
 - **Haiku check (1 run each, not the gate):** action 92.6% (A6 entries 95.2%), 0 wrong targets, 0 negative captures,
   span 97.5%; read regression 0 action captures. Remaining gate blockers are READ-entry gold args (owner list in
   DECISIONS). `QUOKY_NL_ACTIONS` stays `off`.
