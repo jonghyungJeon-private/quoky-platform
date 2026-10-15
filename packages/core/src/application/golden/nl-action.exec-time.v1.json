@@ -646,7 +646,7 @@
   {
    "id": "a6-reference-todo.complete-041",
    "family": "reference",
-   "text": "1번 완료해줘",
+   "text": "2번도 완료해줘",
    "fixture": {
     "listings": [
      {
@@ -663,12 +663,12 @@
    "expect": {
     "entryId": "todo.complete",
     "args": {
-     "ref": "#1"
+     "ref": "#2"
     },
     "outcome": "refuse",
     "reason": "already-final"
    },
-   "note": "was ref-091; targetGone not expressible; dropped; exec-time: needs the local store (items), not evaluated by the offline decision path"
+   "note": "was ref-091; relabelled 2026-10-15: the exact anchored \"1번 완료해줘\" is a Class A command that acts on the current list, so this case uses the selector-path wording; targetGone not expressible offline; exec-time: needs the local store"
   },
   {
    "id": "a6-reference-reminder.cancel-022",
