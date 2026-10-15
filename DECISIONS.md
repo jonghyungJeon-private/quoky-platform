@@ -24940,6 +24940,24 @@ the 51 `help.topic` read cases 2× each keep their outcome (101/102; the one mis
   0 over the bound, gate passed in the run. Read regression: D12 96.8%, 0 action captures, 0 wrong captures, relabeled
   14/14, gate passed.
 
+#### A6 R1 scope reduction: the positive request-form rule (orchestrator decision, 2026-10-15)
+
+- **Why.** CA round 3 still found negation and question bypasses of the negative-list backstop, past the fix-loop cap for
+  that finding. The orchestrator inverted the backstop.
+- **Rule.** Every A6 write (`todo.add`, `todo.complete`, `todo.cancel`, `reminder.create`, `reminder.cancel`,
+  `action.undo`) grounds only when the entry's action word heads an affirmative request from a closed grammatical set:
+  Korean request endings (해줘, 해 주세요, 해줄래, 해 줄 수 있어, 해주실래요, 해 주시겠어요, 하자, 해, 해라, 놔, 둬, 부탁해 …)
+  right after the word (only its own ending, 로/다고, 처리/표시/기록/복구, 좀 and a carrier verb between), or a bare
+  imperative of the vocabulary's verbs; English: the action word (or mark/set/make/turn/put) leads the clause, after an
+  optional please / can-could-would-will you. A question grounds only in a polite request form. A negation anywhere in the
+  message vetoes (Codex). Anything else asks ("실행할까요? \"2번 완료해줘\"처럼 요청으로 말씀해 주세요") or, with no action
+  word at all, is chat; nothing executes.
+- **Deviation for the owner.** The nominal command (the verbal noun ends the whole message: "할 일에 'UAT 결과 정리' 추가",
+  "2번도 완료", "reminder 12 cancel") still grounds, because the ratified A6 live phrases U4 and U8c and the anchored Class A
+  grammar ("1번 완료") use that form. Removing it is one line plus the U4/U8c acceptance expectations; owner's call.
+- **Cost.** Owner-approved golds that name the action without a request form stay as approved and count as misses
+  (`isRequestFormCost`), measured in the Haiku run below.
+
 
 ### ADR-0120 amendment A8 — Jira release listings: a `jira.release` READ entry (one fix version for every assignee, or a project's release list), three named read queries, and release links only on the configured Jira site (Proposed — awaiting the owner's yes) (2026-10-15)
 
