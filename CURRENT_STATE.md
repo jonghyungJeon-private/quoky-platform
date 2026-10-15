@@ -61,13 +61,14 @@ Details and the review record for each item are in the matching notes in `DECISI
 
 - **Accepted:** ADR-0112 amendments 1 (Slack delete) and 2 (Jira create and undo), all 20 decisions as recommended;
   implementation stays at A6 R3 / R4.
-- **Corpus:** 46 cases and the 8 #204 metadata edits owner-approved (and the 148 S1 cases marked with their 2026-10-13 approval); `neg-098`, `neg-100`, `uat5r6-07` relabelled to
-  `item.summarize` for the A6 read-regression mode only (`neg-099` held, A6-D2 has no "이" deictic); T1 extended to 7
-  more calendar cases.
+- **Corpus:** 46 cases and the 8 #204 metadata edits owner-approved (and the 148 S1 cases marked with their 2026-10-13 approval); `neg-098`, `neg-100` relabelled to
+  `item.summarize` for the A6 read-regression mode only (`neg-099` and `uat5r6-07` held, see "Next owner batch"); T1
+  extended to 7 more calendar cases.
 - **Prompt:** read `nl-select.v24` (A6 `off` pin `golden/nl-select.v24.prompts.json`), A6 `nl-select.v25`; v24 also
   defines the weekend symbols as Saturday and Sunday together (the `calendar-023` drift fix).
-- **Measured:** Haiku 3 runs: overall 95.7-96.5%, calendar 92.6-96.8%, wrong captures 1/0/0 (`neg-037`, pre-existing);
-  D12 gate in runs 2 and 3. Not merged; not live.
+- **Measured (final v24, the gate evidence):** Haiku 3 runs: overall 96.1-97.3%, calendar 93.7-95.8%, wrong captures
+  0/0/0, p95 2.1-2.3 s; D12 and S1 gates pass in all three runs (v22: 95.7-96.5%, 92.4-96.7%, 0). The earlier 3-run eval
+  of the pre-weekend-clause v24 (prompt `d5002b58…`, wrong 1/0/0) is superseded. Not merged; not live.
 
 Details: the A5 note 3 addendum and the two ADR-0112 ratification records in `DECISIONS.md`.
 

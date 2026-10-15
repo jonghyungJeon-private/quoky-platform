@@ -8833,25 +8833,7 @@
         "entryId": "mail.list",
         "args": {}
       },
-      "note": "summarizing a listed mail is not a list request [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15] [A6 relabel, owner-approved 2026-10-15 (A6 ratification decision 10, docs/plans/nl-action-relabel-batch.md): with the A6 entries offered (eval:nl --mode read-regression) the gold is a6Relabel, item.summarize, scored apart, with context.lastListing as the Reference context (a one-item listing: with several items Core asks, the nl-action reference cases cover that); read mode (A6 off, eval:nl --mode run) keeps expect none: item.summarize is not offered there] [ref spelling: \"this\", not the batch sheet's \"recent\". A6-D2 grounds both on any closed deictic (그거 included) and resolves them identically (step 3), so it does not choose; the v25 prompt example for this sentence and all 15 \"그거\" cases of the A6 action corpus use \"this\" (방금/아까 use \"recent\"). The owner approved the relabel direction, not a ref spelling (orchestrator, 2026-10-15)]",
-      "a6Relabel": {
-        "entryId": "item.summarize",
-        "args": {
-          "source": "mail",
-          "ref": "this",
-          "mode": "summary"
-        },
-        "batch": "A6-relabel-2026-10-15"
-      },
-      "context": {
-        "lastListing": {
-          "source": "mail",
-          "labels": [
-            1
-          ],
-          "ageMinutes": 1
-        }
-      }
+      "note": "summarizing a listed mail is not a list request [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15] [A6 relabel HELD (not applied): the owner-approved relabel batch (2026-10-15, docs/plans/nl-action-relabel-batch.md) gives item.summarize {source: mail, ref: recent, mode: summary} with a one-item mail listing; held pending the owner's confirmation of the ref spelling, because A6-D2 grounds and resolves recent and this alike while the v24/v25 prompt example for this very sentence (\"그거 요약해줘\", verbatim) uses this, which also makes the case contaminated for scoring. Read mode keeps expect none]"
     },
     {
       "id": "uat5r2-08",

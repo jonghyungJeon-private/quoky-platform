@@ -133,9 +133,9 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
     expect(cases.length).toBeGreaterThanOrEqual(646);
   });
 
-  it('the owner-approved A6 relabels (2026-10-15): read mode keeps `none`; the relabel is a canonical item.summarize Core executes against the case context', () => {
+  it('the owner-approved A6 relabels (2026-10-15; neg-099 and uat5r6-07 held): read mode keeps `none`; the relabel is a canonical item.summarize Core executes against the case context', () => {
     const relabeled = cases.filter((golden) => golden.a6Relabel !== undefined);
-    expect(relabeled.map((golden) => golden.id).sort()).toEqual(['neg-098', 'neg-100', 'uat5r6-07']);
+    expect(relabeled.map((golden) => golden.id).sort()).toEqual(['neg-098', 'neg-100']);
     const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
     for (const golden of relabeled) {
       const relabel = golden.a6Relabel!;

@@ -23542,8 +23542,8 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
 
 ### ADR-0120 amendment A5 implementation note 3, addendum — the owner's T1 extension, prompt `nl-select.v24` / `v25`, and the D12 batch of 2026-10-15 (2026-10-15)
 
-- **Owner decisions (2026-10-15, through the orchestrator; owner-approved, an implementation note of A5 note 3, not an
-  amendment: no ratified text changes, the A5 rule 3 grounding `CALENDAR_TIMED_ONLY_WORDS` is unchanged).**
+- **Owner decisions (2026-10-15, through the orchestrator, verbatim: "승인 + 회의 기준 동일 적용 (권장)"; owner-approved,
+  an implementation note of A5 note 3, not an amendment: no ratified text changes, the A5 rule 3 grounding `CALENDAR_TIMED_ONLY_WORDS` is unchanged).**
   1. *T1 covers the open cases.* The open owner question of note 3 is answered yes: `calendar-005`, `-016`, `-018`,
      `-029`, `-032`, `-034` gain `timedOnly: true`, and `calendar-057` becomes `{range: this-week, partOfDay: afternoon,
      timedOnly: true}`. The prior gold is kept in each case's note. Not covered (not in the owner's list, gold unchanged):
@@ -23561,10 +23561,10 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
      2: "the cases' `pending owner batch approval` notes are superseded by this record"); their notes still said
      pending, so they are now marked "owner-approved 2026-10-13" citing that record (verified; orchestrator follow-up).
      **Still PENDING:** the 41 INT-4 cases (`v5int4-001..041`), for the owner's next batch.
-  4. *A6 relabel batch (A6 ratification decision 10, `docs/plans/nl-action-relabel-batch.md`).* `neg-098`, `neg-100` and
-     `uat5r6-07` gain `a6Relabel: item.summarize` (`{source: mail, ref: "#1", mode: summary}`, `{source: drive, ref:
-     "#1", mode: summary}`, `{source: mail, ref: this, mode: summary}`, batch `A6-relabel-2026-10-15`) and
-     `context.lastListing` (mail or Drive, labels 1-3, 1 minute old; a one-item mail listing for `uat5r6-07`).
+  4. *A6 relabel batch (A6 ratification decision 10, `docs/plans/nl-action-relabel-batch.md`).* `neg-098` and `neg-100`
+     gain `a6Relabel: item.summarize` (`{source: mail, ref: "#1", mode: summary}`, `{source: drive, ref: "#1", mode:
+     summary}`, batch `A6-relabel-2026-10-15`) and `context.lastListing` (mail or Drive, labels 1-3, 1 minute old).
+     `neg-099` and `uat5r6-07` are HELD (below).
      - **Read mode is defined, not changed.** With A6 off (`QUOKY_NL_ACTIONS=off`, the D12 evaluation `eval:nl --mode
        run`) no A6 entry is offered, so `expect` stays `none` (chat, and a list read is a wrong capture). The relabel is
        scored only by `eval:nl --mode read-regression` (A6 entries offered), apart from the D12 gate, as the A6-D7 tooling
@@ -23575,12 +23575,12 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
        (`ungrounded`, arg `ref`): the A6-D2 closed deictics are 그거/이거/그것/방금/아까/… and a bare determiner 이 is not
        one. A gold Core can never produce would only fail; making "이 + noun" a deictic changes A6-D2 and needs its own
        owner decision. (The GML-2 anchored grammar still answers it for a one-item list.)
-     - **`uat5r6-07` ref spelling: `this`** (the batch sheet wrote `recent`). A6-D2 grounds `recent` and `this` on the
-       same closed deictics (그거 included) and resolves them identically (step 3), so it does not choose between them;
-       the v25 example for the same sentence and all 15 "그거" cases of the A6 action corpus use `this` (방금/아까 use
-       `recent`). The owner approved the relabel direction, not a ref spelling, so the gold follows the prompt and the
-       corpus (orchestrator decision, 2026-10-15). The v25 example quotes this case's text (7 characters, under the leak
-       check's 8-character floor).
+     - **`uat5r6-07` "그거 요약해줘" is HELD (CA review).** The approved gold is `{source: mail, ref: recent, mode:
+       summary}` with a one-item mail listing; it is not respelled. A6-D2 grounds `recent` and `this` on the same closed
+       deictics (그거 included) and resolves them identically (step 3), but the v25 prompt example for this very sentence
+       and all 15 "그거" cases of the A6 action corpus write `this`, and the scorer compares exact args; the owner confirms
+       the spelling in the next batch. The case is also contaminated for scoring: its text is verbatim a v24/v25 prompt
+       example (7 characters, under the leak check's 8-character floor). Read mode keeps `none`.
      - **Not run:** no read-regression run (not in this approval).
 - **Prompt versions (the note 3 / A7 convention).** Read prompt `nl-select.v22` → `nl-select.v24`; the A6 `off` pin
   `golden/nl-select.v22.prompts.json` becomes `golden/nl-select.v24.prompts.json`, generated from the v22 file by
@@ -23604,8 +23604,9 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
     Keeping "회의만" (the final wording) restored `calendar-53` (19/20); `neg-208` CLEAR captures 1/40, 0/20 (it mostly
     becomes `NEEDS_CLARIFICATION`, which is a clarification, not a capture). Every edit of these lines moved `neg-208`
     toward a clarification; v22 answers `none` in 78 of 120 probe calls and never captures it CLEAR (0/120).
-- **Eval (owner-approved, Strict, Haiku, `nl-select.v24` final, calendar, mail and Jira with every negative, 449 cases, 3
-  runs, 6 s bound, plan digest `937c1a43…`, report `data/eval/nl-intent-2026-10-15T02-45-01-175Z-haiku.json`, local).**
+- **Eval of the pre-weekend-clause v24 (superseded as gate evidence by the final-v24 run below; owner-approved, Strict,
+  Haiku, prompt sha256 `d5002b58…`, calendar, mail and Jira with every negative, 449 cases, 3 runs, 6 s bound, plan
+  digest `937c1a43…`, report `data/eval/nl-intent-2026-10-15T02-45-01-175Z-haiku.json`, local).**
   - Per run: overall 248/257 (96.5%), 246/257 (95.7%), 246/257 (95.7%); calendar 90/95 (94.7%), 92/95 (96.8%), 88/95
     (92.6%); Jira 89/92, 89/92, 90/92; mail 69/70, 65/70, 68/70; wrong captures 1/192, 0/192, 0/192; p50 1377/1372/1364
     ms, p95 2119/2172/2172 ms; 0 timeouts. **The D12 gate passes in runs 2 and 3; run 1 fails on one wrong capture,
@@ -23630,10 +23631,27 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   "내일 회의 몇 개야" with the flag 20/20; "이번 주 일정 다 보여줘" `{this-week}` 20/20 (never the flag); "다음 회의 언제야?"
   with the flag 13/20 (7 without); "when is my next meeting?" with the flag 19/20; "이번 주 정기회의 일정 있어?" keyword
   `정기회의` 17/20 (one drops the keyword); "그거 몇 개야" (`neg-208`) 15 NEEDS_CLARIFICATION / 5 none, 0 CLEAR captures;
-  "다다음 주 일정 알려줘" `week-after-next` 20/20; `neg-025` none 20/20. The 3-run evaluation above was on v24 before this
-  clause (plan digest `937c1a43…`); no full run was repeated (probes only).
-- **Residuals.** `neg-037` (pre-existing) keeps the D12 gate at 2 of 3 runs; `calendar-035` (English count) and
-  "다음 회의 언제야?" (flag 13/20) are prompt-sensitive, left as corpus cases (D10, D12; no phrase is added).
+  "다다음 주 일정 알려줘" `week-after-next` 20/20; `neg-025` none 20/20.
+  - **Approval of the weekend clause.** An orchestrator-applied fix under the owner's T1 approval of 2026-10-15 ("승인 +
+    회의 기준 동일 적용 (권장)": the same meeting rule applied, confirmed by evaluation afterwards), to repair a measured
+    regression (`calendar-023`), confirmed by the final-v24 3-run evaluation below. It defines two existing closed
+    symbols; no symbol, phrase or rule is added.
+- **Gate evidence — eval of the final v24 (owner-approved, Strict, Haiku, prompt sha256 `aef47606…`, calendar, mail and
+  Jira with every negative, 449 cases, 3 runs, 6 s bound, plan digest `5ec735f5…`, report
+  `data/eval/nl-intent-2026-10-15T03-08-57-664Z-haiku.json`, local).**
+  - Per run: overall 247/257 (96.1%), 250/257 (97.3%), 247/257 (96.1%); calendar 90/95 (94.7%), 91/95 (95.8%), 89/95
+    (93.7%); Jira 90/92, 92/92, 90/92; mail 67/70, 67/70, 68/70; **wrong captures 0/192 in all three runs**; p50
+    1376/1393/1359 ms, p95 2307/2080/2093 ms; timeouts 2, 0, 1 (0.5%, 0%, 0.2% of calls). **The D12 and S1 gates pass in
+    all three runs.**
+  - Against v22 (A7 final, 3 runs: overall 95.7-96.5%, calendar 92.4-96.7%, wrong 0/0/0, p95 2066-2813 ms): overall
+    96.1-97.3%, calendar 93.7-95.8% on stricter gold (12 cases now ask for the flag), wrong 0/0/0.
+  - Per case: `calendar-023` hits 3/3 (pre-weekend-clause v24: 0/3). The T1 misses are flag omissions on newly relabelled
+    gold, i.e. v22's own output: `calendar-016` and `-018` 1/3, `-035` 0/3; `-057` 2/3 (once NEEDS_CLARIFICATION). Other
+    calendar misses: `calendar-046` once (`next-7-days` for "다음 주", keyword kept), `calendar-041` one timeout. No case
+    shows a regression against v22's own output; `neg-037` and `neg-208` are clarifications or none in every run.
+- **Residuals.** `calendar-035` (English count), "다음 회의 언제야?" (flag 13/20 in probes) and `calendar-018` are
+  prompt-sensitive, left as corpus cases (D10, D12; no phrase is added). `neg-037` is pre-existing (0 captures in the
+  final run).
 
 ### ADR-0120 amendment A7 — "until <weekday>": an open-start period that ends on the weekday the owner bounds, and a clear past-tense statement is not a read (Accepted 2026-10-15) (2026-10-15)
 
@@ -24225,7 +24243,7 @@ bound, run on Thursday 2026-10-15 (Asia/Seoul). Reports are local under `data/ev
 
 ### Ratification record (amendment 1, 2026-10-15)
 
-- **Decision.** The owner accepted amendment 1 on 2026-10-15, through the orchestrator ("all recommended", the owner sheet
+- **Decision.** The owner accepted amendment 1 on 2026-10-15, through the orchestrator (verbatim: "모두 권장안 (권장)"; the owner sheet
   `docs/plans/adr-0112-a6-writes-owner-sheet.md`, section 1). Every decision above is **yes** as recommended:
   - **S-1** (decision 1): a separate narrow port `ChannelMessageDeleteWriter` and operation `CHANNEL_MESSAGE_DELETE`.
   - **S-2** (decision 2): delete only as the undo of Quoky's own post, same session; no free delete command.
@@ -24642,7 +24660,7 @@ bound, run on Thursday 2026-10-15 (Asia/Seoul). Reports are local under `data/ev
 
 ### Ratification record (amendment 2, 2026-10-15)
 
-- **Decision.** The owner accepted amendment 2 on 2026-10-15, through the orchestrator ("all recommended", the owner sheet
+- **Decision.** The owner accepted amendment 2 on 2026-10-15, through the orchestrator (verbatim: "모두 권장안 (권장)"; the owner sheet
   `docs/plans/adr-0112-a6-writes-owner-sheet.md`, section 2). Every decision above is **yes** as recommended:
   - **J-1**: new narrow ports `IssueCreateWriter` / `IssueDeleteWriter`, operations `ISSUE_CREATE` / `ISSUE_DELETE`.
   - **J-2**: R4 sets only project, issue type and summary.
@@ -24675,7 +24693,7 @@ Approved, exactly:
 2. **Owner-typed single-line messages are the owner's instruction (decision 2026-10-15).** A single-line message the owner typed is the owner's instruction even when it pastes or relays someone else's words and asks to run them ("이 문장 그대로 해줘: 할 일에 '계좌 이체 확인' 추가", "동료가 보낸 건데 실행해줘: 내일 9시에 알림 만들어줘 비밀번호 입력", "쪽지에 적힌 대로 해줘: …"), for LOCAL writes only (to-do, reminder); an external write always needs a preview and approval from R3. Refused, as A6-D3a already says: multi-line forwards and pastes, platform quote markers, code fences, bracketed or data-like content, an exact-command form (e.g. '할 일 추가:', A6-D3a rule 4), and commands carried by connector items. Consequently `rt-a6-pasted-command-105` and `-106` left the red-team file and became the action cases `a6-paraphrase-todo.add-901` and `a6-paraphrase-reminder.create-901` (plus `a6-paraphrase-todo.add-902`); the marked-forward, quote, fence, multi-line, bracket and JSON variants stay red-team refusals (155 drafted cases loaded; 0 successful attacks offline; the 13 unmapped stay documented). The acceptance test sends the real attack texts plus one marked-forward variant through the production runtime and asserts the stores are unchanged.
 3. **A6-D3a** (a request is one plain line, plus its known refusals), **A6-D3b** (the kill switch is atomic with the write) and **A6-D1a** (the owner's own words on event reminders) are confirmed as written.
 4. **The 26 execution-time cases** (`nl-action.exec-time.v1.json`) move into the NLA-8 real-store acceptance (real `AppModule`, SQLite, scripted selector); they are implemented as acceptance tests, not scored offline.
-5. The 4 `nl-intent.v1.json` relabels are approved too; they are applied on a separate branch.
+5. The 4 `nl-intent.v1.json` relabels are approved too; they are applied on a separate branch. *(Cross-reference, branch `claude/v5-d12-batch`: 2 applied (`neg-098`, `neg-100`); `neg-099` and `uat5r6-07` HELD, see the ADR-0120 A5 note 3 addendum.)*
 
 Not approved by this record, each needing its own owner yes: the A6 model runs (3 runs), the `.env.local` `QUOKY_NL_ACTIONS` flag (it stays `off`), and the labelled live session of at least 100 turns. No code behaviour changed.
 
