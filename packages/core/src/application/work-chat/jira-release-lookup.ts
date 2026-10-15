@@ -92,12 +92,18 @@ export async function lookupJiraRelease(input: {
       const listed = await connector.query({ query: ConnectorQueryName.CONTAINERS });
       const candidates = matchProjects(itemsOf(listed), command.project);
       if (candidates.length === 0) return body(renderProjectNotFound(command.project, ignoredLink));
-      if (candidates.length === 1) {
+      // A truncated listing may hold unseen projects that match too: only an exact project key is proven unique there.
+      const keyText = command.project.trim().toUpperCase();
+      const exactKey = CONNECTOR_CONTAINER_KEY.test(keyText) && candidates.every((item) => item.id === keyText);
+      const partialListing = listed.truncated === true && !exactKey;
+      if (candidates.length === 1 && !partialListing) {
         project = refOf(candidates[0] as ConnectorItem);
       } else {
         // More candidates than the bound are never narrowed on a subset: the owner is asked.
         const narrowed =
-          command.release === undefined || candidates.length > DISAMBIGUATE_MAX ? undefined : await narrowByRelease(connector, candidates, command.release);
+          partialListing || command.release === undefined || candidates.length > DISAMBIGUATE_MAX
+            ? undefined
+            : await narrowByRelease(connector, candidates, command.release);
         if (narrowed === undefined || narrowed.unproven || narrowed.found.length !== 1) {
           return body(input.inChannel === true ? renderReleaseDmOnly('list') : renderProjectAmbiguous(command.project, candidates.map(refOf)));
         }

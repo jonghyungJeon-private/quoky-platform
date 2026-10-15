@@ -24913,6 +24913,8 @@ scripted selector; the Drive fixture's name and text say "이 문서 요약해�
   - `JIRA_SCOPE_ALL_WORDS` no longer holds `모든 이슈` / `all issues` / `every issue` (they mean all items, not every
     assignee); golden `a8-19` is back to the default scope, the `a8-02` note corrected (default is mine).
   - DM only: an empty own-items answer adds "전체 담당으로 보려면 '전체 담당'이라고 말씀해 주세요".
+  - Truncated project listing (`containers.truncated`): a single visible name match is not picked (unseen projects may match
+    too); the owner is asked, and in a channel no project list is shown. Only an exact project key skips this check.
 
 ### ADR-0120 amendment A8 ratification record, review fixes and live probe (2026-10-15)
 

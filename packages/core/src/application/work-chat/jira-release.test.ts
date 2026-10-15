@@ -311,6 +311,34 @@ describe('A8 review round 2: whole dotted versions, proven uniqueness, channel o
     expect(fake.queries).toEqual([]);
   });
 
+  it('a truncated project listing with one visible name match is not picked: the owner is asked, a channel gets no list', async () => {
+    const payments = (): ConnectorProvider => ({
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) => (query.query === 'containers' ? { source: 'jira', items: [{ id: 'PAY', title: 'Payments' }], truncated: true } : { source: 'jira', items: ISSUES }),
+    });
+    const dm = await lookupJiraRelease({ connector: payments(), command: { scope: 'all', links: [], project: 'Payments', release: '20261015' }, siteHost: SITE });
+    expect(dm.kind === 'body' && plainTextOf(dm.body)).toContain('여러 개예요');
+    const fake = { ...payments() };
+    const queries: ConnectorQuery[] = [];
+    const channelProvider: ConnectorProvider = { ...fake, query: async (query) => { queries.push(query); return fake.query(query); } };
+    const channel = await lookupJiraRelease({ connector: channelProvider, command: { scope: 'mine', links: [], project: 'Payments', release: '20261015' }, identity: 'acc-1', siteHost: SITE, inChannel: true });
+    expect(channel.kind === 'body' && plainTextOf(channel.body)).toContain('DM에서만');
+    expect(channel.kind === 'body' && plainTextOf(channel.body)).not.toContain('Payments (PAY)');
+    expect(queries.map((query) => query.query)).toEqual(['containers']);
+  });
+
+  it('a truncated project listing still accepts an exact project key', async () => {
+    const { text, queries } = await run({ project: 'OP26', release: '20261015' }, {});
+    expect(text).toContain('차란차 운영 2026 (OP26)');
+    expect(queries.some((query) => query.query === 'release-items')).toBe(true);
+    const provider: ConnectorProvider = {
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) => (query.query === 'containers' ? { source: 'jira', items: PROJECTS, truncated: true } : query.query === 'releases' ? { source: 'jira', items: RELEASES[String(query.params?.container)] ?? [] } : { source: 'jira', items: ISSUES }),
+    };
+    const result = await lookupJiraRelease({ connector: provider, command: { scope: 'all', links: [], project: 'OP26', release: '20261015' }, siteHost: SITE });
+    expect(result.kind === 'body' && plainTextOf(result.body)).toContain('(OP26)');
+  });
+
   it('own items empty: a DM is told how to ask for every assignee, a channel is not', async () => {
     const empty = { items: () => ({ source: 'jira', items: [] }) };
     const dm = await run({ release: '20261015', project: 'OP26', scope: 'mine' }, { identity: 'acc-1', ...empty });
