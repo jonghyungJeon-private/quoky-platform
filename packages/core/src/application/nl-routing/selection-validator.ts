@@ -27,7 +27,7 @@ import {
   nlRangeKeepsWeekday,
   nlKeywordIsTitle,
   nlSingleWeekday,
-  nlMultiWeekdayBoundKeeps,
+  nlMultiWeekdayBound,
   nlUntilBound,
   nlUntilSymbolWeekday,
   nlWeekdayMentions,
@@ -223,9 +223,18 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     } else if (weekday?.boundConflict === true) {
       // The mentions disagree on the bound or, with a bound, on the week: no reading is inferred, every period asks.
       return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
-    } else if (weekday === undefined && nlMultiWeekdayBoundKeeps(range, mentions, ctx.now, ctx.timeZone) === false) {
-      return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
-    } else if (typeof rangeValue === 'string' && (weekday !== undefined || mentions.length === 0)) {
+    } else if (weekday === undefined && mentions.length > 0) {
+      // Several weekdays: the exact span, or (both bounds explicit) the one allowed span inside the selected period.
+      const multi = nlMultiWeekdayBound(range, mentions, ctx.now, ctx.timeZone);
+      if (multi === 'refuse') return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
+      if (typeof multi === 'object') {
+        args[rangeSpec.name] = multi.canonical;
+        range = resolveNlRange(multi.canonical, ctx.now, ctx.timeZone);
+      } else if (multi === 'n/a' && typeof rangeValue === 'string' && nlUntilSymbolWeekday(rangeValue) !== undefined) {
+        // Several weekdays without one end-bounded span: an `until-*` symbol has nothing to stand on.
+        return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
+      }
+    } else if (typeof rangeValue === 'string') {
       const previousRange = ctx.previousArgs?.[rangeSpec.name];
       const until = nlUntilBound(rangeValue, range, weekday, typeof previousRange === 'string' ? previousRange : undefined, ctx.now, ctx.timeZone);
       if (until === 'refuse') return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
@@ -233,9 +242,6 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
         args[rangeSpec.name] = until.canonical;
         range = resolveNlRange(until.canonical, ctx.now, ctx.timeZone);
       }
-    } else if (typeof rangeValue === 'string' && nlUntilSymbolWeekday(rangeValue) !== undefined && nlMultiWeekdayBoundKeeps(range, mentions, ctx.now, ctx.timeZone) !== true) {
-      // Several weekdays without one end-bounded span: an `until-*` symbol has nothing to stand on.
-      return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
     }
   }
   if (rangeSpec !== undefined && weekday !== undefined) {

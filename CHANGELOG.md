@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — "X부터 Y까지" span canonical form (ADR-0120 A7 implementation note, 2026-10-15)
+
+- Live: "다음 주 월요일부터 금요일까지 일정" was asked because the selector named next week. When both bounds are explicit
+  and the selected period contains exactly one allowed span, Core now shows that span (2026-10-19..2026-10-23); two
+  candidate spans or none are still asked. No prompt change.
+
 ## Unreleased — Document summaries: attribution by construction, one regeneration, never looser than main (ADR-0104 D1 amendment, owner-approved 2026-10-15)
 
 - **Live fix.** `1번 문서 요약해줘` on a dogfood-tracker Google Sheet was replaced whole by the not-done notice. The sheet's

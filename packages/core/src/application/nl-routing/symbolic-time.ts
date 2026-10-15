@@ -678,22 +678,46 @@ export function nlUntilBound(
 }
 
 /**
- * ADR-0120 amendment A7: a period when the owner names SEVERAL weekdays with bounds ("목요일부터 토요일까지").
- * `undefined` when the rule does not apply (fewer than two weekdays, or no end bound); otherwise whether the period runs
- * exactly from the start-bounded weekday (when one is given) to the end-bounded weekday, each in its own week anchor and
- * direction. No symbol names such a span, so this mostly asks; it never lets an unrelated period through.
+ * ADR-0120 amendment A7: a period when the owner names SEVERAL weekdays with an end bound ("목요일부터 토요일까지"). `'n/a'`
+ * when the rule does not apply (fewer than two weekdays, or no end bound). Otherwise the period must EXACTLY equal one
+ * allowed [start day, first end weekday on or after it] span (`'keep'`), or it is refused. A7 implementation note
+ * (span canonical form): when both bounds are explicit (부터 / from and 까지 / through) and the selected period CONTAINS
+ * exactly one allowed span ("다음 주 월요일부터 금요일까지" read as `next-week`), it is spelled as that explicit span
+ * (`YYYY-MM-DD..YYYY-MM-DD`, Core's dates), never wider than the selected period; two contained spans are asked.
  */
+export function nlMultiWeekdayBound(range: NlResolvedRange | undefined, mentions: readonly NlWeekdayMention[], now: IsoTimestamp, timeZone: string): 'n/a' | NlUntilBoundOutcome {
+  const result = multiWeekdaySpans(mentions, now, timeZone);
+  if (result === 'n/a') return 'n/a';
+  if (result === 'none' || range === undefined) return 'refuse';
+  const same = (left: LocalDate, right: LocalDate) => compareLocalDates(left, right) === 0;
+  const last = lastDayOf(range);
+  if (result.spans.some(([from, to]) => same(range.startDate, from) && same(last, to))) return 'keep';
+  if (!result.grounded || range.upcoming === true) return 'refuse';
+  const inside = result.spans.filter(([from, to]) => compareLocalDates(from, range.startDate) >= 0 && compareLocalDates(to, last) <= 0);
+  const unique = inside.filter(([from, to], index) => inside.findIndex(([f, t]) => same(f, from) && same(t, to)) === index);
+  if (unique.length !== 1) return 'refuse';
+  const [from, to] = unique[0] as readonly [LocalDate, LocalDate];
+  return { canonical: `${isoDateOf(from)}..${isoDateOf(to)}` };
+}
+
+/** Whether the rule above keeps the period as it is (`undefined`: not applicable). */
 export function nlMultiWeekdayBoundKeeps(range: NlResolvedRange | undefined, mentions: readonly NlWeekdayMention[], now: IsoTimestamp, timeZone: string): boolean | undefined {
-  if (new Set(mentions.map((mention) => mention.weekday)).size < 2) return undefined;
+  const outcome = nlMultiWeekdayBound(range, mentions, now, timeZone);
+  return outcome === 'n/a' ? undefined : outcome === 'keep';
+}
+
+/** The allowed [start, end] spans of several end-bounded weekdays, and whether both bounds are explicit. */
+function multiWeekdaySpans(mentions: readonly NlWeekdayMention[], now: IsoTimestamp, timeZone: string): { readonly spans: ReadonlyArray<readonly [LocalDate, LocalDate]>; readonly grounded: boolean } | 'n/a' | 'none' {
+  if (new Set(mentions.map((mention) => mention.weekday)).size < 2) return 'n/a';
   const ends = mentions.filter((mention) => mention.until === true);
-  if (ends.length === 0) return undefined;
-  if (range === undefined || new Set(ends.map((mention) => mention.weekday)).size > 1) return false;
+  if (ends.length === 0) return 'n/a';
+  if (new Set(ends.map((mention) => mention.weekday)).size > 1) return 'none';
   const end = ends[0] as NlWeekdayMention;
   // The start is the start-bounded weekday (부터, from, since), or else the one other weekday named ("this Wednesday
   // through Friday"); more than one candidate start is no single span.
   const marked = mentions.filter((mention) => mention.start === true);
   const startPool = marked.length > 0 ? marked : mentions.filter((mention) => mention.weekday !== end.weekday);
-  if (new Set(startPool.map((mention) => mention.weekday)).size !== 1) return false;
+  if (new Set(startPool.map((mention) => mention.weekday)).size !== 1) return 'none';
   const start = startPool[0] as NlWeekdayMention;
   // The span must EXACTLY equal [startDay, endDay]: startDay an allowed resolution of the start bound, endDay the first
   // end weekday on or after it. An anchored bound's allowed days: a Korean week word gives that week's day; an English
@@ -725,7 +749,9 @@ export function nlMultiWeekdayBoundKeeps(range: NlResolvedRange | undefined, men
     const endDay = addLocalDays(today, (end.weekday - weekdayOf(today) + 7) % 7);
     spans.push([addLocalDays(endDay, -gap), endDay]);
   }
-  return spans.some(([from, to]) => same(range.startDate, from) && same(lastDayOf(range), to));
+  // Narrowing needs exactly one start-bounded and one end-bounded weekday and nothing else ("이번 주 월요일부터 금요일까지,
+  // 다음 주 월요일부터 금요일까지" has more bounds: no narrowing, asked).
+  return { spans, grounded: mentions.length === 2 && marked.length === 1 && ends.length === 1 && marked[0] !== ends[0] };
 }
 
 /** The two `until-*` forms of the owner's weekday, the owner's own spelling first (다음 주 → until-next-*). */

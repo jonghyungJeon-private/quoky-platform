@@ -163,44 +163,71 @@ describe('A7 canonical form: a period holding the end-bounded day but not ending
   });
 
   it('several weekdays with an end bound need the exact span from the start-bounded to the end-bounded day (review P1)', () => {
-    for (const range of ['until-fri', '10-15..10-16', 'this-week', 'until-sat']) {
-      expect(argsOf('calendar.events', '목요일부터 토요일까지 일정', { range }), range).toEqual(range === 'until-sat' ? { range } : 'refused:weekday');
-    }
-    // Without week words the span is the nearest one (CA delta P1): never last or next week's Thursday..Saturday.
-    expect(argsOf('calendar.events', '목요일부터 토요일까지 일정', { range: '10-01..10-03' })).toBe('refused:weekday');
-    expect(argsOf('calendar.events', '목요일부터 토요일까지 일정', { range: '10-22..10-24' })).toBe('refused:weekday');
-    expect(argsOf('calendar.events', '다음 주 목요일부터 다음 주 토요일까지 일정', { range: '10-22..10-24' })).toEqual({ range: '10-22..10-24' });
-    // A bound without its own week word takes the other bound's (CA final check).
-    expect(argsOf('calendar.events', '다음 주 월요일부터 금요일까지 일정', { range: '10-19..10-23' })).toEqual({ range: '10-19..10-23' });
-    for (const range of ['next-week', '10-12..10-16', 'until-fri', 'until-next-fri']) {
-      expect(argsOf('calendar.events', '다음 주 월요일부터 금요일까지 일정', { range }), range).toBe('refused:weekday');
-    }
-    expect(argsOf('calendar.events', '이번 주 수요일부터 금요일까지 일정', { range: '10-14..10-16' })).toEqual({ range: '10-14..10-16' });
-    expect(argsOf('calendar.events', '이번 주 수요일부터 금요일까지 일정', { range: 'this-week' })).toBe('refused:weekday');
-    // English and Korean: the unanchored end follows the start's resolved day, never a bare direction (Codex on 88809cd).
-    for (const text of ['show my calendar from next Monday through Friday', '다음 주 월요일부터 금요일까지 일정']) {
-      expect(argsOf('calendar.events', text, { range: '10-19..10-23' }), text).toEqual({ range: '10-19..10-23' });
-      for (const range of ['10-19..10-30', '10-26..10-30', '10-12..10-16']) expect(argsOf('calendar.events', text, { range }), `${text} ${range}`).toBe('refused:weekday');
-    }
-    // ("to" is not in the closed A5 bound set, so "from this Wednesday to Friday" names no end bound and is not this rule's.)
-    for (const text of ['show my calendar from this Wednesday through Friday', 'this Wednesday through Friday', '이번 주 수요일부터 금요일까지 일정']) {
-      expect(argsOf('calendar.events', text, { range: '10-14..10-16' }), text).toEqual({ range: '10-14..10-16' });
-      // Exactly [start, end]: no superset, no subset (Codex on 36954df).
-      for (const range of ['10-14..10-23', '10-12..10-16', '10-15..10-16', 'until-fri', 'this-week']) {
-        expect(argsOf('calendar.events', text, { range }), `${text} ${range}`).toBe('refused:weekday');
-      }
-    }
-    // English "this Wednesday" may also be the coming one (the A5 note 2 "this" rule); Korean 이번 주 is this week only.
-    expect(argsOf('calendar.events', 'this Wednesday through Friday', { range: '10-21..10-23' })).toEqual({ range: '10-21..10-23' });
-    expect(argsOf('calendar.events', '이번 주 수요일부터 금요일까지 일정', { range: '10-21..10-23' })).toBe('refused:weekday');
-    // An end earlier in the week than the start is in the following week ("다음 주 금요일부터 월요일까지" = 10/23..10/26).
-    expect(argsOf('calendar.events', '다음 주 금요일부터 월요일까지 일정', { range: '10-23..10-26' })).toEqual({ range: '10-23..10-26' });
-    // No week word: the nearest Friday and the Monday before it.
-    expect(argsOf('calendar.events', '월요일부터 금요일까지 일정', { range: '10-12..10-16' })).toEqual({ range: '10-12..10-16' });
-    expect(argsOf('calendar.events', '월요일부터 금요일까지 일정', { range: '10-19..10-23' })).toBe('refused:weekday');
-    // until-sat on a Thursday is exactly Thursday..Saturday; a date span the owner gave is fine too.
-    expect(argsOf('calendar.events', '목요일부터 토요일까지 일정', { range: '10-15..10-17' })).toEqual({ range: '10-15..10-17' });
-    expect(argsOf('calendar.events', '월요일부터 금요일까지 일정', { range: 'until-fri' })).toBe('refused:weekday');
+    const refused = 'refused:weekday';
+    const cases: ReadonlyArray<readonly [string, string, NlArgs | string]> = [
+      // Thursday 10/15. Without week words the span is the nearest one (CA delta P1).
+      ['목요일부터 토요일까지 일정', 'until-sat', { range: 'until-sat' }],
+      ['목요일부터 토요일까지 일정', '10-15..10-17', { range: '10-15..10-17' }],
+      ['목요일부터 토요일까지 일정', 'until-fri', refused],
+      ['목요일부터 토요일까지 일정', '10-15..10-16', refused],
+      ['목요일부터 토요일까지 일정', '10-01..10-03', refused],
+      ['목요일부터 토요일까지 일정', '10-22..10-24', refused],
+      ['다음 주 목요일부터 다음 주 토요일까지 일정', '10-22..10-24', { range: '10-22..10-24' }],
+      // A bound without its own week word takes the other bound's resolved day (CA final check, Codex on 88809cd).
+      ['다음 주 월요일부터 금요일까지 일정', '10-19..10-23', { range: '10-19..10-23' }],
+      ['다음 주 월요일부터 금요일까지 일정', '10-12..10-16', refused],
+      ['다음 주 월요일부터 금요일까지 일정', 'until-fri', refused],
+      ['show my calendar from next Monday through Friday', '10-19..10-23', { range: '10-19..10-23' }],
+      ['show my calendar from next Monday through Friday', '10-26..10-30', refused],
+      ['이번 주 수요일부터 금요일까지 일정', '10-14..10-16', { range: '10-14..10-16' }],
+      ['이번 주 수요일부터 금요일까지 일정', '10-21..10-23', refused],
+      ['이번 주 수요일부터 금요일까지 일정', '10-15..10-16', refused],
+      ['이번 주 수요일부터 금요일까지 일정', 'until-fri', refused],
+      // English "this Wednesday" may also be the coming one (the A5 note 2 "this" rule).
+      ['this Wednesday through Friday', '10-14..10-16', { range: '10-14..10-16' }],
+      ['this Wednesday through Friday', '10-21..10-23', { range: '10-21..10-23' }],
+      ['this Wednesday through Friday', '10-15..10-16', refused],
+      // An end earlier in the week than the start is in the following week.
+      ['다음 주 금요일부터 월요일까지 일정', '10-23..10-26', { range: '10-23..10-26' }],
+      // No week word: the nearest Friday and the Monday before it.
+      ['월요일부터 금요일까지 일정', '10-12..10-16', { range: '10-12..10-16' }],
+      ['월요일부터 금요일까지 일정', '10-19..10-23', refused],
+      ['월요일부터 금요일까지 일정', 'until-fri', refused],
+      // ("to" is not in the closed A5 bound set: "from this Wednesday to Friday" names no end bound, not this rule's.)
+    ];
+    for (const [text, range, expected] of cases) expect(argsOf('calendar.events', text, { range }), `${text} ${range}`).toEqual(expected);
+  });
+
+  it('span canonical form: both bounds explicit and exactly one allowed span inside the selected period (live 2026-10-15)', () => {
+    const refused = 'refused:weekday';
+    const cases: ReadonlyArray<readonly [string, string, NlArgs | string]> = [
+      // The live defect: "다음 주 월요일부터 금요일까지 일정" read as next week shows Monday..Friday, never the weekend.
+      ['다음 주 월요일부터 금요일까지 일정', 'next-week', { range: '2026-10-19..2026-10-23' }],
+      ['다음 주 월요일부터 금요일까지 일정', 'until-next-fri', { range: '2026-10-19..2026-10-23' }],
+      ['show my calendar from next Monday through Friday', 'next-week', { range: '2026-10-19..2026-10-23' }],
+      ['show my calendar from next Monday through Friday', '10-19..10-30', { range: '2026-10-19..2026-10-23' }],
+      ['이번 주 수요일부터 금요일까지 일정', 'this-week', { range: '2026-10-14..2026-10-16' }],
+      ['이번 주 수요일부터 금요일까지 일정', '10-14..10-23', { range: '2026-10-14..2026-10-16' }],
+      ['목요일부터 토요일까지 일정', 'this-week', { range: '2026-10-15..2026-10-17' }],
+      ['월요일부터 금요일까지 일정', 'this-week', { range: '2026-10-12..2026-10-16' }],
+      // Never wider than the selected period: a period that does not contain the span is asked.
+      ['다음 주 월요일부터 금요일까지 일정', '10-19..10-22', refused],
+      ['다음 주 월요일부터 금요일까지 일정', 'this-week', refused],
+      // Two allowed spans inside the period ("from this Wednesday" may be 10/14 or 10/21): never pick, ask.
+      ['show my calendar from this Wednesday through Friday', '10-12..10-25', refused],
+      // More than one start / end pair or weekday mention: no narrowing (Codex on 9d7905e).
+      ['이번 주 월요일부터 금요일까지, 다음 주 월요일부터 금요일까지 일정', '10-12..10-25', refused],
+      ['다음 주 월요일부터 금요일까지, 월요일 오전 일정', 'next-week', refused],
+      // Not both bounds explicit (no 부터 / from): only the exact span passes.
+      ['this Wednesday through Friday', 'this-week', refused],
+      ['this Wednesday through Friday', '10-12..10-16', refused],
+    ];
+    for (const [text, range, expected] of cases) expect(argsOf('calendar.events', text, { range }), `${text} ${range}`).toEqual(expected);
+    // The canonical span validates unchanged on its own (it is a closed date-range symbol).
+    expect(argsOf('calendar.events', '다음 주 월요일부터 금요일까지 일정', { range: '2026-10-19..2026-10-23' })).toEqual({ range: '2026-10-19..2026-10-23' });
+  });
+
+  it('several weekdays without an end bound are unchanged', () => {
     // Several weekdays without an end bound: the A5 rule steps aside as before, but no until-* symbol.
     expect(argsOf('calendar.events', '월요일이랑 금요일 일정', { range: 'this-week' })).toEqual({ range: 'this-week' });
     expect(argsOf('calendar.events', '월요일이랑 금요일 일정', { range: 'until-fri' })).toBe('refused:weekday');

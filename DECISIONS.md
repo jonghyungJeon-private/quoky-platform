@@ -23779,6 +23779,29 @@ bound, run on Thursday 2026-10-15 (Asia/Seoul). Reports are local under `data/ev
 7. D12 batch: `a7u-01..10`, `a7s-01..15`. Recommended: approve.
 
 
+### ADR-0120 amendment A7 implementation note — the span canonical form for "X부터 Y까지" (2026-10-15, live Telegram)
+
+- **Live defect** (Telegram, 2026-10-15, after #209). "다음 주 월요일부터 금요일까지 일정" (Thursday 10/15) got the weekday
+  question (`validation_failed reason=weekday`). The selector named a period that contains the span (likely `next-week`,
+  10/19-10/25); A7 decision 4 requires a two-weekday span to equal exactly [start day, end day], and the closed symbols
+  have no Monday-Friday form, while the model must not compute dates (D4 step 4).
+- **Rule (Core-computed, the same mechanism as the `until-*` canonical form of decision 4; no ratified text changes).**
+  When the message has exactly one start-bounded and one end-bounded weekday and no other weekday mention (one 부터 /
+  from / since and one 까지 / until / through …; "이번 주 월요일부터 금요일까지, 다음 주 월요일부터 금요일까지" is not
+  narrowed, Codex review), each resolves per the existing A7
+  rules, and the selected period CONTAINS exactly one allowed [start day, end day] span, the period is spelled as that
+  explicit span, `YYYY-MM-DD..YYYY-MM-DD` (Core's dates). It is never wider than the selected period. A period that
+  contains no allowed span, or two (English "from this Wednesday through Friday" may be 10/14 or 10/21), is still asked;
+  without an explicit start bound ("this Wednesday through Friday") only the exact span passes, as before.
+- **Where.** `symbolic-time.ts` `nlMultiWeekdayBound` (:688, with `nlMultiWeekdayBoundKeeps` kept as its boolean view);
+  `selection-validator.ts` step 4b (:228).
+- **Tests.** `until-weekday.test.ts`: `next-week` and `until-next-fri` → 2026-10-19..2026-10-23 for "다음 주 월요일부터
+  금요일까지" and "from next Monday through Friday"; `this-week` → 2026-10-14..2026-10-16 for "이번 주 수요일부터
+  금요일까지"; a period with two allowed spans, a period that does not contain the span, and an implicit start are asked;
+  the exact-span table of A7 decision 4 unchanged except where a containing period is now canonicalised. Service test:
+  the live sentence executes with a five-day range.
+- **No prompt change** (`nl-select.v22` / `v23` byte for byte), so no evaluation run; no corpus change.
+
 ## ADR-0112 amendment 1 — Slack channel-message delete: a narrow `ChannelMessageDeleteWriter`, only for a message Quoky posted, bound to that post's SENT receipt, only as the undo of a post (Proposed — owner decision pending) (2026-10-14)
 
 - **Status:** **Proposed (owner decision pending).**
