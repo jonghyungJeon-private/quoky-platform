@@ -434,6 +434,45 @@ describe('numbered to-do commands resolve against the fresh listing snapshot (A6
     expect(extended).toMatchObject({ action: { label: 4 } });
   });
 
+  it('Codex P1: an ambiguous prompt after drift records the numbers it shows, so "2번 완료" hits the item shown as 2', async () => {
+    for (const [phrase, verb] of [['완료 처리: 보고서', '완료 처리'], ['할 일 취소: 보고서', '취소'], ['할 일 연결: 보고서 Jira PROJ-9', '연결']] as const) {
+      const { desk, rows, work } = world();
+      for (const title of ['기타 일', '보고서 초안', '보고서 검토']) {
+        await say(desk, `할 일 추가: ${title}`);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+      const snapshot = await listed(desk);
+      await work.transition(byTitle(rows, '기타 일').id, WorkItemStatus.COMPLETED);
+      const asked = await say(desk, phrase, snapshot);
+      expect(text(asked), phrase).toBe(`일치하는 할 일이 여러 개라 아무것도 ${verb}하지 않았어요. 번호로 지정해 주세요.\n1. 보고서 초안\n2. 보고서 검토`);
+      const items = (asked as { listing?: { items: ListingSlot['items'] } }).listing?.items;
+      expect(items, phrase).toEqual([
+        { label: 1, id: byTitle(rows, '보고서 초안').id },
+        { label: 2, id: byTitle(rows, '보고서 검토').id },
+      ]);
+      // The runtime replaces the slot with what the prompt showed; "2번 완료" then means 보고서 검토, not the old 2 (초안).
+      const followed = await say(desk, '2번 완료', { source: 'todo', at: NOW, items: items ?? [] });
+      expect(text(followed), phrase).toBe('할 일을 완료 처리했어요: "보고서 검토"');
+      expect(byTitle(rows, '보고서 초안').status, phrase).toBe(WorkItemStatus.ACTIVE);
+      expect(byTitle(rows, '보고서 초안').resourceRefs, phrase).toEqual([]);
+    }
+    // With receipts off nothing is recorded (exactly as before A6).
+    const off = world(false);
+    for (const title of ['보고서 초안', '보고서 검토']) await say(off.desk, `할 일 추가: ${title}`);
+    expect(await say(off.desk, '완료 처리: 보고서')).not.toHaveProperty('listing');
+  });
+
+  it('a status answer for an open item the fresh listing does not show names no number', async () => {
+    const { desk } = world();
+    await addThree(desk);
+    const snapshot = await listed(desk);
+    await desk.handleAction(cmd('todo.add', { title: '목록 밖 일' }), owner);
+    expect(text(await say(desk, '목록 밖 일 완료했나?', snapshot))).toBe('"목록 밖 일"는 아직 열린 할 일이에요. 번호는 "내 할 일"로 확인해 주세요.');
+    // Without a listing the live number is named, and the live command resolves it the same way.
+    expect(text(await say(desk, '목록 밖 일 완료했나?'))).toContain('(4번). 완료하려면 "완료 처리: 4"');
+    expect(text(await say(desk, '완료 처리: 4'))).toBe('할 일을 완료 처리했어요: "목록 밖 일"');
+  });
+
   it('read-only hints name only a number the numbered command resolves to the same item', async () => {
     const { desk, rows, work } = world();
     await addThree(desk);

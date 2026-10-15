@@ -23,6 +23,8 @@ import type {
 /** Below the 1,900-character message budget so a footer or notice can still be appended. */
 export const WORK_CHAT_REPLY_MAX_CHARS = 1800;
 const TODO_LIST_MAX_ROWS = 15;
+/** The candidate rows an ambiguous to-do reply shows (and so records as the listing, A6-D2 amendment). */
+export const TODO_AMBIGUOUS_MAX_ROWS = TODO_LIST_MAX_ROWS;
 const EXTERNAL_LIST_MAX_ROWS = 10;
 const LIST_TITLE_MAX_CHARS = 80;
 const REFS_SHOWN = 3;
@@ -159,11 +161,11 @@ export function renderTodoAmbiguous(
   action: keyof typeof ACTION_LABEL,
   candidates: ReadonlyArray<{ no: number; item: WorkItem }>,
 ): MessageBody {
-  const rows = candidates.slice(0, TODO_LIST_MAX_ROWS).map(({ no, item }) => ({
+  const rows = candidates.slice(0, TODO_AMBIGUOUS_MAX_ROWS).map(({ no, item }) => ({
     text: messageContent(`${no}. `, titleOf(item)),
     droppable: true,
   }));
-  const more = candidates.length > TODO_LIST_MAX_ROWS ? candidates.length - TODO_LIST_MAX_ROWS : 0;
+  const more = candidates.length > TODO_AMBIGUOUS_MAX_ROWS ? candidates.length - TODO_AMBIGUOUS_MAX_ROWS : 0;
   return fit([
     { text: `일치하는 할 일이 여러 개라 아무것도 ${ACTION_LABEL[action]}하지 않았어요. 번호로 지정해 주세요.` },
     ...rows,

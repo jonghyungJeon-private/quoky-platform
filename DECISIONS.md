@@ -26543,8 +26543,15 @@ the last round under the fix-loop cap.**
      so the owner saw it.
   4. Read-only hints and status answers ("2번 완료했어", "X 완료했나?") name only a number that the numbered command would
      resolve to the same item. With a fresh slot that does not show the item, no number is named.
-  5. Undo is unchanged: the per-action inverse on the same item id (record A).
-  6. Title targets ("완료 처리: 보고서") are unchanged.
+  5. Every anchored reply that shows to-do numbers records what it showed. The list and the drift refusal record the
+     open list, and an ambiguous title prompt ("번호로 지정해 주세요", for complete, cancel and link) records its numbered
+     candidates as the listing (Codex P1). So a numbered follow-up resolves against the numbers on screen, never against
+     an older snapshot. Audit of the other number-showing replies: hints and status answers name a slot label or no
+     number (item 4); the NL echoes and the NL "which one" candidates already merge the number they show (A6-D2). The
+     daily brief and the status views are unnumbered, the composer's work-surface reply has no local to-dos, and
+     reminder `#N` is stable.
+  6. Undo is unchanged: the per-action inverse on the same item id (record A).
+  7. Title targets ("완료 처리: 보고서") resolve as before; only the numbers their ambiguous prompt shows are recorded.
 - **Scope.** Snapshots exist only while `QUOKY_NL_INTENT_MODE=active` and `QUOKY_NL_ACTIONS` is not `off`, and the desk
   honours one only with `actionReceipts`. With actions `off` the anchored grammar is byte-identical to before. No new
   port, storage or migration. The turn handler reads the slot from `TurnHandlerContext.session.metadata`, and

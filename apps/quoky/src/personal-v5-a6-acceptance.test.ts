@@ -268,6 +268,23 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect((await todos()).map((item) => `${item.id}:${item.status}`).join(',')).toBe(before);
   });
 
+  it('A6-D2 amendment (Codex P1): an ambiguous anchored prompt after drift becomes the listing; "N번 완료" follows the numbers on screen', async () => {
+    for (const title of ['감사 기타', '감사보고 초안', '감사보고 검토']) await send(`할 일 추가: ${title}`);
+    await turn('내 할 일 보여줘');
+    const open = (await todos()).filter((item) => item.status === 'ACTIVE');
+    const [other, draft, review] = ['감사 기타', '감사보고 초안', '감사보고 검토'].map((title) => open.find((item) => item.title === title)!);
+    const shown = (id: string) => open.findIndex((item) => item.id === id) + 1;
+    expect((await turn(`${shown(other.id)}번 완료`)).text).toBe('할 일을 완료 처리했어요: "감사 기타"');
+    const live = (await todos()).filter((item) => item.status === 'ACTIVE');
+    const liveNo = (id: string) => live.findIndex((item) => item.id === id) + 1;
+    const asked = await turn('완료 처리: 감사보고');
+    expect(asked.text).toContain(`${liveNo(draft.id)}. 감사보고 초안`);
+    expect(asked.text).toContain(`${liveNo(review.id)}. 감사보고 검토`);
+    const done = await turn(`${liveNo(review.id)}번 완료`);
+    expect(done.text).toBe('할 일을 완료 처리했어요: "감사보고 검토"');
+    expect((await storage.workItems.get(draft.id))?.status).toBe('ACTIVE');
+  });
+
   it('live phrase 1: a grammar-made reminder, then "방금 거 취소해줘" cancels that #N; "되돌려줘" schedules the same #N again', async () => {
     const created = await turn('내일 9시에 물 마시라고 알려줘');
     expect(created.selects).toHaveLength(0);
