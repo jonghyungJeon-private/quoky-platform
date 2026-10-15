@@ -14,6 +14,7 @@ import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlSele
 import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
+import { renderListStatusDmOnly } from '../nl-routing/nl-action-policy';
 import { isDirectConversation } from '../message-rendering';
 import { surfaceClaimOf, surfaceGroupsOfWorkChatCommand } from '../surface-grants/surface-group-map';
 import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
@@ -133,6 +134,10 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     const prepared = selected.entryId === 'jira.release' ? prepareSelectionInput(ctx.message.text, 0, ctx.message.quotedRanges ?? []) : undefined;
     const mapped = workChatCommandForSelection(selected, prepared === undefined || 'skip' in prepared ? '' : prepared.groundingText);
     if (mapped === null) return null;
+    // A status view is DM-only until ADR-0122 P1 (owner: channels default-deny); nothing is read in a channel.
+    if (mapped.kind === 'todo.list' && mapped.status !== undefined && !isDirectConversation(ctx.message.context)) {
+      return { reply: outboundMessage(ctx.message.context, renderListStatusDmOnly(selected.language)) };
+    }
     // ADR-0120 A8 owner decision 7: a release listing knows whether it answers in a channel.
     const command = mapped.kind === 'release' && !isDirectConversation(ctx.message.context) ? { ...mapped, inChannel: true as const } : mapped;
     const { outcome, listed } = await this.run(command, ctx);

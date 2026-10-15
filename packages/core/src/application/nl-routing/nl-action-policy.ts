@@ -187,6 +187,14 @@ export function renderDeicticPayload(language: Lang): string {
 }
 
 /** A6-D6 stale-command guard and every "say it again" answer. */
+/**
+ * The list status views (canceled, completed / past, all) are DM-only until ADR-0122 P1 ships (owner: channels default-deny;
+ * CA review): a channel gets this fixed reply and nothing is read.
+ */
+export function renderListStatusDmOnly(language: Lang): string {
+  return language === 'en' ? 'I show canceled, finished or all items only in a DM.' : '취소·완료·지난 항목이나 전체 목록은 DM에서만 보여 드려요.';
+}
+
 /** A6 R1 review: an action the open question did not ask for is not run (that one turn; the reply ends the question). */
 export function renderQuestionOpen(language: Lang): string {
   return language === 'en' ? 'A question is still open, so I did not do that. Please tell me again.' : '질문이 열려 있어 실행하지 않았어요. 다시 말씀해 주세요.';

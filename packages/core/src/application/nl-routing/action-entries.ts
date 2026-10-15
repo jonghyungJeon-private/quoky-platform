@@ -430,26 +430,47 @@ export function isNlBulkRequest(groundingText: string): boolean {
 // "처리 방법", "체크해봐" are not completions (CA review).
 const TODO_COMPLETE_WORDS: readonly string[] = ['완료', '끝냈', '끝났', '끝내', '끝마', '마쳤', '마치', '마무리', '다 했', '다했', '해치웠', 'done', 'complete', 'completed', 'finish', 'finished', 'check off'];
 const CANCEL_WORDS: readonly string[] = ['취소', '캔슬', '삭제', '지워', '지우', '지운', '없애', '없던 걸로', '없던걸로', '제거', '제외', '그만', '필요 없', '필요없', 'cancel', 'remove', 'delete', 'drop', 'scrap'];
-const TODO_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '빼', '안 할', '안할'];
-const REMINDER_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '꺼', '끄', '끈', '멈춰', '안 해도', '안해도', 'stop', 'turn off', 'disable'];
-const TODO_ADD_WORDS: readonly string[] = ['추가', '넣어', '넣자', '넣기', '올려', '적어', '등록', '기록', '메모', 'add', 'put', 'note', 'jot'];
-const REMINDER_CREATE_WORDS: readonly string[] = ['알려', '알림', '알람', '리마인드', '리마인더', '깨워', '상기', 'remind', 'reminder', 'alert', 'ping', 'notify'];
+// No negation-shaped words ("안 할", "안 해도"): a negation in the clause voids grounding (CA review), so they cannot ground.
+const TODO_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '빼'];
+const REMINDER_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '꺼', '끄', '끈', '멈춰', 'stop', 'turn off', 'disable'];
+// Verbs only, never a source noun (CA review: "메모장 열어줘", "알림 설정 어떻게 해?" must not ground a write).
+const TODO_ADD_WORDS: readonly string[] = ['추가', '넣어', '넣자', '넣기', '올려', '적어', '등록', 'add', 'put', 'jot down'];
+const REMINDER_CREATE_WORDS: readonly string[] = [
+  '알려', '리마인드', '깨워', '상기시켜',
+  // A reminder noun only together with its verb ("알림해줘", "리마인더 설정해줘", "알림 부탁해"), never the noun alone.
+  '알림해', '알림 해', '알림 줘', '알림 걸', '알림 만들', '알림으로 만들', '알림 설정', '알림 맞춰', '알림 부탁',
+  '리마인더 설정', '리마인더 만들', '리마인더 걸', '리마인더 부탁', '알람 맞춰', '알람 걸', '알람 설정',
+  'remind', 'set a reminder', 'notify', 'alert me', 'ping me',
+];
 const UNDO_WORDS: readonly string[] = ['되돌', '돌려', '원래대로', '원상', '원복', '롤백', '무르', '물러', '취소', 'undo', 'revert', 'roll back', 'rollback'];
 /** Every Korean action word of the vocabularies above (for the glued-noun boundary of {@link nlNamedItemSources}). */
 const ACTION_VOCABULARY_KO: readonly string[] = [...TODO_COMPLETE_WORDS, ...TODO_CANCEL_WORDS, ...REMINDER_CANCEL_WORDS, ...UNDO_WORDS, ...TODO_ADD_WORDS, ...REMINDER_CREATE_WORDS];
 
-/** A negation right after an action word: "-지 마 / 말아 / 않" ("완료하지 말아줘", "취소하지 마", "삭제 하지 마"). */
-const NEGATED_AFTER = /^(?:\S*?|\s+\S*?)지\s*(?:마|말|않)/u;
+/** Where a clause ends after an action word: 말고, sentence punctuation or a line break. */
+const CLAUSE_END = /말고|[,.!?。;~\n]/u;
+/**
+ * A negation anywhere later in the same clause (CA review): "-지 마/말아/않" ("취소는 하지 마", "완료하지 말아줘"), a
+ * standalone 안/못 ("취소 안 해도 돼", "완료 안 됐어", "취소하면 안 돼"), 금지.
+ */
+const NEGATED_IN_CLAUSE = /지\s*(?:마|말|않)|(?:^|\s)(?:안|못)(?=\s|$|되|돼|됐|해|했|하|할)|금지/u;
 /** A negation word right before it: "안 지워도 돼", "못 끝냈어". */
 const NEGATED_BEFORE = /(?:^|\s)(?:안|못)\s*$/u;
-/** An adnominal or noun form of the action word in the same word: "제외된 거", "취소된 알림", "완료한 할 일". */
-const ADNOMINAL_REST = /^(?:된|됐던|되었던|되는|됨|한|했던|하는|할)$/u;
+/**
+ * An adnominal or noun form of the action word in the same word, a bound noun and a particle allowed: "제외된 거",
+ * "취소된거", "완료된건", "완료한 할 일".
+ */
+const ADNOMINAL_REST = /^(?:된|됐던|되었던|되는|됨|한|했던|하는|할)(?:거|것|건|걸)?(?:야|이야|요|은|는|이|가|을|를|도|만)?$/u;
+/** A request form inside a question ("완료해줄래?", "취소해 줄 수 있어?"): such a question still asks for the action. */
+const REQUEST_IN_QUESTION = /줘|주세요|줄래|줄 ?수|주실|주시|주겠|please|can you|could you|would you/u;
+/** An interrogative clause ending without a question mark ("취소할까", "완료했니"). */
+const INTERROGATIVE_END = /(?:까|니|냐|나요)\s*$/u;
 const NEGATED_BEFORE_EN = /(?:^|\s)(?:don't|dont|do not|never|not|no)\s+(?:\S+\s+)?$/u;
 
 /**
- * A6 R1 review: whether one of an entry's action words occurs in the owner's prose in a requesting form. An occurrence in
- * a closed grammatical negation ("-지 마/말아/않", "안/못 …") or an adnominal form ("취소된 거", "완료한 할 일") grounds
- * nothing; another occurrence of an action word still can ("완료하지 말고 취소해줘" grounds the cancel).
+ * A6 R1 review: whether one of an entry's action words occurs in the owner's prose in a requesting form. An occurrence
+ * followed by a negation in its clause ("-지 마/말아/않", a standalone 안/못, 금지), preceded by 안/못, in an adnominal form
+ * ("취소된 거", "완료한 할 일") or in a question that is not a polite request ("2번 끝냈어?", "취소할까?") grounds nothing;
+ * another occurrence of an action word in another clause still can ("완료하지 말고 취소해줘" grounds the cancel).
  */
 export function nlActionWordGrounded(prose: string, words: readonly string[]): boolean {
   const text = normalizeForMatch(prose);
@@ -462,9 +483,14 @@ export function nlActionWordGrounded(prose: string, words: readonly string[]): b
     }
     for (let at = text.indexOf(word); at >= 0; at = text.indexOf(word, at + 1)) {
       const after = text.slice(at + word.length);
+      const end = CLAUSE_END.exec(after);
+      const clause = end === null ? after : after.slice(0, end.index);
       const rest = /^\S*/u.exec(after)?.[0] ?? '';
-      if (NEGATED_AFTER.test(after) || ADNOMINAL_REST.test(rest)) continue;
-      if (!/^(?:안|못)/u.test(word) && NEGATED_BEFORE.test(text.slice(0, at))) continue;
+      if (NEGATED_IN_CLAUSE.test(clause) || ADNOMINAL_REST.test(rest.replace(/[?!.,~]+$/u, ''))) continue;
+      if (NEGATED_BEFORE.test(text.slice(0, at))) continue;
+      // A question about the item ("2번 끝냈어?", "취소할까?") never grounds a write; a polite request in question form does.
+      const question = end?.[0] === '?' || INTERROGATIVE_END.test(clause);
+      if (question && !REQUEST_IN_QUESTION.test(`${word}${clause}`)) continue;
       return true;
     }
   }

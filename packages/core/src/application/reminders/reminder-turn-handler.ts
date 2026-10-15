@@ -12,6 +12,7 @@ import { parseReminderMessage } from './reminder-grammar';
 import { isNlActionEntryId, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
 import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
+import { renderListStatusDmOnly } from '../nl-routing/nl-action-policy';
 import type { OnDemandBrief } from './on-demand-brief';
 import type { ReminderConversationService } from './reminder-conversation-service';
 import type { ReminderReplyComposer } from './reminder-reply-composer';
@@ -104,6 +105,10 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
     if (selected.entryId === 'reminder.list') {
       const status = selected.args.status === 'canceled' || selected.args.status === 'done' || selected.args.status === 'all' ? selected.args.status : undefined;
       // The status view (owner-approved 2026-10-15) is read-only and never an A6 listing.
+      // A status view is DM-only until ADR-0122 P1 (owner: channels default-deny); nothing is read in a channel.
+      if (status !== undefined && !isDirectConversation(ctx.message.context)) {
+        return { reply: outboundMessage(ctx.message.context, renderListStatusDmOnly(selected.language), { replyToMessageId: ctx.message.id }) };
+      }
       if (status !== undefined && this.deps.conversation.listReply !== undefined) return { reply: await this.deps.conversation.listReply(base, status) };
       // A6: the detailed form also reports the listing as rendered (present only with QUOKY_NL_ACTIONS not off).
       if (this.deps.conversation.listReplyDetailed !== undefined) {

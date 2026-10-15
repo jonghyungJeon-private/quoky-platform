@@ -560,6 +560,37 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
     expect((await run('메일 답장 완료해줘', 'todo.complete', { match: '메일 답장' })).kind).toBe('execute');
   });
 
+  it('CA delta: clause negations, questions and source nouns never write (scripted wrong selector)', async () => {
+    const run = async (text: string, entryId: string, args: Record<string, unknown>) => {
+      const w = world({ level: 'local', script: () => out(entryId, args) });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      return w.decide(text, { now: at(1) });
+    };
+    const writes: Array<[string, string, Record<string, unknown>]> = [
+      ['2번 취소는 하지 마', 'todo.cancel', { ref: '#2' }],
+      ['2번 삭제는 하지 말아줘', 'todo.cancel', { ref: '#2' }],
+      ['2번 완료는 하지 마', 'todo.complete', { ref: '#2' }],
+      ['2번 취소하면 안 돼', 'todo.cancel', { ref: '#2' }],
+      ['2번 취소 안 해도 돼', 'todo.cancel', { ref: '#2' }],
+      ['2번 취소 금지', 'todo.cancel', { ref: '#2' }],
+      ['2번 아직 완료 안 됐어', 'todo.complete', { ref: '#2' }],
+      ['2번 끝냈어?', 'todo.complete', { ref: '#2' }],
+      ['2번 완료됐어?', 'todo.complete', { ref: '#2' }],
+      ['2번 취소했어?', 'todo.cancel', { ref: '#2' }],
+      ['2번 취소할까?', 'todo.cancel', { ref: '#2' }],
+      ['취소된거 뭐야', 'todo.cancel', { ref: 'this' }],
+      ['2번 완료된거 맞아', 'todo.complete', { ref: '#2' }],
+      ['알림 설정 어떻게 해?', 'reminder.create', { body: '설정', when: '내일 9시' }],
+      ['알림 왜 안 왔어?', 'reminder.create', { body: '왜', when: '내일 9시' }],
+      ['알림장 챙기기 내일 9시', 'reminder.create', { body: '알림장 챙기기', when: '내일 9시' }],
+      ['메모장 열어줘', 'todo.add', { title: '메모장 열어줘' }],
+    ];
+    for (const [text, entryId, args] of writes) expect((await run(text, entryId, args)).kind, text).not.toBe('execute');
+    // A polite request in question form still acts.
+    expect((await run('2번 완료해줄래?', 'todo.complete', { ref: '#2' })).kind).toBe('execute');
+    expect((await run('2번 취소해 줄 수 있어?', 'todo.cancel', { ref: '#2' })).kind).toBe('execute');
+  });
+
   it('a second or another source noun asks: "할 일 말고 2번 메일 취소해줘", "2번 (메일) 취소해줘", "메일2번 취소해줘"', async () => {
     for (const text of ['할 일 말고 2번 메일 취소해줘', '2번 (메일) 취소해줘', '메일2번 취소해줘']) {
       const w = world({ level: 'local', script: () => out('todo.cancel', { ref: '#2' }) });
