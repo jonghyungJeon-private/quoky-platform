@@ -747,7 +747,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     }
     if (selected.kind === 'unavailable') {
       this.log('info', 'nl_selection.decided', { outcome: 'unavailable', cause: selected.cause, route: turn.route, latencyMs: selected.latencyMs, ...(selected.call ?? {}) });
-      this.logAgreement(turn, { outcome: 'fallback', reason: selected.cause, latencyMs: selected.latencyMs });
+      this.logAgreement(turn, { outcome: 'fallback', reason: selected.cause, latencyMs: selected.latencyMs, ...(selected.call !== undefined ? { call: selected.call } : {}) });
       return { kind: 'unavailable' };
     }
     const decision =
@@ -759,6 +759,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       ...(decision.kind === 'execute' && isNlWave1EntryId(decision.command.entryId) ? { selection: { entryId: decision.command.entryId, args: decision.command.args } } : {}),
       latencyMs: selected.latencyMs,
       cached: selected.cached,
+      ...(selected.call !== undefined ? { call: selected.call } : {}),
     });
     this.log('info', 'nl_selection.decided', {
       outcome: decision.kind,
@@ -1436,7 +1437,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     }
     if (selected.kind === 'unavailable') {
       this.log('info', 'nl_selection.shadow', { outcome: 'unavailable', cause: selected.cause, grammarId: turn.route, latencyMs: selected.latencyMs, ...(selected.call ?? {}) });
-      this.logAgreement(turn, { outcome: 'fallback', reason: selected.cause, latencyMs: selected.latencyMs, shadow: true });
+      this.logAgreement(turn, { outcome: 'fallback', reason: selected.cause, latencyMs: selected.latencyMs, shadow: true, ...(selected.call !== undefined ? { call: selected.call } : {}) });
       return;
     }
     const output = selected.output;
@@ -1457,6 +1458,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         latencyMs: selected.latencyMs,
         cached: selected.cached,
         shadow: true,
+        ...(selected.call !== undefined ? { call: selected.call } : {}),
       });
       return;
     }
@@ -1633,6 +1635,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       readonly latencyMs?: number;
       readonly cached?: boolean;
       readonly shadow?: boolean;
+      readonly call?: SelectionCallMeta;
     },
   ): void {
     const grammar = turn.grammar;
@@ -1651,6 +1654,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       ...(result.reason !== undefined ? { reason: result.reason } : {}),
       ...(result.latencyMs !== undefined ? { latencyMs: result.latencyMs } : {}),
       ...(result.cached !== undefined ? { cached: result.cached } : {}),
+      ...(result.call ?? {}),
     });
   }
 

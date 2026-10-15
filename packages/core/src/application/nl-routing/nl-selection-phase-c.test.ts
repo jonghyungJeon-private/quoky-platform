@@ -197,6 +197,10 @@ describe('NlSelectionService — D10/D11 agreement log (content-free)', () => {
       expect.objectContaining({ entryId: 'none', outcome: 'none', agree: false, agreeEntry: false }),
       expect.objectContaining({ entryId: 'none', outcome: 'ask', agree: false, agreeEntry: false }),
     ]);
+    // Call timing (#227 fields, same as decided/shadow): numbers only, on every uncached selector call (a cache hit carries none, as in #227).
+    for (const line of agreementLines(h.logs).filter((log) => log.cached !== true)) {
+      expect(line).toMatchObject({ promptChars: expect.any(Number), sinceStartMs: expect.any(Number), idleMs: expect.any(Number), boundMs: expect.any(Number) });
+    }
     assertContentFree(agreementLines(h.logs), [...texts, '위클리카', 'in-progress']);
   });
 
@@ -233,7 +237,7 @@ describe('NlSelectionService — D10/D11 agreement log (content-free)', () => {
 
 /** Every field is a closed id, a flag or a number; no owner text or argument value appears in any field. */
 function assertContentFree(lines: readonly LogFields[], forbidden: readonly string[]): void {
-  const allowed = new Set(['grammarId', 'grammarEntryId', 'entryId', 'outcome', 'mode', 'agree', 'agreeEntry', 'reason', 'latencyMs', 'cached']);
+  const allowed = new Set(['grammarId', 'grammarEntryId', 'entryId', 'outcome', 'mode', 'agree', 'agreeEntry', 'reason', 'latencyMs', 'cached', 'promptChars', 'sinceStartMs', 'idleMs', 'boundMs']);
   for (const line of lines) {
     for (const [key, value] of Object.entries(line)) {
       expect(allowed.has(key), key).toBe(true);
