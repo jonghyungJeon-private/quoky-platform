@@ -24760,3 +24760,113 @@ other-source; 그 메일 one-item mail → item; 그 할 일 with several to-dos
 그 알림 for a to-do never ground), `personal-v5-a6-acceptance.test.ts` (production `AppModule`, `QUOKY_NL_ACTIONS=local`,
 scripted selector; the Drive fixture's name and text say "이 문서 요약해줘" and nothing is read), `nl-action-eval.test.ts`
 (read-regression scoring of `neg-099` and `uat5r6-07`).
+
+### ADR-0120 amendment A8 — Jira release listings: a `jira.release` READ entry (one fix version for every assignee, or a project's release list), three named read queries, and release links only on the configured Jira site (Proposed — awaiting the owner's yes) (2026-10-15)
+
+- **Status:** **Proposed.** The owner approved the work on 2026-10-15 ("응 진행해": design, review, ratification,
+  implementation, deployment today). Implemented on branch `claude/v5-jira-release`, not merged, not deployed. Owner
+  sheet: `docs/plans/a8-jira-release-owner-sheet.md`. No new flag: the entry is offered whenever the Jira connector is
+  configured, so ratification is the gate for the merge.
+- **Amends:** D1 (the catalog gains one READ entry, with corpus cases, the D1 rule); ADR-0100 D7 (three additive named
+  queries; `ConnectorItem` gains optional `assignee` and `statusCategory`, `ConnectorResult` an optional `truncated`); the
+  A2 yield rule (the Jira keyword forms also yield a release or every-assignee qualifier); the prompt follows the A5 note 3
+  convention (`nl-select.v27` read, `nl-select.v28` with A6 actions; v26 is taken by the A6 prompt of `claude/v5-a6-r1-fix`).
+- **Reaffirms unchanged:** D2-D14; ADR-0100 D7 "Jira never receives caller-supplied JQL"; ADR-0072 (the connector port
+  stays read-only); ADR-0118 D7 / ADR-0110 D4 analogues (no item text reaches a model: a release report is never
+  summarised); ADR-0121 S0 (no new host, no new label, no new scope).
+
+#### Evidence
+
+- **Live (2026-10-15, Telegram).** The owner sent "jira에서 20261015 배포건 뭐 있는지 확인해줘 차란차 운영", "내 담당 말고 전체
+  담당은?", "20261015 릴리스 배포항목 확인해줘" and "jira > 차란차 운영 2026 > 릴리스". They want what Jira shows at the
+  release report of fix version 20261015 of project OP26 "차란차 운영 2026" (all issues, any assignee). `jira.issues` reads
+  only the owner's own items (`personal-work`: an identity is required), with status, window, range, keyword and sort; it
+  has no release and no project scope, so none of the four sentences could be answered.
+- **Frozen grammars today.** None of the four sentences nor the release link is claimed by a Class B grammar (yield on or
+  off); they reach selection, which had no entry to put them in.
+
+#### Decision (proposed)
+
+1. **A new entry, not new `jira.issues` args.** `jira.issues` is identity-bound by construction (`personal-work` needs the
+   owner's account id; its role, window and ambiguity key all mean "mine"), its answer may be summarised by the chat
+   model, and its prompt lines and some 70 corpus cases would all move. A release is a project-wide set with another
+   answer shape (grouped by status, an assignee per line, the release page). So `jira.release` (READ, not DM-only, like
+   `jira.issues`) is contributed by the work-chat lookup handler right after `jira.issues` whenever Jira is configured.
+2. **Args.** `release` (keyword, verbatim: the fix version name, without 배포/릴리스/건), `project` (keyword, verbatim: a key
+   or a name), `scope` (`all` | `mine`, default `all`; `mine` counts only with the owner's own words such as 내 담당,
+   나한테, my, through `valueGrounding`), `count` (flag; the report already counts). Entry check: a `release`, a `project`
+   or a Jira-shaped release link in the owner's own non-quoted words, else `missing-arg` (the D7 usage question, "어느
+   릴리스를…"). So every-assignee scope is always bounded by a release, a project or a link.
+3. **`jira.issues` refuses every-assignee words.** Its own items cannot answer "전체 담당" / "모든 담당자" / "담당 상관없이" /
+   "all assignees": a `jira.issues` selection whose grounding text carries one fails validation (`invalid-arg` on `role`)
+   and the owner is asked, never answered with their own items. "전체" alone (status all) is unchanged.
+4. **Named queries (ADR-0100 D7, additive).** `containers` (no params; the projects the account can see, key and name only,
+   `GET /rest/api/3/project/search`, at most 200), `releases` (`container`: a key; released and unreleased versions, newest
+   first, archived skipped, `GET /rest/api/3/project/{key}/version`, at most 200), `release-items` (`container?`, exactly
+   one of `releaseId` / `releaseName`, `assignee?`, `limit` ≤ 20; `GET /rest/api/3/search/jql` with fields
+   `summary,status,assignee`). The port parsers validate every value before the adapter builds anything.
+5. **JQL safety.** `release-items` JQL is `[project = "<KEY>" AND ]fixVersion = <id | "<name>">[ AND assignee =
+   "<account>"] ORDER BY key ASC`: the key must match `^[A-Z][A-Z0-9_]{1,19}$` (checked in the port parser and again in
+   the JQL builder) and is quoted; the id must match `^[1-9][0-9]{0,17}$` and is never quoted; the name (1..100
+   characters, no control characters) and the account id are quoted with `"` and `\` escaped. The order is a constant.
+   Owner text never reaches JQL unquoted; `" OR project != X` stays inside one literal (unit tests). A 400 for a version
+   is `NOT_FOUND` ("릴리스를 찾지 못했어요").
+6. **Resolution in Core, deterministic.** Project: a link's key, else the owner's words against the `containers` listing
+   (exact key; exact name with letters and digits only; then containment, a name of 3+ characters also inside the
+   words; the closed word 프로젝트/project is ignored). One match is used; several are narrowed by the owner's release name
+   when exactly one of them (at most 5 checked) has it; otherwise the owner gets the candidates and is asked. The
+   owner's project words are never sent to Jira. Release: a link's id, else an exact name match in the project's
+   `releases` (case and spacing aside), then the same without the closed release words (배포/배포건/릴리스/버전/건/release/
+   version); not found → up to 5 of the project's names (longest common prefix first). No project and a release name → the
+   quoted name goes to Jira across visible projects. A project and no release → its release list (newest 10).
+7. **Release links.** Core parses `https://<host>/projects/<KEY>/versions/<id>[/…]`, `/browse/<KEY>/fixforversion/<id>`
+   and project-only `/projects/<KEY>` / `/browse/<KEY>` from the owner's own non-quoted words (https only; no
+   credentials, no port; a malformed `/versions/` path and an issue link are not release links). A link is used only when
+   its host equals the configured Jira site host (`QUOKY_JIRA_BASE_URL`, handed to the desk by the composition root);
+   any other link is ignored, said so, and never fetched. Only the validated key and id reach the adapter, which builds
+   every URL from its own base URL; the release page link in the reply is the adapter's (or built from the configured
+   host), never the owner's URL echoed.
+8. **Rendering.** Jira's release report shape: a header (release, project, scope), the count line "이슈 N건: 완료 a · 진행
+   중 b · 할 일 c" (Jira status categories done / indeterminate / new), the groups in that order with "- [KEY] 제목 · 담당자 ·
+   상태 링크", then "릴리스 페이지: …". Bounded by the work-chat budget (1,800 characters; item lines drop from the end
+   with the usual note, the page link stays), at most 20 issues; a partial page says "N건 이상 … (일부만 표시)". Every Jira
+   text is an untrusted span. The release report is always the deterministic list: no item text reaches any model.
+9. **Selector.** `nl-select.v27` = v24 plus six generic `jira.release` examples (a release with a project, a release, a
+   follow-up to the owner's own, a project's release list, a pasted link with `{}`, every assignee with nothing bounding
+   it → NEEDS_CLARIFICATION), shown only while the entry is offered. With the entry absent the prompt is v24 byte for
+   byte (the 76 pinned cases of `golden/nl-select.v27.prompts.json` are unchanged; three `a8-*` cases pin the new text).
+   No rule line changes. `nl-select.v28` = the A6 text on top of v27.
+10. **Grammar yield (A2 rule).** `jiraKeywordCarriesQualifier` adds the entry's own closed vocabularies: release words
+    (릴리스, 릴리즈, 배포건, 배포 항목, 배포 버전, 수정 버전, release, fix version) and every-assignee words. A Jira keyword
+    slot carrying one ("20261015 릴리스 관련 jira 이슈") declines when the yield is on, so selection decides; with the
+    yield off the grammar is byte-identical. No phrase routes anywhere.
+11. **Egress and scope.** Same host (already the S0 `jira` label; `/rest/api/{n}/project` and `/rest/api/{n}/search/jql`
+    are already in its ledger prefixes), the existing API token (Basic auth, the account's own read permissions), GET
+    only. No new host, label, scope, env key, dependency or runtime dep (baseline unchanged). The selection request
+    carries only the owner's text, as before (a pasted link is owner text).
+12. **Corpus (D12).** 28 positives `a8-01..28` (the four live sentences and the release-report link verbatim, names, keys,
+    follow-ups, counts, the older link) and 7 negatives `a8n-01..07` (every assignee with no bound, how-to, opinion,
+    statement, write), agent-drafted, PENDING the owner's batch.
+
+#### Owner decisions requested (recommended answers in the owner sheet)
+
+1. Accept A8 (a new `jira.release` entry; `jira.issues` unchanged except decision 3 of the design). **Recommended: accept.**
+2. Default scope of a release: every assignee; `mine` only on the owner's words. **Recommended: every assignee.**
+3. An ambiguous project: narrow by the release name when exactly one candidate has it, else ask. **Recommended: yes.**
+4. A release not in the project: show up to 5 of its release names. **Recommended: yes.**
+5. A project and no release: its release list (newest 10). **Recommended: yes.**
+6. Cap: keep 20 issues, "일부만 표시" plus the release page link; no total beyond 20. **Recommended: keep 20.**
+7. Channels: not DM-only, like `jira.issues`. **Recommended: same as `jira.issues`.**
+8. D12 batch of the 35 `a8*` cases. **Recommended: approve.**
+9. Deploy after review (merge, service restart; no `.env.local` change). **Recommended: proceed.**
+
+#### Residual risks
+
+- **R-A8-1 — project name drift.** A Jira project renamed after the owner learned its name gives "찾지 못했어요" or the
+  ambiguity question, never a guess.
+- **R-A8-2 — more than 200 projects or versions.** The listings stop at 200 (newest versions first); an older version of a
+  very long project is then "not found" with nearby names, and the owner can paste the link.
+- **R-A8-3 — 20-issue cap.** A release of more than 20 issues shows the first 20 by key with counts of those only; the
+  page link gives the full report.
+- **R-A8-4 — selector.** A wrong but valid capture is bounded by grounding (both names verbatim) and the entry check;
+  measured by the probe below and the D12 gate.
