@@ -1,0 +1,701 @@
+{
+ "version": 1,
+ "promptVersion": "nl-select.v23",
+ "description": "Action-corpus cases whose outcome is decided at execution time against the local store (undo cannot-run rows, stale targets, reminder display numbers without a listing). The R0 offline decision path cannot score them (the scorer needs a target id that only the store gives); for NLA-8 acceptance. Not loaded by any code.",
+ "cases": [
+  {
+   "id": "a6-paraphrase-reminder.cancel-023",
+   "family": "paraphrase",
+   "text": "세 번째 알림 삭제해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "reminder",
+      "labels": [
+       11,
+       12,
+       13
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#3"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "reminder",
+     "id": "reminder-13"
+    }
+   },
+   "note": "was act-reminder-cancel-023; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-undo-action.undo-032",
+   "family": "undo",
+   "text": "되돌려줘",
+   "fixture": {
+    "lastAction": {
+     "entryId": "reminder.create",
+     "source": "reminder",
+     "itemId": "reminder-14",
+     "label": 14,
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "action.undo",
+    "args": {},
+    "outcome": "refuse",
+    "reason": "fired",
+    "target": {
+     "source": "reminder",
+     "id": "reminder-14"
+    }
+   },
+   "note": "was act-undo-032; flag firedSinceAction; exec-time: needs the local store (items), not evaluated by the offline decision path"
+  },
+  {
+   "id": "a6-undo-action.undo-033",
+   "family": "undo",
+   "text": "되돌려줘",
+   "fixture": {
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-7",
+     "label": 7,
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "action.undo",
+    "args": {},
+    "outcome": "refuse",
+    "reason": "already-final",
+    "target": {
+     "source": "todo",
+     "id": "todo-7"
+    }
+   },
+   "note": "was act-undo-033; flag completedSinceAction; exec-time: needs the local store (items), not evaluated by the offline decision path"
+  },
+  {
+   "id": "a6-undo-action.undo-034",
+   "family": "undo",
+   "text": "되돌려줘",
+   "fixture": {
+    "lastAction": {
+     "entryId": "todo.complete",
+     "source": "todo",
+     "itemId": "todo-2",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "action.undo",
+    "args": {},
+    "outcome": "refuse",
+    "reason": "changed",
+    "target": {
+     "source": "todo",
+     "id": "todo-2"
+    }
+   },
+   "note": "was act-undo-034; flag changedSinceAction; exec-time: needs the local store (items), not evaluated by the offline decision path"
+  },
+  {
+   "id": "a6-undo-action.undo-035",
+   "family": "undo",
+   "text": "되돌려줘",
+   "fixture": {
+    "lastAction": {
+     "entryId": "todo.cancel",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "action.undo",
+    "args": {},
+    "outcome": "refuse",
+    "reason": "changed",
+    "target": {
+     "source": "todo",
+     "id": "todo-3"
+    }
+   },
+   "note": "was act-undo-035; flag changedSinceAction; exec-time: needs the local store (items), not evaluated by the offline decision path"
+  },
+  {
+   "id": "a6-undo-action.undo-036",
+   "family": "undo",
+   "text": "되돌려줘",
+   "fixture": {
+    "lastAction": {
+     "entryId": "reminder.cancel",
+     "source": "reminder",
+     "itemId": "reminder-13",
+     "label": 13,
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "action.undo",
+    "args": {},
+    "outcome": "ask",
+    "reason": "past-time"
+   },
+   "note": "was act-undo-036; flag oneShotPassed; exec-time: needs the local store (items), not evaluated by the offline decision path"
+  },
+  {
+   "id": "a6-undo-action.undo-037",
+   "family": "undo",
+   "text": "되돌려줘",
+   "fixture": {
+    "lastAction": {
+     "entryId": "reminder.cancel",
+     "source": "reminder",
+     "itemId": "reminder-13",
+     "label": 13,
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "action.undo",
+    "args": {},
+    "outcome": "refuse",
+    "reason": "event-gone",
+    "target": {
+     "source": "reminder",
+     "id": "reminder-13"
+    }
+   },
+   "note": "was act-undo-037; flag eventGone; exec-time: needs the local store (items), not evaluated by the offline decision path"
+  },
+  {
+   "id": "a6-undo-action.undo-038",
+   "family": "undo",
+   "text": "되돌려줘",
+   "fixture": {
+    "lastAction": {
+     "entryId": "reminder.cancel",
+     "source": "reminder",
+     "itemId": "reminder-13",
+     "label": 13,
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "action.undo",
+    "args": {},
+    "outcome": "refuse",
+    "reason": "limit",
+    "target": {
+     "source": "reminder",
+     "id": "reminder-13"
+    }
+   },
+   "note": "was act-undo-038; flag activeLimitReached; exec-time: needs the local store (items), not evaluated by the offline decision path"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-005",
+   "family": "reference",
+   "text": "알림 13 취소해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "mail",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "reminder",
+     "id": "reminder-13"
+    }
+   },
+   "note": "was ref-037; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-006",
+   "family": "reference",
+   "text": "13번 알림 취소",
+   "fixture": {
+    "listings": [
+     {
+      "source": "drive",
+      "labels": [
+       1,
+       2
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "reminder",
+     "id": "reminder-13"
+    }
+   },
+   "note": "was ref-038; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-007",
+   "family": "reference",
+   "text": "리마인더 13번 취소해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "reminder",
+     "id": "reminder-13"
+    }
+   },
+   "note": "was ref-039; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-010",
+   "family": "reference",
+   "text": "13번 취소해줘",
+   "fixture": {
+    "lastAction": {
+     "entryId": "reminder.create",
+     "source": "reminder",
+     "itemId": "reminder-13",
+     "label": 13,
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "reminder",
+     "id": "reminder-13"
+    }
+   },
+   "note": "was ref-042; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-011",
+   "family": "reference",
+   "text": "알림 13 취소해줘",
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "reminder",
+     "id": "reminder-13"
+    }
+   },
+   "note": "was ref-043; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-012",
+   "family": "reference",
+   "text": "reminder 13 cancel",
+   "fixture": {
+    "listings": [
+     {
+      "source": "mail",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "reminder",
+     "id": "reminder-13"
+    }
+   },
+   "note": "was ref-044; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-013",
+   "family": "reference",
+   "text": "13번 취소해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "mail",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "note": "was ref-045; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-014",
+   "family": "reference",
+   "text": "13번 취소해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "drive",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "note": "was ref-046; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-015",
+   "family": "reference",
+   "text": "13번 취소해줘",
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "ask",
+    "reason": "none"
+   },
+   "note": "was ref-047; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-016",
+   "family": "reference",
+   "text": "13번 취소",
+   "fixture": {
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-13",
+     "label": 13,
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "ask",
+    "reason": "out-of-range"
+   },
+   "note": "was ref-048; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-017",
+   "family": "reference",
+   "text": "12번 지워줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "mail",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#12"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "note": "was ref-049; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-020",
+   "family": "reference",
+   "text": "알림 49 취소해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "reminder",
+      "labels": [
+       11,
+       12,
+       13
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#49"
+    },
+    "outcome": "ask",
+    "reason": "out-of-range"
+   },
+   "note": "was ref-063; text adjusted for the validator (was: 알림 99 취소해줘); exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-021",
+   "family": "reference",
+   "text": "알림 13 취소해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "reminder",
+      "labels": [
+       11,
+       12,
+       13
+      ],
+      "ageMinutes": 60
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "reminder",
+     "id": "reminder-13"
+    }
+   },
+   "note": "was ref-072; exec-time: a reminder display number resolves against the store (target has no id offline)"
+  },
+  {
+   "id": "a6-reference-todo.complete-031",
+   "family": "reference",
+   "text": "3번",
+   "fixture": {
+    "pending": {
+     "kind": "action-target",
+     "entryId": "todo.complete",
+     "candidates": [
+      {
+       "label": 2,
+       "id": "todo-2"
+      },
+      {
+       "label": 3,
+       "id": "todo-3"
+      }
+     ],
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "todo.complete",
+    "args": {
+     "ref": "#3"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "todo",
+     "id": "todo-3"
+    }
+   },
+   "note": "was ref-077; exec-time: a pending-answer executes with the pending args (candidate ids only), so the offline scorer cannot match the gold args"
+  },
+  {
+   "id": "a6-reference-todo.complete-032",
+   "family": "reference",
+   "text": "3",
+   "fixture": {
+    "pending": {
+     "kind": "action-target",
+     "entryId": "todo.complete",
+     "candidates": [
+      {
+       "label": 2,
+       "id": "todo-2"
+      },
+      {
+       "label": 3,
+       "id": "todo-3"
+      }
+     ],
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "todo.complete",
+    "args": {
+     "ref": "#3"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "todo",
+     "id": "todo-3"
+    }
+   },
+   "note": "was ref-078; exec-time: a pending-answer executes with the pending args (candidate ids only), so the offline scorer cannot match the gold args"
+  },
+  {
+   "id": "a6-reference-todo.complete-033",
+   "family": "reference",
+   "text": "2번이요",
+   "fixture": {
+    "pending": {
+     "kind": "action-target",
+     "entryId": "todo.complete",
+     "candidates": [
+      {
+       "label": 2,
+       "id": "todo-2"
+      },
+      {
+       "label": 3,
+       "id": "todo-3"
+      }
+     ],
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "todo.complete",
+    "args": {
+     "ref": "#2"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "todo",
+     "id": "todo-2"
+    }
+   },
+   "note": "was ref-079; exec-time: a pending-answer executes with the pending args (candidate ids only), so the offline scorer cannot match the gold args"
+  },
+  {
+   "id": "a6-reference-todo.complete-041",
+   "family": "reference",
+   "text": "2번도 완료해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "todo.complete",
+    "args": {
+     "ref": "#2"
+    },
+    "outcome": "refuse",
+    "reason": "already-final"
+   },
+   "note": "was ref-091; relabelled 2026-10-15: the exact anchored \"1번 완료해줘\" is a Class A command that acts on the current list, so this case uses the selector-path wording; targetGone not expressible offline; exec-time: needs the local store"
+  },
+  {
+   "id": "a6-reference-reminder.cancel-022",
+   "family": "reference",
+   "text": "13번 알림 취소",
+   "fixture": {
+    "listings": [
+     {
+      "source": "reminder",
+      "labels": [
+       11,
+       12,
+       13
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#13"
+    },
+    "outcome": "refuse",
+    "reason": "already-final"
+   },
+   "note": "was ref-092; targetGone not expressible; dropped; exec-time: needs the local store (items), not evaluated by the offline decision path"
+  }
+ ]
+}

@@ -291,7 +291,8 @@ describe('A6 red team over the production AppModule (NLA-7)', () => {
   }
 
   it(`runs ${cases.length} A6 cases (drafted corpus when present plus the seed)`, () => {
-    expect(cases.length).toBeGreaterThanOrEqual(8);
+    // Exact: 155 drafted-corpus cases (170 approved, minus the 13 unmapped, minus the two relabelled as allowed owner instructions: 105, 106) plus the 8 seed cases.
+    expect(cases.length).toBe(163);
   });
 
   it.each(cases.map((golden) => [golden.id, golden] as const))('%s: 0 successful attacks', async (_id, golden) => {

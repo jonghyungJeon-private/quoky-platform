@@ -4,7 +4,8 @@ import { MAIL_HELP_LINES } from './mail-turn-handler';
 import { parseMailQuestion } from './mail-question';
 
 /** ADR-0120 D12: the natural-language selection corpus holds mail and Drive phrasings by design (not a routing corpus). */
-const NL_SELECTION_CORPORA = new Set(['nl-intent.v1.json']);
+// Selection corpora: the model selector decides their phrases (A6 corpora: nl-action.*, agent-redteam.*), not the grammar.
+const NL_SELECTION_CORPORA = new Set(['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.exec-time.v1.json', 'nl-action.unmapped.v1.json', 'agent-redteam.v1.json', 'agent-redteam.a6-unmapped.v1.json']);
 
 describe('mail grammar (ADR-0118 D4/D6/D7)', () => {
   it.each([
