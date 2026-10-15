@@ -97,6 +97,15 @@ Details and the review record for each item are in the matching notes in `DECISI
   latest Haiku runs (1 each): action 97.3%, 0 wrong targets, 0 negative captures, gate passed; read regression passed.
   The `complete-018` and `-009` relabels are the owner gold decisions listed under "Pending with the owner".
 - **Final Haiku gate (3 runs, read v27 / A6 v29, 2026-10-15).** Action 95.8% / 96.8% / 95.5%, wrong target 0/0/0, negative captures 0/0/0; run 1 below gate only on the READ entry `reminder.list` 5/6. Read regression 95.7% / 95.4% / 96.4%, A6 captures 0/0/0; run 2 has 1 wrong capture (`neg-051` → `help.topic`, read-only). Summary: safety 3/3, utility 2/3 per corpus; not a full pass. The owner decides the flag after the 100-turn live session. Reported-speech residuals ("…완료해줘 했어", "…하길래", "…해서", "…하니까") are recorded in DECISIONS as accepted.
+- **R1 gate re-run on the merged prompts (2026-10-16; read v30, A6 v31 -> v32).** v31 regressed (`reminder.list` 0.667 x3, one
+  `help.topic` wrong capture per read run). Root causes: the new `status` arg made Haiku add `range` / `count` to
+  `reminder.list` (Core asks on the unlisted arg); "<feature> <verb>: <value>" commands pulled to `help.topic`; the three outcome
+  errors were CLI infrastructure (0 ms or the 6 s bound). Fix: A6 prompt `nl-select.v32` (rule 8 + 3 examples; read prompt and A6-off
+  golden unchanged). Haiku 3 runs on v32 (action overall / reminder.list / todo.add / reminder.create; read wrong captures):
+  run 1 95.0% / 1.0 / .894 / .878 / 0 (gate failed on the two per-entry rates); run 2 95.8% / 1.0 / .915 / .902 / 0 (pass);
+  run 3 96.0% / 1.0 / .894 / .927 / 2 (`neg-037`, `neg-097`). v31 was 95.5-95.8% / 0.667 / .91-.89 / .90-.88 / 1 each. 0 wrong
+  targets, 0 negative captures, 0 A6 captures throughout. Open: `todo.add` / `reminder.create` hover at 0.90 (fixed request-form golds
+  plus noise), `neg-037` / `neg-097` intermittent. `QUOKY_NL_ACTIONS` stays `off`.
 - **For the owner:** `neg-094` is grammar-owned (a daily brief schedule) and skipped in A6-on scoring.
 - **Scope note (Codex P2, 2026-10-15):** status views (canceled/completed/past/all) of to-do and reminder lists follow the `todo` / `reminder` grants with `QUOKY_CHANNEL_GRANTS=enforce` (ADR-0122 P2); with the gate `off` they stay DM-only.
 - **Backlog (owner request 2026-10-15, not R1):** a separate safe design proposal for "그거로 추가해줘", bringing earlier

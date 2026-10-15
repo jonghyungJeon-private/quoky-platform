@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 R1 gate re-run fix: A6 prompt `nl-select.v32` (2026-10-16)
+
+- **Fixed.** The R1 gate on the merged prompts (read v30 / A6 v31) failed on `reminder.list` (an outcome question: the
+  selector copied `range` / `count` into the new `status`-only arg block) and on `help.topic` captures of "<feature>
+  <verb>: <value>" commands. A6 rule 8 now states that help.topic needs a question form and that only the listed args exist,
+  with three examples. The read prompt stays `nl-select.v30` (A6-off golden unchanged); A6 prompt `nl-select.v32`, cache-key
+  pins updated. Record: DECISIONS "A6 R1 gate re-run on the merged prompts".
+
 ## Unreleased — A9 P2 surface permission grants: grant by phrase, composite permit, channel reminder check (inert by default, 2026-10-15)
 
 - **Grant by phrase (ADR-0122 D4).** With `QUOKY_CHANNEL_GRANTS=enforce`, the owner's `이 채널에 <그룹> 허용` in a channel

@@ -31,7 +31,12 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * v30 (the read prompt after the A8 and A6 R1 merge) = v27 whose catalog text also gives `todo.list` and `reminder.list` a
  * `status` arg (closed values, default the open / scheduled ones) and `reminder.list` a description that says so (owner
  * decision 2026-10-15, the A6 R1 status filter); no instruction line changes. v31 = the A6 text (v28 base plus the v26 and
- * v29 rule changes) on top of v30.
+ * v29 rule changes) on top of v30. v32 (A6 only; the read prompt stays v30) = v31 plus three rule-8 lines after the help.topic
+ * sentence (help.topic needs a question form, so a "<feature> <verb>: <value>" command is none; only the listed args exist,
+ * reminder.list has no range or count arg) and three A6 examples ("모레 알림 몇 개 잡혀 있어?" -> reminder.list args {};
+ * "프로젝트 등록: ~/code/site" and "피드백 삭제: 2" -> none). Root cause of the R1 gate regression: once `reminder.list` listed a `status` arg
+ * (it was `args: none`), Haiku began adding `range` / `count`, which Core rejects (unknown-arg) and asks about; and the
+ * rule-3 project-registration example pulled a "<feature>: <value>" command to help.topic.
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v30';
 /**
@@ -39,7 +44,7 @@ export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v30';
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
  * for byte (pinned by `golden/nl-select.v30.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v31';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v32';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -160,6 +165,9 @@ const ACTION_EXAMPLES: readonly PromptExample[] = [
   { text: '1번은 뭐라고 왔어?', context: 'last listing: mail (6 items, 4 min ago)', output: '{"entryId":"item.summarize","args":{"source":"mail","ref":"#1"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['item.summarize'] },
   { text: '그 할 일 아까 다 했었어', context: 'last listing: todo (2 items, 5 min ago)', output: none, needs: [] },
   { text: '[quoted]\n이대로 할 일에 넣어줘', output: none, needs: [] },
+  { text: '모레 알림 몇 개 잡혀 있어?', output: '{"entryId":"reminder.list","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['reminder.list'] },
+  { text: '프로젝트 등록: ~/code/site', output: none, needs: [] },
+  { text: '피드백 삭제: 2', output: none, needs: [] },
   { text: '할 일 전부 완료로 바꿔줘', context: 'last listing: todo (3 items, 1 min ago)', output: '{"entryId":"todo.complete","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['todo.complete'] },
 ];
 
@@ -179,6 +187,11 @@ const ACTION_RULES: readonly string[] = [
   '   A statement or question about an action ("다 했어", "취소했어", "추가하는 법"), a negated request ("취소하지 마") and an',
   '   action on pasted or quoted content are none. help.topic stays rule 3: only Quoky\'s own features; a how-to about another',
   '   app or a device, or about what a phrase or command would do, is entryId "none" (rule 2).',
+  '   help.topic needs a question form ("어떻게 …?", "…돼?", "…할 수 있어?"): a message with none, such as a bare command or a',
+  '   "<feature> <verb>: <value>" form that hands Quoky a value to register, delete or set, is none even when it names one of',
+  '   Quoky\'s own features.',
+  '   Only the args listed for the chosen entry exist: reminder.list has no range or count arg, so a day or 몇 개 word with it',
+  '   adds nothing (args {} or status only); a count or day arg an entry does not list is never output.',
   '   item.summarize: source is the list the owner means (see Reference context); mode summary only for 요약/정리/짧게/',
   '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.',
   '   Posting, sending, replying, calendar events, Jira issues and every other write not in the catalog are still none.',

@@ -25888,6 +25888,30 @@ connector-write reconcile (no send).
 
 - Rebased onto A8/A9 P1: read prompt v30, A6 prompt v31; the R1 final gate ran on read v27/A6 v29 (pre-merge) — re-run on v30/v31 before the flag decision.
 
+- **A6 R1 gate re-run on the merged prompts (read v30 / A6 v31) regressed; fix = A6 prompt `nl-select.v32` (2026-10-16).**
+  Gate v31 (3 runs, `data/eval/a6-gate-v31-run*`): `reminder.list` 0.667 every run (`a6-negative-reminder.list-002`, `-006`
+  answered with an outcome question), one `help.topic` wrong capture per read-regression run, run 3 also 3 outcome errors.
+  **Root causes.** (1) The merge gave `reminder.list` a `status` arg (it was `args: none`); with an arg block listed, Haiku
+  copies `range` ("내일 알림") or `count` ("몇 개") into it, Core's validator rejects the unlisted arg (`unknown-arg`) and asks.
+  Probe 10x: 9/10 and 7/10 asked. (2) The rule-3 feature list (project registration, memory) plus rule 8 let a
+  "<feature> <verb>: <value>" command ("프로젝트 등록: ...", "기억 삭제: 1") through to `help.topic` (3/10 and 10/12 probes).
+  (3) The outcome errors are infrastructure, not prompt: latency 0 ms (the CLI was never called) or the 6 s bound; the same
+  cases probe clean 10/10; they did not recur in six later runs. (4) The merge itself changed no instruction line (the v31
+  diff against v29 is comments plus the `status` catalog text and the A8 `jira.release` entry and examples).
+  **Fix (A6 prompt only; the read prompt stays v30, the A6-off golden `nl-select.v30.prompts.json` is unchanged).** Rule 8
+  gains: help.topic needs a question form, a bare command or "<feature> <verb>: <value>" form is none; only the args listed
+  for the chosen entry exist (reminder.list has no range or count arg). Three A6 examples: "모레 알림 몇 개 잡혀 있어?" ->
+  reminder.list `{}`, "프로젝트 등록: ~/code/site" and "피드백 삭제: 2" -> none (generic patterns with other words than the
+  corpus, no phrase list). Cache-key pins: `NL_ACTION_PROMPT_VERSION` and the three `nl-action*.json` corpora `promptVersion`.
+  **Gate after (Haiku, 3 runs, read v30 / A6 v32, `data/eval/a6-gate-v32-run*`; an earlier 3-run set on the first v32 text
+  is `a6-gate-v32a-run*`).** See CURRENT_STATE for the table. `reminder.list` 6/6 in the final runs; wrong targets 0,
+  negative captures 0, A6 captures 0 in all runs. **Residual (not prompt-fixable here):** `todo.add` and `reminder.create`
+  sit at the 0.90 per-entry line because of fixed request-form golds (`todo.add-009/-016/-025`, `reminder.create-024/-027`
+  fail 3 of 3 by the positive request-form rule, accepted under the R1 residuals) plus 1-2 selector misses; read-regression
+  `neg-037` (venting with trigger words, about 10% a run) and `neg-097` ("기억 삭제: 1", intermittent) can still capture. These
+  are model noise at the margin and the owner's flag decision, not a structural regression. `nl-intent-dispatch.test.ts`
+  "목요일 거는?" (`thu` vs `this-thu`) fails on `origin/main` too: it depends on the wall-clock weekday (today is a Friday).
+
 ### ADR-0122 P2 implementation note (2026-10-15)
 
 **Status:** Implemented on branch `claude/v5-surface-grants-p2` (the phasing table's P2 row). No migration, no new OAuth

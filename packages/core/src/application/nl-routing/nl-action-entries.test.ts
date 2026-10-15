@@ -282,7 +282,7 @@ describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v31
   });
 
   it('v31 adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v31');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v32');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
