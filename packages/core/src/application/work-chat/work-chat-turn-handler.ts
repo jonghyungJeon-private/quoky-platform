@@ -129,8 +129,10 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     if (this.deps.mode !== 'lookup') return this.handleAction(selected, ctx);
     // ADR-0120 A8: a release link is read from the owner's own non-quoted words only (quoted or fenced text is data).
     const prepared = selected.entryId === 'jira.release' ? prepareSelectionInput(ctx.message.text, 0, ctx.message.quotedRanges ?? []) : undefined;
-    const command = workChatCommandForSelection(selected, prepared === undefined || 'skip' in prepared ? '' : prepared.groundingText);
-    if (command === null) return null;
+    const mapped = workChatCommandForSelection(selected, prepared === undefined || 'skip' in prepared ? '' : prepared.groundingText);
+    if (mapped === null) return null;
+    // ADR-0120 A8 owner decision 7: a release listing knows whether it answers in a channel.
+    const command = mapped.kind === 'release' && !isDirectConversation(ctx.message.context) ? { ...mapped, inChannel: true as const } : mapped;
     const { outcome, listed } = await this.run(command, ctx);
     if (command.kind !== 'lookup' || command.listOnly !== true || listed === undefined || outcome === null) return outcome;
     if (outcome.kind !== undefined && outcome.kind !== 'reply') return outcome;

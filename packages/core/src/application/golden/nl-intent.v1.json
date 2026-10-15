@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases were owner-approved on 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) were owner-approved in the D12 batch of 2026-10-15 (ADR-0120 D12). GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) were owner-approved in the D12 batch of 2026-10-15. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) were owner-approved in the D12 batch of 2026-10-15. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) were owner-approved in the D12 batch of 2026-10-15. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events). D12 owner batch 2026-10-15 (second part, through the orchestrator): approved uat5r1..r9 (23 cases from the 2026-10-14 live edge-case run), uat5gy-01..06, uat5wd-01..07, uat5ca-01..10 and the 8 grammar-metadata-only edits of ADR-0120 A2 implementation note 2 (confluence-001, -005, -007, todo-016, -020, brief-017, neg-219, help-038). Still PENDING the owner's batch approval: the 41 INT-4 cases (v5int4-001..041). T1 extension (owner-approved 2026-10-15): calendar-005, -016, -018, -029, -032, -034 and -057 gain timedOnly (a meeting word in a listing question means timed events), the earlier gold kept in each note. A8 (2026-10-15, ADR-0120 amendment A8, Proposed): 28 agent-drafted jira.release cases (a8-01..28: the owner's four live sentences of 2026-10-15 and the release-report link verbatim, release and project names, follow-ups, counts, links) and 7 negatives (a8n-01..07), PENDING the owner's D12 batch approval.",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases were owner-approved on 2026-10-13, DECISIONS.md \"S1 owner decisions (2026-10-13)\" decision 2), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) were owner-approved in the D12 batch of 2026-10-15 (ADR-0120 D12). GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) were owner-approved in the D12 batch of 2026-10-15. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) were owner-approved in the D12 batch of 2026-10-15. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) were owner-approved in the D12 batch of 2026-10-15. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events). D12 owner batch 2026-10-15 (second part, through the orchestrator): approved uat5r1..r9 (23 cases from the 2026-10-14 live edge-case run), uat5gy-01..06, uat5wd-01..07, uat5ca-01..10 and the 8 grammar-metadata-only edits of ADR-0120 A2 implementation note 2 (confluence-001, -005, -007, todo-016, -020, brief-017, neg-219, help-038). Still PENDING the owner's batch approval: the 41 INT-4 cases (v5int4-001..041). T1 extension (owner-approved 2026-10-15): calendar-005, -016, -018, -029, -032, -034 and -057 gain timedOnly (a meeting word in a listing question means timed events), the earlier gold kept in each note. A8 (2026-10-15, ADR-0120 amendment A8, Proposed): 28 agent-drafted jira.release cases (a8-01..28: the owner's four live sentences of 2026-10-15 and the release-report link verbatim, release and project names, follow-ups, counts, links) and 7 negatives (a8n-01..07), owner-approved in the D12 batch of 2026-10-15 with the owner's default scope (the owner's own items; every assignee only when said).",
   "cases": [
     {
       "id": "jira-001",
@@ -9593,7 +9593,7 @@
           "project": "차란차 운영"
         }
       },
-      "note": "owner live sentence 1, 2026-10-15 Telegram; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner live sentence 1, 2026-10-15 Telegram; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-02",
@@ -9602,7 +9602,8 @@
         "entryId": "jira.release",
         "args": {
           "release": "20261015",
-          "project": "차란차 운영"
+          "project": "차란차 운영",
+          "scope": "all"
         }
       },
       "prior": {
@@ -9612,7 +9613,7 @@
           "project": "차란차 운영"
         }
       },
-      "note": "owner live sentence 2 (a follow-up); every assignee is the default scope; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner live sentence 2 (a follow-up); every assignee is the default scope; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-03",
@@ -9623,7 +9624,7 @@
           "release": "20261015"
         }
       },
-      "note": "owner live sentence 3; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner live sentence 3; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-04",
@@ -9634,7 +9635,7 @@
           "project": "차란차 운영 2026"
         }
       },
-      "note": "owner live sentence 4: the project release list; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner live sentence 4: the project release list; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-05",
@@ -9643,7 +9644,7 @@
         "entryId": "jira.release",
         "args": {}
       },
-      "note": "owner release-report link; Core reads the link, the selector copies nothing; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner release-report link; Core reads the link, the selector copies nothing; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-06",
@@ -9652,7 +9653,7 @@
         "entryId": "jira.release",
         "args": {}
       },
-      "note": "link with a request; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "link with a request; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-07",
@@ -9664,7 +9665,7 @@
           "release": "20261015"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-08",
@@ -9676,7 +9677,7 @@
           "release": "20261015"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-09",
@@ -9687,7 +9688,7 @@
           "release": "20261022"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-10",
@@ -9698,7 +9699,7 @@
           "release": "1.4.0"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-11",
@@ -9709,7 +9710,7 @@
           "project": "OP26"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-12",
@@ -9720,7 +9721,7 @@
           "project": "차란차 운영 2026"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-13",
@@ -9728,11 +9729,10 @@
       "expect": {
         "entryId": "jira.release",
         "args": {
-          "release": "20261015",
-          "scope": "mine"
+          "release": "20261015"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-14",
@@ -9740,17 +9740,17 @@
       "expect": {
         "entryId": "jira.release",
         "args": {
-          "release": "20261015",
-          "scope": "mine"
+          "release": "20261015"
         }
       },
       "prior": {
         "entryId": "jira.release",
         "args": {
-          "release": "20261015"
+          "release": "20261015",
+          "scope": "all"
         }
       },
-      "note": "follow-up narrows to the owner's own; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "follow-up narrows to the owner's own; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-15",
@@ -9758,17 +9758,17 @@
       "expect": {
         "entryId": "jira.release",
         "args": {
-          "release": "20261015"
+          "release": "20261015",
+          "scope": "all"
         }
       },
       "prior": {
         "entryId": "jira.release",
         "args": {
-          "release": "20261015",
-          "scope": "mine"
+          "release": "20261015"
         }
       },
-      "note": "follow-up back to every assignee; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "follow-up back to every assignee; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-16",
@@ -9786,7 +9786,7 @@
           "release": "20261015"
         }
       },
-      "note": "count follow-up; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "count follow-up; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-17",
@@ -9798,7 +9798,7 @@
           "count": true
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-18",
@@ -9809,7 +9809,7 @@
           "release": "2.3.0"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-19",
@@ -9818,10 +9818,11 @@
         "entryId": "jira.release",
         "args": {
           "release": "20261015",
-          "project": "OP26"
+          "project": "OP26",
+          "scope": "all"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-20",
@@ -9832,7 +9833,7 @@
           "project": "OP26"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-21",
@@ -9840,10 +9841,11 @@
       "expect": {
         "entryId": "jira.release",
         "args": {
-          "release": "20261015"
+          "release": "20261015",
+          "scope": "all"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-22",
@@ -9855,7 +9857,7 @@
           "release": "20261015"
         }
       },
-      "note": "no status filter on a release: the grouped report answers it; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "no status filter on a release: the grouped report answers it; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-23",
@@ -9866,7 +9868,7 @@
           "release": "20261015"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-24",
@@ -9877,7 +9879,7 @@
           "release": "20261015"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-25",
@@ -9886,7 +9888,7 @@
         "entryId": "jira.release",
         "args": {}
       },
-      "note": "the older release page link; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "the older release page link; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-26",
@@ -9897,7 +9899,7 @@
           "project": "OP26"
         }
       },
-      "note": "the project release list; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "the project release list; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-27",
@@ -9915,7 +9917,7 @@
           "project": "OP26"
         }
       },
-      "note": "picks a release from the listed project; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "picks a release from the listed project; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-28",
@@ -9923,53 +9925,52 @@
       "expect": {
         "entryId": "jira.release",
         "args": {
-          "release": "20261015",
-          "scope": "mine"
+          "release": "20261015"
         }
       },
-      "note": "PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8n-01",
       "text": "jira 전체 담당 이슈 다 보여줘",
       "expect": "none",
-      "note": "every assignee with no release, project or link: asked (jira.issues refuses it); PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "every assignee with no release, project or link: asked (jira.issues refuses it); owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8n-02",
       "text": "릴리스 노트 잘 쓰는 법 알려줘",
       "expect": "none",
-      "note": "how-to; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "how-to; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8n-03",
       "text": "다음 배포 언제 하는 게 좋을까?",
       "expect": "none",
-      "note": "opinion; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "opinion; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8n-04",
       "text": "지라에서 릴리스 만드는 방법",
       "expect": "none",
-      "note": "how-to about another app; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "how-to about another app; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8n-05",
       "text": "20261015 배포 무사히 끝났어",
       "expect": "none",
-      "note": "statement; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "statement; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8n-06",
       "text": "20261015 릴리스 버전 하나 만들어줘",
       "expect": "none",
-      "note": "write request; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "write request; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8n-07",
       "text": "모든 담당자 이슈 보여줘",
       "expect": "none",
-      "note": "every assignee with nothing that bounds it: asked; PENDING the owner's D12 batch (ADR-0120 amendment A8, agent-drafted 2026-10-15)"
+      "note": "every assignee with nothing that bounds it: asked; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     }
   ]
 }

@@ -55,7 +55,8 @@ export function workChatCommandForSelection(selected: NlSelectedCommand, groundi
         source: 'jira',
         ...(release !== undefined ? { release } : {}),
         ...(project !== undefined ? { project } : {}),
-        scope: nlStringArg(args, 'scope') === 'mine' ? 'mine' : 'all',
+        // ADR-0120 A8 owner decision 2: the owner's own items unless every assignee was asked for (grounded).
+        scope: nlStringArg(args, 'scope') === 'all' ? 'all' : 'mine',
         links: parseJiraReleaseLinks(groundingText),
       };
     }

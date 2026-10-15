@@ -8,7 +8,7 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
 import { NL_WAVE1_ENTRIES, jiraKeywordCarriesQualifier, nlWave1Entry } from '../nl-routing/wave1-entries';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { hasJiraReleaseLink, normalizeSiteHost, parseJiraReleaseLinks, releaseLinkOnSite } from './jira-release-link';
-import { lookupJiraRelease, matchProjects, matchRelease, nearbyReleases, type ReleaseLookupCommand } from './jira-release-lookup';
+import { lookupJiraRelease, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
 import { renderReleaseIssues } from './jira-release-renderer';
 import { detectWorkChatCommand } from './work-chat-command';
 import { workChatCommandForSelection } from './work-chat-selection';
@@ -171,6 +171,11 @@ describe('lookupJiraRelease (A8): resolve what the owner named, read the release
     expect(queries[1]?.params).toEqual({ container: 'OP26', releaseId: '16555', limit: 20 });
     expect(JSON.stringify(queries)).not.toContain('https://');
     expect(text).toContain('**Jira 릴리스 20261015** · OP26 · 전체 담당');
+    // The page link is the adapter's release URL; Core builds no Jira URL (none when the release is not listed).
+    expect(text).toContain(`릴리스 페이지: ${LINK}`);
+    const unlisted = await run({ links: parseJiraReleaseLinks(`https://${SITE}/projects/OP26/versions/19999`) });
+    expect(unlisted.queries.at(-1)?.params).toEqual({ container: 'OP26', releaseId: '19999', limit: 20 });
+    expect(unlisted.text).not.toContain('릴리스 페이지');
   });
 
   it('a link on another host is ignored and never fetched; with nothing else named the owner is asked', async () => {
@@ -201,6 +206,73 @@ describe('lookupJiraRelease (A8): resolve what the owner named, read the release
     expect(empty.text).toContain('이 릴리스에 포함된 이슈가 없어요.');
     const denied = await run({ release: '20261015' }, { items: () => { throw new ConnectorQueryError('UNAUTHORIZED'); } });
     expect(denied.text).toBe('FAILURE UNAUTHORIZED');
+  });
+});
+
+describe('A8 review fixes: default scope, channels, deadline, first-page narrowing, release words', () => {
+  it('the owner own items are the default command scope', async () => {
+    const mine = await run({ release: '20261015', project: 'OP26', scope: 'mine' }, { identity: 'acc-1' });
+    expect(mine.text).toContain('· 내 담당');
+  });
+
+  it('owner decision 7: in a channel every-assignee scope and the lists are refused before or instead of any list', async () => {
+    const fake = connector();
+    const ask = (command: Partial<ReleaseLookupCommand>) =>
+      lookupJiraRelease({ connector: fake.provider, command: { scope: 'mine', links: [], ...command }, identity: 'acc-1', siteHost: SITE, inChannel: true }).then((result) => (result.kind === 'body' ? plainTextOf(result.body) : result.reason));
+    expect(await ask({ release: '20261015', scope: 'all' })).toBe('전체 담당 릴리스 조회는 DM에서만 할 수 있어요.');
+    expect(fake.queries).toEqual([]);
+    expect(await ask({ project: 'OP26' })).toContain('프로젝트·릴리스 목록은 DM에서만');
+    expect(await ask({ project: '차란차 운영' })).toContain('프로젝트·릴리스 목록은 DM에서만');
+    expect(await ask({ project: 'OP26', release: '20261016' })).not.toContain('비슷한 릴리스');
+    expect(await ask({ project: 'OP26', release: '20261015' })).toContain('**Jira 릴리스 20261015** · 차란차 운영 2026 (OP26) · 내 담당');
+  });
+
+  it('the deadline is checked before every query: once it passed no further query starts', async () => {
+    const fake = connector();
+    const stop = new AbortController();
+    const slow: ConnectorProvider = { ...fake.provider, query: async (query) => { const result = await fake.provider.query(query); stop.abort(); return result; } };
+    const result = await lookupJiraRelease({ connector: slow, command: { scope: 'all', links: [], release: '20261015', project: '차란차 운영' }, siteHost: SITE, signal: stop.signal });
+    expect(result).toEqual({ kind: 'failure', reason: 'TIMEOUT' });
+    expect(fake.queries.map((query) => query.query)).toEqual(['containers']);
+  });
+
+  it('ambiguous projects are narrowed on the first page of each release list only', async () => {
+    const { queries } = await run({ release: '20261015', project: '차란차 운영' });
+    expect(queries.filter((query) => query.query === 'releases').map((query) => query.params)).toEqual([{ container: 'OP25', limit: 50 }, { container: 'OP26', limit: 50 }]);
+  });
+
+  it('a release name without a project drops the closed release words, and retries the words as written when unknown', async () => {
+    const stripped = await run({ release: '20261015 배포건' });
+    expect(stripped.queries[0]?.params).toEqual({ releaseName: '20261015', limit: 20 });
+    expect(stripReleaseWords('Release 1.0')).toBe('1.0');
+    const names: unknown[] = [];
+    const retried = await run({ release: 'Release 1.0' }, { items: (query) => { names.push(query.params?.releaseName); if (query.params?.releaseName === '1.0') throw new ConnectorQueryError('NOT_FOUND'); return { source: 'jira', items: ISSUES }; } });
+    expect(names).toEqual(['1.0', 'Release 1.0']);
+    expect(retried.text).toContain('**Jira 릴리스 Release 1.0**');
+  });
+});
+
+describe('live names (owner-approved read-only probe, 2026-10-15): project "차란차 플랫폼 운영 2026", version "배포일_20261015(목)"', () => {
+  const live: ConnectorItem[] = [
+    { id: 'APPOP', title: '차란차 플랫폼 APP운영' },
+    { id: 'OP25', title: '차란차 플랫폼 운영 2025' },
+    { id: 'OP26', title: '차란차 플랫폼 운영 2026' },
+    { id: 'COP26', title: '코브랜드 운영 2026' },
+  ];
+  const versions: ConnectorItem[] = [
+    { id: '16591', title: '배포일_20261020(화)' },
+    { id: '16555', title: '배포일_20261015(목)' },
+    { id: '16104', title: '비정기 배포' },
+  ];
+
+  it('the owner words match the project by whole words and the release by a whole token', () => {
+    expect(matchProjects(live, '차란차 운영 2026').map((item) => item.id)).toEqual(['OP26']);
+    expect(matchProjects(live, '차란차 운영').map((item) => item.id)).toEqual(['OP25', 'OP26']);
+    expect(matchRelease(versions, '20261015')?.id).toBe('16555');
+    expect(matchRelease(versions, '20261015 배포건')?.id).toBe('16555');
+    expect(matchRelease(versions, '2026101')).toBeUndefined();
+    expect(matchRelease([...versions, { id: '9', title: '핫픽스_20261015' }], '20261015')).toBeUndefined();
+    expect(nearbyReleases(versions, '20261016').map((item) => item.title).slice(0, 2)).toEqual(['배포일_20261015(목)', '배포일_20261020(화)']);
   });
 });
 
@@ -236,7 +308,7 @@ describe('the release report renderer (A8)', () => {
     }));
     const text = plainTextOf(renderReleaseIssues({ releaseName: '20261015', releaseUrl: LINK, scope: 'all', items, truncated: true }));
     expect(Array.from(text).length).toBeLessThanOrEqual(1800);
-    expect(text).toContain('이슈 20건 이상: 완료 10 · 진행 중 10 · 할 일 0');
+    expect(text).toContain('이슈 20건 이상 — 표시한 20건 기준: 완료 10 · 진행 중 10 · 할 일 0 (일부만 표시, 전체는 릴리스 페이지에서)');
     expect(text).toContain(`릴리스 페이지: ${LINK}`);
     expect(text).toContain('(길이 때문에 일부는 생략했어요)');
   });
@@ -266,10 +338,14 @@ describe('jira.release validation (A8)', () => {
     expect(validate('jira.release', { project: 'OP27' }, 'OP26 릴리스')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'project' });
   });
 
-  it('scope mine needs the owner words; all is the default and is dropped from the canonical args', () => {
-    expect(validate('jira.release', { release: '20261015', scope: 'mine' }, '20261015 릴리스 보여줘')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'scope' });
-    expect(validate('jira.release', { release: '20261015', scope: 'mine' }, '20261015 릴리스 중에 내 담당만')).toMatchObject({ ok: true, value: { args: { release: '20261015', scope: 'mine' } } });
-    expect(validate('jira.release', { release: '20261015', project: '차란차 운영', scope: 'all' }, '내 담당 말고 전체 담당은?', { release: '20261015', project: '차란차 운영' })).toMatchObject({ ok: true, value: { args: { release: '20261015', project: '차란차 운영' } } });
+  it('owner decision 2: mine is the default (dropped from the canonical args); all needs the owner explicit words', () => {
+    expect(validate('jira.release', { release: '20261015', scope: 'all' }, '20261015 릴리스 보여줘')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'scope' });
+    expect(validate('jira.release', { release: '20261015', scope: 'mine' }, '20261015 릴리스 중에 내 담당만')).toMatchObject({ ok: true, value: { args: { release: '20261015' } } });
+    for (const text of ['내 담당 말고 전체 담당은?', '20261015 담당 상관없이 보여줘', '20261015 모든 담당자 거', 'release 20261015 for all assignees']) {
+      expect(validate('jira.release', { release: '20261015', scope: 'all' }, text, { release: '20261015' }), text).toMatchObject({ ok: true, value: { args: { release: '20261015', scope: 'all' } } });
+    }
+    // A follow-up keeps a stated every-assignee scope from the previous selection.
+    expect(validate('jira.release', { release: '20261015', scope: 'all' }, '몇 개야?', { release: '20261015', scope: 'all' })).toMatchObject({ ok: true });
   });
 
   it('jira.issues refuses a request for every assignee (its own items cannot answer it)', () => {
@@ -280,9 +356,10 @@ describe('jira.release validation (A8)', () => {
 
   it('the basis line names the release, the project and the scope', () => {
     const entry = nlWave1Entry('jira.release');
-    expect(entry.describe?.({ release: '20261015', project: '차란차 운영' }, undefined, 'ko')).toBe('릴리스 "20261015" / 프로젝트 "차란차 운영" / 전체 담당');
+    expect(entry.describe?.({ release: '20261015', project: '차란차 운영' }, undefined, 'ko')).toBe('릴리스 "20261015" / 프로젝트 "차란차 운영" / 내 담당');
+    expect(entry.describe?.({ release: '20261015', scope: 'all' }, undefined, 'ko')).toBe('릴리스 "20261015" / 전체 담당');
     expect(entry.describe?.({ project: 'OP26' }, undefined, 'ko')).toBe('프로젝트 "OP26" / 릴리스 목록');
-    expect(entry.describe?.({ scope: 'mine' }, undefined, 'ko')).toBe('링크의 릴리스 / 내 담당');
+    expect(entry.describe?.({}, undefined, 'ko')).toBe('링크의 릴리스 / 내 담당');
   });
 
   it('the selection maps to a release command with the links of the owner own words', () => {
@@ -290,10 +367,10 @@ describe('jira.release validation (A8)', () => {
       kind: 'release',
       source: 'jira',
       release: '20261015',
-      scope: 'all',
+      scope: 'mine',
       links: [{ host: SITE, projectKey: 'OP26', versionId: '16555' }],
     });
-    expect(workChatCommandForSelection({ entryId: 'jira.release', args: { scope: 'mine', project: 'OP26' }, language: 'ko' })).toMatchObject({ scope: 'mine', project: 'OP26', links: [] });
+    expect(workChatCommandForSelection({ entryId: 'jira.release', args: { scope: 'all', project: 'OP26' }, language: 'ko' })).toMatchObject({ scope: 'all', project: 'OP26', links: [] });
   });
 });
 
@@ -317,7 +394,7 @@ describe('prompt nl-select.v27 (A8): the jira.release examples appear only while
     const withRelease = buildSelectionPrompt({ entries: [nlWave1Entry('jira.issues'), nlWave1Entry('jira.release')], text: 'x' });
     expect(withRelease).toContain('- jira.release: ');
     expect(withRelease).toContain('release: verbatim text.');
-    expect(withRelease).toContain('scope: all|mine.');
+    expect(withRelease).toContain('scope: mine|all.');
     expect(withRelease).toContain('Message: 2.4.1 배포건 정리해줘');
     const without = buildSelectionPrompt({ entries: [nlWave1Entry('jira.issues')], text: 'x' });
     expect(without).not.toContain('jira.release');

@@ -87,11 +87,12 @@ const EXAMPLES: readonly PromptExample[] = [
   { text: '목요일 거는?', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-thu"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '그 중에 미팅 시간 있는 것만', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-week","timedOnly":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '가장 오래된 것부터 보여줘', previous: '{"entryId":"jira.issues","args":{"status":"in-progress"}}', output: '{"entryId":"jira.issues","args":{"status":"in-progress","sort":"oldest"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
-  // ADR-0120 amendment A8 (v27): a release, a project's release list, a follow-up to the owner's own, a pasted link, and
-  // every assignee with nothing that bounds it (asked).
-  { text: 'ABC 프로젝트 3.2.0 버전에 들어간 이슈 다 보여줘', output: '{"entryId":"jira.release","args":{"project":"ABC","release":"3.2.0"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
+  // ADR-0120 amendment A8 (v27): a release for every assignee (stated), a release (the owner's own by default), a
+  // follow-up back to the owner's own, a project's release list, a pasted link, and every assignee with nothing that
+  // bounds it (asked).
+  { text: 'ABC 프로젝트 3.2.0 버전에 들어간 거 담당 상관없이 보여줘', output: '{"entryId":"jira.release","args":{"project":"ABC","release":"3.2.0","scope":"all"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
   { text: '2.4.1 배포건 정리해줘', output: '{"entryId":"jira.release","args":{"release":"2.4.1"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
-  { text: '거기서 내 담당인 것만', previous: '{"entryId":"jira.release","args":{"release":"2.4.1"}}', output: '{"entryId":"jira.release","args":{"release":"2.4.1","scope":"mine"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
+  { text: '거기서 내 담당인 것만', previous: '{"entryId":"jira.release","args":{"release":"2.4.1","scope":"all"}}', output: '{"entryId":"jira.release","args":{"release":"2.4.1"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
   { text: '결제팀 프로젝트 릴리스 뭐 있어?', output: '{"entryId":"jira.release","args":{"project":"결제팀"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
   { text: 'https://example.atlassian.net/projects/ABC/versions/10001 이거 확인 좀', output: '{"entryId":"jira.release","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
   { text: '지라 담당자 상관없이 다 보여줘', output: '{"entryId":"jira.release","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['jira.release'] },

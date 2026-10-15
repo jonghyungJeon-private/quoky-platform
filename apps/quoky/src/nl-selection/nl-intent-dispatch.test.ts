@@ -667,7 +667,8 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     const start = marks();
     const result = await send('jira에서 20261015 배포건 뭐 있는지 확인해줘 차란차 운영');
     expect(selected.slice(start.selected).map((entry) => entry.command.entryId)).toEqual(['jira.release']);
-    expect(result.reply.text.split('\n')[0]).toBe('기준: 릴리스 "20261015" / 프로젝트 "차란차 운영" / 전체 담당');
+    // Owner decision 2: the owner's own items by default.
+    expect(result.reply.text.split('\n')[0]).toBe('기준: 릴리스 "20261015" / 프로젝트 "차란차 운영" / 내 담당');
     // The fake Jira has no such project: one `containers` read, then the honest not-found answer.
     expect(connectorQueries.slice(start.connectors).map((entry) => entry.query.query)).toEqual(['containers']);
     expect(result.reply.text).toContain('Jira 프로젝트를 찾지 못했어요');
@@ -690,6 +691,14 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(selected.length).toBe(allStart.selected);
     expect(connectorQueries.length).toBe(allStart.connectors);
     expect(asked.reply.text).toContain('Jira 릴리스 조회에서 무엇을 찾을지 정확히 모르겠어요.');
+
+    // Owner decision 7: every assignee in a channel is refused (DM-only until A9), nothing is read.
+    selectorAnswer = answer('jira.release', { release: '20261015', scope: 'all' });
+    const channelStart = marks();
+    const refused = await send('20261015 릴리스 전체 담당으로 보여줘', context(false));
+    expect(selected.slice(channelStart.selected).map((entry) => entry.command.entryId)).toEqual(['jira.release']);
+    expect(connectorQueries.length).toBe(channelStart.connectors);
+    expect(refused.reply.text).toContain('전체 담당 릴리스 조회는 DM에서만 할 수 있어요.');
   });
 
   /** The `Previous selection:` line of the last selector call since `from` (the prompt's own examples carry others). */

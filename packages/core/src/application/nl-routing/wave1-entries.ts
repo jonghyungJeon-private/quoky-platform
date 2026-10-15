@@ -54,8 +54,11 @@ export const JIRA_RELEASE_WORDS: readonly string[] = ['릴리스', '릴리즈', 
  * its validator refuses a selection whose text carries one, and the frozen Jira grammar yields it.
  */
 export const JIRA_ALL_ASSIGNEE_WORDS: readonly string[] = ['전체 담당', '모든 담당', '담당 상관없이', '담당자 상관없이', '담당자 전체', '전체 담당자', '모든 담당자', '다른 사람 담당', '팀 전체', 'all assignees', 'any assignee', 'everyone'];
-/** ADR-0120 amendment A8: words that limit a release listing to the owner's own items (`scope: mine`). */
-export const JIRA_MINE_WORDS: readonly string[] = ['내 담당', '내가 담당', '제 담당', '내 것', '내 거', '내꺼', '내 이슈', '나한테', '내게 할당', '나에게', 'mine', 'my own', 'assigned to me', 'my issues'];
+/**
+ * ADR-0120 amendment A8 (owner decision 2, 2026-10-15: "default로는 당연히 내 담당 기준"): words with which the owner explicitly
+ * asks a release listing for every assignee (`scope: all`). Without one the listing is the owner's own items.
+ */
+export const JIRA_SCOPE_ALL_WORDS: readonly string[] = [...JIRA_ALL_ASSIGNEE_WORDS, '전체', '모든 이슈', 'all issues', 'every issue'];
 
 /** Period words (relative days, weeks, months): a keyword carrying one is a period, not a topic. */
 export const NL_PERIOD_WORDS: readonly string[] = ['오늘', '어제', '내일', '모레', '이번', '지난', '다음', '금주', '최근', '요즘', 'today', 'yesterday', 'tomorrow', 'week', 'month', 'recent'];
@@ -178,13 +181,13 @@ const jiraRelease: NlCatalogEntry = {
   label: { ko: 'Jira 릴리스 조회', en: 'Jira release' },
   aliases: ['릴리스', '릴리즈', '배포', 'release', '버전'],
   description: {
-    en: "The issues in one Jira release (fix version) of a project, for every assignee unless the owner asks for only their own, grouped by status like Jira's release report; or a project's release list when no release is named. Also a pasted Jira release link.",
-    ko: 'Jira 릴리스(배포 버전)에 포함된 이슈, 기본은 전체 담당, 상태별. 릴리스 이름 없이 프로젝트만 말하면 그 프로젝트의 릴리스 목록. Jira 릴리스 링크도.',
+    en: "The issues in one Jira release (fix version) of a project, the owner's own unless they ask for every assignee, grouped by status like Jira's release report; or a project's release list when no release is named. Also a pasted Jira release link.",
+    ko: 'Jira 릴리스(배포 버전)에 포함된 이슈, 기본은 내 담당(전체 담당은 말할 때만), 상태별. 릴리스 이름 없이 프로젝트만 말하면 그 프로젝트의 릴리스 목록. Jira 릴리스 링크도.',
   },
   args: [
     { name: 'release', kind: 'keyword', description: 'The release (fix version) name copied verbatim from the owner\'s words (e.g. 3.2.0), without words like 배포/배포건/릴리스/버전. Omit for a pasted link: Quoky reads the link itself.' },
     { name: 'project', kind: 'keyword', description: 'The Jira project name or key copied verbatim and whole from the owner\'s words (every word of a multi-word name, e.g. 모바일 앱 운영, never just 모바일), without 프로젝트. Omit when none is named.' },
-    { name: 'scope', kind: 'enum', values: ['all', 'mine'], default: 'all', valueGrounding: { mine: JIRA_MINE_WORDS }, description: 'mine ONLY when the owner limits it to their own issues (내 담당만, 나한테 할당된 것만); default all = every assignee. Every assignee (전체 담당) with no release, project or link named: NEEDS_CLARIFICATION.' },
+    { name: 'scope', kind: 'enum', values: ['mine', 'all'], default: 'mine', valueGrounding: { all: JIRA_SCOPE_ALL_WORDS }, description: 'all ONLY when the owner explicitly asks for every assignee (전체, 모든 담당, 담당 상관없이, all assignees); default mine = the owner\'s own issues. Every assignee with no release, project or link named: NEEDS_CLARIFICATION.' },
     COUNT,
   ],
   usage: { ko: '"ABC 프로젝트 1.2.0 릴리스 보여줘"', en: '"ABC 프로젝트 1.2.0 릴리스 보여줘"' },
@@ -202,7 +205,7 @@ const jiraRelease: NlCatalogEntry = {
     const project = typeof args.project === 'string' ? (language === 'en' ? `project ${quoted(args.project)}` : `프로젝트 ${quoted(args.project)}`) : undefined;
     const what = typeof args.release === 'string' || typeof args.project !== 'string' ? undefined : (language === 'en' ? 'release list' : '릴리스 목록');
     const scope = typeof args.release === 'string' || typeof args.project !== 'string'
-      ? (args.scope === 'mine' ? (language === 'en' ? 'assigned to me' : '내 담당') : (language === 'en' ? 'every assignee' : '전체 담당'))
+      ? (args.scope === 'all' ? (language === 'en' ? 'every assignee' : '전체 담당') : (language === 'en' ? 'assigned to me' : '내 담당'))
       : undefined;
     return joinBasis([release, project, what, scope]);
   },

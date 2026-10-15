@@ -126,6 +126,8 @@ export type WorkChatCommand =
       readonly project?: string;
       readonly scope: 'mine' | 'all';
       readonly links: readonly JiraReleaseLink[];
+      /** The conversation is a channel (A8 owner decision 7): every-assignee scope and the lists are DM-only. */
+      readonly inChannel?: true;
     }
   | { readonly kind: 'external-write-unsupported'; readonly source: WorkChatSource }
   /**

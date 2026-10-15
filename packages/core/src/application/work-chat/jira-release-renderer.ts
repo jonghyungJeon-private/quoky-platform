@@ -85,7 +85,11 @@ export function renderReleaseIssues(view: ReleaseIssuesView): MessageBody {
   } else {
     const counts = GROUPS.map((group) => ({ ...group, items: view.items.filter((item) => groupOf(item) === group.key) }));
     const summary = counts.map((group) => `${group.label} ${group.items.length}`).join(' · ');
-    lines.push({ text: `이슈 ${view.items.length}건${view.truncated ? ' 이상' : ''}: ${summary}${view.truncated ? ` (일부만 표시, 최대 ${view.items.length}건)` : ''}` });
+    lines.push({
+      text: view.truncated
+        ? `이슈 ${view.items.length}건 이상 — 표시한 ${view.items.length}건 기준: ${summary} (일부만 표시, 전체는 릴리스 페이지에서)`
+        : `이슈 ${view.items.length}건: ${summary}`,
+    });
     for (const group of counts) {
       if (group.items.length === 0) continue;
       lines.push({ text: `${group.label} (${group.items.length})`, droppable: true });
@@ -166,6 +170,14 @@ export function renderReleaseNotFound(text: string, project: ReleaseProjectRef |
     lines.push({ text: '프로젝트 이름도 함께 말씀해 주시면 그 프로젝트에서 찾아볼게요.' });
   }
   return fit(lines);
+}
+
+/**
+ * ADR-0120 A8 owner decision 7 (2026-10-15): in a channel, every-assignee scope and the project / release lists are
+ * refused until the A9 surface permissions exist; nothing was read for the refused part.
+ */
+export function renderReleaseDmOnly(what: 'all' | 'list'): MessageBody {
+  return fit([{ text: what === 'all' ? '전체 담당 릴리스 조회는 DM에서만 할 수 있어요.' : '프로젝트·릴리스 목록은 DM에서만 볼 수 있어요. 릴리스 이름을 정확히 말씀해 주시거나 DM에서 물어봐 주세요.' }]);
 }
 
 /** Nothing to read: no release, no project and no usable link. */

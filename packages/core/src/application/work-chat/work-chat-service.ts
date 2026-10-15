@@ -606,12 +606,17 @@ export class WorkChatService implements WorkDesk {
       .filter(Boolean)
       .sort()[0];
     let result: Awaited<ReturnType<typeof lookupJiraRelease>>;
+    // The deadline also stops the chain: no further query starts once it passed (a request in flight is not cancelled).
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), this.lookupDeadlineMs);
     try {
       result = await withDeadline(
         () =>
           lookupJiraRelease({
             connector,
             command,
+            signal: deadline.signal,
+            ...(command.inChannel === true ? { inChannel: true } : {}),
             ...(identity !== undefined ? { identity } : {}),
             ...(this.jiraSiteHost !== undefined ? { siteHost: this.jiraSiteHost } : {}),
           }),
@@ -619,6 +624,9 @@ export class WorkChatService implements WorkDesk {
       );
     } catch (error) {
       return reply(renderLookupFailure('jira', failureReason(error)));
+    } finally {
+      clearTimeout(timer);
+      deadline.abort();
     }
     if (result.kind === 'failure') return reply(renderLookupFailure('jira', result.reason));
     return { ...messageFields(result.body), kind: 'reply', ...(result.listed !== undefined ? { listed: result.listed } : {}) };
