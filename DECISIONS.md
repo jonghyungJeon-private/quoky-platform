@@ -25888,6 +25888,115 @@ connector-write reconcile (no send).
 
 - Rebased onto A8/A9 P1: read prompt v30, A6 prompt v31; the R1 final gate ran on read v27/A6 v29 (pre-merge) — re-run on v30/v31 before the flag decision.
 
+- **A6 R1 gate re-run on the merged prompts (read v30 / A6 v31) regressed; fix = A6 prompt `nl-select.v32` (2026-10-16).**
+  Gate v31 (3 runs, `data/eval/a6-gate-v31-run*`): `reminder.list` 0.667 every run (`a6-negative-reminder.list-002`, `-006`
+  answered with an outcome question), one `help.topic` wrong capture per read-regression run, run 3 also 3 outcome errors.
+  **Root causes.** (1) The merge gave `reminder.list` a `status` arg (it was `args: none`); with an arg block listed, Haiku
+  copies `range` ("내일 알림") or `count` ("몇 개") into it, Core's validator rejects the unlisted arg (`unknown-arg`) and asks.
+  Probe 10x: 9/10 and 7/10 asked. (2) The rule-3 feature list (project registration, memory) plus rule 8 let a
+  "<feature> <verb>: <value>" command ("프로젝트 등록: ...", "기억 삭제: 1") through to `help.topic` (3/10 and 10/12 probes).
+  (3) The outcome errors are infrastructure, not prompt: latency 0 ms (the CLI was never called) or the 6 s bound; the same
+  cases probe clean 10/10; they did not recur in six later runs. (4) The merge itself changed no instruction line (the v31
+  diff against v29 is comments plus the `status` catalog text and the A8 `jira.release` entry and examples).
+  **Fix (A6 prompt only; the read prompt stays v30, the A6-off golden `nl-select.v30.prompts.json` is unchanged).** Rule 8
+  gains: help.topic needs a question form, a bare command or "<feature> <verb>: <value>" form is none; only the args listed
+  for the chosen entry exist (reminder.list has no range or count arg). Three A6 examples: "모레 알림 몇 개 잡혀 있어?" ->
+  reminder.list `{}`, "프로젝트 등록: ~/code/site" and "피드백 삭제: 2" -> none. (Correction, CA review: these near-copied
+  scored corpus cases `neg-110`, `neg-097` and `reminder.list-002/-006`; replaced in `nl-select.v33`, note below.) Cache-key pins: `NL_ACTION_PROMPT_VERSION` and the three `nl-action*.json` corpora `promptVersion`.
+  **Gate after (Haiku, 3 runs, read v30 / A6 v32, `data/eval/a6-gate-v32-run*`; an earlier 3-run set on the first v32 text
+  is `a6-gate-v32a-run*`).** See CURRENT_STATE for the table. `reminder.list` 6/6 in the final runs; wrong targets 0,
+  negative captures 0, A6 captures 0 in all runs. **Residual (not prompt-fixable here):** `todo.add` and `reminder.create`
+  sit at the 0.90 per-entry line because of fixed request-form golds (`todo.add-009/-016/-025`, `reminder.create-024/-027`
+  fail 3 of 3 by the positive request-form rule, accepted under the R1 residuals) plus 1-2 selector misses; read-regression
+  `neg-037` (venting with trigger words, about 10% a run) and `neg-097` ("기억 삭제: 1", intermittent) can still capture. These
+  are model noise at the margin and the owner's flag decision, not a structural regression. `nl-intent-dispatch.test.ts`
+  "목요일 거는?" (`thu` vs `this-thu`) fails on `origin/main` too: it depends on the wall-clock weekday (today is a Friday).
+
+- **A6 R1 gate note: the five fixed `todo.add` / `reminder.create` golds (2026-10-16).** Correction to the note above:
+  `reminder.create-027` ("20분 후에 '스프린트 데모 준비' 알려줘") was never refused by the request-form rule. Core grounded
+  and executed it, but Haiku's `when` was "20분 후에" (raw output seen in an earlier diagnostic), and the scorer compares exact
+  args. `-019` missed the same way in one run (the selector picks `calendar.events` in most runs). Fix: `reminder.create`
+  `normalize` drops one trailing locative 에 from `when` when time words remain. This is the canonical form its own arg
+  description names, and the grammar reads both as the same time. **Unchanged, owner gold decision (recommended gold =
+  ask/refuse):** `todo.add-009` ("… 추가할게.", first-person promise), `todo.add-016` and `reminder.create-024` (exact-command
+  colon heads, A6-D3a), and `todo.add-025` ("… 추가 ㄱㄱ"). ㄱㄱ / 고고 were tried as closed request endings and reverted
+  (Codex P1: "추가 고고 했다" and "추가 ㄱㄱ 하는 법" grounded; the R1 backstop is closed, orchestrator decision). They stay
+  must-not-execute tests. One Haiku action run (A6 v32, `data/eval/nl-action-2026-10-15T16-18-28-659Z.json`) ran before
+  the revert, so its 025 hit no longer holds (todo.add 45/47 there, about 44/47 now). 027 hit; `reminder.create` 0.854
+  (024; 019 → `calendar.events`; 033/035/037/039 are intermittent selector arg misses also seen in earlier runs); overall
+  0.948, spanExact 0.962, wrong targets 0, negative captures 0; gate not passed. No model run after the revert.
+
+- **A6 prompt `nl-select.v33` (CA review of v32, 2026-10-16).** The three v32 rule-8 examples near-copied scored corpus cases.
+  They are replaced by other features, verbs and sentence shapes that teach the same rules ("다음 주에 울릴 리마인더 쭉
+  보여줘" -> reminder.list `{}`; "브랜치 hotfix-0420 새로 따 줘" and "커밋 메시지는 앞으로 영어로 쓰게 설정해 둬" -> none). No
+  rule line changes. A test now checks that no A6 example equals a scored case (`nl-action.v1`, seed, `nl-intent.v1`) and
+  that each v33 example stays below 0.5 token overlap. Remaining near-copies from before v32 are reported, not changed:
+  "그거 요약해줘" (a read example; its A6 override equals `a6-reference-item.summarize-001`) and "할 일 전부 완료로
+  바꿔줘" (about `todo.complete-033`). Includes the CA ㄱㄱ strings as must-not-ground tests.
+  **Gate on v33 (Haiku 3+3, `data/eval/a6-gate-v33-run{1,2,3}-{action,readreg}.stdout.txt`):**
+  action overall 0.943 / 0.953 / 0.960, `todo.add` 0.915 / 0.894 / 0.915, `reminder.create` 0.854 / 0.902 / 0.927,
+  `reminder.list` 1 / 0.833 / 1, spanExact 0.948 / 0.910 / 0.961; wrong targets, negative captures and over-bound are 0
+  everywhere. Action gate: run 3 passed. Read-regression overall 0.954 / 0.951 / 0.954, A6 captures 0, wrong captures 2 / 1 / 2
+  (`help.topic`: neg-012 "아이폰 알림 어떻게 꺼?", neg-025 "Jira 이슈 제목 쓰는 좋은 방법이 있을까?", neg-110 "프로젝트 등록:
+  /tmp/app"); read gate passed 0 of 3. Compared with v32: neg-097 no longer captures (0 of 3, was 4 of 6), and neg-110 is
+  back (1 of 3; v32's near-copy example had masked it). neg-012 / neg-025 (other apps' how-tos) are new, and
+  `reminder.create-014` ("금요일 오후 6시에 주간 회고 작성 알려줘") is now `none` 3 of 3 (it hit 7 of 7 before). Not fixed
+  here: no further prompt loop was authorized.
+
+- **A6 prompt `nl-select.v34` (one more iteration, owner blanket approval for follow-ups, 2026-10-16).** Three changes.
+  (1) Rule 8 now says a question form is needed but not enough: help.topic is only a question about Quoky itself, and a
+  question about any other app, device or service is none. (2) The "…설정해 둬" none example is replaced by "대화 모델은
+  소네트로 고정해". Probe: with it, `reminder.create-014` went to none 3 of 5; without it, 0 of 10. (3) The two older A6
+  near-copies are rewritten: "그 메일 내용 짧게 정리해 줄래?" (A6 prompt only; the read prompt keeps v30) and "목록에 있는
+  거 모두 끝난 걸로 처리해 줘". The overlap test now covers every A6 example. Its measure is shape-aware (numbers and paths
+  are one token, punctuation counts) with a 0.6 threshold, calibrated so that all five removed examples are flagged.
+  **Gate (Haiku 3+3, `data/eval/a6-gate-v34-run*`):** action overall 0.960 / 0.965 / 0.948, `todo.add` 0.915 / 0.936 /
+  0.915, `reminder.create` 0.927 / 0.976 / 0.902, `reminder.list` 1 / 1 / 1, spanExact 0.987 / 0.987 / 0.962; wrong targets
+  and negative captures 0. Action gate passed 2 of 3. Read overall 0.953 / 0.961 / 0.947, A6 captures 0, wrong captures
+  0 / 1 / 3. Read gate passed 0 of 3: `jira.release` is below 0.9 in every run (it has been below 0.9 since v32),
+  `confluence.search` 48/54 in two runs (misread as `slack.search` 13 times, against 5-6 on v32/v33), and `help.topic` 44/51
+  in run 3. **Flips vs v33.** Fixed: `reminder.create-014` 0 -> 3, `-033` 1 -> 3, neg-012 / neg-025 1 -> 3 (other apps'
+  how-tos), `calendar-018`, `uat5ca-03`. Regressed: `a6-negative-none-029` "리마인더 만드는 법" / `-032` "할 일 빼는 방법 좀"
+  / `-124` (gold none, now help.topic: rule 3 already makes a how-to about Quoky's own feature help.topic, so the gold and
+  the rule disagree); `item.summarize-007` "첫 번째 요약해줘" 2 -> 0 (the rewritten summarize example lost the short form);
+  `todo.complete-032` "다 완료 처리해줘" 2 -> 0 (the rewritten bulk example lost the action word); neg-110 2 -> 0;
+  `calendar-025` 3 -> 0; `confluence-004/-018/-027` 3 -> 1. **Stopped here (no further iteration).** Recommendation.
+  *Fix* in a later prompt: restore a short "<ordinal/deictic> 요약해" form and a bulk example that names the action, both in
+  a non-corpus form. *Owner gold decision:* none-029/-032/-124 -> help.topic (consistent with rule 3). *Residual:*
+  `jira.release` (an A8 read-side weakness that predates v32), confluence->slack and neg-110 / neg-037 / neg-051 (model noise).
+
+- **Gold relabel, owner-delegated ("후속작업 전부 승인", 2026-10-16; orchestrator decision under that approval).** Five how-to
+  golds move from `none` to help.topic: `a6-negative-none-028` "할 일을 완료하는 방법이 궁금해" -> `{topic: todo}`, `-029`
+  "리마인더 만드는 법" -> `{topic: reminder}`, `-030` "undo 하는 방법 알려줘" -> `{topic: all}` (no undo topic in
+  `NL_HELP_TOPICS`; `all` is the closest general index), `-032` "할 일 빼는 방법 좀" -> `{topic: todo}`, `-033` "알림 반복
+  설정은 어떻게 해?" -> `{topic: reminder}`. They match the existing D12 help golds (help-038 "할 일 추가하는 법 알려줘" todo,
+  help-043 feedback, help-045 "리마인더 설정하는 방법" reminder). Rationale: the D12 help-gold convention, and prompt rule 3
+  makes a how-to question about one of Quoky's own features help.topic, so the gold `none` contradicted the rule the selector
+  is taught. `a6-negative-none-124` "the undo button is missing in this app" stays `none`, a deliberate deviation from the
+  orchestrator list: it is a statement, not a question, and rule 8 (v32+) says help.topic needs a question form.
+  **Known residual:** prompt rule 8 still lists "...하는 법" forms as none, which contradicts rule 3 and these golds. It is to
+  be fixed in the next A6 prompt version (inert: no prompt change in this step).
+- **A6 prompt `nl-select.v35`, the last iteration (2026-10-16).** v34 plus two examples back in their short and
+  action-word forms, in non-corpus wording ("이거 요약 좀" -> item.summarize this/summary; "남은 거 모두 완료 처리해" ->
+  todo.complete NEEDS_CLARIFICATION). The overlap test covers them. **Gate (Haiku 3+3, `data/eval/a6-gate-v35-run*`):**
+  action overall 0.955 / 0.960 / 0.953, `todo.add` 0.936 x3, `reminder.create` 0.951 / 0.976 / 0.976, `reminder.list` 1 x3,
+  spanExact 0.987 / 1 / 0.987; wrong targets and negative captures 0. Action gate passed 1 of 3. Run 1 failed on
+  `reminder.cancel` 0.897. Run 2 failed on `help.topic` 1/2: the entry now has only the two relabelled golds, so one miss is
+  0.5. Read overall 0.951 / 0.948 / 0.956, A6 captures 0, wrong captures 0 / 2 / 3 (neg-110 "프로젝트 등록: /tmp/app",
+  neg-111 "모델 변경: codex", neg-051, all to help.topic); read gate passed 0 of 3.
+  **A6-off baseline (the read prompt v30 on this branch, 3 runs, `data/eval/a6-off-baseline-v30-run*`):** overall 0.959 /
+  0.969 / 0.975, `jira.release` 26 / 24 / 24 of 28, `confluence.search` 50 / 49 / 52 of 54, wrong captures 0 / 0 / 1
+  (neg-037); D12 gate passed 1 of 3. With A6 on (v35), `jira.release` is 22 / 24 / 25 and `confluence.search` 47 / 49 / 51.
+  So `jira.release` below 0.9 and the confluence->slack confusion predate A6. The A6-only read failures are the
+  `help.topic` captures of colon commands (neg-110 / neg-111) and the overall about 1-2 points lower.
+  **Flips vs v34.** Fixed: none-029 0 -> 3, none-032 0 -> 2, `todo.complete-032` 0 -> 2, `reminder.create-037` 1 -> 3,
+  `todo.add-042` 1 -> 3, `confluence-018/-027/-037`, `jira-047`. Regressed: `reference-todo.complete-005` "first one done"
+  3 -> 0, `item.summarize-015` and `reminder.cancel-027` 3 -> 1, neg-111 3 -> 1, `calendar-018` 3 -> 0, `calendar-005`,
+  `drive-003/-054` 2 -> 0, `help-027` 2 -> 0. Most of these move in both directions between runs at this sample size.
+- **Routing.** The gate instability (the A6-off read baseline also passes only 1 of 3) is routed to ADR-0123 (RAG-0
+  contamination lint first; merged as Proposed in #224).
+  Stopped: no further prompt iteration (orchestrator).
+
 ### ADR-0122 P2 implementation note (2026-10-15)
 
 **Status:** Implemented on branch `claude/v5-surface-grants-p2` (the phasing table's P2 row). No migration, no new OAuth

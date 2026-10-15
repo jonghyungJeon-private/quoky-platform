@@ -5,6 +5,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 R1 gate: A6 prompt `nl-select.v35`, canonical reminder `when` (2026-10-16)
+
+- **Fixed.** `reminder.create` drops one trailing locative 에 from `when` when time words remain ("20분 후에" -> "20분 후").
+  This is its documented canonical form, and the grammar reads both as the same time. `reminder.create-027` was an exact-args
+  miss, not a grounding refusal.
+- **Not passed.** Gate not passed (action 1/3, read 0/3); `QUOKY_NL_ACTIONS` stays off.
+- **Changed.** A6 prompt `nl-select.v35`: the short summarize and named-action bulk examples are back in non-corpus wording;
+  golds `a6-negative-none-028/-029/-030/-032/-033` relabelled to help.topic (owner-delegated, rule 3). Before it, `nl-select.v34`: rule 8 limits help.topic to questions about Quoky itself (other apps' how-tos
+  are none); the remaining A6 near-copies are rewritten and the overlap test covers every A6 example. Before it, `nl-select.v33`: the three v32 rule-8 examples near-copied scored corpus cases (CA review). They are
+  replaced by other features and sentence shapes, and a test now checks example/corpus overlap. Cache-key pins updated.
+- **Not changed.** ㄱㄱ / 고고 as request endings were tried and reverted (Codex P1: reports and how-to text grounded). They
+  are must-not-ground tests. `todo.add-009/-016/-025` and `reminder.create-024` await an owner gold decision (recommended:
+  ask/refuse). Record: DECISIONS "A6 R1 gate note" and "A6 prompt `nl-select.v33`".
+
+## Unreleased — A6 R1 gate re-run fix: A6 prompt `nl-select.v32` (2026-10-16)
+
+- **Fixed.** The R1 gate on the merged prompts (read v30 / A6 v31) failed on `reminder.list` (an outcome question: the
+  selector copied `range` / `count` into the new `status`-only arg block) and on `help.topic` captures of "<feature>
+  <verb>: <value>" commands. A6 rule 8 now states that help.topic needs a question form and that only the listed args exist,
+  with three examples. The read prompt stays `nl-select.v30` (A6-off golden unchanged); A6 prompt `nl-select.v32`, cache-key
+  pins updated. Record: DECISIONS "A6 R1 gate re-run on the merged prompts".
+
 ## Unreleased — A9 P2 surface permission grants: grant by phrase, composite permit, channel reminder check (inert by default, 2026-10-15)
 
 - **Grant by phrase (ADR-0122 D4).** With `QUOKY_CHANNEL_GRANTS=enforce`, the owner's `이 채널에 <그룹> 허용` in a channel

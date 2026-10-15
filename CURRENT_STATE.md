@@ -54,6 +54,19 @@ byte-identical. Chief Architect review required before merge (port and runtime d
 - Owner gold decisions (asked on Discord 2026-10-15; recommended for `reminder.create-020` / `-022`: ask). Still listed as
   PENDING in `nl-action.v1.json`: `a6-paraphrase-todo.complete-018` ("완룐", now `none`), `a6-paraphrase-todo.complete-009`
   ("체크해줘", now `none`), `a6-paraphrase-reminder.create-020` and `a6-paraphrase-reminder.create-022` (now `ask`).
+- Owner gold decision (new, 2026-10-16; recommended: ask/refuse, consistent with A6-D3a and the first-person rule):
+  `a6-paraphrase-todo.add-009` ("할 일 하나 추가할게. …"), `-016` ("todo 추가: …"), `-025` ("… 추가 ㄱㄱ") and
+  `a6-paraphrase-reminder.create-024` ("알림 설정: …"); they now fail every run by design.
+- A6 prompt `nl-select.v33` gate (3+3 Haiku, 2026-10-16): action passed 1 of 3, read-regression 0 of 3 (help.topic captures
+  of neg-012 / neg-025 / neg-110; `reminder.create-014` now `none` 3 of 3). DECISIONS "A6 prompt `nl-select.v33`".
+- A6 prompt `nl-select.v34` gate (3+3 Haiku, 2026-10-16): action passed 2 of 3, read-regression 0 of 3 (`jira.release` < 0.9
+  every run since v32, confluence->slack, help.topic run 3). Owner gold decision proposed: `a6-negative-none-029/-032/-124`
+  -> help.topic. DECISIONS "A6 prompt `nl-select.v34`".
+- A6 prompt `nl-select.v35` (last iteration, 2026-10-16): action gate 1 of 3, read 0 of 3. The A6-off baseline also fails
+  the read gate on `jira.release` 2 of 3, so that miss predates A6. The A6-only read misses are help.topic captures of colon
+  commands (neg-110 / neg-111). Golds none-028/-029/-030/-032/-033 relabelled to help.topic (owner-delegated); none-124 stays none.
+  The gate instability (the A6-off read baseline also passes only 1 of 3) is routed to ADR-0123 (RAG-0 contamination lint
+  first; merged as Proposed in #224).
 - D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
   metadata edits, the calendar relabels and the T1 extension); the 148 S1 cases are marked with their 2026-10-13
   approval. They gate no live behaviour.
@@ -97,6 +110,15 @@ Details and the review record for each item are in the matching notes in `DECISI
   latest Haiku runs (1 each): action 97.3%, 0 wrong targets, 0 negative captures, gate passed; read regression passed.
   The `complete-018` and `-009` relabels are the owner gold decisions listed under "Pending with the owner".
 - **Final Haiku gate (3 runs, read v27 / A6 v29, 2026-10-15).** Action 95.8% / 96.8% / 95.5%, wrong target 0/0/0, negative captures 0/0/0; run 1 below gate only on the READ entry `reminder.list` 5/6. Read regression 95.7% / 95.4% / 96.4%, A6 captures 0/0/0; run 2 has 1 wrong capture (`neg-051` → `help.topic`, read-only). Summary: safety 3/3, utility 2/3 per corpus; not a full pass. The owner decides the flag after the 100-turn live session. Reported-speech residuals ("…완료해줘 했어", "…하길래", "…해서", "…하니까") are recorded in DECISIONS as accepted.
+- **R1 gate re-run on the merged prompts (2026-10-16; read v30, A6 v31 -> v32).** v31 regressed (`reminder.list` 0.667 x3, one
+  `help.topic` wrong capture per read run). Root causes: the new `status` arg made Haiku add `range` / `count` to
+  `reminder.list` (Core asks on the unlisted arg); "<feature> <verb>: <value>" commands pulled to `help.topic`; the three outcome
+  errors were CLI infrastructure (0 ms or the 6 s bound). Fix: A6 prompt `nl-select.v32` (rule 8 + 3 examples; read prompt and A6-off
+  golden unchanged). Haiku 3 runs on v32 (action overall / reminder.list / todo.add / reminder.create; read wrong captures):
+  run 1 95.0% / 1.0 / .894 / .878 / 0 (gate failed on the two per-entry rates); run 2 95.8% / 1.0 / .915 / .902 / 0 (pass);
+  run 3 96.0% / 1.0 / .894 / .927 / 2 (`neg-037`, `neg-097`). v31 was 95.5-95.8% / 0.667 / .91-.89 / .90-.88 / 1 each. 0 wrong
+  targets, 0 negative captures, 0 A6 captures throughout. Open: `todo.add` / `reminder.create` hover at 0.90 (fixed request-form golds
+  plus noise), `neg-037` / `neg-097` intermittent. `QUOKY_NL_ACTIONS` stays `off`.
 - **For the owner:** `neg-094` is grammar-owned (a daily brief schedule) and skipped in A6-on scoring.
 - **Scope note (Codex P2, 2026-10-15):** status views (canceled/completed/past/all) of to-do and reminder lists follow the `todo` / `reminder` grants with `QUOKY_CHANNEL_GRANTS=enforce` (ADR-0122 P2); with the gate `off` they stay DM-only.
 - **Backlog (owner request 2026-10-15, not R1):** a separate safe design proposal for "그거로 추가해줘", bringing earlier

@@ -1,4 +1,4 @@
-import type { NlActionEntryId, NlAmbiguityKey, NlArgs, NlCatalogEntry, NlEntryCheckFailure, NlItemSource, NlWave1EntryId } from './catalog';
+import type { NlActionEntryId, NlAmbiguityKey, NlArgValue, NlArgs, NlCatalogEntry, NlEntryCheckFailure, NlItemSource, NlWave1EntryId } from './catalog';
 import { normalizeForMatch } from './selection-input';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { isNlTimeWord } from './symbolic-time';
@@ -708,6 +708,14 @@ const reminderCreate: NlCatalogEntry = {
     },
   ],
   usage: { ko: '"내일 오전 9시에 회의 준비 알려줘"', en: '"remind me tomorrow at 9am to prepare the meeting"' },
+  // The canonical `when` carries no trailing locative 에 (its own arg description): "20분 후에" is "20분 후". The grammar
+  // reads both as the same time, so this is a spelling of the owner's own time words, never another time (A6 R1 gate).
+  normalize(args: Record<string, NlArgValue>): void {
+    const when = args.when;
+    if (typeof when !== 'string') return;
+    const bare = when.replace(/(?<=\S)\s*에$/u, '');
+    if (bare !== when && containsNlTimeExpression(bare)) args.when = bare;
+  },
   staleCommands: [/["“'‘][^"”'’\n]{1,80}알려\s?줘["”'’]\s?(?:라고|처럼|이라고)/u],
   check(args: NlArgs, groundingText: string): NlEntryCheckFailure | undefined {
     const when = args.when;

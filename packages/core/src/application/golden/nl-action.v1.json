@@ -1,7 +1,7 @@
 {
  "version": 1,
  "description": "ADR-0120 amendment A6 action corpus (NLA-6 data), schema docs/plans/nl-action-corpus-schema.md. Agent-drafted; owner batch APPROVED 2026-10-15. Names, titles and ids are invented. Old draft ids are kept in each note (was ...).",
- "promptVersion": "nl-select.v31",
+ "promptVersion": "nl-select.v35",
  "cases": [
   {
    "id": "a6-paraphrase-todo.add-001",
@@ -10078,8 +10078,14 @@
      "ageMinutes": 1
     }
    },
-   "expect": "none",
-   "note": "was neg-028"
+   "expect": {
+    "entryId": "help.topic",
+    "args": {
+     "topic": "todo"
+    },
+    "outcome": "execute"
+   },
+   "note": "was neg-028 [owner-delegated relabel 2026-10-16 (\"후속작업 전부 승인\"): a how-to question about Quoky's own to-dos (할 일 완료) is help.topic by prompt rule 3; was none]"
   },
   {
    "id": "a6-negative-none-029",
@@ -10105,8 +10111,14 @@
      "ageMinutes": 1
     }
    },
-   "expect": "none",
-   "note": "was neg-029"
+   "expect": {
+    "entryId": "help.topic",
+    "args": {
+     "topic": "reminder"
+    },
+    "outcome": "execute"
+   },
+   "note": "was neg-029 [owner-delegated relabel 2026-10-16 (\"후속작업 전부 승인\"): a how-to question about Quoky's own reminders is help.topic by prompt rule 3; was none]"
   },
   {
    "id": "a6-negative-none-030",
@@ -10132,8 +10144,12 @@
      "ageMinutes": 1
     }
    },
-   "expect": "none",
-   "note": "was neg-030"
+   "expect": {
+    "entryId": "help.topic",
+    "args": {},
+    "outcome": "execute"
+   },
+   "note": "was neg-030 [owner-delegated relabel 2026-10-16 (\"후속작업 전부 승인\"): a how-to question about Quoky's own undo (no undo topic in NL_HELP_TOPICS; closest general index) is help.topic by prompt rule 3; was none]"
   },
   {
    "id": "a6-negative-none-031",
@@ -10186,8 +10202,14 @@
      "ageMinutes": 1
     }
    },
-   "expect": "none",
-   "note": "was neg-032"
+   "expect": {
+    "entryId": "help.topic",
+    "args": {
+     "topic": "todo"
+    },
+    "outcome": "execute"
+   },
+   "note": "was neg-032 [owner-delegated relabel 2026-10-16 (\"후속작업 전부 승인\"): a how-to question about Quoky's own to-dos is help.topic by prompt rule 3; was none]"
   },
   {
    "id": "a6-negative-none-033",
@@ -10213,8 +10235,14 @@
      "ageMinutes": 1
     }
    },
-   "expect": "none",
-   "note": "was neg-033"
+   "expect": {
+    "entryId": "help.topic",
+    "args": {
+     "topic": "reminder"
+    },
+    "outcome": "execute"
+   },
+   "note": "was neg-033 [owner-delegated relabel 2026-10-16 (\"후속작업 전부 승인\"): a how-to question about Quoky's own reminders (알림 반복) is help.topic by prompt rule 3; was none]"
   },
   {
    "id": "a6-negative-none-034",
