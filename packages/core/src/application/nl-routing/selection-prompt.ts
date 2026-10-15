@@ -44,7 +44,9 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * help.topic is only a question about Quoky itself; a question about any other app, device or service is none), the
  * "…설정해 둬" example replaced by "대화 모델은 소네트로 고정해" -> none (probe: the 설정해 둬 example sent "금요일 오후 6시에 …
  * 알려줘" to none 3/5, 0/10 without it), and the two older A6 near-copies in another form ("그거 요약해줘" -> "그 메일 내용 짧게
- * 정리해 줄래?" in the A6 prompt only; "할 일 전부 완료로 바꿔줘" -> "목록에 있는 거 모두 끝난 걸로 처리해 줘").
+ * 정리해 줄래?" in the A6 prompt only; "할 일 전부 완료로 바꿔줘" -> "목록에 있는 거 모두 끝난 걸로 처리해 줘"). v35 (A6 only) =
+ * v34 with those two examples back in their short and action-word forms, still not corpus near-copies ("이거 요약 좀";
+ * "남은 거 모두 완료 처리해"): v34 lost "첫 번째 요약해줘" and "다 완료 처리해줘".
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v30';
 /**
@@ -52,7 +54,7 @@ export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v30';
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
  * for byte (pinned by `golden/nl-select.v30.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v34';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v35';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -149,8 +151,8 @@ const EXAMPLES: readonly PromptExample[] = [
  */
 const ACTION_EXAMPLE_OVERRIDES: Readonly<Record<string, Omit<PromptExample, 'text'> & { readonly text?: string }>> = {
   '그거 요약해줘': {
-    // v34: another form in the A6 prompt (the v24 text equals the scored case a6-reference-item.summarize-001).
-    text: '그 메일 내용 짧게 정리해 줄래?',
+    // v35: the short form in another wording (the v24 text equals the scored case a6-reference-item.summarize-001).
+    text: '이거 요약 좀',
     previous: '{"entryId":"mail.list","args":{}}',
     context: 'last listing: mail (2 items, 1 min ago)',
     output: '{"entryId":"item.summarize","args":{"source":"mail","ref":"this","mode":"summary"},"ambiguity":"CLEAR","alternatives":[]}',
@@ -178,7 +180,7 @@ const ACTION_EXAMPLES: readonly PromptExample[] = [
   { text: '다음 주에 울릴 리마인더 쭉 보여줘', output: '{"entryId":"reminder.list","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['reminder.list'] },
   { text: '브랜치 hotfix-0420 새로 따 줘', output: none, needs: [] },
   { text: '대화 모델은 소네트로 고정해', output: none, needs: [] },
-  { text: '목록에 있는 거 모두 끝난 걸로 처리해 줘', context: 'last listing: todo (3 items, 1 min ago)', output: '{"entryId":"todo.complete","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['todo.complete'] },
+  { text: '남은 거 모두 완료 처리해', context: 'last listing: todo (3 items, 1 min ago)', output: '{"entryId":"todo.complete","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['todo.complete'] },
 ];
 
 /** The v25 rule lines (A6) inserted after rule 7. */

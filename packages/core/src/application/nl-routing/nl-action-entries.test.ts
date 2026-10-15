@@ -265,7 +265,7 @@ describe('item.summarize (record C): the owner must ask for the content; mode on
   });
 });
 
-describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v34 with actions', () => {
+describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v35 with actions', () => {
   const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v30.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
@@ -281,8 +281,8 @@ describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v34
     }
   });
 
-  it('the A6 prompt (v34) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v34');
+  it('the A6 prompt (v35) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v35');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
@@ -533,7 +533,7 @@ describe('A6 R1 gate (v32): the canonical `when`; ㄱㄱ / 고고 are not reques
   });
 });
 
-describe('A6 prompt v34 (CA review): the rule-8 lines and examples teach the rule, never a scored corpus case', () => {
+describe('A6 prompt v35 (CA review): the rule-8 lines and examples teach the rule, never a scored corpus case', () => {
   const corpusTexts = ['nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-intent.v1.json'].flatMap((file) =>
     (JSON.parse(readFileSync(new URL(`../golden/${file}`, import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string }> }).cases.map((c) => ({ id: `${file}:${c.id}`, text: c.text })),
   );
@@ -551,7 +551,7 @@ describe('A6 prompt v34 (CA review): the rule-8 lines and examples teach the rul
   // Every example the A6 prompt shows differently from the read prompt: the action examples and the overridden ones.
   const a6Examples = actionPrompt.split('\nMessage: ').slice(1).map((block) => `Message: ${block.split('\n').slice(0, 2).join('\n')}`).filter((block) => !readPrompt.includes(`\n${block}\n`)).map((block) => block.split('\n')[0]!.slice('Message: '.length));
 
-  it('keeps the rule-8 help.topic lines and the v34 examples', () => {
+  it('keeps the rule-8 help.topic lines and the v35 examples', () => {
     expect(actionPrompt).toContain('   help.topic needs a question form ("어떻게 …?", "…돼?", "…할 수 있어?"): a message with none, such as a bare command or a');
     expect(actionPrompt).toContain('   A question form is needed but not enough: help.topic is only a question whose subject is Quoky itself (you, or one of');
     expect(actionPrompt).toContain('   is none, even when it shares a word with a Quoky feature.');
@@ -559,9 +559,9 @@ describe('A6 prompt v34 (CA review): the rule-8 lines and examples teach the rul
     expect(actionPrompt).toContain('Message: 다음 주에 울릴 리마인더 쭉 보여줘\nOutput: {"entryId":"reminder.list","args":{},"ambiguity":"CLEAR","alternatives":[]}');
     expect(actionPrompt).toContain('Message: 브랜치 hotfix-0420 새로 따 줘\nOutput: {"entryId":"none"');
     expect(actionPrompt).toContain('Message: 대화 모델은 소네트로 고정해\nOutput: {"entryId":"none"');
-    expect(actionPrompt).toContain('Message: 그 메일 내용 짧게 정리해 줄래?\nOutput: {"entryId":"item.summarize","args":{"source":"mail","ref":"this","mode":"summary"}');
-    expect(actionPrompt).toContain('Message: 목록에 있는 거 모두 끝난 걸로 처리해 줘\nOutput: {"entryId":"todo.complete","args":{},"ambiguity":"NEEDS_CLARIFICATION"');
-    for (const gone of ['모레 알림 몇 개 잡혀 있어?', '프로젝트 등록: ~/code/site', '피드백 삭제: 2', '커밋 메시지는 앞으로 영어로 쓰게 설정해 둬', '그거 요약해줘', '할 일 전부 완료로 바꿔줘']) {
+    expect(actionPrompt).toContain('Message: 이거 요약 좀\nOutput: {"entryId":"item.summarize","args":{"source":"mail","ref":"this","mode":"summary"}');
+    expect(actionPrompt).toContain('Message: 남은 거 모두 완료 처리해\nOutput: {"entryId":"todo.complete","args":{},"ambiguity":"NEEDS_CLARIFICATION"');
+    for (const gone of ['모레 알림 몇 개 잡혀 있어?', '프로젝트 등록: ~/code/site', '피드백 삭제: 2', '커밋 메시지는 앞으로 영어로 쓰게 설정해 둬', '그거 요약해줘', '할 일 전부 완료로 바꿔줘', '그 메일 내용 짧게 정리해 줄래?', '목록에 있는 거 모두 끝난 걸로 처리해 줘']) {
       expect(actionPrompt, gone).not.toContain(`Message: ${gone}\n`);
     }
     // The read prompt (A6 off) still carries its v30 example byte for byte.
