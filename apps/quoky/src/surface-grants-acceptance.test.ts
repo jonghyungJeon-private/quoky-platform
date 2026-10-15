@@ -7,6 +7,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   AI_PROVIDERS,
   ACTION_SWITCH_METADATA_KEY,
+  Capability,
+  CapabilityRouter,
+  NL_PENDING_METADATA_KEY,
+  NlActionSwitch,
+  NlSelectionService,
+  SessionManager,
+  prepareSelectionInput,
   ActorMetadataStore,
   CALENDAR_READER,
   CONVERSATION_TURN_HANDLERS,
@@ -27,6 +34,7 @@ import {
   surfaceChannelKey,
   surfaceGroupsOfSelection,
   type AiProvider,
+  type AiRequest,
   type ApplyPreviewAnchor,
   type CalendarEvent,
   type CalendarEventQuery,
@@ -44,6 +52,7 @@ import { SURFACE_GRANTS, type SurfaceGrantsComposition } from './features/surfac
 import routingCorpus from '../../../packages/core/src/application/golden/turn-handler-routing.v1.json';
 import actionShapedCorpus from '../../../packages/core/src/application/golden/action-shaped-fallthrough.v1.json';
 import precedenceCorpus from '../../../packages/core/src/application/golden/reminder-todo-precedence.v1.json';
+import nlIntentCorpus from '../../../packages/core/src/application/golden/nl-intent.v1.json';
 
 /**
  * ADR-0122 (A9 P1) acceptance, OFFLINE over the production `AppModule` (the INT-1 harness shape: a temp SQLite file,
@@ -92,12 +101,18 @@ let storage: SqliteStorageProvider;
 let composition: SurfaceGrantsComposition;
 let handlers: readonly ConversationTurnHandler[];
 let providerCalls = 0;
+/** INTENT_SELECTION calls (the stub selector), counted apart from chat calls. */
+let selectorCalls = 0;
+/** The stub selector's answer for a selection prompt (golden output of the nl-intent corpus). */
+let selectorScript: ((request: AiRequest) => string) | undefined;
 const calendarReads: CalendarEventQuery[] = [];
 let deskCalls = 0;
 const sinkDeliveries: Array<{ kind: string; text: string }> = [];
 let gitCalls: string[] = [];
 let reactionsRecorded = 0;
 let core: QuokyCore;
+let router: CapabilityRouter;
+let sessionManager: SessionManager;
 
 function calendarFixture(query: CalendarEventQuery): readonly CalendarEvent[] {
   const from = Date.parse(query.from);
@@ -140,12 +155,18 @@ beforeAll(async () => {
       async isAvailable() {
         return true;
       },
-      async execute() {
+      async execute(request: AiRequest) {
+        if (request.capability === Capability.INTENT_SELECTION) {
+          selectorCalls += 1;
+          return { text: selectorScript?.(request) ?? JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] }), artifacts: [] };
+        }
         providerCalls += 1;
         return { text: 'A9 stub provider reply', artifacts: [] };
       },
     });
   for (const provider of app.get<AiProvider[]>(AI_PROVIDERS)) stub(provider);
+  router = app.get(CapabilityRouter);
+  sessionManager = app.get(SessionManager);
   stubProviderSelection(app, stub);
   Object.assign(app.get<CalendarReader>(CALENDAR_READER), {
     async listEvents(query: CalendarEventQuery) {
@@ -519,6 +540,20 @@ describe('owner flows in the production composition', () => {
     expect(await anchorStatus(pr)).toBe('PR_CREATED');
   });
 
+  it('an event-relative reminder reads the calendar: it needs `calendar` as well as `reminder` (Codex P1)', async () => {
+    setMode('enforce');
+    const reminderOnly = freshContext('seeded');
+    await grant(reminderOnly, ['reminder']);
+    const before = calendarReads.length;
+    const denied = await send(reminderOnly, '다음 회의 10분 전에 알려줘');
+    expect(denied.text).toBe("이 채널에서는 '캘린더 조회' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+    expect(calendarReads.length).toBe(before);
+    const both = freshContext('seeded');
+    await grant(both, ['reminder', 'calendar']);
+    await send(both, '다음 회의 10분 전에 알려줘');
+    expect(calendarReads.length).toBe(before + 1);
+  });
+
   it('a 👍 reaction in a channel without `memory` is dropped before anything is stored; with it, or in a DM, it is recorded', async () => {
     setMode('enforce');
     const signal = (context: ConversationContext) => ({ platform: 'discord', context, targetPlatformMessageId: '1', rating: 'POSITIVE' as const, action: 'ADDED' as const });
@@ -535,17 +570,143 @@ describe('owner flows in the production composition', () => {
   });
 });
 
+
+// ── natural-language selection in a channel (Phase A, Phase C, c-shadow) with a stub selector ─────────────────────
+
+describe('selection in a channel without grants (stub selector over the nl-intent corpus)', () => {
+  type NlCase = { id: string; text: string; expect: 'none' | { entryId: string; args: Record<string, unknown> } };
+  const cases = (nlIntentCorpus as unknown as { cases: NlCase[] }).cases.filter((c) => !('skip' in prepareSelectionInput(c.text)));
+  const out = (golden: NlCase | undefined) =>
+    JSON.stringify(golden === undefined || golden.expect === 'none' ? { entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] } : { entryId: golden.expect.entryId, args: golden.expect.args, ambiguity: 'CLEAR', alternatives: [] });
+  const byPrompt = (request: AiRequest) => out(cases.find((c) => request.prompt.endsWith(`<<<\n${(prepareSelectionInput(c.text) as { text: string }).text}\n>>>`)));
+
+  beforeAll(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+    selectorScript = undefined;
+  });
+
+  async function runPhase(phase: 'a' | 'c' | 'c-shadow', mode: 'off' | 'enforce') {
+    const deps = depsOf();
+    const previous = deps.nlSelection;
+    const service = new NlSelectionService({
+      mode: 'active',
+      phase,
+      router,
+      sessions: sessionManager,
+      actors: { get: (id) => storage.actors.get(id), save: (actor) => storage.actors.save(actor) },
+      timeZone: 'Asia/Seoul',
+      logger: { info() {}, warn() {}, error() {} },
+      // Each background job an hour apart: the c-shadow hourly cap never hides a queued job here.
+      elapsed: (() => {
+        let ms = 0;
+        return () => (ms += 3_600_000);
+      })(),
+    });
+    deps.nlSelection = service;
+    selectorScript = byPrompt;
+    const results = new Map<string, Observation & { selector: number; shadow: number }>();
+    try {
+      for (const golden of cases) {
+        vi.setSystemTime(CASE_START);
+        const context = freshContext('channel');
+        setMode(mode);
+        const before = selectorCalls;
+        const observed = await send(context, golden.text);
+        const inTurn = selectorCalls - before;
+        await (runtime as unknown as { lastAfterReplyRun?: Promise<void> }).lastAfterReplyRun;
+        await service.lastShadowRun;
+        results.set(golden.id, { ...observed, selector: inTurn, shadow: selectorCalls - before - inTurn });
+      }
+    } finally {
+      deps.nlSelection = previous;
+      setMode('enforce');
+    }
+    return results;
+  }
+
+
+  it('an A6 question (which to-do?) in a channel is the A6 DM-only copy; the question is not kept', async () => {
+    const deps = depsOf();
+    const previous = deps.nlSelection;
+    const actors = { get: (id: string) => storage.actors.get(id), save: (actor: Parameters<typeof storage.actors.save>[0]) => storage.actors.save(actor) };
+    const logger = { info() {}, warn() {}, error() {} };
+    deps.nlSelection = new NlSelectionService({
+      mode: 'active',
+      router,
+      sessions: sessionManager,
+      actors,
+      timeZone: 'Asia/Seoul',
+      logger,
+      actions: { level: 'local', killSwitch: new NlActionSwitch({ actors, logger }) },
+    });
+    // NEEDS_CLARIFICATION: the A6 service asks (a question tagged with the entry) instead of acting.
+    selectorScript = () => JSON.stringify({ entryId: 'todo.complete', args: { match: '보고서' }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [] });
+    try {
+      const results: Record<string, string> = {};
+      for (const mode of ['off', 'enforce'] as const) {
+        vi.setSystemTime(CASE_START);
+        const channel = freshContext('channel');
+        const dm: ConversationContext = { platform: 'discord', channelId: `dm-${channel.userId}`, userId: channel.userId, direct: true };
+        setMode('enforce');
+        await send(dm, '할 일 추가: 보고서 초안');
+        vi.setSystemTime(CASE_START + 1000);
+        await send(dm, '할 일 추가: 보고서 검토');
+        setMode(mode);
+        results[mode] = (await send(channel, '보고서 그거 완료 처리해줘')).text;
+        const session = await storage.sessions.findActiveByContext(channel.platform, channel.channelId, channel.threadId);
+        if (mode === 'enforce') expect(session?.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+      }
+      expect(results.enforce).toBe('이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.');
+      expect(results.off).not.toBe(results.enforce);
+    } finally {
+      deps.nlSelection = previous;
+      selectorScript = undefined;
+      setMode('enforce');
+    }
+  }, 60_000);
+
+  for (const phase of ['a', 'c', 'c-shadow'] as const) {
+    it(`phase ${phase}: identical to off, or the denial with nothing read and no background selection`, async () => {
+      const off = await runPhase(phase, 'off');
+      const enforce = await runPhase(phase, 'enforce');
+      const total = [...off.values()].reduce((sum, o) => sum + o.selector + o.shadow, 0);
+      expect(total, 'the stub selector must be reached').toBeGreaterThan(0);
+      if (phase === 'c-shadow') expect([...off.values()].reduce((sum, o) => sum + o.shadow, 0), 'c-shadow jobs ran with the gate off').toBeGreaterThan(0);
+      const problems: string[] = [];
+      let denied = 0;
+      for (const golden of cases) {
+        const got = enforce.get(golden.id)!;
+        const was = off.get(golden.id)!;
+        if (DENIALS.has(got.text)) {
+          denied += 1;
+          if (got.providerCalls + got.calendarReads + got.deskCalls + got.shadow !== 0) problems.push(`${golden.id}: denied but read or queued`);
+          continue;
+        }
+        // A `skip` claim (hint / status) denied falls through to chat, which reads nothing.
+        if (got.text === 'A9 stub provider reply' && got.deskCalls === 0 && got.calendarReads === 0) continue;
+        if (normalize(got.text) !== normalize(was.text)) problems.push(`${golden.id}: ${got.text.slice(0, 80)} <> ${was.text.slice(0, 80)}`);
+      }
+      expect(problems).toEqual([]);
+      expect(denied).toBeGreaterThan(50);
+    }, 300_000);
+  }
+});
+
 describe('registry (D2.1): every registered handler claims, and its claims map to the closed groups', () => {
   it('each production handler implements surfaceClaim', () => {
     expect(handlers.length).toBeGreaterThanOrEqual(10);
     for (const handler of handlers) expect(typeof handler.surfaceClaim, handler.id).toBe('function');
   });
 
-  it('conformance over the corpora: handle() non-null ⇒ a claim; a reply claim ⇒ handle() answered; a listing maps into the claim', async () => {
+  it('conformance over the corpora, in a DM and in a channel: handle() non-null ⇒ a claim; a reply claim ⇒ handle() answered; a listing maps into the claim', async () => {
     const mismatches: string[] = [];
+    for (const surface of ['dm', 'channel'] as const)
     for (const golden of CORPUS) {
       if (golden.ctx !== undefined) continue; // state-dependent cases are covered by the runtime suites above
-      const context = freshContext('dm');
+      const context = freshContext(surface);
       const actorId = await ensureActor(context);
       const actor = (await storage.actors.get(actorId))!;
       const session = await storage.sessions.save({ id: `conf-${context.channelId}`, actorId, context, status: 'ACTIVE', createdAt: new Date().toISOString(), lastActivityAt: new Date().toISOString() } as never);
@@ -555,8 +716,8 @@ describe('registry (D2.1): every registered handler claims, and its claims map t
       for (const handler of ordered) {
         const claim = handler.surfaceClaim?.({ message, now }) ?? null;
         const outcome = await handler.handle({ message, session, actor, now, applyAnchor: null, resolveActiveWorkspace: async () => null } as never);
-        if (outcome !== null && claim === null) mismatches.push(`${golden.id}: ${handler.id} answered without a claim`);
-        if (outcome === null && claim !== null && claim.onDeny === 'reply') mismatches.push(`${golden.id}: ${handler.id} claimed (reply) but declined`);
+        if (outcome !== null && claim === null) mismatches.push(`${surface} ${golden.id}: ${handler.id} answered without a claim`);
+        if (outcome === null && claim !== null && claim.onDeny === 'reply') mismatches.push(`${surface} ${golden.id}: ${handler.id} claimed (reply) but declined`);
         const selection = outcome !== null && outcome.kind !== 'write-draft' ? outcome.nlSelection : undefined;
         if (selection !== undefined && claim !== null && surfaceGroupsOfSelection(selection).some((group) => !(claim.groups as readonly string[]).includes(group))) {
           mismatches.push(`${golden.id}: ${handler.id} listed ${selection.entryId} outside its claim`);
