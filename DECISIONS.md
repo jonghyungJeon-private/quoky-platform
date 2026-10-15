@@ -25965,6 +25965,31 @@ connector-write reconcile (no send).
   a non-corpus form. *Owner gold decision:* none-029/-032/-124 -> help.topic (consistent with rule 3). *Residual:*
   `jira.release` (an A8 read-side weakness that predates v32), confluence->slack and neg-110 / neg-037 / neg-051 (model noise).
 
+- **Gold relabel, owner-delegated ("후속작업 전부 승인", Discord 2026-10-16; orchestrator decision under that approval).**
+  `a6-negative-none-029` "리마인더 만드는 법" -> help.topic `{topic: reminder}`, `a6-negative-none-032` "할 일 빼는 방법 좀"
+  -> help.topic `{topic: todo}`. Reason: prompt rule 3 makes a how-to question about one of Quoky's own features help.topic,
+  so the gold `none` contradicted the rule the selector is taught. `a6-negative-none-124` "the undo button is missing in
+  this app" stays `none`, a deliberate deviation from the orchestrator list. It is a statement, not a question, and rule
+  8 (v32+) says help.topic needs a question form, so relabelling it would contradict the same rule-consistency reason.
+- **A6 prompt `nl-select.v35`, the last iteration (2026-10-16).** v34 plus two examples back in their short and
+  action-word forms, in non-corpus wording ("이거 요약 좀" -> item.summarize this/summary; "남은 거 모두 완료 처리해" ->
+  todo.complete NEEDS_CLARIFICATION). The overlap test covers them. **Gate (Haiku 3+3, `data/eval/a6-gate-v35-run*`):**
+  action overall 0.955 / 0.960 / 0.953, `todo.add` 0.936 x3, `reminder.create` 0.951 / 0.976 / 0.976, `reminder.list` 1 x3,
+  spanExact 0.987 / 1 / 0.987; wrong targets and negative captures 0. Action gate passed 1 of 3. Run 1 failed on
+  `reminder.cancel` 0.897. Run 2 failed on `help.topic` 1/2: the entry now has only the two relabelled golds, so one miss is
+  0.5. Read overall 0.951 / 0.948 / 0.956, A6 captures 0, wrong captures 0 / 2 / 3 (neg-110 "프로젝트 등록: /tmp/app",
+  neg-111 "모델 변경: codex", neg-051, all to help.topic); read gate passed 0 of 3.
+  **A6-off baseline (the read prompt v30 on this branch, 3 runs, `data/eval/a6-off-baseline-v30-run*`):** overall 0.959 /
+  0.969 / 0.975, `jira.release` 26 / 24 / 24 of 28, `confluence.search` 50 / 49 / 52 of 54, wrong captures 0 / 0 / 1
+  (neg-037); D12 gate passed 1 of 3. With A6 on (v35), `jira.release` is 22 / 24 / 25 and `confluence.search` 47 / 49 / 51.
+  So `jira.release` below 0.9 and the confluence->slack confusion predate A6. The A6-only read failures are the
+  `help.topic` captures of colon commands (neg-110 / neg-111) and the overall about 1-2 points lower.
+  **Flips vs v34.** Fixed: none-029 0 -> 3, none-032 0 -> 2, `todo.complete-032` 0 -> 2, `reminder.create-037` 1 -> 3,
+  `todo.add-042` 1 -> 3, `confluence-018/-027/-037`, `jira-047`. Regressed: `reference-todo.complete-005` "first one done"
+  3 -> 0, `item.summarize-015` and `reminder.cancel-027` 3 -> 1, neg-111 3 -> 1, `calendar-018` 3 -> 0, `calendar-005`,
+  `drive-003/-054` 2 -> 0, `help-027` 2 -> 0. Most of these move in both directions between runs at this sample size.
+  Stopped: no further prompt iteration (orchestrator).
+
 ### ADR-0122 P2 implementation note (2026-10-15)
 
 **Status:** Implemented on branch `claude/v5-surface-grants-p2` (the phasing table's P2 row). No migration, no new OAuth

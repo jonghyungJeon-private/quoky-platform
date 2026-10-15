@@ -62,6 +62,9 @@ byte-identical. Chief Architect review required before merge (port and runtime d
 - A6 prompt `nl-select.v34` gate (3+3 Haiku, 2026-10-16): action passed 2 of 3, read-regression 0 of 3 (`jira.release` < 0.9
   every run since v32, confluence->slack, help.topic run 3). Owner gold decision proposed: `a6-negative-none-029/-032/-124`
   -> help.topic. DECISIONS "A6 prompt `nl-select.v34`".
+- A6 prompt `nl-select.v35` (last iteration, 2026-10-16): action gate 1 of 3, read 0 of 3. The A6-off baseline also fails
+  the read gate on `jira.release` 2 of 3, so that miss predates A6. The A6-only read misses are help.topic captures of colon
+  commands (neg-110 / neg-111). Golds none-029/-032 relabelled to help.topic (owner-delegated); none-124 stays none.
 - D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
   metadata edits, the calendar relabels and the T1 extension); the 148 S1 cases are marked with their 2026-10-13
   approval. They gate no live behaviour.
