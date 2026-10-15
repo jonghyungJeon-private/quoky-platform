@@ -93,7 +93,7 @@ export class SurfaceGrantService {
       }
       case 'revoke-all': {
         if (!direct) return this.revokeAllFromChannelHint(language);
-        return this.revokeAll(actor, language);
+        return this.revokeAll(actor, now, language);
       }
       case 'list': {
         if (direct) return renderSurfaceGrantChannelOnly(language);
@@ -113,11 +113,11 @@ export class SurfaceGrantService {
         if (direct) return renderSurfaceGrantChannelOnly(language);
         const refusal = this.groupRefusal(phrase.groups, phrase.unknown, language);
         if (refusal !== undefined) return refusal;
-        return this.revoke(actor, message.context, phrase.groups, language);
+        return this.revoke(actor, message.context, phrase.groups, now, language);
       }
       case 'revoke-channel': {
         if (direct) return renderSurfaceGrantChannelOnly(language);
-        return this.revokeChannel(actor, message.context, language);
+        return this.revokeChannel(actor, message.context, now, language);
       }
     }
   }
@@ -229,12 +229,13 @@ export class SurfaceGrantService {
     actor: Actor,
     context: ConversationContext,
     groups: readonly SurfaceGroupId[],
+    now: IsoTimestamp,
     language: SurfaceCopyLanguage,
   ): Promise<string> {
     const key = surfaceChannelKey(context);
     let changed: readonly SurfaceGroupId[] = [];
     const ok = await this.write(actor, (record) => {
-      const result = withSurfaceGroupsRevoked(record, key, groups);
+      const result = withSurfaceGroupsRevoked(record, key, groups, now);
       changed = result.changed;
       return result.record;
     });
@@ -246,11 +247,11 @@ export class SurfaceGrantService {
     return renderSurfaceRevoked(changed, language);
   }
 
-  private async revokeChannel(actor: Actor, context: ConversationContext, language: SurfaceCopyLanguage): Promise<string> {
+  private async revokeChannel(actor: Actor, context: ConversationContext, now: IsoTimestamp, language: SurfaceCopyLanguage): Promise<string> {
     const key = surfaceChannelKey(context);
     let changed: readonly SurfaceGroupId[] = [];
     const ok = await this.write(actor, (record) => {
-      const result = withSurfaceChannelCleared(record, key);
+      const result = withSurfaceChannelCleared(record, key, now);
       changed = result.changed;
       return result.record;
     });
@@ -262,10 +263,10 @@ export class SurfaceGrantService {
     return renderSurfaceChannelCleared(changed.length, language);
   }
 
-  private async revokeAll(actor: Actor, language: SurfaceCopyLanguage): Promise<string> {
+  private async revokeAll(actor: Actor, now: IsoTimestamp, language: SurfaceCopyLanguage): Promise<string> {
     let channels = 0;
     const ok = await this.write(actor, (record) => {
-      const result = withAllSurfaceGrantsCleared(record);
+      const result = withAllSurfaceGrantsCleared(record, now);
       channels = result.channels;
       return result.record;
     });

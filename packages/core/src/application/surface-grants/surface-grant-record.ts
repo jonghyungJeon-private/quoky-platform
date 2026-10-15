@@ -1,4 +1,5 @@
 import type { ConversationContext, IsoTimestamp } from '../../domain';
+import { now as clockNow } from '../../util/clock';
 import { sha256Canonical } from '../canonical-digest';
 import { SURFACE_GROUP_IDS, isGrantableSurfaceGroup, isSurfaceGroupId, type SurfaceGroupId } from './surface-groups';
 
@@ -7,7 +8,7 @@ import { SURFACE_GROUP_IDS, isGrantableSurfaceGroup, isSurfaceGroupId, type Surf
  * written through `ActorMetadataStore.updateMetadataEntry` (the per-actor lock). Content-free:
  *
  *   { v: 1, channels: { "<platform>:<spaceId|->:<channelId>": { groups: { "<group>": { at, source } } } }, seeds: [digest],
- *     revoked?: { "<channel key>": ["<group>"] } }
+ *     revoked?: { "<channel key>": { groups: ["<group>"], at } } }
  *
  * `revoked` (additive, P1 review): the grantable groups the owner revoked per channel and that are not granted again
  * since, so a changed deploy seed can say exactly which of the groups it adds the owner had revoked (D6 DM line).
@@ -38,8 +39,16 @@ export interface SurfaceGrantRecord {
   readonly v: typeof SURFACE_GRANT_RECORD_VERSION;
   readonly channels: Readonly<Record<string, SurfaceGrantChannel>>;
   readonly seeds: readonly string[];
-  /** Per channel key: the groups the owner revoked that were not granted again since (content-free). */
-  readonly revoked?: Readonly<Record<string, readonly SurfaceGroupId[]>>;
+  /**
+   * Per channel key: the groups the owner revoked that were not granted again since, and when that channel's note last
+   * changed (the oldest note is evicted first when the bound is reached). Content-free.
+   */
+  readonly revoked?: Readonly<Record<string, SurfaceGrantRevokedNote>>;
+}
+
+export interface SurfaceGrantRevokedNote {
+  readonly groups: readonly SurfaceGroupId[];
+  readonly at: IsoTimestamp;
 }
 
 /** Bound on the channel keys kept in `revoked`. */
@@ -100,33 +109,47 @@ export function readSurfaceGrants(raw: unknown): SurfaceGrantRecord {
   const seeds = Array.isArray(raw.seeds)
     ? raw.seeds.filter((seed): seed is string => typeof seed === 'string' && SEED_DIGEST_SHAPE.test(seed)).slice(-SURFACE_GRANT_MAX_SEEDS)
     : [];
-  const revoked: Record<string, SurfaceGroupId[]> = {};
+  const revoked: Record<string, SurfaceGrantRevokedNote> = {};
   if (isRecordObject(raw.revoked)) {
+    const notes: Array<[string, SurfaceGrantRevokedNote]> = [];
     for (const [key, value] of Object.entries(raw.revoked)) {
-      if (Object.keys(revoked).length >= SURFACE_GRANT_MAX_REVOKED_CHANNELS) break;
-      if (!CHANNEL_KEY_SHAPE.test(key) || !Array.isArray(value)) continue;
-      const groups = SURFACE_GROUP_IDS.filter((id) => isGrantableSurfaceGroup(id) && value.includes(id));
-      if (groups.length > 0) revoked[key] = groups;
+      if (!CHANNEL_KEY_SHAPE.test(key) || !isRecordObject(value) || !Array.isArray(value.groups)) continue;
+      if (typeof value.at !== 'string' || !Number.isFinite(Date.parse(value.at))) continue;
+      const listed = value.groups as unknown[];
+      const groups = SURFACE_GROUP_IDS.filter((id) => isGrantableSurfaceGroup(id) && listed.includes(id));
+      if (groups.length > 0) notes.push([key, { groups, at: value.at as IsoTimestamp }]);
     }
+    // Over the bound (a hand-edited row): keep the newest notes.
+    notes.sort((a, b) => Date.parse(b[1].at) - Date.parse(a[1].at));
+    for (const [key, note] of notes.slice(0, SURFACE_GRANT_MAX_REVOKED_CHANNELS)) revoked[key] = note;
   }
   return { v: SURFACE_GRANT_RECORD_VERSION, channels, seeds, ...(Object.keys(revoked).length > 0 ? { revoked } : {}) };
 }
 
 /** The record with `groups` noted as revoked for `key` (`add`) or no longer revoked (`remove`); bounded. */
-function withRevokedNote(record: SurfaceGrantRecord, key: string, groups: readonly SurfaceGroupId[], op: 'add' | 'remove'): SurfaceGrantRecord {
+function withRevokedNote(
+  record: SurfaceGrantRecord,
+  key: string,
+  groups: readonly SurfaceGroupId[],
+  op: 'add' | 'remove',
+  now: IsoTimestamp,
+): SurfaceGrantRecord {
   if (groups.length === 0) return record;
-  const current = new Set(record.revoked?.[key] ?? []);
+  const current = new Set(record.revoked?.[key]?.groups ?? []);
   for (const id of groups) {
     if (op === 'add') current.add(id);
     else current.delete(id);
   }
-  const revoked: Record<string, readonly SurfaceGroupId[]> = { ...(record.revoked ?? {}) };
+  const revoked: Record<string, SurfaceGrantRevokedNote> = { ...(record.revoked ?? {}) };
   delete revoked[key];
   const ordered = SURFACE_GROUP_IDS.filter((id) => current.has(id));
   if (ordered.length > 0) {
-    const keys = Object.keys(revoked);
-    if (keys.length >= SURFACE_GRANT_MAX_REVOKED_CHANNELS) delete revoked[keys[0]!];
-    revoked[key] = ordered;
+    // Full: evict the note changed longest ago (by its recorded time, never by key order).
+    while (Object.keys(revoked).length >= SURFACE_GRANT_MAX_REVOKED_CHANNELS) {
+      const oldest = Object.entries(revoked).reduce((a, b) => (Date.parse(b[1].at) < Date.parse(a[1].at) ? b : a));
+      delete revoked[oldest[0]];
+    }
+    revoked[key] = { groups: ordered, at: now };
   }
   const { revoked: _previous, ...rest } = record;
   return Object.keys(revoked).length > 0 ? { ...rest, revoked } : rest;
@@ -151,7 +174,10 @@ export function serializeSurfaceGrants(record: SurfaceGrantRecord): Record<strin
     channels[key] = { groups };
   }
   const revoked: Record<string, unknown> = {};
-  for (const key of Object.keys(record.revoked ?? {}).sort()) revoked[key] = [...record.revoked![key]!];
+  for (const key of Object.keys(record.revoked ?? {}).sort()) {
+    const note = record.revoked![key]!;
+    revoked[key] = { groups: [...note.groups], at: note.at };
+  }
   return { v: SURFACE_GRANT_RECORD_VERSION, channels, seeds: [...record.seeds], ...(Object.keys(revoked).length > 0 ? { revoked } : {}) };
 }
 
@@ -179,7 +205,7 @@ export function withSurfaceGroupsGranted(
   }
   if (changed.length === 0) return { ok: true, record, changed };
   const granted = { ...record, channels: { ...record.channels, [key]: { groups: next } } };
-  return { ok: true, record: withRevokedNote(granted, key, changed, 'remove'), changed };
+  return { ok: true, record: withRevokedNote(granted, key, changed, 'remove', now), changed };
 }
 
 /** Revoke `groups` from `key`; a channel left without grants is removed. */
@@ -187,6 +213,7 @@ export function withSurfaceGroupsRevoked(
   record: SurfaceGrantRecord,
   key: string,
   groups: readonly SurfaceGroupId[],
+  now: IsoTimestamp = clockNow(),
 ): { readonly record: SurfaceGrantRecord; readonly changed: readonly SurfaceGroupId[] } {
   const current = record.channels[key];
   if (current === undefined) return { record, changed: [] };
@@ -201,19 +228,26 @@ export function withSurfaceGroupsRevoked(
   const channels = { ...record.channels };
   if (Object.keys(next).length === 0) delete channels[key];
   else channels[key] = { groups: next };
-  return { record: withRevokedNote({ ...record, channels }, key, changed, 'add'), changed };
+  return { record: withRevokedNote({ ...record, channels }, key, changed, 'add', now), changed };
 }
 
 /** Clear one channel; `seeds` are kept, so the same seed never comes back (D6). */
-export function withSurfaceChannelCleared(record: SurfaceGrantRecord, key: string): { readonly record: SurfaceGrantRecord; readonly changed: readonly SurfaceGroupId[] } {
-  return withSurfaceGroupsRevoked(record, key, grantedSurfaceGroups(record, key));
+export function withSurfaceChannelCleared(
+  record: SurfaceGrantRecord,
+  key: string,
+  now: IsoTimestamp = clockNow(),
+): { readonly record: SurfaceGrantRecord; readonly changed: readonly SurfaceGroupId[] } {
+  return withSurfaceGroupsRevoked(record, key, grantedSurfaceGroups(record, key), now);
 }
 
 /** Clear every channel; `seeds` are kept (D6). */
-export function withAllSurfaceGrantsCleared(record: SurfaceGrantRecord): { readonly record: SurfaceGrantRecord; readonly channels: number } {
+export function withAllSurfaceGrantsCleared(
+  record: SurfaceGrantRecord,
+  now: IsoTimestamp = clockNow(),
+): { readonly record: SurfaceGrantRecord; readonly channels: number } {
   const keys = Object.keys(record.channels);
   let next: SurfaceGrantRecord = { ...record, channels: {} };
-  for (const key of keys) next = withRevokedNote(next, key, grantedSurfaceGroups(record, key), 'add');
+  for (const key of keys) next = withRevokedNote(next, key, grantedSurfaceGroups(record, key), 'add', now);
   return { record: next, channels: keys.length };
 }
 
@@ -277,7 +311,7 @@ export function applySurfaceGrantSeed(record: SurfaceGrantRecord, seed: SurfaceG
       skippedForLimit.push(channel.key);
       continue;
     }
-    const revokedBefore = new Set(next.revoked?.[channel.key] ?? []);
+    const revokedBefore = new Set(next.revoked?.[channel.key]?.groups ?? []);
     next = change.record;
     if (change.changed.length > 0) added.push({ key: channel.key, groups: change.changed });
     const again = change.changed.filter((id) => revokedBefore.has(id));

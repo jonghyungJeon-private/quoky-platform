@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   EMPTY_SURFACE_GRANT_RECORD,
+  SURFACE_GRANT_MAX_REVOKED_CHANNELS,
   SURFACE_GRANT_MAX_CHANNELS,
   applySurfaceGrantSeed,
   canonicalSeed,
@@ -86,15 +87,15 @@ describe('grant, revoke, clear, caps', () => {
     if (!again.ok) throw new Error('grant');
     expect(again.changed).toEqual(['github']);
     expect(again.record.channels[KEY]?.groups.calendar).toEqual({ at: T0, source: 'seed' });
-    const revoked = withSurfaceGroupsRevoked(again.record, KEY, ['calendar', 'todo']);
+    const revoked = withSurfaceGroupsRevoked(again.record, KEY, ['calendar', 'todo'], T1);
     expect(revoked.changed).toEqual(['calendar']);
     expect(withSurfaceChannelCleared(revoked.record, KEY).record.channels).toEqual({});
-    const all = withAllSurfaceGrantsCleared(again.record);
-    expect(all).toEqual({ record: { v: 1, channels: {}, seeds: ['b'.repeat(64)], revoked: { [KEY]: ['github', 'calendar'] } }, channels: 1 });
+    const all = withAllSurfaceGrantsCleared(again.record, T1);
+    expect(all).toEqual({ record: { v: 1, channels: {}, seeds: ['b'.repeat(64)], revoked: { [KEY]: { groups: ['github', 'calendar'], at: T1 } } }, channels: 1 });
     // A later grant of a revoked group removes it from `revoked` again; the note round-trips through storage.
     const regranted = withSurfaceGroupsGranted(all.record, KEY, ['github'], 'owner', T1);
     if (!regranted.ok) throw new Error('grant');
-    expect(regranted.record.revoked).toEqual({ [KEY]: ['calendar'] });
+    expect(regranted.record.revoked).toEqual({ [KEY]: { groups: ['calendar'], at: T1 } });
     expect(readSurfaceGrants(JSON.parse(JSON.stringify(serializeSurfaceGrants(regranted.record))))).toEqual(regranted.record);
   });
 
@@ -110,6 +111,34 @@ describe('grant, revoke, clear, caps', () => {
     // A stored record beyond the cap is read capped too.
     const over = { ...serializeSurfaceGrants(record), channels: { ...(serializeSurfaceGrants(record).channels as object), 'discord:100000:999999': { groups: { todo: { at: T0, source: 'owner' } } } } };
     expect(Object.keys(readSurfaceGrants(over).channels)).toHaveLength(SURFACE_GRANT_MAX_CHANNELS);
+  });
+});
+
+describe('revoked notes are bounded and evicted by recorded time (P3)', () => {
+  it('when full, the note changed longest ago is dropped, whatever the key order after a reload', () => {
+    let record = EMPTY_SURFACE_GRANT_RECORD;
+    const at = (i: number) => new Date(Date.parse(T0) + i * 60_000).toISOString();
+    // Keys whose alphabetical order is the reverse of their time order.
+    const key = (i: number) => `discord:100000:${900000 - i}`;
+    for (let i = 0; i < SURFACE_GRANT_MAX_REVOKED_CHANNELS; i += 1) {
+      const granted = withSurfaceGroupsGranted({ ...record, channels: {} }, key(i), ['todo'], 'owner', at(i));
+      if (!granted.ok) throw new Error('grant');
+      record = withSurfaceGroupsRevoked(granted.record, key(i), ['todo'], at(i)).record;
+      record = readSurfaceGrants(JSON.parse(JSON.stringify(serializeSurfaceGrants(record))));
+    }
+    expect(Object.keys(record.revoked ?? {})).toHaveLength(SURFACE_GRANT_MAX_REVOKED_CHANNELS);
+    const extra = withSurfaceGroupsGranted({ ...record, channels: {} }, 'discord:100000:111111', ['todo'], 'owner', at(99));
+    if (!extra.ok) throw new Error('grant');
+    const next = withSurfaceGroupsRevoked(extra.record, 'discord:100000:111111', ['todo'], at(99)).record;
+    expect(Object.keys(next.revoked ?? {})).toHaveLength(SURFACE_GRANT_MAX_REVOKED_CHANNELS);
+    expect(next.revoked?.[key(0)]).toBeUndefined(); // the oldest (alphabetically the LAST key) went
+    expect(next.revoked?.[key(SURFACE_GRANT_MAX_REVOKED_CHANNELS - 1)]).toBeDefined(); // alphabetically first, newest: kept
+    expect(next.revoked?.['discord:100000:111111']).toEqual({ groups: ['todo'], at: at(99) });
+  });
+
+  it('a malformed note (no time, bad groups) is dropped on read', () => {
+    const read = readSurfaceGrants({ v: 1, channels: {}, seeds: [], revoked: { [KEY]: ['todo'], 'discord:1:2': { groups: ['mail'], at: T0 }, 'discord:1:3': { groups: ['todo'], at: 'x' } } });
+    expect(read.revoked).toBeUndefined();
   });
 });
 
