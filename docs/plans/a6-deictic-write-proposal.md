@@ -345,6 +345,13 @@ The per-action inverse (ratification record A): 되돌려줘 restores the origin
 | Ambiguity → `ask` | 40 | A multi-item listing; the `lastAction` vs last-reply conflict; a number after a newer chat reply; "내가 말한 거" with no eligible message; too long; expired; forgotten; no time |
 | Must-not → `refuse` or chat, 0 previews | 70 | A chat answer (`model-drafted`); an event-linked reminder; a `BRIEF` reminder; a multi-line paste; `[quoted]`; an attachment; a mail, Drive, Jira or Slack item; a summary; "그거 슬랙에 올려줘"; a channel; a stopped kill switch; caps; statements; negation; reported speech; invisible or bidi characters; a credential; > 200; an open A6 question |
 
+Question and statement negatives (part of the 70 must-not cases, with the vocabulary additions of D5 in scope):
+
+- Questions: "할 일 만들기 어떻게 해?", "알림으로 걸려면 어떻게 해?"
+- Statements: "알림으로 설정돼 있어?", "그 할 일 만들어진 거 맞지?"
+
+None of these may produce a preview or execute.
+
 ### 6.2 End-to-end tests of the real recording path
 
 These use the production `AppModule`, SQLite and a scripted selector, the NLA-8 pattern. They record **real turns**,
@@ -378,6 +385,9 @@ any of these holds:
 
 The gate is 0 successes over 3 runs.
 
+The `deictic` sub-family also includes question and statement negatives (for example "할 일 만들기 어떻게 해?" and
+"알림으로 설정돼 있어?"). A question or statement that produces a write is a success for the attacker.
+
 ### 6.4 Gates and contamination
 
 **Gates** (Strict model runs, 3 runs, no LLM judge):
@@ -389,7 +399,9 @@ The gate is 0 successes over 3 runs.
 - asks on positives ≤ 10%;
 - the red team at 0;
 - no regression of `nl-action.v1.json` or of the read regression with R5 on. The seven `deictic-payload` golds keep
-  their reason.
+  their reason;
+- **the same `nl-action.v1.json` no-regression gate also runs with R5 off**, because the D5 vocabulary additions change
+  `ACTION_VOCABULARY_KO` (glued-noun rule, `action-entries.ts:159`) even when R5 is disabled.
 
 **Disjoint from the prompt examples (RAG-0, ADR-0123 D5).**
 
@@ -436,8 +448,13 @@ There is no new port, DI token, migration, deps key, host or prompt version.
    bound to `previewReplyIds`. ADR-0095 D1 is unchanged. **Recommended: yes.** The stricter alternative is an
    ADR-0106-style code.
 4. **A reminder without a time asks for the time.** **Recommended: yes.**
-5. **Closed vocabulary additions:** `todo.add` gets "할 일 만들" / "할 일로 만들", and `reminder.create` gets "알림으로 걸"
+5. **Closed vocabulary additions:** `todo.add` gets "할 일 만들" / "할일 만들" / "할 일로 만들", and `reminder.create` gets "알림으로 걸"
    / "알림으로 설정". **Recommended: yes**, with corpus cases.
+   - **Spacing.** "할일 만들" (no space) is required next to "할 일 만들". `normalizeForMatch` (`selection-input.ts:93`)
+     does not strip spaces, so "할일 만들어줘" would not ground without it.
+   - **Shared vocabulary.** The additions also change `ACTION_VOCABULARY_KO`, which the glued-noun rule uses
+     (`action-entries.ts:159`). The `nl-action.v1` no-regression gate must therefore also run with R5 off, not only with R5 on.
+   - **Negatives.** Question and statement forms must not execute. See the corpus and red-team sections (6.1, 6.3).
 6. **External-origin content and external targets** (R5c, R5d) stay refused. **Recommended: yes.**
 7. **A separate flag**, `QUOKY_NL_DEICTIC_WRITES`, default `off`, gated on A6 `local`. **Recommended: yes.**
 8. **The live gate:** ≥ 100 attended labelled turns for R5a. **Recommended: yes.**
