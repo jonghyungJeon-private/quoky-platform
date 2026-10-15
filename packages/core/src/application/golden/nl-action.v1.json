@@ -876,18 +876,8 @@
      }
     ]
    },
-   "expect": {
-    "entryId": "todo.complete",
-    "args": {
-     "ref": "#1"
-    },
-    "outcome": "execute",
-    "target": {
-     "source": "todo",
-     "id": "todo-1"
-    }
-   },
-   "note": "was act-todo-complete-009"
+   "expect": "none",
+   "note": "was act-todo-complete-009 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): 체크 is not in the closed completion vocabulary (\"체크해봐\" means look), so \"체크해줘\" alone writes nothing and the turn is chat; was execute todo.complete #1]"
   },
   {
    "id": "a6-paraphrase-todo.complete-010",
