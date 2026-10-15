@@ -339,6 +339,39 @@ describe('A8 review round 2: whole dotted versions, proven uniqueness, channel o
     expect(result.kind === 'body' && plainTextOf(result.body)).toContain('(OP26)');
   });
 
+  it('key split on a truncated listing: "OP26 WEB 20261015" (WEB may be a hidden project) is not split silently', async () => {
+    const provider = (truncated: boolean): ConnectorProvider => ({
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) => (query.query === 'containers' ? { source: 'jira', items: [PROJECTS[1] as ConnectorItem], ...(truncated ? { truncated: true } : {}) } : { source: 'jira', items: ISSUES }),
+    });
+    const queries: ConnectorQuery[] = [];
+    const base = provider(true);
+    const recording: ConnectorProvider = { ...base, query: async (query) => { queries.push(query); return base.query(query); } };
+    await lookupJiraRelease({ connector: recording, command: { scope: 'all', links: [], release: 'OP26 WEB 20261015' }, siteHost: SITE });
+    const items = queries.find((query) => query.query === 'release-items');
+    expect(items?.params).toEqual({ releaseName: 'OP26 WEB 20261015', limit: 20 });
+    expect(queries.some((query) => query.query === 'releases')).toBe(false);
+  });
+
+  it('key split on a truncated listing: "OP26 20261015" with the one key visible is split', async () => {
+    const queries: ConnectorQuery[] = [];
+    const base: ConnectorProvider = {
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) => (query.query === 'containers' ? { source: 'jira', items: [PROJECTS[1] as ConnectorItem], truncated: true } : query.query === 'releases' ? { source: 'jira', items: RELEASES[String(query.params?.container)] ?? [] } : { source: 'jira', items: ISSUES }),
+    };
+    const recording: ConnectorProvider = { ...base, query: async (query) => { queries.push(query); return base.query(query); } };
+    const result = await lookupJiraRelease({ connector: recording, command: { scope: 'all', links: [], release: 'OP26 20261015' }, siteHost: SITE });
+    expect(queries.at(-1)?.params).toEqual({ container: 'OP26', releaseId: '16555', limit: 20 });
+    expect(result.kind === 'body' && plainTextOf(result.body)).toContain('차란차 운영 2026 (OP26)');
+  });
+
+  it('key split on a complete listing is unchanged: "OP26 WEB 20261015" keeps the text; "OP26 20261015" splits', async () => {
+    const two = await run({ release: 'OP26 WEB 20261015' }, {});
+    expect(two.queries.find((query) => query.query === 'release-items')?.params).toEqual({ releaseName: 'OP26 WEB 20261015', limit: 20 });
+    const one = await run({ release: 'OP26 20261015' }, {});
+    expect(one.queries.at(-1)?.params).toEqual({ container: 'OP26', releaseId: '16555', limit: 20 });
+  });
+
   it('own items empty: a DM is told how to ask for every assignee, a channel is not', async () => {
     const empty = { items: () => ({ source: 'jira', items: [] }) };
     const dm = await run({ release: '20261015', project: 'OP26', scope: 'mine' }, { identity: 'acc-1', ...empty });

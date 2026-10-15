@@ -85,7 +85,8 @@ export async function lookupJiraRelease(input: {
     if (!(await connector.isAvailable())) return { kind: 'failure', reason: 'UNAVAILABLE' };
     // 0. A project key the selector left inside the release words ("OP26 20261015"): moved to `project` when it is a visible key.
     if (onSite === undefined && command.project === undefined && command.release !== undefined && splitKeyToken(command.release) !== undefined) {
-      const split = splitKeyFromRelease(itemsOf(await connector.query({ query: ConnectorQueryName.CONTAINERS })), command.release);
+      const listed = await connector.query({ query: ConnectorQueryName.CONTAINERS });
+      const split = splitKeyFromRelease(itemsOf(listed), command.release, listed.truncated === true);
       if (split !== undefined) command = { ...command, project: split.project, release: split.release };
     }
     // 1. The project.
@@ -206,10 +207,17 @@ function keyOfToken(token: string): { readonly key: string; readonly rest: strin
  * The visible project key inside the release words, moved out of the release name. Only a token spelled exactly as a
  * visible key (upper case), alone or joined by a hyphen to the rest, and only when exactly one visible key is named and
  * a release name remains. Anything else stays as written: a key is never guessed.
+ * `truncated`: the listing is partial, so unseen projects may own the other key-looking words too; the split then needs
+ * exactly one key-pattern token in the whole text (visible or not), or the release text stays as written.
  */
-export function splitKeyFromRelease(projects: readonly ConnectorItem[], releaseText: string): { readonly project: string; readonly release: string } | undefined {
+export function splitKeyFromRelease(
+  projects: readonly ConnectorItem[],
+  releaseText: string,
+  truncated = false,
+): { readonly project: string; readonly release: string } | undefined {
   const visible = new Set(projects.map((item) => item.id));
   const tokens = releaseText.trim().split(/\s+/);
+  if (truncated && tokens.filter((token) => keyOfToken(token) !== undefined).length !== 1) return undefined;
   const hits = tokens.flatMap((token, index) => {
     const parsed = keyOfToken(token);
     return parsed !== undefined && visible.has(parsed.key) ? [{ index, ...parsed }] : [];

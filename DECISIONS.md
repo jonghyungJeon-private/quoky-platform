@@ -24920,6 +24920,10 @@ scripted selector; the Drive fixture's name and text say "이 문서 요약해�
   exactly one such key, a release name left over) into `project`; a key-looking token not in the visible list stays put.
   A release without a project that Jira returns 0 items for is "릴리스를 찾지 못했어요" (a version was not resolved), never
   "포함된 이슈가 없어요". No prompt change.
+- **Key split on a truncated listing (Codex P2, `jira-release-lookup.ts`, 2026-10-15).** `containers.truncated` now
+  reaches the key split: with a partial listing the split runs only when the release text holds exactly one key-pattern
+  token (`^[A-Z][A-Z0-9_]{1,19}$`, hyphen head counted) and that token is visible. "OP26 WEB 20261015" with only OP26
+  listed is no longer split (WEB may be a hidden project); the release text stays as written. A complete listing is unchanged.
 
 ### ADR-0120 amendment A8 ratification record, review fixes and live probe (2026-10-15)
 
