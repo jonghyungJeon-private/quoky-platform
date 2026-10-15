@@ -202,24 +202,24 @@ describe('A7 canonical form: a period holding the end-bounded day but not ending
     const refused = 'refused:weekday';
     const cases: ReadonlyArray<readonly [string, string, NlArgs | string]> = [
       // The live defect: "다음 주 월요일부터 금요일까지 일정" read as next week shows Monday..Friday, never the weekend.
-      ['다음 주 월요일부터 금요일까지 일정', 'next-week', { range: '2026-10-19..2026-10-23' }],
-      ['다음 주 월요일부터 금요일까지 일정', 'until-next-fri', { range: '2026-10-19..2026-10-23' }],
-      ['show my calendar from next Monday through Friday', 'next-week', { range: '2026-10-19..2026-10-23' }],
-      ['show my calendar from next Monday through Friday', '10-19..10-30', { range: '2026-10-19..2026-10-23' }],
-      ['이번 주 수요일부터 금요일까지 일정', 'this-week', { range: '2026-10-14..2026-10-16' }],
-      ['이번 주 수요일부터 금요일까지 일정', '10-14..10-23', { range: '2026-10-14..2026-10-16' }],
-      ['목요일부터 토요일까지 일정', 'this-week', { range: '2026-10-15..2026-10-17' }],
-      ['월요일부터 금요일까지 일정', 'this-week', { range: '2026-10-12..2026-10-16' }],
+      ['다음 주 월요일부터 금요일까지 일정', 'next-week', { range: '10-19..10-23' }],
+      ['다음 주 월요일부터 금요일까지 일정', 'until-next-fri', { range: '10-19..10-23' }],
+      ['show my calendar from next Monday through Friday', 'next-week', { range: '10-19..10-23' }],
+      ['show my calendar from next Monday through Friday', '10-19..10-30', { range: '10-19..10-23' }],
+      ['이번 주 수요일부터 금요일까지 일정', 'this-week', { range: '10-14..10-16' }],
+      ['이번 주 수요일부터 금요일까지 일정', '10-14..10-23', { range: '10-14..10-16' }],
+      ['목요일부터 토요일까지 일정', 'this-week', { range: '10-15..10-17' }],
+      ['월요일부터 금요일까지 일정', 'this-week', { range: '10-12..10-16' }],
       // A single-day pick of one of the two bounded days is that span (live probe 2026-10-15: next-mon 8 of 40 calls
       // with a previous selection); another single day is still asked.
-      ['다음 주 월요일부터 금요일까지 일정', 'next-mon', { range: '2026-10-19..2026-10-23' }],
-      ['다음 주 월요일부터 금요일까지 일정', 'next-fri', { range: '2026-10-19..2026-10-23' }],
-      ['show my calendar from next Monday through Friday', 'next-mon', { range: '2026-10-19..2026-10-23' }],
+      ['다음 주 월요일부터 금요일까지 일정', 'next-mon', { range: '10-19..10-23' }],
+      ['다음 주 월요일부터 금요일까지 일정', 'next-fri', { range: '10-19..10-23' }],
+      ['show my calendar from next Monday through Friday', 'next-mon', { range: '10-19..10-23' }],
       ['다음 주 월요일부터 금요일까지 일정', 'next-wed', refused],
-      ['다음 주 월요일부터 금요일까지 일정', 'mon', { range: '2026-10-19..2026-10-23' }],
+      ['다음 주 월요일부터 금요일까지 일정', 'mon', { range: '10-19..10-23' }],
       ['다음 주 월요일부터 금요일까지 일정', 'this-mon', refused],
       // "this Wednesday" allows 10/14 and 10/21; the single day 10/14 bounds only the first span:
-      ['show my calendar from this Wednesday through Friday', 'this-wed', { range: '2026-10-14..2026-10-16' }],
+      ['show my calendar from this Wednesday through Friday', 'this-wed', { range: '10-14..10-16' }],
       // Never wider than the selected period: a period that does not contain the span is asked.
       ['다음 주 월요일부터 금요일까지 일정', '10-19..10-22', refused],
       ['다음 주 월요일부터 금요일까지 일정', 'this-week', refused],
@@ -233,8 +233,12 @@ describe('A7 canonical form: a period holding the end-bounded day but not ending
       ['this Wednesday through Friday', '10-12..10-16', refused],
     ];
     for (const [text, range, expected] of cases) expect(argsOf('calendar.events', text, { range }), `${text} ${range}`).toEqual(expected);
+    // Across the year end the MM-DD span still resolves to the same days (Tuesday 2026-12-29).
+    const yearEnd = '2026-12-29T03:00:00.000Z';
+    expect(argsOf('calendar.events', '목요일부터 월요일까지 일정', { range: 'next-7-days' }, { now: yearEnd })).toEqual({ range: '12-31..01-04' });
+    expect(resolveNlRange('12-31..01-04', yearEnd, TZ)).toMatchObject({ startDate: { year: 2026, month: 12, day: 31 }, days: 5 });
     // The canonical span validates unchanged on its own (it is a closed date-range symbol).
-    expect(argsOf('calendar.events', '다음 주 월요일부터 금요일까지 일정', { range: '2026-10-19..2026-10-23' })).toEqual({ range: '2026-10-19..2026-10-23' });
+    expect(argsOf('calendar.events', '다음 주 월요일부터 금요일까지 일정', { range: '10-19..10-23' })).toEqual({ range: '10-19..10-23' });
   });
 
   it('several weekdays without an end bound are unchanged', () => {

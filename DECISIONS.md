@@ -23819,6 +23819,29 @@ bound, run on Thursday 2026-10-15 (Asia/Seoul). Reports are local under `data/ev
   this Wednesday through Friday" → the one span it bounds; `next-wed`, `this-mon` asked) and a service test with a
   previous selection and a `next-mon` pick. No prompt or corpus change.
 
+### ADR-0120 amendment A7 implementation note 3 — the narrowed span is stored in the prompt's own form (2026-10-15, live Telegram)
+
+- **Live** (after #212, Thursday 10/15 10:44). "이번 주 금요일까지 일정" and then "다음 주 월요일부터 금요일까지 일정" executed
+  (10/19-10/23); the same sentence sent again was asked. The service log shows the refusal was
+  `validation_failed reason=invalid-arg arg=range` (10:44:36), not `weekday`: the selector wrote a range value that is not a
+  closed symbol at all. The earlier refusals at 10:21:56 and 10:37:30 were `weekday` (fixed by note 2, #212).
+- **Probes (owner-approved, Haiku, `nl-select.v22`, the exact sentence).** With the previous selection stored as Core's
+  narrowed span `2026-10-19..2026-10-23`: 40 calls, `next-mon` 24, `10-19..10-23` 10, `next-week` 6, all executing; with
+  `10-19..10-23` stored: 20 calls, `next-mon` 13, `10-19..10-23` 7, all executing; the real `NlSelectionService` over the
+  three live turns, 8 sequences: every third turn executed (1 timeout). The invalid value was not reproduced, so its exact
+  form is unknown.
+- **Change (no ratified text changes).** The span canonical form (notes 1 and 2) is now spelled `MM-DD..MM-DD`, the prompt's
+  own span form and the form the selector writes itself, instead of `YYYY-MM-DD..YYYY-MM-DD`. The stored `lastSelection`
+  (and so the next prompt's "Previous selection") therefore never shows the selector a year the owner did not write, which
+  the prompt forbids it to write ("never write a timestamp or a year the owner did not write"); the days are unchanged
+  (`MM-DD` resolves to the nearest occurrence, and a span whose end comes before its start runs into the next year).
+  `symbolic-time.ts` `nlMultiWeekdayBound` (:).
+- **Tests.** The repeat sequence through the service for each probed pick (`next-mon`, `10-19..10-23`, `next-week`): the
+  stored span is `10-19..10-23`, the next prompt shows it, and the repeat executes Monday-Friday; a year-end span
+  (`12-31..01-04` on 2026-12-29). No prompt or corpus change.
+- **Residual.** If the selector again writes a non-symbol range on such a repeat, the owner is asked (D7), never shown a
+  guessed period; the log keeps `reason=invalid-arg`.
+
 ## ADR-0112 amendment 1 — Slack channel-message delete: a narrow `ChannelMessageDeleteWriter`, only for a message Quoky posted, bound to that post's SENT receipt, only as the undo of a post (Proposed — owner decision pending) (2026-10-14)
 
 - **Status:** **Proposed (owner decision pending).**
