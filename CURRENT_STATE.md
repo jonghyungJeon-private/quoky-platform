@@ -95,6 +95,7 @@ Details and the review record for each item are in the matching notes in `DECISI
   The `complete-018` and `-009` relabels are the owner gold decisions listed under "Pending with the owner".
 - **Final Haiku gate (3 runs, read v27 / A6 v29, 2026-10-15).** Action 95.8% / 96.8% / 95.5%, wrong target 0/0/0, negative captures 0/0/0; run 1 below gate only on the READ entry `reminder.list` 5/6. Read regression 95.7% / 95.4% / 96.4%, A6 captures 0/0/0; run 2 has 1 wrong capture (`neg-051` → `help.topic`, read-only). Summary: safety 3/3, utility 2/3 per corpus; not a full pass. The owner decides the flag after the 100-turn live session. Reported-speech residuals ("…완료해줘 했어", "…하길래", "…해서", "…하니까") are recorded in DECISIONS as accepted.
 - **For the owner:** `neg-094` is grammar-owned (a daily brief schedule) and skipped in A6-on scoring.
+- **Scope note (Codex P2, 2026-10-15):** status views (canceled/completed/past/all) of to-do and reminder lists are DM-only for now, even in channels granted todo/reminder under ADR-0122; P2 will make them follow those grants.
 - **Backlog (owner request 2026-10-15, not R1):** a separate safe design proposal for "그거로 추가해줘", bringing earlier
   reply content into a to-do: a preview showing the exact text, explicit approval, and defenses against content-borne
   injection (ADR-0121 S3 territory). Until then the A6-D3 deictic-payload refusal stays.
