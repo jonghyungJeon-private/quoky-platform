@@ -361,10 +361,15 @@ describe('S1 W1/W2 — c-shadow jobs are bounded, single-flight, capped and stop
   });
 
   it('the whole job — provider resolution included — is bounded; a hang ends as `fallback timeout` and frees the slot', async () => {
-    const h = slowService({ timeoutMs: 50, select: () => new Promise<AiProvider>(() => undefined) });
+    // Past the 180 s cold-start window, so the configured 50 ms bound applies.
+    let clock = 0;
+    const h = slowService({ elapsed: () => clock, timeoutMs: 50, select: () => new Promise<AiProvider>(() => undefined) });
+    clock = 200_000;
     await h.service.shadowGrammarHit(turnOf('이번 주 일정'), chat);
     expect(agreementLines(h.logs)).toEqual([expect.objectContaining({ outcome: 'fallback', reason: 'timeout' })]);
-    const hangingChat = slowService({ timeoutMs: 50 });
+    let hangingClock = 0;
+    const hangingChat = slowService({ elapsed: () => hangingClock, timeoutMs: 50 });
+    hangingClock = 200_000;
     await hangingChat.service.shadowGrammarHit(turnOf('이번 주 일정'), () => new Promise(() => undefined));
     expect(agreementLines(hangingChat.logs)).toEqual([expect.objectContaining({ outcome: 'fallback', reason: 'timeout' })]);
     await hangingChat.service.shadowGrammarHit(turnOf('이번 주 일정 2'), chat);
