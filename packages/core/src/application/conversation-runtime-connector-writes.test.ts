@@ -2397,6 +2397,25 @@ describe('surface grants: an approved write in a channel re-checks the live gran
     expect((h.anchorTask()?.metadata?.connectorWriteAnchor as { status: string } | undefined)?.status ?? 'NOT_SENT').toBe('NOT_SENT');
   });
 
+  it('a revoke that lands while the receipt is being prepared: the writer is never called, the receipt is NOT_SENT', async () => {
+    const { h, revokeLive } = enforced();
+    await h.send('PROJ-12에 댓글 달아줘: 배포 완료');
+    await h.send('승인');
+    const receipts = h.receipts as unknown as { prepare(...args: unknown[]): Promise<unknown> };
+    const prepare = receipts.prepare.bind(receipts);
+    receipts.prepare = async (...args) => {
+      const prepared = await prepare(...args);
+      revokeLive();
+      return prepared;
+    };
+    await h.send('댓글 실행');
+    expect(h.writes.addComment).toHaveLength(0);
+    const rows = [...h.receipts.rows.values()];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe('NOT_SENT');
+    expect((h.anchorTask()?.metadata?.connectorWriteAnchor as { status: string } | undefined)?.status ?? 'NOT_SENT').toBe('NOT_SENT');
+  });
+
   it('with the live grant still there, the same phrase sends once', async () => {
     const { h } = enforced();
     await h.send('PROJ-12에 댓글 달아줘: 배포 완료');
