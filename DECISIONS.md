@@ -25917,6 +25917,15 @@ connector-write reconcile (no send).
   and executed it, but Haiku's `when` was "20분 후에" (raw output seen in an earlier diagnostic), and the scorer compares exact
   args. `-019` missed the same way in one run (the selector picks `calendar.events` in most runs). Fix: `reminder.create`
   `normalize` drops one trailing locative 에 from `when` when time words remain. This is the canonical form its own arg
+  description names, and the grammar reads both as the same time. **Unchanged, owner gold decision (recommended gold =
+  ask/refuse):** `todo.add-009` ("… 추가할게.", first-person promise), `todo.add-016` and `reminder.create-024` (exact-command
+  colon heads, A6-D3a), and `todo.add-025` ("… 추가 ㄱㄱ"). ㄱㄱ / 고고 were tried as closed request endings and reverted
+  (Codex P1: "추가 고고 했다" and "추가 ㄱㄱ 하는 법" grounded; the R1 backstop is closed, orchestrator decision). They stay
+  must-not-execute tests. One Haiku action run (A6 v32, `data/eval/nl-action-2026-10-15T16-18-28-659Z.json`) ran before
+  the revert, so its 025 hit no longer holds (todo.add 45/47 there, about 44/47 now). 027 hit; `reminder.create` 0.854
+  (024; 019 → `calendar.events`; 033/035/037/039 are intermittent selector arg misses also seen in earlier runs); overall
+  0.948, spanExact 0.962, wrong targets 0, negative captures 0; gate not passed. No model run after the revert.
+
   description names, and the grammar reads both as the same time. `todo.add-025` ("… 추가 ㄱㄱ"): ㄱㄱ / 고고 join the closed
   request endings. Every veto still applies: negation, question, retraction, reported speech and first person
   ("추가하지 마 ㄱㄱ" and "추가 ㄱㄱ?" never write). **Unchanged, owner gold decision:** `todo.add-009` ("…

@@ -497,7 +497,7 @@ describe('A6 R1 review: the completion vocabulary is closed (CA delta)', () => {
   });
 });
 
-describe('A6 R1 gate (v32): the canonical `when` and the ㄱㄱ / 고고 go-ahead', () => {
+describe('A6 R1 gate (v32): the canonical `when`; ㄱㄱ / 고고 are not request endings (R1 backstop closed)', () => {
   it('a `when` with its trailing 에 validates as the canonical time words (gold a6-paraphrase-reminder.create-027)', () => {
     const create = (text: string, when: string) => validateSelection({ entryId: 'reminder.create', args: { body: '스프린트 데모 준비', when } }, ctx(text));
     const text = "20분 후에 '스프린트 데모 준비' 알려줘";
@@ -508,14 +508,7 @@ describe('A6 R1 gate (v32): the canonical `when` and the ㄱㄱ / 고고 go-ahea
     expect(validateSelection({ entryId: 'reminder.create', args: { body: '회의', when: '내일까지' } }, ctx('내일까지 회의 알려줘'))).toMatchObject({ ok: true, value: { args: { when: '내일까지' } } });
   });
 
-  it('ㄱㄱ / 고고 after an action noun is an affirmative request (gold a6-paraphrase-todo.add-025)', () => {
-    const add = (text: string) => validateSelection({ entryId: 'todo.add', args: { title: '회의실 정리' } }, ctx(text));
-    for (const text of ['투두에 "회의실 정리" 추가 ㄱㄱ', '투두에 회의실 정리 추가 ㄱㄱㄱ', '할 일에 회의실 정리 추가 고고', '할 일에 회의실 정리 추가 ㄱㄱ!', '할 일에 회의실 정리 넣어 ㄱㄱ']) {
-      expect(add(text), text).toMatchObject({ ok: true });
-    }
-  });
-
-  it('ㄱㄱ never grounds after a negation, as a question, reported, retracted or first-person', () => {
+  it('ㄱㄱ / 고고 never ground a write (gold a6-paraphrase-todo.add-025 is an owner gold decision; Codex P1 strings)', () => {
     const add = (text: string) => validateSelection({ entryId: 'todo.add', args: { title: '회의실 정리' } }, ctx(text));
     for (const text of [
       '할 일에 회의실 정리 추가하지 마 ㄱㄱ',
@@ -527,6 +520,10 @@ describe('A6 R1 gate (v32): the canonical `when` and the ㄱㄱ / 고고 go-ahea
       '내가 할 일에 회의실 정리 추가 ㄱㄱ',
       '할 일에 회의실 정리 추가 ㄱㄱ할까',
       '할 일에 회의실 정리 추가 고고학',
+      '할 일에 회의실 정리 추가 고고 했다',
+      '할 일에 회의실 정리 추가 ㄱㄱ 하는 법',
+      '투두에 "회의실 정리" 추가 ㄱㄱ',
+      '할 일에 회의실 정리 추가 고고',
     ]) {
       expect(add(text), text).toMatchObject({ ok: false });
     }

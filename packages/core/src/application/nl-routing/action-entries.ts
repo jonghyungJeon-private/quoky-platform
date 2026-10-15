@@ -480,12 +480,11 @@ const NON_REQUEST_IN_CLAUSE = /(?:할|될|볼|줄|을|일|걸)까(?=\s|$|요)|(?
  * The POSITIVE request-form rule (orchestrator decision under the fix-loop cap, CA round 3): the action word must be the
  * head of an affirmative request — right after it (its own verb ending, an optional 처리 / 좀) comes a request ending from
  * this closed grammatical set (해줘, 해 주세요, 해줄래, 해 줄 수 있어, 해주실래요, 해 주시겠어요, 하자, 해, 해라, 놔, 둬,
- * 부탁해 …, and the chat-slang go-ahead ㄱㄱ / 고고: "추가 ㄱㄱ"), or the word is itself a bare imperative (지워, 빼, 꺼, 넣어,
- * 만들어 …). A request whose head is another verb ("완료됐는지 보여줄래?") does not ground the action. A question grounds
- * only in a polite request form (해줄래?, 해 줄 수 있어?, 해 주시겠어요?). Anything else — a question, a wish, a statement,
- * a bare noun ("2번 완료") — grounds nothing.
+ * 부탁해 …), or the word is itself a bare imperative (지워, 빼, 꺼, 넣어, 만들어 …). A request whose head is another verb
+ * ("완료됐는지 보여줄래?") does not ground the action. A question grounds only in a polite request form (해줄래?, 해 줄 수
+ * 있어?, 해 주시겠어요?). Anything else — a question, a wish, a statement, a bare noun ("2번 완료") — grounds nothing.
  */
-const KO_REQUEST_ENDING = '(?:할래요|할래|줘요|줘라|줘|주라|주세요|주십시오|줄래요|줄래|줄\\s*수\\s*있어요|줄\\s*수\\s*있어|줄\\s*수\\s*있나요|주실래요|주시겠어요|주실\\s*수\\s*있어요|주시겠습니까|놔요|놔|둬요|둬|두세요|해요|해라|하자|합시다|하세요|해|부탁해요|부탁해|부탁드려요|부탁드립니다|부탁합니다|부탁|ㄱㄱ+|고고+)';
+const KO_REQUEST_ENDING = '(?:할래요|할래|줘요|줘라|줘|주라|주세요|주십시오|줄래요|줄래|줄\\s*수\\s*있어요|줄\\s*수\\s*있어|줄\\s*수\\s*있나요|주실래요|주시겠어요|주실\\s*수\\s*있어요|주시겠습니까|놔요|놔|둬요|둬|두세요|해요|해라|하자|합시다|하세요|해|부탁해요|부탁해|부탁드려요|부탁드립니다|부탁합니다|부탁)';
 /**
  * Between the action word and the request ending only this closed light-verb material may stand: the word's own verb
  * ending, a complement marker (로, 다고: "완료로 바꿔줘", "끝냈다고 처리해줘"), a light noun (처리, 표시, 기록, 복구), 좀,
