@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) are PENDING the owner's batch approval under ADR-0120 D12. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) are PENDING the owner's batch approval under ADR-0120 D12. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) are PENDING the owner's batch approval under ADR-0120 D12. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events); uat5ca-01..10 remain PENDING.",
+  "description": "ADR-0120 D12 natural-language selection corpus: per entry >=25 natural phrasings -> {entryId, args}, plus >=80 negatives. Agent-drafted; corpus approval delegated by the owner for the 2026-10-12 run (ADR-0120 ratification record, decision 5). S1 (2026-10-13, ADR-0121 S1 / ADR-0120 D6 Phase C): every entry with a frozen Class B grammar has at least 25 phrasings that grammar answers in Phase A (agent-drafted; the 148 S1 cases are PENDING the owner's batch approval under ADR-0120 D12 and are not approved yet), plus narrowing follow-ups without a previous selection and grammar-adjacent negatives. INT-4 (2026-10-14): 41 more agent-drafted edge cases (v5int4-001..041: typos, spacing errors, mixed language, indirect asks, compound requests, follow-ups with a prior selection, capability-word negatives) are PENDING the owner's batch approval under ADR-0120 D12. GY (2026-10-14, ADR-0120 A2 implementation note 2): 6 more agent-drafted cases (uat5gy-01..06: two live sentences a Class B grammar used to swallow, four plain phrases the grammars still answer with yield on) were owner-approved in the D12 batch of 2026-10-15. WD (2026-10-14, ADR-0120 A5 implementation note 2): 7 more agent-drafted cases (uat5wd-01..07: one-syllable weekdays after a week anchor, and 금 without one) were owner-approved in the D12 batch of 2026-10-15. CA (2026-10-14, calendar-accuracy implementation note): 10 more agent-drafted cases (uat5ca-01..04: bare and anchored weekdays, a one-syllable weekday after 담주; uat5ca-05..10: weekday statements that must stay none) were owner-approved in the D12 batch of 2026-10-15. D12 owner batch 2026-10-15 (A5 implementation note 3): 9 approved-gold relabels approved by the owner (calendar-010, -026, -036, -057 for the A5 availability/partOfDay args; calendar-008, -020, -025, -030, -035 timedOnly, a meeting word = timed events). D12 owner batch 2026-10-15 (second part, through the orchestrator): approved uat5r1..r9 (23 cases from the 2026-10-14 live edge-case run), uat5gy-01..06, uat5wd-01..07, uat5ca-01..10 and the 8 grammar-metadata-only edits of ADR-0120 A2 implementation note 2 (confluence-001, -005, -007, todo-016, -020, brief-017, neg-219, help-038; neg-219 and help-038 themselves stay in the S1 batch). Still PENDING the owner's batch approval: the 148 S1 cases and the 41 INT-4 cases (v5int4-001..041).",
   "cases": [
     {
       "id": "jira-001",
@@ -1395,7 +1395,8 @@
         "args": {
           "keyword": "온보딩"
         }
-      }
+      },
+      "note": "[Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): the `grammar` tag is removed; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15]"
     },
     {
       "id": "confluence-002",
@@ -1442,7 +1443,8 @@
         "args": {
           "keyword": "DB 설계"
         }
-      }
+      },
+      "note": "[Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): the `grammar` tag is removed; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15]"
     },
     {
       "id": "confluence-006",
@@ -1464,7 +1466,7 @@
           "keyword": "정책"
         }
       },
-      "note": "spelling variant"
+      "note": "spelling variant [Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): the `grammar` tag is removed; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15]"
     },
     {
       "id": "confluence-008",
@@ -3324,7 +3326,8 @@
       },
       "grammar": "work-surface",
       "grammarAnswer": null,
-      "grammarYieldOff": "work-lookup.todo-list"
+      "grammarYieldOff": "work-lookup.todo-list",
+      "note": "[Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): re-tagged `work-surface` (grammarAnswer null) with grammarYieldOff `work-lookup.todo-list`; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15]"
     },
     {
       "id": "todo-017",
@@ -3372,7 +3375,8 @@
       },
       "grammar": "work-surface",
       "grammarAnswer": null,
-      "grammarYieldOff": "work-lookup.todo-list"
+      "grammarYieldOff": "work-lookup.todo-list",
+      "note": "[Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): re-tagged `work-surface` (grammarAnswer null) with grammarYieldOff `work-lookup.todo-list`; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15]"
     },
     {
       "id": "todo-021",
@@ -3853,7 +3857,8 @@
       },
       "grammar": "work-surface",
       "grammarAnswer": null,
-      "grammarYieldOff": "work-lookup.todo-list"
+      "grammarYieldOff": "work-lookup.todo-list",
+      "note": "[Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): re-tagged `work-surface` (grammarAnswer null) with grammarYieldOff `work-lookup.todo-list`; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15]"
     },
     {
       "id": "brief-018",
@@ -7848,7 +7853,7 @@
           "topic": "todo"
         }
       },
-      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]",
+      "note": "S1 Phase C: a Class B grammar answers it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12] [Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): re-tagged `help-intent` with grammarYieldOff `work-lookup.todo-list`; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15 (the case itself stays in the pending S1 batch)]",
       "grammarYieldOff": "work-lookup.todo-list"
     },
     {
@@ -8106,7 +8111,7 @@
       "grammar": "work-surface",
       "grammarAnswer": null,
       "grammarYieldOff": "work-lookup.todo-list",
-      "note": "S1 Phase C negative; a Class B grammar captures it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12]"
+      "note": "S1 Phase C negative; a Class B grammar captures it in Phase A [S1 batch: pending owner batch approval, ADR-0120 D12] [Grammar metadata edited in ADR-0120 A2 implementation note 2 (#204): re-tagged `work-surface` (grammarAnswer null) with grammarYieldOff `work-lookup.todo-list`; expect unchanged; the edit owner-approved in the D12 batch 2026-10-15 (the case itself stays in the pending S1 batch)]"
     },
     {
       "id": "neg-220",
@@ -8698,7 +8703,7 @@
           "range": "yesterday"
         }
       },
-      "note": "mail received yesterday [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "mail received yesterday [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r1-02",
@@ -8709,7 +8714,7 @@
           "range": "last-week"
         }
       },
-      "note": "mail received last week [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "mail received last week [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r1-03",
@@ -8721,7 +8726,7 @@
           "range": "this-week"
         }
       },
-      "note": "unread mail this week [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "unread mail this week [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r1-04",
@@ -8732,7 +8737,7 @@
           "range": "last-7-days"
         }
       },
-      "note": "mail, last 7 days [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "mail, last 7 days [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r1-05",
@@ -8749,7 +8754,7 @@
           "range": "yesterday"
         }
       },
-      "note": "follow-up replaces the period [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "follow-up replaces the period [UAT R1: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r6-06",
@@ -8764,7 +8769,7 @@
         "entryId": "mail.list",
         "args": {}
       },
-      "note": "asks about one listed mail by number; never a re-list [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "asks about one listed mail by number; never a re-list [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r6-07",
@@ -8774,7 +8779,7 @@
         "entryId": "mail.list",
         "args": {}
       },
-      "note": "summarizing a listed mail is not a list request [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "summarizing a listed mail is not a list request [UAT R6: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r2-08",
@@ -8787,7 +8792,7 @@
           "availability": true
         }
       },
-      "note": "free/busy question about an afternoon [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "free/busy question about an afternoon [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r2-09",
@@ -8799,7 +8804,7 @@
           "partOfDay": "afternoon"
         }
       },
-      "note": "weekday plus part of day [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "weekday plus part of day [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r2-10",
@@ -8817,7 +8822,7 @@
           "range": "day-after-tomorrow"
         }
       },
-      "note": "follow-up modifier keeps the previous day [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "follow-up modifier keeps the previous day [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r2-11",
@@ -8829,7 +8834,7 @@
           "partOfDay": "morning"
         }
       },
-      "note": "morning events [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "morning events [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r2-12",
@@ -8840,7 +8845,7 @@
           "partOfDay": "evening"
         }
       },
-      "note": "evening events [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "evening events [UAT R2: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r3-13",
@@ -8851,7 +8856,7 @@
           "range": "last-fri"
         }
       },
-      "note": "last week's Friday, not the whole week [UAT R3: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "last week's Friday, not the whole week [UAT R3: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r3-14",
@@ -8869,7 +8874,7 @@
           "range": "next-week"
         }
       },
-      "note": "the week after next [UAT R3: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "the week after next [UAT R3: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r3-15",
@@ -8880,7 +8885,7 @@
           "range": "rest-of-month"
         }
       },
-      "note": "today to the end of the month [UAT R3: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "today to the end of the month [UAT R3: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r4-16",
@@ -8897,7 +8902,7 @@
           "range": "this-week"
         }
       },
-      "note": "a weekday follow-up is a period, never a title keyword [UAT R4: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a weekday follow-up is a period, never a title keyword [UAT R4: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r4-17",
@@ -8914,7 +8919,7 @@
           "range": "next-week"
         }
       },
-      "note": "period correction keeps no time-word keyword [UAT R4: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "period correction keeps no time-word keyword [UAT R4: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r5-18",
@@ -8932,7 +8937,7 @@
           "range": "this-week"
         }
       },
-      "note": "meetings only: drops all-day entries [UAT R5: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "meetings only: drops all-day entries [UAT R5: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r7-19",
@@ -8943,7 +8948,7 @@
           "keyword": "배포"
         }
       },
-      "note": "core search term without conversational filler [UAT R7: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "core search term without conversational filler [UAT R7: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r7-20",
@@ -8954,7 +8959,7 @@
           "keyword": "결제"
         }
       },
-      "note": "core search term without filler [UAT R7: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "core search term without filler [UAT R7: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r8-21",
@@ -8972,7 +8977,7 @@
           "status": "in-progress"
         }
       },
-      "note": "order follow-up keeps the previous args [UAT R8: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "order follow-up keeps the previous args [UAT R8: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r8-22",
@@ -8983,13 +8988,13 @@
           "sort": "recently-updated"
         }
       },
-      "note": "recently updated first [UAT R8: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "recently updated first [UAT R8: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5r9-24",
       "text": "일정 관리 잘하는 법 알려줘",
       "expect": "none",
-      "note": "advice, not a calendar read [UAT R9: agent-drafted from the 2026-10-14 live edge-case run, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "advice, not a calendar read [UAT R9: agent-drafted from the 2026-10-14 live edge-case run, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5gy-01",
@@ -9001,7 +9006,7 @@
           "partOfDay": "afternoon"
         }
       },
-      "note": "a part of day the calendar grammar cannot carry: it declines (A2 yield) and selection binds partOfDay [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a part of day the calendar grammar cannot carry: it declines (A2 yield) and selection binds partOfDay [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5gy-02",
@@ -9012,7 +9017,7 @@
       },
       "grammar": "work-surface",
       "grammarAnswer": null,
-      "note": "an exclusion the personal-work surface clause cannot express: with yield on it asks the selector first and keeps the surface as the fallback (A5 change 9) [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "an exclusion the personal-work surface clause cannot express: with yield on it asks the selector first and keeps the surface as the fallback (A5 change 9) [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5gy-03",
@@ -9026,7 +9031,7 @@
         "entryId": "todo.list",
         "args": {}
       },
-      "note": "plain phrase: the to-do grammar still answers with yield on [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "plain phrase: the to-do grammar still answers with yield on [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5gy-04",
@@ -9044,7 +9049,7 @@
           "keyword": "배포"
         }
       },
-      "note": "plain phrase: the search slot is already the canonical keyword, so the grammar still answers [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "plain phrase: the search slot is already the canonical keyword, so the grammar still answers [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5gy-05",
@@ -9062,7 +9067,7 @@
           "keyword": "온보딩"
         }
       },
-      "note": "plain phrase: the search slot is already the canonical keyword, so the grammar still answers [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "plain phrase: the search slot is already the canonical keyword, so the grammar still answers [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5gy-06",
@@ -9080,7 +9085,7 @@
           "range": "tomorrow"
         }
       },
-      "note": "plain phrase: the calendar grammar still answers with yield on [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "plain phrase: the calendar grammar still answers with yield on [GY: agent-drafted from the 2026-10-14 live Telegram run after A5, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5wd-01",
@@ -9091,7 +9096,7 @@
           "range": "next-wed"
         }
       },
-      "note": "the live sentence: a one-syllable weekday after a week anchor is that weekday (was answered with next Monday) [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "the live sentence: a one-syllable weekday after a week anchor is that weekday (was answered with next Monday) [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5wd-02",
@@ -9102,7 +9107,7 @@
           "range": "this-fri"
         }
       },
-      "note": "one-syllable weekday with this week [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "one-syllable weekday with this week [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5wd-03",
@@ -9113,7 +9118,7 @@
           "range": "last-mon"
         }
       },
-      "note": "one-syllable weekday with a particle, last week [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "one-syllable weekday with a particle, last week [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5wd-04",
@@ -9125,7 +9130,7 @@
           "partOfDay": "morning"
         }
       },
-      "note": "colloquial next-week anchor, weekday plus part of day [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "colloquial next-week anchor, weekday plus part of day [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5wd-05",
@@ -9136,7 +9141,7 @@
           "range": "next-sat"
         }
       },
-      "note": "anchor without a space [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "anchor without a space [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5wd-06",
@@ -9147,13 +9152,13 @@
           "range": "last-thu"
         }
       },
-      "note": "mail received on a one-syllable weekday of last week [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "mail received on a one-syllable weekday of last week [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5wd-07",
       "text": "금 시세 알려줘",
       "expect": "none",
-      "note": "금 without a week anchor is gold, not Friday: no source to read [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "금 without a week anchor is gold, not Friday: no source to read [WD: agent-drafted from the 2026-10-14 live Telegram run (one-syllable weekday), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5ca-01",
@@ -9171,7 +9176,7 @@
           "range": "10-16"
         }
       },
-      "note": "a weekday with no week word is the bare symbol (this-fri on a Wednesday is the same day and canonicalised to fri) [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a weekday with no week word is the bare symbol (this-fri on a Wednesday is the same day and canonicalised to fri) [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5ca-02",
@@ -9189,7 +9194,7 @@
           "range": "10-15"
         }
       },
-      "note": "a Korean week anchor keeps its own form (thu on a Wednesday is canonicalised to this-thu) [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a Korean week anchor keeps its own form (thu on a Wednesday is canonicalised to this-thu) [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5ca-03",
@@ -9201,7 +9206,7 @@
           "range": "thu"
         }
       },
-      "note": "no week word: never next-thu [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "no week word: never next-thu [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5ca-04",
@@ -9212,43 +9217,43 @@
           "range": "next-fri"
         }
       },
-      "note": "a one-syllable weekday after a week word is that day, never a keyword [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a one-syllable weekday after a week word is that day, never a keyword [CA: agent-drafted from the 2026-10-14 calendar-accuracy work, owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5ca-05",
       "text": "금요일에 친구 만나기로 했어",
       "expect": "none",
-      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5ca-06",
       "text": "다음 주 수요일 생일이야",
       "expect": "none",
-      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5ca-07",
       "text": "월요일은 늘 피곤해",
       "expect": "none",
-      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5ca-08",
       "text": "수요일마다 운동해",
       "expect": "none",
-      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5ca-09",
       "text": "이번 주 금요일 휴가야",
       "expect": "none",
-      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "uat5ca-10",
       "text": "토요일에 이사해",
       "expect": "none",
-      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+      "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), owner-approved D12 batch 2026-10-15]"
     },
     {
       "id": "a7u-01",
