@@ -23557,12 +23557,13 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
   3. *D12 batch approved:* `uat5r1..r9` (23), `uat5gy-01..06` (6), `uat5wd-01..07` (7), `uat5ca-01..10` (10), marked
      "owner-approved D12 batch 2026-10-15" in their notes; and the 8 grammar-metadata-only edits of the A2 implementation
      note 2 (`confluence-001`, `-005`, `-007`, `todo-016`, `-020`, `brief-017`, `neg-219`, `help-038`), marked in their
-     notes. `neg-219` and `help-038` themselves stay in the S1 batch. **Still PENDING:** the 148 S1 cases and the 41 INT-4
-     cases (`v5int4-001..041`). Discrepancy found: the A2 implementation note 2 says "the S1 batch approved on 2026-10-13",
-     but the corpus, the INT-4 note and the S1 note all record the S1 batch as pending; it is left pending here.
+     notes. **The 148 S1 cases** were already owner-approved on 2026-10-13 ("S1 owner decisions (2026-10-13)", decision
+     2: "the cases' `pending owner batch approval` notes are superseded by this record"); their notes still said
+     pending, so they are now marked "owner-approved 2026-10-13" citing that record (verified; orchestrator follow-up).
+     **Still PENDING:** the 41 INT-4 cases (`v5int4-001..041`), for the owner's next batch.
   4. *A6 relabel batch (A6 ratification decision 10, `docs/plans/nl-action-relabel-batch.md`).* `neg-098`, `neg-100` and
      `uat5r6-07` gain `a6Relabel: item.summarize` (`{source: mail, ref: "#1", mode: summary}`, `{source: drive, ref:
-     "#1", mode: summary}`, `{source: mail, ref: recent, mode: summary}`, batch `A6-relabel-2026-10-15`) and
+     "#1", mode: summary}`, `{source: mail, ref: this, mode: summary}`, batch `A6-relabel-2026-10-15`) and
      `context.lastListing` (mail or Drive, labels 1-3, 1 minute old; a one-item mail listing for `uat5r6-07`).
      - **Read mode is defined, not changed.** With A6 off (`QUOKY_NL_ACTIONS=off`, the D12 evaluation `eval:nl --mode
        run`) no A6 entry is offered, so `expect` stays `none` (chat, and a list read is a wrong capture). The relabel is
@@ -23574,14 +23575,17 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
        (`ungrounded`, arg `ref`): the A6-D2 closed deictics are 그거/이거/그것/방금/아까/… and a bare determiner 이 is not
        one. A gold Core can never produce would only fail; making "이 + noun" a deictic changes A6-D2 and needs its own
        owner decision. (The GML-2 anchored grammar still answers it for a one-item list.)
-     - **Not run:** no read-regression run (not in this approval). Two expected effects for when it runs: the v25
-       example "그거 요약해줘" (A6 override) writes `ref: this` while `uat5r6-07`'s approved gold is `recent`; Core resolves
-       both the same way (A6-D2 step 3), but the scorer compares exact args. And that example quotes `uat5r6-07`'s text
-       (7 characters, under the leak check's 8-character floor).
+     - **`uat5r6-07` ref spelling: `this`** (the batch sheet wrote `recent`). A6-D2 grounds `recent` and `this` on the
+       same closed deictics (그거 included) and resolves them identically (step 3), so it does not choose between them;
+       the v25 example for the same sentence and all 15 "그거" cases of the A6 action corpus use `this` (방금/아까 use
+       `recent`). The owner approved the relabel direction, not a ref spelling, so the gold follows the prompt and the
+       corpus (orchestrator decision, 2026-10-15). The v25 example quotes this case's text (7 characters, under the leak
+       check's 8-character floor).
+     - **Not run:** no read-regression run (not in this approval).
 - **Prompt versions (the note 3 / A7 convention).** Read prompt `nl-select.v22` → `nl-select.v24`; the A6 `off` pin
   `golden/nl-select.v22.prompts.json` becomes `golden/nl-select.v24.prompts.json`, generated from the v22 file by
-  replacing exactly those three lines in each of the 31 prompts that offer the calendar entry (93 lines plus the version
-  and note). The A6 action prompt `nl-select.v23` → `nl-select.v25` (the A6 text on v24; the seed label follows). The
+  replacing exactly those lines: the three calendar lines in the 31 prompts that offer the calendar entry, and the
+  range-symbols line in all 76 (169 lines plus the version and note; the weekend clause is the follow-up below). The A6 action prompt `nl-select.v23` → `nl-select.v25` (the A6 text on v24; the seed label follows). The
   selector cache key carries the version (tests: v18, v20-v25 give 7 distinct keys).
 - **Grammar side** (`scoreGrammarSide`, offline): five of the seven relabelled cases are calendar-grammar-tagged and the
   grammar answers them without the flag: exact 208 → 204/248, user-visible 226 → 221, entry 243, wrong 0.
@@ -23614,8 +23618,22 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
     is omitted; probe: v22 2/20, v24 0/20 set it). `calendar-046` and `-53` hit 3/3.
   - Other calendar misses: `calendar-023` "다음 주말에 잡힌 일정 있어?" → `next-sat` 3/3 (gold `next-weekend`; probe v22
     14/20 → v24 8/20 hits, a drift to watch, not a wrong capture); `calendar-004` once, `uat5r2-12` once.
+- **Follow-up: the `calendar-023` drift (orchestrator, owner-approved probes).** "다음 주말에 잡힌 일정 있어?" (gold
+  `next-weekend`), 40 calls each: v22 27 `next-weekend` / 13 `next-sat`; v24 as evaluated 16 / 24. Bisection (40 each):
+  only the description changed 28/40, only the examples 30/40, the description and the "내일" example 27/40, so no single
+  edit causes it; reverting the "다음 미팅" example fixes it but loses T1 on "다음 회의 언제야?" (0/20 flag). Two rewordings
+  of that example kept the drift (14/40, 19/40). **Fix:** one clause at the end of the range-symbols line,
+  "this-weekend / next-weekend: Saturday and Sunday together (주말), never one day;" (a symbol definition, no corpus
+  phrase). A first placement as a parenthesis after `next-weekend` (38/40) moved "다다음 주 일정 알려줘" to `next-week`
+  in 5/20 (v22: 20/20), the A7 sensitivity of that line, so the clause goes at the end of the line (20/20 both).
+  **Final v24, 20 calls each:** "다음 주말에 잡힌 일정 있어?" `next-weekend` 20/20; "오늘 미팅 있어요?" `{timedOnly}` 20/20;
+  "내일 회의 몇 개야" with the flag 20/20; "이번 주 일정 다 보여줘" `{this-week}` 20/20 (never the flag); "다음 회의 언제야?"
+  with the flag 13/20 (7 without); "when is my next meeting?" with the flag 19/20; "이번 주 정기회의 일정 있어?" keyword
+  `정기회의` 17/20 (one drops the keyword); "그거 몇 개야" (`neg-208`) 15 NEEDS_CLARIFICATION / 5 none, 0 CLEAR captures;
+  "다다음 주 일정 알려줘" `week-after-next` 20/20; `neg-025` none 20/20. The 3-run evaluation above was on v24 before this
+  clause (plan digest `937c1a43…`); no full run was repeated (probes only).
 - **Residuals.** `neg-037` (pre-existing) keeps the D12 gate at 2 of 3 runs; `calendar-035` (English count) and
-  `calendar-023` are prompt-sensitive misses, left as corpus cases (D10, D12; no phrase is added).
+  "다음 회의 언제야?" (flag 13/20) are prompt-sensitive, left as corpus cases (D10, D12; no phrase is added).
 
 ### ADR-0120 amendment A7 — "until <weekday>": an open-start period that ends on the weekday the owner bounds, and a clear past-tense statement is not a read (Accepted 2026-10-15) (2026-10-15)
 

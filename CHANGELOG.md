@@ -11,12 +11,14 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   decisions as recommended (S-1..S-6, C-1, J-1..J-13; J-9: no *Delete issues* request now, close as the fallback,
   conditional on the NLA-12 permission check). Docs only; built in R3 / R4.
 - **D12 corpus approvals.** 46 agent-drafted cases owner-approved (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*`
-  10) and the 8 grammar-metadata edits of #204. Still pending: 148 S1 and 41 INT-4 cases.
+  10) and the 8 grammar-metadata edits of #204; the 148 S1 cases marked with their 2026-10-13 approval. Still pending:
+  41 INT-4 cases.
 - **A6 relabels.** `neg-098`, `neg-100`, `uat5r6-07` → `item.summarize` in `eval:nl --mode read-regression` only, with
   the listing the owner saw as the Reference context; read mode (A6 off) keeps `none`. `neg-099` is held: "이 문서" has
   no A6-D2 deictic, so Core refuses `ref: this`.
 - **T1.** A meeting word in a calendar question means timed events: seven more cases gain `timedOnly`; the `timedOnly`
-  description and two meeting examples follow (read prompt `nl-select.v24`, A6 prompt `nl-select.v25`, new `off` pin).
+  description and two meeting examples follow, and the weekend symbols are defined as Saturday and Sunday together
+  ("다음 주말" had drifted to next Saturday alone) (read prompt `nl-select.v24`, A6 prompt `nl-select.v25`, new `off` pin).
 - **Measured (Haiku, 3 runs, 449 cases).** Overall 96.5 / 95.7 / 95.7%, calendar 94.7 / 96.8 / 92.6%, wrong captures
   1 / 0 / 0 (`neg-037`, pre-existing), p95 2.1-2.2 s. D12 gate in 2 of 3 runs.
 

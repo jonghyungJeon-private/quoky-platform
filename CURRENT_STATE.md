@@ -27,17 +27,19 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 
 - S1 per-grammar Phase C decision: a grammar moves to `c` only on its own `nl_selection.agreement` data, with the owner's yes.
 - Egress `enforce`: after 7 clean ledger days; the owner ask is due around 2026-10-20.
-- A6 R1 batch: the red-team review of the drafted corpus (the relabel batch was approved on 2026-10-15), and the A6 clause confirmations (A6-D3a and the
-  others under "A6 clauses pending owner confirmation"). `QUOKY_NL_ACTIONS` stays `off` until then.
-- D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
-  metadata edits, the calendar relabels and the T1 extension). Still pending: the 148 S1 cases and the 41 INT-4 cases
-  (`v5int4-*`), and the A6 relabel of `neg-099` (not applicable under A6-D2, see the A5 note 3 addendum).
-
 - A6 R1: the batch review is APPROVED (2026-10-15; DECISIONS "A6 R1 owner batch approval"). Still needing a separate owner
   yes each: the A6 model runs (3 runs), the `.env.local` `QUOKY_NL_ACTIONS` flag (stays `off`), and the labelled live session
   of at least 100 turns.
-- D12 batch approval of the 23 `uat5r*` golden cases (A5), the 7 `uat5wd-*` cases (A5 note 2) and the 10 `uat5ca-*` cases
-  plus the proposed calendar relabels (A5 note 3). They gate no live behaviour.
+- D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
+  metadata edits, the calendar relabels and the T1 extension); the 148 S1 cases are marked with their 2026-10-13
+  approval. They gate no live behaviour.
+- **Next owner batch:**
+  - the 41 INT-4 cases `v5int4-001..041` (still PENDING);
+  - `neg-099` "이 문서 요약해줘": A6 relabel HELD pending an A6-D2 decision (whether a bare determiner "이" + noun counts as a
+    deictic; today Core refuses `ref: this` for it as ungrounded);
+  - `uat5r6-07` "그거 요약해줘": A6 relabel HELD pending the owner's confirmation of the ref spelling (the approved sheet
+    says `recent`; A6-D2 treats `recent` and `this` alike; the v25 prompt example for this very sentence uses `this`, so the
+    case is contaminated for scoring: its text is verbatim a v24/v25 prompt example).
 - Owner follow-up (pre-existing, found in A6 acceptance): an anchored Class A command such as "1번 완료해줘" acts on the CURRENT numbered list, so if the list was renumbered since the owner last saw it (an item completed elsewhere), it completes a different to-do than the one shown. A6 selector-path references are bound to the shown label and refuse instead; whether the anchored form should do the same is the owner's call.
 - Token rotation: deferred (ADR-0121 S0 owner decision, design Q5).
 - OS-level firewall for child processes: "not now" (ADR-0121 S0 owner decision, design Q10).
@@ -59,10 +61,11 @@ Details and the review record for each item are in the matching notes in `DECISI
 
 - **Accepted:** ADR-0112 amendments 1 (Slack delete) and 2 (Jira create and undo), all 20 decisions as recommended;
   implementation stays at A6 R3 / R4.
-- **Corpus:** 46 cases and the 8 #204 metadata edits owner-approved; `neg-098`, `neg-100`, `uat5r6-07` relabelled to
+- **Corpus:** 46 cases and the 8 #204 metadata edits owner-approved (and the 148 S1 cases marked with their 2026-10-13 approval); `neg-098`, `neg-100`, `uat5r6-07` relabelled to
   `item.summarize` for the A6 read-regression mode only (`neg-099` held, A6-D2 has no "이" deictic); T1 extended to 7
   more calendar cases.
-- **Prompt:** read `nl-select.v24` (A6 `off` pin `golden/nl-select.v24.prompts.json`), A6 `nl-select.v25`.
+- **Prompt:** read `nl-select.v24` (A6 `off` pin `golden/nl-select.v24.prompts.json`), A6 `nl-select.v25`; v24 also
+  defines the weekend symbols as Saturday and Sunday together (the `calendar-023` drift fix).
 - **Measured:** Haiku 3 runs: overall 95.7-96.5%, calendar 92.6-96.8%, wrong captures 1/0/0 (`neg-037`, pre-existing);
   D12 gate in runs 2 and 3. Not merged; not live.
 
