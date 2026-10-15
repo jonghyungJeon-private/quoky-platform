@@ -90,3 +90,16 @@ describe('LearningTurnHandler — DM-only (P0 ahead of ADR-0122 D7)', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 });
+
+describe('LearningTurnHandler — ADR-0122 P2: `memory` in the channel permit lifts the P0 copy', () => {
+  it('runs with `memory`; stays DM-only without it or without a permit', async () => {
+    const execute = vi.fn(async () => ({ text: '저장된 예시가 없어요.', status: 'RESPONDED' as const }));
+    const handler = new LearningTurnHandler({ service: { execute } });
+    const inChannel = (allowed?: readonly string[]) =>
+      ({ ...ctxOf('예시 목록', undefined, false), ...(allowed !== undefined ? { surfacePermit: { allowed } } : {}) }) as TurnHandlerContext;
+    expect((await handler.handle(inChannel(['memory'])))?.reply.text).toBe('저장된 예시가 없어요.');
+    expect((await handler.handle(inChannel(['todo'])))?.reply.text).toBe(DM_ONLY_FEATURE_TEXT);
+    expect((await handler.handle(inChannel()))?.reply.text).toBe(DM_ONLY_FEATURE_TEXT);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+});

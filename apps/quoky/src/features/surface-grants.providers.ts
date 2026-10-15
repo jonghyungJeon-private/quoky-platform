@@ -3,6 +3,7 @@ import {
   ActorMetadataStore,
   NOTIFICATION_SINK,
   STORAGE_PROVIDER,
+  SessionManager,
   SurfaceGate,
   SurfaceGrantService,
   newId,
@@ -15,6 +16,7 @@ import {
   type NotificationSink,
   type StorageProvider,
   type SurfaceGrantSeedResult,
+  type SurfaceGroupId,
 } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
 import type { ChannelGrantsConfig } from '../surface-grants/channel-grants-config';
@@ -44,6 +46,11 @@ export interface SurfaceGrantsComposition {
   readonly freshActor: (actorId: string) => Promise<Actor | null>;
   /** Present only while `enforce`: whether a feedback reaction in this conversation may be recorded (`memory`). */
   readonly reactionAllowed?: (context: ConversationContext) => Promise<boolean>;
+  /**
+   * Present only while `enforce` (D2.6, P2): whether a channel reminder may still be delivered to its channel — the live
+   * owner Actor's grants hold `groups` there (fail closed on a missing actor or a failed read).
+   */
+  readonly deliveryAllowed?: (origin: ConversationContext, actorId: string, groups: readonly SurfaceGroupId[]) => Promise<boolean>;
   /** D6: apply the configured seed once per digest (only while `enforce`); a no-op without a seed. */
   applySeed(now: string): Promise<readonly SurfaceGrantSeedResult[]>;
   /** D6: the owner DM line of each channel the last `applySeed` added groups to (call once the platform is up). */
@@ -73,6 +80,7 @@ export function createSurfaceGrantsComposition(
   storage: StorageProvider,
   sink: NotificationSink | undefined,
   logger: Logger,
+  sessions: SessionManager = new SessionManager(storage),
 ): SurfaceGrantsComposition {
   // The live repository, dereferenced at call time (the SQLite repositories exist only after `storage.init()`).
   const metadata = new ActorMetadataStore({
@@ -85,6 +93,8 @@ export function createSurfaceGrantsComposition(
     isOwner: surfaceOwnerCheck(config),
     logger,
     ...(sink !== undefined ? { notify: (notification) => sink.deliver(notification) } : {}),
+    // P2: the pending grant (`허용 실행`) lives in the session row, written under the shared session write lock.
+    sessions,
   });
   const enforced = config.channelGrants.mode === 'enforce';
   const pendingReceipts: { readonly target: ConversationContext; readonly text: string }[] = [];
@@ -100,11 +110,23 @@ export function createSurfaceGrantsComposition(
         }
       }
     : undefined;
+  const deliveryAllowed = enforced
+    ? async (origin: ConversationContext, actorId: string, groups: readonly SurfaceGroupId[]): Promise<boolean> => {
+        try {
+          const actor = await metadata.get(actorId);
+          if (actor === null) return false;
+          return gate.decide(origin, actor, groups, { path: 'delivery' }).allow;
+        } catch {
+          return false;
+        }
+      }
+    : undefined;
   return {
     gate,
     service,
     freshActor: (actorId) => metadata.get(actorId),
     ...(reactionAllowed !== undefined ? { reactionAllowed } : {}),
+    ...(deliveryAllowed !== undefined ? { deliveryAllowed } : {}),
     async applySeed(now: string): Promise<readonly SurfaceGrantSeedResult[]> {
       const seed = config.channelGrants.seed;
       if (seed === undefined) return [];
@@ -161,14 +183,14 @@ export function createSurfaceGrantsProviders(
   return [
     {
       provide: SURFACE_GRANTS,
-      useFactory: (storage: StorageProvider, sink?: NotificationSink): SurfaceGrantsComposition => {
+      useFactory: (storage: StorageProvider, sink?: NotificationSink, sessions?: SessionManager): SurfaceGrantsComposition => {
         const config = resolveConfig();
         if (config.channelGrants.mode === 'off') {
           logger.warn('surface_grants.off', { explicit: config.channelGrants.explicit, seedConfigured: config.channelGrants.seed !== undefined });
         }
-        return createSurfaceGrantsComposition(config, storage, sink, logger);
+        return createSurfaceGrantsComposition(config, storage, sink, logger, sessions ?? new SessionManager(storage));
       },
-      inject: [STORAGE_PROVIDER, { token: NOTIFICATION_SINK, optional: true }],
+      inject: [STORAGE_PROVIDER, { token: NOTIFICATION_SINK, optional: true }, { token: SessionManager, optional: true }],
     },
   ];
 }

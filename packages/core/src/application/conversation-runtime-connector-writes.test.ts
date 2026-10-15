@@ -2376,7 +2376,7 @@ describe('surface grants: an approved write in a channel re-checks the live gran
     revokeLive(); // the owner's revoke (another turn) lands after this turn read its actor snapshot
     gate.release();
     const result = await turn;
-    expect(result.reply.text).toBe("이 채널에서는 '외부 쓰기(승인)' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+    expect(result.reply.text).toBe("이 채널에서는 '외부 쓰기(승인)' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이 채널에 허용하려면 \"이 채널에 외부 쓰기(승인) 허용\"이라고 보내 주세요.");
     expect(h.totalWrites()).toBe(0);
     expect(h.receipts.rows.size).toBe(0);
     expect((h.anchorTask()?.metadata?.connectorWriteAnchor as { status: string } | undefined)?.status).toBe('APPROVED');

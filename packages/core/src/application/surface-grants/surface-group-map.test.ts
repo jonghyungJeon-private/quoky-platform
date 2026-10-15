@@ -85,8 +85,8 @@ describe('the selection map (D2.2): every catalog entry is mapped', () => {
     expect(surfaceGroupsOfSelection({ entryId: 'drive.files', args: {} })).toEqual(['drive']);
     expect(surfaceGroupsOfSelection({ entryId: 'brief.today', args: {} })).toEqual(['brief']);
     expect(surfaceGroupsOfSelection({ entryId: 'help.topic', args: {} })).toEqual(['help']);
-    // Interim P1 rule: the combined view needs all of its sources (the P2 permit filters instead).
-    expect(surfaceGroupsOfSelection({ entryId: 'todo.list', args: {} })).toEqual(['todo', 'jira-mine', 'github']);
+    // D2.4 (P2): the combined view is `todo`; the permit filters its Jira / GitHub sections.
+    expect(surfaceGroupsOfSelection({ entryId: 'todo.list', args: {} })).toEqual(['todo']);
   });
 
   it.each([
@@ -106,7 +106,7 @@ describe('the work-command map (D2.1)', () => {
   it.each([
     ['할 일 추가: 보고서', ['todo']],
     ['완료 처리: 1', ['todo']],
-    ['내 할 일 보여줘', ['todo', 'jira-mine', 'github']],
+    ['내 할 일 보여줘', ['todo']],
     ['내 Jira 이슈 보여줘', ['jira-mine']],
     ['GitHub 리뷰 요청 보여줘', ['github']],
     ['Slack에서 배포 검색', ['slack-search']],

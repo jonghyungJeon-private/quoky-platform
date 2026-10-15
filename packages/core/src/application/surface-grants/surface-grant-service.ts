@@ -1,10 +1,18 @@
-import type { Actor, ConversationContext, Id, InboundMessage, IsoTimestamp } from '../../domain';
+import type { Actor, ConversationContext, Id, InboundMessage, IsoTimestamp, Session } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
 import type { OwnerNotification } from '../../ports/notification-sink.port';
 import { newId } from '../../util/id';
 import type { ActorMetadataStore } from '../actor-metadata-store';
 import { ACTION_SWITCH_METADATA_KEY, parseActionSwitchPhrase, readActionSwitch, withActionSwitch, type NlActionSwitchState } from '../nl-routing/action-switch';
 import {
+  SURFACE_WRITE_READ_GROUPS,
+  renderSurfaceAlreadyGranted,
+  renderSurfaceGrantChannelLimit,
+  renderSurfaceGrantConfirm,
+  renderSurfaceGrantExpired,
+  renderSurfaceGrantNoPending,
+  renderSurfaceGrantReceipt,
+  renderSurfaceGranted,
   renderSurfaceAllChannelsList,
   renderSurfaceAllCleared,
   renderSurfaceChannelCleared,
@@ -20,9 +28,10 @@ import {
   type SurfaceCopyLanguage,
 } from './surface-grant-copy';
 import { isSurfaceDirect } from './surface-gate';
-import { parseSurfaceGrantPhrase } from './surface-grant-phrases';
+import { parseSurfaceGrantConfirm, parseSurfaceGrantPhrase } from './surface-grant-phrases';
 import {
   SURFACE_GRANTS_METADATA_KEY,
+  SURFACE_GRANT_MAX_CHANNELS,
   applySurfaceGrantSeed,
   grantedSurfaceGroups,
   parseSurfaceChannelKey,
@@ -31,12 +40,48 @@ import {
   surfaceChannelKey,
   withAllSurfaceGrantsCleared,
   withSurfaceChannelCleared,
+  withSurfaceGroupsGranted,
   withSurfaceGroupsRevoked,
   type SurfaceGrantRecord,
   type SurfaceGrantSeed,
   type SurfaceGrantSeedResult,
 } from './surface-grant-record';
-import { SURFACE_GROUPS, type SurfaceGroupId } from './surface-groups';
+import { SURFACE_GROUPS, SURFACE_GROUP_IDS, isGrantableSurfaceGroup, isSurfaceGroupId, type SurfaceGroupId } from './surface-groups';
+
+/**
+ * D4.2 (P2): the grant waiting for `허용 실행`, in `Session.metadata['quoky.grantPending']` (the session is this
+ * conversation): group ids, the channel key and the expiry — no text. Read fail closed: anything malformed is no pending.
+ */
+export const SURFACE_GRANT_PENDING_METADATA_KEY = 'quoky.grantPending';
+/** D4.2: the confirmation window. */
+export const SURFACE_GRANT_CONFIRM_TTL_MS = 2 * 60 * 1000;
+
+export interface SurfaceGrantPending {
+  readonly v: 1;
+  readonly key: string;
+  readonly groups: readonly SurfaceGroupId[];
+  readonly expiresAt: IsoTimestamp;
+}
+
+export function readSurfaceGrantPending(raw: unknown): SurfaceGrantPending | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (value.v !== 1 || typeof value.key !== 'string' || parseSurfaceChannelKey(value.key) === undefined) return undefined;
+  if (typeof value.expiresAt !== 'string' || !Number.isFinite(Date.parse(value.expiresAt))) return undefined;
+  if (!Array.isArray(value.groups)) return undefined;
+  const listed = value.groups as unknown[];
+  const groups = SURFACE_GROUP_IDS.filter((id) => isGrantableSurfaceGroup(id) && listed.includes(id));
+  if (groups.length === 0 || listed.some((id) => !isSurfaceGroupId(id) || !isGrantableSurfaceGroup(id))) return undefined;
+  return { v: 1, key: value.key, groups, expiresAt: value.expiresAt as IsoTimestamp };
+}
+
+/** What the runtime does with a turn that met a pending grant (or the confirmation phrase). */
+export interface SurfaceGrantPendingResult {
+  /** The fixed reply that ends the turn (nothing recorded). */
+  readonly reply?: string;
+  /** The pending grant of this session was dropped (another message ended it); the turn routes as before. */
+  readonly cleared?: true;
+}
 
 /**
  * ADR-0122 D3/D4/D6 (P1): the grant service — the owner's list and revoke phrases, the startup seed and the kill-switch
@@ -54,6 +99,11 @@ export interface SurfaceGrantServiceDeps {
   readonly logger: Pick<Logger, 'info' | 'warn'>;
   /** The owner notification sink (`SURFACE_GRANT`, DM-only). Absent: no receipt. */
   readonly notify?: (notification: OwnerNotification) => Promise<unknown>;
+  /**
+   * P2: the session store that holds the pending grant (`SessionManager.updateMetadataEntry`, field-scoped under the
+   * shared session write lock). Absent: the grant phrase answers "not available" and nothing is saved.
+   */
+  readonly sessions?: { updateMetadataEntry(session: Pick<Session, 'id'>, key: string, update: (current: unknown) => unknown): Promise<Session | null> };
 }
 
 function languageOfText(text: string): SurfaceCopyLanguage {
@@ -67,7 +117,7 @@ export class SurfaceGrantService {
    * The owner's phrase, answered with fixed copy; `undefined` when the text is not a grant phrase (or not the owner's),
    * so the turn routes as before. Never throws.
    */
-  async handlePhrase(message: InboundMessage, actor: Actor, now: IsoTimestamp): Promise<string | undefined> {
+  async handlePhrase(message: InboundMessage, actor: Actor, now: IsoTimestamp, session?: Pick<Session, 'id'>): Promise<string | undefined> {
     let phrase;
     try {
       phrase = parseSurfaceGrantPhrase(message);
@@ -106,8 +156,11 @@ export class SurfaceGrantService {
         if (direct) return renderSurfaceGrantChannelOnly(language);
         const refusal = this.groupRefusal(phrase.groups, phrase.unknown, language);
         if (refusal !== undefined) return refusal;
-        this.log('info', 'surface_grant.refused', { reason: 'grant-not-available' });
-        return renderSurfaceGrantNotYet(language);
+        if (this.deps.sessions === undefined || session === undefined) {
+          this.log('info', 'surface_grant.refused', { reason: 'grant-not-available' });
+          return renderSurfaceGrantNotYet(language);
+        }
+        return this.askToConfirm(message, record, phrase.groups, session, now, suspended, language);
       }
       case 'revoke': {
         if (direct) return renderSurfaceGrantChannelOnly(language);
@@ -191,7 +244,144 @@ export class SurfaceGrantService {
     return result;
   }
 
+  /**
+   * D4.2 (P2): a turn in a session that holds a pending grant, or the confirmation phrase itself. Runs right after the
+   * kill-switch phrase, in every state, only while the gate is enforced:
+   *
+   * - `허용 실행` from the owner in the channel of the pending grant, within 2 minutes → the grant is saved through the
+   *   per-actor metadata lock, logged, receipted in the owner DM and answered; the pending grant is consumed atomically
+   *   (under the session lock), so a second `허용 실행` finds nothing;
+   * - `허용 실행` after the window → the expiry reply, nothing saved; with nothing pending (in a channel) → a fixed reply;
+   * - any other message (or a non-owner's) ends the pending grant and routes as before (`cleared`).
+   *
+   * `undefined`: no pending grant and not the confirmation phrase — the turn routes exactly as before. Never throws.
+   */
+  async handleGrantPending(
+    message: InboundMessage,
+    session: Pick<Session, 'id' | 'metadata'>,
+    actor: Actor,
+    now: IsoTimestamp,
+  ): Promise<SurfaceGrantPendingResult | undefined> {
+    let confirm: boolean;
+    try {
+      confirm = parseSurfaceGrantConfirm(message);
+    } catch {
+      confirm = false;
+    }
+    const hasPending = session.metadata?.[SURFACE_GRANT_PENDING_METADATA_KEY] !== undefined;
+    const direct = isSurfaceDirect(message.context);
+    if (!hasPending) {
+      if (!confirm || direct) return undefined;
+      if (!this.deps.isOwner(actor, message.context)) {
+        this.log('warn', 'surface_grant.refused', { reason: 'not-owner' });
+        return undefined;
+      }
+      return { reply: renderSurfaceGrantNoPending(languageOfText(message.text)) };
+    }
+    const sessions = this.deps.sessions;
+    const owner = this.deps.isOwner(actor, message.context);
+    if (confirm && !owner) this.log('warn', 'surface_grant.refused', { reason: 'not-owner' });
+    // Consume (or drop) the pending grant atomically: only the turn that takes it can act on it.
+    let consumed: SurfaceGrantPending | undefined;
+    try {
+      await sessions?.updateMetadataEntry(session, SURFACE_GRANT_PENDING_METADATA_KEY, (current) => {
+        consumed = readSurfaceGrantPending(current);
+        return undefined;
+      });
+    } catch (error) {
+      this.log('warn', 'surface_grant.write_failed', { errorName: error instanceof Error ? error.name : typeof error });
+    }
+    if (!confirm || !owner) {
+      this.log('info', 'surface_grant.pending_ended', { reason: confirm ? 'not-owner' : 'other-message' });
+      return { cleared: true };
+    }
+    const language = languageOfText(message.text);
+    const key = surfaceChannelKey(message.context);
+    if (consumed === undefined || consumed.key !== key) return { reply: renderSurfaceGrantNoPending(language) };
+    if (Date.parse(now) > Date.parse(consumed.expiresAt)) {
+      this.log('info', 'surface_grant.refused', { reason: 'confirmation-expired' });
+      return { reply: renderSurfaceGrantExpired(language) };
+    }
+    return { reply: await this.grant(actor, message.context, consumed.groups, now, language) };
+  }
+
   // ── internals ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+  /** D4.1–D4.3: save the pending grant in this session and answer with the confirmation. Nothing is granted yet. */
+  private async askToConfirm(
+    message: InboundMessage,
+    record: SurfaceGrantRecord,
+    groups: readonly SurfaceGroupId[],
+    session: Pick<Session, 'id'>,
+    now: IsoTimestamp,
+    suspended: boolean,
+    language: SurfaceCopyLanguage,
+  ): Promise<string> {
+    const key = surfaceChannelKey(message.context);
+    const already = grantedSurfaceGroups(record, key);
+    const wanted = groups.filter((id) => !already.includes(id));
+    if (wanted.length === 0) return renderSurfaceAlreadyGranted(groups, language);
+    if (record.channels[key] === undefined && Object.keys(record.channels).length >= SURFACE_GRANT_MAX_CHANNELS) {
+      this.log('info', 'surface_grant.refused', { reason: 'channel-limit' });
+      return renderSurfaceGrantChannelLimit(language);
+    }
+    const pending: SurfaceGrantPending = {
+      v: 1,
+      key,
+      groups: SURFACE_GROUP_IDS.filter((id) => wanted.includes(id)),
+      expiresAt: new Date(Date.parse(now) + SURFACE_GRANT_CONFIRM_TTL_MS).toISOString() as IsoTimestamp,
+    };
+    let saved: Session | null = null;
+    try {
+      saved = (await this.deps.sessions?.updateMetadataEntry(session, SURFACE_GRANT_PENDING_METADATA_KEY, () => ({ ...pending, groups: [...pending.groups] }))) ?? null;
+    } catch (error) {
+      this.log('warn', 'surface_grant.write_failed', { errorName: error instanceof Error ? error.name : typeof error });
+    }
+    if (saved === null) return renderSurfaceGrantWriteFailed(language);
+    this.log('info', 'surface_grant.pending', { platform: message.context.platform, channelId: message.context.channelId, groups: pending.groups.join(',') });
+    const missingWriteReadGroups = SURFACE_WRITE_READ_GROUPS.filter((id) => !already.includes(id) && !pending.groups.includes(id));
+    return renderSurfaceGrantConfirm({
+      groups: pending.groups,
+      ...(message.audience !== undefined ? { audience: message.audience } : {}),
+      missingWriteReadGroups,
+      suspended,
+      language,
+    });
+  }
+
+  /** `허용 실행`: the grant through the per-actor metadata lock (re-read inside it), logged and receipted. */
+  private async grant(
+    actor: Actor,
+    context: ConversationContext,
+    groups: readonly SurfaceGroupId[],
+    now: IsoTimestamp,
+    language: SurfaceCopyLanguage,
+  ): Promise<string> {
+    const key = surfaceChannelKey(context);
+    let changed: readonly SurfaceGroupId[] = [];
+    let limited = false;
+    let suspended = false;
+    const ok = await this.write(actor, (record) => {
+      const result = withSurfaceGroupsGranted(record, key, groups, 'owner', now);
+      if (!result.ok) {
+        limited = true;
+        return record;
+      }
+      changed = result.changed;
+      return result.record;
+    }, (fresh) => {
+      suspended = readActionSwitch({ metadata: fresh }).state === 'stopped';
+    });
+    if (!ok) return renderSurfaceGrantWriteFailed(language);
+    if (limited) {
+      this.log('info', 'surface_grant.refused', { reason: 'channel-limit' });
+      return renderSurfaceGrantChannelLimit(language);
+    }
+    if (changed.length === 0) return renderSurfaceAlreadyGranted(groups, language);
+    this.log('info', 'surface_grant.changed', { op: 'grant', platform: context.platform, channelId: context.channelId, groups: changed.join(','), source: 'owner' });
+    await this.receipt(context, renderSurfaceGrantReceipt(context.channelId, changed));
+    return renderSurfaceGranted(changed, suspended, language);
+  }
 
   private revokeAllFromChannelHint(language: SurfaceCopyLanguage): string {
     return language === 'en'
@@ -210,6 +400,7 @@ export class SurfaceGrantService {
   private async write(
     actor: Actor,
     change: (record: SurfaceGrantRecord) => SurfaceGrantRecord,
+    observe?: (savedMetadata: Actor['metadata']) => void,
   ): Promise<boolean> {
     try {
       const saved = await this.deps.metadata.updateMetadataEntry(
@@ -218,6 +409,7 @@ export class SurfaceGrantService {
         (current) => serializeSurfaceGrants(change(readSurfaceGrants(current))),
         actor,
       );
+      if (saved !== null) observe?.(saved.metadata);
       return saved !== null;
     } catch (error) {
       this.log('warn', 'surface_grant.write_failed', { errorName: error instanceof Error ? error.name : typeof error });

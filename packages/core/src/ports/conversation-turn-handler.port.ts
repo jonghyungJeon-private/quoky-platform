@@ -21,6 +21,7 @@ import type { ConnectorWriteDraft } from '../application/connector-writes/connec
 import type { NlActionReceipt, NlCatalogEntry, NlClassBProbe, NlGrammarSelection, NlListingReceipt, NlSelectedCommand } from '../application/nl-routing/catalog';
 // Type-only, like the catalog above: the closed ADR-0122 capability groups (plain string ids).
 import type { SurfaceGroupId } from '../application/surface-grants/surface-groups';
+import type { SurfacePermit } from '../application/surface-grants/surface-permit';
 
 /**
  * The three fixed dispatch points in `ConversationRuntime.handleInner` (ADR-0096 D3):
@@ -70,6 +71,13 @@ export interface TurnHandlerContext {
    * persisted kill switch is stopped nothing is written, whatever happened since dispatch.
    */
   readonly nlActionWriteCondition?: ActionWriteCondition;
+  /**
+   * ADR-0122 D2.4 (P2): the content-free set of groups this channel holds right now (the gate's decision). Present only in
+   * a channel while `QUOKY_CHANNEL_GRANTS=enforce`; absent in a DM and with the gate off, where every handler behaves
+   * exactly as before. A handler filters by it (the composite "my work" view, the second-layer DM-only rules) and never
+   * reads a grant itself.
+   */
+  readonly surfacePermit?: SurfacePermit;
 }
 
 /**

@@ -1,6 +1,7 @@
 import type { ConversationTurnHandler, Logger, SurfaceClaim, TurnHandlerContext, TurnHandlerProbeContext, TurnHandlerReply } from '../../ports';
 import { surfaceClaimOf } from '../surface-grants/surface-group-map';
-import { DM_ONLY_FEATURE_TEXT, isDirectConversation, outboundBody, outboundMessage } from '../message-rendering';
+import { surfaceChannelHolds } from '../surface-grants/surface-permit';
+import { DM_ONLY_FEATURE_TEXT, outboundBody, outboundMessage } from '../message-rendering';
 import { parseMemoryCommand } from './memory-command-grammar';
 import { renderMemoryCommandFailed } from './memory-command-renderer';
 import { memoryCommandHistory, type MemoryCommandService } from './memory-command-service';
@@ -54,7 +55,9 @@ export class MemoryCommandTurnHandler implements ConversationTurnHandler {
     const context = ctx.message.context;
     // P0 ahead of ADR-0122 D7 (channels default-deny): lists, views, status and confirmation previews show the actor's
     // memories, so outside a DM nothing is read or changed and the reply is fixed copy.
-    if (!isDirectConversation(context)) {
+    // ADR-0122 P2 (D7 narrowed): lifted only in a channel holding `memory` while the gate is enforced; with the gate off a
+    // channel keeps the P0 DM-only copy (owner: the P0 privacy stays).
+    if (!surfaceChannelHolds(context, ctx.surfacePermit, 'memory')) {
       return { reply: outboundMessage(context, DM_ONLY_FEATURE_TEXT, { replyToMessageId: ctx.message.id }) };
     }
     try {

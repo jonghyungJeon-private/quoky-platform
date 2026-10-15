@@ -1,6 +1,7 @@
 import type { ConversationTurnHandler, Logger, SurfaceClaim, TurnHandlerContext, TurnHandlerProbeContext, TurnHandlerReply } from '../../ports';
 import { surfaceClaimOf } from '../surface-grants/surface-group-map';
-import { DM_ONLY_FEATURE_TEXT, isDirectConversation, outboundBody, outboundMessage } from '../message-rendering';
+import { surfaceChannelHolds } from '../surface-grants/surface-permit';
+import { DM_ONLY_FEATURE_TEXT, outboundBody, outboundMessage } from '../message-rendering';
 import { parseLearningCommand } from './learning-commands';
 import { LEARNING_FAILURE_TEXT } from './learning-service';
 import type { LearningService } from './learning-service';
@@ -46,7 +47,8 @@ export class LearningTurnHandler implements ConversationTurnHandler {
     const context = ctx.message.context;
     // P0 ahead of ADR-0122 D7 (channels default-deny): candidates and examples carry private request excerpts, so
     // outside a DM nothing is read or changed and the reply is fixed copy.
-    if (!isDirectConversation(context)) return { reply: outboundMessage(context, DM_ONLY_FEATURE_TEXT) };
+    // ADR-0122 P2 (D7 narrowed): lifted only in a channel holding `memory` while the gate is enforced.
+    if (!surfaceChannelHolds(context, ctx.surfacePermit, 'memory')) return { reply: outboundMessage(context, DM_ONLY_FEATURE_TEXT) };
     try {
       const result = await this.deps.service.execute(command, {
         actorId: ctx.actor.id,

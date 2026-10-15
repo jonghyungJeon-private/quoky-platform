@@ -128,3 +128,20 @@ describe('MemoryCommandTurnHandler — DM-only (P0 ahead of ADR-0122 D7)', () =>
     expect(await handler.handle(ctx('안녕', context))).toBeNull();
   });
 });
+
+describe('MemoryCommandTurnHandler — ADR-0122 P2: a channel holding `memory` (gate enforced) lifts the P0 copy', () => {
+  const channel = { platform: 'discord', spaceId: 'g1', channelId: 'qa', userId: 'user-1', direct: false };
+  const withPermit = (text: string, allowed: readonly string[] | undefined) =>
+    ({ ...ctx(text, channel), ...(allowed !== undefined ? { surfacePermit: { allowed } } : {}) }) as TurnHandlerContext;
+
+  it('with `memory` in the permit the command runs; without it (or without a permit: the gate off) it stays DM-only', async () => {
+    const execute = vi.fn(async () => ({ text: '저장된 기억이 없어요.', status: 'RESPONDED' as const }));
+    const handler = createMemoryCommandTurnHandler({ service: { execute } });
+    expect((await handler.handle(withPermit('기억 목록', ['chat', 'help', 'control', 'memory'])))?.reply.text).toBe('저장된 기억이 없어요.');
+    expect(execute).toHaveBeenCalledTimes(1);
+    for (const allowed of [['chat', 'help', 'control', 'todo'], undefined]) {
+      expect((await handler.handle(withPermit('기억 목록', allowed)))?.reply.text).toBe(DM_ONLY_FEATURE_TEXT);
+    }
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+});

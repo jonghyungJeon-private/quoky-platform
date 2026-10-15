@@ -98,9 +98,10 @@ import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSel
 import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from './nl-routing/nl-action-policy';
 import { LAST_SELECTION_METADATA_KEY, isActionPendingQuestion, type PendingQuestion } from './nl-routing/selection-state';
 import { parseActionSwitchPhrase, renderActionSwitchReply } from './nl-routing/action-switch';
-import { decideSurface, isSurfaceDirect, type SurfaceDecision, type SurfaceGate, type SurfaceGateAudit } from './surface-grants/surface-gate';
-import type { SurfaceGrantService } from './surface-grants/surface-grant-service';
-import { renderNlActionDmOnly, renderSurfaceDenied, renderSurfaceSwitchSuffix } from './surface-grants/surface-grant-copy';
+import { allowedSurfaceGroups, decideSurface, isSurfaceDirect, type SurfaceDecision, type SurfaceGate, type SurfaceGateAudit } from './surface-grants/surface-gate';
+import { surfacePermittedWorkSources, type SurfacePermit } from './surface-grants/surface-permit';
+import { SURFACE_GRANT_PENDING_METADATA_KEY, type SurfaceGrantService } from './surface-grants/surface-grant-service';
+import { SURFACE_GRANT_HELP_LINES, renderNlActionDmOnly, renderSurfaceDenied, renderSurfaceSwitchSuffix } from './surface-grants/surface-grant-copy';
 import {
   surfaceGroupOfStateStep,
   surfaceGroupsOfSelection,
@@ -237,7 +238,7 @@ import type {
 } from './runtime-provider-routing-service';
 import type { IntentResolutionContext } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
-import type { WorkSurface } from './work-surface-query';
+import type { WorkSurface, WorkSurfaceReadOptions } from './work-surface-query';
 import type { ExternalWorkReadout } from './work-chat/external-work-readout';
 import { detectWorkChatCommand, todoListLeavesUnexpressedContent } from './work-chat/work-chat-command';
 import {
@@ -853,7 +854,8 @@ export interface ConversationRuntimeDeps {
    *  this path it only ever runs `pnpm test`/`pnpm typecheck` (derived from the validation intent, never
    *  user text); it never spawns a shell, calls git, or mutates a file. */
   readonly command: { run(input: RunCommandInput): Promise<CommandExecution> };
-  readonly contextBuilder: { build(task: Task, excludeMemoryIds: Id[]): Promise<ContextBundle> };
+  /** `options.channelRecall` (ADR-0122 D7, P2): passed only for a channel holding `memory` while the gate is enforced. */
+  readonly contextBuilder: { build(task: Task, excludeMemoryIds: Id[], options?: { readonly channelRecall?: boolean }): Promise<ContextBundle> };
   /**
    * ADR-0100 D8: the readout is widened by type only to carry a work summary's external-work readout; ADR-0118 D7
    * widens it the same way for the untrusted readout of one personal item the owner asked to summarize.
@@ -889,7 +891,8 @@ export interface ConversationRuntimeDeps {
   readonly artifacts: { persistAll(taskId: Id, runId: Id, artifacts: Artifact[]): Promise<Id[]> };
   readonly composer: ResponseComposer;
   /** Read-only, rebuildable personal-work projection. Replaces the unused legacy `risk` dependency (31 → 31). */
-  readonly workSurface: { forActor(actor: Actor): Promise<WorkSurface> };
+  /** `options.sources` (ADR-0122 D2.4, P2): only in a channel with the gate enforced, the sources its permit allows. */
+  readonly workSurface: { forActor(actor: Actor, options?: WorkSurfaceReadOptions): Promise<WorkSurface> };
   readonly intentResolver: {
     resolve(intent: Intent, context: IntentResolutionContext): ExecutionRequest | null;
     isExecution(intent: Intent): boolean;
@@ -1113,7 +1116,7 @@ export interface ConversationRuntimeDeps {
    */
   readonly surfaceGrants?: {
     readonly gate: SurfaceGate;
-    readonly service?: Pick<SurfaceGrantService, 'handlePhrase' | 'handleSwitchPhrase'>;
+    readonly service?: Pick<SurfaceGrantService, 'handlePhrase' | 'handleSwitchPhrase'> & Partial<Pick<SurfaceGrantService, 'handleGrantPending'>>;
     /** The live actor (grants re-read at an execution step, D2.5); absent → the turn's snapshot. */
     readonly freshActor?: (actorId: Id) => Promise<Actor | null>;
   };
@@ -1216,6 +1219,15 @@ function sameDispatchGrants(
       );
     })
   );
+}
+
+/** The turn's session copy without one metadata key (mirrors a field-scoped removal already saved on the live row). */
+function withoutSessionMetadataKey(session: Session, key: string): Session {
+  if (session.metadata?.[key] === undefined) return session;
+  const metadata = { ...session.metadata };
+  delete metadata[key];
+  const { metadata: _previous, ...rest } = session;
+  return Object.keys(metadata).length > 0 ? { ...rest, metadata } : rest;
 }
 
 /**
@@ -2427,7 +2439,13 @@ export class ConversationRuntime {
     if (surfaceService !== undefined && !expiryNotice) {
       const switched = await surfaceService.handleSwitchPhrase(actor, message, this.clock());
       if (switched !== undefined) return this.responded(session, outboundMessage(message.context, switched));
-      const phrase = await surfaceService.handlePhrase(message, actor, this.clock());
+      // D4.2 (P2): `허용 실행` saves a pending grant of this channel; any other message ends it and routes as before.
+      if (surfaceService.handleGrantPending !== undefined) {
+        const pendingGrant = await surfaceService.handleGrantPending(message, session, actor, this.clock());
+        if (pendingGrant?.reply !== undefined) return this.responded(session, outboundMessage(message.context, pendingGrant.reply));
+        if (pendingGrant?.cleared === true) session = withoutSessionMetadataKey(session, SURFACE_GRANT_PENDING_METADATA_KEY);
+      }
+      const phrase = await surfaceService.handlePhrase(message, actor, this.clock(), session);
       if (phrase !== undefined) return this.responded(session, outboundMessage(message.context, phrase));
     }
     if (control) {
@@ -3747,11 +3765,18 @@ export class ConversationRuntime {
     nlFacts?: NlChatFacts,
   ): Promise<TurnResult> {
     if (intent.type === IntentType.LOOKUP && intent.raw?.kind === 'personal-work-surface') {
-      // ADR-0122 D2.4: the combined "my work" view, under the same groups as `todo.list` (interim P1 rule: all three).
+      // ADR-0122 D2.4: the combined "my work" view, under the same group as `todo.list` (`todo`); its Jira / GitHub
+      // sections are read only when the channel's permit also holds `jira-mine` / `github` (P2).
       const deniedSurface = this.surfaceDenied(message.context, actor, surfaceGroupsOfSelection({ entryId: 'todo.list', args: {} }), { path: 'route' });
       if (deniedSurface) return this.surfaceDeniedTurn(message, session, deniedSurface);
-      const surface = await this.deps.workSurface.forActor(actor);
-      return this.respondComposed(message, session, this.deps.composer.composeWorkSurface(message.context, surface));
+      const permit = this.surfacePermitOf(message.context, actor);
+      if (permit === undefined) {
+        const surface = await this.deps.workSurface.forActor(actor);
+        return this.respondComposed(message, session, this.deps.composer.composeWorkSurface(message.context, surface));
+      }
+      const { sources, withheld } = surfacePermittedWorkSources(permit);
+      const surface = sources.length > 0 ? await this.deps.workSurface.forActor(actor, { sources }) : null;
+      return this.respondComposed(message, session, this.deps.composer.composeWorkSurface(message.context, surface, withheld));
     }
 
     // (B) Project registration — deterministic command (ADR-0018).
@@ -3908,7 +3933,11 @@ export class ConversationRuntime {
     let reply: OutboundMessage;
     let denied = false;
     if (command === 'help') {
-      reply = this.deps.composer.composeHelp(message.context, this.contributedHelpLines);
+      // ADR-0122 P2: the owner's channel-permission phrases are listed only while the gate is enforced (off: unchanged).
+      reply = this.deps.composer.composeHelp(
+        message.context,
+        this.surfaceGate()?.enforced === true ? [...this.contributedHelpLines, ...SURFACE_GRANT_HELP_LINES] : this.contributedHelpLines,
+      );
     } else {
       // ADR-0097 D5 (OVR-3 contract): the credential-override set is invalidated (`reset`, by the owner) through the
       // flow BEFORE the session closes, so the reset is serialized with an in-flight consume; nothing is sent.
@@ -3986,6 +4015,8 @@ export class ConversationRuntime {
     // project captured HERE, at dispatch time, not to any object a handler can reach.
     const sessionId = session.id;
     const activeProjectId = session.activeProjectId;
+    // ADR-0122 D2.4 (P2): only in a channel with the gate enforced (absent otherwise, so the context is unchanged).
+    const permit = this.surfacePermitOf(message.context, actor);
     return Object.freeze({
       message: frozenPlainSnapshot(message),
       session: frozenPlainSnapshot(session),
@@ -3995,6 +4026,7 @@ export class ConversationRuntime {
       ...(this.nlYield.has(sourceMessage) ? { grammarYield: true } : {}),
       resolveActiveWorkspace: () => this.resolveActiveWorkspaceForHandler(sessionId, activeProjectId),
       ...(nlActionWriteCondition !== undefined ? { nlActionWriteCondition: Object.freeze({ ...nlActionWriteCondition }) } : {}),
+      ...(permit !== undefined ? { surfacePermit: frozenPlainSnapshot(permit) } : {}),
     });
   }
 
@@ -8461,10 +8493,14 @@ export class ConversationRuntime {
       // ADR-0111 D3: the current message's text attachments join the bundle as one bounded, untrusted Resource
       // (from the InboundMessage only; never persisted). A work summary stays self-contained and carries none.
       // ADR-0118 D7: a document summary is self-contained the same way (no transcript, recall or attachments).
+      // ADR-0122 D7 (P2): a channel holding `memory` while the gate is enforced gets durable recall and curated examples.
+      const channelRecall = this.channelHoldsGroup(message.context, actor, 'memory');
       const bundle: ContextBundle = isExternalWorkReadout(readout) || isUntrustedDocumentReadout(readout)
         ? { taskId: task.id, conversationTranscript: [], backgroundResources: [] }
         : withAttachedTextFiles(
-            await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []),
+            channelRecall
+              ? await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : [], { channelRecall: true })
+              : await this.deps.contextBuilder.build(task, excludeMemoryId ? [excludeMemoryId] : []),
             message,
           );
 
@@ -8479,8 +8515,9 @@ export class ConversationRuntime {
       ) {
         const ownMemoryQuestion = detectOwnMemoryRecallQuestion(message.text);
         if (ownMemoryQuestion && !hasOwnMemoryRecallHit(ownMemoryQuestion, bundle)) {
-          // P0 ahead of ADR-0122 D7: outside a DM no durable memory is recalled, so "not in my memory" would be untrue.
-          const direct = isDirectConversation(message.context);
+          // P0 / ADR-0122 D7: outside a DM no durable memory is recalled (except in a channel holding `memory` while the
+          // gate is enforced), so "not in my memory" would be untrue there.
+          const direct = isDirectConversation(message.context) || channelRecall;
           const text = direct
             ? renderOwnMemoryNotFound(ownMemoryQuestion.language)
             : renderOwnMemoryDmOnly(ownMemoryQuestion.language);
@@ -9068,6 +9105,22 @@ export class ConversationRuntime {
     if (gate === undefined) return undefined;
     const decision = gate.decide(context, actor, groups, audit);
     return decision.allow ? undefined : decision;
+  }
+
+  /**
+   * D7 / P2: whether this is a channel turn with the gate enforced AND the channel holds `group` (quiet: no log). False in
+   * a DM and with the gate off or absent — callers lift a second-layer DM-only rule only on `true`.
+   */
+  private channelHoldsGroup(context: ConversationContext, actor: Pick<Actor, 'metadata'>, group: SurfaceGroupId): boolean {
+    const gate = this.channelGate(context);
+    return gate !== undefined && decideSurface({ mode: gate.mode, context, actor, groups: [group] }).allow;
+  }
+
+  /** D2.4 (P2): the content-free permit of a channel turn with the gate enforced; `undefined` otherwise (DM, off, absent). */
+  private surfacePermitOf(context: ConversationContext, actor: Pick<Actor, 'metadata'>): SurfacePermit | undefined {
+    const gate = this.channelGate(context);
+    if (gate === undefined) return undefined;
+    return { allowed: [...allowedSurfaceGroups({ mode: gate.mode, context, actor })] };
   }
 
   /** A quiet check (no log) for a lookup that only filters what it may name (another conversation's write). */

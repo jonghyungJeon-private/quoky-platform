@@ -147,8 +147,22 @@ export interface InboundMessage {
    * after bounded intake. Absent when the message had none.
    */
   attachments?: readonly InboundAttachment[];
+  /**
+   * ADR-0122 D4.3 (optional, additive, content-free): who can read a channel message, computed by the adapter from its
+   * cache only (no fetch, no privileged intent). Read only by the channel-grant confirmation; absent when unknown (a DM,
+   * Telegram, or nothing cached).
+   */
+  audience?: InboundAudience;
   receivedAt: IsoTimestamp;
   metadata?: Metadata;
+}
+
+/** ADR-0122 D4.3: the audience facts of a channel message — upper bounds only, no names, no ids. */
+export interface InboundAudience {
+  /** The server's member count as an upper bound of the readers. */
+  readonly memberUpperBound?: number;
+  /** The channel denies `@everyone` the view permission (a private channel). */
+  readonly restricted?: boolean;
 }
 
 /** One file's portion of a code-change preview — the COMPLETE unified diff for that path, never clamped

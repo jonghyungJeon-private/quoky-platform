@@ -31,9 +31,9 @@ const ENTRY_GROUPS: Readonly<Record<NlCatalogEntryId, readonly SurfaceGroupId[]>
   'calendar.events': ['calendar'],
   'mail.list': ['mail'],
   'drive.files': ['drive'],
-  // Interim P1 rule (until the P2 composite permit filters the sections): the combined view also shows Jira and GitHub
-  // items, so all three groups are required.
-  'todo.list': ['todo', 'jira-mine', 'github'],
+  // D2.4 (P2): the combined "my work" view is answered under `todo`; its Jira and GitHub sections are read only when the
+  // permit also holds `jira-mine` / `github` (the desk filters by `TurnHandlerContext.surfacePermit`).
+  'todo.list': ['todo'],
   'reminder.list': ['reminder'],
   'brief.today': ['brief'],
   'help.topic': ['help'],
@@ -148,11 +148,10 @@ export function surfaceGroupsOfWorkChatCommand(command: WorkChatCommand): readon
     case 'todo.link':
     case 'todo.status':
     case 'todo.hint':
-      return ['todo'];
-    // The combined view (interim P1 rule, see `ENTRY_GROUPS['todo.list']`).
+    // The combined view (D2.4, see `ENTRY_GROUPS['todo.list']`): its Jira / GitHub sections follow the permit.
     case 'todo.list':
     case 'todo.summary':
-      return ['todo', 'jira-mine', 'github'];
+      return ['todo'];
     case 'lookup':
       return [surfaceReadGroupOfWorkSource(command.source)];
     case 'release':

@@ -25,7 +25,13 @@ export interface WorkSurface {
   sources: WorkSurfaceSourceAvailability[];
 }
 
-const SOURCES: readonly WorkSurfaceSource[] = ['jira', 'github'];
+export const WORK_SURFACE_SOURCES: readonly WorkSurfaceSource[] = ['jira', 'github'];
+const SOURCES = WORK_SURFACE_SOURCES;
+
+export interface WorkSurfaceReadOptions {
+  /** ADR-0122 D2.4: the sources a channel's permit allows; absent = every source. */
+  readonly sources?: readonly WorkSurfaceSource[];
+}
 
 /**
  * Rebuildable, non-authoritative personal-work read model (ADR-0074).
@@ -34,14 +40,19 @@ const SOURCES: readonly WorkSurfaceSource[] = ['jira', 'github'];
 export class WorkSurfaceQuery {
   constructor(private readonly connectors: { list(): readonly ConnectorProvider[] }) {}
 
-  async forActor(actor: Actor): Promise<WorkSurface> {
-    const results = await Promise.all(SOURCES.map((source) => this.readSource(actor, source)));
+  /**
+   * `options.sources` (ADR-0122 D2.4, P2): read only these sources — a source the channel's permit withholds is never
+   * queried, and the status is computed over the sources read. Absent: every source, exactly as before.
+   */
+  async forActor(actor: Actor, options: WorkSurfaceReadOptions = {}): Promise<WorkSurface> {
+    const wanted = options.sources === undefined ? SOURCES : SOURCES.filter((source) => options.sources!.includes(source));
+    const results = await Promise.all(wanted.map((source) => this.readSource(actor, source)));
     const items = results.flatMap((result) => result.items).sort(compareSurfaceItems);
     const sources = results.map((result) => result.availability);
     const availableCount = sources.filter((source) => source.status === 'AVAILABLE').length;
 
     return {
-      status: availableCount === SOURCES.length ? 'COMPLETE' : availableCount === 0 ? 'UNAVAILABLE' : 'PARTIAL',
+      status: availableCount === wanted.length ? 'COMPLETE' : availableCount === 0 ? 'UNAVAILABLE' : 'PARTIAL',
       items,
       sources,
     };

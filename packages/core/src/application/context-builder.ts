@@ -106,6 +106,12 @@ interface ContextBudget {
  * Optional durable recall remains separately attributed and shares the final
  * ranking budget. No vector search or summarization occurs here.
  */
+/** ADR-0122 D7 (P2): per-build options the runtime passes (absent = the P0 behaviour). */
+export interface ContextBuildOptions {
+  /** This channel holds `memory` while the surface gate is enforced: recall and curated examples are allowed. */
+  readonly channelRecall?: boolean;
+}
+
 export class ContextBuilder {
   private readonly ranking: ContextRankingConfig | undefined;
 
@@ -122,7 +128,12 @@ export class ContextBuilder {
     this.ranking = ContextBuilder.validateConfig(config);
   }
 
-  async build(task: Task, excludeMemoryIds: Id[] = []): Promise<ContextBundle> {
+  /**
+   * `options.channelRecall` (ADR-0122 D7, P2): the runtime's word that this channel holds `memory` while the surface gate
+   * is enforced, so durable recall and curated examples are allowed outside a DM. Absent: a channel gets neither (P0).
+   */
+  async build(task: Task, excludeMemoryIds: Id[] = [], options: ContextBuildOptions = {}): Promise<ContextBundle> {
+    const privateContext = isDirectConversation(task.context) || options.channelRecall === true;
     const scope: MemoryScope = task.sessionId
       ? { sessionId: task.sessionId }
       : {
@@ -146,13 +157,13 @@ export class ContextBuilder {
 
     const transcript = ContextBuilder.toTranscriptEntries(recent);
     const project = task.projectId ? await this.memory.projectMemory(task.projectId) : undefined;
-    const durableCandidates = await this.retrieveDurableCandidates(task, excludeMemoryIds);
+    const durableCandidates = await this.retrieveDurableCandidates(task, excludeMemoryIds, privateContext);
     const deduplicatedDurableCandidates = durableCandidates.filter(
       ({ memory: durable }) =>
         !transcript.some((entry) => durable.content === entry.content),
     );
 
-    const curatedExamples = await this.selectCuratedExamples(task);
+    const curatedExamples = await this.selectCuratedExamples(task, privateContext);
 
     const minimumCompressionCharacters = this.ranking
       ? ContextBuilder.resolveMinimumCompressionCharacters(this.ranking)
@@ -222,10 +233,11 @@ export class ContextBuilder {
    * ADR-0107 D5: at most two owner-curated examples for a GENERAL_CHAT turn, under their own fixed budget (separate
    * from the transcript/recall budget). Optional and degraded: any failure yields none.
    */
-  private async selectCuratedExamples(task: Task): Promise<CuratedExampleEntry[]> {
+  private async selectCuratedExamples(task: Task, privateContext: boolean): Promise<CuratedExampleEntry[]> {
     if (!this.curatedExamples || task.intent.capability !== Capability.GENERAL_CHAT || !task.actorId) return [];
-    // P0 hotfix ahead of ADR-0122 D7: curated examples are owner-private learning context; never outside a DM.
-    if (!isDirectConversation(task.context)) return [];
+    // P0 hotfix / ADR-0122 D7: curated examples are owner-private learning context; never outside a DM, except in a
+    // channel holding `memory` while the surface gate is enforced (P2).
+    if (!privateContext) return [];
     try {
       const selected = await this.curatedExamples.select(task);
       return Array.isArray(selected) ? selected : [];
@@ -237,6 +249,7 @@ export class ContextBuilder {
   private async retrieveDurableCandidates(
     task: Task,
     excludeMemoryIds: readonly Id[],
+    privateContext: boolean,
   ): Promise<RetrievedMemory[]> {
     if (!this.memoryRetriever) return [];
 
@@ -244,8 +257,9 @@ export class ContextBuilder {
     if (!task.actorId) return [];
     // P0 hotfix ahead of ADR-0122 D7: actor-scoped recall would carry memories saved in a DM into a shared channel.
     // Until the surface memory grant exists, a non-direct conversation (`ConversationContext.direct`, platform-neutral)
-    // gets no durable recall, and the retriever is not even queried.
-    if (!isDirectConversation(task.context)) return [];
+    // gets no durable recall, and the retriever is not even queried. ADR-0122 D7 (P2): a channel holding `memory` while
+    // the gate is enforced is the one exception (`channelRecall`).
+    if (!privateContext) return [];
     const scope: DurableMemoryScope = { actorId: task.actorId };
 
     try {

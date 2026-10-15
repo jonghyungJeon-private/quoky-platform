@@ -7,3 +7,4 @@ export * from './surface-group-map';
 export * from './surface-grant-phrases';
 export * from './surface-grant-copy';
 export * from './surface-grant-service';
+export * from './surface-permit';

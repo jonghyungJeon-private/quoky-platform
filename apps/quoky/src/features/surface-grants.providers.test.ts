@@ -34,9 +34,9 @@ function world() {
     },
   };
   const logger = { info() {}, warn() {}, error() {} };
-  const composition = (groups: readonly string[]) =>
+  const composition = (groups: readonly string[], mode: 'enforce' | 'off' = 'enforce') =>
     createSurfaceGrantsComposition(
-      { channelGrants: { mode: 'enforce', explicit: true, seed: { channels: [{ key: KEY, groups: groups as never }] } }, discordOwnerIds: [OWNER_ID], telegramOwnerIds: [] },
+      { channelGrants: { mode, explicit: true, seed: { channels: [{ key: KEY, groups: groups as never }] } }, discordOwnerIds: [OWNER_ID], telegramOwnerIds: [] },
       storage,
       sink,
       logger,
@@ -62,5 +62,23 @@ describe('seed DM lines (D6)', () => {
       ['SURFACE_GRANT', `배포 시 사전 허용: ${QA}에 GitHub 조회. 해제: 그 채널에서 "이 채널 권한 모두 해제".`],
       ['SURFACE_GRANT', `배포 설정이 바뀌어 해제하셨던 캘린더 조회을(를) ${QA}에 다시 허용했어요. 원치 않으면 그 채널에서 '… 허용 해제'라고 보내 주세요.`],
     ]);
+  });
+});
+
+describe('the reminder delivery check (D2.6, P2)', () => {
+  const channel: ConversationContext = { platform: 'discord', spaceId: GUILD, channelId: QA, userId: OWNER_ID, direct: false };
+
+  it('exists only while `enforce`; it reads the live owner grants and fails closed', async () => {
+    const w = world();
+    expect(w.composition([], 'off').deliveryAllowed).toBeUndefined();
+    const enforced = w.composition(['reminder']);
+    expect(await enforced.deliveryAllowed!(channel, 'owner', ['reminder'])).toBe(false); // nothing seeded yet
+    await enforced.applySeed('2026-10-15T00:00:00.000Z');
+    expect(await enforced.deliveryAllowed!(channel, 'owner', ['reminder'])).toBe(true);
+    expect(await enforced.deliveryAllowed!(channel, 'owner', ['reminder', 'calendar'])).toBe(false);
+    expect(await enforced.deliveryAllowed!(channel, 'nobody', ['reminder'])).toBe(false);
+    const message: InboundMessage = { id: 'm', context: channel, text: '이 채널 권한 모두 해제', receivedAt: '2026-10-15T00:00:00.000Z' };
+    await enforced.service.handlePhrase(message, w.actor(), '2026-10-15T00:00:00.000Z');
+    expect(await enforced.deliveryAllowed!(channel, 'owner', ['reminder'])).toBe(false);
   });
 });

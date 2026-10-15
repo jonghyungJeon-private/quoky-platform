@@ -152,10 +152,12 @@ function harness(
 ) {
   const work = new FakeWork();
   const surfaceCalls: Actor[] = [];
+  const surfaceOptions: unknown[] = [];
   const deps: WorkChatServiceDeps = {
     workSurface: {
-      async forActor(actor) {
+      async forActor(actor, ...rest) {
         surfaceCalls.push(actor);
+        surfaceOptions.push(...rest);
         if (options.surface instanceof Error) throw options.surface;
         return options.surface ?? emptySurface;
       },
@@ -172,7 +174,7 @@ function harness(
     if (!command) throw new Error(`not a work-chat command: ${text}`);
     return service.handle(command, actor);
   };
-  return { service, work, say, surfaceCalls };
+  return { service, work, say, surfaceCalls, surfaceOptions };
 }
 
 const textOf = (outcome: WorkChatOutcome): string => {
@@ -907,5 +909,35 @@ describe('the to-do status view (owner-approved status filter, 2026-10-15)', () 
     const all = textOf(await service.handle({ kind: 'todo.list', status: 'all' }, owner));
     expect(all).toContain('**전체 할 일** (3건)');
     expect(textOf(await service.handle({ kind: 'todo.list' }, owner))).toContain('**내 할 일** (1건)');
+  });
+});
+
+describe('ADR-0122 D2.4 (P2): the combined view filters its Jira / GitHub sections by the channel permit', () => {
+  it('`todo` alone: the to-dos, one fixed line, and no Jira / GitHub read', async () => {
+    const { service, say, surfaceCalls } = harness();
+    await say('할 일 추가: 보고서 쓰기');
+    const text = textOf(await service.handle({ kind: 'todo.list' }, owner, { permit: { allowed: ['chat', 'help', 'control', 'todo'] } }));
+    expect(text).toContain('1. 보고서 쓰기');
+    expect(text).toContain('**Jira·GitHub 업무**\nJira·GitHub 항목은 이 채널에서 허용되지 않아 뺐어요.');
+    expect(surfaceCalls).toEqual([]);
+  });
+
+  it('`todo` + `github`: only GitHub is read; Jira is named as left out', async () => {
+    const { service, surfaceCalls, surfaceOptions } = harness([], { surface: { status: 'COMPLETE', items: [], sources: [{ source: 'github', status: 'AVAILABLE', message: '' }] } });
+    const text = textOf(await service.handle({ kind: 'todo.summary' }, owner, { permit: { allowed: ['todo', 'github'] } }));
+    expect(surfaceCalls).toHaveLength(1);
+    expect(surfaceOptions).toEqual([{ sources: ['github'] }]);
+    expect(text).toContain('확인한 소스에는 업무가 없어요.');
+    expect(text).toContain('- Jira: 이 채널에서 허용되지 않아 뺐어요');
+  });
+
+  it('every section allowed (or no permit: a DM, the gate off) reads as before', async () => {
+    const a = harness();
+    const b = harness();
+    const allowed = textOf(await a.service.handle({ kind: 'todo.list' }, owner, { permit: { allowed: ['todo', 'jira-mine', 'github'] } }));
+    const plain = textOf(await b.service.handle({ kind: 'todo.list' }, owner));
+    expect(allowed).toBe(plain);
+    expect(a.surfaceOptions).toEqual([{ sources: ['jira', 'github'] }]);
+    expect(b.surfaceOptions).toEqual([]);
   });
 });

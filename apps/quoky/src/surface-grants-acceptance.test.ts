@@ -25,11 +25,15 @@ import {
   NOTIFICATION_SINK,
   QuokyCore,
   SURFACE_GRANTS_METADATA_KEY,
+  SURFACE_GRANT_HELP_LINES,
+  DM_ONLY_FEATURE_TEXT,
+  renderOwnMemoryDmOnly,
   STORAGE_PROVIDER,
   StatelessApplyPreviewFlow,
   SurfaceGate,
   VECTOR_PROVIDER,
   WorkChatService,
+  WorkSurfaceQuery,
   grantedSurfaceGroups,
   readSurfaceGrants,
   renderSurfaceDenied,
@@ -63,8 +67,10 @@ import nlIntentCorpus from '../../../packages/core/src/application/golden/nl-int
  * Over the routing corpora (turn-handler routing, action-shaped turns, reminder/to-do precedence, plus extra capability
  * phrases), each case is sent in a fresh actor and conversation under one surface mode:
  *  - `absent` (no `surfaceGrants` dep) vs `off`: byte-identical in a DM and in a channel (the P1 default);
- *  - `enforce` in a DM: byte-identical to `off`;
- *  - `enforce` in a channel holding the QA seed groups: byte-identical to `off` except the `writes` cases (not seeded);
+ *  - `enforce` in a DM: byte-identical to `off`, except `도움말`, which also lists the channel-permission phrases (P2);
+ *  - `enforce` in a channel holding the QA seed groups: byte-identical to `off` except the `writes` cases (not seeded)
+ *    and, since P2, the memory / learning / feedback-summary commands and the own-memory question, which `memory` lifts
+ *    from the P0 DM-only copy to exactly the DM's answer (D7 narrowed); the gate `off` keeps the P0 copy;
  *  - `enforce` in a channel with no grant: identical to `off` (chat, help, control) or the fixed denial — and then zero
  *    provider calls, zero calendar reads, the work desk never called.
  * Plus the owner flows: the seed from the environment, list / revoke, the kill switch, the state-bound section after a
@@ -115,6 +121,7 @@ let reactionsRecorded = 0;
 let core: QuokyCore;
 let router: CapabilityRouter;
 let sessionManager: SessionManager;
+let app: Awaited<ReturnType<typeof NestFactory.createApplicationContext>>;
 
 function calendarFixture(query: CalendarEventQuery): readonly CalendarEvent[] {
   const from = Date.parse(query.from);
@@ -144,7 +151,7 @@ beforeAll(async () => {
     QUOKY_CALENDAR_GOOGLE_REFRESH_TOKEN: 'sg-calendar-refresh-placeholder',
   });
   const { AppModule } = await import('./app.module');
-  const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
+  app = await NestFactory.createApplicationContext(AppModule, { logger: false });
   storage = app.get<SqliteStorageProvider>(STORAGE_PROVIDER);
   closeApp = async () => {
     await storage.close().catch(() => undefined);
@@ -178,9 +185,9 @@ beforeAll(async () => {
   });
   const desk = app.get(WorkChatService);
   const deskHandle = desk.handle.bind(desk);
-  vi.spyOn(desk, 'handle').mockImplementation(async (command, actor) => {
+  vi.spyOn(desk, 'handle').mockImplementation(async (command, actor, options) => {
     deskCalls += 1;
-    return deskHandle(command, actor);
+    return options === undefined ? deskHandle(command, actor) : deskHandle(command, actor, options);
   });
   const git = app.get(GitManager) as unknown as Record<string, unknown>;
   for (const name of Object.getOwnPropertyNames(Object.getPrototypeOf(git))) {
@@ -361,8 +368,13 @@ const DENIALS: ReadonlySet<string> = new Set(
 );
 const writesDenial = (text: string) => text === renderSurfaceDenied({ allow: false, reason: 'not-granted', group: 'writes' }, 'ko') || text === renderSurfaceDenied({ allow: false, reason: 'not-granted', group: 'writes' }, 'en');
 
+/** P2: with the gate enforced, `도움말` also lists the channel-permission phrases (asserted separately, removed here). */
+const withoutGrantHelp = (text: string) => SURFACE_GRANT_HELP_LINES.reduce((out, line) => out.split(`\n${line}`).join(''), text);
 /** Random one-time codes (a memory forget confirmation) are the only per-run text; everything else is compared byte for byte. */
-const normalize = (text: string) => text.replace(/기억 확인 [A-Z0-9]{4}/g, '기억 확인 <code>').replace(/confirm memory [A-Z0-9]{4}/g, 'confirm memory <code>');
+const normalize = (text: string) =>
+  withoutGrantHelp(text).replace(/기억 확인 [A-Z0-9]{4}/g, '기억 확인 <code>').replace(/confirm memory [A-Z0-9]{4}/g, 'confirm memory <code>');
+/** The P0 DM-only copies a channel holding `memory` no longer gets while the gate is enforced (P2). */
+const P0_MEMORY_COPIES: ReadonlySet<string> = new Set([DM_ONLY_FEATURE_TEXT, renderOwnMemoryDmOnly('ko'), renderOwnMemoryDmOnly('en')]);
 const strip = (o: Observation) => ({ text: normalize(o.text), status: o.status, providerCalls: o.providerCalls, calendarReads: o.calendarReads, deskCalls: o.deskCalls });
 function diffs(left: Map<string, Observation>, right: Map<string, Observation>, skip: (id: string) => boolean = () => false): string[] {
   const out: string[] = [];
@@ -409,14 +421,19 @@ describe(`surface grants over the routing corpora (${CORPUS.length} cases)`, () 
     }
   }, 240_000);
 
-  it('`enforce` in a DM is byte-identical to `off`', async () => {
+  it('`enforce` in a DM is byte-identical to `off` (help also lists the channel-permission phrases)', async () => {
     const off = await observe('off', 'dm');
     const enforce = await observe('enforce', 'dm');
     expect(diffs(enforce, off)).toEqual([]);
+    for (const line of SURFACE_GRANT_HELP_LINES) {
+      expect(enforce.get('x-help')!.text).toContain(line);
+      expect(off.get('x-help')!.text).not.toContain(line);
+    }
   }, 240_000);
 
   it('`enforce` in a channel holding the QA seed groups is byte-identical to `off`, except the `writes` requests (not seeded)', async () => {
     const off = await observe('off', 'channel');
+    const offDm = await observe('off', 'dm');
     const seeded = await observe('enforce', 'seeded');
     const writes: string[] = [];
     for (const golden of CORPUS) {
@@ -425,7 +442,11 @@ describe(`surface grants over the routing corpora (${CORPUS.length} cases)`, () 
       writes.push(golden.id);
       expect(got.providerCalls + got.calendarReads + got.deskCalls, golden.id).toBe(0);
     }
-    expect(diffs(seeded, off, (id) => writes.includes(id))).toEqual([]);
+    // P2 (D7 narrowed): where the gate off keeps the P0 DM-only copy, a channel holding `memory` answers exactly as the DM.
+    const lifted = CORPUS.filter((golden) => P0_MEMORY_COPIES.has(off.get(golden.id)!.text) && !P0_MEMORY_COPIES.has(seeded.get(golden.id)!.text)).map((golden) => golden.id);
+    for (const id of lifted) expect(strip(seeded.get(id)!), id).toEqual(strip(offDm.get(id)!));
+    expect(lifted).toEqual(expect.arrayContaining(['x-memory-list', 'x-learning', 'x-feedback']));
+    expect(diffs(seeded, off, (id) => writes.includes(id) || lifted.includes(id))).toEqual([]);
     expect(writes).toEqual(expect.arrayContaining(['x-jira-comment', 'x-slack-post', 'x-calendar-create']));
   }, 240_000);
 
@@ -451,7 +472,7 @@ describe(`surface grants over the routing corpora (${CORPUS.length} cases)`, () 
     for (const id of ['x-jira', 'x-github', 'x-slack', 'x-confluence', 'x-calendar', 'x-todo-add', 'x-todo-list', 'x-reminder', 'x-reminder-list', 'x-memory', 'x-memory-list', 'x-learning', 'x-feedback', 'x-jira-comment', 'x-slack-post', 'x-calendar-create', 'x-branch', 'x-code']) {
       expect(DENIALS.has(extra(id)), id).toBe(true);
     }
-    expect(extra('x-calendar')).toBe("이 채널에서는 '캘린더 조회' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+    expect(extra('x-calendar')).toBe("이 채널에서는 '캘린더 조회' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이 채널에 허용하려면 \"이 채널에 캘린더 조회 허용\"이라고 보내 주세요.");
     for (const id of ['x-help', 'x-model', 'x-chat']) expect(DENIALS.has(extra(id)), id).toBe(false);
     expect(denied.length).toBeGreaterThan(100);
     // The state-bound section (every post-push anchor case): denied or as before, and the anchor never moves.
@@ -494,7 +515,7 @@ describe('owner flows in the production composition', () => {
     expect(sinkDeliveries.at(-1)).toEqual({ kind: 'SURFACE_GRANT', text: `채널 권한 해제: ${QA_CHANNEL_ID} — 캘린더 조회.` });
     for (const context of [QA, QA_THREAD]) {
       const after = await send(context, '오늘 일정 알려줘');
-      expect(after.text).toBe("이 채널에서는 '캘린더 조회' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+      expect(after.text).toBe("이 채널에서는 '캘린더 조회' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이 채널에 허용하려면 \"이 채널에 캘린더 조회 허용\"이라고 보내 주세요.");
       expect(after.calendarReads + after.providerCalls).toBe(0);
     }
     expect((await send(OWNER_DM, '오늘 일정 알려줘')).calendarReads).toBe(1);
@@ -515,13 +536,80 @@ describe('owner flows in the production composition', () => {
     expect((await send(QA, '내 할 일 보여줘')).deskCalls).toBe(1);
   });
 
-  it('`기억해:` and every memory command need `memory`; the P0 DM-only rule stays the second layer', async () => {
+  it('P2 grant by phrase: denial hint → confirmation → `허용 실행` (DM receipt) → use → other text cancels → expiry', async () => {
+    setMode('enforce');
+    const channel: ConversationContext = { platform: 'discord', spaceId: GUILD_ID, channelId: '1520835639904309361', userId: OWNER_ID, direct: false };
+    const channelGroups = async () => {
+      const actor = await storage.actors.findByExternalIdentity('discord', OWNER_ID);
+      return grantedSurfaceGroups(readSurfaceGrants(actor?.metadata?.[SURFACE_GRANTS_METADATA_KEY]), surfaceChannelKey(channel));
+    };
+    const denied = await send(channel, '오늘 일정 알려줘');
+    expect(denied.text).toContain('"이 채널에 캘린더 조회 허용"이라고 보내 주세요.');
+    expect(denied.calendarReads).toBe(0);
+    // The Discord adapter's cached audience rides on the inbound message.
+    const ask = await runtime.handle({ id: 'a9-grant-1', context: channel, text: '이 채널에 캘린더 조회 허용', audience: { memberUpperBound: 12, restricted: false }, receivedAt: new Date().toISOString() });
+    expect(ask.reply.text).toBe('이 채널에 다음을 허용할까요? · 캘린더 조회\n이 채널을 볼 수 있는 사람은 모두 답을 볼 수 있어요. 서버 인원 최대 12명 · 비공개 채널: 아니오.\n허용하려면 2분 안에 "허용 실행"이라고 보내 주세요. 다른 말을 보내면 취소돼요.');
+    expect(await channelGroups()).toEqual([]);
+    const receiptsBefore = sinkDeliveries.length;
+    expect((await send(channel, '허용 실행')).text).toBe('이 채널에 허용했어요: 캘린더 조회.');
+    expect(sinkDeliveries.slice(receiptsBefore)).toEqual([{ kind: 'SURFACE_GRANT', text: `채널 권한 허용: ${channel.channelId} — 캘린더 조회.` }]);
+    expect(await channelGroups()).toEqual(['calendar']);
+    expect((await send(channel, '오늘 일정 알려줘')).calendarReads).toBe(1);
+    expect((await send(channel, '허용 실행')).text).toBe('지금 허용을 기다리는 요청이 없어요. 아무것도 바꾸지 않았어요.');
+    // Another message ends a pending grant and routes as before (here: chat).
+    expect((await send(channel, '이 채널에 Slack 허용')).text).toContain('주의: Slack 검색 결과에는 비공개 채널·DM 메시지도 나올 수 있어요.');
+    expect((await send(channel, '오늘 기분이 좋아')).text).toBe('A9 stub provider reply');
+    expect((await send(channel, '허용 실행')).text).toBe('지금 허용을 기다리는 요청이 없어요. 아무것도 바꾸지 않았어요.');
+    // After the 2-minute window nothing is granted.
+    await send(channel, '이 채널에 GitHub 허용');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + 121_000);
+      expect((await send(channel, '허용 실행')).text).toBe('허용 확인 시간(2분)이 지났어요. 아무것도 허용하지 않았어요. 다시 "이 채널에 … 허용"이라고 보내 주세요.');
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await channelGroups()).toEqual(['calendar']);
+    // A non-owner is ordinary text (admission drops them on the live host; the service's own check is the second layer).
+    const stranger = { ...channel, userId: '333333333333000777' };
+    expect((await send(stranger, '이 채널에 GitHub 허용')).text).toBe('A9 stub provider reply');
+    expect((await send(channel, '이 채널 권한 모두 해제')).text).toBe('이 채널의 권한을 모두 해제했어요.');
+  });
+
+  it('P2 composite "my work": `todo` alone shows the to-dos and leaves Jira / GitHub unread with the fixed line', async () => {
+    setMode('enforce');
+    const context = freshContext('seeded');
+    await grant(context, ['todo']);
+    await send(context, '할 일 추가: A9 composite');
+    const forActor = vi.spyOn(app.get(WorkSurfaceQuery), 'forActor');
+    try {
+      const view = await send(context, '내 할 일 보여줘');
+      expect(view.text).toContain('1. A9 composite');
+      expect(view.text).toContain('Jira·GitHub 항목은 이 채널에서 허용되지 않아 뺐어요.');
+      expect(forActor).not.toHaveBeenCalled();
+      const both = freshContext('seeded');
+      await grant(both, ['todo', 'github']);
+      const partial = await send(both, '내 할 일 보여줘');
+      expect(forActor).toHaveBeenCalledWith(expect.anything(), { sources: ['github'] });
+      expect(partial.text).toContain('- Jira: 이 채널에서 허용되지 않아 뺐어요');
+    } finally {
+      forActor.mockRestore();
+    }
+  });
+
+  it('`기억해:` and every memory command need `memory`; with it the P0 DM-only rule is lifted, with the gate off it stays', async () => {
     setMode('enforce');
     const context = freshContext('ungranted');
-    expect((await send(context, '기억해: A9 비밀 아님')).text).toBe("이 채널에서는 '기억' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+    expect((await send(context, '기억해: A9 비밀 아님')).text).toBe("이 채널에서는 '기억' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이 채널에 허용하려면 \"이 채널에 기억 허용\"이라고 보내 주세요.");
     const seeded = freshContext('seeded');
     await grant(seeded, SEED_GROUPS);
-    expect((await send(seeded, '기억 목록')).text).toBe('이 기능은 DM에서만 쓸 수 있어요');
+    expect((await send(seeded, '기억 목록')).text).toBe('저장된 기억이 없어요. "기억해: 내용"이라고 보내면 저장해 둬요.');
+    setMode('off');
+    try {
+      expect((await send(seeded, '기억 목록')).text).toBe('이 기능은 DM에서만 쓸 수 있어요');
+    } finally {
+      setMode('enforce');
+    }
   });
 
   it('state-bound section: a revoke between the approval and the exact execution phrase runs nothing; PR status needs `github`', async () => {
@@ -532,13 +620,13 @@ describe('owner flows in the production composition', () => {
     gitCalls = [];
     await grant(context, []); // revoked
     const run = await send(context, '푸시 실행해줘');
-    expect(run.text).toBe("이 채널에서는 '코드 작업' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+    expect(run.text).toBe("이 채널에서는 '코드 작업' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이 채널에 허용하려면 \"이 채널에 코드 작업 허용\"이라고 보내 주세요.");
     expect(gitCalls).toEqual([]);
     expect(await anchorStatus(context)).toBe('PUSH_APPROVED');
     const pr = freshContext('seeded');
     await grant(pr, ['code']);
     await seedAnchor(pr, 'PR_CREATED');
-    expect((await send(pr, 'PR 상태 확인해줘')).text).toBe("이 채널에서는 'GitHub 조회' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+    expect((await send(pr, 'PR 상태 확인해줘')).text).toBe("이 채널에서는 'GitHub 조회' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이 채널에 허용하려면 \"이 채널에 GitHub 조회 허용\"이라고 보내 주세요.");
     expect(await anchorStatus(pr)).toBe('PR_CREATED');
   });
 
@@ -561,7 +649,7 @@ describe('owner flows in the production composition', () => {
       };
       try {
         const run = await send(context, phrase);
-        expect(run.text, phrase).toBe("이 채널에서는 '코드 작업' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+        expect(run.text, phrase).toBe("이 채널에서는 '코드 작업' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이 채널에 허용하려면 \"이 채널에 코드 작업 허용\"이라고 보내 주세요.");
       } finally {
         actors.resolveFromContext = original;
       }
@@ -576,7 +664,7 @@ describe('owner flows in the production composition', () => {
     await grant(reminderOnly, ['reminder']);
     const before = calendarReads.length;
     const denied = await send(reminderOnly, '다음 회의 10분 전에 알려줘');
-    expect(denied.text).toBe("이 채널에서는 '캘린더 조회' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+    expect(denied.text).toBe("이 채널에서는 '캘린더 조회' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이 채널에 허용하려면 \"이 채널에 캘린더 조회 허용\"이라고 보내 주세요.");
     expect(calendarReads.length).toBe(before);
     const both = freshContext('seeded');
     await grant(both, ['reminder', 'calendar']);

@@ -9,6 +9,7 @@ import { isAdmittedReaction, toRating } from './reactions';
 import { readConnectedIdentity } from './connected-identity';
 import { normalizeInboundText } from './addressing';
 import { discordReplyReferenceOf } from './reply-reference';
+import { discordAudienceOf } from './audience';
 import type { DiscordConnectedIdentity } from './connected-identity';
 import { AttachmentIntake, renderAttachmentIntakeNote, summarizeAttachmentIntake } from './attachments';
 import type { AttachmentIntakeOptions, AttachmentIntakeResult, AttachmentSource } from './attachments';
@@ -624,6 +625,8 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       direct: !message.guildId,
     };
     const replyTo = discordReplyReferenceOf(message);
+    // ADR-0122 D4.3: who can read a guild message, from the cache only (read by the channel-grant confirmation).
+    const audience = discordAudienceOf(message as unknown as Parameters<typeof discordAudienceOf>[0]);
 
     return {
       id: message.id,
@@ -633,6 +636,7 @@ export class DiscordPlatformAdapter implements PlatformAdapter, NotificationSink
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
       // GML-2: a reply's referenced message id, opaque to Core (matched only against this adapter's receipts).
       ...(replyTo !== undefined ? { replyTo } : {}),
+      ...(audience !== undefined ? { audience } : {}),
       receivedAt: now(),
     };
   }

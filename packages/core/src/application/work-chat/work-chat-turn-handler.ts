@@ -17,6 +17,7 @@ import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { renderListStatusDmOnly } from '../nl-routing/nl-action-policy';
 import { isDirectConversation } from '../message-rendering';
 import { surfaceClaimOf, surfaceGroupsOfWorkChatCommand } from '../surface-grants/surface-group-map';
+import { surfaceChannelHolds } from '../surface-grants/surface-permit';
 import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
 import {
   EXTERNAL_WORK_EXCERPT_MAX_CHARS,
@@ -134,12 +135,15 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     const prepared = selected.entryId === 'jira.release' ? prepareSelectionInput(ctx.message.text, 0, ctx.message.quotedRanges ?? []) : undefined;
     const mapped = workChatCommandForSelection(selected, prepared === undefined || 'skip' in prepared ? '' : prepared.groundingText);
     if (mapped === null) return null;
-    // A status view is DM-only until ADR-0122 P1 (owner: channels default-deny); nothing is read in a channel.
-    if (mapped.kind === 'todo.list' && mapped.status !== undefined && !isDirectConversation(ctx.message.context)) {
+    // A status view is DM-only in a channel unless the gate is enforced and the channel holds `todo` (ADR-0122 P2, Codex
+    // P2 of #221); with the gate off it stays DM-only. Nothing is read when refused.
+    if (mapped.kind === 'todo.list' && mapped.status !== undefined && !surfaceChannelHolds(ctx.message.context, ctx.surfacePermit, 'todo')) {
       return { reply: outboundMessage(ctx.message.context, renderListStatusDmOnly(selected.language), { replyToMessageId: ctx.message.id }) };
     }
-    // ADR-0120 A8 owner decision 7: a release listing knows whether it answers in a channel.
-    const command = mapped.kind === 'release' && !isDirectConversation(ctx.message.context) ? { ...mapped, inChannel: true as const } : mapped;
+    // ADR-0120 A8 owner decision 7: a release listing knows whether it answers in a channel — every-assignee scope and the
+    // lists stay DM-only there unless the gate is enforced and the channel holds `jira-project` (ADR-0122 P2).
+    const command =
+      mapped.kind === 'release' && !surfaceChannelHolds(ctx.message.context, ctx.surfacePermit, 'jira-project') ? { ...mapped, inChannel: true as const } : mapped;
     const { outcome, listed } = await this.run(command, ctx);
     if (command.kind !== 'lookup' || command.listOnly !== true || listed === undefined || outcome === null) return outcome;
     if (outcome.kind !== undefined && outcome.kind !== 'reply') return outcome;
@@ -234,7 +238,10 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     }
     let outcome: WorkChatOutcome;
     try {
-      outcome = await this.deps.desk.handle(command, ctx.actor);
+      // ADR-0122 D2.4: the combined view filters its Jira / GitHub sections by the channel's permit (absent: unchanged).
+      outcome = ctx.surfacePermit !== undefined && (command.kind === 'todo.list' || command.kind === 'todo.summary')
+        ? await this.deps.desk.handle(command, ctx.actor, { permit: ctx.surfacePermit })
+        : await this.deps.desk.handle(command, ctx.actor);
     } catch (error) {
       // The desk catches its own failures; this is the handler-contract backstop. The message was a recognized work
       // command, so it must not fall through to chat (a model could claim the change). Failure class only, no text.

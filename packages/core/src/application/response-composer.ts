@@ -71,11 +71,11 @@ import {
   untrustedText,
   withOutboundBody,
 } from './message-rendering';
-import { safeLinkUrl } from './work-chat/work-chat-renderer';
+import { MY_WORK_SECTIONS_WITHHELD_LINE, MY_WORK_SOURCE_WITHHELD_STATUS, safeLinkUrl } from './work-chat/work-chat-renderer';
 import type { MessagePart } from './message-rendering';
 import { formatSafeErrorText } from './safe-error';
 import type { SafeError, SafeErrorContext } from './safe-error';
-import type { WorkSurface } from './work-surface-query';
+import type { WorkSurface, WorkSurfaceSource } from './work-surface-query';
 import { ProviderGatewayTerminalStatus } from './provider-routing-gateway';
 import type { ProviderGatewayFailureCode } from './provider-routing-gateway';
 import { RoutingFailureCode } from './runtime-response-validation-contracts';
@@ -791,7 +791,14 @@ function renderDiffBlock(diff: GitDiff, maxChars: number): string {
 
 export class ResponseComposer {
   /** Read-only Personal Work Surface. Availability is always explicit when the projection is incomplete. */
-  composeWorkSurface(context: ConversationContext, surface: WorkSurface): OutboundMessage {
+  composeWorkSurface(context: ConversationContext, surface: WorkSurface): OutboundMessage;
+  /**
+   * ADR-0122 D2.4 (P2): `withheld` names the sources a channel's permit leaves out (never read); with every source
+   * withheld `surface` is `null` and the reply is the one fixed line.
+   */
+  composeWorkSurface(context: ConversationContext, surface: WorkSurface | null, withheld: readonly WorkSurfaceSource[]): OutboundMessage;
+  composeWorkSurface(context: ConversationContext, surface: WorkSurface | null, withheld: readonly WorkSurfaceSource[] = []): OutboundMessage {
+    if (surface === null) return outboundMessage(context, MY_WORK_SECTIONS_WITHHELD_LINE);
     const lines: MessageBody[] = [];
     if (surface.status === 'UNAVAILABLE') {
       lines.push('지금은 개인 작업 목록을 불러올 수 없어요.');
@@ -826,6 +833,7 @@ export class ResponseComposer {
         lines.push(`- ${source.source}: ${action}`);
       }
     }
+    for (const source of withheld) lines.push(`- ${source}: ${MY_WORK_SOURCE_WITHHELD_STATUS}.`);
     return outboundMessage(context, clampBodyToMessageBudget(joinBody(lines)));
   }
 
