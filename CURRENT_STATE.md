@@ -55,9 +55,10 @@ Details and the review record for each item are in the matching notes in `DECISI
 - **What changes.** "금요일까지" periods (`until-<weekday>`, `until-next-<weekday>`) grounded by the owner's end bound; a
   single day at such a bound shown as today through that day; the calendar grammar yields such messages; a clear past-tense
   statement is chat, not a read. Prompt `nl-select.v22` (A6 `off` pin) and `nl-select.v23` (A6 actions).
-- **Eval.** v22, 3 Haiku runs (441 cases): 95.6%, 95.6%, 96.8%, calendar 92.1-95.5%, wrong captures 1, 0, 0 (`neg-037`,
-  pre-existing); v20 baseline 92.4%. `neg-042` probe captures 6/20 → 0/20.
-- **Pending with the owner:** the seven A7 decisions and the D12 batch `a7u-01..07`, `a7s-01..10`.
+- **Eval.** Final v22 after the CA/Codex review round, 3 Haiku runs (446 cases): 96.5%, 95.7%, 96.5%, calendar 92.4-96.7%,
+  0 wrong captures, D12/S1 gates pass 3 of 3; v20 baseline 92.4%. `neg-042` probe captures 6/20 → 0/20. The A6 action
+  corpus was not re-evaluated on `nl-select.v23`.
+- **Pending with the owner:** the seven A7 decisions and the D12 batch `a7u-01..07`, `a7s-01..15`.
 
 ### v5 calendar accuracy (ADR-0120 A5 implementation note 3) — on branch `claude/v5-calendar-accuracy` (2026-10-14)
 
