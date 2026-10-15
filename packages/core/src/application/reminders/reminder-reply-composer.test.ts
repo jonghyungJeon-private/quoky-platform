@@ -232,4 +232,3 @@ describe('the reminder status view (owner-approved status filter, 2026-10-15)', 
     expect(composer.statusListRendered([], 'done', '2026-10-02T00:00:00.000Z')).toEqual({ body: '지난 알림이 없어요.', shown: 0 });
   });
 });
-

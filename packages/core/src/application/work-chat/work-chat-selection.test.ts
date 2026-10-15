@@ -86,4 +86,3 @@ describe('todo.list status (owner-approved status filter, 2026-10-15)', () => {
     expect(nlSelectionForWorkChatCommand({ kind: 'todo.list', status: 'completed' })).toEqual({ entryId: 'todo.list', args: { status: 'completed' } });
   });
 });
-
