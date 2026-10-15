@@ -800,7 +800,7 @@ describe('ADR-0120 amendment A7: until-<weekday> and the clear past-tense statem
     const h = harness({ script: [out('calendar.events', { range: 'next-week' })] });
     expect(await h.decide('다음 주 월요일부터 금요일까지 일정')).toMatchObject({
       kind: 'execute',
-      command: { entryId: 'calendar.events', args: { range: '2026-10-19..2026-10-23' }, range: { days: 5 } },
+      command: { entryId: 'calendar.events', args: { range: '10-19..10-23' }, range: { days: 5 } },
     });
   });
 
@@ -809,8 +809,23 @@ describe('ADR-0120 amendment A7: until-<weekday> and the clear past-tense statem
     await h.decide('이번 주 일정');
     expect(await h.decide('다음 주 월요일부터 금요일까지 일정', { now: at(60_000) })).toMatchObject({
       kind: 'execute',
-      command: { entryId: 'calendar.events', args: { range: '2026-10-19..2026-10-23' }, range: { days: 5 } },
+      command: { entryId: 'calendar.events', args: { range: '10-19..10-23' }, range: { days: 5 } },
     });
+  });
+
+  it('A7 span repeat (live 2026-10-15 10:44): the same sentence again after a narrowed span executes for every probed pick', async () => {
+    // Probe, previous = the stored span (60 calls): next-mon 37, 10-19..10-23 17, next-week 6; each must execute.
+    for (const pick of ['next-mon', '10-19..10-23', 'next-week']) {
+      const h = harness({ script: [out('calendar.events', { range: 'next-week' }), out('calendar.events', { range: pick })] });
+      await h.decide('다음 주 월요일부터 금요일까지 일정');
+      // The narrowed span is stored in the prompt's own MM-DD form, never with a year the owner did not write.
+      expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY], pick).toMatchObject({ args: { range: '10-19..10-23' } });
+      expect(await h.decide('다음 주 월요일부터 금요일까지 일정', { now: at(60_000) }), pick).toMatchObject({
+        kind: 'execute',
+        command: { args: { range: '10-19..10-23' }, range: { days: 5 } },
+      });
+      expect(h.calls[1]?.prompt, pick).toContain('Previous selection: {"entryId":"calendar.events","args":{"range":"10-19..10-23"}}');
+    }
   });
 
   it('a past-tense question still executes', async () => {

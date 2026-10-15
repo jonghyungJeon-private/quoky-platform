@@ -683,7 +683,7 @@ export function nlUntilBound(
  * allowed [start day, first end weekday on or after it] span (`'keep'`), or it is refused. A7 implementation note
  * (span canonical form): when both bounds are explicit (부터 / from and 까지 / through) and the selected period CONTAINS
  * exactly one allowed span ("다음 주 월요일부터 금요일까지" read as `next-week`), or is a single day that is one bound of
- * exactly one allowed span (read as `next-mon`), it is spelled as that explicit span (`YYYY-MM-DD..YYYY-MM-DD`, Core's
+ * exactly one allowed span (read as `next-mon`), it is spelled as that explicit span (`MM-DD..MM-DD`, Core's
  * dates); never wider than the selected period or the owner's two bounds; two candidate spans are asked.
  */
 export function nlMultiWeekdayBound(range: NlResolvedRange | undefined, mentions: readonly NlWeekdayMention[], now: IsoTimestamp, timeZone: string): 'n/a' | NlUntilBoundOutcome {
@@ -702,7 +702,10 @@ export function nlMultiWeekdayBound(range: NlResolvedRange | undefined, mentions
   const unique = inside.filter(([from, to], index) => inside.findIndex(([f, t]) => same(f, from) && same(t, to)) === index);
   if (unique.length !== 1) return 'refuse';
   const [from, to] = unique[0] as readonly [LocalDate, LocalDate];
-  return { canonical: `${isoDateOf(from)}..${isoDateOf(to)}` };
+  // Spelled MM-DD..MM-DD, the prompt's own span form (and the form the selector writes itself), so the stored
+  // `lastSelection` never shows the selector a year it did not write; it resolves to the same days (the nearest
+  // occurrence, a year-end span runs into the next year).
+  return { canonical: `${isoDateOf(from).slice(5)}..${isoDateOf(to).slice(5)}` };
 }
 
 /** Whether the rule above keeps the period as it is (`undefined`: not applicable). */

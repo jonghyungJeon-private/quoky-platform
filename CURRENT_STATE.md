@@ -75,6 +75,7 @@ Details: the ADR-0104 D1 amendment note in `DECISIONS.md`.
   allowed span inside the selected period (live: "다음 주 월요일부터 금요일까지" read as next week → 10/19-10/23).
 - **Follow-up 2 (branch `claude/v5-span-probe`, A7 implementation note 2):** a single-day pick of one bound of a grounded
   "X부터 Y까지" (`next-mon`, seen when a previous calendar selection is in the prompt) shows the owner's span.
+- **Follow-up 3 (branch `claude/v5-span-repeat`, A7 implementation note 3):** the narrowed span is stored as `MM-DD..MM-DD`.
 - **Owner-approved:** the seven A7 decisions and the D12 batch `a7u-01..10`, `a7s-01..15` (2026-10-15).
 
 ### v5 calendar accuracy (ADR-0120 A5 implementation note 3) — on branch `claude/v5-calendar-accuracy` (2026-10-14)

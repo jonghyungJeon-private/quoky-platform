@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — the narrowed span is stored as MM-DD..MM-DD (ADR-0120 A7 implementation note 3, 2026-10-15)
+
+- Live: the same "다음 주 월요일부터 금요일까지 일정" sent twice was asked the second time (`invalid-arg` range: the selector wrote
+  a non-symbol). Core's narrowed span is now spelled `MM-DD..MM-DD` (the prompt's own form), so the stored previous selection
+  never shows a year; probes of the repeat (60 calls) all execute. No prompt change.
+
 ## Unreleased — a single-day pick of one bound of "X부터 Y까지" (ADR-0120 A7 implementation note 2, 2026-10-15)
 
 - Live: "다음 주 월요일부터 금요일까지 일정" was still asked; a probe showed the selector answers `next-mon` when a previous
