@@ -704,12 +704,21 @@ describe('ADR-0122 D2.6 (P2): the send-time channel check', () => {
     return { repository, sink, logger, service, asked };
   }
 
-  it('a channel that still holds `reminder` gets the reminder as before', async () => {
-    const { repository, sink, service, asked } = gated(async () => true);
+  it('a channel that still holds `reminder` gets the reminder; the sink gets a last-moment re-check with the DM text (Codex P1)', async () => {
+    let live = true;
+    const { repository, sink, service, asked, logger } = gated(async () => live);
     repository.seed({ schedule: ONCE_AT(NOW), occurrenceAt: NOW });
     await service.dispatchDue(NOW);
     expect(asked).toEqual([{ origin: ORIGIN, actorId: ACTOR, groups: ['reminder'] }]);
-    expect(sink.delivered[0]).toMatchObject({ target: ORIGIN, kind: 'TEXT', text: '알림 #1: 회의 준비' });
+    const delivered = sink.delivered[0]!;
+    expect(delivered).toMatchObject({ target: ORIGIN, kind: 'TEXT', text: '알림 #1: 회의 준비' });
+    expect(delivered.channelRecheck?.dm).toEqual({ text: '알림 #1: 회의 준비\n(이 알림을 만든 채널에 지금 알림 권한이 없어 DM으로 보냈어요.)' });
+    // The sink calls it after resolving the channel: it re-reads the live grants each time.
+    expect(await delivered.channelRecheck!.allows()).toBe(true);
+    live = false;
+    expect(await delivered.channelRecheck!.allows()).toBe(false);
+    expect(asked).toHaveLength(3);
+    expect(logger.lines).toContainEqual({ level: 'info', message: 'reminder.dispatch.channel_withheld', fields: { platform: 'discord', channelId: 'c1', groups: 'reminder', at: 'send' } });
   });
 
   it('a revoked (or unreadable) channel: the owner DM gets it with the fixed note; a content-free log line', async () => {

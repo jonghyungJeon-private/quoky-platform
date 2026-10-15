@@ -276,6 +276,8 @@ export function renderSurfaceGrantConfirm(input: {
   /** For `writes`: the service read groups this channel would still lack (D1: a write also needs its read group). */
   readonly missingWriteReadGroups: readonly SurfaceGroupId[];
   readonly suspended: boolean;
+  /** Asked inside a thread: the grant applies to the parent channel and all its threads (CA P1). */
+  readonly inThread?: boolean;
   readonly language: SurfaceCopyLanguage;
 }): string {
   const { language } = input;
@@ -287,6 +289,9 @@ export function renderSurfaceGrantConfirm(input: {
   } else {
     lines.push(`이 채널에 다음을 허용할까요? · ${labels}`);
     lines.push(`이 채널을 볼 수 있는 사람은 모두 답을 볼 수 있어요. ${renderSurfaceAudienceLine(input.audience, 'ko')}.`);
+  }
+  if (input.inThread === true) {
+    lines.push(language === 'en' ? 'This applies to the whole parent channel (all of its threads included).' : '상위 채널 전체(모든 스레드 포함)에 적용돼요.');
   }
   for (const id of input.groups) {
     const warning = renderSurfaceStrongWarning(id, language);
@@ -330,6 +335,13 @@ export function renderSurfaceGrantExpired(language: SurfaceCopyLanguage): string
   return language === 'en'
     ? 'The 2 minutes to confirm have passed. Nothing was allowed. Send "이 채널에 … 허용" again.'
     : '허용 확인 시간(2분)이 지났어요. 아무것도 허용하지 않았어요. 다시 "이 채널에 … 허용"이라고 보내 주세요.';
+}
+
+/** `허용 실행` after the channel grants or the kill switch changed since the question (CA suggestion). */
+export function renderSurfaceGrantStale(language: SurfaceCopyLanguage): string {
+  return language === 'en'
+    ? 'Channel permissions changed while this was waiting (a removal or "에이전트 중지"). Nothing was allowed. Send "이 채널에 … 허용" again.'
+    : '허용을 기다리는 사이에 채널 권한이 바뀌었어요(해제 또는 에이전트 중지). 아무것도 허용하지 않았어요. 다시 "이 채널에 … 허용"이라고 보내 주세요.';
 }
 
 /** `허용 실행` with no grant waiting in this channel. */

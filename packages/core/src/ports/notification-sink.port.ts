@@ -29,6 +29,16 @@ export interface OwnerNotification {
    * title, a conversation reference); `text` is its plain rendering and the adapter renders `content` instead.
    */
   content?: MessageContent;
+  /**
+   * ADR-0122 D2.6 (P2, Codex P1): a last-moment check for a CHANNEL send. An adapter that delivers to the originating
+   * channel MUST call `allows()` as the last step before the channel send — after resolving the channel — and, when it
+   * returns false or throws, send nothing to the channel and deliver `dm` (text, and `content` when present) to the owner
+   * DM instead. Absent: unchanged. Never consulted for a DM send.
+   */
+  channelRecheck?: {
+    allows(): Promise<boolean>;
+    readonly dm: { readonly text: string; readonly content?: MessageContent };
+  };
 }
 
 /**

@@ -17,8 +17,12 @@ const OTHER: ConversationContext = { ...CHANNEL, channelId: '1520835639904309351
 const DM: ConversationContext = { platform: 'discord', channelId: '900000', userId: OWNER_ID, direct: true };
 const SEED = { channels: [{ key: surfaceChannelKey(CHANNEL), groups: ['jira-mine', 'jira-project', 'github', 'slack-search', 'confluence', 'calendar', 'todo', 'reminder', 'memory', 'code'] as const }] };
 
+const SECOND_OWNER_ID = '700001';
+
 function world(options: { readonly sessions?: boolean } = {}) {
-  let actor: Actor = { id: 'owner', displayName: 'o', identities: [{ platform: 'discord', externalId: OWNER_ID }], createdAt: T0 };
+  // Two configured owner accounts on one owner Actor (CA P2: only the account that asked may confirm).
+  let actor: Actor = { id: 'owner', displayName: 'o', identities: [{ platform: 'discord', externalId: OWNER_ID }, { platform: 'discord', externalId: SECOND_OWNER_ID }], createdAt: T0 };
+  let failSessionSaves = false;
   // One session per conversation (the runtime's session is per channel / thread); metadata only.
   const sessions = new Map<string, Session>();
   const sessionOf = (context: ConversationContext): Session => {
@@ -46,7 +50,7 @@ function world(options: { readonly sessions?: boolean } = {}) {
   };
   const service = new SurfaceGrantService({
     metadata: new ActorMetadataStore(repo, new KeyedMutex()),
-    isOwner: (who, context) => who.identities.some((identity) => identity.platform === context.platform && identity.externalId === context.userId) && context.userId === OWNER_ID,
+    isOwner: (who, context) => who.identities.some((identity) => identity.platform === context.platform && identity.externalId === context.userId) && [OWNER_ID, SECOND_OWNER_ID].includes(context.userId),
     logger: { info: (event, fields) => logs.push([event, (fields ?? {}) as Record<string, string>]), warn: (event, fields) => logs.push([event, (fields ?? {}) as Record<string, string>]) },
     notify: async (notification) => {
       receipts.push(notification);
@@ -57,6 +61,7 @@ function world(options: { readonly sessions?: boolean } = {}) {
       : {
           sessions: {
             async updateMetadataEntry(session: Pick<Session, 'id'>, key: string, update: (current: unknown) => unknown) {
+              if (failSessionSaves) throw new Error('session save failed');
               const live = sessions.get(session.id);
               if (live === undefined) return null;
               const metadata: Record<string, unknown> = { ...(live.metadata ?? {}) };
@@ -90,6 +95,9 @@ function world(options: { readonly sessions?: boolean } = {}) {
     say,
     turn,
     pending: (context: ConversationContext) => sessionOf(context).metadata?.[SURFACE_GRANT_PENDING_METADATA_KEY],
+    failSessionSaves: (fail: boolean) => {
+      failSessionSaves = fail;
+    },
     /** The next actor read waits for `until` (a lock interleaving test). */
     armSlowRead: (until: Promise<void>) => {
       slow = until;
@@ -220,13 +228,24 @@ describe('content-free logs (D3)', () => {
 describe('the grant phrase and its `허용 실행` confirmation (D4.1–D4.3, P2)', () => {
   const later = (ms: number) => new Date(Date.parse(T0) + ms).toISOString();
   const CONFIRM_TAIL = '허용하려면 2분 안에 "허용 실행"이라고 보내 주세요. 다른 말을 보내면 취소돼요.';
+  const STALE = '허용을 기다리는 사이에 채널 권한이 바뀌었어요(해제 또는 에이전트 중지). 아무것도 허용하지 않았어요. 다시 "이 채널에 … 허용"이라고 보내 주세요.';
+  const NO_PENDING = '지금 허용을 기다리는 요청이 없어요. 아무것도 바꾸지 않았어요.';
 
   it('asks first (audience line, nothing saved), then `허용 실행` saves it with a log line and a one-line DM receipt', async () => {
     const w = world();
     const ask = await w.say(CHANNEL, '이 채널에 캘린더, 할 일 허용', { audience: { memberUpperBound: 12, restricted: false } });
     expect(ask).toBe(`이 채널에 다음을 허용할까요? · 캘린더 조회, 할 일\n이 채널을 볼 수 있는 사람은 모두 답을 볼 수 있어요. 서버 인원 최대 12명 · 비공개 채널: 아니오.\n${CONFIRM_TAIL}`);
     expect(w.granted()).toEqual([]);
-    expect(w.pending(CHANNEL)).toEqual({ v: 1, key: surfaceChannelKey(CHANNEL), groups: ['calendar', 'todo'], expiresAt: later(120_000) });
+    expect(w.pending(CHANNEL)).toEqual({
+      v: 1,
+      id: expect.any(String),
+      key: surfaceChannelKey(CHANNEL),
+      groups: ['calendar', 'todo'],
+      expiresAt: later(120_000),
+      userId: OWNER_ID,
+      grantsDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+      switchState: 'running',
+    });
     expect(w.receipts).toEqual([]);
     expect(await w.turn(CHANNEL, '허용 실행', later(119_000))).toBe('이 채널에 허용했어요: 캘린더 조회, 할 일.');
     expect(w.granted()).toEqual(['calendar', 'todo']);
@@ -331,11 +350,11 @@ describe('the grant phrase and its `허용 실행` confirmation (D4.1–D4.3, P2
     await full.service.applySeed('owner', { channels: keys }, T0);
     const limit = '채널 권한은 최대 16개 채널에만 허용할 수 있어요. 아무것도 허용하지 않았어요. 다른 채널의 권한을 먼저 해제해 주세요(그 채널에서 "이 채널 권한 모두 해제").';
     expect(await full.say(CHANNEL, '이 채널에 캘린더 허용')).toBe(limit);
-    // A table that filled up between the question and the confirmation refuses at the save as well.
+    // A table that filled up between the question and the confirmation: the grants changed since, so nothing is allowed.
     const racing = world();
     await racing.say(CHANNEL, '이 채널에 캘린더 허용');
     await racing.service.applySeed('owner', { channels: keys }, T0);
-    expect(await racing.turn(CHANNEL, '허용 실행')).toBe(limit);
+    expect(await racing.turn(CHANNEL, '허용 실행')).toBe(STALE);
     expect(racing.granted()).toEqual([]);
   });
 
@@ -375,5 +394,73 @@ describe('the grant phrase and its `허용 실행` confirmation (D4.1–D4.3, P2
     const replies = await Promise.all([w.turn(CHANNEL, '허용 실행'), w.turn(CHANNEL, '허용 실행')]);
     expect(replies.sort()).toEqual(['이 채널에 허용했어요: 캘린더 조회.', '지금 허용을 기다리는 요청이 없어요. 아무것도 바꾸지 않았어요.'].sort());
     expect(w.receipts).toHaveLength(1);
+  });
+
+  it('CA P2: a failed session save on `허용 실행` grants nothing and keeps the pending grant (no replay window)', async () => {
+    const w = world();
+    await w.say(CHANNEL, '이 채널에 캘린더 허용');
+    w.failSessionSaves(true);
+    expect(await w.turn(CHANNEL, '허용 실행')).toBe('채널 권한을 저장하지 못했어요. 아무것도 바뀌지 않았어요. 다시 시도해 주세요.');
+    expect(w.granted()).toEqual([]);
+    expect(await w.turn(CHANNEL, '오늘 기분 좋아')).toBe('<routed>'); // a failed drop is not reported as cleared
+    w.failSessionSaves(false);
+    expect(w.pending(CHANNEL)).toBeDefined();
+    expect(await w.turn(CHANNEL, '허용 실행')).toBe('이 채널에 허용했어요: 캘린더 조회.');
+  });
+
+  it('CA P2: only the owner account that asked can confirm (another configured owner id cannot)', async () => {
+    const w = world();
+    await w.say(CHANNEL, '이 채널에 캘린더 허용');
+    expect(await w.turn({ ...CHANNEL, userId: SECOND_OWNER_ID }, '허용 실행')).toBe(NO_PENDING);
+    expect(w.granted()).toEqual([]);
+    expect(w.pending(CHANNEL)).toBeUndefined();
+  });
+
+  it('CA suggestion: "모든 채널 권한 해제" or "에이전트 중지" in the DM after the question voids the confirmation', async () => {
+    const cleared = world();
+    await cleared.service.applySeed('owner', { channels: [{ key: surfaceChannelKey(OTHER), groups: ['todo'] }] }, T0);
+    await cleared.say(CHANNEL, '이 채널에 캘린더 허용');
+    expect(await cleared.say(DM, '모든 채널 권한 해제')).toBe('모든 채널(1개)의 권한을 해제했어요.');
+    expect(await cleared.turn(CHANNEL, '허용 실행')).toBe(STALE);
+    expect(cleared.granted()).toEqual([]);
+
+    const stopped = world();
+    await stopped.say(CHANNEL, '이 채널에 캘린더 허용');
+    await stopped.service.handleSwitchPhrase(stopped.actor(), { id: 'k', context: DM, text: '에이전트 중지', receivedAt: T0 }, T0);
+    expect(await stopped.turn(CHANNEL, '허용 실행')).toBe(STALE);
+    expect(stopped.granted()).toEqual([]);
+  });
+
+  it('Codex P2: a delayed `허용 실행` consumes only the pending grant its turn saw; a replacement is left untouched', async () => {
+    const w = world();
+    await w.say(CHANNEL, '이 채널에 캘린더 허용');
+    const seenAtStart = w.sessionOf(CHANNEL); // the delayed confirmation turn began here
+    await w.say(CHANNEL, '이 채널에 기억 허용'); // a newer question replaced the pending grant
+    const replacement = w.pending(CHANNEL);
+    const delayed = await w.service.handleGrantPending({ id: 'late', context: CHANNEL, text: '허용 실행', receivedAt: T0 }, seenAtStart, w.actor(), T0);
+    expect(delayed).toEqual({ reply: NO_PENDING });
+    expect(w.granted()).toEqual([]);
+    expect(w.pending(CHANNEL)).toEqual(replacement);
+    // A delayed other message does not drop the replacement either.
+    expect(await w.service.handleGrantPending({ id: 'late2', context: CHANNEL, text: '오늘 기분 좋아', receivedAt: T0 }, seenAtStart, w.actor(), T0)).toBeUndefined();
+    expect(w.pending(CHANNEL)).toEqual(replacement);
+    expect(await w.turn(CHANNEL, '허용 실행')).toBe('이 채널에 허용했어요: 기억.');
+  });
+
+  it('CA P1: asked inside a thread, the question says the grant covers the parent channel and all its threads', async () => {
+    const w = world();
+    const thread: ConversationContext = { ...CHANNEL, threadId: '1520835639904309399' };
+    expect(await w.say(thread, '이 채널에 캘린더 허용')).toContain('\n상위 채널 전체(모든 스레드 포함)에 적용돼요.\n');
+    expect(await w.say(CHANNEL, '이 채널에 GitHub 허용')).not.toContain('상위 채널 전체');
+  });
+
+  it('CA P2: an approval-expiry turn (cancel only) ends the pending grant and never confirms', async () => {
+    const w = world();
+    await w.say(CHANNEL, '이 채널에 캘린더 허용');
+    const message: InboundMessage = { id: 'x', context: CHANNEL, text: '허용 실행', receivedAt: T0 };
+    expect(await w.service.handleGrantPending(message, w.sessionOf(CHANNEL), w.actor(), T0, { cancelOnly: true })).toEqual({ cleared: true });
+    expect(w.granted()).toEqual([]);
+    expect(w.pending(CHANNEL)).toBeUndefined();
+    expect(await w.service.handleGrantPending(message, w.sessionOf(CHANNEL), w.actor(), T0, { cancelOnly: true })).toBeUndefined();
   });
 });

@@ -15,7 +15,7 @@ import {
   type WorkItem,
 } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
-import type { NotificationSink } from '../../ports/notification-sink.port';
+import type { NotificationSink, OwnerNotification } from '../../ports/notification-sink.port';
 import type { ReminderRepository } from '../../ports/reminder-repository.port';
 import { newId } from '../../util/id';
 import { isDirectConversation, messageBody, messageFields } from '../message-rendering';
@@ -390,6 +390,7 @@ export class ReminderDispatchService {
         target: routed.target,
         kind: reminder.kind,
         ...messageFields(routed.text),
+        ...(routed.channelRecheck !== undefined ? { channelRecheck: routed.channelRecheck } : {}),
       });
     } catch (error) {
       this.logFailure('reminder.dispatch.sink_threw', error);
@@ -402,7 +403,10 @@ export class ReminderDispatchService {
    * with a space — the only target the sink would deliver to a channel) is checked; a refused (or failed) check sends it
    * to the owner DM — the same owner, the origin's space and thread dropped — with the fixed note. Content-free log.
    */
-  private async surfaceRoute(reminder: Reminder, text: MessageBody): Promise<{ readonly target: ConversationContext; readonly text: MessageBody }> {
+  private async surfaceRoute(
+    reminder: Reminder,
+    text: MessageBody,
+  ): Promise<{ readonly target: ConversationContext; readonly text: MessageBody; readonly channelRecheck?: OwnerNotification['channelRecheck'] }> {
     const check = this.deps.surfaceDelivery;
     const origin = reminder.origin;
     if (check === undefined || reminder.kind !== 'TEXT' || isDirectConversation(origin) || origin.spaceId === undefined) return { target: origin, text };
@@ -413,10 +417,32 @@ export class ReminderDispatchService {
     } catch {
       allowed = false;
     }
-    if (allowed) return { target: origin, text };
+    const dmText = messageBody(text, '\n', REMINDER_CHANNEL_WITHHELD_NOTE);
+    if (allowed) {
+      // Codex P1: the sink re-asks the live grants as the last step before the channel send (after resolving the channel);
+      // a revoke or kill switch that landed meanwhile sends the DM text instead.
+      const logger = this.deps.logger;
+      return {
+        target: origin,
+        text,
+        channelRecheck: {
+          async allows() {
+            let still = false;
+            try {
+              still = await check.allows(origin, reminder.actorId, groups);
+            } catch {
+              still = false;
+            }
+            if (!still) logger.info('reminder.dispatch.channel_withheld', { platform: origin.platform, channelId: origin.channelId, groups: groups.join(','), at: 'send' });
+            return still;
+          },
+          dm: messageFields(dmText),
+        },
+      };
+    }
     this.deps.logger.info('reminder.dispatch.channel_withheld', { platform: origin.platform, channelId: origin.channelId, groups: groups.join(',') });
     const { spaceId: _space, threadId: _thread, ...rest } = origin;
-    return { target: { ...rest, direct: true }, text: messageBody(text, '\n', REMINDER_CHANNEL_WITHHELD_NOTE) };
+    return { target: { ...rest, direct: true }, text: dmText };
   }
 
   private async composeText(

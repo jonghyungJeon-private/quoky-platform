@@ -198,6 +198,14 @@ async function deliver(n: OwnerNotification, deps: OwnerNotificationDeps): Promi
   // originating guild channel/thread only.
   if (deps.channelDelivery && n.kind === 'TEXT' && target.spaceId !== undefined) {
     const channelOutcome = await tryChannel(n, text, ownerId, deps, timeoutMs);
+    if (channelOutcome === WITHHELD) {
+      // ADR-0122 D2.6: the last-moment check refused the channel — the owner DM gets the caller's DM text instead.
+      const dm = n.channelRecheck!.dm;
+      const { content: _content, ...rest } = n;
+      const dmText = renderNotificationForDiscord({ ...rest, text: dm.text, ...(dm.content !== undefined ? { content: dm.content } : {}) });
+      if ([...dmText].length > REMINDER_LIMITS.maxDeliveredTextChars) return notSent('TEXT_TOO_LONG', false);
+      return sendDm(dmText, ownerId, deps, timeoutMs);
+    }
     if (channelOutcome) return channelOutcome;
     // Confirmed non-transmitting refusal, or target unusable/not admitted: fall back once to the owner DM.
   }
@@ -218,13 +226,16 @@ function isAdmittedGuildTarget(n: OwnerNotification, deps: OwnerNotificationDeps
  * Returns a terminal outcome, or `null` to fall back to the DM (target not admitted/unusable, or a confirmed
  * non-transmitting permission/unknown-channel refusal). An UNCERTAIN or retryable result is terminal: no fallback.
  */
+/** `tryChannel`: the caller's last-moment channel check refused (ADR-0122 D2.6). */
+const WITHHELD = Symbol('channel-withheld');
+
 async function tryChannel(
   n: OwnerNotification,
   text: string,
   ownerId: string,
   deps: OwnerNotificationDeps,
   timeoutMs: number,
-): Promise<NotificationSinkOutcome | null> {
+): Promise<NotificationSinkOutcome | typeof WITHHELD | null> {
   if (!isAdmittedGuildTarget(n, deps)) return null;
   const targetId = n.target.threadId ?? n.target.channelId;
   let channel: NotificationChannel | null;
@@ -239,6 +250,17 @@ async function tryChannel(
 
   const content = `<@${ownerId}> ${text}`;
   if (content.length > DISCORD_MESSAGE_LIMIT) return notSent('TEXT_TOO_LONG', false);
+  // ADR-0122 D2.6 (Codex P1): the caller's last-moment check, after the awaited channel resolution and right before the
+  // send, so a revoke (or a kill switch) that landed meanwhile keeps the text out of the channel. Fail closed.
+  if (n.channelRecheck !== undefined) {
+    let allowed = false;
+    try {
+      allowed = await n.channelRecheck.allows();
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) return WITHHELD;
+  }
   try {
     await sendWithTimeout(channel, { content, allowedMentions: { parse: [], users: [ownerId] } }, timeoutMs);
     return { status: 'SENT', via: 'channel' };

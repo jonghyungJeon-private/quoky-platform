@@ -18,10 +18,13 @@ describe('discordAudienceOf', () => {
     expect(discordAudienceOf({ guildId: 'g1', guild: { memberCount: 42, roles: { everyone } }, channel: { type: ChannelType.GuildText, isThread: () => false, ...viewable(true) } })).toEqual({ memberUpperBound: 42, restricted: false });
   });
 
-  it('a channel @everyone cannot view is private; a thread uses its parent; a private thread is always private', () => {
+  it('a channel @everyone cannot view is private; a thread always reports its PARENT (the grant covers the parent, CA P1)', () => {
     expect(discordAudienceOf({ guildId: 'g1', guild: { memberCount: 42, roles: { everyone } }, channel: { type: ChannelType.GuildText, isThread: () => false, ...viewable(false) } })).toEqual({ memberUpperBound: 42, restricted: true });
     expect(discordAudienceOf({ guildId: 'g1', guild: { memberCount: 7, roles: { everyone } }, channel: { type: ChannelType.PublicThread, isThread: () => true, parent: viewable(false) } })).toEqual({ memberUpperBound: 7, restricted: true });
-    expect(discordAudienceOf({ guildId: 'g1', guild: { memberCount: 7, roles: { everyone } }, channel: { type: ChannelType.PrivateThread, isThread: () => true, parent: viewable(true) } })).toEqual({ memberUpperBound: 7, restricted: true });
+    // A private thread in a public channel: the grant opens the public parent, so it is NOT reported private.
+    expect(discordAudienceOf({ guildId: 'g1', guild: { memberCount: 7, roles: { everyone } }, channel: { type: ChannelType.PrivateThread, isThread: () => true, parent: viewable(true), ...viewable(false) } })).toEqual({ memberUpperBound: 7, restricted: false });
+    // A thread whose parent is not cached: unknown privacy (never the thread's own).
+    expect(discordAudienceOf({ guildId: 'g1', guild: { memberCount: 7, roles: { everyone } }, channel: { type: ChannelType.PrivateThread, isThread: () => true, parent: null, ...viewable(false) } })).toEqual({ memberUpperBound: 7 });
   });
 
   it('nothing cached (or an unexpected shape) is "unknown", never a guess', () => {

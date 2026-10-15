@@ -25,8 +25,10 @@ export interface DiscordAudienceChannel {
 
 /**
  * ADR-0122 D4.3: the content-free audience of a guild message for the channel-grant confirmation — the server's member
- * count as an upper bound, and whether the channel is private (its `@everyone` cannot view it; a private thread always
- * is). `undefined` for a DM or when nothing is known; any unexpected shape is "unknown", never a guess.
+ * count as an upper bound, and whether the channel is private (its `@everyone` cannot view it). A grant made in a thread
+ * applies to the whole PARENT channel (the grant key has no thread, CA P1), so the audience is always the parent's, never
+ * the thread's (a private thread does not make the grant private). `undefined` for a DM or when nothing is known; any
+ * unexpected shape is "unknown", never a guess.
  */
 export function discordAudienceOf(message: DiscordAudienceSource): InboundAudience | undefined {
   if (!message.guildId) return undefined;
@@ -47,8 +49,7 @@ export function discordAudienceOf(message: DiscordAudienceSource): InboundAudien
 function restrictedOf(message: DiscordAudienceSource): boolean | undefined {
   const channel = message.channel;
   if (channel === undefined) return undefined;
-  if (channel.type === ChannelType.PrivateThread) return true;
-  const inThread = typeof channel.isThread === 'function' && channel.isThread();
+  const inThread = (typeof channel.isThread === 'function' && channel.isThread()) || channel.type === ChannelType.PrivateThread || channel.type === ChannelType.PublicThread || channel.type === ChannelType.AnnouncementThread;
   const target = inThread ? channel.parent ?? undefined : channel;
   const everyone = message.guild?.roles?.everyone;
   if (target === undefined || everyone === undefined || everyone === null || typeof target.permissionsFor !== 'function') return undefined;

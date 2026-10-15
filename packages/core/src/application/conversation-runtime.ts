@@ -2436,6 +2436,11 @@ export class ConversationRuntime {
     // and the owner's anchored channel-permission phrases, in every state, before the control handlers. Nothing is
     // recorded (like the kill switch). With `off` (or absent) the text routes exactly as before.
     const surfaceService = this.surfaceGate()?.enforced === true ? this.deps.surfaceGrants?.service : undefined;
+    // CA P2: a turn that answers an approval expiry still ends a pending grant ("any other message"); it never confirms.
+    if (surfaceService?.handleGrantPending !== undefined && expiryNotice) {
+      const ended = await surfaceService.handleGrantPending(message, session, actor, this.clock(), { cancelOnly: true });
+      if (ended?.cleared === true) session = withoutSessionMetadataKey(session, SURFACE_GRANT_PENDING_METADATA_KEY);
+    }
     if (surfaceService !== undefined && !expiryNotice) {
       const switched = await surfaceService.handleSwitchPhrase(actor, message, this.clock());
       if (switched !== undefined) return this.responded(session, outboundMessage(message.context, switched));

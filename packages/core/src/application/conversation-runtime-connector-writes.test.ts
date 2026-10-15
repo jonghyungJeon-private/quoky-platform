@@ -2366,6 +2366,25 @@ describe('surface grants: an approved write in a channel re-checks the live gran
     return { h, revokeLive: () => (live = { ...OWNER, metadata: {} }) };
   }
 
+  it('CA P2: a turn that answers an approval expiry still ends a pending channel grant (cancel only, never a confirmation)', async () => {
+    const { h } = enforced();
+    const calls: Array<{ text: string; cancelOnly: boolean }> = [];
+    (h.runtime as unknown as { deps: { surfaceGrants: Record<string, unknown> } }).deps.surfaceGrants.service = {
+      async handleSwitchPhrase() { return undefined; },
+      async handlePhrase() { return undefined; },
+      async handleGrantPending(message: { text: string }, _session: unknown, _actor: unknown, _now: unknown, options?: { cancelOnly?: boolean }) {
+        calls.push({ text: message.text, cancelOnly: options?.cancelOnly === true });
+        return options?.cancelOnly === true ? { cleared: true } : undefined;
+      },
+    };
+    await h.send('PROJ-12에 댓글: a');
+    advanceMinutes(31);
+    const expired = await h.send('허용 실행');
+    expect(expired.status).toBe('DENIED');
+    expect(calls.at(-1)).toEqual({ text: '허용 실행', cancelOnly: true });
+    expect(calls.filter((call) => call.cancelOnly)).toHaveLength(1);
+  });
+
   it('a revoke that completes while the execution turn is paused wins: nothing is consumed or sent', async () => {
     const { h, revokeLive } = enforced();
     await h.send('PROJ-12에 댓글 달아줘: 배포 완료');
