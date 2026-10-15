@@ -40,6 +40,8 @@ export interface SurfaceGrantsFeatureConfig {
 export interface SurfaceGrantsComposition {
   readonly gate: SurfaceGate;
   readonly service: SurfaceGrantService;
+  /** The live owner Actor (grants re-read at an execution step, ADR-0122 D2.5). */
+  readonly freshActor: (actorId: string) => Promise<Actor | null>;
   /** Present only while `enforce`: whether a feedback reaction in this conversation may be recorded (`memory`). */
   readonly reactionAllowed?: (context: ConversationContext) => Promise<boolean>;
   /** D6: apply the configured seed once per digest (only while `enforce`); a no-op without a seed. */
@@ -101,6 +103,7 @@ export function createSurfaceGrantsComposition(
   return {
     gate,
     service,
+    freshActor: (actorId) => metadata.get(actorId),
     ...(reactionAllowed !== undefined ? { reactionAllowed } : {}),
     async applySeed(now: string): Promise<readonly SurfaceGrantSeedResult[]> {
       const seed = config.channelGrants.seed;
@@ -127,11 +130,11 @@ export function createSurfaceGrantsComposition(
         results.push(result);
         for (const channel of result.added) {
           const channelId = parseSurfaceChannelKey(channel.key)?.channelId ?? '';
-          const reAdded = result.reAdded.find((entry) => entry.key === channel.key);
-          pendingReceipts.push({
-            target,
-            text: reAdded !== undefined ? renderSurfaceSeedReAdded(channelId, reAdded.groups) : renderSurfaceSeedApplied(channelId, channel.groups),
-          });
+          const again = result.reAdded.find((entry) => entry.key === channel.key)?.groups ?? [];
+          const fresh = channel.groups.filter((group) => !again.includes(group));
+          // Groups added for the first time get the plain line; groups the owner had revoked get the explicit one.
+          if (fresh.length > 0) pendingReceipts.push({ target, text: renderSurfaceSeedApplied(channelId, fresh) });
+          if (again.length > 0) pendingReceipts.push({ target, text: renderSurfaceSeedReAdded(channelId, again) });
         }
       }
       return results;

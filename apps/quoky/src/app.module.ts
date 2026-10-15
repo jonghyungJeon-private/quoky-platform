@@ -742,7 +742,7 @@ const application: Provider[] = [
         // ADR-0120 D14 (deps baseline 35 → 36): natural-language selection; mode `off` (the default) runs nothing.
         nlSelection,
         // ADR-0122 (deps baseline 36 → 37): the surface gate and the owner's grant phrases; mode `off` runs nothing.
-        ...(surfaceGrants !== undefined ? { surfaceGrants: { gate: surfaceGrants.gate, service: surfaceGrants.service } } : {}),
+        ...(surfaceGrants !== undefined ? { surfaceGrants: { gate: surfaceGrants.gate, service: surfaceGrants.service, freshActor: surfaceGrants.freshActor } } : {}),
         logger: coreLogger,
       }, {
         gitRemoteEnabled: config.git.remoteEnabled,

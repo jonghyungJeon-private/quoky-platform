@@ -916,14 +916,26 @@ export class ApprovalDecisionService {
    * approval → session locks a revocation takes (Codex P1 on 55c5a2f), on the live anchor and approval, then sends
    * outside them. A withdrawn grant is refused truthfully; a started one is reported, never re-sent.
    */
-  executeConnectorWrite(input: ApprovalDecisionInput, view: ConnectorWriteAnchorView): Promise<ConnectorWriteStep> {
+  executeConnectorWrite(
+    input: ApprovalDecisionInput,
+    view: ConnectorWriteAnchorView,
+    /**
+     * ADR-0122 D2.5: run inside the claim (under the approval → session locks, before the grant is consumed); it throws to
+     * refuse, and nothing is consumed or sent.
+     */
+    surfaceRecheck?: () => Promise<boolean>,
+  ): Promise<ConnectorWriteStep> {
     const flow = this.deps.connectorWriteFlow!;
     return flow.execute({
       session: input.session,
       actor: input.actor,
       view,
       now: this.clock(),
-      claim: (work) => this.exclusive(view.anchor.approvalId, input.session.id, work),
+      claim: (work) =>
+        this.exclusive(view.anchor.approvalId, input.session.id, async (held) => {
+          if (surfaceRecheck !== undefined) await surfaceRecheck();
+          return work(held);
+        }),
     });
   }
 

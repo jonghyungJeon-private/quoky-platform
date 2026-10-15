@@ -55,6 +55,7 @@ import {
 } from './connector-writes/connector-write-flow';
 import { connectorWritePayloadSha256 } from './connector-writes/connector-write-payload';
 import { ConversationRuntime, type ConversationRuntimeDeps } from './conversation-runtime';
+import { SurfaceGate } from './surface-grants/surface-gate';
 import { IntentResolver } from './intent-resolver';
 import type { MemoryWriter } from './memory-writer';
 import { PromptComposer } from './prompt-composer';
@@ -2344,5 +2345,48 @@ describe('connector writes — bare execution questions and prohibitions with a 
 
     const empty = harness();
     expect((await empty.send('실행해도 돼?')).reply.text).toContain('이 대화에는 지금 실행할 승인된 작업이 없어요');
+  });
+});
+
+// ── ADR-0122 D2.5 (Codex P1): the execution claim re-reads the live grants, not the turn's snapshot ─────────────────
+
+describe('surface grants: an approved write in a channel re-checks the live grant inside the execution claim', () => {
+  const T = '2026-10-06T00:00:00.000Z';
+  const grantedMetadata = {
+    'quoky.surfaceGrants': { v: 1, channels: { 'test:-:chan-1': { groups: { writes: { at: T, source: 'seed' }, 'jira-mine': { at: T, source: 'seed' } } } }, seeds: [] },
+  };
+  function enforced() {
+    const h = harness();
+    let live: Actor = { ...OWNER, metadata: grantedMetadata };
+    h.setActor({ ...OWNER, metadata: grantedMetadata });
+    (h.runtime as unknown as { deps: Record<string, unknown> }).deps.surfaceGrants = {
+      gate: new SurfaceGate('enforce'),
+      freshActor: async () => live,
+    };
+    return { h, revokeLive: () => (live = { ...OWNER, metadata: {} }) };
+  }
+
+  it('a revoke that completes while the execution turn is paused wins: nothing is consumed or sent', async () => {
+    const { h, revokeLive } = enforced();
+    await h.send('PROJ-12에 댓글 달아줘: 배포 완료');
+    await h.send('승인');
+    const gate = h.pauseTurn('댓글 실행');
+    const turn = h.send('댓글 실행');
+    await gate.reached;
+    revokeLive(); // the owner's revoke (another turn) lands after this turn read its actor snapshot
+    gate.release();
+    const result = await turn;
+    expect(result.reply.text).toBe("이 채널에서는 '외부 쓰기(승인)' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+    expect(h.totalWrites()).toBe(0);
+    expect(h.receipts.rows.size).toBe(0);
+    expect((h.anchorTask()?.metadata?.connectorWriteAnchor as { status: string } | undefined)?.status).toBe('APPROVED');
+  });
+
+  it('with the live grant still there, the same phrase sends once', async () => {
+    const { h } = enforced();
+    await h.send('PROJ-12에 댓글 달아줘: 배포 완료');
+    await h.send('승인');
+    await h.send('댓글 실행');
+    expect(h.writes.addComment).toHaveLength(1);
   });
 });

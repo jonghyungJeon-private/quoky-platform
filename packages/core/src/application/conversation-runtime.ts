@@ -1112,6 +1112,8 @@ export interface ConversationRuntimeDeps {
   readonly surfaceGrants?: {
     readonly gate: SurfaceGate;
     readonly service?: Pick<SurfaceGrantService, 'handlePhrase' | 'handleSwitchPhrase'>;
+    /** The live actor (grants re-read at an execution step, D2.5); absent → the turn's snapshot. */
+    readonly freshActor?: (actorId: Id) => Promise<Actor | null>;
   };
   readonly logger: Logger;
 }
@@ -1828,6 +1830,14 @@ function nlActionReceiptSource(command: NlSelectedCommand): NlItemSource | undef
   if (command.entryId.startsWith('todo.')) return 'todo';
   if (command.entryId.startsWith('reminder.')) return 'reminder';
   return command.target?.source;
+}
+
+/** ADR-0122 D2.5: thrown inside a connector-write execution claim when the live grant no longer allows the write. */
+export class SurfaceDeniedError extends Error {
+  constructor(readonly decision: Extract<SurfaceDecision, { allow: false }>) {
+    super('SURFACE_DENIED');
+    this.name = 'SurfaceDeniedError';
+  }
 }
 
 /** ADR-0122 D2.3: the anchor statuses whose pending decision intercepts every turn. */
@@ -3171,7 +3181,8 @@ export class ConversationRuntime {
         responder = handler;
       });
       if (handled) {
-        const probe = responder === undefined ? null : this.nlClassBProbe(responder, ctx);
+        // ADR-0122: a denied turn is not a grammar answer: no background selection on its text, no S1 agreement line.
+        const probe = responder === undefined || this.surfaceDenials.has(handled) ? null : this.nlClassBProbe(responder, ctx);
         if (probe !== null) this.queueGrammarHitShadow(message, session, actor, probe);
         return this.respondTurnHandler(message, session, actor, userMemory.id, handled);
       }
@@ -3389,6 +3400,11 @@ export class ConversationRuntime {
     const ctx = this.turnHandlerContext(message, session, actor, applyAnchor);
     let early: NlEarlySelection | undefined;
     for (const handler of handlers) {
+      // ADR-0122: a grammar whose claim is denied here answers with the denial before any selector call on this text.
+      const deniedClaim = this.deniedReplyClaim(handler, ctx);
+      if (deniedClaim !== undefined) {
+        return { kind: 'responded', result: await this.respondTurnHandler(message, session, actor, userMemoryId, deniedClaim) };
+      }
       if (early === undefined) {
         const probe = this.nlClassBProbe(handler, ctx);
         if (probe !== null) {
@@ -3612,8 +3628,8 @@ export class ConversationRuntime {
     if (decision === undefined) return undefined;
     if (decision.kind === 'ask') {
       // ADR-0122 D2.2: an A6 question lists the owner's items; in a channel it is the A6 DM-only copy instead.
-      const deniedAsk = this.surfaceDenied(message.context, actor, ['nl-actions'], { path: 'selection', entryId: 'action.undo' });
-      if (deniedAsk) return this.respondComposed(message, session, outboundMessage(message.context, renderNlActionDmOnly(languageOf(message.text))));
+      const deniedAsk = await this.surfaceDeniedAsk(message, session, actor, { ...decision, entryId: decision.entryId ?? 'action.undo' });
+      if (deniedAsk) return deniedAsk;
       return this.respondComposed(message, session, outboundMessage(message.context, decision.text));
     }
     if (decision.kind !== 'execute') return undefined;
@@ -3674,9 +3690,14 @@ export class ConversationRuntime {
         return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}), ...(nl.mode === 'active' ? { declined: true as const } : {}) };
       case 'unavailable':
         return { kind: 'continue', ...(honest !== undefined ? { facts: honest } : {}), ...(grammar !== undefined ? { fallback: true as const } : {}) };
-      case 'ask':
+      case 'ask': {
+        // ADR-0122 D2.2: a question about one entry (usage, preference, an A6 target with the owner's item labels) is
+        // gated like that entry; a denied A6 question also closes the pending question it saved.
+        const deniedAsk = await this.surfaceDeniedAsk(message, session, actor, decision);
+        if (deniedAsk) return { kind: 'responded', result: deniedAsk };
         this.deps.logger.info('nl selection asked', { sessionId: session.id });
         return { kind: 'responded', result: await this.respondComposed(message, session, outboundMessage(message.context, decision.text)) };
+      }
       case 'execute': {
         // ADR-0120 amendment A6: an action (or ITEM_READ) decision goes to the handler that serves its source.
         if (isNlActionEntryId(decision.command.entryId)) {
@@ -4364,7 +4385,17 @@ export class ConversationRuntime {
         if (isAcceptedExecutionPhrase(gate, message.text)) {
           // Not caught here: after the consume save a failure may follow the send, so the `handle` backstop's
           // "cannot verify" wording is the truthful one. Validation + consume share the revocation's locks (Codex P1).
-          return respond(await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view));
+          // ADR-0122 D2.5: the grant is re-read (live, not this turn's snapshot) inside the execution claim, right
+          // before the grant is consumed; a revoke that landed meanwhile wins and nothing is sent.
+          const recheck = this.channelGate(message.context) === undefined
+            ? undefined
+            : () => this.surfaceStillAllows(message.context, actor, writeGroups);
+          try {
+            return respond(await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck));
+          } catch (error) {
+            if (!(error instanceof SurfaceDeniedError)) throw error;
+            return this.surfaceDeniedTurn(message, session, error.decision);
+          }
         }
         const decision = interpretStrayDecisionUtterance(message.text);
         // Another write's execution phrase while this one waits approved: it runs nothing, and the reply names the
@@ -9038,7 +9069,9 @@ export class ConversationRuntime {
 
   /** The denial as a handler reply (control: nothing recorded; post-anchor / pre-classify: recorded like any reply). */
   private surfaceDenialOutcome(message: InboundMessage, denied: Extract<SurfaceDecision, { allow: false }>): TurnHandlerReply {
-    return { reply: outboundMessage(message.context, this.surfaceDenialText(message.text, denied)) };
+    const outcome: TurnHandlerReply = { reply: outboundMessage(message.context, this.surfaceDenialText(message.text, denied)) };
+    this.surfaceDenials.add(outcome);
+    return outcome;
   }
 
   /**
@@ -9111,6 +9144,68 @@ export class ConversationRuntime {
       }
     }
     return outcome;
+  }
+
+  /** Denial outcomes this runtime made (by identity): never a grammar answer (no c-shadow job, no agreement line). */
+  private readonly surfaceDenials = new WeakSet<TurnHandlerOutcome>();
+
+  /** Phase C: the handler's claim denied with `reply` in this channel, as the denial outcome; otherwise `undefined`. */
+  private deniedReplyClaim(handler: ConversationTurnHandler, ctx: TurnHandlerContext): TurnHandlerReply | undefined {
+    const gate = this.channelGate(ctx.message.context);
+    if (gate === undefined || typeof handler.surfaceClaim !== 'function') return undefined;
+    let claim: SurfaceClaim | null;
+    try {
+      claim = handler.surfaceClaim(ctx);
+    } catch {
+      return undefined;
+    }
+    if (claim === null || claim.onDeny !== 'reply') return undefined;
+    const decision = gate.decide(ctx.message.context, ctx.actor, claim.groups, { path: 'grammar', handlerId: handler.id });
+    return decision.allow ? undefined : this.surfaceDenialOutcome(ctx.message, decision);
+  }
+
+  /** D2.2: an `ask` about one entry, gated like that entry (A6: the A6 copy, and the saved question is closed). */
+  private async surfaceDeniedAsk(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    decision: { readonly entryId?: NlCatalogEntry['id'] },
+  ): Promise<TurnResult | undefined> {
+    if (decision.entryId === undefined || this.channelGate(message.context) === undefined) return undefined;
+    const denied = this.surfaceDenied(message.context, actor, surfaceGroupsOfSelection({ entryId: decision.entryId, args: {} }), {
+      path: 'selection',
+      entryId: decision.entryId,
+    });
+    if (denied === undefined) return undefined;
+    // The question the service saved must not be answered later in this channel.
+    try {
+      await this.deps.nlSelection?.takePending?.(session, actor.id, this.clock());
+    } catch {
+      // best-effort: an answer would still be gated at execution
+    }
+    const text = denied.reason === 'dm-only' && denied.group === 'nl-actions'
+      ? renderNlActionDmOnly(languageOf(message.text))
+      : this.surfaceDenialText(message.text, denied);
+    return this.respondComposed(message, session, outboundMessage(message.context, text));
+  }
+
+  /**
+   * D2.5: the live grant (re-read through the deps' fresh actor read, never this turn's snapshot) still allows `groups`
+   * here; otherwise it throws {@link SurfaceDeniedError}. A failed read refuses (fail closed). Logged like any decision.
+   */
+  private async surfaceStillAllows(context: ConversationContext, actor: Actor, groups: readonly SurfaceGroupId[]): Promise<boolean> {
+    const gate = this.channelGate(context);
+    if (gate === undefined) return true;
+    let fresh: Pick<Actor, 'metadata'> | null;
+    try {
+      fresh = this.deps.surfaceGrants?.freshActor !== undefined ? await this.deps.surfaceGrants.freshActor(actor.id) : actor;
+    } catch {
+      fresh = null;
+    }
+    // Fail closed: an unreadable owner is a channel without grants.
+    const decision = gate.decide(context, fresh ?? {}, groups, { path: 'approval' });
+    if (decision.allow) return true;
+    throw new SurfaceDeniedError(decision);
   }
 
   /** D2.2: the groups of a validated selection (a `jira.release` link in the owner's own non-quoted words counts). */
