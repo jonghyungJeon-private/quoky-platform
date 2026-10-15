@@ -1,5 +1,6 @@
 import type {
   ConversationTurnHandler,
+  SurfaceClaim,
   TurnHandlerContext,
   TurnHandlerProbeContext,
   TurnHandlerOutcome,
@@ -14,6 +15,7 @@ import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { isDirectConversation } from '../message-rendering';
+import { surfaceClaimOf, surfaceGroupsOfWorkChatCommand } from '../surface-grants/surface-group-map';
 import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
 import {
   EXTERNAL_WORK_EXCERPT_MAX_CHARS,
@@ -196,6 +198,22 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     if (selection === null) return null;
     const grammarId = command.kind === 'lookup' ? `work-lookup.${command.query}` : command.kind === 'todo.list' ? 'work-lookup.todo-list' : 'work-lookup.todo-summary';
     return { grammarId, selection };
+  }
+
+  /**
+   * ADR-0122 D2.1: the groups this handler's grammar would answer under — the same `detectWorkChatCommand` `handle` reads,
+   * mapped by the exhaustive work-command switch. Hint-only and status statements (`todo.hint`, `todo.status`: the desk may
+   * still decline when no open to-do matches) are `skip`. Pure: the desk is not called.
+   */
+  surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
+    let command: WorkChatCommand | null;
+    try {
+      command = detectWorkChatCommand(ctx.message.text, { yieldToSelection: ctx.grammarYield === true });
+    } catch {
+      return null;
+    }
+    if (command === null || workChatCommandMode(command) !== this.deps.mode) return null;
+    return surfaceClaimOf(surfaceGroupsOfWorkChatCommand(command), command.kind === 'todo.hint' || command.kind === 'todo.status' ? 'skip' : 'reply');
   }
 
   /** One command through the desk; `listed` is a deterministic lookup list's item count (for a count answer). */

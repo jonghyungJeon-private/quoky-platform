@@ -1,4 +1,5 @@
-import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerProbeContext, TurnHandlerReply } from '../../ports';
+import type { ConversationTurnHandler, Logger, SurfaceClaim, TurnHandlerContext, TurnHandlerProbeContext, TurnHandlerReply } from '../../ports';
+import { surfaceClaimOf } from '../surface-grants/surface-group-map';
 import { outboundMessage } from '../message-rendering';
 import { nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlSelectedCommand } from '../nl-routing/catalog';
 import { NL_HELP_TOPICS, nlWave1Entry } from '../nl-routing/wave1-entries';
@@ -104,6 +105,17 @@ export class HelpIntentTurnHandler implements ConversationTurnHandler {
       return topic !== undefined && more.length === 0 && (NL_HELP_TOPICS as readonly string[]).includes(topic) && topic !== 'all'
         ? { grammarId: HELP_INTENT_GRAMMAR_ID, selection: { entryId: 'help.topic', args: { topic } } }
         : { grammarId: HELP_INTENT_GRAMMAR_ID };
+    } catch {
+      return null;
+    }
+  }
+
+  /** ADR-0122 D2.1: Quoky's own help (`help`, always allowed); `handle` may still decline a topic with no lines. */
+  surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
+    try {
+      const topics = this.deps.topics ?? HELP_INTENT_TOPICS;
+      if (detectHelpIntent(ctx.message.text, topics) === null && detectCapabilityQuestion(ctx.message.text) === null) return null;
+      return surfaceClaimOf(['help'], 'skip');
     } catch {
       return null;
     }

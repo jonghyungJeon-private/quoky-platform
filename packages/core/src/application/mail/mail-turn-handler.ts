@@ -4,6 +4,7 @@ import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlRangeLabel, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import type {
   ConversationTurnHandler,
+  SurfaceClaim,
   TurnHandlerContext,
   TurnHandlerProbeContext,
   TurnHandlerReply,
@@ -21,6 +22,7 @@ import {
 } from '../../ports/mail-reader.port';
 import type { Id, IsoTimestamp, MessageBody } from '../../domain';
 import { isDirectConversation, outboundMessage } from '../message-rendering';
+import { surfaceClaimOf } from '../surface-grants/surface-group-map';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { localDateOf, zonedToUtcIso } from '../reminders/zoned-time';
 import {
@@ -173,6 +175,24 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
   private readonly pendingReceipts = new Map<string, PendingReceipt>();
 
   constructor(private readonly deps: MailTurnHandlerDeps) {}
+
+  /**
+   * ADR-0122 D2.1: every mail read is `mail` (DM-only); the write refusal and the usage hint read nothing (`help`). An
+   * unnamed summary outside a DM is not ours (`null`, as `handle`). A form read only as a reply to a recorded listing is
+   * `skip` (the listing check needs the session). Pure.
+   */
+  surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
+    let question = this.parseQuestion(ctx);
+    let replyBoundOnly = false;
+    if (question === null && ctx.message.replyTo !== undefined) {
+      question = this.parseQuestion(ctx, true);
+      replyBoundOnly = question !== null;
+    }
+    if (question === null) return null;
+    if (question.kind === 'summarize' && question.unnamed === true && !isDirectConversation(ctx.message.context)) return null;
+    if (question.kind === 'write-refused' || question.kind === 'usage') return surfaceClaimOf(['help']);
+    return surfaceClaimOf(['mail'], replyBoundOnly ? 'skip' : 'reply');
+  }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerSummarizeReply | null> {
     const picked = this.replyMatch(ctx);

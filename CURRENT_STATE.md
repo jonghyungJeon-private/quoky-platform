@@ -27,7 +27,18 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 learning commands and `피드백 요약` are DM-only (P0 ahead of ADR-0122 D7; DECISIONS "… owner memory/learning commands
 are DM-only"); `isDirectConversation` is fail-closed (`direct: true` only). The QA channel loses them until the ADR-0122
 grants exist. Still actor-wide in a channel, for ADR-0122: `reminder.list` and the to-do list.
-Remaining channel exposures (pre-existing; ADR-0122 P1 next): to-do list/status/complete/cancel replies and reminder listings/cancellations show DM-created titles in channels; cross-conversation connector-write hints show Jira keys/Slack channel names.
+Remaining channel exposures (pre-existing): to-do list/status/complete/cancel replies and reminder listings/cancellations show DM-created titles in channels; cross-conversation connector-write hints show Jira keys/Slack channel names. Closed by ADR-0122 P1 once `QUOKY_CHANNEL_GRANTS=enforce` is set (below).
+
+**ADR-0122 (A9) surface permission grants — Accepted 2026-10-15; P1 on branch `claude/v5-surface-grants`.** One Core
+gate for every channel turn (default deny, per-channel grants in `Actor.metadata`, one per-actor metadata lock), owner
+list / revoke phrases, kill-switch suspension, the deploy seed. Code default `QUOKY_CHANNEL_GRANTS=off` (inert,
+byte-identical; owner amendment 2026-10-15: stays `off` during development, switched to `enforce` only for permission tests with the owner's yes and back to `off` afterwards); enabling needs the owner's yes for the live `.env.local` values `QUOKY_CHANNEL_GRANTS=enforce` and
+`QUOKY_CHANNEL_GRANTS_SEED=discord:1520835639103324181:1520835639904309350=jira-mine,jira-project,github,slack-search,confluence,calendar,todo,reminder,memory,code`
+(Strict), plus the deploy checks: `quoky.actionSwitch` (a stopped switch suspends the seed from the first turn) and
+`QUOKY_REMINDERS_CHANNEL_DELIVERY` false or unset until P2's send-time check (unset live, checked 2026-10-15). P2
+next: the grant phrase with `허용 실행`, the audience line, the composite permit, reminder channel delivery, grant
+receipts, recall in channels holding `memory`, help lines, code default `enforce`. Chief Architect review required
+before merge (port and runtime dispatch change).
 
 **Pending with the owner.**
 

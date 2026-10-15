@@ -3,6 +3,7 @@ import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { nlActionEntry } from '../nl-routing/action-entries';
 import type {
   ConversationTurnHandler,
+  SurfaceClaim,
   TurnHandlerContext,
   TurnHandlerProbeContext,
   TurnHandlerReply,
@@ -25,6 +26,7 @@ import {
 } from '../../ports/drive-reader.port';
 import type { Id, IsoTimestamp, MessageBody } from '../../domain';
 import { isDirectConversation, outboundMessage } from '../message-rendering';
+import { surfaceClaimOf } from '../surface-grants/surface-group-map';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { persistListing, readPersistedListing } from '../last-listing';
 import type { SessionManager } from '../session-manager';
@@ -139,6 +141,17 @@ export class DriveTurnHandler implements ConversationTurnHandler {
   private readonly recentListings = new Map<string, RecentListing>();
 
   constructor(private readonly deps: DriveTurnHandlerDeps) {}
+
+  /**
+   * ADR-0122 D2.1: every Drive read is `drive` (DM-only); the write refusal and the usage hint read nothing (`help`). A bare
+   * `이 문서` summary is ours only while a Drive list is open in this conversation (a session check), so it is `skip`. Pure.
+   */
+  surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
+    const question = this.parseQuestion(ctx);
+    if (question === null) return null;
+    if (question.kind === 'write-refused' || question.kind === 'usage') return surfaceClaimOf(['help']);
+    return surfaceClaimOf(['drive'], question.kind === 'summarize' && !question.explicit ? 'skip' : 'reply');
+  }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerSummarizeReply | null> {
     const question = this.parseQuestion(ctx);

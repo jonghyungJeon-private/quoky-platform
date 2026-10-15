@@ -1,4 +1,5 @@
-import type { ConversationTurnHandler, Logger, TurnHandlerContext, TurnHandlerReply } from '../../ports';
+import type { ConversationTurnHandler, Logger, SurfaceClaim, TurnHandlerContext, TurnHandlerProbeContext, TurnHandlerReply } from '../../ports';
+import { surfaceClaimOf } from '../surface-grants/surface-group-map';
 import { DM_ONLY_FEATURE_TEXT, isDirectConversation, outboundBody, outboundMessage } from '../message-rendering';
 import { parseLearningCommand } from './learning-commands';
 import { LEARNING_FAILURE_TEXT } from './learning-service';
@@ -29,6 +30,15 @@ export class LearningTurnHandler implements ConversationTurnHandler {
   readonly helpLines = LEARNING_HELP_LINES;
 
   constructor(private readonly deps: LearningTurnHandlerDeps) {}
+
+  /** ADR-0122 D2.1: the owner's memory and learning commands are `memory` (the P0 DM-only rule stays as the second layer). */
+  surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
+    try {
+      return parseLearningCommand(ctx.message.text) !== null ? surfaceClaimOf(['memory']) : null;
+    } catch {
+      return null;
+    }
+  }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {
     const command = parseLearningCommand(ctx.message.text);

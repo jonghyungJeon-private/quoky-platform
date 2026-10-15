@@ -92,6 +92,7 @@ import { ExecutionOutcomeStatus, ExecutionStage } from './execution-orchestrator
 import { EXECUTION_PHRASES } from './execution-command-guard';
 import { MAX_PR_BODY_CHARS, MAX_PR_TITLE_CHARS, prDescriptionContentHash } from './code-work/pr-description';
 import type { ExecutionOutcome, ExecutionRequest } from './execution-orchestrator';
+import { SurfaceGate } from './surface-grants/surface-gate';
 import { ConversationRuntime, filterInScopeChanges, toCodeChangePreview, toCodeDiffPreview } from './conversation-runtime';
 import type {
   ApplyPreviewAnchor,
@@ -5560,6 +5561,34 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
       expect(calls.lastApplyAnchor?.status, text).toBe('GIT_PUSHED');
       expect(result.status, text).toBe('RESPONDED');
       expect(result.reply.text, text).toBe(composer.composePushExecuted(CTX, { commitHash: HEAD_SHA, remote: REMOTE, branch: BRANCH }).text);
+    }
+  });
+
+  it('ADR-0122 D2.5: a revoke that lands during the awaited push preflight wins; the push is never called (Codex race)', async () => {
+    const T = '2026-10-15T00:00:00.000Z';
+    const channel: ConversationContext = { platform: 'test', spaceId: 'g1', channelId: 'c1', userId: 'u1', direct: false };
+    const granted: Actor = { ...ACTOR, metadata: { 'quoky.surfaceGrants': { v: 1, channels: { 'test:g1:c1': { groups: { code: { at: T, source: 'seed' } } } }, seeds: [] } } };
+    for (const revokeMidway of [true, false]) {
+      const { deps, calls } = execDeps();
+      let live: Actor = granted;
+      const record = deps as unknown as Record<string, unknown>;
+      record.actors = { async resolveFromContext() { return granted; } };
+      record.surfaceGrants = { gate: new SurfaceGate('enforce'), freshActor: async () => live };
+      const git = deps.git as unknown as { info(root: string): Promise<unknown> };
+      const info = git.info.bind(git);
+      git.info = async (root) => {
+        // The owner's revoke completes while the push preflight is awaited (after the step-entry recheck).
+        if (revokeMidway) live = { ...ACTOR, metadata: {} };
+        return info(root);
+      };
+      const result = await new ConversationRuntime(deps).handle({ id: 'm1', context: channel, text: '푸시 실행해줘', receivedAt: TS });
+      if (revokeMidway) {
+        expect(calls.gitPush).toBe(0);
+        expect(result.reply.text).toBe("이 채널에서는 '코드 작업' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+        expect(calls.lastApplyAnchor?.status ?? 'PUSH_APPROVED').toBe('PUSH_APPROVED');
+      } else {
+        expect(calls.gitPush).toBe(1);
+      }
     }
   });
 

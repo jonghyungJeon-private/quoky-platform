@@ -4,6 +4,7 @@ import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import type { SessionManager } from '../session-manager';
+import { ActorMetadataStore } from '../actor-metadata-store';
 import {
   LAST_LISTING_METADATA_KEY,
   findAnyListingByReply,
@@ -16,12 +17,14 @@ import {
 import type { DeliveredTurn, TurnDeliveryObserver } from '../turn-delivery';
 import {
   isNlActionEntryId,
+  isNlCatalogEntryId as isNlCatalogEntryIdValue,
   isNlWave1EntryId,
   type NlActionEntryId,
   type NlActionReceipt,
   type NlAmbiguityKey,
   type NlArgs,
   type NlCatalogEntry,
+  type NlCatalogEntryId,
   type NlCatalogRisk,
   type NlClassBProbe,
   type NlGrammarSelection,
@@ -208,8 +211,12 @@ export type NlSelectionDecision =
    * (D7). `action` is present only for an A6 entry: the content-free audit facts the runtime completes after dispatch.
    */
   | { readonly kind: 'execute'; readonly command: NlSelectedCommand; readonly basis?: string; readonly action?: NlActionAudit }
-  /** One numbered question (D7), never chat; the pending choice is already saved. */
-  | { readonly kind: 'ask'; readonly text: string };
+  /**
+   * One numbered question (D7), never chat; the pending choice is already saved. `entryId` (ADR-0122 D2.2) names the one
+   * entry the question is about (a usage, preference or A6 question), so the runtime gates it like that entry; absent for
+   * a data-free question between several entries or a fixed cancel note.
+   */
+  | { readonly kind: 'ask'; readonly text: string; readonly entryId?: NlCatalogEntryId };
 
 export interface NlSelectionServiceDeps {
   readonly mode: NlIntentMode;
@@ -305,7 +312,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
   private shadowInFlight = false;
   private readonly shadowStarts: number[] = [];
 
+  /** ADR-0122 D3: the one per-actor metadata writer (preferences go through its lock). */
+  private readonly actorMetadata: ActorMetadataStore;
+
   constructor(private readonly deps: NlSelectionServiceDeps) {
+    this.actorMetadata = new ActorMetadataStore(deps.actors);
     this.mode = deps.mode;
     this.actionLevelValue = deps.actions?.level ?? 'off';
     this.actionCaps = deps.actions?.caps ?? new NlActionCaps();
@@ -368,6 +379,18 @@ export class NlSelectionService implements TurnDeliveryObserver {
     } catch (error) {
       this.log('warn', 'nl_selection.failed', { errorName: error instanceof Error ? error.name : typeof error });
       return { kind: 'unavailable' };
+    }
+  }
+
+  /**
+   * ADR-0122 D2.2: drop this session's open question unconditionally (a question saved during this turn included), e.g.
+   * when the surface gate refuses the question in a channel. Field-scoped on the live row; never throws.
+   */
+  async dropPending(sessionId: string): Promise<void> {
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: sessionId }, NL_PENDING_METADATA_KEY, () => undefined);
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: NL_PENDING_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
     }
   }
 
@@ -770,7 +793,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // ADR-0120 A8: an entry check may point the question at a better-fitting offered entry (its usage text only).
       const entry = (!main.ok && main.askEntryId !== undefined ? ctx.offered.get(main.askEntryId) : undefined) ?? failed;
       this.log('info', 'nl_selection.validation_failed', { entryId: failed.id, reason: main.ok ? 'ambiguous' : main.reason, ...(main.ok || main.arg === undefined ? {} : { arg: main.arg }) });
-      return { kind: 'ask', text: weekdayRefused ? renderWeekdayQuestion(entry, language) : renderUsageQuestion(entry, language) };
+      return { kind: 'ask', text: weekdayRefused ? renderWeekdayQuestion(entry, language) : renderUsageQuestion(entry, language), entryId: entry.id };
     }
     const stored = options.map((option): StoredSelection => ({ entryId: option.entry.id as StoredSelection['entryId'], args: option.args }));
     await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
@@ -833,7 +856,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         };
         await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, question));
         this.log('info', 'nl_selection.preference_asked', { key: open.key });
-        return { kind: 'ask', text: renderPreferenceQuestion(open, language) };
+        return { kind: 'ask', text: renderPreferenceQuestion(open, language), entryId };
       }
       args = { ...args, [open.arg]: preferred };
     } else if (note === undefined && explicit !== undefined) {
@@ -902,7 +925,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
     if (resolved.kind === 'unclear') {
       await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, { ...pending, at: turn.now }));
-      return { kind: 'ask', text: renderPreferenceQuestion(key, language) };
+      return { kind: 'ask', text: renderPreferenceQuestion(key, language), entryId: entry.id };
     }
     const value = pending.values[resolved.index] as string;
     await this.savePreference(turn, key.key, value);
@@ -931,7 +954,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /** One `nl_action.decided` line (content-free) and the question / refusal it answers with. */
   private actionAnswer(audit: NlActionAudit, text: string): NlSelectionDecision {
     this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
-    return { kind: 'ask', text };
+    return { kind: 'ask', text, ...(isNlCatalogEntryIdValue(audit.entryId) ? { entryId: audit.entryId } : {}) };
   }
 
   /**
@@ -1173,7 +1196,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
       if (resolved.kind === 'unclear') {
         await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, { ...pending, at: turn.now }));
-        return { kind: 'ask', text: renderPreferenceQuestion(ITEM_CONTENT_MODE, language) };
+        return { kind: 'ask', text: renderPreferenceQuestion(ITEM_CONTENT_MODE, language), entryId: 'item.summarize' };
       }
       const mode = ITEM_CONTENT_MODE.values[resolved.index]?.value;
       if (mode === undefined) return undefined;
@@ -1444,15 +1467,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /** Re-read the Actor, replace only the preferences key, save (ADR-0120 D7 wave-1 storage). */
   private async savePreference(turn: NlSelectionTurn, key: string, value: string): Promise<boolean> {
     try {
-      const actor = (await this.deps.actors.get(turn.actor.id)) ?? turn.actor;
-      const metadata = { ...(actor.metadata ?? {}) };
-      metadata[INTERPRETATION_PREFERENCES_METADATA_KEY] = withInterpretationPreference(
-        metadata[INTERPRETATION_PREFERENCES_METADATA_KEY],
-        key,
-        value,
-        turn.now,
+      // ADR-0122 D3: through the one per-actor metadata lock; only the preferences key changes on the live actor.
+      await this.actorMetadata.updateMetadataEntry(
+        turn.actor.id,
+        INTERPRETATION_PREFERENCES_METADATA_KEY,
+        (current) => withInterpretationPreference(current, key, value, turn.now),
+        turn.actor,
       );
-      await this.deps.actors.save({ ...actor, metadata });
       this.log('info', 'nl_selection.preference_saved', { key });
       return true;
     } catch (error) {

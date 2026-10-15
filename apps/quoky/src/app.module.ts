@@ -135,6 +135,7 @@ import { createDriveProviders } from './features/drive.providers';
 import { MAIL_DELIVERY_OBSERVERS, createMailProviders } from './features/mail.providers';
 import { createMemoryProviders } from './features/memory.providers';
 import { NL_SELECTION, createNlSelectionProviders } from './features/nl-selection.providers';
+import { SURFACE_GRANTS, createSurfaceGrantsProviders, type SurfaceGrantsComposition } from './features/surface-grants.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { workChatProviders } from './features/work-chat.providers';
@@ -659,6 +660,7 @@ const application: Provider[] = [
       connectorWriteFlow: ConnectorWriteFlow | null,
       providerSelection: ProviderSelectionService,
       nlSelection: NlSelectionService | undefined,
+      surfaceGrants: SurfaceGrantsComposition | undefined,
     ) => {
       // ADR-0032: production ApprovalFlow — stateless, derived from existing aggregates
       // (Session.activeTaskId → Task.planId → approvals.findByExecutionPlan → PENDING); anchors the
@@ -739,6 +741,8 @@ const application: Provider[] = [
         connectorWriteFlow: connectorWriteFlow ?? undefined,
         // ADR-0120 D14 (deps baseline 35 → 36): natural-language selection; mode `off` (the default) runs nothing.
         nlSelection,
+        // ADR-0122 (deps baseline 36 → 37): the surface gate and the owner's grant phrases; mode `off` runs nothing.
+        ...(surfaceGrants !== undefined ? { surfaceGrants: { gate: surfaceGrants.gate, service: surfaceGrants.service, freshActor: surfaceGrants.freshActor } } : {}),
         logger: coreLogger,
       }, {
         gitRemoteEnabled: config.git.remoteEnabled,
@@ -777,6 +781,7 @@ const application: Provider[] = [
       CONNECTOR_WRITE_FLOW,
       ProviderSelectionService,
       { token: NL_SELECTION, optional: true },
+      { token: SURFACE_GRANTS, optional: true },
     ],
   },
   // Thin platform-entry facade (ADR-0032): delegates to ConversationRuntime, then delivers.
@@ -790,6 +795,7 @@ const application: Provider[] = [
       feedback: FeedbackRecorder,
       mailObservers: readonly TurnDeliveryObserver[] = [],
       nlSelection?: NlSelectionService,
+      surfaceGrants?: SurfaceGrantsComposition,
     ) => {
       // ADR-0120 amendment A6: the selection service binds an action's echo ids (it records nothing while QUOKY_NL_ACTIONS
       // is off, and returns at once).
@@ -799,7 +805,15 @@ const application: Provider[] = [
       ];
       // ADR-0118 amendment (GML-2): observers registered explicitly by their feature (today: the mail handler, only when
       // Gmail is configured) are told the delivery receipt of each reply.
-      const core = new QuokyCore({ runtime, platform, logger: coreLogger, feedback, ...(deliveryObservers.length > 0 ? { deliveryObservers } : {}) });
+      const core = new QuokyCore({
+        runtime,
+        platform,
+        logger: coreLogger,
+        feedback,
+        ...(deliveryObservers.length > 0 ? { deliveryObservers } : {}),
+        // ADR-0122 D1: a 👍/👎 reaction in a channel without `memory` is dropped before anything is stored (enforce only).
+        ...(surfaceGrants?.reactionAllowed !== undefined ? { reactionAllowed: surfaceGrants.reactionAllowed } : {}),
+      });
       platform.onFeedback?.((signal) =>
         core.handleFeedbackSignal(signal).catch((err: unknown) =>
           coreLogger.warn('feedback signal handling failed', {
@@ -809,7 +823,14 @@ const application: Provider[] = [
       );
       return core;
     },
-    inject: [ConversationRuntime, PLATFORM_ADAPTER, FeedbackRecorder, { token: MAIL_DELIVERY_OBSERVERS, optional: true }, { token: NL_SELECTION, optional: true }],
+    inject: [
+      ConversationRuntime,
+      PLATFORM_ADAPTER,
+      FeedbackRecorder,
+      { token: MAIL_DELIVERY_OBSERVERS, optional: true },
+      { token: NL_SELECTION, optional: true },
+      { token: SURFACE_GRANTS, optional: true },
+    ],
   },
 ];
 
@@ -843,6 +864,12 @@ const features: Provider[] = [
   ...createProviderSelectionProviders({ config, catalog: providerCatalog, store: providerSelectionStore }),
   // ADR-0120: natural-language capability selection over the turn handlers' catalog (QUOKY_NL_INTENT_MODE, default off).
   ...createNlSelectionProviders(() => ({ nlSelection: config.nlSelection, timeZone: config.reminders.timeZone })),
+  // ADR-0122 (A9 P1): the surface gate and grant service; QUOKY_CHANNEL_GRANTS (P1 default `off`) and the deploy seed.
+  ...createSurfaceGrantsProviders(() => ({
+    channelGrants: config.channelGrants,
+    discordOwnerIds: config.discord.ownerIds,
+    telegramOwnerIds: config.telegram?.ownerIds ?? [],
+  })),
   turnHandlersProvider,
 ];
 

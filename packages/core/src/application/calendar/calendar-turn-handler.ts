@@ -1,5 +1,6 @@
 import type {
   ConversationTurnHandler,
+  SurfaceClaim,
   TurnHandlerContext,
   TurnHandlerProbeContext,
   TurnHandlerReply,
@@ -20,6 +21,7 @@ import { CALENDAR_PART_OF_DAY_VALUES, type CalendarPartOfDay } from '../nl-routi
 import { addLocalDays, zonedToUtcIso } from '../reminders/zoned-time';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { parseCalendarWriteRequest } from './calendar-write-request';
+import { surfaceClaimOf } from '../surface-grants/surface-group-map';
 import {
   calendarListedEventIds,
   renderCalendarEvents,
@@ -107,6 +109,16 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
 
   constructor(private readonly deps: CalendarTurnHandlerDeps) {
     this.helpLines = deps.writesEnabled === true ? CALENDAR_WRITE_HELP_LINES : CALENDAR_HELP_LINES;
+  }
+
+  /**
+   * ADR-0122 D2.1: a schedule question is `calendar`; a write request is `writes` plus `calendar` (its preview shows calendar
+   * data). The same parse `handle` reads; nothing is read.
+   */
+  surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
+    const question = this.parseQuestion(ctx);
+    if (question === null) return null;
+    return surfaceClaimOf(question.kind === 'write-refused' ? ['writes', 'calendar'] : ['calendar']);
   }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | TurnHandlerWriteDraft | null> {

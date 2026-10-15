@@ -27,9 +27,10 @@ export type ReminderBodyKind = 'TEXT' | 'BRIEF';
  * The kinds the owner `NotificationSink` carries (ADR-0101 D1, amended narrowly by ADR-0113 D7): the reminder body kinds,
  * plus `OPS_DECISION_RESULT` — the result of an approve/reject made in the local operations UI, delivered to the owner
  * DM only (never a channel), bounded by `REMINDER_LIMITS.maxDeliveredTextChars`, never resent automatically. It is a
- * notification kind only; no reminder is ever stored with it.
+ * notification kind only; no reminder is ever stored with it. ADR-0122 D3 adds `SURFACE_GRANT`: the one-line receipt of a
+ * channel-permission change or the deploy seed, owner DM only, never a channel, never resent.
  */
-export type OwnerNotificationKind = ReminderBodyKind | 'OPS_DECISION_RESULT';
+export type OwnerNotificationKind = ReminderBodyKind | 'OPS_DECISION_RESULT' | 'SURFACE_GRANT';
 
 /** Day of the week in the reminder's zone: 0 = Sunday … 6 = Saturday (the `Date#getUTCDay` convention). */
 export type ReminderWeekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;

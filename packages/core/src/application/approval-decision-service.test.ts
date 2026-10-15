@@ -30,6 +30,7 @@ import { StatelessApprovalFlow } from './stateless-approval-flow';
 import { StatelessScopeClarificationFlow } from './stateless-scope-clarification-flow';
 import { CREDENTIAL_OVERRIDE_DENY_COMMENT, CREDENTIAL_OVERRIDE_SEND_PHRASE } from './credential-override';
 import type { CredentialOverrideAnchor, CredentialOverrideFlow, CredentialOverrideLookup } from './credential-override';
+import { SurfaceGate } from './surface-grants/surface-gate';
 
 /**
  * ADR-0113 D7 / OPS-2b acceptance, offline: the operations UI and chat share ONE decision path. One fixture is driven
@@ -845,5 +846,64 @@ describe('every session write goes through the one shared session write lock (AD
     expect(live.activeTaskId).toBeDefined();
     expect(live.activeTaskId).not.toBe(stale.activeTaskId);
     expect((await applyFlow.findAnchor(live))).toMatchObject({ status: 'COMMIT_APPROVED', commitApprovalId: 'appr-new' });
+  });
+});
+
+// ── ADR-0122 D2.5: the approval's group is re-checked against its origin conversation at every decision step ─────────
+
+describe('surface grants: an approval in a channel re-checks `code` at the chat and the UI decision (ADR-0122 D2.5)', () => {
+  const T = '2026-10-07T00:00:00.000Z';
+  const granted = (state: 'running' | 'stopped' = 'running'): Actor => ({
+    ...OWNER,
+    identities: [],
+    metadata: {
+      'quoky.surfaceGrants': { v: 1, channels: { 'discord:guild-1:chan-1': { groups: { code: { at: T, source: 'seed' } } } }, seeds: [] },
+      ...(state === 'stopped' ? { 'quoky.actionSwitch': { state: 'stopped', at: T } } : {}),
+    },
+  });
+  function enforce(f: Fixture, actor: Actor): void {
+    const deps = (f.runtime as unknown as { deps: Record<string, unknown> }).deps;
+    deps.surfaceGrants = { gate: new SurfaceGate('enforce') };
+    deps.actors = { async resolveFromContext() { return actor; } };
+  }
+  const denial = "이 채널에서는 '코드 작업' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.";
+
+  it('UI approve after a revoke is refused (SURFACE_DENIED), nothing decided; UI reject still works', async () => {
+    const f = await fixture();
+    const reference = await chatReference(f);
+    enforce(f, OWNER);
+    expect(await decideUi(f, 'approve', reference)).toEqual({ status: 'REFUSED', refusal: 'SURFACE_DENIED' });
+    expect(f.decides).toBe(0);
+    expect((await f.manager.get(f.approvalId))?.status).toBe(ApprovalStatus.PENDING);
+    expect(await decideUi(f, 'reject')).toMatchObject({ status: 'DECIDED', outcome: 'REJECTED' });
+  });
+
+  it('UI approve with the grant decides as before; a stopped kill switch suspends it', async () => {
+    const stopped = await fixture();
+    const stoppedRef = await chatReference(stopped);
+    enforce(stopped, granted('stopped'));
+    expect(await stopped.service.decideFromOpsUi({ approvalId: stopped.approvalId, decision: 'approve', actor: granted('stopped'), reference: stoppedRef, sessions: sessionsOf(stopped) })).toEqual({ status: 'REFUSED', refusal: 'SURFACE_DENIED' });
+    const f = await fixture();
+    const reference = await chatReference(f);
+    enforce(f, granted());
+    expect(await f.service.decideFromOpsUi({ approvalId: f.approvalId, decision: 'approve', actor: granted(), reference, sessions: sessionsOf(f) })).toMatchObject({ status: 'DECIDED', outcome: 'APPROVED' });
+  });
+
+  it('chat: "승인" (and the pending reminder) in an ungranted channel gets the denial and decides nothing; "거절" still decides', async () => {
+    const f = await fixture();
+    enforce(f, OWNER);
+    expect((await f.runtime.handle(message('승인'))).reply.text).toBe(denial);
+    expect((await f.runtime.handle(message('이게 뭐였지?'))).reply.text).toBe(denial);
+    expect(f.decides).toBe(0);
+    expect((await liveAnchor(f))?.status).toBe('COMMIT_APPROVAL_PENDING');
+    await f.runtime.handle(message('거절'));
+    expect((await f.manager.get(f.approvalId))?.status).toBe(ApprovalStatus.REJECTED);
+  });
+
+  it('off (or absent) is unchanged: the chat approval decides', async () => {
+    const f = await fixture();
+    (f.runtime as unknown as { deps: Record<string, unknown> }).deps.surfaceGrants = { gate: new SurfaceGate('off') };
+    await f.runtime.handle(message('승인'));
+    expect((await f.manager.get(f.approvalId))?.status).toBe(ApprovalStatus.APPROVED);
   });
 });

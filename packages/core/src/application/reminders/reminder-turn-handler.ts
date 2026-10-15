@@ -1,10 +1,14 @@
 import type {
   ConversationTurnHandler,
+  SurfaceClaim,
   TurnHandlerContext,
+  TurnHandlerProbeContext,
   TurnHandlerReply,
 } from '../../ports/conversation-turn-handler.port';
 import type { Logger } from '../../ports/logger.port';
 import { isDirectConversation, outboundMessage } from '../message-rendering';
+import { surfaceClaimOf } from '../surface-grants/surface-group-map';
+import { parseReminderMessage } from './reminder-grammar';
 import { isNlActionEntryId, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
 import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
@@ -146,6 +150,22 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
       ...(reply.content !== undefined ? { history: { assistant: REMINDER_EVENT_HISTORY_NOTE } } : {}),
       ...(result.action !== undefined ? { nlAction: result.action } : {}),
     };
+  }
+
+  /**
+   * ADR-0122 D2.1: every reminder grammar hit (create, cancel, list, clarify, the disabled reply) is `reminder`, and an
+   * event-relative create also `calendar` (it reads the calendar). The same
+   * whole-message grammar the service reads; nothing is read or written.
+   */
+  surfaceClaim(ctx: TurnHandlerProbeContext): SurfaceClaim | null {
+    try {
+      const kind = parseReminderMessage(ctx.message.text, { now: ctx.now }).kind;
+      if (kind === 'NOT_REMINDER') return null;
+      // An event-relative reminder ("회의 10분 전에 알려줘") reads the calendar to place itself (Codex P1): both groups.
+      return surfaceClaimOf(kind === 'CREATE_EVENT_RELATIVE' ? ['reminder', 'calendar'] : ['reminder']);
+    } catch {
+      return null;
+    }
   }
 
   async handle(ctx: TurnHandlerContext): Promise<TurnHandlerReply | null> {

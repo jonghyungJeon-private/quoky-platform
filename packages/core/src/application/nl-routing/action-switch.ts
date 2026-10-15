@@ -1,5 +1,6 @@
 import type { Actor, Id, IsoTimestamp, Metadata } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
+import { ActorMetadataStore } from '../actor-metadata-store';
 
 /**
  * The persisted kill switch of natural-language actions (ADR-0120 amendment A6-D3, owner decision 8): stored in
@@ -52,9 +53,16 @@ export interface NlActionSwitchDeps {
   readonly logger: Logger;
 }
 
-/** The kill switch over the existing `ActorRepository`: re-read, merge one key, save (A6-D3). */
+/**
+ * The kill switch over the existing `ActorRepository`: re-read, merge one key, save (A6-D3), through the ONE per-actor
+ * metadata lock (ADR-0122 D3), so a racing preference or grant write never loses this key or brings an old one back.
+ */
 export class NlActionSwitch {
-  constructor(private readonly deps: NlActionSwitchDeps) {}
+  private readonly metadata: ActorMetadataStore;
+
+  constructor(private readonly deps: NlActionSwitchDeps) {
+    this.metadata = new ActorMetadataStore(deps.actors);
+  }
 
   /** The current state of `actor` (the turn's snapshot; a save made earlier in the turn is visible on the next turn). */
   state(actor: Pick<Actor, 'metadata'>): NlActionSwitchState {
@@ -64,8 +72,12 @@ export class NlActionSwitch {
   /** Persist `state` for `actorId`. Returns the saved state, or `undefined` when the write failed (logged, no content). */
   async set(actorId: Id, fallback: Actor, state: NlActionSwitchState, now: IsoTimestamp): Promise<NlActionSwitchState | undefined> {
     try {
-      const actor = (await this.deps.actors.get(actorId)) ?? fallback;
-      await this.deps.actors.save({ ...actor, metadata: withActionSwitch(actor.metadata, state, now) });
+      await this.metadata.updateMetadataEntry(
+        actorId,
+        ACTION_SWITCH_METADATA_KEY,
+        () => withActionSwitch(undefined, state, now)[ACTION_SWITCH_METADATA_KEY],
+        fallback,
+      );
       this.log('info', 'nl_action.switch', { state });
       return state;
     } catch (error) {

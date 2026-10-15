@@ -25026,3 +25026,630 @@ later DM prompt carries both; an own-memory question in a channel gets the DM-on
 learning command in a channel records only the fixed copy in the channel's history), `first-release-acceptance.test.ts`
 (the Personal v1 row "a DM memory is recalled in a channel" is inverted: never in a channel, still in a fresh DM
 session). Test fixtures that meant a DM now set `direct: true`.
+
+## ADR-0122 — Surface permission grants: in a channel, personal and connector capabilities are denied unless the owner granted their group in that channel; one Core gate keyed by (platform, channel, group) runs before every grammar, selected entry, anchored command and runtime route; grants live in `Actor.metadata` (no migration); anchored owner-only phrases with a confirmation step; an explicit, logged seed for the QA channel. Amends ADR-0096 D1/D3, ADR-0100 D2, ADR-0101 D8, ADR-0110 D3, the ADR-0110 amendment, ADR-0112 D5, ADR-0120 D1/D4/A6-D3, the ADR-0073 amendment, ADR-0107 D5 and ADR-0032 (M3 deps baseline +1).
+
+- **Status:** **Accepted 2026-10-15.** The Product Owner ratified it with "모두 권장안 (권장)": the recommended option of
+  owner decisions 1–11, 13 and 14 (decision 12 is moot: A8 shipped `jira.release` with `scope=mine` as the default). See
+  "ADR-0122 ratification record and P1 implementation note" below. Proposed earlier the same day and revised after the
+  Chief Architect design review (APPROVE WITH CHANGES, eleven points, folded in below). D7 shipped ahead as the P0
+  hotfix (#219). Plan track A9.
+- **Date:** 2026-10-15
+- **Owner sheet:** `docs/plans/a9-surface-grants-owner-sheet.md` (Korean, plain words, the decision list of this ADR).
+- **Reaffirms unchanged:** ADR-0091 (owner-only Discord admission, channel allowlist), ADR-0114 (Telegram: the
+  owner's private chat only), ADR-0117 D4 and ADR-0118 D5 (brief, mail and Drive are DM-only), the ADR-0120 A6-D1 rule
+  that natural-language actions are DM-only, ADR-0121 D5 (agent runs only in the owner's DM), ADR-0112 (exact-payload,
+  one-time approvals) and ARCHITECTURE.md §8.3 labels (`WORK_CHANNEL_OK` / `OWNER_DM_ONLY`).
+- **Relates:** ADR-0009 (Actor; this is not the `PolicyProvider` seam, see Alternatives), ADR-0102 D5 (startup
+  identity gate), ADR-0106 (memory commands), ADR-0113 (operations UI decisions), PLT-0 / PLT-1 (platform-neutral
+  content, conversation-reference spans), ADR-0120 D7 (`Actor.metadata` re-read and merge),
+  `docs/plans/agent-security-design-2026-10-13.md` (T9, MSIT ⑤-1).
+- **No conflict with `ARCHITECTURE.md`.** The gate is Core logic over existing generic fields
+  (`ConversationContext.platform`, `spaceId`, `channelId`, `direct`); Core gains no platform type and no platform or
+  provider branch (§5.1, §5.2, §12). Grants are routing and display policy for one owner, not multi-actor authorization
+  (§13 Identity row unchanged). No constitution text changes.
+
+### Context
+
+- **Owner decisions of 2026-10-15** (verbatim intent, recorded by the orchestrator):
+  1. A DM (Telegram private chat, the owner's Discord DM) is owner-only: every READ capability is allowed there, as
+     today.
+  2. A channel (a Discord guild channel; any future Slack-delivered surface) is **default deny** for personal and
+     connector data. A capability group works in a channel only if the owner granted it **in that channel**: "이 채널에
+     Jira 릴리스 조회 허용"; "이 채널 권한 보여줘" lists the grants; "…허용 해제" revokes. Only the owner can grant or
+     revoke, even if a non-owner types the phrase.
+  3. Jira's default scope is the owner's own items ("default로는 당연히 내 담당 기준"). Project-wide and release
+     listings (every assignee) are a separate, stronger group.
+  4. At deploy, the existing QA channel (Discord `1520835639904309350`, `#일반` of guild `1520835639103324181`) is
+     pre-granted the groups that work there today, so testing is not broken. This must be explicit, logged and
+     owner-approved, not a silent default.
+- **Who can reach Quoky in a channel today.** The Discord adapter admits only messages authored by an id in
+  `QUOKY_DISCORD_OWNER_IDS`, and only in DMs or in channels listed in `QUOKY_DISCORD_CHANNEL_IDS` (threads by their own
+  or their parent's id); bots and webhooks are dropped (`adapter-discord/src/index.ts`, `isAdmitted`,
+  `handleMessageCreate`). Telegram admits only the owner's own private chat (`adapter-telegram/src/admission.ts`). So
+  every turn Core sees is the owner's. **The channel risk is disclosure, not command:** whatever the owner asks for
+  in a channel is shown to every member who can read it.
+- **How DM vs channel is enforced today.** There is no central rule. `ConversationContext.direct` (PLT-0) is set by
+  both adapters; `isDirectConversation()` (`message-rendering.ts`) falls back to "no `spaceId` = direct". Four places
+  check it, each inside its own handler:
+  - `MailTurnHandler`, `DriveTurnHandler` (ADR-0118 D5): listings and summaries refused outside a DM before any read;
+  - `ReminderTurnHandler` (ADR-0117): the on-demand brief, and A6 `reminder.create` / `reminder.cancel`;
+  - `WorkChatTurnHandler.handleAction` (A6-D1): to-do actions;
+  - the runtime's kill-switch phrase (`에이전트 중지` / `에이전트 재개`) is recognized only in a DM.
+
+  The catalog's `NlCatalogEntry.dmOnly` flag is documentation: no code reads it (`grep '\.dmOnly'` finds only a test);
+  each owning handler enforces its own rule (ADR-0120 D4 step 2).
+- **What works in an allowlisted channel today** (all from the owner, all visible to channel members):
+
+  | Area | Paths (grammar, anchored command, NL selection, runtime route) |
+  |---|---|
+  | Jira, own items | "내 Jira 이슈", due this week, keyword filter (`detectLookup`, `detectJiraListing`); `jira.issues` (role assignee / reporter / either) |
+  | GitHub | my items, review requests; `github.items` |
+  | Slack search | "Slack에서 X 검색"; `slack.search` (the user token can match the owner's private channels and DMs) |
+  | Confluence search | "Confluence에서 X 검색"; `confluence.search` |
+  | Calendar reads | `calendar-question` grammar; `calendar.events` |
+  | Connector writes | Jira comment / transition / create, Slack post, calendar create / update / delete: preview and approval card in the channel (ADR-0112, ADR-0110 amendment) |
+  | To-dos | anchored `할 일 추가:` / `완료 처리:` / `할 일 취소:` / `할 일 연결:` and numbered forms; list, summary, status, hints; `todo.list` |
+  | "My work" | the combined view (to-dos + Jira + GitHub work surface) and the classifier's personal-work-surface route |
+  | Reminders | create, cancel, list (delivery goes to the owner DM unless `QUOKY_REMINDERS_CHANNEL_DELIVERY=true`); `reminder.list` |
+  | Memory and learning | `기억해:`, `기억 목록`, `기억 N 잊어줘`, 보관함; `피드백 후보`, `예시 목록`, `피드백 요약` |
+  | Code work | code change, preview, apply, git branch, project registration, analysis, tests, their approvals |
+  | Chat | general chat **with actor-scoped durable recall** (ADR-0073 amendment: memories saved in the DM are recalled in a channel), curated examples, attachments, image understanding |
+  | Help, model, reset | `도움말`, `모델 상태`, `모델 변경:`, `새 대화` |
+
+  Already DM-only (unchanged by this ADR): mail, Drive, the brief, every A6 action entry (`todo.add`,
+  `todo.complete`, `todo.cancel`, `reminder.create`, `reminder.cancel`, `action.undo`, `item.summarize`), the kill
+  switch, and the ADR-0121 agent (S2, not live).
+- **Why now.** The new `jira.release` entry (branch `claude/v5-jira-release`, ADR-0120 amendment A8) lists every
+  assignee's issues of a release. In a guild's general channel that is project data shown to the whole server. The
+  MSIT advisory (#ax-security, `agent-security-design-2026-10-13.md` §4, item ⑤-1 "limit export to work scope;
+  minimize data in responses") and the owner's "보안상으로 취약점은 막긴 해야해" call for least exposure by default.
+
+### Decision
+
+1. **D1 — A closed list of capability groups.** A Core constant (`packages/core/src/application/surface-grants/
+   surface-groups.ts`) defines every group, its class and its Korean label and aliases. Adding or widening a group, or
+   moving a path between groups, needs an amendment of this ADR.
+
+   | Group id | Label (KO) | Class | Paths it covers |
+   |---|---|---|---|
+   | `chat` | 대화 | **always** | general / policy-sensitive chat, honest chat, attachments, image understanding (but see D7 for recall) |
+   | `help` | 도움말 | **always** | `도움말`, `help.topic`, usage hints, fixed refusals that carry no data, `모델 상태` / `모델 변경:`, `새 대화` |
+   | `control` | 제어 | **always** | the grant phrases of D4, the kill switch phrase, approval decisions (re-checked against the approval's own group, D2.5) |
+   | `jira-mine` | Jira 내 담당 조회 | grantable | Jira own-item grammars and `jira.issues` (any role: assignee, reporter or either are all the owner's own); `jira.release` only with `scope=mine` **and** a named release or a release link |
+   | `jira-project` | Jira 프로젝트·릴리스 조회(전체 담당) | grantable, strong | `jira.release` otherwise (every assignee; a project's release list); any later project-wide Jira read |
+   | `github` | GitHub 조회 | grantable | GitHub grammars, `github.items`, the PR status step of the state-bound section (D2.3) |
+   | `slack-search` | Slack 검색 | grantable, strong | Slack search grammar, `slack.search` |
+   | `confluence` | Confluence 검색 | grantable | Confluence search grammar, `confluence.search` |
+   | `calendar` | 캘린더 조회 | grantable | `calendar-question`, `calendar.events` |
+   | `todo` | 할 일 | grantable | anchored and numbered to-do commands, list, summary, status, hints, `todo.list` (composite rule in D2.4) |
+   | `reminder` | 알림 | grantable | reminder create / cancel / list grammars, `reminder.list`, channel delivery (D2.6) |
+   | `memory` | 기억 | grantable | `기억해:`, memory commands, 보관함, learning commands, `피드백 요약`, 👍/👎 reaction feedback writes (ADR-0098 D3; a reaction in a channel without `memory` is dropped before anything is stored, content-free log), and durable recall in chat (D7) |
+   | `code` | 코드 작업 | grantable, strong | code change / preview / apply, git branch, project registration, analysis, tests, the credential-override approval, and every state-bound follow-up step of D2.3 (commit, push, PR creation, merge, main sync, local branch cleanup, remote branch cleanup) with their approvals; push, PR creation, merge and remote branch delete are GitHub writes, hence strong |
+   | `writes` | 외부 쓰기(승인) | grantable, strong | every connector-write draft, preview, approval and run step (Jira comment / transition / create / delete-undo, Slack post / delete-undo, calendar create / update / delete). **Also requires the read group of the same service** (`jira-mine`, `slack-search`, `calendar`), because previews and targets show that service's data |
+   | `mail` | 메일 | **DM-only** | mail grammars, `mail.list`, `item.summarize` of mail (ADR-0118 D5) |
+   | `drive` | 드라이브 | **DM-only** | Drive grammars, `drive.files`, `item.summarize` of Drive (ADR-0118 D5) |
+   | `brief` | 브리핑 | **DM-only** | `brief.today`, the on-demand brief (ADR-0117 D4) |
+   | `nl-actions` | 자연어 실행 | **DM-only** | every A6 action entry and the anchored `되돌리기` (A6-D1) |
+   | `agent` | 에이전트 | **DM-only** | ADR-0121 runs (D5) |
+
+   - **always**: allowed on every surface; not grantable, not revocable.
+   - **grantable**: allowed in a DM; in a channel only with a live grant for that channel (D3). Default: denied in every
+     channel. "Strong" groups get an extra warning line in the confirmation (D4.2).
+   - **DM-only**: allowed in a DM; never in a channel, and not grantable. A grant record that names one is ignored on
+     read. Making one grantable needs an amendment of the ADR that made it DM-only.
+   - `jira-project` does **not** imply `jira-mine` and vice versa; each is granted separately (owner decision 4).
+   - **Relation to ARCHITECTURE.md §8.3.** The DM-only class is the gate's form of the `OWNER_DM_ONLY` scope label, and
+     the grantable class refines `WORK_CHANNEL_OK`: such data may appear in a channel only where its group is granted.
+     The agent's labels (ADR-0121 D4) and this gate agree; an agent run stays DM-only either way.
+2. **D2 — One Core gate before anything runs.** `SurfaceGate` (Core, `application/surface-grants/surface-gate.ts`)
+   exposes one pure decision, `decide(context, actor, group, now) → allow | deny(reason)`, where `reason` is
+   `not-granted`, `dm-only`, `suspended` (D4.6) or `unclassified`. Handlers never read grants. The runtime calls the
+   gate at every dispatch point, before the handler or route runs:
+   1. **Turn handlers (grammars and anchored commands).** `ConversationTurnHandler` gains an optional, pure,
+      synchronous `surfaceClaim?(ctx: TurnHandlerProbeContext): SurfaceClaim | null`, the twin of `classBProbe`: the
+      group this handler would answer the message under (`null` = it would not claim it), plus `onDeny: 'reply' |
+      'skip'` (`skip` for hint-only claims such as `todo.hint`, so a denied hint falls through to the next handler or
+      chat) and the reply language. It reuses the handler's own pure parser (`detectWorkChatCommand`,
+      `parseCalendarQuestion`, the mail / Drive / reminder / memory / learning grammars). `runTurnHandlers` asks the
+      claim **before** `handle()`; a denied claim ends the turn with the denial reply (D2.7) and `handle()` is never
+      called, so no connector, store or provider is touched. **Fail closed:** in a channel, a handler without
+      `surfaceClaim` that returns a non-null outcome is treated as `unclassified` and its outcome is replaced by the
+      denial copy (and logged as a defect); the registry test requires every registered handler to implement it.
+   2. **Natural-language selection.** Before `handleSelected` (Phase A and Phase C) and before the early A6 paths
+      (`handleEarlyNlAction`, anchored `되돌리기`), the runtime maps the validated selection to its group with
+      `surfaceGroupOfSelection(entryId, args)`: a `Record<NlCatalogEntryId, …>` so a new entry is a compile error until
+      it is mapped. The selector still sees the full catalog (owner decision 9): a request for a denied group gets the
+      honest denial, not a chat answer that guesses.
+   3. **Runtime routes.** The personal-work-surface route, `기억해:`, code work (change, apply, branch, registration,
+      analysis, tests, credential override), the connector-write flow (`write-draft` outcomes from any handler) and
+      chat each pass the gate with their fixed group before they run.
+      - **The state-bound code-change section** (`conversation-runtime.ts`, roughly lines 2507–2620 at `eacd10c`: the
+        `*_APPROVAL_PENDING` decision intercepts for commit, push, PR, merge and remote branch cleanup, the preview
+        discard, and after the post-anchor handlers the `COMMIT_APPROVED`, `GIT_COMMITTED`, PR, merge, `MAIN_SYNCED`,
+        local and remote branch-cleanup and PR-status steps) runs **before** the post-anchor handlers, so D2.1 claims
+        never see it. It is gated **once, at its entry**: the runtime derives the step from the apply anchor's status
+        and the message (a pure function over the same predicates the section already uses) and calls the gate with
+        that step's group: PR status → `github`; every other step → `code` (push, PR creation, merge and remote branch
+        delete are the strong GitHub-write part of `code`). A denied step replies with the denial copy and leaves the
+        anchor unchanged. No step of the section runs ungated, and adding a step needs a row in that function (an
+        exhaustive switch over the anchor statuses).
+   4. **Composite views.** The combined "my work" view is answered under `todo`, on every path that produces it:
+      `todo.list` (grammar or selection) **and** the classifier's personal-work-surface route both claim `todo` and
+      both filter by the same permit. Its Jira and GitHub sections are read only when `jira-mine` /
+      `github` are also allowed; otherwise the section is replaced by one fixed line ("Jira·GitHub 항목은 이 채널에서
+      허용되지 않아 뺐어요") and not read. The gate hands the desk a content-free `SurfacePermit` (the set of allowed
+      groups) on `TurnHandlerContext`; the permit is the gate's decision, the desk only filters by it.
+   5. **Approvals.** An approval (connector write, code apply, commit / push / PR / merge / branch cleanup, credential
+      override) is created only after its group passed the gate. The group is re-checked against the approval's origin
+      conversation **at every later step**: each decision path (chat phrase, operations UI, ADR-0113 D7) **and** the
+      run step (the exact execution phrase of an approved commit, push, PR, merge or cleanup, and the connector-write
+      execution phrase), immediately before anything executes. A revoked grant means nothing executes and the reply is
+      the denial copy; the approval stays as it is until its own expiry. For `writes`, the re-check covers both
+      `writes` and the service's read group (D1).
+   6. **Channel delivery.** With `QUOKY_REMINDERS_CHANNEL_DELIVERY=true`, a reminder created in a channel is delivered
+      there only if that channel still holds `reminder` at send time; otherwise it goes to the owner DM (ADR-0101 D8
+      fallback). `BRIEF` and `OPS_*` stay DM-only.
+   7. **Denial reply.** Fixed text, no data, nothing read, `RESPONDED`, recorded in short-term history as the fixed
+      text:
+      - grantable, not granted: "이 채널에서는 '{label}' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이
+        채널에 허용하려면 \"이 채널에 {label} 허용\"이라고 보내 주세요." (EN twin);
+      - DM-only: the group's existing DM-only copy (`renderMailDmOnly`, `renderDriveDmOnly`, `renderBriefDmOnly`, the
+        A6 "이 작업은 DM에서만 해요…"), so the visible text and the A6 `refused/not-dm` receipt are unchanged;
+      - suspended (D4.6): "채널 권한이 지금 모두 멈춰 있어요(에이전트 중지). 아무것도 읽지 않았어요."
+   8. **Surface kind.** The gate treats a turn as a DM only when the inbound context says `direct === true`; an absent
+      flag on an inbound message is a channel (fail closed). For stored contexts (reminder delivery, approvals) the
+      existing `isDirectConversation()` fallback applies. In a DM every group passes (owner decision 1); there the
+      gate is a no-op and logs nothing.
+   9. **Defence in depth.** The handlers' own DM-only checks (mail, Drive, brief, A6) stay as a second layer. When an
+      outcome carries an `nlSelection`, the runtime asserts its entry maps to the claimed group; a mismatch replaces the
+      reply with the denial copy and logs `surface_gate.mismatch` (a defect, never expected).
+   10. **No platform or provider branch.** The gate reads only `platform` (an opaque string), `spaceId`, `channelId`,
+       `direct`, the actor and the clock. Telegram has no channels today, so the gate is a no-op there; a future Slack
+       platform adapter that sets `direct=false` is gated with no Core change.
+3. **D3 — Grant storage: `Actor.metadata`, no migration.**
+   - **Where.** `Actor.metadata['quoky.surfaceGrants']`, written through the existing `ActorRepository` with the
+     ADR-0120 D7 re-read-and-merge write (re-read the actor, replace only this key, save), exactly like
+     `quoky.actionSwitch` and `quoky.interpretationPreferences`. No table, no schema change, no migration.
+   - **Shape (content-free):**
+     `{ v: 1, channels: { "<platform>:<spaceId|->:<channelId>": { groups: { "<group>": { at, source: "owner" | "seed" } } } }, seeds: ["<seed digest>"] }`.
+     The key is the conversation's ids; a thread uses its parent channel's key (the adapters already put the parent in
+     `channelId`), so a thread inherits its channel's grants, as admission does. No channel name, member, message or
+     text is stored.
+   - **Read rules (fail closed).** A malformed record, an unknown version, an unknown or DM-only group, or a bad
+     timestamp is dropped entry by entry; a wholly malformed record means "no grants". The actor snapshot of the turn is
+     used; a grant saved in an earlier turn is visible on the next turn.
+   - **Bounds.** At most 16 channels; a 17th channel's grant is refused with a fixed reply that names the limit. Groups
+     per channel are bounded by the closed list.
+   - **One per-actor metadata lock (required).** Today `NlActionSwitch.set` (`action-switch.ts:67`) and the
+     preference save (`nl-selection-service.ts:1453`) re-read, merge and save `Actor.metadata` with no lock, so a
+     preference save that read the actor before a revoke can write the revoked grant back. A9 adds one per-actor
+     `updateMetadataEntry(actorId, key, update)` on an actor-metadata service (the `SessionManager.updateMetadataEntry`
+     pattern: re-read under a lock, replace one key, save), and **every** `Actor.metadata` writer uses it: grants,
+     seed, kill switch, interpretation preferences and any later key. A direct `actors.save` of metadata outside it
+     fails a source test. This lands in P1, before any grant can be written.
+   - **Integrity.** Only two writers exist: the grant service of D4 (an owner phrase in that very channel, after the
+     confirmation) and the startup seed of D6. Both log (D3 audit). Whoever can write the SQLite file already controls
+     the host (out of scope, as for every `Actor.metadata` key); even then the code constant of D1 keeps DM-only groups
+     closed.
+   - **Owner check.** Admission already drops every non-owner (ADR-0091, ADR-0114). The grant service additionally
+     requires that the turn's actor holds the message's `(platform, userId)` identity and is the owner Actor the
+     composition root maps the configured owner ids to; otherwise the phrase is ignored as ordinary text (no reply that
+     reveals the feature) and `surface_grant.refused reason=not-owner` is logged.
+   - **Expiry.** None (owner decision 6). A grant lasts until revoked, suspended (D4.6) or the channel leaves the
+     allowlist (then no message from it is admitted at all).
+   - **Audit.** Content-free log lines: `surface_grant.changed {op: grant|revoke|revoke-all, platform, channelId,
+     groups, source}`, `surface_grant.seeded {platform, channelId, groups, seedDigest}`, `surface_grant.refused
+     {reason}`, `surface_gate.denied {platform, channelId, group, path: grammar|selection|route|approval|delivery,
+     reason, handlerId?, entryId?}`, `surface_gate.mismatch {handlerId, claimed, entryId}`. Allowed channel decisions
+     log at debug only. No message text, no item content, no channel or user name. Each grant or revoke also sends the
+     owner a one-line DM receipt through the existing `NotificationSink` (a new DM-only kind `SURFACE_GRANT`; owner
+     decision 10), so a grant made from a stolen Discord session is visible in the owner's DM.
+4. **D4 — Grant UX: anchored, owner-only Class A phrases.** Grants change the security posture, so they are anchored
+   whole-message phrases (like `에이전트 중지`), never chosen by the selector or the chat model (owner decision 3). They
+   are recognized in every state, right after the kill-switch phrase and before the control turn handlers, only when
+   `QUOKY_CHANNEL_GRANTS=enforce`. Matching is on the NFC-normalized, whitespace-collapsed text with an optional closed
+   polite tail (`해줘`, `해 줘`, `해주세요`) and trailing `.`/`!`; quoted text, code-formatted text and attachments never
+   match (ADR-0120 D8 / A6 formatting facts). Group names match the closed aliases of D1 (case-folded; a trailing `조회`
+   or `검색` is optional; `Jira` / `지라` alone means `jira-mine`; `Jira 릴리스` / `Jira 프로젝트` / `Jira 전체` mean
+   `jira-project`).
+   1. **Grant (in the channel).** `이 채널에 <그룹>[, <그룹>…] 허용` → a confirmation, never an immediate grant.
+   2. **Confirmation.** "이 채널(<#id>)에 다음을 허용할까요? · {labels} — 이 채널을 볼 수 있는 사람은 모두 답을 볼 수
+      있어요. {audience line}. {strong-group warnings} 허용하려면 2분 안에 \"허용 실행\"이라고 보내 주세요. 다른 말을
+      보내면 취소돼요." The pending grant lives in `Session.metadata['quoky.grantPending']` (group ids, channel key,
+      expiry; no text) for 2 minutes; `허용 실행` from the owner in the same channel saves it; anything else ends it and
+      routes normally. Strong-group warnings: `slack-search` "Slack 검색 결과에는 비공개 채널·DM 메시지도 나올 수 있어요";
+      `jira-project` "다른 사람 담당 이슈와 릴리스 목록도 보여요"; `writes` "승인 카드에 보낼 내용 전체가 이 채널에 보여요".
+      `허용 실행` does not overlap the approval vocabulary (`승인`, `진행`, …; `approval-decision.ts`).
+   3. **Audience line.** The adapter may add an optional, content-free `InboundMessage.audience = { memberUpperBound?:
+      number; restricted?: boolean }` computed from its cache only (Discord: the guild's `memberCount` as an upper
+      bound; `restricted` when the channel's overwrites deny `@everyone` the view permission). No fetch, no privileged
+      `GuildMembers` intent (MSIT ③-4 least privilege). Copy: "서버 인원 최대 N명 · 비공개 채널: 예/아니오"; unknown →
+      "몇 명이 볼 수 있는지 확인하지 못했어요". Telegram never sets it.
+   4. **List.** `이 채널 권한` / `이 채널 권한 보여줘` (in a channel): the granted groups with date and source (`직접`
+      or `배포 시 사전 허용`), then the always groups and the DM-only groups ("DM에서만: 메일, 드라이브, 브리핑, 자연어
+      실행"). `채널 권한 목록` (in a DM): every channel with grants, named by the PLT-0 conversation-reference span (ids
+      only, the platform renders it), with its groups.
+   5. **Revoke.** `이 채널에 <그룹>[, …] 허용 해제` and `이 채널 권한 모두 해제` (in the channel), `모든 채널 권한 해제`
+      (in a DM): immediate, no confirmation (revoking only reduces exposure), with a fixed confirmation reply.
+   6. **Kill switch.** While `quoky.actionSwitch` is `stopped` (`에이전트 중지`), every channel grant is **suspended**:
+      the gate denies every grantable group in every channel with the `suspended` copy; grants are kept and come back
+      with `에이전트 재개` (owner decision 7). To make the switch work even when `QUOKY_NL_ACTIONS=off`, the phrase is
+      recognized whenever A6 actions **or** channel grants are enabled (narrow amendment of A6-D3), still in the owner
+      DM only.
+   7. **Wrong place or group.** The grant phrase in a DM → "채널 권한은 그 채널에서 보내 주세요. DM에서는 원래 모두 답해요.";
+      a DM-only group → "{label}은(는) DM에서만 답해요. 채널에는 허용할 수 없어요."; an unknown group name → a usage reply
+      listing the grantable labels; a full channel table → the 16-channel limit reply. None of these reads or writes
+      anything.
+   8. **Natural language.** "Jira 여기서도 보이게 해줘" is not a grant. If the selector or chat sees such a message, the
+      honest-chat rule (ADR-0098 D1 / ADR-0120 D9) answers with the exact anchored phrase; a chat reply that claims a
+      grant was made is replaced by the claim guard (the A6-D6 stale-command pattern extends to the grant phrases).
+5. **D5 — Threats and how each is closed.**
+
+   | Threat | Closure |
+   |---|---|
+   | A non-owner in the channel asks for data or types a grant phrase | Dropped by the adapter before Core (ADR-0091, `isAdmitted`): no reply, no log of the content. The grant service's owner check (D3) is a second layer. Grants only widen what **the owner's own** requests show. A future multi-user admission (Team edition) would have every grantable group denied for a non-owner actor until a policy ADR says otherwise |
+   | Impersonation (display name, nickname) | Admission compares author ids, never names |
+   | Bots, webhooks, relays, other Quoky instances | `message.author.bot` is dropped first; webhook messages are bot-authored |
+   | Forwarded messages | A Discord forward carries the original in message snapshots, not in `content`; Core sees only the owner's own text, so a forwarded grant phrase never matches. Telegram is private-only |
+   | Quoted / pasted / code-formatted phrase | Anchored whole-message match on the owner's non-quoted text; `quotedRanges` and `formatting.code` never match (ADR-0120 D8, A6) |
+   | Threads (public, private, forum posts) | Inherit the parent channel's grants, exactly like admission; a private thread may have fewer readers than its channel (only narrower) |
+   | Channel rename, move to another category, permission change | Grants are keyed by ids, so a rename changes nothing. A move or permission change can widen the audience without Quoky noticing: listed as residual R2; the owner re-checks with `이 채널 권한` |
+   | Channel deleted or removed from the allowlist | Nothing is admitted from it; its grants are dormant and visible in `채널 권한 목록`; `모든 채널 권한 해제` clears them |
+   | Private vs public channel; member count | Shown in the confirmation (D4.3) from cached data, as an upper bound; exact per-channel visibility needs the privileged member intent, which is not requested |
+   | Owner's Discord session stolen | The thief is "the owner" to admission. The DM receipt (D3) shows every grant; `에이전트 중지` suspends all grants; DM-only groups stay closed regardless |
+   | Durable memory leaking into channel chat | D7 |
+   | Stale approval after revoke | D2.5 re-check at decision |
+   | Reminder text in a channel after revoke | D2.6 send-time check |
+   | Slack | There is no Slack inbound surface; Slack data reaches a Discord channel only through `slack-search` (strong) or an approved `writes` post. A future Slack platform adapter is gated by D2.10 with no Core change; Slack channel membership would feed `audience` the same way |
+   | Telegram groups | Not admitted (ADR-0114); the gate is a no-op for private chats |
+6. **D6 — Migration of today's behaviour and the QA-channel seed.**
+   - **After deploy, in any allowlisted channel without grants:** everything in the Context table is denied with the
+     D2.7 copy, except `chat`, `help` and `control`; chat runs without durable recall and curated examples (D7). DM
+     behaviour is byte-identical to today.
+   - **The seed (explicit, logged, owner-approved).** A startup config value, parsed and validated only in
+     `apps/quoky/src/config.ts`:
+     `QUOKY_CHANNEL_GRANTS_SEED=discord:1520835639103324181:1520835639904309350=jira-mine,jira-project,github,slack-search,confluence,calendar,todo,reminder,memory,code`.
+     - Each channel must also be in `QUOKY_DISCORD_CHANNEL_IDS` (and match `DISCORD_GUILD_ID`); every group must be
+       grantable; otherwise startup fails with a typed config error that echoes no value.
+     - At startup, **after `ActorIdentityProvisioner` has saved the identities** (`apps/quoky/src/actor-identity-
+       provisioner.ts`, after its save loop at line 83) so the seed's save cannot lose them, and before the platform
+       starts, the seed is merged into
+       `quoky.surfaceGrants` with `source: "seed"` **only if** its digest (SHA-256 of the canonical value) is not yet in
+       `seeds`. It adds, never removes; a group the owner revoked later is not re-added by the same seed (same digest).
+     - It logs `surface_grant.seeded` and sends the owner one DM: "배포 시 사전 허용: <#1520835639904309350>에 {labels}.
+       해제: 그 채널에서 \"이 채널 권한 모두 해제\"."
+     - Removing the env value later changes nothing: grants are data, revoked by phrase. `모든 채널 권한 해제` and
+       `이 채널 권한 모두 해제` clear the grants but **keep** the `seeds` digest list, so the same seed never comes back.
+     - A **changed** seed value has a new digest and is applied again, which can re-add groups the owner revoked. When
+       it would re-add any group that is absent now, it still applies (the owner approved the new value) but the DM
+       says so explicitly: "배포 설정이 바뀌어 해제하셨던 {labels}을(를) <#id>에 다시 허용했어요. 원치 않으면 그 채널에서
+       '… 허용 해제'라고 보내 주세요."
+     - The value above is "what works there today" plus `jira-project` (the release listing will be tested in that
+       channel), **without `writes`**: connector-write tests grant it by phrase for the test and revoke it after (owner
+       decisions 5 and 11). The exact value is recorded in the
+       ratification record; setting it on the live host is Strict.
+   - **Rollback switch.** `QUOKY_CHANNEL_GRANTS=enforce|off` (exact values; anything else is a startup error; default
+     `enforce`). `off` restores today's behaviour exactly (no gate, phrases are ordinary text, recall unchanged) and logs
+     one startup warning. No shadow mode: in a DM nothing changes, and in the seeded channel nothing changes either, so
+     the classification is proven offline by the conformance tests (D8) instead.
+7. **D7 — Chat in a channel without `memory`: no durable recall. Shipped as a P0 hotfix ahead of A9.** The leak exists
+   today, so the Chief Architect review split it out: the P0 hotfix turns recall and curated examples off in every
+   channel (no grant exists yet); A9 then narrows that to "channels without `memory`". The ADR-0073 amendment recalls the owner's durable
+   memories in any conversation, so a memory saved in the DM can surface in a channel chat answer today. In a channel
+   that does not hold `memory`, the runtime builds the chat context with durable recall and ADR-0107 curated examples
+   switched off (a Core flag on the existing `ContextBuilder` request; the channel's own short-term transcript stays).
+   In a DM, and in a channel holding `memory`, recall is unchanged (owner decision 8).
+8. **D8 — Interfaces recorded before code (§11.7).**
+   - `packages/core/src/application/surface-grants/`: `surface-groups.ts` (D1 constants, labels, aliases),
+     `surface-grant-record.ts` (pure read / merge codec), `surface-gate.ts` (the decision), `surface-group-map.ts`
+     (`surfaceGroupOfSelection`, the work-chat command → group switch with a `never` default),
+     `surface-grant-phrases.ts` (pure parser), `surface-grant-service.ts` (pending, save, list, revoke, receipt),
+     `surface-grant-copy.ts` (fixed KO/EN copy).
+   - Port: `ConversationTurnHandler.surfaceClaim?` and `SurfaceClaim` in `conversation-turn-handler.port.ts`;
+     `TurnHandlerContext.surfacePermit?` (content-free set of allowed groups).
+   - Domain: optional `InboundMessage.audience?` (`messaging.ts`); `OwnerNotificationKind` gains `SURFACE_GRANT`.
+   - Runtime: `ConversationRuntimeDeps.surfaceGrants?` (one new optional key; ADR-0032 M3 baseline 36 → 37 on main
+     today, or 37 → 38 if `agentRuns?` lands first). Absent = `off` behaviour, so every existing runtime test is
+     unchanged.
+   - Adapter: Discord computes `audience` from cache; Telegram unchanged.
+   - Composition root: `QUOKY_CHANNEL_GRANTS`, `QUOKY_CHANNEL_GRANTS_SEED`, seed application, wiring.
+
+### Composition with the open branches
+
+- **`claude/v5-jira-release`** (A8 accepted, new READ entry `jira.release`, command kind `release`, `scope` default
+  `mine`): the `Record<NlCatalogEntryId, …>` map and the exhaustive command switch make whichever branch merges second
+  add its rows; this ADR fixes the rows (`jira.release` → `jira-mine` with `scope=mine`, the default, and a named
+  release or link; a release list or `scope=all` → `jira-project`).
+- **`claude/v5-a6-r1-fix`** (A6 completion vocabulary, undo binding): every A6 entry is `nl-actions` (DM-only); the gate
+  sits before `handleSelected` and `handleEarlyNlAction` and does not touch the A6 validator, resolver or receipts. The
+  A6-D3 phrase-recognition widening (D4.6) is a separate line in `NlSelectionService.handleSwitchPhrase`'s caller.
+
+### Amended clauses
+
+| Clause | Today | After ADR-0122 |
+|---|---|---|
+| ADR-0096 D1 (port) / D3 (dispatch) | A handler is asked only `handle()` (and `classBProbe` in Phase C) | Also `surfaceClaim()` first; the runtime calls the gate before `handle()` |
+| ADR-0100 D2 | Work lookups and to-do commands answer in any admitted conversation | In a channel only with `jira-mine` / `github` / `slack-search` / `confluence` / `todo`; composite view filtered |
+| ADR-0101 D8 | Channel delivery when the flag is on | Also requires `reminder` in that channel at send time, else the DM |
+| ADR-0110 D3; ADR-0110 amendment; ADR-0112 D5 | Calendar reads and every connector write (preview, approval) work in an admitted channel | `calendar` / `writes` grant required; approval decisions re-check |
+| ADR-0120 D1 / D4 step 2 | `dmOnly` flag enforced by each handler | Group mapping enforced by the gate first; handler checks stay as a second layer; `dmOnly: true` entries map to DM-only groups |
+| ADR-0120 A6-D3 | Kill-switch phrase recognized only while A6 actions are not `off`; stops A6 only | Also recognized while channel grants are enforced; `stopped` also suspends every channel grant |
+| ADR-0073 amendment; ADR-0107 D5 | Actor-scoped durable recall and curated examples in every conversation | P0 hotfix: off in every channel; A9: off in a channel without `memory` |
+| ADR-0046 … ADR-0060 (commit, push, PR, merge, main sync, branch cleanups, PR status) | State-bound steps run in any admitted conversation | Gated once at the section's entry by step: `code`, PR status `github`; re-checked at each run step |
+| ADR-0098 D3 | 👍/👎 reactions record feedback in any admitted location | In a channel only with `memory` |
+| ADR-0120 D7 / A6-D3 (`Actor.metadata` writes) | Re-read, merge, save without a lock | Through one per-actor metadata lock (D3) |
+| ADR-0032 M3 amendment | Deps baseline 36 (37 reserved for `agentRuns?`) | +1 for `surfaceGrants?` |
+
+### Alternatives considered
+
+- **Per-handler checks (extend today's `isDirectConversation` pattern).** Rejected: four ad-hoc checks already exist
+  and the catalog flag is unenforced; a new path (a grammar, a route, a handler) is open by default. The gate is one
+  decision with fail-closed registration.
+- **Filter the selector's catalog only.** Rejected: grammars, anchored commands and runtime routes bypass selection.
+- **Filter outputs after the handler ran.** Rejected as the primary control: the connector call (egress, MSIT ⑤) and
+  the read have already happened. Kept only as the D2.9 mismatch backstop.
+- **A per-feature channel list in the adapter or `.env` (`QUOKY_DISCORD_CHANNEL_JIRA=…`).** Rejected: feature logic in
+  an adapter, a restart per change, and no owner phrase. The seed uses config once, for the bootstrap only.
+- **A `settings` table.** Rejected: a migration (Strict) for ≤16 small records that `Actor.metadata` already holds
+  with the ratified re-read-and-merge write.
+- **The `PolicyProvider` seam (ADR-0009).** Not used: that seam is multi-actor authorization; this is one owner's
+  display policy per surface. A Team edition can later express grants as policy without changing this gate's callers.
+- **Natural-language grants.** Rejected: a model must never widen exposure; anchored phrases plus a confirmation.
+- **Immediate grant without confirmation.** Rejected: one typo in a busy channel would expose data to every member.
+- **Grants with a default expiry (e.g. 30 days).** Not recommended: the QA channel would lapse mid-testing; revocation,
+  listing, the DM receipt and the kill switch cover the risk. Offered as owner decision 6.
+
+### Consequences
+
+- **+** Default deny in every channel; the owner decides per channel and per group, by phrase, with no restart.
+- **+** One gate, fail-closed registration, an exhaustive entry map: a new capability cannot appear in a channel by
+  accident.
+- **+** DM behaviour unchanged; the seeded QA channel unchanged.
+- **+** Closes the durable-recall leak into channel chat.
+- **−** A port member on every handler and a new runtime dep; each handler's claim duplicates its parse (pure, cheap)
+  and must stay in step with `handle()` (conformance test).
+- **−** New owner-facing phrases to learn (listed in help and in the denial copy).
+- **−** The audience line is an upper bound, not the exact readers.
+
+### Residual risks
+
+- **R1 — Claim / handle drift.** A grammar change that updates `handle()` but not `surfaceClaim()`. Mitigation: the
+  claim calls the same parser; the corpus conformance test; the mismatch backstop.
+- **R2 — Audience widening after a grant** (channel moved, permissions changed, new members). Not detected. The DM
+  receipt and `이 채널 권한` keep it visible; a later version may store the audience at grant time and warn on change.
+- **R3 — Owner session compromise.** Out of Quoky's control (MSIT ③-1 MFA); D3 receipt and D4.6 suspension limit it.
+- **R4 — Metadata write race.** Closed by the per-actor lock of D3 for writers inside the process. A writer that
+  bypasses it (a future code path) is caught by the source test; another process writing the same SQLite file is out
+  of scope (one runtime per data directory).
+
+### Tests and gates
+
+- **Unit.** Group table (every group has a class, label and alias; aliases unique); record codec (malformed, unknown
+  group, DM-only group, version, caps, merge keeps other keys); gate decision table (DM / channel × class × grant ×
+  suspended × `direct` absent); selection map exhaustive (compile-time) and per-arg (`jira.release` rows); phrase
+  parser (every phrase, polite tails, aliases, quoted / code / attachment never match, near-misses, DM vs channel).
+- **Handler conformance.** Over the ADR-0096 routing corpus, the PLT-1 corpus and the NL golden texts, for every
+  production handler: `handle()` non-null ⇒ `surfaceClaim()` non-null; when the outcome has `nlSelection`, its entry
+  maps to the claimed group; a claim with `onDeny: 'reply'` ⇒ `handle()` non-null in the same state, **except** on
+  turns where an A2 grammar yields to selection (`grammarYield`, ADR-0120 A2): there `handle()` may decline, and the
+  rule is that the selected entry's group (D2.2) then governs. The registry test
+  fails if a handler lacks `surfaceClaim`.
+- **Runtime (production `AppModule`).** A channel fixture with no grants: every capability phrase of the corpus gets
+  the denial copy with **zero** connector, calendar, store-read and provider calls (spies), chat excepted; a DM fixture
+  replays the existing DM suites byte-identically; the seeded channel replays today's channel suites byte-identically;
+  grant → confirm → use → revoke → denied; confirmation TTL and cancel; 16-channel cap; thread inherits; non-owner
+  actor ignored silently; kill switch suspends and restores; composite view sections; approval revoked before
+  decision (writer spy: no call, chat and ops-UI paths); reminder channel delivery falls back to the DM; chat in an
+  ungranted channel gets no durable recall or curated example (ContextBuilder spy), in a DM unchanged.
+- **Lock.** Concurrent preference save and revoke: the revoke survives (interleaving test); a source test fails on
+  any `Actor.metadata` save outside the lock.
+- **State-bound section.** For every anchor status and step phrase in an ungranted channel: denial, anchor unchanged,
+  git / GitHub spies not called; revoke between approval and the exact execution phrase: nothing executes.
+- **Seed.** Validation errors (unknown group, DM-only group, channel not allowlisted, guild mismatch) echo no value;
+  applied once per digest; never re-adds a revoked group under the same digest (also after `모든 채널 권한 해제`); a
+  changed value that re-adds a revoked group sends the explicit DM; runs after the identity provisioner.
+- **Content-free logs.** A test asserts no message text, item title or name appears in any `surface_*` log field.
+- **Gates.** `pnpm typecheck`, the full test suite, `git diff --check`. No prompt or catalog-text change, so no D12
+  model evaluation. Independent Chief Architect review before merge (port and runtime dispatch change), Codex review.
+  Live UAT in the QA channel (Strict): seeded behaviour unchanged; revoke one group → denied; re-grant through the
+  confirmation; DM unchanged; kill switch suspend / resume.
+
+### Implementation plan (after ratification)
+
+Phased so that no phase opens a channel path that a later phase would close. A "gate plus Jira first" slice is
+rejected: it would leave every other path ungated while the switch is on.
+
+| Phase | Scope | Files | Effort |
+|---|---|---|---|
+| **P0** (hotfix, ahead of A9, separate change) | D7: durable recall and curated examples off in every channel | `context-builder.ts`, the runtime chat path | (tracked separately) |
+| **P1** | Group table, record codec, gate, selection / command / anchor-step maps; the per-actor metadata lock and moving every `Actor.metadata` writer onto it; `surfaceClaim` on all twelve registered handlers (work-chat to-do and lookup, calendar, mail, drive, reminders, memory, learning, feedback summary, git branch, help intent, the composition root's model command claiming `help`) + registry check; runtime gating of handler dispatch, selection, early A6, routes, the state-bound section, the write flow, approval decisions and run steps (chat and ops UI), reactions; denial copy; `QUOKY_CHANNEL_GRANTS=enforce|off`; the seed with its checks and DMs; `이 채널 권한` / `채널 권한 목록` and every revoke phrase; deps key; conformance and acceptance tests | `core/src/application/surface-grants/*`, `conversation-turn-handler.port.ts`, handler files, `conversation-runtime.ts`, `approval-decision-service.ts`, `action-switch.ts`, `nl-selection-service.ts`, `apps/quoky/src/config.ts`, `main.ts`, the app module | ~4 d |
+| **P2** | The grant phrase with the `허용 실행` confirmation, strong-group warnings, the Discord `audience` line, the composite "my work" permit, the reminder channel-delivery check, the DM receipts of owner grants, D7 narrowed to "without `memory`", help lines, CHANGELOG / CURRENT_STATE / implementation note | `surface-grant-service.ts`, `surface-grant-phrases.ts`, `adapter-discord/src/index.ts`, `work-chat-service.ts`, reminder dispatch, docs | ~2–3 d |
+
+Between P1 and P2 the only way to grant is the seed; P1 alone is safe to deploy (default deny, seeded QA channel,
+revocation works). Total about 7–8 focused working days.
+
+### Strict gates
+
+- **Deploy check (before enabling `enforce`):** read `quoky.actionSwitch` on the owner Actor. If it is already
+  `stopped`, every channel grant (the seed included) is suspended from the first turn; the operator reports this to the
+  owner and either resumes with `에이전트 재개` (owner's yes) or deploys knowingly suspended. The Live UAT plan starts
+  with this check.
+- Push, PR and merge; the always-on service restart; setting `QUOKY_CHANNEL_GRANTS` and the seed value in the live
+  host's `.env.local`; the seed's first application to the live runtime database (a runtime data mutation); the Live
+  UAT in the Discord QA channel. Each needs the owner's exact-scope yes. No migration and no secret is involved.
+
+### Owner decisions requested
+
+1. Adopt ADR-0122 (default deny in channels, one gate, grants per channel and group). **Recommended:** adopt.
+2. The group list and classes of D1 (11 grantable, 3 always, 5 DM-only), with the state-bound code steps in `code`
+   (PR status in `github`) and reactions in `memory`. **Recommended:** approve as listed.
+3. Grants only by anchored phrases with the `허용 실행` confirmation (2 minutes), no natural-language grants.
+   **Recommended:** approve.
+4. `jira-mine` and `jira-project` granted separately; `Jira` alone means `jira-mine`. **Recommended:** approve.
+5. Connector writes (`writes`) are grantable but strong, default deny, and need the service's read group as well.
+   Alternative: never in channels. **Recommended:** grantable, but **not** in the QA seed; grant it by phrase only for
+   a write test and revoke it after.
+6. No expiry. Alternative: a 30- or 90-day default. **Recommended:** no expiry.
+7. `에이전트 중지` also suspends every channel grant (kept, restored by `에이전트 재개`). **Recommended:** yes.
+8. Chat in a channel without `memory` runs without durable recall and curated examples. **Recommended:** yes.
+9. The selector keeps seeing the full catalog in channels, so a denied request gets the honest denial. **Recommended:**
+   yes.
+10. A one-line DM receipt for every grant and revoke. **Recommended:** yes.
+11. The QA seed value of D6 (today's read and local groups plus `jira-project`, without `writes`). **Recommended:**
+    approve as written.
+12. (Moot: A8 is accepted with `jira.release` defaulting to `scope=mine`, which matches "default로는 당연히 내 담당
+    기준". Kept only so the numbering stays stable.)
+13. Maximum 16 channels with grants. **Recommended:** approve.
+14. Rollback switch `QUOKY_CHANNEL_GRANTS=enforce|off`, default `enforce`, no shadow mode. **Recommended:** approve.
+
+### V1 / V2
+
+`[NOW]` (after ratification): D1–D8 for Discord guild channels; Telegram unaffected. `[LATER]`: audience change
+warnings (R2), optional expiry, English phrases, a Slack platform adapter (gated with no Core change), Team-edition
+policy for non-owner actors through the ADR-0009 seam.
+
+### ADR-0122 ratification record and P1 implementation note (2026-10-15)
+
+- **Ratification.** The Product Owner accepted ADR-0122 on 2026-10-15 with "모두 권장안 (권장)": the recommended option of
+  decisions 1–11, 13 and 14 (decision 12 moot). The QA seed value of decision 11 is
+  `QUOKY_CHANNEL_GRANTS_SEED=discord:1520835639103324181:1520835639904309350=jira-mine,jira-project,github,slack-search,confluence,calendar,todo,reminder,memory,code`
+  (no `writes`). Setting it, and `QUOKY_CHANNEL_GRANTS=enforce`, in the live `.env.local` stays Strict (owner's yes).
+- **Owner amendment to decision 14 (2026-10-15, Discord):** "개발 기간에는 상시 오픈으로 해두자 다만 테스트 시에 권한 테스트가 있으면 그때 off 테스트 하는걸로" — `QUOKY_CHANNEL_GRANTS` stays `off` during development (code default `off`); it is switched to `enforce` only for permission tests, each time with the owner's yes, and switched back afterwards.
+- **P1 status:** Implemented on branch `claude/v5-surface-grants` (the phasing table's P1 row). P2 (grant phrase with
+  `허용 실행`, strong warnings, Discord `audience`, the composite permit, the reminder channel-delivery check, receipts of
+  owner grants, D7 narrowed to "without `memory`", help lines) is not built.
+
+**Deploy sequencing (one deviation from decision 14's text, for the owner's confirmation).** The code default of
+`QUOKY_CHANNEL_GRANTS` is `off` in P1, not `enforce`: P1 merges inert, byte-identical to main apart from the shipped P0
+gates, until the owner sets `QUOKY_CHANNEL_GRANTS=enforce` together with the seed on the live host (Strict). Decision 14's
+ratified `enforce` therefore takes effect through that value; the code default flips to `enforce` with P2 (or earlier on
+the owner's word). `off` logs one startup warning (`surface_grants.off`); a seed configured while `off` is not applied
+(`surface_grant.seed_not_applied`).
+
+**What P1 builds (D1–D6, D8).**
+
+1. **Core module** `application/surface-grants/`: `surface-groups.ts` (the D1 table: 3 always, 11 grantable — 4 strong —,
+   5 DM-only; labels, unique aliases), `surface-grant-record.ts` (codec, fail closed entry by entry, 16-channel cap,
+   seed digest), `surface-gate.ts` (`decideSurface`, the `SurfaceGate` with content-free `surface_gate.denied` /
+   `surface_gate.mismatch` lines; allowed decisions are not logged — the `Logger` port has no debug level),
+   `surface-group-map.ts` (`Record<NlCatalogEntryId, …>`, the work-command, write-family, state-step and approval-kind
+   switches, all with `never` defaults), `surface-grant-phrases.ts`, `surface-grant-service.ts`, `surface-grant-copy.ts`.
+2. **One per-actor metadata lock (D3, before any grant can be written).** `ActorMetadataStore.updateMetadataEntry`
+   (process-wide `KeyedMutex` per actor: re-read the live actor, replace one key, save). `NlActionSwitch.set` and the
+   ADR-0120 D7 preference save use it; the grant service and the seed are the only `quoky.surfaceGrants` writers. A
+   source test fails on any `actors.save(` outside the store (allowed: `ActorManager` creation, the startup identity
+   provisioner, and the two composition files that hand the live repository to the store).
+3. **Port.** `ConversationTurnHandler.surfaceClaim?(ctx: TurnHandlerProbeContext): SurfaceClaim | null` with
+   `SurfaceClaim = { groups: [g, ...g[]]; onDeny: 'reply' | 'skip' }`. A claim lists every group that must pass (a
+   connector write is `writes` plus the service read group). All registered handlers implement it: work-chat to-do and
+   lookup, calendar, mail, Drive, reminders, memory commands, learning, feedback summary, git branch, help intent, model
+   command. Fixed copy that reads nothing claims `help` (mail / Drive write refusal and usage, the external-write
+   refusal, search usage, the branch-delete refusal). `skip` claims: `todo.hint` (ADR), `todo.status` (the desk may still
+   decline when no open to-do matches; denied, the turn falls through to chat, which reads nothing), a mail form read only
+   as a reply to a listing, a bare Drive `이 문서` summary (both need session state the probe does not carry), help intent.
+   `OwnerNotificationKind` gains `SURFACE_GRANT`. `TurnHandlerContext.surfacePermit` and `InboundMessage.audience` are P2.
+4. **Runtime (`ConversationRuntimeDeps.surfaceGrants?`, ADR-0032 baseline 36 → 37).** In a channel with `enforce`:
+   - handler dispatch (control, post-anchor, pre-classify, Phase C and c-shadow): claim first, `handle()` only when the
+     claim passes; an outcome without a claim, or a listing whose entry is outside the claim, is replaced by the denial
+     and logged (D2.9);
+   - selection (Phase A and C) and A6 (`dispatchNlAction`, the early question and the anchored `되돌리기`): the entry's
+     groups (`jira.release` rows incl. a release link in the owner's non-quoted words) before `handleSelected`; a denied
+     A6 entry answers with the A6 copy and the same `refused / not-dm` receipt;
+   - routes: `기억해:` (`memory`), the personal-work surface (see 6), project registration and analysis, execution
+     intents and the B0b status answer (`code`), connector-write drafts (`writes` + read group);
+   - **the state-bound section (D2.3):** implemented as one wrapper per step — every `return` of the section goes
+     through `stateBoundStep(kind, run)` (87 sites, rewritten mechanically; the routing predicates are unchanged, so the
+     step function cannot drift from the section). `pr-status` is `github`, every other step `code` (exhaustive switch
+     over `STATE_BOUND_STEPS`). The pending-decision intercepts (`AWAITING_APPROVAL`, `*_APPROVAL_PENDING`) are gated at
+     their entry;
+   - **approvals (D2.5):** the plan approval, scope clarification, credential override, every `*_PENDING` intercept and a
+     pending connector write re-check their group on each chat turn; "거절" / "취소" / a stop word always pass (they only
+     reduce exposure and read nothing). A connector write's later steps (choice number, the execution phrase, the
+     reminders that name the target, the finished-write phrase) re-check `writes` + read group immediately before; a
+     withdraw passes. The operations UI's approve re-checks the approval's origin conversation and refuses with the new
+     `SURFACE_DENIED` (reject still works);
+   - the pre-existing exposures found by Codex are closed under the gate: work-chat to-do list / status / hint /
+     complete / cancel / link (claims `todo`), reminder listings and cancellations (claim `reminder`, selection
+     `reminder.list`), and the cross-conversation connector-write hints (the "approved elsewhere" and recent-write
+     lookups skip any operation whose groups the channel lacks; a stray write phrase needs `writes` + read group);
+   - reactions (ADR-0098 D3): `QuokyCore.reactionAllowed` (wired only with `enforce`) drops a reaction in a channel
+     without `memory` before anything is stored.
+5. **Owner phrases (D4, P1 subset).** Recognized in every state right after the kill-switch phrase, only with `enforce`,
+   nothing recorded: `이 채널 권한 (보여줘)`, `채널 권한 목록` (DM), `이 채널에 <그룹>[, …] 허용 해제`, `이 채널 권한 모두
+   해제`, `모든 채널 권한 해제` (DM). The grant phrase `이 채널에 <그룹> 허용` is recognized and answered "채널 권한 허용
+   문장은 아직 준비 중이에요 … 지금은 배포 설정으로만 허용돼요" (P2 builds it); for the same reason the D2.7 denial copy
+   does not yet add "… 허용하려면 '이 채널에 … 허용'이라고 보내 주세요" (`SURFACE_GRANT_PHRASE_AVAILABLE = false`). A
+   channel revoke sends the one-line `SURFACE_GRANT` DM receipt. The owner check: the actor holds the message's identity
+   and it is a configured owner id (Discord or Telegram); otherwise ordinary text and `surface_grant.refused`.
+   **Kill switch (D4.6):** with `enforce` and A6 actions `off`, the grant service owns `에이전트 중지` / `재개` in the owner
+   DM (same `quoky.actionSwitch`, through the lock); with A6 on, the A6 reply gains "채널 권한도 모두 멈췄어요 / 다시
+   켰어요". `stopped` suspends every grantable group in every channel (`suspended` copy).
+6. **Interim P1 rule for the composite "my work" view.** Until the P2 permit filters its sections, `todo.list`,
+   `todo.summary` and the classifier's personal-work surface require `todo`, `jira-mine` **and** `github` (stricter than
+   D2.4, never looser). The seed holds all three, so the QA channel is unchanged.
+7. **Second layers kept (P2 relaxes them).** The P0 DM-only copy of the memory / learning / feedback-summary handlers
+   and of durable recall stays in every channel (D7's narrowing is P2), and the A8 decision 7 channel refusal of
+   every-assignee and list release requests stays in the handler even where `jira-project` is granted (the P2 permit
+   carries the grant to the handler).
+8. **Composition root.** `QUOKY_CHANNEL_GRANTS` (`enforce` | `off`, exact) and `QUOKY_CHANNEL_GRANTS_SEED`
+   (`discord:<guild>:<channel>=<groups>[;…]`; each channel in `QUOKY_DISCORD_CHANNEL_IDS`, the guild equal to
+   `DISCORD_GUILD_ID`, grantable groups only, ≤ 16 channels; typed value-free errors with startup hints). The seed is
+   applied in `main.ts` right after `ActorIdentityProvisioner.provision()` and before the platform starts, once per digest
+   (adds only; a revoked group is not re-added by the same seed, also after `모든 채널 권한 해제`; a changed value re-adds
+   and the DM says so); it needs the owner Actor (a fresh install skips it until the next start). The DM lines are sent
+   once the platform is up. Revoking and clearing keep the seed digests.
+
+**Tests.** Core: gate decision table (every group × DM / channel granted / not granted / revoked / suspended / other
+channel / thread / flag absent × enforce / off), record codec and caps, seed digest rules, group table and aliases,
+every map (all catalog ids, release rows, write operations, state steps, approval kinds), phrases (forms, polite tails,
+near-misses, quoted / code / multi-line / attachment), the grant service (list, revoke, receipts, owner check, kill
+switch, seed, content-free logs), the metadata lock (a revoke and a preference save interleaved: the revoke survives; the
+production switch and preference writers share the lock) and the source rule, approval decisions in a channel (chat and
+ops UI: refused after a revoke and while suspended, reject passes, `off` unchanged). Apps (production `AppModule`, 517
+corpus cases from the turn-handler routing, action-shaped and precedence corpora plus 22 capability phrases, clock fixed
+per case): `off` byte-identical to no surface dep (DM and channel), `enforce` DM byte-identical to `off`, a channel with the
+QA seed groups byte-identical to `off` except the `writes` requests, a channel without grants either unchanged (chat,
+help, control) or the denial with zero provider calls, calendar reads and desk calls, and every post-push anchor left
+unchanged; the env seed (once, the DM line), revoke with thread inheritance, the kill switch, `기억해:`, a revoke between
+`PUSH_APPROVED` and the exact push phrase (no git call, anchor unchanged), PR status needing `github`, the reaction gate,
+and the claim conformance of every registered handler over the corpora. Config: the switch and seed validation.
+
+**P1 review round (Chief Architect APPROVE WITH CHANGES and Codex, 2026-10-15), fixed on the same branch.**
+
+- **Deploy packet (D2.6 is P2).** Until P2 builds the send-time check, `QUOKY_CHANNEL_GRANTS=enforce` requires
+  `QUOKY_REMINDERS_CHANNEL_DELIVERY=false` (or unset): with channel delivery on, a reminder created in a granted channel
+  would still be delivered there after a revoke. Checked read-only on 2026-10-15: the key is not set in the live
+  `.env.local` nor in the launchd plist (default `false`). The deploy check now has two items: `quoky.actionSwitch` and
+  this key. The decision-14 code default (`off` in P1) is with the owner separately.
+- **A6 and selection questions are gated.** `NlSelectionDecision.ask` carries the `entryId` it is about (usage,
+  preference and every A6 question); the runtime gates it like that entry, answers a denied A6 question with the A6
+  DM-only copy and closes the pending question it saved (Phase A, Phase C and the early A6 path).
+- **c-shadow.** A denied turn is not a grammar answer: no background selection is queued on its text and no S1
+  agreement line is written. **Phase C:** a grammar whose `reply` claim is denied answers with the denial before any
+  selector call on the text.
+- **Connector-write execution (Codex P1).** The exact execution phrase re-reads the live grants (the owner Actor through
+  the `ActorMetadataStore`, `ConversationRuntimeDeps.surfaceGrants.freshActor`, no new deps key) inside the execution
+  claim, under the approval → session locks and before the grant is consumed; a revoke that completed after the turn read
+  its snapshot wins (`SurfaceDeniedError`, nothing consumed or sent, the denial copy). Unconditional in a channel with
+  `enforce`.
+- **Event-relative reminders (Codex P1).** "회의 10분 전에 알려줘" reads the calendar, so the reminder claim is
+  `reminder` + `calendar` for `CREATE_EVENT_RELATIVE`.
+- **Seed DM precision (P3).** The record keeps an additive, content-free `revoked: { "<channel key>": [groups] }` (the
+  owner's revokes not granted again since); a changed seed reports as "해제하셨던 … 다시 허용" only those groups, new
+  groups get the plain line.
+- **Tests added.** A source rule that fails on any unwrapped `return` of the state-bound section (and checks the
+  pending-intercept gate set); the channel pass of the claim conformance test; an `enforce` ungranted-channel run of the
+  nl-intent corpus with a stub selector in Phase A, Phase C and c-shadow (identical to `off` or the denial with nothing
+  read and nothing queued; c-shadow jobs proven to run with the gate off); an A6 question in a channel; the execution
+  race (revoke while the execution turn is paused); the event-relative reminder; the seed DM lines.
+
+**P1 revoke races — final narrow fix and accepted residual (orchestrator decision, 2026-10-15).** Strong side effects
+re-read the live grants (the owner Actor through the `ActorMetadataStore`) as the last statement before the external
+call, after every awaited preflight: git push, PR creation, merge, remote branch delete, and the connector-write send
+(before the request is prepared; a refusal there is recorded NOT_SENT). The state-bound step entry and the connector-write
+execution claim keep their live re-read too. **Residual (accepted):** a revoke that lands while a turn is already in
+flight takes effect from the next step or turn for READS — grammar claims and selections use the turn-start actor
+snapshot; strong writes are always re-checked at the call. The feature ships with `QUOKY_CHANNEL_GRANTS` default `off`
+(owner: off during development). Tests: a revoke during the awaited push preflight (no push), and during the
+connector-write reconcile (no send).

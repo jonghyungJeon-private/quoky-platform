@@ -421,7 +421,7 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect((asked as { text: string }).text).toContain('1. Jira 이슈 조회');
     expect(ungrounded.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ options: [{ entryId: 'jira.issues', args: {} }] });
     const missing = harness({ script: [out('slack.search', {})] });
-    expect(await missing.decide('슬랙 좀 봐줘')).toEqual({ kind: 'ask', text: 'Slack 검색에서 무엇을 찾을지 정확히 모르겠어요. "Slack에서 배포 검색"처럼 말씀해 주세요.' });
+    expect(await missing.decide('슬랙 좀 봐줘')).toEqual({ kind: 'ask', entryId: expect.any(String), text: 'Slack 검색에서 무엇을 찾을지 정확히 모르겠어요. "Slack에서 배포 검색"처럼 말씀해 주세요.' });
   });
 
   it('a follow-up refines lastSelection; a keyword grounded only in the previous args is accepted', async () => {
@@ -492,7 +492,7 @@ describe('NlSelectionService — the interpretation preference (D7: ask once, 30
     const h = harness({ script: [created, created] });
     const asked = await h.decide('오늘 jira 이슈 등록된거 브리핑해줘');
     expect(asked).toEqual({
-      kind: 'ask',
+      kind: 'ask', entryId: expect.any(String),
       text: '"등록된 이슈"를 어떤 기준으로 볼까요? 한 번 정하면 30일 동안 같은 기준을 쓸게요.\n1. 내가 담당자인 이슈\n2. 내가 보고자(등록자)인 이슈\n3. 둘 다 (담당 또는 보고)\n번호로 답해 주세요.',
     });
     const answered = await h.decide('3', { now: at(30_000) });
@@ -704,7 +704,7 @@ describe('ADR-0120 A5 implementation note 2: a period that loses the owner\'s we
   it('the question names the week and the day, and an identical retry calls the selector again (no cached refusal)', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'next-mon' }), out('calendar.events', { range: 'next-wed' })] });
     expect(await h.decide('다음 주 수 일정 있어?')).toEqual({
-      kind: 'ask',
+      kind: 'ask', entryId: expect.any(String),
       text: '캘린더 일정 조회에서 어느 날을 볼지 정확히 모르겠어요. "다음 주 수요일"처럼 주와 요일을 함께 말씀해 주세요.',
     });
     expect(await h.decide('다음 주 수 일정 있어?', { now: at(1000) })).toMatchObject({ kind: 'execute', command: { args: { range: 'next-wed' } } });
@@ -724,7 +724,7 @@ describe('ADR-0120 A5 implementation note 2: a period that loses the owner\'s we
   it('live 2026-10-14 16:48: the weekday read as a keyword ("다음 주" + keyword "수") asks with the weekday hint too', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'next-week', keyword: '수' }), out('calendar.events', { range: 'next-wed' })] });
     expect(await h.decide('다음 주 수 일정 있어?')).toEqual({
-      kind: 'ask',
+      kind: 'ask', entryId: expect.any(String),
       text: '캘린더 일정 조회에서 어느 날을 볼지 정확히 모르겠어요. "다음 주 수요일"처럼 주와 요일을 함께 말씀해 주세요.',
     });
     expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
@@ -755,7 +755,7 @@ describe('ADR-0120 A5 implementation note 2: a period that loses the owner\'s we
   it('a refused time keyword without a weekday form keeps the usage question, even when the message names the day', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'next-wed', keyword: '오후' })] });
     const asked = await h.decide('다음 주 수요일 오후 일정');
-    expect(asked).toEqual({ kind: 'ask', text: '캘린더 일정 조회에서 무엇을 찾을지 정확히 모르겠어요. "오늘 일정"처럼 말씀해 주세요.' });
+    expect(asked).toEqual({ kind: 'ask', entryId: expect.any(String), text: '캘린더 일정 조회에서 무엇을 찾을지 정확히 모르겠어요. "오늘 일정"처럼 말씀해 주세요.' });
     expect(h.logs.find((log) => log.event === 'nl_selection.validation_failed')?.fields).toMatchObject({ reason: 'time-keyword', arg: 'keyword' });
     const full = harness({ script: [out('calendar.events', { range: 'next-week', keyword: '수요일' })] });
     expect(await full.decide('다음 주 수요일 일정')).toMatchObject({ kind: 'ask', text: expect.stringContaining('주와 요일을 함께') });
@@ -764,7 +764,7 @@ describe('ADR-0120 A5 implementation note 2: a period that loses the owner\'s we
   it('a time word taken as a keyword in a message that names no weekday keeps the usage question', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'tomorrow', keyword: '내일 오후' })] });
     expect(await h.decide('내일 오후 일정 알려줘')).toEqual({
-      kind: 'ask',
+      kind: 'ask', entryId: expect.any(String),
       text: '캘린더 일정 조회에서 무엇을 찾을지 정확히 모르겠어요. "오늘 일정"처럼 말씀해 주세요.',
     });
   });
