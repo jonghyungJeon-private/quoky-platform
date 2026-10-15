@@ -92,6 +92,8 @@ export interface SearchQueryParams {
  */
 export interface ReleasesQueryParams {
   container: string;
+  /** At most this many releases (1..CONNECTOR_CATALOG_MAX_ITEMS, default the maximum); the adapter stops paging there. */
+  limit?: number;
 }
 
 /**
@@ -313,6 +315,7 @@ export function parseSearchParams(params: Metadata | undefined, source = 'connec
 
 export interface ParsedReleasesParams {
   container: string;
+  limit: number;
 }
 
 /** Validates `releases` params (ADR-0120 A8). Failures are value-free `UNSUPPORTED_QUERY` errors. */
@@ -321,7 +324,11 @@ export function parseReleasesParams(params: Metadata | undefined, source = 'conn
   if (typeof container !== 'string' || !CONNECTOR_CONTAINER_KEY.test(container)) {
     throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: a valid container key is required`);
   }
-  return { container };
+  const limit = params?.limit ?? CONNECTOR_CATALOG_MAX_ITEMS;
+  if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > CONNECTOR_CATALOG_MAX_ITEMS) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: invalid release limit`);
+  }
+  return { container, limit };
 }
 
 export interface ParsedReleaseItemsParams {

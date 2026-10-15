@@ -22,8 +22,8 @@ export interface ConnectorItem {
   /** ADR-0120 amendment A8: the assignee's display name (`release-items`); absent when unassigned or not exposed. */
   assignee?: string;
   /**
-   * ADR-0120 amendment A8: the provider-neutral status group of a work item (`release-items`): to do, in progress or
-   * done. For a release (`releases`): `released` or `unreleased` is in `status`; this stays absent.
+   * ADR-0120 amendment A8: the provider-neutral status group of a work item (`release-items` only): to do, in progress
+   * or done. Absent when the source does not say. (A `releases` item carries `released` / `unreleased` in `status`.)
    */
   statusCategory?: 'todo' | 'in-progress' | 'done';
   raw?: Metadata;

@@ -106,8 +106,13 @@ describe('release-items (A8)', () => {
   it('a complete page is not partial; a 400 (unknown version) is NOT_FOUND; a 401 stays UNAUTHORIZED', async () => {
     const complete = scripted([{ body: { isLast: true, issues: [] } }]);
     expect((await jira(complete.fetchImpl).query({ query: 'release-items', params: { releaseName: '20261015' } })).truncated).toBeUndefined();
-    const unknown = scripted([{ status: 400, body: { errorMessages: ['no such version'] } }]);
+    const unknown = scripted([{ status: 400, body: { errorMessages: ["The value 'nope' does not exist for the field 'fixVersion'."] } }]);
     await expect(jira(unknown.fetchImpl).query({ query: 'release-items', params: { releaseName: 'nope' } })).rejects.toMatchObject({ reason: 'NOT_FOUND' });
+    // Any other 400 (not about the fix version) is not "not found".
+    const other = scripted([{ status: 400, body: { errorMessages: ["Error in the JQL Query: expecting ')'"] } }]);
+    await expect(jira(other.fetchImpl).query({ query: 'release-items', params: { releaseName: 'x' } })).rejects.toMatchObject({ reason: 'INVALID_RESPONSE' });
+    const empty = scripted([{ status: 400, body: 'not json' }]);
+    await expect(jira(empty.fetchImpl).query({ query: 'release-items', params: { releaseName: 'x' } })).rejects.toMatchObject({ reason: 'INVALID_RESPONSE' });
     const denied = scripted([{ status: 401, body: {} }]);
     await expect(jira(denied.fetchImpl).query({ query: 'release-items', params: { releaseName: 'x' } })).rejects.toMatchObject({ reason: 'UNAUTHORIZED' });
   });
@@ -161,6 +166,15 @@ describe('containers and releases (A8)', () => {
       { id: '16600', title: '20261022', status: 'unreleased', container: 'OP26', url: 'https://example.atlassian.net/projects/OP26/versions/16600/tab/release-report-all-issues', dueDate: '2026-10-22' },
       { id: '16555', title: '20261015', status: 'released', container: 'OP26', url: 'https://example.atlassian.net/projects/OP26/versions/16555/tab/release-report-all-issues', dueDate: '2026-10-15' },
     ]);
+  });
+
+  it('stops at the release limit (first page only for narrowing)', async () => {
+    const fake = scripted([{ body: { isLast: false, values: Array.from({ length: 50 }, (_, i) => ({ id: String(100 + i), name: `v${i}` })) } }]);
+    const result = await jira(fake.fetchImpl).query({ query: 'releases', params: { container: 'OP26', limit: 50 } });
+    expect(fake.urls).toHaveLength(1);
+    expect(result.items).toHaveLength(50);
+    expect(result.truncated).toBe(true);
+    await expect(jira(fake.fetchImpl).query({ query: 'releases', params: { container: 'OP26', limit: 201 } })).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
   });
 
   it.each([['op26'], ['OP26/../x'], ['OP26?x=1'], [''], [undefined]])('refuses the container %j before any request', async (container) => {

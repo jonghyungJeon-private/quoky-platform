@@ -183,13 +183,13 @@ export class JiraConnectorProvider implements ConnectorProvider {
    * (`/rest/api/3/project/{key}/version`, read-only), at most CONNECTOR_CATALOG_MAX_ITEMS.
    */
   private async releases(params: Metadata | undefined): Promise<ConnectorResult> {
-    const { container } = parseReleasesParams(params, 'jira connector');
+    const { container, limit } = parseReleasesParams(params, 'jira connector');
     const items: ConnectorItem[] = [];
     let truncated = false;
     for (let startAt = 0; ; startAt += CATALOG_PAGE_SIZE) {
       const url = new URL(`/rest/api/3/project/${encodeURIComponent(container)}/version`, this.baseUrl);
       url.searchParams.set('startAt', String(startAt));
-      url.searchParams.set('maxResults', String(CATALOG_PAGE_SIZE));
+      url.searchParams.set('maxResults', String(Math.min(CATALOG_PAGE_SIZE, limit)));
       url.searchParams.set('orderBy', '-sequence');
       url.searchParams.set('status', 'released,unreleased');
       const page = pageOf(await this.getJson(url));
@@ -208,18 +208,19 @@ export class JiraConnectorProvider implements ConnectorProvider {
         items.push(item);
       }
       if (page.last || page.values.length === 0) break;
-      if (items.length >= CONNECTOR_CATALOG_MAX_ITEMS || startAt + CATALOG_PAGE_SIZE >= CONNECTOR_CATALOG_MAX_ITEMS) {
+      if (items.length >= limit || startAt + CATALOG_PAGE_SIZE >= limit) {
         truncated = true;
         break;
       }
     }
-    return { source: this.source, items: items.slice(0, CONNECTOR_CATALOG_MAX_ITEMS), ...(truncated ? { truncated } : {}) };
+    return { source: this.source, items: items.slice(0, limit), ...(truncated ? { truncated } : {}) };
   }
 
   /**
    * ADR-0120 A8: the issues of one release (fix version), any assignee unless `assignee` is set. The JQL is built from
    * a validated project key, a numeric version id or a quoted, escaped version name, and a quoted identity; nothing else.
-   * A 400 for a version name or id means Jira does not know that version for this account: `NOT_FOUND`.
+   * A 400 whose error names the fix version (the value does not exist or is not visible to this account) is
+   * `NOT_FOUND`; any other 400 is `INVALID_RESPONSE`. The error text is inspected, never kept or returned.
    */
   private async releaseItems(params: Metadata | undefined): Promise<ConnectorResult> {
     const parsed = parseReleaseItemsParams(params, 'jira connector');
@@ -227,15 +228,9 @@ export class JiraConnectorProvider implements ConnectorProvider {
     url.searchParams.set('jql', releaseItemsJql(parsed));
     url.searchParams.set('fields', RELEASE_ITEM_FIELDS);
     url.searchParams.set('maxResults', String(parsed.limit));
-    let payload: unknown;
-    try {
-      payload = await this.getJson(url);
-    } catch (error) {
-      if (error instanceof JiraConnectorHttpError && error.status === 400) {
-        throw new ConnectorQueryError('NOT_FOUND', 'jira connector: release not found');
-      }
-      throw error;
-    }
+    const payload = await this.getJson(url, (status, body) =>
+      status === 400 ? (namesFixVersion(body) ? new ConnectorQueryError('NOT_FOUND', 'jira connector: release not found') : new JiraConnectorResponseError()) : undefined,
+    );
     if (!isRecord(payload) || !Array.isArray(payload.issues)) throw new JiraConnectorResponseError();
     const items = payload.issues.slice(0, parsed.limit).map((issue) => this.mapReleaseIssue(issue));
     const more =
@@ -245,7 +240,11 @@ export class JiraConnectorProvider implements ConnectorProvider {
     return { source: this.source, items, ...(more ? { truncated: true } : {}) };
   }
 
-  private async getJson(url: URL): Promise<unknown> {
+  /**
+   * GET one JSON document. `onError` may map a failed status (and its parsed error body, read only then) to a specific
+   * error; otherwise the status maps as usual. The body is never retained.
+   */
+  private async getJson(url: URL, onError?: (status: number, body: unknown) => Error | undefined): Promise<unknown> {
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
@@ -260,7 +259,19 @@ export class JiraConnectorProvider implements ConnectorProvider {
       throw new JiraConnectorRequestError();
     }
 
-    if (!response.ok) throw mapHttpError(response.status);
+    if (!response.ok) {
+      if (onError !== undefined) {
+        let body: unknown;
+        try {
+          body = await response.json();
+        } catch {
+          body = undefined;
+        }
+        const mapped = onError(response.status, body);
+        if (mapped !== undefined) throw mapped;
+      }
+      throw mapHttpError(response.status);
+    }
 
     try {
       return await response.json();
@@ -413,6 +424,14 @@ const STATUS_CATEGORY_GROUP: Readonly<Record<string, 'todo' | 'in-progress' | 'd
   indeterminate: 'in-progress',
   done: 'done',
 });
+
+/** Whether a Jira 400 error body is about the fix version value (`errorMessages` / `errors` naming fixVersion). */
+function namesFixVersion(body: unknown): boolean {
+  if (!isRecord(body)) return false;
+  const messages = Array.isArray(body.errorMessages) ? body.errorMessages.filter((value): value is string => typeof value === 'string') : [];
+  const errors = isRecord(body.errors) ? Object.entries(body.errors).flatMap(([key, value]) => [key, typeof value === 'string' ? value : '']) : [];
+  return [...messages, ...errors].some((text) => /fix\s*version/i.test(text));
+}
 
 /** One page of a Jira paginated listing (`values`, `isLast`); anything else is an unexpected response. */
 function pageOf(payload: unknown): { readonly values: readonly unknown[]; readonly last: boolean } {
