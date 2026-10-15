@@ -25901,8 +25901,8 @@ connector-write reconcile (no send).
   **Fix (A6 prompt only; the read prompt stays v30, the A6-off golden `nl-select.v30.prompts.json` is unchanged).** Rule 8
   gains: help.topic needs a question form, a bare command or "<feature> <verb>: <value>" form is none; only the args listed
   for the chosen entry exist (reminder.list has no range or count arg). Three A6 examples: "모레 알림 몇 개 잡혀 있어?" ->
-  reminder.list `{}`, "프로젝트 등록: ~/code/site" and "피드백 삭제: 2" -> none (generic patterns with other words than the
-  corpus, no phrase list). Cache-key pins: `NL_ACTION_PROMPT_VERSION` and the three `nl-action*.json` corpora `promptVersion`.
+  reminder.list `{}`, "프로젝트 등록: ~/code/site" and "피드백 삭제: 2" -> none. (Correction, CA review: these near-copied
+  scored corpus cases `neg-110`, `neg-097` and `reminder.list-002/-006`; replaced in `nl-select.v33`, note below.) Cache-key pins: `NL_ACTION_PROMPT_VERSION` and the three `nl-action*.json` corpora `promptVersion`.
   **Gate after (Haiku, 3 runs, read v30 / A6 v32, `data/eval/a6-gate-v32-run*`; an earlier 3-run set on the first v32 text
   is `a6-gate-v32a-run*`).** See CURRENT_STATE for the table. `reminder.list` 6/6 in the final runs; wrong targets 0,
   negative captures 0, A6 captures 0 in all runs. **Residual (not prompt-fixable here):** `todo.add` and `reminder.create`
@@ -25925,6 +25925,23 @@ connector-write reconcile (no send).
   the revert, so its 025 hit no longer holds (todo.add 45/47 there, about 44/47 now). 027 hit; `reminder.create` 0.854
   (024; 019 → `calendar.events`; 033/035/037/039 are intermittent selector arg misses also seen in earlier runs); overall
   0.948, spanExact 0.962, wrong targets 0, negative captures 0; gate not passed. No model run after the revert.
+
+- **A6 prompt `nl-select.v33` (CA review of v32, 2026-10-16).** The three v32 rule-8 examples near-copied scored corpus cases.
+  They are replaced by other features, verbs and sentence shapes that teach the same rules ("다음 주에 울릴 리마인더 쭉
+  보여줘" -> reminder.list `{}`; "브랜치 hotfix-0420 새로 따 줘" and "커밋 메시지는 앞으로 영어로 쓰게 설정해 둬" -> none). No
+  rule line changes. A test now checks that no A6 example equals a scored case (`nl-action.v1`, seed, `nl-intent.v1`) and
+  that each v33 example stays below 0.5 token overlap. Remaining near-copies from before v32 are reported, not changed:
+  "그거 요약해줘" (a read example; its A6 override equals `a6-reference-item.summarize-001`) and "할 일 전부 완료로
+  바꿔줘" (about `todo.complete-033`). Includes the CA ㄱㄱ strings as must-not-ground tests.
+  **Gate on v33 (Haiku 3+3, `data/eval/a6-gate-v33-run{1,2,3}-{action,readreg}.stdout.txt`):**
+  action overall 0.943 / 0.953 / 0.960, `todo.add` 0.915 / 0.894 / 0.915, `reminder.create` 0.854 / 0.902 / 0.927,
+  `reminder.list` 1 / 0.833 / 1, spanExact 0.948 / 0.910 / 0.961; wrong targets, negative captures and over-bound are 0
+  everywhere. Action gate: run 3 passed. Read-regression overall 0.954 / 0.951 / 0.954, A6 captures 0, wrong captures 2 / 1 / 2
+  (`help.topic`: neg-012 "아이폰 알림 어떻게 꺼?", neg-025 "Jira 이슈 제목 쓰는 좋은 방법이 있을까?", neg-110 "프로젝트 등록:
+  /tmp/app"); read gate passed 0 of 3. Compared with v32: neg-097 no longer captures (0 of 3, was 4 of 6), and neg-110 is
+  back (1 of 3; v32's near-copy example had masked it). neg-012 / neg-025 (other apps' how-tos) are new, and
+  `reminder.create-014` ("금요일 오후 6시에 주간 회고 작성 알려줘") is now `none` 3 of 3 (it hit 7 of 7 before). Not fixed
+  here: no further prompt loop was authorized.
 
 ### ADR-0122 P2 implementation note (2026-10-15)
 

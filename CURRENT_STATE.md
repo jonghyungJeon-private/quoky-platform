@@ -54,6 +54,11 @@ byte-identical. Chief Architect review required before merge (port and runtime d
 - Owner gold decisions (asked on Discord 2026-10-15; recommended for `reminder.create-020` / `-022`: ask). Still listed as
   PENDING in `nl-action.v1.json`: `a6-paraphrase-todo.complete-018` ("완룐", now `none`), `a6-paraphrase-todo.complete-009`
   ("체크해줘", now `none`), `a6-paraphrase-reminder.create-020` and `a6-paraphrase-reminder.create-022` (now `ask`).
+- Owner gold decision (new, 2026-10-16; recommended: ask/refuse, consistent with A6-D3a and the first-person rule):
+  `a6-paraphrase-todo.add-009` ("할 일 하나 추가할게. …"), `-016` ("todo 추가: …"), `-025` ("… 추가 ㄱㄱ") and
+  `a6-paraphrase-reminder.create-024` ("알림 설정: …"); they now fail every run by design.
+- A6 prompt `nl-select.v33` gate (3+3 Haiku, 2026-10-16): action passed 1 of 3, read-regression 0 of 3 (help.topic captures
+  of neg-012 / neg-025 / neg-110; `reminder.create-014` now `none` 3 of 3). DECISIONS "A6 prompt `nl-select.v33`".
 - D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
   metadata edits, the calendar relabels and the T1 extension); the 148 S1 cases are marked with their 2026-10-13
   approval. They gate no live behaviour.
