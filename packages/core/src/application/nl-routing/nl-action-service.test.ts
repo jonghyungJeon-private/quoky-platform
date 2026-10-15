@@ -539,6 +539,27 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
     }
   });
 
+  it('Codex P1 (round 2): reference payloads, terse payloads, negations, adnominals, glued nouns and match spans never write', async () => {
+    const run = async (text: string, entryId: string, args: Record<string, unknown>) => {
+      const w = world({ level: 'local', script: () => out(entryId, args) });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      w.setMetadata(LAST_ACTION_METADATA_KEY, todoAction());
+      return w.decide(text, { now: at(1) });
+    };
+    for (const text of ['2번만요', '그걸로요', '13번 알림']) expect((await run(text, 'todo.add', { title: text })).kind, text).not.toBe('execute');
+    expect((await run('2번만요 추가해줘', 'todo.add', { title: '2번만요' })).kind).toBe('ask');
+    expect((await run('13번 알림 추가해줘', 'todo.add', { title: '13번 알림' })).kind).toBe('ask');
+    expect((await run('내일 9시 우유', 'reminder.create', { body: '우유', when: '내일 9시' })).kind).toBe('ask');
+    expect((await run('내일 9시에 우유 사라고 알려줘', 'reminder.create', { body: '우유 사라고', when: '내일 9시' })).kind).toBe('execute');
+    expect((await run('2번을 완료하지 말아줘', 'todo.complete', { ref: '#2' })).kind).toBe('none');
+    expect((await run('취소하지 마', 'todo.cancel', { ref: 'this' })).kind).toBe('none');
+    expect((await run('그거 제외된 거 뭐야', 'todo.cancel', { ref: 'this' })).kind).toBe('none');
+    for (const text of ['2번 메일취소해줘', '2번 알림취소해줘']) expect((await run(text, 'todo.cancel', { ref: '#2' })).kind, text).toBe('ask');
+    expect((await run('할 일 말고 2번 메일 취소해줘', 'todo.cancel', { match: '메일' })).kind).toBe('ask');
+    // A source noun inside the matched title alone is the title's own word.
+    expect((await run('메일 답장 완료해줘', 'todo.complete', { match: '메일 답장' })).kind).toBe('execute');
+  });
+
   it('a second or another source noun asks: "할 일 말고 2번 메일 취소해줘", "2번 (메일) 취소해줘", "메일2번 취소해줘"', async () => {
     for (const text of ['할 일 말고 2번 메일 취소해줘', '2번 (메일) 취소해줘', '메일2번 취소해줘']) {
       const w = world({ level: 'local', script: () => out('todo.cancel', { ref: '#2' }) });

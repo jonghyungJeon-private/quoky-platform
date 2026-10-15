@@ -13,6 +13,7 @@ import {
 import {
   formatNlRef,
   isNlDeicticOnlyPayload,
+  nlActionWordGrounded,
   withoutStructures,
   isNlRefGrounded,
   isNlSpanGrounded,
@@ -154,8 +155,8 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // A6 R1 review: an entry that acts on an existing item needs its own action word in the owner's prose (`actionGrounding`,
   // a closed catalog vocabulary like `flagGrounding`); a reference alone ("2번도", "그걸로요") never selects the action.
   if (entry.actionGrounding !== undefined) {
-    const prose = normalizeForMatch(withoutStructures(ctx.groundingText));
-    if (!entry.actionGrounding.some((word) => groundingWordIn(prose, normalizeForMatch(word)))) return { ok: false, reason: 'ungrounded', entryId, arg: 'action' };
+    // In a requesting form only: a negated ("완료하지 말아줘") or adnominal ("취소된 거") action word grounds nothing.
+    if (!nlActionWordGrounded(withoutStructures(ctx.groundingText), entry.actionGrounding)) return { ok: false, reason: 'ungrounded', entryId, arg: 'action' };
   }
   // A6-D3 (A6 R1 fix): a payload made only of deictic, ordinal or time words gets its fixed reply ("내용을 직접 적어
   // 주세요") before any missing argument is named: "그거 알림으로 만들어줘" has no time either, and the content is the problem.

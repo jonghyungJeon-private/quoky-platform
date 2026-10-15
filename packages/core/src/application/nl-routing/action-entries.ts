@@ -145,8 +145,22 @@ export function nlNamedItemSources(groundingText: string): ReadonlySet<NlItemSou
     .trim();
   const named = new Set<NlItemSource>();
   for (const match of text.matchAll(NAMED_NOUN_ALL)) for (const source of ITEM_SOURCE_NOUNS_KO.get(nounKey(match[1] as string)) ?? []) named.add(source);
+  // A noun glued to a following action or content word of the catalog's own vocabularies ("메일취소해줘", "알림취소해줘",
+  // "문서요약해줘"; A6 R1 review); a noun glued to anything else ("알림장") is still no source.
+  for (const match of text.matchAll(gluedNounPattern())) for (const source of ITEM_SOURCE_NOUNS_KO.get(nounKey(match[1] as string)) ?? []) named.add(source);
   for (const [word, source] of ITEM_SOURCE_WORDS_LATIN) if (latinWordIn(text, word)) named.add(source);
   return named;
+}
+
+let gluedNoun: RegExp | undefined;
+/** Built on first use: the vocabularies are declared further down this module. */
+function gluedNounPattern(): RegExp {
+  if (gluedNoun !== undefined) return gluedNoun;
+  const verbs = [...new Set([...ACTION_VOCABULARY_KO, ...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS].map(normalizeForMatch).filter((word) => !/^[a-z0-9 .;-]+$/.test(word)))]
+    .sort((a, b) => b.length - a.length)
+    .map((word) => word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*'));
+  gluedNoun = new RegExp(`(?<=^|\\s|\\d|번|째)(${NOUN_ALTERNATION})(?=${verbs.join('|')})`, 'gu');
+  return gluedNoun;
 }
 
 /** Whether the owner's words point with a determiner at an item-source noun ("이 문서", "그 메일"), whatever the entry. */
@@ -273,12 +287,22 @@ export function isNlSpanGrounded(span: string, groundingText: string): boolean {
 /** Filler words that carry no content on their own ("첫 번째 거", "the one"). */
 const FILLER = new Set(['거', '것', '걸', '건', '게', '번', '개', '그', '이', '저', '좀', '하나', 'the', 'one', 'a', 'an', 'item', 'thing', 'please']);
 
+/** Particles glued on a reference go with it ("2번만요", "그걸로요"; A6 R1 review). */
+const GLUED_PARTICLES = `${PARTICLE_WORDS}*`;
+const KO_ORDINAL_WITH_PARTICLES = new RegExp(`(?:첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\\s*(?:번\\s*)?째${GLUED_PARTICLES}`, 'gu');
+const NUMBER_WITH_PARTICLES = new RegExp(`#?\\d+\\s*번\\s*째?${GLUED_PARTICLES}`, 'gu');
+const DEICTIC_WITH_PARTICLES = new RegExp(`(?:${[...DEICTIC_KO, ...LAST_KO].sort((a, b) => b.length - a.length).join('|')})${GLUED_PARTICLES}`, 'gu');
+/** An item-source noun of the catalog standing as its own word, with its particles ("13번 알림", "메일을"). */
+const SOURCE_NOUN_WITH_PARTICLES = new RegExp(`(?<=^|\\s)(?:${NOUN_ALTERNATION})${GLUED_PARTICLES}(?=${NOUN_END})`, 'gu');
+
 function contentTokens(span: string): string[] {
   let text = normalizeForMatch(span);
-  text = text.replace(KO_ORDINAL_PATTERN, ' ').replace(EN_ORDINAL_PATTERN, ' ');
-  text = text.replace(/#?\d+\s*번\s*째?/gu, ' ');
+  text = text.replace(KO_ORDINAL_WITH_PARTICLES, ' ').replace(EN_ORDINAL_PATTERN, ' ');
+  text = text.replace(NUMBER_WITH_PARTICLES, ' ');
   text = text.replace(DETERMINER_NOUN_ALL, ' ');
-  for (const word of [...DEICTIC_KO, ...LAST_KO].sort((a, b) => b.length - a.length)) text = text.split(word).join(' ');
+  text = text.replace(DEICTIC_WITH_PARTICLES, ' ');
+  // A6 R1 review: an item-source noun names where an item lives, never what a to-do or reminder says ("13번 알림").
+  text = text.replace(SOURCE_NOUN_WITH_PARTICLES, ' ');
   const tokens = text
     .replace(/[\p{P}\p{S}]+/gu, ' ')
     .split(/\s+/u)
@@ -292,7 +316,10 @@ function contentTokens(span: string): string[] {
   });
 }
 
-/** A6-D3: a payload made only of deictic, ordinal, number or time words ("그거", "첫 번째 거", "내일"). */
+/**
+ * A6-D3: a payload made only of deictic, ordinal, number, time or item-source words, with their particles ("그거", "첫 번째
+ * 거", "내일", "2번만요", "13번 알림").
+ */
 export function isNlDeicticOnlyPayload(span: string): boolean {
   return contentTokens(span).length === 0;
 }
@@ -394,8 +421,59 @@ export function isNlBulkRequest(groundingText: string): boolean {
   return BULK_KO.test(text) || BULK_EN.test(text);
 }
 
+/**
+ * The closed action vocabularies of the A6 entries that act on an existing item (A6 R1 review, `actionGrounding`): the
+ * owner must say the action itself. Stems match inside a word (Korean endings follow: 완료해줘, 지워줘, 꺼줘, 되돌려
+ * 놔); Latin words are whole words. A message with only a reference ("2번도", "그걸로요", "13번 알림") grounds none.
+ */
+// 끝 only in its completion forms (끝냈 / 끝났 / 끝내 / 끝마치): "언제 끝나?" is a question, not a completion. No 처리 or 체크:
+// "처리 방법", "체크해봐" are not completions (CA review).
+const TODO_COMPLETE_WORDS: readonly string[] = ['완료', '끝냈', '끝났', '끝내', '끝마', '마쳤', '마치', '마무리', '다 했', '다했', '해치웠', 'done', 'complete', 'completed', 'finish', 'finished', 'check off'];
+const CANCEL_WORDS: readonly string[] = ['취소', '캔슬', '삭제', '지워', '지우', '지운', '없애', '없던 걸로', '없던걸로', '제거', '제외', '그만', '필요 없', '필요없', 'cancel', 'remove', 'delete', 'drop', 'scrap'];
+const TODO_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '빼', '안 할', '안할'];
+const REMINDER_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '꺼', '끄', '끈', '멈춰', '안 해도', '안해도', 'stop', 'turn off', 'disable'];
+const TODO_ADD_WORDS: readonly string[] = ['추가', '넣어', '넣자', '넣기', '올려', '적어', '등록', '기록', '메모', 'add', 'put', 'note', 'jot'];
+const REMINDER_CREATE_WORDS: readonly string[] = ['알려', '알림', '알람', '리마인드', '리마인더', '깨워', '상기', 'remind', 'reminder', 'alert', 'ping', 'notify'];
+const UNDO_WORDS: readonly string[] = ['되돌', '돌려', '원래대로', '원상', '원복', '롤백', '무르', '물러', '취소', 'undo', 'revert', 'roll back', 'rollback'];
+/** Every Korean action word of the vocabularies above (for the glued-noun boundary of {@link nlNamedItemSources}). */
+const ACTION_VOCABULARY_KO: readonly string[] = [...TODO_COMPLETE_WORDS, ...TODO_CANCEL_WORDS, ...REMINDER_CANCEL_WORDS, ...UNDO_WORDS, ...TODO_ADD_WORDS, ...REMINDER_CREATE_WORDS];
+
+/** A negation right after an action word: "-지 마 / 말아 / 않" ("완료하지 말아줘", "취소하지 마", "삭제 하지 마"). */
+const NEGATED_AFTER = /^(?:\S*?|\s+\S*?)지\s*(?:마|말|않)/u;
+/** A negation word right before it: "안 지워도 돼", "못 끝냈어". */
+const NEGATED_BEFORE = /(?:^|\s)(?:안|못)\s*$/u;
+/** An adnominal or noun form of the action word in the same word: "제외된 거", "취소된 알림", "완료한 할 일". */
+const ADNOMINAL_REST = /^(?:된|됐던|되었던|되는|됨|한|했던|하는|할)$/u;
+const NEGATED_BEFORE_EN = /(?:^|\s)(?:don't|dont|do not|never|not|no)\s+(?:\S+\s+)?$/u;
+
+/**
+ * A6 R1 review: whether one of an entry's action words occurs in the owner's prose in a requesting form. An occurrence in
+ * a closed grammatical negation ("-지 마/말아/않", "안/못 …") or an adnominal form ("취소된 거", "완료한 할 일") grounds
+ * nothing; another occurrence of an action word still can ("완료하지 말고 취소해줘" grounds the cancel).
+ */
+export function nlActionWordGrounded(prose: string, words: readonly string[]): boolean {
+  const text = normalizeForMatch(prose);
+  for (const raw of words) {
+    const word = normalizeForMatch(raw);
+    if (/^[a-z0-9][a-z0-9 -]*$/.test(word)) {
+      const pattern = new RegExp(`(?<![a-z0-9])${word.replace(/ /g, '\\s+')}s?(?![a-z0-9])`, 'gu');
+      for (const match of text.matchAll(pattern)) if (!NEGATED_BEFORE_EN.test(text.slice(0, match.index))) return true;
+      continue;
+    }
+    for (let at = text.indexOf(word); at >= 0; at = text.indexOf(word, at + 1)) {
+      const after = text.slice(at + word.length);
+      const rest = /^\S*/u.exec(after)?.[0] ?? '';
+      if (NEGATED_AFTER.test(after) || ADNOMINAL_REST.test(rest)) continue;
+      if (!/^(?:안|못)/u.test(word) && NEGATED_BEFORE.test(text.slice(0, at))) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
 const todoAdd: NlCatalogEntry = {
   id: 'todo.add',
+  actionGrounding: TODO_ADD_WORDS,
   risk: 'LOCAL_WRITE',
   dmOnly: true,
   label: { ko: '할 일 추가', en: 'Add a to-do' },
@@ -423,19 +501,6 @@ const todoAdd: NlCatalogEntry = {
     return undefined;
   },
 };
-
-/**
- * The closed action vocabularies of the A6 entries that act on an existing item (A6 R1 review, `actionGrounding`): the
- * owner must say the action itself. Stems match inside a word (Korean endings follow: 완료해줘, 지워줘, 꺼줘, 되돌려
- * 놔); Latin words are whole words. A message with only a reference ("2번도", "그걸로요", "13번 알림") grounds none.
- */
-// 끝 only in its completion forms (끝냈 / 끝났 / 끝내 / 끝마치): "언제 끝나?" is a question, not a completion. No 처리 or 체크:
-// "처리 방법", "체크해봐" are not completions (CA review).
-const TODO_COMPLETE_WORDS: readonly string[] = ['완료', '끝냈', '끝났', '끝내', '끝마', '마쳤', '마치', '마무리', '다 했', '다했', '해치웠', 'done', 'complete', 'completed', 'finish', 'finished', 'check off'];
-const CANCEL_WORDS: readonly string[] = ['취소', '캔슬', '삭제', '지워', '지우', '지운', '없애', '없던 걸로', '없던걸로', '제거', '제외', '그만', '필요 없', '필요없', 'cancel', 'remove', 'delete', 'drop', 'scrap'];
-const TODO_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '빼', '안 할', '안할'];
-const REMINDER_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '꺼', '끄', '끈', '멈춰', '안 해도', '안해도', 'stop', 'turn off', 'disable'];
-const UNDO_WORDS: readonly string[] = ['되돌', '돌려', '원래대로', '원상', '원복', '롤백', '무르', '물러', '취소', 'undo', 'revert', 'roll back', 'rollback'];
 
 function transitionEntry(id: 'todo.complete' | 'todo.cancel'): NlCatalogEntry {
   const complete = id === 'todo.complete';
@@ -469,6 +534,7 @@ function transitionEntry(id: 'todo.complete' | 'todo.cancel'): NlCatalogEntry {
 
 const reminderCreate: NlCatalogEntry = {
   id: 'reminder.create',
+  actionGrounding: REMINDER_CREATE_WORDS,
   risk: 'LOCAL_WRITE',
   dmOnly: true,
   label: { ko: '알림 만들기', en: 'Create a reminder' },

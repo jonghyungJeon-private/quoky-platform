@@ -34,7 +34,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlNumeralsIn, nlOrdinalsIn, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -1023,6 +1023,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (validated.reason === 'ungrounded' && validated.arg === 'action') {
         const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'no-action-word' };
         if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+        // A payload entry with a payload but no add / remind word ("내일 9시 우유") asks the owner to restate; an item
+        // entry with only a reference is chat.
+        if (entryId === 'todo.add' || entryId === 'reminder.create') return this.actionAnswer({ ...audit, result: 'asked' }, renderRestate(language));
         this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
         return { kind: 'none' };
       }
@@ -1081,6 +1084,17 @@ export class NlSelectionService implements TurnDeliveryObserver {
       }
       target = resolved.target;
       resolution = 'resolved';
+    } else if (typeof args.match === 'string' && source !== undefined) {
+      // A6 R1 review: the source cross-check covers every target arg. A `match` span may hold a source noun of its own
+      // (a to-do titled "메일 답장"), but the rest of the prose must not name another source, and the whole prose never
+      // two ("할 일 말고 2번 메일 취소해줘" with match "메일" asks).
+      const whole = nlNamedItemSources(prepared.groundingText);
+      const rest = nlNamedItemSources(withoutSpan(prepared.groundingText, args.match));
+      if (whole.size > 1 || [...rest].some((named) => named !== source)) {
+        const audit: NlActionAudit = { ...base, risk: entry.risk, resolution: 'other-source', result: 'asked', reason: 'other-source' };
+        if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+        return this.actionAnswer(audit, renderReferenceQuestion('other-source', source, language, {}));
+      }
     }
     // A6 R1 review: while an A6 question is open, only the questioned entry on one of its candidates runs.
     if (!this.allowedWhileAsked(openQuestion, entryId, target)) return this.blockedWhileAsked({ ...base, risk: entry.risk }, language);

@@ -68,11 +68,11 @@ describe('the action corpus (A6-D7)', () => {
       version: 1,
       cases: [
         { id: 'a6-bad-1', family: 'live', text: '그거 완료 처리해줘', expect: { entryId: 'todo.complete', args: { ref: 'this' }, outcome: 'execute' } },
-        { id: 'a6-bad-2', family: 'paraphrase', text: '보고서 쓰기 할 일로', expect: { entryId: 'todo.add', args: { title: '보고서 작성' }, outcome: 'execute' } },
+        { id: 'a6-bad-2', family: 'paraphrase', text: '보고서 쓰기 할 일로 추가', expect: { entryId: 'todo.add', args: { title: '보고서 작성' }, outcome: 'execute' } },
         { id: 'a6-bad-3', family: 'negative' as never, text: '안녕', expect: { entryId: 'todo.add', args: {}, outcome: 'ask' } },
       ],
     });
-    expect(problems).toEqual(['a6-bad-1: expect target', 'a6-bad-2: gold does not validate (ungrounded title)', 'a6-bad-3: expect reason', 'a6-bad-3: gold does not validate (missing-arg title)']);
+    expect(problems).toEqual(['a6-bad-1: expect target', 'a6-bad-2: gold does not validate (ungrounded title)', 'a6-bad-3: expect reason', 'a6-bad-3: gold does not validate (ungrounded action)']);
   });
 
   it('a perfect selector passes every gate on the seed through Core\'s own decision path', async () => {
@@ -102,7 +102,7 @@ describe('scoring (A6-D7): a wrong target is never a question; negatives capture
     // The owner wrote 3 too, so #3 is grounded and Core would act on another item than the gold one: a wrong target.
     expect(await score({ ...twoTodos, text: '2번 말고 3번 완료해줘' }, answer('todo.complete', { ref: '#3' }))).toBe('wrong-target');
     expect(await score(twoTodos, answer('todo.complete', { ref: '#7' }))).toBe('question');
-    const negative: NlActionCase = { id: 'a6-t-2', family: 'negative', text: '할 일에 보고서 넣었어', expect: 'none' };
+    const negative: NlActionCase = { id: 'a6-t-2', family: 'negative', text: '할 일에 보고서 넣어 놨어', expect: 'none' };
     expect(await score(negative, answer('todo.add', { title: '보고서' }))).toBe('negative-capture');
     expect(await score(negative, answer('none'))).toBe('none');
   });
