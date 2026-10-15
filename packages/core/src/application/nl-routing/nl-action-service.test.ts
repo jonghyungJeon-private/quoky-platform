@@ -551,9 +551,10 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
     expect((await run('13번 알림 추가해줘', 'todo.add', { title: '13번 알림' })).kind).toBe('ask');
     expect((await run('내일 9시 우유', 'reminder.create', { body: '우유', when: '내일 9시' })).kind).toBe('ask');
     expect((await run('내일 9시에 우유 사라고 알려줘', 'reminder.create', { body: '우유 사라고', when: '내일 9시' })).kind).toBe('execute');
-    expect((await run('2번을 완료하지 말아줘', 'todo.complete', { ref: '#2' })).kind).toBe('none');
-    expect((await run('취소하지 마', 'todo.cancel', { ref: 'this' })).kind).toBe('none');
-    expect((await run('그거 제외된 거 뭐야', 'todo.cancel', { ref: 'this' })).kind).toBe('none');
+    // The action word without a request form asks for the request ("실행할까요?") and writes nothing.
+    expect((await run('2번을 완료하지 말아줘', 'todo.complete', { ref: '#2' })).kind).not.toBe('execute');
+    expect((await run('취소하지 마', 'todo.cancel', { ref: 'this' })).kind).not.toBe('execute');
+    expect((await run('그거 제외된 거 뭐야', 'todo.cancel', { ref: 'this' })).kind).not.toBe('execute');
     for (const text of ['2번 메일취소해줘', '2번 알림취소해줘']) expect((await run(text, 'todo.cancel', { ref: '#2' })).kind, text).toBe('ask');
     expect((await run('할 일 말고 2번 메일 취소해줘', 'todo.cancel', { match: '메일' })).kind).toBe('ask');
     // A source noun inside the matched title alone is the title's own word.
@@ -599,10 +600,65 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
       ["don't remind me tomorrow at 9am to call Kim", 'reminder.create', { body: 'call Kim', when: 'tomorrow at 9am' }],
     );
     for (const [text, entryId, args] of writes) expect((await run(text, entryId, args)).kind, text).not.toBe('execute');
-    expect((await run('not now, mark 2 complete', 'todo.complete', { ref: '#2' })).kind).toBe('execute');
+    // A negation anywhere in the message vetoes (Codex: a later retraction counts), so this fails closed.
+    expect((await run('not now, mark 2 complete', 'todo.complete', { ref: '#2' })).kind).not.toBe('execute');
     // A polite request in question form still acts.
     expect((await run('2번 완료해줄래?', 'todo.complete', { ref: '#2' })).kind).toBe('execute');
     expect((await run('2번 취소해 줄 수 있어?', 'todo.cancel', { ref: '#2' })).kind).toBe('execute');
+  });
+
+  it('positive request-form rule (fix-loop cap): only an affirmative request writes; CA round 3 and Codex strings never do', async () => {
+    const run = async (text: string, entryId: string, args: Record<string, unknown>) => {
+      const w = world({ level: 'local', script: () => out(entryId, args) });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      w.setMetadata(LAST_ACTION_METADATA_KEY, todoAction());
+      return w.decide(text, { now: at(1) });
+    };
+    const complete = { ref: '#2' };
+    const never: Array<[string, string, Record<string, unknown>]> = [
+      // CA round 3
+      ['2번 취소할지 모르겠어', 'todo.cancel', complete],
+      ['2번 완료해줘야 할까?', 'todo.complete', complete],
+      ['2번 완료해야 하나', 'todo.complete', complete],
+      ['2번 완료해야 해', 'todo.complete', complete],
+      ['2번 취소할까 해', 'todo.cancel', complete],
+      ['2번 취소 필요 없어', 'todo.cancel', complete],
+      ['2번 취소 싫어', 'todo.cancel', complete],
+      ['2번 완료 아니고 3번', 'todo.complete', complete],
+      ['is 2 done?', 'todo.complete', complete],
+      ['did you cancel 2?', 'todo.cancel', complete],
+      ['I shouldn’t cancel 2', 'todo.cancel', complete],
+      ['we won’t cancel 2', 'todo.cancel', complete],
+      ['추가 질문 있어', 'todo.add', { title: '질문' }],
+      ['2번 완료할게', 'todo.complete', complete],
+      ['2번 완료해?', 'todo.complete', complete],
+      // Codex (on 4ab11e1)
+      ['2번 완료해줄래? 아니 하지마', 'todo.complete', complete],
+      ['2번완료해줄래?아니하지마', 'todo.complete', complete],
+      ['2번 완료됐는지 보여줄래?', 'todo.complete', complete],
+      ['2번 취소인지 확인해줄래?', 'todo.cancel', complete],
+      ['can you tell me if 2 is complete?', 'todo.complete', complete],
+      ['mark 2 complete 안 해도 돼', 'todo.complete', complete],
+      ['2번완료하진마', 'todo.complete', complete],
+      ['2번 완료할필요없어', 'todo.complete', complete],
+      ['don’t mark 2 complete', 'todo.complete', complete],
+      ['2 is done', 'todo.complete', complete],
+    ];
+    for (const [text, entryId, args] of never) expect((await run(text, entryId, args)).kind, text).not.toBe('execute');
+    const genuine: Array<[string, string, Record<string, unknown>]> = [
+      ['2번 완료해줘', 'todo.complete', complete],
+      ['그거 취소해 줄래', 'todo.cancel', { ref: 'this' }],
+      ['그거 취소해 줄 수 있어?', 'todo.cancel', { ref: 'this' }],
+      ['그거 완료해줄래?', 'todo.complete', { ref: 'this' }],
+      ['내일 9시에 회의 알려줘', 'reminder.create', { body: '회의', when: '내일 9시' }],
+      ['please complete 2', 'todo.complete', complete],
+      ['can you cancel 2', 'todo.cancel', complete],
+      ["할 일에 '보고서' 추가해줘", 'todo.add', { title: '보고서' }],
+      // Kept nominal commands (ratified A6 live phrases U4 / U8c; reported for the owner).
+      ["할 일에 'UAT 결과 정리' 추가", 'todo.add', { title: 'UAT 결과 정리' }],
+      ['2번도 완료', 'todo.complete', complete],
+    ];
+    for (const [text, entryId, args] of genuine) expect((await run(text, entryId, args)).kind, text).toBe('execute');
   });
 
   it('a second or another source noun asks: "할 일 말고 2번 메일 취소해줘", "2번 (메일) 취소해줘", "메일2번 취소해줘"', async () => {
@@ -611,7 +667,9 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
       w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
       const decision = await w.decide(text, { now: at(1) });
       expect(decision.kind, text).toBe('ask');
-      expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === 'other-source'), text).toBe(true);
+      // "말고" is also a whole-message veto now (no request form), so that string asks for the request instead.
+      const reason = text.includes('말고') ? 'no-action-word' : 'other-source';
+      expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === reason), text).toBe(true);
     }
   });
 

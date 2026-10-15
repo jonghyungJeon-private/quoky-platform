@@ -488,9 +488,11 @@ describe('A6 R1 review: the payload rule before a missing argument', () => {
 });
 
 describe('A6 R1 review: the completion vocabulary is closed (CA delta)', () => {
-  it('처리, 체크 and a bare 끝 ground no completion; the completion forms of 끝 do', () => {
+  it('처리, 체크 and a bare 끝 ground no completion; statements do not either (positive request-form rule)', () => {
     const complete = (text: string) => validateSelection({ entryId: 'todo.complete', args: { ref: '#2' } }, ctx(text));
-    for (const text of ['2번 처리 방법 알려줘', '2번 체크해봐', '1번 할일 체크해줘', '2번 언제 끝나?', '3번 완룐 처리해줘']) expect(complete(text), text).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
-    for (const text of ['2번 끝냈어', '2번 끝났으니 완료해줘', '2번 완료해줘', '2번 해치웠어']) expect(complete(text).ok, text).toBe(true);
+    for (const text of ['2번 처리 방법 알려줘', '2번 체크해봐', '1번 할일 체크해줘', '2번 언제 끝나?', '3번 완룐 처리해줘', '2번 끝냈어', '2번 해치웠어']) {
+      expect(complete(text), text).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    }
+    for (const text of ['2번 끝내줘', '2번 완료해줘', '2번 완료 처리 부탁드립니다', '2번 완료로 표시해줘']) expect(complete(text).ok, text).toBe(true);
   });
 });

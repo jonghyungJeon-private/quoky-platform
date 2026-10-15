@@ -34,7 +34,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlActionWordPresent, nlNamedItemSources, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -56,6 +56,7 @@ import {
   renderInputRefusal,
   renderReferenceQuestion,
   renderQuestionOpen,
+  renderRequestForm,
   renderRestate,
   renderTimeInTitle,
   renderTimeOutsideWhen,
@@ -1023,9 +1024,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (validated.reason === 'ungrounded' && validated.arg === 'action') {
         const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'no-action-word' };
         if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
-        // A payload entry with a payload but no add / remind word ("내일 9시 우유") asks the owner to restate; an item
-        // entry with only a reference is chat.
+        // A payload entry with a payload but no add / remind request ("내일 9시 우유") asks the owner to restate. The
+        // action named but not as a request ("2번 완료", "취소할까?") asks for the request form; a reference alone is chat.
         if (entryId === 'todo.add' || entryId === 'reminder.create') return this.actionAnswer({ ...audit, result: 'asked' }, renderRestate(language));
+        if (nlActionWordPresent(prepared.groundingText, ctx.offered.get(entryId)?.actionGrounding ?? [])) return this.actionAnswer({ ...audit, result: 'asked' }, renderRequestForm(language));
         this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
         return { kind: 'none' };
       }

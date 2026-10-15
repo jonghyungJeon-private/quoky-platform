@@ -136,7 +136,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     if (mapped === null) return null;
     // A status view is DM-only until ADR-0122 P1 (owner: channels default-deny); nothing is read in a channel.
     if (mapped.kind === 'todo.list' && mapped.status !== undefined && !isDirectConversation(ctx.message.context)) {
-      return { reply: outboundMessage(ctx.message.context, renderListStatusDmOnly(selected.language)) };
+      return { reply: outboundMessage(ctx.message.context, renderListStatusDmOnly(selected.language), { replyToMessageId: ctx.message.id }) };
     }
     // ADR-0120 A8 owner decision 7: a release listing knows whether it answers in a channel.
     const command = mapped.kind === 'release' && !isDirectConversation(ctx.message.context) ? { ...mapped, inChannel: true as const } : mapped;

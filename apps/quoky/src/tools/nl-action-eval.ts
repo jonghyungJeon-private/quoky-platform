@@ -178,6 +178,19 @@ const SPAN_ARGS = ['title', 'match', 'body', 'when'];
 const TARGET_ENTRIES = new Set(['todo.complete', 'todo.cancel', 'reminder.cancel', 'item.summarize', 'action.undo']);
 
 /** The schema check of `docs/plans/nl-action-corpus-schema.md` (problems as `id: what`, never a value). */
+/**
+ * Whether a gold is out of reach under the positive request-form rule (orchestrator decision 2026-10-15): the owner's text
+ * names the entry's action without an affirmative request form, so Core asks and never executes. Kept as the measured cost.
+ */
+export function isRequestFormCost(golden: NlActionCase): boolean {
+  if (golden.expect === 'none' || !isNlCatalogEntryId(golden.expect.entryId)) return false;
+  const prepared = prepareSelectionInput(golden.text);
+  if ('skip' in prepared) return false;
+  const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
+  const result = validateSelection({ entryId: golden.expect.entryId, args: golden.expect.args }, { offered, groundingText: prepared.groundingText, now: '2026-10-14T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true });
+  return !result.ok && result.reason === 'ungrounded' && result.arg === 'action';
+}
+
 export function validateActionCorpus(corpus: NlActionCorpus): string[] {
   const problems: string[] = [];
   const ids = new Set<string>();
@@ -213,7 +226,11 @@ export function validateActionCorpus(corpus: NlActionCorpus): string[] {
       const result = validateSelection({ entryId: expect.entryId, args: expect.args }, { offered, groundingText: prepared.groundingText, now: '2026-10-14T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true, ...(golden.fixture?.prior !== undefined ? { previousArgs: golden.fixture.prior.args } : {}) });
       const refusedByRule = expect.outcome !== 'execute' && ['deictic-payload', 'time-in-title', 'time-outside-when', 'bulk', 'credential'].includes(expect.reason ?? '');
       // An `acceptsAnyQuestion` gold scores the question, not its args (owner D12 batch 2026-10-15).
-      if (!result.ok && !refusedByRule && expect.acceptsAnyQuestion !== true) problems.push(`${where}: gold does not validate (${result.reason} ${result.arg ?? ''})`);
+      // The positive request-form rule (orchestrator decision 2026-10-15, under the fix-loop cap) leaves some owner golds
+      // without a request form ("2번 완료"); they stay as the owner approved them and score as misses, which is the
+      // measured cost of the rule, not a schema problem.
+      const requestFormCost = !result.ok && result.reason === 'ungrounded' && result.arg === 'action';
+      if (!result.ok && !refusedByRule && expect.acceptsAnyQuestion !== true && !requestFormCost) problems.push(`${where}: gold does not validate (${result.reason} ${result.arg ?? ''})`);
       else if (result.ok && canonical(result.value.args) !== canonical(expect.args)) problems.push(`${where}: gold args not canonical`);
     }
   }

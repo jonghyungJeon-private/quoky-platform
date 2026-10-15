@@ -186,7 +186,6 @@ export function renderDeicticPayload(language: Lang): string {
   return language === 'en' ? 'Please write the content itself.' : '내용을 직접 적어 주세요.';
 }
 
-/** A6-D6 stale-command guard and every "say it again" answer. */
 /**
  * The list status views (canceled, completed / past, all) are DM-only until ADR-0122 P1 ships (owner: channels default-deny;
  * CA review): a channel gets this fixed reply and nothing is read.
@@ -200,6 +199,17 @@ export function renderQuestionOpen(language: Lang): string {
   return language === 'en' ? 'A question is still open, so I did not do that. Please tell me again.' : '질문이 열려 있어 실행하지 않았어요. 다시 말씀해 주세요.';
 }
 
+/**
+ * The positive request-form rule (A6 R1, fix-loop cap): the owner named an action but not as a request ("2번 완료",
+ * "취소할까?"); nothing runs and the reply asks for the request itself.
+ */
+export function renderRequestForm(language: Lang): string {
+  return language === 'en'
+    ? 'Shall I do it? Please ask as a request, for example "please complete 2".'
+    : '실행할까요? "2번 완료해줘"처럼 요청으로 말씀해 주세요.';
+}
+
+/** A6-D6 stale-command guard and every "say it again" answer. */
 export function renderRestate(language: Lang): string {
   return language === 'en' ? 'Please tell me again what to do and which item.' : '무엇을/어느 항목을 다시 말씀해 주세요.';
 }
