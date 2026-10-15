@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 R1 gate fixes: same-source cross-check, bare references, A6 prompt `nl-select.v26` (2026-10-15)
+
+- **Wrong target closed.** The owner's item-source nouns (catalog aliases) are cross-checked against the entry's source
+  for every ref kind; "1번 문서" after a mail list or "2번 메일" after a Drive list asks and reads nothing.
+- **Bare references select nothing.** "2번도", "그거", "1" alone are chat (`no-request`), unless an A6 question is open.
+- **Validator.** Stacked particles in the whole-message time check ("5시에도"); the deictic-payload reply before a
+  missing argument.
+- **Prompt `nl-select.v26`** (A6 only; read prompt `nl-select.v24` unchanged): `when` without 에, `this` vs `recent`,
+  pick the asked action with another list shown, copy a deictic content as the span.
+- **Eval and corpus (owner decisions 2026-10-15).** `{}` refusal golds scored by their closed reason; `acceptsNone` on
+  the relay cases 901/902; the 11 anchored read cases carry their A6 action as `a6Relabel` (A6-on gold, scored apart).
+- **Haiku check (1 run each, not the gate):** action 92.6% (A6 entries 95.2%), 0 wrong targets, 0 negative captures,
+  span 97.5%; read regression 0 action captures. Remaining gate blockers are READ-entry gold args (owner list in
+  DECISIONS). `QUOKY_NL_ACTIONS` stays `off`.
+
 ## Unreleased — ADR-0122 Accepted; A9 P1 surface permission grants (inert by default, 2026-10-15)
 
 - **Decided.** ADR-0122 accepted by the owner ("모두 권장안"): channels are default deny for personal and connector

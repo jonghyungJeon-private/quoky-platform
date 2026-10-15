@@ -73,6 +73,16 @@ before merge (port and runtime dispatch change).
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
 
+### A6 R1 gate fixes — on branch `claude/v5-a6-r1-fix` (2026-10-15)
+
+- **Why:** the Haiku R1 gates (v25, 3 runs) failed: 1–2 wrong targets, a "2번도" capture, 11 anchored read captures.
+- **Fixed:** source-noun cross-check for every ref kind; a bare reference selects no action; stacked-particle time check;
+  deictic payload reply first; A6 prompt `nl-select.v26` (read prompt v24 unchanged); scorer `{}`-reason rule; owner
+  decisions (2) and (3) in the corpora. Details: DECISIONS "A6 implementation note — R1 gate fixes".
+- **Haiku check (1 run):** action 92.6% (A6 95.2%), 0 wrong targets, 0 negative captures; read regression 0 action
+  captures, 1 non-A6 wrong capture (`neg-051`). Pending: the owner's call on the READ-entry gold args and the other gold
+  issues listed in DECISIONS, then the orchestrator's 3-run gate. `QUOKY_NL_ACTIONS` stays `off`.
+
 ### ADR-0120 amendment A8: Jira release listings (`jira.release`) — Accepted 2026-10-15, on branch `claude/v5-jira-release`
 
 - **Owner request (live, 2026-10-15):** "20261015 배포건" of project "차란차 운영 2026" for every assignee, like Jira's

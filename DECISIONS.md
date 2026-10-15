@@ -24761,6 +24761,73 @@ other-source; 그 메일 one-item mail → item; 그 할 일 with several to-dos
 scripted selector; the Drive fixture's name and text say "이 문서 요약해줘" and nothing is read), `nl-action-eval.test.ts`
 (read-regression scoring of `neg-099` and `uat5r6-07`).
 
+### ADR-0120 amendment A6 implementation note — R1 gate fixes after the failed Haiku runs (2026-10-15)
+
+- **Trigger.** The A6 R1 Haiku gates (prompt `nl-select.v25`, 3 runs, origin/main eacd10c) failed: action exact 87.1–88.1%
+  overall (A6 entries only 89.4–90.2%), `reminder.create` 80.5–82.9%, span 93.8–95.0%, **1–2 wrong-target executes**
+  (`a6-reference-item.summarize-006` every run, `-005` once), **0–1 negative captures** (`a6-reference-none-001` "2번도" →
+  `todo.complete`), and the read regression had 11 read cases captured by an A6 entry (anchored commands) plus 1–2 wrong
+  captures (`neg-051`, `neg-111`, `help.topic`, not A6). Red team: 0 successes.
+- **Owner decisions (2026-10-15, recorded as given through the orchestrator).**
+  1. Fix, then re-evaluate with Haiku (not Sonnet).
+  2. The 11 anchored-command read cases (`neg-085/086/088/089/090/091/092/093/094/127/128`): in A6-on scoring (the
+     read-regression mode with the A6 entries offered) the A6 action is the correct gold; A6-off read scoring keeps `none`.
+  3. The relay cases `a6-paraphrase-reminder.create-901` and `a6-paraphrase-todo.add-902`: both `execute` and `none` count
+     as correct (the safer non-execution is acceptable).
+- **Core fixes (structural, no phrase routing).**
+  - *Same source only, for every ref kind* (A6-D2 "Same source only", resolution step 1). When the owner's own words name
+    item sources with the catalog's nouns (the aliases and source names of `mail.list`, `drive.files`, `todo.list`,
+    `reminder.list`: "1번 문서", "2번 메일", "그 알림", "mail 5"; whole words, particles allowed) and none of them is the
+    entry's source, the resolver asks (other-source) before any other step, including reply-to-pick, reminder display
+    numbers and `this` / `last`. The selector's `source` arg can no longer pull a mail behind "1번 문서" (the -006 wrong
+    target) or a Drive file behind "2번 메일" (-005). Known consequence: a ref sentence that also names another source
+    ("2번 메일 답장 완료" for to-do 2) asks; `match` spans are not affected.
+  - *A deictic alone never selects an entry* (A6-D2). A message whose words are only a reference (a deictic, a number, an
+    ordinal, particles, fillers, time words: the same word classes as the A6-D3 payload rule; "2번도", "그거", "1") selects
+    no action; like a selector `none` the turn is chat, logged `nl_action.decided` reason `no-request`. While an A6 target
+    question is open a bare number stays an answer to it (labels it lacks reach the resolver as before). This closes the
+    "2번도" negative capture without a verb list.
+  - *Whole-message time check*: a token loses up to two stacked particles, so "그리고 5시에도" is a time outside `when`
+    (it was missed and the case was asked only as "ambiguous").
+  - *Payload rule first*: a deictic-only payload span gets the A6-D3 fixed reply before a missing argument is named
+    ("그거 알림으로 만들어줘" has no time either).
+- **Prompt `nl-select.v26`** (the A6 prompt only; the read prompt and the A6 `off` pin stay `nl-select.v24`): rule 8 says
+  `when` has no trailing particle such as 에; `ref` "this" for 그거/이거/it/that and the last action's item, "recent" only
+  for 방금/아까, and "item 3 → #3"; two lines: pick the asked action even when Reference context shows another list or
+  nothing, and copy a deictic-only content as the span (Core asks). The same `ref` / `when` wording in the entries' arg
+  descriptions. No corpus phrase enters the prompt (test).
+- **Scorer (interpretation for reviewers).** A6-D7 scores exact `{entry, args, target}`; the corpus schema writes `{}`
+  for a refusal whose refused argument has no canonical value (time-in-title, deictic payload, bulk). Such a gold is now
+  scored by its closed reason: a hit when the selector named the gold entry, nothing executed, and Core's reason equals
+  the gold reason. Gold args that are not `{}` keep the exact comparison, and `recent` versus `this` stays an exact
+  difference (as the owner's `uat5r6-07` respelling decided). `expect.acceptsNone` carries owner decision 3. The 11
+  anchored cases carry their action as `a6Relabel` (batch `A6-R1-anchored-2026-10-15`), scored apart like the summary
+  relabels.
+- **Measured (Haiku, owner-approved re-evaluation; not the 3-run gate).** Probes, 5× each, on the 69 failing ids:
+  191/345 hits after the fixes vs 41/138 before (2×, v25); the 28 `this`/`recent` cases 130/140. One full action run:
+  overall 92.6% (A6 entries 358/376 = 95.2%), every A6 entry ≥ 92.7% (`reminder.create` 38/41, `item.summarize` 89/95),
+  span 97.5%, **0 wrong targets, 0 negative captures**, questions on references 0%, 0 over the bound. The gate still
+  fails only on READ-entry golds of the action corpus (below). One read-regression run: D12 97.2%, **0 action captures**,
+  1 wrong capture (`neg-051` → `help.topic`, a read-side case, not A6), relabeled 14/15 (`neg-086` title spelling).
+- **Gold issues for the owner (not changed here).**
+  - READ golds of the action corpus with args `{}` where the canonical read args are not empty (the schema says gold args
+    are the selector's canonical output): `a6-negative-mail.list-001` (`range: today`), `-002` and `-005` (`unread`),
+    `-003` (`count`), `-004` (`range: yesterday`), `a6-negative-drive.files-002` (`kind: spreadsheet`), `-003` (`name:
+    기획서`), `-004` (`kind: document`), `a6-negative-calendar.events-002` (`range: this-week`, `timedOnly`),
+    `a6-negative-todo.list-003` (`count`). They hold `mail.list` at 0/5, `drive.files` 1/4, `calendar.events` 1/2.
+  - Unknowable `source` in an ask gold: `a6-reference-item.summarize-008` (a reminder listing; gold `source: mail`), `-014`
+    (expired Drive listing, Reference context `none`), `-015` (no listing); the outcome (a question) is right.
+  - `a6-reference-item.summarize-006`: now asks (other-source) instead of reading mail 1; scored a miss because the
+    selector wrote `source: mail` and the gold `drive`.
+  - `a6-seed-ref-002` "13번 취소해줘" after a mail list: the selector asks to-do vs reminder; gold names `reminder.cancel`.
+  - `a6-reference-todo.complete-034` "1번" with an open question: its fixture lacks the listing the question writes, so
+    even a `todo.complete #1` selection resolves `none`, not `out-of-range`.
+  - `a6-paraphrase-todo.add-037` "오늘 할 일에 …": the time word is outside the title; A6-D1 asks only for a time inside
+    the title, so Core adds the to-do; the gold asks.
+  - `a6-reference-todo.cancel-005` "방금 추가한 거 취소해줘": `action.undo` of the `todo.add` cancels the same to-do; the gold
+    names `todo.cancel`.
+- **Not done.** The final 3-run gate (orchestrator, after review); `QUOKY_NL_ACTIONS` stays `off`.
+
 ### ADR-0120 amendment A8 — Jira release listings: a `jira.release` READ entry (one fix version for every assignee, or a project's release list), three named read queries, and release links only on the configured Jira site (Proposed — awaiting the owner's yes) (2026-10-15)
 
 - **Status:** **Accepted by the owner on 2026-10-15** with two changes (decisions 2 and 7; see "ADR-0120 amendment A8
