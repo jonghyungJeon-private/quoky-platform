@@ -1084,6 +1084,8 @@ export interface ConversationRuntimeDeps {
       Pick<
         NlSelectionService,
         | 'takePending'
+        // ADR-0122 D2.2: a question refused by the surface gate is dropped (no new deps key: the same slot).
+        | 'dropPending'
         | 'recordGrammarSelection'
         | 'clearLastSelection'
         | 'yieldsToSelection'
@@ -9094,17 +9096,31 @@ export class ConversationRuntime {
 
   /**
    * D2.3: one step of the state-bound code-change section, gated by its step group (PR status `github`, every other step
-   * `code`) immediately before it runs; a denied step replies with the denial copy and leaves the anchor unchanged.
+   * `code`) immediately before it runs — on the turn's snapshot and then on the live grants; a denied step replies with
+   * the denial copy and leaves the anchor unchanged.
    */
-  private stateBoundStep(
+  private async stateBoundStep(
     message: InboundMessage,
     session: Session,
     actor: Actor,
     step: StateBoundStep,
     run: () => Promise<TurnResult>,
   ): Promise<TurnResult> {
-    const denied = this.surfaceDenied(message.context, actor, [surfaceGroupOfStateStep(step)], { path: 'route' });
-    return denied ? this.surfaceDeniedTurn(message, session, denied) : run();
+    const groups = [surfaceGroupOfStateStep(step)];
+    const denied = this.surfaceDenied(message.context, actor, groups, { path: 'route' });
+    if (denied) return this.surfaceDeniedTurn(message, session, denied);
+    // Codex P1: the turn's actor snapshot may predate an owner-DM revoke that completed while this turn waited, so the
+    // live grants are re-read (through the ActorMetadataStore) immediately before the step runs — a commit, push, PR,
+    // merge, sync or branch delete never executes on a stale grant.
+    if (this.channelGate(message.context) !== undefined) {
+      try {
+        await this.surfaceStillAllows(message.context, actor, groups);
+      } catch (error) {
+        if (!(error instanceof SurfaceDeniedError)) throw error;
+        return this.surfaceDeniedTurn(message, session, error.decision);
+      }
+    }
+    return run();
   }
 
   /**
@@ -9177,12 +9193,9 @@ export class ConversationRuntime {
       entryId: decision.entryId,
     });
     if (denied === undefined) return undefined;
-    // The question the service saved must not be answered later in this channel.
-    try {
-      await this.deps.nlSelection?.takePending?.(session, actor.id, this.clock());
-    } catch {
-      // best-effort: an answer would still be gated at execution
-    }
+    // The question the service saved during this turn must not be answered later in this channel (a "1" would otherwise
+    // save a preference before the execution gate): drop it from the live session row, whatever this turn's snapshot holds.
+    await this.deps.nlSelection?.dropPending?.(session.id);
     const text = denied.reason === 'dm-only' && denied.group === 'nl-actions'
       ? renderNlActionDmOnly(languageOf(message.text))
       : this.surfaceDenialText(message.text, denied);

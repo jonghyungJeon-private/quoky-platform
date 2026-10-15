@@ -383,6 +383,18 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }
 
   /**
+   * ADR-0122 D2.2: drop this session's open question unconditionally (a question saved during this turn included), e.g.
+   * when the surface gate refuses the question in a channel. Field-scoped on the live row; never throws.
+   */
+  async dropPending(sessionId: string): Promise<void> {
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: sessionId }, NL_PENDING_METADATA_KEY, () => undefined);
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: NL_PENDING_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+    }
+  }
+
+  /**
    * D7: take the open question at the start of an owner turn and clear it, whatever route the turn then takes, so a
    * question never survives a turn that did not answer it. The returned question is handed to `decide` when the turn
    * reaches selection. `null` when there is none (no write then). Only in `active` mode; never throws.
