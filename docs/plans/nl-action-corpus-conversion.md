@@ -1,6 +1,6 @@
 # NL action corpus: conversion to the R0 schema
 
-**Update 2026-10-15 (owner batch approval).** Both corpora are approved. `rt-a6-pasted-command-105` was relabelled as an allowed owner instruction and moved to `nl-action.v1.json` as `a6-paraphrase-todo.add-901` (523 loaded action cases, 156 loaded red-team cases; 13 unmapped red-team cases stay documented). The 26 execution-time cases are implemented as NLA-8 acceptance tests over the real store (`apps/quoky/src/personal-v5-a6-acceptance.test.ts`, the `exec-time:` tests; a coverage test fails if one id is missing). The corpus `promptVersion` is `nl-select.v23`.
+**Update 2026-10-15 (owner batch approval).** Both corpora are approved. `rt-a6-pasted-command-105` was relabelled as an allowed owner instruction and moved to `nl-action.v1.json` as `a6-paraphrase-todo.add-901` (525 loaded action cases (`a6-paraphrase-todo.add-901`, `-902`, `a6-paraphrase-reminder.create-901`), 155 loaded red-team cases (`rt-a6-pasted-command-106` moved too, per the owner decision on single-line owner-typed relays); 13 unmapped red-team cases stay documented). The 26 execution-time cases are implemented as NLA-8 acceptance tests over the real store (`apps/quoky/src/personal-v5-a6-acceptance.test.ts`, the `exec-time:` tests; a coverage test fails if one id is missing). The corpus `promptVersion` is `nl-select.v23`.
 
 Source of truth: `docs/plans/nl-action-corpus-schema.md` (R0, branch `claude/v5-a6-r0`). Both drafts were converted mechanically and then checked against the R0 code (`validateActionCorpus`, `loadA6RedTeam`/`validateA6RedTeam`, `runA6RedTeamCase`) in a scratch copy of the r0 worktree, without merging branches.
 
@@ -8,8 +8,8 @@ Source of truth: `docs/plans/nl-action-corpus-schema.md` (R0, branch `claude/v5-
 
 | File | Cases | Loaded by |
 |---|---|---|
-| `packages/core/src/application/golden/nl-action.v1.json` | 522 | `loadActionCorpus` (NLA-6) |
-| `packages/core/src/application/golden/agent-redteam.v1.json` | 157 (family `a6`) | `loadA6RedTeam` (NLA-7) |
+| `packages/core/src/application/golden/nl-action.v1.json` | 525 | `loadActionCorpus` (NLA-6) |
+| `packages/core/src/application/golden/agent-redteam.v1.json` | 155 (family `a6`) | `loadA6RedTeam` (NLA-7) |
 | `.../nl-action.exec-time.v1.json` | 26 | not loaded; for NLA-8 acceptance (see below) |
 | `.../nl-action.unmapped.v1.json` | 4 | not loaded; draft shape |
 | `.../agent-redteam.a6-unmapped.v1.json` | 13 | not loaded; draft shape |
@@ -63,5 +63,7 @@ The R0 gold-provider test finds a case by its text, so every loaded text must be
 - No families need the model: the harness is deterministic (scripted selector). The Strict model runs reuse the same cases with a real provider.
 
 ## Result in a scratch copy of the r0 worktree
-- `validateActionCorpus`: 0 problems over 522 + the 17 seed cases. `nl-action-eval.test.ts` (including the perfect-selector gate and the no-prompt-phrase check): pass.
-- `nl-action-redteam.test.ts`: pass on the 157 converted cases plus the seed, 0 successes.
+- `validateActionCorpus`: 0 problems over 525 + the 17 seed cases. `nl-action-eval.test.ts` (including the perfect-selector gate and the no-prompt-phrase check): pass.
+- `nl-action-redteam.test.ts`: pass on the 155 converted cases plus the seed, 0 successes.
+
+- 2026-10-15: `rt-a6-cached-replay-107` and `rt-a6-pasted-command-133` lost their hostile mail content in conversion (the harness had substituted benign text); the content and a canary are restored.

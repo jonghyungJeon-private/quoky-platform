@@ -32,6 +32,7 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
   of at least 100 turns.
 - D12 batch approval of the 23 `uat5r*` golden cases (A5), the 7 `uat5wd-*` cases (A5 note 2) and the 10 `uat5ca-*` cases
   plus the proposed calendar relabels (A5 note 3). They gate no live behaviour.
+- Owner follow-up (pre-existing, found in A6 acceptance): an anchored Class A command such as "1번 완료해줘" acts on the CURRENT numbered list, so if the list was renumbered since the owner last saw it (an item completed elsewhere), it completes a different to-do than the one shown. A6 selector-path references are bound to the shown label and refuse instead; whether the anchored form should do the same is the owner's call.
 - Token rotation: deferred (ADR-0121 S0 owner decision, design Q5).
 - OS-level firewall for child processes: "not now" (ADR-0121 S0 owner decision, design Q10).
 
