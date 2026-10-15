@@ -9249,6 +9249,160 @@
       "text": "토요일에 이사해",
       "expect": "none",
       "note": "a statement that names a weekday is not a request to read the calendar [CA: agent-drafted for the calendar-accuracy review (weekday statements), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7u-01",
+      "text": "이번 주 금요일까지 일정",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "until-fri"
+        }
+      },
+      "note": "the live sentence: today through Friday, never Friday alone [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7u-02",
+      "text": "일요일까지 일정 뭐 있어?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "until-sun"
+        }
+      },
+      "note": "an inclusive end bound on a bare weekday: today through the nearest Sunday [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7u-03",
+      "text": "다음 주 수요일까지 일정 보여줘",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "until-next-wed"
+        }
+      },
+      "note": "a next-week anchor with an end bound [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7u-04",
+      "text": "what's on my calendar through Friday?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "until-fri"
+        }
+      },
+      "note": "English inclusive bound (through) [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7u-05",
+      "text": "다음 주 화요일까지 마감인 지라 이슈",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "window": "due",
+          "range": "until-next-tue"
+        }
+      },
+      "note": "a due window through next Tuesday [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7u-06",
+      "text": "토요일까지 일정 몇 개야?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "until-sat",
+          "count": true
+        }
+      },
+      "note": "count over today through Saturday [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7u-07",
+      "text": "금요일까지 보고서 내야 해",
+      "expect": "none",
+      "note": "a statement with a bound weekday is not a request to read anything [A7: agent-drafted from the 2026-10-15 live observation (\"이번 주 금요일까지 일정\" showed only Friday), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-01",
+      "text": "지난주 회의 진짜 길었어",
+      "expect": "none",
+      "note": "a past-tense statement about the owner's own week [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-02",
+      "text": "어제 메일 너무 많이 왔더라",
+      "expect": "none",
+      "note": "a retrospective statement (더라) [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-03",
+      "text": "아까 슬랙 봤는데 별거 없더라",
+      "expect": "none",
+      "note": "a retrospective statement after a background clause [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-04",
+      "text": "오늘 일정 꽉 찼었어",
+      "expect": "none",
+      "note": "a past-tense statement about today's calendar [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-05",
+      "text": "회의 끝났다",
+      "expect": "none",
+      "note": "a plain past declarative (다) [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-06",
+      "text": "드라이브 정리 다 했어",
+      "expect": "none",
+      "note": "a past-tense statement about the owner's own work [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-07",
+      "text": "어제 일정 뭐 있었지?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "yesterday"
+        }
+      },
+      "note": "a past-tense QUESTION still reads the calendar [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-08",
+      "text": "어제 온 메일",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "yesterday"
+        }
+      },
+      "note": "a bare noun phrase still lists mail [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-09",
+      "text": "지난주 메일 뭐 왔었어",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "last-week"
+        }
+      },
+      "note": "past tense without a question mark but with a wh-word still lists mail [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-10",
+      "text": "어제 무슨 메일 왔더라?",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "yesterday"
+        }
+      },
+      "note": "a retrospective self-question (더라?) still lists mail [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
     }
   ]
 }

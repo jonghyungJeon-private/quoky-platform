@@ -160,6 +160,8 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
     { entryId: output.entryId, args: output.args },
     { offered, groundingText: prepared.groundingText, ...(golden.prior ? { previousArgs: golden.prior.args } : {}), now, timeZone },
   );
+  // A7 (Proposed): the runtime answers a clear past-tense statement as `none` (chat), exactly like a selector `none`.
+  if (!validated.ok && validated.reason === 'statement') return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   if (!validated.ok || output.ambiguity !== 'CLEAR') {
     return { id: golden.id, expected, outcome: 'clarify', got: output.entryId };
   }

@@ -224,3 +224,15 @@ describe('placeCalendarSpan (QUOKY_TIMEZONE windows)', () => {
     expect(window?.to).toBe('2026-10-19T15:00:00.000Z');
   });
 });
+
+describe('ADR-0120 amendment A7 (Proposed): with yield on, a weekday at an inclusive end bound declines to selection', () => {
+  it.each(['일요일까지 일정 뭐 있어?', '다음 주 수요일까지 일정 보여줘', '토요일까지 일정 몇 개야?', 'what is on my calendar through Friday?'])('%j', (text) => {
+    expect(parseCalendarQuestion(text, { yieldToSelection: true })).toBeNull();
+    // Yield off: the frozen grammar answers exactly as before.
+    expect(parseCalendarQuestion(text)).toMatchObject({ kind: 'events' });
+  });
+
+  it('a weekday without an end bound is still answered by the grammar', () => {
+    expect(parseCalendarQuestion('일요일 일정 뭐 있어?', { yieldToSelection: true })).toMatchObject({ kind: 'events' });
+  });
+});

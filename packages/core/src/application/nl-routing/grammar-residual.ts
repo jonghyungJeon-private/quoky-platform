@@ -124,6 +124,19 @@ export function isNlContentWord(token: string): boolean {
   return isContentToken(token.normalize('NFC').toLowerCase());
 }
 
+/** The noun stems of {@link REQUEST_STEM}: alone ("드라이브 정리 다 했어") they name an activity, not a request. */
+const BARE_NOUN_STEM = /^(?:확인|조회|정리)$/u;
+
+/**
+ * Whether one word is a Korean request or interrogative form of the closed classes above: a request verbal ("알려줘",
+ * "보여주세요", "확인해"; a bare noun stem such as "정리" is not one) or a wh-word with its copula ending ("뭐야",
+ * "언제죠", "몇"). Shared with the A7 statement check.
+ */
+export function isNlRequestOrWhWord(token: string): boolean {
+  const word = token.normalize('NFC').toLowerCase();
+  return (REQUEST_VERBAL.test(word) && !BARE_NOUN_STEM.test(word)) || WH_VERBAL.test(word);
+}
+
 /** Whether `text` is nothing but particles ("이", "에는"). */
 export function isNlParticleOnly(text: string): boolean {
   return PARTICLE_ONLY.test(text);

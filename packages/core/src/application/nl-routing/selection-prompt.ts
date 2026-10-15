@@ -13,15 +13,17 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
 /**
  * Bumped whenever the instruction text changes (the eval plan digest binds it). v20 = v18 with three examples in the
  * weekday lines of the range symbols (금요일 = fri, 이번 주 금요일 = this-fri, 다음 주 수 = next-wed). v21 = the A6 v19 text
- * on top of v20.
+ * on top of v20. v22 (ADR-0120 amendment A7, Proposed) = v20 with one `until-*` line after the date line of the range
+ * symbols (one example: 금요일까지 = until-fri) and two rule-2 lines on remarks about the past. v23 = the A6 text on top
+ * of v22.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v20';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v22';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v20.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v22.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v21';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v23';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -32,7 +34,7 @@ export interface NlSelectionPromptInput {
   readonly previous?: { readonly entryId: NlCatalogEntryId; readonly args: NlArgs };
   /**
    * ADR-0120 amendment A6: present only when action entries are offered this turn. `referenceContext` is the structural
-   * "Reference context" line (A6-D2: kinds, counts and ages only, never an item, title or id). Absent: the v20 prompt.
+   * "Reference context" line (A6-D2: kinds, counts and ages only, never an item, title or id). Absent: the v22 prompt.
    */
   readonly actions?: { readonly referenceContext: string };
 }
@@ -43,7 +45,7 @@ interface PromptExample {
   /** Entries that must be offered for the example to be shown (none = always). */
   readonly needs: readonly NlCatalogEntryId[];
   readonly previous?: string;
-  /** v21 only: the example's "Reference context" line. */
+  /** v23 only: the example's "Reference context" line. */
   readonly context?: string;
 }
 
@@ -101,7 +103,7 @@ const EXAMPLES: readonly PromptExample[] = [
 ];
 
 /**
- * A6 (v21): v20 examples whose answer changes when an action entry is offered (keyed by the v20 example text), and the
+ * A6 (v23): v22 examples whose answer changes when an action entry is offered (keyed by the v22 example text), and the
  * action examples. Generic patterns, not corpus phrases.
  */
 const ACTION_EXAMPLE_OVERRIDES: Readonly<Record<string, Omit<PromptExample, 'text'>>> = {
@@ -133,7 +135,7 @@ const ACTION_EXAMPLES: readonly PromptExample[] = [
   { text: '할 일 전부 완료로 바꿔줘', context: 'last listing: todo (3 items, 1 min ago)', output: '{"entryId":"todo.complete","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['todo.complete'] },
 ];
 
-/** The v21 rule lines (A6) inserted after rule 7. */
+/** The v23 rule lines (A6) inserted after rule 7. */
 const ACTION_RULES: readonly string[] = [
   '8. Action entries (only those in the catalog): pick one when the owner asks Quoky to do it NOW: todo.add, todo.complete,',
   '   todo.cancel, reminder.create, reminder.cancel, action.undo (undo what Quoky itself just did), item.summarize (what ONE',
@@ -159,7 +161,7 @@ function examplesFor(offered: ReadonlySet<string>, actions: NlSelectionPromptInp
   return [...base, ...ACTION_EXAMPLES].filter((example) => example.needs.every((id) => offered.has(id)));
 }
 
-/** v21 (A6) replacements of whole v20 lines; a line not listed is kept byte for byte. */
+/** v23 (A6) replacements of whole v22 lines; a line not listed is kept byte for byte. */
 const ACTION_LINE_REPLACEMENTS: Readonly<Record<string, readonly string[]>> = {
   'You are the request router of Quoky, a personal assistant. Map ONE message from its owner to at most one read-only': [
     'You are the request router of Quoky, a personal assistant. Map ONE message from its owner to at most one catalog entry',
@@ -197,6 +199,8 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   switching Quoky\'s model, and EVERY request to create, add, register,',
     '   send, reply, forward, post, comment, assign, move, change, delete, cancel, schedule, remind or remember something, also when',
     '   asked politely ("can you post this for me?"). Writes are never an entry. "<time>에 … 알려줘" sets a reminder: none.',
+    '   A remark about what already happened or how it went ("…했어", "…끝났다", "…더라", "…었는데 …") is none even when it',
+    '   names a source or a day; a past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup.',
     '3. help.topic is ONLY a question about Quoky itself: what Quoky can read or do, or how to use one of Quoky\'s own',
     '   features (to-dos, reminders, memory, feedback, model switching, branches, commits, project registration).',
     '   help.topic: "알림은 어떻게 지워?", "너 깃허브도 볼 수 있어?", "지라 상태 바꾸는 것도 돼?", "how do I add a to-do?"',
@@ -242,6 +246,7 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     `Range symbols: ${NL_RANGE_SYMBOLS.join(', ')}; mon..sun (the nearest such day: 금요일 = fri); this-mon..this-sun (that day of this week: 이번 주 금요일 = this-fri);`,
     'next-mon..next-sun and last-mon..last-sun (that day of next / last week: 지난주 금요일 = last-fri, 다음 주 수 = next-wed);',
     'MM-DD for a date the owner names (10월 20일 -> 10-20); MM-DD..MM-DD for a span of at most 31 days.',
+    'until-mon..until-sun (from today through the nearest such day: 금요일까지 = until-fri); until-next-mon..until-next-sun (from today through that day of next week);',
     '',
     'Catalog:',
   );
@@ -291,7 +296,7 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
 }
 
 /**
- * v21: the v20 instruction lines with the A6 replacements and rule 8 inserted after rule 7. Only the fixed instruction
+ * v23: the v22 instruction lines with the A6 replacements and rule 8 inserted after rule 7. Only the fixed instruction
  * header (before "Catalog:") is rewritten; the catalog, the examples and the owner's message are never touched.
  */
 function withActionRules(lines: readonly string[]): string[] {

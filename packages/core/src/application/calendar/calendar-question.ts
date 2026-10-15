@@ -3,6 +3,7 @@ import { calendarWindowForDays } from '../../ports/calendar-window';
 import { detectReplyLanguage } from '../chat-policy/chat-response-policy';
 import { detectExternalActionRequest, isPersonalScheduleQuestion } from '../intent-classifier';
 import { containsGroundingWord, leavesUnexpressedContent } from '../nl-routing/grammar-residual';
+import { nlExpressedWeekday } from '../nl-routing/symbolic-time';
 import { CALENDAR_PART_OF_DAY_WORDS } from '../nl-routing/wave1-entries';
 import {
   addLocalDays,
@@ -123,6 +124,15 @@ function namesUncarriedPartOfDay(message: string): boolean {
   return containsGroundingWord(message.replace(new RegExp(CLOCK_TIME, 'giu'), ' '), PART_OF_DAY_WORDS);
 }
 
+/**
+ * ADR-0120 amendment A7 (Proposed): whether the owner's one weekday carries an inclusive end bound ("일요일까지", "through
+ * Friday"). The grammar can place only that single day, and the period the owner means (today through that day) is a
+ * typed `until-*` range it cannot carry, so with yield on it declines (the A2 rule; it adds no phrase).
+ */
+function namesUncarriedEndBound(message: string): boolean {
+  return nlExpressedWeekday(message)?.until === true;
+}
+
 /** How-to / setup questions about the calendar feature itself (the help-intent handler answers those). */
 const HOW_TO =
   /어떻게\s*(?:써|쓰|사용|해|하|연결|설정|봐|보)|(?:쓰는|사용하는|연결하는|설정하는|보는)\s*(?:법|방법)|방법|\bhow\s+(?:do|to|can|should|would)\b|\b(?:set\s*up|connect|configure)\b/iu;
@@ -213,7 +223,7 @@ export function parseCalendarQuestion(text: string, options: { readonly yieldToS
   if (!(BARE_KO.test(message) || BARE_EN.test(message) || isPersonalScheduleQuestion(message))) return null;
   // ADR-0120 amendment A2 (only when the caller says selection would run): a schedule question carrying a qualifier this grammar cannot express (a title word, a period, or
   // a part of the day outside a clock time) is not answered with the whole span; it falls through to natural-language selection.
-  if (options.yieldToSelection === true && (leavesUnexpressedContent(message, CALENDAR_EXPRESSED) || namesUncarriedPartOfDay(message))) return null;
+  if (options.yieldToSelection === true && (leavesUnexpressedContent(message, CALENDAR_EXPRESSED) || namesUncarriedPartOfDay(message) || namesUncarriedEndBound(message))) return null;
   const span = extractSpan(message);
   return REMAINING.test(message) && span.kind !== 'next'
     ? { kind: 'events', span, language, remaining: true }
