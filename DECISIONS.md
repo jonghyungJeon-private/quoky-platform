@@ -26116,8 +26116,8 @@ the last round under the fix-loop cap.**
      Ollama embedding model chosen by measurement under ADR-0105). The owner pulls the model manually (C6 probe); the
      provider never pulls.
    - **Pinning.** The pin is `name:tag`, the Ollama manifest digest the owner's host reports (`ollama list` id) **and** the Ollama runtime version (`ollama --version`), because the same digest can produce slightly different vectors under a different runtime; a changed runtime version is a changed space.
-     The space id becomes `<sanitized name>@<digest, 12 hex>` and the record also stores the runtime version; the harness and (phase 2) the composition root refuse to
-     use a collection whose space id differs from the configured pin. The embedding prefix policy (nomic
+     The space id becomes `<sanitized name>@<digest, 12 hex>@ollama<runtime version>` (model name + tag + digest + runtime version), also stored in the collection metadata; the harness and (phase 2) the composition root refuse to
+     use a collection whose space id differs from the configured pin; a mismatch (including a runtime upgrade) means rebuild the collection and re-run the D5 audit. The embedding prefix policy (nomic
      `search_query:` for both sides, because pool texts and owner messages are the same kind of text) is part of the pin
      and recorded in every run record.
    - **Model change.** A new digest is a new space: the pool collection is rebuilt from the pool file (~150–2,000
@@ -26208,10 +26208,11 @@ the last round under the fix-loop cap.**
      reported but decide nothing. The pool author never reads gold (D4), so held-out is also a set the pool was not
      written against.
    - **Leakage control (pool → gold similarity strata).** The embedding audit (D5) gives every held-out case its maximum
-     cosine to any pool entry. Cases are bucketed `< 0.70`, `0.70–τ_low`, `τ_low–τ`, with τ_low = 0.80 fixed before any
-     run. Every metric below is reported per bucket. The **primary endpoint is the low-similarity stratum** (held-out cases
+     cosine to any pool entry. Cases are bucketed `< 0.70`, `0.70–τ_low`, `τ_low–τ`, with τ_low = min(0.80, τ − 0.05) fixed before any
+     run (so τ_low < τ always). If calibration gives τ − 0.05 < 0.70, the experiment aborts before any run. Every metric below is reported per bucket. The **primary endpoint is the low-similarity stratum** (held-out cases
      with max pool cosine < τ_low). The experiment is valid only if that stratum holds ≥ 50% of held-out cases and ≥ 10
-     cases per entry; this is checked at audit time, before any selector run, and a failure means rewriting pool entries,
+     cases per entry (counted over the read and action corpora together; small entries such as `jira.release`, about 20
+     held-out cases, make this a coarse, stop-biased test); this is checked at audit time, before any selector run, and a failure means rewriting pool entries,
      not running. A gain that appears only in the `τ_low–τ` bucket is treated as leakage and is a stop.
    - **Arms** (same selector model, temperature, case order and concurrency; **5 runs each** over the held-out D12 gate:
      the A6 action corpus and the read regression):
@@ -26226,7 +26227,7 @@ the last round under the fix-loop cap.**
      - **A2:** A1 with a seeded random k = 3 under the same filters (controls "more examples" against "relevant
        examples").
    - **Metrics:** overall, per entry, wrong captures, wrong targets, negatives captured, span exact; the **per-entry
-     minimum across runs** `m_X(e) = min_r acc_X(e, r)` and its floor `S_X = min_e m_X(e)`; per-case error counts over the
+     minimum across runs** `m_X(e) = min_r acc_X(e, r)` and its floor `S_X = min_e m_X(e)`, computed per entry over the whole held-out set (not only the primary stratum); per-case error counts over the
      5 runs (for paired analysis); selector p50 / p95; retrieval-only added latency p50 / p95 (embedding + query, measured
      separately because CLI latency noise is larger than the budget); prompt tokens. Run-to-run SD is reported, not
      used for a decision (5 runs cannot support a variance-ratio rule).
@@ -26251,9 +26252,9 @@ the last round under the fix-loop cap.**
      otherwise in writing.
    - **Traffic (ADR-0121 D8, MSIT minimal-traffic rule).** The experiment makes about 20,700 Claude CLI selector calls. The
      plan digest states a traffic-ledger budget of 21,500 calls (a small reserve) and a rate cap of 4 concurrent, ≤ 1 call/s
-     sustained; the harness stops at the budget. Arms are interleaved within each run / session (same case, all arms, in
-     rotation), so model drift across sessions does not confound arms. Embeddings are local and add no egress.
-   - **Budget cap and confirmatory runs:** 2 sessions. The first held-out set is the test. A second set is allowed only
+     sustained (about 6 h of calls in all, split into 3 sessions of ≤ 2.5 h each); the harness stops at the budget. Arms are
+     interleaved within every session (same case, all arms, in rotation), so model drift across sessions does not confound arms. Embeddings are local and add no egress.
+   - **Budget cap and confirmatory runs:** 3 sessions of ≤ 2.5 h. The first held-out set is the test. A second set is allowed only
      as a **confirmatory** run of the same pre-registered criteria: every change (pool, k, wording, model) is recorded in
      `DECISIONS.md` before it runs, the new plan digest is approved, and its result stands alone (it is never pooled with
      the first set). No re-tuning on held-out, ever.
@@ -26315,7 +26316,7 @@ the last round under the fix-loop cap.**
 ### Alternatives considered
 
 - **A new vector database now (sqlite-vec, LanceDB, Qdrant).** Rejected for this scope (D2): no measured need, new
-  native code or a new server, and and for LanceDB tombstone deletion (not a pool concern: the pool holds no memories, and since the ADR-0106 amendment forget
+  native code or a new server, and for LanceDB tombstone deletion (not a pool concern: the pool holds no memories, and since the ADR-0106 amendment forget
   is an archive with the vector removed on archive). sqlite-vec is the recorded migration path.
 - **A "Vector + RAG platform" (general retrieval over memory, examples and connector content).** Rejected: no measured
   need, and indexing connector content is an information-flow problem that needs its own ADR (D1).
@@ -26330,7 +26331,7 @@ the last round under the fix-loop cap.**
 ### Consequences
 
 - **+** The instability hypothesis is tested directly (A0-swap) and against a relevance control (A2), with pre-registered
-  effect sizes on a held-out split, before any runtime change; a neutral result costs two sessions and leaves the lint
+  effect sizes on a held-out split, before any runtime change; a neutral result costs three sessions and leaves the lint
   as a permanent gain.
 - **+** Zero new dependencies, processes, ports or egress; the security posture of the MSIT mapping is unchanged.
 - **+** The contamination lint makes gold scores trustworthy for every later prompt version, with or without retrieval.
@@ -26365,7 +26366,7 @@ the last round under the fix-loop cap.**
    to an independent reviewer, never to the agent or session that drafted it (D4). **Recommended: the owner approves
    every batch of v1 (≥ 150 entries, about three batches).**
 5. The run budget of D6: 4 arms (A0, A0-swap, A1, A2) × 5 runs on the held-out 70%, plus one dev smoke run of A0 and
-   A1, about 20,700 selector calls (≈ 2 h at concurrency 4). **Recommended: approve as pre-registered;** cutting runs
+   A1, about 20,700 selector calls (≈ 6 h at the ≤ 1 call/s cap, in 3 sessions of ≤ 2.5 h). **Recommended: approve as pre-registered;** cutting runs
    or arms weakens the paired analysis and is not recommended.
 6. Strict approvals for phase 1: the C6 probe (the owner pulls `nomic-embed-text` and the digest is pinned), one embed
    audit run, one plan-digest approval for the dev smoke run, and one for the held-out set.

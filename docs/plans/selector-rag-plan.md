@@ -29,7 +29,7 @@
 |---|---|---|---|---|
 | **RAG-0** | Contamination lint, n-gram half, with a ratchet over today's findings (ADR-0123 D5) | none | standing delegation (test + docs) once the owner says yes to decision 2 | S |
 | **RAG-1** | Pool v1 (≥ 150 entries, owner-approved batches), the embedding audit and τ calibration, C6 probe | local embeddings only | Strict: C6 probe (owner pulls the model, digest pinned); one embed-audit run | M |
-| **RAG-2** | Pre-registered four-arm experiment (A0 / A0-swap / A1 / A2, 5 runs each on the held-out 70%, after one dev smoke run) and the decision record | selector (Claude CLI) + local embeddings | Strict: one plan-digest approval for the whole set | M |
+| **RAG-2** | Pre-registered four-arm experiment (A0 / A0-swap / A1 / A2, 5 runs each on the held-out 70%, after one dev smoke run) and the decision record | selector (Claude CLI) + local embeddings | Strict: one plan-digest approval for the dev smoke run, one for the held-out set | M |
 | **RAG-3** | Runtime retrieval behind `QUOKY_NL_EXAMPLE_RETRIEVAL=off|shadow|on` (default `off`) | — | only after an RAG-2 pass; its own ADR-0120 amendment and Chief Architect review | M |
 
 Order and dependencies: RAG-0 → RAG-1 → RAG-2 → (pass) RAG-3. RAG-0 is useful on its own and does not wait for the rest.
@@ -74,7 +74,7 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
     pinned space into a store under `data/eval/selector-rag/store/` (its own `LocalVectorProvider` directory), computes
     max cosine per pool entry against gold, and τ calibration (τ = minimum positive cosine minus 0.02, plus negative pairs and the reported false-positive rate).
   - `apps/quoky/src/tools/selector-rag/selector-pool.audit.v1.json` (committed): pool digest, gold digest, space id
-    (`nomic-embed-text@<digest12>`), Ollama runtime version, prefix policy, τ, calibration set and scores, flagged pairs (must be empty).
+    (`nomic-embed-text@<digest12>@ollama<version>`), prefix policy, τ, calibration set and scores, flagged pairs (must be empty).
   - `apps/quoky/src/tools/selector-rag/pool.test.ts`: pool schema and coverage, n-gram lint with zero findings, and
     "the audit record's digests equal the committed pool and gold" (a stale audit fails the suite).
   - CLI: `apps/quoky/src/tools/selector-rag-cli.ts`, script `eval:rag` in the root `package.json`.
@@ -102,8 +102,8 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
     model and effort.
   - `apps/quoky/src/tools/selector-rag/split.ts`: the stratified 30 / 70 dev / held-out split by a seeded hash of the
     case id, and the similarity strata (`< 0.70`, `0.70–τ_low`, `τ_low–τ`) from the audit; the validity check of the
-    low-similarity stratum (≥ 50% of held-out, ≥ 10 per entry) runs here, before any selector run.
-  - `apps/quoky/src/tools/selector-rag/analysis.ts`: per-entry minimum across runs and the floor `S_X`, paired bootstrap
+    low-similarity stratum (≥ 50% of held-out, ≥ 10 per entry, read + action counted together; coarse and stop-biased for small entries such as `jira.release` ≈ 20) runs here, with τ_low = min(0.80, τ − 0.05) and an abort if τ − 0.05 < 0.70, before any selector run.
+  - `apps/quoky/src/tools/selector-rag/analysis.ts`: per-entry minimum across runs and the floor `S_X` (per entry over the whole held-out set), paired bootstrap
     over cases (10,000 seeded resamples) for error-rate differences, McNemar on per-case majority correctness, and the
     five pre-registered criteria of ADR-0123 D6, per stratum.
   - Modes: `pnpm eval:rag -- --mode plan` (offline: prints plan and digest), `--mode run --approved-plan-digest <sha>`
@@ -122,7 +122,7 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
 |---|---|---|
 | Cases | ~1,418 in all (A6 action 544 incl. seed + read 874): dev ≈ 425, held-out ≈ 993 | current corpus files, 30 / 70 split |
 | Selector calls | held-out 4 arms × 5 runs × 993 ≈ 19,900, plus the dev smoke 2 × 425 ≈ 850: ≈ 20,700 | D6 |
-| Wall time | ≈ 2 h at concurrency 4 (dev smoke ≈ 5 min, held-out ≈ 2 h): two sessions | recorded selector p50 ≈ 1.35 s, p95 ≈ 2.1 s |
+| Wall time | ≈ 6 h at the ≤ 1 call/s cap (concurrency 4; dev smoke ≈ 15 min): 3 sessions of ≤ 2.5 h, arms interleaved within every session | recorded selector p50 ≈ 1.35 s, p95 ≈ 2.1 s |
 | Prompt size | ~23k characters (~6k tokens) with the full catalog; retrieved block +120–200 tokens (+2–3%) | `nl-select.v30.prompts.json` largest case |
 | Input tokens | ≈ 130M over all runs, most of it the repeated static prefix (kept cacheable by placing the block after the static examples) | above |
 | Traffic (ADR-0121 D8) | Ledger budget 21,500 Claude CLI calls (≈ 20,700 + reserve); rate cap 4 concurrent, ≤ 1 call/s sustained; stated in the plan digest; the harness stops at the budget | MSIT minimal-traffic rule |
