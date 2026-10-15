@@ -429,7 +429,9 @@ const todoAdd: NlCatalogEntry = {
  * owner must say the action itself. Stems match inside a word (Korean endings follow: 완료해줘, 지워줘, 꺼줘, 되돌려
  * 놔); Latin words are whole words. A message with only a reference ("2번도", "그걸로요", "13번 알림") grounds none.
  */
-const TODO_COMPLETE_WORDS: readonly string[] = ['완료', '처리', '끝', '마쳤', '마치', '마무리', '다 했', '다했', '해치웠', '체크', 'done', 'complete', 'completed', 'finish', 'finished', 'check off'];
+// 끝 only in its completion forms (끝냈 / 끝났 / 끝내 / 끝마치): "언제 끝나?" is a question, not a completion. No 처리 or 체크:
+// "처리 방법", "체크해봐" are not completions (CA review).
+const TODO_COMPLETE_WORDS: readonly string[] = ['완료', '끝냈', '끝났', '끝내', '끝마', '마쳤', '마치', '마무리', '다 했', '다했', '해치웠', 'done', 'complete', 'completed', 'finish', 'finished', 'check off'];
 const CANCEL_WORDS: readonly string[] = ['취소', '캔슬', '삭제', '지워', '지우', '지운', '없애', '없던 걸로', '없던걸로', '제거', '제외', '그만', '필요 없', '필요없', 'cancel', 'remove', 'delete', 'drop', 'scrap'];
 const TODO_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '빼', '안 할', '안할'];
 const REMINDER_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '꺼', '끄', '끈', '멈춰', '안 해도', '안해도', 'stop', 'turn off', 'disable'];

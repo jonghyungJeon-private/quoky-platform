@@ -187,6 +187,11 @@ export function renderDeicticPayload(language: Lang): string {
 }
 
 /** A6-D6 stale-command guard and every "say it again" answer. */
+/** A6 R1 review: an action the open question did not ask for is not run (that one turn; the reply ends the question). */
+export function renderQuestionOpen(language: Lang): string {
+  return language === 'en' ? 'A question is still open, so I did not do that. Please tell me again.' : '질문이 열려 있어 실행하지 않았어요. 다시 말씀해 주세요.';
+}
+
 export function renderRestate(language: Lang): string {
   return language === 'en' ? 'Please tell me again what to do and which item.' : '무엇을/어느 항목을 다시 말씀해 주세요.';
 }

@@ -34,7 +34,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlNumeralsIn, nlOrdinalsIn, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -55,6 +55,7 @@ import {
   renderDeicticPayload,
   renderInputRefusal,
   renderReferenceQuestion,
+  renderQuestionOpen,
   renderRestate,
   renderTimeInTitle,
   renderTimeOutsideWhen,
@@ -1037,7 +1038,22 @@ export class NlSelectionService implements TurnDeliveryObserver {
       return this.actionAnswer(audit, isNlBulkRequest(prepared.groundingText) ? renderBulk(language) : renderRestate(language));
     }
     if (entryId === 'action.undo') {
-      if (!this.allowedWhileAsked(openQuestion, entryId, undefined)) return this.blockedWhileAsked({ ...base, risk: entry.risk });
+      if (!this.allowedWhileAsked(openQuestion, entryId, undefined)) return this.blockedWhileAsked({ ...base, risk: entry.risk }, language);
+      // A6 R1 review: the selector's undo undoes only what the owner's words can mean. A source noun of another source (or a
+      // second one), or a number / ordinal other than the last action's shown label ("2번 취소해줘" after "할 일 5번으로
+      // 추가했어요"), asks instead of undoing the last action.
+      const record = reference.lastAction?.record;
+      if (record !== undefined) {
+        const named = nlNamedItemSources(prepared.groundingText);
+        const numbers = [...nlNumeralsIn(prepared.groundingText), ...nlOrdinalsIn(prepared.groundingText)];
+        const otherSource = named.size > 1 || (named.size === 1 && !named.has(record.source));
+        const otherNumber = numbers.some((number) => number !== record.label);
+        if (otherSource || otherNumber) {
+          const audit: NlActionAudit = { ...base, risk: entry.risk, resolution: otherSource ? 'other-source' : 'ambiguous', result: 'asked', reason: otherSource ? 'other-source' : 'ambiguous' };
+          if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+          return this.actionAnswer(audit, renderRestate(language));
+        }
+      }
       return this.decideUndo(turn, language, latencyMs, 'none', reference);
     }
     // A6-D2: resolve the target in code (most recent listing only, display numbers, lastAction).
@@ -1067,7 +1083,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       resolution = 'resolved';
     }
     // A6 R1 review: while an A6 question is open, only the questioned entry on one of its candidates runs.
-    if (!this.allowedWhileAsked(openQuestion, entryId, target)) return this.blockedWhileAsked({ ...base, risk: entry.risk });
+    if (!this.allowedWhileAsked(openQuestion, entryId, target)) return this.blockedWhileAsked({ ...base, risk: entry.risk }, language);
     const audit: NlActionAudit = { ...base, risk: entry.risk, resolution, ...(target !== undefined ? { target } : {}), result: 'executed' };
     if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
     if (!this.actionCaps.allows(turn.actor.id, entry.risk, Date.parse(turn.now))) {
@@ -1096,12 +1112,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}), action: audit };
   }
 
-  /** An action the open A6 question does not ask for: nothing runs and the turn is chat (logged, content-free). */
-  private blockedWhileAsked(base: Omit<NlActionAudit, 'resolution' | 'result'>): NlSelectionDecision {
+  /**
+   * An action the open A6 question does not ask for: nothing runs and a short fixed reply says so (logged, content-free).
+   * The lock lasts that one turn: any reply ends the question (D7).
+   */
+  private blockedWhileAsked(base: Omit<NlActionAudit, 'resolution' | 'result'>, language: 'ko' | 'en'): NlSelectionDecision {
     const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'pending-question' };
     if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
-    this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
-    return { kind: 'none' };
+    return this.actionAnswer(audit, renderQuestionOpen(language));
   }
 
   /** A6 (D8) `shadow`: the decision is logged and nothing acts; the turn continues as today (honest chat). */

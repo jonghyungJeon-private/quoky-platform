@@ -509,15 +509,34 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
     const nine = await w.decide('9', { now: at(1), pending });
     expect(nine.kind).toBe('ask');
     expect(w.calls).toHaveLength(0);
-    // A full request for another entry while the question is open: the selector runs, nothing is written (chat).
+    // A full request for another entry while the question is open: the selector runs, nothing is written, and a short
+    // fixed reply says so (the lock lasts this one turn: the reply ends the question).
     const other = world({ level: 'local', script: () => out('action.undo') });
     other.setMetadata(LAST_ACTION_METADATA_KEY, todoAction());
-    expect((await other.decide('방금 거 되돌려줘', { now: at(1), pending })).kind).toBe('none');
+    const blocked = await other.decide('방금 거 되돌려줘', { now: at(1), pending });
+    expect(blocked).toMatchObject({ kind: 'ask', text: '질문이 열려 있어 실행하지 않았어요. 다시 말씀해 주세요.' });
     expect(other.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === 'pending-question')).toBe(true);
     // The questioned entry on a candidate still runs.
     const same = world({ level: 'local', script: () => out('todo.complete', { ref: '#3' }) });
     same.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([2, 3], 0));
     expect((await same.decide('3번 완료해줘 그걸로', { now: at(1), pending })).kind).toBe('execute');
+  });
+
+  it('a selector undo never undoes another item than the owner names: "2번 취소해줘", "2번 메일 취소해줘" after "할 일 5번" ask', async () => {
+    const added = withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-5', label: 5, at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0));
+    for (const [text, reason] of [['2번 취소해줘', 'ambiguous'], ['2번 메일 취소해줘', 'other-source'], ['그 알림 되돌려줘', 'other-source'], ['두 번째 거 되돌려줘', 'ambiguous']] as const) {
+      const w = world({ level: 'local', script: () => out('action.undo') });
+      w.setMetadata(LAST_ACTION_METADATA_KEY, added);
+      const decision = await w.decide(text, { now: at(1) });
+      expect(decision.kind, text).toBe('ask');
+      expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === reason), text).toBe(true);
+    }
+    // Its own label, its own source noun, or no number: the undo runs.
+    for (const text of ['5번 되돌려줘', '그 할 일 되돌려줘', '방금 거 되돌려줘']) {
+      const w = world({ level: 'local', script: () => out('action.undo') });
+      w.setMetadata(LAST_ACTION_METADATA_KEY, added);
+      expect((await w.decide(text, { now: at(1) })).kind, text).toBe('execute');
+    }
   });
 
   it('a second or another source noun asks: "할 일 말고 2번 메일 취소해줘", "2번 (메일) 취소해줘", "메일2번 취소해줘"', async () => {
