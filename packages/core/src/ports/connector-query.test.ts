@@ -19,8 +19,14 @@ import {
 import * as ports from './index';
 
 describe('connector query vocabulary', () => {
-  it('names exactly the two read-only queries and bounds results to 20', () => {
-    expect(ConnectorQueryName).toEqual({ PERSONAL_WORK: 'personal-work', SEARCH: 'search' });
+  it('names exactly the read-only queries (the two of ADR-0100 D7 and the three of ADR-0120 A8) and bounds results to 20', () => {
+    expect(ConnectorQueryName).toEqual({
+      PERSONAL_WORK: 'personal-work',
+      SEARCH: 'search',
+      CONTAINERS: 'containers',
+      RELEASES: 'releases',
+      RELEASE_ITEMS: 'release-items',
+    });
     expect(CONNECTOR_QUERY_DEFAULT_LIMIT).toBe(20);
     expect(CONNECTOR_QUERY_MAX_LIMIT).toBe(20);
     expect(CONNECTOR_SEARCH_TEXT_MAX_LENGTH).toBe(100);
