@@ -133,3 +133,17 @@ describe('FeedbackSummaryTurnHandler — DM-only (P0 ahead of ADR-0122 D7)', () 
     expect(get).not.toHaveBeenCalled();
   });
 });
+
+describe('FeedbackSummaryTurnHandler — ADR-0122 P2: `memory` in the channel permit lifts the P0 copy', () => {
+  it('reads the summary with `memory`; stays DM-only without it or without a permit', async () => {
+    const context = { platform: 'test', spaceId: 'g1', channelId: 'qa', userId: 'u1', direct: false };
+    const { handler, summarize } = handlerWith();
+    const inChannel = (allowed?: readonly string[]) =>
+      ({ ...ctxOf('피드백 요약', context), ...(allowed !== undefined ? { surfacePermit: { allowed } } : {}) }) as TurnHandlerContext;
+    expect((await handler.handle(inChannel(['memory'])))?.reply.text).not.toBe(DM_ONLY_FEATURE_TEXT);
+    expect(summarize).toHaveBeenCalledTimes(1);
+    expect((await handler.handle(inChannel(['todo'])))?.reply.text).toBe(DM_ONLY_FEATURE_TEXT);
+    expect((await handler.handle(inChannel()))?.reply.text).toBe(DM_ONLY_FEATURE_TEXT);
+    expect(summarize).toHaveBeenCalledTimes(1);
+  });
+});

@@ -7,6 +7,7 @@ import type {
 } from '../../ports/conversation-turn-handler.port';
 import type { Logger } from '../../ports/logger.port';
 import { isDirectConversation, outboundMessage } from '../message-rendering';
+import { surfaceChannelHolds } from '../surface-grants/surface-permit';
 import { surfaceClaimOf } from '../surface-grants/surface-group-map';
 import { parseReminderMessage } from './reminder-grammar';
 import { isNlActionEntryId, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
@@ -105,8 +106,9 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
     if (selected.entryId === 'reminder.list') {
       const status = selected.args.status === 'canceled' || selected.args.status === 'done' || selected.args.status === 'all' ? selected.args.status : undefined;
       // The status view (owner-approved 2026-10-15) is read-only and never an A6 listing.
-      // A status view is DM-only until ADR-0122 P1 (owner: channels default-deny); nothing is read in a channel.
-      if (status !== undefined && !isDirectConversation(ctx.message.context)) {
+      // A status view is DM-only in a channel unless the gate is enforced and the channel holds `reminder` (ADR-0122 P2,
+      // Codex P2 of #221); with the gate off it stays DM-only. Nothing is read when refused.
+      if (status !== undefined && !surfaceChannelHolds(ctx.message.context, ctx.surfacePermit, 'reminder')) {
         return { reply: outboundMessage(ctx.message.context, renderListStatusDmOnly(selected.language), { replyToMessageId: ctx.message.id }) };
       }
       if (status !== undefined && this.deps.conversation.listReply !== undefined) return { reply: await this.deps.conversation.listReply(base, status) };

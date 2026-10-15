@@ -92,3 +92,16 @@ describe('WorkSurfaceQuery', () => {
     expect(surface.sources[1]).toMatchObject({ source: 'github', status: 'IDENTITY_MISSING' });
   });
 });
+
+describe('WorkSurfaceQuery — ADR-0122 D2.4 `sources` (P2)', () => {
+  it('reads only the listed sources (a withheld connector is never queried); the status is over the sources read', async () => {
+    let githubQueries = 0;
+    const github = connector('github', [{ id: '1', title: 'GitHub task' }]);
+    const counted: ConnectorProvider = { ...github, async query(input) { githubQueries += 1; return github.query(input); } };
+    const surface = await query([connector('jira', [{ id: 'J-1', title: 'Jira task' }]), counted]).forActor(actor, { sources: ['jira'] });
+    expect(githubQueries).toBe(0);
+    expect(surface.status).toBe('COMPLETE');
+    expect(surface.sources.map((source) => source.source)).toEqual(['jira']);
+    expect(surface.items.map((item) => item.resource.identity)).toEqual(['jira:J-1']);
+  });
+});

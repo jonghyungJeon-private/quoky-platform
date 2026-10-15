@@ -35,10 +35,13 @@ list / revoke phrases, kill-switch suspension, the deploy seed. Code default `QU
 byte-identical; owner amendment 2026-10-15: stays `off` during development, switched to `enforce` only for permission tests with the owner's yes and back to `off` afterwards); enabling needs the owner's yes for the live `.env.local` values `QUOKY_CHANNEL_GRANTS=enforce` and
 `QUOKY_CHANNEL_GRANTS_SEED=discord:1520835639103324181:1520835639904309350=jira-mine,jira-project,github,slack-search,confluence,calendar,todo,reminder,memory,code`
 (Strict), plus the deploy checks: `quoky.actionSwitch` (a stopped switch suspends the seed from the first turn) and
-`QUOKY_REMINDERS_CHANNEL_DELIVERY` false or unset until P2's send-time check (unset live, checked 2026-10-15). P2
-next: the grant phrase with `허용 실행`, the audience line, the composite permit, reminder channel delivery, grant
-receipts, recall in channels holding `memory`, help lines, code default `enforce`. Chief Architect review required
-before merge (port and runtime dispatch change).
+`QUOKY_REMINDERS_CHANNEL_DELIVERY` (P2 adds the send-time check, so channel delivery no longer has to stay off).
+**P2 on branch `claude/v5-surface-grants-p2`** (DECISIONS "ADR-0122 P2 implementation note"): the grant phrase with the
+`허용 실행` confirmation (2 minutes, owner only, strong-group warnings, the Discord cached audience line, DM receipts),
+the denial hint, the composite "my work" permit (`todo`, Jira / GitHub sections by grant), the reminder send-time channel
+check, recall and the memory / learning commands in channels holding `memory`, status views by `todo` / `reminder`, the
+A8 release lists by `jira-project`, help lines. Code default stays `off` (owner amendment); with `off` everything is
+byte-identical. Chief Architect review required before merge (port and runtime dispatch change).
 
 **Pending with the owner.**
 
@@ -95,7 +98,7 @@ Details and the review record for each item are in the matching notes in `DECISI
   The `complete-018` and `-009` relabels are the owner gold decisions listed under "Pending with the owner".
 - **Final Haiku gate (3 runs, read v27 / A6 v29, 2026-10-15).** Action 95.8% / 96.8% / 95.5%, wrong target 0/0/0, negative captures 0/0/0; run 1 below gate only on the READ entry `reminder.list` 5/6. Read regression 95.7% / 95.4% / 96.4%, A6 captures 0/0/0; run 2 has 1 wrong capture (`neg-051` → `help.topic`, read-only). Summary: safety 3/3, utility 2/3 per corpus; not a full pass. The owner decides the flag after the 100-turn live session. Reported-speech residuals ("…완료해줘 했어", "…하길래", "…해서", "…하니까") are recorded in DECISIONS as accepted.
 - **For the owner:** `neg-094` is grammar-owned (a daily brief schedule) and skipped in A6-on scoring.
-- **Scope note (Codex P2, 2026-10-15):** status views (canceled/completed/past/all) of to-do and reminder lists are DM-only for now, even in channels granted todo/reminder under ADR-0122; P2 will make them follow those grants.
+- **Scope note (Codex P2, 2026-10-15):** status views (canceled/completed/past/all) of to-do and reminder lists follow the `todo` / `reminder` grants with `QUOKY_CHANNEL_GRANTS=enforce` (ADR-0122 P2); with the gate `off` they stay DM-only.
 - **Backlog (owner request 2026-10-15, not R1):** a separate safe design proposal for "그거로 추가해줘", bringing earlier
   reply content into a to-do: a preview showing the exact text, explicit approval, and defenses against content-borne
   injection (ADR-0121 S3 territory). Until then the A6-D3 deictic-payload refusal stays.

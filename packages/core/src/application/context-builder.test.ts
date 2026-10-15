@@ -1571,4 +1571,26 @@ describe('ContextBuilder — DM-only durable recall and curated examples (P0 hot
     }
   });
 
+  // ADR-0122 D7 narrowed (P2): the runtime passes `channelRecall` only for a channel holding `memory` while the gate is
+  // enforced; then recall and examples are allowed there. `channelRecall: false` (or absent) is the P0 behaviour.
+  it('a channel turn with `channelRecall: true` gets recall and examples; `false` or absent gets neither', async () => {
+    for (const config of configs) {
+      const granted = fixture();
+      const bundle = await new ContextBuilder(memory, config, granted.retriever, granted.source).build(
+        taskWith({ sessionId: 's1', direct: false, spaceId: 'guild-1' }),
+        [],
+        { channelRecall: true },
+      );
+      expect(bundle.durableRecall?.map((entry) => entry.content)).toEqual(['DM에서 기억해 둔 비밀 메모']);
+      expect(bundle.curatedExamples).toEqual([example]);
+      for (const options of [{ channelRecall: false }, {}]) {
+        const f = fixture();
+        const plain = await new ContextBuilder(memory, config, f.retriever, f.source).build(taskWith({ sessionId: 's1', direct: false, spaceId: 'guild-1' }), [], options);
+        expect(plain).not.toHaveProperty('durableRecall');
+        expect(plain).not.toHaveProperty('curatedExamples');
+        expect(f.retrievals).toHaveLength(0);
+        expect(f.selections).toHaveLength(0);
+      }
+    }
+  });
 });

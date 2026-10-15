@@ -19,7 +19,8 @@ import type { ConnectorProvider, ConnectorQuery, PersonalWorkFilter } from '../.
 import { containsCredentialMaterial } from '../credential-guard';
 import { messageFields } from '../message-rendering';
 import type { WorkManager } from '../work-manager';
-import type { WorkSurface } from '../work-surface-query';
+import type { WorkSurface, WorkSurfaceReadOptions } from '../work-surface-query';
+import { surfacePermittedWorkSources, type SurfacePermit } from '../surface-grants/surface-permit';
 import {
   buildExternalWorkReadout,
   fitExternalWorkReadoutToPrompt,
@@ -110,7 +111,11 @@ export type WorkChatOutcome =
  */
 export interface WorkDesk {
   forActor(actor: Actor): Promise<WorkSurface>;
-  handle(command: WorkChatCommand, actor: Actor): Promise<WorkChatOutcome>;
+  /**
+   * `options.permit` (ADR-0122 D2.4, P2): the channel's content-free permit; the combined "my work" view reads its Jira /
+   * GitHub sections only when the permit allows them. Absent (DM, gate off): exactly as before.
+   */
+  handle(command: WorkChatCommand, actor: Actor, options?: WorkDeskHandleOptions): Promise<WorkChatOutcome>;
   /** The work sources with a registered read-only connector (ADR-0120 D1: only those are offered to selection). */
   configuredSources?(): readonly WorkChatSource[];
   /**
@@ -120,8 +125,12 @@ export interface WorkDesk {
   handleAction?(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome>;
 }
 
+export interface WorkDeskHandleOptions {
+  readonly permit?: SurfacePermit;
+}
+
 export interface WorkChatServiceDeps {
-  readonly workSurface: { forActor(actor: Actor): Promise<WorkSurface> };
+  readonly workSurface: { forActor(actor: Actor, options?: WorkSurfaceReadOptions): Promise<WorkSurface> };
   readonly connectors: { list(): readonly ConnectorProvider[] };
   /** The only to-do state owner; to-do commands never touch storage directly. */
   readonly work: Pick<WorkManager, 'create' | 'listByActor' | 'listActiveByActor' | 'transition' | 'correlate'> &
@@ -285,7 +294,7 @@ export class WorkChatService implements WorkDesk {
     return WORK_CHAT_SOURCES.filter((source) => registered.has(source));
   }
 
-  async handle(command: WorkChatCommand, actor: Actor): Promise<WorkChatOutcome> {
+  async handle(command: WorkChatCommand, actor: Actor, options: WorkDeskHandleOptions = {}): Promise<WorkChatOutcome> {
     if (command.kind === 'todo.hint') return this.completionHint(command, actor);
     if (command.kind === 'todo.status') return this.statusAnswer(command, actor);
     try {
@@ -300,7 +309,7 @@ export class WorkChatService implements WorkDesk {
         // falls through
         // ADR-0104 D3 (DET-2): a status question about the whole list is answered with the same store-backed view.
         case 'todo.summary': {
-          const listed = await this.listWorkWithItems(actor);
+          const listed = await this.listWorkWithItems(actor, options.permit);
           return replyWith(listed.body, this.listingReceipt(listed.todos));
         }
         case 'todo.complete':
@@ -592,15 +601,28 @@ export class WorkChatService implements WorkDesk {
 
   // -- combined view ------------------------------------------------------------------------------------------------
 
-  private async listWorkWithItems(actor: Actor): Promise<{ readonly body: MessageBody; readonly todos: readonly WorkItem[] }> {
+  private async listWorkWithItems(actor: Actor, permit?: SurfacePermit): Promise<{ readonly body: MessageBody; readonly todos: readonly WorkItem[] }> {
     const todos = await this.activeTodos(actor);
-    let surface: WorkSurface | null = null;
-    try {
-      surface = await this.deps.workSurface.forActor(actor);
-    } catch {
-      surface = null;
+    // ADR-0122 D2.4: without a permit every section is read exactly as before; with one, a withheld section is not read.
+    if (permit === undefined) {
+      let surface: WorkSurface | null = null;
+      try {
+        surface = await this.deps.workSurface.forActor(actor);
+      } catch {
+        surface = null;
+      }
+      return { body: renderMyWork(todos, surface), todos };
     }
-    return { body: renderMyWork(todos, surface), todos };
+    const { sources, withheld } = surfacePermittedWorkSources(permit);
+    let surface: WorkSurface | null = null;
+    if (sources.length > 0) {
+      try {
+        surface = await this.deps.workSurface.forActor(actor, { sources });
+      } catch {
+        surface = null;
+      }
+    }
+    return { body: renderMyWork(todos, surface, withheld), todos };
   }
 
   // -- connector lookups (named read-only queries only) --------------------------------------------------------------

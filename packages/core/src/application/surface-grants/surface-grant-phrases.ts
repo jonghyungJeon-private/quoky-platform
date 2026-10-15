@@ -7,8 +7,8 @@ import { resolveSurfaceGroupAlias, type SurfaceGroupId } from './surface-groups'
  * Quoted text, code-formatted text and a message with attachments never match (ADR-0120 D8 / A6 formatting facts).
  * Never chosen by the selector or the chat model.
  *
- * P1 recognizes every phrase; the grant itself (`이 채널에 X 허용` → confirmation → `허용 실행`) is P2, so in P1 the grant
- * phrase gets a fixed "not available yet" reply and changes nothing.
+ * The grant (`이 채널에 X 허용`) is never immediate: it asks for the exact confirmation `허용 실행` within 2 minutes
+ * (`parseSurfaceGrantConfirm`, P2).
  */
 
 export type SurfaceGrantPhrase =
@@ -16,7 +16,7 @@ export type SurfaceGrantPhrase =
   | { readonly kind: 'list' }
   /** `채널 권한 목록` (in a DM). */
   | { readonly kind: 'list-all' }
-  /** `이 채널에 <그룹>[, <그룹>…] 허용` (P2). */
+  /** `이 채널에 <그룹>[, <그룹>…] 허용` (a confirmation, never an immediate grant). */
   | { readonly kind: 'grant'; readonly groups: readonly SurfaceGroupId[]; readonly unknown: readonly string[] }
   /** `이 채널에 <그룹>[, …] 허용 해제`. */
   | { readonly kind: 'revoke'; readonly groups: readonly SurfaceGroupId[]; readonly unknown: readonly string[] }
@@ -74,4 +74,14 @@ export function parseSurfaceGrantPhrase(
   const grant = /^이 ?채널에 (.+?) ?허용$/u.exec(text);
   if (grant) return { kind: 'grant', ...groupsOf(grant[1] as string) };
   return undefined;
+}
+
+/**
+ * D4.2: the exact confirmation `허용 실행` (whole message, NFC, whitespace collapsed, an optional polite tail and trailing
+ * `.`/`!`; quoted, code-formatted, multi-line text and attachments never match). It does not overlap the approval
+ * vocabulary (`승인`, `진행`, …).
+ */
+export function parseSurfaceGrantConfirm(message: Pick<InboundMessage, 'text' | 'quotedRanges' | 'formatting' | 'attachments'>): boolean {
+  if (isIneligible(message)) return false;
+  return /^허용 ?실행$/u.test(normalizeSurfaceGrantText(message.text));
 }

@@ -4,7 +4,7 @@ import { CONNECTOR_QUERY_MAX_LIMIT } from '../../ports';
 import type { ConnectorQueryErrorReason } from '../../ports';
 import { fitLines, joinMessage, messageBody, messageContent, messageLink, untrustedText } from '../message-rendering';
 import type { MessagePart } from '../message-rendering';
-import type { WorkSurface, WorkSurfaceSourceStatus } from '../work-surface-query';
+import type { WorkSurface, WorkSurfaceSource, WorkSurfaceSourceStatus } from '../work-surface-query';
 import type { ExternalWorkReadout } from './external-work-readout';
 import { WORK_CHAT_SEARCH_TEXT_MAX_LENGTH } from './work-chat-command';
 import type {
@@ -228,7 +228,16 @@ const SURFACE_STATUS_LINE: Readonly<Record<Exclude<WorkSurfaceSourceStatus, 'AVA
  * `완료 처리: N` resolves), then Jira/GitHub personal work. Sources that could not be read are named, and a partial
  * result is never presented as "no work". `surface` is null when it could not be read at all.
  */
-export function renderMyWork(todos: readonly WorkItem[], surface: WorkSurface | null): MessageBody {
+/** ADR-0122 D2.4: the fixed line of a "my work" view whose Jira and GitHub sections the channel does not allow (not read). */
+export const MY_WORK_SECTIONS_WITHHELD_LINE = 'Jira·GitHub 항목은 이 채널에서 허용되지 않아 뺐어요.';
+/** ADR-0122 D2.4: the status line of one section the channel does not allow (not read). */
+export const MY_WORK_SOURCE_WITHHELD_STATUS = '이 채널에서 허용되지 않아 뺐어요';
+
+/**
+ * `withheld` (ADR-0122 D2.4, P2): the Jira / GitHub sections a channel's permit does not allow — never read, each named
+ * with a fixed line; both withheld replace the section with one fixed line. Empty (the default): exactly as before.
+ */
+export function renderMyWork(todos: readonly WorkItem[], surface: WorkSurface | null, withheld: readonly WorkSurfaceSource[] = []): MessageBody {
   const lines: Array<{ text: MessagePart; droppable?: boolean }> = [];
 
   lines.push({ text: `**내 할 일** (${todos.length}건)` });
@@ -243,7 +252,10 @@ export function renderMyWork(todos: readonly WorkItem[], surface: WorkSurface | 
   }
 
   lines.push({ text: '' });
-  if (surface === null) {
+  if (withheld.includes('jira') && withheld.includes('github')) {
+    lines.push({ text: '**Jira·GitHub 업무**' });
+    lines.push({ text: MY_WORK_SECTIONS_WITHHELD_LINE });
+  } else if (surface === null) {
     lines.push({ text: '**Jira·GitHub 업무**' });
     lines.push({ text: '지금은 Jira·GitHub 업무를 불러오지 못했어요. 로컬 할 일만 보여드려요.' });
   } else {
@@ -251,8 +263,10 @@ export function renderMyWork(todos: readonly WorkItem[], surface: WorkSurface | 
     if (surface.items.length === 0) {
       lines.push({
         text:
-          surface.status === 'COMPLETE'
+          surface.status === 'COMPLETE' && withheld.length === 0
             ? 'Jira와 GitHub에서 확인된 업무가 없어요.'
+            : surface.status === 'COMPLETE'
+              ? '확인한 소스에는 업무가 없어요.'
             : '확인 가능한 소스에는 업무가 없어요. 확인하지 못한 소스가 있으니 아래 상태를 확인해 주세요.',
       });
     } else {
@@ -272,6 +286,7 @@ export function renderMyWork(todos: readonly WorkItem[], surface: WorkSurface | 
       const label = sourceLabel(source.source);
       lines.push({ text: `- ${label}: ${SURFACE_STATUS_LINE[source.status]}` });
     }
+    for (const source of withheld) lines.push({ text: `- ${sourceLabel(source)}: ${MY_WORK_SOURCE_WITHHELD_STATUS}` });
   }
   return fit(lines);
 }

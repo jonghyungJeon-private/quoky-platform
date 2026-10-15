@@ -187,3 +187,21 @@ describe('the reminder status view is DM-only (owner: channels default-deny unti
     expect(calls).toEqual(['canceled']);
   });
 });
+
+describe('ADR-0122 P2: the reminder status view follows `reminder` in a channel with the gate enforced', () => {
+  it('a permit naming `reminder` reads the view; another permit, or none (the gate off), keeps the DM-only reply', async () => {
+    const calls: Array<string | undefined> = [];
+    const conversation = { handleTurn: async () => null, listReply: async (_input: unknown, status?: string) => { calls.push(status); return { context: CONTEXT, text: '취소된 알림이 없어요.' }; } };
+    const handler = new ReminderTurnHandler({ conversation, composer: new ReminderReplyComposer(), enabled: true, logger: new RecordingLogger() });
+    const selected = { entryId: 'reminder.list' as const, args: { status: 'canceled' }, language: 'ko' as const };
+    const base = context('취소된 알림 보여줘');
+    const channel = (allowed?: readonly string[]) =>
+      ({ ...base, message: { ...base.message, context: { ...CONTEXT, spaceId: 'guild-1', direct: false } }, ...(allowed !== undefined ? { surfacePermit: { allowed } } : {}) }) as never;
+    expect((await handler.handleSelected(selected, channel(['reminder'])))?.reply.text).toBe('취소된 알림이 없어요.');
+    expect(calls).toEqual(['canceled']);
+    for (const allowed of [['todo'], undefined]) {
+      expect((await handler.handleSelected(selected, channel(allowed)))?.reply.text).toBe('취소·완료·지난 항목이나 전체 목록은 DM에서만 보여 드려요.');
+    }
+    expect(calls).toEqual(['canceled']);
+  });
+});

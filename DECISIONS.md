@@ -25749,7 +25749,8 @@ policy for non-owner actors through the ADR-0009 seam.
 - **Owner amendment to decision 14 (2026-10-15, Discord):** "개발 기간에는 상시 오픈으로 해두자 다만 테스트 시에 권한 테스트가 있으면 그때 off 테스트 하는걸로" — `QUOKY_CHANNEL_GRANTS` stays `off` during development (code default `off`); it is switched to `enforce` only for permission tests, each time with the owner's yes, and switched back afterwards.
 - **P1 status:** Implemented on branch `claude/v5-surface-grants` (the phasing table's P1 row). P2 (grant phrase with
   `허용 실행`, strong warnings, Discord `audience`, the composite permit, the reminder channel-delivery check, receipts of
-  owner grants, D7 narrowed to "without `memory`", help lines) is not built.
+  owner grants, D7 narrowed to "without `memory`", help lines) is built on `claude/v5-surface-grants-p2` (see "ADR-0122 P2
+  implementation note" below).
 
 **Deploy sequencing (one deviation from decision 14's text, for the owner's confirmation).** The code default of
 `QUOKY_CHANNEL_GRANTS` is `off` in P1, not `enforce`: P1 merges inert, byte-identical to main apart from the shipped P0
@@ -25886,3 +25887,127 @@ snapshot; strong writes are always re-checked at the call. The feature ships wit
 connector-write reconcile (no send).
 
 - Rebased onto A8/A9 P1: read prompt v30, A6 prompt v31; the R1 final gate ran on read v27/A6 v29 (pre-merge) — re-run on v30/v31 before the flag decision.
+
+### ADR-0122 P2 implementation note (2026-10-15)
+
+**Status:** Implemented on branch `claude/v5-surface-grants-p2` (the phasing table's P2 row). No migration, no new OAuth
+scope or Discord intent, no new egress, no new `ConversationRuntimeDeps` key (ADR-0032 baseline stays 37). **Code default
+stays `QUOKY_CHANNEL_GRANTS=off`** (owner amendment to decision 14, 2026-10-15): P2 does not flip it; the P1 deploy note
+"the code default flips to `enforce` with P2" is superseded. With `off` (or the dep absent) every turn, reply, read and
+delivery is byte-identical to main (the corpus test `off` vs absent, DM and channel).
+
+1. **Grant phrase with the confirmation (D4.1–D4.3).** `이 채널에 <그룹>[, …] 허용` (owner only, in the channel, only with
+   `enforce`) saves nothing: it stores the pending grant in `Session.metadata['quoky.grantPending']` (`{v, key, groups,
+   expiresAt}`, no text; field-scoped `SessionManager.updateMetadataEntry` under the shared session lock) and answers the
+   confirmation — "이 채널에 다음을 허용할까요?" (the channel is not named by id there, the owner is in it; the DM receipt
+   names it), the labels, "이 채널을 볼 수 있는 사람은 모두 답을 볼 수 있어요", the audience line, one `주의:` line per
+   strong group (`jira-project`, `slack-search`, `code` — its GitHub-write part — and `writes`), for `writes` the service
+   read groups this channel still lacks (owner decision 5: a write also needs `jira-mine` / `slack-search` / `calendar`,
+   which the gate keeps enforcing), a suspended note while `에이전트 중지` is on, and "2분 안에 \"허용 실행\"". The exact
+   `허용 실행` (polite tail and spacing forms; quoted, code-formatted, multi-line or attached text never) from the owner in
+   that conversation within 2 minutes consumes the pending grant atomically (one of two concurrent confirmations wins) and
+   saves the grant through the per-actor `ActorMetadataStore` lock (re-read inside it, so a racing revoke or preference
+   save is never lost); it logs `surface_grant.changed {op: grant}` and sends the one-line `SURFACE_GRANT` DM receipt
+   ("채널 권한 허용: <channelId> — …", owner decision 10). After the window: "허용 확인 시간(2분)이 지났어요", nothing saved.
+   Any other message (or a non-owner's) ends the pending grant (`surface_grant.pending_ended`) and routes as before; a
+   `허용 실행` with nothing pending in a channel gets a fixed reply; in a DM it is ordinary text. Already granted groups are
+   not asked again; the 16-channel cap is checked at the question and again at the save. Runtime order: the kill-switch
+   phrase, then the pending grant, then the anchored phrases (`SurfaceGrantService.handleGrantPending`, `handlePhrase`).
+2. **Audience (D4.3).** Optional, content-free `InboundMessage.audience = {memberUpperBound?, restricted?}`; the Discord
+   adapter fills it from its cache only (`adapter-discord/src/audience.ts`: the guild's `memberCount` from the `Guilds`
+   intent, `@everyone`'s cached `ViewChannel` on the channel or a thread's parent, a private thread is restricted; no fetch,
+   no `GuildMembers` intent). Unknown → "몇 명이 볼 수 있는지 확인하지 못했어요". Telegram never sets it.
+3. **Denial hint (D2.7).** `SURFACE_GRANT_PHRASE_AVAILABLE = true`: the not-granted copy adds "이 채널에 허용하려면
+   \"이 채널에 {label} 허용\"이라고 보내 주세요" (the label only; every grantable label parses back to its group, pinned).
+4. **Composite "my work" permit (D2.4).** `todo.list` / `todo.summary` (grammar and selection) and the classifier's
+   personal-work route claim `todo` only (the P1 interim "all three" rule is gone). The runtime hands handlers a
+   content-free `TurnHandlerContext.surfacePermit = {allowed}` — present only in a channel with `enforce`. The desk
+   (`WorkDesk.handle(command, actor, {permit})`) and the route read Jira / GitHub through `WorkSurfaceQuery.forActor(actor,
+   {sources})` only for the allowed sources; a withheld source is never queried and is named with a fixed line ("Jira·GitHub
+   항목은 이 채널에서 허용되지 않아 뺐어요" when both are withheld).
+5. **Reminder channel delivery (D2.6).** `ReminderDispatchDeps.surfaceDelivery` is wired only when
+   `QUOKY_REMINDERS_CHANNEL_DELIVERY=true` (with reminders on) **and** `enforce`. At send time a TEXT reminder whose origin
+   is a channel is delivered there only if the live owner grants still hold `reminder` (and `calendar` for an
+   event-relative one); otherwise — or when the check fails — it goes to the owner DM with "(이 알림을 만든 채널에 지금 알림
+   권한이 없어 DM으로 보냈어요.)" and a content-free `reminder.dispatch.channel_withheld` line. The P1 deploy constraint
+   "`enforce` requires channel delivery off" is lifted.
+6. **D7 narrowed.** Durable recall and curated examples: `ContextBuilder.build(task, ids, {channelRecall: true})` only for
+   a channel holding `memory` with `enforce`; the own-memory question there answers like a DM. The P0 DM-only copy of the
+   memory, learning and `피드백 요약` handlers is lifted only when the permit names `memory`. With `off`, every channel keeps
+   P0's DM-only behaviour (owner: the P0 privacy stays).
+7. **Second layers that follow the grants (with `enforce` only).** The to-do and reminder status views (canceled /
+   completed / past / all, Codex P2 of #221) follow `todo` / `reminder`; the A8 decision 7 channel rule (every-assignee
+   scope, project and release lists, ambiguous-project candidates) is lifted where `jira-project` is granted. With `off`
+   both stay DM-only.
+8. **Help.** `도움말` lists the grant phrases (two lines) only while `enforce`; the chat prompt's configured-sources fact is
+   unchanged (no prompt change).
+
+**Tests.** Core: the grant service (question, audience, strong and `writes` lines, `허용 실행` forms and near-misses,
+expiry, cancel by other text, non-owner, per-channel pending, DM, already granted, the 16-channel cap at both steps, kill
+switch, no session store, a revoke racing the grant's locked save — fails without the lock —, two concurrent confirmations,
+content-free logs), the confirm parser, the audience and warning copy, help-line bounds, the label round-trip, the group map
+(`todo.list` → `todo`), the runtime (permit only in an enforced channel, the personal-work route by permit, help lines, channel
+recall granted / not granted / off with the real `ContextBuilder`), `ContextBuilder` `channelRecall`, the work-chat handler
+(status view, A8 release rule, permit to the desk), the desk and `WorkSurfaceQuery` source filters, the memory / learning /
+feedback-summary handlers, the reminder handler status view, the reminder dispatcher (kept, rerouted with the note, failed
+check, event-relative groups, DM origin and brief untouched), the Discord audience. Apps: the dispatcher wiring (only with
+channel delivery and `enforce`), the composition's delivery check (live grants, fail closed), and in the production
+`AppModule`: the corpus byte-identity (`off` = absent; `enforce` DM = `off` except `도움말`; the seeded channel = `off` except
+`writes` and the memory commands, which now equal the DM's answer), the grant flow end to end (denial hint, confirmation with
+audience, `허용 실행`, receipt, use, cancel, expiry, non-owner), and the composite view (Jira / GitHub unread when withheld).
+
+**Owner-facing deploy items (unchanged Strict).** Setting `QUOKY_CHANNEL_GRANTS=enforce` (and the seed) on the live host
+for a permission test, and back to `off` afterwards; the deploy check of `quoky.actionSwitch`. Live UAT in the QA channel:
+grant by phrase with `허용 실행`, the audience line, the composite view with `todo` alone, a reminder after a revoke (with
+channel delivery on), recall with and without `memory`.
+
+**P2 review round (Chief Architect APPROVE WITH CHANGES and Codex, 2026-10-15), fixed on the same branch.**
+
+- **Thread audience (CA P1).** A grant made in a thread applies to the whole parent channel (the grant key has no thread),
+  so the Discord audience is always the parent's (a private thread no longer reads "비공개 채널: 예"), and a question asked
+  in a thread adds "상위 채널 전체(모든 스레드 포함)에 적용돼요".
+- **Consume only on commit (CA P2 / Codex P2).** The pending grant counts as taken only after its removal is saved; a
+  failed save grants nothing, keeps the pending grant and answers the write-failed copy (no replay window).
+- **Approval-expiry turns (CA P2).** A turn answered with an approval-expiry notice still ends a pending grant
+  (`handleGrantPending(…, {cancelOnly: true})`); it never confirms.
+- **Bound to the requester and the question (CA P2, Codex P2, CA suggestion).** The pending grant stores a nonce `id`, the
+  requesting `userId`, the digest of the whole grants record and the kill-switch state. A confirmation consumes only the
+  pending grant its turn saw when it began (a newer question is neither consumed nor dropped by a delayed turn); only the
+  same owner account can confirm; any grant change since the question (e.g. "모든 채널 권한 해제", a revoke, a seed —
+  compared inside the per-actor lock) or a kill-switch flip ("에이전트 중지") voids it with "허용을 기다리는 사이에 채널 권한이
+  바뀌었어요".
+- **Reminder send race (Codex P1).** `OwnerNotification.channelRecheck` (optional port field): the Discord sink sends to
+  the channel only through it, after the awaited channel resolution; on a refusal (or a throw) nothing goes to the channel
+  and the dispatcher's DM text (with the note) goes to the owner DM. The dispatcher's first check stays.
+- **Tests added.** Audience from the parent (private thread in a public channel, uncached parent), the thread line, a failed
+  session save, a second owner account, DM clear-all and kill switch after the question, a replaced pending grant under a
+  delayed confirmation (and a delayed other message), the cancel-only path and the runtime expiry turn, the sink's recheck
+  order, a revoke during channel resolution, a throwing recheck, and the dispatcher's live recheck.
+
+**P2 final review round (CA APPROVE with two suggestions; Codex verification of `64569c35` / `677207d8`, 2026-10-16) —
+the last round under the fix-loop cap.**
+
+- **Check and send under one lock (Codex P1, CA suggestion).** `channelRecheck.sendIfAllowed(send)`: the composition
+  (`deliverIfAllowed`) reads the live owner Actor and decides `reminder` (+ `calendar`) inside
+  `ActorMetadataStore.whileLocked` — the same per-actor lock every revoke, clear-all and kill-switch write takes — and
+  runs the channel send in that critical section, so a revoke issued meanwhile waits for the send and the next send is
+  refused. The sink's send deadline bounds the wait for the lock and the check: a send not started by then never starts
+  (the owner DM instead); a send that started keeps its own timeout and the old classification (UNCERTAIN stays terminal).
+- **Bound to the turn's first read (Codex P2).** The runtime keeps the pending grant as `openForContext` returned it,
+  before the activity touch refreshes the session (`seenPending`); a confirmation consumes only that nonce, so a
+  replacement saved before the touch is never consumed.
+- **Live basis inside the lock (Codex P2, CA).** The grants digest and the digest of the stored kill-switch value are
+  compared on the live actor inside the grant's locked save (`updateMetadataEntry` now hands the update the live actor):
+  a stop that lands while the confirmation waits, and a stop followed by a resume, both void the confirmation.
+- **Tests.** A revoke issued during the locked check-and-send waits for the send (order pinned) and the next send is
+  refused; a revoke committed first refuses without sending; a lock held past the deadline → the DM and the late send never
+  runs; a started send that fails keeps the old outcome; the first-read binding under a touched session; a concurrent stop
+  while the confirmation waits; stop → resume.
+- **Residual (accepted, recorded).** Any remaining timing window is accepted: (a) a revoke can commit while a channel
+  reminder's send that already started is in flight (the revoke waits for it, at most the send deadline); (b) the
+  dispatcher's own first check and the turn-start actor snapshots for READS keep the P1 residual (a revoke takes effect
+  from the next step or turn); (c) another process writing the same SQLite file is out of scope (R4). The feature stays
+  `off` during development (owner amendment to decision 14) and is switched to `enforce` only for permission tests.
+- **Gate note.** On 2026-10-16 (a Friday) the full gate shows one failure outside this change:
+  `nl-intent-dispatch.test.ts` "live UAT R4/R5" assumes "this-thu" equals "thu" on the real clock (true on a Thursday); it
+  fails the same way on `origin/main` today. Not fixed here (out of scope); every other test passes.

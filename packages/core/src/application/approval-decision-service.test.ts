@@ -866,7 +866,7 @@ describe('surface grants: an approval in a channel re-checks `code` at the chat 
     deps.surfaceGrants = { gate: new SurfaceGate('enforce') };
     deps.actors = { async resolveFromContext() { return actor; } };
   }
-  const denial = "이 채널에서는 '코드 작업' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.";
+  const denial = "이 채널에서는 '코드 작업' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이 채널에 허용하려면 \"이 채널에 코드 작업 허용\"이라고 보내 주세요.";
 
   it('UI approve after a revoke is refused (SURFACE_DENIED), nothing decided; UI reject still works', async () => {
     const f = await fixture();

@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A9 P2 surface permission grants: grant by phrase, composite permit, channel reminder check (inert by default, 2026-10-15)
+
+- **Grant by phrase (ADR-0122 D4).** With `QUOKY_CHANNEL_GRANTS=enforce`, the owner's `이 채널에 <그룹> 허용` in a channel
+  asks first (labels, "everyone in this channel sees the answers", the Discord audience line from the cache, a warning per
+  strong group, the read groups a `writes` grant still needs) and saves only on the exact `허용 실행` within 2 minutes —
+  through the per-actor metadata lock, with a log line and a one-line DM receipt. Any other message cancels; late or
+  missing confirmations change nothing. No new Discord intent, scope or egress.
+- **Denial hint.** "권한이 없어요" now ends with how to grant: "이 채널에 {label} 허용".
+- **Composite "my work".** The combined view and the classifier's "my work" route need `todo` only; their Jira / GitHub
+  sections are read only where `jira-mine` / `github` are granted, otherwise one fixed line (no read).
+- **Reminder channel delivery.** With `QUOKY_REMINDERS_CHANNEL_DELIVERY=true` and `enforce`, a channel reminder is sent to
+  its channel only while the channel still holds `reminder` (and `calendar` for an event-relative one); otherwise it goes
+  to the owner DM with a note.
+- **Channels holding a grant.** `memory`: recall, curated examples and the memory / learning / feedback-summary commands
+  (P0's DM-only rule stays wherever `memory` is not granted, and always with the gate `off`); `todo` / `reminder`: their
+  status views; `jira-project`: release lists and every-assignee scope (A8).
+- **Help** lists the grant phrases while `enforce`.
+- **Default unchanged:** `QUOKY_CHANNEL_GRANTS` stays `off` during development (owner); with `off` everything is
+  byte-identical to before. No migration.
+
 ## Unreleased — A6 R1 final gate fixes: positive request-form rule, status filter, prompt `nl-select.v29` (2026-10-15)
 
 - **Positive request-form rule (closed for R1).** Every A6 write grounds only on an affirmative request from a closed

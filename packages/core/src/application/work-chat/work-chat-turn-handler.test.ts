@@ -350,3 +350,56 @@ describe('the to-do status view is DM-only (owner: channels default-deny until A
     expect(commands).toEqual([{ kind: 'todo.list', status: 'canceled' }]);
   });
 });
+
+describe('ADR-0122 P2: the channel permit lifts the second-layer rules and filters the combined view', () => {
+  const inChannel = (text: string, allowed?: readonly string[]): TurnHandlerContext => {
+    const base = ctxOf(text);
+    return {
+      ...base,
+      message: { ...base.message, context: { ...CTX, spaceId: 'guild-1', direct: false } },
+      ...(allowed !== undefined ? { surfacePermit: { allowed: allowed as never } } : {}),
+    };
+  };
+
+  it('a to-do status view follows `todo` in a channel with the gate enforced; without a permit it stays DM-only', async () => {
+    const { desk, commands } = fakeDesk(() => ({ kind: 'reply', text: '취소된 할 일 (0건)' }) as WorkChatOutcome);
+    const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
+    const selected = { entryId: 'todo.list' as const, args: { status: 'canceled' }, language: 'ko' as const };
+    expect((await handler.handleSelected(selected, inChannel('취소된 할 일 보여줘', ['todo'])))?.reply.text).toBe('취소된 할 일 (0건)');
+    expect(commands).toEqual([{ kind: 'todo.list', status: 'canceled' }]);
+    for (const allowed of [['jira-mine'], undefined]) {
+      expect((await handler.handleSelected(selected, inChannel('취소된 할 일 보여줘', allowed)))?.reply.text).toBe('취소·완료·지난 항목이나 전체 목록은 DM에서만 보여 드려요.');
+    }
+    expect(commands).toHaveLength(1);
+  });
+
+  it('A8: every-assignee and list release requests are allowed in a channel holding `jira-project` (gate enforced)', async () => {
+    const { desk, commands } = fakeDesk(() => ({ kind: 'reply', text: 'report' }));
+    const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
+    const selected = { entryId: 'jira.release' as const, args: { release: '20261015', scope: 'all' }, language: 'ko' as const };
+    await handler.handleSelected(selected, inChannel('20261015 릴리스 전체 담당', ['jira-mine', 'jira-project']));
+    expect(commands.at(-1)).toMatchObject({ kind: 'release', scope: 'all' });
+    expect(commands.at(-1)).not.toHaveProperty('inChannel');
+    for (const allowed of [['jira-mine'], undefined]) {
+      await handler.handleSelected(selected, inChannel('20261015 릴리스 전체 담당', allowed));
+      expect(commands.at(-1)).toMatchObject({ kind: 'release', scope: 'all', inChannel: true });
+    }
+  });
+
+  it('the combined view hands the desk the permit (only with one); other commands never carry it', async () => {
+    const calls: unknown[][] = [];
+    const desk = {
+      async handle(...args: unknown[]): Promise<WorkChatOutcome> {
+        calls.push(args.slice(2));
+        return { kind: 'reply', text: 'ok' } as WorkChatOutcome;
+      },
+    };
+    const todo = new WorkChatTurnHandler({ desk, mode: 'mutation', summaryEnabled: true, logger });
+    const lookup = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
+    await lookup.handle(inChannel('내 할 일 보여줘', ['todo']));
+    await lookup.handle(inChannel('내 할 일 보여줘'));
+    await lookup.handle(ctxOf('내 할 일 보여줘'));
+    await todo.handle(inChannel('할 일 추가: 보고서', ['todo']));
+    expect(calls).toEqual([[{ permit: { allowed: ['todo'] } }], [], [], []]);
+  });
+});

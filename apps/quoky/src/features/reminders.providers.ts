@@ -32,6 +32,7 @@ import { createBriefSources, type BriefActorStorageSeam } from '../reminders/bri
 import type { ReminderConfig } from '../reminders/reminder-config';
 import { ReminderTickDriver, type ReminderTickTimers } from '../reminders/reminder-tick-driver';
 import { REMINDER_TURN_HANDLERS } from './feature-tokens';
+import { SURFACE_GRANTS, type SurfaceGrantsComposition } from './surface-grants.providers';
 
 /**
  * Proactive owner reminders (ADR-0101) — feature composition (ADR-0096 D7, PRO-5). Every reminder binding lives
@@ -186,8 +187,15 @@ export function createRemindersProviders(
         calendar: CalendarReader | undefined,
         connectors: readonly ConnectorProvider[] | undefined,
         mail: MailReader | undefined,
+        surfaceGrants: SurfaceGrantsComposition | undefined,
       ) => {
         const seam = storage as StorageProvider & ReminderStorageSeam;
+        // ADR-0122 D2.6 (P2): the send-time channel check, only when a reminder can reach a channel at all
+        // (QUOKY_REMINDERS_CHANNEL_DELIVERY on) and the gate is enforced; otherwise delivery is exactly as before.
+        const surfaceDelivery =
+          config.channelDelivery === true && surfaceGrants?.deliveryAllowed !== undefined && surfaceGrants.deliverIfAllowed !== undefined
+            ? { allows: surfaceGrants.deliveryAllowed, sendIfAllowed: surfaceGrants.deliverIfAllowed }
+            : undefined;
         const briefSources = createBriefSources({
           calendar,
           connectors,
@@ -205,6 +213,7 @@ export function createRemindersProviders(
           ...(briefSources !== undefined ? { briefSources } : {}),
           // ADR-0117 D6 (BRF-2): the fire-time re-check of a pre-meeting reminder's event (read-only).
           ...(calendar ? { eventCalendar: new EventReminderCalendar({ reader: calendar, logger }) } : {}),
+          ...(surfaceDelivery !== undefined ? { surfaceDelivery } : {}),
           // Read-only, call-time WorkItem identities for the local daily brief (QA-001).
           workItems: {
             listByActor: (actorId) => {
@@ -227,6 +236,8 @@ export function createRemindersProviders(
         { token: CONNECTOR_PROVIDERS, optional: true },
         // BRF-3: bound only when Gmail is configured; read only with QUOKY_BRIEF_MAIL_ENABLED=true.
         { token: MAIL_READER, optional: true },
+        // ADR-0122 D2.6: the surface gate (its delivery check exists only while `enforce`).
+        { token: SURFACE_GRANTS, optional: true },
       ],
     },
     {

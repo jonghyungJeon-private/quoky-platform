@@ -198,6 +198,14 @@ async function deliver(n: OwnerNotification, deps: OwnerNotificationDeps): Promi
   // originating guild channel/thread only.
   if (deps.channelDelivery && n.kind === 'TEXT' && target.spaceId !== undefined) {
     const channelOutcome = await tryChannel(n, text, ownerId, deps, timeoutMs);
+    if (channelOutcome === WITHHELD) {
+      // ADR-0122 D2.6: the last-moment check refused the channel — the owner DM gets the caller's DM text instead.
+      const dm = n.channelRecheck!.dm;
+      const { content: _content, ...rest } = n;
+      const dmText = renderNotificationForDiscord({ ...rest, text: dm.text, ...(dm.content !== undefined ? { content: dm.content } : {}) });
+      if ([...dmText].length > REMINDER_LIMITS.maxDeliveredTextChars) return notSent('TEXT_TOO_LONG', false);
+      return sendDm(dmText, ownerId, deps, timeoutMs);
+    }
     if (channelOutcome) return channelOutcome;
     // Confirmed non-transmitting refusal, or target unusable/not admitted: fall back once to the owner DM.
   }
@@ -218,13 +226,67 @@ function isAdmittedGuildTarget(n: OwnerNotification, deps: OwnerNotificationDeps
  * Returns a terminal outcome, or `null` to fall back to the DM (target not admitted/unusable, or a confirmed
  * non-transmitting permission/unknown-channel refusal). An UNCERTAIN or retryable result is terminal: no fallback.
  */
+/** `tryChannel`: the caller's last-moment channel check refused (ADR-0122 D2.6). */
+const WITHHELD = Symbol('channel-withheld');
+
+class RecheckDeadlineError extends Error {
+  override readonly name = 'RecheckDeadlineError';
+}
+
+/**
+ * Run the channel `send` through the caller's check. The deadline (`timeoutMs`) bounds the wait for the caller's lock and
+ * the check: if `send` has not started by then it never starts (WITHHELD → DM). Once started, `send` is bounded by its own
+ * timeout and its errors propagate (classified as before: UNCERTAIN is terminal, never a DM fallback). A check that
+ * refuses or throws before `send` started is WITHHELD (fail closed).
+ */
+async function sendThroughRecheck(
+  recheck: NonNullable<OwnerNotification['channelRecheck']>,
+  send: () => Promise<void>,
+  timeoutMs: number,
+): Promise<'sent' | typeof WITHHELD> {
+  let started = false;
+  let expired = false;
+  const attempt = Promise.resolve().then(() =>
+    recheck.sendIfAllowed(async () => {
+      if (expired) throw new RecheckDeadlineError('the check did not start the send in time');
+      started = true;
+      await send();
+    }),
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<'deadline'>((resolve) => {
+    timer = setTimeout(() => resolve('deadline'), timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    const first = await Promise.race([attempt.then((result) => ({ result }), (error: unknown) => ({ error })), deadline]);
+    let settled = first;
+    if (first === 'deadline') {
+      if (!started) {
+        expired = true;
+        attempt.catch(() => undefined);
+        return WITHHELD;
+      }
+      settled = await attempt.then((result) => ({ result }), (error: unknown) => ({ error }));
+    }
+    const outcome = settled as { result?: Awaited<ReturnType<typeof recheck.sendIfAllowed>>; error?: unknown };
+    if ('error' in outcome) {
+      if (!started) return WITHHELD;
+      throw outcome.error;
+    }
+    return outcome.result?.sent === true ? 'sent' : WITHHELD;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function tryChannel(
   n: OwnerNotification,
   text: string,
   ownerId: string,
   deps: OwnerNotificationDeps,
   timeoutMs: number,
-): Promise<NotificationSinkOutcome | null> {
+): Promise<NotificationSinkOutcome | typeof WITHHELD | null> {
   if (!isAdmittedGuildTarget(n, deps)) return null;
   const targetId = n.target.threadId ?? n.target.channelId;
   let channel: NotificationChannel | null;
@@ -239,8 +301,17 @@ async function tryChannel(
 
   const content = `<@${ownerId}> ${text}`;
   if (content.length > DISCORD_MESSAGE_LIMIT) return notSent('TEXT_TOO_LONG', false);
+  const options: NotificationSendOptions = { content, allowedMentions: { parse: [], users: [ownerId] } };
   try {
-    await sendWithTimeout(channel, { content, allowedMentions: { parse: [], users: [ownerId] } }, timeoutMs);
+    if (n.channelRecheck === undefined) {
+      await sendWithTimeout(channel, options, timeoutMs);
+    } else {
+      // ADR-0122 D2.6 (Codex P1): the channel send runs only through the caller's last-moment check, after the awaited
+      // channel resolution; the caller holds its grant lock from the check through the send (a revoke waits). Refused,
+      // failed, or not started within the send deadline → nothing reaches the channel; the DM gets the caller's DM text.
+      const checked = await sendThroughRecheck(n.channelRecheck, () => sendWithTimeout(channel, options, timeoutMs), timeoutMs);
+      if (checked === WITHHELD) return WITHHELD;
+    }
     return { status: 'SENT', via: 'channel' };
   } catch (err) {
     const c = classifyDiscordError(err);

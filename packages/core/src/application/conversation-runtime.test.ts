@@ -93,6 +93,8 @@ import { EXECUTION_PHRASES } from './execution-command-guard';
 import { MAX_PR_BODY_CHARS, MAX_PR_TITLE_CHARS, prDescriptionContentHash } from './code-work/pr-description';
 import type { ExecutionOutcome, ExecutionRequest } from './execution-orchestrator';
 import { SurfaceGate } from './surface-grants/surface-gate';
+import { SURFACE_GRANT_HELP_LINES } from './surface-grants/surface-grant-copy';
+import type { ConversationTurnHandler, TurnHandlerContext } from '../ports/conversation-turn-handler.port';
 import { ConversationRuntime, filterInScopeChanges, toCodeChangePreview, toCodeDiffPreview } from './conversation-runtime';
 import type {
   ApplyPreviewAnchor,
@@ -5584,7 +5586,7 @@ describe('Approved Git Push Execution — runtime (Sprint 3a, ADR-0048)', () => 
       const result = await new ConversationRuntime(deps).handle({ id: 'm1', context: channel, text: '푸시 실행해줘', receivedAt: TS });
       if (revokeMidway) {
         expect(calls.gitPush).toBe(0);
-        expect(result.reply.text).toBe("이 채널에서는 '코드 작업' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시면 돼요.");
+        expect(result.reply.text).toBe("이 채널에서는 '코드 작업' 권한이 없어요. 아무것도 읽지 않았어요. DM으로 물어보시거나, 이 채널에 허용하려면 \"이 채널에 코드 작업 허용\"이라고 보내 주세요.");
         expect(calls.lastApplyAnchor?.status ?? 'PUSH_APPROVED').toBe('PUSH_APPROVED');
       } else {
         expect(calls.gitPush).toBe(1);
@@ -11694,6 +11696,61 @@ describe('LRN-2 curated examples follow the resolved provider\'s declared locali
     expect(retrievals).toHaveLength(1);
   });
 
+  // ADR-0122 D7 narrowed (P2): only a channel holding `memory` while the gate is enforced gets durable recall and curated
+  // examples; without `memory`, or with the gate off (owner: the P0 privacy stays), a channel still gets neither.
+  it.each([
+    ['enforce, `memory` granted', 'enforce', true, true],
+    ['enforce, `memory` not granted', 'enforce', false, false],
+    ['off, `memory` granted', 'off', true, false],
+  ] as const)('channel recall and examples (%s)', async (_label, mode, granted, recalled) => {
+    const SECRET = '내 이직 계획은 아직 비밀이야';
+    const turn = exampleTurn({ locality: 'LOCAL' });
+    const saved: MemoryRecord[] = [{
+      id: 'durable-1',
+      type: MemoryType.LONG_TERM,
+      scope: { userId: ACTOR.id },
+      content: SECRET,
+      metadata: { kind: 'SEMANTIC', provenance: 'USER_PROVIDED', authorityLevel: 'USER_CLAIM_OR_INTENT' },
+      createdAt: TS,
+      updatedAt: TS,
+    }];
+    const retrievals: string[] = [];
+    const builds: unknown[][] = [];
+    const real = new ContextBuilder(
+      { async recentShortTerm() { return []; }, async projectMemory() { return undefined; } } as unknown as MemoryManager,
+      {},
+      new DefaultMemoryRetriever({
+        async findDurableCandidates() {
+          retrievals.push('asked');
+          return saved;
+        },
+      } as never),
+      { async select() { return [example]; } },
+    );
+    turn.deps.contextBuilder = { build: (...args: Parameters<ContextBuilder['build']>) => { builds.push(args.slice(1)); return real.build(...args); } };
+    const channel: ConversationContext = { platform: 'test', spaceId: 'guild-1', channelId: 'qa-1', userId: 'u1', direct: false };
+    const actor: Actor = granted
+      ? { ...ACTOR, metadata: { 'quoky.surfaceGrants': { v: 1, channels: { 'test:guild-1:qa-1': { groups: { memory: { at: TS, source: 'owner' } } } }, seeds: [] } } }
+      : ACTOR;
+    (turn.deps as { actors: ConversationRuntimeDeps['actors'] }).actors = { async resolveFromContext() { return actor; } };
+    (turn.deps as { surfaceGrants?: ConversationRuntimeDeps['surfaceGrants'] }).surfaceGrants = { gate: new SurfaceGate(mode) };
+    const result = await new ConversationRuntime(turn.deps).handle({ id: 'm-ch', context: channel, text: '회의록 요약 형식 알려줘', receivedAt: TS });
+    expect(result.status).toBe('RESPONDED');
+    expect(turn.prompts).toHaveLength(1);
+    if (recalled) {
+      expect(turn.prompts[0]).toContain(SECRET);
+      expect(turn.prompts[0]).toContain(EXAMPLE_ANSWER);
+      expect(retrievals).toHaveLength(1);
+      expect(builds).toEqual([[[expect.any(String)], { channelRecall: true }]]);
+    } else {
+      expect(turn.prompts[0]).not.toContain(SECRET);
+      expect(turn.prompts[0]).not.toContain(EXAMPLE_ANSWER);
+      expect(retrievals).toHaveLength(0);
+      // The call is the P0 one (no third argument), byte-identical to before.
+      expect(builds.every((args) => args.length === 1)).toBe(true);
+    }
+  });
+
   // ADR-0116 (LRN-5): the selection source travels from the router to the composer with the resolved provider.
   const OWNER_REMOTE = 'LOCAL_OR_OWNER_SELECTED_REMOTE' as const;
   const withoutTaskIds = (prompt: string | undefined) => (prompt ?? '').replace(/[0-9a-f-]{36}/g, '<id>');
@@ -12960,5 +13017,99 @@ describe('P0 ahead of ADR-0122 D7 — owner learning replies never enter a chann
     expect(inDm.result.reply.text).toBe(PRIVATE);
     expect(inDm.executed).toHaveLength(1);
     expect(inDm.recorded.map((entry) => entry.text)).toEqual([PRIVATE]);
+  });
+});
+
+describe('ADR-0122 P2 — the content-free permit, the composite "my work" route and the grant help lines', () => {
+  const T = '2026-10-15T00:00:00.000Z';
+  const CHANNEL: ConversationContext = { platform: 'test', spaceId: 'g1', channelId: 'c1', userId: 'u1', direct: false };
+  const withGroups = (...groups: string[]): Actor => ({
+    ...ACTOR,
+    metadata: { 'quoky.surfaceGrants': { v: 1, channels: { 'test:g1:c1': { groups: Object.fromEntries(groups.map((group) => [group, { at: T, source: 'owner' }])) } }, seeds: [] } },
+  });
+  const workSurfaceIntent: Intent = {
+    type: IntentType.LOOKUP,
+    capability: Capability.READONLY_LOOKUP,
+    confidence: 1,
+    requiresWork: false,
+    summary: 'Show my work',
+    raw: { kind: 'personal-work-surface' },
+  };
+  function surfaceRuntime(opts: { mode?: 'enforce' | 'off'; actor?: Actor; intent?: Intent; handler?: ConversationTurnHandler }) {
+    const { deps } = makeDeps(opts.intent !== undefined ? { intent: opts.intent } : {});
+    const reads: unknown[][] = [];
+    const record = deps as unknown as Record<string, unknown>;
+    record.actors = { async resolveFromContext() { return opts.actor ?? ACTOR; } };
+    record.workSurface = {
+      async forActor(...args: unknown[]) {
+        reads.push(args.slice(1));
+        return { status: 'COMPLETE', items: [], sources: [{ source: 'jira', status: 'AVAILABLE', message: 'ok' }] };
+      },
+    };
+    if (opts.handler !== undefined) record.turnHandlers = [opts.handler];
+    if (opts.mode !== undefined) record.surfaceGrants = { gate: new SurfaceGate(opts.mode) };
+    return { runtime: new ConversationRuntime(deps), reads };
+  }
+
+  it('a handler sees `surfacePermit` only in a channel with the gate enforced (the groups it holds plus the always groups)', async () => {
+    const seen: Array<TurnHandlerContext['surfacePermit']> = [];
+    const handler: ConversationTurnHandler = {
+      id: 'probe',
+      stage: 'pre-classify',
+      order: 1,
+      surfaceClaim: () => ({ groups: ['help'], onDeny: 'reply' }),
+      async handle(ctx) {
+        seen.push(ctx.surfacePermit);
+        return { reply: { context: ctx.message.context, text: 'probe' } };
+      },
+    };
+    const actor = withGroups('todo', 'memory');
+    await surfaceRuntime({ mode: 'enforce', actor, handler }).runtime.handle({ ...messageOf('probe'), context: CHANNEL });
+    await surfaceRuntime({ mode: 'enforce', actor, handler }).runtime.handle(messageOf('probe'));
+    await surfaceRuntime({ mode: 'off', actor, handler }).runtime.handle({ ...messageOf('probe'), context: CHANNEL });
+    await surfaceRuntime({ actor, handler }).runtime.handle({ ...messageOf('probe'), context: CHANNEL });
+    expect(seen).toEqual([{ allowed: ['chat', 'help', 'control', 'todo', 'memory'] }, undefined, undefined, undefined]);
+  });
+
+  it('the classifier\'s "my work" route claims `todo` and reads only the sections the permit allows', async () => {
+    const todoOnly = surfaceRuntime({ mode: 'enforce', actor: withGroups('todo'), intent: workSurfaceIntent });
+    const none = await todoOnly.runtime.handle({ ...messageOf('내 업무'), context: CHANNEL });
+    expect(none.reply.text).toBe('Jira·GitHub 항목은 이 채널에서 허용되지 않아 뺐어요.');
+    expect(todoOnly.reads).toEqual([]);
+
+    const jira = surfaceRuntime({ mode: 'enforce', actor: withGroups('todo', 'jira-mine'), intent: workSurfaceIntent });
+    const partial = await jira.runtime.handle({ ...messageOf('내 업무'), context: CHANNEL });
+    expect(jira.reads).toEqual([[{ sources: ['jira'] }]]);
+    expect(partial.reply.text).toContain('- github: 이 채널에서 허용되지 않아 뺐어요.');
+
+    const denied = surfaceRuntime({ mode: 'enforce', actor: withGroups('jira-mine', 'github'), intent: workSurfaceIntent });
+    expect((await denied.runtime.handle({ ...messageOf('내 업무'), context: CHANNEL })).reply.text).toContain("'할 일' 권한이 없어요");
+    expect(denied.reads).toEqual([]);
+
+    // A DM, the gate off and no gate: every section is read exactly as before (one argument).
+    for (const run of [
+      () => surfaceRuntime({ mode: 'enforce', actor: withGroups(), intent: workSurfaceIntent }),
+      () => surfaceRuntime({ mode: 'off', actor: withGroups(), intent: workSurfaceIntent }),
+      () => surfaceRuntime({ actor: withGroups(), intent: workSurfaceIntent }),
+    ]) {
+      const h = run();
+      const dm = await h.runtime.handle(messageOf('내 업무'));
+      expect(dm.reply.text).toBe('현재 Jira와 GitHub에서 확인된 작업이 없어요.');
+      expect(h.reads).toEqual([[]]);
+    }
+    const offChannel = surfaceRuntime({ mode: 'off', actor: withGroups(), intent: workSurfaceIntent });
+    await offChannel.runtime.handle({ ...messageOf('내 업무'), context: CHANNEL });
+    expect(offChannel.reads).toEqual([[]]);
+  });
+
+  it('`도움말` lists the channel-permission phrases only while the gate is enforced', async () => {
+    const enforced = await surfaceRuntime({ mode: 'enforce' }).runtime.handle(messageOf('도움말'));
+    const off = await surfaceRuntime({ mode: 'off' }).runtime.handle(messageOf('도움말'));
+    const absent = await surfaceRuntime({}).runtime.handle(messageOf('도움말'));
+    for (const line of SURFACE_GRANT_HELP_LINES) {
+      expect(enforced.reply.text).toContain(line);
+      expect(off.reply.text).not.toContain(line);
+    }
+    expect(off.reply.text).toBe(absent.reply.text);
   });
 });

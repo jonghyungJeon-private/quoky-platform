@@ -4,6 +4,7 @@ import {
   planEventCanceledCompletion,
   planEventRescheduleCompletion,
   planFiringCompletion,
+  type ConversationContext,
   type Id,
   type IsoTimestamp,
   type MessageBody,
@@ -14,10 +15,11 @@ import {
   type WorkItem,
 } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
-import type { NotificationSink } from '../../ports/notification-sink.port';
+import type { ChannelRecheckResult, NotificationSink, OwnerNotification } from '../../ports/notification-sink.port';
 import type { ReminderRepository } from '../../ports/reminder-repository.port';
 import { newId } from '../../util/id';
-import { messageFields } from '../message-rendering';
+import { isDirectConversation, messageBody, messageFields } from '../message-rendering';
+import type { SurfaceGroupId } from '../surface-grants/surface-groups';
 import { decideMissedOccurrence, nextOccurrenceAfter } from './reminder-schedule';
 import type { DailyBriefSources } from './daily-brief-sources';
 import type { EventReminderCalendar, EventReminderRecheck } from './event-reminder-calendar';
@@ -59,7 +61,25 @@ export interface ReminderDispatchDeps {
   readonly eventCalendar?: Pick<EventReminderCalendar, 'recheck'>;
   /** Firing-attempt id source; defaults to the shared `newId`. */
   readonly idGenerator?: () => Id;
+  /**
+   * ADR-0122 D2.6 (P2): the send-time channel check, wired by the composition root only while
+   * `QUOKY_CHANNEL_GRANTS=enforce` AND `QUOKY_REMINDERS_CHANNEL_DELIVERY=true`. A TEXT reminder created in a channel is
+   * delivered there only when `allows` says the channel still holds its groups (`reminder`, and `calendar` for an
+   * event-relative one) on the live grants; otherwise it goes to the owner DM with a note. A failed check is a refusal
+   * (fail closed). Absent: delivery exactly as before.
+   */
+  readonly surfaceDelivery?: {
+    allows(origin: ConversationContext, actorId: Id, groups: readonly SurfaceGroupId[]): Promise<boolean>;
+    /**
+     * The last-moment form (Codex P1): check the live grants and run `send` while holding the per-actor metadata lock, so
+     * a revoke or a kill switch waits until the channel send returns; `{sent: false}` when refused.
+     */
+    sendIfAllowed<T>(origin: ConversationContext, actorId: Id, groups: readonly SurfaceGroupId[], send: () => Promise<T>): Promise<ChannelRecheckResult<T>>;
+  };
 }
+
+/** D2.6: the note on a channel reminder delivered to the owner DM because the channel no longer holds its groups. */
+export const REMINDER_CHANNEL_WITHHELD_NOTE = '(이 알림을 만든 채널에 지금 알림 권한이 없어 DM으로 보냈어요.)';
 
 export interface ReminderDispatchOptions {
   /** Checked before each reminder of the batch; `false` stops starting new deliveries (the active one finishes). */
@@ -368,17 +388,61 @@ export class ReminderDispatchService {
     occurrenceAt: IsoTimestamp,
     text: MessageBody,
   ): Promise<NotificationDeliveryOutcome> {
+    const routed = await this.surfaceRoute(reminder, text);
     try {
       return await this.deps.sink.deliver({
         correlationId: `${reminder.id}:${occurrenceAt}:${reminder.attempt}`,
-        target: reminder.origin,
+        target: routed.target,
         kind: reminder.kind,
-        ...messageFields(text),
+        ...messageFields(routed.text),
+        ...(routed.channelRecheck !== undefined ? { channelRecheck: routed.channelRecheck } : {}),
       });
     } catch (error) {
       this.logFailure('reminder.dispatch.sink_threw', error);
       return { status: 'UNCERTAIN', reason: 'UNCLASSIFIED' };
     }
+  }
+
+  /**
+   * ADR-0122 D2.6: where a channel reminder goes at send time. Only a TEXT reminder whose origin is a channel (not direct,
+   * with a space — the only target the sink would deliver to a channel) is checked; a refused (or failed) check sends it
+   * to the owner DM — the same owner, the origin's space and thread dropped — with the fixed note. Content-free log.
+   */
+  private async surfaceRoute(
+    reminder: Reminder,
+    text: MessageBody,
+  ): Promise<{ readonly target: ConversationContext; readonly text: MessageBody; readonly channelRecheck?: OwnerNotification['channelRecheck'] }> {
+    const check = this.deps.surfaceDelivery;
+    const origin = reminder.origin;
+    if (check === undefined || reminder.kind !== 'TEXT' || isDirectConversation(origin) || origin.spaceId === undefined) return { target: origin, text };
+    const groups: readonly SurfaceGroupId[] = reminder.event !== undefined ? ['reminder', 'calendar'] : ['reminder'];
+    let allowed = false;
+    try {
+      allowed = await check.allows(origin, reminder.actorId, groups);
+    } catch {
+      allowed = false;
+    }
+    const dmText = messageBody(text, '\n', REMINDER_CHANNEL_WITHHELD_NOTE);
+    if (allowed) {
+      // Codex P1: the sink re-asks the live grants as the last step before the channel send (after resolving the channel);
+      // a revoke or kill switch that landed meanwhile sends the DM text instead.
+      const logger = this.deps.logger;
+      return {
+        target: origin,
+        text,
+        channelRecheck: {
+          async sendIfAllowed<T>(send: () => Promise<T>): Promise<ChannelRecheckResult<T>> {
+            const result = await check.sendIfAllowed(origin, reminder.actorId, groups, send);
+            if (!result.sent) logger.info('reminder.dispatch.channel_withheld', { platform: origin.platform, channelId: origin.channelId, groups: groups.join(','), at: 'send' });
+            return result;
+          },
+          dm: messageFields(dmText),
+        },
+      };
+    }
+    this.deps.logger.info('reminder.dispatch.channel_withheld', { platform: origin.platform, channelId: origin.channelId, groups: groups.join(',') });
+    const { spaceId: _space, threadId: _thread, ...rest } = origin;
+    return { target: { ...rest, direct: true }, text: dmText };
   }
 
   private async composeText(

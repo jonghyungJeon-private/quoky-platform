@@ -680,3 +680,85 @@ describe('ReminderDispatchService reachable surface', () => {
     expect(Object.keys(workItems)).toEqual(['listByActor']);
   });
 });
+
+describe('ADR-0122 D2.6 (P2): the send-time channel check', () => {
+  function gated(allows: (origin: ConversationContext, actorId: string, groups: readonly string[]) => Promise<boolean>) {
+    const repository = new FakeReminderRepository();
+    const sink = new ScriptedSink();
+    const logger = new RecordingLogger();
+    const asked: Array<{ origin: ConversationContext; actorId: string; groups: readonly string[] }> = [];
+    const service = new ReminderDispatchService({
+      repository,
+      sink,
+      composer: new ReminderReplyComposer(),
+      workItems: { async listByActor() { return []; } },
+      logger,
+      idGenerator: () => 'attempt-1',
+      surfaceDelivery: {
+        async allows(origin, actorId, groups) {
+          asked.push({ origin, actorId, groups });
+          return allows(origin, actorId, groups);
+        },
+        async sendIfAllowed(origin, actorId, groups, send) {
+          asked.push({ origin, actorId, groups });
+          if (!(await allows(origin, actorId, groups))) return { sent: false };
+          return { sent: true, value: await send() };
+        },
+      },
+    });
+    return { repository, sink, logger, service, asked };
+  }
+
+  it('a channel that still holds `reminder` gets the reminder; the sink gets a last-moment re-check with the DM text (Codex P1)', async () => {
+    let live = true;
+    const { repository, sink, service, asked, logger } = gated(async () => live);
+    repository.seed({ schedule: ONCE_AT(NOW), occurrenceAt: NOW });
+    await service.dispatchDue(NOW);
+    expect(asked).toEqual([{ origin: ORIGIN, actorId: ACTOR, groups: ['reminder'] }]);
+    const delivered = sink.delivered[0]!;
+    expect(delivered).toMatchObject({ target: ORIGIN, kind: 'TEXT', text: '알림 #1: 회의 준비' });
+    expect(delivered.channelRecheck?.dm).toEqual({ text: '알림 #1: 회의 준비\n(이 알림을 만든 채널에 지금 알림 권한이 없어 DM으로 보냈어요.)' });
+    // The sink sends through it after resolving the channel: the live grants are re-read and the send runs only if allowed.
+    let sends = 0;
+    expect(await delivered.channelRecheck!.sendIfAllowed(async () => (sends += 1))).toEqual({ sent: true, value: 1 });
+    live = false;
+    expect(await delivered.channelRecheck!.sendIfAllowed(async () => (sends += 1))).toEqual({ sent: false });
+    expect(sends).toBe(1);
+    expect(asked).toHaveLength(3);
+    expect(logger.lines).toContainEqual({ level: 'info', message: 'reminder.dispatch.channel_withheld', fields: { platform: 'discord', channelId: 'c1', groups: 'reminder', at: 'send' } });
+  });
+
+  it('a revoked (or unreadable) channel: the owner DM gets it with the fixed note; a content-free log line', async () => {
+    for (const allows of [async () => false, async () => { throw new Error('db down'); }]) {
+      const { repository, sink, service, logger } = gated(allows);
+      repository.seed({ schedule: ONCE_AT(NOW), occurrenceAt: NOW });
+      const summary = await service.dispatchDue(NOW);
+      expect(summary).toMatchObject({ delivered: 1, errors: 0 });
+      expect(sink.delivered[0]).toMatchObject({
+        target: { platform: 'discord', channelId: 'c1', userId: 'owner', direct: true },
+        kind: 'TEXT',
+        text: '알림 #1: 회의 준비\n(이 알림을 만든 채널에 지금 알림 권한이 없어 DM으로 보냈어요.)',
+      });
+      expect(sink.delivered[0]?.target).not.toHaveProperty('spaceId');
+      expect(logger.lines).toContainEqual({ level: 'info', message: 'reminder.dispatch.channel_withheld', fields: { platform: 'discord', channelId: 'c1', groups: 'reminder' } });
+    }
+  });
+
+  it('an event-relative reminder needs `calendar` as well', async () => {
+    const { repository, service, asked } = gated(async () => true);
+    const row = repository.seed({ schedule: ONCE_AT(NOW), occurrenceAt: NOW });
+    repository.rows.set(row.id, { ...repository.rows.get(row.id)!, event: { eventId: 'evt-1', offsetMinutes: 10 } });
+    await service.dispatchDue(NOW);
+    expect(asked.map((entry) => entry.groups)).toEqual([['reminder', 'calendar']]);
+  });
+
+  it('a DM-origin reminder and the brief are never checked or rerouted', async () => {
+    const { repository, sink, service, asked } = gated(async () => false);
+    const dm = repository.seed({ schedule: ONCE_AT(NOW), occurrenceAt: NOW });
+    repository.rows.set(dm.id, { ...repository.rows.get(dm.id)!, origin: { platform: 'discord', channelId: 'dm-1', userId: 'owner', direct: true } });
+    repository.seed({ schedule: ONCE_AT(NOW), occurrenceAt: NOW, kind: 'BRIEF' });
+    await service.dispatchDue(NOW);
+    expect(asked).toEqual([]);
+    expect(sink.delivered.map((n) => n.target)).toEqual([{ platform: 'discord', channelId: 'dm-1', userId: 'owner', direct: true }, ORIGIN]);
+  });
+});
