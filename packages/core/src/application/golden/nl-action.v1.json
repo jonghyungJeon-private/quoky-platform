@@ -1,7 +1,7 @@
 {
  "version": 1,
  "description": "ADR-0120 amendment A6 action corpus (NLA-6 data), schema docs/plans/nl-action-corpus-schema.md. Agent-drafted; owner batch APPROVED 2026-10-15. Names, titles and ids are invented. Old draft ids are kept in each note (was ...).",
- "promptVersion": "nl-select.v28",
+ "promptVersion": "nl-select.v29",
  "cases": [
   {
    "id": "a6-paraphrase-todo.add-001",

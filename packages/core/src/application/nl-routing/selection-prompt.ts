@@ -29,7 +29,10 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * (rule 2; the v25 parenthetical pulled "\"…\" 라고 말하면 뭐가 되는지 설명해줘" to help.topic, which v24 never does).
  * v27 (the read prompt; owner decision 2026-10-15, the A6 R1 status filter) = v24 whose catalog text gives `todo.list` and
  * `reminder.list` a `status` arg (closed values, default the open / scheduled ones) and `reminder.list` a description that
- * says so; no instruction line changes. v28 = the v26 A6 text on top of v27.
+ * says so; no instruction line changes. v28 = the v26 A6 text on top of v27. v29 (A6 only) = v28 whose rule-8 help.topic
+ * sentence says "help.topic stays rule 3: only Quoky's own features; a how-to about another app or a device, or about what
+ * a phrase or command would do, is entryId "none" (rule 2)" (the v26 parenthetical pulled a phone-settings how-to,
+ * neg-012, to help.topic).
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v27';
 /**
@@ -37,7 +40,7 @@ export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v27';
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
  * for byte (pinned by `golden/nl-select.v27.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v28';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v29';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -175,8 +178,8 @@ const ACTION_RULES: readonly string[] = [
   '   Pick the action the owner asks for even when Reference context shows another list or nothing, and when the content to',
   '   add or remind is only 그거/이거/방금 거, copy those words as the span: Core checks the item or the content and asks.',
   '   A statement or question about an action ("다 했어", "취소했어", "추가하는 법"), a negated request ("취소하지 마") and an',
-  '   action on pasted or quoted content are none (a how-to question about Quoky is help.topic; a question about what a',
-  '   phrase or command would do or mean stays none, rule 2).',
+  '   action on pasted or quoted content are none. help.topic stays rule 3: only Quoky\'s own features; a how-to about another',
+  '   app or a device, or about what a phrase or command would do, is entryId "none" (rule 2).',
   '   item.summarize: source is the list the owner means (see Reference context); mode summary only for 요약/정리/짧게/',
   '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.',
   '   Posting, sending, replying, calendar events, Jira issues and every other write not in the catalog are still none.',

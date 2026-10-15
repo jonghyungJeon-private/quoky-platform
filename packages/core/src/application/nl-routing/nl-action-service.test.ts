@@ -235,7 +235,7 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', 'nl-select.v24', 'nl-select.v25', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
     expect(new Set(keys).size).toBe(9);
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v27');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v28');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v29');
     // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
@@ -659,6 +659,22 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
       ['2번도 완료', 'todo.complete', complete],
     ];
     for (const [text, entryId, args] of genuine) expect((await run(text, entryId, args)).kind, text).toBe('execute');
+    // Post-rule extension (Haiku cost analysis): a reason clause before the request, 할래, a Latin action word in a Korean
+    // request, the undo nouns; a negated clause naming the same action still vetoes.
+    const extended: Array<[string, string, Record<string, unknown>]> = [
+      ['3번 할 일은 필요 없어졌어 빼줘', 'todo.cancel', { ref: '#3' }],
+      ['1번은 안 할 거야 삭제해줘', 'todo.cancel', { ref: '#1' }],
+      ['알림 취소할래 2번', 'reminder.cancel', { ref: '#2' }],
+      ['1번 done 처리해줘', 'todo.complete', { ref: '#1' }],
+      ['아니 방금 거 되돌려줘', 'action.undo', {}],
+      ['방금 한 거 롤백', 'action.undo', {}],
+    ];
+    for (const [text, entryId, args] of extended) expect((await run(text, entryId, args)).kind, text).toBe('execute');
+    for (const [text, entryId, args] of [
+      ['2번 취소하지 마 3번 빼줘', 'todo.cancel', { ref: '#2' }],
+      ['2번 취소할래?', 'todo.cancel', { ref: '#2' }],
+      ['완료하지 말고 2번 처리해줘', 'todo.complete', { ref: '#2' }],
+    ] as const) expect((await run(text, entryId, args)).kind, text).not.toBe('execute');
   });
 
   it('a second or another source noun asks: "할 일 말고 2번 메일 취소해줘", "2번 (메일) 취소해줘", "메일2번 취소해줘"', async () => {
@@ -667,9 +683,7 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
       w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
       const decision = await w.decide(text, { now: at(1) });
       expect(decision.kind, text).toBe('ask');
-      // "말고" is also a whole-message veto now (no request form), so that string asks for the request instead.
-      const reason = text.includes('말고') ? 'no-action-word' : 'other-source';
-      expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === reason), text).toBe(true);
+      expect(w.logs.some((log) => log.event === NL_ACTION_LOG_EVENT && log.fields?.reason === 'other-source'), text).toBe(true);
     }
   });
 
