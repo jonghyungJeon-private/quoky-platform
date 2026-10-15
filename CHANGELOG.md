@@ -30,7 +30,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   statement negatives 0/20 on both; the live sentence → `until-fri` 17/20 (3 timeouts).
 - **Review round** (Chief Architect, Codex): fixes above; the A6 seed label is `nl-select.v23`; the A6 action corpus was
   not re-evaluated on v23.
-- **Corpus.** `a7u-01..07`, `a7s-01..15` (836 cases), PENDING the owner's D12 batch. Owner sheet:
+- **Final delta round** (no prompt change): without a week word only the nearest bounded day counts for any period;
+  mixed bounded/unbounded mentions accept only a period ending on that day; quoted requests (…달라고) and wishes with
+  any ending are requests.
+- **Corpus.** `a7u-01..10`, `a7s-01..15` (839 cases), PENDING the owner's D12 batch. Owner sheet:
   `docs/plans/a7-until-weekday-owner-sheet.md`.
 
 ## Unreleased — calendar accuracy: the canonical weekday symbol, prompt `nl-select.v20`, the weekday question on every weekday refusal (ADR-0120 A5 implementation note 3, 2026-10-14)

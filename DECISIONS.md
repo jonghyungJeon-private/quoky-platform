@@ -23515,16 +23515,21 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
    and `until-next-wed` cover the same days, the owner's spelling is kept ("다음 주 수요일까지" = `until-next-wed`), like
    the A5 note 3 canonical weekday symbol.
 4. **Every period at an end bound ends on that day (canonicalised, not refused).** When the owner's certain weekday
-   carries an inclusive end bound, the period must end on that day. A period that already does is kept (a date span
-   `10-12..10-16`). A period that holds the day without ending on it — a single day (`fri`, `this-fri`, `next-wed`, a
-   date `10-16`, `today`) or a longer one (`this-week`, `next-7-days`) — is rewritten to the `until-*` symbol that ends on
-   that day, and only when that symbol itself passes decision 3. Otherwise it is refused and asked: a passed day
+   carries an inclusive end bound, every period is today through that day: a period that holds the day — a single day
+   (`fri`, `this-fri`, `next-wed`, a date `10-16`, `today`) or a longer one (`this-week`, `next-7-days`, `last-7-days` on
+   a Friday, a date span `10-12..10-16`) — is rewritten to the `until-*` symbol that ends on that day, and only when that
+   symbol itself passes decision 3 (so without a week word only the NEAREST such day counts: "일요일까지" read as
+   `next-week` on a Thursday, or "금요일까지" as `10-03..10-09`, is refused). Otherwise it is refused and asked: a passed day
    ("지난주 금요일까지") has no such symbol, a day that is not the one the owner bounds ("일요일까지" read as next week's
    Sunday `next-sun` on a Thursday) is never widened into `until-next-sun`, and a longer period without the day
    (`next-week` for "이번 주 금요일까지") is refused. A single day that is another day stays the A5 rule's refusal. An
    uncertain weekday ("다음 주 일까지") is left to the A5 rule.
+   - **Mixed mentions** (one bounded, one not: "이번 주 금요일까지 … 금요일도 포함해서", "보고서는 금요일까지야, 금요일 일정
+     알려줘"): only a period ending on that weekday is accepted — the day itself (the A5 rule checks which) or the
+     matching `until-*`; Core never rewrites to `until-*` here; any longer period is refused.
    - **Several weekdays with an end bound** ("목요일부터 토요일까지"): the period must run exactly from the start-bounded
-     day (부터, from, since; when one is given) to the end-bounded day, each in its own anchor; otherwise it is refused.
+     day (부터, from, since; when one is given) to the end-bounded day, each in its own anchor, and without a week word the
+     nearest such span (on Thursday 10/15 only 10/15..10/17); otherwise it is refused.
      No symbol names such a span except an `until-*` that starts today, so this mostly asks; it never lets an unrelated
      period through. Several weekdays without an end bound are unchanged (the A5 guard steps aside), but take no
      `until-*`.
@@ -23549,8 +23554,9 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
    - no word is a request or interrogative form: the A2 closed request verbals and wh-forms of `grammar-residual.ts`
      (a bare noun stem such as 정리 or 확인 is not a request), the closed wh-stems (뭐, 무슨, 언제, 몇, 어떤, 어디, 누가,
      누구, 얼마, 왜) and the closed request endings (…줘, …주세요, …줄래, …할래, …볼래, …할까);
-   - no wish, which is a polite request: a conditional before 했 / 좋 / 바라 ("보여주셨으면 했어요", "알면 좋겠다") or 싶
-     ("보고 싶었다");
+   - no quoted request (…달라고 / …주라고: "메일 보여달라고 했는데 안 보여줬어") and no wish, which is a polite request:
+     a conditional before 하 / 좋 / 바라 with any ending ("보여주셨으면 했어요", "…으면 해서 말씀드렸습니다", "알면
+     좋겠다") or 싶 ("보고 싶었다");
    - the last word (emoticon jamo such as ㅠ, ㅋㅋ, emoji and format characters ignored) ends in a PAST or retrospective
      declarative. Past is only the past marker 았 / 었 / 였 / 했 and its contractions (왔, 봤, 났, 찼, 됐, 셨: a ㅆ-final
      syllable with the vowel ㅏ ㅐ ㅓ ㅕ ㅘ ㅙ ㅝ), never 겠 ("확인해야겠다", "봐야겠어": an intention) and never the present
@@ -23615,10 +23621,13 @@ decline a read. A miss stays a corpus case (D10, D12).
   looking-back periods; the statement check limited to real past markers, wishes as requests, no 했어 / degree-adverb
   markers, and moved to message level in active, shadow and the evaluation; 14 days; the A6 seed label `nl-select.v23`.
   The A6 action corpus was not re-evaluated on `nl-select.v23` (no A6 change here; A6 stays `off` live).
+- **Final delta round (CA P1/P2, Codex; validator and statement check only, no prompt byte changed, so no re-run).**
+  The nearest-day rule for longer periods and for several weekdays, the mixed-mentions rule, the quoted-request and
+  any-ending wish forms; golden `a7u-08..10` (839 cases) with periods a selector may end on a non-nearest weekday.
 
 #### Corpus
 
-`a7u-01..07` and `a7s-01..15` in `nl-intent.v1.json` (836 cases): six "까지" positives (calendar ×5, Jira ×1), the
+`a7u-01..10` and `a7s-01..15` in `nl-intent.v1.json` (839 cases; `a7u-08..10` from the final delta round): six "까지" positives (calendar ×5, Jira ×1), the
 statement "금요일까지 보고서 내야 해", the six statement negatives of the owner's request, four positives that must still
 execute ("어제 일정 뭐 있었지?", "어제 온 메일", "지난주 메일 뭐 왔었어", "어제 무슨 메일 왔더라?"; "내일 일정" is already
 `uat5gy-06`), and five review positives (`a7s-11..15`: 겠 "오늘 일정 확인해야겠다", "메일 좀 봐야겠다"; wishes "내일 일정 알면
@@ -23675,7 +23684,7 @@ bound, run on Thursday 2026-10-15 (Asia/Seoul). Reports are local under `data/ev
    shows it as today through Friday (decision 4), so overdue items are not in the window. Recommended: accept.
 6. Statement check scope: clear past statements only (recommended); short informal past without "?" stays with the
    prompt.
-7. D12 batch: `a7u-01..07`, `a7s-01..15`. Recommended: approve.
+7. D12 batch: `a7u-01..10`, `a7s-01..15`. Recommended: approve.
 
 
 ## ADR-0112 amendment 1 — Slack channel-message delete: a narrow `ChannelMessageDeleteWriter`, only for a message Quoky posted, bound to that post's SENT receipt, only as the undo of a post (Proposed — owner decision pending) (2026-10-14)

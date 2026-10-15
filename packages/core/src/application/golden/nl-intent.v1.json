@@ -9454,6 +9454,39 @@
         }
       },
       "note": "an informal past with no second marker stays with the selector [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7u-08",
+      "text": "일요일까지 일정 전부 보여줘",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "until-sun"
+        }
+      },
+      "note": "the nearest Sunday; next-week (ending next week's Sunday) is refused [A7: agent-drafted for the A7 CA delta (2026-10-15): a longer period that ends on a non-nearest weekday must not pass, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7u-09",
+      "text": "다음 주 일요일까지 일정",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "until-next-sun"
+        }
+      },
+      "note": "anchored: next-week ends on that Sunday and is spelled until-next-sun [A7: agent-drafted for the A7 CA delta (2026-10-15): a longer period that ends on a non-nearest weekday must not pass, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7u-10",
+      "text": "금요일까지 무슨 일정 있어?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "until-fri"
+        }
+      },
+      "note": "the nearest Friday; a span ending on another Friday is refused [A7: agent-drafted for the A7 CA delta (2026-10-15): a longer period that ends on a non-nearest weekday must not pass, PENDING the owner's batch approval under ADR-0120 D12]"
     }
   ]
 }

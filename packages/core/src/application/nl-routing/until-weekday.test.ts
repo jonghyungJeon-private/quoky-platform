@@ -130,22 +130,48 @@ describe('A7 canonical form: a period holding the end-bounded day but not ending
     expect(argsOf('calendar.events', '이번 주 금요일까지 일정', { range: 'this-week' })).toEqual({ range: 'until-fri' });
     expect(argsOf('calendar.events', '금요일까지 일정', { range: 'next-7-days' })).toEqual({ range: 'until-fri' });
     expect(argsOf('jira.issues', '이번 주 금요일까지인 이슈들 알려줄래', { window: 'due', range: 'this-week' })).toEqual({ window: 'due', range: 'until-fri' });
-    // A span that already ends on the day is the owner's; one without the day is refused.
-    expect(argsOf('calendar.events', '이번 주 금요일까지 일정', { range: '10-12..10-16' })).toEqual({ range: '10-12..10-16' });
+    // Every period at the bound is today through the day: a span ending on it is spelled until-fri too.
+    expect(argsOf('calendar.events', '이번 주 금요일까지 일정', { range: '10-12..10-16' })).toEqual({ range: 'until-fri' });
     expect(argsOf('calendar.events', '이번 주 금요일까지 일정', { range: 'next-week' })).toBe('refused:weekday');
     expect(argsOf('calendar.events', '이번 주 금요일까지 일정', { range: 'this-week' }, { now: SATURDAY })).toBe('refused:weekday');
+  });
+
+  it('without a week word only the NEAREST bounded day counts, for longer periods too (CA delta P1)', () => {
+    // Thursday 10/15: next week ends on next week's Sunday, not the owner's Sunday 10/18.
+    expect(argsOf('calendar.events', '일요일까지 일정', { range: 'next-week' })).toBe('refused:weekday');
+    expect(argsOf('calendar.events', '금요일까지 일정', { range: '10-03..10-09' })).toBe('refused:weekday');
+    expect(argsOf('calendar.events', '금요일까지 일정', { range: '10-15..10-23' })).toEqual({ range: 'until-fri' });
+    // On a Friday, last-7-days ends today: today through Friday is today alone.
+    expect(argsOf('calendar.events', '금요일까지 일정', { range: 'last-7-days' }, { now: FRIDAY })).toEqual({ range: 'until-fri' });
+    // With a week word the anchored day decides.
+    expect(argsOf('calendar.events', '다음 주 일요일까지 일정', { range: 'next-week' })).toEqual({ range: 'until-next-sun' });
+  });
+
+  it('mixed mentions (one bounded, one not) accept only a period ending on that weekday (Codex delta)', () => {
+    const text = '이번 주 금요일까지 일정 보여줘 금요일도 포함해서';
+    expect(argsOf('calendar.events', text, { range: 'this-week' })).toBe('refused:weekday');
+    expect(argsOf('calendar.events', text, { range: 'until-fri' })).toEqual({ range: 'until-fri' });
+    // The day itself stays a day (its week words disagree, so the A5 note 3 spelling is the bare fri, the same Friday).
+    expect(argsOf('calendar.events', text, { range: 'this-fri' })).toEqual({ range: 'fri' });
+    expect(argsOf('calendar.events', '보고서는 금요일까지야, 금요일 일정 알려줘', { range: 'fri' })).toEqual({ range: 'fri' });
+    expect(argsOf('calendar.events', '보고서는 금요일까지야, 금요일 일정 알려줘', { range: 'this-week' })).toBe('refused:weekday');
   });
 
   it('the end bound counts only when every mention of the weekday carries it (review P1)', () => {
     expect(argsOf('calendar.events', '금요일 일정 알려줘, 보고서는 금요일까지야', { range: 'fri' })).toEqual({ range: 'fri' });
     expect(argsOf('calendar.events', '금요일까지 휴가인데 금요일 오후 일정 알려줘', { range: 'fri', partOfDay: 'afternoon' })).toEqual({ range: 'fri', partOfDay: 'afternoon' });
-    expect(argsOf('calendar.events', '금요일 일정 알려줘, 보고서는 금요일까지야', { range: 'until-fri' })).toBe('refused:weekday');
+    // Mixed mentions: the matching until-* is still accepted (Codex delta rule); it is never produced by Core.
+    expect(argsOf('calendar.events', '금요일 일정 알려줘, 보고서는 금요일까지야', { range: 'until-fri' })).toEqual({ range: 'until-fri' });
   });
 
   it('several weekdays with an end bound need the exact span from the start-bounded to the end-bounded day (review P1)', () => {
     for (const range of ['until-fri', '10-15..10-16', 'this-week', 'until-sat']) {
       expect(argsOf('calendar.events', '목요일부터 토요일까지 일정', { range }), range).toEqual(range === 'until-sat' ? { range } : 'refused:weekday');
     }
+    // Without week words the span is the nearest one (CA delta P1): never last or next week's Thursday..Saturday.
+    expect(argsOf('calendar.events', '목요일부터 토요일까지 일정', { range: '10-01..10-03' })).toBe('refused:weekday');
+    expect(argsOf('calendar.events', '목요일부터 토요일까지 일정', { range: '10-22..10-24' })).toBe('refused:weekday');
+    expect(argsOf('calendar.events', '다음 주 목요일부터 다음 주 토요일까지 일정', { range: '10-22..10-24' })).toEqual({ range: '10-22..10-24' });
     // until-sat on a Thursday is exactly Thursday..Saturday; a date span the owner gave is fine too.
     expect(argsOf('calendar.events', '목요일부터 토요일까지 일정', { range: '10-15..10-17' })).toEqual({ range: '10-15..10-17' });
     expect(argsOf('calendar.events', '월요일부터 금요일까지 일정', { range: 'until-fri' })).toBe('refused:weekday');
@@ -227,6 +253,10 @@ describe('A7 statement check: a clear past-tense statement is not a request to r
     '어제 일정 좀 보여줬으면 했어',
     '어제 메일 좀 보여주셨으면 했어요',
     '어제 일정 보고 싶었다',
+    '어제 메일 좀 보여주셨으면 해서 말씀드렸습니다',
+    // a quoted request is a request (CA delta P2)
+    '메일 보여달라고 했는데 안 보여줬어',
+    '어제 일정 알려달라고 했었어',
     'I forgot my meeting yesterday',
   ])('%j is not', (text) => {
     expect(nlIsPastStatement(text)).toBe(false);
