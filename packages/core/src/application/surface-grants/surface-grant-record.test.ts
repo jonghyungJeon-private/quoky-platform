@@ -90,7 +90,12 @@ describe('grant, revoke, clear, caps', () => {
     expect(revoked.changed).toEqual(['calendar']);
     expect(withSurfaceChannelCleared(revoked.record, KEY).record.channels).toEqual({});
     const all = withAllSurfaceGrantsCleared(again.record);
-    expect(all).toEqual({ record: { v: 1, channels: {}, seeds: ['b'.repeat(64)] }, channels: 1 });
+    expect(all).toEqual({ record: { v: 1, channels: {}, seeds: ['b'.repeat(64)], revoked: { [KEY]: ['github', 'calendar'] } }, channels: 1 });
+    // A later grant of a revoked group removes it from `revoked` again; the note round-trips through storage.
+    const regranted = withSurfaceGroupsGranted(all.record, KEY, ['github'], 'owner', T1);
+    if (!regranted.ok) throw new Error('grant');
+    expect(regranted.record.revoked).toEqual({ [KEY]: ['calendar'] });
+    expect(readSurfaceGrants(JSON.parse(JSON.stringify(serializeSurfaceGrants(regranted.record))))).toEqual(regranted.record);
   });
 
   it('at most 16 channels: a 17th channel is refused, an existing one still changes', () => {
@@ -140,7 +145,9 @@ describe('the seed (D6)', () => {
     const second = applySurfaceGrantSeed(revoked, changed, T1);
     expect(second.applied).toBe(true);
     expect(second.added).toEqual([{ key: KEY, groups: ['slack-search', 'code', 'writes'] }]);
-    expect(second.reAdded).toEqual(second.added);
+    // Only what the owner had revoked is "re-added"; `writes` is new in the changed value.
+    expect(second.reAdded).toEqual([{ key: KEY, groups: ['slack-search', 'code'] }]);
+    expect(second.record.revoked).toBeUndefined();
     expect(second.record.seeds).toEqual([first.digest, second.digest]);
     expect(second.record.channels[KEY]?.groups.calendar).toEqual({ at: T0, source: 'seed' });
   });
