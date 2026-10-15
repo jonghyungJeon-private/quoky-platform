@@ -265,7 +265,7 @@ describe('item.summarize (record C): the owner must ask for the content; mode on
   });
 });
 
-describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v31 with actions', () => {
+describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v33 with actions', () => {
   const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v30.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
@@ -281,8 +281,8 @@ describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v31
     }
   });
 
-  it('v31 adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v32');
+  it('the A6 prompt (v33) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v33');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
@@ -508,7 +508,7 @@ describe('A6 R1 gate (v32): the canonical `when`; ㄱㄱ / 고고 are not reques
     expect(validateSelection({ entryId: 'reminder.create', args: { body: '회의', when: '내일까지' } }, ctx('내일까지 회의 알려줘'))).toMatchObject({ ok: true, value: { args: { when: '내일까지' } } });
   });
 
-  it('ㄱㄱ / 고고 never ground a write (gold a6-paraphrase-todo.add-025 is an owner gold decision; Codex P1 strings)', () => {
+  it('ㄱㄱ / 고고 never ground a write (gold a6-paraphrase-todo.add-025 is an owner gold decision; Codex P1 and CA strings)', () => {
     const add = (text: string) => validateSelection({ entryId: 'todo.add', args: { title: '회의실 정리' } }, ctx(text));
     for (const text of [
       '할 일에 회의실 정리 추가하지 마 ㄱㄱ',
@@ -524,8 +524,45 @@ describe('A6 R1 gate (v32): the canonical `when`; ㄱㄱ / 고고 are not reques
       '할 일에 회의실 정리 추가 ㄱㄱ 하는 법',
       '투두에 "회의실 정리" 추가 ㄱㄱ',
       '할 일에 회의실 정리 추가 고고',
+      '팀장님이 할 일에 회의실 정리 추가 ㄱㄱ 하래',
+      '할 일에 회의실 정리 추가 ㄱㄱ 하자고 했었지',
     ]) {
-      expect(add(text), text).toMatchObject({ ok: false });
+      expect(add(text), text).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    }
+    expect(validateSelection({ entryId: 'reminder.cancel', args: { ref: '#2' } }, ctx('2번 알림 취소 ㄱㄱ')), '2번 알림 취소 ㄱㄱ').toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+  });
+});
+
+describe('A6 prompt v33 (CA review): the rule-8 lines and examples teach the rule, never a scored corpus case', () => {
+  const corpusTexts = ['nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-intent.v1.json'].flatMap((file) =>
+    (JSON.parse(readFileSync(new URL(`../golden/${file}`, import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string }> }).cases.map((c) => ({ id: `${file}:${c.id}`, text: c.text })),
+  );
+  const tokens = (text: string) => new Set(text.normalize('NFC').toLowerCase().replace(/[\p{P}\p{S}]+/gu, ' ').split(/\s+/u).filter((token) => token.length > 0));
+  const overlap = (a: Set<string>, b: Set<string>) => [...a].filter((token) => b.has(token)).length / new Set([...a, ...b]).size;
+  const messages = (prompt: string) => prompt.split('\n').filter((line) => line.startsWith('Message: ')).map((line) => line.slice('Message: '.length));
+  const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '안녕', actions: { referenceContext: 'none' } });
+  const readMessages = new Set(messages(buildSelectionPrompt({ entries: READS, text: '안녕' })));
+  const V33_EXAMPLES = ['다음 주에 울릴 리마인더 쭉 보여줘', '브랜치 hotfix-0420 새로 따 줘', '커밋 메시지는 앞으로 영어로 쓰게 설정해 둬'];
+
+  it('keeps the rule-8 help.topic question-form and listed-args lines and the three v33 examples', () => {
+    expect(actionPrompt).toContain('   help.topic needs a question form ("어떻게 …?", "…돼?", "…할 수 있어?"): a message with none, such as a bare command or a');
+    expect(actionPrompt).toContain('   Only the args listed for the chosen entry exist: reminder.list has no range or count arg, so a day or 몇 개 word with it');
+    expect(actionPrompt).toContain('Message: 다음 주에 울릴 리마인더 쭉 보여줘\nOutput: {"entryId":"reminder.list","args":{},"ambiguity":"CLEAR","alternatives":[]}');
+    expect(actionPrompt).toContain('Message: 브랜치 hotfix-0420 새로 따 줘\nOutput: {"entryId":"none"');
+    expect(actionPrompt).toContain('Message: 커밋 메시지는 앞으로 영어로 쓰게 설정해 둬\nOutput: {"entryId":"none"');
+    for (const gone of ['모레 알림 몇 개 잡혀 있어?', '프로젝트 등록: ~/code/site', '피드백 삭제: 2']) expect(actionPrompt).not.toContain(`Message: ${gone}`);
+  });
+
+  it('no A6 example equals a scored corpus case, and no v33 example near-duplicates one (token overlap < 0.5)', () => {
+    const actionOnly = messages(actionPrompt).filter((message) => !readMessages.has(message));
+    expect(actionOnly).toEqual(expect.arrayContaining(V33_EXAMPLES));
+    for (const message of actionOnly) {
+      const normalized = [...tokens(message)].join(' ');
+      for (const golden of corpusTexts) expect([...tokens(golden.text)].join(' '), `${message} = ${golden.id}`).not.toBe(normalized);
+    }
+    for (const message of V33_EXAMPLES) {
+      const own = tokens(message);
+      for (const golden of corpusTexts) expect(overlap(own, tokens(golden.text)), `${message} ~ ${golden.id}`).toBeLessThan(0.5);
     }
   });
 });

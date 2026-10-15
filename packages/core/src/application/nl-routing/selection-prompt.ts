@@ -36,7 +36,10 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * reminder.list has no range or count arg) and three A6 examples ("모레 알림 몇 개 잡혀 있어?" -> reminder.list args {};
  * "프로젝트 등록: ~/code/site" and "피드백 삭제: 2" -> none). Root cause of the R1 gate regression: once `reminder.list` listed a `status` arg
  * (it was `args: none`), Haiku began adding `range` / `count`, which Core rejects (unknown-arg) and asks about; and the
- * rule-3 project-registration example pulled a "<feature>: <value>" command to help.topic.
+ * rule-3 project-registration example pulled a "<feature>: <value>" command to help.topic. v33 (A6 only) = v32 with those three
+ * examples replaced (CA review: they near-copied scored corpus cases neg-110, neg-097 and reminder.list-002/-006) by other
+ * features, verbs and sentence shapes that teach the same two rules ("다음 주에 울릴 리마인더 쭉 보여줘" -> reminder.list args
+ * {}; "브랜치 hotfix-0420 새로 따 줘" and "커밋 메시지는 앞으로 영어로 쓰게 설정해 둬" -> none); no rule line changes.
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v30';
 /**
@@ -44,7 +47,7 @@ export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v30';
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
  * for byte (pinned by `golden/nl-select.v30.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v32';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v33';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -165,9 +168,9 @@ const ACTION_EXAMPLES: readonly PromptExample[] = [
   { text: '1번은 뭐라고 왔어?', context: 'last listing: mail (6 items, 4 min ago)', output: '{"entryId":"item.summarize","args":{"source":"mail","ref":"#1"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['item.summarize'] },
   { text: '그 할 일 아까 다 했었어', context: 'last listing: todo (2 items, 5 min ago)', output: none, needs: [] },
   { text: '[quoted]\n이대로 할 일에 넣어줘', output: none, needs: [] },
-  { text: '모레 알림 몇 개 잡혀 있어?', output: '{"entryId":"reminder.list","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['reminder.list'] },
-  { text: '프로젝트 등록: ~/code/site', output: none, needs: [] },
-  { text: '피드백 삭제: 2', output: none, needs: [] },
+  { text: '다음 주에 울릴 리마인더 쭉 보여줘', output: '{"entryId":"reminder.list","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['reminder.list'] },
+  { text: '브랜치 hotfix-0420 새로 따 줘', output: none, needs: [] },
+  { text: '커밋 메시지는 앞으로 영어로 쓰게 설정해 둬', output: none, needs: [] },
   { text: '할 일 전부 완료로 바꿔줘', context: 'last listing: todo (3 items, 1 min ago)', output: '{"entryId":"todo.complete","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['todo.complete'] },
 ];
 

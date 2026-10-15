@@ -25926,15 +25926,6 @@ connector-write reconcile (no send).
   (024; 019 → `calendar.events`; 033/035/037/039 are intermittent selector arg misses also seen in earlier runs); overall
   0.948, spanExact 0.962, wrong targets 0, negative captures 0; gate not passed. No model run after the revert.
 
-  description names, and the grammar reads both as the same time. `todo.add-025` ("… 추가 ㄱㄱ"): ㄱㄱ / 고고 join the closed
-  request endings. Every veto still applies: negation, question, retraction, reported speech and first person
-  ("추가하지 마 ㄱㄱ" and "추가 ㄱㄱ?" never write). **Unchanged, owner gold decision:** `todo.add-009` ("…
-  추가할게.", first-person promise) plus `todo.add-016` and `reminder.create-024` (exact-command colon heads, A6-D3a). The
-  recommendation is gold = ask/refuse. One Haiku action run (A6 v32, `data/eval/nl-action-2026-10-15T16-18-28-659Z.json`):
-  027 and 025 hit; `todo.add` 0.957, `reminder.create` 0.854 (024; 019 → `calendar.events`; 033/035/037/039 intermittent
-  selector arg misses seen in earlier runs too); overall 0.948, spanExact 0.962, wrong targets 0, negative captures 0; gate
-  not passed.
-
 ### ADR-0122 P2 implementation note (2026-10-15)
 
 **Status:** Implemented on branch `claude/v5-surface-grants-p2` (the phasing table's P2 row). No migration, no new OAuth
