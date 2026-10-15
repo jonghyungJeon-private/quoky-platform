@@ -95,7 +95,7 @@ const REASONS = [
  * The reasons of a clarification question (which item, which list, which mode, restate the item): `acceptsAnyQuestion`
  * counts only these, never a refusal (input guard, cap, kill switch, payload or time rule; CA review).
  */
-const CLARIFICATION_REASONS: ReadonlySet<string> = new Set(['out-of-range', 'expired', 'ambiguous', 'stale', 'other-source', 'none', 'conflict', 'content-mode', 'missing-arg', 'invalid-arg', 'ungrounded']);
+const CLARIFICATION_REASONS: ReadonlySet<string> = new Set(['out-of-range', 'expired', 'ambiguous', 'stale', 'other-source', 'none', 'conflict', 'content-mode', 'missing-arg', 'invalid-arg', 'ungrounded', 'no-action-word']);
 const SOURCES = ['todo', 'reminder', 'mail', 'drive'] as const;
 type Source = (typeof SOURCES)[number];
 

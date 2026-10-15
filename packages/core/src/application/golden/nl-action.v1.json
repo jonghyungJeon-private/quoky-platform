@@ -2843,13 +2843,12 @@
    "text": "오늘 밤 10시에 알림: 가스 밸브 잠그기",
    "expect": {
     "entryId": "reminder.create",
-    "args": {
-     "body": "가스 밸브 잠그기",
-     "when": "오늘 밤 10시"
-    },
-    "outcome": "execute"
+    "args": {},
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
    },
-   "note": "was act-reminder-create-020"
+   "note": "was act-reminder-create-020 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): reminder.create grounds only on a remind / notify verb, never the noun 알림 / 리마인더 alone, so this terse form asks to restate; was execute]"
   },
   {
    "id": "a6-paraphrase-reminder.create-021",
@@ -2871,13 +2870,12 @@
    "text": "3일 뒤 오전 9시에 월세 이체 리마인더",
    "expect": {
     "entryId": "reminder.create",
-    "args": {
-     "body": "월세 이체",
-     "when": "3일 뒤 오전 9시"
-    },
-    "outcome": "execute"
+    "args": {},
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
    },
-   "note": "was act-reminder-create-022"
+   "note": "was act-reminder-create-022 [PENDING owner approval (A6 R1 CA delta, 2026-10-15): reminder.create grounds only on a remind / notify verb, never the noun 알림 / 리마인더 alone, so this terse form asks to restate; was execute]"
   },
   {
    "id": "a6-paraphrase-reminder.create-023",
