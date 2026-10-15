@@ -21,7 +21,7 @@ import { NL_SELECTION_TIMEOUT_MS } from '@quoky/core';
  * - `QUOKY_NL_INTENT_TIMEOUT_MS` (ADR-0120 amendment A3): the per-call selection bound, an integer from 2000 to 8000;
  *   default `NL_SELECTION_TIMEOUT_MS` (6 s).
  * - `QUOKY_NL_ACTIONS` (ADR-0120 amendment A6-D8): exactly `off`, `shadow`, `local` or `external`; default `off` (no action
- *   entry is ever offered and every prompt and reply is byte-identical to `nl-select.v27`). Any other value requires
+ *   entry is ever offered and every prompt and reply is byte-identical to `nl-select.v30`). Any other value requires
  *   `QUOKY_NL_INTENT_MODE=active` (`NL_ACTIONS_REQUIRES_ACTIVE`, a startup refusal); the composition root always builds
  *   the persisted kill switch, and the service refuses to start without it. Each non-`off` level is a Strict owner step.
  *   `external` (R3) is refused at startup (`NL_ACTIONS_EXTERNAL_NOT_AVAILABLE`) until its stage is built.

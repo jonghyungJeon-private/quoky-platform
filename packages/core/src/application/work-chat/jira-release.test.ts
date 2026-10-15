@@ -521,7 +521,7 @@ describe('the A2 yield (A8): a Jira keyword slot that names a release or every a
   });
 });
 
-describe('prompt nl-select.v27 (A8): the jira.release examples appear only while the entry is offered', () => {
+describe('prompt nl-select.v30 (A8): the jira.release examples appear only while the entry is offered', () => {
   it('shows the entry and its examples with it, and is unchanged without it', () => {
     const withRelease = buildSelectionPrompt({ entries: [nlWave1Entry('jira.issues'), nlWave1Entry('jira.release')], text: 'x' });
     expect(withRelease).toContain('- jira.release: ');

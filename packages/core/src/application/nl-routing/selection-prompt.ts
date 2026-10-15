@@ -19,28 +19,27 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * description saying "when the owner asks about meetings" instead of "only when the owner narrows to meetings" (its
  * examples unchanged), `timedOnly` in the two meeting examples ("내일 미팅 있나?", "다음 미팅이 몇 시더라"), and one
  * clause at the end of the range-symbols line (the weekend symbols are Saturday and Sunday together, 주말). v25 = the A6 text on top
- * of v24. (v26 is the A6 prompt of another branch.) v27 (ADR-0120 amendment A8) = v24 with six `jira.release` examples,
- * shown only while that entry is offered; with it absent the text is v24 byte for byte. v28 = the A6 text on top of v27.
- * of v24. v26 (A6 R1 fix, the A6 prompt only; the read prompt stays v24) = v25 with the rule-8 `when` line saying "without
+ * of v24. v26-v29 were the A6 R1 fix prompts of a branch rebased since: v26 = v25 with the rule-8 `when` line saying "without
  * a trailing particle such as 에", the `ref` line splitting "this" (그거/이거/it/that) from "recent" (방금/아까) and adding
  * "item 3", and two rule-8 lines: pick the asked action even when Reference context shows another list or nothing, and copy
  * a deictic-only content as the span (Core asks); the same `ref` and `when` wording in the action entries' arg descriptions;
  * and the rule-8 help.topic parenthetical adds that a question about what a phrase or command would do or mean stays none
- * (rule 2; the v25 parenthetical pulled "\"…\" 라고 말하면 뭐가 되는지 설명해줘" to help.topic, which v24 never does).
- * v27 (the read prompt; owner decision 2026-10-15, the A6 R1 status filter) = v24 whose catalog text gives `todo.list` and
- * `reminder.list` a `status` arg (closed values, default the open / scheduled ones) and `reminder.list` a description that
- * says so; no instruction line changes. v28 = the v26 A6 text on top of v27. v29 (A6 only) = v28 whose rule-8 help.topic
- * sentence says "help.topic stays rule 3: only Quoky's own features; a how-to about another app or a device, or about what
- * a phrase or command would do, is entryId "none" (rule 2)" (the v26 parenthetical pulled a phone-settings how-to,
- * neg-012, to help.topic).
+ * (rule 2). v27 (ADR-0120 amendment A8; read) = v24 with six `jira.release` examples, shown only while that entry is
+ * offered; v28 = the A6 text on top of v27. v29 (A6 only) = the R1 status-filter wording plus the help.topic sentence
+ * "help.topic stays rule 3: only Quoky's own features; a how-to about another app or a device, or about what a phrase or
+ * command would do, is entryId "none" (rule 2)" (the v26 parenthetical pulled a phone-settings how-to, neg-012, to help.topic).
+ * v30 (the read prompt after the A8 and A6 R1 merge) = v27 whose catalog text also gives `todo.list` and `reminder.list` a
+ * `status` arg (closed values, default the open / scheduled ones) and `reminder.list` a description that says so (owner
+ * decision 2026-10-15, the A6 R1 status filter); no instruction line changes. v31 = the A6 text (v28 base plus the v26 and
+ * v29 rule changes) on top of v30.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v27';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v30';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v27.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v30.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v29';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v31';
 
 const DESCRIPTION_MAX_CHARS = 320;
 

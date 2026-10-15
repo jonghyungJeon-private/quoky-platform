@@ -25884,3 +25884,5 @@ flight takes effect from the next step or turn for READS — grammar claims and 
 snapshot; strong writes are always re-checked at the call. The feature ships with `QUOKY_CHANNEL_GRANTS` default `off`
 (owner: off during development). Tests: a revoke during the awaited push preflight (no push), and during the
 connector-write reconcile (no send).
+
+- Rebased onto A8/A9 P1: read prompt v30, A6 prompt v31; the R1 final gate ran on read v27/A6 v29 (pre-merge) — re-run on v30/v31 before the flag decision.
