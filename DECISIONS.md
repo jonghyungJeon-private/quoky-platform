@@ -20498,95 +20498,87 @@ The backup, verify and scratch-copy check, and the v16 apply on the service DB; 
   - A third-party subject followed by a second third-party subject still exempts the claim; that is the origin/main rule
     and is unchanged.
 
-### ADR-0104 D1 amendment — summary turns: attribution by construction, one regeneration, strict guards (owner-approved 2026-10-15)
+### ADR-0104 D1 amendment — summary turns: attribution by construction, one regeneration, never looser than main (owner-approved 2026-10-15)
 
-- **Status:** Approved by the Product Owner on 2026-10-15. It replaces the "hide claim sentences" handling, which was
-  approved earlier the same day and is not shipped. That handling was dropped after the fix-loop cap:
-  - CA round 3 found 98 of 1,820 composed leaks (`Already did that.`, `머지함.`, `끝!`), plus replace-path and
-    Discord-escape clipping issues;
-  - Codex found leaks such as `The PR got merged.` and `Successfully merged the PR.`.
+- **Status.** Approved by the Product Owner on 2026-10-15. Revised the same day after two review rounds. Neither
+  earlier approach shipped:
+  - "Hide claim sentences" leaked split claims (CA round 3: 98 of 1,820; Codex: `The PR got merged.`).
+  - An attributed-quote exemption leaked: CA flagged attribution supplied inside the quote and a blanked quote hiding
+    Quoky's own verb (`상태는 'Slack'`); Codex flagged `이 답변의 상태는 '요약본을 Slack에 보냈어요'예요.` and a quadratic scan
+    on unmatched smart quotes.
 
-  The owner wants content shown by accurate judgment, not by guessing which sentence is safe. The amendment applies to
-  mail, mail-thread and Drive SUMMARIZE turns only (ADR-0118 D7/D8). Chat replies and the two guards' code are unchanged
-  (`internal-action-claim-guard.ts` and `document-summary-claim-guard.ts` are byte-identical to origin/main). No flag,
-  migration, port or provider change.
+  The orchestrator removed every exemption. This amendment applies to mail, mail-thread and Drive SUMMARIZE turns only
+  (ADR-0118 D7/D8). Chat replies are unchanged. The two guards (`internal-action-claim-guard.ts`,
+  `document-summary-claim-guard.ts`) are byte-identical to origin/main. No flag, migration, port or provider change.
 - **Symptom.** Telegram, 2026-10-14: `1번 문서 요약해줘` on a dogfood-tracker Google Sheet was replaced whole by the
   ADR-0104 notice. The sheet's own status lines (`Jira 티켓 등록 완료`, `PR이 머지되었습니다`) read as Quoky's claims: on a
   summary, DET-1 exempts only the first and second person, and D2 makes the impersonal completed aspect a claim.
+- **Invariant.** A verdict is never looser than origin/main for the same text. There is no new exemption.
+  - ADR-0104 D2 already skips quoted text (QUAL-6).
+  - The document guard runs on the raw and display text as on main.
+  - What makes legitimate tracker content visible is the attribution prompt (quote the document's words and attribute
+    them), not any exemption.
 - **Decision.**
-  1. **Attribution by construction (prompt).** The mail, thread and Drive summary prompts carry
-     `DOCUMENT_ATTRIBUTION_RULE` in place of the third-person rule. Every action, change or status is attributed to the
-     item, with the item or a named person as the subject and the item's words quoted verbatim
-     (`시트에는 'Jira 티켓 등록 완료'로 표시돼 있어요`, `메일에서 김철수 님은 '배포했다'고 적었어요`,
-     `According to the sheet, the status is 'merged'`). The rule forbids:
-     - an unattributed completed action;
-     - the first person;
-     - addressing the reader;
-     - saying anything was done by or for anyone in the conversation.
-  2. **One regeneration.** The first draft goes to the claim check. A flagged draft is regenerated once, with
-     `DOCUMENT_ATTRIBUTION_RETRY_RULE` added to the developer rules (`documentSummaryRetry`). The flagged text is never
-     fed back. If the second draft is flagged too, the whole summary is replaced by today's fixed notice.
-     - A credential-shaped first draft is withheld and not regenerated.
-     - Counters are content-free (`document summary claim check`, attempt, outcome).
-     - The run records both executions' usage: a count is summed only when both report it.
-     - ADR-0118 D7 egress: the regeneration sends the same item text once more on the same explicit request. The owner
-       approved this with the design.
-  3. **The claim check** (`document-summary-claim-check.ts`). Main's ADR-0104 guard and document guard decide. On a
-     summary they read more forms, so every addition is stricter, never looser:
-     - the reply as written, with links neutralized;
-     - the reply rendered with every markup stripped: `*`, `_`, `` ` ``, `[x](url)`, `<b>`, `>` quote markers, and
-       struck-through words dropped;
-     - each of these with wrapped lines joined;
-     - unattributed quotes read as claims;
-     - `요청대로` / `말씀하신 대로 … 처리했` as a request carried out;
-     - a bare or owner-directed completion (`got merged`, `Successfully merged`, `Already did that`, `머지함`, `끝!`,
-       `all set`, `for you`, `on your behalf`, `myself`);
-     - a sentence that names the assistant or the owner and reports a completed act.
+  1. **Prompt.** The mail, thread and Drive prompts carry `DOCUMENT_ATTRIBUTION_RULE` in place of the third-person
+     rule. Every action, change or status is attributed to the item with its words quoted
+     (`시트에는 'Jira 티켓 등록 완료'로 표시돼 있어요`). The rule forbids an unattributed completed action, the first person,
+     addressing the reader, and saying anything was done by or for anyone in the conversation.
+  2. **One regeneration.** A flagged first draft is regenerated once, with `DOCUMENT_ATTRIBUTION_RETRY_RULE` added. The
+     flagged text is never fed back. If the second draft is flagged too, the whole summary is replaced by today's notice.
+     - One shared credential check (raw and display forms) decides both that a draft is withheld and that it is not
+       regenerated.
+     - If the regeneration throws, the flagged first draft is replaced (fail closed) and the first call's usage is
+       recorded. Otherwise both calls' usage is recorded; a count is summed only when both report it.
+     - Counters are content-free.
+     - **Second send.** The regeneration sends the same item text to the chat-tier provider once more, on the same
+       explicit request (ADR-0118 D7). The owner approved this with the design.
+     - **Latency bound.** A flagged summary takes up to two provider calls: worst case 2× the provider timeout.
+  3. **The claim check** (`document-summary-claim-check.ts`). Main's checks run first, exactly as on main. Every
+     addition can only flag more, and none depends on reading quotes as the document's words:
+     - main's two guards also read the reply rendered with every markup stripped (`*`, `_`, `` ` ``, `[x](url)`,
+       `<b>`, `>` quote markers, struck-through words), and each form with wrapped lines joined;
+     - outside quoted text, clause by clause, with negated clauses skipped for these additions only, the following are
+       claims:
+       - `요청대로` / `말씀하신 대로 … 처리했`;
+       - bare or owner-directed completions (`got merged`, `Successfully merged`, `Already did that`, `머지함`, `끝!`,
+         `all set`, `for you`, `on your behalf`, `myself`);
+       - a completed act with a self-reference (`이 요약`, `본 요약`, `요약본`, `이 답변`, `이 메시지`, `방금`, `지금 막`,
+         `this summary`, `this reply`, `just now`);
+       - the summary itself sent or posted with no named subject (`요약을 게시했어요`);
+       - a completed act in a clause that names the speaker or addresses the owner. The marker list is the first person
+         with possessive and reflexive forms, Quoky, `요약 모델` / `이 모델` / `AI 모델` / `AI 비서`, `봇이`, `요청하신`,
+         `님께` (never `님께서`), `님에게`, `드렸`, `대신`, `you`, `your`. Bare `에게`, `한테` and `모델` are not markers.
+     - Quoted text is blanked in one linear pass: the next closing quote of each kind is precomputed per line, so an
+       unmatched quote costs nothing. Clauses are split once. A reply over 8,000 characters is withheld before any guard
+       runs.
+  4. **Delivered text** (CA P1-2 and P1-3, every path, the replacement path included). The reply is a `takeLines` node:
+     - its lines are whole joined-wrapped lines of the rendered summary, and its tail is the fixed footer;
+     - the budget is 1,900 code points, measured by each platform's own markup;
+     - each line is first capped in Core at the worst case, `(1,900 − footer − reserve) / 2` code points, so no platform
+       cuts a line;
+     - `shown`, the plain text of every capped line built from the body's parts, passes the claim check, or the whole
+       summary is replaced;
+     - a fixed notice is accepted as Quoky copy.
 
-     A reply over 8,000 characters is withheld before any guard runs.
-  4. **The attributed-quote exemption** (narrow and principled, owner-approved). A quoted span is the document's words,
-     not Quoky's, only when all of these hold in its own sentence:
-     - the quote is closed;
-     - the sentence names the item, a field of it, or a named person reporting (`시트에는`, `메일에서`, `표시돼`,
-       `적혀`, `상태는`, `처리 칸에는`, `김철수 님은 … 적었어요`, `according to the sheet`, `the status is`, `Kim wrote`);
-     - a Korean quote is followed by a citation (`라고`, `로`, `고`, `이고`, `예요`, a comma);
-     - there is no assistant marker in the sentence, in the quote, or where the quote closes. The markers are the first
-       person (possessive and reflexive forms included), Quoky, a stand-in (`비서`, `모델`, `assistant`, `bot`,
-       `Claude`, `GPT`), an addressee or honorific form (`요청하신`, `님께`, `에게`, `드렸`, `대신`), `you`, `your`.
-
-     An attributed quote is masked for the document guard. It stays a mention for the ADR-0104 guard, as on main.
-     **Ratified text.** ADR-0104 D2 already exempts quoted text (QUAL-6). On summaries this amendment narrows that
-     exemption to attributed quotes, and extends it to the document guard, whose quote handling is not ratified ADR
-     text. No ratified D2 sentence changes; the exemption is recorded here as part of this owner-approved amendment.
-  5. **Delivered-text check** (CA P1-2, every path). In `handleDocumentSummary`, the exact text the owner is shown runs
-     through the claim check: the rendered and clipped summary, before the fixed footer, which is Quoky copy. Otherwise
-     the summary is replaced by the fixed notice. A reply that is exactly one of the fixed notices passes as Quoky copy.
-  6. **Clipping** (CA P1-3). A platform escapes an untrusted span before it clips. Core therefore clips the summary text
-     to `(1,900 − footer) / 2` code points, the worst case of every code point rendered as two. No platform clips or
-     splits a summary, and the checked text is the text every platform shows. A summary now shows about 850 code points
-     at most; it showed 1,900 before.
-  7. **Footers** (CA P1). The mail, thread and Drive footers also say nothing was written to Jira, Slack or GitHub.
-- **Measured.**
-  - **Stub model.** 40 tracker summaries, 240 legitimate lines:
-    - main shows 6 of 240 lines;
-    - the unattributed first draft is always flagged;
-    - the attributed regeneration shows 240 of 240.
-  - **Hostile with the stub.** 92 samples: the 58 earlier assistant claims, every CA and Codex leak string from rounds
-    1–3, and 8 split claims. The model returns the hostile line in both drafts. Hostile shown: 0, on all three sources.
-  - **Hostile wrapped as attributions.** The same samples wrapped as `시트에는 '<hostile>'로 표시돼 있어요`: 23 are shown
-    as the document's words. None of them carries an assistant marker; with an assistant marker, 0 are shown.
-  - **Real model.** One probe of the tracker prompt, owner-approved: `claude -p --model sonnet` with the provider's
-    isolation flags, on a synthetic 3-sheet dogfood tracker. Three first drafts and one regeneration all attributed and
-    quoted every status. Main shows each of them. Two first drafts were flagged by the first reading (field-subject
-    attribution, `상태는 '…', 담당은 …`) until the field markers were added; all 4 drafts then pass.
-  - **Linear.** A CPU-time doubling test.
+     A test pins the property that a clean `shown` has only clean line prefixes, so whatever a platform takes is clean.
+  5. **Footers** (CA). The mail, thread and Drive footers end `· Quoky는 이 답변에서 아무 곳에도 쓰거나 보내지 않았어요` (en:
+     `· nothing was written or sent anywhere by Quoky in this reply`). Every footer passes the check.
+- **Measured** (stub model, against origin/main's guards).
+  - 40 tracker summaries, 240 legitimate lines: main shows 6 of 240. HEAD shows 240 of 240 after one regeneration to
+    the attributed shape.
+  - 282 hostile texts: 94 samples, each bare, inside a summary, and wrapped as a quoted attribution. HEAD shows 87,
+    main shows 111. Shown by HEAD but not by main: 0, on all three sources.
+  - The 28 CA and Codex leak strings from rounds 1–4: 0 shown.
+  - Real model, re-checked: the 4 sonnet drafts of the tracker probe are shown by both HEAD and main.
 - **Accepted residuals.**
-  - A document's own words quoted with attribution are shown even when they describe a completed act
-    (`시트에는 'PR 머지 완료'로 표시돼 있어요`). That is the exemption, and the footer says nothing was written.
-  - The completion and assistant-marker lists are backstops, not the mechanism. A summary of a document that itself uses
-    `you`, `에게`, `모델` or past-tense narration may be regenerated or replaced. This fails closed.
-  - Quoted values are not rendered distinguishably. The PLT-1 untrusted-span renderer treats the whole summary as one
-    span; sub-spans would need the model's text parsed. Left for later.
+  - Text main shows stays shown. That includes a claim hidden inside quotes, such as `Jira 티켓 '등록 완료' 했어요` or
+    `시트에는 '제가 등록 완료'로 표시돼 있어요`, because ADR-0104 D2 skips quotes. The footer stating that nothing was
+    written or sent is the guarantee.
+  - The marker and completion lists are backstops. A document that itself narrates with them may be regenerated or
+    replaced. This fails closed.
+  - DET-1's own quote regex is main's code and is not linear on a line of unmatched smart quotes. The 8,000-character
+    bound limits it; it is not changed here.
+  - Quoted values are not rendered distinguishably (left for later).
 
 ### ADR-0118 amendment implementation note — DRV-2 shared drives and DRV-2b every sheet (2026-10-13)
 

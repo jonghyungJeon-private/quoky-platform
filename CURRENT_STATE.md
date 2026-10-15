@@ -47,17 +47,16 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
 
-### v5 document summaries: attribution, one regeneration, strict guards (ADR-0104 D1 amendment, owner-approved 2026-10-15) — on branch `claude/v5-sheet-summary-guard`
+### v5 document summaries: attribution, one regeneration, never looser than main (ADR-0104 D1 amendment, owner-approved 2026-10-15) — on branch `claude/v5-sheet-summary-guard`
 
 - **What changed.**
-  - Mail, thread and Drive summaries attribute every action or status to the item, with its words quoted.
-  - A flagged first draft is regenerated once; a second flagged draft is replaced whole.
-  - The guards are unchanged and read more forms on summaries. One narrow exemption: a closed quote attributed in its
-    own sentence, with no assistant marker.
-  - The exact delivered text is checked. Core clips summaries to a worst-case platform budget, about 850 code points.
-  - Footers name Jira, Slack and GitHub. Chat is unchanged.
-- **Measured.** Stub model: 240 of 240 legitimate tracker lines shown after one regeneration (before: 6); 0 of 92
-  hostile samples shown. Real model (sonnet): 4 of 4 tracker drafts attributed and shown.
+  - Mail, thread and Drive summaries quote and attribute the document's words.
+  - A flagged first draft is regenerated once; a second flagged draft (or a failed regeneration) is replaced whole.
+  - No new exemption: the guards are main's and read more forms.
+  - The delivered lines are checked on every path and taken whole per platform.
+  - Footers say Quoky wrote or sent nothing anywhere. Chat is unchanged.
+- **Measured (stub).** Legitimate tracker lines: 240 of 240 after one regeneration (main: 6). Hostile shown by HEAD but
+  not by main: 0. Review-round leak strings: 0 of 28.
 - **Not run live.** Offline tests plus one owner-approved model probe on a synthetic sheet.
 
 Details: the ADR-0104 D1 amendment note in `DECISIONS.md`.
