@@ -27,7 +27,9 @@ import {
   nlRangeKeepsWeekday,
   nlKeywordIsTitle,
   nlSingleWeekday,
+  nlMultiWeekdayBoundKeeps,
   nlUntilBound,
+  nlUntilSymbolWeekday,
   nlWeekdayMentions,
   normalizeNlRangeSymbol,
   resolveNlRange,
@@ -35,20 +37,18 @@ import {
   type NlWeekdayMention,
 } from './symbolic-time';
 import { canonicalNlKeyword } from './keyword-canonical';
-import { nlIsPastStatement } from './statement-guard';
 
 export { canonicalNlKeyword } from './keyword-canonical';
 
 /**
  * Deterministic validation of a selector candidate (ADR-0120 D4, the ADR-0090 L2 policy), in order:
  *  (1) closed ids and the argument schema (unknown args rejected, closed values only);
- *  (2) the entry is offered in this turn's catalog (registered and configured) and is a READ entry (D5); (2b, A7 Proposed) a
- *      READ entry is refused as `statement` on a clear past-tense statement with no request form (the turn is chat);
+ *  (2) the entry is offered in this turn's catalog (registered and configured) and is a READ entry (D5);
  *  (3) bounds: limit 1..10, keyword 1..100 characters;
  *  (4) a range is a symbol Core resolves with the turn's clock and `QUOKY_TIMEZONE` (at most 31 days), and keeps the one
  *      weekday the owner's words name (A5 implementation note 2: "다음 주 수" is never next Monday nor the whole week);
- *      an `until-*` period is grounded by the owner's inclusive end bound on that weekday, and a single day at such a
- *      bound is spelled as the `until-*` symbol ending on the same day (A7 Proposed);
+ *      an `until-*` period is grounded by the owner's inclusive end bound on that weekday, and a period holding such a
+ *      bounded day without ending on it is spelled as the `until-*` symbol ending on that day (A7 Proposed);
  *  (5) grounding: a keyword appears verbatim in the owner's non-quoted text or in the previous selection's args, and an
  *      entry with a `range` never takes a time expression as a keyword; a grounded flag / enum value needs an owner word;
  *  (6) the credential guard runs on every string arg.
@@ -81,11 +81,6 @@ export type NlValidationFailureReason =
    * `time-keyword`, never repaired by dropping the range: the owner is asked.
    */
   | 'weekday'
-  /**
-   * A7 (Proposed): the owner's message is a clear past-tense statement with no request or question form ("어제 일정
-   * 있었는데 까먹었어"). Not a clarification: the turn is `none` (chat), like a selector `none`.
-   */
-  | 'statement'
   | 'credential'
   /** A6-D3: a payload span made only of deictic, ordinal or time words ("그거", "첫 번째 거"). */
   | 'deictic-payload'
@@ -142,8 +137,6 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   const entry = ctx.offered.get(entryId);
   if (entry === undefined) return { ok: false, reason: 'not-offered', entryId };
   if (entry.risk !== 'READ' && ctx.actions !== true) return { ok: false, reason: 'not-read', entryId };
-  // (2b, A7 Proposed) a READ entry never runs on a clear past-tense statement (grammar only: `statement-guard.ts`).
-  if (entry.risk === 'READ' && nlIsPastStatement(ctx.groundingText)) return { ok: false, reason: 'statement', entryId };
   const specs = new Map(entry.args.map((spec) => [spec.name, spec] as const));
   const args: Record<string, NlArgValue> = {};
   for (const [name, value] of Object.entries(candidate.args)) {
@@ -218,15 +211,28 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // per-arg checks, so a weekday keyword still fails as `time-keyword`).
   const weekday = nlSingleWeekday(mentions);
   // (4b, A7 Proposed) an `until-*` period needs the owner's inclusive end bound on that weekday and ends on that day; a
-  // single day at such a bound ("금요일까지" read as `fri`) is spelled as the `until-*` symbol ending on the same day.
+  // period that holds such a bounded day but does not end on it ("금요일까지" read as `fri` or `this-week`) is spelled as
+  // the grounded `until-*` symbol ending on that day, else refused. Several weekdays with an end bound ("목요일부터
+  // 토요일까지") need a period from the start-bounded day to the end-bounded day. A period that looks back (mail, Jira
+  // created / updated) never takes an `until-*` symbol and keeps the A5 rule unchanged.
   const rangeValue = rangeSpec !== undefined ? args[rangeSpec.name] : undefined;
-  if (rangeSpec !== undefined && typeof rangeValue === 'string') {
-    const previousRange = ctx.previousArgs?.[rangeSpec.name];
-    const until = nlUntilBound(rangeValue, range, weekday, typeof previousRange === 'string' ? previousRange : undefined, ctx.now, ctx.timeZone);
-    if (until === 'refuse') return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
-    if (until !== 'keep') {
-      args[rangeSpec.name] = until.canonical;
-      range = resolveNlRange(until.canonical, ctx.now, ctx.timeZone);
+  if (rangeSpec !== undefined) {
+    const lookingBack = rangeSpec.pastOnly === true || rangeSpec.pastWindow?.(args) === true;
+    if (lookingBack) {
+      if (typeof rangeValue === 'string' && nlUntilSymbolWeekday(rangeValue) !== undefined) return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
+    } else if (weekday === undefined && nlMultiWeekdayBoundKeeps(range, mentions, ctx.now, ctx.timeZone) === false) {
+      return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
+    } else if (typeof rangeValue === 'string' && (weekday !== undefined || mentions.length === 0)) {
+      const previousRange = ctx.previousArgs?.[rangeSpec.name];
+      const until = nlUntilBound(rangeValue, range, weekday, typeof previousRange === 'string' ? previousRange : undefined, ctx.now, ctx.timeZone);
+      if (until === 'refuse') return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
+      if (until !== 'keep') {
+        args[rangeSpec.name] = until.canonical;
+        range = resolveNlRange(until.canonical, ctx.now, ctx.timeZone);
+      }
+    } else if (typeof rangeValue === 'string' && nlUntilSymbolWeekday(rangeValue) !== undefined && nlMultiWeekdayBoundKeeps(range, mentions, ctx.now, ctx.timeZone) !== true) {
+      // Several weekdays without one end-bounded span: an `until-*` symbol has nothing to stand on.
+      return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
     }
   }
   if (rangeSpec !== undefined && weekday !== undefined) {

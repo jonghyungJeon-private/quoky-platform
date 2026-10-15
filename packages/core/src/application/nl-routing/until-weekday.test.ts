@@ -41,6 +41,17 @@ describe('A7 symbols: until-<weekday> is today through the nearest such day, unt
     expect(span('until-next-fri', THURSDAY)).toBe('10/15+9');
     expect(span('until-next-sun', THURSDAY)).toBe('10/15+11');
     expect(span('until-next-mon', SUNDAY)).toBe('10/18+2');
+    // A Monday through next week's Sunday is the longest: 14 days.
+    expect(span('until-next-sun', '2026-10-12T03:00:00.000Z')).toBe('10/12+14');
+  });
+
+  it('crosses month and year ends, and follows the Seoul date at midnight', () => {
+    expect(span('until-fri', '2026-12-29T03:00:00.000Z')).toBe('12/29+4'); // Tue 12/29 .. Fri 2027-01-01
+    expect(resolveNlRange('until-fri', '2026-12-29T03:00:00.000Z', TZ)?.to).toBe('2027-01-01T15:00:00.000Z');
+    expect(span('until-next-mon', '2026-10-28T03:00:00.000Z')).toBe('10/28+6'); // Wed 10/28 .. Mon 11/2
+    // 2026-10-15T14:59Z is Thursday 23:59 in Seoul; one minute later it is Friday.
+    expect(span('until-fri', '2026-10-15T14:59:00.000Z')).toBe('10/15+2');
+    expect(span('until-fri', '2026-10-15T15:00:00.000Z')).toBe('10/16+1');
   });
 
   it('is a closed spelling: full English names normalise, anything else is not a symbol', () => {
@@ -99,7 +110,7 @@ describe('A7 grounding: an until-* period needs the owner\'s inclusive end bound
   });
 });
 
-describe('A7 canonical form: a single day at an inclusive end bound is the until-* symbol that ends on the same day', () => {
+describe('A7 canonical form: a period holding the end-bounded day but not ending on it is the until-* symbol ending on that day', () => {
   it('"이번 주 금요일까지 일정" read as this-fri, fri or the date 10-16 is today through Friday', () => {
     for (const range of ['this-fri', 'fri', '10-16']) expect(argsOf('calendar.events', '이번 주 금요일까지 일정', { range }), range).toEqual({ range: 'until-fri' });
     expect(argsOf('calendar.events', '다음 주 수요일까지 일정 보여줘', { range: 'next-wed' })).toEqual({ range: 'until-next-wed' });
@@ -115,9 +126,45 @@ describe('A7 canonical form: a single day at an inclusive end bound is the until
     expect(argsOf('calendar.events', '일요일까지 일정 뭐 있어?', { range: 'sun' })).toEqual({ range: 'until-sun' });
   });
 
-  it('a multi-day period that contains the day stays as the selector chose it (nothing hidden)', () => {
-    expect(argsOf('calendar.events', '이번 주 금요일까지 일정', { range: 'this-week' })).toEqual({ range: 'this-week' });
-    expect(argsOf('calendar.events', '금요일까지 일정', { range: 'next-7-days' })).toEqual({ range: 'next-7-days' });
+  it('a longer period must end on the bounded day too (review P1): this-week and next-7-days become until-fri', () => {
+    expect(argsOf('calendar.events', '이번 주 금요일까지 일정', { range: 'this-week' })).toEqual({ range: 'until-fri' });
+    expect(argsOf('calendar.events', '금요일까지 일정', { range: 'next-7-days' })).toEqual({ range: 'until-fri' });
+    expect(argsOf('jira.issues', '이번 주 금요일까지인 이슈들 알려줄래', { window: 'due', range: 'this-week' })).toEqual({ window: 'due', range: 'until-fri' });
+    // A span that already ends on the day is the owner's; one without the day is refused.
+    expect(argsOf('calendar.events', '이번 주 금요일까지 일정', { range: '10-12..10-16' })).toEqual({ range: '10-12..10-16' });
+    expect(argsOf('calendar.events', '이번 주 금요일까지 일정', { range: 'next-week' })).toBe('refused:weekday');
+    expect(argsOf('calendar.events', '이번 주 금요일까지 일정', { range: 'this-week' }, { now: SATURDAY })).toBe('refused:weekday');
+  });
+
+  it('the end bound counts only when every mention of the weekday carries it (review P1)', () => {
+    expect(argsOf('calendar.events', '금요일 일정 알려줘, 보고서는 금요일까지야', { range: 'fri' })).toEqual({ range: 'fri' });
+    expect(argsOf('calendar.events', '금요일까지 휴가인데 금요일 오후 일정 알려줘', { range: 'fri', partOfDay: 'afternoon' })).toEqual({ range: 'fri', partOfDay: 'afternoon' });
+    expect(argsOf('calendar.events', '금요일 일정 알려줘, 보고서는 금요일까지야', { range: 'until-fri' })).toBe('refused:weekday');
+  });
+
+  it('several weekdays with an end bound need the exact span from the start-bounded to the end-bounded day (review P1)', () => {
+    for (const range of ['until-fri', '10-15..10-16', 'this-week', 'until-sat']) {
+      expect(argsOf('calendar.events', '목요일부터 토요일까지 일정', { range }), range).toEqual(range === 'until-sat' ? { range } : 'refused:weekday');
+    }
+    // until-sat on a Thursday is exactly Thursday..Saturday; a date span the owner gave is fine too.
+    expect(argsOf('calendar.events', '목요일부터 토요일까지 일정', { range: '10-15..10-17' })).toEqual({ range: '10-15..10-17' });
+    expect(argsOf('calendar.events', '월요일부터 금요일까지 일정', { range: 'until-fri' })).toBe('refused:weekday');
+    // Several weekdays without an end bound: the A5 rule steps aside as before, but no until-* symbol.
+    expect(argsOf('calendar.events', '월요일이랑 금요일 일정', { range: 'this-week' })).toEqual({ range: 'this-week' });
+    expect(argsOf('calendar.events', '월요일이랑 금요일 일정', { range: 'until-fri' })).toBe('refused:weekday');
+  });
+
+  it('a format character between the weekday and its bound is ignored (review P2)', () => {
+    expect(nlExpressedWeekday('금요일\u200b까지 일정')?.until).toBe(true);
+    expect(argsOf('calendar.events', '금요일\u200b까지 일정', { range: 'fri' })).toEqual({ range: 'until-fri' });
+  });
+
+  it('a period that looks back (mail, Jira created/updated) never takes until-* and keeps the A5 rule (review P2)', () => {
+    expect(argsOf('mail.list', '금요일까지 온 메일', { range: 'until-fri' })).toBe('refused:weekday');
+    expect(argsOf('mail.list', '금요일까지 온 메일', { range: 'last-fri' })).toEqual({ range: 'last-fri' });
+    expect(argsOf('jira.issues', '금요일까지 등록된 지라 이슈', { window: 'created', range: 'until-fri' })).toBe('refused:weekday');
+    expect(argsOf('jira.issues', '지난주 금요일까지 등록된 지라 이슈', { window: 'created', range: 'last-fri' })).toEqual({ window: 'created', range: 'last-fri' });
+    expect(argsOf('jira.issues', '금요일까지 마감인 지라 이슈', { window: 'due', range: 'until-fri' })).toEqual({ window: 'due', range: 'until-fri' });
   });
 
   it('a past bounded day has no until-* symbol and is asked; another day is still refused by the A5 rule', () => {
@@ -138,44 +185,56 @@ describe('A7 canonical form: a single day at an inclusive end bound is the until
 describe('A7 statement check: a clear past-tense statement is not a request to read', () => {
   it.each([
     '어제 일정 있었는데 까먹었어 ㅠ',
-    '지난주 회의 진짜 길었어',
     '어제 메일 너무 많이 왔더라',
     '아까 슬랙 봤는데 별거 없더라',
     '오늘 일정 꽉 찼었어',
     '회의 끝났다',
-    '드라이브 정리 다 했어',
-    '일정 추가했어',
     '회의 끝났습니다',
     '메일 다 읽었다ㅋㅋ',
+    '어제 회의 길었던데',
   ])('%j is a statement', (text) => {
     expect(nlIsPastStatement(text)).toBe(true);
   });
 
   it.each([
+    // requests and questions
     '어제 일정 뭐 있었지?',
     '어제 온 메일',
     '내일 일정',
     '지난주 메일 뭐 왔었어',
     '어제 무슨 메일 왔더라?',
-    // A casual question without its question mark: the existence verb and a bare arrival stay requests.
-    '어제 일정 있었어',
-    '메일 왔어',
-    '새메일 왔나',
-    '어제 회의 길었어',
     '오늘 뭐 해야 되더라',
     '알림 뭐 걸어놨더라',
     '어제 일정 있었는데 알려줘',
     '어제 회의 길었어. 오늘 일정 보여줘',
+    // a casual question without its question mark: the informal past needs a second grammatical marker
+    '어제 일정 있었어',
+    '메일 왔어',
+    '새메일 왔나',
+    '메일 진짜 왔어',
+    '어제 일정 궁금했어',
+    '일정 확인 필요했어',
+    '지난주 회의 진짜 길었어',
+    '드라이브 정리 다 했어',
+    // 겠 is a guess or an intention, 있/없 the present: never past
+    '오늘 일정 확인해야겠다',
+    '메일 좀 봐야겠다',
+    '내일 일정 알면 좋겠다',
+    '진짜 메일 좀 봐야겠어',
+    '내일 회의 있다',
+    '확인할 메일 있습니다',
+    // a wish is a polite request
+    '어제 일정 좀 보여줬으면 했어',
+    '어제 메일 좀 보여주셨으면 했어요',
+    '어제 일정 보고 싶었다',
     'I forgot my meeting yesterday',
   ])('%j is not', (text) => {
     expect(nlIsPastStatement(text)).toBe(false);
   });
 
-  it('refuses a READ entry as `statement`, before any arg check; a request in the same words still validates', () => {
-    expect(argsOf('calendar.events', '어제 일정 있었는데 까먹었어 ㅠ', { range: 'yesterday' })).toBe('refused:statement');
-    expect(argsOf('mail.list', '어제 메일 너무 많이 왔더라', { range: 'yesterday' })).toBe('refused:statement');
-    expect(argsOf('calendar.events', '어제 일정 뭐 있었지?', { range: 'yesterday' })).toEqual({ range: 'yesterday' });
-    expect(argsOf('calendar.events', '어제 일정 있었어', { range: 'yesterday' })).toEqual({ range: 'yesterday' });
+  it('format characters never hide an ending or a question mark', () => {
+    expect(nlIsPastStatement('회의 끝났\u200b다')).toBe(true);
+    expect(nlIsPastStatement('어제 일정 있었\u200b어')).toBe(false);
   });
 });
 

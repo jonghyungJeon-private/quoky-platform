@@ -35,8 +35,10 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
   it('A7 (Proposed): a capture of a clear past-tense statement scores as the runtime answers it, `none`', () => {
     const statement: NlEvalCase = { id: 'neg-s', text: '어제 일정 있었는데 까먹었어 ㅠ', expect: 'none' };
     expect(scoreOutput(statement, answer('calendar.events', { range: 'yesterday' }), NOW)).toMatchObject({ outcome: 'none', got: 'none' });
-    const positive: NlEvalCase = { id: 'pos-s', text: '드라이브 정리 다 했어', expect: { entryId: 'drive.files', args: {} } };
-    expect(scoreOutput(positive, answer('drive.files'), NOW)).toMatchObject({ outcome: 'miss', got: 'none' });
+    const positive: NlEvalCase = { id: 'pos-s', text: '회의 끝났다', expect: { entryId: 'calendar.events', args: {} } };
+    expect(scoreOutput(positive, answer('calendar.events'), NOW)).toMatchObject({ outcome: 'miss', got: 'none' });
+    // Message-level: an ambiguous output on a statement is chat too, not a clarification.
+    expect(scoreOutput(statement, answer('calendar.events', { range: 'yesterday' }, 'NEEDS_CLARIFICATION'), NOW)).toMatchObject({ outcome: 'none' });
   });
 
   it('summarizes per entry and applies the gate (95% overall, 90% per entry, 0 wrong captures)', () => {

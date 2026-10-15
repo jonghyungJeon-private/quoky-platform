@@ -9403,6 +9403,57 @@
         }
       },
       "note": "a retrospective self-question (더라?) still lists mail [A7: agent-drafted for the neg-042 statement fix (2026-10-15), PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-11",
+      "text": "오늘 일정 확인해야겠다",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {}
+      },
+      "note": "겠 is an intention, not the past [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-12",
+      "text": "메일 좀 봐야겠다",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {}
+      },
+      "note": "겠 is an intention, not the past [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-13",
+      "text": "내일 일정 알면 좋겠다",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow"
+        }
+      },
+      "note": "a wish (…면 좋겠다) is a polite request [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-14",
+      "text": "어제 메일 좀 보여주셨으면 했어요",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "yesterday"
+        }
+      },
+      "note": "a wish (…으면 했어요) is a polite request [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, PENDING the owner's batch approval under ADR-0120 D12]"
+    },
+    {
+      "id": "a7s-15",
+      "text": "어제 일정 궁금했어",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "yesterday"
+        }
+      },
+      "note": "an informal past with no second marker stays with the selector [A7: agent-drafted for the A7 review (2026-10-15): a guess, an intention, the present or a wish is not a past statement, PENDING the owner's batch approval under ADR-0120 D12]"
     }
   ]
 }

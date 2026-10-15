@@ -789,6 +789,13 @@ describe('ADR-0120 amendment A7 (Proposed): until-<weekday> and the clear past-t
     expect(JSON.stringify(h.logs)).not.toMatch(/까먹|꽉/);
   });
 
+  it('shadow sees what active does: a statement is none and agrees with chat', async () => {
+    const h = harness({ mode: 'shadow', script: [out('calendar.events', { range: 'yesterday' })] });
+    expect(await h.decide('어제 일정 있었는데 까먹었어 ㅠ')).toEqual({ kind: 'skip', reason: 'shadow' });
+    await h.service.lastShadowRun;
+    expect(h.logs.find((log) => log.event === 'nl_selection.shadow')?.fields).toMatchObject({ entryId: 'calendar.events', agree: true, outcome: 'none' });
+  });
+
   it('a past-tense question still executes', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'yesterday' })] });
     expect(await h.decide('어제 일정 뭐 있었지?')).toMatchObject({ kind: 'execute', command: { args: { range: 'yesterday' } } });
