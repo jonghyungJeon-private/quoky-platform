@@ -8,7 +8,7 @@ import {
   type ListingItem,
   type ListingSource,
 } from '../last-listing';
-import { parseNlRef } from './action-entries';
+import { isNlRefGrounded, parseNlRef } from './action-entries';
 import type { NlActionEntryId, NlItemSource } from './catalog';
 import { hasReferenceRecord, renderReferenceContext, resolveItemReference, resolveUndo, type NlReferenceState } from './item-reference';
 import { LAST_ACTION_TTL_MS, readLastAction, withLastAction, withLastActionEcho, type LastActionRecord } from './last-action';
@@ -163,6 +163,29 @@ describe('resolution table (every A6-D2 branch)', () => {
     expect(resolve('todo.complete', 'todo', '#2', '2번 완료', state(todo, 29, { replyTo: 'reply-t' }))).toMatchObject({ kind: 'resolved', target: { id: 'todo-2' } });
     expect(resolve('todo.complete', 'todo', '#2', '2번 완료', state(todo, 31, { replyTo: 'reply-t' }))).toMatchObject({ kind: 'unresolved', outcome: 'expired' });
     expect(resolve('todo.complete', 'todo', '#2', '2번 완료', state(value, 5, { replyTo: 'reply-m' }))).toMatchObject({ kind: 'unresolved', outcome: 'other-source', found: 'mail' });
+  });
+});
+
+describe('A6-D2 clarification (owner 2026-10-15): "이 / 그 / 저 + noun" resolves like 그거 / 이거', () => {
+  // The determiner only grounds the ref (`hasNlDeterminerReference`); the item is the ordinary A6-D2 step 3.
+  const rows: ReadonlyArray<{ text: string; source: NlItemSource; slots: Array<{ source: ListingSource; labels: number[]; minute: number }>; expected: object }> = [
+    { text: '이 문서 요약해줘', source: 'drive', slots: [{ source: 'drive', labels: [1], minute: 0 }], expected: { kind: 'resolved', target: { source: 'drive', id: 'drive-1', label: 1 } } },
+    { text: '이 문서 요약해줘', source: 'drive', slots: [{ source: 'drive', labels: [1, 2, 3], minute: 0 }], expected: { kind: 'unresolved', outcome: 'ambiguous', candidates: items('drive', [1, 2, 3]) } },
+    { text: '이 메일 요약해줘', source: 'mail', slots: [{ source: 'mail', labels: [1], minute: 0 }, { source: 'drive', labels: [1], minute: 1 }], expected: { kind: 'unresolved', outcome: 'other-source', found: 'drive' } },
+    { text: '그 메일 무슨 내용이야', source: 'mail', slots: [{ source: 'mail', labels: [1], minute: 0 }], expected: { kind: 'resolved', target: { source: 'mail', id: 'mail-1', label: 1 } } },
+    { text: 'summarize this document', source: 'drive', slots: [{ source: 'drive', labels: [1], minute: 0 }], expected: { kind: 'resolved', target: { source: 'drive', id: 'drive-1', label: 1 } } },
+    { text: 'what does that mail say', source: 'mail', slots: [{ source: 'mail', labels: [1, 2], minute: 0 }], expected: { kind: 'unresolved', outcome: 'ambiguous' } },
+    { text: '저 알림 취소해줘', source: 'reminder', slots: [{ source: 'reminder', labels: [13], minute: 0 }], expected: { kind: 'resolved', target: { source: 'reminder', id: 'reminder-13', label: 13 } } },
+  ];
+  it.each(rows)('$text ($source; most recent listing $slots.length slot(s))', ({ text, source, slots, expected }) => {
+    expect(isNlRefGrounded({ kind: 'this' }, text)).toBe(true);
+    const entryId: NlActionEntryId = source === 'reminder' ? 'reminder.cancel' : 'item.summarize';
+    expect(resolve(entryId, source, 'this', text, state(listings(slots), 2))).toMatchObject(expected);
+  });
+
+  it('a fresh lastAction of the source wins over the listing, exactly as for 그거', () => {
+    const last = action('todo.add', 'todo', 'todo-new', 0, { label: 7 });
+    expect(resolve('todo.complete', 'todo', 'this', '그 할 일 완료해줘', state(undefined, 1, { lastAction: last }))).toEqual({ kind: 'resolved', target: { source: 'todo', id: 'todo-new', label: 7 } });
   });
 });
 

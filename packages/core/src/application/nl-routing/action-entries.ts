@@ -1,5 +1,6 @@
-import type { NlActionEntryId, NlAmbiguityKey, NlArgs, NlCatalogEntry, NlEntryCheckFailure } from './catalog';
+import type { NlActionEntryId, NlAmbiguityKey, NlArgs, NlCatalogEntry, NlEntryCheckFailure, NlItemSource, NlWave1EntryId } from './catalog';
 import { normalizeForMatch } from './selection-input';
+import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { isNlTimeWord } from './symbolic-time';
 import { ANCHORED_TODO_PREFIX_HEADS } from '../reminders/reminder-grammar';
 import { SLACK_POST_COLON_HEAD } from '../work-chat/work-chat-command';
@@ -54,6 +55,33 @@ export function formatNlRef(ref: NlRef): string {
 /** A6-D2: the closed deictics that ground `recent` / `this`. Korean words match inside a token (particles glued on). */
 const DEICTIC_KO = ['그거', '이거', '저거', '그것', '이것', '저것', '그건', '이건', '저건', '그걸', '이걸', '저걸', '방금', '아까'];
 const DEICTIC_EN = ['it', 'that', 'this', 'that one', 'this one'];
+/**
+ * A6-D2 clarification (owner decision 2026-10-15): a demonstrative determiner 이 / 그 / 저 standing before a noun that names
+ * an item source ("이 문서", "그 메일", "저 알림") is a closed deictic exactly like 그거 / 이거. The determiners are a closed
+ * set and the nouns are the catalog's own words for the item sources (the aliases and source names of the mail, Drive,
+ * to-do and reminder list entries), never a phrase list. English needs nothing new: "this document" and "that mail"
+ * already carry this / that. Like every deictic it only grounds a `ref`; which item it means is A6-D2 resolution.
+ */
+const DETERMINERS_KO = ['이', '그', '저'] as const;
+const ITEM_SOURCE_LIST_ENTRIES: Readonly<Record<NlItemSource, NlWave1EntryId>> = { mail: 'mail.list', drive: 'drive.files', todo: 'todo.list', reminder: 'reminder.list' };
+const ITEM_SOURCE_NOUNS_KO: readonly string[] = [
+  ...new Set(
+    Object.values(ITEM_SOURCE_LIST_ENTRIES)
+      .flatMap((id) => [...NL_WAVE1_ENTRIES[id].aliases, ...(NL_WAVE1_ENTRIES[id].sourceNames ?? [])])
+      .map(normalizeForMatch)
+      .filter((noun) => !/^[a-z0-9 .-]+$/.test(noun)),
+  ),
+].sort((a, b) => b.length - a.length);
+/** A determiner token followed by an item-source noun (particles may follow the noun: "이 문서를"). */
+const DETERMINER_NOUN_SOURCE = `(?<=^|\\s)(?:${DETERMINERS_KO.join('|')})\\s+(?:${ITEM_SOURCE_NOUNS_KO.map((noun) => noun.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*')).join('|')})`;
+const DETERMINER_NOUN = new RegExp(DETERMINER_NOUN_SOURCE, 'u');
+const DETERMINER_NOUN_ALL = new RegExp(DETERMINER_NOUN_SOURCE, 'gu');
+
+/** Whether the owner's words point with a determiner at an item-source noun ("이 문서", "그 메일"). */
+export function hasNlDeterminerReference(groundingText: string): boolean {
+  return DETERMINER_NOUN.test(normalizeForMatch(groundingText));
+}
+
 /** `last` needs one of these. */
 const LAST_KO = ['마지막'];
 const LAST_EN = ['last', 'the last one'];
@@ -75,7 +103,7 @@ function wordIn(text: string, word: string): boolean {
 /** Whether the owner's words carry a closed deictic (A6-D2). */
 export function hasNlDeictic(groundingText: string): boolean {
   const text = normalizeForMatch(groundingText);
-  return DEICTIC_KO.some((word) => text.includes(word)) || DEICTIC_EN.some((word) => latinWordIn(text, word));
+  return DEICTIC_KO.some((word) => text.includes(word)) || DEICTIC_EN.some((word) => latinWordIn(text, word)) || DETERMINER_NOUN.test(text);
 }
 
 function hasLastWord(groundingText: string): boolean {
@@ -160,6 +188,7 @@ function contentTokens(span: string): string[] {
   let text = normalizeForMatch(span);
   text = text.replace(KO_ORDINAL_PATTERN, ' ').replace(EN_ORDINAL_PATTERN, ' ');
   text = text.replace(/#?\d+\s*번\s*째?/gu, ' ');
+  text = text.replace(DETERMINER_NOUN_ALL, ' ');
   for (const word of [...DEICTIC_KO, ...LAST_KO].sort((a, b) => b.length - a.length)) text = text.split(word).join(' ');
   const tokens = text
     .replace(/[\p{P}\p{S}]+/gu, ' ')

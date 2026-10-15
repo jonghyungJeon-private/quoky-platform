@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NL_ACTION_ENTRIES,
   containsNlTimeExpression,
+  hasNlDeterminerReference,
   isNlBulkRequest,
   isNlDeicticOnlyPayload,
   isNlSpanInsideStructure,
@@ -161,6 +162,35 @@ describe('`ref` (A6-D2): closed forms, grounded by a numeral, ordinal or deictic
     expect(isNlRefGrounded({ kind: 'last' }, '그거 완료')).toBe(false);
     expect(nlIndexWording(13, '13번 취소해줘')).toBe('digits');
     expect(nlIndexWording(1, '첫 번째 거 취소해줘')).toBe('ordinal');
+  });
+
+  it('A6-D2 clarification (owner 2026-10-15): a determiner 이/그/저 before an item-source noun of the catalog is a deictic', () => {
+    for (const text of ['이 문서 요약해줘', '그 메일 무슨 내용이야', '저 알림 취소해줘', '그 할 일 완료해줘', '이 파일을 요약해줘', '그 드라이브 문서 요약', '이 이메일 원문 보여줘']) {
+      expect(hasNlDeterminerReference(text), text).toBe(true);
+      expect(isNlRefGrounded({ kind: 'this' }, text), text).toBe(true);
+      expect(isNlRefGrounded({ kind: 'recent' }, text), text).toBe(true);
+    }
+    // English already carries this / that.
+    for (const text of ['summarize this document', 'what does that mail say']) expect(isNlRefGrounded({ kind: 'this' }, text), text).toBe(true);
+    // Not a determiner token (이메일, 그메일), not an item-source noun (그 사람, 이 회의), or no determiner at all.
+    for (const text of ['이메일 요약해줘', '그메일 요약해줘', '그 사람 요약해줘', '이 회의 요약해줘', '문서 요약해줘', '메일 요약해줘']) {
+      expect(hasNlDeterminerReference(text), text).toBe(false);
+      expect(isNlRefGrounded({ kind: 'this' }, text), text).toBe(false);
+    }
+    // A determiner never grounds a number or `last`.
+    expect(isNlRefGrounded({ kind: 'index', index: 1 }, '이 문서 요약해줘')).toBe(false);
+    expect(isNlRefGrounded({ kind: 'last' }, '그 메일 요약해줘')).toBe(false);
+    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'drive', ref: 'this', mode: 'summary' } }, ctx('이 문서 요약해줘'))).toMatchObject({ ok: true, value: { args: { source: 'drive', ref: 'this', mode: 'summary' } } });
+    // The nouns come from the catalog itself: every Korean alias of the item sources' list entries.
+    for (const id of ['mail.list', 'drive.files', 'todo.list', 'reminder.list'] as const) {
+      for (const noun of NL_WAVE1_ENTRIES[id].aliases.filter((alias) => !/^[a-z ]+$/.test(alias))) expect(hasNlDeterminerReference(`그 ${noun} 요약`), noun).toBe(true);
+    }
+  });
+
+  it('a payload made only of a determiner and an item-source noun is deictic only (A6-D3, like 그거)', () => {
+    for (const span of ['그 메일', '이 문서를', '저 알림']) expect(isNlDeicticOnlyPayload(span), span).toBe(true);
+    for (const span of ['그 메일 답장하기', '이 문서 검토', '이메일 정리']) expect(isNlDeicticOnlyPayload(span), span).toBe(false);
+    expect(validateSelection({ entryId: 'todo.add', args: { title: '그 메일' } }, ctx('그 메일 할 일에 추가해줘'))).toMatchObject({ ok: false, reason: 'deictic-payload', arg: 'title' });
   });
 
   it('refuses an ungrounded ref and needs exactly one of ref / match', () => {

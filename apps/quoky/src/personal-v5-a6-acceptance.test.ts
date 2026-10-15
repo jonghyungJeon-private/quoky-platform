@@ -263,6 +263,40 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect(result.text).toContain(SUMMARY);
   });
 
+  it('A6-D2 clarification (owner 2026-10-15): "이/그 + noun" through the selector resolves like 그거 (one listed item reads it, another source or several items ask)', async () => {
+    // (The anchored GML-2 grammars still answer the exact "이 문서 요약해줘" / "이 메일 요약해줘" forms without the selector.)
+    await turn('드라이브 최근 파일 보여줘');
+    const doc = await turn('이 문서 내용 정리해줄래', answer('item.summarize', { source: 'drive', ref: 'this', mode: 'summary' }));
+    expect(doc.selects).toHaveLength(1);
+    expect(doc.summaries).toHaveLength(1);
+    expect(doc.text).toContain(SUMMARY);
+    await turn('드라이브 최근 파일 보여줘');
+    const english = await turn('can you summarize this document for me', answer('item.summarize', { source: 'drive', ref: 'this', mode: 'summary' }));
+    expect(english.selects).toHaveLength(1);
+    expect(english.summaries).toHaveLength(1);
+    // Another source than the most recent listing: the existing other-source question, nothing read.
+    await turn('드라이브 최근 파일 보여줘');
+    const otherSource = await turn('이 메일 무슨 내용이야', answer('item.summarize', { source: 'mail', ref: 'this' }));
+    expect(otherSource.selects).toHaveLength(1);
+    expect(otherSource.summaries).toHaveLength(0);
+    expect(otherSource.text).toBe('가장 최근에 보여 드린 건 드라이브 파일 목록이에요. 어느 메일인지 다시 말씀해 주세요.');
+    // Several listed mails: a question under their own numbers, nothing read.
+    await turn('안 읽은 메일 보여줘');
+    const several = await turn('그 메일 무슨 내용이야', answer('item.summarize', { source: 'mail', ref: 'this' }));
+    expect(several.selects).toHaveLength(1);
+    expect(several.summaries).toHaveLength(0);
+    expect(several.text).toBe('어느 메일인가요? 1번, 2번 중에서 번호로 답해 주세요.');
+  });
+
+  it('red-team: without a determiner or deictic in the owner\'s own words, `ref: this` reads nothing, whatever the listed content says', async () => {
+    await turn('드라이브 최근 파일 보여줘');
+    const result = await turn('내용 정리해줄래', answer('item.summarize', { source: 'drive', ref: 'this', mode: 'summary' }));
+    expect(result.selects).toHaveLength(1);
+    expect(result.summaries).toHaveLength(0);
+    expect(result.text).not.toContain(SUMMARY);
+    for (const request of result.selects) expect(request.prompt).not.toContain(CANARY);
+  });
+
   it('live phrase 6: after a mail list, "아까 1번은 무슨 내용이었지" asks summary or full once; the answer is kept and reused', async () => {
     await turn('안 읽은 메일 보여줘');
     const asked = await turn('아까 1번은 무슨 내용이었지', answer('item.summarize', { source: 'mail', ref: '#1' }));
