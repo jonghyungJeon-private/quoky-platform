@@ -26011,3 +26011,370 @@ the last round under the fix-loop cap.**
 - **Gate note.** On 2026-10-16 (a Friday) the full gate shows one failure outside this change:
   `nl-intent-dispatch.test.ts` "live UAT R4/R5" assumes "this-thu" equals "thu" on the real clock (true on a Thursday); it
   fails the same way on `origin/main` today. Not fixed here (out of scope); every other test passes.
+
+## ADR-0123 — Retrieval for the selector's few-shot examples, measured first: an offline, pre-registered four-arm experiment over a held-out split of the D12 gate, the existing `LocalVectorProvider` (no new vector database) and local `nomic-embed-text` embeddings pinned by digest, an owner-approved example pool kept disjoint from every gold corpus by a contamination lint, and runtime retrieval only behind a default-off flag after the experiment passes. Knowledge RAG over Jira / Confluence is out of scope. Phase 1 amends nothing; phase 2 would amend ADR-0120 D3 / D12 / A6-D7 and the ADR-0098 D8 limits.
+
+- **Status:** **Proposed (2026-10-16).** Chief Architect draft, docs only. Nothing here is authorized until the Product
+  Owner ratifies it. Every model run it describes (local embeddings included) is a Strict action that needs its own
+  owner yes on an approved plan digest, as ADR-0120 D12 already requires for selection runs.
+- **Date:** 2026-10-16
+- **Plan:** `docs/plans/selector-rag-plan.md` (phases, harness files, cost and latency estimate, Korean owner summary).
+- **Input:** the read-only analysis memo of 2026-10-16 ("Vector + RAG for Quoky", no model or API calls), summarized in
+  Context below.
+- **Reaffirms unchanged:** ADR-0098 D8 (local embedding recall, cloud model names refused, no egress), ADR-0107 D1 / D5 /
+  D6 (owner-approved learning items, `LOCAL_ONLY`, examples only for `LOCAL` providers), ADR-0120 D3 (one selection call,
+  no retry), D4 (deterministic validation and grounding), D10 (no new phrase, verb or pattern: a miss becomes a corpus
+  case, never a regex) and D12 (the gate), ADR-0120 A6-D7 (flag off = the pinned prompt, byte for byte), ADR-0121 D4 / D5
+  / D8 (labels, closed tools, egress allowlist and traffic ledger), ADR-0122 (the surface gate runs after selection) and
+  ADR-0112 (exact-payload, one-time approvals).
+- **No conflict with `ARCHITECTURE.md`.** Embedding generation stays an `AiProvider` `EMBEDDING` capability on a local
+  CLI provider (§5.5, §6.5); the store is the existing `VectorProvider` port and its local adapter (§5.6); no new port,
+  no new process, no new listener and no new egress destination (§12). A cloud embedding API would conflict with §5.5
+  (HTTP API adapters serve only the chat tier and image understanding, ADR-0115) and is therefore not decided here (D3).
+
+### Context
+
+- **The problem is gate instability, not a missing platform.** The ADR-0120 selector prompt is a fixed, byte-pinned
+  string (`nl-select.v30` read, `golden/nl-select.v30.prompts.json`; the A6 action prompt is `nl-select.v31` on `main` and
+  `nl-select.v35` on the A6 gate branch). Swapping two or three hand-picked examples between versions has moved D12
+  scores by about ±10 pp, and run-to-run noise on one version is about ±3 pp per entry (v34 record: `todo.add` 0.915 /
+  0.936 / 0.915, `reminder.create` 0.927 / 0.976 / 0.902). Several examples were near-copies of scored gold cases (CA
+  review of v33; v34 and v35 rewrote the A6-only ones), so part of the measured accuracy was the example, not the model.
+- **A scratch measurement (2026-10-16, no model, word-token and character-3-gram Jaccard over the source literals)**
+  found that the read examples shared by `nl-select.v30` and the A6 prompt still contain **3 exact copies** of gold
+  cases (`오후만`, `목요일 거는?`, `그거 요약해줘` = `nl-intent.v1.json` `uat5r2-10`, `uat5r4-16`, `uat5r6-07`) and about 6 to 7
+  more pairs at token Jaccard ≥ 0.6 (for example `드라이브에서 폴더 공유하는 법 알려줘` vs `neg-014`). The v35 branch test
+  (`nl-action-entries.test.ts`, "no A6 example equals or near-copies a scored corpus case") covers only the A6-only
+  examples, not the shared read examples. This is indicative only; D5 defines the real lint.
+- **What already exists** (do not rebuild):
+  - ADR-0098 D8 (QUAL-5): `OllamaCliEmbeddingProvider` (`packages/ai-cli`, advertises only `EMBEDDING`, runs `ollama run
+    --keepalive 30m <model>` in the contained runner, refuses a model or tag containing `cloud`, never pulls), flag
+    `QUOKY_EMBEDDING_ENABLED` (default `false`), model `nomic-embed-text` with nomic role prefixes, a canonical embedding
+    envelope whose `space` names the model (vectors of different spaces never mix).
+  - `LocalVectorProvider` (`packages/vector-local`): one JSON file per collection (Float32 base64), atomic writes (unique
+    temp file + rename, mode 0600), lazily loaded into memory, cosine top-K by brute force, ≤ 20,000 records per
+    collection, a rebuildable cache, a verified backup snapshot (`writeVerifiedVectorSnapshot`).
+  - ADR-0107 LRN-1..4: `learning_items` (SQLite v14, `LOCAL_ONLY`, owner-curated `EXAMPLE` promotion, ≤ 2 non-authoritative
+    examples for GENERAL_CHAT, `QUOKY_LEARNING_EXAMPLES_ENABLED`), LRN-3 offline mining, LRN-4 deferred. The C6 live
+    embedding probe (`docs/plans/personal-v3-plan.md`) has not been executed.
+  - The PLT-0 / ADR-0073-amendment DM gate: durable recall and curated examples are queried only in the owner's DM.
+- **What does not exist:** retrieval inside the selector, and any knowledge index over connector content (connectors
+  are live read calls, not an index).
+- **Owner direction.** Recorded with ADR-0121: Quoky should be better than OpenClaw, not an imitation, and a feature
+  earns its place only by a measured result. No hardcoded phrase routing (ADR-0120 D10). The MSIT advisory
+  (`docs/plans/agent-security-design-2026-10-13.md` §4): minimal external traffic, no tunnels. Bounded agent (ADR-0121):
+  write paths need grounding and approval, and retrieved content never authorizes a write. Undo restores the original
+  state, same item.
+
+### Decision
+
+1. **D1 — Scope and phases.**
+   - **Phase 0 (RAG-0, no model):** the offline contamination lint of D5 over today's prompt examples. It ships first and
+     on its own; it needs no ratification of the rest of this ADR (it is a test over committed files).
+   - **Phase 1 (RAG-1, RAG-2, offline only):** the example pool (D4), the embedding audit (D5) and the four-arm
+     experiment (D6). No runtime code path changes: nothing is wired in `apps/quoky` composition, no flag is read by the
+     running service, and with no retrieved input the prompt builder emits today's bytes (D8).
+   - **Phase 2 (RAG-3, runtime):** only if phase 1 passes D6, behind `QUOKY_NL_EXAMPLE_RETRIEVAL=off|shadow|on` (exact
+     values, default `off`), with its own ADR-0120 amendment (D10) and an independent Chief Architect review before
+     merge.
+   - **Out of scope:** knowledge RAG over Jira, Confluence, Slack, mail, Drive or documents (needs its own ADR under
+     ADR-0121 information-flow control: indexing external content copies enterprise data to local disk and puts
+     untrusted text near a planner); an embedding prefilter or classifier over the catalog (memo option b; reconsider only
+     if phase 1 is neutral); using live owner turns as selector examples (memo option c stays the LRN path and produces
+     eval data, not pool entries).
+
+2. **D2 — Vector store: keep `LocalVectorProvider`; no new vector database.**
+
+   | Criterion | `LocalVectorProvider` (JSON, existing) | sqlite-vec (in the existing SQLite) | LanceDB (embedded) | Qdrant (local server) |
+   |---|---|---|---|---|
+   | Scale needed (≤ 10k vectors; the pool is ~150–2,000) | Fits: ≤ 20k per collection; 2k × 768 in memory ≈ 6 MB, brute-force top-K in single-digit ms | Fits easily | Built for far larger, columnar | Built for far larger, HNSW |
+   | Ops burden, new process / port | None | None, but a schema migration of the production DB (Strict apply) | None (in-process) | A new long-running server, ports 6333 / 6334 on loopback, its own restart and crash-loop watch |
+   | Dependency / supply chain | 0 new dependencies (Node `fs` only) | A new native extension per platform (0.x releases when last checked; re-verify), loaded with `loadExtension` into the DB connection (extension loading enabled on the connection that holds every owner table) | A large prebuilt Rust/N-API module per platform plus Arrow | A server binary or container image plus a client; telemetry is on by default and must be disabled |
+   | Durability and backup | Atomic rename writes; verified snapshot exists; the pool collection is rebuildable from the repo, so it needs no backup | Transactional with `learning_items`; SQLite backup | Versioned dataset files; own backup | Snapshot API; own backup and restore runbook |
+   | Deletion and undo | Hard delete by id (file rewritten atomically); pool changes are reverted through git (revert the PR), not the owner-action undo, and a re-embed of the same text gives the same record id but not a guaranteed-identical vector | Row delete; old bytes stay in free pages until `VACUUM` unless `secure_delete` | Deletes are tombstones until compaction and old-version cleanup: a "deleted" vector stays readable on disk (irrelevant for the pool, which holds no memories) | Delete is immediate in the API; WAL and snapshots keep data until optimised or rotated |
+   | Query latency (≤ 300 ms p95 added) | Store share < 10 ms at this scale; the budget is the embedding call (D10) | < 10 ms | < 10 ms | < 10 ms plus a loopback HTTP hop |
+   | Egress / MSIT | None | None | None | A loopback HTTP client the ADR-0121 D8 guard does not allow today (plain http only for the exact Ollama binding): an allowlist amendment |
+
+   - **Why.** At this scale every option meets the latency budget; the difference is risk. The JSON store adds nothing
+     to install, run, patch, back up or explain to the security team, and it is already reviewed (ADR-0098 D8). The pool
+     is small, read-mostly and rebuildable, so a database's strengths (transactions, indexes, concurrent writers) buy
+     nothing here.
+   - **Collections.** `selector-pool-<digest12>` (the pool vectors, D4) and, in phase 1 only,
+     `selector-gold-audit-<digest12>` (D5); the model digest keeps names inside the store's `[a-z0-9-]` pattern. Phase 1
+     uses its own store directory under `data/eval/selector-rag/`, never the service's `QUOKY_VECTOR_PATH`. Record id =
+     the first 32 hex of `sha256(normalized text + "\n" + JSON(previous, context))`; metadata holds the pool entry id,
+     the `entryId` label and the pool version, never anything else.
+   - **Migration path (each step needs an ADR amendment, the `VectorProvider` port stays unchanged).** Trigger: a
+     collection is projected past 20,000 records, or the store's own share of p95 exceeds 50 ms, or a feature needs
+     transactional joins with SQLite rows. Then (1) a `packages/vector-sqlite` adapter with sqlite-vec in a **separate**
+     SQLite file (not `data/chunsik.db`), the extension pinned by version and checksum; (2) LanceDB or Qdrant only for a
+     knowledge-RAG ADR or Team Edition (ARCHITECTURE.md §13: transports distributed in Team Edition), never for the
+     selector pool.
+
+3. **D3 — Embedding model: local only, pinned by digest, re-embed on change.**
+   - Default and only allowed path: the existing `OllamaCliEmbeddingProvider` with `nomic-embed-text` (or another local
+     Ollama embedding model chosen by measurement under ADR-0105). The owner pulls the model manually (C6 probe); the
+     provider never pulls.
+   - **Pinning.** The pin is `name:tag`, the Ollama manifest digest the owner's host reports (`ollama list` id) **and** the Ollama runtime version (`ollama --version`), because the same digest can produce slightly different vectors under a different runtime; a changed runtime version is a changed space.
+     The space id becomes `<sanitized name>@<digest, 12 hex>@ollama<runtime version>` (model name + tag + digest + runtime version), also stored in the collection metadata; the harness and (phase 2) the composition root refuse to
+     use a collection whose space id differs from the configured pin; a mismatch (including a runtime upgrade) means rebuild the collection and re-run the D5 audit. The embedding prefix policy (nomic
+     `search_query:` for both sides, because pool texts and owner messages are the same kind of text) is part of the pin
+     and recorded in every run record.
+   - **Model change.** A new digest is a new space: the pool collection is rebuilt from the pool file (~150–2,000
+     embeddings, minutes, local), the D5 embedding audit is re-run, and phase 2 retrieval stays off (static prompt) until
+     one A1 run on the D12 corpus confirms the gate under the new space; the owner decides if more runs are needed.
+   - **Cloud embeddings are not decided here.** An embedding API would need an ARCHITECTURE.md §5.5 amendment, an
+     ADR-0115 amendment, a new egress allowlist host and traffic-ledger budget (ADR-0121 D8), and a statement of which
+     texts leave the host. It is a separate owner decision with its own ADR.
+
+4. **D4 — The example pool.**
+   - **What.** Hand-written selector examples in the existing `PromptExample` shape (`text`, optional `previous` and
+     `context`, the exact expected `output`, `needs`), plus `id`, `source` (`drafted` | `owner`), `approvedBatch` and
+     `language`. Target ≥ 150 entries, every catalog entry (read and A6 action) ≥ 5, negatives (`none`) ≥ 20%. Cap 2,000.
+   - **Where.** One committed file, `apps/quoky/src/tools/selector-rag/selector-pool.v1.json` in phase 1 (tool-only);
+     phase 2 moves it to a runtime asset loaded by the composition root and passed to Core as typed data.
+   - **Admission (anti-poisoning).** The agent drafts paraphrases without consulting the gold files; the owner approves
+     each batch (as for the D12 corpus, ADR-0120 D12 and ADR-0098 D7). Nothing enters automatically. **Approval is never
+     delegated to the drafter:** if the owner delegates a later batch, the delegate is an independent reviewer (another
+     agent or session than the one that drafted it, per the AGENTS.md reviewer ≠ implementer rule), and the batch record
+     names both the drafter and the approver. No user free text enters the pool: not chat turns, not `learning_items`
+     rows, not connector content. Each entry must pass the credential guard, the identifier rule, the D5 lint, and Core's schema check of
+     its `output` (a closed `entryId`, closed args). **Identifier rule:** an entry (text, previous, context, output) contains
+     no real identifier: no Jira issue keys, real channel names, people's names, emails or URLs to internal hosts; it uses
+     placeholders (`ABC-123`-style keys, `#channel-a`, `<person>`, `user@example.com`, `https://example.invalid/...`) so a
+     retrieved example cannot bias a target. The same scan runs in the pool loader beside the credential guard, and the
+     credential guard (also applied to the query text, D7) rejects an entry, never redacts it. Changes only by reviewed PR; the pool digest binds every plan.
+   - **No path from the learning store (scopes ADR-0107 D6).** ADR-0107 D6 governs `learning_items` and stays unchanged:
+     that data is `LOCAL_ONLY` and `OWNER_DM_ONLY` and is composed only for a `LOCAL` provider. The pool is not learning
+     data; it is prompt text written for the repository, the same class as the static examples. Because the selector is
+     the Claude CLI (`REMOTE`), **no `learning_items` row, LRN-1 export or LRN-3 proposal may become a pool entry**, by
+     copy or by close edit. This removes the export path rather than adding a per-entry declassification step, because
+     (a) declassification would be a human judgment on text that came from the owner's DMs and may carry personal or
+     company data, and one mistaken yes publishes it to the repository remote and to every selector call; (b) ADR-0121
+     D4 lets only the deterministic projector declassify, never a per-item approval; (c) the pool loses nothing it needs:
+     a live turn can still inspire a fresh paraphrase the owner writes, which is new text with `source: owner`. LRN-1..3
+     keep producing gold candidates and eval data under ADR-0107 D4, as before.
+   - **Labels.** Pool entries are `TRUSTED` (owner-approved), egress `REMOTE_OK` (same publication status as the static
+     examples already sent to the Claude CLI selector), scope `WORK_CHANNEL_OK` (no personal data by the admission rule).
+     `learning_items` rows stay `LOCAL_ONLY` and `OWNER_DM_ONLY` and never join the pool, directly or through an export.
+
+5. **D5 — The contamination lint: n-gram in the test suite, embeddings in a recorded local audit.**
+   - **Scope.** Every example a selector prompt can show (the static read examples, the A6 examples and overrides, the
+     `jira.release` examples, every pool entry) against every scored gold case (`nl-intent.v1.json`, `nl-action.v1.json`,
+     `nl-action.seed.v1.json`, `nl-action.exec-time.v1.json`, and any later D12 corpus).
+   - **N-gram half (no model, runs in `pnpm test`; the repository has no hosted CI, so the normal suite is the gate).** A
+     pure Core helper (`application/nl-routing/example-contamination.ts`) reuses the v35 shape-aware tokens (digits,
+     paths and `~` collapse to `#`, punctuation is a token) and adds character 3-grams over NFC-normalized text. A pair is
+     a near-copy when token Jaccard ≥ 0.6 **or** character-3-gram Jaccard ≥ 0.6; exact equality after normalization is
+     always a finding. Prompts are rendered through `buildSelectionPrompt` with every entry offered (read and A6 modes)
+     and the `Message:` lines extracted, so the lint sees exactly what the model sees.
+   - **Short Korean text and containment.** Jaccard under-reports a short text inside a longer one (`드라이브에서 폴더
+     공유하는 법 알려줘` inside `구글 드라이브에서 폴더 공유하는 법 알려줘`). The lint therefore also flags a character-3-gram
+     **containment** coefficient `|A ∩ B| / min(|A|, |B|)` ≥ 0.8. A text of ≤ 3 characters after normalization
+     (whitespace removed; `오후만`, `목요일만`-like follow-ups) has too few n-grams to measure: an exact match is a finding,
+     and every such short example is listed for manual review in the lint's record (reviewer and reason), whether or not
+     it matches.
+   - **Context and label, not just the message.** A follow-up is defined by its `(previous, context, text)` together, so
+     the lint also compares that pair against gold cases that carry a previous selection or fixture (same measures over
+     the concatenated normalized form). It also lints the expected **output**: an example whose output repeats a gold
+     case's `entryId` together with a verbatim span arg value (`title`, `body`, `match`, `when`, ≥ 4 characters) of that
+     case is a finding, because it teaches the gold label even when the message is reworded.
+   - **Ratchet, not a big-bang fix.** Rewriting today's shared read examples changes a pinned prompt and needs a gate run,
+     so RAG-0 commits a `known-findings` list equal to today's findings; the test fails on any new finding and on any
+     stale entry, so the list can only shrink. The pool has no ratchet: any finding rejects the entry.
+   - **Embedding half (local model, Strict per run, phase 1).** `--mode embed-audit` embeds pool and gold texts in the
+     pinned space and flags cosine ≥ τ. τ is calibrated, not guessed: τ is the largest threshold that still flags every calibration near-copy (the minimum cosine among the
+     positive calibration pairs: the examples removed in v33–v35 and the three exact copies above), minus a stated margin
+     (0.02). ("Smallest value that flags everything" would be trivially 0.) The calibration set also holds negative pairs
+     (unrelated sentences of the same feature) and the false-positive rate at τ is reported with it. τ_low (D6) stays as
+     defined there. Recorded with the calibration set. The audit writes a small committed record (pool digest, gold digest, space id, τ,
+     the flagged pairs, which must be empty for the pool); a suite test fails when the record's digests no longer match
+     the committed pool and gold files, so a pool or gold change without a fresh audit cannot merge.
+   - **Calibration test.** As in v35, a test asserts the measure flags the known near-copies, so a weaker tokenizer cannot
+     silently pass everything.
+
+6. **D6 — The experiment (phase 1, offline, Strict per run).**
+   - **Known contaminated cases are excluded.** The 3 exact copies (`오후만`, `목요일 거는?`, `그거 요약해줘`) and the 6–7
+     ratcheted near-copies (D5 known-findings list) are removed from the pass / stop scoring and reported separately, so the
+     static prompt's own contamination cannot inflate A0 or deflate the gain.
+   - **Frozen before any run:** gold digest (D12 corpora untouched for the whole experiment), pool digest, space id, τ,
+     τ_low, k, seeds, the dev / held-out split, the selector model and effort, and the prompt version (the A6 prompt on
+     `main` at that time, expected `nl-select.v35`, and the read prompt). All are bound into one plan digest the owner
+     approves.
+   - **Dev / held-out split (against forking paths).** The gold cases are split once, stratified per entry, by a seeded
+     hash of the case id: 30% **dev**, 70% **held-out**. Every choice that could be tuned (k, the prefix policy, the
+     retrieved-block wording, the subsample rate) is fixed on dev, in at most one A0 + A1 smoke run, and recorded in
+     `DECISIONS.md` before the held-out runs start. Pass and stop are computed **only** on held-out; dev numbers are
+     reported but decide nothing. The pool author never reads gold (D4), so held-out is also a set the pool was not
+     written against.
+   - **Leakage control (pool → gold similarity strata).** The embedding audit (D5) gives every held-out case its maximum
+     cosine to any pool entry. Cases are bucketed `< 0.70`, `0.70–τ_low`, `τ_low–τ`, with τ_low = min(0.80, τ − 0.05) fixed before any
+     run (so τ_low < τ always). If calibration gives τ − 0.05 < 0.70, the experiment aborts before any run. Every metric below is reported per bucket. The **primary endpoint is the low-similarity stratum** (held-out cases
+     with max pool cosine < τ_low). The experiment is valid only if that stratum holds ≥ 50% of held-out cases and ≥ 10
+     cases per entry (counted over the read and action corpora together; small entries such as `jira.release`, about 20
+     held-out cases, make this a coarse, stop-biased test); this is checked at audit time, before any selector run, and a failure means rewriting pool entries,
+     not running. A gain that appears only in the `τ_low–τ` bucket is treated as leakage and is a stop.
+   - **Arms** (same selector model, temperature, case order and concurrency; **5 runs each** over the held-out D12 gate:
+     the A6 action corpus and the read regression):
+     - **A0:** the static prompt as pinned.
+     - **A0-swap (mandatory; it tests the actual hypothesis):** the static prompt whose example section is replaced by a
+       frozen random draw from the pool with the same per-entry counts as the static set, one draw per run (seed *r*).
+       It measures how much a static example set's choice alone moves the scores.
+     - **A1:** A0 + k = 3 retrieved pool examples: cosine top-k against the prepared owner text
+       (`prepareSelectionInput().text`, quoted and code spans already masked), at most 1 per `entryId`, only entries
+       whose `needs` are offered this turn **and whose `entryId` the prompt mode offers** (read or A6 mode), never a duplicate of a static example; run *r* uses an 80% pool subsample
+       with seed *r*, so its variance includes example-set change.
+     - **A2:** A1 with a seeded random k = 3 under the same filters (controls "more examples" against "relevant
+       examples").
+   - **Metrics:** overall, per entry, wrong captures, wrong targets, negatives captured, span exact; the **per-entry
+     minimum across runs** `m_X(e) = min_r acc_X(e, r)` and its floor `S_X = min_e m_X(e)`, computed per entry over the whole held-out set (not only the primary stratum); per-case error counts over the
+     5 runs (for paired analysis); selector p50 / p95; retrieval-only added latency p50 / p95 (embedding + query, measured
+     separately because CLI latency noise is larger than the budget); prompt tokens. Run-to-run SD is reported, not
+     used for a decision (5 runs cannot support a variance-ratio rule).
+   - **Paired analysis.** Every arm sees the same cases in the same order, so comparisons are paired per case: a paired
+     bootstrap over held-out cases (10,000 resamples, seeded, case-level resampling, errors summed over the 5 runs) gives
+     a 95% CI of the error-rate difference; McNemar on per-case majority correctness (≥ 3 of 5) is reported as a
+     secondary check.
+   - **Pre-registered effect sizes** (on the primary stratum unless stated; all required for a pass):
+     1. **Gate:** A1 passes the D12 gate in all 5 runs on the full held-out set (≥ 95% overall, ≥ 90% per entry, 0 wrong
+        captures, 0 wrong targets, 0 negatives captured).
+     2. **Fewer errors than today:** A1 errors ≤ 0.75 × A0 errors, and the 95% CI of the difference excludes 0.
+     3. **A higher floor:** `S_A1 ≥ S_A0 + 2 pp` and `S_A1 ≥ S_A0-swap + 3 pp` (retrieval beats both today's set and a
+        swapped static set on the worst entry in the worst run).
+     4. **Relevance matters:** A1 errors ≤ 0.85 × A2 errors, and the 95% CI of the difference excludes 0.
+     5. **No new harm:** no wrong action (wrong capture, wrong target, negative captured) in any A1 run on a case where
+        A0 had none in all 5 runs; the embedding audit flags 0 pool entries; retrieval-only p95 ≤ 300 ms warm.
+     The overall-accuracy delta is reported, not gated: near 96–97% a fixed "+3 pp overall" can be unreachable.
+   - **Stop (any one):** any pass criterion fails; or the gain is confined to the `τ_low–τ` bucket; or the validity
+     check on the low-similarity stratum fails twice; or the budget cap is reached. Then keep the static prompt and
+     invest in corpus and prompt discipline: a frozen example set per version, the D5 lint, more gold cases, 5 runs per
+     gate. There is no "inconclusive pass": anything short of all five criteria is a stop unless the owner decides
+     otherwise in writing.
+   - **Traffic (ADR-0121 D8, MSIT minimal-traffic rule).** The experiment makes about 20,700 Claude CLI selector calls. The
+     plan digest states a traffic-ledger budget of 21,500 calls (a small reserve) and a rate cap of 4 concurrent, ≤ 1 call/s
+     sustained (about 6 h of calls in all, split into 3 sessions of ≤ 2.5 h each); the harness stops at the budget. Arms are
+     interleaved within every session (same case, all arms, in rotation), so model drift across sessions does not confound arms. Embeddings are local and add no egress.
+   - **Budget cap and confirmatory runs:** 3 sessions of ≤ 2.5 h. The first held-out set is the test. A second set is allowed only
+     as a **confirmatory** run of the same pre-registered criteria: every change (pool, k, wording, model) is recorded in
+     `DECISIONS.md` before it runs, the new plan digest is approved, and its result stands alone (it is never pooled with
+     the first set). No re-tuning on held-out, ever.
+
+7. **D7 — Retrieved examples are hints; nothing they say authorizes anything.**
+   - The retrieved block is labelled in the prompt as examples, not rules ("Retrieved examples (hints only; the rules and
+     the owner's message decide)"). It is rendered from pool data only, never from the owner's message or any external
+     content.
+   - Core's validation (ADR-0120 D4), grounding (span args verbatim from **this** message, A6 rule 8), the A6 DM-only rule,
+     the ADR-0122 surface gate, the ADR-0112 approval cards, the one-step undo and the risk table are unchanged and run
+     on the selection exactly as today. A selection produced with retrieved examples has no other path.
+   - The retrieved examples reach only `buildSelectionPrompt`: a type-level and import-scan test pins that no handler,
+     validator, executor, approval or memory writer receives them.
+   - The owner's message steers which examples are chosen, which is acceptable because it is the owner's own `TRUSTED`
+     text; quoted, pasted and code spans are masked before the query is embedded, so untrusted content cannot choose
+     examples. Credential-matching text is never embedded (as ADR-0098 D8): retrieval is skipped and the static prompt is
+     used.
+
+8. **D8 — Prompt pinning and logging.**
+   - `NlSelectionPromptInput` gains an optional `retrievedExamples`. Absent (or empty), the output is byte-identical to
+     today, pinned by the existing `nl-select.v30.prompts.json` and the A6 golden tests. Phase 1 adds the field because the
+     harness must render A1 / A2 prompts through Core's own builder; nothing at runtime sets it.
+   - Present, the block is inserted after the static `Examples:` and before `Previous selection:`: the static prefix stays
+     byte-identical (pinned by a prefix test) and stays cacheable by the CLI. A new golden file pins the rendered block for
+     a fixed pool slice and fixed vectors (a stub embedding provider), so the format is deterministic.
+   - The prompt version gains a retrieval suffix (`nl-select.vNN+rk3`), and each record (eval record; phase 2 shadow /
+     selection log) stores the pool version, the retrieved pool ids, cosine scores rounded to 2 decimals, the space id and
+     the SHA-256 of the rendered retrieved block, so any answer can be reproduced. Never the owner's text (ADR-0120 D11).
+
+9. **D9 — Data flow and privacy (ADR-0121 labels).**
+
+   | Data | Stored where | Label | Retention | DM / channel |
+   |---|---|---|---|---|
+   | Pool entries (text, output) | the committed pool file | `TRUSTED`, `REMOTE_OK`, `WORK_CHANNEL_OK` | git history; removal by PR | shown to the selector on any surface it already runs on |
+   | Pool vectors | phase 1: `data/eval/selector-rag/`; phase 2: collection `selector-pool-<digest12>` under `QUOKY_VECTOR_PATH` (git-ignored, 0600) | `HOST_ONLY`, derived | rebuildable; deleted on a space change or pool rebuild | n/a |
+   | Gold audit vectors (phase 1 only) | `data/eval/selector-rag/` (git-ignored) | `HOST_ONLY`, derived from committed gold | deleted when the experiment closes, at most 30 days | n/a |
+   | Owner message for the query embedding (phase 2) | memory only; sent to the local Ollama CLI only | the owner's `TRUSTED` words, `LOCAL_MODEL_ONLY` for this step | not persisted | the turns the selector already sees; the surface gate after selection is unchanged |
+   | Query vector | memory only | `HOST_ONLY` | dropped at the end of the turn | — |
+   | Selection and eval records | existing logs and `data/eval/*.json` (git-ignored) | content-free in runtime logs; eval records hold gold text that is already committed | existing retention | — |
+   | `learning_items` `EXAMPLE` rows | SQLite v14 (unchanged) | `LOCAL_ONLY`, `OWNER_DM_ONLY` | ADR-0107 | never in the pool |
+
+   No new egress host, no new listener, no new process. The selector call is unchanged (the Claude CLI already receives
+   the owner's message and the static examples); retrieval adds about 120–200 prompt tokens of owner-approved pool text.
+
+10. **D10 — Phase 2 runtime integration (only after a pass; a separate ADR-0120 amendment).**
+    - A Core service `SelectorExampleRetriever` in `application/nl-routing/` uses the existing `VectorProvider` port and the
+      `EMBEDDING` capability through the `CapabilityRouter`; it is an optional dependency of `NlSelectionService`, not of
+      `ConversationRuntimeDeps` (the ADR-0032 deps baseline does not change). No new port, no new token.
+    - `QUOKY_NL_EXAMPLE_RETRIEVAL=off|shadow|on`, exact, default `off`. `off`: byte-identical prompts. `shadow`: embeds and
+      logs the would-be ids and scores, sends the static prompt. `on`: sends the retrieved block. Retrieval also needs
+      `QUOKY_EMBEDDING_ENABLED=true` and a ready provider in the pinned space.
+    - **Latency budget:** retrieval-only p95 ≤ 300 ms warm. A retrieval timeout of 300 ms, and any error, not-ready
+      provider, space mismatch or credential match, **fails open to the static prompt** (logged); it never delays the
+      selection beyond the budget and never retries. The ADR-0120 A3 selection timeout (6 s) is unchanged.
+    - The amendment it needs: ADR-0120 D3 (a local embedding call precedes the one selection call), D12 (the gate binds the
+      pool and space), A6-D7 (flag off is still byte-identical; on adds a pinned block), and ADR-0098 D8 (a second consumer
+      of the embedding budget: ≤ 1 embedding per selection turn, outside the 4-per-turn recall budget).
+
+### Alternatives considered
+
+- **A new vector database now (sqlite-vec, LanceDB, Qdrant).** Rejected for this scope (D2): no measured need, new
+  native code or a new server, and for LanceDB tombstone deletion (not a pool concern: the pool holds no memories, and since the ADR-0106 amendment forget
+  is an archive with the vector removed on archive). sqlite-vec is the recorded migration path.
+- **A "Vector + RAG platform" (general retrieval over memory, examples and connector content).** Rejected: no measured
+  need, and indexing connector content is an information-flow problem that needs its own ADR (D1).
+- **Fix instability only by prompt discipline (no retrieval).** Kept as the stop-rule fallback and partly adopted now:
+  the D5 lint ships in phase 0 regardless of the experiment.
+- **Embedding prefilter or classifier over the catalog (memo b).** Deferred: it needs labelled volume that does not
+  exist, and an embedding classifier trained near the gold corpus is the contamination case.
+- **Owner-correction learning feeding the pool directly (memo c).** Rejected for the pool (poisoning, `LOCAL_ONLY` data
+  to a `REMOTE` selector); it continues as LRN-1..3 producing eval data.
+- **A cloud embedding API.** Not decided (D3).
+
+### Consequences
+
+- **+** The instability hypothesis is tested directly (A0-swap) and against a relevance control (A2), with pre-registered
+  effect sizes on a held-out split, before any runtime change; a neutral result costs three sessions and leaves the lint
+  as a permanent gain.
+- **+** Zero new dependencies, processes, ports or egress; the security posture of the MSIT mapping is unchanged.
+- **+** The contamination lint makes gold scores trustworthy for every later prompt version, with or without retrieval.
+- **−** A pool to curate and approve (≥ 150 entries) and an embedding audit to keep fresh when the pool or gold changes.
+- **−** Phase 2 makes the prompt input-dependent: reproducing an answer needs the logged ids and block hash, and a model
+  change means a rebuild and a confirming run.
+- **−** The JSON store rewrites a whole collection on each change; fine for a read-mostly pool, a known limit for any
+  write-heavy future use (the migration trigger in D2).
+
+### Residual risks
+
+- **R1 Semantic leakage below τ.** A paraphrase can teach a gold case's decision without lexical or embedding
+  similarity. Mitigation: the D6 primary endpoint on the low-similarity stratum of the held-out split, with the gain
+  reported per similarity bucket; A2 (random) as control; owner review of pool batches; the gold corpus grows from
+  live turns the pool never sees.
+- **R2 Retrieval steering toward a write entry.** Mitigation: D7 (validation, grounding, DM-only, approval and undo
+  unchanged); the stop rule on any new wrong action; the A6 negatives in every run.
+- **R3 Cold embedding model.** QA-V2-CL-04 (1–2 s cold swap) would exceed the budget; fail-open to the static prompt
+  keeps correctness, and the keep-alive warm-up of ADR-0098 D8 applies.
+- **R4 The pool becomes a second prompt to maintain.** Mitigation: the same ratchet and digest discipline as the gold
+  corpus; the pool version is bound into every plan digest.
+
+### Owner decisions requested
+
+1. Ratify D2: keep `LocalVectorProvider`, no new vector database; sqlite-vec in a separate file is the migration path.
+   **Recommended: yes.**
+2. Ship RAG-0 (the n-gram contamination lint with a ratchet over today's findings) now, independent of the rest.
+   **Recommended: yes.**
+3. The three exact copies in the shared read examples: rewrite them in the next prompt bump (needs a D12 gate run), or
+   only ratchet them for now. **Recommended: ratchet now, rewrite with the next planned gate run.**
+4. Pool authorship: agent-drafted paraphrases approved per batch by the owner; the owner may delegate a later batch only
+   to an independent reviewer, never to the agent or session that drafted it (D4). **Recommended: the owner approves
+   every batch of v1 (≥ 150 entries, about three batches).**
+5. The run budget of D6: 4 arms (A0, A0-swap, A1, A2) × 5 runs on the held-out 70%, plus one dev smoke run of A0 and
+   A1, about 20,700 selector calls (≈ 6 h at the ≤ 1 call/s cap, in 3 sessions of ≤ 2.5 h). **Recommended: approve as pre-registered;** cutting runs
+   or arms weakens the paired analysis and is not recommended.
+6. Strict approvals for phase 1: the C6 probe (the owner pulls `nomic-embed-text` and the digest is pinned), one embed
+   audit run, one plan-digest approval for the dev smoke run, and one for the held-out set.
+7. Cloud embeddings: confirm "not now" (separate ADR if ever).
+
+### V1 / V2
+
+- `[NOW]` Phase 0 lint; phase 1 pool, audit, harness and experiment (offline).
+- `[RESERVE]` the optional `retrievedExamples` prompt input (absent = byte-identical).
+- `[LATER]` phase 2 runtime retrieval (after a pass, by amendment); sqlite-vec migration (on trigger); knowledge RAG
+  (own ADR); cloud embeddings (own ADR).
