@@ -14,6 +14,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Live probe (read-only):** OP26 "차란차 플랫폼 운영 2026", release "배포일_20261015(목)"; matching now uses whole words
   and whole tokens. Dry run: mine 0, all 17 (완료 1 · 진행 중 16 · 할 일 0).
 - D12: the 35 `a8*` cases approved, gold adjusted for the default scope.
+- **Review round 2:** dotted versions are one token (`2.3` is not `2.3.1`); a release or project is picked only when
+  proven unique (bound of 5 projects, partial listings, several matches ask); channel list requests refused before any
+  catalog read; "모든 이슈" / "all issues" no longer mean every assignee; a DM with 0 own items is told how to ask for all.
 
 ## Unreleased — ADR-0120 amendment A8 (as first proposed): Jira release listings, `jira.release`, prompt `nl-select.v27` / `v28` (2026-10-15)
 

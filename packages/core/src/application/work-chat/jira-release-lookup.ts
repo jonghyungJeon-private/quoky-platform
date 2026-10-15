@@ -78,6 +78,8 @@ export async function lookupJiraRelease(input: {
   const onSite = releaseLinkOnSite(command.links, input.siteHost);
   const ignoredLink = command.links.length > 0 && onSite === undefined;
   if (input.inChannel === true && command.scope === 'all') return body(renderReleaseDmOnly('all'));
+  // A project / release list is a DM-only answer: refused before any read, the project catalog included.
+  if (input.inChannel === true && command.release === undefined && onSite?.versionId === undefined && (command.project !== undefined || onSite !== undefined)) return body(renderReleaseDmOnly('list'));
   if (command.scope === 'mine' && (input.identity === undefined || input.identity.length === 0)) return { kind: 'failure', reason: 'IDENTITY_MISSING' };
   try {
     if (!(await connector.isAvailable())) return { kind: 'failure', reason: 'UNAVAILABLE' };
@@ -93,10 +95,14 @@ export async function lookupJiraRelease(input: {
       if (candidates.length === 1) {
         project = refOf(candidates[0] as ConnectorItem);
       } else {
-        const narrowed = command.release === undefined ? [] : await narrowByRelease(connector, candidates.slice(0, DISAMBIGUATE_MAX), command.release);
-        if (narrowed.length !== 1) return body(input.inChannel === true ? renderReleaseDmOnly('list') : renderProjectAmbiguous(command.project, candidates.map(refOf)));
-        project = refOf(narrowed[0]!.project);
-        preResolved = narrowed[0]!.release;
+        // More candidates than the bound are never narrowed on a subset: the owner is asked.
+        const narrowed =
+          command.release === undefined || candidates.length > DISAMBIGUATE_MAX ? undefined : await narrowByRelease(connector, candidates, command.release);
+        if (narrowed === undefined || narrowed.unproven || narrowed.found.length !== 1) {
+          return body(input.inChannel === true ? renderReleaseDmOnly('list') : renderProjectAmbiguous(command.project, candidates.map(refOf)));
+        }
+        project = refOf(narrowed.found[0]!.project);
+        preResolved = narrowed.found[0]!.release;
       }
     }
     // 2. The release.
@@ -111,7 +117,7 @@ export async function lookupJiraRelease(input: {
         let match = preResolved;
         if (match === undefined) {
           const known = await releasesOf(connector, project.key);
-          match = matchRelease(known.items, command.release);
+          match = resolveRelease(known.items, command.release, known.truncated === true).item;
           if (match === undefined) return body(renderReleaseNotFound(command.release, project, input.inChannel === true ? [] : nearbyReleases(known.items, command.release)));
         }
         release = { id: match.id, name: match.title, ...(match.url !== undefined ? { url: match.url } : {}) };
@@ -120,7 +126,6 @@ export async function lookupJiraRelease(input: {
         release = { name: stripReleaseWords(command.release), ...(stripReleaseWords(command.release) !== command.release.trim() ? { raw: command.release.trim() } : {}) };
       }
     } else if (project !== undefined) {
-      if (input.inChannel === true) return body(renderReleaseDmOnly('list'));
       const known = await releasesOf(connector, project.key);
       return body(renderReleaseList(project, known.items, known.truncated === true, ignoredLink));
     } else {
@@ -159,6 +164,7 @@ export async function lookupJiraRelease(input: {
         items,
         truncated,
         ...(ignoredLink ? { ignoredLink } : {}),
+        ...(input.inChannel !== true ? { offerAllScope: true } : {}),
       }),
       listed: { count: items.length, truncated },
     };
@@ -195,19 +201,26 @@ async function releasesOf(connector: ConnectorProvider, key: string, limit?: num
   return { items: itemsOf(result), ...(result.truncated === true ? { truncated: true } : {}) };
 }
 
-/** The ambiguous projects that hold a release of the owner's name (each listing read once, read-only). */
+/**
+ * The ambiguous projects that hold a release of the owner's name (each listing read once, read-only). `unproven`: some
+ * listing was partial or held several matches, so a single hit is not proven unique and nothing may be picked.
+ */
 async function narrowByRelease(
   connector: ConnectorProvider,
   candidates: readonly ConnectorItem[],
   releaseText: string,
-): Promise<Array<{ readonly project: ConnectorItem; readonly release: ConnectorItem }>> {
+): Promise<{ readonly found: Array<{ readonly project: ConnectorItem; readonly release: ConnectorItem }>; readonly unproven: boolean }> {
   const found: Array<{ readonly project: ConnectorItem; readonly release: ConnectorItem }> = [];
+  let unproven = false;
   for (const candidate of candidates) {
     const known = await releasesOf(connector, candidate.id, DISAMBIGUATE_PAGE);
-    const match = matchRelease(known.items, releaseText);
-    if (match !== undefined) found.push({ project: candidate, release: match });
+    const partial = known.truncated === true || known.items.length >= DISAMBIGUATE_PAGE;
+    const resolved = resolveRelease(known.items, releaseText, partial);
+    if (resolved.item !== undefined) found.push({ project: candidate, release: resolved.item });
+    // Several matches, a hit on a partial page, or no hit on a partial page (it may sit past the page).
+    if (resolved.ambiguous || (partial && resolved.item === undefined)) unproven = true;
   }
-  return found;
+  return { found, unproven };
 }
 
 /** NFC, lower case, whitespace collapsed. */
@@ -230,9 +243,12 @@ function withoutWords(text: string, words: readonly string[]): string {
   return out.replace(/\s+/g, ' ').trim();
 }
 
-/** Letter-and-digit tokens ("배포일_20261015(목)" → 배포일, 20261015, 목). */
+/** Letter-and-digit tokens; a dotted version stays one token ("배포일_20261015(목)" → 배포일, 20261015, 목; "1.2.3" → 1.2.3). */
 function tokens(text: string): string[] {
-  return fold(text).split(/[^\p{L}\p{N}]+/u).filter((token) => token.length > 0);
+  return fold(text)
+    .split(/[^\p{L}\p{N}.]+/u)
+    .map((token) => token.replace(/^\.+|\.+$/g, ''))
+    .filter((token) => token.length > 0);
 }
 
 /** Whether `needle` occurs as a contiguous run of whole tokens in `haystack`. */
@@ -279,17 +295,27 @@ export function matchProjects(items: readonly ConnectorItem[], text: string): Co
  * none (the owner gets the nearby names), never a guess.
  */
 export function matchRelease(items: readonly ConnectorItem[], text: string): ConnectorItem | undefined {
+  return resolveRelease(items, text, false).item;
+}
+
+/**
+ * Like matchRelease, but says when several releases hold the words (`ambiguous`), and on a partial listing a whole-token
+ * hit is not proven unique, so it is not returned (an exact name is unique in a project and still counts).
+ */
+function resolveRelease(items: readonly ConnectorItem[], text: string, partial: boolean): { readonly item?: ConnectorItem; readonly ambiguous: boolean } {
   const wanted = fold(text);
   const exact = items.find((item) => fold(item.title) === wanted);
-  if (exact !== undefined) return exact;
+  if (exact !== undefined) return { item: exact, ambiguous: false };
   const stripped = withoutWords(text, RELEASE_WORDS);
   if (stripped.length > 0 && stripped !== wanted) {
     const byStripped = items.find((item) => fold(item.title) === stripped);
-    if (byStripped !== undefined) return byStripped;
+    if (byStripped !== undefined) return { item: byStripped, ambiguous: false };
   }
   const words = tokens(stripped.length > 0 ? stripped : text);
   const byTokens = items.filter((item) => containsTokens(tokens(item.title), words));
-  return byTokens.length === 1 ? byTokens[0] : undefined;
+  if (byTokens.length > 1) return { ambiguous: true };
+  if (byTokens.length === 1) return partial ? { ambiguous: true } : { item: byTokens[0] as ConnectorItem, ambiguous: false };
+  return { ambiguous: false };
 }
 
 /**

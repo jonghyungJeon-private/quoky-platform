@@ -71,6 +71,8 @@ export interface ReleaseIssuesView {
   readonly truncated: boolean;
   /** A link on another host was in the message and was ignored (never fetched). */
   readonly ignoredLink?: boolean;
+  /** A DM: an empty own-items answer says how to ask for every assignee. */
+  readonly offerAllScope?: boolean;
 }
 
 /** The release report: header, counts per group, the grouped items, the release page link. */
@@ -82,6 +84,7 @@ export function renderReleaseIssues(view: ReleaseIssuesView): MessageBody {
   lines.push({ text: messageContent('**Jira ', release, '**', where, ` · ${scopeLabel(view.scope)}`) });
   if (view.items.length === 0) {
     lines.push({ text: view.scope === 'mine' ? '이 릴리스에 내 담당 이슈가 없어요.' : '이 릴리스에 포함된 이슈가 없어요.' });
+    if (view.scope === 'mine' && view.offerAllScope === true) lines.push({ text: "전체 담당으로 보려면 '전체 담당'이라고 말씀해 주세요" });
   } else {
     const counts = GROUPS.map((group) => ({ ...group, items: view.items.filter((item) => groupOf(item) === group.key) }));
     const summary = counts.map((group) => `${group.label} ${group.items.length}`).join(' · ');

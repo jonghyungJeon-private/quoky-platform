@@ -58,7 +58,7 @@ export const JIRA_ALL_ASSIGNEE_WORDS: readonly string[] = ['전체 담당', '모
  * ADR-0120 amendment A8 (owner decision 2, 2026-10-15: "default로는 당연히 내 담당 기준"): words with which the owner explicitly
  * asks a release listing for every assignee (`scope: all`). Without one the listing is the owner's own items.
  */
-export const JIRA_SCOPE_ALL_WORDS: readonly string[] = [...JIRA_ALL_ASSIGNEE_WORDS, '전체', '모든 이슈', 'all issues', 'every issue'];
+export const JIRA_SCOPE_ALL_WORDS: readonly string[] = [...JIRA_ALL_ASSIGNEE_WORDS, '전체'];
 
 /** Period words (relative days, weeks, months): a keyword carrying one is a period, not a topic. */
 export const NL_PERIOD_WORDS: readonly string[] = ['오늘', '어제', '내일', '모레', '이번', '지난', '다음', '금주', '최근', '요즘', 'today', 'yesterday', 'tomorrow', 'week', 'month', 'recent'];

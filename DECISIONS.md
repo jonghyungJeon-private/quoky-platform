@@ -24903,6 +24903,16 @@ scripted selector; the Drive fixture's name and text say "이 문서 요약해�
   corpus dispatch runs every `a8*` case through the real runtime with the yield on and off.
 - **Not run:** the D12 evaluation gate over the whole corpus (Strict, needs a plan digest and the owner's yes), and any
   live Jira call (the version list of OP26 was not probed).
+- **Review round 2 fixes (`jira-release-lookup.ts`, `wave1-entries.ts`, renderer).**
+  - Release tokens keep a dotted version whole (`2.3` no longer matches `2.3.1` or `1.2.3`, `10` not `1.10`;
+    `20261015` still matches `배포일_20261015(목)`, `Release 1.0` still matches `1.0`); `narrowByRelease` uses the same rule.
+  - Uniqueness is proven or the owner is asked: more ambiguous projects than the bound (5) are never narrowed on a
+    subset; a single whole-token hit on a partial listing (`truncated`, or a full 50-item first page) is not picked, and a
+    partial page with no hit counts as unproven; several matches in one project are ambiguity, not "no match".
+  - Channel: project-list and every-assignee requests are refused before any `containers` read.
+  - `JIRA_SCOPE_ALL_WORDS` no longer holds `모든 이슈` / `all issues` / `every issue` (they mean all items, not every
+    assignee); golden `a8-19` is back to the default scope, the `a8-02` note corrected (default is mine).
+  - DM only: an empty own-items answer adds "전체 담당으로 보려면 '전체 담당'이라고 말씀해 주세요".
 
 ### ADR-0120 amendment A8 ratification record, review fixes and live probe (2026-10-15)
 

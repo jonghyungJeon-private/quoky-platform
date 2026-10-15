@@ -252,6 +252,77 @@ describe('A8 review fixes: default scope, channels, deadline, first-page narrowi
   });
 });
 
+describe('A8 review round 2: whole dotted versions, proven uniqueness, channel order, DM hint', () => {
+  const item = (title: string, id = title): ConnectorItem => ({ id, title });
+
+  it('a dotted version is one token: 2.3 is not 2.3.1 or 1.2.3, 10 is not 1.10, dated names still match', () => {
+    expect(matchRelease([item('2.3.1')], '2.3')).toBeUndefined();
+    expect(matchRelease([item('1.2.3')], '2.3 버전')).toBeUndefined();
+    expect(matchRelease([item('1.10')], '10')).toBeUndefined();
+    expect(matchRelease([item('릴리스 2.3 핫픽스', 'a')], '2.3')?.id).toBe('a');
+    expect(matchRelease([item('배포일_20261015(목)', 'a')], '20261015')?.id).toBe('a');
+    expect(matchRelease([item('1.0', 'a')], 'Release 1.0')?.id).toBe('a');
+  });
+
+  it('more ambiguous projects than the bound: asked, nothing narrowed on a subset', async () => {
+    const many = Array.from({ length: 6 }, (_, i) => ({ id: `AB${i}`, title: `공통 이름 ${i}` }));
+    const queries: ConnectorQuery[] = [];
+    const provider: ConnectorProvider = {
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) => { queries.push(query); return query.query === 'containers' ? { source: 'jira', items: many } : { source: 'jira', items: [item('1.0', 'v')] }; },
+    };
+    const result = await lookupJiraRelease({ connector: provider, command: { scope: 'all', links: [], project: '공통 이름', release: '1.0' }, siteHost: SITE });
+    expect(result.kind === 'body' && plainTextOf(result.body)).toContain('여러 개예요');
+    expect(queries.map((query) => query.query)).toEqual(['containers']);
+  });
+
+  it('a single token hit on a partial listing is not unique: ambiguity or not found, never a pick', async () => {
+    const partial = (items: ConnectorItem[], truncated: boolean): ConnectorProvider => ({
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) => (query.query === 'containers' ? { source: 'jira', items: PROJECTS } : query.query === 'releases' ? { source: 'jira', items, ...(truncated ? { truncated: true } : {}) } : { source: 'jira', items: ISSUES }),
+    });
+    const ask = async (provider: ConnectorProvider, command: Partial<ReleaseLookupCommand>) => {
+      const result = await lookupJiraRelease({ connector: provider, command: { scope: 'all', links: [], ...command }, siteHost: SITE });
+      return result.kind === 'body' ? plainTextOf(result.body) : result.reason;
+    };
+    // Named project, truncated listing, token hit only.
+    expect(await ask(partial([item('배포일_20261015(목)', 'a')], true), { project: 'OP26', release: '20261015' })).toContain('찾지 못했어요');
+    // Ambiguous projects: a hit on a 50-item first page is not proven unique.
+    const page = Array.from({ length: 50 }, (_, i) => item(`x${i}`));
+    expect(await ask(partial([...page.slice(1), item('배포일_20261015(목)', 'a')], false), { project: '차란차 운영', release: '20261015' })).toContain('여러 개예요');
+  });
+
+  it('several token matches in one ambiguous project are ambiguity, not "no match": another project is not picked', async () => {
+    const provider: ConnectorProvider = {
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) =>
+        query.query === 'containers' ? { source: 'jira', items: PROJECTS }
+        : query.query === 'releases' ? { source: 'jira', items: query.params?.container === 'OP25' ? [item('a_20261015', '1'), item('b_20261015', '2')] : [item('c_20261015', '3')] }
+        : { source: 'jira', items: ISSUES },
+    };
+    const result = await lookupJiraRelease({ connector: provider, command: { scope: 'all', links: [], project: '차란차 운영', release: '20261015' }, siteHost: SITE });
+    expect(result.kind === 'body' && plainTextOf(result.body)).toContain('여러 개예요');
+  });
+
+  it('in a channel a project list is refused before the project catalog is read', async () => {
+    const fake = connector();
+    const result = await lookupJiraRelease({ connector: fake.provider, command: { scope: 'mine', links: [], project: '차란차 운영 2026' }, identity: 'acc-1', siteHost: SITE, inChannel: true });
+    expect(result.kind === 'body' && plainTextOf(result.body)).toContain('DM에서만');
+    expect(fake.queries).toEqual([]);
+  });
+
+  it('own items empty: a DM is told how to ask for every assignee, a channel is not', async () => {
+    const empty = { items: () => ({ source: 'jira', items: [] }) };
+    const dm = await run({ release: '20261015', project: 'OP26', scope: 'mine' }, { identity: 'acc-1', ...empty });
+    expect(dm.text).toContain("전체 담당으로 보려면 '전체 담당'이라고 말씀해 주세요");
+    const fake = connector(empty);
+    const channel = await lookupJiraRelease({ connector: fake.provider, command: { scope: 'mine', links: [], project: 'OP26', release: '20261015' }, identity: 'acc-1', siteHost: SITE, inChannel: true });
+    expect(channel.kind === 'body' && plainTextOf(channel.body)).not.toContain('전체 담당으로 보려면');
+    const all = await run({ release: '20261015', project: 'OP26' }, { items: () => ({ source: 'jira', items: [] }) });
+    expect(all.text).not.toContain('전체 담당으로 보려면');
+  });
+});
+
 describe('live names (owner-approved read-only probe, 2026-10-15): project "차란차 플랫폼 운영 2026", version "배포일_20261015(목)"', () => {
   const live: ConnectorItem[] = [
     { id: 'APPOP', title: '차란차 플랫폼 APP운영' },

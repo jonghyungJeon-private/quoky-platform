@@ -9613,7 +9613,7 @@
           "project": "차란차 운영"
         }
       },
-      "note": "owner live sentence 2 (a follow-up); every assignee is the default scope; owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
+      "note": "owner live sentence 2 (a follow-up); the default scope is mine (this is a follow-up asking for every assignee); owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
     },
     {
       "id": "a8-03",
@@ -9818,8 +9818,7 @@
         "entryId": "jira.release",
         "args": {
           "release": "20261015",
-          "project": "OP26",
-          "scope": "all"
+          "project": "OP26"
         }
       },
       "note": "owner-approved in the D12 batch of 2026-10-15 (ADR-0120 A8 ratification; default scope mine)"
