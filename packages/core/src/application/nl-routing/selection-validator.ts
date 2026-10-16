@@ -15,6 +15,7 @@ import {
   isNlDeicticOnlyPayload,
   NL_ACTION_CANONICAL_WORDS,
   NL_ACTION_ENTRIES,
+  NL_ACTION_LOANWORDS,
   NL_ACTION_VERBAL_NOUNS,
   NL_ACTION_WORDS,
   nlFrameExpressesAction,
@@ -258,7 +259,7 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
   }
   // A6-D3a amendment 1, garbled action word addendum: read on the frame without the content spans (a title "완룐 보고서"
   // is content), against the selected entry's own words first.
-  const near = nlGarbledActionWord(contentFrame, actionVocabularies(entry), NL_ACTION_VERBAL_NOUNS, CATALOG_WORDS, prose);
+  const near = nlGarbledActionWord(contentFrame, actionVocabularies(entry), NL_ACTION_VERBAL_NOUNS, CATALOG_WORDS, prose, NL_ACTION_LOANWORDS);
   const garbled = near === undefined ? undefined : canonicalActionWord(near.owner, /^[a-z]+$/u.test(near.word));
   return { ...(veto !== undefined ? { veto } : {}), expressesAction, ...(garbled !== undefined ? { garbled } : {}) };
 }

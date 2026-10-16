@@ -14,6 +14,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Changed (D, A6-D3a known refusals amended).** "Add a to-do: X", "Remind me: …", "Todo: X" pass the A6 input guard like
   the Korean colon forms: one key colon, at the start, led by a catalog action or list word. "Q4: …", "request: …", a second
   key and "I added a to-do: …" stay refused; questions and quoted or reported text keep their vetoes.
+- **Changed (E).** A vowel-only variant of a loanword action word (캔슬, 리마인드, 롤백; a tag on the existing vocabulary)
+  asks like a garbled word: "칸셀해줘" asks, "캔슬해줘" acts. No execute gold newly asks.
 - **Decided (A, B).** A bare "<title> 할 일" executes `todo.add` (duplicate guard unchanged); `QUOKY_WORK_SUMMARY_ENABLED`
   is on only for the R2 live tests (record only).
 

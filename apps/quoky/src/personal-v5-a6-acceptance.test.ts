@@ -1016,6 +1016,18 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect(await stores()).toBe(before);
   }));
 
+  it('owner decision E (2026-10-17): "칸셀해줘" (a vowel-only variant of the loanword 캔슬) asks and writes nothing; "캔슬해줘" cancels', () => withOwnCaps(async () => {
+    await resetNlState();
+    await send('모레 8시에 세탁소 들르기 알려줘');
+    const laundry = (await reminders()).find((entry) => entry.body === '세탁소 들르기');
+    expect(laundry?.status).toBe('SCHEDULED');
+    const asked = await turn('세탁소 들르기 알림 칸셀해줘', answer('reminder.cancel', { match: '세탁소 들르기' }));
+    expect(asked.text).toContain("'취소'(이)라고 하신 건가요? 아직 아무것도 바꾸지 않았어요.");
+    expect(await reminders()).toContainEqual(expect.objectContaining({ id: laundry?.id, status: 'SCHEDULED' }));
+    const canceled = await turn('세탁소 들르기 알림 캔슬해줘', answer('reminder.cancel', { match: '세탁소 들르기' }));
+    expect(canceled.text).toContain(`알림 #${laundry?.displayNo} 취소했어요: '세탁소 들르기'`);
+  }));
+
   it('exec-time: every case of nl-action.exec-time.v1.json is covered by an acceptance test above', async () => {
     const { readFileSync } = await import('node:fs');
     const file = new URL('../../../packages/core/src/application/golden/nl-action.exec-time.v1.json', import.meta.url);

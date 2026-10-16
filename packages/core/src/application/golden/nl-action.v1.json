@@ -14608,6 +14608,86 @@
    "text": "I added a to-do: renew passport",
    "expect": "none",
    "note": "owner decision D counter-case (2026-10-17): a label that does not lead with the command word stays refused by the input guard [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-905",
+   "family": "paraphrase",
+   "text": "치과 예약 확인 알림 칸셀해줘",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "치과 예약 확인",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "치과 예약 확인"
+    },
+    "outcome": "ask",
+    "reason": "garbled-action",
+    "acceptsAnyQuestion": true
+   },
+   "note": "owner decision E (2026-10-17): a vowel-only variant of the loanword 캔슬 asks, live kit H03 [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-906",
+   "family": "paraphrase",
+   "text": "11번 알림 캔설해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "reminder",
+      "labels": [
+       11,
+       12,
+       13
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#11"
+    },
+    "outcome": "ask",
+    "reason": "garbled-action",
+    "acceptsAnyQuestion": true
+   },
+   "note": "owner decision E (2026-10-17): 캔설, a vowel-only variant of 캔슬, asks [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-907",
+   "family": "paraphrase",
+   "text": "치과 예약 확인 알림 캔슬해줘",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "치과 예약 확인",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "치과 예약 확인"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision E counter-case (2026-10-17): the loanword 캔슬 itself executes (decision C, by title) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
   }
  ]
 }

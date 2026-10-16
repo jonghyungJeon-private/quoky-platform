@@ -29,6 +29,11 @@ import { nlIsRequestForm } from './request-shape';
  *    inflect by itself (it takes 하다 / 되다 / 처리), so any one-jamo change to it is a garble: 완룐 asks. English adds -s or
  *    -d ("completes", "removed").
  *
+ *  - Loanword vowels (owner decision E, 2026-10-17): for an action word the caller tags as a LOANWORD (`loanwords`: 캔슬,
+ *    리마인드, 롤백, a tag on the existing vocabulary), a token in the slot with the same syllable count and the same initial
+ *    and final consonant in every syllable but other vowels is garbled too, whatever the distance ("칸셀해줘" asks, "캔슬해줘"
+ *    acts). Known words and normal inflections are checked first, as for every near word.
+ *
  * The result names the vocabulary that holds the near word (the caller offers that entry's canonical word, never the raw
  * stem) and is only ever a question; nothing here selects or executes.
  * Pure; the owner's text is never logged.
@@ -149,8 +154,34 @@ export interface NlGarbledAction {
   readonly owner: string;
 }
 
+/**
+ * Owner decision E (2026-10-17): a vowel-only variant of a LOANWORD action word. A loanword is spelled from its sound, so
+ * its vowels drift (캔슬 / 칸셀 / 캔설) while its consonant frame stays: the same number of syllables, and in every syllable
+ * the same initial and the same final consonant, with at least one vowel different. Such a token is garbled however many
+ * vowels differ (the one-jamo distance alone lets 칸셀, two vowels away from 캔슬, through).
+ */
+function isVowelOnlyVariant(stem: string, action: string): boolean {
+  const x = Array.from(stem);
+  const y = Array.from(action);
+  if (x.length !== y.length || x.length === 0) return false;
+  let vowelDiffers = false;
+  for (const [index, char] of x.entries()) {
+    const p = partsOf(char);
+    const q = partsOf(y[index]);
+    if (p === undefined || q === undefined || p[0] !== q[0] || p[2] !== q[2]) return false;
+    if (p[1] !== q[1]) vowelDiffers = true;
+  }
+  return vowelDiffers;
+}
+
 /** The vocabulary word the stems garble, if any (vocabularies in order: the selected entry's first). */
-function garbledOf(stems: readonly string[], vocabularies: readonly NlActionVocabulary[], known: readonly string[], verbalNouns: ReadonlySet<string>): NlGarbledAction | undefined {
+function garbledOf(
+  stems: readonly string[],
+  vocabularies: readonly NlActionVocabulary[],
+  known: readonly string[],
+  verbalNouns: ReadonlySet<string>,
+  loanwords: ReadonlySet<string> = new Set(),
+): NlGarbledAction | undefined {
   // A stem that is a normal inflection of any known word is a form, whatever else it is near ("해치워": 해치웠 without ㅆ).
   if (stems.some((stem) => known.some((action) => isInflection(stem, action, verbalNouns)))) return undefined;
   for (const vocabulary of vocabularies) {
@@ -160,7 +191,7 @@ function garbledOf(stems: readonly string[], vocabularies: readonly NlActionVoca
       if (latin ? action.length < MIN_LATIN_LETTERS : !isHangulWord(action) || Array.from(action).length < MIN_HANGUL_SYLLABLES) continue;
       for (const stem of stems) {
         if (latin ? !isLatinWord(stem) : !isHangulWord(stem)) continue;
-        if (nlJamoDistance(stem, action) === 1) return { word: action, owner: vocabulary.owner };
+        if (nlJamoDistance(stem, action) === 1 || (loanwords.has(action) && isVowelOnlyVariant(stem, action))) return { word: action, owner: vocabulary.owner };
       }
     }
   }
@@ -186,8 +217,10 @@ export function nlGarbledActionWord(
   verbalNouns: readonly string[],
   catalogWords: readonly string[] = [],
   message: string = frame,
+  loanwords: readonly string[] = [],
 ): NlGarbledAction | undefined {
   const normalized = vocabularies.map((vocabulary) => ({ owner: vocabulary.owner, words: vocabulary.words.map(normalizeForMatch) }));
+  const loans = new Set(loanwords.map(normalizeForMatch));
   const knownWords = [...new Set(normalized.flatMap((vocabulary) => vocabulary.words))];
   const nouns = new Set(verbalNouns.map(normalizeForMatch));
   // The catalog's own words (entry aliases and source names of two syllables or more: "리마인더" beside 리마인드) are known
@@ -219,7 +252,7 @@ export function nlGarbledActionWord(
       }
     }
     if (stems.length === 0) continue;
-    const garbled = garbledOf(stems, normalized, knownWords, nouns);
+    const garbled = garbledOf(stems, normalized, knownWords, nouns, loans);
     if (garbled !== undefined) return garbled;
   }
   return undefined;

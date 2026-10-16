@@ -27407,3 +27407,32 @@ requires. No live configuration was changed by this record (`QUOKY_NL_ACTIONS` s
   `a6-paraphrase-reminder.create-902` (with a Korean time: the reminder grammar parses no English time at execution, a
   pre-existing limit), `a6-negative-none-189` (question; selector-dependent like the Korean colon forms, since a lure title
   can swallow the question mark) and `-190` (not led by the command word; refused by the guard).
+
+### E. A vowel-only variant of a loanword action word asks (owner decision; extends the garbled-word addendum)
+
+- **Extends** "A6-D3a amendment 1 addendum: a garbled action word asks": for a **loanword** action word, a token in the
+  action word's slot with the same number of syllables and the same initial and final consonant in every syllable, but
+  with at least one other vowel, is garbled and asks, however many vowels differ ("칸셀해줘" asks, two vowels from 캔슬;
+  "캔슬해줘" executes). The one-jamo rule for every other action word is unchanged (a two-vowel change of the Sino-Korean
+  완료, "운류해줘", stays outside the rule). Same anchor (the predicate or imperative slot), same order (after the
+  request-shape vetoes; known words, catalog aliases and normal inflections first), same question and reason
+  (`garbled-action`, the entry's canonical word), and `action.undo` keeps its own-word anchor first.
+- **The loanword set is a tag on the existing vocabulary** (`NL_ACTION_LOANWORDS` in `action-entries.ts`, like the
+  verbal-noun tag), not new words: 캔슬 (cancel), 리마인드 (remind), 롤백 (roll back), the single-word Hangul loanwords of
+  `NL_ACTION_WORDS`. The owner's other examples are not in the vocabulary and were not added: 체크 and 클리어 are no action
+  words (the vocabulary comment explains why 체크 is excluded), and 알람 appears only inside phrases ("알람 맞춰"), which the
+  rule never compares. The catalog alias 리마인더 is a known word, so it never counts as a variant of 리마인드.
+- **Gold proof.** Every LOCAL_WRITE gold of `nl-action.v1`, `seed`, `exec-time` and `deictic` validated with its gold
+  selection: the only `garbled-action` results are the ask golds (`a6-paraphrase-todo.complete-018` and the two new ones
+  below); **no execute gold newly asks** (pinned in `garbled-action.test.ts`). Noise class, as before: the rule can only ask;
+  e.g. "큰술해줘" beside 캔슬 would ask if a selector chose a cancel for it.
+- **Corpus** (agent-drafted, pending the owner's D12 batch): `a6-paraphrase-reminder.cancel-905` (kit H03, "칸셀해줘", ask)
+  and `-906` ("캔설해줘", ask), and the counter-case `-907` ("캔슬해줘", execute by title).
+
+### Offline gold proof for A–E (no model call)
+
+The gold selection of every case of `nl-action.v1` and `seed` was run through `NlSelectionService` (a scripted selector
+returning the gold, the `nl-action-eval` path), and every LOCAL_WRITE gold of `nl-action.v1`, `seed`, `exec-time` and
+`deictic` through `validateSelection` and the input guard, before and after the five changes. **No existing gold changed
+its outcome or reason** (execute golds included); the 16 new cases all score as their gold (`reminder.cancel-904` is an
+honest ask, see C).

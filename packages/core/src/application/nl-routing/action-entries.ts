@@ -716,6 +716,14 @@ export function nlLocalListTarget(text: string, quotedRanges: readonly InboundQu
  */
 export const NL_ACTION_VERBAL_NOUNS: readonly string[] = ['완료', '마무리', '취소', '캔슬', '삭제', '제거', '제외', '추가', '등록', '리마인드', '원상복구', '원상', '원복', '롤백', '넣기', '되돌리기', '원래대로'];
 
+/**
+ * Owner decision E (2026-10-17): the Hangul action words of the vocabularies that are LOANWORDS (spelled from an English
+ * sound: cancel, remind, roll back). A tag on the existing vocabulary, like {@link NL_ACTION_VERBAL_NOUNS}; no word is added.
+ * A loanword's vowels drift in spelling while its consonant frame stays, so a vowel-only variant of one is garbled and asks
+ * ("칸셀해줘"; `garbled-action.ts`). Only single-word entries are tagged: a phrase such as "알람 맞춰" is never compared.
+ */
+export const NL_ACTION_LOANWORDS: readonly string[] = ['캔슬', '리마인드', '롤백'];
+
 /** The canonical action word of each LOCAL_WRITE entry, offered when a garbled word asks (never the raw vocabulary stem). */
 export const NL_ACTION_CANONICAL_WORDS: Readonly<Record<'todo.add' | 'todo.complete' | 'todo.cancel' | 'reminder.create' | 'reminder.cancel' | 'action.undo', { readonly ko: string; readonly en: string }>> = Object.freeze({
   'todo.add': { ko: '추가', en: 'add' },
