@@ -1035,22 +1035,28 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
     expect(await answer(other.w, '응 근데 날씨는?')).toBeUndefined();
   });
 
-  it('Codex P1: "되돌려줘" to "3번도 완료할까요?" never completes 3; it is left unconsumed and undoes the completion of 1', async () => {
+  it('Codex P1: one "되돌려줘" to "3번도 완료할까요?" undoes the completion of 1 in that turn and never completes 3', async () => {
     // The selector answers the elliptical turn with todo.complete #3 and each undo request with action.undo.
-    const w = world({ level: 'local', script: ['{"entryId":"todo.complete","args":{"ref":"#3"},"ambiguity":"CLEAR","alternatives":[]}', ...Array.from({ length: 2 }, () => '{"entryId":"action.undo","args":{},"ambiguity":"CLEAR","alternatives":[]}')] });
+    const w = world({ level: 'local', script: ['{"entryId":"todo.complete","args":{"ref":"#3"},"ambiguity":"CLEAR","alternatives":[]}', '{"entryId":"action.undo","args":{},"ambiguity":"CLEAR","alternatives":[]}'] });
     w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
     w.setMetadata(LAST_ACTION_METADATA_KEY, completedOne());
     expect(await w.decide('이번엔 3번', { now: at(1) })).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
-    for (const text of ['되돌려줘', '되돌려', '되돌려줘.']) expect(await answer(w, text), text).toBeUndefined();
-    // The same turn routed normally: the open question ends unanswered and, as for every open A6 question, the selector's
-    // undo is held for that one turn (A6 R1 lock: nothing runs, a short reply says so). #3 is never completed.
-    const held = await w.decide('되돌려줘', { now: at(2) });
-    expect(held).toMatchObject({ kind: 'ask', entryId: 'action.undo' });
-    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'pending-question' });
-    expect(readPendingQuestion(w.session(), 'owner', at(3))).toBeUndefined();
-    // Said again, the normal undo routing undoes the completion of #1.
-    const undo = await w.decide('되돌려줘', { now: at(3) });
+    // One "되돌려줘" closes the question and undoes the completion of #1 in that same turn; #3 is never touched.
+    const undo = await w.decide('되돌려줘', { now: at(2) });
     expect(undo).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' }, undo: { entryId: 'todo.complete' } } });
+    expect(JSON.stringify(undo)).not.toContain('todo-3');
+    expect(readPendingQuestion(w.session(), 'owner', at(3))).toBeUndefined();
+    // The same through the start-of-turn answer path; a non-direct undo word is no answer there (routes normally).
+    const again = await run('이번엔 3번');
+    expect(await answer(again.w, '되돌려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' } } });
+    const loose = await run('이번엔 3번');
+    expect(await answer(loose.w, '되돌려 주신 기능 설명해줘')).toBeUndefined();
+    // Other A6 questions keep their one-turn lock: an open multi-candidate target question still holds the undo.
+    const locked = world({ level: 'local', script: () => out('action.undo') });
+    locked.setMetadata(LAST_ACTION_METADATA_KEY, completedOne());
+    const pending: PendingQuestion = { kind: 'action-target', at: at(1), language: 'ko', entryId: 'todo.complete', source: 'todo', candidates: [{ label: 2, id: 'todo-2' }, { label: 3, id: 'todo-3' }], args: {} };
+    expect(await locked.decide('되돌려줘', { now: at(2), pending })).toMatchObject({ kind: 'ask', entryId: 'action.undo' });
+    expect(actionLogs(locked).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'pending-question' });
     // The undo confirmation keeps its own undo-word approval.
     expect(interpretUndoConfirmReply('되돌려줘')).toBe('approve');
     expect(interpretContinuationConfirmReply('되돌려줘')).toBe('none');

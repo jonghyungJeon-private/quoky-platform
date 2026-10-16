@@ -1606,8 +1606,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (entry === undefined) return undefined;
       const labels = pending.candidates.map((candidate) => candidate.label);
       // A6-D3a amendment 1, elliptical continuation: a one-candidate confirmation takes a yes ("응") as the candidate and a
-      // no as the end of the question; a number still answers it as any target question. An undo word ("되돌려줘") is no
-      // answer (Codex P1): it falls through unconsumed and the turn routes to the undo of the last action.
+      // no as the end of the question; a number still answers it as any target question. An undo word ("되돌려줘") is never
+      // a yes (Codex P1). An explicit undo command (the closed `nlUndoIsDirect` grammar) closes the question and undoes the
+      // last action in this same turn, so the owner is never ignored for a turn; only this confirmation does so, every
+      // other A6 question keeps its one-turn lock.
+      if (pending.confirm === true && offered.has('action.undo') && (turn.direct === true || turn.surfaceEnforced === true) && nlUndoIsDirect(answerText)) {
+        await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => undefined);
+        return this.decideUndo(turn, language, 0, 'none');
+      }
       const yesNo = pending.confirm === true ? interpretContinuationConfirmReply(answerText) : 'none';
       if (yesNo === 'deny') return { kind: 'ask', text: renderCancelled(language) };
       const choice: ReturnType<typeof resolveLabelChoice> = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveLabelChoice(answerText, labels);
