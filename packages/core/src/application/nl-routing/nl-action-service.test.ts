@@ -12,7 +12,7 @@ import { NL_ACTION_LOG_EVENT, NlActionCaps, type NlActionLevel } from './nl-acti
 import { NlActionsConfigError, NlSelectionService, nlSelectionCacheKey, type NlSelectionDecision } from './nl-selection-service';
 import { prepareSelectionInput } from './selection-input';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
-import { INTERPRETATION_PREFERENCES_METADATA_KEY, LAST_SELECTION_METADATA_KEY, NL_PENDING_METADATA_KEY, type PendingQuestion } from './selection-state';
+import { INTERPRETATION_PREFERENCES_METADATA_KEY, LAST_SELECTION_METADATA_KEY, NL_PENDING_METADATA_KEY, readPendingQuestion, type PendingQuestion } from './selection-state';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 // ADR-0120 amendment A6 (NLA-5) at the selection service: the flag levels and the startup refusals, `off` byte-identical
@@ -34,7 +34,7 @@ interface World {
   session(): Session;
   actor(): Actor;
   setMetadata(key: string, value: unknown): void;
-  decide(text: string, opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; pending?: PendingQuestion | null; replyTo?: string; codeFormatted?: boolean }): Promise<NlSelectionDecision>;
+  decide(text: string, opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; pending?: PendingQuestion | null; replyTo?: string; codeFormatted?: boolean; direct?: boolean; surfaceEnforced?: boolean }): Promise<NlSelectionDecision>;
 }
 
 function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | ((request: AiRequest) => string); caps?: NlActionCaps; withSwitch?: boolean } = {}): World {
@@ -110,6 +110,7 @@ function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | 
     },
     async decide(text, opts = {}) {
       return service.decide({
+        direct: opts.direct ?? true,
         text,
         attachmentCount: 0,
         session,
@@ -121,6 +122,7 @@ function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | 
         ...(opts.pending !== undefined ? { pending: opts.pending } : {}),
         ...(opts.replyTo !== undefined ? { replyToMessageId: opts.replyTo } : {}),
         ...(opts.codeFormatted === true ? { codeFormatted: true } : {}),
+        ...(opts.surfaceEnforced === true ? { surfaceEnforced: true } : {}),
         turnId: 'turn-1',
       });
     },
@@ -331,9 +333,21 @@ describe('references, questions and the audit line', () => {
   it('the anchored 되돌리기 decides the same undo with no selector call', async () => {
     const w = world({ script: [] });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
-    const decision = await w.service.decideAnchoredUndo({ text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+    const decision = await w.service.decideAnchoredUndo({ direct: true, text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
     expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', undo: { entryId: 'todo.add' } } });
     expect(w.calls).toHaveLength(0);
+  });
+
+  it('A6-D3a amendment 1 (CA round 3): the anchored 되돌리기 is DM-only while ADR-0122 enforcement is off', async () => {
+    const w = world({ script: [] });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
+    const channel = await w.service.decideAnchoredUndo({ direct: false, text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+    expect(channel).toEqual({ kind: 'ask', entryId: 'action.undo', text: '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'dm-only' });
+    const absent = await w.service.decideAnchoredUndo({ text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+    expect(absent?.kind).toBe('ask');
+    const enforced = await w.service.decideAnchoredUndo({ direct: false, surfaceEnforced: true, text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+    expect(enforced?.kind).toBe('execute');
   });
 });
 
@@ -350,7 +364,7 @@ describe('round 4: the anchored 되돌리기 meets the plain-line eligibility (C
   ])('%s never undoes', async (_name, extra) => {
     const w = world({ script: [] });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
-    const decision = await w.service.decideAnchoredUndo({ session: w.session(), actor: w.actor(), now: at(1), entries: ALL, ...extra });
+    const decision = await w.service.decideAnchoredUndo({ direct: true, session: w.session(), actor: w.actor(), now: at(1), entries: ALL, ...extra });
     expect(decision).toBeUndefined();
     expect(w.calls).toHaveLength(0);
   });
@@ -358,7 +372,7 @@ describe('round 4: the anchored 되돌리기 meets the plain-line eligibility (C
   it('spaces around the single line still anchor', async () => {
     const w = world({ script: [] });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
-    expect(await w.service.decideAnchoredUndo({ text: '  되돌리기 ', session: w.session(), actor: w.actor(), now: at(1), entries: ALL })).toMatchObject({ kind: 'execute' });
+    expect(await w.service.decideAnchoredUndo({ direct: true, text: '  되돌리기 ', session: w.session(), actor: w.actor(), now: at(1), entries: ALL })).toMatchObject({ kind: 'execute' });
   });
 
   it('platform code formatting refuses a selected action like a quote does', async () => {
@@ -729,5 +743,202 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
     expect(w.session().metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual(selection);
     await w.decide('2번 완료', { now: at(1) });
     expect(w.session().metadata?.[LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+  });
+});
+
+describe('A6-D3a amendment 1 (owner-approved direction 2026-10-16): a chosen LOCAL_WRITE acts; only structure vetoes it', () => {
+  const run = async (text: string, entryId: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
+    const w = world({ level: 'local', script: () => out(entryId, args, extra) });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3, 4], 0));
+    const decision = await w.decide(text, { now: at(1) });
+    return { w, decision };
+  };
+
+  it('the owner\'s live shadow phrases execute directly with the args from the text (no "할까요?")', async () => {
+    const cases: Array<[string, string, Record<string, unknown>]> = [
+      ['3일 뒤 오전 9시에 월세 이체 리마인더', 'reminder.create', { body: '월세 이체', when: '3일 뒤 오전 9시' }],
+      ['오늘 밤 10시에 알림: 가스 밸브 잠그기', 'reminder.create', { body: '가스 밸브 잠그기', when: '오늘 밤 10시' }],
+      ['알림 설정: 모레 아침 8시 이사 업체 전화', 'reminder.create', { body: '이사 업체 전화', when: '모레 아침 8시' }],
+      ['todo 추가: 프린터 토너 주문', 'todo.add', { title: '프린터 토너 주문' }],
+      ['투두에 "회의실 정리" 추가 ㄱㄱ', 'todo.add', { title: '회의실 정리' }],
+      ['1번 할일 체크해줘', 'todo.complete', { ref: '#1' }],
+      ['2번 할 일 빼', 'todo.cancel', { ref: '#2' }],
+    ];
+    for (const [text, entryId, args] of cases) {
+      const { w, decision } = await run(text, entryId, args);
+      expect(decision, text).toMatchObject({ kind: 'execute', command: { entryId, args } });
+      expect(actionLogs(w).some((log) => typeof log.fields?.reason === 'string' && String(log.fields.reason).startsWith('not-request')), text).toBe(false);
+    }
+    const { decision } = await run('1번 할일 체크해줘', 'todo.complete', { ref: '#1' });
+    expect(decision).toMatchObject({ kind: 'execute', command: { target: { source: 'todo', id: 'todo-1' } } });
+  });
+
+  it('first-person volition is chat (none), never a question: "할 일 하나 추가할게. 도서관 책 반납"', async () => {
+    for (const [text, entryId, args] of [
+      ['할 일 하나 추가할게. 도서관 책 반납', 'todo.add', { title: '도서관 책 반납' }],
+      ['할 일 하나 추가할게. 도서관 책 반납', 'todo.add', { title: '책 반납' }],
+      ['도서관 책 반납 내가 할 일에 추가할게요', 'todo.add', { title: '도서관 책 반납' }],
+      ['2번은 내가 완료할래', 'todo.complete', { ref: '#2' }],
+      ['내일 9시에 병원 가는 거 알아서 적어둘게', 'reminder.create', { body: '병원 가는 거', when: '내일 9시' }],
+      ["I'll add milk to my todos", 'todo.add', { title: 'milk' }],
+    ] as const) {
+      const { w, decision } = await run(text, entryId, args);
+      expect(decision, text).toEqual({ kind: 'none' });
+      expect(actionLogs(w).at(-1)?.fields, text).toMatchObject({ entryId, result: 'refused', reason: 'not-request:volition' });
+    }
+    // Shadow logs the same refusal as `shadow`.
+    const shadow = world({ level: 'shadow', script: () => out('todo.add', { title: '도서관 책 반납' }) });
+    expect((await shadow.decide('할 일 하나 추가할게. 도서관 책 반납', { now: at(1) })).kind).toBe('none');
+    expect(actionLogs(shadow).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'not-request:volition' });
+  });
+
+  it('every veto class ends as chat with its own closed reason (Korean and English)', async () => {
+    const vetoed: Array<[string, string, Record<string, unknown>, string]> = [
+      ['2번 완료하는 법 알려줘', 'todo.complete', { ref: '#2' }, 'question'],
+      ['how do I complete 2?', 'todo.complete', { ref: '#2' }, 'question'],
+      ['2번 완료하지 마', 'todo.complete', { ref: '#2' }, 'negation'],
+      ["don't complete 2", 'todo.complete', { ref: '#2' }, 'negation'],
+      ['2번 완료해줘 아 취소', 'todo.complete', { ref: '#2' }, 'retraction'],
+      ['팀장님이 할 일에 보고서 추가하래', 'todo.add', { title: '보고서' }, 'reported'],
+      ['my boss told me to add the report to my todos', 'todo.add', { title: 'the report' }, 'reported'],
+      ['비 오면 내일 9시에 우산 알려줘', 'reminder.create', { body: '우산', when: '내일 9시' }, 'conditional'],
+      ['if it rains remind me tomorrow at 9am to take an umbrella', 'reminder.create', { body: 'take an umbrella', when: 'tomorrow at 9am' }, 'conditional'],
+      ['2번 완료했어', 'todo.complete', { ref: '#2' }, 'statement'],
+      ['I already finished 2', 'todo.complete', { ref: '#2' }, 'statement'],
+      ['제가 2번 취소할게요', 'todo.cancel', { ref: '#2' }, 'volition'],
+      ['예를 들어 2번 완료해줘', 'todo.complete', { ref: '#2' }, 'example'],
+    ];
+    for (const [text, entryId, args, veto] of vetoed) {
+      const { w, decision } = await run(text, entryId, args);
+      expect(decision, text).toEqual({ kind: 'none' });
+      expect(actionLogs(w).at(-1)?.fields?.reason, text).toBe(`not-request:${veto}`);
+    }
+  });
+
+  it('asks only for a missing required slot or an ambiguous target', async () => {
+    // A reminder without a time: the slot question, nothing written.
+    const noTime = await run('월세 이체 리마인더 걸어줘', 'reminder.create', { body: '월세 이체' });
+    expect(noTime.decision.kind).toBe('ask');
+    expect(actionLogs(noTime.w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'missing-arg' });
+    // A number the owner never saw in the listing: the target question.
+    const outOfRange = await run('9번 할일 체크해줘', 'todo.complete', { ref: '#9' });
+    expect(outOfRange.decision.kind).toBe('ask');
+    expect(actionLogs(outOfRange.w).at(-1)?.fields).toMatchObject({ result: 'asked', reason: 'out-of-range' });
+    // A payload with nothing else said is content, not an action: restate ("내일 9시 우유").
+    expect((await run('내일 9시 우유', 'reminder.create', { body: '우유', when: '내일 9시' })).decision.kind).toBe('ask');
+    // A reference with nothing else said is chat ("2번도").
+    expect((await run('2번도', 'todo.complete', { ref: '#2' })).decision).toEqual({ kind: 'none' });
+  });
+
+  it('typo case "3번 완룐 처리해줘": Core has no typo list; the selector\'s own NEEDS_CLARIFICATION flag is what asks', async () => {
+    const flagged = await run('3번 완룐 처리해줘', 'todo.complete', { ref: '#3' }, { ambiguity: 'NEEDS_CLARIFICATION' });
+    expect(flagged.decision.kind).toBe('ask');
+    expect(actionLogs(flagged.w).at(-1)?.fields).toMatchObject({ result: 'asked', reason: 'ambiguous' });
+    // A CLEAR selection of the same words executes: nothing in Core recognises the misspelling.
+    expect((await run('3번 완룐 처리해줘', 'todo.complete', { ref: '#3' })).decision).toMatchObject({ kind: 'execute', command: { target: { id: 'todo-3' } } });
+  });
+
+  it('CA P2: while ADR-0122 enforcement is off a local write acts only in a DM; reads are unaffected', async () => {
+    const w = world({ level: 'local', script: () => out('todo.complete', { ref: '#1' }) });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2], 0));
+    const channel = await w.decide('1번 할일 체크해줘', { now: at(1), direct: false });
+    expect(channel).toMatchObject({ kind: 'ask', text: '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'dm-only' });
+    const undo = world({ level: 'local', script: () => out('action.undo') });
+    expect((await undo.decide('되돌려줘', { now: at(1), direct: false })).kind).toBe('ask');
+    // With ADR-0122 enforcement on, the surface gate has already decided the channel: the write acts.
+    expect((await w.decide('1번 할일 체크해줘', { now: at(1), direct: false, surfaceEnforced: true })).kind).toBe('execute');
+    // A read in a channel still works.
+    const read = world({ level: 'local', script: () => out('mail.list') });
+    expect((await read.decide('메일함 보여줘', { now: at(1), direct: false })).kind).toBe('execute');
+    // Shadow logs the refusal as shadow.
+    const shadow = world({ level: 'shadow', script: () => out('todo.complete', { ref: '#1' }) });
+    shadow.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2], 0));
+    expect((await shadow.decide('1번 할일 체크해줘', { now: at(1), direct: false })).kind).toBe('none');
+    expect(actionLogs(shadow).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'dm-only' });
+  });
+
+  it('span grounding stays: a title or body that is not verbatim in the message never writes', async () => {
+    for (const [text, entryId, args] of [
+      ['todo 추가: 프린터 토너 주문', 'todo.add', { title: '프린터 토너 주문하기' }],
+      ['3일 뒤 오전 9시에 월세 이체 리마인더', 'reminder.create', { body: '월세 송금', when: '3일 뒤 오전 9시' }],
+      ['3일 뒤 오전 9시에 월세 이체 리마인더', 'reminder.create', { body: '월세 이체', when: '사흘 뒤 9시' }],
+    ] as const) {
+      const { decision } = await run(text, entryId, args);
+      expect(decision.kind, `${text} ${JSON.stringify(args)}`).not.toBe('execute');
+    }
+    // A negation inside delimited content is content ("…알림: 가스 밸브 잠그지 마"); undelimited at the end it vetoes.
+    expect((await run('오늘 밤 10시에 알림: 가스 밸브 잠그지 마', 'reminder.create', { body: '가스 밸브 잠그지 마', when: '오늘 밤 10시' })).decision.kind).toBe('execute');
+    expect((await run('할 일에 우유 추가하지 마', 'todo.add', { title: '우유 추가하지 마' })).decision).toEqual({ kind: 'none' });
+  });
+});
+
+describe('A6-D3a amendment 1, undo confirmation rule: only an unambiguous undo executes directly', () => {
+  const completed = (minute = 0) => withLastAction(undefined, 'owner', { entryId: 'todo.complete', source: 'todo', itemId: 'todo-2', label: 2, at: at(minute), undoable: true, undone: false, echoReplyIds: [] }, at(minute));
+  const asked = async (text: string) => {
+    const w = world({ level: 'local', script: () => out('action.undo') });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, completed());
+    const decision = await w.decide(text, { now: at(1) });
+    return { w, decision };
+  };
+  const answer = (w: World, text: string, minute = 2) =>
+    w.service.answerActionPending({ text, attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(minute), entries: ALL, route: 'chat', direct: true, pending: readPendingQuestion(w.session(), 'owner', at(minute)) ?? null });
+
+  it('an unambiguous undo command executes directly', async () => {
+    for (const text of ['되돌려줘', '원상복구 부탁', '되돌려줘 빨리요', '원래대로 돌려 줄 수 있어?']) {
+      const { decision } = await asked(text);
+      expect(decision, text).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-2' }, undo: { entryId: 'todo.complete' } } });
+    }
+  });
+
+  it('any other selected undo asks a one-step confirmation naming the action; 응 executes it, 아니 does nothing', async () => {
+    for (const text of ['되돌려 주셨던 기능 추천', '되돌려 봐 주는 앱 추천', '되돌려 주신 기능 설명해줘', '되돌려줘 주의 깊게']) {
+      const { w, decision } = await asked(text);
+      expect(decision, text).toMatchObject({ kind: 'ask', text: "방금 한 '할 일 2번 완료'를 되돌릴까요? (응 / 아니)" });
+      expect(actionLogs(w).at(-1)?.fields, text).toMatchObject({ entryId: 'action.undo', result: 'asked', reason: 'undo-confirm' });
+      expect(readPendingQuestion(w.session(), 'owner', at(2)), text).toMatchObject({ kind: 'action-undo-confirm', target: { id: 'todo-2' }, undoEntryId: 'todo.complete' });
+    }
+    const yes = await asked('되돌려 주신 기능 설명해줘');
+    expect(await answer(yes.w, '응')).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-2' }, undo: { entryId: 'todo.complete' } } });
+    const no = await asked('되돌려 주신 기능 설명해줘');
+    const denied = await answer(no.w, '아니');
+    expect(denied?.kind).toBe('ask');
+    expect(denied).not.toMatchObject({ kind: 'execute' });
+    // Not an answer: the question ends and the turn routes normally.
+    const other = await asked('되돌려 주신 기능 설명해줘');
+    expect(await answer(other.w, '응 근데 3번은?')).toBeUndefined();
+  });
+
+  it('Codex P2: the answer may be a platform reply to the confirmation message; it is bound to the stored action', async () => {
+    const { w } = await asked('되돌려 주신 기능 설명해줘');
+    const reply = await w.service.answerActionPending({
+      text: '응', attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(2), entries: ALL, route: 'chat', direct: true,
+      replyToMessageId: 'confirm-question-1', pending: readPendingQuestion(w.session(), 'owner', at(2)) ?? null,
+    });
+    expect(reply).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-2' }, undo: { entryId: 'todo.complete' } } });
+    // A changed lastAction still refuses, with or without a reply.
+    const changed = await asked('되돌려 주신 기능 설명해줘');
+    changed.w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.complete', source: 'todo', itemId: 'todo-2', label: 2, at: at(1), undoable: true, undone: false, echoReplyIds: [] }, at(1)));
+    const refused = await changed.w.service.answerActionPending({
+      text: '응', attachmentCount: 0, session: changed.w.session(), actor: changed.w.actor(), now: at(2), entries: ALL, route: 'chat', direct: true,
+      replyToMessageId: 'confirm-question-1', pending: readPendingQuestion(changed.w.session(), 'owner', at(2)) ?? null,
+    });
+    expect(refused?.kind).toBe('ask');
+    expect(actionLogs(changed.w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'undo-changed' });
+  });
+
+  it('a confirmation runs only if the last action is still the one it named', async () => {
+    const { w } = await asked('되돌려 주신 기능 설명해줘');
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-7', label: 7, at: at(1), undoable: true, undone: false, echoReplyIds: [] }, at(1)));
+    const decision = await answer(w, '응');
+    expect(decision?.kind).toBe('ask');
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'undo-changed' });
+  });
+
+  it('shadow logs the confirmation as shadow and asks nothing', async () => {
+    const w = world({ level: 'shadow', script: () => out('action.undo') });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, completed());
+    expect((await w.decide('되돌려 주신 기능 설명해줘', { now: at(1) })).kind).toBe('none');
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'undo-confirm' });
   });
 });

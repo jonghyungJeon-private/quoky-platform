@@ -757,7 +757,7 @@ describe('selection in a channel without grants (stub selector over the nl-inten
   }
 
 
-  it('an A6 target question saved during the turn: kept with the gate off, dropped (and the A6 copy) with it on', async () => {
+  it('an A6 target question in a channel: never saved with the gate off (DM-only at selection, A6-D3a amendment 1), dropped with it on', async () => {
     const deps = depsOf();
     const previous = deps.nlSelection;
     const actors = { get: (id: string) => storage.actors.get(id), save: (actor: Parameters<typeof storage.actors.save>[0]) => storage.actors.save(actor) };
@@ -790,8 +790,10 @@ describe('selection in a channel without grants (stub selector over the nl-inten
         const live = await storage.sessions.get(session.id);
         results[mode] = { text, pending: live?.metadata?.[NL_PENDING_METADATA_KEY] };
       }
-      expect(results.off!.text).toContain('1번, 2번');
-      expect(results.off!.pending).toMatchObject({ kind: 'action-target', entryId: 'todo.complete' });
+      // A6-D3a amendment 1 (CA P2): with the gate off a local write is DM-only at selection too, so no target question
+      // is saved in a channel (before it, the question was asked and the handler refused at dispatch).
+      expect(results.off!.text).toBe('이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.');
+      expect(results.off!.pending).toBeUndefined();
       expect(results.enforce!.text).toBe('이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.');
       expect(results.enforce!.pending).toBeUndefined();
     } finally {

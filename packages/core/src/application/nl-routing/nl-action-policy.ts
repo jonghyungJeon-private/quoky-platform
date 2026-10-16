@@ -200,13 +200,11 @@ export function renderQuestionOpen(language: Lang): string {
 }
 
 /**
- * The positive request-form rule (A6 R1, fix-loop cap): the owner named an action but not as a request ("2번 완료",
- * "취소할까?"); nothing runs and the reply asks for the request itself.
+ * A6-D3a amendment 1 (CA P2): a local write asked for outside a DM while ADR-0122 enforcement is off; nothing ran, and no
+ * target question is asked. The same copy as the handlers' A6-D1 DM-only refusal at dispatch.
  */
-export function renderRequestForm(language: Lang): string {
-  return language === 'en'
-    ? 'Shall I do it? Please ask as a request, for example "please complete 2".'
-    : '실행할까요? "2번 완료해줘"처럼 요청으로 말씀해 주세요.';
+export function renderDmOnlyAction(language: Lang): string {
+  return language === 'en' ? 'I do that only in a direct message. Nothing was changed.' : '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.';
 }
 
 /** A6-D6 stale-command guard and every "say it again" answer. */

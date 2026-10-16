@@ -5,6 +5,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 act-and-undo: local writes act directly; only structural vetoes stop them (2026-10-16)
+
+- **Changed (inert, `QUOKY_NL_ACTIONS` off).** ADR-0120 A6-D3a amendment 1 (Proposed; owner-approved direction, Chief
+  Architect review pending). A to-do or reminder write the selector chose now runs without a closed request verb or request
+  form ("3일 뒤 오전 9시에 월세 이체 리마인더", "todo 추가: 프린터 토너 주문", "1번 할일 체크해줘"). New
+  `nl-routing/request-shape.ts`: grammar-level vetoes (question, negation, retraction, reported speech, conditional,
+  statement, first-person volition, example) on the message without its content spans; a veto ends as chat
+  (`not-request:<class>`). "할 일 하나 추가할게" is chat, never a question. Asks remain only for a missing slot or an
+  ambiguous target. The "실행할까요? … 요청으로 말씀해 주세요" reply is removed.
+- **Changed.** The undo hint on every A6 local-write receipt reads `되돌리려면 "되돌려줘" (10분 안)`.
+- **Changed (gold).** `golden/nl-action.v1.json`: `todo.add-016`, `-025`, `reminder.create-020`, `-022`, `-024` → execute with
+  their args; `todo.add-009` → none; `todo.complete-009` note updated; `todo.complete-018` unchanged (execute; the typo ask
+  needs the selector's own flag, see DECISIONS).
+- **Known.** "3일 뒤 오전 9시" is `AMBIGUOUS_TIME` in the reminder grammar, so that phrase asks for the time at execution.
+- **Changed (review round).** Spans hide no veto unless quote- or colon-enclosed; unpaired quotes in a span are refused;
+  new `wish` and `deferred` vetoes, hearsay, relay and quoted-command checks, a final -다 / -야 is a statement, `action.undo`
+  needs its undo word and no recipient; Hangul speaker labels are refused by the input guard. A local write outside a DM is
+  refused at selection while ADR-0122 enforcement is off (`dm-only`). R5a seam: `nlActionWordGrounded` kept,
+  `NlValidationContext.requestFrame` added. 22 corpus negatives added; the selector-pool audit needs regenerating.
+- **Changed (review round 3).** Over-blocks fixed: content words inside a title or reminder text no longer veto (라면, 냉면,
+  희망퇴직, 퇴근 후, 야식 먹지 않기), content after the request word is exempt, "-라고 해줘" is a request, English volition only in
+  its explicit forms. New refusals: 예정, -ㄹ까, -듯, 각, -함/-됨, "you should", jokes, undo look-alikes; the anchored 되돌리기 is
+  DM-only. 16 corpus negatives added; the selector-pool audit needs regenerating.
+- **Changed (review round 4).** Trailing content after the request keeps its retraction, negation and joke checks; jokes
+  inside enclosed content and topic-marked nouns after an undo word no longer refuse; new refusals for plans, -ㄹ걸, -더라,
+  state nouns, thanks/relief, English hedges, third-party wants and afterthoughts. 16 corpus negatives added; the
+  selector-pool audit needs regenerating.
+- **Changed (undo confirmation rule).** `action.undo` executes directly only for an unambiguous undo command; any other
+  selected undo asks "방금 한 '…'를 되돌릴까요? (응 / 아니)" (new open question `action-undo-confirm`; 응 undoes the same item,
+  아니 does nothing). The undo token-chain heuristics are removed.
+
 ## Unreleased — ADR-0123 pool batch 2 (pending owner approval) and the runner's selector transport and exact scorer (2026-10-16)
 
 - **Added (pool, pending).** Batch 2: 53 drafted examples (`status: pending-owner-approval`, drafter `agent`, never self-approved) that bring the

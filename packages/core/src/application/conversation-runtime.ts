@@ -3645,6 +3645,8 @@ export class ConversationRuntime {
       ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}),
       turnId: message.id,
       ...(message.formatting?.code === true ? { codeFormatted: true } : {}),
+      direct: isDirectConversation(message.context),
+      ...(this.surfaceGate()?.enforced === true ? { surfaceEnforced: true } : {}),
     };
     let decision: NlSelectionDecision | undefined;
     try {
@@ -3698,6 +3700,8 @@ export class ConversationRuntime {
       ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}),
       turnId: message.id,
       ...(message.formatting?.code === true ? { codeFormatted: true } : {}),
+      direct: isDirectConversation(message.context),
+      ...(this.surfaceGate()?.enforced === true ? { surfaceEnforced: true } : {}),
       text: message.text,
       attachmentCount: message.attachments?.length ?? 0,
       ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),

@@ -24,7 +24,7 @@ import { isNlRequestOrWhWord } from './grammar-residual';
  */
 
 /** The past marker (았/었/였/했) and its contractions: a ㅆ-final syllable with the vowel ㅏ ㅐ ㅓ ㅕ ㅘ ㅙ ㅝ. */
-function isPastSyllable(char: string | undefined): boolean {
+export function isPastSyllable(char: string | undefined): boolean {
   if (char === undefined) return false;
   const code = char.charCodeAt(0) - 0xac00;
   if (code < 0 || code > 11171 || code % 28 !== 20) return false;

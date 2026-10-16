@@ -17,3 +17,5 @@ export * from './last-action';
 export * from './nl-action-policy';
 export * from './statement-guard';
 export * from './example-contamination';
+export * from './request-shape';
+export * from './undo-confirm';

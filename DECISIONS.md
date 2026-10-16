@@ -26690,3 +26690,252 @@ it never widens a write. Inert while `QUOKY_NL_ACTIONS` is `off`. No prompt, TTL
    slot and is not touched. Its listings and drift lists are written to the same `quoky.lastListing` record, so they are
    ordered by the same timestamps (a drift list is the owner's newest view and outranks an older `lastAction` for
    "그거"), and `recordReceipt` still writes every echo with the inbound message id.
+
+## ADR-0120 amendment A6-D3a amendment 1 — act-and-undo for local writes: a LOCAL_WRITE the selector chose runs unless a structural veto says the sentence is not a request; the closed request-verb and request-form requirement is removed (Proposed, 2026-10-16)
+
+- **Status:** **Proposed.** Owner-approved direction on 2026-10-16; Chief Architect review pending. Implemented on branch
+  `claude/v5-a6-act-undo`, inert while `QUOKY_NL_ACTIONS` is `off` (the default). Promotion is shadow-first (gates below).
+- **Date:** 2026-10-16
+- **Amends:** the A6 R1 "positive request-form rule" (A6 R1 scope reduction, orchestrator decision 2026-10-15) and the A6 R1
+  review rule that every LOCAL_WRITE needs a word of its entry's closed action vocabulary (`actionGrounding`). The A6-D3a
+  input guard (one plain line, no hidden characters, no structure markers, no exact-command form) is **unchanged**.
+- **Reaffirms unchanged:** ADR-0120 D10 (no new phrase, verb or pattern; a miss becomes a corpus case), A6-D1 (closed
+  entries), A6-D2 (ref grounding, resolution, the #233 listing snapshot and the #235 reference priority), A6-D3 span
+  grounding and payload rules, A6-D3b (kill switch atomic with the write), the caps, the per-action inverse undo, and the
+  R3/R4 external writes (`slack.post`, `calendar.create`, Jira) with their preview and one-time approval.
+
+### Context
+
+The owner wants Quoky to act like a personal assistant, not a chatbot that asks "할까요?" each time. In a shadow-mode live
+test the A6 selector chose the correct entry and target for all 8 write requests the owner sent, and the closed-set
+request-form grounding refused every one (`nl_action.decided` reason `no-action-word`): for example "3일 뒤 오전 9시에 월세
+이체 리마인더", "오늘 밤 10시에 알림: 가스 밸브 잠그기", "todo 추가: 프린터 토너 주문", "1번 할일 체크해줘". The rule
+needed both a word of a closed action vocabulary and an affirmative request ending from a closed set. Extending either
+list phrase by phrase is the hardcoding the owner forbids (D10).
+
+### Decision
+
+1. **A LOCAL_WRITE acts when the selector chose it, its arguments validate and no structural veto applies.** Entries:
+   `todo.add`, `todo.complete`, `todo.cancel`, `reminder.create`, `reminder.cancel`, `action.undo`. `item.summarize`
+   (ITEM_READ) is not affected: it never had the request-form rule and keeps its content-word check. No request verb and
+   no request form is required. The execution receipt states what was done and ends with the undo hint
+   `되돌리려면 "되돌려줘" (10분 안)`; "되돌려줘" restores the same item to its original state (the per-action inverse).
+2. **Structural vetoes (grammar, never topics or verbs).** They run on the frame: the owner's prose (pasted structures
+   removed) without the selector's content spans (`title`, `body`, `match`; `when` stays), so content such as a to-do
+   "야식 먹지 않기" is not read as a negation. A content span that ends the message undelimited (no colon or quote before
+   it) still lends its negation and question mark, so a span cannot swallow "…추가하지 마". Classes (`request-shape.ts`):
+   - `question`: a question mark without a polite request form (줄래, 줄 수 있어, 주시겠어요, can/could/would/will you,
+     please); a how-to or wh-form (어떻게, -는 법, 방법, 언제, 왜, how/what/…); capability or deliberation (할 수 있어,
+     할까, 할지); an interrogative ending; the entry's action named only in an embedded question ("완료됐는지 보여줄래?");
+   - `negation`: Korean per clause (the last clause, a negator spanning the last clause boundary, or a negated clause
+     that names the entry's own action; a negation in an earlier clause is a reason: "필요 없어 취소해줘"); English anywhere;
+   - `retraction`: a bare retraction after a command ("…완료해줘 취소", "…추가 ㄱㄱ 아니 취소"), 철회, 그만해;
+   - `reported`: a quoted request ("…해줘 했더니"), the quotative -라고/-자고/-달라고/-다고 + a speech verb, hearsay
+     endings, the contracted quotatives on 하/으/달/주 ("추가하래", "해 달래"), "told/asked me to";
+   - `conditional`: -면, -거든, 만약/만일, -ㄹ 경우, if/unless/in case/wish;
+   - `statement`: a finite past form in the last clause (the past marker followed only by a sentence ending), a
+     thank-you for a done act (줘서), an existential or copular last predicate (있어, -이야), a copular sentence ending on
+     a topic-marked noun, the action named only as a modifier with no request ending ("2번 완료된거 맞아"), is/was/did/
+     already in the last English clause;
+   - `volition`: a first-person subject (내가/제가/나는/저는), a promise ending -(으)ㄹ게 that ends its sentence,
+     intention/obligation in the last clause (-려고, -야지, -야 해), "I'll", "let me";
+   - `example`: 예를 들어, 예컨대, for example.
+   Every veto ends the turn as chat (`none`), logged `not-request:<class>`; shadow logs it as `shadow`. **First-person
+   volition is `none`, never a question** (owner: "추가할게" means the owner will do it).
+3. **No action expressed.** A frame with nothing but references, deictics, numbers, time words and fillers expresses no
+   action: a target entry is chat ("2번도", "그걸로요", "13번 알림": the item-source noun is part of the reference); a
+   payload entry asks to restate ("내일 9시 우유"; here a source noun such as 리마인더 does count, it names what to make).
+4. **Asking is only for a missing required slot or an ambiguous target** (a reminder without a time, several matches, an
+   out-of-range or stale listing, other-source), plus the existing selector `NEEDS_CLARIFICATION` flag. The
+   "실행할까요? 요청으로 말씀해 주세요" reply is removed.
+5. **The vocabularies only veto.** `actionGrounding` stays on the entries for the negated-clause check, the
+   command-before-retraction check and the glued-noun boundary; no word in it is needed for a write.
+
+### Safety argument
+
+- The writes are local, capped (20/hour, 100/day), kill-switch-atomic and undoable for 10 minutes by a per-action inverse
+  that restores the same item; external writes keep preview and approval.
+- A write still needs the selector's entry, grounded refs (the owner's own numeral, ordinal or deictic, resolved against
+  the listing the owner saw), verbatim spans from this turn, the entry checks (time-in-title, time-outside-when, bulk)
+  and the A6-D3a input guard. The vetoes can only turn an action into chat.
+- On the corpus, every execute gold validates with its gold arguments (the old request-form cost list is empty except a
+  bare "1번" that the answer path handles). Of the 157 `none` negatives (22 added in the review round below), 121 are
+  refused by Core for every lure a wrong selector could return (`validateSelection` with spans taken from the text, every
+  numeral as a ref, every time run as a reminder `when`, the undo); 36 have some lure that validates (chit-chat, other
+  sources, polite capability questions, deferral or a recipient inside a to-do title) and rest on the selector. Both lists
+  are pinned in `request-shape.test.ts`.
+
+### The typo case "3번 완룐 처리해줘"
+
+Core cannot recognise a misspelling without a typo or phrase list, so it does not try. The design asks only when the
+selector itself sets `ambiguity: NEEDS_CLARIFICATION` (existing behaviour, tested); a CLEAR selection executes `#3`. Note:
+the repository's owner gold decision of 2026-10-16 ("Owner decisions on A6 gold") is **execute** for
+`a6-paraphrase-todo.complete-018`, and that gold is left unchanged. If the owner wants **ask**, the only non-hardcoded
+route is a selector prompt rule ("an action word you had to guess is NEEDS_CLARIFICATION") plus a D12 run; that is not
+done here (no model calls; the prompt is being changed on another branch).
+
+### Gold changes (`golden/nl-action.v1.json`, owner decisions of 2026-10-16)
+
+- `a6-paraphrase-todo.add-016` "todo 추가: 프린터 토너 주문" → execute `{title: "프린터 토너 주문"}` (was ask).
+- `a6-paraphrase-todo.add-025` "투두에 \"회의실 정리\" 추가 ㄱㄱ" → execute `{title: "회의실 정리"}` (was ask).
+- `a6-paraphrase-reminder.create-020` → execute `{body: "가스 밸브 잠그기", when: "오늘 밤 10시"}` (was ask).
+- `a6-paraphrase-reminder.create-022` → execute `{body: "월세 이체", when: "3일 뒤 오전 9시"}` (was ask).
+- `a6-paraphrase-reminder.create-024` → execute `{body: "이사 업체 전화", when: "모레 아침 8시"}` (was ask).
+- `a6-paraphrase-todo.add-009` "할 일 하나 추가할게. 도서관 책 반납" → `none` (was ask): first-person volition.
+- `a6-paraphrase-todo.complete-009` "1번 할일 체크해줘": already execute `#1`; note updated (now reachable).
+- `a6-paraphrase-todo.complete-018`: unchanged (execute), see the typo case.
+- Re-checked, unchanged: the reference-family `ambiguous` asks (target ambiguity with listing fixtures), the
+  `a6-reference-none-001..005` golds ("2번도", "이번엔 3번", "2번": no action expressed → chat; "내일 아침 9시": restate;
+  "할 일 제목은 '보고서 마감'": copular statement → chat), and every other `none`/ask gold. The read-regression relabels of the
+  anchored colon commands (`neg-085` …) now validate as A6 hits instead of a request-form clarify.
+
+### Risks
+
+- **Selector-dependent negatives.** A wrong selector choice on a message with no grammatical veto can now write (e.g.
+  "내일 오후 3시에 테스트 회의 잡아줘" as a reminder; a translation request carrying an English command). Bounded by the
+  caps, the receipt and the 10-minute undo; measured by the D12 gate.
+- **Over-vetoing (utility).** Fail-closed grammar can refuse real requests: a reason clause with a first-person subject
+  ("내가 깜빡하니까 9시에 약 알려줘"), a noun ending in 면/는/은 in the frame (가면, 화면), "-ㄹ게" adverbs at a sentence end,
+  an undelimited title that ends in a negation ("…추가해줘 야식 먹지 않기"). These end as chat, never as a wrong write.
+- **Execution-time time grammar.** "3일 뒤 오전 9시" is `AMBIGUOUS_TIME` in the deterministic reminder grammar (it cannot
+  put a clock on "N일 뒤"), so the owner's example `reminder.create-022` selects and validates but asks for the time at
+  execution and writes nothing. A grammar follow-up, out of scope here.
+- `고고학`-style strings: no list decides them either way; the selector's `none` is what keeps them from acting.
+
+### Gates (promotion shadow-first)
+
+1. Offline: build, typecheck, the targeted suites (done on the branch).
+2. D12 on Haiku, 3 runs each for the action corpus and the read regression: **wrong target 0 and negative captures 0 in
+   every run** (hard), plus the existing per-entry utility thresholds. Strict: needs the owner's yes on the plan digest.
+3. Shadow (`QUOKY_NL_ACTIONS=shadow`) on the owner's live traffic: every `not-request:*` and every would-execute line is
+   reviewed; no write that the owner labels wrong.
+4. Then `local`, with the Chief Architect review recorded here.
+
+### Review round (CA CHANGES REQUIRED and Codex P2, 2026-10-16)
+
+- **Spans (CA P1).** The vetoes read the frame without only those content spans that a matching quote pair, or a colon form
+  running to the end of the message, fully encloses; an undelimited span stays in the frame. A span with an unpaired quote
+  (one that runs past a closing quote) is refused (`invalid-arg`). Every span's own negated action is checked whether
+  enclosed or not, and a quoted span that is itself a request is reported speech (neg-090). The lexical classes (wh-words,
+  -면, wishes, deferral) ignore a hit that lies inside an undelimited span before its last word ("5분 뒤에 라면 불 끄기
+  알려줘"), unless that span runs to the end of the message and so swallowed the predicate ("할 일 추가하는 법 알려줘").
+- **Anchors (CA P1).** A plain declarative -다 on the last word is a statement (-ㅂ시다 and 부탁드립니다 are not); a final
+  -야 after a vowel (copula or obligation) is a statement. `action.undo`, which has no argument, still needs a word of
+  its undo vocabulary in the frame (any form, no request form) and no dative recipient ("친구한테 책 돌려줘").
+- **New veto classes and gaps (CA P2).** `wish` (-고 싶다, 바래/바라, 희망, should I, maybe, would be nice) and `deferred`
+  (-고 나서, 끝나고/마치고, -ㄴ 뒤에/후에/다음에, 나중에, 이따 without a time, after/later/once; in the main clause for Korean,
+  outside a reminder's own `when`) end as chat. Hearsay -ㄴ대/-는대/-았대 and -ㄹ 거래, the relay "-라고/-다고 전해줘",
+  whole-message quotes and quoted commands are `reported`. Hangul speaker labels ("팀장님: …", "[김대리] …", "X 왈") are
+  refused by the A6-D3a input guard as `not-plain`, like the Latin "Kim: …" key; the address suffixes (님, 씨, office
+  titles) are the closed class of Korean address terms.
+- **Codex P2.** "2번 취소해줘. 취소" is retracted (a request ending makes a cancel word a command; bare "취소 취소" stays an
+  undo); a polite request form exempts the interrogative -나요 ending ("완료해 줄 수 있나요?"); a past or report statement
+  holds unless a later clause makes a request ("2번 완료했어 고마워" is chat, "3번 끝났어 완료로 바꿔줘" acts).
+- **DM only (CA P2).** While ADR-0122 enforcement is off, the selection service refuses a LOCAL_WRITE outside a DM before
+  any resolution or question (`nl_action.decided` reason `dm-only`, the handlers' A6-D1 copy "이 작업은 DM에서만 해요.
+  아무것도 바꾸지 않았어요."). `NlSelectionTurn.direct` (absent = not direct, fail closed) and `surfaceEnforced` carry it;
+  with enforcement on, the surface gate and the handlers' A6-D1 check decide. Making it configurable is left for later.
+- **R5a seam (CA P2).** `nlActionWordGrounded(prose, words)` keeps its export and signature: an action word is present and
+  no structural veto applies. `NlValidationContext.requestFrame` (and the `stripFrame` argument of `requestShapeOf`) lets
+  a caller remove its own phrases ("내가 말한 거", "아까 보냈던 거") from the prose before the vetoes run.
+- **Corpus.** 22 negatives added (`a6-negative-none-132` … `-153`), one per finding. The ADR-0123 selector-pool audit record
+  hashes the gold files, so it must be regenerated (`pnpm eval:rag -- --mode dry-run --write-audit true`, a local embedding
+  run) before `selector-rag/pool.test.ts` passes again.
+- **Typo case.** Unchanged: execute when the selector is CLEAR, ask on NEEDS_CLARIFICATION; `complete-018` stays execute
+  pending the owner's answer.
+
+### Review round 3 (CA over-blocks and gaps, Codex P2, 2026-10-16)
+
+- **Content is content (CA 3, 5).** A lexical hit (wh-words, -면, wishes, deferral, 후/뒤) entirely inside a content span is
+  the content's own ("할 일에 라면 추가해줘", "희망퇴직", "퇴근 후 장보기", "점심 먹은 후 약 먹기 1시에 알려줘"), except on a longer
+  span's last word ("할 일 추가하는 법") or a one-word span that is the veto word itself ("방법", "maybe"). -면 counts only
+  after a verb stem (vowel-, ㄹ- or past-final, or 으: "냉면" is a noun), and inside a span only on the action or a light
+  verb ("그거 완료되면"). Content that ends the message right after the request word ("할 일 추가해줘 운동 끝나고
+  샤워하기", "remind me at 5pm to stretch after lunch", "… that the report is due") leaves the frame like enclosed content.
+- **Negation scope (CA 4).** The prohibitive -지 마 / 말아 / 마세요 always negates the request; the descriptive -지 않- and
+  안/못 + a verb negate only that verb, so they veto only on the light verb (하/되, and the generic 실행/진행/처리) or an
+  action word ("야식 먹지 않기" is content; "2번 완료 처리하지 마" is not).
+- **Smaller fixes (CA 6).** "-라고 해줘" to Quoky is a request; English volition is only I'll / I will / I'm going to / we'll /
+  let me; a Korean first-person subject vetoes only when no request word is in the message ("내가 자꾸 까먹으니까 … 추가해줘"
+  acts).
+- **Gaps (CA 7).** New: "예정", -ㄹ까 on any verb ("완료해 버릴까"), -ㄹ/ㄴ 듯, a final "각", the report endings -함 / -됨 /
+  -았음, "you/someone should …", "she said …", jokes (`joke`: 농담, 장난이야, jk). `action.undo` needs an undo head: a bare
+  돌려 ("돈 좀 돌려줘") and an undo word before an adnominal verb ("되돌리기 해주는 앱 추천") are not one.
+- **Anchored 되돌리기 (CA 8)** carries the same DM-only guard (`dm-only`).
+- **Codex P2.** A quoted segment outside the selected span is a quoted command on any command word, nominal included
+  (`"2번 완료"`, a translation object); the selected span is one only in a finite request form, which is now looked for in
+  every word of the quote (`"2번 완료해줘 지금"`).
+- **Remaining refusals by existing rules** (not vetoes): `time-in-title` ("저녁 먹고 나서 설거지"), `bulk` ("1번 다 했어, 완료
+  처리해줘"), the English `time-outside-when` for "remind me in 10 minutes …", and the past reports "2번 했어요" / "2번 다
+  했다" (kept as statements). 16 more negatives (`a6-negative-none-154` … `-169`); the negative pins are 135 refused for every
+  lure and 38 selector-dependent. The selector-pool audit must be regenerated again.
+
+### Review round 4 (Codex P1/P2, CA P3, 2026-10-16)
+
+- **Trailing content (Codex P1).** Only quote- or colon-enclosed content is fully exempt. Content that ends the message after
+  the request word still has its retraction, negation and joke checked ("할 일 추가해줘 우유 사기, 아니 취소" is refused;
+  "… 야식 먹지 않기" and the one-clause title "결제 취소" still act).
+- **Codex P2.** The joke check reads the request frame and trailing content, never enclosed content ("할 일에 '농담 모음'
+  추가해줘" acts). After an undo word only a modifying verb form (-는 / -ㄴ on a verb stem) is a modifier; a topic-marked
+  noun is not ("되돌려줘 이번에는 제대로 해줘" acts).
+- **CA P3.** New refusals: a plan noun after -ㄹ ("완료할 계획/생각"), the guess -ㄹ걸, the sarcastic "같은 소리", a final -더라,
+  a state noun after -ㄴ ("돌려놓은 상태"), thanks or relief after the act ("-주셔서", "-서 다행"), probably / might / thinking
+  of, third-party "wants", "kidding", and an afterthought led by 근데 / but that ends as a statement ("2번 완료해줘. 아 근데
+  그거 아직이네"; "… 근데 아까 목록 기준" and a follow-up request still act). 16 corpus negatives (`a6-negative-none-170` …
+  `-185`); pins 149 refused for every lure, 40 selector-dependent. The selector-pool audit must be regenerated.
+
+### Final round (Codex P2, 2026-10-16)
+
+- **Structural undo anchor.** `action.undo` grounds only when the undo word is the command: it carries a request form
+  itself ("되돌려줘", "되돌려 줄래", "취소해줘", "원복해줘") or stands bare as the command, at the end of the message or before a
+  request word ("되돌리기", "되돌리기 해줘", "원래대로 해줘", "방금 거 원래대로", "원래대로 돌려놔"); in English the undo word
+  leads ("undo", "undo that", "please revert that") or takes a Korean request ("undo 해줘"). A descriptive or nominal use
+  never grounds ("되돌리기 돕는 앱 추천", "되돌리기 기능", "되돌리는 앱"), whatever verb follows; the enumerated adnominal list
+  is gone. An undo cannot itself be undone, so this direction fails closed.
+- **Known residual over-block (recorded for D12 and the shadow review).** The afterthought veto refuses a message whose
+  later 근데 / but clause ends as a statement even when the owner still wants the action: "2번 완료해줘. 근데 3번은 진행
+  중이네" and "2번 완료해줘. 근데 아직이네. 그래도 완료해줘". Both fail closed (chat, nothing written) and are pinned in
+  `request-shape.test.ts` in their current behaviour. No gold change in this round.
+
+- **Undo grounding, whole-chain rule (Codex, after 80b4ad5e).** The token checks are replaced by one rule. The chain is
+  the undo-bearing token (a bare undo noun takes its light or undo verb: "되돌리기 해줘", "원래대로 돌려 놔"), then every
+  consecutive auxiliary token of 주다 / 드리다 / 보다 / 놓다 / 두다 in any inflection (the stem syllable followed only by
+  closed verbal ending syllables, so "주의", "주말", "보고서" are not auxiliaries), up to a sentence boundary. The undo grounds
+  only when the chain's final token is a request form (`nlIsRequestForm`, or the capability request "… 줄 수 있어?") and no
+  other request or predicate follows the chain; trailing adverbs and a repeated light verb ("되돌려줘 이번에는 제대로 해줘")
+  are fine. "되돌려 봐 주는 앱 추천" and "되돌려 주신 기능 설명해줘" are refused; "되돌려 두세요" and "원래대로 돌려 두세요"
+  act. **Known residual:** "되돌려줘. 주말 일정은 그대로 둬" (a second request after a sentence boundary) fails closed as
+  chat; pinned in `request-shape.test.ts` for D12 and the shadow review.
+
+### A6-D3a amendment 1: undo confirmation rule (2026-10-16, supersedes the undo token-chain rules above)
+
+- **Why.** Five review rounds of token heuristics for `action.undo` kept leaking in both directions (주셨던 / 주었던 / 보았던
+  grounded; "원상복구 부탁", "원복 좀", "되돌려줘 빨리요" were refused). Korean morphology is open-ended, so no token list closes
+  this. The owner's approved principle reserves a confirmation for irreversible or ambiguous actions, and an undo cannot
+  itself be undone.
+- **Rule.** `action.undo` executes directly only when the message is an unambiguous undo command: from the clause holding
+  the undo word to the end, every token is the undo word, a command part (a request or auxiliary ending, the capability
+  tail "줄 수 있어"), a closed filler or adverb (좀, 다시, 지금, 빨리, 제발, 부탁, 요, 아니, please, now …) or a reference to
+  the last action (방금 거, 그 작업, its shown label, the last one …), and the last meaningful token is a request form or a bare
+  undo noun (되돌리기, 원래대로, 원복, undo). Earlier clauses are reasons ("잘못 눌렀어 되돌려줘"). The closed sets are
+  fillers and references only, never routing (`undo-confirm.ts`, `nlUndoIsDirect`).
+- **Every other selected undo** whose vetoes pass and that holds an undo word (descriptive, mixed or extra-content
+  messages) asks a one-step confirmation naming the exact action: "방금 한 '할 일 2번 완료'를 되돌릴까요? (응 / 아니)". It is
+  the existing A6 open question (new pending kind `action-undo-confirm`, item and undone action only). A narrow
+  whole-message reply decides: 응 / 네 / 좋아 / yes / 되돌려줘 undoes, and only if the last action is still the one named
+  (otherwise `undo-changed`, nothing written); 아니 / 취소 / 됐어 / no does nothing; anything else ends the question and routes
+  normally. Shadow logs `undo-confirm` as `shadow`.
+- **Simplified.** The validator keeps only the undo word (a bare 돌려 is "give back") and the dative check; the auxiliary
+  chain, the light-request and predicate-tail heuristics are removed. The structural vetoes stay.
+- **Buckets.** Direct: 되돌려줘, 되돌려 두세요, 원상복구 부탁, 원복 좀, 되돌리기 좀 해줘, 되돌려줘 빨리요 / 제발요, 되돌려 봐,
+  원래대로 돌려 줄 수 있어? and every undo execute gold. Confirm: 되돌려 주셨던 기능 추천, 되돌려 봐 주는 앱 추천, 되돌려 주신
+  기능 설명해줘, the other descriptive strings of the review rounds, and **"되돌려줘 주의 깊게" (chosen: confirm**, it carries
+  words beyond the command), "되돌려줘 이번에는 제대로 해줘", "되돌려줘. 주말 일정은 그대로 둬". No gold change.
+- **Closed direct grammar and reply binding (Codex, after 5263a468).** The direct path is a closed grammar over EXACT
+  tokens, no prefix or suffix matching: in the undo clause, references to the last action (방금, 그거, 그 작업, 추가한 거,
+  its label, please …), then an undo head (되돌려줘, 되돌려, 되돌리기, 원래대로, 원상복구, 원복, 취소해줘, undo …), then only
+  exact verb, auxiliary, request and filler tokens (돌려 / 해 / 해줘, 줘 / 줄래 / 주세요 / 두세요 / 둬 / 봐 / 보세요 / 부탁,
+  "줄 수 있어", 좀 / 빨리 / 제발 / 지금 / 다시, that / it / the last one), ending on a complete command token. Anything else
+  asks the confirmation ("되돌려 주신 거 보여줘" asks). The confirmation answer is resolved from the stored binding (item,
+  undone action and the lastAction's time), never from the reply target, so a platform reply to the question works; a
+  changed lastAction still refuses.

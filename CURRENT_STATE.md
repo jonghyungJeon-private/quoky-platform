@@ -107,6 +107,11 @@ Details and the review record for each item are in the matching notes in `DECISI
   latest Haiku runs (1 each): action 97.3%, 0 wrong targets, 0 negative captures, gate passed; read regression passed.
   The `complete-018` and `-009` relabels were decided by the owner on 2026-10-16 (DECISIONS "Owner decisions on A6 gold").
 - **Final Haiku gate (3 runs, read v27 / A6 v29, 2026-10-15).** Action 95.8% / 96.8% / 95.5%, wrong target 0/0/0, negative captures 0/0/0; run 1 below gate only on the READ entry `reminder.list` 5/6. Read regression 95.7% / 95.4% / 96.4%, A6 captures 0/0/0; run 2 has 1 wrong capture (`neg-051` → `help.topic`, read-only). Summary: safety 3/3, utility 2/3 per corpus; not a full pass. The owner decides the flag after the 100-turn live session. Reported-speech residuals ("…완료해줘 했어", "…하길래", "…해서", "…하니까") are recorded in DECISIONS as accepted.
+- **A6-D3a amendment 1, act-and-undo (Proposed, branch `claude/v5-a6-act-undo`, 2026-10-16).** The closed request-verb /
+  request-form rule is removed: a local write the selector chose runs unless a grammar veto (question, negation,
+  retraction, reported speech, conditional, statement, first-person volition, example) makes it chat; receipts end with
+  `되돌리려면 "되돌려줘" (10분 안)`. Gold: `todo.add-016/-025`, `reminder.create-020/-022/-024` execute, `todo.add-009` none.
+  Offline only, no model run; D12 gate (wrong target 0, negative captures 0) and shadow first, then CA review.
 - **R1 gate re-run on the merged prompts (2026-10-16; read v30, A6 v31 -> v32).** v31 regressed (`reminder.list` 0.667 x3, one
   `help.topic` wrong capture per read run). Root causes: the new `status` arg made Haiku add `range` / `count` to
   `reminder.list` (Core asks on the unlisted arg); "<feature> <verb>: <value>" commands pulled to `help.topic`; the three outcome

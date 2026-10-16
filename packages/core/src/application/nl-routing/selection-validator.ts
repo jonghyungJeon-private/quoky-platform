@@ -13,7 +13,9 @@ import {
 import {
   formatNlRef,
   isNlDeicticOnlyPayload,
-  nlActionWordGrounded,
+  NL_ACTION_WORDS,
+  nlFrameExpressesAction,
+  withoutSpan,
   withoutStructures,
   isNlRefGrounded,
   isNlSpanGrounded,
@@ -23,6 +25,7 @@ import {
 } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
+import { nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
 import {
   isNlRangeSymbol,
   isWeekdayOrTimeKeyword,
@@ -92,7 +95,12 @@ export type NlValidationFailureReason =
   /** A6-D1: a reminder message with a time expression outside `when`. */
   | 'time-outside-when'
   /** A6-D1: one action per message ("다 완료해줘"). */
-  | 'bulk';
+  | 'bulk'
+  /**
+   * A6-D3a amendment 1: the owner's own sentence is not a request (a question, a negation, a retraction, reported speech, a
+   * hypothetical, a past statement or first-person volition); `arg` names the class ({@link NlRequestVeto}). The turn is chat.
+   */
+  | 'not-request';
 
 export interface NlValidatedSelection {
   readonly entry: NlCatalogEntry;
@@ -129,10 +137,111 @@ export interface NlValidationContext {
    * step (2) refuses every entry that is not `READ`, exactly as before A6.
    */
   readonly actions?: boolean;
+  /**
+   * A6-D3a amendment 1, the R5a seam: strips the caller's own phrases (an origin phrase such as "내가 말한 거") from the
+   * owner's prose before the request-shape vetoes read it. Spans are still grounded in the whole prose.
+   */
+  readonly requestFrame?: (prose: string) => string;
 }
 
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+
+/** The content spans of a LOCAL_WRITE: the owner's content, never the request around it (a `when` stays in the frame). */
+const CONTENT_SPAN_ARGS = ['title', 'body', 'match'] as const;
+const QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [["'", "'"], ['"', '"'], ['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』']];
+/** A dative recipient ("친구한테", "팀장님께"): something is given to someone, never Quoky's own undo. */
+const DATIVE = /(?:한테|에게|께)(?=$|\s|[.,!?~])/u;
+
+/**
+ * A quote character without its pair inside a span ("우유' 사기 추가하지 마" runs past a closing quote). An apostrophe
+ * between letters ("Kim's") is not a quote.
+ */
+export function nlSpanHasUnbalancedQuote(span: string): boolean {
+  const text = span.replace(/(?<=\p{L})['’](?=\p{L})/gu, '');
+  return QUOTE_PAIRS.some(([open, close]) => {
+    const opens = text.split(open).length - 1;
+    if (open === close) return opens % 2 !== 0;
+    return opens !== text.split(close).length - 1;
+  });
+}
+
+/**
+ * Whether the owner's prose fully encloses the span as content: a matching quote pair right around it, or a colon form
+ * ("할 일 추가: …", "알림: …") whose span runs to the end of the message.
+ */
+function spanEnclosure(prose: string, span: string): 'quote' | 'colon' | 'after-request' | undefined {
+  const at = prose.indexOf(span);
+  if (at < 0) return undefined;
+  const before = prose.slice(0, at).replace(/\s+$/u, '');
+  const after = prose.slice(at + span.length);
+  const opened = before.at(-1);
+  const closed = after.replace(/^\s+/u, '').at(0);
+  if (QUOTE_PAIRS.some(([open, close]) => opened === open && closed === close)) return 'quote';
+  const toEnd = /^[\s.!?~^ㅋㅎ]*$/u.test(after);
+  if (/[:：]$/u.test(before) && toEnd) return 'colon';
+  // Content that ends the message after the request verb ("할 일 추가해줘 운동 끝나고 샤워하기", "remind me at 5pm to
+  // stretch after lunch"): the request is already said, the rest is the content (CA round 3).
+  return toEnd && nlRequestEndsBefore(before, NL_ACTION_WORDS) ? 'after-request' : undefined;
+}
+
+/** A6-D3a amendment 1: the request shape of a LOCAL_WRITE (see {@link requestShapeOf}). */
+export interface NlRequestShape {
+  readonly veto?: NlRequestVeto;
+  readonly expressesAction: boolean;
+  /** A content span with an unpaired quote: refused as `invalid-arg`. */
+  readonly unbalancedSpan?: string;
+}
+
+/**
+ * A6-D3a amendment 1: the request shape of a LOCAL_WRITE. The vetoes read the owner's prose (pasted structures removed)
+ * without the content spans that a quote pair or a colon form running to the end fully encloses; an undelimited span stays
+ * in the frame, so "할 일에 우유 사기 추가하지 마, 그냥 메모야" stays vetoed whatever span the selector returns. Every span's
+ * own negated action always counts. `stripFrame` is the R5a seam: a caller may remove its own phrases ("내가 말한 거",
+ * "아까 보냈던 거") from the prose before the vetoes run. An arg-less entry (`action.undo`) also needs its own action word
+ * (an undo word) in the frame and no dative recipient ("친구한테 책 돌려줘").
+ */
+export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingText: string, stripFrame?: (prose: string) => string): NlRequestShape {
+  const base = withoutStructures(groundingText).normalize('NFC').replace(/\s+/g, ' ');
+  const prose = stripFrame === undefined ? base : stripFrame(base).normalize('NFC').replace(/\s+/g, ' ');
+  let vetoFrame = prose;
+  let contentFrame = prose;
+  const content: string[] = [];
+  const quoted: string[] = [];
+  const trailing: string[] = [];
+  for (const name of CONTENT_SPAN_ARGS) {
+    const span = args[name];
+    if (typeof span !== 'string' || span.length === 0) continue;
+    if (nlSpanHasUnbalancedQuote(span)) return { expressesAction: false, unbalancedSpan: name };
+    content.push(span);
+    const enclosure = spanEnclosure(prose, span);
+    if (enclosure !== undefined) vetoFrame = withoutSpan(vetoFrame, span);
+    if (enclosure === 'quote') quoted.push(span);
+    // Only quote- or colon-enclosed content is fully exempt; trailing content after the request keeps its retraction,
+    // negation and joke checks (Codex P1).
+    if (enclosure === 'after-request') trailing.push(span);
+    contentFrame = withoutSpan(contentFrame, span);
+  }
+  const words = entry.actionGrounding ?? [];
+  const when = typeof args.when === 'string' ? args.when : undefined;
+  const veto = nlRequestVeto(vetoFrame, words, NL_ACTION_WORDS, { content, quoted, trailing, ...(when !== undefined ? { when } : {}) });
+  // For a target entry an item-source noun is part of the reference; a payload entry has no reference.
+  const payload = entry.args.some((spec) => spec.kind === 'span' && spec.required === true);
+  let expressesAction = nlFrameExpressesAction(contentFrame, !payload);
+  if (entry.args.length === 0 && words.length > 0) {
+    // A6-D3a amendment 1, undo confirmation rule: the undo needs one of its own words (a bare 돌려 is "give back": "돈 좀
+    // 돌려줘") and no dative recipient ("친구한테 책 돌려줘"). Whether it executes directly or asks a confirmation is decided
+    // at the message level by `nlUndoIsDirect` (undo-confirm.ts); no token heuristics here.
+    const frameText = normalizeForMatch(contentFrame);
+    const anchored = words.some((raw) => {
+      const word = normalizeForMatch(raw);
+      if (word === '돌려') return /되돌려/u.test(frameText);
+      return /^[a-z ]+$/u.test(word) ? new RegExp(`(?<![a-z])${word.replace(/ /g, '\\s+')}(?![a-z])`, 'u').test(frameText) : frameText.includes(word);
+    });
+    expressesAction &&= anchored && !DATIVE.test(contentFrame);
+  }
+  return { ...(veto !== undefined ? { veto } : {}), expressesAction };
+}
 
 export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValidationContext): NlValidationResult {
   // (1) closed ids
@@ -152,11 +261,15 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     args[name] = checked;
   }
   entry.normalize?.(args);
-  // A6 R1 review: an entry that acts on an existing item needs its own action word in the owner's prose (`actionGrounding`,
-  // a closed catalog vocabulary like `flagGrounding`); a reference alone ("2번도", "그걸로요") never selects the action.
-  if (entry.actionGrounding !== undefined) {
-    // In a requesting form only: a negated ("완료하지 말아줘") or adnominal ("취소된 거") action word grounds nothing.
-    if (!nlActionWordGrounded(withoutStructures(ctx.groundingText), entry.actionGrounding)) return { ok: false, reason: 'ungrounded', entryId, arg: 'action' };
+  // A6-D3a amendment 1 (owner-approved direction 2026-10-16): a LOCAL_WRITE the selector chose runs unless the owner's own
+  // sentence is not a request. No request verb or closed request form is needed; the structural vetoes decide (chat), and
+  // a frame with nothing but references ("2번도", "그걸로요", "13번 알림") or nothing but content ("내일 9시 우유")
+  // expresses no action.
+  if (entry.risk === 'LOCAL_WRITE') {
+    const shape = requestShapeOf(entry, args, ctx.groundingText, ctx.requestFrame);
+    if (shape.unbalancedSpan !== undefined) return { ok: false, reason: 'invalid-arg', entryId, arg: shape.unbalancedSpan };
+    if (shape.veto !== undefined) return { ok: false, reason: 'not-request', entryId, arg: shape.veto };
+    if (!shape.expressesAction) return { ok: false, reason: 'ungrounded', entryId, arg: 'action' };
   }
   // A6-D3 (A6 R1 fix): a payload made only of deictic, ordinal or time words gets its fixed reply ("내용을 직접 적어
   // 주세요") before any missing argument is named: "그거 알림으로 만들어줘" has no time either, and the content is the problem.

@@ -95,7 +95,7 @@ describe('A6 to-do actions (A6-D1/D3)', () => {
     const { desk } = world();
     await addThree(desk);
     const outcome = await desk.handleAction(cmd('todo.add', { title: 'UAT 결과 보고' }), owner);
-    expect(text(outcome)).toBe('할 일 4번으로 추가했어요: "UAT 결과 보고" · 되돌리기: "되돌려줘" (10분)');
+    expect(text(outcome)).toBe('할 일 4번으로 추가했어요: "UAT 결과 보고" · 되돌리려면 "되돌려줘" (10분 안)');
     expect(outcome).toMatchObject({ action: { entryId: 'todo.add', result: 'executed', label: 4 } });
   });
 
@@ -104,7 +104,7 @@ describe('A6 to-do actions (A6-D1/D3)', () => {
     await addThree(desk);
     const second = [...rows.values()].find((item) => item.title === 'UAT 결과 정리') as WorkItem;
     const done = await desk.handleAction(cmd('todo.complete', { ref: '#2' }, { target: { source: 'todo', id: second.id, label: 2 } }), owner);
-    expect(text(done)).toBe('할 일 2번을 완료 처리했어요: "UAT 결과 정리" · 되돌리기: "되돌려줘" (10분)');
+    expect(text(done)).toBe('할 일 2번을 완료 처리했어요: "UAT 결과 정리" · 되돌리려면 "되돌려줘" (10분 안)');
     expect(rows.get(second.id)?.status).toBe(WorkItemStatus.COMPLETED);
     const again = await desk.handleAction(cmd('todo.complete', { ref: '#2' }, { target: { source: 'todo', id: second.id, label: 2 } }), owner);
     expect(again).toMatchObject({ action: { result: 'refused', reason: 'already-final' } });

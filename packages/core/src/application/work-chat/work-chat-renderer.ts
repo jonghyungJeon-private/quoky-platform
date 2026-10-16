@@ -520,8 +520,8 @@ export function renderedTodoRows(todos: readonly WorkItem[]): number {
   return shown;
 }
 
-/** A6-D3: the undo hint of every A6 local write (the 10-minute `lastAction` window). */
-export const NL_ACTION_UNDO_HINT = '되돌리기: "되돌려줘" (10분)';
+/** A6-D3: the undo hint of every A6 local write (the 10-minute `lastAction` window; wording per the owner, 2026-10-16). */
+export const NL_ACTION_UNDO_HINT = '되돌리려면 "되돌려줘" (10분 안)';
 
 /** The number of a to-do as the owner sees it: its position among the open to-dos (createdAt order), 1-based. */
 export function todoNumberOf(todos: readonly WorkItem[], id: string): number | undefined {
@@ -529,7 +529,7 @@ export function todoNumberOf(todos: readonly WorkItem[], id: string): number | u
   return index < 0 ? undefined : index + 1;
 }
 
-/** `할 일 7번으로 추가했어요: "UAT 결과 정리" · 되돌리기: "되돌려줘" (10분)` (A6-D3 echo). */
+/** `할 일 7번으로 추가했어요: "UAT 결과 정리" · 되돌리려면 "되돌려줘" (10분 안)` (A6-D3 echo). */
 export function renderTodoActionAdded(item: WorkItem, no: number): MessageBody {
   return fit([{ text: messageContent(`할 일 ${no}번으로 추가했어요: "`, titleOf(item, 200), `" · ${NL_ACTION_UNDO_HINT}`) }]);
 }
