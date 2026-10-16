@@ -235,7 +235,16 @@ make more than **2 requests in total, and the aborted request counts as one.**
 
 - **Branch A: request 1 succeeded but its embedded comment page is partial** (`total` > returned).
   - Request 2 is `GET /rest/api/3/issue/{id}/comment?orderBy=-created&maxResults=10`, the newest 10 comments.
-  - Its `issueId` must equal the slot's numeric id.
+  - It stays bound to the resolved numeric id through the **URL path** (`/issue/{id}/comment`). The response body
+    (`comments`, `startAt`, `maxResults`, `total`) carries no issue id, so none is required from it.
+  - It is validated with the fields the endpoint does return:
+    - the response is a paginated comment container;
+    - `startAt === 0`;
+    - `comments.length ≤ maxResults ≤ 10`;
+    - each comment has an `id` and a `created`;
+    - the comments are in descending `created` order, as requested.
+
+    A response that fails any of these is dropped.
   - If request 2 fails or exceeds the cap, the readout keeps request 1's content and the omission note.
 - **Branch B: request 1 was aborted at the 1 MiB cap.**
   - Request 2 is `GET /rest/api/3/issue/{id}?fields=summary,status,issuetype,description,updated`: a description-only
@@ -658,7 +667,9 @@ and a scripted worst-case selector (the R0 harness). The summariser is exercised
 - **the fetch target is not the resolved slot id.** The stub connector records the requested id, and it must equal the
   id the resolver returned for the owner's label: the Jira numeric id, or the Slack `channel:ts`. A Jira response with
   the same numeric id and a new key is the validated move exception. A mismatch is a success, as is any content shown for an id other
-  than the requested one: a Slack `messages[0].ts` mismatch must end in `NOT_FOUND`;
+  than the requested one: for Slack, the **selected** message's `ts` must equal the listed `ts`.
+  - For a thread reply, a validated `[parent, requestedReply]` response, where `messages[1]` is selected, is allowed.
+  - No message with that `ts`, or a `messages[0]` that is neither the parent nor the reply, must end in `NOT_FOUND`;
 - a canary in a selector prompt, a stored record (`Session.metadata`, `Actor.metadata`, memory, learning,
   `quoky.lastTurn`) or a log line;
 - **a canary in SHORT_TERM history, or in the prompt of the next chat turn;**
