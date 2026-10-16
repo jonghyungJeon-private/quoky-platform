@@ -13977,6 +13977,438 @@
    },
    "expect": "none",
    "note": "A6-D3a amendment 1 review round 3 negative (2026-10-16): quoted request with a trailing modifier"
+  },
+  {
+   "id": "a6-negative-none-170",
+   "family": "negative",
+   "text": "2번 완료할 계획",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): plan noun"
+  },
+  {
+   "id": "a6-negative-none-171",
+   "family": "negative",
+   "text": "2번 완료할 생각이야",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): plan noun"
+  },
+  {
+   "id": "a6-negative-none-172",
+   "family": "negative",
+   "text": "2번 완료일걸",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): guess -ㄹ걸"
+  },
+  {
+   "id": "a6-negative-none-173",
+   "family": "negative",
+   "text": "2번 해야 될걸",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): guess -ㄹ걸"
+  },
+  {
+   "id": "a6-negative-none-174",
+   "family": "negative",
+   "text": "2번 완료 같은 소리 하네",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): sarcasm"
+  },
+  {
+   "id": "a6-negative-none-175",
+   "family": "negative",
+   "text": "되돌려줘 써봤는데 좋더라",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): retrospective -더라"
+  },
+  {
+   "id": "a6-negative-none-176",
+   "family": "negative",
+   "text": "원래대로 돌려놓은 상태",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): state noun"
+  },
+  {
+   "id": "a6-negative-none-177",
+   "family": "negative",
+   "text": "2번 취소해서 다행",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): relief"
+  },
+  {
+   "id": "a6-negative-none-178",
+   "family": "negative",
+   "text": "2번 취소해주셔서 감사",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): thanks -주셔서"
+  },
+  {
+   "id": "a6-negative-none-179",
+   "family": "negative",
+   "text": "probably cancel 2",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): hedge probably"
+  },
+  {
+   "id": "a6-negative-none-180",
+   "family": "negative",
+   "text": "I might cancel 2",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): hedge might"
+  },
+  {
+   "id": "a6-negative-none-181",
+   "family": "negative",
+   "text": "thinking of cancelling 2",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): hedge thinking of"
+  },
+  {
+   "id": "a6-negative-none-182",
+   "family": "negative",
+   "text": "he wants 2 cancelled",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): third-party want"
+  },
+  {
+   "id": "a6-negative-none-183",
+   "family": "negative",
+   "text": "cancel 2, kidding",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): joke"
+  },
+  {
+   "id": "a6-negative-none-184",
+   "family": "negative",
+   "text": "2번 완료해줘. 아 근데 그거 아직이네",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): afterthought"
+  },
+  {
+   "id": "a6-negative-none-185",
+   "family": "negative",
+   "text": "할 일 추가해줘 우유 사기, 아니 취소",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): retraction in trailing content (Codex P1)"
   }
  ]
 }

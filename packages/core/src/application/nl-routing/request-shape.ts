@@ -56,9 +56,9 @@ const QUOTATIVE_KO = /(?:라|자|달라|냐|다)고\s*(?:했|하더|하던|하�
 const CONTRACTED_QUOTATIVE_KO = /(?:하|으|달|주)(?:래|래요|래서|랬|라셔|라시|란다|재|재요)(?=$|[\s.!?~,]|[\u3131-\u318e])/u;
 /** A quoted segment of the frame (content spans already removed): '…', "…", “…”, ‘…’, 「…」, 『…』. */
 const QUOTED_SEGMENT = /'([^']+)'|"([^"]+)"|“([^”]+)”|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
-const REPORTED_EN = /\b(?:told|asked|wants?|wanted|said|says)\s+(?:(?:me|us|him|her|them)\s+)?to\b|\b(?:you|someone|somebody|they|he|she)\s+(?:should|must|might|could|said|says|told)\b/u;
+const REPORTED_EN = /\b(?:told|asked|wants?|wanted|said|says)\s+(?:(?:me|us|him|her|them)\s+)?to\b|\b(?:you|someone|somebody|they|he|she)\s+(?:should|must|might|could|said|says|told|wants?|wanted)\b/u;
 /** A joke or a tease (CA round 3): never an instruction. */
-const JOKE = /농담|장난(?:이야|임|이에요)|\bjk\b|\bj\/k\b|just kidding/u;
+const JOKE = /농담|장난(?:이야|임|이에요)|같은\s*소리|\bjk\b|\bj\/k\b|\bkidding\b/u;
 
 // questions
 const QUESTION_MARK = /[?？]/u;
@@ -76,7 +76,7 @@ const QUESTION_EN = /(?:^|[,.;!?]\s*)(?:how|what|why|when|where|who|which|whose)
 
 // wishes, hedges and deferred timing
 const WISH_KO = /싶|바래|바라|바랍|희망|아마(?=$|\s)|듯(?=$|\s|해|하|함|요|싶|[.!~])|(?:^|\s)각(?=$|\s|[.!~ㅋㅎ])/u;
-const WISH_EN = /\bshould i\b|\bmaybe\b|\bperhaps\b|would be nice|\bi wish\b|\bi hope\b|\bhopefully\b/u;
+const WISH_EN = /\bshould i\b|\bmaybe\b|\bperhaps\b|\bprobably\b|\bmight\b|thinking (?:of|about)|would be nice|\bi wish\b|\bi hope\b|\bhopefully\b/u;
 /** -고 나서, the aspectual 끝나고 / 마치고, 나중에, 이따(가) without a time of its own; English after / later / once. */
 const DEFERRED_KO = /고\s*나서|(?:끝나|마치|끝내)고(?=$|\s)|나중에|이따가?(?=$|\s)(?!\s*\d)/u;
 const DEFERRED_EN = /\b(?:after|later|once)\b/u;
@@ -91,7 +91,9 @@ const PLANNED_KO = /예정(?=$|\s|이|임|입니다|[.!~])/u;
 /** A report ending on the last word: -함 / -됨, or a past or existential stem + 음 ("추가함", "필요함", "다녀왔음"). */
 const REPORT_ENDING_LAST = /(?:함|됨)$|(?:했|됐|었|았|였|있|없|겠)음$/u;
 /** A thank-you or a report of a done act ("알려줘서 고마워"). */
-const DONE_FOR_ME_KO = /줘서(?=$|\s)/u;
+const DONE_FOR_ME_KO = /(?:줘서|주셔서)(?=$|\s)|서\s*다행/u;
+/** An afterthought that turns on the request ("2번 완료해줘. 아 근데 그거 아직이네"): a later clause led by but/actually. */
+const AFTERTHOUGHT = /^(?:아\s*)?(?:근데|그런데|하지만|but\b|actually\b).*(?:네|네요|다|어|지|구나|잖아|yet|not)$/u;
 /**
  * An existential or copular predicate ends the sentence ("추가 질문 있어", "2번은 회의야"): a statement. "줄 수 있어"
  * (a polite request) is excluded by its 수.
@@ -298,8 +300,11 @@ export interface NlRequestSpans {
   readonly when?: string;
   /** The content spans a quote pair encloses: a quoted request as the content is the object of another verb (neg-090). */
   readonly quoted?: readonly string[];
-  /** The whole prose, spans included: a joke ("…농담이야", "jk") holds for the message whatever span the selector took. */
-  readonly whole?: string;
+  /**
+   * Undelimited content that ends the message after the request word: exempt from the lexical and statement classes, but
+   * its retraction, negation and joke still count (Codex P1: "할 일 추가해줘 우유 사기, 아니 취소").
+   */
+  readonly trailing?: readonly string[];
 }
 
 /**
@@ -364,7 +369,14 @@ function isConditionalWord(word: string): boolean {
 export function nlRequestVeto(frame: string, entryWords: readonly string[], actionWords: readonly string[], spans: NlRequestSpans = {}): NlRequestVeto | undefined {
   const text = normalizeForMatch(frame).replace(/[’‘`´]/gu, "'");
   if (EXAMPLE_FRAME.test(text)) return 'example';
-  if (JOKE.test(text) || (spans.whole !== undefined && JOKE.test(normalizeForMatch(spans.whole)))) return 'joke';
+  // A joke in the request frame or in undelimited trailing content; enclosed content is content ("'농담 모음' 추가해줘").
+  const trailing = (spans.trailing ?? []).map((span) => normalizeForMatch(span));
+  if (JOKE.test(text) || trailing.some((span) => JOKE.test(span))) return 'joke';
+  for (const span of trailing) {
+    const own = clausesOf(span);
+    if (NEGATION_EN.test(span) || own.some((clause, index) => negatesKo(clause, actionWords, wordsOf(own[index - 1] ?? '').at(-1) ?? ''))) return 'negation';
+    if (own.length > 1 && RETRACTION_FINAL.test(wordsOf(own.at(-1) ?? '').at(-1) ?? '')) return 'retraction';
+  }
   if (QUOTED_REQUEST_KO.test(text) || QUOTATIVE_KO.test(text) || CONTRACTED_QUOTATIVE_KO.test(text) || REPORTED_EN.test(text)) return 'reported';
   // A quoted command that is not this selection's content (a whole-message quote, a translation object): any command word,
   // a nominal one included ("2번 완료"). The selected content span itself is a quoted request only in a finite request form
@@ -405,6 +417,7 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
   const words = wordsOf(text);
   const last = words.at(-1);
   if (RETRACTION_ANYWHERE.test(text)) return 'retraction';
+  if (clauses.some((clause, index) => index > 0 && AFTERTHOUGHT.test(clause) && !requestsSomething(clause, actionWords) && clauses.slice(0, index).some((earlier) => requestsSomething(earlier, actionWords)))) return 'retraction';
   if (last !== undefined && RETRACTION_FINAL.test(last) && rawWords.slice(0, -1).some((word) => isCommandWord(word, actionWords))) return 'retraction';
 
   // The lexical classes skip a hit that lies entirely inside a content span (its own words are content).
@@ -460,6 +473,14 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
   // polite 부탁드립니다 are requests. A report ending -함 / -됨 / -았음 likewise ("민수가 … 추가함", "원상복구 필요함").
   if (/다$/u.test(lastWord) && !/시다$/u.test(lastWord) && !/부탁/u.test(lastWord)) return 'statement';
   if (REPORT_ENDING_LAST.test(lastWord)) return 'statement';
+  // A retrospective -더라, a plan noun after -ㄹ ("완료할 계획/생각"), a state noun after -ㄴ ("돌려놓은 상태"), a guess -ㄹ걸
+  // ("완료일걸", "해야 될걸"): statements or guesses, never requests (CA P3).
+  if (/더라(?:고)?$/u.test(lastWord)) return 'statement';
+  const beforeLast = Array.from(words.at(-2) ?? '').at(-1);
+  if (/^(?:계획|생각)(?:이야|임|이에요|입니다)?$/u.test(lastWord) && finalConsonant(beforeLast) === 8) return 'statement';
+  if (/^상태(?:야|임|이야|예요)?$/u.test(lastWord) && (finalConsonant(beforeLast) === 4 || beforeLast === '는')) return 'statement';
+  const guessChars = Array.from(lastWord.replace(/요$/u, ''));
+  if (guessChars.at(-1) === '걸' && finalConsonant(guessChars.at(-2)) === 8) return 'wish';
   // A copular sentence with its 이다 elided ends on a topic-marked noun ("할 일 제목은 '보고서 마감'"): a statement.
   if (Array.from(lastWord).length >= 2 && /[은는]$/u.test(lastWord) && !isAdnominalVerb(lastWord)) return 'statement';
   if (EXISTENTIAL_LAST.test(lastWords.at(-1) ?? '') && !/수$/u.test(lastWords.at(-2) ?? '') && !/수(?:있|없)/u.test(lastWords.at(-1) ?? '')) return 'statement';

@@ -28,6 +28,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   희망퇴직, 퇴근 후, 야식 먹지 않기), content after the request word is exempt, "-라고 해줘" is a request, English volition only in
   its explicit forms. New refusals: 예정, -ㄹ까, -듯, 각, -함/-됨, "you should", jokes, undo look-alikes; the anchored 되돌리기 is
   DM-only. 16 corpus negatives added; the selector-pool audit needs regenerating.
+- **Changed (review round 4).** Trailing content after the request keeps its retraction, negation and joke checks; jokes
+  inside enclosed content and topic-marked nouns after an undo word no longer refuse; new refusals for plans, -ㄹ걸, -더라,
+  state nouns, thanks/relief, English hedges, third-party wants and afterthoughts. 16 corpus negatives added; the
+  selector-pool audit needs regenerating.
 
 ## Unreleased — ADR-0123 pool batch 2 (pending owner approval) and the runner's selector transport and exact scorer (2026-10-16)
 

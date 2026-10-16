@@ -26869,3 +26869,17 @@ done here (no model calls; the prompt is being changed on another branch).
   처리해줘"), the English `time-outside-when` for "remind me in 10 minutes …", and the past reports "2번 했어요" / "2번 다
   했다" (kept as statements). 16 more negatives (`a6-negative-none-154` … `-169`); the negative pins are 135 refused for every
   lure and 38 selector-dependent. The selector-pool audit must be regenerated again.
+
+### Review round 4 (Codex P1/P2, CA P3, 2026-10-16)
+
+- **Trailing content (Codex P1).** Only quote- or colon-enclosed content is fully exempt. Content that ends the message after
+  the request word still has its retraction, negation and joke checked ("할 일 추가해줘 우유 사기, 아니 취소" is refused;
+  "… 야식 먹지 않기" and the one-clause title "결제 취소" still act).
+- **Codex P2.** The joke check reads the request frame and trailing content, never enclosed content ("할 일에 '농담 모음'
+  추가해줘" acts). After an undo word only a modifying verb form (-는 / -ㄴ on a verb stem) is a modifier; a topic-marked
+  noun is not ("되돌려줘 이번에는 제대로 해줘" acts).
+- **CA P3.** New refusals: a plan noun after -ㄹ ("완료할 계획/생각"), the guess -ㄹ걸, the sarcastic "같은 소리", a final -더라,
+  a state noun after -ㄴ ("돌려놓은 상태"), thanks or relief after the act ("-주셔서", "-서 다행"), probably / might / thinking
+  of, third-party "wants", "kidding", and an afterthought led by 근데 / but that ends as a statement ("2번 완료해줘. 아 근데
+  그거 아직이네"; "… 근데 아까 목록 기준" and a follow-up request still act). 16 corpus negatives (`a6-negative-none-170` …
+  `-185`); pins 149 refused for every lure, 40 selector-dependent. The selector-pool audit must be regenerated.

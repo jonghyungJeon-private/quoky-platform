@@ -150,6 +150,11 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 /** The content spans of a LOCAL_WRITE: the owner's content, never the request around it (a `when` stays in the frame). */
 const CONTENT_SPAN_ARGS = ['title', 'body', 'match'] as const;
 const QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [["'", "'"], ['"', '"'], ['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』']];
+/**
+ * A modifying verb form after an undo word ("되돌리기 해주는 앱"): -는 / -ㄴ / -은 on a verb stem, never a topic-marked noun
+ * ("되돌려줘 이번에는 제대로 해줘", Codex P2).
+ */
+const ADNOMINAL_VERB = /(?:하|되|주|드리|시키|돌리|보|쓰|만들|해주|돌려주)는$|(?:해준|해주신|된|한|돌린|돌려준)$/u;
 /** A dative recipient ("친구한테", "팀장님께"): something is given to someone, never Quoky's own undo. */
 const DATIVE = /(?:한테|에게|께)(?=$|\s|[.,!?~])/u;
 
@@ -208,6 +213,7 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
   let contentFrame = prose;
   const content: string[] = [];
   const quoted: string[] = [];
+  const trailing: string[] = [];
   for (const name of CONTENT_SPAN_ARGS) {
     const span = args[name];
     if (typeof span !== 'string' || span.length === 0) continue;
@@ -216,11 +222,14 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
     const enclosure = spanEnclosure(prose, span);
     if (enclosure !== undefined) vetoFrame = withoutSpan(vetoFrame, span);
     if (enclosure === 'quote') quoted.push(span);
+    // Only quote- or colon-enclosed content is fully exempt; trailing content after the request keeps its retraction,
+    // negation and joke checks (Codex P1).
+    if (enclosure === 'after-request') trailing.push(span);
     contentFrame = withoutSpan(contentFrame, span);
   }
   const words = entry.actionGrounding ?? [];
   const when = typeof args.when === 'string' ? args.when : undefined;
-  const veto = nlRequestVeto(vetoFrame, words, NL_ACTION_WORDS, { content, quoted, whole: prose, ...(when !== undefined ? { when } : {}) });
+  const veto = nlRequestVeto(vetoFrame, words, NL_ACTION_WORDS, { content, quoted, trailing, ...(when !== undefined ? { when } : {}) });
   // For a target entry an item-source noun is part of the reference; a payload entry has no reference.
   const payload = entry.args.some((spec) => spec.kind === 'span' && spec.required === true);
   let expressesAction = nlFrameExpressesAction(contentFrame, !payload);
@@ -238,7 +247,7 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
             const anchor = normalizeForMatch(word);
             if (/^[a-z ]+$/u.test(anchor)) return false;
             return anchor === '돌려' ? /되돌려/u.test(token) : token.includes(anchor);
-          }) && !/는$/u.test(tokens[index + 1] ?? ''),
+          }) && !ADNOMINAL_VERB.test(tokens[index + 1] ?? ''),
       );
     expressesAction &&= anchored && !DATIVE.test(contentFrame);
   }

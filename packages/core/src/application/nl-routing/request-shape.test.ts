@@ -246,6 +246,51 @@ describe('A6-D3a amendment 1, review round 3 (CA over-blocks and gaps, Codex P2)
   });
 });
 
+describe('A6-D3a amendment 1, review round 4 (Codex P1/P2, CA P3)', () => {
+  const v = (entryId: string, args: Record<string, string>, text: string) => validateSelection({ entryId, args }, ctx(text));
+
+  it('Codex P1: trailing content after the request keeps its retraction, negation and joke checks', () => {
+    expect(v('todo.add', { title: '우유 사기, 아니 취소' }, '할 일 추가해줘 우유 사기, 아니 취소')).toMatchObject({ ok: false, reason: 'not-request' });
+    expect(v('todo.add', { title: '우유 사기, 취소' }, '할 일 추가해줘 우유 사기, 취소')).toMatchObject({ ok: false, reason: 'not-request', arg: 'retraction' });
+    expect(v('todo.add', { title: '우유 사기 하지 마' }, '할 일 추가해줘 우유 사기 하지 마')).toMatchObject({ ok: false, reason: 'not-request', arg: 'negation' });
+    expect(v('todo.add', { title: '우유 사기 농담이야' }, '할 일 추가해줘 우유 사기 농담이야')).toMatchObject({ ok: false, reason: 'not-request', arg: 'joke' });
+    // Still content: a scoped content negation and a single-clause title ending in a cancel word.
+    expect(v('todo.add', { title: '야식 먹지 않기' }, '할 일 추가해줘 야식 먹지 않기').ok).toBe(true);
+    expect(v('todo.add', { title: '결제 취소' }, '할 일 추가해줘 결제 취소').ok).toBe(true);
+  });
+
+  it('Codex P2: a joke word inside enclosed content is content; a topic-marked noun after the undo word is no modifier', () => {
+    expect(v('todo.add', { title: '농담 모음' }, "할 일에 '농담 모음' 추가해줘").ok).toBe(true);
+    expect(v('todo.add', { title: '농담' }, '할 일에 농담 추가해줘')).toMatchObject({ ok: false, reason: 'not-request', arg: 'joke' });
+    expect(v('action.undo', {}, '되돌려줘 이번에는 제대로 해줘').ok).toBe(true);
+    expect(v('action.undo', {}, '되돌리기 해주는 앱 추천')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+  });
+
+  it('CA P3: plans, guesses, sarcasm, -더라, state nouns, thanks and relief, English hedges, afterthoughts', () => {
+    const refused: Array<[string, string, Record<string, string>, string]> = [
+      ['2번 완료할 계획', 'todo.complete', { ref: '#2' }, 'statement'],
+      ['2번 완료할 생각이야', 'todo.complete', { ref: '#2' }, 'statement'],
+      ['2번 완료일걸', 'todo.complete', { ref: '#2' }, 'wish'],
+      ['2번 해야 될걸', 'todo.complete', { ref: '#2' }, 'wish'],
+      ['2번 완료 같은 소리 하네', 'todo.complete', { ref: '#2' }, 'joke'],
+      ['되돌려줘 써봤는데 좋더라', 'action.undo', {}, 'statement'],
+      ['원래대로 돌려놓은 상태', 'action.undo', {}, 'statement'],
+      ['2번 취소해서 다행', 'todo.cancel', { ref: '#2' }, 'statement'],
+      ['2번 취소해주셔서 감사', 'todo.cancel', { ref: '#2' }, 'statement'],
+      ['probably cancel 2', 'todo.cancel', { ref: '#2' }, 'wish'],
+      ['I might cancel 2', 'todo.cancel', { ref: '#2' }, 'wish'],
+      ['thinking of cancelling 2', 'todo.cancel', { ref: '#2' }, 'wish'],
+      ['he wants 2 cancelled', 'todo.cancel', { ref: '#2' }, 'reported'],
+      ['cancel 2, kidding', 'todo.cancel', { ref: '#2' }, 'joke'],
+      ['2번 완료해줘. 아 근데 그거 아직이네', 'todo.complete', { ref: '#2' }, 'retraction'],
+    ];
+    for (const [text, entryId, args, veto] of refused) expect(v(entryId, args, text), text).toMatchObject({ ok: false, reason: 'not-request', arg: veto });
+    // Not over-blocked: a follow-up request after 근데, a plain request after a reason.
+    expect(v('todo.complete', { ref: '#2' }, '2번 완료해줘. 근데 3번은 그대로 둬').ok).toBe(true);
+    expect(v('todo.complete', { ref: '#2' }, '2번 끝났어 완료로 바꿔줘').ok).toBe(true);
+  });
+});
+
 describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-action.v1 + seed)', () => {
   const load = (name: string) => (JSON.parse(readFileSync(new URL(`../golden/${name}`, import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string; expect: unknown }> }).cases;
   const negatives = [...load('nl-action.v1.json'), ...load('nl-action.seed.v1.json')].filter((golden) => golden.expect === 'none');
@@ -411,6 +456,20 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-164',
     'a6-negative-none-167',
     'a6-negative-none-169',
+    'a6-negative-none-170',
+    'a6-negative-none-171',
+    'a6-negative-none-172',
+    'a6-negative-none-173',
+    'a6-negative-none-174',
+    'a6-negative-none-176',
+    'a6-negative-none-177',
+    'a6-negative-none-178',
+    'a6-negative-none-179',
+    'a6-negative-none-180',
+    'a6-negative-none-181',
+    'a6-negative-none-182',
+    'a6-negative-none-183',
+    'a6-negative-none-185',
     'a6-seed-neg-001',
     'a6-seed-neg-002',
     'a6-seed-neg-003',
@@ -455,6 +514,8 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-165',
     'a6-negative-none-166',
     'a6-negative-none-168',
+    'a6-negative-none-175',
+    'a6-negative-none-184',
     'a6-seed-live-005',
   ];
 
