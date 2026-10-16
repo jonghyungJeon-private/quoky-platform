@@ -56,8 +56,8 @@ export interface ConnectorItemDetail {
   /** True when the source holds more than was read (a partial comment page, `has_more`, a description-only retry). */
   partial: boolean;
   /**
-   * Every person handle that appears as an author or a mention, in order of first appearance (Core pseudonymises each one
-   * in `summary` mode). Never shown as a list.
+   * Every person handle that appears as an author or a mention, in order of first appearance, then the item's assignee and
+   * reporter (Jira) (Core pseudonymises every written form of each one in `summary` mode). Never shown as a list.
    */
   people: string[];
   /** Jira: the comment container's `total` and how many comments the readout holds from the returned page. */

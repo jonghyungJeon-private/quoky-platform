@@ -6,6 +6,7 @@ import {
   WORK_ITEM_SECTION_MAX_CHARS,
   buildWorkItemReadout,
   pseudonymLabel,
+  pseudonymiseParticipants,
   renderWorkItemFailure,
   renderWorkItemFallback,
   renderWorkItemFooter,
@@ -320,5 +321,62 @@ describe('footer and fallback', () => {
     expect(out).toBe("결제 오류 수정 (In Progress) https://acme.atlassian.net/browse/PROJ-1\n요약을 만들지 못했어요. '원문 보여줘'로 볼 수 있어요.\n목록 이후 수정됨");
     const slack = text(renderWorkItemFallback('slack', item([], { url: 'https://x.slack.com/a' }), []));
     expect(slack).toBe("결제 오류 수정\n요약을 만들지 못했어요. '원문 보여줘'로 볼 수 있어요.");
+  });
+});
+
+describe('pseudonymiseParticipants (D5, live test 3: a name inside free text)', () => {
+  const people = [
+    { handle: '전혜정', label: '참여자 A' },
+    { handle: 'Minsu Kim', label: '참여자 B' },
+    { handle: '이준', label: '참여자 C' },
+  ];
+  it.each([
+    ['혜정님에게 전달', '참여자 A에게 전달'],
+    ['전혜정님이 확인', '참여자 A이 확인'],
+    ['전혜정 님이 확인', '참여자 A이 확인'],
+    ['전혜정 확인 부탁', '참여자 A 확인 부탁'],
+    ['혜정씨 의견대로', '참여자 A 의견대로'],
+    ['혜정 씨 의견대로', '참여자 A 의견대로'],
+    ['혜정에게 넘김', '참여자 A에게 넘김'],
+    ['혜정께 보고', '참여자 A께 보고'],
+    ['혜정아 이거 봐줘', '참여자 A 이거 봐줘'],
+    ['Minsu Kim will review', '참여자 B will review'],
+    ['ask Minsu tomorrow', 'ask 참여자 B tomorrow'],
+    ['Minsu님 확인', '참여자 B 확인'],
+    ['준님 확인', '참여자 C 확인'],
+    ['이준 담당', '참여자 C 담당'],
+  ])('%s -> %s', (input, expected) => {
+    expect(pseudonymiseParticipants(input, people)).toBe(expected);
+  });
+
+  it.each(['정혜정리', '혜정리 작업', 'Minsukim', '준비 완료', '기준 변경', '수준 높음', '혜정이 맡기로 함'])('leaves %s untouched (not a certain name form)', (line) => {
+    expect(pseudonymiseParticipants(line, people)).toBe(line);
+  });
+
+  it('CA P2: a bare given name that is an ordinary word stays intact ("버그 수정이 필요하고 서버 지원도")', () => {
+    const words = [
+      { handle: '김수정', label: '참여자 A' },
+      { handle: '박지원', label: '참여자 B' },
+    ];
+    expect(pseudonymiseParticipants('버그 수정이 필요하고 서버 지원도 확인해 주세요. 수정 완료.', words)).toBe('버그 수정이 필요하고 서버 지원도 확인해 주세요. 수정 완료.');
+    expect(pseudonymiseParticipants('수정님이 버그 수정을, 지원씨가 서버 지원을, 김수정 확인', words)).toBe('참여자 A이 버그 수정을, 참여자 B가 서버 지원을, 참여자 A 확인');
+  });
+
+  it('a given name two participants share becomes the plain "참여자", never the wrong person', () => {
+    const shared = [
+      { handle: '김민수', label: '참여자 A' },
+      { handle: '이민수', label: '참여자 B' },
+    ];
+    expect(pseudonymiseParticipants('민수님께 전달, 이민수 확인', shared)).toBe('참여자께 전달, 참여자 B 확인');
+  });
+
+  it('buildWorkItemReadout pseudonymises a given name + honorific inside a comment body (no name reaches the prompt)', () => {
+    const r = ok(
+      build('jira', 'item', 'summary', item([{ kind: 'comment', author: '전혜정', text: '오토업 API 혜정님에게 전달했어요. 민수 씨도 참고' }], {}, { people: ['전혜정', '김민수'] })),
+    );
+    const prompt = renderUntrustedDocumentForPrompt(r.readout);
+    expect(prompt).not.toMatch(/혜정|전혜정|민수|김민수/u);
+    expect(prompt).toContain('참여자 A에게 전달');
+    expect(prompt).toContain('참여자 B도 참고');
   });
 });

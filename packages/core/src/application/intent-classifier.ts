@@ -4,6 +4,7 @@ import type { CapabilityRouter } from './capability-router';
 import { detectReplyLanguage, isExternalActionKind } from './chat-policy';
 import type { ExternalActionKind, ExternalActionRequest } from './chat-policy';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
+import { nlLocalListTarget } from './nl-routing/action-entries';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 
 export interface IntentClassifyContext {
@@ -593,10 +594,27 @@ export function detectExternalActionRequest(text: string): ExternalActionRequest
   const clauses = isMetaFraming(requests) ? requests.split(CLAUSE_BOUNDARY).filter((c) => !isMetaFraming(c)) : [requests];
   for (const clause of clauses) {
     const kind = externalActionKindOf(clause);
-    if (kind !== undefined) return { kind };
+    if (kind === undefined) continue;
+    // Live test 3 (T2): "할 일에 주차장 일정 확인 추가해줘" names Quoky's own to-do list as the place of the add; "일정" is
+    // part of the title, not a calendar. The #256 local-list shape narrows the calendar action exactly as it narrows the
+    // calendar write grammar, but only for its own sub-clause (Codex P2): every other sub-clause is still checked, so
+    // "… 할 일에 … 추가해줘 그리고 내일 3시에 일정 추가해줘" stays a calendar action. A clause naming a calendar is never exempt.
+    if (kind === 'calendar' && nlLocalListTarget(clause) !== undefined) {
+      const remaining = clause
+        .split(CLAUSE_BOUNDARY)
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0)
+        .map((part) => ({ part, kind: externalActionKindOf(part) }))
+        .find(({ part, kind: partKind }) => partKind !== undefined && !(partKind === 'calendar' && nlLocalListTarget(part) !== undefined && !EXPLICIT_CALENDAR.test(part)));
+      if (remaining?.kind !== undefined) return { kind: remaining.kind };
+      if (!EXPLICIT_CALENDAR.test(clause)) continue;
+    }
+    return { kind };
   }
   return undefined;
 }
+
+const EXPLICIT_CALENDAR = /(캘린더|달력|calendar)/iu;
 
 /** Sentence punctuation (followed by space or the end), newlines and "and then" / "그리고" connectives. */
 const CLAUSE_BOUNDARY = /[.!?。！？;；](?=\s|$)|[;；]|\n|\s+and\s+then\s+|\s+그리고(?:\s*나서)?\s+/iu;

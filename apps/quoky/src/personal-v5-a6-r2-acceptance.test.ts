@@ -65,10 +65,38 @@ describe('A6 R2 acceptance: QUOKY_NL_ACTIONS=local, QUOKY_NL_ITEM_R2=all', () =>
     expect(slot?.labels).toEqual([1, 2, 3]);
   });
 
+  it('live test 3: the summary body itself carries the labels — list, then "3번 요약" reads the 3rd visible item', async () => {
+    // The model writes unnumbered bullets in its own order (overdue first), each starting with the item's reference.
+    h.summarizer = (prompt) =>
+      prompt.includes('EXTERNAL WORK DATA')
+        ? ['마감 순으로 정리했어요.', '- [jira:PROJ-3] 문서 정리가 가장 급해요', '- [jira:PROJ-1] 로그인 오류 확인 중', '- [jira:PROJ-2] 결제 모듈 개선 진행'].join('\n')
+        : stubSummary(prompt);
+    try {
+      const listed = await h.turn('내 Jira 이슈 보여줘');
+      expect(listed.summaries[0]?.prompt).toContain('starts with its bracketed reference exactly as listed');
+      const visible = listed.text.split('\n').filter((line) => /^\d+\. /u.test(line));
+      // Body: 1..3 in reading order; footer: the same three labels for the same items, in the same order.
+      expect(visible.slice(0, 3)).toEqual(['1. [jira:PROJ-3] 문서 정리가 가장 급해요', '2. [jira:PROJ-1] 로그인 오류 확인 중', '3. [jira:PROJ-2] 결제 모듈 개선 진행']);
+      expect(visible[3]).toMatch(/^1\. 문서 정리/u);
+      expect(visible[5]).toMatch(/^3\. 결제 모듈 개선/u);
+      expect(visible).toHaveLength(6);
+      const slot = ((await h.sessionMetadata())['quoky.lastListing'] as { byActor: Record<string, { jira?: { ids: string[]; labels: number[] } }> }).byActor[h.owner.id]?.jira;
+      expect(slot?.ids).toEqual(['PROJ-3:10003', 'PROJ-1:10001', 'PROJ-2:10002']);
+      expect(slot?.labels).toEqual([1, 2, 3]);
+      const read = await h.turn('3번 요약해줘', pick('item.summarize', { source: 'jira', ref: '#3', mode: 'summary' }));
+      // The 3rd visible item is PROJ-2 (numeric id 10002), not the 3rd item of the connector's order (PROJ-3).
+      expect(read.items).toHaveLength(1);
+      expect(read.items[0]).toContain('/rest/api/3/issue/10002?');
+      expect(read.text).toContain(`https://${R2_JIRA_HOST}/browse/PROJ-2`);
+    } finally {
+      h.summarizer = stubSummary;
+    }
+  });
+
   it('"2번 이슈 요약해줘" is exactly one GET by numeric id plus one SUMMARIZATION; no name reaches the model; history keeps the fixed note', async () => {
     await h.turn('내 Jira 이슈 보여줘');
     const read = await h.turn('2번 이슈 요약해줘', pick('item.summarize', { source: 'jira', ref: '#2', mode: 'summary' }));
-    expect(read.items).toEqual([`GET https://${R2_JIRA_HOST}/rest/api/3/issue/10002?fields=summary%2Cstatus%2Cissuetype%2Cdescription%2Ccomment%2Cupdated`]);
+    expect(read.items).toEqual([`GET https://${R2_JIRA_HOST}/rest/api/3/issue/10002?fields=summary%2Cstatus%2Cissuetype%2Cdescription%2Ccomment%2Cupdated%2Cassignee%2Creporter`]);
     expect(read.summaries).toHaveLength(1);
     const prompt = read.summaries[0]?.prompt ?? '';
     expect(prompt).toContain('결제 모듈의 타임아웃');

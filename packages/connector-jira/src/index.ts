@@ -103,8 +103,8 @@ export class JiraConnectorItemTooLargeError extends ConnectorQueryError {
 const JIRA_ITEM_REF = /^([A-Z][A-Z0-9_]{1,19}-[1-9]\d{0,9}):([1-9]\d{0,17})$/;
 const JIRA_ISSUE_KEY = /^[A-Z][A-Z0-9_]{1,19}-[1-9][0-9]{0,9}$/;
 const JIRA_NUMERIC_ID = /^[1-9][0-9]{0,17}$/;
-const ITEM_FIELDS = 'summary,status,issuetype,description,comment,updated';
-const ITEM_FIELDS_NO_COMMENT = 'summary,status,issuetype,description,updated';
+const ITEM_FIELDS = 'summary,status,issuetype,description,comment,updated,assignee,reporter';
+const ITEM_FIELDS_NO_COMMENT = 'summary,status,issuetype,description,updated,assignee,reporter';
 const ITEM_COMMENTS_KEPT = 10;
 const ATTACHMENT_PLACEHOLDER = '[첨부]';
 
@@ -369,6 +369,13 @@ export class JiraConnectorProvider implements ConnectorProvider {
       if (comment.at !== undefined) section.at = comment.at;
       comment.mentions.forEach((name) => people.add(name));
       sections.push(section);
+    }
+
+    // A6 R2 (D5, live test 3): the assignee and reporter are participants too. Their display names are never shown or
+    // sent; Core uses them only to pseudonymise every written form of their names in the text ("혜정님에게 전달").
+    for (const role of ['assignee', 'reporter'] as const) {
+      const person = fields?.[role];
+      if (isRecord(person) && typeof person.displayName === 'string' && person.displayName.trim().length > 0) people.add(this.redactToken(person.displayName.trim()));
     }
 
     const kept = comments.length;

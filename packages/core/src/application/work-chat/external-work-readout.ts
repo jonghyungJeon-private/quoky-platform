@@ -57,6 +57,11 @@ export interface ExternalWorkReadout {
   readonly truncated: boolean;
   /** Items dropped, or stripped of their excerpt, because they carried credential material. */
   readonly omittedSensitive: number;
+  /**
+   * A6 R2 (D1, live test 3): the summary of a numbered Jira / Slack list. The prompt asks the model to start each item's
+   * line with the item's bracketed reference; Quoky then numbers those lines itself ({@link numberExternalWorkSummary}).
+   */
+  readonly numbered?: true;
 }
 
 export interface BuildExternalWorkReadoutInput {
@@ -213,6 +218,9 @@ function layoutPrompt(readout: ExternalWorkReadout): PromptLayout {
     'Summary rules: use only the listed items; never invent items, status or links; do not output URLs;',
     'this lookup is read-only, so never claim that anything was created, changed, commented or sent;',
     'mention overdue and due-soon items first; answer in the language of the user message.',
+    ...(readout.numbered === true
+      ? ['Write each item you mention on its own line that starts with its bracketed reference exactly as listed (for example [jira:KEY]); never number the lines (Quoky numbers them).']
+      : []),
     request.join(' | '),
     SECTION_OPEN,
   ];
@@ -369,4 +377,78 @@ export function stripLeadingListMarkers(text: string): string {
       return match === null ? line : `- ${normalized.slice(match[0].length)}`;
     })
     .join('\n');
+}
+
+/** A bulleted line (what {@link stripLeadingListMarkers} leaves of a list line). */
+const BULLET = /^[-*•]\s+/u;/** Emphasis or code marks a model may wrap a leading key in ("**PROJ-1**", "`PROJ-1`"). */
+const LEADING_MARKS = /^(?:\*\*|__|\*|_|`)?/u;
+
+/**
+ * The ONE used item a summary line leads with, or `undefined` (CA P1 on 274bb2e0). After the bullet (and an emphasis
+ * mark), the line must START with the bracketed reference (`[jira:KEY]`) or the bare key of exactly one used item. A key
+ * or title elsewhere in the line never counts: "- 배포 준비: 로그인 오류 수정 이후 진행" names no item.
+ */
+function itemLedBy(line: string, items: readonly ExternalWorkReadoutItem[]): number | undefined {
+  const head = line.trimStart().replace(BULLET, '').replace(LEADING_MARKS, '');
+  const led = items.flatMap((item, index) => {
+    const id = item.ref.slice(item.ref.indexOf(':') + 1);
+    if (head.startsWith(`[${item.ref}]`)) return [index];
+    if (id.length === 0 || !head.startsWith(id)) return [];
+    return /^[A-Za-z0-9_-]/u.test(head.slice(id.length)) ? [] : [index];
+  });
+  return led.length === 1 ? led[0] : undefined;
+}
+
+export interface NumberedExternalWorkSummary {
+  /** The summary text: each item line that names exactly one item carries that item's shown label. */
+  readonly text: string;
+  /** The deterministic index footer, in the same order and with the same labels as the body. */
+  readonly footer: MessageBody;
+  /** `itemRef` of each delivered label, `labels[k]` is label `k + 1`; stops at the first item without one. */
+  readonly labels: readonly string[];
+}
+
+/**
+ * A6 R2 (owner decision D1, CA finding 1; live test 3): the owner's "3번" must mean the third numbered line they SEE.
+ * The model's own list markers are stripped (they are never labels). Then every item line (a list line, or a line that
+ * starts with a bracketed reference) that LEADS with the reference or bare key of exactly ONE used item, the first time
+ * that item leads a line, gets the next label `1.`, `2.`, … in reading order (a title never identifies an item), so the visible numbers always run in order. Items the body never names follow in
+ * readout order. The index footer is rendered in that same order, so body and footer show one numbering, and only the
+ * labels the footer certainly delivers number a body line or are recorded. A line naming several items, a repeat
+ * mention and a line past the delivered labels stay plain bullets.
+ */
+export function numberExternalWorkSummary(summaryText: string, readout: ExternalWorkReadout): NumberedExternalWorkSummary {
+  const used = readout.items.slice(0, countExternalWorkPromptItems(readout));
+  const lines = stripLeadingListMarkers(summaryText).split('\n');
+  const order: number[] = [];
+  const lineItem = new Map<number, number>();
+  lines.forEach((line, at) => {
+    const trimmed = line.trimStart();
+    if (!BULLET.test(trimmed) && !/^\[[a-z]+:[^\]\s]+\]/u.test(trimmed)) return;
+    const led = itemLedBy(line, used);
+    if (led === undefined || order.includes(led)) return;
+    order.push(led);
+    lineItem.set(at, led);
+  });
+  used.forEach((_item, index) => {
+    if (!order.includes(index)) order.push(index);
+  });
+  const ordered: ExternalWorkReadout = { ...readout, items: [...order.map((index) => used[index] as ExternalWorkReadoutItem), ...readout.items.slice(used.length)] };
+  const { footer, labelled } = renderExternalWorkIndexFooter(ordered);
+  const labels: string[] = [];
+  for (const item of ordered.items.slice(0, labelled)) {
+    if (item.itemRef === undefined) break;
+    labels.push(item.itemRef);
+  }
+  const text = lines
+    .map((line, at) => {
+      const item = lineItem.get(at);
+      if (item === undefined) return line;
+      const position = order.indexOf(item);
+      if (position >= labels.length) return line;
+      const trimmed = line.trimStart();
+      return `${position + 1}. ${trimmed.replace(BULLET, '')}`;
+    })
+    .join('\n');
+  return { text, footer, labels };
 }

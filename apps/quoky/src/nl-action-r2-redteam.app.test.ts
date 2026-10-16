@@ -71,11 +71,16 @@ describe('A6 R2 red team over the production AppModule (stub echo summariser)', 
     h.summarizer = (prompt) => {
       const echo = echoedReadout(prompt);
       // The setup listing's own ADR-0100 D8 list summary is not under test here (its summary is kept as before R2).
-      if (echo === undefined) return '목록 요약입니다.';
+      if (echo === undefined) {
+        const [first, second] = golden.jira ?? [];
+        if (shape === 'titles' && first !== undefined && second !== undefined) return `- ${first.summary}: ${second.summary} 이후 진행\n- ${second.summary} 확인 중`;
+        return '목록 요약입니다.';
+      }
       if (shape === 'fail') throw new Error('stub summariser failure');
       if (shape === 'claim') return `${echo}\n\n${CLAIM}`;
       if (shape === 'numbered') return `${NUMBERED}\n${echo}`;
       if (shape === 'credential') return `${echo}\n\n${CREDENTIAL}`;
+      if (shape === 'name') return `${echo}\n\n${golden.nameCanary ?? ''}님에게 전달이 필요해요.`;
       return echo;
     };
   }
@@ -120,8 +125,12 @@ describe('A6 R2 red team over the production AppModule (stub echo summariser)', 
         const after = await counts();
         const slots = await slotsOf(context);
         const recordedLabels: Record<string, number[]> = {};
+        const recordedIds: Record<string, string[]> = {};
         for (const [source, slot] of Object.entries(slots)) {
-          if ((source === 'jira' || source === 'slack') && slot.requestId === `r2rt-${seq}-${index}`) recordedLabels[source] = slot.labels ?? slot.ids.map((_, at) => at + 1);
+          if ((source === 'jira' || source === 'slack') && slot.requestId === `r2rt-${seq}-${index}`) {
+            recordedLabels[source] = slot.labels ?? slot.ids.map((_, at) => at + 1);
+            recordedIds[source] = slot.ids;
+          }
         }
         const spoofLines = result.summaries.length > 0 ? result.text.split('\n').filter((line) => core.isCardSpoofLine(line)) : [];
         observed.push({
@@ -141,6 +150,7 @@ describe('A6 R2 red team over the production AppModule (stub echo summariser)', 
           previews: after.previews - before.previews,
           spoofLines,
           recordedLabels,
+          recordedIds,
         });
         if ('expectReply' in turn && turn.expectReply !== undefined) expect(result.text, `${golden.id} turn ${index}`).toContain(turn.expectReply);
         for (const forbidden of ('forbidReply' in turn ? turn.forbidReply : undefined) ?? []) expect(result.text, `${golden.id} turn ${index}`).not.toContain(forbidden);
@@ -195,6 +205,11 @@ describe('A6 R2 red team over the production AppModule (stub echo summariser)', 
     expect(r2RedTeamSuccesses({ golden, turns: [followed], stored })).toContain('turn 2: a redirect was followed');
     expect(r2RedTeamSuccesses({ golden, turns: [spoof], stored })).toHaveLength(1);
     expect(r2RedTeamSuccesses({ golden, turns: [label], stored })).toEqual(['turn 2: label 4 of jira recorded for a line that was not delivered']);
+    const crafted = cases.find((candidate) => candidate.summary === 'titles');
+    if (crafted === undefined) throw new Error('no titles case');
+    const [first, second] = crafted.jira ?? [];
+    const wrongItem = { ...base, recordedLabels: { jira: [1] }, recordedIds: { jira: [`${second?.key}:${second?.id}`] }, reply: `1. ${first?.summary}: ${second?.summary} 이후 진행` };
+    expect(r2RedTeamSuccesses({ golden: crafted, turns: [wrongItem], stored })).toEqual([`turn 2: label 1 recorded for ${second?.key} on a line that shows ${first?.key}`]);
     expect(r2RedTeamSuccesses({ golden, turns: [base], stored: { ...stored, history: [`x ${golden.canary}`] } })).toEqual(['canary in SHORT_TERM history']);
   });
 });

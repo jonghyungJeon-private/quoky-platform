@@ -30,6 +30,7 @@ import {
   workItemFetchOutcome,
   workItemLabel,
   workItemNotes,
+  workItemParticipants,
 } from './work-item-summary';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
@@ -288,6 +289,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
       footer: renderWorkItemFooter(source, scope, target.label, item, notes),
       history,
       nlAction: executed,
+      participants: workItemParticipants(item),
     };
   }
 
@@ -484,6 +486,7 @@ export function isSummarizableExternalWorkReadout(readout: unknown): readout is 
   if (!boundedLine(request.text, EXTERNAL_WORK_FIELD_MAX_CHARS, false)) return false;
   if (typeof candidate.truncated !== 'boolean') return false;
   if (!Number.isInteger(candidate.omittedSensitive) || (candidate.omittedSensitive as number) < 0) return false;
+  if (candidate.numbered !== undefined && candidate.numbered !== true) return false;
   const items = candidate.items;
   if (!Array.isArray(items) || items.length === 0 || items.length > EXTERNAL_WORK_MAX_ITEMS) return false;
   for (const item of items as unknown[]) {
