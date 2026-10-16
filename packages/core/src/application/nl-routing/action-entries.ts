@@ -569,7 +569,12 @@ const REMINDER_NOUN_HEAD = /^(?:알림|리마인더|알람)(?:으로)?\s?/u;
 const REMINDER_CREATE_VERBS = REMINDER_CREATE_WORDS.filter((word) => REMINDER_NOUN_HEAD.test(word))
   .map((word) => word.replace(REMINDER_NOUN_HEAD, ''))
   .filter((verb) => verb.length > 0 && verb !== '해' && verb !== '줘');
-/** The closed particles a verbal noun may carry before a separate request word ("완료로 바꿔줘", "추가 좀 해줘"). */
+/**
+ * The closed standalone fillers between a verbal noun and its request word (the undo grammar's filler class, adverbs only:
+ * 좀, 좀만, 한번 / 한 번, 빨리, 다시, 제발, 지금); they carry no content and never make the request.
+ */
+const REQUEST_FILLERS: ReadonlySet<string> = new Set(['좀', '좀만', '한번', '빨리', '빨리요', '다시', '제발', '제발요', '지금']);
+/** The closed particles a verbal noun may carry before a separate request word ("완료로 바꿔줘", "추가좀 해줘"). */
 const VERB_PARTICLE = /^(?:으로|로|을|를|좀)?$/u;
 
 interface LocalListShape {
@@ -622,8 +627,17 @@ function isRequestedVerbAt(clause: string, index: number, verb: string): boolean
   const word = clause.slice(start, end);
   if (nlIsRequestForm(word)) return true;
   if (!VERB_PARTICLE.test(clause.slice(index + verb.length, end))) return false;
-  const next = clause.slice(end).trim().split(' ')[0] ?? '';
-  if (next.length === 0) return clause.slice(index + verb.length, end).length === 0;
+  // Closed standalone fillers before the request word are skipped ("추가 좀 해줘", "취소 한 번 해줘", "등록 빨리 해줘").
+  const following = clause.slice(end).trim().split(' ').filter((token) => token.length > 0);
+  let at = 0;
+  while (at < following.length) {
+    const token = following[at] ?? '';
+    if (REQUEST_FILLERS.has(token)) at += 1;
+    else if (token === '한' && following[at + 1] === '번') at += 2;
+    else break;
+  }
+  const next = following[at];
+  if (next === undefined) return clause.slice(index + verb.length, end).length === 0;
   return nlIsRequestForm(next);
 }
 

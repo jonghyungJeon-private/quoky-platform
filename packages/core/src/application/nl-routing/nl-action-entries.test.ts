@@ -649,6 +649,13 @@ describe('live test 2 (A09, C01, D02): the local-list request shape', () => {
     expect(nlLocalListTarget('"알림 취소" 문구 정리 할 일에 추가해줘')).toBe('todo');
     expect(nlLocalListTarget('완료로 바꿔줘 할 일 목록에서')).toBeUndefined();
     expect(nlLocalListTarget('보고서 할 일 완료로 바꿔줘')).toBe('todo');
+    // Codex P2: closed standalone fillers before the request word are skipped (the spaced form).
+    expect(nlLocalListTarget("'시안 반영' 할 일에 추가 좀 해줘")).toBe('todo');
+    expect(nlLocalListTarget('보고서 할 일 취소 좀만 해줘')).toBe('todo');
+    expect(nlLocalListTarget('보고서 할 일 완료 한 번 해줘')).toBe('todo');
+    expect(nlLocalListTarget('세무사 통화 알림으로 등록 빨리 해줘')).toBe('reminder');
+    expect(nlLocalListTarget('할 일에 보고서 추가 좀')).toBe('todo');
+    expect(nlLocalListTarget('할 일에 추가 좀 한 회의 취소해줘')).toBeUndefined();
     const pasted = '할 일에 추가해줘 라고 적힌 문구 반영해줘';
     expect(nlLocalListTarget(pasted, [{ start: 0, end: '할 일에 추가해줘'.length }])).toBeUndefined();
   });
