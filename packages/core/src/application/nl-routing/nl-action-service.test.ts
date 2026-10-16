@@ -554,6 +554,17 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
     }
   });
 
+  it('A6 R2 review (CA): a contracted quotative inside a content span is the content, outside it still refuses the write', async () => {
+    const run = async (text: string, entryId: string, args: Record<string, unknown>) => {
+      const w = world({ level: 'local', script: () => out(entryId, args) });
+      return w.decide(text, { now: at(1) });
+    };
+    expect((await run('내일 9시에 엄마가 전화하랬던 거 알려줘', 'reminder.create', { body: '엄마가 전화하랬던 거', when: '내일 9시' })).kind).toBe('execute');
+    expect((await run('할 일에 아기 달래는데 필요한 장난감 사기 추가해줘', 'todo.add', { title: '아기 달래는데 필요한 장난감 사기' })).kind).toBe('execute');
+    expect((await run('팀장이 할 일에 보고서 쓰기 추가하래', 'todo.add', { title: '보고서 쓰기' })).kind).not.toBe('execute');
+    expect((await run('팀장이 할 일에 보고서 쓰기 추가하랬는데', 'todo.add', { title: '보고서 쓰기' })).kind).not.toBe('execute');
+  });
+
   it('Codex P1 (round 2): reference payloads, terse payloads, negations, adnominals, glued nouns and match spans never write', async () => {
     const run = async (text: string, entryId: string, args: Record<string, unknown>) => {
       const w = world({ level: 'local', script: () => out(entryId, args) });

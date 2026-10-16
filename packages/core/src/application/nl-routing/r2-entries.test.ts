@@ -211,7 +211,7 @@ describe('selection prompt v47', () => {
   });
 });
 
-describe('A6 R2 (v47): the ITEM_READ request-shape veto (reported, example, joke, retraction)', () => {
+describe('A6 R2 (v47): the ITEM_READ veto is a relayed request only (quoted command, Korean quotative or hearsay)', () => {
   const grounding = (text: string): string => {
     const prepared = prepareSelectionInput(text);
     return 'skip' in prepared ? '' : prepared.groundingText;
@@ -221,7 +221,7 @@ describe('A6 R2 (v47): the ITEM_READ request-shape veto (reported, example, joke
   const positive = (expect: unknown): boolean =>
     typeof expect === 'object' && expect !== null && (expect as { entryId?: string }).entryId === 'item.summarize' && (expect as { outcome?: string }).outcome !== 'none';
 
-  it('every over-block example of both review rounds reads (with and without a question mark)', () => {
+  it('every over-block example of every review round reads (with and without a question mark)', () => {
     for (const text of [
       // round 1 (Codex P2, CA P2)
       'Summarize email #1 that has the invoice',
@@ -234,10 +234,16 @@ describe('A6 R2 (v47): the ITEM_READ request-shape veto (reported, example, joke
       '내용 많으면 요약만 해줘',
       '3번 메일 요약해줘, 길면 짧게',
       '요약 안 해도 되고 원문 보여줘',
-      // round 2 (Codex)
+      // round 2 (Codex, CA)
       'Show the full text of email #1 that has the invoice',
       '1번 메일 원문 보여줘, 요약하지 마',
       'Show the full text of email #1, not a summary',
+      '3번 요약했어',
+      // round 3 (Codex)
+      'Summarize email #1, not the attachments',
+      '1번 메일 원문 보여줘, 첨부파일 말고',
+      'Summarize email #1 that John asked me to review',
+      '1번 메일 농담 부분까지 요약해줘',
       // plain question forms
       '그 슬랙 메시지 내용이 뭐야?',
       '3번 티켓 뭐라고 적혀 있어?',
@@ -247,26 +253,34 @@ describe('A6 R2 (v47): the ITEM_READ request-shape veto (reported, example, joke
     }
   });
 
-  it('refuses reported, quoted, example, joke and retracted requests', () => {
-    expect(nlItemReadVeto(grounding('동료가 "슬랙 3번 요약해줘"라고 했어'))).toBe('reported');
-    expect(nlItemReadVeto(grounding('동료가 "3번 요약해줘"라고 했는데'))).toBe('reported');
-    expect(nlItemReadVeto(grounding('팀장이 요약해달래'))).toBe('reported');
-    expect(nlItemReadVeto(grounding('김 대리가 3번 요약해 달랬는데'))).toBe('reported');
-    expect(nlItemReadVeto(grounding('민수가 2번 메일 요약해 달래'))).toBe('reported');
-    expect(nlItemReadVeto(grounding('예를 들어 3번 메일 요약해줘'))).toBe('example');
-    expect(nlItemReadVeto(grounding('농담이야 3번 메일 요약해줘'))).toBe('joke');
-    expect(nlItemReadVeto(grounding('3번 요약해줘 아 아니다'))).toBe('retraction');
-    expect(nlItemReadVeto(grounding('3번 요약해줘 아 취소'))).toBe('retraction');
-    expect(nlItemReadVeto(grounding('이슈 요약은 이제 그만해도 돼'))).toBe('retraction');
+  it('refuses a quoted command and a Korean quotative or hearsay relay', () => {
+    for (const text of [
+      '동료가 "슬랙 3번 요약해줘"라고 했어',
+      '동료가 "3번 요약해줘"라고 했는데',
+      '팀장이 요약해달래',
+      '김 대리가 3번 요약해 달랬는데',
+      '민수가 2번 메일 요약해 달래',
+      '팀장이 3번 메일 요약하라고 했어',
+    ]) {
+      expect(nlItemReadVeto(grounding(text)), text).toBe('reported');
+    }
   });
 
-  it('an own request appended to a reported one does not read the quoted target: the whole message is chat', () => {
+  it('an own request appended to a relayed one does not read the relayed target: the whole message is chat', () => {
     expect(nlItemReadVeto(grounding('팀장이 3번 요약해달래. 요약해줘'))).toBe('reported');
     expect(nlItemReadVeto(grounding('요약해줘. 동료가 "3번 요약해줘"라고 했거든'))).toBe('reported');
   });
 
-  it('negation, past and report statements stay with the selector (no Core veto)', () => {
-    for (const text of ['2번 이슈는 요약하지 마', '3번 요약했어', '어제 그 이슈 요약해서 보냈어', 'I already read that jira issue', "don't summarize that Slack message"]) {
+  it('example, joke, retraction, negation, past and English relay forms stay with the selector (no Core veto)', () => {
+    for (const text of [
+      '예를 들어 3번 메일 요약해줘',
+      '농담이야 3번 메일 요약해줘',
+      '3번 요약해줘 아 아니다',
+      '2번 이슈는 요약하지 마',
+      '어제 그 이슈 요약해서 보냈어',
+      'I already read that jira issue',
+      "don't summarize that Slack message",
+    ]) {
       expect(nlItemReadVeto(grounding(text)), text).toBeUndefined();
     }
   });
@@ -293,7 +307,7 @@ describe('A6 R2 (v47): the ITEM_READ request-shape veto (reported, example, joke
   it('settles these R2 negatives deterministically (the rest stay with the selector and Core)', () => {
     const settled = load('nl-action.r2.v1.json')
       .filter((c) => !positive(c.expect) && nlItemReadVeto(grounding(c.text)) !== undefined)
-      .map((c) => `${c.id.replace('a6r2-negative-', '')}:${nlItemReadVeto(grounding(c.text))}`);
-    expect(settled).toEqual(['005:retraction', '039:reported', '040:reported', '042:reported', '043:reported', '070:reported']);
+      .map((c) => c.id.replace('a6r2-negative-', ''));
+    expect(settled).toEqual(['039', '040', '042', '043', '070']);
   });
 });

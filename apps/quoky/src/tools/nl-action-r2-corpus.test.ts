@@ -108,7 +108,7 @@ describe('the A6 R2 corpus (agent-drafted, awaiting the owner batch approval)', 
   });
 
   it('pins the known gap: of the six selector-only negatives, Core vetoes only the reported 070 (v47 ITEM_READ veto)', async () => {
-    // Negation and past statements stay with the selector (the v47 veto covers reported, example, joke and retraction only):
+    // Negation and past statements stay with the selector (the v47 veto covers a relayed request only: a quoted command or a Korean quotative or hearsay):
     // Core executes them if the selector mistakes them; the reported command 070 is refused whatever the selector says.
     const selectorOnly = cases.filter((golden) => golden.selectorOnly === true);
     expect(selectorOnly).toHaveLength(6);

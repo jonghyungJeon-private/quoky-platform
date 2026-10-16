@@ -368,6 +368,51 @@ function isConditionalWord(word: string): boolean {
 }
 
 /**
+ * The Korean quotative and contracted quotative forms in the frame (…하라고 했어, …해 달래, …하랬는데, "…해줘 했더니"). A
+ * contracted quotative inside a content span is the content's own, like the lexical classes ("엄마가 전화하랬던 거" as a
+ * reminder body, "아기 달래는데" in a title); on the span's last word or outside every span it counts (CA review).
+ */
+function koreanQuotative(text: string, regions: ReadonlyArray<readonly [number, number]> = []): boolean {
+  return QUOTED_REQUEST_KO.test(text) || QUOTATIVE_KO.test(text) || hitOutside(CONTRACTED_QUOTATIVE_KO, text, regions);
+}
+
+/**
+ * A quoted command that is not this selection's content (a whole-message quote, a translation object): any command word,
+ * a nominal one included ("2번 완료"). The selected content span itself is a quoted request only in a finite request form
+ * ("보고서 추가 검토" is content, Codex P2).
+ */
+function quotedCommand(text: string, actionWords: readonly string[]): boolean {
+  for (const match of text.matchAll(QUOTED_SEGMENT)) {
+    const inner = match.slice(1).find((group) => group !== undefined) ?? '';
+    if (requestsSomething(inner, actionWords) || isQuotedRequest(inner, actionWords)) return true;
+  }
+  return false;
+}
+
+/** Hearsay ends a clause: -(으)ㄴ대 / -는대 / -았대 ("민수가 2번 완료한대"), -ㄹ 거래. */
+function hearsayEnding(clauses: readonly string[]): boolean {
+  for (const clause of clauses) {
+    const words = wordsOf(clause);
+    const word = words.at(-1) ?? '';
+    const before = Array.from(word.replace(HEARSAY_TAIL, '')).at(-1);
+    if (HEARSAY_TAIL.test(word) && Array.from(word).length >= 2 && (finalConsonant(before) === 4 || before === '는' || isPastSyllable(before))) return true;
+    if (/^거래(?:요)?$/u.test(word) && finalConsonant(Array.from(words.at(-2) ?? '').at(-1)) === 8) return true;
+  }
+  return false;
+}
+
+/**
+ * A6 R2 ITEM_READ veto (final narrowing): whether the owner relays someone else's request instead of making one: a quoted
+ * span holding a request form, or a Korean quotative or hearsay ending (…해 달래, …하랬는데, …하라고 했어, …한대). The same
+ * grammar as the LOCAL_WRITE `reported` class, without the English "asked me to" form (for a read it describes the item:
+ * "email #1 that John asked me to review"). Example, joke, retraction, negation and statements stay with the selector.
+ */
+export function nlRelaysRequest(frame: string, actionWords: readonly string[]): boolean {
+  const text = normalizeForMatch(frame).replace(/[’‘`´]/gu, "'");
+  return quotedCommand(text, actionWords) || koreanQuotative(text) || hearsayEnding(clausesOf(text));
+}
+
+/**
  * The veto class of a LOCAL_WRITE frame, or `undefined` when the frame is a request shape. `frame` is the owner's prose
  * without the content spans that a quote pair or a colon form running to the end fully encloses, or that end the message
  * after the request verb (an undelimited span otherwise stays in the frame, so it cannot hide "…추가하지 마").
@@ -385,28 +430,15 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
     if (NEGATION_EN.test(span) || own.some((clause, index) => negatesKo(clause, actionWords, wordsOf(own[index - 1] ?? '').at(-1) ?? ''))) return 'negation';
     if (own.length > 1 && RETRACTION_FINAL.test(wordsOf(own.at(-1) ?? '').at(-1) ?? '')) return 'retraction';
   }
-  if (QUOTED_REQUEST_KO.test(text) || QUOTATIVE_KO.test(text) || CONTRACTED_QUOTATIVE_KO.test(text) || REPORTED_EN.test(text)) return 'reported';
-  // A quoted command that is not this selection's content (a whole-message quote, a translation object): any command word,
-  // a nominal one included ("2번 완료"). The selected content span itself is a quoted request only in a finite request form
-  // ("보고서 추가 검토" is content, Codex P2).
-  for (const match of text.matchAll(QUOTED_SEGMENT)) {
-    const inner = match.slice(1).find((group) => group !== undefined) ?? '';
-    if (requestsSomething(inner, actionWords) || isQuotedRequest(inner, actionWords)) return 'reported';
-  }
+  if (koreanQuotative(text, spanRegions(text, spans.content ?? [])) || REPORTED_EN.test(text)) return 'reported';
+  if (quotedCommand(text, actionWords)) return 'reported';
   for (const span of [...(spans.content ?? []), ...(spans.quoted ?? [])]) {
     for (const match of normalizeForMatch(span).matchAll(QUOTED_SEGMENT)) if (isQuotedRequest(match.slice(1).find((group) => group !== undefined) ?? '', actionWords)) return 'reported';
   }
   for (const span of spans.quoted ?? []) if (isQuotedRequest(normalizeForMatch(span), actionWords)) return 'reported';
 
   const clauses = clausesOf(text);
-  // Hearsay ends a clause: -(으)ㄴ대 / -는대 / -았대 ("민수가 2번 완료한대"), -ㄹ 거래.
-  for (const clause of clauses) {
-    const words = wordsOf(clause);
-    const word = words.at(-1) ?? '';
-    const before = Array.from(word.replace(HEARSAY_TAIL, '')).at(-1);
-    if (HEARSAY_TAIL.test(word) && Array.from(word).length >= 2 && (finalConsonant(before) === 4 || before === '는' || isPastSyllable(before))) return 'reported';
-    if (/^거래(?:요)?$/u.test(word) && finalConsonant(Array.from(words.at(-2) ?? '').at(-1)) === 8) return 'reported';
-  }
+  if (hearsayEnding(clauses)) return 'reported';
 
   const lastOf = (index: number): string => wordsOf(clauses[index] ?? '').at(-1) ?? '';
   const negated = (index: number): boolean => negatesKo(clauses[index] ?? '', actionWords, lastOf(index - 1)) || verbNegated(clauses[index + 1] ?? '', actionWords, lastOf(index));
@@ -542,22 +574,6 @@ const IMPERATIVE_TAIL = /(?:해|해요|려|려요|죠|합시다|십시오|봐|�
 export function nlIsRequestForm(raw: string): boolean {
   const word = raw.replace(WORD_NOISE, '').replace(/요{2,}$/u, '요');
   return word.length > 0 && !isAdnominal(word) && (REQUEST_WORD_KO.test(word) || IMPERATIVE_TAIL.test(word));
-}
-
-/**
- * The retraction class on its own (A6 R2 ITEM_READ veto): a request followed by a later clause that only takes it back
- * ("3번 요약해줘 아 아니다", "… 아 취소", "…, never mind"): the last clause negates or retracts (the negators, the
- * retraction words) and makes no request of its own, and an earlier clause makes one. A later clause that names an action
- * or a mode ("원문 보여줘, 요약하지 마", "…, not a summary") is no retraction. `nlRequestVeto` reports such a message as
- * `negation` (its first class), so a caller that does not veto negation reads the retraction here. Grammar only.
- */
-export function nlRequestRetracted(text: string, actionWords: readonly string[]): boolean {
-  const clauses = clausesOf(normalizeForMatch(text).replace(/[’‘`´]/gu, "'"));
-  if (clauses.length < 2) return false;
-  const last = clauses.at(-1) ?? '';
-  const lastWord = wordsOf(last).at(-1) ?? '';
-  const takesBack = NEGATION_KO.test(last) || NEGATION_EN.test(last) || RETRACTION_FINAL.test(lastWord) || RETRACTION_ANYWHERE.test(last) || /never mind|forget it/u.test(last);
-  return takesBack && !requestsSomething(last, actionWords) && clauses.slice(0, -1).some((clause) => requestsSomething(clause, actionWords));
 }
 
 /** Whether `text` makes a request of its own (a request word, an action word as a command, an English request lead). */

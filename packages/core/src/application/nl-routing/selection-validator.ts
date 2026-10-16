@@ -33,7 +33,7 @@ import {
 } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
-import { nlFrameIsElliptical, nlRequestEndsBefore, nlRequestRetracted, nlRequestVeto, type NlRequestVeto } from './request-shape';
+import { nlFrameIsElliptical, nlRelaysRequest, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
 import { nlFrameHasActionInflection, nlGarbledActionWord, type NlActionVocabulary } from './garbled-action';
 import {
   isNlRangeSymbol,
@@ -210,30 +210,21 @@ function spanEnclosure(prose: string, span: string): 'quote' | 'colon' | 'after-
   return toEnd && nlRequestEndsBefore(before, NL_ACTION_WORDS) ? 'after-request' : undefined;
 }
 
-/**
- * A6 R2 (v47): the request-shape classes that also veto an `ITEM_READ` (`item.summarize`), narrowed after review to the
- * classes that say the owner is not asking at all: reported or quoted speech (hearsay, relay, a quoted command), an example
- * or joke frame, and a retraction. Negation, past or report statements, questions, conditionals and wishes stay with the
- * selector: for a read they are as often a mode choice, a description of the item or a polite request ("원문 보여줘, 요약하지
- * 마", "email #1 that has the invoice", "길면 요약해줘", "요약해주시면 감사하겠습니다"), and the selector answered none on
- * every negation negative of the v45 and v46 gates. Each class only turns a read into `none` (chat).
- */
-const ITEM_READ_VETOES: ReadonlySet<NlRequestVeto> = new Set<NlRequestVeto>(['reported', 'example', 'joke', 'retraction']);
 /** The words that name a read of one item (Core's mode and content vocabulary) beside every action word. */
 const ITEM_READ_ACTION_WORDS: readonly string[] = [...NL_ACTION_WORDS, ...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS];
 
 /**
- * A6 R2 (v47): the veto class of an `ITEM_READ` request, or `undefined` when it may read. Read on the owner's prose with
- * pasted structures removed (`item.summarize` has no content spans). `nlRequestVeto` reports its FIRST class, so a
- * reported or quoted command anywhere vetoes the whole message, also with an own request appended ("팀장이 3번
- * 요약해달래. 요약해줘" is chat: the quoted target is never read on the owner's behalf). A retraction that the first class
- * reports as `negation` ("3번 요약해줘 아 아니다") is read by `nlRequestRetracted`.
+ * A6 R2 (v47, final narrowing after review): the veto of an `ITEM_READ` request, or `undefined` when it may read. ONLY a
+ * relayed request (`nlRelaysRequest`): a quoted span holding a request form, or a Korean quotative or hearsay ending on the
+ * owner's clause (…해 달래, …하랬는데, …하라고 했어). Example, joke, retraction, negation, statements, questions,
+ * conditionals, wishes and the English "asked me to" stay with the selector: for a read their trigger words as often
+ * describe the item or choose a mode ("email #1 that John asked me to review", "농담 부분까지 요약해줘", "…, not the
+ * attachments"). A relayed request anywhere vetoes the whole message, also with an own request appended ("팀장이 3번
+ * 요약해달래. 요약해줘" is chat: the relayed target is never read on the owner's behalf). It only turns a read into `none`.
  */
-export function nlItemReadVeto(groundingText: string): NlRequestVeto | undefined {
+export function nlItemReadVeto(groundingText: string): 'reported' | undefined {
   const frame = withoutStructures(groundingText).normalize('NFC').replace(/\s+/g, ' ');
-  const veto = nlRequestVeto(frame, [], ITEM_READ_ACTION_WORDS);
-  if (veto !== undefined && ITEM_READ_VETOES.has(veto)) return veto;
-  return nlRequestRetracted(frame, ITEM_READ_ACTION_WORDS) ? 'retraction' : undefined;
+  return nlRelaysRequest(frame, ITEM_READ_ACTION_WORDS) ? 'reported' : undefined;
 }
 
 /** A6-D3a amendment 1: the request shape of a LOCAL_WRITE (see {@link requestShapeOf}). */
