@@ -47,6 +47,8 @@ import {
   parseReminderMessage,
   isNlActionEntryId,
   isNlCatalogEntryId,
+  mergeItemSummarizeEntries,
+  nlItemSummarizeEntry,
   isNlWave1EntryId,
   parseSelectionOutput,
   pendingQuestionRecord,
@@ -66,6 +68,8 @@ import {
   type NlSelectionDecision,
   type Session,
 } from '@quoky/core';
+// A6 R2: `quoky.lastRead` is not (yet) re-exported by the package index.
+import { LAST_READ_METADATA_KEY, withLastRead } from '../../../../packages/core/src/application/nl-routing/last-read';
 
 export const NL_ACTION_EVAL_GATE = Object.freeze({
   overall: 0.95,
@@ -80,6 +84,7 @@ export const NL_ACTION_EVAL_GATE = Object.freeze({
 const GOLDEN_DIR = resolve(__dirname, '../../../../packages/core/src/application/golden');
 export const NL_ACTION_CORPUS_PATH = resolve(GOLDEN_DIR, 'nl-action.v1.json');
 export const NL_ACTION_SEED_PATH = resolve(GOLDEN_DIR, 'nl-action.seed.v1.json');
+export const NL_ACTION_R2_CORPUS_PATH = resolve(GOLDEN_DIR, 'nl-action.r2.v1.json');
 export const NL_INTENT_CORPUS_PATH = resolve(GOLDEN_DIR, 'nl-intent.v1.json');
 
 const FAMILIES = ['live', 'paraphrase', 'reference', 'negative', 'undo', 'mode'] as const;
@@ -96,7 +101,7 @@ const REASONS = [
  * counts only these, never a refusal (input guard, cap, kill switch, payload or time rule; CA review).
  */
 const CLARIFICATION_REASONS: ReadonlySet<string> = new Set(['garbled-action', 'out-of-range', 'expired', 'ambiguous', 'stale', 'other-source', 'none', 'conflict', 'content-mode', 'missing-arg', 'invalid-arg', 'ungrounded', 'no-action-word']);
-const SOURCES = ['todo', 'reminder', 'mail', 'drive'] as const;
+const SOURCES = ['todo', 'reminder', 'mail', 'drive', 'jira', 'slack'] as const;
 type Source = (typeof SOURCES)[number];
 
 export interface NlActionFixture {
@@ -120,6 +125,8 @@ export interface NlActionFixture {
   readonly replyTo?: { readonly kind: 'listing'; readonly source: Source; readonly ageMinutes?: number } | { readonly kind: 'echo'; readonly matchesLastAction: boolean };
   readonly items?: unknown;
   readonly contentMode?: 'summary' | 'full';
+  /** A6 R2 (D9): the content-free `quoky.lastRead` record, `ageMinutes` before the turn. */
+  readonly lastRead?: { readonly source: 'jira' | 'slack'; readonly id: string; readonly label?: number; readonly ageMinutes: number };
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
 }
 
@@ -148,12 +155,19 @@ export interface NlActionCase {
   readonly expect: 'none' | NlActionExpect;
   readonly batch?: string;
   readonly note?: string;
+  /** A6 R2: a `none` negative that no deterministic layer vetoes; only the selector answering `none` keeps it safe (known gap). */
+  readonly selectorOnly?: true;
 }
 
 export interface NlActionCorpus {
   readonly version: number;
   readonly promptVersion?: string;
   readonly cases: readonly NlActionCase[];
+}
+
+/** The A6 R2 (Jira / Slack `item.summarize`) agent-drafted corpus. */
+export function loadR2ActionCorpus(): { corpus: NlActionCorpus; sha256: string; files: string[] } {
+  return loadActionCorpus([NL_ACTION_R2_CORPUS_PATH]);
 }
 
 /** The drafted corpus when present, plus the R0 seed (ids are kept distinct by the schema check). */
@@ -174,6 +188,10 @@ export function loadActionCorpus(paths: readonly string[] = [NL_ACTION_CORPUS_PA
 const ALL_READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
 const ALL_ACTIONS: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined);
 export const NL_ACTION_EVAL_ENTRIES: readonly NlCatalogEntry[] = [...ALL_READS, ...ALL_ACTIONS];
+/** The offered entries with the A6 R2 `item.summarize` (mail, Drive, Jira and Slack). */
+export const NL_ACTION_R2_EVAL_ENTRIES: readonly NlCatalogEntry[] = NL_ACTION_EVAL_ENTRIES.map((entry) =>
+  entry.id === 'item.summarize' ? mergeItemSummarizeEntries([entry, nlItemSummarizeEntry(['jira', 'slack'])]) : entry,
+);
 const SPAN_ARGS = ['title', 'match', 'body', 'when'];
 const TARGET_ENTRIES = new Set(['todo.complete', 'todo.cancel', 'reminder.cancel', 'item.summarize', 'action.undo']);
 
@@ -192,12 +210,12 @@ export function isRequestFormCost(golden: NlActionCase): boolean {
   return !result.ok && (result.reason === 'not-request' || (result.reason === 'ungrounded' && result.arg === 'action'));
 }
 
-export function validateActionCorpus(corpus: NlActionCorpus): string[] {
+export function validateActionCorpus(corpus: NlActionCorpus, evalEntries: readonly NlCatalogEntry[] = NL_ACTION_EVAL_ENTRIES): string[] {
   const problems: string[] = [];
   const ids = new Set<string>();
   for (const golden of corpus.cases) {
     const where = typeof golden.id === 'string' ? golden.id : '(no id)';
-    if (typeof golden.id !== 'string' || !/^a6-[a-z0-9.-]+$/.test(golden.id)) problems.push(`${where}: id`);
+    if (typeof golden.id !== 'string' || !/^a6(?:r2)?-[a-z0-9.-]+$/.test(golden.id)) problems.push(`${where}: id`);
     if (ids.has(golden.id)) problems.push(`${where}: duplicate id`);
     ids.add(golden.id);
     if (!(FAMILIES as readonly string[]).includes(golden.family)) problems.push(`${where}: family`);
@@ -211,6 +229,7 @@ export function validateActionCorpus(corpus: NlActionCorpus): string[] {
     }
     const last = golden.fixture?.lastAction;
     if (last !== undefined && (!isNlActionEntryId(last.entryId) || (last.source !== 'todo' && last.source !== 'reminder'))) problems.push(`${where}: lastAction`);
+    if (golden.selectorOnly !== undefined && (golden.selectorOnly !== true || golden.expect !== 'none')) problems.push(`${where}: selectorOnly`);
     if (golden.expect === 'none') continue;
     const expect = golden.expect;
     if (!isNlCatalogEntryId(expect.entryId)) problems.push(`${where}: expect entry`);
@@ -223,7 +242,7 @@ export function validateActionCorpus(corpus: NlActionCorpus): string[] {
     // A gold selection must be what the validator accepts from this text (grounded spans and refs, closed values).
     if (isNlCatalogEntryId(expect.entryId) && !('skip' in prepareSelectionInput(golden.text))) {
       const prepared = prepareSelectionInput(golden.text) as { groundingText: string };
-      const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
+      const offered = new Map(evalEntries.map((entry) => [entry.id, entry] as const));
       const result = validateSelection({ entryId: expect.entryId, args: expect.args }, { offered, groundingText: prepared.groundingText, now: '2026-10-14T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true, ...(golden.fixture?.prior !== undefined ? { previousArgs: golden.fixture.prior.args } : {}) });
       const refusedByRule = expect.outcome !== 'execute' && ['deictic-payload', 'time-in-title', 'time-outside-when', 'bulk', 'credential'].includes(expect.reason ?? '');
       // An `acceptsAnyQuestion` gold scores the question, not its args (owner D12 batch 2026-10-15).
@@ -240,6 +259,13 @@ function canonical(args: NlArgs): string {
   return JSON.stringify(Object.entries(args).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
+/** The fixture id of label `n` when a listing carries no `ids` (Jira `KEY:numericId`, Slack `channelId:ts`). */
+function defaultItemId(source: Source, label: number): string {
+  if (source === 'jira') return `PROJ-${label}:${10000 + label}`;
+  if (source === 'slack') return `C0123456:17000000${String(label).padStart(2, '0')}.000100`;
+  return `${source}-${label}`;
+}
+
 // ── fixtures → the session and actor Core reads ────────────────────────────────────────────────────────────────
 
 const ACTOR_ID = 'eval-owner';
@@ -253,7 +279,7 @@ export function fixtureWorld(fixture: NlActionFixture | undefined, now: IsoTimes
   // `lastWritten` names the youngest listing explicitly: it is written last at its age (minus a millisecond tie-break).
   for (const slot of listings) {
     const age = fixture?.lastWritten === slot.source ? Math.max(0, slot.ageMinutes - 0.001) : slot.ageMinutes;
-    const items = slot.labels.map((label, index) => ({ label, id: slot.ids?.[index] ?? `${slot.source}-${label}` }));
+    const items = slot.labels.map((label, index) => ({ label, id: slot.ids?.[index] ?? defaultItemId(slot.source, label) }));
     const requestId = `req-${slot.source}`;
     listing = withLabelledListing(listing, ACTOR_ID, slot.source, items, minus(age), 'listing', requestId);
     if (fixture?.replyTo?.kind === 'listing' && fixture.replyTo.source === slot.source) {
@@ -290,6 +316,14 @@ export function fixtureWorld(fixture: NlActionFixture | undefined, now: IsoTimes
     );
     if (fixture?.replyTo?.kind === 'echo') replyToMessageId = fixture.replyTo.matchesLastAction ? (echo[0] ?? 'echo-current') : 'echo-older';
   }
+  if (fixture?.lastRead !== undefined) {
+    metadata[LAST_READ_METADATA_KEY] = withLastRead(
+      undefined,
+      ACTOR_ID,
+      { source: fixture.lastRead.source, id: fixture.lastRead.id, ...(fixture.lastRead.label !== undefined ? { label: fixture.lastRead.label } : {}), at: minus(fixture.lastRead.ageMinutes) },
+      minus(fixture.lastRead.ageMinutes),
+    );
+  }
   const pending = fixture?.pending;
   if (pending !== undefined && pending.kind === 'action-target' && pending.entryId !== undefined && isNlActionEntryId(pending.entryId) && pending.candidates !== undefined) {
     const source = pending.entryId.startsWith('todo') ? 'todo' : pending.entryId.startsWith('reminder') ? 'reminder' : 'mail';
@@ -314,7 +348,7 @@ export async function decideActionCase(
   golden: Pick<NlActionCase, 'text' | 'fixture'>,
   provider: AiProvider,
   now: IsoTimestamp,
-  options: { readonly timeoutMs?: number } = {},
+  options: { readonly timeoutMs?: number; readonly itemR2?: 'off' | 'shadow' | 'jira' | 'all' } = {},
 ): Promise<{ readonly decision: NlSelectionDecision; readonly audit?: Record<string, unknown> }> {
   const world = fixtureWorld(golden.fixture, now);
   let session = world.session;
@@ -349,7 +383,7 @@ export async function decideActionCase(
     timeZone: 'Asia/Seoul',
     logger,
     timeoutMs: options.timeoutMs ?? NL_SELECTION_TIMEOUT_MS,
-    actions: { level: 'local', killSwitch: new NlActionSwitch({ actors, logger }) },
+    actions: { level: 'local', killSwitch: new NlActionSwitch({ actors, logger }), ...(options.itemR2 !== undefined ? { itemR2: options.itemR2 } : {}) },
   });
   const decision = await service.decide({
     // The owner's DM: the action corpus measures the selector and Core's decision, not the channel gate.
@@ -359,7 +393,7 @@ export async function decideActionCase(
     session,
     actor,
     now,
-    entries: NL_ACTION_EVAL_ENTRIES,
+    entries: options.itemR2 !== undefined && options.itemR2 !== 'off' ? NL_ACTION_R2_EVAL_ENTRIES : NL_ACTION_EVAL_ENTRIES,
     route: 'chat',
     chatProviderId: provider.family ?? provider.id,
     chatProviderLocality: executionLocalityOf(provider),
