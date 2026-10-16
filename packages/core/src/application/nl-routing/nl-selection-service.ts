@@ -92,6 +92,7 @@ import {
   readPendingQuestion,
   sanitizeStoredSelection,
   withInterpretationPreference,
+  withPendingQuestionReplies,
   type LastSelection,
   type PendingQuestion,
   type StoredSelection,
@@ -384,6 +385,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
   private readonly actionCaps: NlActionCaps;
   /** A6: echoes and listings waiting for their delivery receipt (by inbound message). */
   private readonly echoReceipts = new Map<string, PendingEcho>();
+  /**
+   * Elliptical continuation (Codex P1): the asking turns of open confirmation questions, keyed by session and inbound
+   * message id, until their delivery binds the question's platform ids to the pending record (bounded like the echoes).
+   */
+  private readonly questionReceipts = new Map<string, { readonly actorId: string; readonly at: IsoTimestamp }>();
   /** The last shadow run (tests await it; production never does). */
   lastShadowRun: Promise<void> = Promise.resolve();
   /** W1: aborts every background selection on shutdown (`stopBackground`). */
@@ -847,6 +853,19 @@ export class NlSelectionService implements TurnDeliveryObserver {
    */
   async observeDelivery(turn: DeliveredTurn): Promise<void> {
     if (this.deictic !== undefined) await this.deictic.observeDelivery(turn);
+    try {
+      const questionKey = questionReceiptKey(turn.sessionId, turn.messageId);
+      const question = this.questionReceipts.get(questionKey);
+      if (question !== undefined) {
+        this.questionReceipts.delete(questionKey);
+        if (turn.status === 'RESPONDED' && turn.platformMessageIds.length > 0) {
+          const ids = turn.platformMessageIds;
+          await this.deps.sessions.updateMetadataEntry({ id: turn.sessionId }, NL_PENDING_METADATA_KEY, (current) => withPendingQuestionReplies(current, question.actorId, question.at, ids));
+        }
+      }
+    } catch {
+      this.log('warn', 'nl_action.receipt_persist_failed', {});
+    }
     try {
       const key = echoKey(turn.messageId, turn.context);
       const pending = this.echoReceipts.get(key);
@@ -1442,6 +1461,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
         confirm: true,
       }),
     );
+    // Its delivery binds the question's platform ids, so a reply to the question itself is told apart (Codex P1).
+    if (turn.turnId !== undefined) this.awaitQuestion(turn.session.id, turn.turnId, turn.actor.id, turn.now);
     // One next-turn question per session: the confirmation supersedes any R5a draft, so "응" can only mean this.
     if (this.deictic !== undefined) await this.deictic.clearDraft(turn.session, turn.actor.id, turn.now, 'continuation-confirm-asked');
     return this.actionAnswer(audit, renderContinuationConfirm(entryId, source, label, language, continued));
@@ -1638,21 +1659,29 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // this confirmation does so; every other A6 question keeps its one-turn lock.
       const yesNo = pending.confirm === true ? interpretContinuationConfirmReply(answerText) : 'none';
       if (yesNo === 'deny') return { kind: 'ask', text: renderCancelled(language) };
-      if (pending.confirm === true && offered.has('action.undo') && (turn.direct === true || turn.surfaceEnforced === true) && nlHasExplicitUndoWord(answerText) && nlUndoIsDirect(answerText)) {
+      const undoInput = pending.confirm === true && offered.has('action.undo') && (turn.direct === true || turn.surfaceEnforced === true) ? this.prepare(turn, undefined) : undefined;
+      if (undoInput !== undefined && !('skip' in undoInput) && nlHasExplicitUndoWord(undoInput.groundingText) && nlUndoIsDirect(undoInput.groundingText)) {
         await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => undefined);
-        const { replyTo: _replyTo, ...reference } = this.referenceState(turn);
+        // Codex P1: exactly the selected undo's inputs (the turn's own prepared text, the full reference state with its reply
+        // target, the DM state, the shadow level). The one difference: a platform reply POSITIVELY identified as this
+        // confirmation question itself (its delivered ids) counts as no reply target, like a plain turn; a reply to any other
+        // message keeps its target, so `resolveUndo` refuses it as an echo mismatch exactly as on the selected path.
+        const full = this.referenceState(turn);
+        const toQuestion = turn.replyToMessageId !== undefined && (pending.questionReplyIds ?? []).includes(turn.replyToMessageId);
+        const { replyTo: _replyTo, ...withoutReply } = full;
+        const reference: NlReferenceState = toQuestion ? withoutReply : full;
         const base = { entryId: 'action.undo', risk: 'LOCAL_WRITE' as NlCatalogRisk, refKind: 'none' as const, latencyMs: 0, ...correlationOf(turn) };
-        const shadow = this.actionLevelValue === 'shadow';
-        // Codex P1: the same request-shape validation as a selected undo (`nlUndoIsDirect` reads the last clause only, so
-        // "농담이야. 되돌려줘" and "되돌리지 마. 되돌려줘" must meet the joke and negation vetoes). A vetoed reply has closed
-        // the question and is chat, exactly as on the selected path; nothing is written.
-        const validated = validateSelection({ entryId: 'action.undo', args: {} }, this.validationContext(turn, answerText, undefined, true));
+        const shadow = this.shadowed('action.undo', {});
+        // The same request-shape validation as a selected undo (`nlUndoIsDirect` reads the last clause only, so "농담이야.
+        // 되돌려줘" and "되돌리지 마. 되돌려줘" meet the joke and negation vetoes). A vetoed reply has closed the question and is
+        // chat, exactly as on the selected path; nothing is written.
+        const validated = validateSelection({ entryId: 'action.undo', args: {} }, this.validationContext(turn, undoInput.groundingText, undefined, true));
         if (!validated.ok) {
           const audit: NlActionAudit = { ...base, resolution: 'none', result: shadow ? 'shadow' : 'refused', reason: validated.reason === 'not-request' ? `not-request:${validated.arg ?? 'unknown'}` : validated.reason };
           this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
           return { kind: 'none' };
         }
-        return this.routeValidatedUndo(turn, answerText, reference, base, language, 0, shadow);
+        return this.routeValidatedUndo(turn, undoInput.groundingText, reference, base, language, 0, shadow);
       }
       const choice: ReturnType<typeof resolveLabelChoice> = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveLabelChoice(answerText, labels);
       if (choice.kind === 'none') return undefined;
@@ -1825,6 +1854,22 @@ export class NlSelectionService implements TurnDeliveryObserver {
       this.log('info', NL_ACTION_LOG_EVENT, { ...nlActionLogFields({ ...decided, result, ...(action?.reason !== undefined ? { reason: action.reason } : {}) }), ...fetch });
     }
     if (echo || listed !== undefined) this.awaitEcho(session.id, actor.id, message, now, echo, listed);
+  }
+
+  private awaitQuestion(sessionId: string, messageId: string, actorId: string, at: IsoTimestamp): void {
+    const nowMs = Date.parse(at);
+    for (const [key, pending] of this.questionReceipts) {
+      const age = nowMs - Date.parse(pending.at);
+      if (!Number.isFinite(age) || age < 0 || age >= ECHO_RECEIPT_TTL_MS) this.questionReceipts.delete(key);
+    }
+    const key = questionReceiptKey(sessionId, messageId);
+    this.questionReceipts.delete(key);
+    this.questionReceipts.set(key, { actorId, at });
+    while (this.questionReceipts.size > ECHO_RECEIPTS_MAX) {
+      const oldest = this.questionReceipts.keys().next().value;
+      if (oldest === undefined) break;
+      this.questionReceipts.delete(oldest);
+    }
   }
 
   private awaitEcho(sessionId: string, actorId: string, message: { readonly id: string; readonly context: ConversationContext }, now: IsoTimestamp, echo: boolean, listing?: ListingSource): void {
@@ -2371,6 +2416,10 @@ function modeLabel(mode: string, language: 'ko' | 'en'): string {
 }
 
 /** A6: one inbound message (platform message ids are unique only per conversation). */
+function questionReceiptKey(sessionId: string, messageId: string): string {
+  return JSON.stringify([sessionId, messageId]);
+}
+
 function echoKey(messageId: string, context: { readonly platform: string; readonly channelId: string }): string {
   return JSON.stringify([context.platform, context.channelId, messageId]);
 }

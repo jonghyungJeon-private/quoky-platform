@@ -1102,6 +1102,44 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
     for (const text of ['취소', '취소해', '취소해줘', '아니 취소', '아니요, 됐어', 'no, cancel']) expect(interpretContinuationConfirmReply(text), text).toBe('deny');
   });
 
+  it('Codex P1: the undo shortcut takes the selected undo\'s reply target; only a reply to the question itself is a plain turn', async () => {
+    const echoed = withLastAction(undefined, 'owner', { entryId: 'todo.complete', source: 'todo', itemId: 'todo-1', label: 1, at: at(0), undoable: true, undone: false, echoReplyIds: ['echo-1'] }, at(0));
+    const asked = async () => {
+      const w = world({ level: 'local', script: ['{"entryId":"todo.complete","args":{"ref":"#3"},"ambiguity":"CLEAR","alternatives":[]}', '{"entryId":"action.undo","args":{},"ambiguity":"CLEAR","alternatives":[]}'] });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      w.setMetadata(LAST_ACTION_METADATA_KEY, echoed);
+      expect(await w.decide('이번엔 3번', { now: at(1) })).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+      // The question is delivered as platform message q-1 (the asking turn is turn-1 of sess-1).
+      await w.service.observeDelivery({ messageId: 'turn-1', context: { platform: 'discord', channelId: 'dm-1' } as never, sessionId: 'sess-1', status: 'RESPONDED', platformMessageIds: ['q-1'] });
+      expect(readPendingQuestion(w.session(), 'owner', at(2))).toMatchObject({ confirm: true, questionReplyIds: ['q-1'] });
+      return w;
+    };
+    const reply = (w: World, replyToMessageId: string) =>
+      w.service.answerActionPending({ text: '되돌려줘', attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(2), entries: ALL, route: 'chat', direct: true, replyToMessageId, turnId: 'turn-1', pending: readPendingQuestion(w.session(), 'owner', at(2)) ?? null });
+
+    // A reply to an unrelated message: echo-mismatch, nothing undone (as on the selected path).
+    const unrelated = await asked();
+    const refused = await reply(unrelated, 'some-other-message');
+    expect(refused?.kind).toBe('ask');
+    expect(actionLogs(unrelated).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'echo-mismatch' });
+    // A reply to the confirmation question itself: a plain turn, so the undo of #1 runs.
+    const toQuestion = await asked();
+    expect(await reply(toQuestion, 'q-1')).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' }, undo: { entryId: 'todo.complete' } } });
+    // A reply to the original action receipt: the same result as the selected path.
+    const toEcho = await asked();
+    const shortcut = await reply(toEcho, 'echo-1');
+    const normal = world({ level: 'local', script: () => out('action.undo') });
+    normal.setMetadata(LAST_ACTION_METADATA_KEY, echoed);
+    const selected = await normal.decide('되돌려줘', { now: at(2), replyTo: 'echo-1' });
+    expect(shortcut).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' } } });
+    expect(shortcut).toEqual(selected);
+    // And the unrelated reply on the selected path refuses the same way.
+    const normalUnrelated = world({ level: 'local', script: () => out('action.undo') });
+    normalUnrelated.setMetadata(LAST_ACTION_METADATA_KEY, echoed);
+    expect((await normalUnrelated.decide('되돌려줘', { now: at(2), replyTo: 'some-other-message' })).kind).toBe('ask');
+    expect(actionLogs(normalUnrelated).at(-1)?.fields).toMatchObject({ reason: 'echo-mismatch' });
+  });
+
   it('a bare reference reads the same way: "3번" / "3번도" after completing 1 ask; with no last action they stay chat as before', async () => {
     for (const text of ['3번', '3번도', '그럼 3번']) {
       const { decision } = await run(text);
