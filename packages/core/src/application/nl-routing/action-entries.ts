@@ -866,11 +866,22 @@ const reminderCancel: NlCatalogEntry = {
     en: 'Cancel ONE of the owner\'s scheduled reminders now.',
     ko: '예정된 알림 하나를 지금 취소.',
   },
-  args: [{ name: 'ref', kind: 'ref', required: true, description: REF_DESCRIPTION }],
+  // Owner decision C (2026-10-17, A6-D1 amendment): like the to-do transitions, a reminder is named by `ref` or by the
+  // owner's own words (`match`), exactly one of them. The handler resolves a match against the scheduled list only.
+  args: [
+    { name: 'ref', kind: 'ref', description: REF_DESCRIPTION },
+    {
+      name: 'match',
+      kind: 'span',
+      maxChars: NL_SPAN_MAX_CHARS,
+      description: 'Instead of ref: the reminder text the owner wrote, verbatim, without the verb and 알림. Exactly one of ref and match.',
+    },
+  ],
   usage: { ko: '"알림 N 취소"', en: '"알림 N 취소"' },
   staleCommands: [/알림\s?(?:\d+|N|번호)\s?(?:번\s?)?취소/u],
-  check(_args: NlArgs, groundingText: string): NlEntryCheckFailure | undefined {
-    return isNlBulkRequest(groundingText) ? { reason: 'bulk' } : undefined;
+  check(args: NlArgs, groundingText: string): NlEntryCheckFailure | undefined {
+    if (isNlBulkRequest(groundingText)) return { reason: 'bulk' };
+    return exactlyOneTarget(args);
   },
 };
 
@@ -937,7 +948,7 @@ const R2_REF_DESCRIPTION = `${REF_DESCRIPTION} For a Jira issue only: the issue 
 
 /**
  * A6 R2: the `item.summarize` entry for the offered sources. Without Jira or Slack it is the R1 entry itself (byte for
- * byte, so the A6 prompt stays nl-select.v42). With them, the `source` enum and the description list only the offered
+ * byte, so the A6 prompt stays nl-select.v44). With them, the `source` enum and the description list only the offered
  * R2 sources (mail and Drive stay as in R1), `scope: thread` is valid for mail and Slack, and `ref` may be a Jira key.
  */
 export function nlItemSummarizeEntry(sources: Iterable<string>): NlCatalogEntry {

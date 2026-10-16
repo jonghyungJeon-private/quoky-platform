@@ -22559,7 +22559,7 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
    | `todo.complete` | LOCAL_WRITE | `ref: ref`, or `match: span` | Exactly one `ACTIVE` to-do (A6-D2). `match` must equal exactly one open title, otherwise a question | `transitionTodo(COMPLETED)` given the resolved **id** |
    | `todo.cancel` (only if owner decision 3 says yes) | LOCAL_WRITE | as `todo.complete` | as `todo.complete` | `transitionTodo(CANCELED)` given the resolved id |
    | `reminder.create` | LOCAL_WRITE | `body: span`, `when: span` | `body` is a payload span. `when` is parsed by the **deterministic reminder time grammar** (the ADR-0101 parser and clarify reasons, BRF-2 for event-relative spans). The model never produces a time. The time grammar also runs over the whole message: a time expression outside `when`, or inside `body`, leads to a question | The existing `ReminderConversationService` create |
-   | `reminder.cancel` | LOCAL_WRITE | `ref: ref` | Exactly one `SCHEDULED` reminder (A6-D2, including the display-number rule). No bulk requests | The existing cancel, given the resolved id |
+   | `reminder.cancel` | LOCAL_WRITE | `ref: ref` *(amended 2026-10-17, owner decision C: `ref` or `match: span`, exactly one)* | Exactly one `SCHEDULED` reminder (A6-D2, including the display-number rule). No bulk requests | The existing cancel, given the resolved id |
    | `action.undo` | LOCAL_WRITE | none | Only Quoky's fresh `lastAction` of this (Session, Actor), not yet undone (A6-D3) | A compensating local write |
    | `item.summarize` | ITEM_READ | `source: enum` (`mail`, `drive`; `jira`, `slack` from R2), `ref: ref`, `scope: enum` (`item` \| `thread`, mail only) | The owner must ask for the content. A closed content-request class (요약, 정리, 내용, 무슨 얘기, summarize, what … say) is a `flagGrounding` (owner decision 5). `source` must equal the most recent listing's source (A6-D2). `thread` needs 스레드/thread | The existing summary commands (`N번 메일 요약`, the GML-2 thread summary, `N번 문서 요약` with DRV-2b sheets) given the resolved id |
    | `slack.post` | EXTERNAL_WRITE | `channel: span`, `text: span` (1–4000) | `channel` is grounded in **this turn**, normalised to `#name` and present in `QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS`. `text` is a payload span | A `channel-post` `ConnectorWriteDraft` through `connectorWriteFlow` only (preview with the A6-D4 banner, then CRITICAL approval, "승인" and "Slack 게시 실행") |
@@ -27350,3 +27350,32 @@ requires. No live configuration was changed by this record (`QUOKY_NL_ACTIONS` s
 - **Scope.** A record only: no configuration, code default or `.env.local` value is changed here. Each switch is still a
   Strict runtime step (a restart) taken by the operator within the approved R2 live test; the R2 promotion steps of
   "ADR-0120 amendment A6 R2" (D6, D10) are unchanged.
+
+### C. `reminder.cancel` by title (owner decision; amends A6-D1)
+
+- **Amends A6-D1** (the closed action entries): `reminder.cancel` takes `match` beside `ref`, like `todo.complete` /
+  `todo.cancel`: a span (the reminder text the owner wrote, verbatim, `NL_SPAN_MAX_CHARS`), exactly one of `ref` and `match`
+  (`invalid-arg` for both, `missing-arg` `ref` for neither). "치과 예약 확인 알림 취소해줘" → `{match: "치과 예약 확인"}`.
+- **Resolution (the handler, `ReminderConversationService.actionCancelByTitle`).** The match is folded like a to-do match
+  (NFC, case, whitespace) and compared with the body of each reminder on the scheduled list (`listActiveByActor`, what "알림
+  목록" shows). A delivered, failed or cancelled reminder is never on that list, so it never matches; a brief has no body.
+  - exactly one: the ordinary cancel of that `#N`, with the receipt and the undo hint; "되돌려줘" schedules the same
+    reminder (same id and `#N`) again (ratification record A, unchanged);
+  - several: "어느 알림인가요? 번호로 답해 주세요. 아직 아무것도 바꾸지 않았어요." with each candidate under its stable
+    `#N` (at most 10); the `asked` receipt makes it the open A6 question and merges the labels into the reminder listing,
+    so "15번" cancels exactly that one;
+  - none: "그 내용의 예정된 알림을 찾지 못했어요. 아무것도 바꾸지 않았어요. …" (receipt `refused` / `not-found`).
+- **Kept unchanged:** span grounding (the match must be the owner's verbatim words of this turn), every structural veto of
+  A6-D3a amendment 1, the source cross-check (the rest of the message must not name another list), the garbled-word rule,
+  DM-only, the caps and the kill switch. Core never resolves a match itself (no new Core lookup, port or migration).
+- **Prompt.** The A6 prompt changes only by the catalog lines of `reminder.cancel` (`ref` loses "(required)", a `match` line
+  is added): **`nl-select.v44`** (from v42; v43 is the R2 prompt). The R2 prompt carries the same catalog, so it moves to
+  **`nl-select.v45`** (= the v43 R2 lines on top of v44). The read prompt stays **`nl-select.v39` byte for byte** (pinned).
+  A prompt change needs the D12 model gate before any promotion; no model call was made here.
+- **Corpus** (`nl-action.v1.json`, agent-drafted, pending the owner's D12 batch): `a6-paraphrase-reminder.cancel-901` …
+  `-903` (execute), `-904` (live kit F09, an ask, see below), `a6-negative-none-187` / `-188` (negated or questioned cancel
+  by title, `none`). The request-shape lure set now also tries `reminder.cancel` with every word run as a `match`: no
+  negative of the corpus moved from "refused for every lure" to "selector-dependent".
+- **Known residual.** A reminder text that itself holds another source noun ("경비 승인 메일 확인 알림 취소 부탁드려요", kit
+  F09) asks which list, because the A6 R1 whole-prose source rule (two source nouns in the message ask) is unchanged; it
+  writes nothing. Relaxing that rule for nouns inside the match span is a separate decision.

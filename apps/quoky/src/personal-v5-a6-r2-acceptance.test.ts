@@ -282,7 +282,7 @@ describe('A6 R2 inertness: QUOKY_NL_ITEM_R2=off keeps every list and record as b
     expect(read.selects.length).toBeLessThanOrEqual(1);
   });
 
-  it('the selector prompt offers no R2 source (the v42 A6 prompt)', async () => {
+  it('the selector prompt offers no R2 source (the v44 A6 prompt)', async () => {
     const turn = await h.turn('아무 말', none);
     const prompt = turn.selects[0]?.prompt ?? '';
     expect(prompt).not.toContain('Jira issue or Slack message');
@@ -327,7 +327,7 @@ describe('A6 R2 live state: QUOKY_NL_ACTIONS=shadow with QUOKY_NL_ITEM_R2=off', 
     expect((await h.sessionMetadata())['quoky.lastRead']).toBeUndefined();
   });
 
-  it('the selector prompt stays the v42 A6 prompt (no R2 source) and R1 shadow decisions are unchanged', async () => {
+  it('the selector prompt stays the v44 A6 prompt (no R2 source) and R1 shadow decisions are unchanged', async () => {
     for (const text of ['아무 말', '오늘 일정 알려줘']) {
       const turn = await h.turn(text, none);
       const prompt = turn.selects[0]?.prompt ?? '';

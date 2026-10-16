@@ -237,7 +237,7 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', 'nl-select.v24', 'nl-select.v25', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
     expect(new Set(keys).size).toBe(9);
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v39');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v42');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v44');
     // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
@@ -960,5 +960,40 @@ describe('A6-D3a amendment 1, garbled action word addendum (owner decision 2026-
       w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3, 4]));
       expect(await w.decide(text, { now: at(1) }), text).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { id } } });
     }
+  });
+});
+
+describe('owner decision C (2026-10-17, A6-D1 amendment): reminder.cancel by title (`match`)', () => {
+  const run = async (text: string, args: Record<string, unknown>, options: { direct?: boolean } = {}) => {
+    const w = world({ level: 'local', script: () => out('reminder.cancel', args) });
+    const decision = await w.decide(text, { now: at(1), ...(options.direct === false ? { direct: false } : {}) });
+    return { w, decision };
+  };
+
+  it('a match the owner wrote verbatim executes; the handler resolves it against the scheduled list (no target from Core)', async () => {
+    const { decision } = await run('치과 예약 확인 알림 취소해줘', { match: '치과 예약 확인' });
+    expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.cancel', args: { match: '치과 예약 확인' } } });
+    expect(decision.kind === 'execute' && decision.command.target).toBeUndefined();
+    expect((await run("'세무사 통화' 알림 꺼줘", { match: '세무사 통화' })).decision.kind).toBe('execute');
+  });
+
+  it('counter-cases: span grounding, exactly one target, the vetoes, another source and DM-only still hold', async () => {
+    // Not verbatim in the message, or both a ref and a match: never executes.
+    expect((await run('치과 예약 확인 알림 취소해줘', { match: '치과 예약 확인하기' })).decision.kind).not.toBe('execute');
+    expect((await run('치과 예약 확인 알림 13번 취소해줘', { match: '치과 예약 확인', ref: '#13' })).decision.kind).not.toBe('execute');
+    // A negation, a question or a past statement is chat.
+    for (const [text, veto] of [['치과 예약 확인 알림 취소하지 마', 'negation'], ['치과 예약 확인 알림 취소할까?', 'question'], ['치과 예약 확인 알림 취소했어', 'statement']]) {
+      const { decision, w } = await run(text, { match: '치과 예약 확인' });
+      expect(decision.kind, text).toBe('none');
+      expect(actionLogs(w).at(-1)?.fields, text).toMatchObject({ result: 'refused', reason: `not-request:${veto}` });
+    }
+    // The rest of the message names the to-do list: the source question, nothing written.
+    const other = await run('치과 예약 확인 할 일 말고 알림 취소해줘', { match: '치과 예약 확인' });
+    expect(other.decision.kind).toBe('ask');
+    expect(actionLogs(other.w).at(-1)?.fields).toMatchObject({ result: 'asked', reason: 'other-source' });
+    // Outside a DM (ADR-0122 enforcement off): refused before any resolution.
+    const channel = await run('치과 예약 확인 알림 취소해줘', { match: '치과 예약 확인' }, { direct: false });
+    expect(channel.decision).toMatchObject({ kind: 'ask', text: '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.' });
+    expect(actionLogs(channel.w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'dm-only' });
   });
 });

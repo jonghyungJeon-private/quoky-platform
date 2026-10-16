@@ -146,6 +146,56 @@ describe('A6 reminder actions', () => {
   });
 });
 
+describe('owner decision C (2026-10-17, A6-D1 amendment): reminder.cancel by title', () => {
+  const byTitle = (match: string) => cmd('reminder.cancel', { match });
+
+  it('exactly one scheduled match is canceled with the receipt and the undo hint; "되돌려줘" schedules the SAME #N again', async () => {
+    const { conversation, repository } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '치과 예약 확인', when: '내일 9시' }), base());
+    await conversation.handleAction(cmd('reminder.create', { body: '세무사 통화', when: '내일 10시' }), base());
+    const canceled = await conversation.handleAction(byTitle('치과  예약 확인'), base());
+    expect(text(canceled)).toBe('알림 #13 취소했어요: \'치과 예약 확인\' · 되돌리려면 "되돌려줘" (10분 안)');
+    expect(canceled.action).toMatchObject({ entryId: 'reminder.cancel', result: 'executed', itemId: 'rem-1', label: 13, undoable: true });
+    expect(repository.rows.map((row) => row.status)).toEqual([ReminderStatus.CANCELED, ReminderStatus.SCHEDULED]);
+    const undo = await conversation.handleAction(cmd('action.undo', {}, { target: { source: 'reminder', id: 'rem-1', label: 13 }, undo: { entryId: 'reminder.cancel', version: canceled.action?.version as string } }), base());
+    expect(undo.action).toMatchObject({ result: 'undone', undoOf: 'reminder.cancel', itemId: 'rem-1', label: 13 });
+    expect(repository.rows).toHaveLength(2);
+    expect(repository.rows[0]).toMatchObject({ id: 'rem-1', displayNo: 13, status: ReminderStatus.SCHEDULED });
+  });
+
+  it('several scheduled matches ask with each candidate under its #N; nothing changes', async () => {
+    const { conversation, repository } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '약 먹기', when: '내일 9시' }), base());
+    await conversation.handleAction(cmd('reminder.create', { body: '세무사 통화', when: '내일 10시' }), base());
+    await conversation.handleAction(cmd('reminder.create', { body: '약 먹기', when: '매일 저녁 8시' }), base());
+    const asked = await conversation.handleAction(byTitle('약 먹기'), base());
+    expect(text(asked)).toContain('어느 알림인가요? 번호로 답해 주세요. 아직 아무것도 바꾸지 않았어요.');
+    expect(text(asked)).toContain('#13 10월 15일(목) 오전 9:00 약 먹기');
+    expect(text(asked)).toContain('#15 ');
+    expect(text(asked)).not.toContain('#14');
+    expect(asked.action).toEqual({ entryId: 'reminder.cancel', result: 'asked', source: 'reminder', reason: 'ambiguous', candidates: [{ label: 13, id: 'rem-1' }, { label: 15, id: 'rem-3' }] });
+    expect(repository.rows.every((row) => row.status === ReminderStatus.SCHEDULED)).toBe(true);
+  });
+
+  it('counter-cases: delivered or cancelled reminders never match and a part of a body is no match; nothing changes', async () => {
+    const { conversation, repository } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '치과 예약 확인', when: '내일 9시' }), base());
+    await conversation.handleAction(cmd('reminder.create', { body: '세무사 통화', when: '내일 10시' }), base());
+    await conversation.handleAction(cmd('reminder.create', { body: '서류 제출', when: '내일 11시' }), base());
+    repository.rows[0] = { ...(repository.rows[0] as Reminder), status: ReminderStatus.COMPLETED };
+    repository.rows[1] = cancelReminder(repository.rows[1] as Reminder, NOW);
+    const before = JSON.stringify(repository.rows);
+    for (const match of ['치과 예약 확인', '세무사 통화', '서류', '서류 제출하기']) {
+      const result = await conversation.handleAction(byTitle(match), base());
+      expect(text(result), match).toBe('그 내용의 예정된 알림을 찾지 못했어요. 아무것도 바꾸지 않았어요. "알림 목록"에서 번호를 확인해 주세요.');
+      expect(result.action, match).toEqual({ entryId: 'reminder.cancel', result: 'refused', source: 'reminder', reason: 'not-found' });
+    }
+    expect(JSON.stringify(repository.rows)).toBe(before);
+    // The one scheduled match still cancels.
+    expect((await conversation.handleAction(byTitle('서류 제출'), base())).action).toMatchObject({ result: 'executed', label: 15 });
+  });
+});
+
 describe('reminder inverses (ratification record A)', () => {
   it('reminder.create → cancel it; a one-shot that already fired → "이미 알림이 나갔어요"', async () => {
     const { conversation, repository } = service();

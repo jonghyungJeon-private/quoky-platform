@@ -14427,6 +14427,133 @@
    "text": "세금 서류 챙기기 할 일 있었나?",
    "expect": "none",
    "note": "owner decision A counter-case (2026-10-17): the bare \"<title> 할 일\" shape as a question is chat [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-901",
+   "family": "paraphrase",
+   "text": "치과 예약 확인 알림 취소해줘",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "치과 예약 확인",
+       "status": "SCHEDULED"
+      },
+      {
+       "id": "reminder-12",
+       "displayNo": 12,
+       "body": "세무사 통화",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "치과 예약 확인"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision C (2026-10-17, A6-D1 amendment): reminder.cancel by title; the handler resolves the match against the scheduled list [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-902",
+   "family": "paraphrase",
+   "text": "'세무사 통화' 알림 꺼줘",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "치과 예약 확인",
+       "status": "SCHEDULED"
+      },
+      {
+       "id": "reminder-12",
+       "displayNo": 12,
+       "body": "세무사 통화",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "세무사 통화"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision C (2026-10-17): a quoted reminder text [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-903",
+   "family": "paraphrase",
+   "text": "cancel the call mom reminder",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "call mom",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "call mom"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision C (2026-10-17): English [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-904",
+   "family": "paraphrase",
+   "text": "번거롭게 해서 미안한데, 경비 승인 메일 확인 알림 취소 부탁드려요",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "경비 승인 메일 확인",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "경비 승인 메일 확인"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "note": "owner decision C (2026-10-17): live kit F09. Known residual: the reminder text holds another source noun (메일), so the A6 R1 whole-prose source rule (unchanged) asks which list; nothing is written [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-187",
+   "family": "negative",
+   "text": "치과 예약 확인 알림 취소하지 마",
+   "expect": "none",
+   "note": "owner decision C counter-case (2026-10-17): a negated cancel by title is chat [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-188",
+   "family": "negative",
+   "text": "치과 예약 확인 알림 취소됐어?",
+   "expect": "none",
+   "note": "owner decision C counter-case (2026-10-17): a question about a cancel by title is chat [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
   }
  ]
 }

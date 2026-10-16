@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 owner decisions of 2026-10-17 (A–E)
+
+- **Changed (C, A6-D1 amendment).** `reminder.cancel` takes `match` beside `ref`: "치과 예약 확인 알림 취소해줘" cancels the one
+  scheduled reminder with that text (receipt and undo hint; "되돌려줘" restores the same `#N`), several ask by `#N`, none
+  says so. Delivered or cancelled reminders never match. A6 prompt `nl-select.v44` (R2 prompt `nl-select.v45`); the read
+  prompt stays `nl-select.v39` byte for byte.
+- **Decided (A, B).** A bare "<title> 할 일" executes `todo.add` (duplicate guard unchanged); `QUOKY_WORK_SUMMARY_ENABLED`
+  is on only for the R2 live tests (record only).
+
 ## Unreleased — A6 live test 1 negative captures (2026-10-16)
 
 - **Fixed (garbled word, H09).** A bare garbled action word that ends the message ("사무실 청소 할 일 츄가") is in the Korean

@@ -492,6 +492,24 @@ export class ReminderReplyComposer {
     return `${withObjectParticle(`알림 #${displayNo}`)} 찾지 못했어요. "알림 목록"에서 번호를 확인해 주세요.`;
   }
 
+  /** Owner decision C (2026-10-17): a reminder `match` that names no scheduled reminder; nothing changed. */
+  cancelMatchNotFound(): string {
+    return '그 내용의 예정된 알림을 찾지 못했어요. 아무것도 바꾸지 않았어요. "알림 목록"에서 번호를 확인해 주세요.';
+  }
+
+  /**
+   * Owner decision C (2026-10-17): several scheduled reminders carry the owner's words. Each candidate under its stable
+   * `#N`, its next time and its body (an event title stays an untrusted span); nothing changed.
+   */
+  actionWhich(candidates: readonly Reminder[], now: IsoTimestamp): MessageBody {
+    const rows = candidates.map((reminder) => {
+      const next = reminder.nextFireAt ?? reminder.occurrenceAt;
+      const prefix = `#${reminder.displayNo} ${next === undefined ? '' : `${formatAbsolute(next, reminder.timeZone, now)} `}`;
+      return reminder.event !== undefined ? messageBody(prefix, eventTitlePart(reminder.body)) : `${prefix}${preview(reminder.body, LIST_BODY_PREVIEW_CHARS)}`;
+    });
+    return joinBody(['어느 알림인가요? 번호로 답해 주세요. 아직 아무것도 바꾸지 않았어요.', ...rows]);
+  }
+
   cancelAlreadyFinal(reminder: Reminder): string {
     switch (reminder.status) {
       case ReminderStatus.COMPLETED:

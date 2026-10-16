@@ -363,7 +363,8 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     const out: Array<{ entryId: string; args: Record<string, string> }> = [{ entryId: 'action.undo', args: {} }];
     for (const run of runs) {
       out.push({ entryId: 'todo.add', args: { title: run } });
-      for (const entryId of ['todo.complete', 'todo.cancel']) out.push({ entryId, args: { match: run } });
+      // Owner decision C (2026-10-17): reminder.cancel takes a `match` too.
+      for (const entryId of ['todo.complete', 'todo.cancel', 'reminder.cancel']) out.push({ entryId, args: { match: run } });
       if (containsNlTimeExpression(run)) for (const body of runs) if (body !== run && !body.includes(run) && !run.includes(body)) out.push({ entryId: 'reminder.create', args: { body, when: run } });
     }
     for (const ref of refs) for (const entryId of ['todo.complete', 'todo.cancel', 'reminder.cancel']) out.push({ entryId, args: { ref } });
@@ -526,6 +527,8 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-183',
     'a6-negative-none-185',
     'a6-negative-none-186', // owner decision A counter-case: the bare "<title> 할 일" as a question
+    'a6-negative-none-187', // owner decision C counter-cases: a negated / questioned cancel by title
+    'a6-negative-none-188',
     'a6-seed-neg-001',
     'a6-seed-neg-002',
     'a6-seed-neg-003',
