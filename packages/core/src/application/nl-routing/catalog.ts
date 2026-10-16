@@ -303,6 +303,11 @@ export interface NlSelectedCommand {
   readonly target?: NlItemTarget;
   /** A6 `action.undo` only: the action the inverse undoes. */
   readonly undo?: NlUndoSpec;
+  /**
+   * A6 R5a: the owner approved a preview of exactly this write, which already named any open to-do with the same title
+   * ("같은 제목의 할 일이 이미 있어요"); the add then runs as approved instead of refusing the duplicate.
+   */
+  readonly previewApproved?: true;
 }
 
 /**

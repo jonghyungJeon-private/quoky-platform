@@ -27190,7 +27190,14 @@ Three local writes executed that the kit expected not to (all cleaned). Fixes, e
   and answers "같은 제목의 할 일이 이미 있어요 (N번): "…" · 아무것도 바꾸지 않았어요." (receipt `refused`, reason
   `duplicate`, not undoable): the same check and wording as the R5a preview's duplicate note. The number is the label
   of the fresh listing the owner saw (#233; Codex P1), the title alone when that listing never showed the item, and the
-  live number only without a listing, so a following "N번" never resolves to another item. The anchored command
+  live number only without a listing, so a following "N번" never resolves to another item. An add approved through an R5a
+  preview (which already showed the duplicate note) runs as approved (`NlSelectedCommand.previewApproved`).
+- **Write echo labels (Codex P1, same review).** While a to-do listing is fresh, an A6 write's echo and receipt never use
+  the live open-list number, which the receipt's merge would pin onto a label the owner saw for another item (list A=1,
+  B=2, C=3; complete A; "D 추가" echoed as 3 re-pointed 3 from C to D). `todo.add` and the undo's reopen show the item's
+  listing label or append it as the next unused label (max + 1); a title-matched complete / cancel shows the listing label
+  or no number; a ref-resolved complete / cancel already carries the listing label. Without a fresh listing the live
+  number stays. Reminders were audited and need nothing: every echo, receipt and listing uses the stable `displayNo`. The anchored command
   ("할 일 추가: …", the owner's explicit form) still adds a second item. The red-team cap positive control now reaches the
   cap with distinct titles; the corpus cap case (one title repeated) writes once.
 

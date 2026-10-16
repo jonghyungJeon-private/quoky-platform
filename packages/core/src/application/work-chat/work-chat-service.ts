@@ -9,7 +9,7 @@ import {
 import { ActionWriteStoppedError, WorkItemReopenError } from '../../domain';
 import type { ActionWriteCondition, Actor, MessageBody, MessageContent, ResourceRef, WorkItem } from '../../domain';
 import type { NlActionReceipt, NlListingReceipt, NlSelectedCommand } from '../nl-routing/catalog';
-import type { ListingSlot } from '../last-listing';
+import { LISTING_MAX_ITEMS, type ListingSlot } from '../last-listing';
 import { renderActionStopped } from '../nl-routing/nl-action-policy';
 import {
   CONNECTOR_QUERY_MAX_LIMIT,
@@ -323,6 +323,20 @@ function receiptLabel(listing: ListingSlot | undefined, id: string, liveNo?: num
   if (own !== undefined) return own.label;
   if (liveNo === undefined || listing.items.some((entry) => entry.label === liveNo)) return undefined;
   return liveNo;
+}
+
+/**
+ * The number an A6 write's echo shows and its receipt records for `id` (A6-D2 amendment, #233; Codex P1). With a fresh
+ * listing: the label the owner saw, else, when `extend`, the next unused label (max + 1) that the receipt appends to that
+ * listing, else none. Never the live number while a listing is fresh: the receipt merges into the listing and a label the
+ * owner saw would silently re-point to another item. Without a listing: the live open-list number, as before.
+ */
+function writeLabel(listing: ListingSlot | undefined, id: string, liveNo: number | undefined, extend: boolean): number | undefined {
+  if (listing === undefined) return liveNo;
+  const own = listing.items.find((entry) => entry.id === id);
+  if (own !== undefined) return own.label;
+  if (!extend || listing.items.length >= LISTING_MAX_ITEMS) return undefined;
+  return Math.max(0, ...listing.items.map((entry) => entry.label)) + 1;
 }
 
 /** The number to name for an open to-do in a read-only hint: the listing's label, or the live number without one. */
@@ -684,9 +698,9 @@ export class WorkChatService implements WorkDesk {
           return await this.actionAdd(command, actor, condition, listing);
         case 'todo.complete':
         case 'todo.cancel':
-          return await this.actionTransition(command, actor, condition);
+          return await this.actionTransition(command, actor, condition, listing);
         case 'action.undo':
-          return command.target?.source === 'todo' ? await this.actionUndo(command, actor, condition) : { kind: 'none' };
+          return command.target?.source === 'todo' ? await this.actionUndo(command, actor, condition, listing) : { kind: 'none' };
         default:
           return { kind: 'none' };
       }
@@ -701,7 +715,8 @@ export class WorkChatService implements WorkDesk {
     // Live test 2026-10-16 G09: a selected add never silently duplicates an open to-do with exactly this title (the same
     // check as the R5a preview's duplicate note); it names the existing one and writes nothing. The anchored command
     // ("할 일 추가: …") is the owner's explicit form and is unchanged.
-    const duplicate = await this.openDuplicate(title, actor);
+    // An approved R5a preview already showed the duplicate note: the owner chose to add it anyway.
+    const duplicate = command.previewApproved === true ? undefined : await this.openDuplicate(title, actor);
     if (duplicate !== undefined) {
       // With a fresh listing the number is the one the owner saw (a later "N번" resolves by it, #233), or none when the
       // listing never showed this item; the live number only without a listing. Never a live number the snapshot disagrees with.
@@ -710,9 +725,9 @@ export class WorkChatService implements WorkDesk {
     }
     const added = await this.addTodoItem(title, [], actor, condition);
     if (added.item === undefined) return replyWith(added.body, { action: { entryId: 'todo.add', result: 'refused', source: 'todo', reason: 'invalid' } });
-    const no = todoNumberOf(await this.activeTodos(actor), added.item.id) ?? 0;
+    const no = writeLabel(listing, added.item.id, todoNumberOf(await this.activeTodos(actor), added.item.id), true);
     return replyWith(renderTodoActionAdded(added.item, no), {
-      action: { entryId: 'todo.add', result: 'executed', source: 'todo', itemId: added.item.id, ...(no > 0 ? { label: no } : {}), version: added.item.updatedAt, undoable: true },
+      action: { entryId: 'todo.add', result: 'executed', source: 'todo', itemId: added.item.id, ...(no !== undefined ? { label: no } : {}), version: added.item.updatedAt, undoable: true },
     });
   }
 
@@ -730,7 +745,7 @@ export class WorkChatService implements WorkDesk {
     return item === undefined ? undefined : { item, no: index + 1 };
   }
 
-  private async actionTransition(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome> {
+  private async actionTransition(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition, listing?: ListingSlot): Promise<WorkChatOutcome> {
     const entryId = command.entryId as 'todo.complete' | 'todo.cancel';
     const status = entryId === 'todo.complete' ? WorkItemStatus.COMPLETED : WorkItemStatus.CANCELED;
     const todos = await this.activeTodos(actor);
@@ -759,7 +774,8 @@ export class WorkChatService implements WorkDesk {
         });
       }
       item = (exact[0] as { no: number; item: WorkItem }).item;
-      no = (exact[0] as { no: number; item: WorkItem }).no;
+      // A title match: the label the fresh listing showed (none if it never showed the item), the live number without one.
+      no = writeLabel(listing, item.id, (exact[0] as { no: number; item: WorkItem }).no, false);
     }
     const updated = await this.deps.work.transition(item.id, status, condition);
     return replyWith(renderTodoActionTransitioned(updated, no, entryId === 'todo.complete' ? 'complete' : 'cancel'), {
@@ -768,7 +784,7 @@ export class WorkChatService implements WorkDesk {
   }
 
   /** Record A: the per-action inverse of a to-do action; an inverse that cannot run is said plainly. */
-  private async actionUndo(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome> {
+  private async actionUndo(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition, listing?: ListingSlot): Promise<WorkChatOutcome> {
     const id = command.target?.id;
     const undone = command.undo?.entryId;
     const refused = (reason: 'already-final' | 'changed' | 'not-found' | 'not-final') =>
@@ -792,7 +808,7 @@ export class WorkChatService implements WorkDesk {
       if (error instanceof WorkItemReopenError) return refused(error.code === 'CHANGED' ? 'changed' : 'not-final');
       throw error;
     }
-    const no = todoNumberOf(await this.activeTodos(actor), reopened.id);
+    const no = writeLabel(listing, reopened.id, todoNumberOf(await this.activeTodos(actor), reopened.id), true);
     return replyWith(renderTodoActionReopened(reopened, no), {
       action: { entryId: 'action.undo', result: 'undone', source: 'todo', itemId: reopened.id, ...(no !== undefined ? { label: no } : {}), undoOf: undone, version: reopened.updatedAt, undoable: false },
     });

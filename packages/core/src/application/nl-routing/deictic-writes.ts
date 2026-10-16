@@ -455,7 +455,7 @@ export class NlDeicticWrites {
         draft.entryId === 'todo.add'
           ? { title: read.payload }
           : { body: read.payload, when: (draft.when as DeicticWhen).span, whenAt: (draft.when as DeicticWhen).at };
-      const command: NlSelectedCommand = { entryId: draft.entryId, args, language };
+      const command: NlSelectedCommand = { entryId: draft.entryId, args, language, ...(draft.entryId === 'todo.add' ? { previewApproved: true as const } : {}) };
       const audit: NlActionAudit = { ...base, refKind: refKindOf(draft.referent), result: 'executed' };
       this.audit({ ...base, refKind: refKindOf(draft.referent), result: 'confirmed', referentLabel: labelOf(draft.referent), payloadOrigin: payloadOriginOf(draft.referent) });
       const value = await execute(command);

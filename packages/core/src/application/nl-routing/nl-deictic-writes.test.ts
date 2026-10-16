@@ -292,7 +292,7 @@ describe('QUOKY_NL_DEICTIC_WRITES at the service', () => {
     expect(decision.kind === 'ask' && decision.history).toBe('[할 일 추가 미리보기]');
     const approved = await w.answer('응');
     expect(approved?.kind).toBe('executed');
-    expect(w.executed).toEqual([{ entryId: 'todo.add', args: { title: 'UAT 결과 정리' }, language: 'ko' }]);
+    expect(w.executed).toEqual([{ entryId: 'todo.add', args: { title: 'UAT 결과 정리' }, language: 'ko', previewApproved: true }]);
     expect(await w.answer('응')).toBeUndefined();
     expect(w.executed).toHaveLength(1);
     const results = deicticLogs(w).map((log) => log.fields?.result);

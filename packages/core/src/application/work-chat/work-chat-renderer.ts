@@ -570,8 +570,9 @@ export function todoNumberOf(todos: readonly WorkItem[], id: string): number | u
 }
 
 /** `할 일 7번으로 추가했어요: "UAT 결과 정리" · 되돌리려면 "되돌려줘" (10분 안)` (A6-D3 echo). */
-export function renderTodoActionAdded(item: WorkItem, no: number): MessageBody {
-  return fit([{ text: messageContent(`할 일 ${no}번으로 추가했어요: "`, titleOf(item, 200), `" · ${NL_ACTION_UNDO_HINT}`) }]);
+export function renderTodoActionAdded(item: WorkItem, no: number | undefined): MessageBody {
+  const head = no === undefined ? '할 일로 추가했어요: "' : `할 일 ${no}번으로 추가했어요: "`;
+  return fit([{ text: messageContent(head, titleOf(item, 200), `" · ${NL_ACTION_UNDO_HINT}`) }]);
 }
 
 /**

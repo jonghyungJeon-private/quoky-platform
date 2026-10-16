@@ -39,6 +39,8 @@ export const LISTING_REPLIED_MAX = 8;
 /** GML-2: at most this many tombstones (reply ids only) are kept per Actor, apart from the live listings. */
 export const LISTING_TOMBSTONES_MAX = 64;
 const MAX_IDS = 50;
+/** The most items one listing slot keeps (a merge past it drops the newest label). */
+export const LISTING_MAX_ITEMS = MAX_IDS;
 const MAX_ID_CHARS = 512;
 /** A long reply may be several platform messages (chunks); each is one id. */
 const MAX_REPLY_IDS = 16;
