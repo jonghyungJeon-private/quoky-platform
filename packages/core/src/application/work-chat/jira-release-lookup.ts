@@ -74,6 +74,8 @@ export async function lookupJiraRelease(input: {
   readonly inChannel?: boolean;
 }): Promise<ReleaseLookupResult> {
   let command = input.command;
+  // The release text before a repeated project key was stripped: a release of exactly that name wins over the stripped one.
+  let keyedRelease: string | undefined;
   const connector = guarded(input.connector, input.signal);
   const onSite = releaseLinkOnSite(command.links, input.siteHost);
   const ignoredLink = command.links.length > 0 && onSite === undefined;
@@ -83,11 +85,20 @@ export async function lookupJiraRelease(input: {
   if (command.scope === 'mine' && (input.identity === undefined || input.identity.length === 0)) return { kind: 'failure', reason: 'IDENTITY_MISSING' };
   try {
     if (!(await connector.isAvailable())) return { kind: 'failure', reason: 'UNAVAILABLE' };
-    // 0. A project key the selector left inside the release words ("OP26 20261015"): moved to `project` when it is a visible key.
-    if (onSite === undefined && command.project === undefined && command.release !== undefined && splitKeyToken(command.release) !== undefined) {
+    // 0. A project key the selector left inside the release words ("OP26 20261015"): moved to `project` when it is a visible
+    // key, or, when `project` already is that same visible key, stripped from the release (it only repeats the project).
+    if (onSite === undefined && command.release !== undefined && splitKeyToken(command.release) !== undefined) {
       const listed = await connector.query({ query: ConnectorQueryName.CONTAINERS });
-      const split = splitKeyFromRelease(itemsOf(listed), command.release, listed.truncated === true);
-      if (split !== undefined) command = { ...command, project: split.project, release: split.release };
+      if (command.project === undefined) {
+        const split = splitKeyFromRelease(itemsOf(listed), command.release, listed.truncated === true);
+        if (split !== undefined) command = { ...command, project: split.project, release: split.release };
+      } else {
+        const stripped = stripRedundantProjectKey(itemsOf(listed), command.project, command.release);
+        if (stripped !== undefined) {
+          keyedRelease = command.release;
+          command = { ...command, release: stripped };
+        }
+      }
     }
     // 1. The project.
     let project: ReleaseProjectRef | undefined;
@@ -129,7 +140,17 @@ export async function lookupJiraRelease(input: {
         let match = preResolved;
         if (match === undefined) {
           const known = await releasesOf(connector, project.key);
-          match = resolveRelease(known.items, command.release, known.truncated === true).item;
+          const truncated = known.truncated === true;
+          if (keyedRelease !== undefined) {
+            // The owner's own wording (key included, release words normalized) first; the key-stripped name only when the
+            // listing is complete and holds no release of the original name (a partial listing proves nothing absent).
+            const original = resolveRelease(known.items, keyedRelease, truncated);
+            match = original.item;
+            if (match === undefined && !truncated && !original.ambiguous) match = resolveRelease(known.items, command.release, false).item;
+            if (match === undefined) return body(renderReleaseNotFound(keyedRelease, project, input.inChannel === true ? [] : nearbyReleases(known.items, keyedRelease)));
+          } else {
+            match = resolveRelease(known.items, command.release, truncated).item;
+          }
           if (match === undefined) return body(renderReleaseNotFound(command.release, project, input.inChannel === true ? [] : nearbyReleases(known.items, command.release)));
         }
         release = { id: match.id, name: match.title, ...(match.url !== undefined ? { url: match.url } : {}) };
@@ -227,6 +248,17 @@ export function splitKeyFromRelease(
   const rest = tokens.flatMap((token, index) => (index === hit.index ? (hit.rest.length > 0 ? [hit.rest] : []) : [token]));
   const release = rest.join(' ').trim();
   return release.length > 0 ? { project: hit.key, release } : undefined;
+}
+
+/**
+ * A release that starts with the project the selector already named ("OP26" + "OP26 20261015"): the repeated key is
+ * dropped, but only when the project is a visible key spelled exactly as the first release token and a name remains.
+ * A different key, or a project that is not a visible key, leaves the release as written.
+ */
+export function stripRedundantProjectKey(projects: readonly ConnectorItem[], project: string, releaseText: string): string | undefined {
+  const [first, ...rest] = releaseText.trim().split(/\s+/);
+  if (first === undefined || rest.length === 0 || project.trim() !== first || !projects.some((item) => item.id === first)) return undefined;
+  return rest.join(' ');
 }
 
 /** The project to name in a not-found answer: a link's key or a key-shaped owner value (never a guessed name). */

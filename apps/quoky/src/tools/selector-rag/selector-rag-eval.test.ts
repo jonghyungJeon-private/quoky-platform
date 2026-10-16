@@ -35,7 +35,7 @@ const baseInput = (over: Partial<ArmRenderInput>): ArmRenderInput => ({
   poolDigest: 'pd',
   spaceId: 'space-1',
   queryVector: vec(1, 0),
-  baseVersion: 'nl-select.v37',
+  baseVersion: 'nl-select.v39',
   k: 3,
   ...over,
 });
@@ -51,7 +51,7 @@ describe('ADR-0123 RAG-2 arm rendering', () => {
   it('A1 renders the slot with the top-k by cosine, one per entry, and only entries the prompt mode offers', () => {
     const { prompt, record } = renderArmPrompt(baseInput({}));
     // read mode offers only the reads: todo.add (an action) is filtered out; the 80% subsample may drop more
-    expect(record.promptVersion).toBe('nl-select.v37+rk3');
+    expect(record.promptVersion).toBe('nl-select.v39+rk3');
     expect(record.retrievedIds.length).toBeGreaterThan(0);
     for (const id of record.retrievedIds) expect(['p-01', 'p-02', 'p-04', 'p-05', 'p-06']).toContain(id);
     expect(record.retrievedIds).not.toContain('p-03');
@@ -59,7 +59,7 @@ describe('ADR-0123 RAG-2 arm rendering', () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(prompt).toContain('More examples');
     const a6 = renderArmPrompt(baseInput({ offered: A6_ENTRY_IDS, context: { entries: [...READS, ...ACTIONS], text: 'x', actions: { referenceContext: 'none' } }, run: 2 }));
-    expect(a6.record.promptVersion).toBe('nl-select.v37+rk3');
+    expect(a6.record.promptVersion).toBe('nl-select.v39+rk3');
   });
 
   it('never retrieves a duplicate of a static example', () => {
@@ -87,7 +87,7 @@ describe('ADR-0123 RAG-2 arm rendering', () => {
     expect(renderArmPrompt(baseInput({ arm: swap })).prompt).toBe(one.prompt);
     expect(one.prompt).not.toBe(buildSelectionPrompt({ entries: READS, text: '지라 이슈 보여줘' }));
     expect(one.prompt).not.toContain('More examples');
-    expect(one.record.promptVersion).toBe('nl-select.v37+swap');
+    expect(one.record.promptVersion).toBe('nl-select.v39+swap');
 
   });
 
@@ -150,7 +150,7 @@ describe('ADR-0123 RAG-2 experiment walk (stubbed transport, no call)', () => {
       poolDigest: 'pd',
       spaceId: 's',
       staticTexts: statics.texts,
-      baseVersion: () => 'nl-select.v37',
+      baseVersion: () => 'nl-select.v39',
       select: async (prompt) => {
         prompts.push(prompt);
         return 'jira.issues';

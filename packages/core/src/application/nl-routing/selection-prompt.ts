@@ -55,14 +55,18 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * "그 중에 스프린트 건만", "오늘까지 마감인 지라 일 있어?", "어제 도착한 메일 보여줘", "드라이브에서 폴더 공유하는 법 알려줘"; the rule line quotes
  * "목요일 거는?" and "그거 요약해줘" and the partOfDay description quote "오후만" are reworded too. v38 (A6) = the v36 text on top of v37
  * (the shared examples and quotes changed the A6 bytes, so A6 moves to the next free number); its summarize override is re-keyed.
+ * v39 (the read prompt) = v37 with a rule line that a source named in the message decides the search entry, one generic
+ * `confluence.search` example, sharper slack.search / confluence.search descriptions, and the `jira.release` arg wording
+ * (a bare number is a release name, project and release are separate args, a follow-up keeps the project); the validator
+ * also canonicalizes `jira.release` args structurally. v40 (A6) = the v36 text on top of v39.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v37';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v39';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v37.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v39.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v38';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v40';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -179,6 +183,7 @@ const EXAMPLES: readonly PromptExample[] = [
   { text: '슬랙에 장애 관련 이야기 나온 거 있어?', output: '{"entryId":"slack.search","args":{"keyword":"장애"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['slack.search'] },
   { text: '지라 티켓 하나 새로 만들어줘', output: none, needs: [] },
   { text: '슬랙에서 장애 대응 얘기 나온 거 있나', output: '{"entryId":"slack.search","args":{"keyword":"장애 대응"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['slack.search'] },
+  { text: '위키에서 야간 점검 절차 나온 페이지 찾아줘', output: '{"entryId":"confluence.search","args":{"keyword":"야간 점검 절차"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['confluence.search'] },
   { text: '슬랙 검색 기능이 원래 이렇게 느려?', output: none, needs: [] },
   { text: '내일 미팅 있나?', output: '{"entryId":"calendar.events","args":{"range":"tomorrow","timedOnly":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '다음 미팅이 몇 시더라', output: '{"entryId":"calendar.events","args":{"range":"upcoming","timedOnly":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
@@ -342,6 +347,8 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   the type word is then `kind`, not part of `name`. Do not use `keyword` on the calendar for "busy/free" questions.',
     '   A message that is only a source name ("지라", "메일", "일정", "드라이브") selects that source\'s default listing with',
     '   args {}; a bare "슬랙" or "컨플루언스" has no keyword, so answer NEEDS_CLARIFICATION with that entry.',
+    '   A source named in the message decides which source\'s search is used (Slack names the Slack search; Confluence or a wiki',
+    '   names the Confluence search): never pick the other source\'s search because the topic or an example looks like it.',
     '   Time: use only the range symbols below; never write a timestamp or a year the owner did not write. A weekday, date or',
     '   period word (목요일, 어제, 다다음 주, 이번 달 말까지) is ALWAYS `range`, never a keyword, from, or name; a part of the day',
     '   (오전, 오후, 저녁) is `partOfDay`. A follow-up that names another day ("일요일 것도 알려줘" after a week) changes `range` only',

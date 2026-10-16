@@ -8,7 +8,7 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
 import { NL_WAVE1_ENTRIES, jiraKeywordCarriesQualifier, nlWave1Entry } from '../nl-routing/wave1-entries';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { hasJiraReleaseLink, normalizeSiteHost, parseJiraReleaseLinks, releaseLinkOnSite } from './jira-release-link';
-import { lookupJiraRelease, splitKeyFromRelease, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
+import { lookupJiraRelease, splitKeyFromRelease, stripRedundantProjectKey, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
 import { renderReleaseIssues } from './jira-release-renderer';
 import { detectWorkChatCommand } from './work-chat-command';
 import { workChatCommandForSelection } from './work-chat-selection';
@@ -521,7 +521,7 @@ describe('the A2 yield (A8): a Jira keyword slot that names a release or every a
   });
 });
 
-describe('prompt nl-select.v37 (A8): the jira.release examples appear only while the entry is offered', () => {
+describe('prompt nl-select.v39 (A8): the jira.release examples appear only while the entry is offered', () => {
   it('shows the entry and its examples with it, and is unchanged without it', () => {
     const withRelease = buildSelectionPrompt({ entries: [nlWave1Entry('jira.issues'), nlWave1Entry('jira.release')], text: 'x' });
     expect(withRelease).toContain('- jira.release: ');
@@ -531,5 +531,75 @@ describe('prompt nl-select.v37 (A8): the jira.release examples appear only while
     const without = buildSelectionPrompt({ entries: [nlWave1Entry('jira.issues')], text: 'x' });
     expect(without).not.toContain('jira.release');
     expect(without).not.toContain('2.4.1');
+  });
+});
+
+describe('jira.release arg canonicalization (structural, v39)', () => {
+  const argsOf = (result: ReturnType<typeof validate>) => (result.ok ? result.value.args : result);
+
+  it('never splits "<KEY> <version>" in the validator (the lookup verifies the key against visible projects)', () => {
+    expect(argsOf(validate('jira.release', { release: 'RC 2026' }, 'RC 2026 보여줘'))).toEqual({ release: 'RC 2026' });
+    expect(argsOf(validate('jira.release', { release: 'ZQX9 20990101' }, 'ZQX9 20990101 보여줘'))).toEqual({ release: 'ZQX9 20990101' });
+  });
+
+  it('drops digits that come only from a pasted link, keeps digits the owner wrote or the previous selection holds', () => {
+    const link = 'https://example.atlassian.net/projects/ZQX9/versions/16555/tab/release-report-all-issues';
+    expect(argsOf(validate('jira.release', { release: '16555' }, `확인 ${link}`))).toEqual({});
+    expect(argsOf(validate('jira.release', { release: '16555' }, `16555 확인 ${link}`))).toEqual({ release: '16555' });
+    expect(argsOf(validate('jira.release', { release: '16555' }, '16555 확인'))).toEqual({ release: '16555' });
+    expect(argsOf(validate('jira.release', { release: '20261015' }, '이 프로젝트에서도 보여줘 https://example.atlassian.net/projects/WEB', { release: '20261015' }))).toEqual({ release: '20261015' });
+  });
+});
+
+describe('lookupJiraRelease: a key repeated inside the release words', () => {
+  it('strips the key when project already is that same visible key', async () => {
+    const { text, queries } = await run({ project: 'OP26', release: 'OP26 20261015' });
+    expect(queries.at(-1)?.params).toEqual({ container: 'OP26', releaseId: '16555', limit: 20 });
+    expect(text).toContain('**Jira 릴리스 20261015**');
+  });
+
+  it('an exact release named with the key wins over the key-stripped name; the stripped name is the fallback', async () => {
+    const both: ConnectorProvider = {
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) =>
+        query.query === 'containers' ? { source: 'jira', items: PROJECTS }
+        : query.query === 'releases' ? { source: 'jira', items: [{ id: '1', title: '20261015' }, { id: '2', title: 'OP26 20261015' }] }
+        : { source: 'jira', items: ISSUES },
+    };
+    const seen: ConnectorQuery[] = [];
+    const spy: ConnectorProvider = { ...both, query: async (query) => { seen.push(query); return both.query(query); } };
+    await lookupJiraRelease({ connector: spy, command: { scope: 'all', links: [], project: 'OP26', release: 'OP26 20261015' }, siteHost: SITE });
+    expect(seen.at(-1)?.params).toMatchObject({ container: 'OP26', releaseId: '2' });
+    const fallback = await run({ project: 'OP26', release: 'OP26 20261015' });
+    expect(fallback.queries.at(-1)?.params).toMatchObject({ releaseId: '16555' });
+  });
+
+  it('the original wording with release words resolves to the key-named release; a truncated listing never falls back to the stripped name', async () => {
+    const listing = (truncated: boolean, withKeyed = true): ConnectorProvider => ({
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) =>
+        query.query === 'containers' ? { source: 'jira', items: PROJECTS }
+        : query.query === 'releases' ? { source: 'jira', items: [{ id: '1', title: '20261015' }, ...(withKeyed ? [{ id: '2', title: 'OP26 20261015' }] : [])], ...(truncated ? { truncated: true } : {}) }
+        : { source: 'jira', items: ISSUES },
+    });
+    const ask = async (provider: ConnectorProvider, release: string) => {
+      const seen: ConnectorQuery[] = [];
+      const spy: ConnectorProvider = { ...provider, query: async (query) => { seen.push(query); return provider.query(query); } };
+      const result = await lookupJiraRelease({ connector: spy, command: { scope: 'all', links: [], project: 'OP26', release }, siteHost: SITE });
+      return { seen, text: result.kind === 'body' ? plainTextOf(result.body) : result.reason };
+    };
+    expect((await ask(listing(false), 'OP26 20261015 배포건')).seen.at(-1)?.params).toMatchObject({ releaseId: '2' });
+    const partial = await ask(listing(true, false), 'OP26 20261015 배포건');
+    expect(partial.seen.some((query) => query.query === 'release-items')).toBe(false);
+    expect(partial.text).toContain('찾지 못했어요');
+  });
+
+  it('leaves a different key alone when a project is set, and a key-shaped word that is no visible project', async () => {
+    expect(stripRedundantProjectKey(PROJECTS, 'OP26', 'WEB 20261015')).toBeUndefined();
+    expect(stripRedundantProjectKey(PROJECTS, 'RC', 'RC 2026')).toBeUndefined();
+    const { text } = await run({ project: 'OP26', release: 'WEB 20261015' });
+    expect(text).toContain('찾지 못했어요');
+    const none = await run({ release: 'RC 2026' });
+    expect(none.text).not.toContain('프로젝트 "RC"');
   });
 });
