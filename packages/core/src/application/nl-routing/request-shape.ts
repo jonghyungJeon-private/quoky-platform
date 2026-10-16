@@ -652,7 +652,10 @@ export function nlHasUnnegatedMention(text: string, word: string, stopWords: rea
         break;
       }
     }
-    if (!negatesKo(rest.slice(0, end), [target])) return true;
+    // A scoped negator directly before the mode verb belongs to its stretch ("안 간추려도 되니까", "못 요약해도", Codex P2).
+    const preceding = /(?:^|\s)(안|못)\s*$/u.exec(normalized.slice(0, at))?.[1];
+    const stretch = preceding === undefined ? rest.slice(0, end) : `${preceding} ${rest.slice(0, end)}`;
+    if (!negatesKo(stretch, [target])) return true;
   }
   return false;
 }

@@ -389,6 +389,8 @@ describe('A6 R2 (v48 gate): item.summarize mode and source come from the owner w
     expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#3', mode: 'summary' }, '3번 메일 요약 안 해도 되고 원문 보여줘'))).toEqual({ source: 'mail', ref: '#3', mode: 'full' });
     expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }, 'Show the full text of email #1, not a summary'))).toEqual({ source: 'mail', ref: '#1', mode: 'full' });
     expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }, "don't summarize email #1, show the original"))).toEqual({ source: 'mail', ref: '#1', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }, '1번 메일은 안 간추려도 되니까 원문 보여줘'))).toEqual({ source: 'mail', ref: '#1', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1' }, '1번 메일 간추려 줘'))).toEqual({ source: 'mail', ref: '#1', mode: 'summary' });
     // English negation governs only its own mention (Codex P2), and tl;dr stays one term.
     expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }, 'Show the full text of email #1 not a summary'))).toEqual({ source: 'mail', ref: '#1', mode: 'full' });
     expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1' }, 'Summarize email #1 not the attachments'))).toEqual({ source: 'mail', ref: '#1', mode: 'summary' });
