@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, promises as fsPromises, readdirSync, readFileS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LocalVectorProvider, VectorCapacityError } from './index';
+import { LocalVectorProvider, VectorCapacityError, VectorQuarantineError } from './index';
 import type { VectorStoreIo } from './index';
 
 const COLLECTION = 'durable-memory-v1';
@@ -244,6 +244,39 @@ describe('LocalVectorProvider (ADR-0098 D8)', () => {
     expect(JSON.stringify(warnings)).not.toContain('secret');
     await store.upsert(COLLECTION, [{ id: 'a', vector: [1] }]);
     expect(existsSync(join(storePath, `${COLLECTION}.json`))).toBe(true);
+  });
+
+  it('blocks writes (never overwrites the original) while the quarantine rename fails, then recovers', async () => {
+    const storePath = freshRoot();
+    await fsPromises.mkdir(storePath, { recursive: true });
+    const file = join(storePath, `${COLLECTION}.json`);
+    writeFileSync(file, '{not json');
+    let failRename = true;
+    const io: VectorStoreIo = {
+      ...realIo,
+      rename: async (from, to) => {
+        if (failRename && from === file) throw new Error('EPERM');
+        return realIo.rename(from, to);
+      },
+    };
+    const store = new LocalVectorProvider(storePath, { io });
+    await expect(store.query(COLLECTION, [1], 1)).resolves.toEqual([]);
+    await expect(store.upsert(COLLECTION, [{ id: 'a', vector: [1] }])).rejects.toBeInstanceOf(VectorQuarantineError);
+    expect(readFileSync(file, 'utf8')).toBe('{not json');
+    failRename = false;
+    await store.upsert(COLLECTION, [{ id: 'a', vector: [1] }]);
+    expect(readdirSync(storePath).some((name) => name.includes('.corrupt-'))).toBe(true);
+    expect((await new LocalVectorProvider(storePath).query(COLLECTION, [1], 1)).map((r) => r.id)).toEqual(['a']);
+  });
+
+  it('does not cache a failed oversized load: repairing the file restores access', async () => {
+    const storePath = freshRoot();
+    const big = new LocalVectorProvider(storePath, { maxRecordsPerCollection: 5 });
+    await big.upsert(COLLECTION, [{ id: 'a', vector: [1] }, { id: 'b', vector: [1] }, { id: 'c', vector: [1] }]);
+    const strict = new LocalVectorProvider(storePath, { maxRecordsPerCollection: 2, overflow: 'reject' });
+    await expect(strict.query(COLLECTION, [1], 5)).rejects.toBeInstanceOf(VectorCapacityError);
+    await new LocalVectorProvider(storePath, { maxRecordsPerCollection: 5 }).delete(COLLECTION, ['c']);
+    expect((await strict.query(COLLECTION, [1], 5)).map((r) => r.id).sort()).toEqual(['a', 'b']);
   });
 
   it('does not warn or quarantine for a missing file', async () => {

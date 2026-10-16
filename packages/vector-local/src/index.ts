@@ -59,6 +59,15 @@ export class VectorCapacityError extends Error {
   }
 }
 
+/** Thrown by writes to a collection whose bad file could not be moved aside, so the original is never overwritten. */
+export class VectorQuarantineError extends Error {
+  readonly code = 'VECTOR_QUARANTINE_FAILED';
+  constructor(readonly collection: string) {
+    super(`Vector collection ${collection} is write-blocked: its unusable file could not be preserved`);
+    this.name = 'VectorQuarantineError';
+  }
+}
+
 export type VectorCorruptReason = 'parse-error' | 'unreadable';
 
 /**
@@ -132,6 +141,8 @@ export class LocalVectorProvider implements VectorProvider {
   private readonly logger: VectorStoreLogger | undefined;
   private readonly onCorrupt: LocalVectorProviderOptions['onCorrupt'];
   private readonly collections = new Map<string, Promise<Map<Id, StoredRecord>>>();
+  /** Collections whose unusable file could not be moved aside: reads are empty, writes throw until it is preserved. */
+  private readonly writeBlocked = new Map<string, string>();
   private readonly writeChains = new Map<string, Promise<void>>();
 
   constructor(
@@ -230,8 +241,13 @@ export class LocalVectorProvider implements VectorProvider {
   private load(collection: string): Promise<Map<Id, StoredRecord>> {
     let loaded = this.collections.get(collection);
     if (loaded === undefined) {
-      loaded = this.readCollection(collection);
-      this.collections.set(collection, loaded);
+      const attempt = this.readCollection(collection);
+      loaded = attempt;
+      this.collections.set(collection, attempt);
+      // A failed load is not cached: once the file is repaired the next call rereads it.
+      attempt.catch(() => {
+        if (this.collections.get(collection) === attempt) this.collections.delete(collection);
+      });
     }
     return loaded;
   }
@@ -279,7 +295,8 @@ export class LocalVectorProvider implements VectorProvider {
       await this.io.rename(this.filePath(collection), target);
       quarantinedTo = target;
     } catch {
-      // Could not move it aside; the warning below says so and the next write will replace the file.
+      // Could not move it aside: block writes so the original is never overwritten (retried on the next write).
+      this.writeBlocked.set(collection, target);
     }
     const event: VectorCorruptEvent = { collection, reason, byteSize, quarantinedTo };
     try {
@@ -295,6 +312,17 @@ export class LocalVectorProvider implements VectorProvider {
     }
   }
 
+  private async assertWritable(collection: string): Promise<void> {
+    const target = this.writeBlocked.get(collection);
+    if (target === undefined) return;
+    try {
+      await this.io.rename(this.filePath(collection), target);
+    } catch (error) {
+      if ((error as { code?: unknown } | null)?.code !== 'ENOENT') throw new VectorQuarantineError(collection);
+    }
+    this.writeBlocked.delete(collection);
+  }
+
   /** Serialize writes per collection; the in-memory view changes only after the file was replaced. */
   private async mutate(
     collection: string,
@@ -304,6 +332,7 @@ export class LocalVectorProvider implements VectorProvider {
     const previous = this.writeChains.get(collection) ?? Promise.resolve();
     const run = previous.then(async () => {
       const current = await this.load(collection);
+      await this.assertWritable(collection);
       const next = change(current);
       if (!shouldPersist()) return;
       await this.persist(collection, next);
