@@ -189,6 +189,7 @@ describe('SlackConnectorProvider', () => {
         source: 'slack',
         items: [{
           id: 'C123:1727859600.000100',
+          itemRef: 'C123:1727859600.000100',
           title: 'Deploy finished [redacted]',
           summary: 'Deploy finished [redacted]',
           url: 'https://example.slack.com/archives/C123/p1727859600000100',
