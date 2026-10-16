@@ -79,7 +79,7 @@ import { nlSelectionMeaning } from './selection-meaning';
 import { NL_ACTION_PROMPT_VERSION, NL_ACTION_R2_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
 import { nlReadNotRequest } from './read-statement';
-import { interpretUndoConfirmReply, nlUndoIsDirect, renderUndoConfirm } from './undo-confirm';
+import { interpretContinuationConfirmReply, interpretUndoConfirmReply, nlUndoIsDirect, renderUndoConfirm } from './undo-confirm';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   LAST_SELECTION_METADATA_KEY,
@@ -1588,8 +1588,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (entry === undefined) return undefined;
       const labels = pending.candidates.map((candidate) => candidate.label);
       // A6-D3a amendment 1, elliptical continuation: a one-candidate confirmation takes a yes ("응") as the candidate and a
-      // no as the end of the question; a number still answers it as any target question.
-      const yesNo = pending.confirm === true ? interpretUndoConfirmReply(answerText) : 'none';
+      // no as the end of the question; a number still answers it as any target question. An undo word ("되돌려줘") is no
+      // answer (Codex P1): it falls through unconsumed and the turn routes to the undo of the last action.
+      const yesNo = pending.confirm === true ? interpretContinuationConfirmReply(answerText) : 'none';
       if (yesNo === 'deny') return { kind: 'ask', text: renderCancelled(language) };
       const choice: ReturnType<typeof resolveLabelChoice> = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveLabelChoice(answerText, labels);
       if (choice.kind === 'none') return undefined;

@@ -79,7 +79,14 @@ export function nlUndoIsDirect(text: string): boolean {
 export type NlUndoConfirmReply = 'approve' | 'deny' | 'none';
 
 /** The narrow whole-message answers to the undo confirmation (like the R5a draft matcher, not ADR-0095 approvals). */
-const APPROVE = new Set(['응', '어', '네', '넵', '예', '그래', '좋아', '맞아', 'ㅇㅇ', '되돌려줘', '되돌려', '해줘', 'yes', 'ok', 'okay', 'y']);
+const UNDO_APPROVALS: ReadonlySet<string> = new Set(['되돌려줘', '되돌려']);
+const APPROVE = new Set(['응', '어', '네', '넵', '예', '그래', '좋아', '맞아', 'ㅇㅇ', ...UNDO_APPROVALS, '해줘', 'yes', 'ok', 'okay', 'y']);
+/**
+ * The approvals of the elliptical continuation confirmation ("할 일 3번도 완료할까요?"): the undo confirmation's plain yeses
+ * WITHOUT the undo words (Codex P1). "되돌려줘" there undoes the last action; it is never a yes to a new write, and it is left
+ * unconsumed so the turn routes to the undo as usual.
+ */
+const CONTINUATION_APPROVE: ReadonlySet<string> = new Set([...APPROVE].filter((word) => !UNDO_APPROVALS.has(word)));
 const DENY = new Set(['아니', '아니요', '아니야', '아뇨', '취소', '됐어', '그만', 'ㄴㄴ', 'no', 'n', 'cancel']);
 
 /** The owner's answer to "…를 되돌릴까요?": the whole message, trailing `.`, `!`, `~` and spaces removed. */
@@ -87,6 +94,15 @@ export function interpretUndoConfirmReply(text: string): NlUndoConfirmReply {
   const normalized = text.normalize('NFC').trim().replace(/[.!~\s]+$/u, '');
   const key = /^[A-Za-z]+$/u.test(normalized) ? normalized.toLowerCase() : normalized;
   if (APPROVE.has(key)) return 'approve';
+  if (DENY.has(key)) return 'deny';
+  return 'none';
+}
+
+/** The owner's answer to the continuation confirmation: as {@link interpretUndoConfirmReply}, but an undo word is no answer. */
+export function interpretContinuationConfirmReply(text: string): NlUndoConfirmReply {
+  const normalized = text.normalize('NFC').trim().replace(/[.!~\s]+$/u, '');
+  const key = /^[A-Za-z]+$/u.test(normalized) ? normalized.toLowerCase() : normalized;
+  if (CONTINUATION_APPROVE.has(key)) return 'approve';
   if (DENY.has(key)) return 'deny';
   return 'none';
 }

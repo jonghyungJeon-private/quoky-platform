@@ -13,6 +13,7 @@ import { NlActionsConfigError, NlSelectionService, nlSelectionCacheKey, type NlS
 import { prepareSelectionInput } from './selection-input';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
 import { INTERPRETATION_PREFERENCES_METADATA_KEY, LAST_SELECTION_METADATA_KEY, NL_PENDING_METADATA_KEY, readPendingQuestion, type PendingQuestion } from './selection-state';
+import { interpretContinuationConfirmReply, interpretUndoConfirmReply } from './undo-confirm';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 // ADR-0120 amendment A6 (NLA-5) at the selection service: the flag levels and the startup refusals, `off` byte-identical
@@ -1032,6 +1033,28 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
     // Not an answer: the question ends and nothing runs from it.
     const other = await run('이번엔 3번');
     expect(await answer(other.w, '응 근데 날씨는?')).toBeUndefined();
+  });
+
+  it('Codex P1: "되돌려줘" to "3번도 완료할까요?" never completes 3; it is left unconsumed and undoes the completion of 1', async () => {
+    // The selector answers the elliptical turn with todo.complete #3 and each undo request with action.undo.
+    const w = world({ level: 'local', script: ['{"entryId":"todo.complete","args":{"ref":"#3"},"ambiguity":"CLEAR","alternatives":[]}', ...Array.from({ length: 2 }, () => '{"entryId":"action.undo","args":{},"ambiguity":"CLEAR","alternatives":[]}')] });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    w.setMetadata(LAST_ACTION_METADATA_KEY, completedOne());
+    expect(await w.decide('이번엔 3번', { now: at(1) })).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+    for (const text of ['되돌려줘', '되돌려', '되돌려줘.']) expect(await answer(w, text), text).toBeUndefined();
+    // The same turn routed normally: the open question ends unanswered and, as for every open A6 question, the selector's
+    // undo is held for that one turn (A6 R1 lock: nothing runs, a short reply says so). #3 is never completed.
+    const held = await w.decide('되돌려줘', { now: at(2) });
+    expect(held).toMatchObject({ kind: 'ask', entryId: 'action.undo' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'pending-question' });
+    expect(readPendingQuestion(w.session(), 'owner', at(3))).toBeUndefined();
+    // Said again, the normal undo routing undoes the completion of #1.
+    const undo = await w.decide('되돌려줘', { now: at(3) });
+    expect(undo).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' }, undo: { entryId: 'todo.complete' } } });
+    // The undo confirmation keeps its own undo-word approval.
+    expect(interpretUndoConfirmReply('되돌려줘')).toBe('approve');
+    expect(interpretContinuationConfirmReply('되돌려줘')).toBe('none');
+    expect(interpretContinuationConfirmReply('응')).toBe('approve');
   });
 
   it('a bare reference reads the same way: "3번" / "3번도" after completing 1 ask; with no last action they stay chat as before', async () => {
