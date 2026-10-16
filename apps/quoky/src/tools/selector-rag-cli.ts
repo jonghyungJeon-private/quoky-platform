@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
 import { runEmbedAudit, type ModelAudit } from './selector-rag/audit';
-import { DEFAULT_OLLAMA_URL, OllamaHttpEmbedder, readPin } from './selector-rag/embed';
+import { DEFAULT_OLLAMA_URL, OllamaHttpEmbedder, readPin, type Embedder } from './selector-rag/embed';
 import { contaminatedGoldIds, loadCalibrationPositives, loadGold, loadKnownFindings } from './selector-rag/gold';
 import { buildRagPlan, ragPlanDigest } from './selector-rag/plan';
 import { approvedEntries, checkPool, loadPoolFile, poolDigest, type PoolEntry } from './selector-rag/pool';
@@ -85,6 +85,10 @@ export interface CliDeps {
   /** A transport injected by a caller (the tests use a fake one); wins over `createSelector`. */
   readonly selector?: SelectorTransport;
   /** Builds the real transport. Called by `run` only after the approved plan digest matched; `defaultDeps` wires the Claude CLI. */
+  /** Builds the embedder (default: the loopback Ollama). Tests inject a fake one so they never touch the network. */
+  readonly createEmbedder?: (model: string, baseUrl: string) => Promise<Embedder>;
+  /** Where eval records and the vector store go (default: `data/eval/selector-rag`). Tests use a temp directory. */
+  readonly evalDir?: string;
   readonly createSelector?: (input: { readonly model: string; readonly budget: number; readonly now: () => string }) => SelectorTransport;
 }
 
@@ -209,7 +213,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     const models = (options['--models'] ?? DEFAULT_EMBEDDING_MODELS.join(',')).split(',').map((model) => model.trim()).filter(Boolean);
     const audits: ModelAudit[] = [];
     for (const model of models) {
-      const embedder = new OllamaHttpEmbedder(await readPin(model, baseUrl), baseUrl);
+      const embedder = deps.createEmbedder !== undefined ? await deps.createEmbedder(model, baseUrl) : new OllamaHttpEmbedder(await readPin(model, baseUrl), baseUrl);
       deps.stdout(`space ${embedder.pin.spaceId} (prefix "${embedder.pin.prefix}")`);
       audits.push(
         await runEmbedAudit({
@@ -220,15 +224,15 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
           split,
           known,
           positives: loadCalibrationPositives(),
-          storeDirectory: resolve(EVAL_DIR, 'store'),
+          storeDirectory: resolve(deps.evalDir ?? EVAL_DIR, 'store'),
           latencySample: options['--latency-sample'] === undefined ? 50 : Number(options['--latency-sample']),
           log: deps.stderr,
         }),
       );
     }
     for (const audit of audits) printAudit(deps, audit, contaminatedGoldIds(known).size);
-    mkdirSync(EVAL_DIR, { recursive: true });
-    const path = resolve(EVAL_DIR, `dry-run-${deps.now().replace(/[:.]/g, '-')}.json`);
+    mkdirSync(deps.evalDir ?? EVAL_DIR, { recursive: true });
+    const path = resolve(deps.evalDir ?? EVAL_DIR, `dry-run-${deps.now().replace(/[:.]/g, '-')}.json`);
     writeFileSync(path, `${JSON.stringify({ at: deps.now(), poolDigest: poolDigest(auditEntries), goldDigest: gold.sha256, splitSha256, split: { dev: split.dev.length, heldOut: split.heldOut.length }, audits }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
     deps.stdout(`dry-run record: ${path}`);
     if (options['--write-audit'] === 'true') {
@@ -338,8 +342,8 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     parseEntry: transport.parseEntry,
     ...(transport.score !== undefined ? { score: transport.score } : {}),
   });
-  mkdirSync(EVAL_DIR, { recursive: true });
-  const path = resolve(EVAL_DIR, `run-${split_}-${deps.now().replace(/[:.]/g, '-')}.json`);
+  mkdirSync(deps.evalDir ?? EVAL_DIR, { recursive: true });
+  const path = resolve(deps.evalDir ?? EVAL_DIR, `run-${split_}-${deps.now().replace(/[:.]/g, '-')}.json`);
   writeFileSync(path, `${JSON.stringify({ at: deps.now(), planDigest: digest, split: split_, results }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
   deps.stdout(`run record (content-free): ${path}`);
   const traffic = transport.summary?.();

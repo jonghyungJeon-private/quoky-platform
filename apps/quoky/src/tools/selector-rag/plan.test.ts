@@ -57,24 +57,50 @@ describe('plan over a pool with a pending batch (approved subset only)', () => {
 });
 
 describe('dry-run audit uses the approved subset, so plan accepts it', () => {
-  it('regenerates the audit from a mixed pool (approved + pending) and then plans', async () => {
-    const { mkdtempSync, writeFileSync, readFileSync } = await import('node:fs');
+  // A deterministic character-trigram embedder: no network, no Ollama. Near copies score high, unrelated texts low.
+  const fakeEmbedder = (model: string) => ({
+    pin: { model, digest12: '000000000000', ollamaVersion: '0.0.0', spaceId: `${model}@000000000000@ollama0.0.0`, prefix: 'search_query: ' },
+    embed: async (texts: readonly string[]) =>
+      texts.map((text) => {
+        const v = new Array<number>(512).fill(0);
+        const chars = Array.from(text.normalize('NFC').toLowerCase());
+        for (let i = 0; i + 3 <= chars.length; i += 1) {
+          let h = 7;
+          for (const c of chars.slice(i, i + 3)) h = (h * 31 + (c.codePointAt(0) as number)) % 512;
+          v[h] = (v[h] as number) + 1;
+        }
+        const norm = Math.sqrt(v.reduce((a, b) => a + b * b, 0)) || 1;
+        return v.map((x) => x / norm);
+      }),
+  });
+
+  it('regenerates the audit from a mixed pool (approved + pending) with a fake embedder in a temp dir, then plans', async () => {
+    const { mkdtempSync, writeFileSync, readFileSync, existsSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
     const { loadPoolFile, approvedEntries, poolDigest } = await import('./pool');
-    const reachable = await fetch('http://127.0.0.1:11434/api/tags').then((r) => r.ok, () => false);
-    if (!reachable) return; // the local Ollama (v2-moe) is needed to embed
     const dir = mkdtempSync(join(tmpdir(), 'rag-audit-'));
     const poolPath = join(dir, 'pool.json');
     const auditPath = join(dir, 'audit.json');
     const pool = loadPoolFile();
     expect(pool.entries.length).toBeGreaterThan(approvedEntries(pool).length); // mixed: a pending batch is present
     writeFileSync(poolPath, JSON.stringify(pool));
-    const quiet = { stdout: () => undefined, stderr: () => undefined, now: () => `2026-10-16T03:00:00.${Math.floor(Math.random() * 1e6)}Z` };
-    expect(await runCli(['--mode', 'dry-run', '--pool', poolPath, '--audit', auditPath, '--write-audit', 'true', '--latency-sample', '3'], quiet)).toBe(EXIT_OK);
-    const audit = JSON.parse(readFileSync(auditPath, 'utf8')) as { poolDigest: string; poolScope: { entries: number; approvedBatches: number[] } };
+    const deps = {
+      stdout: () => undefined,
+      stderr: () => undefined,
+      now: () => '2026-10-16T03:00:00.000Z',
+      evalDir: join(dir, 'eval'),
+      createEmbedder: async (model: string) => fakeEmbedder(model),
+    };
+    const code = await runCli(['--mode', 'dry-run', '--pool', poolPath, '--audit', auditPath, '--write-audit', 'true', '--latency-sample', '3'], deps);
+    expect(existsSync(auditPath)).toBe(true);
+    const audit = JSON.parse(readFileSync(auditPath, 'utf8')) as { poolDigest: string; poolScope: { entries: number; approvedBatches: number[] }; models: Array<{ flaggedPairs: unknown[]; lowStratumValid: boolean | null }> };
     expect(audit.poolDigest).toBe(poolDigest(approvedEntries(pool)));
     expect(audit.poolScope).toEqual({ entries: approvedEntries(pool).length, approvedBatches: [1] });
-    expect(await runCli(['--mode', 'plan', '--split', 'dev', '--pool', poolPath, '--audit', auditPath], quiet)).toBe(EXIT_OK);
-  }, 180_000);
+    // the fake space need not pass the real audit gates; plan must at least accept the audit's pool scope (not call it stale)
+    const err: string[] = [];
+    await runCli(['--mode', 'plan', '--split', 'dev', '--pool', poolPath, '--audit', auditPath], { ...deps, stderr: (l) => err.push(l) });
+    expect(err.join('\n')).not.toContain('stale');
+    expect(code === EXIT_OK || code === 1).toBe(true);
+  }, 120_000);
 });
