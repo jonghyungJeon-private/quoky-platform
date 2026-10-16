@@ -997,7 +997,7 @@ export function nlItemSummarizeEntry(sources: Iterable<string>): NlCatalogEntry 
       }
       if (spec.name === 'mode') {
         const vocabulary = nlModeVocabularyText();
-        return { ...spec, description: `summary ONLY for ${vocabulary.summary}; full ONLY for ${vocabulary.full}. Omit it otherwise (a content word alone, a show or tell verb); scope never sets it.` };
+        return { ...spec, description: `summary ONLY for ${vocabulary.summary}; full ONLY for ${vocabulary.full}. Omit it otherwise; scope never sets it.` };
       }
       if (spec.name === 'ref' && r2.includes('jira')) return { ...spec, description: R2_REF_DESCRIPTION };
       if (spec.name === 'scope') {

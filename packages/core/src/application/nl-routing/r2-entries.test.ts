@@ -105,13 +105,13 @@ describe('nlItemSummarizeEntry', () => {
   });
 });
 
-describe('selection prompt v47', () => {
+describe('selection prompt v48', () => {
   const READS = [NL_WAVE1_ENTRIES['jira.issues'], NL_WAVE1_ENTRIES['mail.list']];
   const build = (item: NlCatalogEntry) =>
     buildSelectionPrompt({ entries: [...READS, item], text: '그 이슈 요약해줘', actions: { referenceContext: 'none' } });
 
   it('names the version and detects R2 entries', () => {
-    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v47');
+    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v48');
     expect(offersR2ItemSources([nlActionEntry('item.summarize')])).toBe(false);
     expect(offersR2ItemSources([nlItemSummarizeEntry(['jira'])])).toBe(true);
     expect(offersR2ItemSources([nlItemSummarizeEntry(['slack'])])).toBe(true);
@@ -203,10 +203,13 @@ describe('selection prompt v47', () => {
     }
   });
 
-  it('v47: a content word alone and a show or tell verb leave mode unset (Core NL_CONTENT_WORDS, listed from the constant)', () => {
+  it('v48: v46 mode guidance plus one line: a content word alone leaves mode unset (Core NL_CONTENT_WORDS)', () => {
     const both = build(nlItemSummarizeEntry(['jira', 'slack']));
-    expect(both).toContain(`   leaves mode unset (${NL_CONTENT_WORDS.join('/')}),`);
-    expect(both).toContain('a show or tell verb (보여줘, 알려줘, 봐줘, show, tell) never sets mode; Core asks the owner once.');
+    expect(both).toContain('   omit mode when the owner only asks what it said. Only these words set mode, with or without scope thread.');
+    expect(both).toContain(`   A content word alone (${NL_CONTENT_WORDS.join('/')}) with no summary or full word leaves mode unset.`);
+    expect(both).not.toContain('never sets mode');
+    expect(both).toContain('   or uses a show verb (보여줘, 알려줘, show).');
+    expect(nlItemSummarizeEntry(['slack']).args.find((spec) => spec.name === 'mode')?.description).toMatch(/Omit it otherwise; scope never sets it\.$/u);
     expect(build(nlActionEntry('item.summarize'))).not.toContain('leaves mode unset');
   });
 });
