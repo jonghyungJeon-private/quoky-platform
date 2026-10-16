@@ -359,10 +359,10 @@ describe('QUOKY_NL_DEICTIC_WRITES at the service', () => {
 // ── A6 R5a review fixes ──────────────────────────────────────────────────────────────────────────────────────────
 
 /** A recency conflict that offers to-do 1 (just added) and reminder #1 (the last listing): both carry the label 1. */
-async function conflictWorld(): Promise<World> {
+async function conflictWorld(reminderLabel = 1): Promise<World> {
   const w = world();
-  w.items.push({ source: 'todo', label: 1, title: '전화하기' }, { source: 'reminder', label: 1, title: '약 먹기' });
-  w.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, ACTOR, 'reminder', [{ label: 1, id: 'reminder-1' }], at(-1), 'listing', PREV));
+  w.items.push({ source: 'todo', label: 1, title: '전화하기' }, { source: 'reminder', label: reminderLabel, title: '약 먹기' });
+  w.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, ACTOR, 'reminder', [{ label: reminderLabel, id: `reminder-${reminderLabel}` }], at(-1), 'listing', PREV));
   w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, ACTOR, { entryId: 'todo.add', source: 'todo', itemId: 'todo-1', label: 1, at: at(-2), undoable: true, undone: false, requestId: 'older-turn', echoReplyIds: [] }, at(-2)));
   await w.record({ text: '내 알림 보여줘', replyKind: 'listing', listingSource: 'reminder' });
   const asked = await w.decide('방금 거 할 일로 추가해줘', out('todo.add', { title: '방금 거' }));
@@ -393,6 +393,20 @@ describe('A6 R5a review: grounding, shared labels, preview caps and undelivered 
     expect(await todo.answer('할 일 1', { now: at(1) })).toMatchObject({ kind: 'reply', replyKind: 'preview', text: expect.stringContaining('> 전화하기') });
     const reminder = await conflictWorld();
     expect(await reminder.answer('알림 1', { now: at(1) })).toMatchObject({ kind: 'reply', replyKind: 'preview', text: expect.stringContaining('> 약 먹기') });
+  });
+
+  it('Codex P2: whenever the answer names a source, the pick must be of that source as well as the label, else it asks again', async () => {
+    // to-do 1 and reminder #2: the labels are unique.
+    for (const [answer, preview] of [['할 일 1', '> 전화하기'], ['알림 2', '> 약 먹기'], ['1', '> 전화하기'], ['2', '> 약 먹기']] as const) {
+      const w = await conflictWorld(2);
+      expect(await w.answer(answer, { now: at(1) }), answer).toMatchObject({ kind: 'reply', replyKind: 'preview', text: expect.stringContaining(preview) });
+    }
+    for (const answer of ['알림 1', '할 일 2', 'reminder 1', '할 일 알림 1']) {
+      const w = await conflictWorld(2);
+      expect(await w.answer(answer, { now: at(1) }), answer).toMatchObject({ kind: 'reply', replyKind: 'question' });
+      expect(readDeicticDraft(w.session().metadata?.[DEICTIC_DRAFT_METADATA_KEY], ACTOR)?.stage, answer).toBe('choose');
+      expect(w.executed, answer).toEqual([]);
+    }
   });
 
   it('the preview budget is rechecked when an answer resumes into a preview', async () => {

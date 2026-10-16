@@ -469,14 +469,16 @@ export class NlDeicticWrites {
     const labels = unique.map((candidate) => labelOf(candidate) ?? 0);
     const audit: DeicticAuditBase = { ...base, refKind: 'deictic:item.local' };
     // A reminder #1 and a to-do 1 can both be offered: a bare "1" is then ambiguous (ask again) and "할 일 1" / "알림 1"
-    // names its source. The source nouns are removed only for the label match.
+    // names its source. The source nouns are removed only for the label match; whenever the answer names a source, the
+    // chosen candidate must be of that source too (Codex P2: "알림 1" never picks to-do 1), else the question is asked again.
+    const named = nlNamedItemSources(turn.groundingText);
+    const ofNamedSource = (candidate: DeicticReferentRef): boolean => named.size === 0 || (named.size === 1 && candidate.kind === 'item.local' && named.has(candidate.source));
     const bareText = turn.groundingText.replace(/할\s*일|알림|리마인더|to-?do|reminder/giu, ' ');
     const numbers = [...new Set(nlNumeralsIn(bareText))];
     if (numbers.length === 1 && nlOrdinalsIn(bareText).length === 0) {
       const matches = unique.map((candidate, index) => ({ candidate, index })).filter(({ index }) => labels[index] === numbers[0]);
       if (matches.length > 1) {
-        const named = nlNamedItemSources(turn.groundingText);
-        const bySource = matches.filter(({ candidate }) => candidate.kind === 'item.local' && named.size === 1 && named.has(candidate.source));
+        const bySource = named.size === 0 ? [] : matches.filter(({ candidate }) => ofNamedSource(candidate));
         if (bySource.length !== 1) return { kind: 'reply', ...(await this.askCandidates(draft.entryId, turn, unique, draft.whenSpan, audit, hold)) };
         return { kind: 'reply', ...(await this.previewOrAskTime(draft.entryId, { ...turn, language: draft.language }, bySource[0]!.candidate, draft.whenSpan, { ...audit, refKind: refKindOf(bySource[0]!.candidate) }, hold)) };
       }
@@ -490,6 +492,7 @@ export class NlDeicticWrites {
     if (choice.kind === 'unlisted') return { kind: 'reply', ...(await this.askCandidates(draft.entryId, turn, unique, draft.whenSpan, audit, hold)) };
     const picked = unique[choice.index];
     if (picked === undefined) return { kind: 'dropped' };
+    if (!ofNamedSource(picked)) return { kind: 'reply', ...(await this.askCandidates(draft.entryId, turn, unique, draft.whenSpan, audit, hold)) };
     return { kind: 'reply', ...(await this.previewOrAskTime(draft.entryId, { ...turn, language: draft.language }, picked, draft.whenSpan, { ...audit, refKind: refKindOf(picked) }, hold)) };
   }
 
