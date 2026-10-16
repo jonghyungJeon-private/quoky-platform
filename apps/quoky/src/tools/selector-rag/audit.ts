@@ -15,7 +15,7 @@ import {
   type NlCatalogEntry,
 } from '@quoky/core';
 import { collectionName, cosine, calibrateTau, openStore, percentiles, recordId, type Calibration, type Embedder, type EmbeddingPin } from './embed';
-import type { GoldCase, KnownFinding } from './gold';
+import type { CalibrationPositive, GoldCase, KnownFinding } from './gold';
 import { poolDigest, type PoolEntry } from './pool';
 import { DEFAULT_K, eligible, outputEntryId, retrieveRandomK, retrieveTopK, subsample, drawSwap, type PoolVector } from './retrieve';
 import { seedFromString, seededRandom } from './stats';
@@ -102,6 +102,8 @@ export interface AuditInput {
   readonly goldDigest: string;
   readonly split: SplitResult;
   readonly known: readonly KnownFinding[];
+  /** The frozen calibration positives (ADR-0123 D5), not derived from the live prompt. */
+  readonly positives: readonly CalibrationPositive[];
   readonly storeDirectory: string;
   readonly negativePairs?: number;
   readonly latencySample?: number;
@@ -138,6 +140,7 @@ async function timed<T>(work: () => Promise<T>): Promise<{ value: T; ms: number 
 
 export async function runEmbedAudit(input: AuditInput): Promise<ModelAudit> {
   const { embedder, pool, gold, split, known } = input;
+  if (input.positives.length === 0) throw new Error('no positive calibration pairs: the frozen calibration fixture is empty');
   const pin: EmbeddingPin = embedder.pin;
   const log = input.log ?? (() => undefined);
   const wholeStarted = performance.now();
@@ -171,10 +174,12 @@ export async function runEmbedAudit(input: AuditInput): Promise<ModelAudit> {
 
   // 3. calibration: known near-copy positives (RAG-0 ratchet: exact and near) and unrelated same-feature negatives
   const goldById = new Map(gold.map((golden) => [golden.id, golden] as const));
-  // Positives are true text near-copies: exact, or near with character-3-gram Jaccard >= 0.6. A near finding that fired on
-  // the shape tokens alone (digits and URLs collapse to `#`, so two different issue links match) is not a semantic copy and
-  // would drag tau down to a value that flags unrelated texts; it is reported, not calibrated on.
-  const positiveSources = known.filter((finding) => (finding.kind === 'exact' || (finding.kind === 'near' && (finding.charJ ?? 0) >= POSITIVE_MIN_CHAR_JACCARD)) && goldById.has(finding.goldId));
+  // Positives come from the frozen fixture (calibration-positives.v1.json): exact copies and near copies with character-3-gram
+  // Jaccard >= 0.6 that the prompt once held. They do not depend on contamination still existing in the live prompt.
+  const positiveSources = input.positives.map((finding) => {
+    if (!goldById.has(finding.goldId)) throw new Error(`calibration positive refers to gold case ${finding.goldId}, which is not in the gold corpora`);
+    return finding;
+  });
   const calibrationEmbed = await timed(() => embedder.embed(positiveSources.map((finding) => finding.example)));
   const calibrationPairs: CalibrationPair[] = positiveSources.map((finding, index) => ({
     example: finding.example,

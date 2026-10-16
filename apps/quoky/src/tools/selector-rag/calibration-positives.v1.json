@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "provenance": "Frozen ADR-0123 D5 calibration positives: the exact copies and the near copies (character-3-gram Jaccard >= 0.6) between selector prompt examples and gold cases that the RAG-0 known list (example-contamination.known.v1.json) recorded on origin/main before the examples were reworded (read prompt v37 / A6 v38). Those prompt examples no longer exist, so the harness calibrates tau on these texts instead of the live prompt. Do not regenerate from the live known list; edit only with an ADR-0123 amendment.",
+  "positives": [
+    {
+      "example": "오늘까지 마감인 지라 일 있어?",
+      "goldId": "uat5ca-03",
+      "kind": "near",
+      "charJ": 0.61
+    },
+    {
+      "example": "그거 요약해줘",
+      "goldId": "uat5r6-07",
+      "kind": "exact",
+      "charJ": 1
+    },
+    {
+      "example": "그거 요약해줘",
+      "goldId": "a6-reference-item.summarize-001",
+      "kind": "exact",
+      "charJ": 1
+    },
+    {
+      "example": "그거 요약해줘",
+      "goldId": "a6-reference-item.summarize-002",
+      "kind": "near",
+      "charJ": 0.67
+    },
+    {
+      "example": "그거 요약해줘",
+      "goldId": "a6-reference-item.summarize-009",
+      "kind": "near",
+      "charJ": 0.83
+    },
+    {
+      "example": "그거 요약해줘",
+      "goldId": "a6-reference-item.summarize-015",
+      "kind": "near",
+      "charJ": 0.83
+    },
+    {
+      "example": "오후만",
+      "goldId": "uat5r2-10",
+      "kind": "exact",
+      "charJ": 1
+    },
+    {
+      "example": "목요일 거는?",
+      "goldId": "uat5r4-16",
+      "kind": "exact",
+      "charJ": 1
+    },
+    {
+      "example": "드라이브에서 폴더 공유하는 법 알려줘",
+      "goldId": "neg-014",
+      "kind": "near",
+      "charJ": 0.86
+    }
+  ]
+}

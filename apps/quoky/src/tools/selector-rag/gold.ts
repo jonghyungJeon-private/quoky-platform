@@ -7,6 +7,7 @@ import { prepareSelectionInput } from '@quoky/core';
 
 export const GOLDEN_DIR = resolve(__dirname, '../../../../../packages/core/src/application/golden');
 export const KNOWN_FINDINGS_PATH = resolve(__dirname, '../../../../../packages/core/src/application/nl-routing/example-contamination.known.v1.json');
+export const CALIBRATION_POSITIVES_PATH = resolve(__dirname, '../../../../../apps/quoky/src/tools/selector-rag/calibration-positives.v1.json');
 export const GOLD_FILES = ['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-action.exec-time.v1.json'] as const;
 
 export type Corpus = 'read' | 'action';
@@ -92,4 +93,25 @@ export function loadKnownFindings(path: string = KNOWN_FINDINGS_PATH): KnownFind
 /** The gold cases the static prompt's own examples already copy (RAG-0 ratchet): reported apart, never scored. */
 export function contaminatedGoldIds(findings: readonly KnownFinding[]): Set<string> {
   return new Set(findings.map((finding) => finding.goldId));
+}
+
+export interface CalibrationPositive {
+  readonly example: string;
+  readonly goldId: string;
+  readonly kind: 'exact' | 'near';
+  readonly charJ: number;
+}
+
+/** The frozen ADR-0123 D5 calibration positives (checked in; independent of the live prompt). Empty or malformed fails loudly. */
+export function loadCalibrationPositives(path: string = CALIBRATION_POSITIVES_PATH): CalibrationPositive[] {
+  const raw = JSON.parse(readFileSync(path, 'utf8')) as { positives?: unknown };
+  if (!Array.isArray(raw.positives) || raw.positives.length === 0) throw new Error(`calibration fixture ${path} has no positives`);
+  return raw.positives.map((item: unknown, index: number) => {
+    const p = item as Partial<CalibrationPositive> | null;
+    if (p === null || typeof p !== 'object' || typeof p.example !== 'string' || p.example.length === 0 || typeof p.goldId !== 'string' || (p.kind !== 'exact' && p.kind !== 'near') || typeof p.charJ !== 'number') {
+      throw new Error(`calibration fixture ${path}: positive #${index} is malformed`);
+    }
+    if (p.kind === 'near' && p.charJ < 0.6) throw new Error(`calibration fixture ${path}: positive #${index} is a near copy below charJ 0.6`);
+    return { example: p.example, goldId: p.goldId, kind: p.kind, charJ: p.charJ };
+  });
 }
