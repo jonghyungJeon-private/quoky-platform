@@ -26200,8 +26200,9 @@ The owner decided the items below on 2026-10-16.
   entries (batches 1 and 2), lint PASSED with 0 findings, and the dry-run has 0 flagged pairs with 98.8% of held-out cases in the low
   similarity stratum (gate >= 50%).
 - **ADR-0123 phase 1 experiment approved as a Strict run.** Plan digests for the pool above (the run takes `--approved-plan-digest`):
-  - dev: `9d185b9cb76bc501600b6ff1ea883d73d9b0dd6f04b0f25c2eac453cab16b764` (449 cases, 2 arms, 1 run, 898 selector calls).
-  - heldout: `cacc5589d553f327c876065076b531f6a857b3a9234068cb680071c617a50c2b` (1039 cases, 20780 selector calls).
+  - dev: `5447bb9cc36518a87204218c807a6cc415cbb1f44db3065fce1c940ae0179007` (449 cases, 2 arms, 1 run, 898 selector calls).
+  - heldout: `cb07e359d1054f47ca7347961f819b7a430a0c8ece7486554bdc8cc0b2775734` (1039 cases, 20780 selector calls).
+- **Superseded digests (2026-10-16, after rebase onto main with #248: A6 prompt v42, read v39).** The digests above are stale. They are superseded by dev `5447bb9cc36518a87204218c807a6cc415cbb1f44db3065fce1c940ae0179007` (898 calls) and heldout `cb07e359d1054f47ca7347961f819b7a430a0c8ece7486554bdc8cc0b2775734` (20780 calls). The owner approval is unchanged. The dev smoke (run `run-dev-2026-10-16T05-44-49-416Z.json`) ran on the pre-rebase digest `9d185b9c...`, and its result is recorded separately.
 - **Run order.** The dev split runs first as a smoke run. The heldout run is not started by this decision; it needs its own go after the
   dev smoke is reviewed. Selector calls stay Haiku, effort low, no tools, at most 1 call/s and 4 concurrent.
 

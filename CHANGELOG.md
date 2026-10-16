@@ -129,9 +129,12 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Changed.** Pool batch 2 (53 examples) set to `status: approved`, `approvedBy: owner:jonghyung.jeon`, `approvedOn: 2026-10-16`.
   The drafter stays `agent`. The pool is now 153 entries; lint PASSED (0 findings); dry-run (`nomic-embed-text-v2-moe`) 0 flagged,
   low-similarity stratum 98.8%. The embedding audit record is regenerated for the 153-entry pool.
-- **Plan digests (no selector call made).** dev `9d185b9cb76bc501600b6ff1ea883d73d9b0dd6f04b0f25c2eac453cab16b764` (898 calls);
-  heldout `cacc5589d553f327c876065076b531f6a857b3a9234068cb680071c617a50c2b` (20780 calls). The owner approved the Strict phase 1 run;
+- **Plan digests (no selector call made).** dev `5447bb9cc36518a87204218c807a6cc415cbb1f44db3065fce1c940ae0179007` (898 calls);
+  heldout `cb07e359d1054f47ca7347961f819b7a430a0c8ece7486554bdc8cc0b2775734` (20780 calls). The owner approved the Strict phase 1 run;
   the dev smoke runs first, and the heldout run waits for its own go.
+- **Superseded.** The digests above are stale after the rebase onto main (#248: A6 prompt v42). Current digests: dev
+  `5447bb9cc36518a87204218c807a6cc415cbb1f44db3065fce1c940ae0179007` (898 calls), heldout
+  `cb07e359d1054f47ca7347961f819b7a430a0c8ece7486554bdc8cc0b2775734` (20780 calls).
 
 ## Unreleased — ADR-0123 owner decisions: v2-moe sole retrieval model, pool batch 1 approved (2026-10-16)
 
