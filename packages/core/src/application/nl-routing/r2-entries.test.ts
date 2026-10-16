@@ -228,6 +228,39 @@ describe('A6 R2 (v47): the ITEM_READ request-shape veto', () => {
     expect(nlItemReadVeto(grounding('1번 지라 이슈 내용 좀 봐줘'))).toBeUndefined();
   });
 
+  it('review of v47: descriptions, polite requests, conditional and wish mode instructions, and a -고 reason still read', () => {
+    for (const text of [
+      'Summarize email #1 that has the invoice',
+      '1번 메일 요약해주시면 감사하겠습니다',
+      '3번 메일 요약해주면 좋겠어',
+      '요약해 줬으면 해',
+      '요약하고 싶어',
+      '만약 길면 요약해줘',
+      '길면 요약해줘',
+      '내용 많으면 요약만 해줘',
+      '3번 메일 요약해줘, 길면 짧게',
+      '요약 안 해도 되고 원문 보여줘',
+      '요약하지 말고 원문 보여줘',
+    ]) {
+      expect(nlItemReadVeto(grounding(text)), text).toBeUndefined();
+      // The same with a question mark.
+      expect(nlItemReadVeto(grounding(`${text}?`)), `${text}?`).toBeUndefined();
+    }
+  });
+
+  it('still refuses reported, negated, joke, example, past and retracted reads', () => {
+    expect(nlItemReadVeto(grounding('동료가 "슬랙 3번 요약해줘"라고 했어'))).toBe('reported');
+    expect(nlItemReadVeto(grounding('민수가 2번 메일 요약해 달래'))).toBe('reported');
+    expect(nlItemReadVeto(grounding('2번 이슈는 요약하지 마'))).toBe('negation');
+    expect(nlItemReadVeto(grounding('2번 이슈 요약하지 말고 그냥 둬'))).toBe('negation');
+    expect(nlItemReadVeto(grounding("don't summarize that Slack message"))).toBe('negation');
+    expect(nlItemReadVeto(grounding('농담이야 3번 메일 요약해줘'))).toBe('joke');
+    expect(nlItemReadVeto(grounding('예를 들어 3번 메일 요약해줘'))).toBe('example');
+    expect(nlItemReadVeto(grounding('어제 그 이슈 요약해서 보냈어'))).toBe('statement');
+    expect(nlItemReadVeto(grounding('I already read that jira issue'))).toBe('statement');
+    expect(nlItemReadVeto(grounding('이슈 요약은 이제 그만해도 돼'))).toBe('retraction');
+  });
+
   it('blocks no item.summarize positive of the D12 corpora (R2, A6, seed): 0 of 234', () => {
     let positives = 0;
     const blocked: string[] = [];
@@ -247,6 +280,6 @@ describe('A6 R2 (v47): the ITEM_READ request-shape veto', () => {
     const settled = load('nl-action.r2.v1.json')
       .filter((c) => !positive(c.expect) && nlItemReadVeto(grounding(c.text)) !== undefined)
       .map((c) => c.id.replace('a6r2-negative-', ''));
-    expect(settled).toEqual(['001', '002', '003', '005', '007', '008', '023', '032', '034', '035', '036', '037', '039', '040', '042', '043', '058', '059', '060', '064', '067', '068', '069', '070', '071', '072', '073']);
+    expect(settled).toEqual(['001', '002', '003', '005', '006', '007', '008', '023', '032', '034', '035', '036', '037', '039', '040', '042', '043', '058', '059', '060', '064', '067', '068', '069', '070', '071', '072', '073']);
   });
 });

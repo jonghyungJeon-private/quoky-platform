@@ -542,6 +542,27 @@ export function nlIsRequestForm(raw: string): boolean {
   return word.length > 0 && !isAdnominal(word) && (REQUEST_WORD_KO.test(word) || IMPERATIVE_TAIL.test(word));
 }
 
+/**
+ * Whether `text` makes a FINITE request: a request ending, a 하다 verb of an action word or an action verb in its own
+ * imperative ending anywhere, or an English request lead or action verb first (the {@link isQuotedRequest} grammar, on the
+ * owner's own prose). A verbal noun, a connective ("요약해서") or a past form ("요약했어") is no request. The A6 R2
+ * ITEM_READ veto reads it to keep a read whose request stands beside a description or a reason (v47 review).
+ */
+export function nlMakesFiniteRequest(text: string, actionWords: readonly string[]): boolean {
+  return isQuotedRequest(normalizeForMatch(text), actionWords);
+}
+
+/**
+ * The connective segments of `text`: split after a word in the connective -고 ("되고", "말고", "하고") and at a comma or
+ * semicolon. Grammar only; the A6 R2 ITEM_READ veto reads the last segment ("요약 안 해도 되고 | 원문 보여줘").
+ */
+export function nlConnectiveSegments(text: string): string[] {
+  return normalizeForMatch(text)
+    .split(/(?<=고)\s+|[,;]\s*/u)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+}
+
 /** Whether `text` makes a request of its own (a request word, an action word as a command, an English request lead). */
 export function nlRequestsSomething(text: string, actionWords: readonly string[]): boolean {
   return requestsSomething(normalizeForMatch(text), actionWords);
