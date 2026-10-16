@@ -1,5 +1,7 @@
 import type { NlActionEntryId, NlAmbiguityKey, NlArgValue, NlArgs, NlCatalogEntry, NlEntryCheckFailure, NlItemSource, NlWave1EntryId } from './catalog';
+import type { InboundQuotedRange } from '../../domain';
 import { normalizeForMatch } from './selection-input';
+import { nlIsRequestForm } from './request-shape';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { isNlTimeWord } from './symbolic-time';
 import { ANCHORED_TODO_PREFIX_HEADS } from '../reminders/reminder-grammar';
@@ -551,6 +553,159 @@ export const NL_R5A_VOCABULARY_ADDITIONS: Readonly<Record<'todo.add' | 'reminder
  * the entry's action, a command before a retraction; see `request-shape.ts`); they never decide that a write runs.
  */
 export const NL_ACTION_WORDS: readonly string[] = [...new Set([...TODO_COMPLETE_WORDS, ...TODO_CANCEL_WORDS, ...REMINDER_CANCEL_WORDS, ...UNDO_WORDS, ...TODO_ADD_WORDS, ...REMINDER_CREATE_WORDS])];
+
+// ── the local-list request shape (live test 2, 2026-10-16: A09, C01, D02) ───────────────────────────────────────────
+
+const escapeForPattern = (word: string): string => word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*');
+const hangulOnly = (words: readonly string[]): string[] => words.filter((word) => /[가-힣]/u.test(word));
+/** A past form (its last syllable closes with ㅆ: 끝냈, 마쳤, 다 했) states what happened; it never asks for a write. */
+const isPastForm = (word: string): boolean => {
+  const last = word.codePointAt(word.length - 1) ?? 0;
+  return last >= 0xac00 && last <= 0xd7a3 && (last - 0xac00) % 28 === 20;
+};
+const alternationOf = (words: readonly string[]): string => [...new Set(words)].sort((a, b) => b.length - a.length).map(escapeForPattern).join('|');
+/** The verb a reminder noun carries in its own create words ("알림 걸", "알림으로 만들" → 걸, 만들); never a bare 해 / 줘. */
+const REMINDER_NOUN_HEAD = /^(?:알림|리마인더|알람)(?:으로)?\s?/u;
+const REMINDER_CREATE_VERBS = REMINDER_CREATE_WORDS.filter((word) => REMINDER_NOUN_HEAD.test(word))
+  .map((word) => word.replace(REMINDER_NOUN_HEAD, ''))
+  .filter((verb) => verb.length > 0 && verb !== '해' && verb !== '줘');
+/**
+ * The closed standalone fillers between a verbal noun and its request word (the undo grammar's filler class, adverbs only:
+ * 좀, 좀만, 한번 / 한 번, 빨리, 다시, 제발, 지금); they carry no content and never make the request.
+ */
+const REQUEST_FILLERS: ReadonlySet<string> = new Set(['좀', '좀만', '한번', '빨리', '빨리요', '다시', '제발', '제발요', '지금']);
+/** The closed particles a verbal noun may carry before a separate request word ("완료로 바꿔줘", "추가좀 해줘"). */
+const VERB_PARTICLE = /^(?:으로|로|을|를|좀)?$/u;
+
+interface LocalListShape {
+  readonly list: 'todo' | 'reminder';
+  /** The list noun with a destination particle; an add verb of that list follows later in the clause ("할 일로 … 등록"). */
+  readonly destination: RegExp;
+  /** The list noun as the object of a verb right after it ("… 할 일 취소", "… 알림 꺼줘"). */
+  readonly object: RegExp;
+  /** The list noun as the source; a cancel / complete verb follows later in the clause ("할 일 목록에서 … 빼줘"). */
+  readonly source: RegExp;
+  readonly addVerb: RegExp;
+  readonly changeVerb: RegExp;
+}
+
+let localListShapes: readonly LocalListShape[] | undefined;
+
+/** Built on first use from the catalog's own list nouns and the A6 vocabularies (one source of truth, no phrase list). */
+function localListShapesOf(): readonly LocalListShape[] {
+  if (localListShapes !== undefined) return localListShapes;
+  const shape = (list: 'todo' | 'reminder', nouns: readonly string[], add: readonly string[], change: readonly string[]): LocalListShape => {
+    const noun = `(?<![가-힣A-Za-z])(?:${alternationOf(nouns.map(normalizeForMatch))})(?:\\s*목록)?`;
+    const addVerb = alternationOf(hangulOnly(add));
+    const changeVerb = alternationOf(hangulOnly(change).filter((word) => !isPastForm(word)));
+    return {
+      list,
+      destination: new RegExp(`${noun}\\s*(?:으로|로|에다가|에다|에)(?![가-힣])`, 'gu'),
+      object: new RegExp(`${noun}\\s*(?:을|를|은|는|도|좀)?\\s*(?=${changeVerb})`, 'gu'),
+      source: new RegExp(`${noun}\\s*에서(?![가-힣])`, 'gu'),
+      addVerb: new RegExp(addVerb, 'gu'),
+      changeVerb: new RegExp(`^(?:${changeVerb})`, 'u'),
+    };
+  };
+  localListShapes = [
+    shape('todo', NL_WAVE1_ENTRIES['todo.list'].aliases, TODO_ADD_WORDS, [...TODO_CANCEL_WORDS, ...TODO_COMPLETE_WORDS]),
+    shape('reminder', NL_WAVE1_ENTRIES['reminder.list'].aliases, [...TODO_ADD_WORDS, ...REMINDER_CREATE_VERBS], REMINDER_CANCEL_WORDS),
+  ];
+  return localListShapes;
+}
+
+/**
+ * Whether the vocabulary verb at `index` of `clause` is the clause's request: its word ends in a request form (the
+ * request-shape recogniser `nlIsRequestForm`: "추가해줘", "취소해", "등록해 주세요"), or the bare verbal noun (a closed
+ * particle at most) is followed by a request word ("완료로 바꿔줘", "취소 처리해줘"), or the bare verb ends the clause (the
+ * terse command "… 하나 추가"). An adnominal ("추가한 회의"), past ("추가했어"), connective ("빼고") or descriptive form never is.
+ */
+function isRequestedVerbAt(clause: string, index: number, verb: string): boolean {
+  const start = clause.lastIndexOf(' ', index) + 1;
+  const spaceAfter = clause.indexOf(' ', index + verb.length);
+  const end = spaceAfter === -1 ? clause.length : spaceAfter;
+  const word = clause.slice(start, end);
+  if (nlIsRequestForm(word)) return true;
+  if (!VERB_PARTICLE.test(clause.slice(index + verb.length, end))) return false;
+  // Closed standalone fillers before the request word are skipped ("추가 좀 해줘", "취소 한 번 해줘", "등록 빨리 해줘").
+  const following = clause.slice(end).trim().split(' ').filter((token) => token.length > 0);
+  let at = 0;
+  while (at < following.length) {
+    const token = following[at] ?? '';
+    if (REQUEST_FILLERS.has(token)) at += 1;
+    else if (token === '한' && following[at + 1] === '번') at += 2;
+    else break;
+  }
+  const next = following[at];
+  if (next === undefined) return clause.slice(index + verb.length, end).length === 0;
+  return nlIsRequestForm(next);
+}
+
+/** Whether a verb of `verbs` after `from` in the clause is the clause's request. */
+function requestedVerbAfter(clause: string, from: number, verbs: RegExp): boolean {
+  verbs.lastIndex = 0;
+  for (const match of clause.slice(from).matchAll(verbs)) {
+    if (isRequestedVerbAt(clause, from + (match.index ?? 0), match[0])) return true;
+  }
+  return false;
+}
+
+/** Clause boundaries: sentence ends, commas and the coordinating connectives (the calendar grammar's own clause rule). */
+const LOCAL_LIST_CLAUSE_SPLIT = /[.!?。！？\r\n]+|[,;]\s*|\s+(?:그리고|하지만|근데|그런데)\s+/u;
+/** Quoted text is content (a title, a phrase), never the request's own list noun or verb. */
+const LOCAL_LIST_QUOTED = /"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』/gu;
+
+function withoutQuotedPayloads(text: string, quotedRanges: readonly InboundQuotedRange[]): string {
+  let out = text;
+  for (const range of quotedRanges) {
+    if (!Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 0 || range.end <= range.start) continue;
+    const end = Math.min(range.end, out.length);
+    if (range.start >= end) continue;
+    out = `${out.slice(0, range.start)}${' '.repeat(end - range.start)}${out.slice(end)}`;
+  }
+  return out.replace(LOCAL_LIST_QUOTED, ' ');
+}
+
+/**
+ * Live test 2 (2026-10-16, A09 / C01 / D02): the local list (Quoky's own to-dos or reminders) one clause of the owner's
+ * sentence names as the place of a write, or `undefined`. The shape is structural: a list noun of the catalog
+ * (`todo.list` / `reminder.list` aliases) with
+ *  - a destination particle (로 / 으로 / 에 / 에다) and an add verb of that list's A6 vocabulary later in the clause
+ *    ("'…' 할 일로 등록해줘", "할 일에 … 추가해줘", "… 알림으로 … 등록해줘");
+ *  - or directly followed (a particle at most) by a cancel / complete verb of that list ("… 일정 잡기 할 일 취소해줘");
+ *  - or 에서 and such a verb later ("할 일 목록에서 … 빼줘");
+ * and the verb is the clause's request ({@link isRequestedVerbAt}: an adnominal, past or connective form never counts).
+ * Quoted text (quote marks, or the platform's quoted ranges) is blanked first: a quoted title is the payload of a request
+ * around it ("'시안 반영' 할 일로 등록해줘" still names the to-do list), and a list phrase inside quotes is never one
+ * ("디자인에 '할 일 완료' 문구를 반영해줘").
+ *
+ * Class A grammars that would otherwise claim the words around it (the calendar write grammar's "일정 … 취소해줘" and
+ * "모레 3시 … 통화 등록해줘", the code-change chain's apply word 반영) read this so a local-list request is not mistaken
+ * for theirs. It narrows their recognition (the message is not a calendar write or a code apply); it is not a yield to
+ * selection and adds no phrase: every word is a catalog noun, an A6 vocabulary word or a closed particle.
+ */
+export function nlLocalListTarget(text: string, quotedRanges: readonly InboundQuotedRange[] = []): 'todo' | 'reminder' | undefined {
+  const normalized = normalizeForMatch(withoutQuotedPayloads(text, quotedRanges));
+  if (normalized.length === 0) return undefined;
+  for (const clause of normalized.split(LOCAL_LIST_CLAUSE_SPLIT).map((part) => part.trim())) {
+    for (const shape of localListShapesOf()) {
+      for (const anchor of clause.matchAll(shape.destination)) {
+        if (requestedVerbAfter(clause, (anchor.index ?? 0) + anchor[0].length, shape.addVerb)) return shape.list;
+      }
+      for (const anchor of clause.matchAll(shape.object)) {
+        const at = (anchor.index ?? 0) + anchor[0].length;
+        const verb = shape.changeVerb.exec(clause.slice(at))?.[0];
+        if (verb !== undefined && isRequestedVerbAt(clause, at, verb)) return shape.list;
+      }
+      for (const anchor of clause.matchAll(shape.source)) {
+        const from = (anchor.index ?? 0) + anchor[0].length;
+        const verbs = new RegExp(shape.changeVerb.source.slice(1), 'gu');
+        if (requestedVerbAfter(clause, from, verbs)) return shape.list;
+      }
+    }
+  }
+  return undefined;
+}
 
 /**
  * Garbled action word addendum (CA review, 2026-10-16): the word class of the Hangul action words that are verbal NOUNS

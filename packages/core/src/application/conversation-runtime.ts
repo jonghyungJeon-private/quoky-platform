@@ -252,7 +252,7 @@ import {
 import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from './work-chat/work-chat-turn-handler';
 import { stripLeadingListMarkers } from './work-chat/external-work-readout';
 import { containsCardSpoofLine, renderCardSpoofNotice } from './card-spoof';
-import { mergeItemSummarizeEntries } from './nl-routing/action-entries';
+import { mergeItemSummarizeEntries, nlLocalListTarget } from './nl-routing/action-entries';
 import {
   documentSummaryReply,
   documentSummaryReplyBody,
@@ -2602,7 +2602,11 @@ export class ConversationRuntime {
     // of a registered turn handler — memory / learning / to-do / work-chat / reminder / "기억해:" — is never hijacked by
     // the chain's word-based detectors: they read an empty text for it, so it reaches its handler. Pending-approval
     // intercepts above and the exact execution allow-list gates (which read `message.text`) are untouched.
-    const explicitCommand = this.isExplicitTurnHandlerCommand(message.text);
+    // (live test 2, A09) A sentence that names Quoky's own to-do or reminder list as the place of its write ("'시안 2차 피드백
+    // 반영' 할 일로 등록해줘") is a local-list request: the chain's word detectors (the apply word 반영, commit, merge …) read
+    // an empty text for it too, so it reaches the to-do / reminder routes. Quoted content is not read for the list: a list
+    // phrase inside quotes never counts, a quoted title before a real list command does. The approval and allow-list gates hold.
+    const explicitCommand = this.isExplicitTurnHandlerCommand(message.text) || nlLocalListTarget(message.text, message.quotedRanges) !== undefined;
     const chainText = explicitCommand ? '' : message.text;
     const bareChainWordsOff = workLookup || explicitCommand || isGitTopicOnlyMention(message.text);
     // A chain companion reply (deploy / release / merge / reviewer / label / assignee) needs the companion word AND a

@@ -912,6 +912,34 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect(await stores()).toBe(before);
   });
 
+  it('live test 2 (A09, C01, D02): a local to-do / reminder request is never captured by the code-change chain or the calendar write grammar', async () => {
+    await resetNlState();
+    // A09: the apply word 반영 sits in the quoted title; no preview is open. Before: the apply-unavailable reply, no selection.
+    const a09 = await turn("'시안 2차 피드백 반영' 할 일로 등록해줘", answer('todo.add', { title: '시안 2차 피드백 반영' }));
+    expect(a09.selects).toHaveLength(1);
+    expect(a09.text).toMatch(/^할 일 \d+번으로 추가했어요: "시안 2차 피드백 반영"/u);
+    expect((await todos()).map((item) => item.title)).toContain('시안 2차 피드백 반영');
+    // C01: "일정" is inside the to-do title. Before: the calendar write grammar claimed "일정 … 취소해줘".
+    await send('할 일 추가: 창고 정리 일정 잡기');
+    const warehouse = (await todos()).find((item) => item.title === '창고 정리 일정 잡기' && item.status === 'ACTIVE');
+    const c01 = await turn('창고 정리 일정 잡기 할 일 취소해줘', answer('todo.cancel', { match: '창고 정리 일정 잡기' }));
+    expect(c01.selects).toHaveLength(1);
+    expect(c01.text).toContain('목록에서 뺐어요: "창고 정리 일정 잡기"');
+    expect((await storage.workItems.get(warehouse?.id ?? ''))?.status).toBe('CANCELED');
+    // D02: "알림으로 … 등록해줘" names the reminder list. Before: the calendar create grammar ("모레 … 통화 등록해줘").
+    const d02 = await turn('모레 오후 3시 알림으로 세무사 통화 등록해줘', answer('reminder.create', { body: '세무사 통화', when: '모레 오후 3시' }));
+    expect(d02.selects).toHaveLength(1);
+    expect(d02.text).toMatch(/^알림 #\d+[을를] 만들었어요: .* · '세무사 통화' · /u);
+    expect((await reminders()).find((entry) => entry.body === '세무사 통화')?.status).toBe('SCHEDULED');
+    // Counter-cases: the calendar write forms keep the calendar route (no selector call, nothing written locally).
+    const before = { todos: (await todos()).length, reminders: (await reminders()).length };
+    for (const text of ['내일 3시 회의 취소해줘', '모레 오후 3시 세무사 통화 등록해줘', '금요일 일정 삭제해줘']) {
+      const calendar = await turn(text, answer('reminder.create', { body: '세무사 통화', when: '모레 오후 3시' }));
+      expect(calendar.selects, text).toHaveLength(0);
+    }
+    expect({ todos: (await todos()).length, reminders: (await reminders()).length }).toEqual(before);
+  });
+
   it('exec-time: every case of nl-action.exec-time.v1.json is covered by an acceptance test above', async () => {
     const { readFileSync } = await import('node:fs');
     const file = new URL('../../../packages/core/src/application/golden/nl-action.exec-time.v1.json', import.meta.url);

@@ -3183,6 +3183,29 @@ describe('Explicit Preview Apply Approval — runtime (Sprint 2s, ADR-0040)', ()
     },
   );
 
+  // Live test 2 (A09): a to-do / reminder request whose title carries the apply word is not an apply, with or without an
+  // open preview; it goes on to classification (and from there to the A6 to-do / reminder routes).
+  it.each([
+    ["'시안 2차 피드백 반영' 할 일로 등록해줘", null],
+    ['시안 피드백 반영 할 일에 추가해줘', null],
+    ["'디자인 반영 확인' 할 일로 등록해줘", 'ELIGIBLE'],
+    ['고객 요청 반영 알림으로 등록해줘', 'ELIGIBLE'],
+  ] as const)('"%s" (anchor %s) is a local-list request: no apply approval, no apply-unavailable reply', async (text, anchor) => {
+    const { deps, calls } = makeDeps(anchor === null ? {} : { applyAnchor: applyAnchorOf() });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.requestForRisk).toBe(0);
+    expect(calls.classify).toBe(1);
+    expect(result.reply.text).not.toBe(new ResponseComposer().composeApplyPreviewUnavailable(CTX).text);
+    expect(result.status).not.toBe('AWAITING_APPROVAL');
+  });
+
+  it.each(['반영해줘', '이대로 반영해줘', '피드백 반영해줘', "디자인에 '할 일 완료' 문구를 반영해줘", '할 일에 추가한 시안 반영해줘'])('counter-case: "%s" with an ELIGIBLE anchor still asks the apply approval', async (text) => {
+    const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
+    const result = await new ConversationRuntime(deps).handle(messageOf(text));
+    expect(calls.requestForRisk).toBe(1);
+    expect(result.status).toBe('AWAITING_APPROVAL');
+  });
+
   it('the no-anchor explicit-apply path calls neither the classifier nor the Orchestrator', async () => {
     const { deps, calls } = makeDeps();
     await new ConversationRuntime(deps).handle(messageOf('적용해줘'));
