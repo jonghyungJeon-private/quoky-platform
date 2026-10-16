@@ -134,6 +134,11 @@ export interface NlDeicticWritesDeps {
   readonly sessionLock?: SessionWriteLock;
   /** Tests only: other preview caps. */
   readonly previewCaps?: NlActionCaps;
+  /**
+   * Whether A6 receipts (and so listing snapshots) are on, as the to-do desk's `actionReceipts`: the duplicate note reads
+   * the fresh listing only then (CA review). Absent: the live number, as without a listing.
+   */
+  readonly actionReceipts?: boolean;
 }
 
 /** A fixed question / refusal / preview reply of a deictic write (the runtime presents it like any A6 question). */
@@ -310,7 +315,7 @@ export class NlDeicticWrites {
     this.previewCaps.note(turn.actor.id, 'LOCAL_WRITE', Date.parse(turn.now));
     if (turn.turnId !== undefined) this.awaitDelivery(turn.session.id, turn.turnId, { actorId: turn.actor.id, at: turn.now, lastTurn: false, draftId });
     const found = entryId === 'todo.add' ? await this.deps.texts.duplicateTodo?.(turn.actor.id, read.payload).catch(() => undefined) : undefined;
-    const duplicate = found === undefined ? undefined : duplicateNote(turn, found);
+    const duplicate = found === undefined ? undefined : duplicateNote(turn, found, this.deps.actionReceipts === true);
     const whenLabel = when !== undefined ? this.whenLabel(when, turn.now) : undefined;
     const body = renderDeicticPreview({
       entryId,
@@ -748,12 +753,13 @@ function groundedWhen(value: unknown, groundingText: string): string | undefined
 
 /**
  * The duplicate note's number, by the rule of the A6 duplicate reply (A6-D2 amendment, #233; Codex P1): with a fresh to-do
- * listing the label the owner saw, or none when that listing never showed the item; the live number only without one.
+ * listing (read only while receipts are on) the label the owner saw, or none when that listing never showed the item; the
+ * live number only without one.
  */
-function duplicateNote(turn: DeicticTurn, found: { readonly id: Id; readonly no: number }): { readonly label?: number } {
+function duplicateNote(turn: DeicticTurn, found: { readonly id: Id; readonly no: number }, receipts: boolean): { readonly label?: number } {
   let listing: ListingSlot | undefined;
   try {
-    listing = readListingRecord(turn.session.metadata?.[LAST_LISTING_METADATA_KEY], turn.actor.id, turn.now).slots.todo;
+    listing = receipts ? readListingRecord(turn.session.metadata?.[LAST_LISTING_METADATA_KEY], turn.actor.id, turn.now).slots.todo : undefined;
   } catch {
     listing = undefined;
   }

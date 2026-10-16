@@ -623,10 +623,11 @@ export function renderTodoActionNotActionable(): string {
 }
 
 /** A `match` that names no single open to-do: the candidates under their own numbers (A6-D2), nothing changed. */
-export function renderTodoActionWhich(candidates: ReadonlyArray<{ no: number; item: WorkItem }>): MessageBody {
+export function renderTodoActionWhich(candidates: ReadonlyArray<{ no: number | undefined; item: WorkItem }>): MessageBody {
   if (candidates.length === 0) return fit([{ text: '그 이름의 열린 할 일을 찾지 못했어요. 아무것도 바꾸지 않았어요. 몇 번인지 말씀해 주세요.' }]);
   return fit([
     { text: '어느 할 일인가요? 번호로 답해 주세요. 아직 아무것도 바꾸지 않았어요.' },
-    ...candidates.slice(0, 10).map(({ no, item }) => ({ text: messageContent(`${no}. `, titleOf(item)), droppable: true })),
+    // A candidate without a number (past the label bound) is named by its title only.
+    ...candidates.slice(0, 10).map(({ no, item }) => ({ text: messageContent(no === undefined ? '· ' : `${no}. `, titleOf(item)), droppable: true })),
   ]);
 }

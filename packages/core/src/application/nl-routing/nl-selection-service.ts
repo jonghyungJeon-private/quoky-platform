@@ -428,6 +428,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
             log: (level, event, fields) => this.log(level, event, fields),
             actionCaps: this.actionCaps,
             stillActing: (actor) => this.actionsStillActing(actor),
+            // The desks' `actionReceipts` is `QUOKY_NL_ACTIONS !== off` (composition root); deictic writes need `local`.
+            actionReceipts: this.actionLevelValue !== 'off',
             ...(deictic.sessionLock !== undefined ? { sessionLock: deictic.sessionLock } : {}),
             ...(deictic.previewCaps !== undefined ? { previewCaps: deictic.previewCaps } : {}),
           });

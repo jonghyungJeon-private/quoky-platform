@@ -10,6 +10,7 @@ import { ActionWriteStoppedError, WorkItemReopenError } from '../../domain';
 import type { ActionWriteCondition, Actor, MessageBody, MessageContent, ResourceRef, WorkItem } from '../../domain';
 import type { NlActionReceipt, NlListingReceipt, NlSelectedCommand } from '../nl-routing/catalog';
 import { LISTING_MAX_ITEMS, type ListingSlot } from '../last-listing';
+import { NL_REF_MAX_INDEX } from '../nl-routing/action-entries';
 import { renderActionStopped } from '../nl-routing/nl-action-policy';
 import {
   CONNECTOR_QUERY_MAX_LIMIT,
@@ -313,30 +314,45 @@ function resolveListedTarget(todos: readonly WorkItem[], target: WorkChatTarget,
 
 /**
  * The label a deterministic receipt may carry (A6-D2 amendment): the number the owner saw for this item in the fresh
- * listing, or — for an add (`liveNo`) — its live number only when the listing does not use that label for another item.
- * Without a fresh listing: none, so a deterministic reply (which shows no number) never writes a label the owner did not
- * see, and never turns into a partial listing that would later stop the live numbering.
+ * listing, or, for an anchored add (`extend`), the next unused label appended to that listing (CA review: never a gap
+ * label such as the live number, which the owner never saw). Without a fresh listing: none, so a deterministic reply
+ * (which shows no number) never writes a label the owner did not see, and never turns into a partial listing that would
+ * later stop the live numbering.
  */
-function receiptLabel(listing: ListingSlot | undefined, id: string, liveNo?: number): number | undefined {
+function receiptLabel(listing: ListingSlot | undefined, id: string, extend = false): number | undefined {
   if (listing === undefined) return undefined;
-  const own = listing.items.find((entry) => entry.id === id);
-  if (own !== undefined) return own.label;
-  if (liveNo === undefined || listing.items.some((entry) => entry.label === liveNo)) return undefined;
-  return liveNo;
+  return writeLabel(listing, id, undefined, extend);
+}
+
+/**
+ * Labels for `ids` against a fresh listing: each item's own label, else the next unused labels in order (max + 1,
+ * max + 2 …), never past the largest numbered reference (`NL_REF_MAX_INDEX`, Codex P2) or the slot's size; none past
+ * either bound, so the item is named by its title only.
+ */
+function listingLabels(listing: ListingSlot, ids: readonly string[]): Array<number | undefined> {
+  let next = Math.max(0, ...listing.items.map((entry) => entry.label)) + 1;
+  let size = listing.items.length;
+  return ids.map((id) => {
+    const own = listing.items.find((entry) => entry.id === id);
+    if (own !== undefined) return own.label;
+    if (next > NL_REF_MAX_INDEX || size >= LISTING_MAX_ITEMS) return undefined;
+    size += 1;
+    next += 1;
+    return next - 1;
+  });
 }
 
 /**
  * The number an A6 write's echo shows and its receipt records for `id` (A6-D2 amendment, #233; Codex P1). With a fresh
- * listing: the label the owner saw, else, when `extend`, the next unused label (max + 1) that the receipt appends to that
- * listing, else none. Never the live number while a listing is fresh: the receipt merges into the listing and a label the
- * owner saw would silently re-point to another item. Without a listing: the live open-list number, as before.
+ * listing: the label the owner saw, else, when `extend`, the next unused label that the receipt appends to that listing
+ * ({@link listingLabels}), else none. Never the live number while a listing is fresh: the receipt merges into the listing
+ * and a label the owner saw would silently re-point to another item. Without a listing: the live open-list number.
  */
 function writeLabel(listing: ListingSlot | undefined, id: string, liveNo: number | undefined, extend: boolean): number | undefined {
   if (listing === undefined) return liveNo;
   const own = listing.items.find((entry) => entry.id === id);
   if (own !== undefined) return own.label;
-  if (!extend || listing.items.length >= LISTING_MAX_ITEMS) return undefined;
-  return Math.max(0, ...listing.items.map((entry) => entry.label)) + 1;
+  return extend ? listingLabels(listing, [id])[0] : undefined;
 }
 
 /** The number to name for an open to-do in a read-only hint: the listing's label, or the live number without one. */
@@ -655,9 +671,8 @@ export class WorkChatService implements WorkDesk {
     if (!this.actionReceipts) return {};
     let no: number | undefined;
     try {
-      // A6-D2 amendment: the anchored add shows no number, so its live number is a label only when it extends the fresh
-      // listing without renaming one of its labels.
-      no = listing === undefined ? undefined : receiptLabel(listing, item.id, todoNumberOf(await this.activeTodos(actor), item.id));
+      // A6-D2 amendment: the anchored add shows no number; with a fresh listing it is appended under the next unused label.
+      no = receiptLabel(listing, item.id, true);
     } catch {
       no = undefined;
     }
@@ -762,14 +777,19 @@ export class WorkChatService implements WorkDesk {
       const numbered = todos.map((candidate, index) => ({ no: index + 1, item: candidate }));
       const exact = wanted.length === 0 ? [] : numbered.filter((candidate) => candidate.item.title !== undefined && fold(candidate.item.title) === wanted);
       if (exact.length !== 1) {
-        const candidates = exact.length > 1 ? exact : [];
+        // The question's numbers merge into the fresh listing (the runtime records `asked` candidates), so with one each
+        // candidate is named by its listing label or the next unused ones, never a live number (CA review, #233).
+        const asked = (exact.length > 1 ? exact : []).slice(0, 10);
+        const labels = listing === undefined ? asked.map((candidate) => candidate.no) : listingLabels(listing, asked.map((candidate) => candidate.item.id));
+        const candidates = asked.map((candidate, index) => ({ no: labels[index], item: candidate.item }));
+        const labelled = candidates.flatMap((candidate) => (candidate.no === undefined ? [] : [{ label: candidate.no, id: candidate.item.id }]));
         return replyWith(renderTodoActionWhich(candidates), {
           action: {
             entryId,
             result: candidates.length > 0 ? 'asked' : 'refused',
             source: 'todo',
             reason: candidates.length > 0 ? 'ambiguous' : 'none',
-            ...(candidates.length > 0 ? { candidates: candidates.slice(0, 10).map((candidate) => ({ label: candidate.no, id: candidate.item.id })) } : {}),
+            ...(labelled.length > 0 ? { candidates: labelled } : {}),
           },
         });
       }

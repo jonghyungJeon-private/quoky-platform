@@ -27199,7 +27199,13 @@ Three local writes executed that the kit expected not to (all cleaned). Fixes, e
   or no number; a ref-resolved complete / cancel already carries the listing label. Without a fresh listing the live
   number stays. Reminders were audited and need nothing: every echo, receipt and listing uses the stable `displayNo`.
   The R5a preview's duplicate note follows the duplicate reply's rule: the fresh listing's label, no number when that
-  listing never showed the item, the live number only without a listing (`duplicateTodo` now returns the id too). The anchored command
+  listing never showed the item, the live number only without a listing (`duplicateTodo` now returns the id too).
+- **CA review (CHANGES REQUIRED) and Codex P2.** The A6 ambiguous title question names each candidate by its listing label
+  or the next unused labels (max + 1, max + 2 …), so the `asked` merge never re-points a shown label. Appended labels stop
+  at `NL_REF_MAX_INDEX` (50) and the slot size: past either the item is named by its title only (a question row "· title")
+  and no label is recorded. The anchored add records the next unused label with a fresh listing (never a gap label the
+  owner did not see) and none without one. The preview's duplicate note reads the listing only while receipts are on
+  (`NlDeicticWritesDeps.actionReceipts`, which is always the case while deictic writes run, since they need `local`). The anchored command
   ("할 일 추가: …", the owner's explicit form) still adds a second item. The red-team cap positive control now reaches the
   cap with distinct titles; the corpus cap case (one title repeated) writes once.
 
