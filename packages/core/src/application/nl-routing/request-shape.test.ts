@@ -291,6 +291,25 @@ describe('A6-D3a amendment 1, review round 4 (Codex P1/P2, CA P3)', () => {
   });
 });
 
+describe('A6-D3a amendment 1, final round (Codex P2)', () => {
+  const undo = (text: string) => validateSelection({ entryId: 'action.undo', args: {} }, ctx(text));
+
+  it('action.undo grounds only when the undo word is the command (a request form, or bare as the command)', () => {
+    for (const text of ['되돌려줘', '되돌려 줄래', '되돌려 줄래?', '되돌리기 해줘', '원래대로 해줘', '되돌리기', '방금 거 원래대로', '원래대로 돌려놔', '실행 취소해줘', '원상복구 해줘', '취소 취소', '되돌려줘요요', '되돌려죠', 'undo', 'undo that', 'undo the last one', 'please revert that', '아까 거 undo 해줘', '되돌려줘 이번에는 제대로 해줘']) {
+      expect(undo(text).ok, text).toBe(true);
+    }
+    for (const text of ['되돌리기 돕는 앱 추천', '되돌리기 해주는 앱 추천', '되돌리기 기능', '되돌리는 앱 있어', '되돌리기 버튼 위치', '돈 좀 돌려줘', 'the undo button is missing']) {
+      expect(undo(text).ok, text).toBe(false);
+    }
+  });
+
+  it('known residual over-blocks (recorded in DECISIONS for D12 / shadow): an afterthought with 근데 / 그래도 goes to chat', () => {
+    // Fail closed: chat, nothing written. Pinned in their current behaviour.
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: '#2' } }, ctx('2번 완료해줘. 근데 3번은 진행 중이네'))).toMatchObject({ ok: false, reason: 'not-request', arg: 'retraction' });
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: '#2' } }, ctx('2번 완료해줘. 근데 아직이네. 그래도 완료해줘'))).toMatchObject({ ok: false, reason: 'not-request', arg: 'retraction' });
+  });
+});
+
 describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-action.v1 + seed)', () => {
   const load = (name: string) => (JSON.parse(readFileSync(new URL(`../golden/${name}`, import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string; expect: unknown }> }).cases;
   const negatives = [...load('nl-action.v1.json'), ...load('nl-action.seed.v1.json')].filter((golden) => golden.expect === 'none');

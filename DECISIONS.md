@@ -26883,3 +26883,16 @@ done here (no model calls; the prompt is being changed on another branch).
   of, third-party "wants", "kidding", and an afterthought led by 근데 / but that ends as a statement ("2번 완료해줘. 아 근데
   그거 아직이네"; "… 근데 아까 목록 기준" and a follow-up request still act). 16 corpus negatives (`a6-negative-none-170` …
   `-185`); pins 149 refused for every lure, 40 selector-dependent. The selector-pool audit must be regenerated.
+
+### Final round (Codex P2, 2026-10-16)
+
+- **Structural undo anchor.** `action.undo` grounds only when the undo word is the command: it carries a request form
+  itself ("되돌려줘", "되돌려 줄래", "취소해줘", "원복해줘") or stands bare as the command, at the end of the message or before a
+  request word ("되돌리기", "되돌리기 해줘", "원래대로 해줘", "방금 거 원래대로", "원래대로 돌려놔"); in English the undo word
+  leads ("undo", "undo that", "please revert that") or takes a Korean request ("undo 해줘"). A descriptive or nominal use
+  never grounds ("되돌리기 돕는 앱 추천", "되돌리기 기능", "되돌리는 앱"), whatever verb follows; the enumerated adnominal list
+  is gone. An undo cannot itself be undone, so this direction fails closed.
+- **Known residual over-block (recorded for D12 and the shadow review).** The afterthought veto refuses a message whose
+  later 근데 / but clause ends as a statement even when the owner still wants the action: "2번 완료해줘. 근데 3번은 진행
+  중이네" and "2번 완료해줘. 근데 아직이네. 그래도 완료해줘". Both fail closed (chat, nothing written) and are pinned in
+  `request-shape.test.ts` in their current behaviour. No gold change in this round.

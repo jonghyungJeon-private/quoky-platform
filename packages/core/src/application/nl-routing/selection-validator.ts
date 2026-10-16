@@ -150,11 +150,8 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 /** The content spans of a LOCAL_WRITE: the owner's content, never the request around it (a `when` stays in the frame). */
 const CONTENT_SPAN_ARGS = ['title', 'body', 'match'] as const;
 const QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [["'", "'"], ['"', '"'], ['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』']];
-/**
- * A modifying verb form after an undo word ("되돌리기 해주는 앱"): -는 / -ㄴ / -은 on a verb stem, never a topic-marked noun
- * ("되돌려줘 이번에는 제대로 해줘", Codex P2).
- */
-const ADNOMINAL_VERB = /(?:하|되|주|드리|시키|돌리|보|쓰|만들|해주|돌려주)는$|(?:해준|해주신|된|한|돌린|돌려준)$/u;
+/** A request form on a word (an imperative or request ending): "되돌려줘", "되돌려", "해줘", "돌려놔", "해 주세요". */
+const UNDO_REQUEST_FORM = /(?:줘|줘요|죠|주세요|줄래|줄래요|주실래요|주시겠어요|놔|놔요|둬|둬요|해|해요|해라|하자|합시다|려|려요|부탁|부탁해)$/u;
 /** A dative recipient ("친구한테", "팀장님께"): something is given to someone, never Quoky's own undo. */
 const DATIVE = /(?:한테|에게|께)(?=$|\s|[.,!?~])/u;
 
@@ -234,21 +231,30 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
   const payload = entry.args.some((spec) => spec.kind === 'span' && spec.required === true);
   let expressesAction = nlFrameExpressesAction(contentFrame, !payload);
   if (entry.args.length === 0 && words.length > 0) {
-    // The undo needs its own word as the head: a bare 돌려 ("돈 좀 돌려줘") is "give back", and an undo word modifying a noun
-    // through an adnominal verb ("되돌리기 해주는 앱 추천") is a description (CA round 3).
+    // Structural (Codex, final round): the undo grounds only when its own word is the command, either carrying a request
+    // form itself ("되돌려줘", "되돌려 줄래", "취소해줘", "원복해줘") or standing bare as the command, at the end or followed
+    // by a request word ("되돌리기", "되돌리기 해줘", "원래대로 해줘", "방금 거 원래대로"); in English the undo word leads the
+    // sentence ("undo", "undo that", "please revert that"). A descriptive or nominal use never grounds ("되돌리기 돕는 앱 추천",
+    // "되돌리기 기능", "되돌리는 앱"), nor a bare 돌려 without 되 ("돈 좀 돌려줘").
     const frameText = normalizeForMatch(contentFrame);
-    const tokens = frameText.split(/\s+/u).filter((token) => token.length > 0);
+    const tokens = frameText.split(/\s+/u).map((token) => token.replace(/[.,!?~…ㅋㅎㅠㅜ^]+$/u, '')).filter((token) => token.length > 0);
+    const korean = words.map(normalizeForMatch).filter((word) => !/^[a-z ]+$/u.test(word));
     const latin = words.map(normalizeForMatch).filter((word) => /^[a-z ]+$/u.test(word));
+    const requestForm = (token: string): boolean => UNDO_REQUEST_FORM.test(token.replace(/요{2,}$/u, '요'));
+    const holdsUndo = (token: string): boolean => korean.some((word) => (word === '돌려' ? /되돌려/u.test(token) : token.includes(word)));
+    const bareUndo = (token: string): boolean => {
+      const stripped = token.replace(/(?:을|를|은|는|도|만|좀)$/u, '');
+      return korean.some((word) => word !== '돌려' && (stripped === word || stripped.endsWith(word))) || /되돌리기$/u.test(stripped);
+    };
     const anchored =
-      latin.some((word) => new RegExp(`(?<![a-z])${word.replace(/ /g, '\\s+')}(?![a-z])`, 'u').test(frameText)) ||
-      tokens.some(
-        (token, index) =>
-          words.some((word) => {
-            const anchor = normalizeForMatch(word);
-            if (/^[a-z ]+$/u.test(anchor)) return false;
-            return anchor === '돌려' ? /되돌려/u.test(token) : token.includes(anchor);
-          }) && !ADNOMINAL_VERB.test(tokens[index + 1] ?? ''),
-      );
+      latin.some((word) => new RegExp(`^(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?${word.replace(/ /g, '\\s+')}(?![a-z])`, 'u').test(frameText)) ||
+      latin.some((word) => new RegExp(`(?<![a-z])${word.replace(/ /g, '\\s+')}\\s+(?:해|해줘|해 줘|해주세요|좀)`, 'u').test(frameText)) ||
+      tokens.some((token, index) => {
+        if (!holdsUndo(token)) return false;
+        if (requestForm(token)) return true;
+        const next = tokens[index + 1];
+        return bareUndo(token) && (next === undefined || requestForm(next) || /^(?:좀|부탁)/u.test(next));
+      });
     expressesAction &&= anchored && !DATIVE.test(contentFrame);
   }
   return { ...(veto !== undefined ? { veto } : {}), expressesAction };
