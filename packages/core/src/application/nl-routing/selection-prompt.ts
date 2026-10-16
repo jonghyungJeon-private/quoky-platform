@@ -71,6 +71,18 @@ export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v39';
  * for byte (pinned by `golden/nl-select.v39.prompts.json`).
  */
 export const NL_ACTION_PROMPT_VERSION = 'nl-select.v42';
+/**
+ * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
+ * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
+ * Jira key ref; every other byte is v42. With R2 `off` the prompt is v42 byte for byte.
+ */
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v43';
+
+/** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
+export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
+  const values = entries.find((entry) => entry.id === 'item.summarize')?.args.find((spec) => spec.name === 'source')?.values ?? [];
+  return values.includes('jira') || values.includes('slack');
+}
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -429,15 +441,18 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     input.text,
     '>>>',
   );
-  return input.actions === undefined ? lines.join('\n') : withActionRules(lines).join('\n');
+  if (input.actions === undefined) return lines.join('\n');
+  const values = input.entries.find((entry) => entry.id === 'item.summarize')?.args.find((spec) => spec.name === 'source')?.values ?? [];
+  return withActionRules(lines, ['jira', 'slack'].filter((source) => values.includes(source))).join('\n');
 }
 
 /**
  * v25: the v24 instruction lines with the A6 replacements and rule 8 inserted after rule 7. Only the fixed instruction
  * header (before "Catalog:") is rewritten; the catalog, the examples and the owner's message are never touched.
  */
-function withActionRules(lines: readonly string[]): string[] {
+function withActionRules(lines: readonly string[], r2: readonly string[] = []): string[] {
   const out: string[] = [];
+  const rules = r2.length === 0 ? ACTION_RULES : ACTION_RULES.flatMap((line) => R2_RULE_REPLACEMENTS(r2)[line] ?? [line]);
   let header = true;
   for (const line of lines) {
     if (!header) {
@@ -447,9 +462,33 @@ function withActionRules(lines: readonly string[]): string[] {
     if (line === 'Catalog:') header = false;
     const replacement = ACTION_LINE_REPLACEMENTS[line];
     out.push(...(replacement ?? [line]));
-    if (line === '   Otherwise CLEAR with "alternatives": [].') out.push(...ACTION_RULES);
+    if (line === '   Otherwise CLEAR with "alternatives": [].') out.push(...rules);
   }
   return out;
+}
+
+/**
+ * A6 R2 (v43): rule 8 lines rewritten when `item.summarize` offers Jira and/or Slack. Only the named sources appear, so a
+ * catalog without Slack never mentions Slack messages.
+ */
+function R2_RULE_REPLACEMENTS(r2: readonly string[]): Readonly<Record<string, readonly string[]>> {
+  const jira = r2.includes('jira');
+  const slack = r2.includes('slack');
+  const items = ['mail', 'Drive file', ...(jira ? ['Jira issue'] : []), ...(slack ? ['Slack message'] : [])];
+  const what = `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+  return {
+    "   todo.cancel, reminder.create, reminder.cancel, action.undo (undo what Quoky itself just did), item.summarize (what ONE": [
+      "   todo.cancel, reminder.create, reminder.cancel, action.undo (undo what Quoky itself just did), item.summarize (what ONE",
+    ],
+    '   listed mail or Drive file says). One action per message; a request for several items is NEEDS_CLARIFICATION.': [
+      `   listed ${what} says). One action per message; a request for several items is NEEDS_CLARIFICATION.`,
+    ],
+    '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.': [
+      '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.',
+      ...(slack ? ['   scope thread only for 스레드/thread (a mail or Slack thread); otherwise omit it.'] : []),
+      ...(jira ? ['   A Jira issue key the owner wrote (PROJ-12) may be the ref, copied exactly; never a key the owner did not write.'] : []),
+    ],
+  };
 }
 
 const REFERENCE_CONTEXT_MAX_CHARS = 300;

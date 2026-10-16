@@ -216,8 +216,17 @@ export interface NlEntryCheckFailure {
   readonly askEntryId?: NlCatalogEntryId;
 }
 
-/** Where an A6 target lives (A6-D2): Quoky's own to-dos and reminders, or a listed mail / Drive item. */
-export type NlItemSource = 'todo' | 'reminder' | 'mail' | 'drive';
+/**
+ * Where an A6 target lives (A6-D2): Quoky's own to-dos and reminders, or a listed mail / Drive item; A6 R2 adds a listed
+ * Jira issue or Slack message (`item.summarize` only).
+ */
+export type NlItemSource = 'todo' | 'reminder' | 'mail' | 'drive' | 'jira' | 'slack';
+/** A6 R2: the item sources a work-chat listing records (Jira and Slack). */
+export const NL_R2_ITEM_SOURCES = ['jira', 'slack'] as const;
+export type NlR2ItemSource = (typeof NL_R2_ITEM_SOURCES)[number];
+export function isNlR2ItemSource(value: unknown): value is NlR2ItemSource {
+  return value === 'jira' || value === 'slack';
+}
 
 /**
  * A6-D2: the item a validated action acts on, resolved by Core from the owner's reference and the content-free listing
@@ -258,11 +267,20 @@ export interface NlActionReceipt {
   readonly candidates?: readonly { readonly label: number; readonly id: string }[];
   /** A closed reason for `refused` / `asked` (never a value). */
   readonly reason?: string;
+  /**
+   * A6 R2 (`item.summarize` over Jira / Slack): the content-free facts of the one fetch (proposal §4): the closed
+   * outcome, how many connector requests were made (1, or 2 with D12) and the response size bucket. Logged on
+   * `nl_action.decided`; never a key, channel, ts or text.
+   */
+  readonly fetch?: { readonly outcome: string; readonly count: number; readonly bytes: string };
 }
 
-/** A6-D2: a to-do or reminder listing a handler showed (the labels the owner saw and the ids), content-free. */
+/**
+ * A6-D2: a to-do or reminder listing a handler showed (the labels the owner saw and the ids), content-free. A6 R2: a
+ * Jira or Slack listing (labels of the delivered numbered rows and the opaque item references).
+ */
 export interface NlListingReceipt {
-  readonly source: 'todo' | 'reminder';
+  readonly source: 'todo' | 'reminder' | 'jira' | 'slack';
   readonly items: readonly { readonly label: number; readonly id: string }[];
 }
 

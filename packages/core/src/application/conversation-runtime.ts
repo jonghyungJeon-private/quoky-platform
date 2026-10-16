@@ -3338,7 +3338,11 @@ export class ConversationRuntime {
     if (action !== undefined && (action.result === 'executed' || action.result === 'undone') && local(action.source) !== undefined) {
       return { kind: 'echo', listingSource: local(action.source) as 'todo' | 'reminder' };
     }
-    if (handled.nlListing !== undefined && handled.nlListing.items.length > 0) return { kind: 'listing', listingSource: handled.nlListing.source };
+    if (handled.nlListing !== undefined && handled.nlListing.items.length > 0) {
+      // A6 R2: a Jira / Slack listing is a listing reply, but never an R5a referent source.
+      const listed = local(handled.nlListing.source);
+      return listed !== undefined ? { kind: 'listing', listingSource: listed } : { kind: 'listing' };
+    }
     if (action !== undefined && action.result === 'asked' && (action.candidates?.length ?? 0) > 0 && local(action.source) !== undefined) {
       return { kind: 'question', listingSource: local(action.source) as 'todo' | 'reminder' };
     }

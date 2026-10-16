@@ -4,6 +4,7 @@ import { LISTING_REPLY_TTL_MS } from '../last-listing';
 import type { NlActionEntryId, NlItemSource, NlItemTarget, NlUndoSpec } from './catalog';
 import { nlIndexWording, nlNamedItemSources, type NlRef } from './action-entries';
 import type { LastActionView } from './last-action';
+import type { LastReadRecord } from './last-read';
 import { newestReference } from './reference-recency';
 import { normalizeForMatch } from './selection-input';
 
@@ -42,6 +43,11 @@ export type NlResolutionOutcome = 'resolved' | 'out-of-range' | 'expired' | 'amb
 export interface NlReferenceState {
   readonly listings: ListingRecord;
   readonly lastAction?: LastActionView;
+  /**
+   * A6 R2 (owner decision D9): the fresh `quoky.lastRead` (a Jira / Slack item `item.summarize` read). Used by
+   * `item.summarize` only, in place of `lastAction`; never by a LOCAL_WRITE.
+   */
+  readonly lastRead?: LastReadRecord;
   /** The owner's message is a platform reply: what its target is (a listing, or nothing Quoky recorded). */
   readonly replyTo?: { readonly messageId: string; readonly listing?: AnyListingReplyMatch };
   readonly now: IsoTimestamp;
@@ -87,7 +93,8 @@ function aboutReminders(input: NlReferenceInput): boolean {
 }
 
 function targetFrom(slot: ListingSlot, item: ListingItem): NlItemTarget {
-  return { source: slot.source as NlItemSource, id: item.id, label: item.label, ...(slot.source === 'mail' || slot.source === 'drive' ? { listingAt: slot.at } : {}) };
+  const provider = slot.source === 'mail' || slot.source === 'drive' || slot.source === 'jira' || slot.source === 'slack';
+  return { source: slot.source as NlItemSource, id: item.id, label: item.label, ...(provider ? { listingAt: slot.at } : {}) };
 }
 
 function unresolved(
@@ -128,6 +135,15 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
     const found = state.replyTo?.listing?.kind === 'listing' ? state.replyTo.listing.slot.source : state.listings.mostRecent?.source;
     return unresolved(input, 'other-source', { ...(meant !== undefined ? { source: meant } : {}), ...(found !== undefined && found !== meant ? { found } : {}) });
   }
+  // A6 R2 (D2, amendment C8): a Jira key the owner wrote names the delivered row of the fresh Jira listing that holds it.
+  if (ref.kind === 'key') {
+    if (localWrite || source !== 'jira') return unresolved(input, 'none');
+    const slot = state.listings.slots.jira;
+    if (slot === undefined) return unresolved(input, 'none');
+    const item = slot.items.find((candidate) => candidate.id.startsWith(`${ref.key}:`));
+    if (item === undefined) return unresolved(input, 'ambiguous', { candidates: slot.items.slice(0, 10), found: 'jira', listingAt: slot.at });
+    return { kind: 'resolved', target: targetFrom(slot, item) };
+  }
   // 0. reply-to-pick names its listing explicitly.
   const reply = state.replyTo?.listing;
   if (reply !== undefined) {
@@ -156,7 +172,11 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
   // 3. `recent` / `this`.
   if (ref.kind === 'recent' || ref.kind === 'this') {
     const last = state.lastAction;
-    const lastItem = last !== undefined && last.fresh && last.record.source === source && !last.record.undone ? last.record : undefined;
+    const lastAction = last !== undefined && last.fresh && last.record.source === source && !last.record.undone ? last.record : undefined;
+    // A6 R2 (D9): for `item.summarize` the fresh `lastRead` of the entry's source stands where `lastAction` would.
+    const read = !localWrite && state.lastRead !== undefined && state.lastRead.source === source ? state.lastRead : undefined;
+    const lastItem: { readonly source: string; readonly itemId: string; readonly label?: number; readonly at: string; readonly requestId?: string } | undefined =
+      lastAction ?? (read !== undefined ? { source: read.source, itemId: read.id, ...(read.label !== undefined ? { label: read.label } : {}), at: read.at } : undefined);
     const single = mostRecent !== undefined && mostRecent.source === source && mostRecent.items.length === 1 ? mostRecent.items[0] : undefined;
     if (lastItem !== undefined) {
       // A6 reference priority (owner 2026-10-16, B1): a listing the owner saw AFTER the action (its own echo excluded)
@@ -185,7 +205,7 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
       if (single !== undefined && single.id !== lastItem.itemId) {
         return unresolved(input, 'conflict', { candidates: [single, { label: lastItem.label ?? 0, id: lastItem.itemId }].filter((item) => item.label > 0), found: source });
       }
-      return { kind: 'resolved', target: { source, id: lastItem.itemId, ...(lastItem.label !== undefined ? { label: lastItem.label } : {}) } };
+      return { kind: 'resolved', target: { source, id: lastItem.itemId, ...(lastItem.label !== undefined ? { label: lastItem.label } : {}), ...(read !== undefined && lastAction === undefined && read.listingAt !== undefined ? { listingAt: read.listingAt } : {}) } };
     }
     if (mostRecent === undefined) return unresolved(input, last !== undefined && last.record.source === source ? 'stale' : 'none');
     if (mostRecent.source !== source) return unresolved(input, 'other-source', { found: mostRecent.source });
@@ -252,10 +272,12 @@ export function renderReferenceContext(state: NlReferenceState): string {
   if (last !== undefined && last.fresh) {
     parts.push(`last action: ${last.record.entryId} (${minutes(last.record.at, state.now)} min ago${last.record.undoable && !last.record.undone ? ', undoable' : ''})`);
   }
+  // A6 R2 (D9): the kind and age of the last item read, never its id or label.
+  if (state.lastRead !== undefined) parts.push(`last read: ${state.lastRead.source} (${minutes(state.lastRead.at, state.now)} min ago)`);
   return parts.length === 0 ? 'none' : parts.join('; ');
 }
 
 /** Whether the turn has any fresh reference record (A6-D3: such a turn bypasses the selection cache). */
 export function hasReferenceRecord(state: NlReferenceState): boolean {
-  return state.listings.mostRecent !== undefined || (state.lastAction !== undefined && state.lastAction.fresh) || state.replyTo !== undefined;
+  return state.listings.mostRecent !== undefined || (state.lastAction !== undefined && state.lastAction.fresh) || state.lastRead !== undefined || state.replyTo !== undefined;
 }

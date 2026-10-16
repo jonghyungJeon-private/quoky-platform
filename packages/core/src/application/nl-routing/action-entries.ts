@@ -29,15 +29,26 @@ export const NL_REF_MAX_INDEX = 50;
 
 /** The closed ref forms (A6-D1). */
 export const NL_REF_KEYWORDS = ['recent', 'this', 'last'] as const;
-export type NlRefKind = 'index' | (typeof NL_REF_KEYWORDS)[number];
+export type NlRefKind = 'index' | (typeof NL_REF_KEYWORDS)[number] | 'key';
 
-/** A parsed `ref` value: `#n` or a deictic keyword. */
-export type NlRef = { readonly kind: 'index'; readonly index: number } | { readonly kind: 'recent' | 'this' | 'last' };
+/**
+ * A parsed `ref` value: `#n`, a deictic keyword, or (A6 R2 owner decision D2, amendment C8) a Jira issue key the owner
+ * wrote verbatim ("PROJ-12"), valid only for `item.summarize` over the fresh Jira listing.
+ */
+export type NlRef =
+  | { readonly kind: 'index'; readonly index: number }
+  | { readonly kind: 'recent' | 'this' | 'last' }
+  | { readonly kind: 'key'; readonly key: string };
 
-/** `#3` → index 3, `recent` / `this` / `last`; anything else `undefined`. */
+/** A6 R2 (D2): the shape of a Jira issue key as a `ref` value (upper-case project key, a dash, a number). */
+export const NL_REF_JIRA_KEY = /^[A-Z][A-Z0-9_]{1,19}-[1-9][0-9]{0,9}$/;
+
+/** `#3` → index 3, `recent` / `this` / `last`, a Jira key → `key`; anything else `undefined`. */
 export function parseNlRef(value: unknown): NlRef | undefined {
   if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim().toLowerCase();
+  const raw = value.trim();
+  if (NL_REF_JIRA_KEY.test(raw)) return { kind: 'key', key: raw };
+  const trimmed = raw.toLowerCase();
   if (trimmed === 'recent' || trimmed === 'this' || trimmed === 'last') return { kind: trimmed };
   const match = /^#?([1-9][0-9]?)$/.exec(trimmed);
   if (match === null) return undefined;
@@ -47,7 +58,7 @@ export function parseNlRef(value: unknown): NlRef | undefined {
 
 /** The canonical text of a ref (`#3`, `recent`, …). */
 export function formatNlRef(ref: NlRef): string {
-  return ref.kind === 'index' ? `#${ref.index}` : ref.kind;
+  return ref.kind === 'index' ? `#${ref.index}` : ref.kind === 'key' ? ref.key : ref.kind;
 }
 
 // ── word classes (value validators) ───────────────────────────────────────────────────────────────────────────────
@@ -77,7 +88,18 @@ const DETERMINERS_KO = ['이', '그', '저'] as const;
 type NlDeterminer = (typeof DETERMINERS_KO)[number];
 /** 저 is also the first-person pronoun: it grounds a read reference only. */
 const READ_ONLY_DETERMINERS: ReadonlySet<NlDeterminer> = new Set(['저']);
-const ITEM_SOURCE_LIST_ENTRIES: Readonly<Record<NlItemSource, NlWave1EntryId>> = { mail: 'mail.list', drive: 'drive.files', todo: 'todo.list', reminder: 'reminder.list' };
+/**
+ * The list entry of each item source, whose catalog words are that source's nouns. A6 R2 adds `jira.issues` (지라, 이슈,
+ * 티켓, jira) and `slack.search` (슬랙, slack): derived from the catalog, never listed by hand.
+ */
+const ITEM_SOURCE_LIST_ENTRIES: Readonly<Record<NlItemSource, NlWave1EntryId>> = {
+  mail: 'mail.list',
+  drive: 'drive.files',
+  todo: 'todo.list',
+  reminder: 'reminder.list',
+  jira: 'jira.issues',
+  slack: 'slack.search',
+};
 /** The catalog's Korean words for each item source (Latin aliases are left to this / that). */
 const ITEM_SOURCE_WORDS_KO: ReadonlyArray<readonly [string, NlItemSource]> = (Object.entries(ITEM_SOURCE_LIST_ENTRIES) as Array<[NlItemSource, NlWave1EntryId]>).flatMap(
   ([source, id]) =>
@@ -272,7 +294,22 @@ export function isNlRefGrounded(ref: NlRef, groundingText: string, target?: NlRe
       return hasNlDeictic(groundingText) || groundsByDeterminer(groundingText, target);
     case 'last':
       return hasLastWord(groundingText);
+    case 'key':
+      // A6 R2 (D2): only `item.summarize` over Jira, and only a key the owner wrote verbatim as its own token.
+      return target?.entryId === 'item.summarize' && target.source === 'jira' && keyWrittenVerbatim(ref.key, groundingText);
   }
+}
+
+/** Whether `key` stands in the owner's words exactly as written (not inside a longer key or word). */
+function keyWrittenVerbatim(key: string, groundingText: string): boolean {
+  const text = groundingText.normalize('NFC');
+  for (let at = text.indexOf(key); at !== -1; at = text.indexOf(key, at + 1)) {
+    const before = at > 0 ? text[at - 1] : undefined;
+    const after = text[at + key.length];
+    const joins = (ch: string | undefined): boolean => ch !== undefined && /[A-Za-z0-9_-]/.test(ch);
+    if (!joins(before) && !joins(after)) return true;
+  }
+  return false;
 }
 
 /** One pair of enclosing quotes (A6-D1 `span`): '…', "…", 「…」, “…”, ‘…’. */
@@ -703,6 +740,63 @@ const itemSummarize: NlCatalogEntry = {
   },
 };
 
+/** The sources `item.summarize` can read, in canonical order (R1: mail, Drive; A6 R2: Jira, Slack). */
+export const NL_ITEM_SUMMARIZE_SOURCES = ['mail', 'drive', 'jira', 'slack'] as const;
+export type NlItemSummarizeSource = (typeof NL_ITEM_SUMMARIZE_SOURCES)[number];
+
+const R2_REF_DESCRIPTION = `${REF_DESCRIPTION} For a Jira issue only: the issue key exactly as the owner wrote it (PROJ-12).`;
+
+/**
+ * A6 R2: the `item.summarize` entry for the offered sources. Without Jira or Slack it is the R1 entry itself (byte for
+ * byte, so the A6 prompt stays nl-select.v42). With them, the `source` enum and the description list only the offered
+ * R2 sources (mail and Drive stay as in R1), `scope: thread` is valid for mail and Slack, and `ref` may be a Jira key.
+ */
+export function nlItemSummarizeEntry(sources: Iterable<string>): NlCatalogEntry {
+  const offered = new Set(sources);
+  const r2 = (['jira', 'slack'] as const).filter((source) => offered.has(source));
+  if (r2.length === 0) return itemSummarize;
+  const names = { jira: { en: 'Jira issue', ko: '지라 이슈' }, slack: { en: 'Slack message', ko: '슬랙 메시지' } };
+  const en = ['mail', 'Drive file', ...r2.map((source) => names[source].en)];
+  const ko = ['메일', '드라이브', ...r2.map((source) => names[source].ko)];
+  const threadSources = ['mail', ...(r2.includes('slack') ? ['slack'] : [])];
+  return {
+    ...itemSummarize,
+    description: {
+      en: `Summarize or show ONE ${en.slice(0, -1).join(', ')} or ${en[en.length - 1]} from the list Quoky just showed, when the owner asks what it says.`,
+      ko: `방금 보여준 ${ko.join('·')} 목록의 항목 하나를 요약하거나 보여주기(내용을 물을 때).`,
+    },
+    args: itemSummarize.args.map((spec) => {
+      if (spec.name === 'source') return { ...spec, values: ['mail', 'drive', ...r2] };
+      if (spec.name === 'ref' && r2.includes('jira')) return { ...spec, description: R2_REF_DESCRIPTION };
+      if (spec.name === 'scope') {
+        return { ...spec, description: `thread ONLY when the owner asks about the whole thread (스레드/thread); ${threadSources.join(' and ')} only.` };
+      }
+      return spec;
+    }),
+    check(args: NlArgs, groundingText: string): NlEntryCheckFailure | undefined {
+      if (!asksForItemContent(groundingText)) return { reason: 'ungrounded', arg: 'mode' };
+      if (args.scope === 'thread' && !threadSources.includes(String(args.source))) return { reason: 'invalid-arg', arg: 'scope' };
+      // A Jira key ref names a Jira issue only (D2).
+      if (parseNlRef(args.ref)?.kind === 'key' && args.source !== 'jira') return { reason: 'invalid-arg', arg: 'ref' };
+      return undefined;
+    },
+  };
+}
+
+/** The `source` values an `item.summarize` entry offers. */
+function itemSummarizeSources(entry: NlCatalogEntry): string[] {
+  return entry.args.find((spec) => spec.name === 'source')?.values?.map(String) ?? [];
+}
+
+/**
+ * A6 R2: one `item.summarize` entry for every handler that contributes one (mail, Drive and the work-chat lookup for
+ * Jira / Slack): the union of their `source` values in canonical order. Without an R2 source it is the R1 entry.
+ */
+export function mergeItemSummarizeEntries(entries: readonly NlCatalogEntry[]): NlCatalogEntry {
+  const union = new Set(entries.flatMap(itemSummarizeSources));
+  return nlItemSummarizeEntry(NL_ITEM_SUMMARIZE_SOURCES.filter((source) => union.has(source)));
+}
+
 /** The A6 entries that can be offered (R1 local entries and `item.summarize`). */
 export const NL_ACTION_ENTRIES: Readonly<Partial<Record<NlActionEntryId, NlCatalogEntry>>> = Object.freeze({
   'todo.add': todoAdd,
@@ -730,7 +824,7 @@ export function isNlActionEntry(entry: Pick<NlCatalogEntry, 'risk'>): boolean {
 export const NL_TARGET_ENTRY_IDS: readonly NlActionEntryId[] = ['todo.complete', 'todo.cancel', 'reminder.cancel', 'item.summarize', 'action.undo'];
 
 /** Which item source an A6 entry acts on, when fixed by the entry (`item.summarize` takes it from its `source` arg). */
-export function nlActionSourceOf(entryId: NlActionEntryId, args: NlArgs): 'todo' | 'reminder' | 'mail' | 'drive' | undefined {
+export function nlActionSourceOf(entryId: NlActionEntryId, args: NlArgs): NlItemSource | undefined {
   switch (entryId) {
     case 'todo.add':
     case 'todo.complete':
@@ -740,7 +834,7 @@ export function nlActionSourceOf(entryId: NlActionEntryId, args: NlArgs): 'todo'
     case 'reminder.cancel':
       return 'reminder';
     case 'item.summarize':
-      return args.source === 'mail' || args.source === 'drive' ? args.source : undefined;
+      return args.source === 'mail' || args.source === 'drive' || args.source === 'jira' || args.source === 'slack' ? args.source : undefined;
     default:
       return undefined;
   }

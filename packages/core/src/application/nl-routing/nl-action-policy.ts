@@ -24,6 +24,8 @@ export const NL_ACTION_CAPS = Object.freeze({
   localWritePerHour: 20,
   localWritePerDay: 100,
   itemReadPerHour: 30,
+  /** A6 R2 owner decision D8: `item.summarize` a day per actor (MSIT per-token volume). */
+  itemReadPerDay: 100,
   externalPerHour: 10,
   externalPerDay: 30,
 });
@@ -36,7 +38,9 @@ const MAX_TRACKED_ACTORS = 256;
 export class NlActionCaps {
   private readonly windows = new Map<string, number[]>();
 
-  constructor(private readonly caps: { readonly [K in keyof typeof NL_ACTION_CAPS]: number } = NL_ACTION_CAPS) {}
+  constructor(
+    private readonly caps: { readonly [K in Exclude<keyof typeof NL_ACTION_CAPS, 'itemReadPerDay'>]: number } & { readonly itemReadPerDay?: number } = NL_ACTION_CAPS,
+  ) {}
 
   /** Whether one more execution of `risk` stays within the caps at `nowMs`. */
   allows(actorId: string, risk: NlCatalogRisk, nowMs: number): boolean {
@@ -46,7 +50,7 @@ export class NlActionCaps {
       case 'LOCAL_WRITE':
         return lastHour < this.caps.localWritePerHour && times.length < this.caps.localWritePerDay;
       case 'ITEM_READ':
-        return lastHour < this.caps.itemReadPerHour;
+        return lastHour < this.caps.itemReadPerHour && times.length < (this.caps.itemReadPerDay ?? NL_ACTION_CAPS.itemReadPerDay);
       case 'EXTERNAL_WRITE':
         return lastHour < this.caps.externalPerHour && times.length < this.caps.externalPerDay;
       case 'READ':
@@ -194,6 +198,8 @@ const NOUN: Readonly<Record<NlItemSource, { ko: string; en: string }>> = {
   reminder: { ko: '알림', en: 'reminder' },
   mail: { ko: '메일', en: 'mail' },
   drive: { ko: '드라이브 파일', en: 'Drive file' },
+  jira: { ko: '지라 이슈', en: 'Jira issue' },
+  slack: { ko: '슬랙 메시지', en: 'Slack message' },
 };
 
 /** A shown label as the owner saw it: a reminder's `#N`, otherwise `N번`. */

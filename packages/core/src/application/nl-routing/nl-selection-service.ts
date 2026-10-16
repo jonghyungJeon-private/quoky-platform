@@ -32,6 +32,7 @@ import {
   type NlCatalogRisk,
   type NlClassBProbe,
   type NlGrammarSelection,
+  isNlR2ItemSource,
   type NlItemSource,
   type NlItemTarget,
   type NlListingReceipt,
@@ -49,6 +50,7 @@ import {
   type NlResolutionOutcome,
 } from './item-reference';
 import { LAST_ACTION_METADATA_KEY, readLastAction, withLastAction, withLastActionEcho, type LastActionRecord } from './last-action';
+import { LAST_READ_METADATA_KEY, readLastRead, withLastRead } from './last-read';
 import {
   NL_ACTION_LOG_EVENT,
   NlActionCaps,
@@ -73,7 +75,7 @@ import {
 import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput } from './selection-input';
 import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { nlSelectionMeaning } from './selection-meaning';
-import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
+import { NL_ACTION_PROMPT_VERSION, NL_ACTION_R2_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
 import { nlReadNotRequest } from './read-statement';
 import { interpretUndoConfirmReply, nlUndoIsDirect, renderUndoConfirm } from './undo-confirm';
@@ -286,6 +288,12 @@ export interface NlSelectionServiceDeps {
    */
   readonly actions?: {
     readonly level: NlActionLevel;
+    /**
+     * ADR-0120 amendment A6 R2 (`QUOKY_NL_ITEM_R2`, default `off`): which R2 sources `item.summarize` acts on. Jira acts
+     * with `jira` or `all`, Slack with `all`, and only at the level `local`; every other combination resolves and logs
+     * the decision as `shadow` (0 fetches, 0 model calls). Any value but `off` requires a level other than `off`.
+     */
+    readonly itemR2?: NlItemR2Level;
     readonly killSwitch?: NlActionSwitch;
     /** Tests only: other caps. */
     readonly caps?: NlActionCaps;
@@ -319,9 +327,21 @@ interface PendingEcho {
 const ECHO_RECEIPTS_MAX = 64;
 const ECHO_RECEIPT_TTL_MS = 5 * 60_000;
 
+/** A6 R2: `QUOKY_NL_ITEM_R2` (owner decision D10). */
+export type NlItemR2Level = 'off' | 'shadow' | 'jira' | 'all';
+export const NL_ITEM_R2_LEVELS: readonly NlItemR2Level[] = ['off', 'shadow', 'jira', 'all'];
+
+/** A6 R2 (proposal §7): whether `item.summarize` over `source` acts at this action level and R2 level. */
+export function itemR2Acts(level: NlActionLevel, itemR2: NlItemR2Level, source: 'jira' | 'slack'): boolean {
+  if (level !== 'local') return false;
+  return itemR2 === 'all' || (itemR2 === 'jira' && source === 'jira');
+}
+
 /** A6 configuration errors (value-free codes; the app maps them to a startup refusal). */
 export class NlActionsConfigError extends Error {
-  constructor(readonly code: 'NL_ACTIONS_REQUIRES_ACTIVE' | 'NL_ACTIONS_REQUIRES_KILL_SWITCH' | 'NL_ACTIONS_EXTERNAL_NOT_AVAILABLE' | 'NL_DEICTIC_WRITES_REQUIRES_LOCAL') {
+  constructor(
+    readonly code: 'NL_ACTIONS_REQUIRES_ACTIVE' | 'NL_ACTIONS_REQUIRES_KILL_SWITCH' | 'NL_ACTIONS_EXTERNAL_NOT_AVAILABLE' | 'NL_DEICTIC_WRITES_REQUIRES_LOCAL' | 'NL_ITEM_R2_REQUIRES_ACTIONS',
+  ) {
     super(code);
     this.name = 'NlActionsConfigError';
   }
@@ -358,6 +378,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
   private readonly cache = new Map<string, CacheEntry>();
   /** A6 (`QUOKY_NL_ACTIONS`). */
   private readonly actionLevelValue: NlActionLevel;
+  /** A6 R2 (`QUOKY_NL_ITEM_R2`). */
+  private readonly itemR2Value: NlItemR2Level;
   private readonly actionCaps: NlActionCaps;
   /** A6: echoes and listings waiting for their delivery receipt (by inbound message). */
   private readonly echoReceipts = new Map<string, PendingEcho>();
@@ -383,7 +405,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
     this.actorMetadata = new ActorMetadataStore(deps.actors);
     this.mode = deps.mode;
     this.actionLevelValue = deps.actions?.level ?? 'off';
+    this.itemR2Value = deps.actions?.itemR2 ?? 'off';
     this.actionCaps = deps.actions?.caps ?? new NlActionCaps();
+    // A6 R2 (D10): the sub-flag needs an action level.
+    if (this.itemR2Value !== 'off' && this.actionLevelValue === 'off') throw new NlActionsConfigError('NL_ITEM_R2_REQUIRES_ACTIONS');
     // A6-D8: any level but `off` needs `active`; `local` / `external` are release-gated on the kill switch.
     if (this.actionLevelValue !== 'off' && deps.mode !== 'active') throw new NlActionsConfigError('NL_ACTIONS_REQUIRES_ACTIVE');
     if (this.actionLevelValue !== 'off' && deps.actions?.killSwitch === undefined) throw new NlActionsConfigError('NL_ACTIONS_REQUIRES_KILL_SWITCH');
@@ -683,6 +708,21 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /** `QUOKY_NL_ACTIONS`; `off` unless configured. */
   actionLevel(): NlActionLevel {
     return this.actionLevelValue;
+  }
+
+  /** `QUOKY_NL_ITEM_R2` (A6 R2); `off` unless configured. */
+  itemR2Level(): NlItemR2Level {
+    return this.itemR2Value;
+  }
+
+  /**
+   * A6 R2 (§7): whether this decision only resolves and logs (`shadow`): the whole action level is `shadow`, or it is an
+   * `item.summarize` over a Jira / Slack source that the R2 sub-flag does not let act.
+   */
+  private shadowed(entryId: string, args: NlArgs | undefined): boolean {
+    if (this.actionLevelValue === 'shadow') return true;
+    const source = args?.source;
+    return entryId === 'item.summarize' && isNlR2ItemSource(source) && !itemR2Acts(this.actionLevelValue, this.itemR2Value, source);
   }
 
   /**
@@ -1100,7 +1140,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const lastAction = readLastAction(turn.session.metadata?.[LAST_ACTION_METADATA_KEY], turn.actor.id, turn.now);
     const replyId = turn.replyToMessageId;
     const listing = replyId === undefined ? undefined : findAnyListingByReply(listingValue, turn.actor.id, replyId, turn.now);
+    // A6 R2 (D9): the last Jira / Slack item read, only while R2 is not `off` (with `off` nothing writes it).
+    const lastRead = this.itemR2Value === 'off' ? undefined : readLastRead(turn.session.metadata?.[LAST_READ_METADATA_KEY], turn.actor.id, turn.now);
     return {
+      ...(lastRead !== undefined ? { lastRead } : {}),
       // Each slot carries the `requestId` of the turn that wrote it, so the resolver can tell the action's own echo slot
       // from a newer listing (A6 reference priority, owner 2026-10-16).
       listings: readListingRecord(listingValue, turn.actor.id, turn.now),
@@ -1161,6 +1204,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
     openQuestion: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' | 'action-undo-confirm' }> | undefined,
   ): Promise<NlSelectionDecision> {
     const entryId = output.entryId as NlActionEntryId;
+    // A6 R2: an R2 source the sub-flag does not let act resolves and logs only (0 fetches, 0 model calls).
+    const shadow = this.shadowed(entryId, output.args);
     const ctx = this.validationContext(turn, prepared.groundingText, undefined, true);
     const validated = validateSelection({ entryId, args: output.args }, ctx);
     const base = { entryId, risk: ctx.offered.get(entryId)?.risk ?? 'LOCAL_WRITE', refKind: refKindOf(output.args), latencyMs, ...correlationOf(turn) } as const;
@@ -1168,13 +1213,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const inputRefusal = ctx.offered.has(entryId) ? nlActionInputRefusal(turn.text, prepared.groundingText, markedMaterial(turn)) : undefined;
     if (inputRefusal !== undefined) {
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: inputRefusal };
-      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
       return this.actionAnswer(audit, renderInputRefusal(language));
     }
     // A6-D3a amendment 1 (CA P2): while ADR-0122 enforcement is off, a local write acts only in a DM (R5a is DM-only too).
     if (ctx.offered.get(entryId)?.risk === 'LOCAL_WRITE' && turn.direct !== true && turn.surfaceEnforced !== true) {
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'dm-only' };
-      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
       return this.actionAnswer(audit, renderDmOnlyAction(language));
     }
     // A6 R5a: a deictic payload ("그거 할 일로 추가해줘", "내가 말한 거 …") resolves its referent in code and previews it.
@@ -1211,7 +1256,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // `none`, the turn is chat: never a question (the owner's decision of 2026-10-16).
       if (validated.reason === 'not-request') {
         const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: `not-request:${validated.arg ?? 'unknown'}` };
-        if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+        if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
         this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
         return { kind: 'none' };
       }
@@ -1219,7 +1264,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // 우유") asks the owner to restate what to do with it.
       if (validated.reason === 'ungrounded' && validated.arg === 'action') {
         const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'no-action-word' };
-        if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+        if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
         if (entryId === 'todo.add' || entryId === 'reminder.create') return this.actionAnswer({ ...audit, result: 'asked' }, renderRestate(language));
         this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
         return { kind: 'none' };
@@ -1228,18 +1273,18 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // ("3번 완룐 처리해줘"), so the owner is asked with the vocabulary word it may stand for; nothing is written.
       if (validated.reason === 'garbled-action' && validated.candidate !== undefined) {
         const asked: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'garbled-action' };
-        if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...asked, result: 'shadow' });
+        if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
         return this.actionAnswer(asked, renderGarbledAction(validated.candidate, language));
       }
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: validated.reason };
-      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
       return this.actionAnswer(audit, validationReply(validated.reason, language));
     }
     const { entry } = validated.value;
     let args = validated.value.args;
     if (output.ambiguity !== 'CLEAR') {
       const audit: NlActionAudit = { ...base, risk: entry.risk, resolution: 'ambiguous', result: 'asked', reason: 'ambiguous' };
-      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
       return this.actionAnswer(audit, isNlBulkRequest(prepared.groundingText) ? renderBulk(language) : renderRestate(language));
     }
     if (entryId === 'action.undo') {
@@ -1255,7 +1300,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         const otherNumber = numbers.some((number) => number !== record.label);
         if (otherSource || otherNumber) {
           const audit: NlActionAudit = { ...base, risk: entry.risk, resolution: otherSource ? 'other-source' : 'ambiguous', result: 'asked', reason: otherSource ? 'other-source' : 'ambiguous' };
-          if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+          if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
           return this.actionAnswer(audit, renderRestate(language));
         }
       }
@@ -1273,7 +1318,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       const resolved = resolveItemReference({ entryId, source, ref, groundingText: prepared.groundingText, state: reference });
       if (resolved.kind === 'unresolved') {
         const audit: NlActionAudit = { ...base, risk: entry.risk, resolution: resolved.outcome, result: 'asked', reason: resolved.outcome };
-        if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+        if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
         if (resolved.candidates !== undefined && resolved.candidates.length > 0) {
           await this.askTarget(turn, language, entryId, source, resolved.candidates, args, resolved.listingAt);
         }
@@ -1297,14 +1342,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
       const rest = nlNamedItemSources(withoutSpan(prepared.groundingText, args.match));
       if (whole.size > 1 || [...rest].some((named) => named !== source)) {
         const audit: NlActionAudit = { ...base, risk: entry.risk, resolution: 'other-source', result: 'asked', reason: 'other-source' };
-        if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+        if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
         return this.actionAnswer(audit, renderReferenceQuestion('other-source', source, language, {}));
       }
     }
     // A6 R1 review: while an A6 question is open, only the questioned entry on one of its candidates runs.
-    if (!this.allowedWhileAsked(openQuestion, entryId, target)) return this.blockedWhileAsked({ ...base, risk: entry.risk }, language);
+    if (!this.allowedWhileAsked(openQuestion, entryId, target)) return this.blockedWhileAsked({ ...base, risk: entry.risk }, language, shadow);
     const audit: NlActionAudit = { ...base, risk: entry.risk, resolution, ...(target !== undefined ? { target } : {}), result: 'executed' };
-    if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+    if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
     if (!this.actionCaps.allows(turn.actor.id, entry.risk, Date.parse(turn.now))) {
       return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
     }
@@ -1335,9 +1380,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * An action the open A6 question does not ask for: nothing runs and a short fixed reply says so (logged, content-free).
    * The lock lasts that one turn: any reply ends the question (D7).
    */
-  private blockedWhileAsked(base: Omit<NlActionAudit, 'resolution' | 'result'>, language: 'ko' | 'en'): NlSelectionDecision {
+  private blockedWhileAsked(base: Omit<NlActionAudit, 'resolution' | 'result'>, language: 'ko' | 'en', shadow = this.actionLevelValue === 'shadow'): NlSelectionDecision {
     const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'pending-question' };
-    if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+    if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
     return this.actionAnswer(audit, renderQuestionOpen(language));
   }
 
@@ -1495,6 +1540,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         ...(pending.listingAt !== undefined ? { listingAt: pending.listingAt } : {}),
       };
       const audit: NlActionAudit = { entryId: pending.entryId, risk: entry.risk, refKind: 'index', resolution: 'resolved', target, result: 'executed', ...correlationOf(turn) };
+      if (this.shadowed(pending.entryId, { source: pending.source })) return this.shadowAction({ ...audit, result: 'shadow' });
       if (!this.actionCaps.allows(turn.actor.id, entry.risk, Date.parse(turn.now))) return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
       let args: NlArgs = pending.args;
       let basis: string | undefined;
@@ -1525,6 +1571,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       const mode = ITEM_CONTENT_MODE.values[resolved.index]?.value;
       if (mode === undefined) return undefined;
       const audit: NlActionAudit = { entryId: 'item.summarize', risk: 'ITEM_READ', refKind: 'index', resolution: 'resolved', target: pending.target, result: 'executed', ...correlationOf(turn) };
+      if (this.shadowed('item.summarize', { source: pending.target.source })) return this.shadowAction({ ...audit, result: 'shadow' });
       if (!this.actionCaps.allows(turn.actor.id, 'ITEM_READ', Date.parse(turn.now))) return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
       await this.savePreference(turn, ITEM_CONTENT_MODE.key, mode);
       this.actionCaps.note(turn.actor.id, 'ITEM_READ', Date.parse(turn.now));
@@ -1625,9 +1672,22 @@ export class NlSelectionService implements TurnDeliveryObserver {
         await write(NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(actor.id, { kind: 'action-reschedule', at: now, language, target, version }));
       }
     }
+    // A6 R2 (D9): a Jira / Slack item `item.summarize` read becomes `quoky.lastRead` (content-free, 10 minutes).
+    if (action !== undefined && action.entryId === 'item.summarize' && action.result === 'executed' && isNlR2ItemSource(action.source) && action.itemId !== undefined && this.itemR2Value !== 'off') {
+      const listingAt = decided?.target?.listingAt;
+      const record = {
+        source: action.source,
+        id: action.itemId,
+        ...(action.label !== undefined ? { label: action.label } : {}),
+        ...(listingAt !== undefined && Number.isFinite(Date.parse(listingAt)) ? { listingAt: listingAt as IsoTimestamp } : {}),
+        at: now,
+      };
+      await write(LAST_READ_METADATA_KEY, (current) => withLastRead(current, actor.id, record, now));
+    }
     if (decided !== undefined) {
       const result = action === undefined ? decided.result : action.result === 'reschedule' ? 'asked' : action.result;
-      this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields({ ...decided, result, ...(action?.reason !== undefined ? { reason: action.reason } : {}) }));
+      const fetch = action?.fetch !== undefined ? { fetchOutcome: action.fetch.outcome, fetchCount: action.fetch.count, fetchBytes: action.fetch.bytes } : {};
+      this.log('info', NL_ACTION_LOG_EVENT, { ...nlActionLogFields({ ...decided, result, ...(action?.reason !== undefined ? { reason: action.reason } : {}) }), ...fetch });
     }
     if (echo || listed !== undefined) this.awaitEcho(session.id, actor.id, message, now, echo, listed);
   }
@@ -1747,7 +1807,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       text: prepared.text,
       previous,
       entryIds: turn.entries.map((entry) => entry.id),
-      promptVersion: actionsOn ? NL_ACTION_PROMPT_VERSION : NL_SELECTION_PROMPT_VERSION,
+      promptVersion: actionsOn ? (offersR2ItemSources(turn.entries) ? NL_ACTION_R2_PROMPT_VERSION : NL_ACTION_PROMPT_VERSION) : NL_SELECTION_PROMPT_VERSION,
     });
     const hit = bypass ? undefined : this.cache.get(cacheKey);
     if (hit !== undefined && clock() - hit.at < NL_SELECTION_CACHE_TTL_MS && !(actionsOn && !isCacheableOutput(hit.output))) {
