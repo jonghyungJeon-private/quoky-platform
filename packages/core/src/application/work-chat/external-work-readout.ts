@@ -355,11 +355,15 @@ export function renderExternalWorkIndexFooter(readout: ExternalWorkReadout): { r
  * `(4)`, `5번`, `①`, optionally after a bullet as in `- 2. …`) is replaced by a plain `- ` bullet. A number word inside a
  * sentence ("두 번째 이슈") and a number that is not followed by a space ("10.5% 증가") are left alone.
  */
-const LEADING_LIST_MARKER = /^\s*(?:[-*•]\s*)?(?:\d+[.)](?=\s)|\(\d+\)|\d+\s*번[.:)]?|[①-⑳])\s*/u;
+const LEADING_LIST_MARKER = /^\s*(?:[-*•]\s*)?(?:\d+[.)](?=\s)|\(\d+\)|\d+\s*번(?!째)[.:)]?)\s*/u;
+/** A circled number is matched before NFKC (which folds it to a bare digit). */
+const LEADING_CIRCLED_MARKER = /^\s*(?:[-*•]\s*)?[①-⑳]\s*/u;
 export function stripLeadingListMarkers(text: string): string {
   return text
     .split('\n')
     .map((line) => {
+      const circled = LEADING_CIRCLED_MARKER.exec(line);
+      if (circled !== null) return `- ${line.slice(circled[0].length)}`;
       const normalized = line.normalize('NFKC');
       const match = LEADING_LIST_MARKER.exec(normalized);
       return match === null ? line : `- ${normalized.slice(match[0].length)}`;
