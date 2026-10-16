@@ -55,7 +55,8 @@ describe('ADR-0123 pool batch 1', () => {
     expect(audit.poolDigest).toBe(poolDigest(pool.entries));
     expect(audit.goldDigest).toBe(gold.sha256);
     expect(audit.splitSha256).toBe(createHash('sha256').update(JSON.stringify(split)).digest('hex'));
-    expect(audit.models.map((model) => model.model)).toEqual(['nomic-embed-text', 'nomic-embed-text-v2-moe']);
+    // ADR-0123 owner decision (2026-10-16): v2-moe is the sole retrieval model; v1.5 is not required in the record.
+    expect(audit.models.map((model) => model.model)).toContain('nomic-embed-text-v2-moe');
     for (const model of audit.models) expect(model.spaceId).toMatch(/^nomic-embed-text(?:-v2-moe)?@[0-9a-f]{12}@ollama\d+\.\d+\.\d+$/);
   });
 });
