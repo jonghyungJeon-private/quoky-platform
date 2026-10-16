@@ -13,7 +13,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   "장난삼아", "장난임"; English "jokingly", "as a joke", "just joking"); compounds such as "장난감" are other nouns.
 - **Fixed (duplicate, G09).** A selected `todo.add` whose title is an open to-do's exact title writes nothing and answers
   "같은 제목의 할 일이 이미 있어요 (N번)" (receipt `refused` / `duplicate`); the anchored "할 일 추가: …" is unchanged. The
-  bare "<title> 할 일" itself still acts under A6-D3a amendment 1 (proposal recorded in `DECISIONS.md`).
+  bare "<title> 할 일" itself still acts under A6-D3a amendment 1 (confirmed by owner decision A of 2026-10-17).
 
 ## Unreleased — A6 R2: `item.summarize` over Jira and Slack (2026-10-16)
 

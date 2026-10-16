@@ -27186,6 +27186,8 @@ Three local writes executed that the kit expected not to (all cleaned). Fixes, e
   confirmation "할 일로 추가할까요?" / "알림으로 만들까요?" instead of acting. Options: (a) both entries, which moves
   `reminder.create-022` from execute to ask; (b) `todo.add` only, keeping 022 (a reminder carries a `when` the owner
   stated, a to-do has nothing beyond the title). Either needs the owner's gold decision, a D12 rerun and a shadow review.
+  *(Decided 2026-10-17, owner decision A: neither option; the bare form executes as written. See "Owner decisions of
+  2026-10-17 (A–E)" at the end of this file.)*
 - **G09 duplicate (changed).** A selected `todo.add` whose normalised title equals an ACTIVE to-do's title writes nothing
   and answers "같은 제목의 할 일이 이미 있어요 (N번): "…" · 아무것도 바꾸지 않았어요." (receipt `refused`, reason
   `duplicate`, not undoable): the same check and wording as the R5a preview's duplicate note. The number is the label
@@ -27318,3 +27320,33 @@ calls, today's reply). Where the code is more specific than the proposal:
   particle right after the quote ("…" 라고 / 라는), so a request outside the quote is the owner's own; the reason-statement
   veto needs a declarative or state ending (-다, -네, -어/-아/-워), so nominal and -시오 mains pass. Leaks accepted: a state
   main ending in 나/해 ("짜증나") and a quote mentioned without a quotative particle stay captured.
+
+## Owner decisions of 2026-10-17 (A–E)
+
+On 2026-10-17 at 00:39 the owner approved every recommended answer of the open A6 items ("일단 전부 권장안으로"). Each item is
+recorded below as an owner decision; where it changes settled text it is an amendment of that text. New gold cases added
+for these items are agent-drafted and marked `PENDING the owner's D12 batch` in their notes, as the corpus convention
+requires. No live configuration was changed by this record (`QUOKY_NL_ACTIONS` stays `shadow` on the service).
+
+### A. A bare "<title> 할 일" executes `todo.add` (owner decision, no amendment)
+
+- **Decision.** A message that is only a title and the to-do source noun, with no action word and no request form
+  ("세금 서류 챙기기 할 일", live test 2026-10-16 G09), **executes** `todo.add` when the selector chose it. This is the
+  current behaviour of A6-D3a amendment 1 (decisions 1 and 3: no action word is needed, and for a payload entry the
+  source noun names what to make) and the same shape as the owner gold `a6-paraphrase-reminder.create-022`. Neither
+  option of the G09 proposal (asking "할 일로 추가할까요?") is adopted, so the A6-D3a amendment 1 text is unchanged.
+- **The duplicate guard stays.** A selected `todo.add` whose normalised title equals an open to-do's title writes nothing
+  and names the existing one (live test 2026-10-16, "G09 duplicate").
+- **Pinned.** `request-shape.test.ts` (the bare form and its counter-cases: a question, a negation, a copular or past
+  statement, a time in the title), the acceptance test `personal-v5-a6-acceptance.test.ts` (executes, then the duplicate
+  refusal), gold `a6-paraphrase-todo.add-903` (execute) and `a6-negative-none-186` (question, `none`). The "pending" note
+  of the G09 proposal and the live kit row G09 (now execute) are updated.
+
+### B. `QUOKY_WORK_SUMMARY_ENABLED` during the R2 live tests (owner decision, record only)
+
+- **Decision.** `QUOKY_WORK_SUMMARY_ENABLED` may be turned **on only for the duration of the A6 R2 live tests**
+  (`item.summarize` over Jira and Slack, `summary` mode), and is turned **off again** when they end. It is not left on
+  between test sessions.
+- **Scope.** A record only: no configuration, code default or `.env.local` value is changed here. Each switch is still a
+  Strict runtime step (a restart) taken by the operator within the approved R2 live test; the R2 promotion steps of
+  "ADR-0120 amendment A6 R2" (D6, D10) are unchanged.

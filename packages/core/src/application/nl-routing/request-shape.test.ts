@@ -525,6 +525,7 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-182',
     'a6-negative-none-183',
     'a6-negative-none-185',
+    'a6-negative-none-186', // owner decision A counter-case: the bare "<title> 할 일" as a question
     'a6-seed-neg-001',
     'a6-seed-neg-002',
     'a6-seed-neg-003',
@@ -606,10 +607,22 @@ describe('live test 2026-10-16 negative captures (QUOKY_NL_ACTIONS=local)', () =
     expect(v('reminder.create', { body: '장난감 반납', when: '내일 9시' }, '내일 9시에 장난감 반납 알려줘')).toMatchObject({ ok: true });
   });
 
-  it('G09: a bare "<title> 할 일" frame acts under A6-D3a amendment 1 (the shape of owner gold reminder.create-022); ask proposal pending', () => {
-    // Amendment 1 D1/D3: no action word and no request form is needed, and for a payload entry the source noun names what
-    // to make ("3일 뒤 오전 9시에 월세 이체 리마인더" executes by owner decision). Changing this to ask needs an amendment.
+  it('G09 (owner decision A, 2026-10-17): a bare "<title> 할 일" with no action word executes todo.add, like owner gold reminder.create-022', () => {
+    // Amendment 1 D1/D3, confirmed by the owner: no action word and no request form is needed, and for a payload entry the
+    // source noun names what to make. The duplicate guard (an open to-do with the same title writes nothing) stays in the
+    // handler (`work-chat-actions.test.ts`).
     expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일')).toMatchObject({ ok: true });
+    expect(v('todo.add', { title: '분기 보고서 표지 교체' }, '분기 보고서 표지 교체 할일')).toMatchObject({ ok: true });
     expect(v('reminder.create', { body: '월세 이체', when: '3일 뒤 오전 9시' }, '3일 뒤 오전 9시에 월세 이체 리마인더')).toMatchObject({ ok: true });
+  });
+
+  it('G09 counter-cases: the same bare shape as a question, a negation, a statement or with a time in the title never executes', () => {
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일 있어?')).toMatchObject({ ok: false, reason: 'not-request', arg: 'question' });
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일 맞지?')).toMatchObject({ ok: false, reason: 'not-request', arg: 'question' });
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일 아니야')).toMatchObject({ ok: false, reason: 'not-request', arg: 'negation' });
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일 하지 마')).toMatchObject({ ok: false, reason: 'not-request', arg: 'negation' });
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일이었어')).toMatchObject({ ok: false, reason: 'not-request', arg: 'statement' });
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일이야')).toMatchObject({ ok: false, reason: 'not-request', arg: 'statement' });
+    expect(v('todo.add', { title: '내일 세금 서류 챙기기' }, '내일 세금 서류 챙기기 할 일')).toMatchObject({ ok: false, reason: 'time-in-title' });
   });
 });

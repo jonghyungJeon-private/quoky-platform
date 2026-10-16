@@ -14407,6 +14407,26 @@
    },
    "expect": "none",
    "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): retraction in trailing content (Codex P1)"
+  },
+  {
+   "id": "a6-paraphrase-todo.add-903",
+   "family": "paraphrase",
+   "text": "세금 서류 챙기기 할 일",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "세금 서류 챙기기"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision A (2026-10-17): a bare \"<title> 할 일\" with no action word executes todo.add, like reminder.create-022; live test 2026-10-16 G09 [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-186",
+   "family": "negative",
+   "text": "세금 서류 챙기기 할 일 있었나?",
+   "expect": "none",
+   "note": "owner decision A counter-case (2026-10-17): the bare \"<title> 할 일\" shape as a question is chat [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
   }
  ]
 }

@@ -940,6 +940,23 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect({ todos: (await todos()).length, reminders: (await reminders()).length }).toEqual(before);
   });
 
+  it('owner decision A (2026-10-17): a bare "<title> 할 일" executes todo.add; the same title again is the duplicate refusal', async () => {
+    resetCaps();
+    await resetNlState();
+    const added = await turn('세금 서류 챙기기 할 일', answer('todo.add', { title: '세금 서류 챙기기' }));
+    expect(added.selects).toHaveLength(1);
+    expect(added.text).toMatch(/^할 일 \d+번으로 추가했어요: "세금 서류 챙기기" · 되돌리려면 "되돌려줘" \(10분 안\)$/u);
+    const open = async () => (await todos()).filter((item) => item.title === '세금 서류 챙기기' && item.status === 'ACTIVE');
+    expect(await open()).toHaveLength(1);
+    const again = await turn('세금 서류 챙기기 할 일', answer('todo.add', { title: '세금 서류 챙기기' }));
+    expect(again.text).toContain('같은 제목의 할 일이 이미 있어요');
+    expect(await open()).toHaveLength(1);
+    // Counter-case: the same shape as a question is chat; nothing is written.
+    const asked = await turn('세금 서류 챙기기 할 일 있었나?', answer('todo.add', { title: '세금 서류 챙기기' }));
+    expect(asked.text).not.toContain('추가했어요');
+    expect(await open()).toHaveLength(1);
+  });
+
   it('exec-time: every case of nl-action.exec-time.v1.json is covered by an acceptance test above', async () => {
     const { readFileSync } = await import('node:fs');
     const file = new URL('../../../packages/core/src/application/golden/nl-action.exec-time.v1.json', import.meta.url);
