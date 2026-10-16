@@ -4,9 +4,9 @@
 - 승격 조건 (A6-D8): 라벨 턴 100개 이상, 오실행(wrong-target execute) 0, undo 는 실행 20건당 1건 이하, 그리고 소유자의 yes.
 - 이 문서는 문서만 추가한다. 코드 변경 없음, 모델 호출 없음, push 없음.
 - 기준 상태 (DECISIONS / CURRENT_STATE 대조, 2026-10-16):
-  - `QUOKY_NL_ACTIONS=shadow` 가 라이브 서비스에서 2026-10-16 09:14 부터 켜져 있다 (`.env.local`, 소유자 승인). CURRENT_STATE 와 맞춘 값이다. 시작 전에 실제 값을 한 번 확인한다.
+  - `QUOKY_NL_ACTIONS` 는 현재 `shadow` 로 시험할 수 있다 (소유자 지시). 단 CURRENT_STATE 22행은 "unset (off)", 130행은 "live service 는 shadow" 라고 적혀 있어 서로 다르다. 시작 전에 `.env.local` 의 실제 값을 확인한다.
   - 킬 스위치 `에이전트 중지` / `에이전트 재개` 는 코드에 있다 (`nl-routing/action-switch.ts`, A6-D3). 오실행 시 이것을 먼저 쓴다.
-  - A6-D3a 수정 1 (act-and-undo, #244) 은 Accepted 이고 main 에 병합·배포됐다. 이 문서의 기대 결과는 #244 적용 기준이다. 그래도 요청 동사가 없는 쓰기가 ask/none 으로 나오면 기록만 하고 오실행으로 세지 않는다.
+  - A6-D3a 수정 1 (act-and-undo, #244) 은 Proposed 상태다. 이 문서의 기대 결과는 #244 적용 기준이다. 미병합 상태이면 요청 동사가 없는 쓰기가 ask/none 으로 나올 수 있다. 그것은 기록만 하고 오실행으로 세지 않는다.
   - undo 확인 (A6-D3a): "되돌려줘" 정확한 명령만 실행하고, 서술형은 확인 질문을 한다.
   - 깨진 행동어 (garbled-action, #248): 행동어가 깨졌으면 실행하지 않고 질문한다.
   - R5a (#246) 는 `QUOKY_NL_DEICTIC_WRITES` 뒤에 있고 기본 `off` 다. 이 키트에서는 켜지 않는다. 따라서 "그거 투두로 넣어줘" (L05) 류는 대화로 남는 것이 기대값이다.
@@ -19,21 +19,44 @@ shadow 에서는 A6 가 아무것도 쓰지 않으므로, 목록과 대상은 �
 
 - 할 일 (열린 상태): `장보기`, `보고서 초안 작성`, `세금 서류 챙기기`, `창고 정리 일정 잡기`, `분기 회의록 정리`, `법인카드 정산 메모`
 - 알림 (예약 상태): `치과 예약 확인`, `법무팀 서명 요청`, `택배 수령`, `운동 가기`, `세무사 통화`
-- 완료 또는 취소된 항목이 나오면 다음 단계 전에 새 fixture 로 다시 채운다. 대상 이름이 겹치면 기대 엔트리를 확인하기 어렵다.
+- 고정 명령으로 만든 fixture 는 A6 쓰기 상한 (아래 1-3) 을 세지 않는다. A6 경로의 `actionCaps.note` 호출만 센다. 그래서 재시드는 상한에 들어가지 않는다.
+- 로컬 단계에서 완료·취소된 항목은 배치 사이에 다시 채운다 (배치 5 전에 E 그룹이 `치과 예약 확인` 알림을 취소하므로 다시 만든다).
 
 ### 1-2. 1단계: shadow (지금 가능)
 
-1. `.env.local` 에 `QUOKY_NL_ACTIONS=shadow` (필요하면 `QUOKY_NL_INTENT_MODE=active` 도 함께; A6-D8 에 따라 필수).
-2. 소유자 본인이 Discord **DM** 에서 메시지를 한 줄씩 보낸다. 그룹(A~M) 순서를 지키고, 목록 표시가 필요한 L 그룹 전에는 해당 목록을 먼저 띄운다.
-3. shadow 는 실행하지 않는다. 기록만 남는다. 결과는 아래 1-4 의 로그 줄로 읽는다.
-4. J 그룹 (undo) 은 shadow 에서 실제 되돌리기가 일어나지 않으므로 건너뛴다. 로컬 단계에서만 돌린다.
+1. `.env.local` 에 `QUOKY_NL_ACTIONS=shadow` (A6-D8 에 따라 `QUOKY_NL_INTENT_MODE=active` 도 필요).
+2. 소유자 본인이 Discord **DM** 에서 메시지를 한 줄씩 보낸다. 그룹(A~M) 순서를 지키고, L 그룹 전에는 해당 목록을 먼저 띄운다.
+3. shadow 는 실행하지 않는다. 판정은 1-4 의 `reason` 과 `resolution` 으로 한다 (`result` 는 쓰지 않는다).
+4. J 그룹 (undo) 은 shadow 에서 되돌리기가 일어나지 않으므로 건너뛴다. 로컬 단계에서만 돌린다.
 
 ### 1-3. 2단계: local (Strict owner step)
 
 - 이 단계는 소유자만 한다. 소유자가 승인하고 `.env.local` 의 `QUOKY_NL_ACTIONS=local` 로 직접 바꾼 뒤 한 번만 재시작한다. 재시작이 10분 안에 3회 이상이면 CRASH_LOOP DM 이 온다.
-- 테스트 메시지는 같은 Discord DM 에서 보낸다. 채널 턴 (K03–K06) 은 DM 이 아닌 채널에서 보낸다.
-- 쓰기 결과는 실제로 바뀐다. 1-1 의 fixture 를 다시 채운 뒤 시작한다.
+- 테스트 메시지는 같은 Discord DM 에서 보낸다. 채널 턴 (K03–K06) 은 배치 0 에서 채널로 보낸다.
 - `QUOKY_NL_DEICTIC_WRITES` 는 `off` 로 둔다.
+
+**쓰기 상한 (NL_ACTION_CAPS, `nl-action-policy.ts`)**
+- `localWritePerHour = 20`, `localWritePerDay = 100`, 사용자(actor)별 슬라이딩 창. LOCAL_WRITE 위험 등급이면 되돌리기 (`action.undo`) 도 같은 창에 든다.
+- 상한에 걸리면 `result=capped` 로 기록되고 "잠시 후 다시" 답이 간다. 상한을 넘긴 쓰기는 세지 않는다.
+- 이 키트는 쓰기 84개 + 되돌리기 6개 = **90** 을 쓴다. 한 시간에 18 을 넘기지 않도록 5개 배치로 나눈다. 하루 100 이하이므로 하루에 다른 A6 쓰기가 있으면 안 된다.
+
+**배치 계획** (각 배치의 쓰기 + 되돌리기 합계가 18 이하. 기대 수치는 실행 기대 (execute) 메시지 수다)
+
+| 배치 | 메시지 | 쓰기 | 되돌리기 | 합계 (상한 20/시간 대비) | 시작 조건 |
+|---|---|---|---|---|---|
+| 0 | 쓰기 없는 턴: H01–H09, I01–I18, G08–G10, L01·L03·L05·L06·L07·L09·L10, M07–M09, K03–K06 (44개) | 0 | 0 | 0 | 시작 전에 아무 때나 (상태를 바꾸지 않음) |
+| 1 | A01–A14, B01–B04 | 18 | 0 | 18 | 1-1 fixture 가 채워진 뒤 |
+| 2 | B05–B10, C01–C06, D01–D06 | 18 | 0 | 18 | 배치 1 의 마지막 쓰기 + 60분 이후 |
+| 3 | D07–D12, E01–E06, F01–F06 | 18 | 0 | 18 | 배치 2 의 마지막 쓰기 + 60분 이후 |
+| 4 | F07–F10, G01–G07, H10, M01–M06 | 18 | 0 | 18 | 배치 3 의 마지막 쓰기 + 60분 이후 |
+| 재시드 | 1-1 의 fixture 를 다시 채움 (고정 명령, 상한 밖) | — | — | — | 배치 4 의 마지막 쓰기 + 60분 이후 |
+| 5 | K01–K02, L02·L04·L08 (목록을 먼저 띄움), J01–J17 | 12 | 6 | 18 | 재시드 뒤 |
+
+- 배치 5 의 쓰기는 K01·K02 (2) + L02·L04·L08 (3) + J 쓰기 7 = 12, 되돌리기는 J 6 개. 합계 18.
+- **대기 규칙 (rolling hour)**: 다음 배치의 첫 메시지는 이전 배치의 **마지막 쓰기 시각 + 60분** 이후에 보낸다. 그렇게 하면 이전 배치의 쓰기가 모두 창 밖으로 나가서 두 배치가 한 창에 겹치지 않는다. 배치 0 은 쓰기가 없으므로 대기가 없다.
+- 배치 중간에 `capped` 가 한 번이라도 보이면 그 배치를 멈추고, 마지막 쓰기 + 60분을 기다린 뒤 남은 메시지부터 다시 보낸다. `capped` 턴은 라벨을 "상한" 으로 적는다 (실행 기대의 오답이 아니다).
+- 전체 최소 소요: 배치 1–5 사이 대기 4회 × 60분 이상 (약 4시간 이상).
+- J 그룹 규칙: 되돌리기 (undo) 는 바로 앞의 쓰기가 있어야 한다. J01·J06·J08·J10·J12·J14·J16 은 쓰기 (todo.add) 이고, 그 바로 뒤가 되돌리기다. J02–J05 는 확인 질문 (쓰기 없음).
 
 ### 1-4. 로그 줄 읽는 법
 
@@ -43,26 +66,34 @@ shadow 에서는 A6 가 아무것도 쓰지 않으므로, 목록과 대상은 �
 grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 ```
 
-**`nl_selection.decided`** (선택 결과, 턴마다 1줄)
-- `outcome`: `execute` / `ask` / `none` / `unavailable` 등. 기대 결과와 비교하는 기본 값이다.
-- `entryId`: 선택된 엔트리 (`none` 이면 엔트리 없음).
-- `ambiguity`, `confidence`: 애매함 정도. `route`, `latencyMs`, `cached`: 경로와 지연.
+**중요 (shadow)**: `shadowAction` 은 `result` 를 항상 `shadow` 로 덮어쓰고 `kind: none` 을 돌려준다. 그래서
+- `nl_action.decided.result=shadow` 는 실행 후보, 질문, 거절을 **구별하지 못한다**. 단독으로 실행 후보라고 판정하지 않는다.
+- `nl_selection.decided.outcome` 도 shadow 에서는 항상 `none` 이다. 이 칸으로 판정하지 않는다. `entryId` 만 셀 수 있다 (selector 가 고른 엔트리).
 
-**`nl_action.decided`** (A6 판정, A6 가 판단한 턴에만 있다)
-- `entryId`, `risk`: 엔트리와 위험 등급 (`LOCAL_WRITE`, `ITEM_READ`).
-- `refKind`, `resolution`: 참조 방식과 해석 결과 (`resolved`, `ambiguous`, `out-of-range`, `stale`, `none` 등).
-- `result`: 실제 결과. 1단계에서는 `shadow` (실행 안 됨), 2단계에서는 `executed` / `previewed` / `asked` / `refused` / `undone` / `capped`.
-- `reason`: 질문이나 거절의 사유 (예: `garbled-action`, undo 확인).
-- `targetSource`, `targetId` (로컬 항목은 UUID), `targetLabel`: 대상이 무엇인지. 오실행 판정에 쓴다.
-- `turnId`, `sessionId`: 턴을 기록과 맞추는 키.
+**`nl_action.decided`** (A6 판정 줄)
+- `entryId`, `risk`: 엔트리와 위험 등급.
+- `resolution`: 대상 해석 결과 (`resolved`, `none`, `ambiguous`, `out-of-range`, `stale`, `other-source`, `expired`, `conflict`).
+- `reason`: 질문이나 거절의 사유. 값 목록: `garbled-action`, `undo-confirm`, `ambiguous`, `other-source`, `content-mode`, `capped`, `not-request:<인자>`, `dm-only`, `no-action-word`, `deictic-payload`, 그리고 검증 사유 (예: `not-offered`, `ungrounded`).
+- `result` (local 만 실제 값): `executed` / `previewed` / `asked` / `refused` / `undone` / `capped`.
+- `targetSource`, `targetId` (로컬 항목은 UUID), `targetLabel`, `turnId`, `sessionId`.
 
-**판정 방법**
-- 실행 기대 (execute): 1단계는 `result=shadow` 이고 `entryId` 가 기대 엔트리와 같아야 한다. 2단계는 `result=executed` (J 는 `undone`).
-- 질문 기대 (ask / confirm-undo): `result=asked` 이고 `reason` 이 질문 사유와 맞아야 한다.
-- 대화 기대 (none): `nl_action.decided` 줄이 없거나 `nl_selection.decided` 의 `outcome=none` 이어야 한다. 실행 줄이 있으면 **부정 포착** 이다.
-- **오실행 (wrong-target)**: `result=executed` 인데 `targetId` / `targetLabel` 이 말한 대상과 다르거나, 기대 엔트리와 다른 엔트리가 실행된 경우.
+**`nl_selection.decided`** (선택 줄, 턴마다 1줄): `outcome` (local 에서만 `execute` / `ask` / `none` 이 실제 값), `entryId`, `ambiguity`, `confidence`, `route`, `latencyMs`, `cached`.
 
-## 2. 테스트 메시지 (132개)
+**판정 규칙 (shadow)** — 아래 순서로 본다.
+1. `nl_action.decided` 줄이 **없음** → 대화 (none). 기대 none 이면 맞음.
+2. 줄이 있고 `reason` 이 **있음** → 질문 또는 거절이다. `reason=garbled-action`, `undo-confirm`, `ambiguous`, `other-source`, `content-mode` 는 질문 쪽이고, `not-request:*`, `dm-only`, `no-action-word`, `deictic-payload` 와 검증 사유는 거절 쪽이다. 기대가 ask 면 질문 쪽이 맞고, 기대가 none 이면 거절 쪽이 맞다.
+3. 줄이 있고 `reason` 이 **없고** `resolution` 이 `resolved` (대상 있는 쓰기) 또는 `none` (대상 없는 쓰기: todo.add, reminder.create) 이면 → **실행 후보 (would-execute)**. 기대 execute 이고 `entryId` 가 기대 엔트리와 같으면 맞음.
+4. 실행 후보인데 기대가 ask 나 none 이면 → **부정 포착 (negative capture)**. 중단 규칙 (4장) 을 적용한다.
+5. 실행 후보의 `targetId` / `targetLabel` 이 말한 대상과 다르면 → **오실행 (wrong-target)**. 즉시 중단.
+
+**판정 규칙 (local)**: `result=executed` 또는 `undone` 이 execute 기대에 맞다. `asked` 는 ask, `refused` 또는 줄 없음은 none 이다. `executed` 가 none 기대에 나오면 부정 포착이다. `capped` 가 나오면 1-3 의 배치 중단 규칙을 따른다.
+
+**판정 방법 요약**
+- 오실행 (wrong-target): 실행된 항목 (`targetId`/`targetLabel`) 이 말한 대상과 다름. 기대 엔트리와 다른 엔트리 실행도 포함.
+- 부정 포착: 기대가 ask/none 인데 실행 후보 (shadow) 또는 `executed` (local).
+
+
+## 2. 테스트 메시지 (139개)
 
 규칙
 - 기대 결과는 4 가지다: 실행 (execute), 질문 (ask), 대화 (none), 되돌리기 확인 질문 (confirm-undo).
@@ -212,20 +243,27 @@ grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 | I17 | 어제 메모에 '할 일에 분기 메모 추가해줘'라고 적혀 있었어 | 대화 (none) | — | 새 상태 |  |
 | I18 | 친구가 보낸 글: "장보기 완료해줘" | 대화 (none) | — | 새 상태 |  |
 
-### J. 되돌리기 (undo: 정확한 명령 vs 서술형) — local 단계에서만 — 10개
+### J. 되돌리기 (undo: 정확한 명령 vs 서술형) — local 단계에서만 — 17개
 
 | ID | 메시지 | 기대 결과 | 기대 엔트리 | 상태 | 비고 |
 |---|---|---|---|---|---|
-| J01 | 지금 한 변경 되돌려줘 | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
-| J02 | 방금 한 작업 되돌려줘 | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
-| J03 | 마지막 변경 되돌려 주세요 | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
-| J04 | 원상태로 복구 부탁해 | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
-| J05 | 원래 상태로 돌려줘 | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
-| J06 | Undo the last action | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
-| J07 | 되돌려 준 기능 설명 부탁해 | 되돌리기 확인 질문 (confirm-undo) | — | 직전 쓰기 직후 |  |
-| J08 | 되돌려줘 신중하게 해줘 | 되돌리기 확인 질문 (confirm-undo) | — | 직전 쓰기 직후 |  |
-| J09 | 되돌려줘. 오늘 일정은 건드리지 마 | 되돌리기 확인 질문 (confirm-undo) | — | 직전 쓰기 직후 |  |
-| J10 | 되돌리는 방법이 궁금해 | 되돌리기 확인 질문 (confirm-undo) | — | 직전 쓰기 직후 |  |
+| J01 | 할 일에 되돌리기 확인 메모 추가해줘 | 실행 (execute) | todo.add | 새 상태 |  |
+| J02 | 되돌려 준 기능 설명 부탁해 | 되돌리기 확인 질문 (confirm-undo) | — | 직전 쓰기 직후 |  |
+| J03 | 되돌려줘 신중하게 해줘 | 되돌리기 확인 질문 (confirm-undo) | — | 직전 쓰기 직후 |  |
+| J04 | 되돌려줘. 오늘 일정은 건드리지 마 | 되돌리기 확인 질문 (confirm-undo) | — | 직전 쓰기 직후 |  |
+| J05 | 되돌리는 방법이 궁금해 | 되돌리기 확인 질문 (confirm-undo) | — | 직전 쓰기 직후 |  |
+| J06 | 할 일에 되돌리기 확인 메모 추가해줘 | 실행 (execute) | todo.add | 새 상태 |  |
+| J07 | 지금 한 변경 되돌려줘 | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
+| J08 | 할 일에 되돌리기 확인 메모 추가해줘 | 실행 (execute) | todo.add | 새 상태 |  |
+| J09 | 방금 한 작업 되돌려줘 | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
+| J10 | 할 일에 되돌리기 확인 메모 추가해줘 | 실행 (execute) | todo.add | 새 상태 |  |
+| J11 | 마지막 변경 되돌려 주세요 | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
+| J12 | 할 일에 되돌리기 확인 메모 추가해줘 | 실행 (execute) | todo.add | 새 상태 |  |
+| J13 | 원상태로 복구 부탁해 | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
+| J14 | 할 일에 되돌리기 확인 메모 추가해줘 | 실행 (execute) | todo.add | 새 상태 |  |
+| J15 | 원래 상태로 돌려줘 | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
+| J16 | 할 일에 되돌리기 확인 메모 추가해줘 | 실행 (execute) | todo.add | 새 상태 |  |
+| J17 | Undo the last action | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
 
 ### K. DM 과 채널 (A6 은 DM 전용) — 6개
 
@@ -266,7 +304,7 @@ grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 | M07 | Don't add a to-do for the report | 대화 (none) | — | 새 상태 |  |
 | M08 | Should I add a to-do for the report? | 대화 (none) | — | 새 상태 |  |
 | M09 | I wish I had added a to-do for the report | 대화 (none) | — | 새 상태 |  |
-| M10 | Please undo the last change | 실행 (execute) | action.undo | 직전 쓰기 직후 |  |
+| M10 | Please don't undo the last change | 대화 (none) | — | 새 상태 |  |
 
 ## 3. 라벨링 시트 템플릿
 
