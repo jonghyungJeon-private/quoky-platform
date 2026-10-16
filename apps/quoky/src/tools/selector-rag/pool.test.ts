@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { AUDIT_RECORD_PATH, type AuditRecord } from '../selector-rag-cli';
 import { calibrateTau, recordId, spaceIdOf } from './embed';
 import { loadGold } from './gold';
-import { approvedEntries, checkPool, coverageOf, entryProblems, identifierProblems, loadPoolFile, poolDigest, type PoolEntry } from './pool';
-import { drawSwap, retrieveRandomK, retrieveTopK, subsample, type PoolVector } from './retrieve';
+import { poolOutput, approvedEntries, checkPool, coverageOf, entryProblems, identifierProblems, loadPoolFile, poolDigest, type PoolEntry } from './pool';
+import { outputEntryId, drawSwap, retrieveRandomK, retrieveTopK, subsample, type PoolVector } from './retrieve';
 import { splitCases } from './split';
 
 const gold = loadGold();
@@ -107,6 +107,22 @@ describe('pool admission rules', () => {
     expect(alt('{"entryId":"todo.complete","args":{"ref":"soon"}}')).toContain('alternative 1: arg ref');
     expect(alt('"todo.complete"')).toContain('parseSelectionOutput');
     expect(entryProblems({ ...ok, needs: [] }).join(' ')).toContain('needs');
+  });
+
+  it('rejects a fenced or padded output, and every consumer labels a valid output the same way', () => {
+    const bare = '{"entryId":"todo.add","args":{"title":"빨래 개기"},"ambiguity":"CLEAR","alternatives":[]}';
+    const ok = entry({ text: '내 할 일에 빨래 개기 추가', output: bare, needs: ['todo.add'] });
+    for (const bad of ['```json\n' + bare + '\n```', ` ${bare}`, `${bare}\n`, `Output: ${bare}`]) {
+      expect(entryProblems({ ...ok, output: bad }).join(' ')).toContain('bare JSON');
+      expect(poolOutput({ output: bad })).toBeNull();
+      expect(coverageOf([{ ...ok, output: bad }]).perEntry['todo.add']).toBe(0);
+      expect(() => outputEntryId({ ...ok, output: bad })).toThrow();
+    }
+    expect(entryProblems(ok)).toEqual([]);
+    expect(coverageOf([ok]).perEntry['todo.add']).toBe(1);
+    expect(outputEntryId(ok)).toBe('todo.add');
+    expect(outputEntryId(entry())).toBe('none');
+    expect(coverageOf([entry()]).negatives).toBe(1);
   });
 
   it('the pool digest ignores the batch status', () => {

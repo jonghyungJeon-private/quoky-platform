@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { cosine } from './embed';
 import { seedFromString, seededRandom } from './stats';
-import type { PoolEntry } from './pool';
+import { poolOutput, type PoolEntry } from './pool';
 
 export const DEFAULT_K = 3;
 export const SUBSAMPLE_RATE = 0.8;
@@ -17,12 +17,9 @@ export interface PoolVector {
 }
 
 export function outputEntryId(entry: PoolEntry): string {
-  try {
-    const id = (JSON.parse(entry.output) as { entryId?: unknown }).entryId;
-    return typeof id === 'string' ? id : 'none';
-  } catch {
-    return 'none';
-  }
+  const parsed = poolOutput(entry);
+  if (parsed === null) throw new Error(`pool entry ${entry.id} has an output that fails admission`);
+  return parsed.entryId;
 }
 
 const hashOf = (seed: string, id: string): string => createHash('sha256').update(`${seed}:${id}`).digest('hex');

@@ -143,6 +143,18 @@ function argProblems(entry: NlCatalogEntry, args: Record<string, unknown>, text:
   return problems;
 }
 
+/**
+ * The one parse every pool consumer shares (admission, lint, coverage, retrieval labels): Core's `parseSelectionOutput` on a
+ * BARE JSON object. A fenced or padded output is rejected (null), so no consumer can read it differently from another.
+ * `entryId` is the catalog id or `none`.
+ */
+export function poolOutput(entry: { readonly output: unknown }): { entryId: string; args: Record<string, unknown> } | null {
+  const raw = entry.output;
+  if (typeof raw !== 'string' || raw !== raw.trim() || !raw.startsWith('{') || !raw.endsWith('}')) return null;
+  const parsed = parseSelectionOutput(raw);
+  return parsed === null ? null : { entryId: parsed.entryId ?? 'none', args: parsed.args as Record<string, unknown> };
+}
+
 export function entryProblems(entry: PoolEntry): string[] {
   const problems: string[] = [];
   if (typeof entry.id !== 'string' || !/^[a-z0-9][a-z0-9._-]{2,80}$/.test(entry.id)) problems.push('id must match [a-z0-9._-]{3,81}');
@@ -151,7 +163,9 @@ export function entryProblems(entry: PoolEntry): string[] {
   if (entry.language !== 'ko' && entry.language !== 'en') problems.push('language must be ko or en');
   if (!Number.isInteger(entry.batch) || entry.batch < 1) problems.push('batch must be a positive integer');
   // Core's own parser: closed top-level keys, entry id shape, args shape, ambiguity, at most 2 alternatives, size bound.
-  const parsed = typeof entry.output === 'string' ? parseSelectionOutput(entry.output) : null;
+  const parsed = poolOutput(entry) === null ? null : parseSelectionOutput(entry.output);
+  if (typeof entry.output === 'string' && entry.output !== entry.output.trim()) problems.push('output must be bare JSON (no surrounding whitespace)');
+  else if (typeof entry.output === 'string' && !entry.output.startsWith('{')) problems.push('output must be bare JSON (no code fence or surrounding text)');
   if (parsed === null) problems.push('output is rejected by Core parseSelectionOutput');
   else {
     const check = (label: string, entryId: string | null, args: Record<string, unknown>): void => {
@@ -198,12 +212,7 @@ const pairText = (...parts: Array<string | undefined>): string => parts.filter((
 export function lintEntry(entry: PoolEntry, gold: readonly GoldCase[]): PoolFinding[] {
   const found: PoolFinding[] = [];
   const short = isShortText(entry.text);
-  let output: { entryId?: unknown; args?: unknown } | undefined;
-  try {
-    output = JSON.parse(entry.output) as typeof output;
-  } catch {
-    output = undefined;
-  }
+  const output = poolOutput(entry);
   for (const golden of gold) {
     const c = closeness(entry.text, golden.text);
     const metrics = { tokenJ: round(c.tokenJ), charJ: round(c.charJ), contain: round(c.contain) };
@@ -219,7 +228,7 @@ export function lintEntry(entry: PoolEntry, gold: readonly GoldCase[]): PoolFind
       const related = c.tokenJ >= PAIR_TEXT_FLOOR || c.charJ >= PAIR_TEXT_FLOOR;
       if (pairKind !== undefined && !short && related && kind === undefined) found.push({ poolId: entry.id, goldId: golden.id, kind: 'pair', tokenJ: round(pair.tokenJ), charJ: round(pair.charJ), contain: round(pair.contain) });
     }
-    if (output !== undefined && golden.expect !== undefined && sharedSpanArg(output, golden.expect) !== undefined) found.push({ poolId: entry.id, goldId: golden.id, kind: 'output', ...metrics });
+    if (output !== null && golden.expect !== undefined && sharedSpanArg(output, golden.expect) !== undefined) found.push({ poolId: entry.id, goldId: golden.id, kind: 'output', ...metrics });
   }
   return found;
 }
@@ -237,12 +246,9 @@ export function coverageOf(entries: readonly PoolEntry[]): Coverage {
   const perEntry: Record<string, number> = Object.fromEntries(POOL_ENTRY_IDS.map((id) => [id, 0]));
   let negatives = 0;
   for (const entry of entries) {
-    let id = 'none';
-    try {
-      id = String((JSON.parse(entry.output) as { entryId?: unknown }).entryId);
-    } catch {
-      continue;
-    }
+    const parsedOutput = poolOutput(entry);
+    if (parsedOutput === null) continue;
+    const id = parsedOutput.entryId;
     if (id === 'none') negatives += 1;
     else perEntry[id] = (perEntry[id] ?? 0) + 1;
   }
