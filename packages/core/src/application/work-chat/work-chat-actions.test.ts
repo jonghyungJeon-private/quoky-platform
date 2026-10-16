@@ -124,8 +124,28 @@ describe('A6 to-do actions (A6-D1/D3)', () => {
     await addThree(desk);
     expect(await desk.handleAction(cmd('todo.complete', { match: '회의록 공유' }), owner)).toMatchObject({ action: { result: 'executed', label: 3 } });
     expect(await desk.handleAction(cmd('todo.complete', { match: '없는 일' }), owner)).toMatchObject({ action: { result: 'refused' } });
-    await desk.handleAction(cmd('todo.add', { title: '보고서 쓰기' }), owner);
+    // A second open '보고서 쓰기' comes from the anchored command (the A6 add refuses an exact duplicate, below).
+    const again = detectWorkChatCommand('할 일 추가: 보고서 쓰기');
+    if (again === null) throw new Error('no command');
+    await desk.handle(again, owner);
     expect(await desk.handleAction(cmd('todo.complete', { match: '보고서 쓰기' }), owner)).toMatchObject({ action: { result: 'asked', candidates: [{ label: 1 }, { label: 3 }] } });
+  });
+
+  it('todo.add never silently duplicates an open to-do with the same title (live test 2026-10-16 G09)', async () => {
+    const { desk, rows } = world();
+    await addThree(desk);
+    const before = rows.size;
+    const outcome = await desk.handleAction(cmd('todo.add', { title: 'UAT 결과 정리' }), owner);
+    expect(text(outcome)).toBe('같은 제목의 할 일이 이미 있어요 (2번): "UAT 결과 정리" · 아무것도 바꾸지 않았어요.');
+    expect(outcome).toMatchObject({ action: { entryId: 'todo.add', result: 'refused', reason: 'duplicate' } });
+    expect((outcome as { action?: { undoable?: boolean } }).action?.undoable).toBeUndefined();
+    expect(rows.size).toBe(before);
+    // Surrounding whitespace is normalised like a new title; a different title, or one that is no longer open, still adds.
+    expect(await desk.handleAction(cmd('todo.add', { title: '  UAT 결과 정리 ' }), owner)).toMatchObject({ action: { result: 'refused', reason: 'duplicate' } });
+    expect(await desk.handleAction(cmd('todo.add', { title: 'UAT 결과 정리 2차' }), owner)).toMatchObject({ action: { result: 'executed', label: 4 } });
+    const second = [...rows.values()].find((item) => item.title === 'UAT 결과 정리') as WorkItem;
+    await desk.handleAction(cmd('todo.complete', { ref: '#2' }, { target: { source: 'todo', id: second.id, label: 2 } }), owner);
+    expect(await desk.handleAction(cmd('todo.add', { title: 'UAT 결과 정리' }), owner)).toMatchObject({ action: { result: 'executed' } });
   });
 });
 

@@ -141,3 +141,23 @@ describe('action.undo', () => {
     expect(validateSelection({ entryId: 'action.undo', args: {} }, ctx('원복해줘'))).toMatchObject({ ok: true });
   });
 });
+
+describe('verb-final slot: a bare garbled word that ends the message (live test 2026-10-16 H09)', () => {
+  const add = (text: string, title: string) => validateSelection({ entryId: 'todo.add', args: { title } }, ctx(text));
+
+  it('asks when the last word of the message, before nothing or punctuation only, is one jamo off an action word', () => {
+    for (const text of ['사무실 청소 할 일 츄가', '사무실 청소 할 일 츄가!', '사무실 청소 할 일 츄가요.', '사무실 청소 할 일에 츄가 ~']) {
+      expect(add(text, '사무실 청소'), text).toEqual({ ok: false, reason: 'garbled-action', entryId: 'todo.add', arg: 'action', candidate: '추가' });
+    }
+    expect(complete('3번 완룐')).toMatchObject({ ok: false, reason: 'garbled-action', candidate: '완료' });
+    expect(garbled('3번 취솨.', 'todo.cancel')).toBe('취소');
+  });
+
+  it('counter-cases still execute: the real word, its forms, and content that ends the message', () => {
+    for (const text of ['사무실 청소 할 일 추가', '사무실 청소 할 일 추가!', '사무실 청소 할 일 추가요', '사무실 청소 할 일에 추가해']) expect(add(text, '사무실 청소'), text).toMatchObject({ ok: true });
+    for (const text of ['3번 완료', '3번 완료!', '2번 마쳐', '2번 끝냄', '3번 완료됨']) expect(garbled(text), text).toBeUndefined();
+    // The last word belongs to the content span: the frame's last word is not the message's ("할 일 추가해줘 완룐 보고서").
+    expect(add('할 일 추가해줘 완룐 보고서', '완룐 보고서')).toMatchObject({ ok: true });
+    expect(add('할 일에 넣어줘 보고서 츄가', '보고서 츄가')).toMatchObject({ ok: true });
+  });
+});

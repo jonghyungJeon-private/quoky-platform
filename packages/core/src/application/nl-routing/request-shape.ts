@@ -57,8 +57,14 @@ const CONTRACTED_QUOTATIVE_KO = /(?:하|으|달|주)(?:래|래요|래서|랬|라
 /** A quoted segment of the frame (content spans already removed): '…', "…", “…”, ‘…’, 「…」, 『…』. */
 const QUOTED_SEGMENT = /'([^']+)'|"([^"]+)"|“([^”]+)”|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
 const REPORTED_EN = /\b(?:told|asked|wants?|wanted|said|says)\s+(?:(?:me|us|him|her|them)\s+)?to\b|\b(?:you|someone|somebody|they|he|she)\s+(?:should|must|might|could|said|says|told|wants?|wanted)\b/u;
-/** A joke or a tease (CA round 3): never an instruction. */
-const JOKE = /농담|장난(?:이야|임|이에요)|같은\s*소리|\bjk\b|\bj\/k\b|\bkidding\b/u;
+/**
+ * A joke or a tease (CA round 3): never an instruction. The closed class of joke nouns (농담, 장난; English joke) frames
+ * the utterance as not serious in two grammatical slots: as the predicate with the copula ("장난이야", "장난임") or as the
+ * manner adverbial of the act, the instrumental -(으)로 or 삼아 ("장난으로 알림 걸어줘", "장난삼아", "as a joke",
+ * "jokingly"; live test 2026-10-16 I16). 장난 counts only as a word of its own: a compound ("장난감", "말장난") is another
+ * noun.
+ */
+const JOKE = /농담|(?<![가-힣])장난(?:이야|이에요|이었어|이었음|임|이지|으로|삼아)(?![가-힣])|같은\s*소리|\bjk\b|\bj\/k\b|\bkidding\b|\bjust joking\b|\bjokingly\b|\bas a joke\b/u;
 
 // questions
 const QUESTION_MARK = /[?？]/u;

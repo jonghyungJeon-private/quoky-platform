@@ -574,6 +574,14 @@ export function renderTodoActionAdded(item: WorkItem, no: number): MessageBody {
   return fit([{ text: messageContent(`할 일 ${no}번으로 추가했어요: "`, titleOf(item, 200), `" · ${NL_ACTION_UNDO_HINT}`) }]);
 }
 
+/**
+ * An A6 add whose title is already an open to-do (live test 2026-10-16 G09): nothing is added; the existing one is named
+ * under its current number, with the R5a preview's duplicate wording ("같은 제목의 할 일이 이미 있어요").
+ */
+export function renderTodoActionDuplicate(item: WorkItem, no: number): MessageBody {
+  return fit([{ text: messageContent(`같은 제목의 할 일이 이미 있어요 (${no}번): "`, titleOf(item, 200), '" · 아무것도 바꾸지 않았어요.') }]);
+}
+
 /** Completed or taken off the list (record decision 3: a cancel reads "목록에서 뺐어요"). */
 export function renderTodoActionTransitioned(item: WorkItem, no: number | undefined, action: 'complete' | 'cancel'): MessageBody {
   const head = no === undefined ? '할 일을' : `할 일 ${no}번을`;

@@ -70,6 +70,7 @@ import {
   renderWorkChatUsage,
   renderTodoActionAddUndone,
   renderTodoActionAdded,
+  renderTodoActionDuplicate,
   renderTodoActionNotActionable,
   renderTodoActionReopened,
   renderTodoActionTransitioned,
@@ -695,12 +696,33 @@ export class WorkChatService implements WorkDesk {
 
   private async actionAdd(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome> {
     const title = typeof command.args.title === 'string' ? command.args.title : '';
+    // Live test 2026-10-16 G09: a selected add never silently duplicates an open to-do with exactly this title (the same
+    // check as the R5a preview's duplicate note); it names the existing one and writes nothing. The anchored command
+    // ("할 일 추가: …") is the owner's explicit form and is unchanged.
+    const duplicate = await this.openDuplicate(title, actor);
+    if (duplicate !== undefined) {
+      return replyWith(renderTodoActionDuplicate(duplicate.item, duplicate.no), { action: { entryId: 'todo.add', result: 'refused', source: 'todo', reason: 'duplicate' } });
+    }
     const added = await this.addTodoItem(title, [], actor, condition);
     if (added.item === undefined) return replyWith(added.body, { action: { entryId: 'todo.add', result: 'refused', source: 'todo', reason: 'invalid' } });
     const no = todoNumberOf(await this.activeTodos(actor), added.item.id) ?? 0;
     return replyWith(renderTodoActionAdded(added.item, no), {
       action: { entryId: 'todo.add', result: 'executed', source: 'todo', itemId: added.item.id, ...(no > 0 ? { label: no } : {}), version: added.item.updatedAt, undoable: true },
     });
+  }
+
+  /** The open to-do whose stored title equals `rawTitle` once normalised like a new title, under its current number. */
+  private async openDuplicate(rawTitle: string, actor: Actor): Promise<{ readonly item: WorkItem; readonly no: number } | undefined> {
+    let title: string;
+    try {
+      title = normalizeWorkItemTitle(rawTitle);
+    } catch {
+      return undefined; // the add itself refuses an empty or over-long title
+    }
+    const todos = await this.activeTodos(actor);
+    const index = todos.findIndex((item) => item.title === title);
+    const item = todos[index];
+    return item === undefined ? undefined : { item, no: index + 1 };
   }
 
   private async actionTransition(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome> {

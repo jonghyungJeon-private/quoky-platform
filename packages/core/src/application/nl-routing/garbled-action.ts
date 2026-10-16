@@ -15,10 +15,12 @@ import { nlIsRequestForm } from './request-shape';
  *  - The ANCHOR: the word sits where the action word stands, the predicate slot. In Korean that is a word with a request
  *    ending glued on ("완룐해줘", "지웨줘", "완룐 처리해") or a word right before a request form or the light verb 처리
  *    ("완룐 처리해줘", "완룐 해줘", "완룐 좀 해줘") that holds no action word of its own ("필요 없어 취소해줘": 취소 is the
- *    action, 없어 is not 없애). In English it is the imperative slot: the first word, after a request
- *    lead ("please", "can you"), or the complement after "as" ("mark 2 as complte"). The slot is what makes a near word
- *    the action word: a noun elsewhere in the frame that is one jamo away ("원본" beside 원복, "제가" beside 제거) is
- *    not in it, and an adnominal inflection ("끝낸 거", "마친 일": 끝내 / 마치 plus a final ㄴ, which a jamo comparison cannot
+ *    action, 없어 is not 없애). Korean is verb-final, so a bare word that ENDS the owner's message (followed by nothing or
+ *    punctuation only: "사무실 청소 할 일 츄가", "… 츄가!") is in the predicate slot too, live test 2026-10-16 H09; a word
+ *    that ends the frame only because a content span after it was removed is not. In English it is the imperative slot:
+ *    the first word, after a request lead ("please", "can you"), or the complement after "as" ("mark 2 as complte").
+ *    The slot is what makes a near word the action word: a noun elsewhere in the frame that is one jamo away ("원본"
+ *    beside 원복, "제가" beside 제거) is not in it, and an adnominal inflection ("끝낸 거", "마친 일": 끝내 / 마치 plus a final ㄴ, which a jamo comparison cannot
  *    tell from 완료 plus ㄴ = 완룐) modifies the noun after it and never carries a request ending.
  *  - Normal inflection of a VERB form (CA / Codex review): on the last syllable, the ending consonants ㄴ / ㄹ / ㅁ / ㅂ / ㅆ
  *    come and go on the same initial and vowel (끝내 → "끝냄 처리해줘", 마치 → "마침", 지우 → "지움", 없애 → "없앰", 끝났 →
@@ -177,7 +179,13 @@ function wordsOf(frame: string): string[] {
  * entry's first; `verbalNouns` the vocabulary words that are verbal nouns (no inflection of their own); `catalogWords` the
  * catalog's own aliases and source names, which are known words.
  */
-export function nlGarbledActionWord(frame: string, vocabularies: readonly NlActionVocabulary[], verbalNouns: readonly string[], catalogWords: readonly string[] = []): NlGarbledAction | undefined {
+export function nlGarbledActionWord(
+  frame: string,
+  vocabularies: readonly NlActionVocabulary[],
+  verbalNouns: readonly string[],
+  catalogWords: readonly string[] = [],
+  message: string = frame,
+): NlGarbledAction | undefined {
   const normalized = vocabularies.map((vocabulary) => ({ owner: vocabulary.owner, words: vocabulary.words.map(normalizeForMatch) }));
   const knownWords = [...new Set(normalized.flatMap((vocabulary) => vocabulary.words))];
   const nouns = new Set(verbalNouns.map(normalizeForMatch));
@@ -185,6 +193,8 @@ export function nlGarbledActionWord(frame: string, vocabularies: readonly NlActi
   // words too, never a garble.
   const catalog = [...new Set(catalogWords.map(normalizeForMatch))].filter((word) => !/\s/u.test(word) && (isLatinWord(word) ? word.length >= MIN_LATIN_LETTERS : isHangulWord(word) && Array.from(word).length >= MIN_HANGUL_SYLLABLES));
   const words = wordsOf(frame);
+  // The message's own last word (punctuation stripped): the verb-final predicate slot of a Korean sentence.
+  const messageLast = wordsOf(message).at(-1);
   for (const [index, word] of words.entries()) {
     if (holdsKnown(word, knownWords) || holdsKnown(word, catalog)) continue;
     let stems: string[] = [];
@@ -198,7 +208,9 @@ export function nlGarbledActionWord(frame: string, vocabularies: readonly NlActi
       let next = words[index + 1] ?? '';
       if (next === '좀') next = words[index + 2] ?? '';
       // A next word that holds an action word is itself the action ("필요 없어 취소해줘"): the word before it is not in the slot.
-      const slot = tail !== null || ((nlIsRequestForm(next) || /^처리/u.test(next)) && !holdsKnown(next, knownWords));
+      // Verb-final: the bare last word of the message is the predicate ("사무실 청소 할 일 츄가").
+      const final = index === words.length - 1 && word === messageLast;
+      const slot = tail !== null || final || ((nlIsRequestForm(next) || /^처리/u.test(next)) && !holdsKnown(next, knownWords));
       if (slot) {
         const stem = tail !== null ? word.slice(0, tail.index) : word;
         const once = stem.replace(PARTICLE_TAIL, '');
