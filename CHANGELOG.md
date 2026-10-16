@@ -18,6 +18,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   `decideActionCase` + `scoreActionDecision` (action corpus), and the per-case prompt contexts from the same fixtures. Unit tests use a
   fake provider; no selector call was made.
 - **Changed.** `pool.test.ts` binds the audit record to the owner-approved entries and checks coverage over the whole pool.
+- **Changed.** `plan` and `run` use the owner-approved subset only (pending entries excluded, a note printed); Core-answered (pre-selector) gold
+  cases are excluded from the plan and its digest. `dry-run` audits the same approved subset and records it (`poolScope`), so `--write-audit` output
+  is accepted by `plan`; `--audit <file>` now also sets where the audit is written.
 
 ## Unreleased — ADR-0123 RAG-2: `retrievedExamples` prompt slot and arm rendering in the harness (2026-10-16)
 

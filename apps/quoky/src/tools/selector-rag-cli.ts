@@ -108,6 +108,8 @@ export interface AuditRecord {
   readonly poolDigest: string;
   readonly goldDigest: string;
   readonly splitSha256: string;
+  /** The pool subset this audit covers: the owner-approved entries only (a pending batch is not embedded or counted). */
+  readonly poolScope?: { readonly entries: number; readonly approvedBatches: readonly number[] };
   readonly prefixPolicy: string;
   readonly models: ReadonlyArray<{
     readonly model: string;
@@ -126,7 +128,7 @@ export interface AuditRecord {
 
 const r4 = (n: number): number => Math.round(n * 10000) / 10000;
 
-export function toAuditRecord(audits: readonly ModelAudit[], splitSha256: string): AuditRecord {
+export function toAuditRecord(audits: readonly ModelAudit[], splitSha256: string, poolScope?: AuditRecord['poolScope']): AuditRecord {
   const first = audits[0];
   if (first === undefined) throw new Error('no audit');
   return {
@@ -135,6 +137,7 @@ export function toAuditRecord(audits: readonly ModelAudit[], splitSha256: string
     poolDigest: first.poolDigest,
     goldDigest: first.goldDigest,
     splitSha256,
+    ...(poolScope !== undefined ? { poolScope } : {}),
     prefixPolicy: 'search_query: on both sides (pool and gold)',
     models: audits.map((audit) => ({
       model: audit.model,
@@ -194,6 +197,13 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
       deps.stderr('the pool failed the offline lint; nothing was embedded');
       return EXIT_FAILED;
     }
+    // The audit covers exactly what `plan` will use: the owner-approved subset (the lint above still checks the whole pool).
+    const auditEntries = approvedEntries(pool);
+    if (auditEntries.length === 0) {
+      deps.stderr('no owner-approved pool entry to audit; nothing was embedded');
+      return EXIT_FAILED;
+    }
+    if (auditEntries.length !== pool.entries.length) deps.stderr(`note: ${pool.entries.length - auditEntries.length} pending (unapproved) pool entries are not audited`);
     const known = loadKnownFindings();
     const baseUrl = options['--ollama-url'] ?? DEFAULT_OLLAMA_URL;
     const models = (options['--models'] ?? DEFAULT_EMBEDDING_MODELS.join(',')).split(',').map((model) => model.trim()).filter(Boolean);
@@ -204,7 +214,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
       audits.push(
         await runEmbedAudit({
           embedder,
-          pool: pool.entries,
+          pool: auditEntries,
           gold: gold.cases,
           goldDigest: gold.sha256,
           split,
@@ -219,11 +229,13 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     for (const audit of audits) printAudit(deps, audit, contaminatedGoldIds(known).size);
     mkdirSync(EVAL_DIR, { recursive: true });
     const path = resolve(EVAL_DIR, `dry-run-${deps.now().replace(/[:.]/g, '-')}.json`);
-    writeFileSync(path, `${JSON.stringify({ at: deps.now(), poolDigest: poolDigest(pool.entries), goldDigest: gold.sha256, splitSha256, split: { dev: split.dev.length, heldOut: split.heldOut.length }, audits }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+    writeFileSync(path, `${JSON.stringify({ at: deps.now(), poolDigest: poolDigest(auditEntries), goldDigest: gold.sha256, splitSha256, split: { dev: split.dev.length, heldOut: split.heldOut.length }, audits }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
     deps.stdout(`dry-run record: ${path}`);
     if (options['--write-audit'] === 'true') {
-      writeFileSync(AUDIT_RECORD_PATH, `${JSON.stringify(toAuditRecord(audits, splitSha256), null, 2)}\n`);
-      deps.stdout(`audit record written: ${AUDIT_RECORD_PATH}`);
+      const auditPath = options['--audit'] ?? AUDIT_RECORD_PATH;
+      const approvedBatches = [...new Set(auditEntries.map((entry) => entry.batch))].sort((a, b) => a - b);
+      writeFileSync(auditPath, `${JSON.stringify(toAuditRecord(audits, splitSha256, { entries: auditEntries.length, approvedBatches }), null, 2)}\n`);
+      deps.stdout(`audit record written: ${auditPath}`);
     }
     deps.stdout('no selector call was made');
     return audits.every((audit) => audit.flaggedPairs.length === 0 && audit.abort === null) ? EXIT_OK : EXIT_FAILED;
