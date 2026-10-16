@@ -21,6 +21,12 @@ export const ConnectorQueryName = {
   RELEASES: 'releases',
   /** ADR-0120 amendment A8: the items in one release, any assignee unless `assignee` is set ({@link ReleaseItemsQueryParams}). */
   RELEASE_ITEMS: 'release-items',
+  /**
+   * ADR-0120 amendment A6 R2 (ADR-0100 D7 amendment C2): ONE listed item read by its opaque item reference
+   * ({@link ItemQueryParams}), GET only. The reference is the `ConnectorItem.itemRef` a listing returned (Core never builds
+   * one from owner text or content); the adapter re-validates its shape. Returns at most one item carrying `detail`.
+   */
+  ITEM: 'item',
 } as const;
 export type ConnectorQueryName = (typeof ConnectorQueryName)[keyof typeof ConnectorQueryName];
 
@@ -109,6 +115,21 @@ export interface ReleaseItemsQueryParams {
   limit?: number;
 }
 
+/** A6 R2: what an `item` read covers: the item alone, or (Slack) its whole thread page. */
+export const CONNECTOR_ITEM_SCOPES = ['item', 'thread'] as const;
+export type ConnectorItemScope = (typeof CONNECTOR_ITEM_SCOPES)[number];
+
+/** A6 R2: `ConnectorQuery.params` for `item`: the opaque item reference and the scope (default `item`). No other key. */
+export interface ItemQueryParams {
+  id: string;
+  scope?: ConnectorItemScope;
+}
+
+/** A6 R2 (proposal §2.2): an `item` response is counted while streaming and aborted above this many bytes. */
+export const CONNECTOR_ITEM_RESPONSE_MAX_BYTES = 1_048_576;
+/** A6 R2: the longest item reference an adapter accepts. */
+export const CONNECTOR_ITEM_REF_MAX_LENGTH = 200;
+
 /** The most `containers` / `releases` items an adapter returns (names only, for Core's deterministic matching). */
 export const CONNECTOR_CATALOG_MAX_ITEMS = 200;
 export const CONNECTOR_RELEASE_NAME_MAX_LENGTH = 100;
@@ -135,6 +156,11 @@ export const CONNECTOR_QUERY_ERROR_REASONS = [
   'UNSUPPORTED_QUERY',
   'UNAVAILABLE',
   'INVALID_RESPONSE',
+  /**
+   * ADR-0120 A6 R2 (ADR-0100 D7 amendment C11): the item answered with a redirect (a moved Jira issue). The redirect is
+   * never followed; the outcome is neutral and names no destination.
+   */
+  'MOVED',
 ] as const;
 export type ConnectorQueryErrorReason = (typeof CONNECTOR_QUERY_ERROR_REASONS)[number];
 
@@ -311,6 +337,31 @@ export function parseSearchParams(params: Metadata | undefined, source = 'connec
     );
   }
   return { text, limit: resolveConnectorQueryLimit(params?.limit, source) };
+}
+
+export interface ParsedItemParams {
+  id: string;
+  scope: ConnectorItemScope;
+}
+
+/**
+ * Validates `item` params (A6 R2): exactly the keys `id` and optionally `scope`; the id 1..200 characters with no
+ * whitespace or control characters (the adapter checks its own closed shape on top); `scope` `item` (default) or `thread`.
+ */
+export function parseItemParams(params: Metadata | undefined, source = 'connector'): ParsedItemParams {
+  const record = params ?? {};
+  if (Object.keys(record).some((key) => key !== 'id' && key !== 'scope')) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported item params`);
+  }
+  const id = record.id;
+  if (typeof id !== 'string' || id.length === 0 || id.length > CONNECTOR_ITEM_REF_MAX_LENGTH || /[\s\u0000-\u001f\u007f]/.test(id)) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: a valid item reference is required`);
+  }
+  const scope = record.scope ?? 'item';
+  if (typeof scope !== 'string' || !(CONNECTOR_ITEM_SCOPES as readonly string[]).includes(scope)) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported item scope`);
+  }
+  return { id, scope: scope as ConnectorItemScope };
 }
 
 export interface ParsedReleasesParams {
