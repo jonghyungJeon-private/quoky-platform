@@ -287,6 +287,21 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
   }
 
   /** Amendment A2: flip the grammar-yield flag (and optionally the mode) on the live service for one scenario. */
+  /**
+   * The golden corpus is written for one weekday: a7u-01 "이번 주 금요일까지 일정" is a future Friday only before Friday, so
+   * the clock is pinned to the same Thursday (2026-10-15 10:00 KST) that #222 pins the R4/R5 test to. Only Date is faked;
+   * timers stay real for the AppModule.
+   */
+  async function withGoldenClock<T>(run: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-15T10:00:00+09:00'));
+    try {
+      return await run();
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
   async function withGrammarYield<T>(yieldOn: boolean, mode: 'off' | 'shadow' | 'active', run: () => Promise<T>): Promise<T> {
     const service = (runtime as unknown as { deps: { nlSelection: { mode: string; deps: { grammarYield?: boolean } } } }).deps.nlSelection;
     const saved = { mode: service.mode, flag: service.deps.grammarYield };
@@ -375,13 +390,13 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
 
   it.each([false, true])('dispatches every golden case with QUOKY_NL_GRAMMAR_YIELD=%s: positives end in their entry (selection or Class B), negatives never in a handleSelected', async (yieldOn) => {
     const before = probes.length;
-    await withGrammarYield(yieldOn, 'active', () => dispatchCorpus());
+    await withGoldenClock(() => withGrammarYield(yieldOn, 'active', () => dispatchCorpus()));
     // Phase A (the default, QUOKY_NL_PHASE unset): no Class B probe is ever asked, so dispatch is exactly pre-S1.
     expect(probes.length).toBe(before);
   }, 600_000);
 
   it.each([false, true])('S1 Phase C, QUOKY_NL_GRAMMAR_YIELD=%s: every golden positive ends in its entry through selection — grammar hits included — with one selector call at most', async (yieldOn) => {
-    const report = await withGrammarYield(yieldOn, 'active', () => withPhase('c', 'active', () => dispatchCorpusPhaseC(yieldOn)));
+    const report = await withGoldenClock(() => withGrammarYield(yieldOn, 'active', () => withPhase('c', 'active', () => dispatchCorpusPhaseC(yieldOn))));
     // ADR-0121 S1 corpus rule: each entry with a frozen Class B grammar has at least 25 phrasings that grammar answers
     // today (production: yield on), so the Phase C evaluation measures the selector on exactly those messages.
     for (const entryId of CLASS_B_ENTRIES) expect(report.grammarHits[entryId] ?? 0, entryId).toBeGreaterThanOrEqual(25);
@@ -525,8 +540,10 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
 
   async function seedPreference(value: string): Promise<void> {
     const actor = (await storage.actors.get(ownerActor.id)) as Actor;
-    const stored = actor.metadata?.[core.INTERPRETATION_PREFERENCES_METADATA_KEY] as Record<string, { value?: string }> | undefined;
-    if (stored?.['jira.created-scope']?.value === value) return;
+    const stored = actor.metadata?.[core.INTERPRETATION_PREFERENCES_METADATA_KEY] as Record<string, { value?: string; at?: string }> | undefined;
+    // A stamp later than the pinned clock (beforeAll seeds with the real clock) reads as stale, so it is re-seeded.
+    const seeded = stored?.['jira.created-scope'];
+    if (seeded?.value === value && typeof seeded.at === 'string' && Date.parse(seeded.at) <= Date.now()) return;
     await storage.actors.save({
       ...actor,
       metadata: { ...(actor.metadata ?? {}), [core.INTERPRETATION_PREFERENCES_METADATA_KEY]: { 'jira.created-scope': { value, at: new Date().toISOString() } } },
