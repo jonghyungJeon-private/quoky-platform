@@ -25,6 +25,8 @@ export interface RagPlanInput {
   readonly devCases: number;
   readonly heldOutCases: number;
   readonly excludedContaminated: number;
+  /** Gold cases Core answers before the selector (no prompt, no call): excluded from both splits, bound into the digest. */
+  readonly preSelectorExcluded?: readonly string[];
   readonly models: readonly PlanModelPin[];
   readonly selectorModel: string;
   readonly runs?: number;
@@ -40,7 +42,7 @@ export interface RagPlan {
   readonly promptSha256: { readonly read: string; readonly action: string };
   readonly poolDigest: string;
   readonly goldDigest: string;
-  readonly split: { readonly sha256: string; readonly dev: number; readonly heldOut: number; readonly excludedContaminated: number };
+  readonly split: { readonly sha256: string; readonly dev: number; readonly heldOut: number; readonly excludedContaminated: number; readonly excludedPreSelector: readonly string[] };
   readonly embeddingModels: readonly PlanModelPin[];
   readonly arms: readonly Arm[];
   readonly runs: number;
@@ -80,7 +82,7 @@ export function buildRagPlan(input: RagPlanInput): RagPlan {
     },
     poolDigest: input.poolDigest,
     goldDigest: input.goldDigest,
-    split: { sha256: input.splitSha256, dev: input.devCases, heldOut: input.heldOutCases, excludedContaminated: input.excludedContaminated },
+    split: { sha256: input.splitSha256, dev: input.devCases, heldOut: input.heldOutCases, excludedContaminated: input.excludedContaminated, excludedPreSelector: [...(input.preSelectorExcluded ?? [])].sort() },
     embeddingModels: input.models,
     arms,
     runs: scopedRuns,

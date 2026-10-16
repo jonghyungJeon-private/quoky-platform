@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { UsageError, parseArguments } from '../selector-rag-cli';
+import { UsageError, parseArguments, runCli, EXIT_OK } from '../selector-rag-cli';
 import { buildRagPlan, ragPlanDigest, type RagPlanInput } from './plan';
 
 const base: Omit<RagPlanInput, 'split'> = {
@@ -28,6 +28,12 @@ describe('ADR-0123 D6 plan binds the split (exact-scope approval)', () => {
     expect(ragPlanDigest(buildRagPlan({ ...base, split: 'dev' }))).toBe(ragPlanDigest(dev));
   });
 
+  it('binds the pre-selector exclusions into the digest', () => {
+    const withExcluded = buildRagPlan({ ...base, split: 'dev', preSelectorExcluded: ['b', 'a'] });
+    expect(withExcluded.split.excludedPreSelector).toEqual(['a', 'b']);
+    expect(ragPlanDigest(withExcluded)).not.toBe(ragPlanDigest(dev));
+  });
+
   it('plan and run refuse to start without an explicit --split, and --split is rejected elsewhere', () => {
     expect(() => parseArguments(['--mode', 'plan'])).toThrow(UsageError);
     expect(() => parseArguments(['--mode', 'run', '--approved-plan-digest', 'x'])).toThrow(UsageError);
@@ -35,4 +41,17 @@ describe('ADR-0123 D6 plan binds the split (exact-scope approval)', () => {
     expect(() => parseArguments(['--mode', 'lint', '--split', 'dev'])).toThrow(UsageError);
     expect(parseArguments(['--mode', 'run', '--split', 'dev', '--approved-plan-digest', 'x']).options['--split']).toBe('dev');
   });
+});
+
+describe('plan over a pool with a pending batch (approved subset only)', () => {
+  it('plans dev and heldout, excludes the pending entries, and validates the audit against the approved subset', async () => {
+    for (const split of ['dev', 'heldout']) {
+      const out: string[] = [];
+      const err: string[] = [];
+      const code = await runCli(['--mode', 'plan', '--split', split], { stdout: (l) => out.push(l), stderr: (l) => err.push(l), now: () => '2026-10-16T03:00:00.000Z' });
+      expect(err.join('\n')).not.toContain('BLOCKED');
+      expect(code).toBe(EXIT_OK);
+      expect(out.join('\n')).toMatch(/plan digest \(sha256\): [0-9a-f]{64}/);
+    }
+  }, 120_000);
 });

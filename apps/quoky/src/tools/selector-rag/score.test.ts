@@ -85,3 +85,18 @@ describe('prompt context fidelity (the A0 prompt of the harness is the prompt th
     expect(() => promptContextOf('no tail here', [])).toThrow();
   });
 });
+
+describe('pre-selector cases (Core answers them before any selector prompt)', () => {
+  it('every case of the full real dev and held-out splits either has a context or is a recorded pre-selector case', async () => {
+    const { splitCases } = await import('./split');
+    const { preSelectorCaseIds } = await import('./score');
+    const split = splitCases(gold.cases.map((golden) => ({ id: golden.id, entry: golden.entry })));
+    const ids = [...split.dev, ...split.heldOut];
+    const pre = new Set(await preSelectorCaseIds(scoring, ids, NOW));
+    expect([...pre]).toEqual(expect.arrayContaining(['a6-reference-todo.complete-032', 'a6-reference-todo.complete-033']));
+    for (const id of ids) {
+      if (pre.has(id)) continue;
+      await expect(contextOfCase(scoring.get(id) as NonNullable<ReturnType<typeof scoring.get>>, NOW), id).resolves.toBeDefined();
+    }
+  }, 120_000);
+});

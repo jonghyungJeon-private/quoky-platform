@@ -29,7 +29,7 @@ import { A6_ENTRY_IDS, READ_ENTRY_IDS, staticExamples } from './selector-rag/aud
 import { buildSchedule } from './selector-rag/arms';
 import { outputEntryId, type PoolVector } from './selector-rag/retrieve';
 import { createClaudeSelectorTransport } from './selector-rag/transport';
-import { loadScoringCases } from './selector-rag/score';
+import { loadScoringCases, preSelectorCaseIds } from './selector-rag/score';
 import { runExperiment, type ExperimentCase, type PromptContext, type RetrievalRecord } from './selector-rag/selector-rag-eval';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION } from '@quoky/core';
 
@@ -230,11 +230,13 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   }
 
   // plan / run: only owner-approved pool batches count, and the audit record must be fresh for exactly this pool and gold
+  // Only the approved subset is planned and run; a pending batch stays excluded (the drafter never approves).
   const entries = approvedEntries(pool);
-  if (entries.length === 0 || entries.length !== pool.entries.length) {
-    deps.stderr('BLOCKED: every pool entry must belong to an owner-approved batch (the drafter never approves); nothing was planned');
+  if (entries.length === 0) {
+    deps.stderr('BLOCKED: no pool entry belongs to an owner-approved batch (the drafter never approves); nothing was planned');
     return EXIT_BLOCKED;
   }
+  if (entries.length !== pool.entries.length) deps.stderr(`note: ${pool.entries.length - entries.length} pending (unapproved) pool entries are excluded from the plan`);
   let audit: AuditRecord;
   try {
     audit = JSON.parse(readFileSync(options['--audit'] ?? AUDIT_RECORD_PATH, 'utf8')) as AuditRecord;
@@ -256,12 +258,16 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   }
   const known = loadKnownFindings();
   const contaminated = contaminatedGoldIds(known);
+  const scoringCases = loadScoringCases();
+  const scoredIds = (ids: readonly string[]): string[] => ids.filter((id) => !contaminated.has(id));
+  const preSelector = new Set(await preSelectorCaseIds(scoringCases, [...split.dev, ...scoredIds(split.heldOut)], deps.now()));
   const plan = buildRagPlan({
     poolDigest: audit.poolDigest,
     goldDigest: gold.sha256,
     splitSha256,
-    devCases: split.dev.length,
-    heldOutCases: split.heldOut.filter((id) => !contaminated.has(id)).length,
+    devCases: split.dev.filter((id) => !preSelector.has(id)).length,
+    heldOutCases: split.heldOut.filter((id) => !contaminated.has(id) && !preSelector.has(id)).length,
+    preSelectorExcluded: [...preSelector],
     excludedContaminated: split.heldOut.filter((id) => contaminated.has(id)).length,
     models: usable.map((model) => ({ model: model.model, spaceId: model.spaceId, prefix: audit.prefixPolicy, tau: model.tau, tauLow: model.tauLow as number })),
     split: options['--split'] as 'dev' | 'heldout',
@@ -293,7 +299,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stderr('BLOCKED: the live embedding space differs from the approved plan; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const ids = new Set(split_ === 'dev' ? split.dev : split.heldOut.filter((id) => !contaminated.has(id)));
+  const ids = new Set((split_ === 'dev' ? split.dev : split.heldOut.filter((id) => !contaminated.has(id))).filter((id) => !preSelector.has(id)));
   const goldCases = gold.cases.filter((golden) => ids.has(golden.id));
   const poolEmbed = await embedder.embed(entries.map((entry) => entry.text));
   const poolVectors: PoolVector[] = entries.map((entry, index) => ({ entry, entryId: outputEntryId(entry), vector: poolEmbed[index] as number[] }));

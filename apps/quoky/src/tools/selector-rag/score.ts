@@ -77,6 +77,29 @@ export function promptContextOf(prompt: string, entries: readonly NlCatalogEntry
   return { entries, text: match[3] as string, ...(previous !== undefined ? { previous } : {}), ...(match[2] !== undefined ? { actions: { referenceContext: match[2] } } : {}) };
 }
 
+/** Core answers this case (a guard, a grammar, a reference refusal) before any selector prompt exists, so there is nothing to retrieve for or score. */
+export class PreSelectorCaseError extends Error {
+  constructor(readonly caseId: string) {
+    super(`case ${caseId}: Core answers it before the selector runs`);
+  }
+}
+
+/** The ids among `caseIds` that Core answers before the selector (sorted). Offline: a scripted provider, no selector call. */
+export async function preSelectorCaseIds(scoring: ReadonlyMap<string, ScoringCase>, caseIds: readonly string[], now: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const id of caseIds) {
+    const one = scoring.get(id);
+    if (one === undefined) throw new Error(`no scoring case for ${id}`);
+    try {
+      await contextOfCase(one, now);
+    } catch (error) {
+      if (error instanceof PreSelectorCaseError) found.push(id);
+      else throw error;
+    }
+  }
+  return found.sort();
+}
+
 /**
  * The prompt context of a gold case: a read case as `runEvaluation` builds it; an action case as Core's service builds it (a
  * scripted provider captures the real prompt, so the fixture world, reference context and prior selection are exactly the
@@ -98,6 +121,6 @@ export async function contextOfCase(scoring: ScoringCase, now: string): Promise<
     }),
     now as Parameters<typeof decideActionCase>[2],
   );
-  if (captured === undefined) throw new Error(`case ${scoring.golden.id}: the service rendered no selector prompt (it is answered before the selector)`);
+  if (captured === undefined) throw new PreSelectorCaseError(scoring.golden.id);
   return promptContextOf(captured, NL_ACTION_EVAL_ENTRIES);
 }
