@@ -265,15 +265,15 @@ describe('item.summarize (record C): the owner must ask for the content; mode on
   });
 });
 
-describe('the selection prompt (A6-D7): v30 byte for byte with the flag off, v36 with actions', () => {
-  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v30.prompts.json', import.meta.url), 'utf8')) as {
+describe('the selection prompt (A6-D7): v37 byte for byte with the flag off, v36 with actions', () => {
+  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v37.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
   };
 
-  it('pins nl-select.v30 for every golden input (no `actions`)', () => {
-    expect(golden.version).toBe('nl-select.v30');
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v30');
+  it('pins nl-select.v37 for every golden input (no `actions`)', () => {
+    expect(golden.version).toBe('nl-select.v37');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v37');
     for (const golden_ of golden.cases) {
       const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
       const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
@@ -566,8 +566,8 @@ describe('A6 prompt v36 (CA review): the rule-8 lines and examples teach the rul
     for (const gone of ['모레 알림 몇 개 잡혀 있어?', '프로젝트 등록: ~/code/site', '피드백 삭제: 2', '커밋 메시지는 앞으로 영어로 쓰게 설정해 둬', '그거 요약해줘', '할 일 전부 완료로 바꿔줘', '그 메일 내용 짧게 정리해 줄래?', '목록에 있는 거 모두 끝난 걸로 처리해 줘']) {
       expect(actionPrompt, gone).not.toContain(`Message: ${gone}\n`);
     }
-    // The read prompt (A6 off) still carries its v30 example byte for byte.
-    expect(readMessages.has('그거 요약해줘')).toBe(true);
+    // The read prompt (A6 off) still carries its v37 example byte for byte.
+    expect(readMessages.has('저 메일 내용 한 줄로 줄여줘')).toBe(true);
   });
 
   it('the near-copy measure flags the removed examples (calibration)', () => {
