@@ -6,7 +6,7 @@ import { parseDriveQuestion } from './drive-question';
 
 /** ADR-0120 D12: the natural-language selection corpus holds mail and Drive phrasings by design (not a routing corpus). */
 // Selection corpora: the model selector decides their phrases (A6 corpora: nl-action.*, agent-redteam.*), not the grammar.
-const NL_SELECTION_CORPORA = new Set(['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.exec-time.v1.json', 'nl-action.unmapped.v1.json', 'agent-redteam.v1.json', 'agent-redteam.a6-unmapped.v1.json']);
+const NL_SELECTION_CORPORA = new Set(['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.exec-time.v1.json', 'nl-action.unmapped.v1.json', 'nl-action.r2.v1.json', 'agent-redteam.v1.json', 'agent-redteam.a6-unmapped.v1.json']);
 
 describe('Drive grammar (ADR-0118 D4/D6/D7, DRV-1)', () => {
   it.each([

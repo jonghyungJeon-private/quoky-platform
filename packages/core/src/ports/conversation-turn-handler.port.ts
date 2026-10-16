@@ -146,6 +146,19 @@ export interface TurnHandlerSummarizeReply {
   readonly footer: MessageBody;
   /** As on `TurnHandlerReply`: the catalog equivalent of this deterministic lookup (ADR-0120 follow-up). */
   readonly nlSelection?: NlGrammarSelection;
+  /**
+   * ADR-0120 amendment A6 R2: what SHORT_TERM history keeps when the fallback is the reply (a fixed note: the fallback of
+   * a Jira / Slack item read shows its title, which must never reach a later prompt, amendment C10). Absent: as before.
+   */
+  readonly history?: { readonly assistant?: string };
+  /** A6 R2: the `item.summarize` read this outcome reports (content-free), recorded like `TurnHandlerReply.nlAction`. */
+  readonly nlAction?: NlActionReceipt;
+  /**
+   * A6 R2 (owner decision D1): a numbered Jira / Slack list. The model's own list markers are stripped from the summary,
+   * and the runtime records the listing receipt of the form that was delivered (the index under the summary, or the
+   * numbered fallback list).
+   */
+  readonly numbered?: { readonly summary: NlListingReceipt; readonly fallback: NlListingReceipt };
 }
 
 /**

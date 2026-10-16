@@ -16,7 +16,7 @@ import {
   ConnectorQueryName,
   isConnectorQueryError,
 } from '../../ports';
-import type { ConnectorProvider, ConnectorQuery, PersonalWorkFilter } from '../../ports';
+import type { ConnectorItem, ConnectorProvider, ConnectorQuery, PersonalWorkFilter } from '../../ports';
 import { containsCredentialMaterial } from '../credential-guard';
 import { messageFields } from '../message-rendering';
 import type { WorkManager } from '../work-manager';
@@ -26,6 +26,7 @@ import {
   buildExternalWorkReadout,
   fitExternalWorkReadoutToPrompt,
   renderExternalWorkFooter,
+  renderExternalWorkIndexFooter,
 } from './external-work-readout';
 import type { ExternalWorkReadout } from './external-work-readout';
 import { lookupJiraRelease } from './jira-release-lookup';
@@ -43,6 +44,7 @@ import type {
 } from './work-chat-command';
 import {
   renderExternalWorkList,
+  renderNumberedExternalWorkList,
   renderExternalWriteRefusal,
   renderLookupFailure,
   renderLookupUnsupported,
@@ -106,7 +108,18 @@ export type WorkChatOutcome =
       readonly fallbackText: MessageBody;
       /** Deterministic source links and the disclosure line, appended to a successful summary. */
       readonly footer: MessageBody;
+      /**
+       * A6 R2 (only while `QUOKY_NL_ITEM_R2` is not `off`, Jira / Slack): the labels each delivered form shows — the
+       * numbered index under a summary, the numbered list of the fallback — and that the model's list markers are
+       * stripped. The runtime records the one that was delivered.
+       */
+      readonly numbered?: { readonly summary: NlListingReceipt; readonly fallback: NlListingReceipt };
     };
+
+/** A6 R2: one `item` read (proposal §2.1): the item with its detail, or the neutral reason it was not read. */
+export type WorkItemRead =
+  | { readonly kind: 'item'; readonly item: ConnectorItem }
+  | { readonly kind: 'failure'; readonly reason: WorkChatLookupFailure };
 
 /**
  * The work desk the runtime talks to (ADR-0100 D10). `forActor` is the read-only Jira/GitHub surface (kept for the
@@ -126,6 +139,11 @@ export interface WorkDesk {
    * `action.undo` of a to-do action), its target already resolved by Core. Absent: no A6 to-do entry is offered.
    */
   handleAction?(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome>;
+  /**
+   * ADR-0120 amendment A6 R2: ONE listed Jira issue or Slack message by its opaque item reference (the listing slot id),
+   * through the read-only `item` named query under the lookup deadline. GET only, no retry, nothing cached (D7).
+   */
+  readItem?(source: 'jira' | 'slack', itemRef: string, scope: 'item' | 'thread'): Promise<WorkItemRead>;
 }
 
 export interface WorkDeskHandleOptions {
@@ -162,6 +180,12 @@ export interface WorkChatServiceOptions {
    * link in the owner's words is used only when its host equals this one; any other link is ignored and never fetched.
    */
   readonly linkHosts?: { readonly jira?: string };
+  /**
+   * ADR-0120 amendment A6 R2 (`QUOKY_NL_ITEM_R2` not `off`, owner decision D1): Jira and Slack lists are numbered and
+   * carry content-free listing receipts (shown label → item reference), for every value except `off` (`shadow`
+   * included). False (the default): every list and record is byte-identical.
+   */
+  readonly numberedLists?: boolean;
 }
 
 export const WORK_CHAT_DEFAULT_LOOKUP_DEADLINE_MS = 15_000;
@@ -331,6 +355,7 @@ export class WorkChatService implements WorkDesk {
   private readonly lookupDeadlineMs: number;
   private readonly actionReceipts: boolean;
   private readonly jiraSiteHost: string | undefined;
+  private readonly numberedLists: boolean;
 
   constructor(
     private readonly deps: WorkChatServiceDeps,
@@ -340,6 +365,43 @@ export class WorkChatService implements WorkDesk {
     this.lookupDeadlineMs = options.lookupDeadlineMs ?? WORK_CHAT_DEFAULT_LOOKUP_DEADLINE_MS;
     this.actionReceipts = options.actionReceipts === true;
     this.jiraSiteHost = options.linkHosts?.jira;
+    this.numberedLists = options.numberedLists === true;
+  }
+
+  /**
+   * A6 R2: one `item` read (proposal §2.1). The adapter makes exactly one GET by default (two only with D12, in its own
+   * exclusive branches). A failure is a neutral reason; nothing else is read in its place.
+   */
+  async readItem(source: 'jira' | 'slack', itemRef: string, scope: 'item' | 'thread'): Promise<WorkItemRead> {
+    const connector = this.deps.connectors.list().find((candidate) => candidate.source === source);
+    if (!connector) return { kind: 'failure', reason: 'NOT_CONFIGURED' };
+    let result: Awaited<ReturnType<ConnectorProvider['query']>> | 'UNAVAILABLE';
+    try {
+      result = await withDeadline(async () => {
+        if (!(await connector.isAvailable())) return 'UNAVAILABLE' as const;
+        return connector.query({ query: ConnectorQueryName.ITEM, params: { id: itemRef, scope } });
+      }, this.lookupDeadlineMs);
+    } catch (error) {
+      return { kind: 'failure', reason: failureReason(error) };
+    }
+    if (result === 'UNAVAILABLE') return { kind: 'failure', reason: 'UNAVAILABLE' };
+    const items = Array.isArray(result.items) ? result.items : [];
+    const item = items[0];
+    // Exactly one item carrying its detail, for the reference asked (the adapter re-validated the target): anything else
+    // is an unexpected answer, never a substitute.
+    if (items.length !== 1 || item === undefined || item.detail === undefined || item.itemRef !== itemRef) return { kind: 'failure', reason: 'INVALID_RESPONSE' };
+    return { kind: 'item', item };
+  }
+
+  /** A6 R2: the listing receipt of the first `labelled` rows of a Jira / Slack readout (rows without a reference stop it). */
+  private workListingReceipt(source: WorkChatSource, items: ReadonlyArray<{ readonly itemRef?: string }>, labelled: number): NlListingReceipt | undefined {
+    if (!this.numberedLists || (source !== 'jira' && source !== 'slack')) return undefined;
+    const rows: Array<{ label: number; id: string }> = [];
+    for (const [index, item] of items.slice(0, labelled).entries()) {
+      if (item.itemRef === undefined) break;
+      rows.push({ label: index + 1, id: item.itemRef });
+    }
+    return { source, items: rows };
   }
 
   forActor(actor: Actor): Promise<WorkSurface> {
@@ -791,6 +853,7 @@ export class WorkChatService implements WorkDesk {
             ...(command.inChannel === true ? { inChannel: true } : {}),
             ...(identity !== undefined ? { identity } : {}),
             ...(this.jiraSiteHost !== undefined ? { siteHost: this.jiraSiteHost } : {}),
+            ...(this.numberedLists ? { numbered: true } : {}),
           }),
         this.lookupDeadlineMs,
       );
@@ -801,7 +864,14 @@ export class WorkChatService implements WorkDesk {
       deadline.abort();
     }
     if (result.kind === 'failure') return reply(renderLookupFailure('jira', result.reason));
-    return { ...messageFields(result.body), kind: 'reply', ...(result.listed !== undefined ? { listed: result.listed } : {}) };
+    // A6 R2 (D1): a numbered release report records its certainly delivered issue rows (display order).
+    const listing = result.shown !== undefined ? this.workListingReceipt('jira', result.shown.items, result.shown.labelled) : undefined;
+    return {
+      ...messageFields(result.body),
+      kind: 'reply',
+      ...(result.listed !== undefined ? { listed: result.listed } : {}),
+      ...(listing !== undefined ? { listing } : {}),
+    };
   }
 
   private async lookup(
@@ -884,12 +954,26 @@ export class WorkChatService implements WorkDesk {
     const built = limited ? { ...builtFull, truncated: true } : builtFull;
     // The connector returns a bounded page of the owner's items: when it was full, a filtered list may be incomplete.
     const readout = keywordFilter && fetched >= CONNECTOR_QUERY_MAX_LIMIT ? { ...built, truncated: true } : built;
-    const fallbackText = renderExternalWorkList(readout);
+    // A6 R2 (D1): while QUOKY_NL_ITEM_R2 is not `off`, a Jira / Slack list is numbered and its delivered rows are labels.
+    const numbered = this.numberedLists && (source === 'jira' || source === 'slack');
+    const list = numbered ? renderNumberedExternalWorkList(readout) : { body: renderExternalWorkList(readout), labelled: 0 };
+    const fallbackText = list.body;
+    const fallbackListing = this.workListingReceipt(source, readout.items, list.labelled);
     if (this.summaryEnabled && readout.items.length > 0 && options.listOnly !== true) {
       const summaryReadout = fitExternalWorkReadoutToPrompt(readout);
+      if (numbered && fallbackListing !== undefined) {
+        const index = renderExternalWorkIndexFooter(summaryReadout);
+        const summaryListing = this.workListingReceipt(source, summaryReadout.items, index.labelled) ?? { source: source as 'jira' | 'slack', items: [] };
+        return { kind: 'summarize', readout: summaryReadout, fallbackText, footer: index.footer, numbered: { summary: summaryListing, fallback: fallbackListing } };
+      }
       return { kind: 'summarize', readout: summaryReadout, fallbackText, footer: renderExternalWorkFooter(summaryReadout) };
     }
-    const listed: WorkChatOutcome = { ...messageFields(fallbackText), kind: 'reply', listed: { count: readout.items.length, truncated: readout.truncated } };
+    const listed: WorkChatOutcome = {
+      ...messageFields(fallbackText),
+      kind: 'reply',
+      listed: { count: readout.items.length, truncated: readout.truncated },
+      ...(fallbackListing !== undefined ? { listing: fallbackListing } : {}),
+    };
     return listed;
   }
 }

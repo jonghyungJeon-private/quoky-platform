@@ -1,0 +1,7437 @@
+{
+ "version": 1,
+ "description": "ADR-0120 amendment A6 R2 action corpus (Jira / Slack item.summarize), schema docs/plans/nl-action-corpus-schema.md. Agent-drafted for A6 R2; awaiting the owner batch approval per ADR-0120 D12. Names, keys and ids are invented (PROJ-n:1000n, C0123456:ts).",
+ "promptVersion": "nl-select.v43",
+ "cases": [
+  {
+   "id": "a6r2-paraphrase-001",
+   "family": "paraphrase",
+   "text": "2번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-002",
+   "family": "paraphrase",
+   "text": "3번 지라 이슈 간단히 요약해 줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#3",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-3:10003"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-003",
+   "family": "paraphrase",
+   "text": "첫 번째 티켓 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#1",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-1:10001"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-004",
+   "family": "paraphrase",
+   "text": "두 번째 이슈 정리해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-005",
+   "family": "paraphrase",
+   "text": "4번 이슈 짧게 간추려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#4",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-4:10004"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-006",
+   "family": "paraphrase",
+   "text": "5번 티켓 요약 부탁해",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#5",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-5:10005"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-007",
+   "family": "paraphrase",
+   "text": "1번 jira 이슈 요약 좀 해줄래",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#1",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-1:10001"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-008",
+   "family": "paraphrase",
+   "text": "Summarize jira ticket 3",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#3",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-3:10003"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-009",
+   "family": "paraphrase",
+   "text": "please summarize the second jira issue",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-010",
+   "family": "paraphrase",
+   "text": "마지막 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "last",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-5:10005"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-011",
+   "family": "paraphrase",
+   "text": "이 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-1:10001"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-012",
+   "family": "paraphrase",
+   "text": "그 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-1:10001"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-013",
+   "family": "paraphrase",
+   "text": "그 지라 티켓 요약해 줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-1:10001"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-014",
+   "family": "paraphrase",
+   "text": "PROJ-3 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "PROJ-3",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-3:10003"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-015",
+   "family": "paraphrase",
+   "text": "PROJ-5 이슈 간단히 정리해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "PROJ-5",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-5:10005"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-016",
+   "family": "paraphrase",
+   "text": "지라 PROJ-2 짧게 요약",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "PROJ-2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-017",
+   "family": "paraphrase",
+   "text": "2번 이슈 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-018",
+   "family": "paraphrase",
+   "text": "3번 티켓 전문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#3",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-3:10003"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-019",
+   "family": "paraphrase",
+   "text": "첫 번째 이슈 그대로 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#1",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-1:10001"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-020",
+   "family": "paraphrase",
+   "text": "4번 지라 이슈 다 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#4",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-4:10004"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-021",
+   "family": "paraphrase",
+   "text": "PROJ-4 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "PROJ-4",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-4:10004"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-022",
+   "family": "paraphrase",
+   "text": "show the full text of jira issue 2",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-023",
+   "family": "paraphrase",
+   "text": "마지막 티켓 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "last",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-5:10005"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-024",
+   "family": "paraphrase",
+   "text": "그 이슈 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-1:10001"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-025",
+   "family": "paraphrase",
+   "text": "2번 이슈 내용 알려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "contentMode": "summary"
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-026",
+   "family": "paraphrase",
+   "text": "3번 티켓 뭐라고 적혀 있어?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "contentMode": "full"
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#3"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-3:10003"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-027",
+   "family": "paraphrase",
+   "text": "첫 번째 이슈 내용이 뭐야",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "contentMode": "summary"
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#1"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-1:10001"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-028",
+   "family": "paraphrase",
+   "text": "4번 이슈 어떤 내용이야?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "contentMode": "full"
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#4"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-4:10004"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-029",
+   "family": "paraphrase",
+   "text": "2번 이슈 내용 알려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-030",
+   "family": "paraphrase",
+   "text": "5번 티켓 뭐라고 되어 있어?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#5"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-031",
+   "family": "paraphrase",
+   "text": "1번 지라 이슈 내용 좀 봐줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#1"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-032",
+   "family": "paraphrase",
+   "text": "PROJ-3 내용 알려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "PROJ-3"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-033",
+   "family": "paraphrase",
+   "text": "그 이슈 내용이 뭐야?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-034",
+   "family": "paraphrase",
+   "text": "마지막 이슈 내용 알려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "last"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-035",
+   "family": "paraphrase",
+   "text": "3번 이슈에 뭐라고 적혀 있는지 알려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#3"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-036",
+   "family": "paraphrase",
+   "text": "tell me the content of jira ticket 4",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#4"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-037",
+   "family": "paraphrase",
+   "text": "2번 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-038",
+   "family": "paraphrase",
+   "text": "3번 슬랙 간단히 요약해 줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000003.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-039",
+   "family": "paraphrase",
+   "text": "첫 번째 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#1",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-040",
+   "family": "paraphrase",
+   "text": "두 번째 slack 메시지 정리해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-041",
+   "family": "paraphrase",
+   "text": "4번 슬랙 메시지 짧게 간추려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#4",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000004.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-042",
+   "family": "paraphrase",
+   "text": "5번 슬랙 요약 부탁해",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#5",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000005.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-043",
+   "family": "paraphrase",
+   "text": "Summarize slack message 3",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000003.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-044",
+   "family": "paraphrase",
+   "text": "please summarize the first slack message",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#1",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-045",
+   "family": "paraphrase",
+   "text": "마지막 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "last",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000005.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-046",
+   "family": "paraphrase",
+   "text": "그 슬랙 메시지 요약",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-047",
+   "family": "paraphrase",
+   "text": "이 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-048",
+   "family": "paraphrase",
+   "text": "그 슬랙 글 정리해 줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-049",
+   "family": "paraphrase",
+   "text": "2번 슬랙 메시지 스레드 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#2",
+     "scope": "thread",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-050",
+   "family": "paraphrase",
+   "text": "3번 슬랙 스레드 전체 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3",
+     "scope": "thread",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000003.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-051",
+   "family": "paraphrase",
+   "text": "그 슬랙 메시지 스레드 정리해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "scope": "thread",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-052",
+   "family": "paraphrase",
+   "text": "summarize the thread of slack message 4",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#4",
+     "scope": "thread",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000004.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-053",
+   "family": "paraphrase",
+   "text": "2번 슬랙 메시지 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#2",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-054",
+   "family": "paraphrase",
+   "text": "3번 슬랙 전문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000003.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-055",
+   "family": "paraphrase",
+   "text": "첫 번째 슬랙 메시지 그대로 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#1",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-056",
+   "family": "paraphrase",
+   "text": "4번 slack 메시지 다 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#4",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000004.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-057",
+   "family": "paraphrase",
+   "text": "show the full text of slack message 2",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#2",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-058",
+   "family": "paraphrase",
+   "text": "마지막 슬랙 메시지 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "last",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000005.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-059",
+   "family": "paraphrase",
+   "text": "그 슬랙 메시지 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-060",
+   "family": "paraphrase",
+   "text": "그 슬랙 스레드 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "scope": "thread",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-061",
+   "family": "paraphrase",
+   "text": "2번 슬랙 메시지 내용 알려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "contentMode": "summary"
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#2"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-062",
+   "family": "paraphrase",
+   "text": "3번 슬랙 뭐라고 적혀 있어?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "contentMode": "full"
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000003.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-063",
+   "family": "paraphrase",
+   "text": "첫 번째 슬랙 메시지 내용이 뭐야",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "contentMode": "summary"
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#1"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-064",
+   "family": "paraphrase",
+   "text": "4번 슬랙 메시지 어떤 내용이야?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "contentMode": "full"
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#4"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000004.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-065",
+   "family": "paraphrase",
+   "text": "2번 슬랙 메시지 내용 알려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#2"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-066",
+   "family": "paraphrase",
+   "text": "5번 슬랙 뭐라고 되어 있어?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#5"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-067",
+   "family": "paraphrase",
+   "text": "1번 슬랙 메시지 내용 좀 봐줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#1"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-068",
+   "family": "paraphrase",
+   "text": "그 슬랙 메시지 내용이 뭐야?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-069",
+   "family": "paraphrase",
+   "text": "마지막 슬랙 메시지 내용 알려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "last"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-070",
+   "family": "paraphrase",
+   "text": "3번 슬랙 스레드에 뭐라고 적혀 있는지 알려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3",
+     "scope": "thread"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-paraphrase-071",
+   "family": "paraphrase",
+   "text": "tell me the content of slack message 4",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#4"
+    },
+    "outcome": "ask",
+    "reason": "content-mode"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-001",
+   "family": "reference",
+   "text": "3번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#3",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-3:10003"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-002",
+   "family": "reference",
+   "text": "2번 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-003",
+   "family": "reference",
+   "text": "7번 이슈 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7,
+       8,
+       9,
+       10
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#7",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-7:10007"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-004",
+   "family": "reference",
+   "text": "4번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#4",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-4:10004"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "labels continue a longer list"
+  },
+  {
+   "id": "a6r2-reference-005",
+   "family": "reference",
+   "text": "2번 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#2",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-006",
+   "family": "reference",
+   "text": "5번 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7,
+       8
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#5",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000005.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-007",
+   "family": "reference",
+   "text": "1번 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#1",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-008",
+   "family": "reference",
+   "text": "OPS-42 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 2,
+      "ids": [
+       "OPS-41:30041",
+       "OPS-42:30042",
+       "OPS-43:30043"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "OPS-42",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "OPS-42:30042"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-009",
+   "family": "reference",
+   "text": "PROJ-1 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "PROJ-1",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-1:10001"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-010",
+   "family": "reference",
+   "text": "2번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "mail",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 12
+     },
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "the newer Jira listing wins over an older mail listing"
+  },
+  {
+   "id": "a6r2-reference-011",
+   "family": "reference",
+   "text": "3번 슬랙 메시지 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 14
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000003.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-012",
+   "family": "reference",
+   "text": "2번 슬랙 메시지 스레드 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 2,
+      "ids": [
+       "C0123456:1700000001.000100",
+       "C0123456:1700000002.000100:1700000000.000050",
+       "C0123456:1700000003.000100"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#2",
+     "scope": "thread",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100:1700000000.000050"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "a thread reply: the id carries the thread timestamp"
+  },
+  {
+   "id": "a6r2-reference-013",
+   "family": "reference",
+   "text": "2번 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 2,
+      "ids": [
+       "C0123456:1700000001.000100",
+       "C0123456:1700000002.000100:1700000000.000050",
+       "C0123456:1700000003.000100"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100:1700000000.000050"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "item scope on a thread reply stays that message"
+  },
+  {
+   "id": "a6r2-reference-014",
+   "family": "reference",
+   "text": "PROJ-9 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "PROJ-9",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous"
+   },
+   "batch": "R2-batch-1",
+   "note": "a key that is not in the fresh Jira listing asks; nothing is fetched"
+  },
+  {
+   "id": "a6r2-reference-015",
+   "family": "reference",
+   "text": "PROJ-12 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "PROJ-12",
+     "mode": "full"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-016",
+   "family": "reference",
+   "text": "PROJ-3 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "PROJ-3",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "none"
+   },
+   "batch": "R2-batch-1",
+   "note": "no Jira listing at all"
+  },
+  {
+   "id": "a6r2-reference-017",
+   "family": "reference",
+   "text": "PROJ-3 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 45
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "PROJ-3",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "none"
+   },
+   "batch": "R2-batch-1",
+   "note": "the Jira listing is older than 30 minutes"
+  },
+  {
+   "id": "a6r2-reference-018",
+   "family": "reference",
+   "text": "2번 메일 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "mail",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-019",
+   "family": "reference",
+   "text": "2번 메일 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "mail",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-020",
+   "family": "reference",
+   "text": "3번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "mail",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#3",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-021",
+   "family": "reference",
+   "text": "3번 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "mail",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-022",
+   "family": "reference",
+   "text": "2번 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-023",
+   "family": "reference",
+   "text": "2번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-024",
+   "family": "reference",
+   "text": "2번 문서 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "drive",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-025",
+   "family": "reference",
+   "text": "2번 이슈 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "drive",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "full"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-026",
+   "family": "reference",
+   "text": "4번 티켓 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 20
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#4",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1",
+   "note": "the newest listing is Slack"
+  },
+  {
+   "id": "a6r2-reference-027",
+   "family": "reference",
+   "text": "2번 메일 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "mail",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 20
+     },
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "mail",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1",
+   "note": "the newest listing is Jira"
+  },
+  {
+   "id": "a6r2-reference-028",
+   "family": "reference",
+   "text": "그 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-029",
+   "family": "reference",
+   "text": "그 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-030",
+   "family": "reference",
+   "text": "2번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 45
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "none"
+   },
+   "batch": "R2-batch-1",
+   "note": "expired listing (older than 30 minutes): no referent"
+  },
+  {
+   "id": "a6r2-reference-031",
+   "family": "reference",
+   "text": "3번 슬랙 메시지 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 31
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3",
+     "mode": "full"
+    },
+    "outcome": "ask",
+    "reason": "none"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-032",
+   "family": "reference",
+   "text": "2번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 29
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "still inside 30 minutes"
+  },
+  {
+   "id": "a6r2-reference-033",
+   "family": "reference",
+   "text": "3번 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 29
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000003.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-034",
+   "family": "reference",
+   "text": "2번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 180
+     }
+    ],
+    "replyTo": {
+     "kind": "listing",
+     "source": "jira"
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "reply to the listing message 3 hours later (24 h window)"
+  },
+  {
+   "id": "a6r2-reference-035",
+   "family": "reference",
+   "text": "3번 슬랙 메시지 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 600
+     }
+    ],
+    "replyTo": {
+     "kind": "listing",
+     "source": "slack"
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000003.000100"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "reply 10 hours later"
+  },
+  {
+   "id": "a6r2-reference-036",
+   "family": "reference",
+   "text": "2번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 1500
+     }
+    ],
+    "replyTo": {
+     "kind": "listing",
+     "source": "jira"
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "expired"
+   },
+   "batch": "R2-batch-1",
+   "note": "reply to the listing message after 24 hours"
+  },
+  {
+   "id": "a6r2-reference-037",
+   "family": "reference",
+   "text": "3번 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 1560
+     }
+    ],
+    "replyTo": {
+     "kind": "listing",
+     "source": "slack"
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#3",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "expired"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-038",
+   "family": "reference",
+   "text": "2번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 100
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "replyTo": {
+     "kind": "listing",
+     "source": "jira"
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "a reply names its own listing even when a newer Slack listing exists"
+  },
+  {
+   "id": "a6r2-reference-039",
+   "family": "reference",
+   "text": "2번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 100
+     },
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "replyTo": {
+     "kind": "listing",
+     "source": "slack"
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1",
+   "note": "a reply to a Slack listing never picks a Jira issue"
+  },
+  {
+   "id": "a6r2-reference-040",
+   "family": "reference",
+   "text": "그 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-041",
+   "family": "reference",
+   "text": "그 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-042",
+   "family": "reference",
+   "text": "이 이슈 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-043",
+   "family": "reference",
+   "text": "이 슬랙 메시지 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000001.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-044",
+   "family": "reference",
+   "text": "그 이슈 요약해줘",
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "none"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-045",
+   "family": "reference",
+   "text": "그 슬랙 메시지 요약해줘",
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "none"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-046",
+   "family": "reference",
+   "text": "9번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#9",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "out-of-range"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-047",
+   "family": "reference",
+   "text": "7번 슬랙 메시지 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#7",
+     "mode": "full"
+    },
+    "outcome": "ask",
+    "reason": "out-of-range"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-048",
+   "family": "reference",
+   "text": "6번 티켓 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#6",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "out-of-range"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-049",
+   "family": "reference",
+   "text": "4번 이슈 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#4",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "out-of-range"
+   },
+   "batch": "R2-batch-1",
+   "note": "a trimmed index holds only three delivered rows"
+  },
+  {
+   "id": "a6r2-reference-050",
+   "family": "reference",
+   "text": "12번 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "#12",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "out-of-range"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-051",
+   "family": "reference",
+   "text": "그거 원문 보여줘",
+   "fixture": {
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "D9: a fresh lastRead and no newer listing"
+  },
+  {
+   "id": "a6r2-reference-052",
+   "family": "reference",
+   "text": "그거 원문 보여줘",
+   "fixture": {
+    "lastRead": {
+     "source": "slack",
+     "id": "C0123456:1700000003.000100",
+     "label": 3,
+     "ageMinutes": 4
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000003.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-053",
+   "family": "reference",
+   "text": "그 이슈 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 8
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "the listing is older than the read"
+  },
+  {
+   "id": "a6r2-reference-054",
+   "family": "reference",
+   "text": "그 슬랙 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 9
+     }
+    ],
+    "lastRead": {
+     "source": "slack",
+     "id": "C0123456:1700000004.000100",
+     "label": 4,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000004.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-055",
+   "family": "reference",
+   "text": "방금 본 거 원문 보여줘",
+   "fixture": {
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-5:10005",
+     "label": 5,
+     "ageMinutes": 4
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "recent",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-5:10005"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-056",
+   "family": "reference",
+   "text": "방금 본 거 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 8
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "recent",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "an older Slack listing does not take the recency word"
+  },
+  {
+   "id": "a6r2-reference-057",
+   "family": "reference",
+   "text": "방금 본 슬랙 메시지 원문 보여줘",
+   "fixture": {
+    "lastRead": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100",
+     "label": 2,
+     "ageMinutes": 6
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "recent",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100"
+    }
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-058",
+   "family": "reference",
+   "text": "그거 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       2
+      ],
+      "ageMinutes": 1,
+      "ids": [
+       "PROJ-2:10002"
+      ]
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 5
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "the newer one-item listing is the same item"
+  },
+  {
+   "id": "a6r2-reference-059",
+   "family": "reference",
+   "text": "2번 이슈 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-4:10004",
+     "label": 4,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "#2",
+     "mode": "full"
+    },
+    "outcome": "execute",
+    "target": {
+     "source": "jira",
+     "id": "PROJ-2:10002"
+    }
+   },
+   "batch": "R2-batch-1",
+   "note": "a number resolves against the listing, not the last read"
+  },
+  {
+   "id": "a6r2-reference-060",
+   "family": "reference",
+   "text": "그거 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 5
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous"
+   },
+   "batch": "R2-batch-1",
+   "note": "D9: a newer multi-item listing asks"
+  },
+  {
+   "id": "a6r2-reference-061",
+   "family": "reference",
+   "text": "그 이슈 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 5
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1",
+   "note": "D9: a newer listing of another source asks"
+  },
+  {
+   "id": "a6r2-reference-062",
+   "family": "reference",
+   "text": "방금 본 거 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 5
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "recent",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "batch": "R2-batch-1",
+   "note": "D9: a strictly newer other-source listing takes the recency word"
+  },
+  {
+   "id": "a6r2-reference-063",
+   "family": "reference",
+   "text": "방금 본 거 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 5
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "recent",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous"
+   },
+   "batch": "R2-batch-1",
+   "note": "D9: a newer multi-item listing of the same source asks"
+  },
+  {
+   "id": "a6r2-reference-064",
+   "family": "reference",
+   "text": "그거 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       3
+      ],
+      "ageMinutes": 1,
+      "ids": [
+       "PROJ-3:10003"
+      ]
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 5
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "conflict"
+   },
+   "batch": "R2-batch-1",
+   "note": "a newer one-item listing of another issue"
+  },
+  {
+   "id": "a6r2-reference-065",
+   "family": "reference",
+   "text": "그거 원문 보여줘",
+   "fixture": {
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 11
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "ask",
+    "reason": "none"
+   },
+   "batch": "R2-batch-1",
+   "note": "the last read is older than 10 minutes"
+  },
+  {
+   "id": "a6r2-reference-066",
+   "family": "reference",
+   "text": "그 이슈 원문 보여줘",
+   "fixture": {
+    "lastRead": {
+     "source": "slack",
+     "id": "C0123456:1700000002.000100",
+     "label": 2,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "jira",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "ask",
+    "reason": "none"
+   },
+   "batch": "R2-batch-1",
+   "note": "a Slack read is never a Jira referent"
+  },
+  {
+   "id": "a6r2-reference-067",
+   "family": "reference",
+   "text": "그 슬랙 메시지 원문 보여줘",
+   "fixture": {
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "slack",
+     "ref": "this",
+     "mode": "full"
+    },
+    "outcome": "ask",
+    "reason": "none"
+   },
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-reference-068",
+   "family": "reference",
+   "text": "그 메일 요약해줘",
+   "fixture": {
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "entryId": "item.summarize",
+    "args": {
+     "source": "mail",
+     "ref": "this",
+     "mode": "summary"
+    },
+    "outcome": "ask",
+    "reason": "none"
+   },
+   "batch": "R2-batch-1",
+   "note": "a Jira read is never a mail referent"
+  },
+  {
+   "id": "a6r2-negative-001",
+   "family": "negative",
+   "text": "2번 이슈는 요약하지 마",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-002",
+   "family": "negative",
+   "text": "슬랙 요약은 필요 없어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-003",
+   "family": "negative",
+   "text": "그 슬랙 메시지 요약 안 해도 괜찮아",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-004",
+   "family": "negative",
+   "text": "3번 이슈 원문은 안 봐도 돼",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-005",
+   "family": "negative",
+   "text": "이슈 요약은 이제 그만해도 돼",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-006",
+   "family": "negative",
+   "text": "슬랙 메시지 요약 말고 그냥 둬",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-007",
+   "family": "negative",
+   "text": "요약 안 해줘도 되는데 고마워",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-008",
+   "family": "negative",
+   "text": "2번 이슈 요약할 필요 없어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-009",
+   "family": "negative",
+   "text": "슬랙 요약 기능 있어?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-010",
+   "family": "negative",
+   "text": "지라 이슈 요약하는 법",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-011",
+   "family": "negative",
+   "text": "슬랙 메시지 요약 어떻게 해?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-012",
+   "family": "negative",
+   "text": "지라 요약 기능은 언제 생겨?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-013",
+   "family": "negative",
+   "text": "슬랙 스레드 요약도 지원해?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-014",
+   "family": "negative",
+   "text": "이슈 요약은 어떻게 동작해?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-015",
+   "family": "negative",
+   "text": "티켓 원문 보는 방법 알려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-016",
+   "family": "negative",
+   "text": "슬랙 요약하려면 뭘 해야 해",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-017",
+   "family": "negative",
+   "text": "지라 이슈 요약 기능 설명해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-018",
+   "family": "negative",
+   "text": "슬랙 메시지 원문 보기 기능 쓸 수 있어?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-019",
+   "family": "negative",
+   "text": "2번 이슈 담당자 누구야",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-020",
+   "family": "negative",
+   "text": "3번 티켓 상태 뭐야",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-021",
+   "family": "negative",
+   "text": "4번 이슈 마감일 언제야",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-022",
+   "family": "negative",
+   "text": "그 이슈 우선순위가 뭐야",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-023",
+   "family": "negative",
+   "text": "2번 이슈에 라벨 뭐 붙어 있어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-024",
+   "family": "negative",
+   "text": "2번 슬랙 메시지 누가 보냈어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-025",
+   "family": "negative",
+   "text": "그 슬랙 메시지 어느 채널에 올라왔어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-026",
+   "family": "negative",
+   "text": "3번 슬랙 메시지 몇 시에 올라왔어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-027",
+   "family": "negative",
+   "text": "이 목록에 이슈 총 몇 건 들어 있어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-028",
+   "family": "negative",
+   "text": "슬랙 메시지 몇 건이야",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-029",
+   "family": "negative",
+   "text": "3번 이슈 누가 만들었어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-030",
+   "family": "negative",
+   "text": "그 이슈 링크 줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-031",
+   "family": "negative",
+   "text": "요약 고마워",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-032",
+   "family": "negative",
+   "text": "요약 잘 봤어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-033",
+   "family": "negative",
+   "text": "이슈 요약 좋네",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-034",
+   "family": "negative",
+   "text": "원문 확인했어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-035",
+   "family": "negative",
+   "text": "슬랙 메시지 잘 받았어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-036",
+   "family": "negative",
+   "text": "지라 이슈 정리 잘됐다",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-037",
+   "family": "negative",
+   "text": "고마워 이슈 요약 덕분에 편해졌어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-038",
+   "family": "negative",
+   "text": "그 슬랙 요약 깔끔하네",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-039",
+   "family": "negative",
+   "text": "\"2번 이슈 요약해줘\" 라고 말하면 돼?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-040",
+   "family": "negative",
+   "text": "문서에 \"그 이슈 원문 보여줘\"라고 적혀 있네",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-041",
+   "family": "negative",
+   "text": "예시: 2번 이슈 요약해줘 이렇게 쓰는 거야?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-042",
+   "family": "negative",
+   "text": "\"슬랙 메시지 요약해줘\"는 무슨 뜻이야",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-043",
+   "family": "negative",
+   "text": "「3번 이슈 원문 보여줘」 이 명령 써도 돼?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-044",
+   "family": "negative",
+   "text": "그 메시지 요약",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-045",
+   "family": "negative",
+   "text": "이 메시지 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-046",
+   "family": "negative",
+   "text": "그 글 요약해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-047",
+   "family": "negative",
+   "text": "그 메시지 원문 보여줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-048",
+   "family": "negative",
+   "text": "메시지 요약 좀",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-049",
+   "family": "negative",
+   "text": "저 메시지 정리해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-050",
+   "family": "negative",
+   "text": "이슈 새로 만들어줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-051",
+   "family": "negative",
+   "text": "슬랙에 요약 올려줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-052",
+   "family": "negative",
+   "text": "지라 이슈 담당자 바꿔줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-053",
+   "family": "negative",
+   "text": "슬랙에 공지 보내줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-054",
+   "family": "negative",
+   "text": "2번 이슈 닫아줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-055",
+   "family": "negative",
+   "text": "3번 티켓에 코멘트 달아줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-056",
+   "family": "negative",
+   "text": "그 슬랙 메시지에 답장해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-057",
+   "family": "negative",
+   "text": "이슈 상태를 진행 중으로 바꿔줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-058",
+   "family": "negative",
+   "text": "지라 이슈 요약본 팀에 공유했어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-059",
+   "family": "negative",
+   "text": "슬랙 요약은 어제 해뒀어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-060",
+   "family": "negative",
+   "text": "동료가 이슈 요약을 해줬어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-061",
+   "family": "negative",
+   "text": "does Jira have a summary feature?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-062",
+   "family": "negative",
+   "text": "thanks for the summary",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-063",
+   "family": "negative",
+   "text": "who is assigned to issue 2",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-064",
+   "family": "negative",
+   "text": "don't summarize that Slack message",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-065",
+   "family": "negative",
+   "text": "how do I show the full text of a ticket",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-066",
+   "family": "negative",
+   "text": "can slack messages be summarized?",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-067",
+   "family": "negative",
+   "text": "I already read that jira issue",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "batch": "R2-batch-1"
+  },
+  {
+   "id": "a6r2-negative-068",
+   "family": "negative",
+   "text": "그 이슈 요약 안 해도 돼",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "selectorOnly": true,
+   "batch": "R2-batch-1",
+   "note": "selector-only negative (proposal 1.1 known gap): the deterministic layers do not veto it (the #244 vetoes cover LOCAL_WRITE only), so the model gate pins that the selector answers none"
+  },
+  {
+   "id": "a6r2-negative-069",
+   "family": "negative",
+   "text": "그 티켓 원문 보여주지 마",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "selectorOnly": true,
+   "batch": "R2-batch-1",
+   "note": "selector-only negative (proposal 1.1 known gap): the deterministic layers do not veto it (the #244 vetoes cover LOCAL_WRITE only), so the model gate pins that the selector answers none"
+  },
+  {
+   "id": "a6r2-negative-070",
+   "family": "negative",
+   "text": "동료가 \"슬랙 3번 요약해줘\"라고 했어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "selectorOnly": true,
+   "batch": "R2-batch-1",
+   "note": "selector-only negative (proposal 1.1 known gap): the deterministic layers do not veto it (the #244 vetoes cover LOCAL_WRITE only), so the model gate pins that the selector answers none"
+  },
+  {
+   "id": "a6r2-negative-071",
+   "family": "negative",
+   "text": "어제 그 이슈 요약해서 보냈어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "selectorOnly": true,
+   "batch": "R2-batch-1",
+   "note": "selector-only negative (proposal 1.1 known gap): the deterministic layers do not veto it (the #244 vetoes cover LOCAL_WRITE only), so the model gate pins that the selector answers none"
+  },
+  {
+   "id": "a6r2-negative-072",
+   "family": "negative",
+   "text": "그 티켓 원문은 이미 읽었어",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "selectorOnly": true,
+   "batch": "R2-batch-1",
+   "note": "selector-only negative (proposal 1.1 known gap): the deterministic layers do not veto it (the #244 vetoes cover LOCAL_WRITE only), so the model gate pins that the selector answers none"
+  },
+  {
+   "id": "a6r2-negative-073",
+   "family": "negative",
+   "text": "no need to summarize that issue",
+   "fixture": {
+    "listings": [
+     {
+      "source": "jira",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "slack",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 2
+     }
+    ],
+    "lastRead": {
+     "source": "jira",
+     "id": "PROJ-2:10002",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": "none",
+   "selectorOnly": true,
+   "batch": "R2-batch-1",
+   "note": "selector-only negative (proposal 1.1 known gap): the deterministic layers do not veto it (the #244 vetoes cover LOCAL_WRITE only), so the model gate pins that the selector answers none"
+  }
+ ]
+}

@@ -100,7 +100,7 @@ const ACTION_NAMES: Readonly<Record<string, { readonly ko: string; readonly en: 
 };
 
 /** "방금 한 '할 일 2번 완료'를 되돌릴까요?" (content-free: the source, the shown label and the action only). */
-export function renderUndoConfirm(undoEntryId: string, source: 'todo' | 'reminder' | 'mail' | 'drive', label: number | undefined, language: 'ko' | 'en'): string {
+export function renderUndoConfirm(undoEntryId: string, source: 'todo' | 'reminder' | 'mail' | 'drive' | 'jira' | 'slack', label: number | undefined, language: 'ko' | 'en'): string {
   const action = ACTION_NAMES[undoEntryId] ?? { ko: '작업', en: 'action' };
   if (language === 'en') {
     const item = source === 'reminder' ? `reminder${label !== undefined ? ` #${label}` : ''}` : `to-do${label !== undefined ? ` ${label}` : ''}`;

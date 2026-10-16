@@ -45,11 +45,13 @@ const MAX_REPLY_IDS = 16;
 const MAX_REPLY_ID_CHARS = 256;
 /** A shown label: a list number or a reminder's display number (`#N`). */
 const MAX_LABEL = 1_000_000;
-const SLOTS = ['mail', 'drive', 'todo', 'reminder'] as const;
+const SLOTS = ['mail', 'drive', 'todo', 'reminder', 'jira', 'slack'] as const;
 
 /**
  * The listing slots: `mail` and `drive` (GML-1/DRV-1), plus the ADR-0120 amendment A6-D2 labelled slots `todo` and
- * `reminder`, written only while `QUOKY_NL_ACTIONS` is not `off` (so with `off` the record is exactly as before).
+ * `reminder`, written only while `QUOKY_NL_ACTIONS` is not `off` (so with `off` the record is exactly as before), and the
+ * A6 R2 slots `jira` and `slack` (shown label → `KEY:numericId` / `channelId:ts[:threadTs]`), written only while
+ * `QUOKY_NL_ITEM_R2` is not `off`.
  */
 export type ListingSource = (typeof SLOTS)[number];
 

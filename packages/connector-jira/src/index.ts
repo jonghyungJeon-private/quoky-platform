@@ -4,7 +4,9 @@ import {
   connectorQueryErrorReasonForStatus,
   CONNECTOR_CATALOG_MAX_ITEMS,
   CONNECTOR_CONTAINER_KEY,
+  CONNECTOR_ITEM_RESPONSE_MAX_BYTES,
   CONNECTOR_RELEASE_ID,
+  parseItemParams,
   parsePersonalWorkParams,
   parseReleaseItemsParams,
   parseReleasesParams,
@@ -12,6 +14,8 @@ import {
   toConnectorDueDate,
   toConnectorTimestamp,
   type ConnectorItem,
+  type ConnectorItemDetail,
+  type ConnectorItemSection,
   type ConnectorProvider,
   type ConnectorQuery,
   type ConnectorResult,
@@ -43,6 +47,11 @@ export interface JiraConnectorConfig {
   timeoutMs?: number;
   /** Injectable clock (epoch ms) for the relative window boundaries; default `Date.now`. */
   now?: () => number;
+  /**
+   * A6 R2 owner decision D12 (default false): allow ONE bounded second GET for an `item` read (a newest-comments page
+   * after a partial embedded page, or a description-only retry after an oversize response). Never more than 2 requests.
+   */
+  itemSecondRequest?: boolean;
 }
 
 export type JiraConnectorHttpErrorKind =
@@ -80,6 +89,25 @@ export class JiraConnectorResponseError extends ConnectorQueryError {
   }
 }
 
+/** A6 R2: a response over CONNECTOR_ITEM_RESPONSE_MAX_BYTES, aborted while streaming. Distinguishable by `tooLarge`. */
+export class JiraConnectorItemTooLargeError extends ConnectorQueryError {
+  readonly tooLarge = true;
+  constructor(readonly bytes: number = CONNECTOR_ITEM_RESPONSE_MAX_BYTES) {
+    // CA P3: its own neutral reason, apart from a malformed answer (INVALID_RESPONSE).
+    super('TOO_LARGE', 'jira connector: item response too large');
+    this.name = 'JiraConnectorItemTooLargeError';
+  }
+}
+
+/** The issue key and numeric id shapes an item reference may carry (A6 R2). */
+const JIRA_ITEM_REF = /^([A-Z][A-Z0-9_]{1,19}-[1-9]\d{0,9}):([1-9]\d{0,17})$/;
+const JIRA_ISSUE_KEY = /^[A-Z][A-Z0-9_]{1,19}-[1-9][0-9]{0,9}$/;
+const JIRA_NUMERIC_ID = /^[1-9][0-9]{0,17}$/;
+const ITEM_FIELDS = 'summary,status,issuetype,description,comment,updated';
+const ITEM_FIELDS_NO_COMMENT = 'summary,status,issuetype,description,updated';
+const ITEM_COMMENTS_KEPT = 10;
+const ATTACHMENT_PLACEHOLDER = '[첨부]';
+
 interface JiraIssue {
   key?: unknown;
   fields?: {
@@ -102,6 +130,7 @@ export class JiraConnectorProvider implements ConnectorProvider {
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
   private readonly now: () => number;
+  private readonly itemSecondRequest: boolean;
 
   constructor(config: JiraConnectorConfig) {
     const host = requireNonEmpty(config?.host, 'host');
@@ -114,6 +143,7 @@ export class JiraConnectorProvider implements ConnectorProvider {
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'jira connector');
     this.now = config.now ?? Date.now;
+    this.itemSecondRequest = config.itemSecondRequest === true;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -131,6 +161,8 @@ export class JiraConnectorProvider implements ConnectorProvider {
         return this.releases(input.params);
       case ConnectorQueryName.RELEASE_ITEMS:
         return this.releaseItems(input.params);
+      case ConnectorQueryName.ITEM:
+        return this.item(input.params);
       default:
         throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported query');
     }
@@ -241,6 +273,179 @@ export class JiraConnectorProvider implements ConnectorProvider {
   }
 
   /**
+   * A6 R2 `item`: ONE issue read by its opaque reference `KEY:numericId`, GET only, by the NUMERIC id (never the key).
+   * One request by default; with `itemSecondRequest` (D12) at most one more, in one of two exclusive branches.
+   */
+  private async item(params: Metadata | undefined): Promise<ConnectorResult> {
+    const parsed = parseItemParams(params, 'jira connector');
+    const ref = JIRA_ITEM_REF.exec(parsed.id);
+    if (!ref || parsed.scope !== 'item') {
+      throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported item reference');
+    }
+    const slotKey = ref[1]!;
+    const numericId = ref[2]!;
+    const issueUrl = (fields: string): URL => {
+      const url = new URL(`/rest/api/3/issue/${numericId}`, this.baseUrl);
+      url.searchParams.set('fields', fields);
+      return url;
+    };
+
+    let requests = 1;
+    let bytes = 0;
+    let descriptionOnly = false;
+    let payload: unknown;
+    try {
+      const first = await this.getItemJson(issueUrl(ITEM_FIELDS));
+      payload = first.json;
+      bytes += first.bytes;
+    } catch (error) {
+      if (!(error instanceof JiraConnectorItemTooLargeError) || !this.itemSecondRequest) throw error;
+      // Branch B: request 1 aborted at the cap. One description-only retry; never a branch A after it, never a third.
+      requests = 2;
+      bytes += error.bytes;
+      const retry = await this.getItemJson(issueUrl(ITEM_FIELDS_NO_COMMENT));
+      payload = retry.json;
+      bytes += retry.bytes;
+      descriptionOnly = true;
+    }
+
+    if (!isRecord(payload)) throw new JiraConnectorResponseError();
+    const responseId = typeof payload.id === 'number' ? String(payload.id) : payload.id;
+    // The numeric id must match: another issue never stands in (a stale slot is NOT_FOUND, not a substitution).
+    if (responseId !== numericId) throw new ConnectorQueryError('NOT_FOUND', 'jira connector: item not found');
+    if (typeof payload.key !== 'string' || !JIRA_ISSUE_KEY.test(payload.key)) throw new JiraConnectorResponseError();
+    const key = payload.key;
+    const fields = isRecord(payload.fields) ? payload.fields : undefined;
+
+    const description = this.adf(fields?.description);
+    let comments: ReadonlyArray<ItemComment> = [];
+    let total = 0;
+    let returned = 0;
+    let newest = false;
+    if (!descriptionOnly) {
+      const container = isRecord(fields?.comment) ? fields.comment : undefined;
+      const list = Array.isArray(container?.comments) ? container.comments : [];
+      returned = list.length;
+      total = typeof container?.total === 'number' && Number.isInteger(container.total) && container.total >= returned ? container.total : returned;
+      comments = list.slice(-ITEM_COMMENTS_KEPT).map((comment) => this.itemComment(comment));
+      // Branch A (D12): the embedded page is partial, so the newest comments are missing; one bounded GET for them.
+      if (this.itemSecondRequest && total > returned) {
+        requests = 2;
+        const url = new URL(`/rest/api/3/issue/${numericId}/comment`, this.baseUrl);
+        url.searchParams.set('orderBy', '-created');
+        url.searchParams.set('maxResults', String(ITEM_COMMENTS_KEPT));
+        try {
+          const second = await this.getItemJson(url);
+          bytes += second.bytes;
+          const page = validNewestComments(second.json);
+          if (page !== undefined) {
+            comments = page.slice().reverse().map((comment) => this.itemComment(comment));
+            returned = page.length;
+            if (isRecord(second.json) && typeof second.json.total === 'number' && Number.isInteger(second.json.total) && second.json.total >= page.length) {
+              total = second.json.total;
+            }
+            newest = true;
+          }
+        } catch (error) {
+          // Request 2 failed, was oversize or invalid: keep request 1's content (an aborted body still counts bytes).
+          if (error instanceof JiraConnectorItemTooLargeError) bytes += error.bytes;
+        }
+      }
+    }
+    comments = comments.filter((comment) => comment.text.length > 0);
+
+    const sections: ConnectorItemSection[] = [];
+    const people = new OrderedSet();
+    if (description.text.length > 0) {
+      sections.push({ kind: 'description', text: description.text });
+      description.mentions.forEach((name) => people.add(name));
+    }
+    for (const comment of comments) {
+      const section: ConnectorItemSection = { kind: 'comment', text: comment.text };
+      if (comment.author !== undefined) {
+        section.author = comment.author;
+        people.add(comment.author);
+      }
+      if (comment.at !== undefined) section.at = comment.at;
+      comment.mentions.forEach((name) => people.add(name));
+      sections.push(section);
+    }
+
+    const kept = comments.length;
+    const detail: ConnectorItemDetail = {
+      sections,
+      // Codex P2: comments dropped here (older than the last ITEM_COMMENTS_KEPT of the page) make the read partial too.
+      partial: descriptionOnly || total > returned || kept < returned,
+      people: people.values(),
+      requests,
+      bytes,
+    };
+    if (!descriptionOnly) detail.comments = { total, returned, kept, ...(newest ? { newest: true } : {}) };
+    if (descriptionOnly) detail.descriptionOnly = true;
+    if (key !== slotKey) detail.movedTo = key;
+
+    const rawTitle = typeof fields?.summary === 'string' && fields.summary.trim().length > 0 ? fields.summary : key;
+    const item: ConnectorItem = {
+      id: key,
+      title: this.redactToken(rawTitle).slice(0, NAME_LIMIT),
+      url: `${this.baseUrl}/browse/${encodeURIComponent(key)}`,
+      itemRef: parsed.id,
+      detail,
+    };
+    const status = isRecord(fields?.status) && typeof fields.status.name === 'string' ? this.redactToken(fields.status.name.trim()) : '';
+    if (status.length > 0) item.status = status.slice(0, STATUS_LIMIT);
+    const updatedAt = toConnectorTimestamp(fields?.updated);
+    if (updatedAt) item.updatedAt = updatedAt;
+    return { source: this.source, items: [item] };
+  }
+
+  private adf(value: unknown): { text: string; mentions: string[] } {
+    const flat = adfText(value);
+    return { text: this.redactToken(flat.text), mentions: flat.mentions.map((name) => this.redactToken(name)) };
+  }
+
+  private itemComment(value: unknown): ItemComment {
+    const record = isRecord(value) ? value : {};
+    const flat = this.adf(record.body);
+    const name = isRecord(record.author) && typeof record.author.displayName === 'string' ? this.redactToken(record.author.displayName.trim()) : '';
+    const at = toConnectorTimestamp(record.created);
+    return { text: flat.text, mentions: flat.mentions, ...(name.length > 0 ? { author: name } : {}), ...(at !== undefined ? { at } : {}) };
+  }
+
+  /**
+   * GET one item document. The egress guard of this runtime does not enforce `redirect: 'error'`, so the adapter sets
+   * `redirect: 'manual'` itself and maps any 3xx (or an opaque redirect) to `MOVED`: nothing is ever followed. The body
+   * is read as a stream and counted; above CONNECTOR_ITEM_RESPONSE_MAX_BYTES the reader is cancelled.
+   */
+  private async getItemJson(url: URL): Promise<{ json: unknown; bytes: number }> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json', Authorization: this.authorization },
+        signal: AbortSignal.timeout(this.timeoutMs),
+        redirect: 'manual',
+      });
+    } catch {
+      throw new JiraConnectorRequestError();
+    }
+    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status <= 399)) {
+      void response.body?.cancel().catch(() => undefined);
+      throw new ConnectorQueryError('MOVED', 'jira connector: item moved');
+    }
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => undefined);
+      throw mapHttpError(response.status);
+    }
+    const { text, bytes } = await readCappedText(response);
+    try {
+      return { json: JSON.parse(text) as unknown, bytes };
+    } catch {
+      throw new JiraConnectorResponseError();
+    }
+  }
+
+  /**
    * GET one JSON document. `onError` may map a failed status (and its parsed error body, read only then) to a specific
    * error; otherwise the status maps as usual. The body is never retained.
    */
@@ -303,6 +508,8 @@ export class JiraConnectorProvider implements ConnectorProvider {
     if (assignee.length > 0) item.assignee = this.redactToken(assignee).slice(0, NAME_LIMIT);
     const container = projectKey(key, undefined);
     if (container) item.container = container;
+    const itemRef = jiraItemRef(key, value.id);
+    if (itemRef) item.itemRef = itemRef;
     return item;
   }
 
@@ -335,6 +542,8 @@ export class JiraConnectorProvider implements ConnectorProvider {
     if (updatedAt) item.updatedAt = updatedAt;
     const container = projectKey(key, fields?.project);
     if (container) item.container = container;
+    const itemRef = jiraItemRef(key, value.id);
+    if (itemRef) item.itemRef = itemRef;
     return item;
   }
 
@@ -511,6 +720,144 @@ function collectText(value: unknown, parts: string[]): void {
   if (!isRecord(value)) return;
   if (typeof value.text === 'string') parts.push(value.text);
   if (Array.isArray(value.content)) collectText(value.content, parts);
+}
+
+interface ItemComment {
+  readonly text: string;
+  readonly mentions: string[];
+  readonly author?: string;
+  readonly at?: string;
+}
+
+class OrderedSet {
+  private readonly seen = new Set<string>();
+  add(value: string): void {
+    if (value.length > 0) this.seen.add(value);
+  }
+  values(): string[] {
+    return [...this.seen];
+  }
+}
+
+/** `KEY:numericId` when both the key and the response's string numeric id have the closed shapes; else undefined. */
+function jiraItemRef(key: string, id: unknown): string | undefined {
+  return typeof id === 'string' && JIRA_NUMERIC_ID.test(id) && JIRA_ISSUE_KEY.test(key) ? `${key}:${id}` : undefined;
+}
+
+/**
+ * The /comment page of D12 branch A, or undefined when it fails validation: an object with an array `comments`,
+ * `startAt === 0`, `comments.length <= maxResults <= 10`, each comment with a string `id` and `created`, and `created`
+ * strictly non-increasing (descending, as requested).
+ */
+function validNewestComments(payload: unknown): unknown[] | undefined {
+  if (!isRecord(payload) || !Array.isArray(payload.comments) || payload.startAt !== 0) return undefined;
+  const max = payload.maxResults;
+  if (typeof max !== 'number' || !Number.isInteger(max) || max > ITEM_COMMENTS_KEPT || payload.comments.length > max) return undefined;
+  let previous = Number.POSITIVE_INFINITY;
+  for (const comment of payload.comments) {
+    if (!isRecord(comment) || typeof comment.id !== 'string' || typeof comment.created !== 'string') return undefined;
+    const created = Date.parse(comment.created);
+    if (!Number.isFinite(created) || created > previous) return undefined;
+    previous = created;
+  }
+  return payload.comments;
+}
+
+/** Reads a response body as a stream, counting bytes; above the item cap the reader is cancelled. */
+async function readCappedText(response: Response): Promise<{ text: string; bytes: number }> {
+  const max = CONNECTOR_ITEM_RESPONSE_MAX_BYTES;
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    let buffer: ArrayBuffer;
+    try {
+      buffer = await response.arrayBuffer();
+    } catch {
+      throw new JiraConnectorRequestError();
+    }
+    if (buffer.byteLength > max) throw new JiraConnectorItemTooLargeError(buffer.byteLength);
+    return { text: decodeUtf8(new Uint8Array(buffer)), bytes: buffer.byteLength };
+  }
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  for (;;) {
+    let result: { done: boolean; value?: Uint8Array };
+    try {
+      result = await reader.read();
+    } catch {
+      throw new JiraConnectorRequestError();
+    }
+    if (result.done) break;
+    const value = result.value ?? new Uint8Array(0);
+    bytes += value.byteLength;
+    if (bytes > max) {
+      await reader.cancel().catch(() => undefined);
+      throw new JiraConnectorItemTooLargeError(bytes);
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    all.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { text: decodeUtf8(all), bytes };
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new JiraConnectorResponseError();
+  }
+}
+
+const ADF_BLOCK_NODES = new Set(['paragraph', 'heading', 'listItem', 'codeBlock', 'blockquote', 'tableRow']);
+
+/**
+ * A6 R2: flattens an ADF tree to plain text for a readout. Unlike the listing's `extractDescription`, every node is
+ * included, hidden or collapsed ones (`expand`, `nestedExpand`, `panel`) too, because the readout is untrusted text.
+ * `mentions` lists the mentioned names in order of appearance.
+ */
+export function adfText(value: unknown): { text: string; mentions: string[] } {
+  if (typeof value === 'string') return { text: value.replace(/\n{3,}/g, '\n\n').trim(), mentions: [] };
+  const mentions: string[] = [];
+  const text = adfNodeText(value, mentions).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return { text, mentions };
+}
+
+function adfNodeText(node: unknown, mentions: string[]): string {
+  if (Array.isArray(node)) return node.map((child) => adfNodeText(child, mentions)).join('');
+  if (!isRecord(node)) return '';
+  const attrs = isRecord(node.attrs) ? node.attrs : {};
+  switch (node.type) {
+    case 'mention': {
+      const text = typeof attrs.text === 'string' ? attrs.text.trim().replace(/^@/, '') : '';
+      const name = text.length > 0 ? text : typeof attrs.id === 'string' ? attrs.id.trim() : '';
+      if (name.length === 0) return '';
+      mentions.push(name);
+      return `@${name}`;
+    }
+    case 'inlineCard':
+    case 'blockCard':
+      return typeof attrs.url === 'string' ? attrs.url : '';
+    case 'status':
+      return typeof attrs.text === 'string' ? attrs.text : '';
+    case 'emoji':
+      return typeof attrs.shortName === 'string' ? attrs.shortName : '';
+    case 'media':
+    case 'mediaSingle':
+    case 'mediaGroup':
+    case 'mediaInline':
+      return ATTACHMENT_PLACEHOLDER;
+    case 'hardBreak':
+      return '\n';
+    default:
+      break;
+  }
+  let out = typeof node.text === 'string' ? node.text : '';
+  if (Array.isArray(node.content)) out += adfNodeText(node.content, mentions);
+  return typeof node.type === 'string' && ADF_BLOCK_NODES.has(node.type) ? `${out}\n` : out;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

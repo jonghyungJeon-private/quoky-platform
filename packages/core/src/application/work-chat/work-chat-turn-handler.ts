@@ -10,8 +10,27 @@ import type { MessageBody } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import { clipMessage, messageBody, outboundBody, outboundMessage, plainTextOf, withOutboundBody } from '../message-rendering';
+import type { NlItemR2Level } from '../nl-routing/nl-selection-service';
 import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlSelectedCommand } from '../nl-routing/catalog';
-import { nlActionEntry } from '../nl-routing/action-entries';
+import { nlActionEntry, nlItemSummarizeEntry } from '../nl-routing/action-entries';
+import { isNlR2ItemSource, type NlActionReceipt } from '../nl-routing/catalog';
+import { renderUntrustedDocumentFull, renderUntrustedDocumentHistoryNote } from '../untrusted-document-readout';
+import {
+  buildWorkItemReadout,
+  renderWorkItemCredentialWithheld,
+  renderWorkItemDmOnly,
+  renderWorkItemEmpty,
+  renderWorkItemFailure,
+  renderWorkItemFallback,
+  renderWorkItemFooter,
+  renderWorkItemReplyNotIsolable,
+  renderWorkItemSummaryOff,
+  workItemBytesBucket,
+  workItemDocumentSource,
+  workItemFetchOutcome,
+  workItemLabel,
+  workItemNotes,
+} from './work-item-summary';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { renderListStatusDmOnly } from '../nl-routing/nl-action-policy';
@@ -83,7 +102,7 @@ export const WORK_CHAT_LOOKUP_TURN_HELP_LINES: readonly string[] = Object.freeze
 export const WORK_SUMMARY_REPLY_MAX_CHARS = 1900;
 
 export interface WorkChatTurnHandlerDeps {
-  readonly desk: Pick<WorkDesk, 'handle' | 'configuredSources'> & Partial<Pick<WorkDesk, 'handleAction'>>;
+  readonly desk: Pick<WorkDesk, 'handle' | 'configuredSources'> & Partial<Pick<WorkDesk, 'handleAction' | 'readItem'>>;
   readonly mode: WorkChatMode;
   /**
    * `QUOKY_WORK_SUMMARY_ENABLED` (owner decision ADR-0100 #2). The desk already honours it; the handler re-checks it
@@ -91,6 +110,12 @@ export interface WorkChatTurnHandlerDeps {
    * reply and no provider is called).
    */
   readonly summaryEnabled: boolean;
+  /**
+   * ADR-0120 amendment A6 R2 (`QUOKY_NL_ITEM_R2`, default `off`): while not `off` the lookup handler offers
+   * `item.summarize` over the configured Jira / Slack sources (the selection service decides per source whether it acts or
+   * only logs) and answers a validated one through `desk.readItem`. `off`: nothing is offered or answered.
+   */
+  readonly itemR2?: NlItemR2Level;
   readonly logger: Logger;
 }
 
@@ -120,9 +145,12 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     }
     const configured = this.deps.desk.configuredSources?.() ?? [];
     // ADR-0120 A8: a configured Jira source also offers its release listing, right after `jira.issues`.
+    // A6 R2: `item.summarize` over the configured Jira / Slack sources, only while QUOKY_NL_ITEM_R2 is not `off`.
+    const r2 = (this.deps.itemR2 ?? 'off') !== 'off' && this.deps.desk.readItem !== undefined ? configured.filter(isNlR2ItemSource) : [];
     return [
       ...configured.flatMap((source) => (source === 'jira' ? [nlWave1Entry('jira.issues'), nlWave1Entry('jira.release')] : [nlWave1Entry(WORK_CHAT_SOURCE_ENTRY[source])])),
       nlWave1Entry('todo.list'),
+      ...(r2.length > 0 ? [nlItemSummarizeEntry(r2)] : []),
     ];
   }
 
@@ -132,6 +160,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
    */
   async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
     if (this.deps.mode !== 'lookup') return this.handleAction(selected, ctx);
+    if (selected.entryId === 'item.summarize') return this.summarizeItem(selected, ctx);
     // ADR-0120 A8: a release link is read from the owner's own non-quoted words only (quoted or fenced text is data).
     const prepared = selected.entryId === 'jira.release' ? prepareSelectionInput(ctx.message.text, 0, ctx.message.quotedRanges ?? []) : undefined;
     const mapped = workChatCommandForSelection(selected, prepared === undefined || 'skip' in prepared ? '' : prepared.groundingText);
@@ -174,6 +203,90 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     return {
       reply: outboundMessage(ctx.message.context, outboundBody(outcome)),
       ...(outcome.action !== undefined ? { nlAction: outcome.action } : {}),
+    };
+  }
+
+  /**
+   * ADR-0120 amendment A6 R2: ONE listed Jira issue or Slack message, its target resolved by Core from the content-free
+   * listing slot (never from content). DM-only (A6-D1). `summary` hands the single-item readout to the ADR-0100 D8
+   * `summarize` path (the runtime re-validates it and runs SUMMARIZATION); `full` shows it to the owner in untrusted
+   * spans with no model call (record C). A summary while QUOKY_WORK_SUMMARY_ENABLED=false is refused before any fetch.
+   * Every outcome keeps only the fixed history note (amendment C10) and carries a content-free receipt.
+   */
+  private async summarizeItem(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
+    const target = selected.target;
+    const readItem = this.deps.desk.readItem;
+    if ((this.deps.itemR2 ?? 'off') === 'off' || readItem === undefined || target === undefined || !isNlR2ItemSource(target.source) || target.id === undefined) return null;
+    const source = target.source;
+    const itemRef = target.id;
+    const scope = selected.args.scope === 'thread' ? 'thread' : 'item';
+    const mode = selected.args.mode === 'full' ? 'full' : 'summary';
+    const language = selected.language;
+    const history = { assistant: renderUntrustedDocumentHistoryNote(workItemDocumentSource(source, scope), language) };
+    const receipt = (result: NlActionReceipt['result'], extra: Partial<Pick<NlActionReceipt, 'reason' | 'fetch'>> = {}): NlActionReceipt => ({
+      entryId: 'item.summarize',
+      result,
+      source,
+      itemId: itemRef,
+      ...(target.label !== undefined ? { label: target.label } : {}),
+      ...extra,
+    });
+    const answer = (text: MessageBody, action: NlActionReceipt): TurnHandlerOutcome => ({
+      reply: outboundMessage(ctx.message.context, text, { replyToMessageId: ctx.message.id }),
+      history,
+      nlAction: action,
+    });
+    if (!isDirectConversation(ctx.message.context)) return answer(renderWorkItemDmOnly(), receipt('refused', { reason: 'not-dm' }));
+    // A Jira issue has no thread; a Slack thread is read whole, never one reply apart (D4).
+    if (source === 'jira' && scope === 'thread') return answer(renderWorkItemReplyNotIsolable(), receipt('refused', { reason: 'reply-not-isolable' }));
+    // CA P2 (proposal §2.1 fixture gate): until a RECORDED Slack fixture proves that one `conversations.replies` request
+    // isolates a single thread reply, a listed reply (`channel:ts:threadTs`) is refused explicitly before any fetch; its
+    // whole thread ('스레드 요약') and every top-level message stay supported.
+    // TODO(A6 R2): record the live Slack fixture (Strict, owner-approved) and lift this refusal when it passes.
+    if (source === 'slack' && scope === 'item' && itemRef.split(':').length === 3) {
+      return answer(renderWorkItemReplyNotIsolable(), receipt('refused', { reason: 'reply-not-isolable' }));
+    }
+    // D6: QUOKY_WORK_SUMMARY_ENABLED=false keeps its meaning — no Jira or Slack text reaches a model; 0 GETs.
+    if (mode === 'summary' && !this.deps.summaryEnabled) return answer(renderWorkItemSummaryOff(), receipt('refused', { reason: 'summary-off' }));
+    let read: Awaited<ReturnType<NonNullable<WorkDesk['readItem']>>>;
+    try {
+      read = await readItem.call(this.deps.desk, source, itemRef, scope);
+    } catch (error) {
+      this.deps.logger.error('work_chat.turn_handler.failed', { handlerId: this.id, errorName: error instanceof Error ? error.name : 'unknown' });
+      read = { kind: 'failure', reason: 'UNAVAILABLE' };
+    }
+    if (read.kind === 'failure') {
+      this.deps.logger.info('work_chat.item_read', { source, outcome: workItemFetchOutcome(read.reason) });
+      return answer(renderWorkItemFailure(source, read.reason), receipt('refused', { reason: workItemFetchOutcome(read.reason), fetch: { outcome: workItemFetchOutcome(read.reason), count: 1, bytes: '0' } }));
+    }
+    const item = read.item;
+    const fetched = { count: item.detail?.requests ?? 1, bytes: workItemBytesBucket(item.detail?.bytes) };
+    const built = buildWorkItemReadout({ source, scope, mode, item });
+    if (!built.ok) {
+      const outcome = built.refusal === 'EMPTY' ? 'empty' : 'credential-withheld';
+      this.deps.logger.info('work_chat.item_read', { source, outcome });
+      return answer(built.refusal === 'EMPTY' ? renderWorkItemEmpty() : renderWorkItemCredentialWithheld(), receipt('refused', { reason: outcome, fetch: { outcome, ...fetched } }));
+    }
+    const notes = workItemNotes({
+      source,
+      scope,
+      item,
+      ...(source === 'jira' ? { listedKey: itemRef.split(':')[0] as string } : {}),
+      ...(target.listingAt !== undefined ? { listingAt: target.listingAt } : {}),
+    });
+    const executed = receipt('executed', { fetch: { outcome: 'ok', ...fetched } });
+    this.deps.logger.info('work_chat.item_read', { source, outcome: 'ok', mode, requests: fetched.count });
+    if (mode === 'full') {
+      const full = renderUntrustedDocumentFull(built.readout, { language, label: workItemLabel(source, target.label, scope), totalChars: built.totalChars });
+      return answer(messageBody(full, ...notes.flatMap((note) => ['\n', note])), executed);
+    }
+    return {
+      kind: 'summarize',
+      readout: built.readout,
+      fallbackText: renderWorkItemFallback(source, item, notes),
+      footer: renderWorkItemFooter(source, scope, target.label, item, notes),
+      history,
+      nlAction: executed,
     };
   }
 
@@ -264,13 +377,14 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     }
     // Only lookups summarise, and only with summaries enabled; anything else gets the deterministic list.
     if (!this.deps.summaryEnabled || this.deps.mode !== 'lookup') {
-      return { outcome: { reply: outboundMessage(ctx.message.context, outcome.fallbackText) } };
+      return { outcome: { reply: outboundMessage(ctx.message.context, outcome.fallbackText), ...(outcome.numbered !== undefined ? { nlListing: outcome.numbered.fallback } : {}) } };
     }
     const summarize: TurnHandlerSummarizeReply = {
       kind: 'summarize',
       readout: outcome.readout,
       fallbackText: outcome.fallbackText,
       footer: outcome.footer,
+      ...(outcome.numbered !== undefined ? { numbered: outcome.numbered } : {}),
     };
     return { outcome: summarize };
   }

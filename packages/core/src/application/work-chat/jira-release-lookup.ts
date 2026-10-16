@@ -5,6 +5,8 @@ import { releaseLinkOnSite, type JiraReleaseLink } from './jira-release-link';
 import {
   renderProjectAmbiguous,
   renderProjectNotFound,
+  releaseIssuesInDisplayOrder,
+  renderNumberedReleaseIssues,
   renderReleaseIssues,
   renderReleaseList,
   renderReleaseNotFound,
@@ -36,7 +38,13 @@ export interface ReleaseLookupCommand {
 }
 
 export type ReleaseLookupResult =
-  | { readonly kind: 'body'; readonly body: MessageBody; readonly listed?: { readonly count: number; readonly truncated: boolean } }
+  | {
+      readonly kind: 'body';
+      readonly body: MessageBody;
+      readonly listed?: { readonly count: number; readonly truncated: boolean };
+      /** A6 R2 (numbered): the issues in display order and how many leading rows were certainly delivered. */
+      readonly shown?: { readonly items: readonly ConnectorItem[]; readonly labelled: number };
+    }
   | { readonly kind: 'failure'; readonly reason: 'IDENTITY_MISSING' | 'TIMEOUT' | ConnectorQueryErrorReason };
 
 /** The lookup deadline passed between two queries: no further query is started. */
@@ -72,6 +80,8 @@ export async function lookupJiraRelease(input: {
    * the project / release lists are refused there; the owner's own items of a named release follow `jira.issues`.
    */
   readonly inChannel?: boolean;
+  /** A6 R2 (D1): number the issue rows and report the certainly delivered ones (`QUOKY_NL_ITEM_R2` not `off`). */
+  readonly numbered?: boolean;
 }): Promise<ReleaseLookupResult> {
   let command = input.command;
   // The release text before a repeated project key was stripped: a release of exactly that name wins over the stripped one.
@@ -189,20 +199,26 @@ export async function lookupJiraRelease(input: {
     const truncated = listed.truncated === true || itemsOf(listed).length > items.length;
     // The page link is the adapter's own release URL (Core builds no Jira URL); unknown when the release was not listed.
     const releaseUrl = release.url;
-    return {
-      kind: 'body',
-      body: renderReleaseIssues({
-        ...(project !== undefined ? { project } : {}),
-        ...(release.name !== undefined ? { releaseName: release.name } : {}),
-        ...(releaseUrl !== undefined ? { releaseUrl } : {}),
-        scope: command.scope,
-        items,
-        truncated,
-        ...(ignoredLink ? { ignoredLink } : {}),
-        ...(input.inChannel !== true ? { offerAllScope: true } : {}),
-      }),
-      listed: { count: items.length, truncated },
+    const view = {
+      ...(project !== undefined ? { project } : {}),
+      ...(release.name !== undefined ? { releaseName: release.name } : {}),
+      ...(releaseUrl !== undefined ? { releaseUrl } : {}),
+      scope: command.scope,
+      items,
+      truncated,
+      ...(ignoredLink ? { ignoredLink } : {}),
+      ...(input.inChannel !== true ? { offerAllScope: true } : {}),
     };
+    if (input.numbered === true) {
+      const numbered = renderNumberedReleaseIssues(view);
+      return {
+        kind: 'body',
+        body: numbered.body,
+        listed: { count: items.length, truncated },
+        shown: { items: releaseIssuesInDisplayOrder(items), labelled: numbered.labelled },
+      };
+    }
+    return { kind: 'body', body: renderReleaseIssues(view), listed: { count: items.length, truncated } };
   } catch (error) {
     if (error instanceof ReleaseLookupAborted) return { kind: 'failure', reason: 'TIMEOUT' };
     if (isConnectorQueryError(error) && error.reason === 'NOT_FOUND') {

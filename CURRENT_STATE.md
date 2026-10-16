@@ -98,6 +98,15 @@ byte-identical. Chief Architect review required before merge (port and runtime d
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
 
+### A6 R2 `item.summarize` over Jira and Slack — on branch `claude/v5-a6-r2-impl` (2026-10-16)
+
+- **Owner:** R2 accepted with D1–D12 at the recommended defaults (DECISIONS "ADR-0120 amendment A6 R2", amendments C1–C11).
+- **Inert:** `QUOKY_NL_ITEM_R2` default `off`; acts only with `QUOKY_NL_ACTIONS=local`; the live `shadow` service makes 0
+  fetches and 0 model calls for R2 (acceptance-tested). Nothing live changes until the owner's Strict promotion steps
+  (corpus and red-team batch approval, the model gate and real-model red team, then `shadow`, `jira`, `all`).
+- **Pending owner items:** approve the agent-drafted R2 corpus (`golden/nl-action.r2.v1.json`) and red-team batch
+  (`subFamily: "r2"`); the Strict 3-run model gate and real-model red team; Chief Architect review before merge.
+
 ### A6 R1 gate fixes — on branch `claude/v5-a6-r1-fix` (2026-10-15)
 
 - **Why:** the Haiku R1 gates (v25, 3 runs) failed: 1–2 wrong targets, a "2번도" capture, 11 anchored read captures.

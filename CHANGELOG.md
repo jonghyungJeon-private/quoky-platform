@@ -5,6 +5,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 R2: `item.summarize` over Jira and Slack (2026-10-16)
+
+- **Added (inert: `QUOKY_NL_ITEM_R2` defaults to `off`).** New flag `QUOKY_NL_ITEM_R2=off|shadow|jira|all`; any value but
+  `off` requires `QUOKY_NL_ACTIONS` other than `off` (`NL_ITEM_R2_REQUIRES_ACTIONS`). Jira acts only with
+  `QUOKY_NL_ACTIONS=local` and `jira`/`all`, Slack only with `local` and `all`; under the live `shadow` an R2 selection
+  resolves and logs only (0 fetches, 0 model calls). New flag `QUOKY_WORK_TEXT_VENDOR_ALLOWED` (exact `true`/`false`,
+  default `false`, owner decision D6).
+- **Behaviour with R2 on.** Jira and Slack lists are numbered (also in `shadow`) and the delivered rows are recorded as
+  labels (`KEY:numericId`, `channel:ts[:threadTs]`); a model-summarised list loses its own numbers and gets a numbered
+  index. "2번 이슈 요약해줘" / "그 슬랙 메시지 요약" / "PROJ-3 원문" read ONE item with one GET (new read-only named query
+  `item`; Jira by numeric id, a redirect is `MOVED` and never followed, a response over 1 MiB is refused; Slack
+  `conversations.replies` with exact ts selection), then the ADR-0100 D8 `summarize` path over the single-item untrusted
+  readout (pseudonyms "참여자 A, B" in summary mode), or the full text with no model call. DM only; summaries off means
+  `full` only with 0 GETs; HTTP API vendors excluded for this text without the opt-in; a card-spoof line replaces the
+  summary; only a fixed history note is kept; 30 reads an hour and 100 a day per actor; `quoky.lastRead` (10 min) makes
+  "그거 원문 보여줘" after a summary mean that item. Selector prompt `nl-select.v43` when R2 sources are offered (v42
+  unchanged otherwise).
+- **Tests.** Adapter tests for the item reads, the R2 corpus (`golden/nl-action.r2.v1.json`, agent-drafted, awaiting the
+  owner's batch) with a deterministic replay, 77 red-team cases with a stub echo summariser over the production
+  `AppModule`, the R2 acceptance (`personal-v5-a6-r2-acceptance.test.ts`) including shadow and off inertness. No model and
+  no live Jira or Slack call was made.
+
 ## Unreleased — A6: a garbled action word asks (2026-10-16)
 
 - **Changed.** A LOCAL_WRITE selection whose action word is garbled ("3번 완룐 처리해줘") now asks, offering the vocabulary

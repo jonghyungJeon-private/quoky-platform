@@ -28,11 +28,17 @@ import { NL_SELECTION_TIMEOUT_MS } from '@quoky/core';
  * - `QUOKY_NL_DEICTIC_WRITES` (ADR-0120 amendment A6 R5a, owner decision 7): exactly `off`, `shadow` or `on`; default
  *   `off` (nothing recorded, every reply byte-identical). Any other value requires `QUOKY_NL_ACTIONS=local`
  *   (`NL_DEICTIC_WRITES_REQUIRES_LOCAL`, a startup refusal), so with the live `QUOKY_NL_ACTIONS=shadow` it cannot be on.
+ * - `QUOKY_NL_ITEM_R2` (ADR-0120 amendment A6 R2, owner decision D10): exactly `off`, `shadow`, `jira` or `all`; default
+ *   `off` (every list, record and prompt byte-identical). Any other value requires `QUOKY_NL_ACTIONS` other than `off`
+ *   (`NL_ITEM_R2_REQUIRES_ACTIONS`, a startup refusal). Jira / Slack `item.summarize` acts only with
+ *   `QUOKY_NL_ACTIONS=local` (Jira with `jira` or `all`, Slack with `all`); under the live `shadow` it resolves and logs
+ *   only (0 fetches, 0 model calls).
  */
 export type NlIntentModeConfig = 'off' | 'shadow' | 'active';
 export type NlPhaseConfig = 'a' | 'c' | 'c-shadow';
 export type NlActionsConfig = 'off' | 'shadow' | 'local' | 'external';
 export type NlDeicticWritesConfig = 'off' | 'shadow' | 'on';
+export type NlItemR2Config = 'off' | 'shadow' | 'jira' | 'all';
 
 export interface NlSelectionConfig {
   readonly mode: NlIntentModeConfig;
@@ -47,6 +53,8 @@ export interface NlSelectionConfig {
   readonly actions: NlActionsConfig;
   /** `QUOKY_NL_DEICTIC_WRITES` (A6 R5a): `off` (default), `shadow` or `on`; only with `actions: 'local'`. */
   readonly deicticWrites: NlDeicticWritesConfig;
+  /** `QUOKY_NL_ITEM_R2` (A6 R2): `off` (default), `shadow`, `jira` or `all`; only with `actions` other than `off`. */
+  readonly itemR2: NlItemR2Config;
 }
 
 export const DEFAULT_NL_INTENT_MODEL = 'haiku';
@@ -63,6 +71,8 @@ export const NlSelectionConfigErrorCode = {
   NL_ACTIONS_EXTERNAL_NOT_AVAILABLE: 'NL_ACTIONS_EXTERNAL_NOT_AVAILABLE',
   NL_DEICTIC_WRITES_INVALID: 'NL_DEICTIC_WRITES_INVALID',
   NL_DEICTIC_WRITES_REQUIRES_LOCAL: 'NL_DEICTIC_WRITES_REQUIRES_LOCAL',
+  NL_ITEM_R2_INVALID: 'NL_ITEM_R2_INVALID',
+  NL_ITEM_R2_REQUIRES_ACTIONS: 'NL_ITEM_R2_REQUIRES_ACTIONS',
 } as const;
 export type NlSelectionConfigErrorCode = (typeof NlSelectionConfigErrorCode)[keyof typeof NlSelectionConfigErrorCode];
 
@@ -137,7 +147,16 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
   if (rawDeictic !== undefined && rawDeictic !== 'off' && rawActions !== 'local') {
     throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_DEICTIC_WRITES_REQUIRES_LOCAL);
   }
+  const rawItemR2 = env.QUOKY_NL_ITEM_R2;
+  if (rawItemR2 !== undefined && rawItemR2 !== 'off' && rawItemR2 !== 'shadow' && rawItemR2 !== 'jira' && rawItemR2 !== 'all') {
+    throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_ITEM_R2_INVALID);
+  }
+  // A6 R2 (D10): the sub-flag rides on an action level; with QUOKY_NL_ACTIONS=off it is refused at startup.
+  if (rawItemR2 !== undefined && rawItemR2 !== 'off' && (rawActions === undefined || rawActions === 'off')) {
+    throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_ITEM_R2_REQUIRES_ACTIONS);
+  }
   return {
+    itemR2: (rawItemR2 as NlItemR2Config | undefined) ?? 'off',
     actions: (rawActions as NlActionsConfig | undefined) ?? 'off',
     deicticWrites: (rawDeictic as NlDeicticWritesConfig | undefined) ?? 'off',
     mode: (rawMode as NlIntentModeConfig | undefined) ?? 'off',

@@ -27,6 +27,8 @@ export const MODEL_SELECTION_TURN_HANDLERS = Symbol('ModelSelectionTurnHandlers'
 export interface ProviderSelectionComposition {
   readonly config: Pick<QuokyConfig, 'ai' | 'imageUnderstanding' | 'imageUnderstandingOptions'> & {
     readonly discord: Pick<QuokyConfig['discord'], 'ownerIds'>;
+    /** ADR-0120 A6 R2 (D6): `QUOKY_WORK_TEXT_VENDOR_ALLOWED`. */
+    readonly work?: Pick<QuokyConfig['work'], 'textVendorAllowed'>;
   };
   readonly catalog: ProviderCatalog;
   readonly store: ProviderSelectionStore;
@@ -54,6 +56,7 @@ export function createProviderSelectionProviders(input: ProviderSelectionComposi
           readiness: (provider) => manager.isReady(provider),
           ollamaModels: () => ollamaInventory.list(),
           logger: new ConsoleLogger('provider-selection'),
+          ...(config.work?.textVendorAllowed === true ? { workTextVendorAllowed: true } : {}),
         }),
       inject: [STORAGE_PROVIDER, AiProviderManager, SessionManager],
     },

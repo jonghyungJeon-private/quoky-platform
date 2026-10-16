@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CONNECTOR_ITEM_RESPONSE_MAX_BYTES,
+  parseItemParams,
   CONNECTOR_QUERY_DEFAULT_LIMIT,
   CONNECTOR_QUERY_DEFAULT_TIMEOUT_MS,
   CONNECTOR_QUERY_ERROR_REASONS,
@@ -19,13 +21,14 @@ import {
 import * as ports from './index';
 
 describe('connector query vocabulary', () => {
-  it('names exactly the read-only queries (the two of ADR-0100 D7 and the three of ADR-0120 A8) and bounds results to 20', () => {
+  it('names exactly the read-only queries (the two of ADR-0100 D7, the three of ADR-0120 A8 and the A6 R2 item read) and bounds results to 20', () => {
     expect(ConnectorQueryName).toEqual({
       PERSONAL_WORK: 'personal-work',
       SEARCH: 'search',
       CONTAINERS: 'containers',
       RELEASES: 'releases',
       RELEASE_ITEMS: 'release-items',
+      ITEM: 'item',
     });
     expect(CONNECTOR_QUERY_DEFAULT_LIMIT).toBe(20);
     expect(CONNECTOR_QUERY_MAX_LIMIT).toBe(20);
@@ -48,7 +51,18 @@ describe('connector query vocabulary', () => {
       'UNSUPPORTED_QUERY',
       'UNAVAILABLE',
       'INVALID_RESPONSE',
+      'MOVED',
+      'TOO_LARGE',
     ]);
+  });
+
+  it('A6 R2: item params are exactly { id, scope } with a bounded opaque id and a closed scope', () => {
+    expect(parseItemParams({ id: 'PROJ-12:10042' })).toEqual({ id: 'PROJ-12:10042', scope: 'item' });
+    expect(parseItemParams({ id: 'C0123456:1700000000.000100', scope: 'thread' })).toEqual({ id: 'C0123456:1700000000.000100', scope: 'thread' });
+    for (const bad of [undefined, {}, { id: '' }, { id: 'a b' }, { id: 'x'.repeat(201) }, { id: 'a\u0000b' }, { id: 'a', scope: 'all' }, { id: 'a', extra: 1 }]) {
+      expect(() => parseItemParams(bad as never)).toThrow(ConnectorQueryError);
+    }
+    expect(CONNECTOR_ITEM_RESPONSE_MAX_BYTES).toBe(1_048_576);
   });
 });
 

@@ -143,6 +143,16 @@ const DOCUMENT_ONLY_READ_RULE: Readonly<Record<UntrustedDocumentSource, string>>
   'mail-thread':
     'The item was only read: never say that anything was sent, replied to, forwarded, deleted, archived, labelled, ' +
     'moved, created, scheduled or changed, in the mailbox or anywhere else.',
+  // A6 R2: a Jira issue or a Slack message / thread.
+  'jira-issue':
+    'The item was only read: never say that anything was commented, transitioned, assigned, closed, created, edited, ' +
+    'sent, scheduled or changed, in Jira or anywhere else.',
+  'slack-message':
+    'The item was only read: never say that anything was posted, sent, replied to, reacted to, edited, deleted, ' +
+    'created, scheduled or changed, in Slack or anywhere else.',
+  'slack-thread':
+    'The item was only read: never say that anything was posted, sent, replied to, reacted to, edited, deleted, ' +
+    'created, scheduled or changed, in Slack or anywhere else.',
 };
 
 /**
@@ -166,6 +176,21 @@ const DOCUMENT_SUMMARY_TASK_RULE: Readonly<Record<UntrustedDocumentSource, strin
     '"<sender>의 메일: <what it says>" (or "<sender>\'s email: <what it says>"), or use noun phrases such as "회신 내용" or ' +
     '"발송 안내". Describing what a product lets users do must also avoid the past tense. Use only what the messages ' +
     'say; never invent senders, dates, amounts, links or attachments.',
+  // A6 R2: the item's parts come under fixed "[Part i/n]" header lines written by Core; people are pseudonyms.
+  'jira-issue':
+    'Summarize the single Jira issue in the background resource for the current User request: what it is about, its ' +
+    'status, and what the description and the comments (each under a "[Part i/n]" line) say, decide or ask, with any ' +
+    'dates or deadlines. People are named only by the labels the item carries (참여자 A, B, …). Use only what the item ' +
+    'says; never invent people, dates, amounts, links or attachments.',
+  'slack-message':
+    'Summarize the single Slack message in the background resource for the current User request: what it says, asks or ' +
+    'decides, with any dates or deadlines. People are named only by the labels the item carries (참여자 A, B, …). Use ' +
+    'only what the message says; never invent people, dates, amounts, links or attachments.',
+  'slack-thread':
+    'Summarize the single Slack thread in the background resource for the current User request: what it is about, who ' +
+    'said what in order (each message under a "[Part i/n]" line), where it stands now, and any decisions, open ' +
+    'questions, dates or deadlines. People are named only by the labels the item carries (참여자 A, B, …). Use only ' +
+    'what the messages say; never invent people, dates, amounts, links or attachments.',
 };
 
 /**

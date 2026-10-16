@@ -1,10 +1,14 @@
 import {
   ConnectorQueryError,
   ConnectorQueryName,
+  CONNECTOR_ITEM_RESPONSE_MAX_BYTES,
+  parseItemParams,
   parseSearchParams,
   resolveConnectorQueryTimeoutMs,
   toConnectorTimestamp,
   type ConnectorItem,
+  type ConnectorItemDetail,
+  type ConnectorItemSection,
   type ConnectorProvider,
   type ConnectorQuery,
   type ConnectorQueryErrorReason,
@@ -28,6 +32,11 @@ const FALLBACK_CONTAINER = 'Slack';
 const SLACK_ID_SHAPE = /^[CDGUW][A-Z0-9]{6,}$/;
 /** At most this many channel lookups are cached (the oldest is dropped first). */
 const CHANNEL_CACHE_MAX = 500;
+/** A6 R2: the item reference `channelId:ts[:threadTs]` and the Slack timestamp shape. */
+const SLACK_ITEM_REF = /^([CG][A-Z0-9]{6,}):(\d{10}\.\d{6})(?::(\d{10}\.\d{6}))?$/;
+const SLACK_TS = /^\d{10}\.\d{6}$/;
+/** A thread read holds the parent and at most this many messages in all (one page, the cursor is never followed). */
+const THREAD_PAGE_LIMIT = 50;
 
 export interface SlackConnectorConfig {
   token: string;
@@ -83,6 +92,16 @@ export class SlackConnectorResponseError extends ConnectorQueryError {
   constructor() {
     super('INVALID_RESPONSE', 'slack connector: query returned an unexpected response');
     this.name = 'SlackConnectorResponseError';
+  }
+}
+
+/** A6 R2: a response over CONNECTOR_ITEM_RESPONSE_MAX_BYTES, aborted while streaming. Distinguishable by `tooLarge`. */
+export class SlackConnectorItemTooLargeError extends ConnectorQueryError {
+  readonly tooLarge = true;
+  constructor(readonly bytes: number = CONNECTOR_ITEM_RESPONSE_MAX_BYTES) {
+    // CA P3: its own neutral reason, apart from a malformed answer (INVALID_RESPONSE).
+    super('TOO_LARGE', 'slack connector: item response too large');
+    this.name = 'SlackConnectorItemTooLargeError';
   }
 }
 
@@ -148,6 +167,7 @@ export class SlackConnectorProvider implements ConnectorProvider {
   async query(input: ConnectorQuery): Promise<ConnectorResult> {
     const name = input?.query;
     if (name === ConnectorQueryName.SEARCH) return this.search(input);
+    if (name === ConnectorQueryName.ITEM) return this.item(input);
     if (name === ConnectorQueryName.PERSONAL_WORK) {
       throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'slack connector: unsupported query');
     }
@@ -237,6 +257,147 @@ export class SlackConnectorProvider implements ConnectorProvider {
       })
       .filter(isConnectorItem);
     return { source: this.source, items };
+  }
+
+  /**
+   * A6 R2 `item`: ONE `conversations.replies` request (GET, never paginated) for a listed message or its thread. No
+   * `conversations.info`, `users.info` or `chat.getPermalink` call is made.
+   */
+  private async item(input: ConnectorQuery): Promise<ConnectorResult> {
+    this.assertConnected();
+    const { id, scope } = parseItemParams(input.params, 'slack connector');
+    const ref = SLACK_ITEM_REF.exec(id);
+    if (!ref) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'slack connector: unsupported item reference');
+    const channel = ref[1]!;
+    const ts = ref[2]!;
+    const refThreadTs = ref[3] !== undefined && ref[3] !== ts ? ref[3] : undefined;
+    const url = new URL('/api/conversations.replies', SLACK_API_ORIGIN);
+    url.searchParams.set('channel', channel);
+    let replyIsolated = false;
+    if (scope === 'thread') {
+      url.searchParams.set('ts', refThreadTs ?? ts);
+      url.searchParams.set('limit', String(THREAD_PAGE_LIMIT));
+    } else if (refThreadTs !== undefined) {
+      replyIsolated = true;
+      url.searchParams.set('ts', refThreadTs);
+      url.searchParams.set('oldest', ts);
+      url.searchParams.set('latest', ts);
+      url.searchParams.set('inclusive', 'true');
+      url.searchParams.set('limit', '2');
+    } else {
+      url.searchParams.set('ts', ts);
+      url.searchParams.set('limit', '1');
+      url.searchParams.set('inclusive', 'true');
+    }
+
+    const { payload, bytes } = await this.getItemPayload(url);
+    const messages = payload.messages;
+    if (!Array.isArray(messages)) throw new SlackConnectorResponseError();
+    const notFound = (): ConnectorQueryError => new ConnectorQueryError('NOT_FOUND', 'slack connector: item not found');
+    const tsOf = (message: unknown): string | undefined => (isRecord(message) && typeof message.ts === 'string' ? message.ts : undefined);
+    const isTombstone = (message: unknown): boolean => isRecord(message) && message.subtype === 'tombstone';
+
+    let kept: unknown[];
+    let replyCount: number | undefined;
+    let hasMore: boolean | undefined;
+    if (scope === 'thread') {
+      const threadTs = refThreadTs ?? ts;
+      if (tsOf(messages[0]) !== threadTs || isTombstone(messages[0])) throw notFound();
+      kept = messages.slice(0, THREAD_PAGE_LIMIT).filter((message, index) => index === 0 || (isRecord(message) && !isTombstone(message)));
+      hasMore = payload.has_more === true;
+    } else if (replyIsolated) {
+      // Slack may prepend the parent: take exactly the message whose ts is the listed ts, never the parent or a neighbour.
+      let selected: unknown;
+      if (tsOf(messages[0]) === ts) selected = messages[0];
+      else if (tsOf(messages[0]) === refThreadTs && tsOf(messages[1]) === ts) selected = messages[1];
+      if (selected === undefined || isTombstone(selected)) throw notFound();
+      kept = [selected];
+    } else {
+      if (tsOf(messages[0]) !== ts || isTombstone(messages[0])) throw notFound();
+      kept = [messages[0]];
+      const count = (messages[0] as Record<string, unknown>).reply_count;
+      replyCount = typeof count === 'number' && Number.isInteger(count) && count > 0 ? count : 0;
+    }
+
+    const sections: ConnectorItemSection[] = [];
+    const people = new Set<string>();
+    for (const message of kept) {
+      const record = message as Record<string, unknown>;
+      const flat = flattenSlackMrkdwn(typeof record.text === 'string' ? record.text : '');
+      const authorRaw = typeof record.user === 'string' && record.user.trim().length > 0 ? record.user.trim() : typeof record.bot_id === 'string' && record.bot_id.trim().length > 0 ? record.bot_id.trim() : 'unknown';
+      const author = redactToken(authorRaw, this.token);
+      const section: ConnectorItemSection = { kind: 'message', author, text: redactToken(flat.text, this.token) };
+      const at = typeof record.ts === 'string' ? toConnectorTimestamp(Number(record.ts) * 1000) : undefined;
+      if (at !== undefined) section.at = at;
+      if (author !== 'unknown') people.add(author);
+      for (const user of flat.users) people.add(redactToken(user, this.token));
+      sections.push(section);
+    }
+
+    const firstLine = (sections[0]?.text ?? '').split('\n').map((line) => line.trim()).find((line) => line.length > 0);
+    const detail: ConnectorItemDetail = {
+      sections,
+      partial: hasMore === true,
+      people: [...people],
+      requests: 1,
+      bytes,
+    };
+    if (replyCount !== undefined) detail.replyCount = replyCount;
+    if (hasMore !== undefined) detail.hasMore = hasMore;
+    // Codex P2: freshness is the latest create OR edit time of what was read (`edited.ts`), so an edit after the listing
+    // is reported ("목록 이후 수정됨").
+    const stamps = kept.flatMap((message) => {
+      const record = isRecord(message) ? message : {};
+      const edited = isRecord(record.edited) && typeof record.edited.ts === 'string' ? record.edited.ts : undefined;
+      return [tsOf(message), edited].filter((value): value is string => typeof value === 'string' && /^\d{10}\.\d{6}$/.test(value)).map(Number);
+    });
+    const latest = stamps.length > 0 ? Math.max(...stamps) : undefined;
+    const updatedAt = latest !== undefined ? toConnectorTimestamp(latest * 1000) : undefined;
+    const item: ConnectorItem = {
+      id: `${channel}:${ts}`,
+      title: (firstLine ?? EMPTY_MESSAGE_TITLE).slice(0, TITLE_LIMIT),
+      itemRef: id,
+      detail,
+    };
+    if (updatedAt) item.updatedAt = updatedAt;
+    return { source: this.source, items: [item] };
+  }
+
+  /**
+   * One item GET. The egress guard of this runtime does not enforce `redirect: 'error'`, so the adapter sets
+   * `redirect: 'manual'` itself and maps any 3xx (or an opaque redirect) to `MOVED`: nothing is ever followed. The body
+   * is streamed and counted; above CONNECTOR_ITEM_RESPONSE_MAX_BYTES the reader is cancelled.
+   */
+  private async getItemPayload(url: URL): Promise<{ payload: Record<string, unknown>; bytes: number }> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json', Authorization: `Bearer ${this.token}` },
+        signal: AbortSignal.timeout(this.timeoutMs),
+        redirect: 'manual',
+      });
+    } catch {
+      throw new SlackConnectorRequestError();
+    }
+    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status <= 399)) {
+      void response.body?.cancel().catch(() => undefined);
+      throw new ConnectorQueryError('MOVED', 'slack connector: item moved');
+    }
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => undefined);
+      throw mapHttpError(response.status);
+    }
+    const { text, bytes } = await readCappedText(response);
+    let payload: unknown;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      throw new SlackConnectorResponseError();
+    }
+    if (!isRecord(payload) || typeof payload.ok !== 'boolean') throw new SlackConnectorResponseError();
+    if (!payload.ok) throw mapSlackApiError(typeof payload.error === 'string' ? payload.error : '');
+    return { payload, bytes };
   }
 
   /**
@@ -416,6 +577,10 @@ function mapSearchMatch(value: unknown, token: string, container: string): Conne
   item.container = container;
   const updatedAt = toConnectorTimestamp(Number(ts) * 1000);
   if (updatedAt) item.updatedAt = updatedAt;
+  if (SLACK_TS.test(ts)) {
+    const threadTs = permalinkThreadTs(value.permalink);
+    item.itemRef = threadTs !== undefined && threadTs !== ts ? `${channelId}:${ts}:${threadTs}` : `${channelId}:${ts}`;
+  }
   return item;
 }
 
@@ -468,6 +633,96 @@ function mapHttpError(status: number): SlackConnectorHttpError {
   return new SlackConnectorHttpError('HTTP_ERROR', status);
 }
 
+/** Reads a response body as a stream, counting bytes; above the item cap the reader is cancelled. */
+async function readCappedText(response: Response): Promise<{ text: string; bytes: number }> {
+  const max = CONNECTOR_ITEM_RESPONSE_MAX_BYTES;
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    let buffer: ArrayBuffer;
+    try {
+      buffer = await response.arrayBuffer();
+    } catch {
+      throw new SlackConnectorRequestError();
+    }
+    if (buffer.byteLength > max) throw new SlackConnectorItemTooLargeError(buffer.byteLength);
+    return { text: decodeUtf8(new Uint8Array(buffer)), bytes: buffer.byteLength };
+  }
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  for (;;) {
+    let result: { done: boolean; value?: Uint8Array };
+    try {
+      result = await reader.read();
+    } catch {
+      throw new SlackConnectorRequestError();
+    }
+    if (result.done) break;
+    const value = result.value ?? new Uint8Array(0);
+    bytes += value.byteLength;
+    if (bytes > max) {
+      await reader.cancel().catch(() => undefined);
+      throw new SlackConnectorItemTooLargeError(bytes);
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    all.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { text: decodeUtf8(all), bytes };
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new SlackConnectorResponseError();
+  }
+}
+
+/**
+ * A6 R2: Slack mrkdwn to plain text. `<!channel>` and friends become `@channel`; `<@U1>` / `<@U1|name>` become `@U1`
+ * (the id is returned in `users`); `<#C1|name>` becomes `#name`; `<url|label>` becomes `label (url)`; then `&lt;`,
+ * `&gt;` and `&amp;` are decoded.
+ */
+export function flattenSlackMrkdwn(input: string): { text: string; users: string[] } {
+  const users: string[] = [];
+  const replaced = input.replace(/<([^<>]*)>/g, (_whole, body: string) => {
+    const bar = body.indexOf('|');
+    const target = bar === -1 ? body : body.slice(0, bar);
+    const label = bar === -1 ? undefined : body.slice(bar + 1);
+    if (target.startsWith('!')) {
+      const command = target.slice(1);
+      if (command === 'channel' || command === 'here' || command === 'everyone') return `@${command}`;
+      if (command.startsWith('subteam')) return label !== undefined && label.length > 0 ? (label.startsWith('@') ? label : `@${label}`) : '@usergroup';
+      return label ?? '';
+    }
+    if (target.startsWith('@')) {
+      const user = target.slice(1);
+      if (user.length === 0) return '';
+      if (!users.includes(user)) users.push(user);
+      return `@${user}`;
+    }
+    if (target.startsWith('#')) return label !== undefined && label.length > 0 ? `#${label}` : '#channel';
+    return label !== undefined && label.length > 0 ? `${label} (${target})` : target;
+  });
+  const text = replaced.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/\n{3,}/g, '\n\n').trim();
+  return { text, users };
+}
+
+/** The `thread_ts` of a search permalink when it is a Slack timestamp, else undefined. */
+function permalinkThreadTs(permalink: unknown): string | undefined {
+  if (typeof permalink !== 'string') return undefined;
+  try {
+    const value = new URL(permalink).searchParams.get('thread_ts');
+    return value !== null && SLACK_TS.test(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function mapSlackApiError(code: string): SlackConnectorHttpError {
   if (['invalid_auth', 'not_authed', 'account_inactive', 'token_revoked'].includes(code)) {
     return new SlackConnectorHttpError('UNAUTHORIZED', 200);
@@ -475,7 +730,7 @@ function mapSlackApiError(code: string): SlackConnectorHttpError {
   if (['missing_scope', 'not_allowed_token_type'].includes(code)) {
     return new SlackConnectorHttpError('INSUFFICIENT_SCOPE', 200);
   }
-  if (code === 'restricted_action') return new SlackConnectorHttpError('FORBIDDEN', 200);
+  if (['restricted_action', 'not_in_channel', 'access_denied'].includes(code)) return new SlackConnectorHttpError('FORBIDDEN', 200);
   if (['channel_not_found', 'thread_not_found', 'message_not_found'].includes(code)) {
     return new SlackConnectorHttpError('NOT_FOUND', 200);
   }

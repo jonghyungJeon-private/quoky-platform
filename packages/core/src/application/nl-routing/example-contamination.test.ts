@@ -77,7 +77,7 @@ interface GoldCase {
 
 // ---- gold corpora (ADR-0123 D5 scope: the D12 corpora) --------------------------------------------------------------
 // A6 R5a: the deictic corpus is gold too (it must produce no finding of its own, §6.4).
-const GOLD_FILES = ['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-action.exec-time.v1.json', 'nl-action.deictic.v1.json'] as const;
+const GOLD_FILES = ['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-action.exec-time.v1.json', 'nl-action.deictic.v1.json', 'nl-action.r2.v1.json'] as const;
 
 function loadGold(): GoldCase[] {
   const cases: GoldCase[] = [];

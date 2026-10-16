@@ -26,7 +26,56 @@ export interface ConnectorItem {
    * or done. Absent when the source does not say. (A `releases` item carries `released` / `unreleased` in `status`.)
    */
   statusCategory?: 'todo' | 'in-progress' | 'done';
+  /**
+   * ADR-0120 amendment A6 R2: the opaque single-item reference the `item` query accepts for this listed item (Jira
+   * `KEY:numericId`, Slack `channelId:ts` or `channelId:ts:threadTs` for a thread reply). Structural and content-free;
+   * Core stores it in the listing slot and never shows it or sends it to a model.
+   */
+  itemRef?: string;
+  /** ADR-0120 amendment A6 R2: the text of ONE item read by the `item` query (absent on every listing). */
+  detail?: ConnectorItemDetail;
   raw?: Metadata;
+}
+
+/**
+ * A6 R2: one text section of an item, in reading order. `kind` and `author` are structural; Core titles every section
+ * with its own copy ("설명", "댓글 3"), never with content. `author` is an opaque person handle (a display name for Jira, a
+ * user id for Slack) that Core pseudonymises before any model sees the text (owner decision D5).
+ */
+export interface ConnectorItemSection {
+  kind: 'description' | 'comment' | 'message';
+  author?: string;
+  text: string;
+  /** ISO-8601, when the source gives one. */
+  at?: string;
+}
+
+/** A6 R2: the item read by `item`, with what was left out stated as counts (never guessed). */
+export interface ConnectorItemDetail {
+  sections: ConnectorItemSection[];
+  /** True when the source holds more than was read (a partial comment page, `has_more`, a description-only retry). */
+  partial: boolean;
+  /**
+   * Every person handle that appears as an author or a mention, in order of first appearance (Core pseudonymises each one
+   * in `summary` mode). Never shown as a list.
+   */
+  people: string[];
+  /** Jira: the comment container's `total` and how many comments the readout holds from the returned page. */
+  comments?: { total: number; returned: number; kept: number; newest?: boolean };
+  /** Slack top-level message: its `reply_count` (0 when none). */
+  replyCount?: number;
+  /** Slack thread: the page was cut (`has_more`). */
+  hasMore?: boolean;
+  /** Jira validated move (same numeric id, another key): the current key. */
+  movedTo?: string;
+  /** Slack: the message was deleted (`tombstone`). */
+  deleted?: boolean;
+  /** D12 branch B: comments were skipped after an oversize response. */
+  descriptionOnly?: boolean;
+  /** How many connector requests this read made (1, or 2 with D12), counting an aborted one. */
+  requests: number;
+  /** The response bytes read (for the content-free audit bucket). */
+  bytes: number;
 }
 
 export interface ConnectorResult {

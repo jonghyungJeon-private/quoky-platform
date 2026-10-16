@@ -27163,6 +27163,102 @@ owner approved a structural Core rule (`nl-routing/garbled-action.ts`), with no 
   selector-RAG gold digest is unchanged and the audit record was not regenerated. The eval scorer counts `garbled-action` as a
   clarification reason.
 
+## ADR-0120 amendment A6 R2 — `item.summarize` over Jira and Slack (owner-approved 2026-10-16, D1–D12 at the recommended defaults)
+
+Status: **Accepted** (owner, 2026-10-16). The owner approved `docs/plans/a6-r2-jira-slack-summarize-proposal.md`
+(revision 2, merged in #252) with every open decision D1–D12 at its recommended default. The code ships **inert**: the new
+sub-flag `QUOKY_NL_ITEM_R2` defaults to `off`, R2 acts only with `QUOKY_NL_ACTIONS=local`, and the live service runs
+`QUOKY_NL_ACTIONS=shadow`, where R2 makes **0 connector fetches and 0 model calls**. Each promotion step (§7 of the
+proposal: corpus and red-team batches, the Strict model and real-model red-team gates, `shadow`, `jira`, `all`) is its own
+Strict owner item. A Chief Architect review is required before the code merges.
+
+**Owner decisions (all at the recommended default).**
+
+| # | Decision |
+|---|---|
+| D1 | Shown labels for every `QUOKY_NL_ITEM_R2` value except `off`: a deterministic numbered list, or, for a model-summarised list, the model text with leading list numbers stripped plus a deterministic numbered index of every used item that replaces the footer's link lines. Labels are recorded only for lines actually delivered. |
+| D2 | A Jira key ("PROJ-12 요약해줘") is a ref only when it appears verbatim in the owner's words and is the id of a delivered label of the fresh Jira listing. An arbitrary key read is deferred to its own READ entry. |
+| D3 | Private Slack channels are refused ("비공개 채널 메시지는 읽을 권한이 없어요"); no `groups:history` scope is added. |
+| D4 | Slack default scope is the message only, with a "스레드 답글 N개" note; the thread only on 스레드/thread. A single thread reply is read only in the one-request form proved by fixture, otherwise refused. |
+| D5 | Pseudonyms ("참여자 A, B, …") for Jira and Slack in `summary` mode; real names only in `full` mode (Jira `displayName`; Slack stays pseudonymous). |
+| D6 | Summary provider: local first, then the Claude CLI fallback; HTTP API vendors excluded unless `QUOKY_WORK_TEXT_VENDOR_ALLOWED=true` (exact value; default `false`). `QUOKY_WORK_SUMMARY_ENABLED=false` means `full` only, with 0 GETs for `summary`. |
+| D7 | No content cache: every request fetches fresh; nothing fetched outlives the turn. |
+| D8 | Rate limits: 30 `item.summarize` an hour per actor shared across mail, Drive, Jira and Slack, plus 100 a day per actor; no retry on 429. |
+| D9 | `quoky.lastRead`, a third content-free reference record (10 min), for `item.summarize` only, under the #235 recency rules. |
+| D10 | Sub-flag `QUOKY_NL_ITEM_R2` = `off` \| `shadow` \| `jira` \| `all` (§7 table), Jira-first promotion, live gate ≥ 100 turns in total with ≥ 40 per source. |
+| D11 | The normalised card-spoof replacement of a summary (§3.3 item 4); `full` shows such lines inert. |
+| D12 | One optional second bounded Jira GET in exclusive branches (A: newest 10 comments after a partial page; B: a description-only retry after an oversize response), never more than 2 requests counting the aborted one. **Off at first.** |
+
+**Amendments of settled text (the proposal's §0 rows C1–C11, as accepted).**
+
+| # | Settled text | Amendment |
+|---|---|---|
+| C1 | A6-D8 R2: a "single-item readout through the ADR-0100 D8 `summarize` path" | **Interpretation (accepted).** R2 uses the D8 `summarize` reply variant (`TurnHandlerSummarizeReply`), carrying the single-item `UntrustedDocumentReadout` (ADR-0118 D7 shape, `handleDocumentSummary`), not the list-shaped `ExternalWorkReadout`. |
+| C2 | ADR-0100 D7: closed named queries | **ADR-0100 D7 amendment.** One new read-only named query `item`, params `{ id, scope }`, GET only; unknown params are `UNSUPPORTED_QUERY`. |
+| C3 | ADR-0100 D8 deterministic list (unnumbered bullets) and footer (link lines only) | **ADR-0100 D8 amendment (behind the flag).** While `QUOKY_NL_ITEM_R2` is not `off`: the deterministic list rows are numbered `1.` … `n.`; on a model-summarised list the leading list markers are stripped from the model text and a deterministic numbered index of every used item replaces the footer's link lines. Labels are recorded only for delivered lines. With `off` every list and stored record is byte-identical. |
+| C4 | ADR-0118: `UNTRUSTED_DOCUMENT_SOURCES = ['mail', 'drive', 'mail-thread']` | **ADR-0118 amendment.** Adds `jira-issue`, `slack-message`, `slack-thread`; bounds, normalisation and the credential guard unchanged. |
+| C5 | Design §2.4 and ADR-0121 D4: work text has one egress label, `REMOTE_OK` | **ADR-0121 D4 and design §2.4 amendment.** The label is set by the read path, not only by the source: the ADR-0100 D8 list summary keeps `REMOTE_OK`; a single Jira / Slack item read through A6 carries `REMOTE_ON_SUMMARY_REQUEST` and scope `OWNER_DM_ONLY`. |
+| C6 | A6-D2: two reference records (listing slots, `lastAction`) | **A6-D2 amendment (D9).** A third, content-free record `quoky.lastRead = { source, id, label, at }`, 10 minutes, read by `item.summarize` only; never a referent for a LOCAL_WRITE, an R5a deictic draft or `action.undo`. |
+| C7 | ADR-0100 Consequences: a "user token with `search:read`", "no history scan" | **ADR-0100 amendment.** One message or one thread page through `conversations.replies` with the `channels:history` scope the user token already holds: a bounded single-item read, not a history scan. No new scope (D3). |
+| C8 | A6-D1 / A6-D2: `ref` is `#n`, `recent`, `this`, `last` | **A6-D1 / A6-D2 amendment (D2).** A `key` ref kind: a Jira key, verbatim in the owner's words, accepted only as a delivered label's id of the fresh Jira slot. |
+| C9 | ADR-0115 / ADR-0116: the summary provider is the effective chat-tier choice | **ADR-0115 amendment (D6).** An additive, data-only work-text constraint on `ProviderSelectionContext`, resolved by the composition root's `ProviderSelectionPolicy` (it knows which keys are HTTP API adapters): without the opt-in an HTTP API vendor is not eligible for Jira / Slack text. Core never branches on a provider id. Mail and Drive are unaffected. |
+| C10 | ADR-0118 history rule | **Reaffirmed and extended.** Every R2 outcome (summary, `full`, each fallback, a refusal that echoes a title) writes only the fixed `renderUntrustedDocumentHistoryNote` note to SHORT_TERM history. |
+| C11 | ADR-0100 D7: the closed `ConnectorQueryErrorReason` set | **ADR-0100 D7 amendment.** One neutral reason `MOVED` (a Jira `3xx`, never followed). With D12 (off) one more bounded Jira GET for Jira only. |
+
+There is no new port, DI token, migration, host or runtime deps key; scopes are unchanged.
+
+### A6 R2 implementation note (2026-10-16, branch `claude/v5-a6-r2-impl`)
+
+Implemented as written in the proposal, inert (`QUOKY_NL_ITEM_R2` default `off`; R2 acts only with `QUOKY_NL_ACTIONS=local`;
+under the live `shadow` an R2 selection resolves and logs `nl_action.decided` with `result: shadow`: 0 fetches, 0 model
+calls, today's reply). Where the code is more specific than the proposal:
+
+1. **Redirects.** The ADR-0121 D8 egress guard strips `maxRedirections` but does not itself refuse a redirect that
+   `fetch` follows, so the adapters set `redirect: 'manual'` on the item GET and map any `3xx` (or an opaque redirect) to
+   `MOVED`; nothing is ever followed. Every other request keeps the adapter's existing transport.
+2. **Port shape.** `ConnectorItem.itemRef` (additive) carries the slot id (`KEY:numericId`, `channel:ts[:threadTs]`).
+   `ConnectorItem.detail.sections` carry a structural `kind` (description / comment / message) instead of a title, because
+   Core titles every section with its own copy; `detail` also states `people`, the Jira comment counts, `replyCount`,
+   `hasMore`, `movedTo`, `descriptionOnly`, `requests` and `bytes`. `isConnectorQueryError` also recognises an error of
+   another class identity that carries a closed neutral `reason` (an adapter built with its own copy of the port module).
+3. **Labels.** The numbered list and the index record only the rows that certainly survive the reply budget under the
+   worst-case (twice) rendering, as the to-do receipts do; the index renders only those rows, so every index line written
+   is delivered. The fallback list and the summary index each carry their receipt and the runtime records the delivered one.
+4. **Scope kept to R2 where the proposal is silent.** `quoky.lastRead` is written for Jira / Slack reads only, and the
+   card-spoof check runs on Jira / Slack summaries only: mail and Drive (R1) are byte-identical. The D8 daily cap (100) is
+   per actor for every `item.summarize`, as decided.
+5. **Copy.** The oversize / malformed reply carries no link (Core builds no Jira URL; the listing message the owner saw
+   holds it). Every R2 outcome (summary, `full`, fallback, refusal) writes only the fixed history note.
+6. **D12** is a Jira adapter option (`itemSecondRequest`, default `false`) and is not wired to configuration; turning it on
+   is its own owner decision. Both exclusive branches are covered by adapter tests.
+7. **Slack thread reply (revised after the CA review).** The adapter implements the one-request form
+   (`ts=threadTs&oldest=ts&latest=ts&inclusive=true&limit=2`, selecting exactly the listed `ts`), pinned only by a
+   documented-shape fixture. Until a RECORDED Slack fixture proves it (a Strict, owner-approved live step; TODO), Core
+   refuses a single listed thread reply explicitly before any fetch, as §2.1 permits ("스레드 답글 하나만 따로 읽을 수는
+   없어요 …"); its whole thread and every top-level message stay supported.
+8. **Corpus and red team.** The R2 corpus is an agent-drafted batch in its own file `golden/nl-action.r2.v1.json` (212
+   cases: 71 paraphrases, 68 references, 73 negatives; 6 negatives are `selectorOnly`, the §1.1 known gap that only the
+   selector's `none` keeps safe) awaiting the owner's batch approval; `nl-action.v1.json` is unchanged. The red-team
+   family is 77 agent-drafted cases (`agent-redteam.v1.json`, `subFamily: "r2"`, all 15 families of §6.3) run offline with
+   a worst-case stub echo summariser; the real-model run is the separate Strict step.
+
+**Review round (CA CHANGES REQUIRED, Codex P1 + 3 P2, 2026-10-16).** Fixed on the same branch:
+
+- CA P1 (inertness): the Jira / Slack nouns (지라, 이슈, 티켓, 슬랙) and the Jira key ref exist only while the offered
+  `item.summarize` lists those sources, and only for `item.summarize` resolution; a LOCAL_WRITE and every R2-`off` turn
+  use the R1 noun tables exactly (`nlNamedItemSources` / determiners / `parseNlRef` take the offered R2 sources).
+- Codex P1: the strict credential guard runs on every complete, normalised original field (title, status, each section,
+  each author) before any clip or pseudonym; the final-payload check stays.
+- Codex P2: the Jira status is a Quoky-titled section of the readout; comments dropped locally (only the last 10 of the
+  returned page are read) mark the read partial and are disclosed; Slack freshness is the latest create or `edited.ts`.
+- CA P2: the card-spoof filter also applies the approval matcher's own logic (`isApprovalDecisionLine`: a plain approval
+  as `interpretApprovalDecision` accepts it, or a whole deny / cancel phrase with its Korean ending) to each normalised
+  line; red-team cases with polite endings added.
+- CA P3: `isConnectorQueryError` recognises another module copy's error only by the `Symbol.for('quoky.ConnectorQueryError')`
+  brand the class sets (the offline app tests load adapters from `dist` while Core runs from source). A too-large item
+  response is its own neutral reason `TOO_LARGE` (an addition to amendment C11), apart from a malformed
+  `INVALID_RESPONSE`, with its own reply and `fetchOutcome`.
+
 ### READ structural guard for reason-clause statements and quoted requests (v5 neg captures)
 
 - `read-statement.ts` (`nlReadNotRequest`, message-level, READ only, next to the A7 past-statement guard) turns a READ capture

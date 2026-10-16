@@ -107,8 +107,10 @@ export interface QuokyConfig {
    * Personal v2 inert configuration (ADR-0096 D9, parsed once in wave 1; no consumer yet). Parsing a variable
    * authorizes no behaviour; semantics belong to the track ADRs.
    * `work.summaryEnabled` (`QUOKY_WORK_SUMMARY_ENABLED`, default true; ADR-0100).
+   * `work.textVendorAllowed` (`QUOKY_WORK_TEXT_VENDOR_ALLOWED`, exact `true` / `false`, default false; ADR-0120 A6 R2
+   * owner decision D6): whether a Jira / Slack item summary may reach an HTTP API vendor the owner selected for chat.
    */
-  work: { summaryEnabled: boolean };
+  work: { summaryEnabled: boolean; textVendorAllowed?: boolean };
   /** `QUOKY_REMINDERS_ENABLED`, `QUOKY_REMINDERS_CHANNEL_DELIVERY`, `QUOKY_TIMEZONE` (ADR-0101; reminders default on per ADR-0102 D9, channel delivery default off). */
   reminders: ReminderConfig;
   /**
@@ -306,6 +308,7 @@ export const QuokyConfigErrorCode = {
   GITHUB_REPOS_TOO_MANY: 'GITHUB_REPOS_TOO_MANY',
   GITHUB_REPOS_WITH_LEGACY_PAIR: 'GITHUB_REPOS_WITH_LEGACY_PAIR',
   WORK_SUMMARY_ENABLED_INVALID: 'WORK_SUMMARY_ENABLED_INVALID',
+  WORK_TEXT_VENDOR_ALLOWED_INVALID: 'WORK_TEXT_VENDOR_ALLOWED_INVALID',
   EMBEDDING_ENABLED_INVALID: 'EMBEDDING_ENABLED_INVALID',
   EMBEDDING_MODEL_INVALID: 'EMBEDDING_MODEL_INVALID',
   EMBEDDING_MODEL_CLOUD_REFUSED: 'EMBEDDING_MODEL_CLOUD_REFUSED',
@@ -626,6 +629,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
         true,
         QuokyConfigErrorCode.WORK_SUMMARY_ENABLED_INVALID,
       ),
+      textVendorAllowed: parseExactBoolean(env.QUOKY_WORK_TEXT_VENDOR_ALLOWED, false, QuokyConfigErrorCode.WORK_TEXT_VENDOR_ALLOWED_INVALID),
     },
     reminders,
     nlSelection,

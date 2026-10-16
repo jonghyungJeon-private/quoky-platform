@@ -17,3 +17,5 @@ export * from './work-chat-selection';
 export * from './jira-release-link';
 export * from './jira-release-lookup';
 export * from './jira-release-renderer';
+// ADR-0120 amendment A6 R2: the single-item readout of one Jira issue or Slack message.
+export * from './work-item-summary';
