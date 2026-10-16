@@ -27400,6 +27400,10 @@ requires. No live configuration was changed by this record (`QUOKY_NL_ACTIONS` s
   question ("Todo: buy milk?"), reported or quoted text ("…, he said", "\"Todo: buy milk\" he said", "… 라고 했어") and a
   negation are chat. The validator needed no change: a colon form running to the end already encloses the content span
   for English as for Korean.
+- **Shared guard, answer paths.** The relaxed label check sits in the shared `nlActionInputRefusal`, so it also reaches
+  the R5a deictic answers (`deictic-writes.ts:400,508`) and the open A6-question answers (`answerRefused` in
+  `nl-selection-service.ts`). Those paths still only preview or validate a draft; the label guard is relaxed there too, and
+  no write happens on the label alone.
 - **Corpus scan.** Over all 3,938 texts of the golden files (red team included), the guard's answer changed only for the
   seven texts that start with an anchored head ("add todo: …", "todo done: …"): they now refuse as `embedded-command`
   instead of `not-plain` (still refused). No red-team text became eligible.

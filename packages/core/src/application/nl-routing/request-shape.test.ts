@@ -579,6 +579,11 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     // Owner decision D: "Todo: renew passport?" - a lure whose colon-enclosed title swallows the question mark validates (as
     // for the Korean colon forms); the selector's none keeps it chat.
     'a6-negative-none-189',
+    // Agent-drafted recorded gaps (owner decision D review, pending the D12 batch): a status-report label and reported
+    // speech without a comma validate for some lure; the selector's none is the only guard. No code change for them.
+    'a6-negative-none-191',
+    'a6-negative-none-192',
+    'a6-negative-none-193',
     'a6-seed-live-005',
   ];
 

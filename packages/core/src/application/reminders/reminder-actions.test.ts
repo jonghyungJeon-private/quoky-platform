@@ -194,6 +194,16 @@ describe('owner decision C (2026-10-17, A6-D1 amendment): reminder.cancel by tit
     // The one scheduled match still cancels.
     expect((await conversation.handleAction(byTitle('서류 제출'), base())).action).toMatchObject({ result: 'executed', label: 15 });
   });
+
+  it('a FIRING copy with the same text is not a candidate: the one SCHEDULED reminder is cancelled, not asked', async () => {
+    const { conversation, repository } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '약 먹기', when: '내일 9시' }), base());
+    await conversation.handleAction(cmd('reminder.create', { body: '약 먹기', when: '내일 10시' }), base());
+    repository.rows[0] = { ...(repository.rows[0] as Reminder), status: ReminderStatus.FIRING };
+    const result = await conversation.handleAction(byTitle('약 먹기'), base());
+    expect(result.action).toMatchObject({ entryId: 'reminder.cancel', result: 'executed', itemId: 'rem-2', label: 14 });
+    expect(repository.rows.map((row) => row.status)).toEqual([ReminderStatus.FIRING, ReminderStatus.CANCELED]);
+  });
 });
 
 describe('reminder inverses (ratification record A)', () => {

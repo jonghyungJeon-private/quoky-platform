@@ -68,7 +68,6 @@ import {
   type NlSelectionDecision,
   type Session,
 } from '@quoky/core';
-// A6 R2: `quoky.lastRead` is not (yet) re-exported by the package index.
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
 import { LAST_READ_METADATA_KEY, withLastRead } from '@quoky/core';
 

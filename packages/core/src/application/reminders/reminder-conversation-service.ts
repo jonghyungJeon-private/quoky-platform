@@ -448,7 +448,9 @@ export class ReminderConversationService {
   private async actionCancelByTitle(command: NlSelectedCommand, match: string, input: ReminderTurnInput): Promise<ReminderTurnResult> {
     const wanted = foldTitle(match);
     const active = wanted.length === 0 ? [] : await this.deps.repository.listActiveByActor(input.actorId);
-    const matches = active.filter((reminder) => reminder.kind === 'TEXT' && foldTitle(reminder.body) === wanted);
+    // listActiveByActor also returns FIRING rows (in flight, not cancelable): only SCHEDULED ones are candidates, so a
+    // FIRING copy of the same text can never make the match ambiguous.
+    const matches = active.filter((reminder) => reminder.status === ReminderStatus.SCHEDULED && reminder.kind === 'TEXT' && foldTitle(reminder.body) === wanted);
     const only = matches.length === 1 ? matches[0] : undefined;
     if (only !== undefined) return await this.actionCancel({ ...command, target: { source: 'reminder', id: only.id, label: only.displayNo } }, input);
     if (matches.length === 0) return { reply: this.reply(input, this.deps.composer.cancelMatchNotFound()), action: refusedReceipt(command, 'not-found') };

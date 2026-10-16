@@ -14610,6 +14610,27 @@
    "note": "owner decision D counter-case (2026-10-17): a label that does not lead with the command word stays refused by the input guard [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
   },
   {
+   "id": "a6-negative-none-191",
+   "family": "negative",
+   "text": "Done: shipped the release",
+   "expect": "none",
+   "note": "owner decision D review (2026-10-17): a status-report label (\"Done:\") with no open title to match is chat; no fixture, so nothing can execute; recorded gap, not a code change [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-192",
+   "family": "negative",
+   "text": "Completed: 보고서 작성",
+   "expect": "none",
+   "note": "owner decision D review (2026-10-17): a status-report label (\"Completed:\") with no open title to match is chat; no fixture, so nothing can execute; recorded gap, not a code change [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-193",
+   "family": "negative",
+   "text": "Todo: buy milk he told me",
+   "expect": "none",
+   "note": "owner decision D review (2026-10-17): reported speech without a comma is not a command; recorded gap, not a code change [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
    "id": "a6-paraphrase-reminder.cancel-905",
    "family": "paraphrase",
    "text": "치과 예약 확인 알림 칸셀해줘",
