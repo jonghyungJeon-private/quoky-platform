@@ -2,7 +2,7 @@
 // Experiment-only: nothing here is read by the running service, and the selector transport is injected (this module never
 // constructs a provider and never makes a call). Records are content-free: ids, rounded scores and hashes, never texts.
 import { createHash } from 'node:crypto';
-import { buildSelectionPrompt, normalize, renderRetrievedBlock, retrievalPromptVersion, type NlCatalogEntry, type NlRetrievedExample, type NlSelectionPromptInput } from '@quoky/core';
+import { buildSelectionPrompt, extractPromptExamples, normalize, renderRetrievedBlock, renderSwappedExamplesBlock, retrievalPromptVersion, type NlCatalogEntry, type NlRetrievedExample, type NlSelectionPromptInput } from '@quoky/core';
 import type { Arm, ScheduleUnit } from './arms';
 import { drawSwap, eligible, outputEntryId, retrieveRandomK, retrieveTopK, subsample, DEFAULT_K, type PoolVector } from './retrieve';
 import type { PoolEntry } from './pool';
@@ -39,8 +39,6 @@ export interface ArmRenderInput {
   /** The prompt mode's offered entry ids (read mode: the reads; A6 mode: reads and actions). */
   readonly offered: ReadonlySet<string>;
   readonly staticTexts: ReadonlySet<string>;
-  /** A0-swap target: the static set's per-entry counts. */
-  readonly staticCounts: Readonly<Record<string, number>>;
   readonly pool: readonly PoolVector[];
   readonly poolDigest: string;
   readonly spaceId: string;
@@ -55,6 +53,21 @@ const sha256 = (text: string): string => createHash('sha256').update(text).diges
 
 export function toRetrievedExample(entry: PoolEntry): NlRetrievedExample {
   return { text: entry.text, output: entry.output, ...(entry.previous !== undefined ? { previous: entry.previous } : {}), ...(entry.context !== undefined ? { context: entry.context } : {}) };
+}
+
+/** Per-entry example counts of a rendered static prompt (the A0-swap draw target for that prompt mode). */
+export function staticCountsOf(prompt: string): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const example of extractPromptExamples(prompt)) {
+    let id = 'none';
+    try {
+      id = String((JSON.parse(example.output) as { entryId?: unknown }).entryId);
+    } catch {
+      // keep none
+    }
+    counts[id] = (counts[id] ?? 0) + 1;
+  }
+  return counts;
 }
 
 export function renderArmPrompt(input: ArmRenderInput): { readonly prompt: string; readonly record: RetrievalRecord } {
@@ -74,10 +87,13 @@ export function renderArmPrompt(input: ArmRenderInput): { readonly prompt: strin
     return { prompt, record: { ...base, promptVersion: input.baseVersion, retrievedIds: [], scores: [], blockSha256: null, promptSha256: sha256(prompt) } };
   }
   if (input.arm.kind === 'A0-swap') {
-    const draw = drawSwap(input.pool.map((candidate) => candidate.entry), input.staticCounts, `A0-swap:${seed}`);
+    // the target counts come from THIS mode's static prompt, and only entries the mode offers can be drawn
+    const counts = staticCountsOf(promptOf({}));
+    const offeredPool = input.pool.filter((candidate) => (candidate.entryId === 'none' || input.offered.has(candidate.entryId)) && candidate.entry.needs.every((id) => input.offered.has(id)));
+    const draw = drawSwap(offeredPool.map((candidate) => candidate.entry), counts, `A0-swap:${seed}`);
     const examples = draw.chosen.map(toRetrievedExample);
     const prompt = promptOf({ retrievedExamples: examples, replaceStaticExamples: true });
-    return { prompt, record: { ...base, promptVersion: `${input.baseVersion}+swap`, retrievedIds: draw.chosen.map((entry) => entry.id), scores: [], blockSha256: sha256(renderRetrievedBlock(examples)), promptSha256: sha256(prompt) } };
+    return { prompt, record: { ...base, promptVersion: `${input.baseVersion}+swap`, retrievedIds: draw.chosen.map((entry) => entry.id), scores: [], blockSha256: sha256(renderSwappedExamplesBlock(examples)), promptSha256: sha256(prompt) } };
   }
   const candidates = eligible(subsample(input.pool, seed), { offered: input.offered, staticTexts: input.staticTexts }, normalize);
   let picked: ReadonlyArray<PoolVector & { readonly score?: number }>;
@@ -127,7 +143,6 @@ export interface ExperimentInput {
   readonly poolDigest: string;
   readonly spaceId: string;
   readonly staticTexts: ReadonlySet<string>;
-  readonly staticCounts: Readonly<Record<string, number>>;
   readonly baseVersion: (offered: ReadonlySet<string>) => string;
   /** The injected selector transport: prompt in, raw model text out. Absent in this harness build (no call is possible). */
   readonly select: (prompt: string, record: RetrievalRecord) => Promise<string>;
@@ -149,7 +164,6 @@ export async function runExperiment(input: ExperimentInput): Promise<UnitResult[
         context: golden.context,
         offered: golden.offered,
         staticTexts: input.staticTexts,
-        staticCounts: input.staticCounts,
         pool: input.pool,
         poolDigest: input.poolDigest,
         spaceId: input.spaceId,

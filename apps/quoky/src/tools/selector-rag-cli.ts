@@ -4,8 +4,8 @@
  *   pnpm eval:rag -- --mode lint                                  offline: pool schema, identifier rule, n-gram lint, coverage
  *   pnpm eval:rag -- --mode dry-run [--models a,b] [--write-audit] embeds pool and gold (local Ollama, loopback), calibrates tau,
  *                                                                  buckets, simulates retrieval; makes NO selector call
- *   pnpm eval:rag -- --mode plan  [--selector-model haiku]        offline: prints the pre-registered plan and its digest
- *   pnpm eval:rag -- --mode run --approved-plan-digest <sha256>   Strict: the same digest rule as eval:nl. Renders every arm through
+ *   pnpm eval:rag -- --mode plan  --split dev|heldout [--selector-model haiku]        offline: prints the pre-registered plan and its digest
+ *   pnpm eval:rag -- --mode run --split dev|heldout --approved-plan-digest <sha256>   Strict: the same digest rule as eval:nl; the digest binds the split. Renders every arm through
  *                                                                  Core's `retrievedExamples` slot and walks the interleaved schedule
  *                                                                  with an injected selector transport
  *
@@ -62,6 +62,8 @@ export function parseArguments(argv: readonly string[]): { mode: 'lint' | 'dry-r
   }
   const mode = options['--mode'];
   if (mode !== 'lint' && mode !== 'dry-run' && mode !== 'plan' && mode !== 'run') throw new UsageError('--mode must be lint, dry-run, plan or run');
+  if ((mode === 'plan' || mode === 'run') && options['--split'] !== 'dev' && options['--split'] !== 'heldout') throw new UsageError(`${mode} requires --split dev|heldout (each split has its own approval)`);
+  if (mode !== 'plan' && mode !== 'run' && options['--split'] !== undefined) throw new UsageError('--split is only for plan and run');
   if (mode === 'run' && options['--approved-plan-digest'] === undefined) throw new UsageError('run requires --approved-plan-digest');
   if (mode !== 'run' && options['--approved-plan-digest'] !== undefined) throw new UsageError('--approved-plan-digest is only for run');
   return { mode, options };
@@ -70,8 +72,8 @@ export function parseArguments(argv: readonly string[]): { mode: 'lint' | 'dry-r
 const HELP = `ADR-0123 selector example retrieval harness (phase 1, offline)
   pnpm eval:rag -- --mode lint [--pool <file>]
   pnpm eval:rag -- --mode dry-run [--models nomic-embed-text-v2-moe] [--write-audit true] [--latency-sample 50]
-  pnpm eval:rag -- --mode plan [--selector-model ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}] [--runs 5] [--sessions 3]
-  pnpm eval:rag -- --mode run --approved-plan-digest <sha256 from plan>   (Strict; needs an injected selector transport, none is built in)
+  pnpm eval:rag -- --mode plan --split dev|heldout [--selector-model ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}] [--runs 5] [--sessions 3]
+  pnpm eval:rag -- --mode run --split dev|heldout --approved-plan-digest <sha256 from plan>   (Strict; needs an injected selector transport, none is built in)
 No mode makes a selector call. dry-run embeds through the local Ollama on loopback only.
 `;
 
@@ -256,6 +258,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     heldOutCases: split.heldOut.filter((id) => !contaminated.has(id)).length,
     excludedContaminated: split.heldOut.filter((id) => contaminated.has(id)).length,
     models: usable.map((model) => ({ model: model.model, spaceId: model.spaceId, prefix: audit.prefixPolicy, tau: model.tau, tauLow: model.tauLow as number })),
+    split: options['--split'] as 'dev' | 'heldout',
     selectorModel: options['--selector-model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
     ...(options['--runs'] !== undefined ? { runs: Number(options['--runs']) } : {}),
     ...(options['--sessions'] !== undefined ? { sessions: Number(options['--sessions']) } : {}),
@@ -276,11 +279,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stderr('BLOCKED: the digest matches, but no selector transport is injected; this harness build makes no selector call (nothing was embedded or executed)');
     return EXIT_BLOCKED;
   }
-  const split_ = options['--split'] ?? 'heldout';
-  if (split_ !== 'dev' && split_ !== 'heldout') {
-    deps.stderr('--split must be dev or heldout');
-    return EXIT_USAGE;
-  }
+  const split_ = plan.split_scope;
   const modelPin = usable[0] as (typeof usable)[number];
   const embedder = new OllamaHttpEmbedder(await readPin(modelPin.model, options['--ollama-url'] ?? DEFAULT_OLLAMA_URL), options['--ollama-url'] ?? DEFAULT_OLLAMA_URL);
   if (embedder.pin.spaceId !== modelPin.spaceId) {
@@ -296,9 +295,9 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     goldCases.map((golden, index) => [golden.id, { id: golden.id, entry: golden.entry, context: transport.contextFor(golden), offered: golden.corpus === 'read' ? READ_ENTRY_IDS : A6_ENTRY_IDS, queryVector: queryEmbed[index] as number[] }] as const),
   );
   const statics = staticExamples();
-  // the dev smoke run is one A0 + one A1 run; the held-out run is every arm for `plan.runs` runs
-  const arms = split_ === 'dev' ? plan.arms.filter((arm) => arm.kind === 'A0' || arm.kind === 'A1') : plan.arms;
-  const schedule = buildSchedule({ caseIds: goldCases.map((golden) => golden.id), arms, runs: split_ === 'dev' ? 1 : plan.runs, sessions: plan.sessions, seed: `${digest}:${split_}` });
+  // arms and runs come from the approved plan (its split scope), never from a flag read after the digest check
+  const arms = plan.arms;
+  const schedule = buildSchedule({ caseIds: goldCases.map((golden) => golden.id), arms, runs: plan.runs, sessions: plan.sessions, seed: `${digest}:${split_}` });
   const results = await runExperiment({
     schedule,
     arms,
@@ -307,7 +306,6 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     poolDigest: plan.poolDigest,
     spaceId: modelPin.spaceId,
     staticTexts: statics.texts,
-    staticCounts: statics.counts,
     baseVersion: (offered) => (offered === READ_ENTRY_IDS ? NL_SELECTION_PROMPT_VERSION : NL_ACTION_PROMPT_VERSION),
     select: transport.select,
     parseEntry: transport.parseEntry,

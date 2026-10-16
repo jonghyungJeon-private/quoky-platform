@@ -14,6 +14,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Added.** `selector-rag/selector-rag-eval.ts`: arm prompt rendering (A0, A0-swap, A1, A2) with filtering by the prompt mode's offered
   entries, seeded A2 / swap draws, and content-free records (ids, rounded scores, block and prompt SHA-256). `eval:rag --mode run`
   walks the schedule through it but still needs the Strict digest and an injected selector transport (none is built in).
+  `plan` and `run` now require `--split dev|heldout`; the split, its arms, runs and call count are part of the plan digest, so a dev-smoke
+  approval cannot authorize the held-out run. A0-swap counts come from the current prompt mode and draw only offered entries; its block hash
+  covers the block as rendered under `Examples:`.
 
 ## Unreleased — ADR-0123 owner decisions: v2-moe sole retrieval model, pool batch 1 approved (2026-10-16)
 

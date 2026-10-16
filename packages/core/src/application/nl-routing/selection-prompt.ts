@@ -116,6 +116,11 @@ function exampleLines(example: NlRetrievedExample): string[] {
   ];
 }
 
+/** A0-swap: the `Examples:` block as rendered when `replaceStaticExamples` is set (the harness hashes this). */
+export function renderSwappedExamplesBlock(examples: readonly NlRetrievedExample[]): string {
+  return examples.length === 0 ? '' : ['Examples:', ...examples.flatMap(exampleLines)].join('\n');
+}
+
 /** The lines the retrieved block adds after the static examples (empty when there is nothing to add); the harness hashes this. */
 export function renderRetrievedBlock(examples: readonly NlRetrievedExample[] | undefined): string {
   if (examples === undefined || examples.length === 0) return '';
@@ -389,8 +394,7 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
   const swap = retrieved !== undefined && input.replaceStaticExamples === true;
   const examples = swap ? [] : examplesFor(offered, input.actions);
   if (swap) {
-    lines.push('', 'Examples:');
-    for (const example of retrieved) lines.push(...exampleLines(example));
+    lines.push('', renderSwappedExamplesBlock(retrieved));
   } else if (examples.length > 0) {
     lines.push('', 'Examples:');
     for (const example of examples) {

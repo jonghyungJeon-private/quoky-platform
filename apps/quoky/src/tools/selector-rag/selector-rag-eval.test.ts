@@ -5,7 +5,7 @@ import { armsFor, buildSchedule } from './arms';
 import { A6_ENTRY_IDS, READ_ENTRY_IDS, staticExamples } from './audit';
 import type { PoolEntry } from './pool';
 import { outputEntryId, type PoolVector } from './retrieve';
-import { renderArmPrompt, runExperiment, type ArmRenderInput, type ExperimentCase } from './selector-rag-eval';
+import { renderArmPrompt, runExperiment, staticCountsOf, type ArmRenderInput, type ExperimentCase } from './selector-rag-eval';
 
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
 const ACTIONS: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined);
@@ -31,7 +31,6 @@ const baseInput = (over: Partial<ArmRenderInput>): ArmRenderInput => ({
   context: { entries: READS, text: '지라 이슈 보여줘' },
   offered: READ_ENTRY_IDS,
   staticTexts: statics.texts,
-  staticCounts: statics.counts,
   pool,
   poolDigest: 'pd',
   spaceId: 'space-1',
@@ -84,12 +83,12 @@ describe('ADR-0123 RAG-2 arm rendering', () => {
 
   it('A0-swap replaces the static examples with a frozen draw, identical for a run and different across runs', () => {
     const swap = { id: 'A0-swap', kind: 'A0-swap' } as const;
-    const one = renderArmPrompt(baseInput({ arm: swap, staticCounts: { 'jira.issues': 1, none: 1 } }));
-    expect(renderArmPrompt(baseInput({ arm: swap, staticCounts: { 'jira.issues': 1, none: 1 } })).prompt).toBe(one.prompt);
+    const one = renderArmPrompt(baseInput({ arm: swap }));
+    expect(renderArmPrompt(baseInput({ arm: swap })).prompt).toBe(one.prompt);
     expect(one.prompt).not.toBe(buildSelectionPrompt({ entries: READS, text: '지라 이슈 보여줘' }));
     expect(one.prompt).not.toContain('More examples');
     expect(one.record.promptVersion).toBe('nl-select.v37+swap');
-    expect(one.record.retrievedIds).toHaveLength(2);
+
   });
 
   it('records hashes, ids and rounded scores only: no owner or pool text', () => {
@@ -103,6 +102,34 @@ describe('ADR-0123 RAG-2 arm rendering', () => {
     // the block hash binds the exact rendered block: the same input hashes the same, another query changes it
     expect(renderArmPrompt(baseInput({})).record.blockSha256).toBe(record.blockSha256);
     expect(renderArmPrompt(baseInput({ queryVector: vec(0, 1) })).record.blockSha256).not.toBe(record.blockSha256);
+  });
+});
+
+describe('ADR-0123 RAG-2 A0-swap scoping and hashing', () => {
+  const swap = { id: 'A0-swap', kind: 'A0-swap' } as const;
+  const big: PoolVector[] = Array.from({ length: 40 }, (_, i) => [
+    pv(entry(`j-${i}`, `젯${i} 지라`, 'jira.issues', ['jira.issues']), vec(1, i / 100)),
+    pv(entry(`t-${i}`, `투${i} 투두`, 'todo.add', ['todo.add']), vec(0.5, i / 100)),
+    pv(entry(`n-${i}`, `엔${i} 잡담`, 'none'), vec(0, i / 100)),
+  ]).flat();
+
+  it('derives the target counts from the current mode and draws only offered entries (read mode never gets an action example)', () => {
+    const readPrompt = buildSelectionPrompt({ entries: READS, text: 'x' });
+    const a6Prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: 'x', actions: { referenceContext: 'none' } });
+    const readCounts = staticCountsOf(readPrompt);
+    expect(Object.keys(readCounts).some((id) => id.startsWith('todo.add'))).toBe(false);
+    expect(staticCountsOf(a6Prompt)['todo.add']).toBeGreaterThan(0);
+    const { record } = renderArmPrompt(baseInput({ arm: swap, pool: big }));
+    expect(record.retrievedIds.length).toBe(Object.entries(readCounts).reduce((sum, [id, n]) => sum + Math.min(n, big.filter((c) => c.entryId === id).length), 0));
+    expect(record.retrievedIds.some((id) => id.startsWith('t-'))).toBe(false);
+    const a6 = renderArmPrompt(baseInput({ arm: swap, pool: big, offered: A6_ENTRY_IDS, context: { entries: [...READS, ...ACTIONS], text: 'x', actions: { referenceContext: 'none' } } }));
+    expect(a6.record.retrievedIds.some((id) => id.startsWith('t-'))).toBe(true);
+  });
+
+  it('hashes the block as rendered under Examples:, not the More examples block', () => {
+    const { prompt, record } = renderArmPrompt(baseInput({ arm: swap, pool: big }));
+    const tail = prompt.slice(prompt.indexOf('\nExamples:\n') + 1, prompt.indexOf('\n\nPrevious selection:'));
+    expect(record.blockSha256).toBe(createHash('sha256').update(tail).digest('hex'));
   });
 });
 
@@ -123,7 +150,6 @@ describe('ADR-0123 RAG-2 experiment walk (stubbed transport, no call)', () => {
       poolDigest: 'pd',
       spaceId: 's',
       staticTexts: statics.texts,
-      staticCounts: { 'jira.issues': 1, none: 1 },
       baseVersion: () => 'nl-select.v37',
       select: async (prompt) => {
         prompts.push(prompt);
