@@ -430,6 +430,26 @@ export interface NlActionRecord {
   readonly got?: string;
   readonly latencyMs: number;
   readonly reason?: string;
+  /**
+   * R2 mode only (diagnosis, v47 gate): the selector's own args, and the gold args for a non-hit. Span args (title, match,
+   * body, when) are never recorded, so the report stays content-free; the R2 entry has none.
+   */
+  readonly gotArgs?: NlArgs;
+  readonly expectedArgs?: NlArgs;
+}
+
+/** The args of a record without span values (content-free). */
+function recordArgs(args: NlArgs): NlArgs {
+  return Object.fromEntries(Object.entries(args).filter(([name]) => !SPAN_ARGS.includes(name)));
+}
+
+/** R2 mode: the selector's args and, for a non-hit, the gold args (see {@link NlActionRecord.gotArgs}). */
+export function r2DiagnosticArgs(golden: NlActionCase, raw: string, outcome: NlActionOutcome): { gotArgs?: NlArgs; expectedArgs?: NlArgs } {
+  const output = parseSelectionOutput(raw);
+  return {
+    ...(output !== null ? { gotArgs: recordArgs(output.args) } : {}),
+    ...(outcome !== 'hit' && golden.expect !== 'none' ? { expectedArgs: recordArgs(golden.expect.args) } : {}),
+  };
 }
 
 /** Score Core's decision against the gold (exported for the offline tests). */
@@ -676,7 +696,8 @@ export async function runActionEvaluation(input: {
         try {
           const { decision, audit } = await decideActionCase(golden, rec.provider, input.now(), { timeoutMs: input.plan.callTimeoutMs, ...(input.plan.itemR2 !== undefined ? { itemR2: input.plan.itemR2 } : {}) });
           const { raw, latencyMs } = rec.last();
-          record = { run, latencyMs, ...scoreActionDecision(golden, raw, decision, audit) };
+          const scored = scoreActionDecision(golden, raw, decision, audit);
+          record = { run, latencyMs, ...scored, ...(input.plan.itemR2 !== undefined ? r2DiagnosticArgs(golden, raw, scored.outcome) : {}) };
         } catch (error) {
           record = { run, id: golden.id, family: golden.family, expected: golden.expect === 'none' ? 'none' : golden.expect.entryId, outcome: 'error', latencyMs: rec.last().latencyMs, reason: error instanceof Error ? error.name : 'unknown' };
         }
