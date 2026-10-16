@@ -14,6 +14,7 @@ import {
   findingKind,
   isShortText,
   normalize,
+  parseSelectionOutput,
   sharedSpanArg,
   type NlCatalogEntry,
 } from '@quoky/core';
@@ -67,7 +68,12 @@ export function poolDigest(entries: readonly PoolEntry[]): string {
 
 /** Entries usable in a plan or run: only those of an owner-approved batch (the drafter never approves). */
 export function approvedEntries(pool: PoolFile): PoolEntry[] {
-  const approved = new Set(pool.batches.filter((batch) => batch.status === 'approved' && batch.approvedBy !== null).map((batch) => batch.batch));
+  // The drafter never approves: a batch counts only with a non-empty approvedBy that differs from its drafter.
+  const approved = new Set(
+    pool.batches
+      .filter((batch) => batch.status === 'approved' && typeof batch.approvedBy === 'string' && batch.approvedBy.trim() !== '' && batch.approvedBy.trim().toLowerCase() !== batch.drafter.trim().toLowerCase())
+      .map((batch) => batch.batch),
+  );
   return pool.entries.filter((entry) => approved.has(entry.batch));
 }
 
@@ -144,20 +150,22 @@ export function entryProblems(entry: PoolEntry): string[] {
   if (entry.source !== 'drafted' && entry.source !== 'owner') problems.push('source must be drafted or owner');
   if (entry.language !== 'ko' && entry.language !== 'en') problems.push('language must be ko or en');
   if (!Number.isInteger(entry.batch) || entry.batch < 1) problems.push('batch must be a positive integer');
-  let parsed: { entryId?: unknown; args?: unknown; ambiguity?: unknown; alternatives?: unknown } | undefined;
-  try {
-    parsed = JSON.parse(entry.output) as typeof parsed;
-  } catch {
-    problems.push('output is not JSON');
-  }
-  if (parsed !== undefined) {
-    const id = parsed.entryId;
-    if (id === 'none') {
-      if (JSON.stringify(parsed.args) !== '{}') problems.push('a none output has empty args');
-    } else if (typeof id !== 'string' || !ALL_ENTRIES.has(id)) problems.push(`entryId ${String(id)} is not in the offered catalog`);
-    else problems.push(...argProblems(ALL_ENTRIES.get(id) as NlCatalogEntry, (parsed.args ?? {}) as Record<string, unknown>, entry.text));
-    if (parsed.ambiguity !== 'CLEAR' && parsed.ambiguity !== 'NEEDS_CLARIFICATION') problems.push('ambiguity must be CLEAR or NEEDS_CLARIFICATION');
-    if (!Array.isArray(parsed.alternatives)) problems.push('alternatives must be an array');
+  // Core's own parser: closed top-level keys, entry id shape, args shape, ambiguity, at most 2 alternatives, size bound.
+  const parsed = typeof entry.output === 'string' ? parseSelectionOutput(entry.output) : null;
+  if (parsed === null) problems.push('output is rejected by Core parseSelectionOutput');
+  else {
+    const check = (label: string, entryId: string | null, args: Record<string, unknown>): void => {
+      if (entryId === null) {
+        if (Object.keys(args).length > 0) problems.push(`${label}: a none selection has empty args`);
+        return;
+      }
+      if (!Array.isArray(entry.needs) || !entry.needs.includes(entryId)) problems.push(`${label}: entry ${entryId} must be listed in needs (it has to be offered for the example to apply)`);
+      const catalogEntry = ALL_ENTRIES.get(entryId);
+      if (catalogEntry === undefined) problems.push(`${label}: entryId ${entryId} is not in the offered catalog`);
+      else problems.push(...argProblems(catalogEntry, args, entry.text).map((problem) => `${label}: ${problem}`));
+    };
+    check('output', parsed.entryId, parsed.args);
+    parsed.alternatives.forEach((candidate, index) => check(`alternative ${index + 1}`, candidate.entryId, candidate.args));
   }
   if (!Array.isArray(entry.needs) || entry.needs.some((id) => !ALL_ENTRIES.has(id))) problems.push('needs must list catalog entry ids');
   const all = [entry.text, entry.previous ?? '', entry.context ?? '', entry.output].join('\n');

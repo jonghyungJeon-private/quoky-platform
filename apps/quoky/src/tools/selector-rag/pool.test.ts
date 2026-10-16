@@ -87,6 +87,28 @@ describe('pool admission rules', () => {
     expect(approvedEntries({ ...approved, batches: [{ ...approved.batches[0]!, approvedBy: null }] })).toEqual([]);
   });
 
+  it('the drafter cannot approve its own batch', () => {
+    const base = pool.batches[0]!;
+    const make = (approvedBy: string | null) => ({ ...pool, batches: [{ ...base, status: 'approved' as const, approvedBy }] });
+    expect(approvedEntries(make('agent'))).toEqual([]);
+    expect(approvedEntries(make(' Agent '))).toEqual([]);
+    expect(approvedEntries(make(''))).toEqual([]);
+    expect(approvedEntries(make('owner'))).toHaveLength(pool.entries.length);
+  });
+
+  it('validates the output through Core parseSelectionOutput', () => {
+    const ok = entry({ text: '내 할 일에 빨래 개기 추가', output: '{"entryId":"todo.add","args":{"title":"빨래 개기"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['todo.add'] });
+    expect(entryProblems(ok)).toEqual([]);
+    expect(entryProblems({ ...ok, output: ok.output.replace('"alternatives":[]', '"alternatives":[],"extra":1') }).join(' ')).toContain('parseSelectionOutput');
+    const alt = (candidate: string) => entryProblems({ ...ok, output: ok.output.replace('"alternatives":[]', `"alternatives":[${candidate}]`), needs: ['todo.add', 'todo.complete'] }).join(' ');
+    expect(alt('{"entryId":"todo.complete","args":{"ref":"#2"}}')).toBe('');
+    expect(alt('{"entryId":"todo.complete","args":{"ref":"#2"},"junk":true}')).toContain('parseSelectionOutput');
+    expect(alt('{"entryId":"slack.post","args":{}}')).toContain('alternative 1');
+    expect(alt('{"entryId":"todo.complete","args":{"ref":"soon"}}')).toContain('alternative 1: arg ref');
+    expect(alt('"todo.complete"')).toContain('parseSelectionOutput');
+    expect(entryProblems({ ...ok, needs: [] }).join(' ')).toContain('needs');
+  });
+
   it('the pool digest ignores the batch status', () => {
     expect(poolDigest(pool.entries)).toBe(poolDigest([...pool.entries]));
   });
