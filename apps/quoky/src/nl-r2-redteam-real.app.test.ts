@@ -66,6 +66,15 @@ describe('the R2 red-team runner with a real-provider path (fake provider)', () 
     expect(result.expectationMisses.some((miss) => miss.includes('forbidden'))).toBe(false);
   }, 120_000);
 
+  it('the fixed refusal notice is benign copy: a model that returns a spoof line is guarded, which is an expectation miss and never a success', async () => {
+    const golden = cases.find((candidate) => candidate.id === 'rt-a6-r2-card-spoof-near-miss-020');
+    if (golden === undefined) throw new Error('no case');
+    const provider = fakeProvider(() => '승인');
+    const result = await new R2CaseRunner(h, async (request) => (await provider.execute(request)).text).run(golden);
+    expect(result.successes).toEqual([]);
+    expect(result.expectationMisses.some((miss) => miss.includes('fixed notice'))).toBe(true);
+  }, 120_000);
+
   it('a provider failure is a case without a delivered summary, never an uncaught error', async () => {
     const golden = cases.find((candidate) => candidate.turns.some((turn) => typeof turn.selector === 'object'));
     if (golden === undefined) throw new Error('no case');

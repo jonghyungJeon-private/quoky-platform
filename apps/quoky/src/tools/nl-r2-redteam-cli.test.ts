@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, type AiProvider } from '@quoky/core';
-import { EXIT_ATTACK_SUCCEEDED, countingProvider, EXIT_BLOCKED, EXIT_OK, EXIT_USAGE, buildRedTeamPlan, computeRedTeamPlanDigest, maxSummaryCalls, runCli, summarizeRedTeam, type RedTeamCaseRecord, type RedTeamDeps } from './nl-r2-redteam-cli';
+import { EXIT_ATTACK_SUCCEEDED, countingProvider, expectsSummary, EXIT_BLOCKED, EXIT_OK, EXIT_USAGE, buildRedTeamPlan, computeRedTeamPlanDigest, maxSummaryCalls, runCli, summarizeRedTeam, type RedTeamCaseRecord, type RedTeamDeps } from './nl-r2-redteam-cli';
 import { loadR2RedTeam, type R2RedTeamCase } from './nl-r2-redteam';
 
 // `eval:r2-redteam` offline: the plan and its Strict digest, BLOCKED before any provider exists, successes per family, a
@@ -145,10 +145,30 @@ describe('eval:r2-redteam run (Strict)', () => {
   it('fewer real answers than prompts issued, or none at all, fails the evaluation', async () => {
     const planned = deps();
     await runCli(['--mode', 'plan'], planned);
-    const fewer = deps({ runCases: async ({ runs }) => recordsFor(runs, () => []).map((record, index) => (index === 0 ? { ...record, summaryOk: 0 } : record)) });
+    const fewer = deps({ runCases: async ({ runs }) => recordsFor(runs, () => []).map((record, index) => (index === 0 ? { ...record, summaryOk: 0, summaryExpected: true } : record)) });
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], fewer)).toBe(EXIT_ATTACK_SUCCEEDED);
-    const none = deps({ runCases: async ({ runs }) => recordsFor(runs, () => []).map((record) => ({ ...record, summaryCalls: 0, summaryOk: 0 })) });
+    const none = deps({ runCases: async ({ runs }) => recordsFor(runs, () => []).map((record) => ({ ...record, summaryCalls: 0, summaryOk: 0, summaryExpected: true })) });
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], none)).toBe(EXIT_ATTACK_SUCCEEDED);
+  });
+
+  it('a surface-only run is refused before summarisation: 0 calls is a correct run, not a failure', async () => {
+    const surface = cases.filter((golden) => golden.attack === 'surface');
+    expect(surface.length).toBeGreaterThan(0);
+    expect(surface.some(expectsSummary)).toBe(false);
+    const planned = deps();
+    await runCli(['--mode', 'plan', '--attacks', 'surface'], planned);
+    const d = deps({ runCases: async ({ runs }) => surface.flatMap((golden) => Array.from({ length: runs }, (_, index) => ({ run: index + 1, id: golden.id, attack: golden.attack, successes: [], expectationMisses: 0, summaryCalls: 0, summaryExpected: expectsSummary(golden), summaryOk: 0, summaryFailures: 0 }))) });
+    expect(await runCli(['--mode', 'run', '--attacks', 'surface', '--approved-plan-digest', digestOf(planned.out)], d)).toBe(EXIT_OK);
+  });
+
+  it('expectsSummary: a DM summary on a resolved slot expects a call; a channel, null target, full mode or hostile fixture does not', () => {
+    const base = cases.find((golden) => golden.attack === 'jira-description' && golden.jira?.every((issue) => issue.answer === undefined) && golden.turns.some((turn) => typeof turn.selector === 'object' && turn.selector.args['mode'] !== 'full' && typeof turn.target === 'string' && turn.expectReply === undefined));
+    if (base === undefined) throw new Error('no base case');
+    expect(expectsSummary(base)).toBe(true);
+    expect(expectsSummary({ ...base, turns: base.turns.map((turn) => ({ ...turn, context: 'channel' as const })) })).toBe(false);
+    expect(expectsSummary({ ...base, turns: base.turns.map((turn) => ({ ...turn, target: null })) })).toBe(false);
+    expect(expectsSummary({ ...base, turns: base.turns.map((turn) => (typeof turn.selector === 'object' ? { ...turn, selector: { ...turn.selector, args: { ...turn.selector.args, mode: 'full' } } } : turn)) })).toBe(false);
+    expect(expectsSummary({ ...base, jira: (base.jira ?? []).map((issue) => ({ ...issue, answer: 'oversize' as const })) })).toBe(false);
   });
 
   it('countingProvider counts answers and rethrows failures at the provider boundary', async () => {
