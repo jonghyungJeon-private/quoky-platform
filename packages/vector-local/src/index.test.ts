@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, promises as fsPromises, readdirSync, readFileS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LocalVectorProvider } from './index';
+import { LocalVectorProvider, VectorCapacityError } from './index';
 import type { VectorStoreIo } from './index';
 
 const COLLECTION = 'durable-memory-v1';
@@ -196,6 +196,99 @@ describe('LocalVectorProvider (ADR-0098 D8)', () => {
     await expect(store.query(COLLECTION, [1], 1)).resolves.toEqual([]);
     await store.upsert(COLLECTION, [{ id: 'a', vector: [1] }]);
     expect((await new LocalVectorProvider(storePath).query(COLLECTION, [1], 1)).map((r) => r.id)).toEqual(['a']);
+  });
+
+  it('quarantines a corrupt file, logs without content, fires the rebuild hook, and the next write succeeds', async () => {
+    const storePath = freshRoot();
+    await fsPromises.mkdir(storePath, { recursive: true });
+    writeFileSync(join(storePath, `${COLLECTION}.json`), '{SECRET-CONTENT not json');
+    const warnings: unknown[] = [];
+    const events: unknown[] = [];
+    const store = new LocalVectorProvider(storePath, {
+      logger: { warn: (message, fields) => warnings.push({ message, fields }) },
+      onCorrupt: (event) => {
+        events.push(event);
+        return store.upsert(COLLECTION, [{ id: 'rebuilt', vector: [1] }]);
+      },
+    });
+    await expect(store.query(COLLECTION, [1], 1)).resolves.toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const aside = readdirSync(storePath).filter((name) => /^durable-memory-v1\.corrupt-.+\.json$/.test(name));
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(join(storePath, aside[0] as string), 'utf8')).toBe('{SECRET-CONTENT not json');
+    expect(warnings).toHaveLength(1);
+    expect(JSON.stringify(warnings)).not.toContain('SECRET');
+    expect(warnings[0]).toMatchObject({ fields: { collection: COLLECTION, reason: 'parse-error', byteSize: 24 } });
+    expect(events).toHaveLength(1);
+    await store.upsert(COLLECTION, [{ id: 'a', vector: [1] }]);
+    const ids = (await new LocalVectorProvider(storePath).query(COLLECTION, [1], 5)).map((r) => r.id).sort();
+    expect(ids).toEqual(['a', 'rebuilt']);
+  });
+
+  it('handles an unreadable file the same way', async () => {
+    const storePath = freshRoot();
+    await fsPromises.mkdir(storePath, { recursive: true });
+    writeFileSync(join(storePath, `${COLLECTION}.json`), '{"version":1,"records":[]}');
+    const warnings: unknown[] = [];
+    const io: VectorStoreIo = {
+      ...realIo,
+      readFile: async () => {
+        throw Object.assign(new Error('EACCES: /secret/path'), { code: 'EACCES' });
+      },
+    };
+    const store = new LocalVectorProvider(storePath, { io, logger: { warn: (m, f) => warnings.push({ m, f }) } });
+    await expect(store.query(COLLECTION, [1], 1)).resolves.toEqual([]);
+    expect(readdirSync(storePath).some((name) => name.includes('.corrupt-'))).toBe(true);
+    expect(existsSync(join(storePath, `${COLLECTION}.json`))).toBe(false);
+    expect(warnings[0]).toMatchObject({ f: { collection: COLLECTION, reason: 'unreadable', byteSize: null } });
+    expect(JSON.stringify(warnings)).not.toContain('secret');
+    await store.upsert(COLLECTION, [{ id: 'a', vector: [1] }]);
+    expect(existsSync(join(storePath, `${COLLECTION}.json`))).toBe(true);
+  });
+
+  it('does not warn or quarantine for a missing file', async () => {
+    const storePath = freshRoot();
+    const warnings: unknown[] = [];
+    const store = new LocalVectorProvider(storePath, { logger: { warn: (m, f) => warnings.push({ m, f }) } });
+    await store.query(COLLECTION, [1], 1);
+    expect(warnings).toEqual([]);
+  });
+
+  describe('overflow policy', () => {
+    const vec = (id: string) => ({ id, vector: [1, 0] });
+
+    it("reject: accepts at the cap and below, throws above it, and writes nothing", async () => {
+      const storePath = freshRoot();
+      const store = new LocalVectorProvider(storePath, { maxRecordsPerCollection: 3, overflow: 'reject' });
+      await store.upsert(COLLECTION, [vec('a'), vec('b')]);
+      await store.upsert(COLLECTION, [vec('c')]);
+      await store.upsert(COLLECTION, [vec('a')]); // overwrite at the cap is not growth
+      const before = readFileSync(join(storePath, `${COLLECTION}.json`), 'utf8');
+      await expect(store.upsert(COLLECTION, [vec('d')])).rejects.toBeInstanceOf(VectorCapacityError);
+      await expect(store.upsert(COLLECTION, [vec('d'), vec('e')])).rejects.toMatchObject({ code: 'VECTOR_CAPACITY_EXCEEDED' });
+      expect(readFileSync(join(storePath, `${COLLECTION}.json`), 'utf8')).toBe(before);
+      expect((await store.query(COLLECTION, [1, 0], 10)).map((r) => r.id).sort()).toEqual(['a', 'b', 'c']);
+    });
+
+    it('reject: a file already above the cap is refused, not trimmed, and left untouched', async () => {
+      const storePath = freshRoot();
+      const big = new LocalVectorProvider(storePath, { maxRecordsPerCollection: 5 });
+      await big.upsert(COLLECTION, [vec('a'), vec('b'), vec('c'), vec('d')]);
+      const before = readFileSync(join(storePath, `${COLLECTION}.json`), 'utf8');
+      const strict = new LocalVectorProvider(storePath, { maxRecordsPerCollection: 3, overflow: 'reject' });
+      await expect(strict.query(COLLECTION, [1, 0], 5)).rejects.toBeInstanceOf(VectorCapacityError);
+      await expect(strict.upsert(COLLECTION, [vec('e')])).rejects.toBeInstanceOf(VectorCapacityError);
+      expect(readFileSync(join(storePath, `${COLLECTION}.json`), 'utf8')).toBe(before);
+      expect(readdirSync(storePath).some((name) => name.includes('.corrupt-'))).toBe(false);
+    });
+
+    it('evict (default and explicit) still drops the oldest silently', async () => {
+      for (const options of [{}, { overflow: 'evict' as const }]) {
+        const store = new LocalVectorProvider(freshRoot(), { maxRecordsPerCollection: 2, ...options });
+        await store.upsert(COLLECTION, [vec('a'), vec('b'), vec('c')]);
+        expect((await store.query(COLLECTION, [1, 0], 10)).map((r) => r.id).sort()).toEqual(['b', 'c']);
+      }
+    });
   });
 
   it('serializes concurrent writes to one collection', async () => {

@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — vector store safeguards for ADR-0123 Q1 (2026-10-16)
+
+- **Added.** `LocalVectorProvider` option `overflow: 'evict' | 'reject'` (default `'evict'`, so memory recall is unchanged).
+  `'reject'` throws `VectorCapacityError` for an upsert above the cap and writes nothing; a file already above the cap is
+  refused on load, not trimmed.
+- **Changed.** A corrupt or unreadable collection file still starts empty, but is now moved to
+  `<collection>.corrupt-<timestamp>.json`, reported to an optional `logger` (collection, reason, byte size, never content),
+  and signalled to an optional `onCorrupt` rebuild hook. A missing file is silent.
+- **Docs.** ADR-0123 Q1 recorded as accepted by the owner with these safeguards; D2 requires the example pool to use `'reject'`.
+
 ## Unreleased — A6 reference priority: a newer listing vs a fresh lastAction (2026-10-16)
 
 - **Fixed (inert, `QUOKY_NL_ACTIONS` off).** "그거" no longer acts on the last action when the owner has since seen a newer
@@ -22,7 +32,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   `-016`, `-025` are ask (`ambiguous`, any question); `a6-negative-none-031` is `help.topic` with args `{}`. PENDING markers removed.
 - **Approved (DECISIONS "Owner decisions on A6 gold, ADR-0123 and the A6 proposals").** ADR-0123 Q3, Q4, Q6 and Q2 (Q2 after a
   Codex review); the A6 R5a deictic write proposal (1a and 2-9; 1b deferred); the A6 reference priority proposal; the ADR-0100 D3
-  amendment (PR #230). ADR-0123 Q1 and Q5 remain under owner review.
+  amendment (PR #230). ADR-0123 Q1 was later accepted (see above); Q5 remains under owner review.
 
 ## Unreleased — A6 prompt `nl-select.v36` (2026-10-16)
 

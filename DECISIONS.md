@@ -26171,8 +26171,31 @@ here, and `QUOKY_NL_ACTIONS` stays `off`. The owner may revise the gold relabels
 - **A6 reference priority proposal (`docs/plans/a6-reference-priority-proposal.md`).** Approved.
 - **ADR-0100 D3 amendment.** Approved (PR #230).
 
+## Owner decisions on ADR-0123 Q1 (2026-10-16)
+
+The owner accepted ADR-0123 Q1 (keep the JSON `LocalVectorProvider`) on 2026-10-16, on condition of two safeguards, both in
+`packages/vector-local/src/index.ts`:
+
+- **Overflow policy.** New option `overflow: 'evict' | 'reject'`, default `'evict'` (memory recall is unchanged: the oldest-written
+  records are evicted silently). With `'reject'`, an upsert that would take the collection above `maxRecordsPerCollection` throws
+  `VectorCapacityError` and writes nothing (overwriting an existing id at the cap is not growth). **Loading a file that already
+  holds more than the cap under `'reject'` also refuses (the same error, phase `load`), it does not trim.** Reason: trimming would
+  silently drop owner-approved examples, which is exactly what `'reject'` exists to prevent; a refused load is loud, leaves the
+  file byte-for-byte untouched (not quarantined, it is not corrupt), and is fixed by raising the cap or repairing the file. The
+  cost is that reads of that collection fail until then; the pool consumer must treat that as "retrieval unavailable".
+- **Corrupt or unreadable file.** Still starts empty (safe), but the file is moved aside to
+  `<collection>.corrupt-<timestamp>.json` (the stem is not a valid collection name, so snapshots ignore it) instead of being
+  overwritten, a warning goes to the optional injectable `logger` with only the collection name, the reason (`parse-error` or
+  `unreadable`) and the byte size (null when unreadable), never content, and the optional `onCorrupt` callback fires once,
+  asynchronously after the load settles, so the owning feature can rebuild from its source of truth. A missing file is a normal
+  first run: no warning, no quarantine. No caller is wired yet: memory recall has no rebuild source, and the pool does not exist
+  on `main`; the pool must wire `onCorrupt` to re-upsert from the checked-in pool file (ADR-0123 D2).
+
 ## ADR-0123 — Retrieval for the selector's few-shot examples, measured first: an offline, pre-registered four-arm experiment over a held-out split of the D12 gate, the existing `LocalVectorProvider` (no new vector database) and local `nomic-embed-text` embeddings pinned by digest, an owner-approved example pool kept disjoint from every gold corpus by a contamination lint, and runtime retrieval only behind a default-off flag after the experiment passes. Knowledge RAG over Jira / Confluence is out of scope. Phase 1 amends nothing; phase 2 would amend ADR-0120 D3 / D12 / A6-D7 and the ADR-0098 D8 limits.
 
+- **Status update (2026-10-16):** **Q1 accepted by the owner** (keep the JSON `LocalVectorProvider`), conditional on two
+  `LocalVectorProvider` safeguards, now implemented in `packages/vector-local` (see "Owner decisions on ADR-0123 Q1"
+  above). Q5 remains under owner review; the rest of this ADR is still Proposed as below.
 - **Status:** **Proposed (2026-10-16).** Chief Architect draft, docs only. Nothing here is authorized until the Product
   Owner ratifies it. Every model run it describes (local embeddings included) is a Strict action that needs its own
   owner yes on an approved plan digest, as ADR-0120 D12 already requires for selection runs.
@@ -26243,6 +26266,11 @@ here, and `QUOKY_NL_ACTIONS` stays `off`. The owner may revise the gold relabels
      eval data, not pool entries).
 
 2. **D2 — Vector store: keep `LocalVectorProvider`; no new vector database.**
+
+   - **Q1 safeguards (owner, 2026-10-16), binding on any phase-1/2 wiring.** The example-pool collection MUST be
+     constructed with `overflow: 'reject'` (no example-pool wiring exists on `main` yet; the future pool code must pass it
+     and must handle `VectorCapacityError`), and SHOULD pass a `logger` and an `onCorrupt` hook that re-upserts from the
+     checked-in pool file (the source of truth). The memory-recall collection keeps the default `'evict'`.
 
    | Criterion | `LocalVectorProvider` (JSON, existing) | sqlite-vec (in the existing SQLite) | LanceDB (embedded) | Qdrant (local server) |
    |---|---|---|---|---|
