@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Capability, type AiProvider, type AiRequest, type NlSelectionDecision } from '@quoky/core';
 import { NL_ACTION_R2_EVAL_GATE, buildActionPlan, computeActionPlanDigest, loadR2ActionCorpus, r2DiagnosticArgs, recordArgs, scoreActionDecision, summarizeActionR2, type NlActionCase, type NlActionRecord } from './nl-action-eval';
-import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, runCli, type CliDeps } from './nl-intent-eval-cli';
+import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, formatGateRuns, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // `eval:nl --mode r2` offline: the plan and its Strict digest (prompt v48, corpus, runs, calls, gate), the digest rule
 // (nothing constructed before it matches), the R2 gate (jira and slack slices, wrong targets, negatives) and the
@@ -122,7 +122,7 @@ describe('eval:nl --mode r2 run (Strict)', () => {
     const d = deps();
     const code = await runCli(['--mode', 'r2', '--runs', '1', '--approved-plan-digest', digestOf(planned.out)], d);
     expect(d.created).toEqual(['haiku']);
-    expect(d.out.join('\n')).toContain('R2 gate (nl-select.v48): PASSED');
+    expect(d.out.join('\n')).toContain('R2 gate (nl-select.v48): PASSED in all 1 run(s)');
     expect(code).toBe(EXIT_OK);
     expect(d.written).toHaveLength(1);
     const report = d.written[0]?.contents ?? '';
@@ -227,5 +227,14 @@ describe('eval:nl --mode r2 diagnosis args', () => {
     expect(recordArgs({ source: 'jira', ref: 'PROJ-12', mode: 'summary' })).toEqual({ source: 'jira', ref: 'PROJ-12', mode: 'summary' });
     expect(recordArgs({ source: 'slack', ref: '#3' })).toEqual({ source: 'slack', ref: '#3' });
     expect(JSON.stringify(recordArgs({ source: 'private text', query: 'private text' }))).not.toContain('private');
+  });
+});
+
+describe('the multi-run gate line (every eval:nl mode)', () => {
+  it('says how many runs passed instead of "FAILED in every one"', () => {
+    const run = (gatePassed: boolean) => ({ gatePassed });
+    expect(formatGateRuns('R2 gate (v)', [run(true), run(true), run(true)])).toBe('R2 gate (v): PASSED in all 3 run(s)');
+    expect(formatGateRuns('R2 gate (v)', [run(true), run(true), run(false)])).toBe('R2 gate (v): FAILED, passed 2 of 3 run(s) (the gate needs every run)');
+    expect(formatGateRuns('intent gate', [run(false), run(false), run(false)])).toBe('intent gate: FAILED, passed 0 of 3 run(s) (the gate needs every run)');
   });
 });
