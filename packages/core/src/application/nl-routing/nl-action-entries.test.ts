@@ -272,20 +272,20 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
   const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } });
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
-    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v41', sha256: 'de81ab964dea48840160319e5a4a9c87310e0f061f577025ed066849c6de35f3' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v42', sha256: '00bfc0b7ec03e503306d8d5b6046b17687257f3eac7bf9f6982e1743e4fa3d1d' });
+    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v39', sha256: 'fe13de80a8b71bc67b138e834036575819a76013fa86164bb7455ca0df3a4555' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v42', sha256: '6bd5932340fc1a47c97973a4d741a6be24a63f1d91b33d3c0da04a1e17904092' });
   });
 });
 
-describe('the selection prompt (A6-D7): v41 byte for byte with the flag off, v42 with actions', () => {
-  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v41.prompts.json', import.meta.url), 'utf8')) as {
+describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v42 with actions', () => {
+  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v39.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
   };
 
-  it('pins nl-select.v41 for every golden input (no `actions`)', () => {
-    expect(golden.version).toBe('nl-select.v41');
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v41');
+  it('pins nl-select.v39 for every golden input (no `actions`)', () => {
+    expect(golden.version).toBe('nl-select.v39');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v39');
     for (const golden_ of golden.cases) {
       const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
       const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
@@ -579,7 +579,7 @@ describe('A6 prompt v36 (CA review): the rule-8 lines and examples teach the rul
     for (const gone of ['모레 알림 몇 개 잡혀 있어?', '프로젝트 등록: ~/code/site', '피드백 삭제: 2', '커밋 메시지는 앞으로 영어로 쓰게 설정해 둬', '그거 요약해줘', '할 일 전부 완료로 바꿔줘', '그 메일 내용 짧게 정리해 줄래?', '목록에 있는 거 모두 끝난 걸로 처리해 줘']) {
       expect(actionPrompt, gone).not.toContain(`Message: ${gone}\n`);
     }
-    // The read prompt (A6 off) still carries its v41 example byte for byte.
+    // The read prompt (A6 off) still carries its v39 example byte for byte.
     expect(readMessages.has('저거 요약 좀 해줄래')).toBe(true);
   });
 

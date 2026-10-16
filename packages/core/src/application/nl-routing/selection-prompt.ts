@@ -59,19 +59,16 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * `confluence.search` example, sharper slack.search / confluence.search descriptions, and the `jira.release` arg wording
  * (a bare number is a release name, project and release are separate args, a follow-up keeps the project); the validator
  * also canonicalizes `jira.release` args structurally. v40 (A6) = the v36 text on top of v39.
- * v41 (the read prompt) = v39 with two rule-2 lines (a feeling or complaint that only mentions a source or lookup subject is
- * none) and two rule-3 lines (a question about what a given phrase or command would do or mean is none, even when the phrase
- * names Quoky's own data; a question about which command or way Quoky has for something is help.topic): the neg-037 and
- * neg-051 wrong captures of the v39 gate. v42 (A6) = the v36 text on top of v41, plus one rule-8 line (a garbled or
- * misspelled action word, so the intended action is uncertain, is NEEDS_CLARIFICATION with the candidate as the one
- * alternative, never a silent pick; owner decision 2026-10-16) and "or which command Quoky has for it" on the how-to line
- * (the help.topic miss of the v40 action gate).
+ * v41 (read, two new rule lines) regressed calendar.events and was abandoned: the read prompt stays v39. v42 (A6) = the v36
+ * text on top of v39, plus one rule-8 line (a garbled or misspelled action word, so the intended action is uncertain, is
+ * NEEDS_CLARIFICATION with the candidate as the one alternative, never a silent pick; owner decision 2026-10-16) and "or
+ * which command Quoky has for it" on the how-to line (the help.topic miss of the v40 action gate).
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v41';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v39';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v41.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v39.prompts.json`).
  */
 export const NL_ACTION_PROMPT_VERSION = 'nl-select.v42';
 
@@ -334,16 +331,12 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   asked politely ("would you mind sending this out for me?"). Writes are never an entry. "<time>에 … 알려줘" sets a reminder: none.',
     '   A remark about what already happened or how it went ("…했어", "…끝났다", "…더라", "…었는데 …") is none even when it',
     '   names a source or a day; a past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup.',
-    '   A feeling or complaint (stress, worry, frustration, not knowing something) that only mentions a source or a lookup',
-    '   subject is none: it asks Quoky for nothing.',
     '3. help.topic is ONLY a question about Quoky itself: what Quoky can read or do, or how to use one of Quoky\'s own',
     '   features (to-dos, reminders, memory, feedback, model switching, branches, commits, project registration).',
     '   help.topic: "리마인더 삭제는 어디서 해?", "깃허브 쪽 조회도 네가 해 주는 거야?", "지라 상태 바꾸는 것도 돼?", "what is the way to put a task on my list?"',
     '   none: "노션에서 표 만드는 방법 알려줘" (another app\'s own feature), "Confluence에서 페이지 복사하는 법",',
     '   "갤럭시 알람 소리 바꾸는 법" (a phone\'s own setting),',
     '   "모델 다른 걸로 바꿔줘" and "can you send a slack message for me?" (requests to act, not questions).',
-    '   A question about what a given phrase or command would do or mean when said to Quoky is none (rule 2), even when the',
-    '   phrase names Quoky\'s own data; a question about which command or way Quoky itself has for something is help.topic.',
     '   A polite request with something concrete to look up ("컨플루언스에서 배포 체크리스트 찾아줄 수 있어?") is that lookup.',
     '   help.topic is always a QUESTION. An imperative request to change or do something ("…로 바꿔줘", "…해줘", "switch',
     '   to …") is never help.topic: it is none, even when Quoky has a command for it.',

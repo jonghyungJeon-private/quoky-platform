@@ -406,6 +406,9 @@ export function scoreActionDecision(golden: NlActionCase, raw: string, decision:
   if (gold.outcome !== 'execute') {
     if (isAction && executed.target !== undefined) return { ...base, outcome: 'wrong-target', got: executed.entryId, ...withSpan };
     if (executed !== undefined) return { ...base, outcome: 'miss', got: executed.entryId, ...withSpan };
+    // A gold ask is a hit only when the selector actually asks (Core's ask outcome, or the selector's own NEEDS_CLARIFICATION):
+    // naming the gold entry with the gold args while the turn ends as none or anything else is a miss (2026-10-16).
+    if (gold.outcome === 'ask' && decision.kind !== 'ask' && output?.ambiguity !== 'NEEDS_CLARIFICATION') return { ...base, outcome: 'miss', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
     if (gold.acceptsAnyQuestion === true && decision.kind === 'ask' && reason !== undefined && CLARIFICATION_REASONS.has(reason)) return { ...base, outcome: 'hit', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
     const named = output?.entryId === gold.entryId && canonical(withoutMode(output.args, gold.args)) === canonical(withoutMode(gold.args, gold.args));
     // A gold refusal or question with no args (`{}`: the refused argument has no canonical value) is scored by its closed

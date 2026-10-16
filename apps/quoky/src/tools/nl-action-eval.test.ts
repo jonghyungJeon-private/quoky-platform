@@ -181,6 +181,32 @@ describe('scoring (A6-D7): a wrong target is never a question; negatives capture
     expect(await score({ ...undoToo, expect: { ...(undoToo.expect as object), alsoAccepts: undefined } as NlActionCase['expect'] }, answer('action.undo'))).toBe('miss');
   });
 
+  it('a gold ask is a hit only when the selector actually asks; naming the entry while the turn ends as none or executes is a miss', () => {
+    const gold: NlActionCase = {
+      id: 'a6-t-13',
+      family: 'paraphrase',
+      text: '3번 완룐 처리해줘',
+      fixture: { listings: [{ source: 'todo', labels: [1, 2, 3], ageMinutes: 1 }] },
+      expect: { entryId: 'todo.complete', args: { ref: '#3' }, outcome: 'ask', reason: 'ambiguous', acceptsAnyQuestion: true },
+    };
+    const clear = answer('todo.complete', { ref: '#3' });
+    const clarifying = answer('todo.complete', { ref: '#3' }, 'NEEDS_CLARIFICATION');
+    const ask = { kind: 'ask', text: '어떤 작업인가요?' } as const;
+    // Core asked: a hit.
+    expect(scoreActionDecision(gold, clarifying, ask, { reason: 'ambiguous' }).outcome).toBe('hit');
+    // The selector asked (NEEDS_CLARIFICATION) even though the turn then ended as none: still asks.
+    expect(scoreActionDecision(gold, clarifying, { kind: 'none' }).outcome).toBe('hit');
+    // The selector named the gold entry with the gold args as CLEAR and the turn did not ask: a miss (it was a hit before).
+    expect(scoreActionDecision(gold, clear, { kind: 'none' }).outcome).toBe('miss');
+    // Executing the entry is a miss, also with the gold target.
+    const executed = { kind: 'execute', command: { entryId: 'todo.complete', args: { ref: '#3' }, target: { source: 'todo', id: 'todo-3' } } } as unknown as Parameters<typeof scoreActionDecision>[2];
+    expect(scoreActionDecision(gold, clear, executed).outcome).toBe('wrong-target');
+    expect(scoreActionDecision(gold, clear, { ...executed, command: { entryId: 'todo.complete', args: { ref: '#3' } } } as unknown as Parameters<typeof scoreActionDecision>[2]).outcome).toBe('miss');
+    // A gold with no acceptsAnyQuestion needs the same: not an ask, not a hit.
+    const strict: NlActionCase = { ...gold, expect: { entryId: 'todo.complete', args: { ref: '#3' }, outcome: 'ask', reason: 'ambiguous' } };
+    expect(scoreActionDecision(strict, clear, { kind: 'none' }).outcome).toBe('miss');
+  });
+
   it('the summary gate fails on one wrong target, one negative capture, or too many questions on references', () => {
     const hit = { run: 1, id: 'x', family: 'reference', expected: 'todo.complete', outcome: 'hit' as const, latencyMs: 10 };
     expect(summarizeAction([hit]).gatePassed).toBe(true);

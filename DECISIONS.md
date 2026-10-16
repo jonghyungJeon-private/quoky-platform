@@ -27030,7 +27030,7 @@ every `nl-action` gold (no grounding or glued-noun change; the seven `deictic-pa
   reply ("이 작업은 DM에서만 해요. …"), which precedes R5a. The selector-RAG gold digest (nl-intent / nl-action golds)
   is unchanged, so the audit record was not regenerated.
 
-### Owner decisions of 2026-10-16 (second): prompts nl-select.v41 (read) and v42 (A6)
+### Owner decisions of 2026-10-16 (second): read prompt stays nl-select.v39, A6 prompt nl-select.v42
 
 - **`a6-paraphrase-todo.complete-018` ("3번 완룐 처리해줘") is an ASK.** The action word itself is garbled, so whether the
   owner means 완료 is uncertain; the assistant asks (gold: `todo.complete` `#3`, outcome ask, reason `ambiguous`,
@@ -27044,14 +27044,13 @@ every `nl-action` gold (no grounding or glued-noun change; the seven `deictic-pa
   relabel: for a Confluence document search the full phrase matters. The keyword filler-drop rule does not list 방법 (its
   generic words are 문서, 자료, 페이지, 파일, 관련, 얘기, 내용, 메시지, 건, 거) and the v39 gate scored the case 3/3, so
   the rule text is unchanged.
-- **Read wrong captures (v39 gate).** `neg-037` (a feeling about not knowing one's issues, jira.issues) and `neg-051` (a
-  question about what a quoted phrase would do, help.topic work-lookup) are fixed by general rule lines in v41: a feeling or
-  complaint that only mentions a source or lookup subject is none (rule 2); a question about what a given phrase or command
-  would do or mean is none, while a question about which command or way Quoky itself has for something is help.topic
-  (rule 3).
+- **Read prompt back to v39.** The v41 read rules (a feeling or complaint that only mentions a source is none; a phrase-meaning
+  question is none) regressed `calendar.events` about 1 point (89-91/95 to 86-89/95) and A6 read-regression 2/3 to 0/3, so the
+  read prompt stays `nl-select.v39` byte for byte. `neg-037` and `neg-051` stay residual wrong captures.
+- **Eval scorer.** A gold `ask` is a hit only when the selector actually asks (Core's ask outcome or the selector's own
+  NEEDS_CLARIFICATION); naming the gold entry with the gold args while the turn ends as none, or executing it, is a miss.
 - **A6 action gate help.topic 5/6.** The miss was `a6-negative-none-031` ("문서 요약 명령어가 뭐야", gold help.topic `{}`),
-  3/3 runs answered none because rule 8 said a question about what a command would do is none. The gold agrees with rules 3
-  and 8 (a question about Quoky's own command), so it is kept; v42 adds "or which command Quoky has for it" to the how-to
-  line and the rule-3 distinction above.
+  3/3 runs answered none because rule 8 said a question about what a command would do is none. v42 adds "or which command
+  Quoky has for it" to the how-to line; help.topic was 6/6.
 - The selector-RAG gold digest changed (complete-018), so the audit record was regenerated (`pnpm eval:rag --mode dry-run
   --write-audit true`, local Ollama only, RAG-0 lint PASSED).
