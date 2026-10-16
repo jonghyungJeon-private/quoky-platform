@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "description": "ADR-0123 D8: the rendered retrieved-examples block for a fixed slice (hand-written expectation; any format change must edit this file and be reviewed).",
+  "header": "More examples (same output format; the rules above still decide):",
+  "examples": [
+    {
+      "text": "이번 주 안에 끝내야 하는 지라 일 보여줘",
+      "output": "{\"entryId\":\"jira.issues\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}"
+    },
+    {
+      "text": "그거 말고 다음 걸로",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "previous": "{\"entryId\":\"jira.issues\",\"args\":{}}",
+      "context": "last listing: todo (3 items, 1 min ago)"
+    }
+  ],
+  "block": "More examples (same output format; the rules above still decide):\nMessage: 이번 주 안에 끝내야 하는 지라 일 보여줘\nOutput: {\"entryId\":\"jira.issues\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}\nPrevious selection: {\"entryId\":\"jira.issues\",\"args\":{}}\nReference context: last listing: todo (3 items, 1 min ago)\nMessage: 그거 말고 다음 걸로\nOutput: {\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}"
+}

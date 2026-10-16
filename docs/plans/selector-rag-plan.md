@@ -94,7 +94,7 @@ Stop after RAG-2 on any ADR-0123 D6 stop condition; the fallback is prompt and c
   - `packages/core/src/application/nl-routing/selection-prompt.ts`: optional `retrievedExamples` on
     `NlSelectionPromptInput`, rendered after the static `Examples:` block under a fixed header; absent = byte-identical.
     Tests: the v30 golden and A6 goldens unchanged; a prefix test; a new
-    `golden/nl-select.retrieved-block.v1.json` pinning the block for a fixed pool slice.
+    `golden/nl-select.retrieved-block.fixture.json` pinning the block for a fixed pool slice.
   - `apps/quoky/src/tools/selector-rag/retrieve.ts`: `retrieveTopK` (cosine top-k, ≤ 1 per `entryId`, `needs` ⊆ offered and `entryId` offered by the prompt mode,
     no duplicate of a static example, deterministic tie-break by id) and `retrieveRandomK` (seeded, same filters), both
     over a pool subsample `(seed r, 80%)`.

@@ -4,7 +4,9 @@
 import { createHash } from 'node:crypto';
 import { NL_ACTION_PROMPT_VERSION, NL_CATALOG_ENTRY_IDS, NL_SELECTION_PROMPT_VERSION, NL_WAVE1_ENTRIES, buildSelectionPrompt, type NlCatalogEntry } from '@quoky/core';
 import { actionPromptSha256 } from '../nl-action-eval';
-import { armsFor, budgetFor, expectedCalls, type Arm } from './arms';
+import { armsFor, budgetFor, type Arm } from './arms';
+
+export type RagSplit = 'dev' | 'heldout';
 import { DEFAULT_MAX_CONCURRENT, DEFAULT_MIN_INTERVAL_MS } from './ledger';
 import { DEFAULT_K, SUBSAMPLE_RATE } from './retrieve';
 
@@ -27,6 +29,8 @@ export interface RagPlanInput {
   readonly selectorModel: string;
   readonly runs?: number;
   readonly sessions?: number;
+  /** The split this approval covers (ADR-0123 D6, AGENTS.md exact scope): dev smoke and held-out are approved separately. */
+  readonly split: RagSplit;
 }
 
 export interface RagPlan {
@@ -45,7 +49,9 @@ export interface RagPlan {
   readonly subsampleRate: number;
   readonly seeds: readonly string[];
   readonly selector: { readonly model: string; readonly effort: 'low'; readonly tools: 'none' };
-  readonly calls: { readonly heldOut: number; readonly devSmoke: number; readonly total: number };
+  /** The split this digest authorizes, and nothing else. */
+  readonly split_scope: RagSplit;
+  readonly calls: { readonly split: RagSplit; readonly cases: number; readonly arms: number; readonly runs: number; readonly total: number };
   readonly traffic: { readonly budget: number; readonly maxConcurrent: number; readonly maxCallsPerSecond: number };
 }
 
@@ -58,8 +64,12 @@ export function buildRagPlan(input: RagPlanInput): RagPlan {
   if (!Number.isInteger(sessions) || sessions < 1) throw new Error('sessions must be a positive integer');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(input.selectorModel)) throw new Error('invalid selector model');
   if (input.models.length === 0) throw new Error('no embedding model');
-  const arms = armsFor(input.models.map((model) => model.model));
-  const calls = expectedCalls(input.heldOutCases, input.devCases, arms.length, runs);
+  // The dev smoke run is one A0 + one A1 run (ADR-0123 D6); the held-out run is every arm for `runs` runs.
+  const allArms = armsFor(input.models.map((model) => model.model));
+  const arms = input.split === 'dev' ? allArms.filter((arm) => arm.kind === 'A0' || arm.kind === 'A1') : allArms;
+  const scopedRuns = input.split === 'dev' ? 1 : runs;
+  const cases = input.split === 'dev' ? input.devCases : input.heldOutCases;
+  const calls = { split: input.split, cases, arms: arms.length, runs: scopedRuns, total: cases * arms.length * scopedRuns };
   return {
     kind: 'selector-rag-experiment',
     adr: 'ADR-0123',
@@ -73,11 +83,12 @@ export function buildRagPlan(input: RagPlanInput): RagPlan {
     split: { sha256: input.splitSha256, dev: input.devCases, heldOut: input.heldOutCases, excludedContaminated: input.excludedContaminated },
     embeddingModels: input.models,
     arms,
-    runs,
+    runs: scopedRuns,
     sessions,
+    split_scope: input.split,
     k: DEFAULT_K,
     subsampleRate: SUBSAMPLE_RATE,
-    seeds: Array.from({ length: runs }, (_, index) => `run-${index + 1}`),
+    seeds: Array.from({ length: scopedRuns }, (_, index) => `run-${index + 1}`),
     selector: { model: input.selectorModel, effort: 'low', tools: 'none' },
     calls,
     traffic: { budget: budgetFor(calls.total), maxConcurrent: DEFAULT_MAX_CONCURRENT, maxCallsPerSecond: 1000 / DEFAULT_MIN_INTERVAL_MS },
