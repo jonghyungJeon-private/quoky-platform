@@ -69,7 +69,8 @@ import {
   type Session,
 } from '@quoky/core';
 // A6 R2: `quoky.lastRead` is not (yet) re-exported by the package index.
-import { LAST_READ_METADATA_KEY, withLastRead } from '../../../../packages/core/src/application/nl-routing/last-read';
+// The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
+import { LAST_READ_METADATA_KEY, withLastRead } from '@quoky/core';
 
 export const NL_ACTION_EVAL_GATE = Object.freeze({
   overall: 0.95,

@@ -14584,12 +14584,12 @@
   {
    "id": "a6-paraphrase-reminder.create-902",
    "family": "paraphrase",
-   "text": "Remind me: 내일 오전 9시 은행에 전화",
+   "text": "Remind me: 모레 저녁 7시 은행에 전화",
    "expect": {
     "entryId": "reminder.create",
     "args": {
      "body": "은행에 전화",
-     "when": "내일 오전 9시"
+     "when": "모레 저녁 7시"
     },
     "outcome": "execute"
    },
@@ -14631,10 +14631,10 @@
      "match": "치과 예약 확인"
     },
     "outcome": "ask",
-    "reason": "garbled-action",
+    "reason": "ambiguous",
     "acceptsAnyQuestion": true
    },
-   "note": "owner decision E (2026-10-17): a vowel-only variant of the loanword 캔슬 asks, live kit H03 [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision E (2026-10-17): a vowel-only variant of the loanword 캔슬 asks, live kit H03; written like complete-018 (reason ambiguous, any question; Core asks `garbled-action` structurally) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
   },
   {
    "id": "a6-paraphrase-reminder.cancel-906",
@@ -14659,10 +14659,10 @@
      "ref": "#11"
     },
     "outcome": "ask",
-    "reason": "garbled-action",
+    "reason": "ambiguous",
     "acceptsAnyQuestion": true
    },
-   "note": "owner decision E (2026-10-17): 캔설, a vowel-only variant of 캔슬, asks [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision E (2026-10-17): 캔설, a vowel-only variant of 캔슬, asks; written like complete-018 (reason ambiguous, any question; Core asks `garbled-action` structurally) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
   },
   {
    "id": "a6-paraphrase-reminder.cancel-907",

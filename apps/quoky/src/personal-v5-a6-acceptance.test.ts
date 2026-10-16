@@ -998,7 +998,7 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect(g05.text).toMatch(/^할 일 \d+번으로 추가했어요: "사무실 와이파이 비밀번호 변경" · /u);
     const added = await turn('Add a to-do: renew passport', answer('todo.add', { title: 'renew passport' }));
     expect(added.text).toMatch(/^할 일 \d+번으로 추가했어요: "renew passport" · /u);
-    const remind = await turn('Remind me: 내일 오전 9시 은행에 전화', answer('reminder.create', { body: '은행에 전화', when: '내일 오전 9시' }));
+    const remind = await turn('Remind me: 모레 저녁 7시 은행에 전화', answer('reminder.create', { body: '은행에 전화', when: '모레 저녁 7시' }));
     expect(remind.text).toMatch(/^알림 #\d+[을를] 만들었어요: .* · '은행에 전화' · /u);
     expect((await reminders()).find((entry) => entry.body === '은행에 전화')?.status).toBe('SCHEDULED');
     // Counter-cases: nothing is written.
