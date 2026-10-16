@@ -86,6 +86,16 @@ export type PendingQuestion =
       readonly candidates: readonly { readonly label: number; readonly id: string }[];
       readonly args: NlArgs;
       readonly listingAt?: IsoTimestamp;
+      /**
+       * A6-D3a amendment 1, elliptical continuation: a one-candidate confirmation ("할 일 3번도 완료할까요?"), where a yes
+       * ("응") picks the candidate and a no ends the question.
+       */
+      readonly confirm?: true;
+      /**
+       * The platform ids the confirmation question itself was delivered as (bound on delivery), so a platform reply to the
+       * question is positively told apart from a reply to any other message (Codex P1).
+       */
+      readonly questionReplyIds?: readonly string[];
     }
   /** Ratification record C: summary or full? The resolved item id only; the answer is kept as the D7 preference. */
   | {
@@ -126,6 +136,25 @@ export function isActionPendingQuestion(question: PendingQuestion | null | undef
 const ITEM_SOURCES: readonly NlItemSource[] = ['todo', 'reminder', 'mail', 'drive'];
 const ACTION_ENUM_ARGS: Readonly<Record<string, readonly string[]>> = { source: ['mail', 'drive'], scope: ['item', 'thread'], mode: ['summary', 'full'] };
 const MAX_CANDIDATES = 10;
+const MAX_REPLY_IDS = 10;
+
+/** Bounded opaque platform ids, or `undefined`. */
+function replyIdsOf(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_REPLY_IDS) return undefined;
+  return value.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 256) ? (value as string[]) : undefined;
+}
+
+/**
+ * Elliptical continuation (Codex P1): bind the delivered platform ids of the confirmation question to the open
+ * `action-target` confirmation it asked, only when the stored record is still that question (same actor, same `at`).
+ * Anything else is returned unchanged.
+ */
+export function withPendingQuestionReplies(current: unknown, actorId: Id, at: IsoTimestamp, ids: readonly string[]): unknown {
+  const record = recordOf(current);
+  const bounded = replyIdsOf([...ids].slice(0, MAX_REPLY_IDS));
+  if (record.actorId !== actorId || record.at !== at || record.kind !== 'action-target' || record.confirm !== true || bounded === undefined) return current;
+  return { ...record, questionReplyIds: bounded };
+}
 
 function targetOf(value: unknown): NlItemTarget | undefined {
   const record = recordOf(value);
@@ -251,6 +280,8 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
       candidates,
       args: actionArgsOf(record.args),
       ...(listingAt !== undefined ? { listingAt } : {}),
+      ...(record.confirm === true && candidates.length === 1 ? { confirm: true as const } : {}),
+      ...(record.confirm === true && candidates.length === 1 && replyIdsOf(record.questionReplyIds) !== undefined ? { questionReplyIds: replyIdsOf(record.questionReplyIds) as string[] } : {}),
     };
   }
   if (record.kind === 'action-mode') {
@@ -292,6 +323,8 @@ export function pendingQuestionRecord(actorId: Id, question: PendingQuestion): M
         candidates: question.candidates.slice(0, MAX_CANDIDATES).map((candidate) => ({ label: candidate.label, id: candidate.id })),
         args: actionArgsOf(question.args),
         ...(question.listingAt !== undefined ? { listingAt: question.listingAt } : {}),
+        ...(question.confirm === true ? { confirm: true } : {}),
+        ...(question.confirm === true && question.questionReplyIds !== undefined ? { questionReplyIds: [...question.questionReplyIds].slice(0, MAX_REPLY_IDS) } : {}),
       };
     case 'action-mode':
       return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target }, ...(question.scope !== undefined ? { scope: question.scope } : {}) };

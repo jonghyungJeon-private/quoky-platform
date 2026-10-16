@@ -557,3 +557,41 @@ export function nlActionWordGrounded(prose: string, words: readonly string[], sp
   const text = normalizeForMatch(prose);
   return words.some((word) => text.includes(normalizeForMatch(word))) && nlRequestVeto(prose, words, words, spans) === undefined;
 }
+
+/**
+ * The closed LIGHT-VERB class (CA review P2 on the elliptical continuation): words that make a request without naming any
+ * action. The light verb 하다 in its request and imperative endings ("해", "해줘", "하세요", "해 주세요"), with the verbal
+ * nouns that only carry it (처리, 부탁: "처리해줘", "부탁해", "부탁드립니다"), the bare 처리 / 부탁, the Korean go-signals ㄱㄱ /
+ * 고고, the manner adverb 똑같이 ("똑같이 해줘"), and the English do / please. A grammatical class, never a phrase list: an
+ * action word with the same endings ("체크해줘", "완료해줘", "빼줘") is not in it.
+ */
+const LIGHT_VERB_WORD = /^(?:(?:처리|부탁)?(?:해|하)(?:줘|줘요|주세요|주십시오|줄래|줄래요|주실래요|라|자|요|세요|십시오)?|주세요|줘|줘요|(?:처리|부탁)(?:해요|합니다|드려요|드립니다|드릴게요)?|똑같이|do|please|pls|plz)$/u;
+const GO_SIGNAL = /^(?:ㄱ{2,}|(?:고){2,})[!~.]*$/u;
+
+/**
+ * ADR-0120 A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold a6-reference-none-002 "이번엔 3번"): whether
+ * a LOCAL_WRITE frame (the owner's prose without the selector's content spans) is ELLIPTICAL: once the light-verb class
+ * ({@link LIGHT_VERB_WORD}: "해줘", "처리해줘", "부탁해", "ㄱㄱ", "똑같이") is set aside, it names no action word of any A6
+ * vocabulary (`actionWords`) and makes no request of its own (no request or imperative form, no command word, no English
+ * request lead). "이번엔 3번", "그럼 3번", "3번도", "3번도 해줘", "그럼 3번 부탁해", "3번도 ㄱㄱ", "2번 체크" are;
+ * "3번 완료", "1번 할일 체크해줘", "2번 빼" are not. The action such a message means is only inferred (from the last
+ * action, or by the selector), so it never executes: the owner's rule is "ambiguous: ask, clear: act". Closed classes only
+ * (the A6 vocabularies, the request endings, the light verb); no phrase list. Pure.
+ */
+export function nlFrameIsElliptical(frame: string, actionWords: readonly string[]): boolean {
+  const kept = normalizeForMatch(frame)
+    .split(/\s+/u)
+    .filter((raw) => {
+      if (raw.length === 0 || GO_SIGNAL.test(raw)) return false;
+      const word = raw.replace(WORD_NOISE, '');
+      return word.length > 0 && !LIGHT_VERB_WORD.test(word);
+    });
+  const text = kept.join(' ');
+  const namesAction = actionWords.some((raw) => {
+    const word = normalizeForMatch(raw);
+    if (word.length === 0) return false;
+    return /^[a-z0-9 -]+$/u.test(word) ? new RegExp(`(?<![a-z0-9])${word.replace(/[-]/g, '\\-').replace(/ /g, '\\s+')}(?![a-z0-9])`, 'u').test(text) : text.includes(word);
+  });
+  if (namesAction) return false;
+  return !requestsSomething(text, actionWords) && !wordsOf(text).some((word) => nlIsRequestForm(word));
+}

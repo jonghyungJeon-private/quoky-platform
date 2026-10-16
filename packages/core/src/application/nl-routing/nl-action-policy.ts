@@ -249,6 +249,25 @@ export function renderGarbledAction(candidate: string, language: Lang): string {
     : `'${candidate}'(이)라고 하신 건가요? 아직 아무것도 바꾸지 않았어요. 맞으면 '${candidate}'로 다시 말씀해 주세요.`;
 }
 
+/**
+ * A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3): "이번엔 3번" right after "1번 완료" plausibly means
+ * "complete 3 too", but the action is only inferred, so Core asks with it: "할 일 3번도 완료할까요? (응 / 아니)"; with no
+ * such last action (`continued` false) the selector's inferred action: "할 일 2번을 완료할까요? (응 / 아니)". "응" runs it
+ * (the open `action-target` confirmation). Content-free: the source, the shown label and the entry's closed action word.
+ */
+export function renderContinuationConfirm(entryId: 'todo.complete' | 'todo.cancel' | 'reminder.cancel', source: NlItemSource, label: number, language: Lang, continued = true): string {
+  if (language === 'en') {
+    const verb = entryId === 'todo.complete' ? 'Complete' : entryId === 'todo.cancel' ? 'Take off the list' : 'Cancel';
+    return `${verb} ${NOUN[source].en} ${renderShownLabel(source, label, 'en')}${continued ? ' too' : ''}? (yes / no)`;
+  }
+  const verb = entryId === 'todo.complete' ? '완료할까요' : entryId === 'todo.cancel' ? '목록에서 뺄까요' : '취소할까요';
+  const shown = renderShownLabel(source, label, 'ko');
+  // The object particle after the shown label: "N번" closes with ㄴ (을); a reminder "#N" is read as its number, whose last
+  // digit 2 / 4 / 5 / 9 (이, 사, 오, 구) ends in a vowel (를).
+  const particle = continued ? '도' : /번$/u.test(shown) || !/[2459]$/u.test(shown) ? '을' : '를';
+  return `${NOUN[source].ko} ${shown}${particle} ${verb}? (응 / 아니)`;
+}
+
 export function renderTimeInTitle(language: Lang): string {
   return language === 'en'
     ? 'To-dos have no time. Should this be a to-do or a reminder at that time? Please tell me again the way you want it.'

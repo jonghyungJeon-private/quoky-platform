@@ -39,7 +39,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, nlR2SourcesOffered, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, nlR2SourcesOffered, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -63,6 +63,7 @@ import {
   renderReferenceQuestion,
   renderQuestionOpen,
   renderDmOnlyAction,
+  renderContinuationConfirm,
   renderGarbledAction,
   renderRestate,
   renderTimeInTitle,
@@ -78,7 +79,7 @@ import { nlSelectionMeaning } from './selection-meaning';
 import { NL_ACTION_PROMPT_VERSION, NL_ACTION_R2_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
 import { nlReadNotRequest } from './read-statement';
-import { interpretUndoConfirmReply, nlUndoIsDirect, renderUndoConfirm } from './undo-confirm';
+import { interpretContinuationConfirmReply, interpretUndoConfirmReply, nlHasExplicitUndoWord, nlUndoIsDirect, renderUndoConfirm } from './undo-confirm';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   LAST_SELECTION_METADATA_KEY,
@@ -91,6 +92,7 @@ import {
   readPendingQuestion,
   sanitizeStoredSelection,
   withInterpretationPreference,
+  withPendingQuestionReplies,
   type LastSelection,
   type PendingQuestion,
   type StoredSelection,
@@ -383,6 +385,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
   private readonly actionCaps: NlActionCaps;
   /** A6: echoes and listings waiting for their delivery receipt (by inbound message). */
   private readonly echoReceipts = new Map<string, PendingEcho>();
+  /**
+   * Elliptical continuation (Codex P1): the asking turns of open confirmation questions, keyed by session and inbound
+   * message id, until their delivery binds the question's platform ids to the pending record (bounded like the echoes).
+   */
+  private readonly questionReceipts = new Map<string, { readonly actorId: string; readonly at: IsoTimestamp }>();
   /** The last shadow run (tests await it; production never does). */
   lastShadowRun: Promise<void> = Promise.resolve();
   /** W1: aborts every background selection on shutdown (`stopBackground`). */
@@ -847,6 +854,19 @@ export class NlSelectionService implements TurnDeliveryObserver {
   async observeDelivery(turn: DeliveredTurn): Promise<void> {
     if (this.deictic !== undefined) await this.deictic.observeDelivery(turn);
     try {
+      const questionKey = questionReceiptKey(turn.sessionId, turn.messageId);
+      const question = this.questionReceipts.get(questionKey);
+      if (question !== undefined) {
+        this.questionReceipts.delete(questionKey);
+        if (turn.status === 'RESPONDED' && turn.platformMessageIds.length > 0) {
+          const ids = turn.platformMessageIds;
+          await this.deps.sessions.updateMetadataEntry({ id: turn.sessionId }, NL_PENDING_METADATA_KEY, (current) => withPendingQuestionReplies(current, question.actorId, question.at, ids));
+        }
+      }
+    } catch {
+      this.log('warn', 'nl_action.receipt_persist_failed', {});
+    }
+    try {
       const key = echoKey(turn.messageId, turn.context);
       const pending = this.echoReceipts.get(key);
       if (pending === undefined) return;
@@ -1263,6 +1283,20 @@ export class NlSelectionService implements TurnDeliveryObserver {
         this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
         return { kind: 'none' };
       }
+      // A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, "이번엔 3번"; CA review P2/P3): a target frame with
+      // no action word and no request beyond the light verb never executes. The inferred action is asked as a confirmation
+      // ("할 일 3번도 완료할까요?" right after the same action, else "할 일 2번을 완료할까요?"; "응" runs it). A bare reference
+      // asks only as a continuation; otherwise it stays chat, as a reference alone always was.
+      if (validated.reason === 'elliptical' || (validated.reason === 'ungrounded' && validated.arg === 'action')) {
+        const confirm = await this.askInferredAction(entryId, output.args, validated.reason === 'elliptical', turn, prepared, language, reference, base, openQuestion, shadow);
+        if (confirm !== undefined) return confirm;
+      }
+      if (validated.reason === 'elliptical') {
+        const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'elliptical' };
+        if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
+        this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
+        return { kind: 'none' };
+      }
       // The frame expresses no action: a reference alone ("2번도", "그걸로요", "13번 알림") is chat; a payload alone ("내일 9시
       // 우유") asks the owner to restate what to do with it.
       if (validated.reason === 'ungrounded' && validated.arg === 'action') {
@@ -1295,22 +1329,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // A6 R1 review: the selector's undo undoes only what the owner's words can mean. A source noun of another source (or a
       // second one), or a number / ordinal other than the last action's shown label ("2번 취소해줘" after "할 일 5번으로
       // 추가했어요"), asks instead of undoing the last action.
-      const record = reference.lastAction?.record;
-      if (record !== undefined) {
-        const named = nlNamedItemSources(prepared.groundingText);
-        const numbers = [...nlNumeralsIn(prepared.groundingText), ...nlOrdinalsIn(prepared.groundingText)];
-        const otherSource = named.size > 1 || (named.size === 1 && !named.has(record.source));
-        const otherNumber = numbers.some((number) => number !== record.label);
-        if (otherSource || otherNumber) {
-          const audit: NlActionAudit = { ...base, risk: entry.risk, resolution: otherSource ? 'other-source' : 'ambiguous', result: 'asked', reason: otherSource ? 'other-source' : 'ambiguous' };
-          if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
-          return this.actionAnswer(audit, renderRestate(language));
-        }
-      }
-      // A6-D3a amendment 1, undo confirmation rule: an undo cannot itself be undone, so only an unambiguous undo command
-      // executes directly; any other selected undo asks a one-step confirmation that names the action.
-      if (!nlUndoIsDirect(prepared.groundingText)) return this.askUndoConfirm(turn, language, latencyMs, reference);
-      return this.decideUndo(turn, language, latencyMs, 'none', reference);
+      return this.routeValidatedUndo(turn, prepared.groundingText, reference, { ...base, risk: entry.risk }, language, latencyMs, shadow);
     }
     // A6-D2: resolve the target in code (most recent listing only, display numbers, lastAction).
     let target: NlItemTarget | undefined;
@@ -1377,6 +1396,115 @@ export class NlSelectionService implements TurnDeliveryObserver {
     this.actionCaps.note(turn.actor.id, entry.risk, Date.parse(turn.now));
     const command: NlSelectedCommand = { entryId, args, language, ...(target !== undefined ? { target } : {}) };
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}), action: audit };
+  }
+
+  /**
+   * A6-D3a amendment 1, elliptical continuation: the question for an inferred action, or `undefined` (the caller then
+   * answers as before: chat). Nothing is written.
+   *  - Right after the same action on the same list (a fresh, not undone last action of this entry and source), an
+   *    elliptical frame or a bare reference asks the continuation: "할 일 3번도 완료할까요?".
+   *  - Otherwise only an elliptical frame asks (a bare reference stays chat, as before), with the selector's entry as the
+   *    inferred action: "할 일 2번을 완료할까요?" ("2번 체크", "3번 해줘"; CA review P2/P3).
+   * The confirmation needs a display number the owner actually wrote that resolves to one item (and, for a continuation,
+   * not the last action's own item); it is the one-candidate `action-target` question, so "응" runs it. An elliptical
+   * frame naming its item by a title (`match`) or by a number that does not resolve asks the owner to restate with the
+   * entry's canonical action word, as for a garbled action word (no span is ever stored).
+   */
+  private async askInferredAction(
+    entryId: NlActionEntryId,
+    rawArgs: NlArgs,
+    elliptical: boolean,
+    turn: NlSelectionTurn,
+    prepared: PreparedSelectionInput,
+    language: 'ko' | 'en',
+    reference: NlReferenceState,
+    base: Omit<NlActionAudit, 'resolution' | 'result'>,
+    openQuestion: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' | 'action-undo-confirm' }> | undefined,
+    shadow: boolean,
+  ): Promise<NlSelectionDecision | undefined> {
+    if (entryId !== 'todo.complete' && entryId !== 'todo.cancel' && entryId !== 'reminder.cancel') return undefined;
+    if (openQuestion !== undefined) return undefined;
+    const source = nlActionSourceOf(entryId, rawArgs);
+    if (source === undefined) return undefined;
+    const last = reference.lastAction;
+    const continued = last !== undefined && last.fresh && !last.record.undone && last.record.entryId === entryId && last.record.source === source;
+    if (!continued && !elliptical) return undefined;
+    const restate = (): NlSelectionDecision | undefined => {
+      if (!elliptical) return undefined;
+      const words = (NL_ACTION_CANONICAL_WORDS as Readonly<Record<string, { readonly ko: string; readonly en: string }>>)[entryId];
+      if (words === undefined) return undefined;
+      const audit: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'elliptical-restate' };
+      if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
+      return this.actionAnswer(audit, renderGarbledAction(language === 'en' ? words.en : words.ko, language));
+    };
+    const ref = parseNlRef(rawArgs.ref);
+    if (ref?.kind !== 'index') return typeof rawArgs.match === 'string' && rawArgs.match.length > 0 ? restate() : undefined;
+    const written = [...nlNumeralsIn(prepared.groundingText), ...nlOrdinalsIn(prepared.groundingText)];
+    if (written.length !== 1 || written[0] !== ref.index) return undefined;
+    const resolved = resolveItemReference({ entryId, source, ref, groundingText: prepared.groundingText, state: reference });
+    if (resolved.kind !== 'resolved' || resolved.target.id === undefined || resolved.target.label === undefined) return restate();
+    if (continued && resolved.target.id === last.record.itemId) return undefined;
+    const target = resolved.target;
+    const label = target.label as number;
+    const audit: NlActionAudit = { ...base, resolution: 'resolved', target, result: 'asked', reason: continued ? 'elliptical-confirm' : 'inferred-confirm' };
+    if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
+    await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
+      pendingQuestionRecord(turn.actor.id, {
+        kind: 'action-target',
+        at: turn.now,
+        language,
+        entryId,
+        source,
+        candidates: [{ label, id: target.id as string }],
+        args: {},
+        ...(target.listingAt !== undefined ? { listingAt: target.listingAt } : {}),
+        confirm: true,
+      }),
+    );
+    // Its delivery binds the question's platform ids, so a reply to the question itself is told apart (Codex P1).
+    if (turn.turnId !== undefined) this.awaitQuestion(turn.session.id, turn.turnId, turn.actor.id, turn.now);
+    // One next-turn question per session: the confirmation supersedes any R5a draft, so "응" can only mean this.
+    if (this.deictic !== undefined) await this.deictic.clearDraft(turn.session, turn.actor.id, turn.now, 'continuation-confirm-asked');
+    return this.actionAnswer(audit, renderContinuationConfirm(entryId, source, label, language, continued));
+  }
+
+  /**
+   * The one route of a VALIDATED undo request (the selected `action.undo`, and the explicit undo answering a continuation
+   * confirmation), so the two paths cannot drift: the source and number cross-checks, then the undo confirmation rule (an
+   * undo cannot itself be undone, so only an unambiguous undo command executes directly; any other asks a one-step
+   * confirmation that names the action).
+   */
+  private async routeValidatedUndo(
+    turn: NlSelectionTurn,
+    groundingText: string,
+    reference: NlReferenceState,
+    base: Omit<NlActionAudit, 'resolution' | 'result'>,
+    language: 'ko' | 'en',
+    latencyMs: number,
+    shadow: boolean,
+  ): Promise<NlSelectionDecision> {
+    const mismatch = this.undoTargetMismatch(groundingText, reference, base, language, shadow);
+    if (mismatch !== undefined) return mismatch;
+    if (!nlUndoIsDirect(groundingText)) return this.askUndoConfirm(turn, language, latencyMs, reference);
+    return this.decideUndo(turn, language, latencyMs, 'none', reference);
+  }
+
+  /**
+   * A6 R1 review: an undo undoes only what the owner's words can mean. A source noun of another source (or a second one),
+   * or a number / ordinal other than the last action's shown label ("2번 취소해줘" after "할 일 5번으로 추가했어요"), asks
+   * instead of undoing the last action. `undefined` when the words fit the last action (or there is none).
+   */
+  private undoTargetMismatch(groundingText: string, reference: NlReferenceState, base: Omit<NlActionAudit, 'resolution' | 'result'>, language: 'ko' | 'en', shadow: boolean): NlSelectionDecision | undefined {
+    const record = reference.lastAction?.record;
+    if (record === undefined) return undefined;
+    const named = nlNamedItemSources(groundingText);
+    const numbers = [...nlNumeralsIn(groundingText), ...nlOrdinalsIn(groundingText)];
+    const otherSource = named.size > 1 || (named.size === 1 && !named.has(record.source));
+    const otherNumber = numbers.some((number) => number !== record.label);
+    if (!otherSource && !otherNumber) return undefined;
+    const audit: NlActionAudit = { ...base, resolution: otherSource ? 'other-source' : 'ambiguous', result: 'asked', reason: otherSource ? 'other-source' : 'ambiguous' };
+    if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
+    return this.actionAnswer(audit, renderRestate(language));
   }
 
   /**
@@ -1522,7 +1650,40 @@ export class NlSelectionService implements TurnDeliveryObserver {
       const entry = offered.get(pending.entryId);
       if (entry === undefined) return undefined;
       const labels = pending.candidates.map((candidate) => candidate.label);
-      const choice = resolveLabelChoice(answerText, labels);
+      // A6-D3a amendment 1, elliptical continuation: a one-candidate confirmation takes a yes ("응") as the candidate and a
+      // no as the end of the question; a number still answers it as any target question. An undo word ("되돌려줘") is never
+      // a yes (Codex P1). A no comes first (Codex / CA P1): "취소", "취소해줘", "아니 취소" close the question and change
+      // nothing. Then an explicit undo command (an explicit undo word, never the 취소 family, in the closed `nlUndoIsDirect`
+      // grammar) closes the question and undoes the last action in this same turn, under the same source and number
+      // cross-checks as a selected undo ("2번 되돌려줘", "알림 되돌려줘" after completing to-do 1 ask, never undo it). Only
+      // this confirmation does so; every other A6 question keeps its one-turn lock.
+      const yesNo = pending.confirm === true ? interpretContinuationConfirmReply(answerText) : 'none';
+      if (yesNo === 'deny') return { kind: 'ask', text: renderCancelled(language) };
+      const undoInput = pending.confirm === true && offered.has('action.undo') && (turn.direct === true || turn.surfaceEnforced === true) ? this.prepare(turn, undefined) : undefined;
+      if (undoInput !== undefined && !('skip' in undoInput) && nlHasExplicitUndoWord(undoInput.groundingText) && nlUndoIsDirect(undoInput.groundingText)) {
+        await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => undefined);
+        // Codex P1: exactly the selected undo's inputs (the turn's own prepared text, the full reference state with its reply
+        // target, the DM state, the shadow level). The one difference: a platform reply POSITIVELY identified as this
+        // confirmation question itself (its delivered ids) counts as no reply target, like a plain turn; a reply to any other
+        // message keeps its target, so `resolveUndo` refuses it as an echo mismatch exactly as on the selected path.
+        const full = this.referenceState(turn);
+        const toQuestion = turn.replyToMessageId !== undefined && (pending.questionReplyIds ?? []).includes(turn.replyToMessageId);
+        const { replyTo: _replyTo, ...withoutReply } = full;
+        const reference: NlReferenceState = toQuestion ? withoutReply : full;
+        const base = { entryId: 'action.undo', risk: 'LOCAL_WRITE' as NlCatalogRisk, refKind: 'none' as const, latencyMs: 0, ...correlationOf(turn) };
+        const shadow = this.shadowed('action.undo', {});
+        // The same request-shape validation as a selected undo (`nlUndoIsDirect` reads the last clause only, so "농담이야.
+        // 되돌려줘" and "되돌리지 마. 되돌려줘" meet the joke and negation vetoes). A vetoed reply has closed the question and is
+        // chat, exactly as on the selected path; nothing is written.
+        const validated = validateSelection({ entryId: 'action.undo', args: {} }, this.validationContext(turn, undoInput.groundingText, undefined, true));
+        if (!validated.ok) {
+          const audit: NlActionAudit = { ...base, resolution: 'none', result: shadow ? 'shadow' : 'refused', reason: validated.reason === 'not-request' ? `not-request:${validated.arg ?? 'unknown'}` : validated.reason };
+          this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
+          return { kind: 'none' };
+        }
+        return this.routeValidatedUndo(turn, undoInput.groundingText, reference, base, language, 0, shadow);
+      }
+      const choice: ReturnType<typeof resolveLabelChoice> = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveLabelChoice(answerText, labels);
       if (choice.kind === 'none') return undefined;
       // A6 R1 review: a bare number or ordinal that is none of the offered labels asks the same question again; it never
       // reaches the selector (where it could become another entry or item).
@@ -1693,6 +1854,22 @@ export class NlSelectionService implements TurnDeliveryObserver {
       this.log('info', NL_ACTION_LOG_EVENT, { ...nlActionLogFields({ ...decided, result, ...(action?.reason !== undefined ? { reason: action.reason } : {}) }), ...fetch });
     }
     if (echo || listed !== undefined) this.awaitEcho(session.id, actor.id, message, now, echo, listed);
+  }
+
+  private awaitQuestion(sessionId: string, messageId: string, actorId: string, at: IsoTimestamp): void {
+    const nowMs = Date.parse(at);
+    for (const [key, pending] of this.questionReceipts) {
+      const age = nowMs - Date.parse(pending.at);
+      if (!Number.isFinite(age) || age < 0 || age >= ECHO_RECEIPT_TTL_MS) this.questionReceipts.delete(key);
+    }
+    const key = questionReceiptKey(sessionId, messageId);
+    this.questionReceipts.delete(key);
+    this.questionReceipts.set(key, { actorId, at });
+    while (this.questionReceipts.size > ECHO_RECEIPTS_MAX) {
+      const oldest = this.questionReceipts.keys().next().value;
+      if (oldest === undefined) break;
+      this.questionReceipts.delete(oldest);
+    }
   }
 
   private awaitEcho(sessionId: string, actorId: string, message: { readonly id: string; readonly context: ConversationContext }, now: IsoTimestamp, echo: boolean, listing?: ListingSource): void {
@@ -2239,6 +2416,10 @@ function modeLabel(mode: string, language: 'ko' | 'en'): string {
 }
 
 /** A6: one inbound message (platform message ids are unique only per conversation). */
+function questionReceiptKey(sessionId: string, messageId: string): string {
+  return JSON.stringify([sessionId, messageId]);
+}
+
 function echoKey(messageId: string, context: { readonly platform: string; readonly channelId: string }): string {
   return JSON.stringify([context.platform, context.channelId, messageId]);
 }

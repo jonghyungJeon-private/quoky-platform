@@ -13,6 +13,7 @@ import { NlActionsConfigError, NlSelectionService, nlSelectionCacheKey, type NlS
 import { prepareSelectionInput } from './selection-input';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
 import { INTERPRETATION_PREFERENCES_METADATA_KEY, LAST_SELECTION_METADATA_KEY, NL_PENDING_METADATA_KEY, readPendingQuestion, type PendingQuestion } from './selection-state';
+import { interpretContinuationConfirmReply, interpretUndoConfirmReply } from './undo-confirm';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 // ADR-0120 amendment A6 (NLA-5) at the selection service: the flag levels and the startup refusals, `off` byte-identical
@@ -995,5 +996,225 @@ describe('owner decision C (2026-10-17, A6-D1 amendment): reminder.cancel by tit
     const channel = await run('치과 예약 확인 알림 취소해줘', { match: '치과 예약 확인' }, { direct: false });
     expect(channel.decision).toMatchObject({ kind: 'ask', text: '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.' });
     expect(actionLogs(channel.w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'dm-only' });
+  });
+});
+
+describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold a6-reference-none-002 "이번엔 3번")', () => {
+  // The gold fixture: a to-do listing labelled 1..3 and a fresh lastAction todo.complete on label 1.
+  const completedOne = (entryId: 'todo.complete' | 'todo.add' = 'todo.complete', minute = 0) =>
+    withLastAction(undefined, 'owner', { entryId, source: 'todo', itemId: 'todo-1', label: 1, at: at(minute), undoable: true, undone: false, echoReplyIds: [] }, at(minute));
+  const run = async (text: string, args: Record<string, unknown> = { ref: '#3' }, options: { lastAction?: 'todo.complete' | 'todo.add' | 'none'; entryId?: string } = {}) => {
+    const w = world({ level: 'local', script: () => out(options.entryId ?? 'todo.complete', args) });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    if (options.lastAction !== 'none') w.setMetadata(LAST_ACTION_METADATA_KEY, completedOne(options.lastAction ?? 'todo.complete'));
+    const decision = await w.decide(text, { now: at(1) });
+    return { w, decision };
+  };
+  const answer = (w: World, text: string, minute = 2) =>
+    w.service.answerActionPending({ text, attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(minute), entries: ALL, route: 'chat', direct: true, pending: readPendingQuestion(w.session(), 'owner', at(minute)) ?? null });
+
+  it('"이번엔 3번" right after completing 1 asks with the inferred action and writes nothing (the selector chose todo.complete #3)', async () => {
+    const { w, decision } = await run('이번엔 3번');
+    expect(decision).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+    expect(decision.kind).not.toBe('execute');
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'todo.complete', result: 'asked', reason: 'elliptical-confirm', targetId: 'todo-3' });
+    expect(readPendingQuestion(w.session(), 'owner', at(2))).toMatchObject({ kind: 'action-target', entryId: 'todo.complete', candidates: [{ label: 3, id: 'todo-3' }], confirm: true });
+  });
+
+  it('"응" executes the asked action on the asked item; "아니" ends it; a number still answers it', async () => {
+    const yes = await run('이번엔 3번');
+    expect(await answer(yes.w, '응')).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { source: 'todo', id: 'todo-3', label: 3 } } });
+    const no = await run('이번엔 3번');
+    const denied = await answer(no.w, '아니');
+    expect(denied?.kind).toBe('ask');
+    expect(denied).not.toMatchObject({ kind: 'execute' });
+    const number = await run('이번엔 3번');
+    expect(await answer(number.w, '3')).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { id: 'todo-3' } } });
+    // Not an answer: the question ends and nothing runs from it.
+    const other = await run('이번엔 3번');
+    expect(await answer(other.w, '응 근데 날씨는?')).toBeUndefined();
+  });
+
+  it('Codex P1: one "되돌려줘" to "3번도 완료할까요?" undoes the completion of 1 in that turn and never completes 3', async () => {
+    // The selector answers the elliptical turn with todo.complete #3 and each undo request with action.undo.
+    const w = world({ level: 'local', script: ['{"entryId":"todo.complete","args":{"ref":"#3"},"ambiguity":"CLEAR","alternatives":[]}', '{"entryId":"action.undo","args":{},"ambiguity":"CLEAR","alternatives":[]}'] });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    w.setMetadata(LAST_ACTION_METADATA_KEY, completedOne());
+    expect(await w.decide('이번엔 3번', { now: at(1) })).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+    // One "되돌려줘" closes the question and undoes the completion of #1 in that same turn; #3 is never touched.
+    const undo = await w.decide('되돌려줘', { now: at(2) });
+    expect(undo).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' }, undo: { entryId: 'todo.complete' } } });
+    expect(JSON.stringify(undo)).not.toContain('todo-3');
+    expect(readPendingQuestion(w.session(), 'owner', at(3))).toBeUndefined();
+    // The same through the start-of-turn answer path; a non-direct undo word is no answer there (routes normally).
+    const again = await run('이번엔 3번');
+    expect(await answer(again.w, '되돌려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' } } });
+    const loose = await run('이번엔 3번');
+    expect(await answer(loose.w, '되돌려 주신 기능 설명해줘')).toBeUndefined();
+    // Codex / CA P1: a no comes first. "취소", "아니 취소", "취소해줘" close the question and change nothing.
+    for (const text of ['취소', '아니 취소', '취소해줘']) {
+      const denied = await run('이번엔 3번');
+      const reply = await answer(denied.w, text);
+      expect(reply, text).toMatchObject({ kind: 'ask' });
+      expect(reply, text).not.toMatchObject({ kind: 'execute' });
+      expect(actionLogs(denied.w).some((log) => log.fields?.entryId === 'action.undo'), text).toBe(false);
+    }
+    // The undo shortcut keeps the selected undo's cross-checks: another number or another source asks, never undoes #1.
+    const otherNumber = await run('이번엔 3번');
+    const numbered = await answer(otherNumber.w, '2번 되돌려줘');
+    expect(numbered).toMatchObject({ kind: 'ask' });
+    expect(actionLogs(otherNumber.w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'asked', reason: 'ambiguous' });
+    const otherSource = await run('이번엔 3번');
+    const sourced = await answer(otherSource.w, '알림 되돌려줘');
+    expect(sourced).toMatchObject({ kind: 'ask' });
+    expect(actionLogs(otherSource.w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'asked', reason: 'other-source' });
+    // Codex P1: the shortcut meets the selected undo's request-shape vetoes (the direct grammar reads the last clause only).
+    for (const text of ['농담이야. 되돌려줘', '되돌리지 마. 되돌려줘', '되돌려줘라고 하면 어떻게 돼?']) {
+      const vetoed = await run('이번엔 3번');
+      const reply = await answer(vetoed.w, text);
+      expect(reply?.kind ?? 'none', text).not.toBe('execute');
+      expect(actionLogs(vetoed.w).some((log) => log.fields?.result === 'executed' || log.fields?.result === 'undone'), text).toBe(false);
+    }
+    const joke = await run('이번엔 3번');
+    expect(await answer(joke.w, '농담이야. 되돌려줘')).toEqual({ kind: 'none' });
+    expect(actionLogs(joke.w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'not-request:joke' });
+    const negated = await run('이번엔 3번');
+    expect(await answer(negated.w, '되돌리지 마. 되돌려줘')).toEqual({ kind: 'none' });
+    expect(actionLogs(negated.w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'not-request:negation' });
+    // The yes path takes only a whole-message yes: a vetoed or embedded yes never runs the asked action.
+    for (const text of ['응이라고 하면 안 돼', '농담이야 응', '응 농담이야', '3번이라고 하면 안 돼']) {
+      const yes = await run('이번엔 3번');
+      expect((await answer(yes.w, text))?.kind ?? 'none', text).not.toBe('execute');
+    }
+    // The plain explicit undo still undoes #1 in the same turn.
+    const plain = await run('이번엔 3번');
+    expect(await answer(plain.w, '되돌려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' }, undo: { entryId: 'todo.complete' } } });
+    // Other A6 questions keep their one-turn lock: an open multi-candidate target question still holds the undo.
+    const locked = world({ level: 'local', script: () => out('action.undo') });
+    locked.setMetadata(LAST_ACTION_METADATA_KEY, completedOne());
+    const pending: PendingQuestion = { kind: 'action-target', at: at(1), language: 'ko', entryId: 'todo.complete', source: 'todo', candidates: [{ label: 2, id: 'todo-2' }, { label: 3, id: 'todo-3' }], args: {} };
+    expect(await locked.decide('되돌려줘', { now: at(2), pending })).toMatchObject({ kind: 'ask', entryId: 'action.undo' });
+    expect(actionLogs(locked).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'pending-question' });
+    // The undo confirmation keeps its own undo-word approval.
+    expect(interpretUndoConfirmReply('되돌려줘')).toBe('approve');
+    expect(interpretContinuationConfirmReply('되돌려줘')).toBe('none');
+    expect(interpretContinuationConfirmReply('응')).toBe('approve');
+    for (const text of ['취소', '취소해', '취소해줘', '아니 취소', '아니요, 됐어', 'no, cancel']) expect(interpretContinuationConfirmReply(text), text).toBe('deny');
+  });
+
+  it('Codex P1: the undo shortcut takes the selected undo\'s reply target; only a reply to the question itself is a plain turn', async () => {
+    const echoed = withLastAction(undefined, 'owner', { entryId: 'todo.complete', source: 'todo', itemId: 'todo-1', label: 1, at: at(0), undoable: true, undone: false, echoReplyIds: ['echo-1'] }, at(0));
+    const asked = async () => {
+      const w = world({ level: 'local', script: ['{"entryId":"todo.complete","args":{"ref":"#3"},"ambiguity":"CLEAR","alternatives":[]}', '{"entryId":"action.undo","args":{},"ambiguity":"CLEAR","alternatives":[]}'] });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      w.setMetadata(LAST_ACTION_METADATA_KEY, echoed);
+      expect(await w.decide('이번엔 3번', { now: at(1) })).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+      // The question is delivered as platform message q-1 (the asking turn is turn-1 of sess-1).
+      await w.service.observeDelivery({ messageId: 'turn-1', context: { platform: 'discord', channelId: 'dm-1' } as never, sessionId: 'sess-1', status: 'RESPONDED', platformMessageIds: ['q-1'] });
+      expect(readPendingQuestion(w.session(), 'owner', at(2))).toMatchObject({ confirm: true, questionReplyIds: ['q-1'] });
+      return w;
+    };
+    const reply = (w: World, replyToMessageId: string) =>
+      w.service.answerActionPending({ text: '되돌려줘', attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(2), entries: ALL, route: 'chat', direct: true, replyToMessageId, turnId: 'turn-1', pending: readPendingQuestion(w.session(), 'owner', at(2)) ?? null });
+
+    // A reply to an unrelated message: echo-mismatch, nothing undone (as on the selected path).
+    const unrelated = await asked();
+    const refused = await reply(unrelated, 'some-other-message');
+    expect(refused?.kind).toBe('ask');
+    expect(actionLogs(unrelated).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'echo-mismatch' });
+    // A reply to the confirmation question itself: a plain turn, so the undo of #1 runs.
+    const toQuestion = await asked();
+    expect(await reply(toQuestion, 'q-1')).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' }, undo: { entryId: 'todo.complete' } } });
+    // A reply to the original action receipt: the same result as the selected path.
+    const toEcho = await asked();
+    const shortcut = await reply(toEcho, 'echo-1');
+    const normal = world({ level: 'local', script: () => out('action.undo') });
+    normal.setMetadata(LAST_ACTION_METADATA_KEY, echoed);
+    const selected = await normal.decide('되돌려줘', { now: at(2), replyTo: 'echo-1' });
+    expect(shortcut).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' } } });
+    expect(shortcut).toEqual(selected);
+    // And the unrelated reply on the selected path refuses the same way.
+    const normalUnrelated = world({ level: 'local', script: () => out('action.undo') });
+    normalUnrelated.setMetadata(LAST_ACTION_METADATA_KEY, echoed);
+    expect((await normalUnrelated.decide('되돌려줘', { now: at(2), replyTo: 'some-other-message' })).kind).toBe('ask');
+    expect(actionLogs(normalUnrelated).at(-1)?.fields).toMatchObject({ reason: 'echo-mismatch' });
+  });
+
+  it('a bare reference reads the same way: "3번" / "3번도" after completing 1 ask; with no last action they stay chat as before', async () => {
+    for (const text of ['3번', '3번도', '그럼 3번']) {
+      const { decision } = await run(text);
+      expect(decision, text).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+    }
+    for (const text of ['3번', '3번도']) {
+      const { w, decision } = await run(text, { ref: '#3' }, { lastAction: 'none' });
+      expect(decision, text).toEqual({ kind: 'none' });
+      expect(actionLogs(w).at(-1)?.fields?.reason, text).toBe('no-action-word');
+    }
+  });
+
+  it('CA P2: a light-verb request names no action either; right after the same action it asks the continuation', async () => {
+    for (const text of ['3번도 해줘', '이번엔 3번 해줘', '그럼 3번 부탁해', '3번도 ㄱㄱ', '3번도 고고', '3번도 처리해줘', '3번도 똑같이 해줘']) {
+      const { w, decision } = await run(text);
+      expect(decision, text).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+      expect(actionLogs(w).at(-1)?.fields?.reason, text).toBe('elliptical-confirm');
+    }
+  });
+
+  it('CA P2/P3: with no matching last action an elliptical request asks the selector\'s inferred action; "응" runs it', async () => {
+    const cases: Array<[string, Parameters<typeof run>[2], Record<string, unknown>, string]> = [
+      ['3번 해줘', { lastAction: 'none' }, { ref: '#3' }, '할 일 3번을 완료할까요? (응 / 아니)'],
+      ['이번엔 3번', { lastAction: 'none' }, { ref: '#3' }, '할 일 3번을 완료할까요? (응 / 아니)'],
+      ['그럼 3번 부탁해', { lastAction: 'todo.add' }, { ref: '#3' }, '할 일 3번을 완료할까요? (응 / 아니)'],
+      ['2번 체크', { lastAction: 'none' }, { ref: '#2' }, '할 일 2번을 완료할까요? (응 / 아니)'],
+      ['2번 check', { lastAction: 'none' }, { ref: '#2' }, '할 일 2번을 완료할까요? (응 / 아니)'],
+      ['이번엔 3번', { entryId: 'todo.cancel' }, { ref: '#3' }, '할 일 3번을 목록에서 뺄까요? (응 / 아니)'],
+      ['now 3', { lastAction: 'none' }, { ref: '#3' }, 'Complete to-do #3? (yes / no)'],
+    ];
+    for (const [text, options, args, question] of cases) {
+      const { w, decision } = await run(text, args, options);
+      expect(decision, `${text} ${JSON.stringify(options)}`).toMatchObject({ kind: 'ask', text: question });
+      expect(actionLogs(w).at(-1)?.fields, text).toMatchObject({ result: 'asked', reason: 'inferred-confirm' });
+      expect(readPendingQuestion(w.session(), 'owner', at(2)), text).toMatchObject({ kind: 'action-target', confirm: true, candidates: [{ label: (args.ref as string) === '#2' ? 2 : 3 }] });
+    }
+    const checked = await run('2번 체크', { ref: '#2' }, { lastAction: 'none' });
+    expect(await answer(checked.w, '응')).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { id: 'todo-2' } } });
+  });
+
+  it('CA P3: an elliptical title target ("회의 준비 체크") asks to restate with the action word; nothing is stored or written', async () => {
+    const { w, decision } = await run('회의 준비 체크', { match: '회의 준비' }, { lastAction: 'none' });
+    expect(decision).toMatchObject({ kind: 'ask', text: renderGarbledAction('완료', 'ko') });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'asked', reason: 'elliptical-restate' });
+    expect(readPendingQuestion(w.session(), 'owner', at(2))).toBeUndefined();
+  });
+
+  it('an elliptical message never writes; with nothing it can safely ask it is chat', async () => {
+    // The same item as the last action again, or a number the owner never wrote (a selector lure on "안녕").
+    const cases: Array<[string, Parameters<typeof run>[2], Record<string, unknown>]> = [
+      ['이번엔 1번', {}, { ref: '#1' }],
+      ['안녕', { lastAction: 'none' }, { ref: '#3' }],
+      ['그럼 그렇게 해줘', { lastAction: 'none' }, { ref: '#3' }],
+    ];
+    for (const [text, options, args] of cases) {
+      const { w, decision } = await run(text, args, options);
+      expect(decision, `${text} ${JSON.stringify(options)}`).toEqual({ kind: 'none' });
+      expect(actionLogs(w).at(-1)?.fields?.reason, text).toBe('elliptical');
+      expect(readPendingQuestion(w.session(), 'owner', at(2)), text).toBeUndefined();
+    }
+  });
+
+  it('a clear request still acts directly: an action word or a request form ("이번엔 3번 완료", "3번도 체크해줘")', async () => {
+    for (const text of ['이번엔 3번 완료', '이번엔 3번 완료해줘', '3번도 체크해줘', '3번 체크해줘', 'complete 3 too']) {
+      const { decision } = await run(text);
+      expect(decision, text).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { id: 'todo-3' } } });
+    }
+  });
+
+  it('shadow logs the confirmation as shadow and asks nothing', async () => {
+    const w = world({ level: 'shadow', script: () => out('todo.complete', { ref: '#3' }) });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    w.setMetadata(LAST_ACTION_METADATA_KEY, completedOne());
+    expect((await w.decide('이번엔 3번', { now: at(1) })).kind).toBe('none');
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'elliptical-confirm' });
+    expect(readPendingQuestion(w.session(), 'owner', at(2))).toBeUndefined();
   });
 });

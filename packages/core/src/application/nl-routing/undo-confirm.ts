@@ -79,7 +79,14 @@ export function nlUndoIsDirect(text: string): boolean {
 export type NlUndoConfirmReply = 'approve' | 'deny' | 'none';
 
 /** The narrow whole-message answers to the undo confirmation (like the R5a draft matcher, not ADR-0095 approvals). */
-const APPROVE = new Set(['응', '어', '네', '넵', '예', '그래', '좋아', '맞아', 'ㅇㅇ', '되돌려줘', '되돌려', '해줘', 'yes', 'ok', 'okay', 'y']);
+const UNDO_APPROVALS: ReadonlySet<string> = new Set(['되돌려줘', '되돌려']);
+const APPROVE = new Set(['응', '어', '네', '넵', '예', '그래', '좋아', '맞아', 'ㅇㅇ', ...UNDO_APPROVALS, '해줘', 'yes', 'ok', 'okay', 'y']);
+/**
+ * The approvals of the elliptical continuation confirmation ("할 일 3번도 완료할까요?"): the undo confirmation's plain yeses
+ * WITHOUT the undo words (Codex P1). "되돌려줘" there undoes the last action; it is never a yes to a new write, and it is left
+ * unconsumed so the turn routes to the undo as usual.
+ */
+const CONTINUATION_APPROVE: ReadonlySet<string> = new Set([...APPROVE].filter((word) => !UNDO_APPROVALS.has(word)));
 const DENY = new Set(['아니', '아니요', '아니야', '아뇨', '취소', '됐어', '그만', 'ㄴㄴ', 'no', 'n', 'cancel']);
 
 /** The owner's answer to "…를 되돌릴까요?": the whole message, trailing `.`, `!`, `~` and spaces removed. */
@@ -89,6 +96,32 @@ export function interpretUndoConfirmReply(text: string): NlUndoConfirmReply {
   if (APPROVE.has(key)) return 'approve';
   if (DENY.has(key)) return 'deny';
   return 'none';
+}
+
+/** A no to the continuation confirmation (Codex / CA P1): the undo confirmation's noes and the 취소 request forms. */
+const CONTINUATION_DENY: ReadonlySet<string> = new Set([...DENY, '취소요', '취소해', '취소해요', '취소해줘', '취소해줘요', '취소해 줘', '취소할게', '취소할게요', '취소합니다']);
+/** A leading no before the answer ("아니 취소", "아니요, 됐어", "no, cancel"). */
+const LEADING_NO = /^(?:아니|아니요|아니야|아뇨|아냐|ㄴㄴ|no)[,\s]+/u;
+
+/**
+ * The owner's answer to the continuation confirmation: as {@link interpretUndoConfirmReply}, but an undo word is no yes,
+ * and "취소" / "취소해줘" / "아니 취소" are a no (in the question's context they decline the inferred action).
+ */
+export function interpretContinuationConfirmReply(text: string): NlUndoConfirmReply {
+  const normalized = text.normalize('NFC').trim().replace(/[.!~\s]+$/u, '');
+  const key = /^[A-Za-z, ]+$/u.test(normalized) ? normalized.toLowerCase() : normalized;
+  if (CONTINUATION_APPROVE.has(key)) return 'approve';
+  const rest = key.replace(LEADING_NO, '');
+  if (CONTINUATION_DENY.has(key) || CONTINUATION_DENY.has(rest)) return 'deny';
+  return 'none';
+}
+
+/**
+ * Whether the text holds an EXPLICIT undo word (되돌-, 원래대로, 원상복구, 원복, 롤백, undo, revert, roll back): the closed undo
+ * heads without the 취소 family, which in a confirmation's context declines rather than undoes.
+ */
+export function nlHasExplicitUndoWord(text: string): boolean {
+  return /되돌|원래대로|원상복구|원복|롤백|\bundo\b|\brevert\b|\broll\s?back\b/iu.test(text.normalize('NFC'));
 }
 
 const ACTION_NAMES: Readonly<Record<string, { readonly ko: string; readonly en: string }>> = {

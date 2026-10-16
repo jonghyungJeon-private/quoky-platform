@@ -30,8 +30,8 @@ import {
 } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
-import { nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
-import { nlGarbledActionWord, type NlActionVocabulary } from './garbled-action';
+import { nlFrameIsElliptical, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
+import { nlFrameHasActionInflection, nlGarbledActionWord, type NlActionVocabulary } from './garbled-action';
 import {
   isNlRangeSymbol,
   isWeekdayOrTimeKeyword,
@@ -113,7 +113,14 @@ export type NlValidationFailureReason =
    * jamo (Latin: one letter) away from an action word without being it or a form of it ("3번 완룐 처리해줘"). The owner is
    * asked, offered `candidate`; nothing is written.
    */
-  | 'garbled-action';
+  | 'garbled-action'
+  /**
+   * A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, "이번엔 3번"): a target entry's frame names no action
+   * word and makes no request of its own (`nlFrameIsElliptical`). The action is only inferred, so nothing is written: the
+   * caller asks a confirmation of the inferred action ("할 일 3번도 완료할까요?") or, with nothing to infer it from, the turn
+   * is chat.
+   */
+  | 'elliptical';
 
 export interface NlValidatedSelection {
   readonly entry: NlCatalogEntry;
@@ -208,6 +215,8 @@ export interface NlRequestShape {
   readonly unbalancedSpan?: string;
   /** The action word a garbled word of the frame may stand for (see `garbled-action.ts`); the selection asks. */
   readonly garbled?: string;
+  /** A target entry's frame with no action word and no request form (`nlFrameIsElliptical`); the selection never executes. */
+  readonly elliptical?: boolean;
 }
 
 /**
@@ -261,7 +270,12 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
   // is content), against the selected entry's own words first.
   const near = nlGarbledActionWord(contentFrame, actionVocabularies(entry), NL_ACTION_VERBAL_NOUNS, CATALOG_WORDS, prose, NL_ACTION_LOANWORDS);
   const garbled = near === undefined ? undefined : canonicalActionWord(near.owner, /^[a-z]+$/u.test(near.word));
-  return { ...(veto !== undefined ? { veto } : {}), expressesAction, ...(garbled !== undefined ? { garbled } : {}) };
+  // A6-D3a amendment 1, elliptical continuation: a target entry (a ref or a match; not a payload entry, whose bare content
+  // acts by owner decision A, nor the arg-less undo with its own anchor rule) whose frame names no action and requests
+  // nothing beyond the light verb ("이번엔 3번", "3번도 해줘") never executes. Read on the content frame, against every A6
+  // vocabulary; an inflected action word ("2번 끝냄 처리해줘") names its action.
+  const elliptical = !payload && entry.args.length > 0 && nlFrameIsElliptical(contentFrame, NL_ACTION_WORDS) && !nlFrameHasActionInflection(contentFrame, NL_ACTION_WORDS, NL_ACTION_VERBAL_NOUNS);
+  return { ...(veto !== undefined ? { veto } : {}), expressesAction, ...(garbled !== undefined ? { garbled } : {}), ...(elliptical ? { elliptical } : {}) };
 }
 
 /** The catalog's own words (aliases and source names of every read and action entry): known words, never a garble. */
@@ -314,6 +328,9 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     // After the vetoes (a garbled word in a question or a negation is still chat): the action word itself is uncertain, so
     // the owner is asked with the candidate instead of the write running (owner decision 2026-10-16, "3번 완룐 처리해줘").
     if (shape.garbled !== undefined) return { ok: false, reason: 'garbled-action', entryId, arg: 'action', candidate: shape.garbled };
+    // After the garble (a garbled action word is its own question): an elliptical frame names no action at all, so the
+    // action is only inferred and nothing is written ("이번엔 3번" after "1번 완료"; D12 gate v44 run 3).
+    if (shape.elliptical === true) return { ok: false, reason: 'elliptical', entryId, arg: 'action' };
   }
   // A6-D3 (A6 R1 fix): a payload made only of deictic, ordinal or time words gets its fixed reply ("내용을 직접 적어
   // 주세요") before any missing argument is named: "그거 알림으로 만들어줘" has no time either, and the content is the problem.

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES, NL_ACTION_WORDS, containsNlTimeExpression, nlActionInputRefusal, nlActionWordGrounded } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { nlRequestVeto } from './request-shape';
+import { nlFrameIsElliptical, nlRequestVeto } from './request-shape';
 import { NL_ACTION_ENTRIES as ENTRIES_FOR_UNDO } from './action-entries';
 import { interpretUndoConfirmReply, nlUndoIsDirect } from './undo-confirm';
 import { prepareSelectionInput } from './selection-input';
@@ -382,6 +382,9 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
   const VETOED: readonly string[] = [
     'a6-paraphrase-todo.add-009', // "할 일 하나 추가할게. …": first-person volition (owner 2026-10-16: none)
     'a6-reference-none-001',
+    // Elliptical continuation (D12 gate v44 run 3): no action word, no request form, so no target lure executes; with the
+    // same action fresh the runtime asks "할 일 3번도 완료할까요?" (nl-action-service.test.ts), never a write.
+    'a6-reference-none-002',
     'a6-reference-none-003',
     'a6-reference-none-004',
     'a6-negative-none-001',
@@ -468,6 +471,7 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-112',
     'a6-negative-none-113',
     'a6-negative-none-115',
+    'a6-negative-none-116', // "ㅋㅋ 그거": elliptical (no action word, no request form) since D12 gate v44 run 3
     'a6-negative-none-117',
     'a6-negative-none-118',
     'a6-negative-none-119',
@@ -537,7 +541,6 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
   // Some lure validates: whether they act rests on the selector (it should answer none), on reference resolution or on
   // the reminder grammar at execution. The D12 gate's "negative captures 0" measures them.
   const SELECTOR_DEPENDENT: readonly string[] = [
-    'a6-reference-none-002',
     'a6-reference-none-005',
     'a6-negative-none-047',
     'a6-negative-none-050',
@@ -564,7 +567,6 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-108',
     'a6-negative-none-110',
     'a6-negative-none-114',
-    'a6-negative-none-116',
     'a6-negative-none-127',
     'a6-negative-none-128',
     'a6-negative-none-129',
@@ -681,5 +683,38 @@ describe('owner decision D (2026-10-17): English colon label forms execute like 
     for (const text of ['"Todo: buy milk" he said', 'he told me to write "Todo: buy milk"', 'How do I add a to-do: buy milk', 'I added a to-do: buy milk', 'Todo: request: buy milk', 'Q4: 예산 검토 할 일로']) {
       expect(eligible(text, 'todo.add', { title: 'buy milk' }).guard, text).toBe('not-plain');
     }
+  });
+});
+
+describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3): no action word and no request form never executes', () => {
+  const v = (entryId: string, args: Record<string, string>, text: string) => validateSelection({ entryId, args }, ctx(text));
+
+  it('a frame without any A6 action word and without a request form is elliptical', () => {
+    for (const text of ['이번엔 3번', '그럼 3번', '이번엔 3번요', '3 too', 'now 3', '2번 체크', '2번 check']) expect(nlFrameIsElliptical(text, NL_ACTION_WORDS), text).toBe(true);
+    // CA review P2: the light-verb class (해/하, 처리, 부탁, ㄱㄱ, 고고, 똑같이, do/please) requests without naming an action.
+    for (const text of ['3번도 해줘', '이번엔 3번 해줘', '그럼 3번 부탁해', '3번도 ㄱㄱ', '3번도 고고', '3번도 처리해줘', '3번도 똑같이 해줘', '3번 해 주세요', '3번 부탁드립니다', 'do 3 too please']) {
+      expect(nlFrameIsElliptical(text, NL_ACTION_WORDS), text).toBe(true);
+    }
+    for (const text of ['이번엔 3번 완료', '3번도 완료해줘', '1번 할일 체크해줘', '2번 할 일 빼', 'mark 3 done', 'complete 3 too', '3번 완료 처리해줘', '3번도 빼줘']) {
+      expect(nlFrameIsElliptical(text, NL_ACTION_WORDS), text).toBe(false);
+    }
+  });
+
+  it('a target entry refuses it as `elliptical` (gold a6-reference-none-002); payload entries and clear requests are unchanged', () => {
+    for (const entryId of ['todo.complete', 'todo.cancel', 'reminder.cancel']) {
+      expect(v(entryId, { ref: '#3' }, '이번엔 3번'), entryId).toMatchObject({ ok: false, reason: 'elliptical', arg: 'action' });
+    }
+    // A reference alone is still `ungrounded` (the frame expresses nothing), as before.
+    expect(v('todo.complete', { ref: '#3' }, '3번')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    expect(v('todo.complete', { ref: '#3' }, '이번엔 3번 완료')).toMatchObject({ ok: true });
+    expect(v('todo.complete', { ref: '#1' }, '1번 할일 체크해줘')).toMatchObject({ ok: true });
+    // Owner decision A: a bare payload names what to make and acts (no action word needed for a payload entry).
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일')).toMatchObject({ ok: true });
+    // An inflected action word names its action even with only the light verb around it (garbled-action inflection rule).
+    expect(v('todo.complete', { ref: '#2' }, '2번 끝냄 처리해줘')).toMatchObject({ ok: true });
+    expect(v('todo.complete', { ref: '#3' }, '3번도 해줘')).toMatchObject({ ok: false, reason: 'elliptical' });
+    expect(v('todo.complete', { ref: '#2' }, '2번 체크')).toMatchObject({ ok: false, reason: 'elliptical' });
+    // The garbled action word keeps its own question first.
+    expect(v('todo.complete', { ref: '#3' }, '3번 완룐 처리해줘')).toMatchObject({ ok: false, reason: 'garbled-action' });
   });
 });

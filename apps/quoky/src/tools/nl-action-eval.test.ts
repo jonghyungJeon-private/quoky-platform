@@ -91,6 +91,21 @@ describe('the action corpus (A6-D7)', () => {
     expect(misses).toEqual([]);
     expect(summarizeAction(records.filter((record) => !cost.has(record.id)))).toMatchObject({ gatePassed: true, wrongTargets: 0, negativeCaptures: 0, spanExact: 1 });
   });
+
+  it('D12 gate v44 run 3: gold a6-reference-none-002 "이번엔 3번" with the selector\'s todo.complete #3 now asks (a question, safe), never a capture', async () => {
+    const golden = corpus.cases.find((candidate) => candidate.id === 'a6-reference-none-002');
+    expect(golden?.expect).toBe('none');
+    for (const [entryId, args] of [['todo.complete', { ref: '#3' }], ['todo.cancel', { ref: '#3' }], ['reminder.cancel', { ref: '#3' }]] as const) {
+      const raw = answer(entryId, args);
+      const { decision, audit } = await decideActionCase(golden!, provider(() => raw), NOW);
+      expect(decision.kind, entryId).not.toBe('execute');
+      expect(scoreActionDecision(golden!, raw, decision, audit).outcome, entryId).not.toBe('negative-capture');
+    }
+    const raw = answer('todo.complete', { ref: '#3' });
+    const { decision, audit } = await decideActionCase(golden!, provider(() => raw), NOW);
+    expect(decision).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+    expect(scoreActionDecision(golden!, raw, decision, audit)).toMatchObject({ outcome: 'question', reason: 'elliptical-confirm' });
+  });
 });
 
 describe('scoring (A6-D7): a wrong target is never a question; negatives captured fail', () => {
