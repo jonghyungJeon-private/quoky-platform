@@ -1,6 +1,7 @@
 import type { NlAmbiguityKey, NlArgs, NlArgValue, NlCatalogEntry, NlWave1EntryId } from './catalog';
 import { containsGroundingWord } from './grammar-residual';
 import { hasJiraReleaseLink } from '../work-chat/jira-release-link';
+import { CONNECTOR_CONTAINER_KEY } from '../../ports/connector-query';
 import { nlRangeLabel, type NlResolvedRange } from './symbolic-time';
 
 /**
@@ -207,6 +208,34 @@ const jiraIssues: NlCatalogEntry = {
  * owner limits it to their own; or the release list of a project when no release is named. A link to a release page on
  * the configured Jira site is read by Core itself (the selector never copies it). Read-only; the list is never summarised.
  */
+/**
+ * Structural canonicalization of `jira.release` args (no phrase list; it reads only the arg values and the shape of the
+ * owner's text):
+ *  - a `release` that is only digits copied from a pasted link (the digits occur nowhere outside the URLs) is dropped:
+ *    Core reads the link itself, so the owner's own words name no release;
+ *  - a `release` of the form "<PROJECTKEY> <version>" (first token matches the connector's project-key pattern, the rest
+ *    holds a digit) is split into `project` and `release` when `project` is absent or already that key.
+ */
+export function normalizeJiraReleaseArgs(args: Record<string, NlArgValue>, groundingText?: string): void {
+  const release = args.release;
+  if (typeof release !== 'string') return;
+  if (groundingText !== undefined && /^\d+$/u.test(release.trim())) {
+    const withoutLinks = groundingText.normalize('NFC').replace(/https?:\/\/[^\s<>"'`]+/giu, ' ');
+    if (hasJiraReleaseLink(groundingText) && !withoutLinks.includes(release.trim())) {
+      delete args.release;
+      return;
+    }
+  }
+  const parts = release.trim().split(/\s+/u);
+  if (parts.length < 2) return;
+  const [key, ...rest] = parts as [string, ...string[]];
+  const version = rest.join(' ');
+  if (!CONNECTOR_CONTAINER_KEY.test(key) || !/\d/u.test(version)) return;
+  if (args.project !== undefined && args.project !== key) return;
+  args.project = key;
+  args.release = version;
+}
+
 const jiraRelease: NlCatalogEntry = {
   id: 'jira.release',
   risk: 'READ',
@@ -218,13 +247,16 @@ const jiraRelease: NlCatalogEntry = {
     ko: 'Jira 릴리스(배포 버전)에 포함된 이슈, 기본은 내 담당(전체 담당은 말할 때만), 상태별. 릴리스 이름 없이 프로젝트만 말하면 그 프로젝트의 릴리스 목록. Jira 릴리스 링크도.',
   },
   args: [
-    { name: 'release', kind: 'keyword', description: 'The release (fix version) name copied verbatim from the owner\'s words (e.g. 3.2.0), without words like 배포/배포건/릴리스/버전. Omit for a pasted link: Quoky reads the link itself.' },
-    { name: 'project', kind: 'keyword', description: 'The Jira project name or key copied verbatim and whole from the owner\'s words (every word of a multi-word name, e.g. 모바일 앱 운영, never just 모바일), without 프로젝트. Omit when none is named.' },
+    { name: 'release', kind: 'keyword', description: 'The release (fix version) name copied verbatim from the owner\'s words (e.g. 3.2.0), without words like 배포/배포건/릴리스/버전. A bare number with no date word (월, 일, 까지) is a release name, not a date. Omit for a pasted link: Quoky reads the link itself.' },
+    { name: 'project', kind: 'keyword', description: 'The Jira project name or key copied verbatim and whole (every word of a multi-word name, e.g. 모바일 앱 운영, never just 모바일), without 프로젝트. Project and release are separate args: a name or key before a version token is `project`, the token is `release`. A follow-up that gives only a release keeps the previous project. Omit when none is named.' },
     { name: 'scope', kind: 'enum', values: ['mine', 'all'], default: 'mine', valueGrounding: { all: JIRA_SCOPE_ALL_WORDS }, description: 'all ONLY when the owner explicitly asks for every assignee (전체, 모든 담당, 담당 상관없이, all assignees); default mine = the owner\'s own issues. Every assignee with no release, project or link named: NEEDS_CLARIFICATION.' },
     COUNT,
   ],
   usage: { ko: '"ABC 프로젝트 1.2.0 릴리스 보여줘"', en: '"ABC 프로젝트 1.2.0 릴리스 보여줘"' },
   sourceNames: ['jira', '지라'],
+  normalize(args: Record<string, NlArgValue>, groundingText?: string): void {
+    normalizeJiraReleaseArgs(args, groundingText);
+  },
   check(args: NlArgs, groundingText: string) {
     // A release listing is bounded by what the owner named: a release, a project or a release link (any host here;
     // the desk uses only a link on the configured site and says so when it ignores one).
@@ -271,7 +303,7 @@ const githubItems: NlCatalogEntry = {
   },
 };
 
-function searchEntry(id: 'slack.search' | 'confluence.search', source: string, aliases: readonly string[], ko: string): NlCatalogEntry {
+function searchEntry(id: 'slack.search' | 'confluence.search', source: string, aliases: readonly string[], sourceNoun: string, ko: string): NlCatalogEntry {
   return {
     id,
     risk: 'READ',
@@ -279,7 +311,7 @@ function searchEntry(id: 'slack.search' | 'confluence.search', source: string, a
     label: { ko: `${source} 검색`, en: `${source} search` },
     aliases,
     description: {
-      en: `Search ${source} for a keyword the owner gives (messages or pages that mention it).`,
+      en: `Search ${source} for a keyword the owner gives: ${sourceNoun}. Pick it whenever the message names ${source} as the place to look, whatever the topic is.`,
       ko,
     },
     args: [
@@ -516,8 +548,8 @@ export const NL_WAVE1_ENTRIES: Readonly<Record<NlWave1EntryId, NlCatalogEntry>> 
   'jira.issues': jiraIssues,
   'jira.release': jiraRelease,
   'github.items': githubItems,
-  'slack.search': searchEntry('slack.search', 'Slack', ['slack', '슬랙'], '슬랙에서 키워드 검색.'),
-  'confluence.search': searchEntry('confluence.search', 'Confluence', ['confluence', '컨플루언스', '컨플', '위키'], '컨플루언스(위키)에서 키워드로 문서 검색.'),
+  'slack.search': searchEntry('slack.search', 'Slack', ['slack', '슬랙'], 'chat messages and channel discussions', '슬랙(채팅) 메시지·채널 대화에서 키워드 검색. 슬랙을 말했을 때만.'),
+  'confluence.search': searchEntry('confluence.search', 'Confluence', ['confluence', '컨플루언스', '컨플', '위키'], 'wiki pages and documents (docs, guides, specs), not chat', '컨플루언스(위키) 페이지·문서에서 키워드 검색. 컨플루언스를 말했을 때.'),
   'calendar.events': calendarEvents,
   'mail.list': mailList,
   'drive.files': driveFiles,

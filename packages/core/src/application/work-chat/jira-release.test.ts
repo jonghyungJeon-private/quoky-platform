@@ -521,7 +521,7 @@ describe('the A2 yield (A8): a Jira keyword slot that names a release or every a
   });
 });
 
-describe('prompt nl-select.v37 (A8): the jira.release examples appear only while the entry is offered', () => {
+describe('prompt nl-select.v39 (A8): the jira.release examples appear only while the entry is offered', () => {
   it('shows the entry and its examples with it, and is unchanged without it', () => {
     const withRelease = buildSelectionPrompt({ entries: [nlWave1Entry('jira.issues'), nlWave1Entry('jira.release')], text: 'x' });
     expect(withRelease).toContain('- jira.release: ');
@@ -531,5 +531,27 @@ describe('prompt nl-select.v37 (A8): the jira.release examples appear only while
     const without = buildSelectionPrompt({ entries: [nlWave1Entry('jira.issues')], text: 'x' });
     expect(without).not.toContain('jira.release');
     expect(without).not.toContain('2.4.1');
+  });
+});
+
+describe('jira.release arg canonicalization (structural, v39)', () => {
+  const argsOf = (result: ReturnType<typeof validate>) => (result.ok ? result.value.args : result);
+
+  it('splits "<PROJECTKEY> <version>" held in release into project and release', () => {
+    expect(argsOf(validate('jira.release', { release: 'ZQX9 20990101' }, 'ZQX9 20990101 보여줘'))).toEqual({ project: 'ZQX9', release: '20990101' });
+    expect(argsOf(validate('jira.release', { project: 'ZQX9', release: 'ZQX9 4.5.6' }, 'ZQX9 4.5.6 릴리스'))).toEqual({ project: 'ZQX9', release: '4.5.6' });
+  });
+
+  it('leaves a release that is not key + version-with-a-digit, or whose project differs, untouched', () => {
+    expect(argsOf(validate('jira.release', { release: 'Spring Release' }, 'Spring Release 보여줘'))).toEqual({ release: 'Spring Release' });
+    expect(argsOf(validate('jira.release', { release: 'RC final' }, 'RC final 보여줘'))).toEqual({ release: 'RC final' });
+    expect(argsOf(validate('jira.release', { project: 'OTHER', release: 'ZQX9 7' }, 'OTHER ZQX9 7'))).toEqual({ project: 'OTHER', release: 'ZQX9 7' });
+  });
+
+  it('drops digits that come only from a pasted link, keeps digits the owner wrote outside it', () => {
+    const link = 'https://example.atlassian.net/projects/ZQX9/versions/16555/tab/release-report-all-issues';
+    expect(argsOf(validate('jira.release', { release: '16555' }, `확인 ${link}`))).toEqual({});
+    expect(argsOf(validate('jira.release', { release: '16555' }, `16555 확인 ${link}`))).toEqual({ release: '16555' });
+    expect(argsOf(validate('jira.release', { release: '16555' }, '16555 확인'))).toEqual({ release: '16555' });
   });
 });

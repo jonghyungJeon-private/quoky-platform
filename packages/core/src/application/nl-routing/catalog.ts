@@ -183,7 +183,7 @@ export interface NlCatalogEntry {
   /** Rewrites a stored (`lastSelection`) args record of an older shape into the current one; pure, defaults untouched. */
   migrateArgs?(args: NlArgs): NlArgs;
   /** Entry-specific normalization after the type checks (e.g. a Jira period without a date field). */
-  normalize?(args: Record<string, NlArgValue>): void;
+  normalize?(args: Record<string, NlArgValue>, groundingText?: string): void;
   /** The basis line text (without the `기준:` prefix) for these canonical args. */
   describe?(args: NlArgs, range: NlResolvedRange | undefined, language: 'ko' | 'en'): string | undefined;
   /**

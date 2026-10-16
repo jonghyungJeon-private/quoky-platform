@@ -260,7 +260,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     if (checked === undefined) return { ok: false, reason: 'invalid-arg', entryId, arg: name };
     args[name] = checked;
   }
-  entry.normalize?.(args);
+  entry.normalize?.(args, ctx.groundingText);
   // A6-D3a amendment 1 (owner-approved direction 2026-10-16): a LOCAL_WRITE the selector chose runs unless the owner's own
   // sentence is not a request. No request verb or closed request form is needed; the structural vetoes decide (chat), and
   // a frame with nothing but references ("2번도", "그걸로요", "13번 알림") or nothing but content ("내일 9시 우유")

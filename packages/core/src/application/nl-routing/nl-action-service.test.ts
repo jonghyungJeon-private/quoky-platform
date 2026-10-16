@@ -236,8 +236,8 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     const base = { actorId: 'owner', text: '메일함', previous: undefined, entryIds: ['mail.list'] };
     const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', 'nl-select.v24', 'nl-select.v25', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
     expect(new Set(keys).size).toBe(9);
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v37');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v38');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v39');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v40');
     // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
