@@ -27172,3 +27172,7 @@ owner approved a structural Core rule (`nl-routing/garbled-action.ts`), with no 
 - **Known residual.** A bare "-해" main clause after a reason connective is read as a request (it is both the imperative of an
   action and the plain form of a state adjective, which grammar cannot separate; a doubled-syllable rule was rejected as
   fitted to one sentence). It fails open into a read. `neg-037` ("…몰라서 답답해") therefore stays a residual wrong capture.
+- **Positive-evidence rule (Codex P2).** The guard fires only on positive evidence: the quoted-request veto needs the quotative
+  particle right after the quote ("…" 라고 / 라는), so a request outside the quote is the owner's own; the reason-statement
+  veto needs a declarative or state ending (-다, -네, -어/-아/-워), so nominal and -시오 mains pass. Leaks accepted: a state
+  main ending in 나/해 ("짜증나") and a quote mentioned without a quotative particle stay captured.

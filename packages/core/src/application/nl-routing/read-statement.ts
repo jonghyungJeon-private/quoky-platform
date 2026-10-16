@@ -24,6 +24,8 @@ const INTERROGATIVE = /(?:니|냐|냐고|까|까요|나요|가요|는가|은가|
 /** A reason connective on a word that is not the last: -아서/-어서/-라서, -(으)니까, -느라 (never the locative 에서 or a noun ending in 서). */
 const REASON_CONNECTIVE = /(?:[아어여라]서|니까|느라)$/u;
 const TRAILING_NOISE = /[ㄱ-ㆎ\p{Extended_Pictographic}️‍]+$/u;
+/** The quotative particle directly after a quote (이)라고 / (이)라는 / (이)란. */
+const QUOTATIVE_AFTER = /^\s*(?:이?라고|이?라는|이?란)(?=\s|$)/u;
 const QUOTED = /"([^"]+)"|“([^”]+)”|'([^']+)'|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
 
 function tokensOf(text: string): string[] {
@@ -52,7 +54,10 @@ function isReasonStatement(text: string): boolean {
   // the imperative of an action and the plain form of a state adjective; it cannot be told apart by grammar, so it stays a
   // request (fails open into a read).
   if (nlIsRequestForm(last)) return false;
-  return !asksOrRequests(last) && !INTERROGATIVE.test(last) && !/싶/u.test(last);
+  // Positive evidence only: a plain declarative (-다) or an informal -어/-아/-워 / -네 state form. A nominal ("요약"), a
+  // -시오 form or any ending not recognised here passes (a read).
+  const declarative = (/다$/u.test(last) && !/시다$|부탁/u.test(last)) || /(?:네|네요|[어아워]|[어아워]요)$/u.test(last);
+  return declarative && !asksOrRequests(last) && !INTERROGATIVE.test(last) && !/싶/u.test(last);
 }
 
 function consumedByArgs(inner: string, args: NlArgs): boolean {
@@ -69,7 +74,11 @@ function hasUnconsumedQuotedRequest(text: string, args: NlArgs): boolean {
     const inner = (match.slice(1).find((group) => group !== undefined) ?? '').trim();
     const words = tokensOf(inner);
     if (words.length < 2 || consumedByArgs(inner, args)) continue;
-    if (nlIsRequestForm(words.at(-1) ?? '') || nlRequestsSomething(inner, [])) return true;
+    if (!(nlIsRequestForm(words.at(-1) ?? '') || nlRequestsSomething(inner, []))) continue;
+    // Positive evidence that the quote is only mentioned: the quotative particle right after it (…" 라고 말하면, …"라는 표현).
+    // A request outside the quote ("…" 대신 내일 일정 보여줘) is the owner's own request.
+    const after = text.slice((match.index ?? 0) + match[0].length);
+    if (QUOTATIVE_AFTER.test(after)) return true;
   }
   return false;
 }
