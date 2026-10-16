@@ -333,9 +333,21 @@ describe('references, questions and the audit line', () => {
   it('the anchored 되돌리기 decides the same undo with no selector call', async () => {
     const w = world({ script: [] });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
-    const decision = await w.service.decideAnchoredUndo({ text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+    const decision = await w.service.decideAnchoredUndo({ direct: true, text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
     expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', undo: { entryId: 'todo.add' } } });
     expect(w.calls).toHaveLength(0);
+  });
+
+  it('A6-D3a amendment 1 (CA round 3): the anchored 되돌리기 is DM-only while ADR-0122 enforcement is off', async () => {
+    const w = world({ script: [] });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
+    const channel = await w.service.decideAnchoredUndo({ direct: false, text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+    expect(channel).toEqual({ kind: 'ask', entryId: 'action.undo', text: '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'dm-only' });
+    const absent = await w.service.decideAnchoredUndo({ text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+    expect(absent?.kind).toBe('ask');
+    const enforced = await w.service.decideAnchoredUndo({ direct: false, surfaceEnforced: true, text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+    expect(enforced?.kind).toBe('execute');
   });
 });
 
@@ -352,7 +364,7 @@ describe('round 4: the anchored 되돌리기 meets the plain-line eligibility (C
   ])('%s never undoes', async (_name, extra) => {
     const w = world({ script: [] });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
-    const decision = await w.service.decideAnchoredUndo({ session: w.session(), actor: w.actor(), now: at(1), entries: ALL, ...extra });
+    const decision = await w.service.decideAnchoredUndo({ direct: true, session: w.session(), actor: w.actor(), now: at(1), entries: ALL, ...extra });
     expect(decision).toBeUndefined();
     expect(w.calls).toHaveLength(0);
   });
@@ -360,7 +372,7 @@ describe('round 4: the anchored 되돌리기 meets the plain-line eligibility (C
   it('spaces around the single line still anchor', async () => {
     const w = world({ script: [] });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
-    expect(await w.service.decideAnchoredUndo({ text: '  되돌리기 ', session: w.session(), actor: w.actor(), now: at(1), entries: ALL })).toMatchObject({ kind: 'execute' });
+    expect(await w.service.decideAnchoredUndo({ direct: true, text: '  되돌리기 ', session: w.session(), actor: w.actor(), now: at(1), entries: ALL })).toMatchObject({ kind: 'execute' });
   });
 
   it('platform code formatting refuses a selected action like a quote does', async () => {

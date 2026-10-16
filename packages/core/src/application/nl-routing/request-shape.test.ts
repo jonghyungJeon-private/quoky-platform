@@ -177,9 +177,72 @@ describe('A6-D3a amendment 1, review round (CA P1/P2, Codex P2)', () => {
     expect(nlActionWordGrounded('2번 완료하지 마', ['완료'])).toBe(false);
     expect(nlActionWordGrounded('2번 체크해줘', ['완료'])).toBe(false);
     // An origin phrase with a past form ("내가 보냈던 거" → a statement would not fire, but "아까 말했잖아" would) is stripped.
-    const text = '아까 내가 말했던 거 완료해줘';
-    expect(v('todo.complete', { ref: 'recent' }, text)).toMatchObject({ ok: false, reason: 'not-request', arg: 'volition' });
-    expect(v('todo.complete', { ref: 'recent' }, text, { requestFrame: (prose) => prose.replace('내가 말했던 거', ' ') }).ok).toBe(true);
+    const text = '아까 보냈다더라 그거 완료해줘';
+    expect(v('todo.complete', { ref: 'this' }, text)).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(v('todo.complete', { ref: 'this' }, text, { requestFrame: (prose) => prose.replace('아까 보냈다더라', ' ') }).ok).toBe(true);
+  });
+});
+
+describe('A6-D3a amendment 1, review round 3 (CA over-blocks and gaps, Codex P2)', () => {
+  const v = (entryId: string, args: Record<string, string>, text: string) => validateSelection({ entryId, args }, ctx(text));
+
+  it('over-blocks fixed: these requests execute', () => {
+    const executes: Array<[string, string, Record<string, string>]> = [
+      // CA 3: a veto word inside the title or the reminder text
+      ['할 일에 라면 추가해줘', 'todo.add', { title: '라면' }],
+      ['내일 12시에 냉면 알려줘', 'reminder.create', { body: '냉면', when: '내일 12시' }],
+      ['할 일에 희망퇴직 추가해줘', 'todo.add', { title: '희망퇴직' }],
+      ['희망퇴직 서류 제출 할 일에 추가해줘', 'todo.add', { title: '희망퇴직 서류 제출' }],
+      ['퇴근 후 장보기 할 일에 추가해줘', 'todo.add', { title: '퇴근 후 장보기' }],
+      ['할 일에 퇴근 후 장보기 추가해줘', 'todo.add', { title: '퇴근 후 장보기' }],
+      ['점심 먹은 후 약 먹기 1시에 알려줘', 'reminder.create', { body: '점심 먹은 후 약 먹기', when: '1시' }],
+      ['내일 9시에 비 오면 우산 챙기기 알려줘', 'reminder.create', { body: '비 오면 우산 챙기기', when: '내일 9시' }],
+      ['이따가 5시에 빨래 알려줘', 'reminder.create', { body: '빨래', when: '5시' }],
+      // CA 4: the negation belongs to the content verb
+      ['할 일에 야식 먹지 않기 추가해줘', 'todo.add', { title: '야식 먹지 않기' }],
+      ['야식 먹지 않기 할 일에 추가해줘', 'todo.add', { title: '야식 먹지 않기' }],
+      // CA 5: content that ends the message after the request verb
+      ['할 일 추가해줘 운동 끝나고 샤워하기', 'todo.add', { title: '운동 끝나고 샤워하기' }],
+      ['remind me at 5pm to stretch after lunch', 'reminder.create', { body: 'stretch after lunch', when: 'at 5pm' }],
+      ['remind me tomorrow at 9am that the report is due', 'reminder.create', { body: 'the report is due', when: 'tomorrow at 9am' }],
+      // CA 6: "-라고 해줘" to Quoky, English reason clauses, Korean first-person reason clauses
+      ['내일 9시에 약 먹으라고 해줘', 'reminder.create', { body: '약 먹으라고', when: '내일 9시' }],
+      ['please add milk, I need it', 'todo.add', { title: 'milk' }],
+      ['complete 2, I finished it', 'todo.complete', { ref: '#2' }],
+      ['할 일에 은행 다녀오기 추가해줘, 내가 자꾸 까먹어서', 'todo.add', { title: '은행 다녀오기' }],
+      ['내가 자꾸 까먹으니까 할 일에 은행 다녀오기 추가해줘', 'todo.add', { title: '은행 다녀오기' }],
+      // Codex P2 (round 2): a content noun in a quoted title
+      ['할 일에 \'보고서 추가 검토\' 추가해줘', 'todo.add', { title: '보고서 추가 검토' }],
+    ];
+    for (const [text, entryId, args] of executes) expect(v(entryId, args, text), text).toMatchObject({ ok: true });
+  });
+
+  it('gaps closed: these are refused', () => {
+    const refused: Array<[string, string, Record<string, string>, string]> = [
+      ['2번 완료 예정', 'todo.complete', { ref: '#2' }, 'statement'],
+      ['2번 완료해 버릴까', 'todo.complete', { ref: '#2' }, 'question'],
+      ['2번 해도 될 듯', 'todo.complete', { ref: '#2' }, 'wish'],
+      ['2번 완료인듯', 'todo.complete', { ref: '#2' }, 'wish'],
+      ['2번 완료 각', 'todo.complete', { ref: '#2' }, 'wish'],
+      ['민수가 할 일에 보고서 추가함', 'todo.add', { title: '보고서' }, 'statement'],
+      ['원상복구 필요함', 'action.undo', {}, 'statement'],
+      ['you should cancel 2', 'todo.cancel', { ref: '#2' }, 'reported'],
+      ['someone should add milk to my todos', 'todo.add', { title: 'milk' }, 'reported'],
+      ['she said add milk to my todos', 'todo.add', { title: 'milk' }, 'reported'],
+      ['2번 완료해줘 농담이야', 'todo.complete', { ref: '#2' }, 'joke'],
+      ['cancel 2 jk', 'todo.cancel', { ref: '#2' }, 'joke'],
+      ['2번 하지 마', 'todo.complete', { ref: '#2' }, 'negation'],
+      ['2번 완료 처리하지 마', 'todo.complete', { ref: '#2' }, 'negation'],
+      // Codex P2: a quoted nominal command outside the selected span, and a quoted request with a trailing modifier
+      ['"2번 완료"', 'todo.complete', { ref: '#2' }, 'reported'],
+      ['이 문장 번역해줘 "2번 완료"', 'todo.complete', { ref: '#2' }, 'reported'],
+      ['"2번 완료해줘 지금"', 'todo.complete', { ref: '#2' }, 'reported'],
+      ['할 일에 "2번 완료해줘 지금" 추가해', 'todo.add', { title: '2번 완료해줘 지금' }, 'reported'],
+    ];
+    for (const [text, entryId, args, veto] of refused) expect(v(entryId, args, text), text).toMatchObject({ ok: false, reason: 'not-request', arg: veto });
+    // Undo look-alikes have no undo head: chat.
+    for (const text of ['되돌리기 해주는 앱 추천', '돈 좀 돌려줘']) expect(v('action.undo', {}, text), text).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    for (const text of ['되돌려줘', '원래대로 돌려놔', 'undo that please', '아까 거 원래대로 해줘']) expect(v('action.undo', {}, text).ok, text).toBe(true);
   });
 });
 
@@ -332,8 +395,22 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-146',
     'a6-negative-none-147',
     'a6-negative-none-148',
+    'a6-negative-none-151',
     'a6-negative-none-152',
     'a6-negative-none-153',
+    'a6-negative-none-154',
+    'a6-negative-none-155',
+    'a6-negative-none-156',
+    'a6-negative-none-157',
+    'a6-negative-none-158',
+    'a6-negative-none-159',
+    'a6-negative-none-160',
+    'a6-negative-none-161',
+    'a6-negative-none-162',
+    'a6-negative-none-163',
+    'a6-negative-none-164',
+    'a6-negative-none-167',
+    'a6-negative-none-169',
     'a6-seed-neg-001',
     'a6-seed-neg-002',
     'a6-seed-neg-003',
@@ -375,7 +452,9 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-137',
     'a6-negative-none-149',
     'a6-negative-none-150',
-    'a6-negative-none-151',
+    'a6-negative-none-165',
+    'a6-negative-none-166',
+    'a6-negative-none-168',
     'a6-seed-live-005',
   ];
 

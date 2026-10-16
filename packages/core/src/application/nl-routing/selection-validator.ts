@@ -25,7 +25,7 @@ import {
 } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
-import { nlRequestVeto, type NlRequestVeto } from './request-shape';
+import { nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
 import {
   isNlRangeSymbol,
   isWeekdayOrTimeKeyword,
@@ -170,7 +170,7 @@ export function nlSpanHasUnbalancedQuote(span: string): boolean {
  * Whether the owner's prose fully encloses the span as content: a matching quote pair right around it, or a colon form
  * ("할 일 추가: …", "알림: …") whose span runs to the end of the message.
  */
-function spanEnclosure(prose: string, span: string): 'quote' | 'colon' | undefined {
+function spanEnclosure(prose: string, span: string): 'quote' | 'colon' | 'after-request' | undefined {
   const at = prose.indexOf(span);
   if (at < 0) return undefined;
   const before = prose.slice(0, at).replace(/\s+$/u, '');
@@ -178,7 +178,11 @@ function spanEnclosure(prose: string, span: string): 'quote' | 'colon' | undefin
   const opened = before.at(-1);
   const closed = after.replace(/^\s+/u, '').at(0);
   if (QUOTE_PAIRS.some(([open, close]) => opened === open && closed === close)) return 'quote';
-  return /[:：]$/u.test(before) && /^[\s.!?~^ㅋㅎ]*$/u.test(after) ? 'colon' : undefined;
+  const toEnd = /^[\s.!?~^ㅋㅎ]*$/u.test(after);
+  if (/[:：]$/u.test(before) && toEnd) return 'colon';
+  // Content that ends the message after the request verb ("할 일 추가해줘 운동 끝나고 샤워하기", "remind me at 5pm to
+  // stretch after lunch"): the request is already said, the rest is the content (CA round 3).
+  return toEnd && nlRequestEndsBefore(before, NL_ACTION_WORDS) ? 'after-request' : undefined;
 }
 
 /** A6-D3a amendment 1: the request shape of a LOCAL_WRITE (see {@link requestShapeOf}). */
@@ -216,13 +220,27 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
   }
   const words = entry.actionGrounding ?? [];
   const when = typeof args.when === 'string' ? args.when : undefined;
-  const veto = nlRequestVeto(vetoFrame, words, NL_ACTION_WORDS, { content, quoted, ...(when !== undefined ? { when } : {}) });
+  const veto = nlRequestVeto(vetoFrame, words, NL_ACTION_WORDS, { content, quoted, whole: prose, ...(when !== undefined ? { when } : {}) });
   // For a target entry an item-source noun is part of the reference; a payload entry has no reference.
   const payload = entry.args.some((spec) => spec.kind === 'span' && spec.required === true);
   let expressesAction = nlFrameExpressesAction(contentFrame, !payload);
   if (entry.args.length === 0 && words.length > 0) {
-    const text = normalizeForMatch(contentFrame);
-    expressesAction &&= words.some((word) => text.includes(normalizeForMatch(word))) && !DATIVE.test(contentFrame);
+    // The undo needs its own word as the head: a bare 돌려 ("돈 좀 돌려줘") is "give back", and an undo word modifying a noun
+    // through an adnominal verb ("되돌리기 해주는 앱 추천") is a description (CA round 3).
+    const frameText = normalizeForMatch(contentFrame);
+    const tokens = frameText.split(/\s+/u).filter((token) => token.length > 0);
+    const latin = words.map(normalizeForMatch).filter((word) => /^[a-z ]+$/u.test(word));
+    const anchored =
+      latin.some((word) => new RegExp(`(?<![a-z])${word.replace(/ /g, '\\s+')}(?![a-z])`, 'u').test(frameText)) ||
+      tokens.some(
+        (token, index) =>
+          words.some((word) => {
+            const anchor = normalizeForMatch(word);
+            if (/^[a-z ]+$/u.test(anchor)) return false;
+            return anchor === '돌려' ? /되돌려/u.test(token) : token.includes(anchor);
+          }) && !/는$/u.test(tokens[index + 1] ?? ''),
+      );
+    expressesAction &&= anchored && !DATIVE.test(contentFrame);
   }
   return { ...(veto !== undefined ? { veto } : {}), expressesAction };
 }

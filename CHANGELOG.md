@@ -24,6 +24,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   needs its undo word and no recipient; Hangul speaker labels are refused by the input guard. A local write outside a DM is
   refused at selection while ADR-0122 enforcement is off (`dm-only`). R5a seam: `nlActionWordGrounded` kept,
   `NlValidationContext.requestFrame` added. 22 corpus negatives added; the selector-pool audit needs regenerating.
+- **Changed (review round 3).** Over-blocks fixed: content words inside a title or reminder text no longer veto (라면, 냉면,
+  희망퇴직, 퇴근 후, 야식 먹지 않기), content after the request word is exempt, "-라고 해줘" is a request, English volition only in
+  its explicit forms. New refusals: 예정, -ㄹ까, -듯, 각, -함/-됨, "you should", jokes, undo look-alikes; the anchored 되돌리기 is
+  DM-only. 16 corpus negatives added; the selector-pool audit needs regenerating.
 
 ## Unreleased — ADR-0123 pool batch 2 (pending owner approval) and the runner's selector transport and exact scorer (2026-10-16)
 

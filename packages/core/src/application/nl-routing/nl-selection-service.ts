@@ -624,12 +624,16 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * undo, with no selector call. `undefined` when the text is not the phrase or actions are not acting.
    */
   async decideAnchoredUndo(
-    turn: Pick<NlSelectionTurn, 'text' | 'session' | 'actor' | 'now' | 'entries' | 'replyToMessageId' | 'turnId' | 'quotedRanges' | 'codeFormatted'>,
+    turn: Pick<NlSelectionTurn, 'text' | 'session' | 'actor' | 'now' | 'entries' | 'replyToMessageId' | 'turnId' | 'quotedRanges' | 'codeFormatted' | 'direct' | 'surfaceEnforced'>,
   ): Promise<NlSelectionDecision | undefined> {
     // The anchored phrase is the whole message on one line and meets the same plain-line eligibility as any action.
     if (!/^되돌리기[.!]?$/u.test(turn.text.normalize('NFC').trim())) return undefined;
     if (nlActionInputRefusal(turn.text, turn.text, markedMaterial(turn)) !== undefined) return undefined;
     if (!this.actionsActing(turn.actor) || !turn.entries.some((entry) => entry.id === 'action.undo')) return undefined;
+    // A6-D3a amendment 1 (CA round 3): the same DM-only guard as a selected local write.
+    if (turn.direct !== true && turn.surfaceEnforced !== true) {
+      return this.actionAnswer({ entryId: 'action.undo', risk: 'LOCAL_WRITE', refKind: 'none', resolution: 'none', result: 'refused', reason: 'dm-only', latencyMs: 0, ...correlationOf(turn) }, renderDmOnlyAction('ko'));
+    }
     const fullTurn: NlSelectionTurn = { ...turn, attachmentCount: 0, route: 'chat' };
     const decision = await this.decideUndo(fullTurn, 'ko', 0, 'none');
     return decision;

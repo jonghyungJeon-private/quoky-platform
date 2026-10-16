@@ -28,15 +28,18 @@ import { isPastSyllable } from './statement-guard';
  *    said "추가할게" means the owner will do it: not Quoky's job, so `none`, never a question.
  * Pure; the text is never logged.
  */
-export type NlRequestVeto = 'example' | 'reported' | 'negation' | 'retraction' | 'question' | 'conditional' | 'wish' | 'deferred' | 'statement' | 'volition';
+export type NlRequestVeto = 'example' | 'joke' | 'reported' | 'negation' | 'retraction' | 'question' | 'conditional' | 'wish' | 'deferred' | 'statement' | 'volition';
 
-/** Korean negators (a standalone or glued 안/못, -지 마/말/않, 금지, 아니, 필요 없, 싫, 말고 …), as in A6 R1. */
-const NEGATION_KO = /[지진](?:는|도|만)?\s*(?:마|말|않)|(?:^|\s)(?:안|못)(?=\s|$|되|돼|됐|해|했|하|할)|안\s*(?:해|하|되|돼|됐|할|함)|(?<!잘)못\s*(?:해|하|했|함)|금지|아니|아냐|아님|ㄴㄴ|노노|됐어|됐다|잠깐|필요\s*없|싫|말아|말고/u;
+/**
+ * Korean negators that negate the request itself: 안/못 + the light verb (안 해, 못 해), 금지, 아니, 필요 없, 싫, 말고, 됐어 ….
+ * The verb negators -지 마/말/않 and 안/못 + a content verb are SCOPED (CA round 3): they negate the verb right before or
+ * after them, so they veto only when that verb is the light verb 하/되 or an action word ("야식 먹지 않기" is content).
+ */
+const NEGATION_KO = /(?:^|\s)(?:안|못)(?=\s*(?:되|돼|됐|해|했|하|할|함)|$)|안\s*(?:해|하|되|돼|됐|할|함)|(?<!잘)못\s*(?:해|하|했|함)|금지|아니|아냐|아님|ㄴㄴ|노노|됐어|됐다|잠깐|필요\s*없|싫|말고/u;
+
 const NEGATION_EN = /(?:^|\s)(?:don't|dont|do not|doesn't|didn't|shouldn't|won't|wouldn't|can't|cannot|never|not|no|nope|nah)(?=\s|$|[,.!?])/u;
-/** A negator that spans a clause boundary of the split below ("필요 | 없어", "하지 | 마"). */
-const SPANNING_NEGATION = /필요\s*없|[지진](?:는|도|만)?\s*(?:마|말|않)|안\s*(?:해|하|되|돼|됐|할|함)/u;
-/** A clause that starts with the negator of the clause before it ("추가하지 | 마"). */
-const NEGATOR_START = /^(?:마|말|않)/u;
+/** A negator that spans a clause boundary of the split below ("필요 | 없어"); "하지 | 마" is the scoped verb negator. */
+const SPANNING_NEGATION = /필요\s*없|안\s*(?:해|하|되|돼|됐|할|함)/u;
 const EXAMPLE_FRAME = /예를\s*들어|예컨대|for example|e\.g\./u;
 
 /** Where a Korean clause ends: sentence punctuation, 말고, or a word in a sentence-final or connective ending + space. */
@@ -49,11 +52,13 @@ const WORD_NOISE = /[\u3131-\u318e\p{Extended_Pictographic}\uFE0F\u200D~^!.?,…
 // reported speech: a quoted request, the quotative -라고/-자고/-달라고/-냐고/-다고 + a speech verb, a hearsay ending, and
 // the contracted quotatives on the light verb 하, the linking vowel 으, 달(라) and 주 (하래, 넣으래, 해 달래, 해 주래, 하재).
 const QUOTED_REQUEST_KO = /(?:줘|주세요|줄래|해)\s*(?:했던|했잖아|했는데|했더니|했어|했지|했다|했었|라고|이라고|라는|란|하면|하고|그랬|하길래|해서|하니까|하더라|하던데|하셨)/u;
-const QUOTATIVE_KO = /(?:라|자|달라|냐|다)고\s*(?:했|하더|하던|하셨|하시|하네|하대|해서|하길래|하니까|그러|그랬|말했|들었|한다|합니다|하는데|해|전해|전달|말해|얘기해|이야기해)|(?:라|다)(?:는데|던데|더라)/u;
+const QUOTATIVE_KO = /(?:라|자|달라|냐|다)고\s*(?:했|하더|하던|하셨|하시|하네|하대|해서|하길래|하니까|그러|그랬|말했|들었|한다|합니다|하는데|해(?!\s*(?:줘|주세요|줄래|주실|주시|줘요))|전해|전달|말해|얘기해|이야기해)|(?:라|다)(?:는데|던데|더라)/u;
 const CONTRACTED_QUOTATIVE_KO = /(?:하|으|달|주)(?:래|래요|래서|랬|라셔|라시|란다|재|재요)(?=$|[\s.!?~,]|[\u3131-\u318e])/u;
 /** A quoted segment of the frame (content spans already removed): '…', "…", “…”, ‘…’, 「…」, 『…』. */
 const QUOTED_SEGMENT = /'([^']+)'|"([^"]+)"|“([^”]+)”|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
-const REPORTED_EN = /\b(?:told|asked|wants?|wanted|said|says)\s+(?:(?:me|us|him|her|them)\s+)?to\b/u;
+const REPORTED_EN = /\b(?:told|asked|wants?|wanted|said|says)\s+(?:(?:me|us|him|her|them)\s+)?to\b|\b(?:you|someone|somebody|they|he|she)\s+(?:should|must|might|could|said|says|told)\b/u;
+/** A joke or a tease (CA round 3): never an instruction. */
+const JOKE = /농담|장난(?:이야|임|이에요)|\bjk\b|\bj\/k\b|just kidding/u;
 
 // questions
 const QUESTION_MARK = /[?？]/u;
@@ -63,25 +68,28 @@ const POLITE_REQUEST = /줄래|줄\s*수\s*있|주실래|주시겠|주실\s*수|
 const HOWTO_WH_KO = /어떻게|어케|는\s*법(?=$|\s|[?.!~]|이|을|은|좀)|방법|하려면|뭐라고|뭐야|뭔지|뭐지|뭘|무엇|무슨|어디|언제|누가|누구|왜|몇|어느|어떤/u;
 /** Capability ("할 수 있어" without 줄), deliberation ("할까", "줄까") and "whether" ("할지"). */
 const CAPABILITY_DELIBERATION_KO = /(?:할|될)\s*수\s*(?:있|없)|(?:할|될|볼|줄|을|일|걸)까(?=$|\s|요|[.!~])|(?:할|될|을)지(?=$|\s)/u;
+/** -(으)ㄹ까 on any verb ("완료해 버릴까"): a syllable with the final ㄹ, then 까(요). */
+const DELIBERATION_TAIL = /까(?:요)?$/u;
 /** An interrogative sentence ending on the last word ("완료하니", "취소했나요", "끝났냐"). */
 const INTERROGATIVE_ENDING_KO = /(?:(?<!더)니|나요|냐|냐고|는가|은가|던가)$/u;
 const QUESTION_EN = /(?:^|[,.;!?]\s*)(?:how|what|why|when|where|who|which|whose)\b|\bhow\s+(?:to|do|can|does|should)\b/u;
 
 // wishes, hedges and deferred timing
-const WISH_KO = /싶|바래|바라|바랍|희망|아마(?=$|\s)/u;
+const WISH_KO = /싶|바래|바라|바랍|희망|아마(?=$|\s)|듯(?=$|\s|해|하|함|요|싶|[.!~])|(?:^|\s)각(?=$|\s|[.!~ㅋㅎ])/u;
 const WISH_EN = /\bshould i\b|\bmaybe\b|\bperhaps\b|would be nice|\bi wish\b|\bi hope\b|\bhopefully\b/u;
 /** -고 나서, the aspectual 끝나고 / 마치고, 나중에, 이따(가) without a time of its own; English after / later / once. */
-const DEFERRED_KO = /고\s*나서|(?:끝나|마치|끝내)고(?=$|\s)|나중에|이따가?(?=$|\s)/u;
+const DEFERRED_KO = /고\s*나서|(?:끝나|마치|끝내)고(?=$|\s)|나중에|이따가?(?=$|\s)(?!\s*\d)/u;
 const DEFERRED_EN = /\b(?:after|later|once)\b/u;
-/** After an adnominal -(으)ㄴ / -는: 뒤(에) / 후(에) / 다음(에) ("끝난 뒤에", "먹은 후"). */
-const AFTER_NOUN = /^(?:뒤|후|다음)(?:에|에는)?$/u;
 
 // conditionals and hypotheticals
-const CONDITIONAL_KO = /(?:면|거든|더라면)(?=$|[\s,.!?~]|요)|만약|만일|(?:할|될|을)\s*경우/u;
 const CONDITIONAL_EN = /\b(?:if|unless|in case|suppose|supposing|whenever|would have|could have|should have)\b/u;
 
 // statements: after the past marker (았/었/였/했 and contractions) only a finite sentence ending may follow
 const FINITE_AFTER_PAST = /^(?:|어|어요|어용|다|지|지요|죠|네|네요|음|습니다|군|군요|구나|잖아|잖아요|더라|더라고|던데|더니)$/u;
+/** A plan, not a request ("2번 완료 예정"). */
+const PLANNED_KO = /예정(?=$|\s|이|임|입니다|[.!~])/u;
+/** A report ending on the last word: -함 / -됨, or a past or existential stem + 음 ("추가함", "필요함", "다녀왔음"). */
+const REPORT_ENDING_LAST = /(?:함|됨)$|(?:했|됐|었|았|였|있|없|겠)음$/u;
 /** A thank-you or a report of a done act ("알려줘서 고마워"). */
 const DONE_FOR_ME_KO = /줘서(?=$|\s)/u;
 /**
@@ -110,7 +118,8 @@ const INTENTION_KO = /려고(?=$|\s|요|[.!?~,])|야지(?=$|\s|요|[.!?~,])|야�
 const OBLIGATION_KO = /야\s*(?:해|해요|한다|합니다|돼|돼요|된다|됩니다|됨|함|하나|하나요|되나|돼나)$/u;
 /** -(으)ㄹ 거야: future intention on the last clause ("추가할 거야"). */
 const FUTURE_INTENTION_KO = /\s(?:거야|거예요|거에요|거임|겁니다|거다|꺼야)$/u;
-const VOLITION_EN = /(?:^|[,.;!?]\s*)(?:i|we)\s|\bi'll\b|\bi will\b|\bi'm going to\b|\bwe'll\b|\blet me\b|\bi'd\b/u;
+/** English volition only in its explicit forms (CA round 3): a reason clause "I need it" is no volition. */
+const VOLITION_EN = /\bi'll\b|\bi will\b|\bi'm going to\b|\bwe'll\b|\blet me\b/u;
 
 /** The final consonant index of a Hangul syllable (0 = none, 4 = ㄴ, 8 = ㄹ), or -1 for anything else. */
 function finalConsonant(char: string | undefined): number {
@@ -182,6 +191,54 @@ function holdsActionWord(word: string, actionWords: readonly string[]): boolean 
 }
 
 /**
+ * The scoped verb negators of a clause (CA round 3): -지 마/말/않 negates the verb right before it (with the noun before a
+ * light-verb form: "완료 처리하지 마"), 안/못 the verb right after it. A negation counts only when that verb is the light
+ * verb 하/되 alone or holds an action word; `before` is the last word of the previous clause, for a negator split off
+ * ("추가하지 | 마").
+ */
+function verbNegated(clause: string, actionWords: readonly string[], before = ''): boolean {
+  const words = clause.split(/\s+/u).filter((word) => word.length > 0);
+  const negatesAt = (index: number, stemEnd: number): boolean => {
+    const token = index >= 0 ? (words[index] ?? '') : before;
+    const stem = token.slice(0, stemEnd < 0 ? token.length : stemEnd);
+    // The light verbs and the closed generic do-verbs (실행, 진행, 처리): "하지 마", "아직 실행하지는 마".
+    if (/^(?:하|되|해)?$/u.test(stem) || /^(?:실행|진행|처리)(?:하|되)?$/u.test(stem)) return true;
+    const previous = index > 0 ? (words[index - 1] ?? '') : index === 0 ? before : '';
+    const phrase = `${previous} ${stem}`;
+    return holdsActionWord(phrase, actionWords) || phrase.split(/\s+/u).some((word) => holdsActionWord(word, actionWords));
+  };
+  // The prohibitive -지 마 / -지 말아(라) / -지 마세요 is addressed to Quoky: it always negates the request. The descriptive
+  // -지 않- and the nominal -지 말기 / -지 않기 negate only their own verb ("야식 먹지 않기" is content).
+  if (/[지진](?:는|도|만)?\s*(?:마(?![가-힣])|마요|마세요|마라|말아|말라)/u.test(clause) || /^(?:마(?![가-힣])|마요|마세요|마라|말아|말라)/u.test(clause) && /[지진](?:는|도|만)?$/u.test(before)) return true;
+  for (const [index, word] of words.entries()) {
+    const own = /[지진](?:는|도|만)?(?:마|말|않)/u.exec(word);
+    if (own !== null) {
+      if (negatesAt(index, own.index)) return true;
+      continue;
+    }
+    if (/^(?:마|말|않)/u.test(word) && index > 0) {
+      const previous = words[index - 1] ?? '';
+      const tail = /[지진](?:는|도|만)?$/u.exec(previous);
+      if (tail !== null && negatesAt(index - 1, tail.index)) return true;
+    }
+    if (/^(?:마|말|않)/u.test(word) && index === 0) {
+      const tail = /[지진](?:는|도|만)?$/u.exec(before);
+      if (tail !== null && negatesAt(-1, tail.index)) return true;
+    }
+    if (/^(?:안|못)$/u.test(word)) {
+      const next = words[index + 1] ?? '';
+      if (next === '' || /^(?:하|해|되|돼|됐|했|할|함)/u.test(next) || holdsActionWord(next, actionWords)) return true;
+    }
+  }
+  return false;
+}
+
+/** Whether a Korean clause negates the request (the unscoped negators, or a scoped verb negator on the action). */
+function negatesKo(clause: string, actionWords: readonly string[], before = ''): boolean {
+  return NEGATION_KO.test(clause) || verbNegated(clause, actionWords, before);
+}
+
+/**
  * A word that issues a command: ㄱㄱ / 고고, a request ending, or an action word (Latin: the whole word) in its nominal or
  * verbal, not adnominal, form. A bare retraction stem ("취소") is no command; "취소해줘" is (Codex P2).
  */
@@ -208,12 +265,14 @@ function requestsSomething(clause: string, actionWords: readonly string[]): bool
  */
 function isQuotedRequest(inner: string, actionWords: readonly string[]): boolean {
   const words = wordsOf(inner);
-  const last = words.at(-1) ?? '';
-  if (REQUEST_WORD_KO.test(last)) return true;
-  if (/(?:해|해요|하세요|해라|하자|합시다)$/u.test(last) && holdsActionWord(last, actionWords)) return true;
-  // A Korean action verb in its own imperative ending ("지워", "되돌려", "꺼"); a verbal noun ("추가", "완료") or a
-  // nominalised form ("추가하기") is not.
-  if (holdsActionWord(last, actionWords) && /[가-힣]$/u.test(last) && /(?:어|아|워|려|빼|꺼|줘)$/u.test(last)) return true;
+  // A finite request form anywhere in the quoted clause ("2번 완료해줘 지금", Codex P2): a request ending, a 하다 verb of
+  // an action word, or a Korean action verb in its own imperative ending ("지워", "되돌려", "꺼"). A verbal noun ("추가",
+  // "완료") or a nominalised form ("추가하기") is content.
+  for (const word of words) {
+    if (REQUEST_WORD_KO.test(word)) return true;
+    if (/(?:해|해요|하세요|해라|하자|합시다)$/u.test(word) && holdsActionWord(word, actionWords)) return true;
+    if (holdsActionWord(word, actionWords) && /[가-힣]$/u.test(word) && /(?:어|아|워|려|빼|꺼|줘)$/u.test(word)) return true;
+  }
   const first = words[0] ?? '';
   return EN_REQUEST_SIGNAL.test(inner.trim()) || (/^[a-z]+$/u.test(first) && holdsActionWord(first, actionWords));
 }
@@ -227,7 +286,7 @@ function negatedClauseNames(text: string, words: readonly string[]): boolean {
   const clauses = clausesOf(text);
   return clauses.some(
     (clause, index) =>
-      (NEGATION_KO.test(clause) || NEGATOR_START.test(clauses[index + 1] ?? '') || (index > 0 && NEGATOR_START.test(clause))) && names(clause, words),
+      (negatesKo(clause, words, wordsOf(clauses[index - 1] ?? '').at(-1) ?? '') || verbNegated(clauses[index + 1] ?? '', words, wordsOf(clause).at(-1) ?? '')) && names(clause, words),
   );
 }
 
@@ -239,59 +298,85 @@ export interface NlRequestSpans {
   readonly when?: string;
   /** The content spans a quote pair encloses: a quoted request as the content is the object of another verb (neg-090). */
   readonly quoted?: readonly string[];
+  /** The whole prose, spans included: a joke ("…농담이야", "jk") holds for the message whatever span the selector took. */
+  readonly whole?: string;
 }
 
 /**
- * Where the lexical classes (wh-words, conditional -면, wishes, deferral) may NOT fire: inside a content span that is still
- * in the frame, before its last word ("5분 뒤에 라면 불 끄기 알려줘": 라면 is the body's own noun). A hit that reaches a
- * span's last word ("추가하는 법", "완료하고 싶다", "회의 끝나고") or lies outside every span counts, so no span can hide one.
+ * Where the lexical classes (wh-words, conditional -면, wishes, deferral) may NOT fire: a hit that lies entirely inside a
+ * content span still in the frame is the content's own ("할 일에 라면 추가해줘", "점심 먹은 후 약 먹기 1시에 알려줘",
+ * "희망퇴직"); a hit that crosses the span's edge ("할 일 추가하는 | 법") or lies outside counts. A span that runs to the end of
+ * the message without a request before it swallowed the predicate, so none of its words is exempt.
  */
-function innerRegions(text: string, content: readonly string[]): Array<readonly [number, number]> {
+function spanRegions(text: string, content: readonly string[]): Array<readonly [number, number]> {
   const regions: Array<readonly [number, number]> = [];
   for (const raw of content) {
     const span = normalizeForMatch(raw).replace(/[’‘`´]/gu, "'");
-    const lastSpace = span.lastIndexOf(' ');
-    if (lastSpace < 0) continue;
+    if (span.length === 0) continue;
     for (let at = text.indexOf(span); at >= 0; at = text.indexOf(span, at + 1)) {
-      // A span that runs to the end of the message swallowed the predicate ("할 일 추가하는 법 알려줘" as a title): none of
-      // its words is exempt.
       if (/^[\s.!?~^ㅋㅎ]*$/u.test(text.slice(at + span.length))) continue;
-      regions.push([at, at + lastSpace]);
+      // A hit on a longer span's last word ("할 일 추가하는 법") is the sentence's, not the content's; a one-word span is content.
+      const lastSpace = span.lastIndexOf(' ');
+      regions.push([at, lastSpace < 0 ? at + span.length : at + lastSpace]);
     }
   }
   return regions;
 }
 
-function lexicalHit(pattern: RegExp, text: string, regions: ReadonlyArray<readonly [number, number]>): boolean {
+function hitOutside(pattern: RegExp, text: string, regions: ReadonlyArray<readonly [number, number]>, inside?: (hit: string, start: number) => boolean): boolean {
   const global = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
   for (const match of text.matchAll(global)) {
     const start = match.index ?? 0;
     const end = start + match[0].length;
-    if (!regions.some(([from, to]) => start >= from && end <= to)) return true;
+    const enclosed = regions.some(([from, to]) => start >= from && end <= to);
+    // A one-word span that IS the veto word ("방법", "maybe", "나중에") is no content of its own.
+    const whole = regions.some(([from, to]) => start === from && end === to && !/\s/u.test(text.slice(from, to)));
+    if (!enclosed || whole || inside?.(match[0], start) === true) return true;
   }
   return false;
 }
 
+/** The word of `text` around position `at`. */
+function wordAt(text: string, at: number): string {
+  const from = text.lastIndexOf(' ', at) + 1;
+  const to = text.indexOf(' ', at);
+  return text.slice(from, to < 0 ? text.length : to);
+}
+
+/** Conditional -(으)면 only after a verb stem: a vowel-, ㄹ- or past-final syllable, or 으 ("냉면", "장면" are nouns). */
+const CONDITIONAL_MYEON = /[^\s]*면(?=$|[\s,.!?~]|요)/gu;
+const CONDITIONAL_OTHER = /만약|만일|(?:할|될|을)\s*경우|거든(?=$|[\s,.!?~]|요)|더라면/u;
+function isConditionalWord(word: string): boolean {
+  const chars = Array.from(word.replace(/[,.!?~]+$/u, '').replace(/요$/u, ''));
+  if (chars.at(-1) !== '면' || chars.length < 2) return false;
+  const before = chars.at(-2);
+  const final = finalConsonant(before);
+  return before === '으' || final === 0 || final === 8 || isPastSyllable(before);
+}
+
 /**
  * The veto class of a LOCAL_WRITE frame, or `undefined` when the frame is a request shape. `frame` is the owner's prose
- * without the content spans that a quote pair or a colon form running to the end fully encloses (an undelimited span stays
- * in the frame, so it cannot hide "…추가하지 마"). `entryWords` are the entry's own action words and `actionWords` every
- * entry's: both only VETO (a negated clause that names the action, a command before a retraction).
+ * without the content spans that a quote pair or a colon form running to the end fully encloses, or that end the message
+ * after the request verb (an undelimited span otherwise stays in the frame, so it cannot hide "…추가하지 마").
+ * `entryWords` are the entry's own action words and `actionWords` every entry's: both only VETO (a negated clause that
+ * names the action, a command before a retraction).
  */
 export function nlRequestVeto(frame: string, entryWords: readonly string[], actionWords: readonly string[], spans: NlRequestSpans = {}): NlRequestVeto | undefined {
   const text = normalizeForMatch(frame).replace(/[’‘`´]/gu, "'");
   if (EXAMPLE_FRAME.test(text)) return 'example';
+  if (JOKE.test(text) || (spans.whole !== undefined && JOKE.test(normalizeForMatch(spans.whole)))) return 'joke';
   if (QUOTED_REQUEST_KO.test(text) || QUOTATIVE_KO.test(text) || CONTRACTED_QUOTATIVE_KO.test(text) || REPORTED_EN.test(text)) return 'reported';
-  // A quoted command that is not this selection's content (a whole-message quote, "이 문장 영어로 바꿔줘 \"1번 완료해줘\""),
-  // also when a span carries the quotes with it.
-  for (const match of [frame, ...(spans.content ?? [])].flatMap((part) => [...normalizeForMatch(part).matchAll(QUOTED_SEGMENT)])) {
+  // A quoted command that is not this selection's content (a whole-message quote, a translation object): any command word,
+  // a nominal one included ("2번 완료"). The selected content span itself is a quoted request only in a finite request form
+  // ("보고서 추가 검토" is content, Codex P2).
+  for (const match of text.matchAll(QUOTED_SEGMENT)) {
     const inner = match.slice(1).find((group) => group !== undefined) ?? '';
-    if (isQuotedRequest(inner, actionWords)) return 'reported';
+    if (requestsSomething(inner, actionWords) || isQuotedRequest(inner, actionWords)) return 'reported';
   }
-  for (const span of spans.quoted ?? []) {
-    const inner = normalizeForMatch(span);
-    if (isQuotedRequest(inner, actionWords)) return 'reported';
+  for (const span of [...(spans.content ?? []), ...(spans.quoted ?? [])]) {
+    for (const match of normalizeForMatch(span).matchAll(QUOTED_SEGMENT)) if (isQuotedRequest(match.slice(1).find((group) => group !== undefined) ?? '', actionWords)) return 'reported';
   }
+  for (const span of spans.quoted ?? []) if (isQuotedRequest(normalizeForMatch(span), actionWords)) return 'reported';
 
   const clauses = clausesOf(text);
   // Hearsay ends a clause: -(으)ㄴ대 / -는대 / -았대 ("민수가 2번 완료한대"), -ㄹ 거래.
@@ -303,11 +388,11 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
     if (/^거래(?:요)?$/u.test(word) && finalConsonant(Array.from(words.at(-2) ?? '').at(-1)) === 8) return 'reported';
   }
 
-  const negated = (index: number): boolean =>
-    NEGATION_KO.test(clauses[index] ?? '') || NEGATOR_START.test(clauses[index + 1] ?? '') || (index > 0 && NEGATOR_START.test(clauses[index] ?? ''));
+  const lastOf = (index: number): string => wordsOf(clauses[index] ?? '').at(-1) ?? '';
+  const negated = (index: number): boolean => negatesKo(clauses[index] ?? '', actionWords, lastOf(index - 1)) || verbNegated(clauses[index + 1] ?? '', actionWords, lastOf(index));
   if (NEGATION_EN.test(text)) return 'negation';
   if (clauses.length > 0 && negated(clauses.length - 1)) return 'negation';
-  if (clauses.length > 1 && SPANNING_NEGATION.test(`${wordsOf(clauses.at(-2) ?? '').at(-1) ?? ''} ${clauses.at(-1) ?? ''}`)) return 'negation';
+  if (clauses.length > 1 && SPANNING_NEGATION.test(`${lastOf(clauses.length - 2)} ${clauses.at(-1) ?? ''}`)) return 'negation';
   if (clauses.some((clause, index) => negated(index) && names(clause, entryWords))) return 'negation';
   // A content span's own negated action always counts, enclosed or not ("'우유 사기 추가하지 마' 추가해줘").
   for (const span of spans.content ?? []) {
@@ -322,25 +407,45 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
   if (RETRACTION_ANYWHERE.test(text)) return 'retraction';
   if (last !== undefined && RETRACTION_FINAL.test(last) && rawWords.slice(0, -1).some((word) => isCommandWord(word, actionWords))) return 'retraction';
 
-  const regions = innerRegions(text, spans.content ?? []);
-  const hit = (pattern: RegExp, within: string = text): boolean => lexicalHit(pattern, within, within === text ? regions : innerRegions(within, spans.content ?? []));
+  // The lexical classes skip a hit that lies entirely inside a content span (its own words are content).
+  const regions = spanRegions(text, spans.content ?? []);
+  const lexicalHit = (pattern: RegExp, within: string = text): boolean => hitOutside(pattern, within, within === text ? regions : spanRegions(within, spans.content ?? []));
   const polite = POLITE_REQUEST.test(text);
   if (QUESTION_MARK.test(text) && !polite) return 'question';
-  if (hit(HOWTO_WH_KO) || hit(CAPABILITY_DELIBERATION_KO) || hit(QUESTION_EN)) return 'question';
+  if (lexicalHit(HOWTO_WH_KO) || lexicalHit(CAPABILITY_DELIBERATION_KO) || lexicalHit(QUESTION_EN)) return 'question';
   if (last !== undefined && INTERROGATIVE_ENDING_KO.test(last) && !polite) return 'question';
+  const lastChars = Array.from((last ?? '').replace(/요$/u, ''));
+  if (last !== undefined && DELIBERATION_TAIL.test(last) && finalConsonant(lastChars.at(-2)) === 8) return 'question';
 
-  if (hit(CONDITIONAL_KO) || hit(CONDITIONAL_EN)) return 'conditional';
-  if (hit(WISH_KO) || hit(WISH_EN)) return 'wish';
+  // -면 counts inside a span only on the action itself or a light verb ("그거 완료되면 알려줘"); "비 오면 우산 챙기기" and
+  // "라면" are content.
+  const conditionalInside = (hit: string): boolean => /(?:하|되|돼|했|됐)면/u.test(hit) || holdsActionWord(hit, actionWords);
+  const conditional = [...text.matchAll(CONDITIONAL_MYEON)].some((match) => {
+    if (!isConditionalWord(match[0])) return false;
+    const start = match.index ?? 0;
+    const enclosed = regions.some(([from, to]) => start >= from && start + match[0].length <= to);
+    return !enclosed || conditionalInside(wordAt(text, start));
+  });
+  if (conditional || lexicalHit(CONDITIONAL_OTHER) || lexicalHit(CONDITIONAL_EN)) return 'conditional';
+  if (lexicalHit(WISH_KO) || lexicalHit(WISH_EN)) return 'wish';
   // Deferred timing outside the reminder's own time span: Korean in the clause of the main predicate (an earlier
   // "나중에 까먹지 않게" is a reason), English anywhere ("after the meeting, cancel 2").
-  const untimed = spans.when === undefined ? text : text.replace(normalizeForMatch(spans.when), ' ');
+  // The reminder's own time stays a time (a digit), so "이따가 5시에" keeps its 이따가 as part of the time. The 후 / 뒤 check
+  // skips a span's own words too ("퇴근 후 장보기").
+  const whenText = spans.when === undefined ? undefined : normalizeForMatch(spans.when);
+  const untimed = whenText === undefined ? text : text.replace(whenText, ' 0 '.padEnd(whenText.length, ' '));
+  const untimedRegions = spanRegions(untimed, spans.content ?? []);
   const mainClause = clausesOf(untimed).at(-1) ?? '';
-  if (hit(DEFERRED_KO, mainClause) || hit(DEFERRED_EN, untimed)) return 'deferred';
-  const mainWords = wordsOf(mainClause);
-  for (const [index, word] of mainWords.entries()) {
-    const previous = Array.from(mainWords[index - 1] ?? '').at(-1);
-    if (AFTER_NOUN.test(word) && (finalConsonant(previous) === 4 || previous === '는')) return 'deferred';
+  const mainStart = untimed.lastIndexOf(mainClause);
+  const mainRegions = untimedRegions.map(([from, to]) => [from - mainStart, to - mainStart] as const);
+  if (hitOutside(DEFERRED_KO, mainClause, mainRegions) || hitOutside(DEFERRED_EN, untimed, untimedRegions)) return 'deferred';
+  for (const match of mainClause.matchAll(/(\S+)\s+(?:뒤|후|다음)(?:에|에는)?(?=$|\s)/gu)) {
+    const previous = Array.from(match[1] ?? '').at(-1);
+    const start = match.index ?? 0;
+    const enclosed = mainRegions.some(([from, to]) => start >= from && start + match[0].length <= to);
+    if (!enclosed && (finalConsonant(previous) === 4 || previous === '는')) return 'deferred';
   }
+  if (lexicalHit(PLANNED_KO)) return 'statement';
 
   // A past or report statement holds unless a later clause makes a request ("3번 끝났어 완료로 바꿔줘" acts; "2번
   // 완료했어 고마워" does not, Codex P2).
@@ -352,8 +457,9 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
   const lastWords = wordsOf(lastClause);
   const lastWord = words.at(-1) ?? '';
   // A plain declarative -다 ends the message ("피곤하다", "되돌리기 기능 좋다", "2번 완료한다"); -ㅂ시다 (let's) and the
-  // polite 부탁드립니다 are requests.
+  // polite 부탁드립니다 are requests. A report ending -함 / -됨 / -았음 likewise ("민수가 … 추가함", "원상복구 필요함").
   if (/다$/u.test(lastWord) && !/시다$/u.test(lastWord) && !/부탁/u.test(lastWord)) return 'statement';
+  if (REPORT_ENDING_LAST.test(lastWord)) return 'statement';
   // A copular sentence with its 이다 elided ends on a topic-marked noun ("할 일 제목은 '보고서 마감'"): a statement.
   if (Array.from(lastWord).length >= 2 && /[은는]$/u.test(lastWord) && !isAdnominalVerb(lastWord)) return 'statement';
   if (EXISTENTIAL_LAST.test(lastWords.at(-1) ?? '') && !/수$/u.test(lastWords.at(-2) ?? '') && !/수(?:있|없)/u.test(lastWords.at(-1) ?? '')) return 'statement';
@@ -363,7 +469,10 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
   if (mentions.length > 0 && mentions.every(isEmbeddedQuestion)) return 'question';
   if (mentions.length > 0 && mentions.every(isAdnominal) && !REQUEST_ENDING_KO.test(text)) return 'statement';
 
-  if (FIRST_PERSON_KO.test(text) || INTENTION_KO.test(lastClause) || OBLIGATION_KO.test(text.replace(WORD_NOISE, '')) || FUTURE_INTENTION_KO.test(lastClause) || VOLITION_EN.test(lastClause)) return 'volition';
+  // A first-person subject is volition unless the message makes a request of its own ("내가 자꾸 까먹으니까 … 추가해줘"
+  // acts; "내가 2번 완료할래", "제가 2번 완료해요" do not).
+  const requestWord = words.some((word) => REQUEST_WORD_KO.test(word)) || EN_REQUEST_SIGNAL.test(text);
+  if ((FIRST_PERSON_KO.test(text) && !requestWord) || INTENTION_KO.test(lastClause) || OBLIGATION_KO.test(text.replace(WORD_NOISE, '')) || FUTURE_INTENTION_KO.test(lastClause) || VOLITION_EN.test(lastClause)) return 'volition';
   // A promise ends its sentence: the last word, or a word followed by punctuation ("추가할게. 도서관 책 반납"). An adverbial
   // -게 inside a sentence ("길게 적어줘") or the causative "-게 해줘" is no promise.
   const spoken = rawWords.map((raw) => ({ raw, word: raw.replace(WORD_NOISE, '') })).filter((entry) => entry.word.length > 0);
@@ -374,9 +483,26 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
     if (promise && endsSentence && !CAUSATIVE_NEXT.test(spoken[index + 1]?.word ?? '')) return 'volition';
   }
   // A last word in the copula or obligation -야 after a vowel ("그냥 메모야", "사야"): never a request.
-  const lastChars = Array.from(lastWord);
-  if (lastChars.length >= 2 && lastChars.at(-1) === '야' && finalConsonant(lastChars.at(-2)) === 0) return 'statement';
+  const lastWordChars = Array.from(lastWord);
+  if (lastWordChars.length >= 2 && lastWordChars.at(-1) === '야' && finalConsonant(lastWordChars.at(-2)) === 0) return 'statement';
   return undefined;
+}
+
+/**
+ * Whether the text before a content span that ends the message closes a request, so the span is content (CA round 3): its
+ * last word is a request word ("할 일 추가해줘 운동 끝나고 샤워하기") or the English "to" / "that" after a request ("remind
+ * me at 5pm to stretch after lunch"). A nominal action word or a bare "-해" before the span is not enough.
+ */
+export function nlRequestEndsBefore(before: string, actionWords: readonly string[]): boolean {
+  const text = normalizeForMatch(before).replace(/[:：,]\s*$/u, '');
+  const last = wordsOf(text).at(-1) ?? '';
+  if (REQUEST_WORD_KO.test(last)) return true;
+  return /^(?:to|that)$/u.test(last) && (EN_REQUEST_SIGNAL.test(text) || wordsOf(text).some((word) => /^[a-z]+$/u.test(word) && holdsActionWord(word, actionWords)));
+}
+
+/** Whether `text` makes a request of its own (a request word, an action word as a command, an English request lead). */
+export function nlRequestsSomething(text: string, actionWords: readonly string[]): boolean {
+  return requestsSomething(normalizeForMatch(text), actionWords);
 }
 
 /**

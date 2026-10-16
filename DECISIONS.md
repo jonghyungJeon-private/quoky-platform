@@ -26843,3 +26843,29 @@ done here (no model calls; the prompt is being changed on another branch).
   run) before `selector-rag/pool.test.ts` passes again.
 - **Typo case.** Unchanged: execute when the selector is CLEAR, ask on NEEDS_CLARIFICATION; `complete-018` stays execute
   pending the owner's answer.
+
+### Review round 3 (CA over-blocks and gaps, Codex P2, 2026-10-16)
+
+- **Content is content (CA 3, 5).** A lexical hit (wh-words, -면, wishes, deferral, 후/뒤) entirely inside a content span is
+  the content's own ("할 일에 라면 추가해줘", "희망퇴직", "퇴근 후 장보기", "점심 먹은 후 약 먹기 1시에 알려줘"), except on a longer
+  span's last word ("할 일 추가하는 법") or a one-word span that is the veto word itself ("방법", "maybe"). -면 counts only
+  after a verb stem (vowel-, ㄹ- or past-final, or 으: "냉면" is a noun), and inside a span only on the action or a light
+  verb ("그거 완료되면"). Content that ends the message right after the request word ("할 일 추가해줘 운동 끝나고
+  샤워하기", "remind me at 5pm to stretch after lunch", "… that the report is due") leaves the frame like enclosed content.
+- **Negation scope (CA 4).** The prohibitive -지 마 / 말아 / 마세요 always negates the request; the descriptive -지 않- and
+  안/못 + a verb negate only that verb, so they veto only on the light verb (하/되, and the generic 실행/진행/처리) or an
+  action word ("야식 먹지 않기" is content; "2번 완료 처리하지 마" is not).
+- **Smaller fixes (CA 6).** "-라고 해줘" to Quoky is a request; English volition is only I'll / I will / I'm going to / we'll /
+  let me; a Korean first-person subject vetoes only when no request word is in the message ("내가 자꾸 까먹으니까 … 추가해줘"
+  acts).
+- **Gaps (CA 7).** New: "예정", -ㄹ까 on any verb ("완료해 버릴까"), -ㄹ/ㄴ 듯, a final "각", the report endings -함 / -됨 /
+  -았음, "you/someone should …", "she said …", jokes (`joke`: 농담, 장난이야, jk). `action.undo` needs an undo head: a bare
+  돌려 ("돈 좀 돌려줘") and an undo word before an adnominal verb ("되돌리기 해주는 앱 추천") are not one.
+- **Anchored 되돌리기 (CA 8)** carries the same DM-only guard (`dm-only`).
+- **Codex P2.** A quoted segment outside the selected span is a quoted command on any command word, nominal included
+  (`"2번 완료"`, a translation object); the selected span is one only in a finite request form, which is now looked for in
+  every word of the quote (`"2번 완료해줘 지금"`).
+- **Remaining refusals by existing rules** (not vetoes): `time-in-title` ("저녁 먹고 나서 설거지"), `bulk` ("1번 다 했어, 완료
+  처리해줘"), the English `time-outside-when` for "remind me in 10 minutes …", and the past reports "2번 했어요" / "2번 다
+  했다" (kept as statements). 16 more negatives (`a6-negative-none-154` … `-169`); the negative pins are 135 refused for every
+  lure and 38 selector-dependent. The selector-pool audit must be regenerated again.
