@@ -15,7 +15,7 @@ import {
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { NL_ACTION_R2_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import { extractPromptExamples } from './example-contamination';
-import { nlItemReadVeto, requestShapeOf } from './selection-validator';
+import { nlItemReadVeto, requestShapeOf, validateSelection, type NlValidationContext } from './selection-validator';
 import { prepareSelectionInput } from './selection-input';
 import type { NlCatalogEntry } from './catalog';
 
@@ -346,5 +346,61 @@ describe('A6 R2 review (CA): the contracted quotative in a LOCAL_WRITE content s
   it('a quotative that modifies a noun inside the span is the content', () => {
     expect(shape('reminder.create', { body: '엄마가 전화하랬던 거', when: '내일 9시' }, '내일 9시에 엄마가 전화하랬던 거 알려줘').veto).toBeUndefined();
     expect(shape('todo.add', { title: '아기 달래는데 필요한 장난감 사기' }, '할 일에 아기 달래는데 필요한 장난감 사기 추가해줘').veto).toBeUndefined();
+  });
+});
+
+describe('A6 R2 (v48 gate): item.summarize mode and source come from the owner words', () => {
+  const R2_ENTRY = nlItemSummarizeEntry(['jira', 'slack']);
+  const offered = new Map<string, NlCatalogEntry>([
+    ['item.summarize', R2_ENTRY],
+    ['jira.issues', NL_WAVE1_ENTRIES['jira.issues']],
+    ['todo.add', nlActionEntry('todo.add')],
+  ]) as NlValidationContext['offered'];
+  const validate = (entryId: string, args: Record<string, unknown>, text: string) => {
+    const prepared = prepareSelectionInput(text);
+    if ('skip' in prepared) throw new Error('skipped');
+    return validateSelection({ entryId, args } as never, { offered, groundingText: prepared.groundingText, now: '2026-10-17T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true });
+  };
+  const argsOf = (result: ReturnType<typeof validate>) => (result.ok ? result.value.args : undefined);
+
+  it('a content word alone leaves mode unset, whatever the selector wrote', () => {
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: '#2', mode: 'full' }, '2번 이슈 내용 알려줘'))).toEqual({ source: 'jira', ref: '#2' });
+    expect(argsOf(validate('item.summarize', { source: 'slack', ref: '#4', mode: 'summary' }, 'tell me the content of slack message 4'))).toEqual({ source: 'slack', ref: '#4' });
+  });
+
+  it('a summary word gives summary and a full word gives full, also when the selector omitted or mistook it', () => {
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: '#1' }, '첫 번째 티켓 요약해줘'))).toEqual({ source: 'jira', ref: '#1', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'slack', ref: '#4', scope: 'thread' }, 'summarize the thread of slack message 4'))).toEqual({ source: 'slack', ref: '#4', scope: 'thread', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: '#2', mode: 'summary' }, '2번 이슈 원문 보여줘'))).toEqual({ source: 'jira', ref: '#2', mode: 'full' });
+  });
+
+  it('both classes keep the existing behaviour: the selector value stays (both are grounded)', () => {
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#3', mode: 'full' }, '3번 메일 요약 말고 원문 보여줘'))).toEqual({ source: 'mail', ref: '#3', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#3' }, '3번 메일 요약 말고 원문 보여줘'))).toEqual({ source: 'mail', ref: '#3' });
+  });
+
+  it('the owner source noun decides the source: 메일 is mail, 문서 is drive', () => {
+    expect(argsOf(validate('item.summarize', { source: 'slack', ref: '#2', mode: 'summary' }, '2번 메일 요약해줘'))).toEqual({ source: 'mail', ref: '#2', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: '#2', mode: 'summary' }, '2번 문서 요약해줘'))).toEqual({ source: 'drive', ref: '#2', mode: 'summary' });
+  });
+
+  it('with no source noun the selector source stays (its recency or Reference context reading)', () => {
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'recent', mode: 'summary' }, '방금 본 거 요약해줘'))).toEqual({ source: 'jira', ref: 'recent', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'slack', ref: '#2', mode: 'full' }, '2번 원문 보여줘'))).toEqual({ source: 'slack', ref: '#2', mode: 'full' });
+  });
+
+  it('with R2 off (the A6 entry) nothing is grounded: an ungrounded selector mode is refused as before', () => {
+    const r1 = new Map<string, NlCatalogEntry>([['item.summarize', nlActionEntry('item.summarize')]]) as NlValidationContext['offered'];
+    const prepared = prepareSelectionInput('아까 1번은 무슨 내용이었지');
+    if ('skip' in prepared) throw new Error('skipped');
+    const result = validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1', mode: 'full' } } as never, { offered: r1, groundingText: prepared.groundingText, now: '2026-10-17T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true });
+    expect(result).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'mode' });
+  });
+
+  it('never turns another selection into item.summarize', () => {
+    const read = validate('jira.issues', {}, '2번 메일 요약해줘');
+    expect(read.ok && read.value.entry.id).toBe('jira.issues');
+    const write = validate('todo.add', { title: '보고서 요약' }, '할 일에 보고서 요약 추가해줘');
+    expect(write.ok ? write.value.entry.id : write.entryId).toBe('todo.add');
   });
 });
