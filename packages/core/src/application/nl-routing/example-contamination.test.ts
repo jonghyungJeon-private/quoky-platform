@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRY_IDS, NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { NL_ACTION_ENTRIES } from './action-entries';
+import { NL_ACTION_ENTRIES, nlItemSummarizeEntry } from './action-entries';
 import {
   NEAR_COPY,
   closeness,
@@ -103,14 +103,18 @@ function loadGold(): GoldCase[] {
 // ---- the examples the model sees ------------------------------------------------------------------------------------
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
 const ACTIONS: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined);
+/** A6 R2: the action catalog with `item.summarize` offering Jira and Slack (the R2 prompt, nl-select.v47). */
+const R2_ACTIONS: readonly NlCatalogEntry[] = ACTIONS.map((entry) => (entry.id === 'item.summarize' ? nlItemSummarizeEntry(['jira', 'slack']) : entry));
 
 function renderedExamples(): RenderedExample[] {
   void NL_ACTION_ENTRY_IDS;
   const read = extractPromptExamples(buildSelectionPrompt({ entries: READS, text: 'x' }));
   const action = extractPromptExamples(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: 'x', actions: { referenceContext: 'none' } }));
+  // A6 R2 (v46): the R2 prompt carries its own examples and rule lines, so it is linted too.
+  const r2 = extractPromptExamples(buildSelectionPrompt({ entries: [...READS, ...R2_ACTIONS], text: 'x', actions: { referenceContext: 'none' } }));
   const seen = new Set<string>();
   const unique: RenderedExample[] = [];
-  for (const example of [...read, ...action]) {
+  for (const example of [...read, ...action, ...r2]) {
     // The output is part of the dedupe identity: a read and an A6 variant with the same (previous, context, text) but a
     // different output are both kept, so the A6 action outputs are output-linted too.
     const key = `${exampleKey(example)}|${example.output}`;
@@ -125,7 +129,8 @@ function renderedExamples(): RenderedExample[] {
 function quotedPhrases(): RenderedExample[] {
   const read = extractQuotedStrings(buildSelectionPrompt({ entries: READS, text: 'x' }));
   const action = extractQuotedStrings(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: 'x', actions: { referenceContext: 'none' } }));
-  return [...new Set([...read, ...action])].map((text) => ({ text, output: '{}' }));
+  const r2 = extractQuotedStrings(buildSelectionPrompt({ entries: [...READS, ...R2_ACTIONS], text: 'x', actions: { referenceContext: 'none' } }));
+  return [...new Set([...read, ...action, ...r2])].map((text) => ({ text, output: '{}' }));
 }
 
 const exampleKey = (e: { text: string; previous?: string | undefined; context?: string | undefined }): string => JSON.stringify([e.previous ?? '', e.context ?? '', e.text]);

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Capability, type AiProvider, type AiRequest, type NlSelectionDecision } from '@quoky/core';
-import { NL_ACTION_R2_EVAL_GATE, buildActionPlan, computeActionPlanDigest, loadR2ActionCorpus, scoreActionDecision, summarizeActionR2, type NlActionCase, type NlActionRecord } from './nl-action-eval';
-import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, runCli, type CliDeps } from './nl-intent-eval-cli';
+import { NL_ACTION_R2_EVAL_GATE, buildActionPlan, computeActionPlanDigest, loadR2ActionCorpus, r2DiagnosticArgs, recordArgs, scoreActionDecision, summarizeActionR2, type NlActionCase, type NlActionRecord } from './nl-action-eval';
+import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, formatGateRuns, runCli, type CliDeps } from './nl-intent-eval-cli';
 
-// `eval:nl --mode r2` offline: the plan and its Strict digest (prompt v45, corpus, runs, calls, gate), the digest rule
+// `eval:nl --mode r2` offline: the plan and its Strict digest (prompt v48, corpus, runs, calls, gate), the digest rule
 // (nothing constructed before it matches), the R2 gate (jira and slack slices, wrong targets, negatives) and the
 // content-free report. Fake providers only; no process is spawned and QUOKY_NL_ITEM_R2 is never read.
 
@@ -66,11 +66,11 @@ describe('eval:nl --mode r2 plan', () => {
     else process.env.QUOKY_NL_ITEM_R2 = saved;
   });
 
-  it('prints the plan: the R2 prompt v45, the corpus digest, runs, the call count, the gate; nothing is constructed', async () => {
+  it('prints the plan: the R2 prompt v48, the corpus digest, runs, the call count, the gate; nothing is constructed', async () => {
     const d = deps();
     expect(await runCli(['--mode', 'r2', '--runs', '3'], d)).toBe(EXIT_OK);
     const plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', runs: 3, concurrency: 4, gitHead: 'rev-1' });
-    expect(plan.promptVersion).toBe('nl-select.v45');
+    expect(plan.promptVersion).toBe('nl-select.v48');
     expect(plan).toMatchObject({ corpusSha256: sha256, runs: 3, itemR2: 'all', calls: corpus.cases.length * 3, gate: NL_ACTION_R2_EVAL_GATE });
     expect(digestOf(d.out)).toBe(computeActionPlanDigest(plan));
     expect(d.out.join('\n')).toContain(`at most ${corpus.cases.length * 3}`);
@@ -122,12 +122,16 @@ describe('eval:nl --mode r2 run (Strict)', () => {
     const d = deps();
     const code = await runCli(['--mode', 'r2', '--runs', '1', '--approved-plan-digest', digestOf(planned.out)], d);
     expect(d.created).toEqual(['haiku']);
-    expect(d.out.join('\n')).toContain('R2 gate (nl-select.v45): PASSED');
+    expect(d.out.join('\n')).toContain('R2 gate (nl-select.v48): PASSED in all 1 run(s)');
     expect(code).toBe(EXIT_OK);
     expect(d.written).toHaveLength(1);
     const report = d.written[0]?.contents ?? '';
     for (const golden of corpus.cases) expect(report).not.toContain(golden.text);
     expect(JSON.parse(report).records).toHaveLength(corpus.cases.length);
+    // Diagnosis (v47 gate): every R2 record carries the selector's args; a hit carries no expectedArgs.
+    const records = JSON.parse(report).records as Array<{ outcome: string; gotArgs?: Record<string, unknown>; expectedArgs?: Record<string, unknown> }>;
+    expect(records.every((record) => record.gotArgs !== undefined)).toBe(true);
+    expect(records.filter((record) => record.outcome === 'hit').every((record) => record.expectedArgs === undefined)).toBe(true);
   });
 
   it('a selector that captures negatives fails the gate (exit 1)', async () => {
@@ -200,5 +204,37 @@ describe('the R2 gate (proposal §6.4)', () => {
     const raw = answer(golden.expect.entryId, golden.expect.args);
     expect(scoreActionDecision(golden, raw, { kind: 'none' } as NlSelectionDecision).outcome).toBe('miss');
     expect(scoreActionDecision(golden, answer(golden.expect.entryId, golden.expect.args, 'NEEDS_CLARIFICATION'), { kind: 'none' } as NlSelectionDecision).outcome).toBe('hit');
+  });
+});
+
+describe('eval:nl --mode r2 diagnosis args', () => {
+  it('records the selector args and, for a non-hit, the gold args; never a span value', () => {
+    const golden = corpus.cases.find((candidate) => candidate.expect !== 'none') as NlActionCase;
+    const raw = answer('item.summarize', { source: 'jira', ref: '#9', mode: 'full' });
+    expect(r2DiagnosticArgs(golden, raw, 'miss')).toEqual({ gotArgs: { source: 'jira', ref: '#9', mode: 'full' }, expectedArgs: golden.expect !== 'none' ? golden.expect.args : {} });
+    expect(r2DiagnosticArgs(golden, raw, 'hit')).toEqual({ gotArgs: { source: 'jira', ref: '#9', mode: 'full' } });
+    expect(r2DiagnosticArgs(golden, answer('todo.add', { title: '비밀 메모' }), 'miss').gotArgs).toEqual({});
+    expect(r2DiagnosticArgs(golden, 'not json', 'error')).toEqual({ expectedArgs: golden.expect !== 'none' ? golden.expect.args : {} });
+  });
+
+  it('records only the closed diagnostic fields; free text becomes "<invalid>" (Codex P2)', () => {
+    expect(recordArgs({ source: 'private text', ref: 'private text', mode: 'whole thing', scope: 'thread', query: 'private text', title: 'private text' })).toEqual({
+      source: '<invalid>',
+      ref: '<invalid>',
+      mode: '<invalid>',
+      scope: 'thread',
+    });
+    expect(recordArgs({ source: 'jira', ref: 'PROJ-12', mode: 'summary' })).toEqual({ source: 'jira', ref: 'PROJ-12', mode: 'summary' });
+    expect(recordArgs({ source: 'slack', ref: '#3' })).toEqual({ source: 'slack', ref: '#3' });
+    expect(JSON.stringify(recordArgs({ source: 'private text', query: 'private text' }))).not.toContain('private');
+  });
+});
+
+describe('the multi-run gate line (every eval:nl mode)', () => {
+  it('says how many runs passed instead of "FAILED in every one"', () => {
+    const run = (gatePassed: boolean) => ({ gatePassed });
+    expect(formatGateRuns('R2 gate (v)', [run(true), run(true), run(true)])).toBe('R2 gate (v): PASSED in all 3 run(s)');
+    expect(formatGateRuns('R2 gate (v)', [run(true), run(true), run(false)])).toBe('R2 gate (v): FAILED, passed 2 of 3 run(s) (the gate needs every run)');
+    expect(formatGateRuns('intent gate', [run(false), run(false), run(false)])).toBe('intent gate: FAILED, passed 0 of 3 run(s) (the gate needs every run)');
   });
 });

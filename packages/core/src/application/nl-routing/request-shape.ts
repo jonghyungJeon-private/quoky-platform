@@ -53,7 +53,15 @@ const WORD_NOISE = /[\u3131-\u318e\p{Extended_Pictographic}\uFE0F\u200D~^!.?,…
 // the contracted quotatives on the light verb 하, the linking vowel 으, 달(라) and 주 (하래, 넣으래, 해 달래, 해 주래, 하재).
 const QUOTED_REQUEST_KO = /(?:줘|주세요|줄래|해)\s*(?:했던|했잖아|했는데|했더니|했어|했지|했다|했었|라고|이라고|라는|란|하면|하고|그랬|하길래|해서|하니까|하더라|하던데|하셨)/u;
 const QUOTATIVE_KO = /(?:라|자|달라|냐|다)고\s*(?:했|하더|하던|하셨|하시|하네|하대|해서|하길래|하니까|그러|그랬|말했|들었|한다|합니다|하는데|해(?!\s*(?:줘|주세요|줄래|주실|주시|줘요))|전해|전달|말해|얘기해|이야기해)|(?:라|다)(?:는데|던데|더라)/u;
-const CONTRACTED_QUOTATIVE_KO = /(?:하|으|달|주)(?:래|래요|래서|랬|라셔|라시|란다|재|재요)(?=$|[\s.!?~,]|[\u3131-\u318e])/u;
+// The past 랬 is hearsay with any ending after it (달랬어, 하랬는데, 주랬잖아); the present 래 also before the connective
+// 는데 (달래는데): the same contracted quotative followed by a connective, never a phrase (A6 R2 review, CA P3).
+const CONTRACTED_QUOTATIVE_KO = /(?:하|으|달|주)(?:(?:래|래요|래서|라셔|라시|란다|재|재요)(?=$|[\s.!?~,]|[\u3131-\u318e]|는데)|랬)/u;
+/**
+ * The word-final contracted quotatives (하래, 달래, 주래, 으래 … at a word end): hearsay wherever a content span puts them
+ * (CA review: "김 대리가 보고서 작성하래 추가" as a title is still reported). Only the forms that go on inside the word
+ * and modify a noun (-랬던, -래는데, -랬다는) are exempt inside a content span.
+ */
+const CONTRACTED_QUOTATIVE_FINAL_KO = /(?:하|으|달|주)(?:래|래요|래서|랬|라셔|라시|란다|재|재요)(?=$|[\s.!?~,]|[\u3131-\u318e])/u;
 /** A quoted segment of the frame (content spans already removed): '…', "…", “…”, ‘…’, 「…」, 『…』. */
 const QUOTED_SEGMENT = /'([^']+)'|"([^"]+)"|“([^”]+)”|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
 const REPORTED_EN = /\b(?:told|asked|wants?|wanted|said|says)\s+(?:(?:me|us|him|her|them)\s+)?to\b|\b(?:you|someone|somebody|they|he|she)\s+(?:should|must|might|could|said|says|told|wants?|wanted)\b/u;
@@ -366,6 +374,79 @@ function isConditionalWord(word: string): boolean {
 }
 
 /**
+ * The Korean quotative and contracted quotative forms in the frame (…하라고 했어, …해 달래, …하랬는데, "…해줘 했더니"). A
+ * contracted quotative inside a content span is the content's own, like the lexical classes ("엄마가 전화하랬던 거" as a
+ * reminder body, "아기 달래는데" in a title); on the span's last word or outside every span it counts (CA review).
+ */
+function koreanQuotative(text: string, regions: ReadonlyArray<readonly [number, number]> = []): boolean {
+  return QUOTED_REQUEST_KO.test(text) || QUOTATIVE_KO.test(text) || CONTRACTED_QUOTATIVE_FINAL_KO.test(text) || hitOutside(CONTRACTED_QUOTATIVE_KO, text, regions);
+}
+
+/**
+ * A quoted command that is not this selection's content (a whole-message quote, a translation object): any command word,
+ * a nominal one included ("2번 완료"). The selected content span itself is a quoted request only in a finite request form
+ * ("보고서 추가 검토" is content, Codex P2).
+ */
+function quotedCommand(text: string, actionWords: readonly string[]): boolean {
+  for (const match of text.matchAll(QUOTED_SEGMENT)) {
+    const inner = match.slice(1).find((group) => group !== undefined) ?? '';
+    if (requestsSomething(inner, actionWords) || isQuotedRequest(inner, actionWords)) return true;
+  }
+  return false;
+}
+
+/** Hearsay ends a clause: -(으)ㄴ대 / -는대 / -았대 ("민수가 2번 완료한대"), -ㄹ 거래. */
+function hearsayEnding(clauses: readonly string[]): boolean {
+  for (const clause of clauses) {
+    const words = wordsOf(clause);
+    const word = words.at(-1) ?? '';
+    const before = Array.from(word.replace(HEARSAY_TAIL, '')).at(-1);
+    if (HEARSAY_TAIL.test(word) && Array.from(word).length >= 2 && (finalConsonant(before) === 4 || before === '는' || isPastSyllable(before))) return true;
+    if (/^거래(?:요)?$/u.test(word) && finalConsonant(Array.from(words.at(-2) ?? '').at(-1)) === 8) return true;
+  }
+  return false;
+}
+
+/**
+ * A6 R2 ITEM_READ veto (final narrowing, review round 4): whether the owner relays someone else's request instead of making
+ * one. Two structural forms only:
+ *  - a quoted span that holds a request FORM (a request or imperative ending, or an English request lead or action verb
+ *    first: {@link isQuotedRequest}) next to a reporting frame ({@link KO_REPORT_AFTER_QUOTE}, {@link EN_REPORT_BEFORE_QUOTE});
+ *    a bare quoted noun ("\"요약\" 모드로") or an unframed quoted title is a label, not a command;
+ *  - a Korean quotative or hearsay form (…해 달래, …하랬는데, …하라고 했어, …한대) that is the message-final predicate: it
+ *    ends inside the last word, which may carry a connective tail (-는데, -거든, -서) and sentence punctuation. A hearsay
+ *    form that modifies a noun ("엄마가 전화하랬던 부분까지 요약해줘") or sits before the owner's own final request
+ *    ("팀장이 3번 요약해달래. 요약해줘": the owner asks, so it reads) does not relay.
+ * The English "asked me to" is no relay for a read (it describes the item). Example, joke, retraction, negation and
+ * statements stay with the selector. The LOCAL_WRITE `reported` class is unchanged.
+ */
+/**
+ * The reporting frame of a quoted read command (Codex P2, round 6): a Korean quotative right after the closing quote
+ * (…"라고 했어", …"이라고 적혀 있네", …" 하고 말했어, …" 했더니) or an English reporting verb right before the opening quote
+ * (said / says / told me / wrote / asked / goes "…"), not one led by a relative pronoun (`email #1 that says "…"` describes
+ * the item, Codex P2). Without one, a quoted span is a description or a title
+ * (`email #1 about "open source"`, `titled "Read receipts"`) and never relays a request.
+ */
+const KO_REPORT_AFTER_QUOTE = /^\s*(?:(?:이)?라고|(?:하고\s*)?(?:했|하더|하셨|하시|말했|말하|그러|그랬|적혀|써|쓰))/u;
+const EN_REPORT_BEFORE_QUOTE = /(?<!\b(?:that|which|who|whose)\s+)\b(?:said|says|say|told|tells|tell|wrote|writes|write|asked|asks|ask|goes|went)(?:\s+(?:me|us|him|her|them|you))?\s*[,:]?\s*$/u;
+
+export function nlRelaysRequest(frame: string, actionWords: readonly string[]): boolean {
+  const text = normalizeForMatch(frame).replace(/[\u2018\u2019`\u00b4]/gu, "'");
+  for (const match of text.matchAll(QUOTED_SEGMENT)) {
+    const start = match.index ?? 0;
+    const framed = KO_REPORT_AFTER_QUOTE.test(text.slice(start + match[0].length)) || EN_REPORT_BEFORE_QUOTE.test(text.slice(0, start));
+    if (framed && isQuotedRequest(match.slice(1).find((group) => group !== undefined) ?? '', actionWords)) return true;
+  }
+  // The final predicate: the last word once trailing punctuation, laughter and emoticons are set aside.
+  const body = text.replace(/[\s.,!?~\u2026;:"'\u3131-\u318e^\p{Extended_Pictographic}\uFE0F\u200D]+$/u, '');
+  const lastStart = body.lastIndexOf(' ') + 1;
+  const endsInLast = (pattern: RegExp): boolean =>
+    [...body.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))].some((match) => (match.index ?? 0) + match[0].length > lastStart);
+  if (endsInLast(QUOTED_REQUEST_KO) || endsInLast(QUOTATIVE_KO) || endsInLast(CONTRACTED_QUOTATIVE_KO)) return true;
+  return hearsayEnding([body]);
+}
+
+/**
  * The veto class of a LOCAL_WRITE frame, or `undefined` when the frame is a request shape. `frame` is the owner's prose
  * without the content spans that a quote pair or a colon form running to the end fully encloses, or that end the message
  * after the request verb (an undelimited span otherwise stays in the frame, so it cannot hide "…추가하지 마").
@@ -383,28 +464,15 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
     if (NEGATION_EN.test(span) || own.some((clause, index) => negatesKo(clause, actionWords, wordsOf(own[index - 1] ?? '').at(-1) ?? ''))) return 'negation';
     if (own.length > 1 && RETRACTION_FINAL.test(wordsOf(own.at(-1) ?? '').at(-1) ?? '')) return 'retraction';
   }
-  if (QUOTED_REQUEST_KO.test(text) || QUOTATIVE_KO.test(text) || CONTRACTED_QUOTATIVE_KO.test(text) || REPORTED_EN.test(text)) return 'reported';
-  // A quoted command that is not this selection's content (a whole-message quote, a translation object): any command word,
-  // a nominal one included ("2번 완료"). The selected content span itself is a quoted request only in a finite request form
-  // ("보고서 추가 검토" is content, Codex P2).
-  for (const match of text.matchAll(QUOTED_SEGMENT)) {
-    const inner = match.slice(1).find((group) => group !== undefined) ?? '';
-    if (requestsSomething(inner, actionWords) || isQuotedRequest(inner, actionWords)) return 'reported';
-  }
+  if (koreanQuotative(text, spanRegions(text, spans.content ?? [])) || REPORTED_EN.test(text)) return 'reported';
+  if (quotedCommand(text, actionWords)) return 'reported';
   for (const span of [...(spans.content ?? []), ...(spans.quoted ?? [])]) {
     for (const match of normalizeForMatch(span).matchAll(QUOTED_SEGMENT)) if (isQuotedRequest(match.slice(1).find((group) => group !== undefined) ?? '', actionWords)) return 'reported';
   }
   for (const span of spans.quoted ?? []) if (isQuotedRequest(normalizeForMatch(span), actionWords)) return 'reported';
 
   const clauses = clausesOf(text);
-  // Hearsay ends a clause: -(으)ㄴ대 / -는대 / -았대 ("민수가 2번 완료한대"), -ㄹ 거래.
-  for (const clause of clauses) {
-    const words = wordsOf(clause);
-    const word = words.at(-1) ?? '';
-    const before = Array.from(word.replace(HEARSAY_TAIL, '')).at(-1);
-    if (HEARSAY_TAIL.test(word) && Array.from(word).length >= 2 && (finalConsonant(before) === 4 || before === '는' || isPastSyllable(before))) return 'reported';
-    if (/^거래(?:요)?$/u.test(word) && finalConsonant(Array.from(words.at(-2) ?? '').at(-1)) === 8) return 'reported';
-  }
+  if (hearsayEnding(clauses)) return 'reported';
 
   const lastOf = (index: number): string => wordsOf(clauses[index] ?? '').at(-1) ?? '';
   const negated = (index: number): boolean => negatesKo(clauses[index] ?? '', actionWords, lastOf(index - 1)) || verbNegated(clauses[index + 1] ?? '', actionWords, lastOf(index));
@@ -540,6 +608,56 @@ const IMPERATIVE_TAIL = /(?:해|해요|려|려요|죠|합시다|십시오|봐|�
 export function nlIsRequestForm(raw: string): boolean {
   const word = raw.replace(WORD_NOISE, '').replace(/요{2,}$/u, '요');
   return word.length > 0 && !isAdnominal(word) && (REQUEST_WORD_KO.test(word) || IMPERATIVE_TAIL.test(word));
+}
+
+/**
+ * Whether `word` is mentioned in `text` outside every negation scope (A6 R2 mode grounding, Codex P2). English: a mention
+ * governed by a negator among the (at most three) words right before it, within its sentence part, does not count ("not a
+ * summary", "don't summarize", "no need to summarize"); another mention in the same clause still does ("Show the full
+ * text of email #1 not a summary" grounds full). The term is matched on the whole text, so "tl;dr" stays one term. Korean: the mention's own stretch runs to
+ * the next of `stopWords`, the next sentence punctuation or the end of the first request-form word, whichever comes
+ * first; a stretch negated by the request-shape negators ("요약하지 말고 …", "요약 말고", "요약 안 해도 되고") does not count.
+ * The same negation grammar as the LOCAL_WRITE vetoes; no phrase list.
+ */
+export function nlHasUnnegatedMention(text: string, word: string, stopWords: readonly string[]): boolean {
+  const target = normalizeForMatch(word);
+  if (target.length === 0) return false;
+  const normalized = normalizeForMatch(text);
+  if (/^[a-z0-9][a-z0-9 ;.-]*$/u.test(target)) {
+    const pattern = new RegExp(`(?<![a-z0-9])${target.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}s?(?![a-z0-9])`, 'gu');
+    for (const match of normalized.matchAll(pattern)) {
+      const before = normalized.slice(0, match.index ?? 0);
+      const part = before.slice(before.search(/[^,.!?]*$/u));
+      const governing = part.trim().split(/\s+/u).filter((token) => token.length > 0).slice(-3);
+      if (!governing.some((token) => NEGATION_EN.test(token))) return true;
+    }
+    return false;
+  }
+  const stops = stopWords.map((stop) => normalizeForMatch(stop)).filter((stop) => stop.length > 0 && stop !== target);
+  for (let at = normalized.indexOf(target); at >= 0; at = normalized.indexOf(target, at + 1)) {
+    const rest = normalized.slice(at);
+    let end = rest.length;
+    for (const stop of stops) {
+      const index = rest.indexOf(stop, target.length);
+      if (index > 0) end = Math.min(end, index);
+    }
+    const punctuation = rest.slice(target.length).search(/[,.!?;]/u);
+    if (punctuation >= 0) end = Math.min(end, target.length + punctuation);
+    // The first request-form word from the mention on closes the stretch ("요약해줘", "… 내용 보여줘").
+    let offset = 0;
+    for (const raw of rest.slice(0, end).split(/(\s+)/u)) {
+      offset += raw.length;
+      if (raw.trim().length > 0 && nlIsRequestForm(raw)) {
+        end = Math.min(end, offset);
+        break;
+      }
+    }
+    // A scoped negator directly before the mode verb belongs to its stretch ("안 간추려도 되니까", "못 요약해도", Codex P2).
+    const preceding = /(?:^|\s)(안|못)\s*$/u.exec(normalized.slice(0, at))?.[1];
+    const stretch = preceding === undefined ? rest.slice(0, end) : `${preceding} ${rest.slice(0, end)}`;
+    if (!negatesKo(stretch, [target])) return true;
+  }
+  return false;
 }
 
 /** Whether `text` makes a request of its own (a request word, an action word as a command, an English request lead). */

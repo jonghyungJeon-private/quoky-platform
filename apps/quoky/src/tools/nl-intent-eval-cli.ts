@@ -223,6 +223,16 @@ function describeMiss(record: NlEvalRecord): string {
   return `  ${record.outcome.padEnd(13)} ${record.id} want ${record.expected} got ${record.got ?? '-'} ${record.gotArgs ? JSON.stringify(record.gotArgs) : ''}${record.error ? ` (${record.error})` : ''}${raw}`;
 }
 
+/**
+ * The multi-run gate line of every eval:nl mode: PASSED only when every run passed, otherwise how many of the runs passed
+ * (the v48 gate printed "FAILED in every one of 3 run(s)" with two runs passing).
+ */
+export function formatGateRuns(label: string, summaries: ReadonlyArray<{ readonly gatePassed: boolean }>): string {
+  const passed = summaries.filter((summary) => summary.gatePassed).length;
+  const total = summaries.length;
+  return passed === total ? `${label}: PASSED in all ${total} run(s)` : `${label}: FAILED, passed ${passed} of ${total} run(s) (the gate needs every run)`;
+}
+
 export async function runCli(argv: readonly string[], deps: CliDeps = defaultDeps()): Promise<number> {
   let parsed: ReturnType<typeof parseArguments>;
   let options: NlEvalPlanOptions;
@@ -292,6 +302,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stdout(`not hit (${misses.length}):`);
     for (const record of misses) deps.stdout(describeMiss(record));
   }
+  deps.stdout(formatGateRuns('intent gate', summaries));
   const path = deps.writeReport(
     `nl-intent-${startedAt.replace(/[:.]/g, '-')}-${plan.model.replace(/[^A-Za-z0-9._-]/g, '_')}.json`,
     `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, records }, null, 2)}\n`,
@@ -356,6 +367,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
     const records = await runActionEvaluation({ corpus, plan, provider, now: deps.now });
     const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeAction(records.filter((record) => record.run === index + 1), plan.callTimeoutMs));
     for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
+    deps.stdout(formatGateRuns(`action gate (${plan.promptVersion})`, summaries));
     const path = deps.writeReport(`nl-action-${startedAt.replace(/[:.]/g, '-')}.json`, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, records }, null, 2)}\n`);
     deps.stdout(`results written to ${path}`);
     return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
@@ -394,6 +406,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
   };
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeReadRegression(records.filter((record) => record.run === index + 1), goldOf));
   for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
+  deps.stdout(formatGateRuns(`read-regression gate (${plan.promptVersion})`, summaries));
   const path = deps.writeReport(`nl-read-regression-${startedAt.replace(/[:.]/g, '-')}.json`, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
@@ -437,7 +450,7 @@ async function runR2Cli(settings: { model: string; runs: number; concurrency: nu
   const records = await runActionEvaluation({ corpus, plan, provider, now: deps.now });
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeActionR2(records.filter((record) => record.run === index + 1), corpus, plan.callTimeoutMs));
   for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
-  deps.stdout(`R2 gate (${plan.promptVersion}): ${summaries.every((summary) => summary.gatePassed) ? 'PASSED' : 'FAILED'} in every one of ${plan.runs} run(s)`);
+  deps.stdout(formatGateRuns(`R2 gate (${plan.promptVersion})`, summaries));
   // Content-free: ids, outcomes, entries and reasons only (never an owner text or a raw model answer).
   const path = deps.writeReport(`nl-action-r2-${startedAt.replace(/[:.]/g, '-')}.json`, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);

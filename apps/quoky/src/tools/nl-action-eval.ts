@@ -70,7 +70,7 @@ import {
   type Session,
 } from '@quoky/core';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
-import { LAST_READ_METADATA_KEY, withLastRead } from '@quoky/core';
+import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, parseNlRef, withLastRead } from '@quoky/core';
 
 export const NL_ACTION_EVAL_GATE = Object.freeze({
   overall: 0.95,
@@ -430,6 +430,44 @@ export interface NlActionRecord {
   readonly got?: string;
   readonly latencyMs: number;
   readonly reason?: string;
+  /**
+   * R2 mode only (diagnosis, v47 gate): the selector's own args, and the gold args for a non-hit. Only the closed
+   * diagnostic fields (source, ref, mode, scope) are recorded, each only as a catalog enum value or a canonical ref;
+   * anything else is "<invalid>", so no free text ever reaches the report (Codex P2).
+   */
+  readonly gotArgs?: NlArgs;
+  readonly expectedArgs?: NlArgs;
+}
+
+const DIAGNOSTIC_VALUES: Readonly<Record<string, readonly string[]>> = {
+  source: NL_ITEM_SUMMARIZE_SOURCES,
+  mode: ['summary', 'full'],
+  scope: ['item', 'thread'],
+};
+
+/** The diagnostic args of a record: source, ref, mode and scope only, each a closed value or "<invalid>" (content-free). */
+export function recordArgs(args: NlArgs): NlArgs {
+  const out: Record<string, string> = {};
+  for (const name of ['source', 'ref', 'mode', 'scope'] as const) {
+    const value = args[name];
+    if (value === undefined) continue;
+    if (name === 'ref') {
+      const ref = parseNlRef(value, { keys: true });
+      out.ref = ref === undefined ? '<invalid>' : formatNlRef(ref);
+      continue;
+    }
+    out[name] = typeof value === 'string' && (DIAGNOSTIC_VALUES[name] ?? []).includes(value) ? value : '<invalid>';
+  }
+  return out;
+}
+
+/** R2 mode: the selector's args and, for a non-hit, the gold args (see {@link NlActionRecord.gotArgs}). */
+export function r2DiagnosticArgs(golden: NlActionCase, raw: string, outcome: NlActionOutcome): { gotArgs?: NlArgs; expectedArgs?: NlArgs } {
+  const output = parseSelectionOutput(raw);
+  return {
+    ...(output !== null ? { gotArgs: recordArgs(output.args) } : {}),
+    ...(outcome !== 'hit' && golden.expect !== 'none' ? { expectedArgs: recordArgs(golden.expect.args) } : {}),
+  };
 }
 
 /** Score Core's decision against the gold (exported for the offline tests). */
@@ -676,7 +714,8 @@ export async function runActionEvaluation(input: {
         try {
           const { decision, audit } = await decideActionCase(golden, rec.provider, input.now(), { timeoutMs: input.plan.callTimeoutMs, ...(input.plan.itemR2 !== undefined ? { itemR2: input.plan.itemR2 } : {}) });
           const { raw, latencyMs } = rec.last();
-          record = { run, latencyMs, ...scoreActionDecision(golden, raw, decision, audit) };
+          const scored = scoreActionDecision(golden, raw, decision, audit);
+          record = { run, latencyMs, ...scored, ...(input.plan.itemR2 !== undefined ? r2DiagnosticArgs(golden, raw, scored.outcome) : {}) };
         } catch (error) {
           record = { run, id: golden.id, family: golden.family, expected: golden.expect === 'none' ? 'none' : golden.expect.entryId, outcome: 'error', latencyMs: rec.last().latencyMs, reason: error instanceof Error ? error.name : 'unknown' };
         }

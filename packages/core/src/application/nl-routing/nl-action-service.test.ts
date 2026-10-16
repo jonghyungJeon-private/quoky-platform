@@ -554,6 +554,26 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
     }
   });
 
+  it('A6 R2 review (CA): a contracted quotative inside a content span is the content, outside it still refuses the write', async () => {
+    const run = async (text: string, entryId: string, args: Record<string, unknown>) => {
+      const w = world({ level: 'local', script: () => out(entryId, args) });
+      return w.decide(text, { now: at(1) });
+    };
+    expect((await run('내일 9시에 엄마가 전화하랬던 거 알려줘', 'reminder.create', { body: '엄마가 전화하랬던 거', when: '내일 9시' })).kind).toBe('execute');
+    expect((await run('할 일에 아기 달래는데 필요한 장난감 사기 추가해줘', 'todo.add', { title: '아기 달래는데 필요한 장난감 사기' })).kind).toBe('execute');
+    expect((await run('팀장이 할 일에 보고서 쓰기 추가하래', 'todo.add', { title: '보고서 쓰기' })).kind).not.toBe('execute');
+    expect((await run('팀장이 할 일에 보고서 쓰기 추가하랬는데', 'todo.add', { title: '보고서 쓰기' })).kind).not.toBe('execute');
+    // A word-final contracted quotative is hearsay wherever the selector's span puts it (refused as on main, CA review).
+    const refused = async (text: string, entryId: string, args: Record<string, unknown>) => {
+      const decision = await run(text, entryId, args);
+      expect(decision.kind, text).not.toBe('execute');
+      return decision;
+    };
+    await refused('할 일에 김 대리가 보고서 작성하래 추가해줘', 'todo.add', { title: '김 대리가 보고서 작성하래 추가' });
+    await refused('3시에 팀장이 회의 하래 알려줘', 'reminder.create', { body: '팀장이 회의 하래 알려', when: '3시' });
+    await refused('팀장님이 회의 준비 완료하래 완료해줘', 'todo.complete', { match: '팀장님이 회의 준비 완료하래 완료' });
+  });
+
   it('Codex P1 (round 2): reference payloads, terse payloads, negations, adnominals, glued nouns and match spans never write', async () => {
     const run = async (text: string, entryId: string, args: Record<string, unknown>) => {
       const w = world({ level: 'local', script: () => out(entryId, args) });
@@ -1132,13 +1152,16 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
     normal.setMetadata(LAST_ACTION_METADATA_KEY, echoed);
     const selected = await normal.decide('되돌려줘', { now: at(2), replyTo: 'echo-1' });
     expect(shortcut).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' } } });
-    expect(shortcut).toEqual(selected);
+    // The audit's wall-clock latency differs by a millisecond under load (the observed flake): compare everything else.
+    const withoutLatency = (decision: unknown): unknown =>
+      decision !== null && typeof decision === 'object' && 'action' in decision ? { ...decision, action: { ...(decision as { action: object }).action, latencyMs: 0 } } : decision;
+    expect(withoutLatency(shortcut)).toEqual(withoutLatency(selected));
     // And the unrelated reply on the selected path refuses the same way.
     const normalUnrelated = world({ level: 'local', script: () => out('action.undo') });
     normalUnrelated.setMetadata(LAST_ACTION_METADATA_KEY, echoed);
     expect((await normalUnrelated.decide('되돌려줘', { now: at(2), replyTo: 'some-other-message' })).kind).toBe('ask');
     expect(actionLogs(normalUnrelated).at(-1)?.fields).toMatchObject({ reason: 'echo-mismatch' });
-  });
+  }, 20_000);
 
   it('a bare reference reads the same way: "3번" / "3번도" after completing 1 ask; with no last action they stay chat as before', async () => {
     for (const text of ['3번', '3번도', '그럼 3번']) {

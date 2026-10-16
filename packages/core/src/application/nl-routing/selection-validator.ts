@@ -18,19 +18,23 @@ import {
   NL_ACTION_LOANWORDS,
   NL_ACTION_VERBAL_NOUNS,
   NL_ACTION_WORDS,
+  NL_CONTENT_WORDS,
+  NL_MODE_FULL_WORDS,
+  NL_MODE_SUMMARY_WORDS,
   nlFrameExpressesAction,
   withoutSpan,
   withoutStructures,
   isNlRefGrounded,
   isNlSpanGrounded,
   nlActionSourceOf,
+  nlNamedItemSources,
   nlR2SourcesOffered,
   normalizeNlSpan,
   parseNlRef,
 } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
-import { nlFrameIsElliptical, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
+import { nlFrameIsElliptical, nlHasUnnegatedMention, nlRelaysRequest, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
 import { nlFrameHasActionInflection, nlGarbledActionWord, type NlActionVocabulary } from './garbled-action';
 import {
   isNlRangeSymbol,
@@ -207,6 +211,34 @@ function spanEnclosure(prose: string, span: string): 'quote' | 'colon' | 'after-
   return toEnd && nlRequestEndsBefore(before, NL_ACTION_WORDS) ? 'after-request' : undefined;
 }
 
+/** The words that name a read of one item (Core's mode and content vocabulary) beside every action word. */
+/**
+ * The command words of a quoted read request (Codex P2, round 5): every action word, the Korean mode and content words (a
+ * Korean quoted command still needs its request ending, so a bare "요약" is a label), and the English command verbs only.
+ * The English mode and content NOUNS (summary, original, whole, content …) never make a quoted span a command, so
+ * `Show the "original" of email #1` reads while `He said "summarize 3"` is relayed.
+ */
+const ITEM_READ_EN_COMMAND_VERBS: readonly string[] = ['summarize', 'sum up', 'show', 'tell', 'explain', 'read', 'open', 'give', 'send'];
+const ITEM_READ_ACTION_WORDS: readonly string[] = [
+  ...NL_ACTION_WORDS,
+  ...[...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS].filter((word) => !/^[a-z0-9 .;-]+$/u.test(word)),
+  ...ITEM_READ_EN_COMMAND_VERBS,
+];
+
+/**
+ * A6 R2 (v47, final narrowing after review): the veto of an `ITEM_READ` request, or `undefined` when it may read. ONLY a
+ * relayed request (`nlRelaysRequest`): a quoted span holding a request form, or a Korean quotative or hearsay ending on the
+ * owner's clause (…해 달래, …하랬는데, …하라고 했어). Example, joke, retraction, negation, statements, questions,
+ * conditionals, wishes and the English "asked me to" stay with the selector: for a read their trigger words as often
+ * describe the item or choose a mode ("email #1 that John asked me to review", "농담 부분까지 요약해줘", "…, not the
+ * attachments"). A relayed request anywhere vetoes the whole message, also with an own request appended ("팀장이 3번
+ * 요약해달래. 요약해줘" is chat: the relayed target is never read on the owner's behalf). It only turns a read into `none`.
+ */
+export function nlItemReadVeto(groundingText: string): 'reported' | undefined {
+  const frame = withoutStructures(groundingText).normalize('NFC').replace(/\s+/g, ' ');
+  return nlRelaysRequest(frame, ITEM_READ_ACTION_WORDS) ? 'reported' : undefined;
+}
+
 /** A6-D3a amendment 1: the request shape of a LOCAL_WRITE (see {@link requestShapeOf}). */
 export interface NlRequestShape {
   readonly veto?: NlRequestVeto;
@@ -295,6 +327,35 @@ function canonicalActionWord(owner: string, latin: boolean): string | undefined 
   return words === undefined ? undefined : latin ? words.en : words.ko;
 }
 
+/**
+ * A6 R2 (v48 gate): `item.summarize`'s `mode` and `source` come from the owner's own words, like every other
+ * grounded arg, never from the selector's guess. Only once the selector has chosen `item.summarize`; it never selects it.
+ *  - `mode`: the classes of the entry's own `valueGrounding` (Core's NL_MODE_SUMMARY_WORDS / NL_MODE_FULL_WORDS) present
+ *    in the message. Exactly one class: that mode. None: unset (Core's content-mode question or stored preference). Both:
+ *    the selector's value stays and is checked as before.
+ *  - `source`: exactly one offered source named by the owner's source noun (`nlNamedItemSources`, the vocabulary of
+ *    the other-source cross-check): that source. No noun (or two): the selector's source, read against the recency and the
+ *    Reference context as before.
+ * Only while `item.summarize` offers an R2 source (Jira or Slack); with R2 off the A6 entry validates exactly as before.
+ * Closed vocabularies only; no phrase list.
+ */
+function groundItemSummarizeArgs(entry: NlCatalogEntry, args: Record<string, NlArgValue>, groundingText: string, r2Sources: ReturnType<typeof nlR2SourcesOffered>): void {
+  // Pasted structures ground nothing, as in the later grounding checks (Codex P1: `… {"source":"jira"}`).
+  const prose = withoutStructures(groundingText);
+  const text = normalizeForMatch(prose);
+  const modeSpec = entry.args.find((spec) => spec.name === 'mode');
+  const modeWords = Object.values(modeSpec?.valueGrounding ?? {}).flatMap((words) => [...(words ?? [])]);
+  // A negated mention ("요약하지 말고", "not a summary") grounds no mode (Codex P2).
+  const grounded = Object.entries(modeSpec?.valueGrounding ?? {})
+    .filter(([, words]) => (words ?? []).some((word) => groundingWordIn(text, normalizeForMatch(word)) && nlHasUnnegatedMention(prose, word, modeWords)))
+    .map(([value]) => value);
+  if (grounded.length === 1) args.mode = grounded[0] as string;
+  else if (grounded.length === 0) delete args.mode;
+  const offered = (entry.args.find((spec) => spec.name === 'source')?.values ?? []).map(String);
+  const named = [...nlNamedItemSources(prose, { r2Sources })].filter((source) => offered.includes(source));
+  if (named.length === 1) args.source = named[0] as string;
+}
+
 export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValidationContext): NlValidationResult {
   // (1) closed ids
   if (!isNlCatalogEntryId(candidate.entryId)) return { ok: false, reason: 'unknown-entry' };
@@ -316,6 +377,8 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     args[name] = checked;
   }
   entry.normalize?.(args, ctx.groundingText, entry.risk === 'READ' ? ctx.previousArgs : undefined);
+  // Only while R2 is offered: with R2 off the A6 entry (mail, Drive) keeps its v44 validation exactly.
+  if (entryId === 'item.summarize' && r2Sources.length > 0) groundItemSummarizeArgs(entry, args, ctx.groundingText, r2Sources);
   // A6-D3a amendment 1 (owner-approved direction 2026-10-16): a LOCAL_WRITE the selector chose runs unless the owner's own
   // sentence is not a request. No request verb or closed request form is needed; the structural vetoes decide (chat), and
   // a frame with nothing but references ("2번도", "그걸로요", "13번 알림") or nothing but content ("내일 9시 우유")
@@ -331,6 +394,12 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     // After the garble (a garbled action word is its own question): an elliptical frame names no action at all, so the
     // action is only inferred and nothing is written ("이번엔 3번" after "1번 완료"; D12 gate v44 run 3).
     if (shape.elliptical === true) return { ok: false, reason: 'elliptical', entryId, arg: 'action' };
+  }
+  // A6 R2 (v47): an ITEM_READ whose own sentence is not a read request (reported, quoted, negated, retracted, example,
+  // conditional, wish, past statement) is chat, like a LOCAL_WRITE veto; a question form still reads.
+  if (entry.risk === 'ITEM_READ') {
+    const veto = nlItemReadVeto(ctx.groundingText);
+    if (veto !== undefined) return { ok: false, reason: 'not-request', entryId, arg: veto };
   }
   // A6-D3 (A6 R1 fix): a payload made only of deictic, ordinal or time words gets its fixed reply ("내용을 직접 적어
   // 주세요") before any missing argument is named: "그거 알림으로 만들어줘" has no time either, and the content is the problem.
