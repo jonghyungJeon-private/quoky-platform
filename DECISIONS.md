@@ -27188,7 +27188,9 @@ Three local writes executed that the kit expected not to (all cleaned). Fixes, e
   stated, a to-do has nothing beyond the title). Either needs the owner's gold decision, a D12 rerun and a shadow review.
 - **G09 duplicate (changed).** A selected `todo.add` whose normalised title equals an ACTIVE to-do's title writes nothing
   and answers "같은 제목의 할 일이 이미 있어요 (N번): "…" · 아무것도 바꾸지 않았어요." (receipt `refused`, reason
-  `duplicate`, not undoable): the same check and wording as the R5a preview's duplicate note. The anchored command
+  `duplicate`, not undoable): the same check and wording as the R5a preview's duplicate note. The number is the label
+  of the fresh listing the owner saw (#233; Codex P1), the title alone when that listing never showed the item, and the
+  live number only without a listing, so a following "N번" never resolves to another item. The anchored command
   ("할 일 추가: …", the owner's explicit form) still adds a second item. The red-team cap positive control now reaches the
   cap with distinct titles; the corpus cap case (one title repeated) writes once.
 

@@ -139,7 +139,7 @@ export interface WorkDesk {
    * ADR-0120 amendment A6: one validated natural-language to-do action (`todo.add`, `todo.complete`, `todo.cancel`, or
    * `action.undo` of a to-do action), its target already resolved by Core. Absent: no A6 to-do entry is offered.
    */
-  handleAction?(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome>;
+  handleAction?(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition, options?: WorkDeskHandleOptions): Promise<WorkChatOutcome>;
   /**
    * ADR-0120 amendment A6 R2: ONE listed Jira issue or Slack message by its opaque item reference (the listing slot id),
    * through the read-only `item` named query under the lookup deadline. GET only, no retry, nothing cached (D7).
@@ -674,12 +674,14 @@ export class WorkChatService implements WorkDesk {
    * ADR-0120 amendment A6: one validated to-do action (A6-D1/D3), the target resolved by Core. Re-reads the item by id at
    * execution (A6-D2 step 5: it must exist, belong to the actor and be ACTIVE); never throws.
    */
-  async handleAction(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome> {
+  async handleAction(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition, options: WorkDeskHandleOptions = {}): Promise<WorkChatOutcome> {
+    // A6-D2 amendment: the listing snapshot is honoured only while receipts (and so snapshots) are on.
+    const listing = this.actionReceipts ? options.todoListing : undefined;
     // A6-D3: every write below carries `condition`; the store evaluates it atomically with the write.
     try {
       switch (command.entryId) {
         case 'todo.add':
-          return await this.actionAdd(command, actor, condition);
+          return await this.actionAdd(command, actor, condition, listing);
         case 'todo.complete':
         case 'todo.cancel':
           return await this.actionTransition(command, actor, condition);
@@ -694,14 +696,17 @@ export class WorkChatService implements WorkDesk {
     }
   }
 
-  private async actionAdd(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition): Promise<WorkChatOutcome> {
+  private async actionAdd(command: NlSelectedCommand, actor: Actor, condition?: ActionWriteCondition, listing?: ListingSlot): Promise<WorkChatOutcome> {
     const title = typeof command.args.title === 'string' ? command.args.title : '';
     // Live test 2026-10-16 G09: a selected add never silently duplicates an open to-do with exactly this title (the same
     // check as the R5a preview's duplicate note); it names the existing one and writes nothing. The anchored command
     // ("할 일 추가: …") is the owner's explicit form and is unchanged.
     const duplicate = await this.openDuplicate(title, actor);
     if (duplicate !== undefined) {
-      return replyWith(renderTodoActionDuplicate(duplicate.item, duplicate.no), { action: { entryId: 'todo.add', result: 'refused', source: 'todo', reason: 'duplicate' } });
+      // With a fresh listing the number is the one the owner saw (a later "N번" resolves by it, #233), or none when the
+      // listing never showed this item; the live number only without a listing. Never a live number the snapshot disagrees with.
+      const no = listing === undefined ? duplicate.no : listing.items.find((entry) => entry.id === duplicate.item.id)?.label;
+      return replyWith(renderTodoActionDuplicate(duplicate.item, no), { action: { entryId: 'todo.add', result: 'refused', source: 'todo', reason: 'duplicate' } });
     }
     const added = await this.addTodoItem(title, [], actor, condition);
     if (added.item === undefined) return replyWith(added.body, { action: { entryId: 'todo.add', result: 'refused', source: 'todo', reason: 'invalid' } });

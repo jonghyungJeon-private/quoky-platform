@@ -306,6 +306,25 @@ describe('numbered to-do commands resolve against the fresh listing snapshot (A6
   const byTitle = (rows: Map<string, WorkItem>, title: string) => [...rows.values()].find((item) => item.title === title) as WorkItem;
   const statuses = (rows: Map<string, WorkItem>) => Object.fromEntries([...rows.values()].map((item) => [item.title, item.status]));
 
+  it('a duplicate add names the existing to-do by its SHOWN label, never a live number the snapshot disagrees with (Codex P1)', async () => {
+    const { desk, rows, work } = world();
+    await addThree(desk); // 1 보고서 쓰기, 2 UAT 결과 정리, 3 회의록 공유
+    const snapshot = await listed(desk);
+    await work.transition(byTitle(rows, '보고서 쓰기').id, WorkItemStatus.COMPLETED); // live: 회의록 공유 is now 2
+    const dup = await desk.handleAction(cmd('todo.add', { title: '회의록 공유' }), owner, undefined, { todoListing: snapshot });
+    expect(text(dup)).toBe('같은 제목의 할 일이 이미 있어요 (3번): "회의록 공유" · 아무것도 바꾸지 않았어요.');
+    // "2번 완료" against the same snapshot is the shown 2, not the live 2 the reply would otherwise have named.
+    await say(desk, '2번 완료', snapshot);
+    expect(statuses(rows)).toMatchObject({ 'UAT 결과 정리': WorkItemStatus.COMPLETED, '회의록 공유': WorkItemStatus.ACTIVE });
+    // An open to-do the fresh listing never showed: the title only, no number.
+    const extra = await desk.handleAction(cmd('todo.add', { title: '새 할 일' }), owner);
+    expect(extra).toMatchObject({ action: { result: 'executed' } });
+    const unshown = await desk.handleAction(cmd('todo.add', { title: '새 할 일' }), owner, undefined, { todoListing: snapshot });
+    expect(text(unshown)).toBe('같은 제목의 할 일이 이미 있어요: "새 할 일" · 아무것도 바꾸지 않았어요.');
+    // Without a listing the live number is the one "N번" resolves by.
+    expect(text(await desk.handleAction(cmd('todo.add', { title: '회의록 공유' }), owner))).toBe('같은 제목의 할 일이 이미 있어요 (1번): "회의록 공유" · 아무것도 바꾸지 않았어요.');
+  });
+
   it('drift by completion: after 1 is completed elsewhere, "2번 완료" completes the SHOWN 2 (not today\'s 2) and keeps label 2', async () => {
     const { desk, rows, work } = world();
     await addThree(desk);
