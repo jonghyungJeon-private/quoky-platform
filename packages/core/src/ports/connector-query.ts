@@ -179,7 +179,14 @@ export class ConnectorQueryError extends Error {
 }
 
 export function isConnectorQueryError(value: unknown): value is ConnectorQueryError {
-  return value instanceof ConnectorQueryError;
+  if (value instanceof ConnectorQueryError) return true;
+  // A6 R2: an adapter loaded with its own copy of this module (a separately built package) throws an equal error of
+  // another class identity. Recognised structurally: an Error whose `reason` is one of the closed neutral reasons.
+  return (
+    value instanceof Error &&
+    typeof (value as { reason?: unknown }).reason === 'string' &&
+    (CONNECTOR_QUERY_ERROR_REASONS as readonly string[]).includes((value as { reason: string }).reason)
+  );
 }
 
 /** Maps an HTTP status to a neutral reason. 2xx is not an error and must not be passed here. */
