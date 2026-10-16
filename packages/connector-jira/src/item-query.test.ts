@@ -89,7 +89,7 @@ describe('Jira item query: transport', () => {
     expect(call.method).toBe('GET');
     expect(call.redirect).toBe('manual');
     expect(call.url.origin + call.url.pathname).toBe('https://example.atlassian.net/rest/api/3/issue/10042');
-    expect(call.url.searchParams.get('fields')).toBe('summary,status,issuetype,description,comment,updated');
+    expect(call.url.searchParams.get('fields')).toBe('summary,status,issuetype,description,comment,updated,assignee,reporter');
     expect([...call.url.searchParams.keys()]).toEqual(['fields']);
     expect(call.url.pathname).not.toContain('PROJ-12');
 
@@ -324,6 +324,15 @@ describe('Jira item query: comments, ADF and people', () => {
     expect(JSON.stringify(result)).not.toContain(TOKEN);
   });
 
+  it('adds the assignee and reporter after the authors and mentions, deduplicated (live test 3: names to pseudonymise)', async () => {
+    const comments = [comment(1, { author: { displayName: '전혜정' }, body: adf([text('혜정님에게 전달')]) })];
+    const body = issue({ comments });
+    const fields = { ...body.fields, assignee: { displayName: '김민수' }, reporter: { displayName: '전혜정' } };
+    const result = await jira(recorder({ body: { ...body, fields } }).fetchImpl).query(item());
+    expect(result.items[0]!.detail!.people).toEqual(['전혜정', '김민수']);
+    expect(JSON.stringify(result.items[0]!.detail!.sections)).not.toContain('김민수');
+  });
+
   it('omits the author when the comment has none', async () => {
     const bare = { id: '1', body: adf([text('anon')]), created: '2026-10-01T10:00:00.000Z' };
     const detail = (await jira(recorder({ body: issue({ comments: [bare] }) }).fetchImpl).query(item())).items[0]!.detail!;
@@ -411,7 +420,7 @@ describe('Jira item query: D12 second request', () => {
     const detail = (await jira(fake.fetchImpl, { itemSecondRequest: true }).query(item())).items[0]!.detail!;
     expect(fake.calls).toHaveLength(2);
     expect(fake.calls[1]!.url.pathname).toBe('/rest/api/3/issue/10042');
-    expect(fake.calls[1]!.url.searchParams.get('fields')).toBe('summary,status,issuetype,description,updated');
+    expect(fake.calls[1]!.url.searchParams.get('fields')).toBe('summary,status,issuetype,description,updated,assignee,reporter');
     expect(fake.calls[1]!.redirect).toBe('manual');
     expect(detail).toMatchObject({ descriptionOnly: true, partial: true, requests: 2 });
     expect(detail.sections.map((s) => s.kind)).toEqual(['description']);

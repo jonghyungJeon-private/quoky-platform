@@ -1028,6 +1028,16 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect(canceled.text).toContain(`알림 #${laundry?.displayNo} 취소했어요: '세탁소 들르기'`);
   }));
 
+  it('live test 3 (T2): "할 일에 … 일정 … 추가해줘" is not a calendar action; the selector runs and the to-do is added', async () => {
+    await resetNlState();
+    // Before: the classifier's calendar external action ("일정" + "추가해줘") made it POLICY_SENSITIVE_CHAT, so no
+    // selection ran and the chat reply said it could not add.
+    const t2 = await turn('할 일에 주차장 일정 확인 추가해줘', answer('todo.add', { title: '주차장 일정 확인' }));
+    expect(t2.selects).toHaveLength(1);
+    expect(t2.text).toMatch(/^할 일 \d+번으로 추가했어요: "주차장 일정 확인"/u);
+    expect((await todos()).filter((item) => item.title === '주차장 일정 확인' && item.status === 'ACTIVE')).toHaveLength(1);
+  });
+
   it('exec-time: every case of nl-action.exec-time.v1.json is covered by an acceptance test above', async () => {
     const { readFileSync } = await import('node:fs');
     const file = new URL('../../../packages/core/src/application/golden/nl-action.exec-time.v1.json', import.meta.url);

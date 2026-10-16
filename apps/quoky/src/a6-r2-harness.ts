@@ -40,6 +40,9 @@ export interface JiraFixtureIssue {
   readonly hidden?: string;
   /** A person @-mentioned (an ADF `mention` node) in the first comment. */
   readonly mention?: string;
+  /** The display names of the issue's assignee and reporter (participants named only in the item fields). */
+  readonly assignee?: string;
+  readonly reporter?: string;
 }
 
 export interface SlackFixtureMessage {
@@ -143,6 +146,8 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
             updated: '2026-10-15T00:00:00.000+0000',
             description: adf(issue.description, issue.hidden !== undefined ? { hidden: issue.hidden } : {}),
             comment: { comments, startAt: 0, maxResults: 50, total: issue.commentTotal ?? comments.length },
+            ...(issue.assignee !== undefined ? { assignee: { displayName: issue.assignee } } : {}),
+            ...(issue.reporter !== undefined ? { reporter: { displayName: issue.reporter } } : {}),
           },
         });
       }

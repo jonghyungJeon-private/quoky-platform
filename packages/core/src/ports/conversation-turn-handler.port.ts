@@ -155,10 +155,17 @@ export interface TurnHandlerSummarizeReply {
   readonly nlAction?: NlActionReceipt;
   /**
    * A6 R2 (owner decision D1): a numbered Jira / Slack list. The model's own list markers are stripped from the summary,
-   * and the runtime records the listing receipt of the form that was delivered (the index under the summary, or the
-   * numbered fallback list).
+   * and the runtime records the listing receipt of the form that was delivered: the numbered fallback list, or, under a
+   * summary, the labels Core itself put on the body's item lines and the index footer in their shown order (live test 3;
+   * `summary` then supplies the source only).
    */
   readonly numbered?: { readonly summary: NlListingReceipt; readonly fallback: NlListingReceipt };
+  /**
+   * A6 R2 (D5, live test 3): the participants of a single Jira / Slack item read (handle and pseudonym). Host-only: never
+   * rendered, logged or sent to a model. The runtime pseudonymises every written form of their names in the model's
+   * summary before it is shown (the output scrub; the prompt text was already pseudonymised).
+   */
+  readonly participants?: readonly { readonly handle: string; readonly label: string }[];
 }
 
 /**

@@ -27440,3 +27440,42 @@ returning the gold, the `nl-action-eval` path), and every LOCAL_WRITE gold of `n
 `deictic` through `validateSelection` and the input guard, before and after the five changes. **No existing gold changed
 its outcome or reason** (execute golds included); the 16 new cases all score as their gold (`reminder.cancel-904` is an
 honest ask, see C).
+
+### Note for the owner's D12 batch: bare "<title> 할 일" selector variance (live test 3, measured residual)
+
+Live test 3 (2026-10-17 01:48–01:57, main 4a7408cf, `QUOKY_NL_ACTIONS=local`) sent the decision-A shape four times. For a
+new title it executed 1 of 3: T7a "분기 예산 검토 할 일" asked (`no-action-word`), T7b (same text, title not yet created)
+executed `todo.add`, T7d "견적서 단가 확인 할 일" got selector `none` (the legacy "restate" chat reply). T7c (a duplicate)
+asked and wrote nothing, so the duplicate guard held. The handler accepts the shape (decision A); the spread is the
+selector's choice for an identical message, so it is a **measured residual, not a code change**. For the batch: gold
+`a6-paraphrase-todo.add-903` (execute) stands; adding T7a / T7d as execute golds would put this variance into the D12
+model gate. No phrase was added for it (no phrase routing).
+
+## Live test 3 fixes (2026-10-17; A6 local, R2 jira, summary on)
+
+Round 3 had 0 wrong targets and 0 negative captures. Three findings are fixed here; inert on the live `shadow` service
+(R2 off), no prompt version change to the A6 selector prompt, no model call.
+
+- **R2 numbering (amends A6 R2 D1 / C3 for the model-summarised list; CA finding 1).** Live: the body was unnumbered
+  bullets in the model's order and the only numbers were the "출처" index, so "3번" took the 3rd footer line (CPDT-68)
+  while the owner meant the 3rd bullet (OP26-1144). Now, while `QUOKY_NL_ITEM_R2` is not `off`: the work-summary prompt asks
+  for one line per item that starts with the item's bracketed reference (`[jira:KEY]`); the model's own list markers are
+  still stripped; then Core (`numberExternalWorkSummary`) numbers every item line (a list line, or a line led by a
+  reference) that names exactly ONE used item by reference, key or whole title, the first time that item is named, `1.`,
+  `2.` … in reading order. Items the body never names follow in readout order, and the index footer is rendered in that
+  same order, so the body and the footer show one numbering and never compete. Only labels the footer certainly delivers
+  number a body line, and exactly those labels are recorded (the slot ids follow the shown order). A line naming several
+  items, a repeat mention and prose stay unnumbered. The deterministic list (no model) was already numbered in readout
+  order and is unchanged.
+- **Names inside free text (D5; live S4 "혜정님에게 전달").** Pseudonymisation covered author fields and mention tokens
+  only. Now every written form of every participant's name is replaced in the text sent to the summariser: the whole
+  handle, each Hangul or Latin part of it, a Korean given name (the last two syllables of a three- or four-syllable name)
+  bare before a closed particle class or with 님 / 씨, and a one-syllable given name only with 님 / 씨. Participants are the
+  fetched item's authors, mentions and (Jira) assignee and reporter: the item read now asks `fields=…,assignee,reporter`
+  (amends the proposal §2.1 call; the names are never shown or sent). Derived from participant data only, no name list.
+  A form two participants share becomes the plain "참여자". The same scrub runs on the model's summary before delivery.
+  Red-team cases `rt-a6-r2-pseudonym-004..007` (given name + honorific in a comment, assignee, reporter, output scrub).
+- **T2 "할 일에 주차장 일정 확인 추가해줘".** Captured by the intent classifier's calendar external action (noun 일정 +
+  "추가해줘") → `POLICY_SENSITIVE_CHAT`, where selection does not run, so the chat reply refused. The #256 local-list shape
+  (`nlLocalListTarget`) now narrows the calendar external action as it already narrows the calendar write grammar, unless
+  the clause names a calendar itself (캘린더 / 달력 / calendar). Narrowing only; no phrase added.

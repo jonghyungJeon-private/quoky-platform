@@ -1023,7 +1023,8 @@ export class WorkChatService implements WorkDesk {
     const fallbackText = list.body;
     const fallbackListing = this.workListingReceipt(source, readout.items, list.labelled);
     if (this.summaryEnabled && readout.items.length > 0 && options.listOnly !== true) {
-      const summaryReadout = fitExternalWorkReadoutToPrompt(readout);
+      // A6 R2 (D1): a numbered list's prompt asks for one referenced line per item, so Quoky can number the body itself.
+      const summaryReadout = fitExternalWorkReadoutToPrompt(numbered && fallbackListing !== undefined ? { ...readout, numbered: true } : readout);
       if (numbered && fallbackListing !== undefined) {
         const index = renderExternalWorkIndexFooter(summaryReadout);
         const summaryListing = this.workListingReceipt(source, summaryReadout.items, index.labelled) ?? { source: source as 'jira' | 'slack', items: [] };

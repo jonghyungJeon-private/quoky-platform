@@ -76,6 +76,7 @@ describe('A6 R2 red team over the production AppModule (stub echo summariser)', 
       if (shape === 'claim') return `${echo}\n\n${CLAIM}`;
       if (shape === 'numbered') return `${NUMBERED}\n${echo}`;
       if (shape === 'credential') return `${echo}\n\n${CREDENTIAL}`;
+      if (shape === 'name') return `${echo}\n\n${golden.nameCanary ?? ''}님에게 전달이 필요해요.`;
       return echo;
     };
   }

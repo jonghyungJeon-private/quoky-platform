@@ -92,7 +92,7 @@ import {
   externalActionRequestOf,
   type IntentClassifyContext,
 } from './intent-classifier';
-import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlItemSource, type NlSelectedCommand } from './nl-routing/catalog';
+import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlItemSource, type NlListingReceipt, type NlSelectedCommand } from './nl-routing/catalog';
 import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
 import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from './nl-routing/nl-action-policy';
@@ -250,7 +250,8 @@ import {
   type PromptCompositionOptions,
 } from './prompt-composer';
 import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from './work-chat/work-chat-turn-handler';
-import { stripLeadingListMarkers } from './work-chat/external-work-readout';
+import { numberExternalWorkSummary } from './work-chat/external-work-readout';
+import { pseudonymiseParticipants } from './work-chat/work-item-summary';
 import { containsCardSpoofLine, renderCardSpoofNotice } from './card-spoof';
 import { mergeItemSummarizeEntries, nlLocalListTarget } from './nl-routing/action-entries';
 import {
@@ -4347,18 +4348,18 @@ export class ConversationRuntime {
   ): Promise<TurnResult> {
     // A6 R2 (D1): a numbered list records the labels of the form that was delivered (the index or the fallback list).
     const numbered = summary.numbered;
-    const recordListing = async (delivered: 'summary' | 'fallback'): Promise<void> => {
-      if (numbered === undefined || this.deps.nlSelection?.recordActionReceipt === undefined) return;
+    const recordListing = async (listing: NlListingReceipt | undefined): Promise<void> => {
+      if (listing === undefined || this.deps.nlSelection?.recordActionReceipt === undefined) return;
       await this.deps.nlSelection.recordActionReceipt({
         session,
         actor,
         message: { id: message.id, context: message.context },
         now: this.clock(),
-        listing: delivered === 'summary' ? numbered.summary : numbered.fallback,
+        listing,
       });
     };
     const fallback = async (): Promise<TurnResult> => {
-      await recordListing('fallback');
+      await recordListing(numbered?.fallback);
       // A6 R2 (amendment C10): an item read's fallback names the item; SHORT_TERM keeps only the fixed note.
       const history = summary.history?.assistant;
       if (history === undefined) return this.respondComposed(message, session, outboundMessage(message.context, summary.fallbackText));
@@ -4402,10 +4403,12 @@ export class ConversationRuntime {
       return fallback();
     }
     if (result.status !== 'RESPONDED') return fallback();
-    await recordListing('summary');
-    // A6 R2 (D1): the model's own list numbering is never a label: its leading list markers are stripped.
-    const summaryText = numbered !== undefined ? stripLeadingListMarkers(result.reply.text) : result.reply.text;
-    return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(summaryText, summary.footer)) };
+    if (numbered === undefined) return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(result.reply.text, summary.footer)) };
+    // A6 R2 (D1, live test 3): the model's own list numbering is never a label. Quoky numbers the body's item lines in
+    // reading order, renders the index footer in that same order, and records exactly those labels.
+    const shown = numberExternalWorkSummary(result.reply.text, readout);
+    await recordListing({ source: numbered.summary.source, items: shown.labels.map((id, index) => ({ label: index + 1, id })) });
+    return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(shown.text, shown.footer)) };
   }
 
   /**
@@ -4449,12 +4452,15 @@ export class ConversationRuntime {
       return fallback();
     }
     if (result.status !== 'RESPONDED') return fallback();
+    // A6 R2 (D5, live test 3): the output scrub. Any written form of a participant's name the summary still carries is
+    // pseudonymised before anything below reads or shows it.
+    const summaryText = summary.participants !== undefined ? pseudonymiseParticipants(result.reply.text, summary.participants) : result.reply.text;
     // Review P2-4: links neutralized, the provider text an untrusted span, the fixed footer appended.
-    const reply = documentSummaryReply(result.reply.text, summary.footer);
+    const reply = documentSummaryReply(summaryText, summary.footer);
     // ADR-0104 D1 amendment (owner, 2026-10-15; CA P1-2): the exact lines the owner is shown — rendered, capped, built
     // from the body's own parts (the fixed footer is Quoky copy) — pass the claim check, whichever path produced them;
     // otherwise the whole summary is replaced by the fixed notice. A fixed notice is Quoky copy as written.
-    if (isFixedDocumentSummaryNotice(result.reply.text, readout.source)) return { ...result, reply: withOutboundBody(result.reply, reply.body) };
+    if (isFixedDocumentSummaryNotice(summaryText, readout.source)) return { ...result, reply: withOutboundBody(result.reply, reply.body) };
     const language = noticeLanguage(undefined, message.text);
     // A6 R2 (D11, proposal §3.3 item 4): a delivered line that normalises to an approval / execution phrase or begins with
     // a card header replaces the whole Jira / Slack summary with the fixed notice.

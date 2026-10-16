@@ -5,6 +5,7 @@ import {
   EXTERNAL_WORK_FOOTER_MAX_CHARS,
   buildExternalWorkReadout,
   countExternalWorkPromptItems,
+  numberExternalWorkSummary,
   renderExternalWorkIndexFooter,
   renderExternalWorkReadoutForPrompt,
   stripLeadingListMarkers,
@@ -192,5 +193,67 @@ describe('renderNumberedReleaseIssues', () => {
 
   it('an empty report labels nothing', () => {
     expect(renderNumberedReleaseIssues({ scope: 'mine', items: [], truncated: false }).labelled).toBe(0);
+  });
+});
+
+describe('numberExternalWorkSummary (D1, live test 3: the body carries the labels the owner sees)', () => {
+  const refs = (count: number) => build(items(count, (i) => ({ itemRef: `PROJ-${i + 1}:1000${i + 1}` })));
+
+  it('numbers the body item lines in reading order and renders the footer in the same order with the same labels', () => {
+    const readout = refs(5);
+    const summary = ['마감 지난 항목부터:', '- [jira:PROJ-3] 세 번째 이슈 설명', '2. [jira:PROJ-1] 첫 이슈', '• PROJ-5 마지막 이슈', '나머지는 진행 중이에요.'].join('\n');
+    const shown = numberExternalWorkSummary(summary, readout);
+    expect(shown.text).toBe(['마감 지난 항목부터:', '1. [jira:PROJ-3] 세 번째 이슈 설명', '2. [jira:PROJ-1] 첫 이슈', '3. PROJ-5 마지막 이슈', '나머지는 진행 중이에요.'].join('\n'));
+    expect(shown.labels).toEqual(['PROJ-3:10003', 'PROJ-1:10001', 'PROJ-5:10005', 'PROJ-2:10002', 'PROJ-4:10004']);
+    const footer = text(shown.footer).split('\n');
+    expect(footer.slice(1, 6)).toEqual([
+      '1. Task 3 https://acme.atlassian.net/browse/PROJ-3',
+      '2. Task 1 https://acme.atlassian.net/browse/PROJ-1',
+      '3. Task 5 https://acme.atlassian.net/browse/PROJ-5',
+      '4. Task 2 https://acme.atlassian.net/browse/PROJ-2',
+      '5. Task 4 https://acme.atlassian.net/browse/PROJ-4',
+    ]);
+  });
+
+  it('the live shape: unnumbered bullets in listed order → "3." is the third visible bullet and the third label', () => {
+    const readout = build(
+      ['QAI-3844', 'OP26-1294', 'OP26-1144', 'CPDT-68', 'CPDT-26'].map((key, i) => ({ id: key, title: `이슈 ${key}`, url: `https://acme.atlassian.net/browse/${key}`, itemRef: `${key}:2000${i}` })),
+    );
+    const summary = ['- **QAI-3844** 검토 중', '- **OP26-1294** 스플래시 다중 게시', '- **OP26-1144** 오토업 연동', '- **CPDT-68** 파라미터 스토어', '- **CPDT-26** 문서'].join('\n');
+    const shown = numberExternalWorkSummary(summary, readout);
+    const bodyLines = shown.text.split('\n');
+    expect(bodyLines[2]).toBe('3. **OP26-1144** 오토업 연동');
+    expect(shown.labels[2]).toBe('OP26-1144:20002');
+    expect(text(shown.footer)).toContain('3. 이슈 OP26-1144');
+    expect(text(shown.footer)).not.toContain('3. 이슈 CPDT-68');
+  });
+
+  it('strips the model numbers; a line naming no item, several items or a repeated item stays a plain bullet', () => {
+    const readout = refs(3);
+    const summary = ['3. 전체 요약', '1) PROJ-1 과 PROJ-2 는 같은 작업', '- [jira:PROJ-2] 둘째', '- PROJ-2 다시 언급', '- [jira:PROJ-9] 없는 이슈'].join('\n');
+    const shown = numberExternalWorkSummary(summary, readout);
+    expect(shown.text).toBe(['- 전체 요약', '- PROJ-1 과 PROJ-2 는 같은 작업', '1. [jira:PROJ-2] 둘째', '- PROJ-2 다시 언급', '- [jira:PROJ-9] 없는 이슈'].join('\n'));
+    expect(shown.labels).toEqual(['PROJ-2:10002', 'PROJ-1:10001', 'PROJ-3:10003']);
+  });
+
+  it('a prose line that mentions an item is not numbered; a key prefix of another key does not match ("PROJ-1" in "PROJ-12")', () => {
+    const readout = build(items(12, (i) => ({ itemRef: `PROJ-${i + 1}:1${i + 1}` })));
+    const shown = numberExternalWorkSummary(['PROJ-3 은 마감이 지났어요.', '- PROJ-12 정리'].join('\n'), readout);
+    expect(shown.text).toBe(['PROJ-3 은 마감이 지났어요.', '- PROJ-12 정리'].join('\n'));
+    expect(shown.labels[0]).toBe('PROJ-1:11');
+  });
+
+  it('every number in the body is a recorded label, and every recorded label is a footer line', () => {
+    const readout = refs(4);
+    const shown = numberExternalWorkSummary(['- PROJ-4 a', '- PROJ-2 b'].join('\n'), readout);
+    const bodyNumbers = [...shown.text.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1]));
+    expect(bodyNumbers).toEqual([1, 2]);
+    for (const label of shown.labels.keys()) expect(text(shown.footer)).toMatch(new RegExp(`^${label + 1}\\. `, 'mu'));
+  });
+
+  it('the numbered prompt asks for one referenced line per item; an unnumbered readout prompt is unchanged', () => {
+    const readout = refs(2);
+    expect(renderExternalWorkReadoutForPrompt({ ...readout, numbered: true })).toContain('starts with its bracketed reference exactly as listed');
+    expect(renderExternalWorkReadoutForPrompt(readout)).not.toContain('bracketed reference');
   });
 });

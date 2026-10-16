@@ -83,11 +83,79 @@ function pseudonymsOf(item: ConnectorItem): Map<string, string> {
   return new Map(sorted.map((entry, index) => [entry.handle, pseudonymLabel(index)]));
 }
 
-/** Replace every handle in `text` with its pseudonym (longest handle first, so "Kim Chulsoo" wins over "Kim"). */
-function pseudonymise(text: string, names: ReadonlyMap<string, string>): string {
-  let out = text;
-  for (const [handle, label] of [...names.entries()].sort((a, b) => b[0].length - a[0].length)) out = out.split(handle).join(label);
-  return out;
+const HANGUL = '가-힣';
+/** Closed particle class a bare given name may carry ("혜정이", "혜정에게", "혜정도"); nothing else may follow it. */
+const NAME_PARTICLES = '이랑|이에게|이한테|이가|이는|이도|이를|이의|에게서|에게|한테|께서|께|으로|로|처럼|보다|부터|까지|이|가|은|는|을|를|도|만|과|와|의|랑|아|야|에';
+const HONORIFIC = '(?:님|씨)';
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The patterns one participant's name is written as in free text, all derived from the handle itself (no name list):
+ * the whole handle, each Hangul or Latin part of it, a Korean given name (the part after a one-syllable family name, the
+ * last two syllables of a three- or four-syllable name) bare or with an honorific, and a one-syllable given name only
+ * with an honorific (님 / 씨, consumed with the name). A bare given name counts only before a particle or a non-Hangul
+ * character, so a word that merely contains it is left alone.
+ */
+function namePatterns(handle: string): { readonly key: string; readonly source: string }[] {
+  const patterns: { key: string; source: string }[] = [{ key: handle, source: `${escapeRegExp(handle)}${HONORIFIC}?` }];
+  const bareGiven = (given: string): string => `(?<![${HANGUL}])${given}(?:${HONORIFIC}|(?=(?:${NAME_PARTICLES})?(?![${HANGUL}])))`;
+  for (const part of handle.split(/[^A-Za-z가-힣]+/u)) {
+    if (part.length === 0 || part === handle) continue;
+    if (/^[가-힣]+$/u.test(part)) {
+      if (part.length >= 2) patterns.push({ key: part, source: `(?<![${HANGUL}])${part}${HONORIFIC}?` });
+    } else if (/^[A-Za-z]{3,}$/u.test(part)) {
+      patterns.push({ key: part, source: `(?<![A-Za-z])${part}(?![A-Za-z])${HONORIFIC}?` });
+    }
+  }
+  for (const part of handle.split(/[^가-힣]+/u)) {
+    if (part.length === 3 || part.length === 4) patterns.push({ key: part.slice(-2), source: bareGiven(part.slice(-2)) });
+    if (part.length === 2) patterns.push({ key: part.slice(-1), source: `(?<![${HANGUL}])${part.slice(-1)}${HONORIFIC}` });
+  }
+  return patterns;
+}
+
+/** One participant (a handle of the fetched item) and the pseudonym it is shown as. Host-only: never in a prompt. */
+export interface WorkItemParticipant {
+  readonly handle: string;
+  readonly label: string;
+}
+
+/**
+ * Replace every written form of every participant's name in `text` with the participant's pseudonym, in one pass
+ * (longest form first, so "Kim Chulsoo" wins over "Kim"). A form two participants share ("민수" of 김민수 and 이민수)
+ * becomes the plain "참여자" (never the wrong person). A6 R2 (D5, live test 3): the comment text "혜정님에게 전달" names
+ * the participant 전혜정 by given name and honorific; that is a name too.
+ */
+export function pseudonymiseParticipants(text: string, participants: readonly WorkItemParticipant[]): string {
+  if (participants.length === 0 || text.length === 0) return text;
+  const handles = new Map(participants.map((participant) => [participant.handle, participant.label]));
+  const byKey = new Map<string, { source: string; labels: Set<string> }>();
+  for (const participant of participants) {
+    for (const pattern of namePatterns(participant.handle)) {
+      const known = byKey.get(pattern.key) ?? { source: pattern.source, labels: new Set<string>() };
+      // A whole handle keeps its own pattern (it may carry characters a part pattern drops).
+      if (pattern.key === participant.handle) known.source = pattern.source;
+      known.labels.add(participant.label);
+      byKey.set(pattern.key, known);
+    }
+  }
+  const entries = [...byKey.entries()]
+    .map(([key, entry]) => [key, { source: entry.source, label: handles.get(key) ?? (entry.labels.size === 1 ? ([...entry.labels][0] as string) : '참여자') }] as const)
+    .sort((a, b) => b[0].length - a[0].length);
+  const combined = new RegExp(entries.map(([, entry]) => `(${entry.source})`).join('|'), 'gu');
+  return text.replace(combined, (...args: unknown[]) => {
+    const groups = args.slice(1, entries.length + 1);
+    const at = groups.findIndex((group) => group !== undefined);
+    return at < 0 ? String(args[0]) : (entries[at]?.[1].label ?? String(args[0]));
+  });
+}
+
+/** The participants of an item in pseudonym order (empty unless the item is shown anonymously). */
+export function workItemParticipants(item: ConnectorItem): WorkItemParticipant[] {
+  return [...pseudonymsOf(item).entries()].map(([handle, label]) => ({ handle, label }));
 }
 
 function sectionTitle(source: WorkItemSource, scope: WorkItemScope, section: ConnectorItemSection, index: number, comment: number): string {
@@ -108,7 +176,8 @@ export function buildWorkItemReadout(input: WorkItemReadoutInput): WorkItemReado
   if (originals.some((field) => isUntrustedTextCredentialShaped(field))) return { ok: false, refusal: 'CREDENTIAL_SHAPED' };
   const anonymous = mode === 'summary' || source === 'slack';
   const names = anonymous ? pseudonymsOf(item) : new Map<string, string>();
-  const people = (text: string): string => (anonymous ? pseudonymise(text, names) : text);
+  const participants = [...names.entries()].map(([handle, label]) => ({ handle, label }));
+  const people = (text: string): string => (anonymous ? pseudonymiseParticipants(text, participants) : text);
   let sections = detail?.sections ?? [];
   let droppedMiddle = false;
   if (sections.length > UNTRUSTED_DOCUMENT_SECTIONS_MAX) {

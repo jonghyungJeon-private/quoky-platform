@@ -58,6 +58,12 @@ read prompt `nl-select.v39` unchanged); English colon labels ("Add a to-do: …"
 guard (A6-D3a known refusals amended); a vowel-only variant of a loanword action word (캔슬, 리마인드, 롤백) asks. Inert on
 the live `shadow` service. Pending: the owner's D12 batch for the 16 agent-drafted golds, and the D12 model gate for v44.
 
+**Live test 3 fixes (2026-10-17), branch `claude/v5-live3-fixes`** (DECISIONS "Live test 3 fixes"): R2 summary bodies carry
+the deterministic labels (the footer index follows the same order; labels recorded = numbers shown); every written form of
+a participant's name (given name + 님/씨 included; Jira assignee / reporter added as participants) is pseudonymised in the
+summariser input and scrubbed from its output; "할 일에 … 일정 … 추가해줘" is no longer a calendar external action. The
+bare "<title> 할 일" selector variance (T7a ask / T7b execute / T7d none) is a measured residual noted for the D12 batch.
+
 **Pending with the owner.**
 
 - S1 per-grammar Phase C decision: a grammar moves to `c` only on its own `nl_selection.agreement` data, with the owner's yes.
