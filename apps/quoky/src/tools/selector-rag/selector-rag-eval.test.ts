@@ -162,3 +162,24 @@ describe('ADR-0123 RAG-2 experiment walk (stubbed transport, no call)', () => {
     expect(results.filter((result) => result.record.arm === 'A1@m' && result.record.caseId === 'c1').every((result) => result.entryCorrect)).toBe(true);
   });
 });
+
+describe('ADR-0123 D6 tuning log: A1 variants', () => {
+  const variantArm = (k: number, minSimilarity: number | null) => ({ id: `A1:t@m`, kind: 'A1' as const, embeddingModel: 'm', variant: { name: 't', k, minSimilarity } });
+
+  it('a variant k overrides the harness k and is reflected in the prompt version', () => {
+    const { record } = renderArmPrompt(baseInput({ arm: variantArm(1, null), k: 3 }));
+    expect(record.retrievedIds.length).toBeLessThanOrEqual(1);
+    expect(record.promptVersion).toBe('nl-select.v39+rk1');
+  });
+
+  it('the similarity floor drops every neighbour below it, and retrieving nothing renders the static prompt', () => {
+    const query = vec(0, 1); // cosine to p-04 (0.1, 0.9) is about 0.99; every other pool vector is far lower
+    const floored = renderArmPrompt(baseInput({ arm: variantArm(3, 0.9), queryVector: query }));
+    for (const id of floored.record.retrievedIds) expect(id).toBe('p-04');
+    const none = renderArmPrompt(baseInput({ arm: variantArm(3, 0.999999), queryVector: vec(1, 1) }));
+    expect(none.record.retrievedIds).toEqual([]);
+    expect(none.record.blockSha256).toBeNull();
+    expect(none.record.promptVersion).toBe('nl-select.v39');
+    expect(none.prompt).toBe(buildSelectionPrompt({ entries: READS, text: '지라 이슈 보여줘' }));
+  });
+});

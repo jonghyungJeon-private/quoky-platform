@@ -71,7 +71,7 @@ export function staticCountsOf(prompt: string): Record<string, number> {
 }
 
 export function renderArmPrompt(input: ArmRenderInput): { readonly prompt: string; readonly record: RetrievalRecord } {
-  const k = input.k ?? DEFAULT_K;
+  const k = input.arm.variant?.k ?? input.k ?? DEFAULT_K;
   const seed = `run-${input.run}`;
   const base = { arm: input.arm.id, run: input.run, caseId: input.caseId, poolDigest: input.poolDigest, spaceId: input.spaceId };
   const promptOf = (extra: Partial<NlSelectionPromptInput>): string =>
@@ -99,7 +99,7 @@ export function renderArmPrompt(input: ArmRenderInput): { readonly prompt: strin
   let picked: ReadonlyArray<PoolVector & { readonly score?: number }>;
   if (input.arm.kind === 'A1') {
     if (input.queryVector === undefined) throw new Error('arm A1 needs the embedded query');
-    picked = retrieveTopK(input.queryVector, candidates, k);
+    picked = retrieveTopK(input.queryVector, candidates, k, input.arm.variant?.minSimilarity ?? null);
   } else {
     picked = retrieveRandomK(candidates, `A2:${seed}:${input.caseId}`, k);
   }

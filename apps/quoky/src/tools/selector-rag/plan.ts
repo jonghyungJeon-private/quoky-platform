@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { NL_ACTION_PROMPT_VERSION, NL_CATALOG_ENTRY_IDS, NL_SELECTION_PROMPT_VERSION, NL_WAVE1_ENTRIES, buildSelectionPrompt, type NlCatalogEntry } from '@quoky/core';
 import { actionPromptSha256 } from '../nl-action-eval';
-import { armsFor, budgetFor, type Arm } from './arms';
+import { DEV_TUNE_SETS, armsFor, budgetFor, tuneArmsFor, type A1Variant, type Arm } from './arms';
 
 export type RagSplit = 'dev' | 'heldout';
 import { DEFAULT_MAX_CONCURRENT, DEFAULT_MIN_INTERVAL_MS } from './ledger';
@@ -33,6 +33,8 @@ export interface RagPlanInput {
   readonly sessions?: number;
   /** The split this approval covers (ADR-0123 D6, AGENTS.md exact scope): dev smoke and held-out are approved separately. */
   readonly split: RagSplit;
+  /** A named dev tuning set (`DEV_TUNE_SETS`): dev only; the arms become A0 plus the set's A1 variants. */
+  readonly tune?: string;
 }
 
 export interface RagPlan {
@@ -45,6 +47,8 @@ export interface RagPlan {
   readonly split: { readonly sha256: string; readonly dev: number; readonly heldOut: number; readonly excludedContaminated: number; readonly excludedPreSelector: readonly string[] };
   readonly embeddingModels: readonly PlanModelPin[];
   readonly arms: readonly Arm[];
+  /** Present only for a dev tuning plan (ADR-0123 D6 tuning log). */
+  readonly tuning?: { readonly set: string; readonly variants: readonly A1Variant[] };
   readonly runs: number;
   readonly sessions: number;
   readonly k: number;
@@ -68,7 +72,16 @@ export function buildRagPlan(input: RagPlanInput): RagPlan {
   if (input.models.length === 0) throw new Error('no embedding model');
   // The dev smoke run is one A0 + one A1 run (ADR-0123 D6); the held-out run is every arm for `runs` runs.
   const allArms = armsFor(input.models.map((model) => model.model));
-  const arms = input.split === 'dev' ? allArms.filter((arm) => arm.kind === 'A0' || arm.kind === 'A1') : allArms;
+  let arms = input.split === 'dev' ? allArms.filter((arm) => arm.kind === 'A0' || arm.kind === 'A1') : allArms;
+  let tuning: RagPlan['tuning'];
+  if (input.tune !== undefined) {
+    if (input.split !== 'dev') throw new Error('tuning is dev only: the held-out split is never tuned on');
+    const variants = DEV_TUNE_SETS[input.tune];
+    if (variants === undefined) throw new Error(`unknown tuning set ${input.tune}`);
+    if (input.models.length !== 1) throw new Error('tuning plans bind exactly one embedding model');
+    arms = tuneArmsFor((input.models[0] as PlanModelPin).model, variants);
+    tuning = { set: input.tune, variants };
+  }
   const scopedRuns = input.split === 'dev' ? 1 : runs;
   const cases = input.split === 'dev' ? input.devCases : input.heldOutCases;
   const calls = { split: input.split, cases, arms: arms.length, runs: scopedRuns, total: cases * arms.length * scopedRuns };
@@ -85,6 +98,7 @@ export function buildRagPlan(input: RagPlanInput): RagPlan {
     split: { sha256: input.splitSha256, dev: input.devCases, heldOut: input.heldOutCases, excludedContaminated: input.excludedContaminated, excludedPreSelector: [...(input.preSelectorExcluded ?? [])].sort() },
     embeddingModels: input.models,
     arms,
+    ...(tuning !== undefined ? { tuning } : {}),
     runs: scopedRuns,
     sessions,
     split_scope: input.split,

@@ -26206,6 +26206,51 @@ The owner decided the items below on 2026-10-16.
 - **Run order.** The dev split runs first as a smoke run. The heldout run is not started by this decision; it needs its own go after the
   dev smoke is reviewed. Selector calls stay Haiku, effort low, no tools, at most 1 call/s and 4 concurrent.
 
+## ADR-0123 D6 tuning log: dev tuning smoke (2026-10-16)
+
+The owner chose to tune on dev and re-smoke (the pre-registration allows tuning on dev only; the held-out split is never tuned on).
+This entry is written BEFORE the tuning run.
+
+- **Dev smoke result being tuned (run `run-dev-2026-10-16T05-44-49-416Z.json`, pre-rebase digest `9d185b9c...`).** A0: entry 426/449,
+  exact 428/449. A1 (static + 3 retrieved, v2-moe): entry 426/449, exact 420/449. No gain; exact slightly worse.
+- **Error analysis (no model calls).** A1 vs A0 on exact: 7 wins, 15 losses (5 entry-level, 10 arg-only). Patterns: (1) retrieval
+  is weak: every top-1 cosine is below tau_low 0.7441 (v2-moe tau 0.7941); 49% of cases retrieve at cosine under 0.5. (2) The harm
+  concentrates at cosine 0.4-0.5 (157 cases: A0 6 errors, A1 15 errors); at 0.6 and above A1 is neutral (3 vs 2 errors), under 0.4
+  neutral (3 vs 2). (3) Losses copy arguments from a near example: the number of an ordinal (`#5` for `#13`), a release (`6.0.0`), a
+  keyword filter (`my-items` plus `결제 모듈`), a reminder body (`약 먹`). (4) Many retrieved examples are of another entry or `none`
+  (e.g. a `none` calendar-create negative for a calendar-read question). (5) The 7 wins are mostly cases A0 misses by sampling noise.
+- **Stale baseline.** The smoke ran with the A6 action prompt `nl-select.v40` (187 of 449 cases). `main` is now `nl-select.v42`
+  (#248; the read prompt is still v39). So the old A0 is not a valid A6 baseline and the tuning plan re-measures A0.
+- **Variants (frozen, `DEV_TUNE_SETS['dev-tune-1']` in `selector-rag/arms.ts`).** `k3-floor050` (k=3, no example below cosine 0.50)
+  and `k1-floor050` (k=1, floor 0.50). A floor is a harness parameter on the A1 arm (`variant.k`, `variant.minSimilarity`); a case
+  with no neighbour above the floor renders the static prompt. Not run: placing retrieved examples before the static ones (needs a
+  Core prompt-builder change and a golden re-pin), "only the selector's offered top candidates" (the selector is one call with no
+  shortlist), "exclude verbatim-copied args" (the gold args are unknown at retrieval time; no honest proxy).
+- **Plan.** `pnpm eval:rag -- --mode plan --split dev --tune dev-tune-1`: arms A0, A1:k3-floor050, A1:k1-floor050; 449 cases x 3 arms x 1
+  run = 1,347 selector calls (under the 1,400 cap); Haiku, effort low, no tools, at most 1 call/s and 4 concurrent. Dev tuning digest
+  `a779d320991e389a3db3e1be324182195c8d3189b8a3f39301c86605c06babdd`. The plain dev digest
+  (`5447bb9c...`, 898 calls) is unchanged by this code.
+- **Decision rule (before the run).** A variant clearly beats A0 on dev if its exact errors are at most 0.75 x the re-measured A0
+  exact errors; then, and only then, that frozen config goes to heldout. Otherwise record "no measured gain" and stop.
+  Held-out stays untouched until its own owner go.
+- **Result (run `run-dev-2026-10-16T08-26-37-052Z.json`, archived under `eval-archive/rag-dev-tune/`; 1,347 calls, 1 timeout, 0 errors).**
+  Errors out of 449 (lower is better), A0 re-measured on the current prompts (read v39, A6 v42):
+
+  | arm | entry errors | exact errors |
+  | --- | --- | --- |
+  | A0 (re-measured) | 25 | 24 |
+  | A1 k3-floor050 | 23 | 26 |
+  | A1 k1-floor050 | 25 | 27 |
+  | (old smoke) A0 / A1 k3 no floor | 23 / 23 | 21 / 29 |
+
+  Neither variant meets the rule (A1 exact errors at most 0.75 x 24 = 18). Both are slightly worse than A0 on exact (26 and 27 vs
+  24), and the difference is inside the noise: 227 of 449 cases retrieved nothing (a static prompt, the same as A0) and flipped
+  anyway (A0 re-run vs the old A0 flips 6 of 262 read cases). The floor removed the worst-loss bucket (the old 29 became 26) but
+  produced no gain over A0.
+- **Conclusion: no measured gain from retrieval on dev.** Recorded as "no measured gain". The held-out run is not started and no
+  config is frozen for it. Retrieval stays experiment-only (RAG-3 not wired). Reopening needs a different lever than weaker or
+  fewer neighbours (a larger or better-matched pool, or a prompt-slot change in Core), decided by the owner.
+
 ## ADR-0123 — Retrieval for the selector's few-shot examples, measured first: an offline, pre-registered four-arm experiment over a held-out split of the D12 gate, the existing `LocalVectorProvider` (no new vector database) and local `nomic-embed-text` embeddings pinned by digest, an owner-approved example pool kept disjoint from every gold corpus by a contamination lint, and runtime retrieval only behind a default-off flag after the experiment passes. Knowledge RAG over Jira / Confluence is out of scope. Phase 1 amends nothing; phase 2 would amend ADR-0120 D3 / D12 / A6-D7 and the ADR-0098 D8 limits.
 
 - **Status update (2026-10-16):** **Q1 accepted by the owner** (keep the JSON `LocalVectorProvider`), conditional on two
