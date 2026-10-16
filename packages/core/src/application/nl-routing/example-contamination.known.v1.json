@@ -122,121 +122,13 @@
       "reason": "Inherited from the pinned shared examples; rewriting a prompt example changes a pinned prompt and needs a gate run (ADR-0123 D5 ratchet), so it is recorded rather than fixed in RAG-0. Character-3-gram containment >= 0.8; often a short generic gold text inside the example (or the reverse), so reviewed as low risk, to be reworded only with a gated prompt change."
     },
     {
-      "example": "can you post this for me?",
-      "goldId": "neg-200",
-      "kind": "near",
-      "tokenJ": 0.67,
-      "charJ": 0.56,
-      "contain": 0.78,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
-      "example": "알림은 어떻게 지워?",
-      "goldId": "help-021",
-      "kind": "near",
-      "tokenJ": 0.6,
-      "charJ": 0.55,
-      "contain": 0.75,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
-      "example": "알림은 어떻게 지워?",
-      "goldId": "help-036",
-      "kind": "near",
-      "tokenJ": 0.6,
-      "charJ": 0.55,
-      "contain": 0.75,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
-      "example": "너 깃허브도 볼 수 있어?",
-      "goldId": "help-018",
-      "kind": "near",
-      "tokenJ": 0.71,
-      "charJ": 0.33,
-      "contain": 0.5,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
-      "example": "how do I add a to-do?",
-      "goldId": "help-034",
-      "kind": "near",
-      "tokenJ": 0.78,
-      "charJ": 0.48,
-      "contain": 0.74,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
-      "example": "how do I add a to-do?",
-      "goldId": "help-046",
-      "kind": "near",
-      "tokenJ": 0.67,
-      "charJ": 0.76,
-      "contain": 0.89,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
-      "example": "제일 오래된 건",
-      "goldId": "uat5r8-21",
-      "kind": "near",
-      "tokenJ": 0.75,
-      "charJ": 0.67,
-      "contain": 1,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
-      "example": "배포 얘기 나온 거",
-      "goldId": "uat5r7-19",
-      "kind": "near",
-      "tokenJ": 0.67,
-      "charJ": 0.47,
-      "contain": 1,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
-      "example": "결제 관련 내용",
-      "goldId": "uat5r7-20",
-      "kind": "near",
-      "tokenJ": 0.6,
-      "charJ": 0.33,
-      "contain": 1,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
-      "example": "시간 비어?",
-      "goldId": "calendar-026",
-      "kind": "near",
-      "tokenJ": 0.6,
-      "charJ": 0.33,
-      "contain": 1,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
-      "example": "시간 비어?",
-      "goldId": "uat5r2-08",
-      "kind": "near",
-      "tokenJ": 0.6,
-      "charJ": 0.36,
-      "contain": 1,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
-      "example": "what can you do",
-      "goldId": "help-028",
-      "kind": "near",
-      "tokenJ": 0.8,
-      "charJ": 0.93,
-      "contain": 1,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
-    },
-    {
       "example": "내일 9시",
       "goldId": "a6-reference-none-004",
       "kind": "near",
       "tokenJ": 0.67,
       "charJ": 0.29,
       "contain": 0.67,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
+      "reason": "Rule and catalog vocabulary, not a routing answer: the phrase only shows what a `when` span value looks like (time words without the particle 에); no message maps to an entry or args through it. Near a gold message only because both are short time expressions; reviewed as low risk."
     },
     {
       "example": "매일 아침 8시",
@@ -245,7 +137,7 @@
       "tokenJ": 0.6,
       "charJ": 0.4,
       "contain": 1,
-      "reason": "Rule or catalog quote, not an Examples-section example (RAG-0 extension after the ADR-0123 Q2 Codex review: quoted phrases of two or more words outside the Examples section are scanned for exact and near copies). Inherited from the pinned rule and catalog text, where the phrase defines a term (a count word, a period word, a filter) rather than teaching a routing answer; reviewed as low risk and to be reworded only with a gated prompt change."
+      "reason": "Rule and catalog vocabulary, not a routing answer: the phrase only shows what a `when` span value looks like (time words without the particle 에); no message maps to an entry or args through it. Near a gold message only because both are short time expressions; reviewed as low risk."
     }
   ],
   "shortReview": [
