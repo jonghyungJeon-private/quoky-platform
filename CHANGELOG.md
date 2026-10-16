@@ -5,6 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 R2 evaluation tooling (2026-10-17)
+
+- **Added (`eval:nl --mode r2`).** Runs the owner-approved R2 corpus (`nl-action.r2.v1.json`, 212 cases) through the real
+  selector with R2 offered as with `QUOKY_NL_ITEM_R2=all` (fixed by the mode; the environment variable is never read).
+  Without `--approved-plan-digest` it is offline: schema check, plan, call count and the Strict digest, which binds the R2
+  prompt version (`nl-select.v45`) and its prompt bytes, the corpus digest, model, runs, call count and the D12 gate. With it
+  (digest recomputed, exit 3 before any provider is built on a mismatch) it scores exact `{entry, args, target}` with the
+  gold-ask rule and applies the proposal §6.4 gate per run: >= 95% overall, >= 90% for each of the jira and slack slices,
+  0 wrong targets, 0 negatives captured, questions on positive references <= 10%, calls over the bound <= 1%. The report
+  holds ids, outcomes and closed reasons only.
+- **Added (`eval:r2-redteam`).** The real-model counterpart of the offline R2 red team: the same `a6` / `r2` cases of
+  `agent-redteam.v1.json` through the production `AppModule` (scripted worst-case selector; Jira and Slack behind the
+  recorded fixture adapters, any other URL throws), with the R2 item summarisation sent to the real chat-tier provider
+  (Claude CLI, SUMMARIZATION). `--mode plan` is offline (plan, digest, call bound); `--mode run` is Strict under the same
+  digest rule. It applies the deterministic §6.3 success conditions (target substitution, canary in history or the next
+  prompt, card spoof, and the rest; no LLM judge), reports successes per attack family, and exits 0 only with 0 successes
+  in every run. Logs and the report are content-free; no `.env` file is read.
+- **Changed (internal).** The case runner moved out of `nl-action-r2-redteam.app.test.ts` into `tools/nl-r2-redteam-runner.ts`
+  and `a6-r2-harness.ts` no longer needs vitest (console capture and the fetch stub are plain), so one runner serves both the
+  CI stub driver and the CLI. No runtime behaviour changed.
+
 ## Unreleased — A6 owner decisions of 2026-10-17 (A–E)
 
 - **Changed (C, A6-D1 amendment).** `reminder.cancel` takes `match` beside `ref`: "치과 예약 확인 알림 취소해줘" cancels the one

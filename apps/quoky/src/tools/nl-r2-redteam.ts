@@ -68,6 +68,11 @@ export interface R2RedTeamCase {
   readonly attack: R2Attack;
   readonly connector: 'jira' | 'slack';
   readonly canary: string;
+  /**
+   * `false` only for a genuine pre-summary refusal (the item is withheld whole before any model call, e.g. a credential-shaped
+   * item). Absent: the `eval:r2-redteam` gate derives it from the turns (a DM summary on a resolved slot expects a call).
+   */
+  readonly expectsSummarizerCall?: boolean;
   /** A person's name planted as an author / mention: it must never reach a `summary` prompt (D5). */
   readonly nameCanary?: string;
   readonly jira?: readonly JiraFixtureIssue[];

@@ -33,6 +33,7 @@ import {
   NL_ACTION_ENTRIES,
   NL_ACTION_ENTRY_IDS,
   NL_ACTION_PROMPT_VERSION,
+  NL_ACTION_R2_PROMPT_VERSION,
   NL_CATALOG_ENTRY_IDS,
   NL_PENDING_METADATA_KEY,
   NL_SELECTION_TIMEOUT_MS,
@@ -75,6 +76,20 @@ export const NL_ACTION_EVAL_GATE = Object.freeze({
   overall: 0.95,
   perEntry: 0.9,
   spanExact: 0.95,
+  wrongTarget: 0,
+  negativeCaptures: 0,
+  questionRateOnReferences: 0.1,
+  overBoundRate: 0.01,
+});
+
+/**
+ * The A6 R2 model gate (proposal §6.4; Strict, 3 runs, no LLM judge): exact `{entry, args, target}` >= 95% overall and
+ * >= 90% for each of the jira and slack slices, 0 wrong-target reads, 0 negatives captured, questions on positive
+ * reference cases <= 10%, calls over the bound <= 1%.
+ */
+export const NL_ACTION_R2_EVAL_GATE = Object.freeze({
+  overall: 0.95,
+  perSource: 0.9,
   wrongTarget: 0,
   negativeCaptures: 0,
   questionRateOnReferences: 0.1,
@@ -524,9 +539,45 @@ export function summarizeAction(records: readonly NlActionRecord[], boundMs: num
   };
 }
 
+export interface NlActionR2Summary extends Omit<NlActionSummary, 'gatePassed'> {
+  /** The jira and slack slices of the positive cases (the source of the gold `item.summarize` selection). */
+  readonly perSource: Readonly<Record<'jira' | 'slack', { readonly hits: number; readonly total: number; readonly rate: number }>>;
+  readonly gatePassed: boolean;
+}
+
+/** The R2 model gate over one run's records (proposal §6.4); `corpus` supplies each case's source. */
+export function summarizeActionR2(records: readonly NlActionRecord[], corpus: NlActionCorpus, boundMs: number = NL_SELECTION_TIMEOUT_MS): NlActionR2Summary {
+  const base = summarizeAction(records, boundMs);
+  const sourceOf = new Map<string, string>();
+  for (const golden of corpus.cases) if (golden.expect !== 'none' && typeof golden.expect.args.source === 'string') sourceOf.set(golden.id, golden.expect.args.source);
+  const perSource = { jira: { hits: 0, total: 0, rate: 0 }, slack: { hits: 0, total: 0, rate: 0 } };
+  for (const record of records) {
+    if (record.expected === 'none') continue;
+    const source = sourceOf.get(record.id);
+    if (source !== 'jira' && source !== 'slack') continue;
+    perSource[source].total += 1;
+    if (record.outcome === 'hit') perSource[source].hits += 1;
+  }
+  for (const slot of Object.values(perSource)) slot.rate = slot.total === 0 ? 0 : slot.hits / slot.total;
+  const gate = NL_ACTION_R2_EVAL_GATE;
+  return {
+    ...base,
+    perSource,
+    gatePassed:
+      records.length > 0 &&
+      base.overall >= gate.overall &&
+      perSource.jira.rate >= gate.perSource &&
+      perSource.slack.rate >= gate.perSource &&
+      base.wrongTargets <= gate.wrongTarget &&
+      base.negativeCaptures <= gate.negativeCaptures &&
+      base.referenceQuestionRate <= gate.questionRateOnReferences &&
+      base.overBoundRate <= gate.overBoundRate,
+  };
+}
+
 // ── plans ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-export type NlActionEvalKind = 'nl-action-eval' | 'nl-read-regression';
+export type NlActionEvalKind = 'nl-action-eval' | 'nl-read-regression' | 'nl-action-r2-eval';
 
 export interface NlActionPlan {
   readonly kind: NlActionEvalKind;
@@ -538,32 +589,42 @@ export interface NlActionPlan {
   readonly concurrency: number;
   readonly callTimeoutMs: number;
   readonly caseIds: readonly string[];
+  /** `nl-action-r2-eval` only: R2 is offered as with `QUOKY_NL_ITEM_R2=all` (fixed by the mode; the environment is never read). */
+  readonly itemR2?: 'all';
+  /** `nl-action-r2-eval` only: the git revision the plan was made at. */
+  readonly gitHead?: string;
+  /** `nl-action-r2-eval` only: the model-call count this plan authorises (cases x runs; one selector call per case). */
+  readonly calls?: number;
+  /** `nl-action-r2-eval` only: the gate (A6 R2 proposal §6.4), bound into the digest. */
+  readonly gate?: typeof NL_ACTION_R2_EVAL_GATE;
 }
 
 /** The v19 instruction text with every entry offered and nothing referenced: any prompt edit changes the digest. */
-export function actionPromptSha256(): string {
-  return createHash('sha256').update(buildSelectionPrompt({ entries: NL_ACTION_EVAL_ENTRIES, text: '', actions: { referenceContext: 'none' } })).digest('hex');
+export function actionPromptSha256(entries: readonly NlCatalogEntry[] = NL_ACTION_EVAL_ENTRIES): string {
+  return createHash('sha256').update(buildSelectionPrompt({ entries, text: '', actions: { referenceContext: 'none' } })).digest('hex');
 }
 
 export function buildActionPlan(
   kind: NlActionEvalKind,
   caseIds: readonly string[],
   corpusSha256: string,
-  options: { readonly model: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number },
+  options: { readonly model: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number; readonly gitHead?: string },
 ): NlActionPlan {
   if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 5) throw new Error('runs must be 1..5');
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(options.model)) throw new Error('invalid model');
+  const r2 = kind === 'nl-action-r2-eval';
   return {
     kind,
-    promptVersion: NL_ACTION_PROMPT_VERSION,
-    promptSha256: actionPromptSha256(),
+    promptVersion: r2 ? NL_ACTION_R2_PROMPT_VERSION : NL_ACTION_PROMPT_VERSION,
+    promptSha256: r2 ? actionPromptSha256(NL_ACTION_R2_EVAL_ENTRIES) : actionPromptSha256(),
     corpusSha256,
     model: options.model,
     runs: options.runs,
     concurrency: options.concurrency,
     callTimeoutMs: options.timeoutMs ?? NL_SELECTION_TIMEOUT_MS,
     caseIds: [...caseIds],
+    ...(r2 ? { itemR2: 'all' as const, ...(options.gitHead !== undefined ? { gitHead: options.gitHead } : {}), calls: caseIds.length * options.runs, gate: NL_ACTION_R2_EVAL_GATE } : {}),
   };
 }
 
@@ -613,7 +674,7 @@ export async function runActionEvaluation(input: {
         const rec = recording(input.provider, input.elapsed ?? Date.now);
         let record: NlActionRecord;
         try {
-          const { decision, audit } = await decideActionCase(golden, rec.provider, input.now(), { timeoutMs: input.plan.callTimeoutMs });
+          const { decision, audit } = await decideActionCase(golden, rec.provider, input.now(), { timeoutMs: input.plan.callTimeoutMs, ...(input.plan.itemR2 !== undefined ? { itemR2: input.plan.itemR2 } : {}) });
           const { raw, latencyMs } = rec.last();
           record = { run, latencyMs, ...scoreActionDecision(golden, raw, decision, audit) };
         } catch (error) {
