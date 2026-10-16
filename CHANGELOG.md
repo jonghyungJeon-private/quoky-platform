@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — vitest worker caps and forks pool (2026-10-16)
+
+- **Changed (test tooling only).** `vitest.config.ts` now pins `pool: 'forks'`, caps workers at `maxWorkers: 2` (`minWorkers: 1`),
+  and bounds `teardownTimeout` to 10 s. `QUOKY_TEST_MAX_WORKERS` overrides the worker cap; a non-positive-integer value is ignored.
+  Added in response to the 2026-10-16 incident in which eight orphaned vitest workers (~3.5 GB each) filled swap and froze the machine
+  after a timed-out test command. The test include list is unchanged.
+
 ## Unreleased — vector store safeguards for ADR-0123 Q1 (2026-10-16)
 
 - **Added.** `LocalVectorProvider` option `overflow: 'evict' | 'reject'` (default `'evict'`, so memory recall is unchanged).
