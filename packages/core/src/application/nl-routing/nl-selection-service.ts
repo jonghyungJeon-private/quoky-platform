@@ -39,7 +39,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, nlR2SourcesOffered, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, nlR2SourcesOffered, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -1264,12 +1264,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
         this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
         return { kind: 'none' };
       }
-      // A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, "이번엔 3번"): a target frame with no action word and
-      // no request form never executes. Right after the same action on the same list, the inferred action is asked as a
-      // confirmation ("할 일 3번도 완료할까요?", "응" runs it); a bare reference ("3번도") reads the same way. Anything else
-      // stays chat, as a reference alone always was.
+      // A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, "이번엔 3번"; CA review P2/P3): a target frame with
+      // no action word and no request beyond the light verb never executes. The inferred action is asked as a confirmation
+      // ("할 일 3번도 완료할까요?" right after the same action, else "할 일 2번을 완료할까요?"; "응" runs it). A bare reference
+      // asks only as a continuation; otherwise it stays chat, as a reference alone always was.
       if (validated.reason === 'elliptical' || (validated.reason === 'ungrounded' && validated.arg === 'action')) {
-        const confirm = await this.askContinuation(entryId, output.args, turn, prepared, language, reference, base, openQuestion, shadow);
+        const confirm = await this.askInferredAction(entryId, output.args, validated.reason === 'elliptical', turn, prepared, language, reference, base, openQuestion, shadow);
         if (confirm !== undefined) return confirm;
       }
       if (validated.reason === 'elliptical') {
@@ -1395,14 +1395,21 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }
 
   /**
-   * A6-D3a amendment 1, elliptical continuation: the confirmation of an inferred action, or `undefined` (the caller then
-   * answers as before). Asked only when the selected target entry is the fresh, not undone last action's entry on the same
-   * list, the reference is a display number the owner actually wrote, and it resolves to another item than the last
-   * action's. The question is the one-candidate `action-target` confirmation; nothing is written.
+   * A6-D3a amendment 1, elliptical continuation: the question for an inferred action, or `undefined` (the caller then
+   * answers as before: chat). Nothing is written.
+   *  - Right after the same action on the same list (a fresh, not undone last action of this entry and source), an
+   *    elliptical frame or a bare reference asks the continuation: "할 일 3번도 완료할까요?".
+   *  - Otherwise only an elliptical frame asks (a bare reference stays chat, as before), with the selector's entry as the
+   *    inferred action: "할 일 2번을 완료할까요?" ("2번 체크", "3번 해줘"; CA review P2/P3).
+   * The confirmation needs a display number the owner actually wrote that resolves to one item (and, for a continuation,
+   * not the last action's own item); it is the one-candidate `action-target` question, so "응" runs it. An elliptical
+   * frame naming its item by a title (`match`) or by a number that does not resolve asks the owner to restate with the
+   * entry's canonical action word, as for a garbled action word (no span is ever stored).
    */
-  private async askContinuation(
+  private async askInferredAction(
     entryId: NlActionEntryId,
     rawArgs: NlArgs,
+    elliptical: boolean,
     turn: NlSelectionTurn,
     prepared: PreparedSelectionInput,
     language: 'ko' | 'en',
@@ -1413,18 +1420,29 @@ export class NlSelectionService implements TurnDeliveryObserver {
   ): Promise<NlSelectionDecision | undefined> {
     if (entryId !== 'todo.complete' && entryId !== 'todo.cancel' && entryId !== 'reminder.cancel') return undefined;
     if (openQuestion !== undefined) return undefined;
-    const last = reference.lastAction;
     const source = nlActionSourceOf(entryId, rawArgs);
-    if (last === undefined || !last.fresh || last.record.undone || last.record.entryId !== entryId || source === undefined || last.record.source !== source) return undefined;
+    if (source === undefined) return undefined;
+    const last = reference.lastAction;
+    const continued = last !== undefined && last.fresh && !last.record.undone && last.record.entryId === entryId && last.record.source === source;
+    if (!continued && !elliptical) return undefined;
+    const restate = (): NlSelectionDecision | undefined => {
+      if (!elliptical) return undefined;
+      const words = (NL_ACTION_CANONICAL_WORDS as Readonly<Record<string, { readonly ko: string; readonly en: string }>>)[entryId];
+      if (words === undefined) return undefined;
+      const audit: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'elliptical-restate' };
+      if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
+      return this.actionAnswer(audit, renderGarbledAction(language === 'en' ? words.en : words.ko, language));
+    };
     const ref = parseNlRef(rawArgs.ref);
-    if (ref?.kind !== 'index') return undefined;
+    if (ref?.kind !== 'index') return typeof rawArgs.match === 'string' && rawArgs.match.length > 0 ? restate() : undefined;
     const written = [...nlNumeralsIn(prepared.groundingText), ...nlOrdinalsIn(prepared.groundingText)];
     if (written.length !== 1 || written[0] !== ref.index) return undefined;
     const resolved = resolveItemReference({ entryId, source, ref, groundingText: prepared.groundingText, state: reference });
-    if (resolved.kind !== 'resolved' || resolved.target.id === undefined || resolved.target.id === last.record.itemId || resolved.target.label === undefined) return undefined;
+    if (resolved.kind !== 'resolved' || resolved.target.id === undefined || resolved.target.label === undefined) return restate();
+    if (continued && resolved.target.id === last.record.itemId) return undefined;
     const target = resolved.target;
     const label = target.label as number;
-    const audit: NlActionAudit = { ...base, resolution: 'resolved', target, result: 'asked', reason: 'elliptical-confirm' };
+    const audit: NlActionAudit = { ...base, resolution: 'resolved', target, result: 'asked', reason: continued ? 'elliptical-confirm' : 'inferred-confirm' };
     if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
     await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
       pendingQuestionRecord(turn.actor.id, {
@@ -1441,7 +1459,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     );
     // One next-turn question per session: the confirmation supersedes any R5a draft, so "응" can only mean this.
     if (this.deictic !== undefined) await this.deictic.clearDraft(turn.session, turn.actor.id, turn.now, 'continuation-confirm-asked');
-    return this.actionAnswer(audit, renderContinuationConfirm(entryId, source, label, language));
+    return this.actionAnswer(audit, renderContinuationConfirm(entryId, source, label, language, continued));
   }
 
   /**

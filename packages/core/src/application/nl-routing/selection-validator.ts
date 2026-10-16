@@ -31,7 +31,7 @@ import {
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
 import { nlFrameIsElliptical, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
-import { nlGarbledActionWord, type NlActionVocabulary } from './garbled-action';
+import { nlFrameHasActionInflection, nlGarbledActionWord, type NlActionVocabulary } from './garbled-action';
 import {
   isNlRangeSymbol,
   isWeekdayOrTimeKeyword,
@@ -272,8 +272,9 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
   const garbled = near === undefined ? undefined : canonicalActionWord(near.owner, /^[a-z]+$/u.test(near.word));
   // A6-D3a amendment 1, elliptical continuation: a target entry (a ref or a match; not a payload entry, whose bare content
   // acts by owner decision A, nor the arg-less undo with its own anchor rule) whose frame names no action and requests
-  // nothing ("이번엔 3번") never executes. Read on the content frame, against every A6 vocabulary.
-  const elliptical = !payload && entry.args.length > 0 && nlFrameIsElliptical(contentFrame, NL_ACTION_WORDS);
+  // nothing beyond the light verb ("이번엔 3번", "3번도 해줘") never executes. Read on the content frame, against every A6
+  // vocabulary; an inflected action word ("2번 끝냄 처리해줘") names its action.
+  const elliptical = !payload && entry.args.length > 0 && nlFrameIsElliptical(contentFrame, NL_ACTION_WORDS) && !nlFrameHasActionInflection(contentFrame, NL_ACTION_WORDS, NL_ACTION_VERBAL_NOUNS);
   return { ...(veto !== undefined ? { veto } : {}), expressesAction, ...(garbled !== undefined ? { garbled } : {}), ...(elliptical ? { elliptical } : {}) };
 }
 

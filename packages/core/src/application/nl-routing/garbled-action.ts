@@ -257,3 +257,21 @@ export function nlGarbledActionWord(
   }
   return undefined;
 }
+
+/**
+ * Elliptical continuation (CA review P2): whether a word of the owner's `frame` is a normal inflection of an action word
+ * of the closed vocabularies (a verb form's ending consonant or contraction: "끝냄", "마침", "지움", "없앰", "마쳐"; English
+ * -s / -d), with a glued request tail and particles removed. Such a frame names its action, so it is never elliptical even
+ * when the request around it is only the light verb ("2번 끝냄 처리해줘"). The same inflection rule as the garble check.
+ */
+export function nlFrameHasActionInflection(frame: string, actionWords: readonly string[], verbalNouns: readonly string[]): boolean {
+  const known = [...new Set(actionWords.map(normalizeForMatch))].filter((word) => !/\s/u.test(word));
+  const nouns = new Set(verbalNouns.map(normalizeForMatch));
+  return wordsOf(frame).some((word) => {
+    const tail = GLUED_REQUEST_TAIL.exec(word);
+    const stem = tail !== null ? word.slice(0, tail.index) : word;
+    const once = stem.replace(PARTICLE_TAIL, '');
+    const stems = [...new Set([stem, once, once.replace(PARTICLE_TAIL, '')])].filter((candidate) => candidate.length > 0);
+    return stems.some((candidate) => known.some((action) => isInflection(candidate, action, nouns)));
+  });
+}

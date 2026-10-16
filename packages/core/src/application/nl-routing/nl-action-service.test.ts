@@ -1069,15 +1069,47 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
     }
   });
 
-  it('an elliptical message with nothing to infer the action from never writes and is chat', async () => {
-    // No last action, a last action of another entry, the same item again, or a cancel the selector guessed.
+  it('CA P2: a light-verb request names no action either; right after the same action it asks the continuation', async () => {
+    for (const text of ['3번도 해줘', '이번엔 3번 해줘', '그럼 3번 부탁해', '3번도 ㄱㄱ', '3번도 고고', '3번도 처리해줘', '3번도 똑같이 해줘']) {
+      const { w, decision } = await run(text);
+      expect(decision, text).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+      expect(actionLogs(w).at(-1)?.fields?.reason, text).toBe('elliptical-confirm');
+    }
+  });
+
+  it('CA P2/P3: with no matching last action an elliptical request asks the selector\'s inferred action; "응" runs it', async () => {
+    const cases: Array<[string, Parameters<typeof run>[2], Record<string, unknown>, string]> = [
+      ['3번 해줘', { lastAction: 'none' }, { ref: '#3' }, '할 일 3번을 완료할까요? (응 / 아니)'],
+      ['이번엔 3번', { lastAction: 'none' }, { ref: '#3' }, '할 일 3번을 완료할까요? (응 / 아니)'],
+      ['그럼 3번 부탁해', { lastAction: 'todo.add' }, { ref: '#3' }, '할 일 3번을 완료할까요? (응 / 아니)'],
+      ['2번 체크', { lastAction: 'none' }, { ref: '#2' }, '할 일 2번을 완료할까요? (응 / 아니)'],
+      ['2번 check', { lastAction: 'none' }, { ref: '#2' }, '할 일 2번을 완료할까요? (응 / 아니)'],
+      ['이번엔 3번', { entryId: 'todo.cancel' }, { ref: '#3' }, '할 일 3번을 목록에서 뺄까요? (응 / 아니)'],
+      ['now 3', { lastAction: 'none' }, { ref: '#3' }, 'Complete to-do #3? (yes / no)'],
+    ];
+    for (const [text, options, args, question] of cases) {
+      const { w, decision } = await run(text, args, options);
+      expect(decision, `${text} ${JSON.stringify(options)}`).toMatchObject({ kind: 'ask', text: question });
+      expect(actionLogs(w).at(-1)?.fields, text).toMatchObject({ result: 'asked', reason: 'inferred-confirm' });
+      expect(readPendingQuestion(w.session(), 'owner', at(2)), text).toMatchObject({ kind: 'action-target', confirm: true, candidates: [{ label: (args.ref as string) === '#2' ? 2 : 3 }] });
+    }
+    const checked = await run('2번 체크', { ref: '#2' }, { lastAction: 'none' });
+    expect(await answer(checked.w, '응')).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { id: 'todo-2' } } });
+  });
+
+  it('CA P3: an elliptical title target ("회의 준비 체크") asks to restate with the action word; nothing is stored or written', async () => {
+    const { w, decision } = await run('회의 준비 체크', { match: '회의 준비' }, { lastAction: 'none' });
+    expect(decision).toMatchObject({ kind: 'ask', text: renderGarbledAction('완료', 'ko') });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'asked', reason: 'elliptical-restate' });
+    expect(readPendingQuestion(w.session(), 'owner', at(2))).toBeUndefined();
+  });
+
+  it('an elliptical message never writes; with nothing it can safely ask it is chat', async () => {
+    // The same item as the last action again, or a number the owner never wrote (a selector lure on "안녕").
     const cases: Array<[string, Parameters<typeof run>[2], Record<string, unknown>]> = [
-      ['이번엔 3번', { lastAction: 'none' }, { ref: '#3' }],
-      ['그럼 3번', { lastAction: 'none' }, { ref: '#3' }],
-      ['이번엔 3번', { lastAction: 'todo.add' }, { ref: '#3' }],
       ['이번엔 1번', {}, { ref: '#1' }],
-      ['이번엔 3번', { entryId: 'todo.cancel' }, { ref: '#3' }],
-      ['now 3', { lastAction: 'none' }, { ref: '#3' }],
+      ['안녕', { lastAction: 'none' }, { ref: '#3' }],
+      ['그럼 그렇게 해줘', { lastAction: 'none' }, { ref: '#3' }],
     ];
     for (const [text, options, args] of cases) {
       const { w, decision } = await run(text, args, options);
@@ -1088,7 +1120,7 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
   });
 
   it('a clear request still acts directly: an action word or a request form ("이번엔 3번 완료", "3번도 체크해줘")', async () => {
-    for (const text of ['이번엔 3번 완료', '이번엔 3번 완료해줘', '3번도 체크해줘', 'complete 3 too']) {
+    for (const text of ['이번엔 3번 완료', '이번엔 3번 완료해줘', '3번도 체크해줘', '3번 체크해줘', 'complete 3 too']) {
       const { decision } = await run(text);
       expect(decision, text).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { id: 'todo-3' } } });
     }

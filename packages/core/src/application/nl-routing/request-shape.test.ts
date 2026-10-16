@@ -690,8 +690,12 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3): no a
   const v = (entryId: string, args: Record<string, string>, text: string) => validateSelection({ entryId, args }, ctx(text));
 
   it('a frame without any A6 action word and without a request form is elliptical', () => {
-    for (const text of ['이번엔 3번', '그럼 3번', '이번엔 3번요', '3 too', 'now 3']) expect(nlFrameIsElliptical(text, NL_ACTION_WORDS), text).toBe(true);
-    for (const text of ['이번엔 3번 완료', '3번도 완료해줘', '1번 할일 체크해줘', '2번 할 일 빼', 'mark 3 done', 'complete 3 too', '3번 처리해줘']) {
+    for (const text of ['이번엔 3번', '그럼 3번', '이번엔 3번요', '3 too', 'now 3', '2번 체크', '2번 check']) expect(nlFrameIsElliptical(text, NL_ACTION_WORDS), text).toBe(true);
+    // CA review P2: the light-verb class (해/하, 처리, 부탁, ㄱㄱ, 고고, 똑같이, do/please) requests without naming an action.
+    for (const text of ['3번도 해줘', '이번엔 3번 해줘', '그럼 3번 부탁해', '3번도 ㄱㄱ', '3번도 고고', '3번도 처리해줘', '3번도 똑같이 해줘', '3번 해 주세요', '3번 부탁드립니다', 'do 3 too please']) {
+      expect(nlFrameIsElliptical(text, NL_ACTION_WORDS), text).toBe(true);
+    }
+    for (const text of ['이번엔 3번 완료', '3번도 완료해줘', '1번 할일 체크해줘', '2번 할 일 빼', 'mark 3 done', 'complete 3 too', '3번 완료 처리해줘', '3번도 빼줘']) {
       expect(nlFrameIsElliptical(text, NL_ACTION_WORDS), text).toBe(false);
     }
   });
@@ -706,6 +710,10 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3): no a
     expect(v('todo.complete', { ref: '#1' }, '1번 할일 체크해줘')).toMatchObject({ ok: true });
     // Owner decision A: a bare payload names what to make and acts (no action word needed for a payload entry).
     expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일')).toMatchObject({ ok: true });
+    // An inflected action word names its action even with only the light verb around it (garbled-action inflection rule).
+    expect(v('todo.complete', { ref: '#2' }, '2번 끝냄 처리해줘')).toMatchObject({ ok: true });
+    expect(v('todo.complete', { ref: '#3' }, '3번도 해줘')).toMatchObject({ ok: false, reason: 'elliptical' });
+    expect(v('todo.complete', { ref: '#2' }, '2번 체크')).toMatchObject({ ok: false, reason: 'elliptical' });
     // The garbled action word keeps its own question first.
     expect(v('todo.complete', { ref: '#3' }, '3번 완룐 처리해줘')).toMatchObject({ ok: false, reason: 'garbled-action' });
   });
