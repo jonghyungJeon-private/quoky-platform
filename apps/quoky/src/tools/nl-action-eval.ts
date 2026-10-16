@@ -352,6 +352,8 @@ export async function decideActionCase(
     actions: { level: 'local', killSwitch: new NlActionSwitch({ actors, logger }) },
   });
   const decision = await service.decide({
+    // The owner's DM: the action corpus measures the selector and Core's decision, not the channel gate.
+    direct: true,
     text: golden.text,
     attachmentCount: 0,
     session,

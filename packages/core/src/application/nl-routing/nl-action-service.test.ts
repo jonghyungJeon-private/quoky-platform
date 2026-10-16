@@ -34,7 +34,7 @@ interface World {
   session(): Session;
   actor(): Actor;
   setMetadata(key: string, value: unknown): void;
-  decide(text: string, opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; pending?: PendingQuestion | null; replyTo?: string; codeFormatted?: boolean }): Promise<NlSelectionDecision>;
+  decide(text: string, opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; pending?: PendingQuestion | null; replyTo?: string; codeFormatted?: boolean; direct?: boolean; surfaceEnforced?: boolean }): Promise<NlSelectionDecision>;
 }
 
 function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | ((request: AiRequest) => string); caps?: NlActionCaps; withSwitch?: boolean } = {}): World {
@@ -110,6 +110,7 @@ function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | 
     },
     async decide(text, opts = {}) {
       return service.decide({
+        direct: opts.direct ?? true,
         text,
         attachmentCount: 0,
         session,
@@ -121,6 +122,7 @@ function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | 
         ...(opts.pending !== undefined ? { pending: opts.pending } : {}),
         ...(opts.replyTo !== undefined ? { replyToMessageId: opts.replyTo } : {}),
         ...(opts.codeFormatted === true ? { codeFormatted: true } : {}),
+        ...(opts.surfaceEnforced === true ? { surfaceEnforced: true } : {}),
         turnId: 'turn-1',
       });
     },
@@ -822,6 +824,26 @@ describe('A6-D3a amendment 1 (owner-approved direction 2026-10-16): a chosen LOC
     expect(actionLogs(flagged.w).at(-1)?.fields).toMatchObject({ result: 'asked', reason: 'ambiguous' });
     // A CLEAR selection of the same words executes: nothing in Core recognises the misspelling.
     expect((await run('3번 완룐 처리해줘', 'todo.complete', { ref: '#3' })).decision).toMatchObject({ kind: 'execute', command: { target: { id: 'todo-3' } } });
+  });
+
+  it('CA P2: while ADR-0122 enforcement is off a local write acts only in a DM; reads are unaffected', async () => {
+    const w = world({ level: 'local', script: () => out('todo.complete', { ref: '#1' }) });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2], 0));
+    const channel = await w.decide('1번 할일 체크해줘', { now: at(1), direct: false });
+    expect(channel).toMatchObject({ kind: 'ask', text: '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'dm-only' });
+    const undo = world({ level: 'local', script: () => out('action.undo') });
+    expect((await undo.decide('되돌려줘', { now: at(1), direct: false })).kind).toBe('ask');
+    // With ADR-0122 enforcement on, the surface gate has already decided the channel: the write acts.
+    expect((await w.decide('1번 할일 체크해줘', { now: at(1), direct: false, surfaceEnforced: true })).kind).toBe('execute');
+    // A read in a channel still works.
+    const read = world({ level: 'local', script: () => out('mail.list') });
+    expect((await read.decide('메일함 보여줘', { now: at(1), direct: false })).kind).toBe('execute');
+    // Shadow logs the refusal as shadow.
+    const shadow = world({ level: 'shadow', script: () => out('todo.complete', { ref: '#1' }) });
+    shadow.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2], 0));
+    expect((await shadow.decide('1번 할일 체크해줘', { now: at(1), direct: false })).kind).toBe('none');
+    expect(actionLogs(shadow).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'dm-only' });
   });
 
   it('span grounding stays: a title or body that is not verbatim in the message never writes', async () => {

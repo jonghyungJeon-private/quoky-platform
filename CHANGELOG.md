@@ -19,6 +19,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   their args; `todo.add-009` → none; `todo.complete-009` note updated; `todo.complete-018` unchanged (execute; the typo ask
   needs the selector's own flag, see DECISIONS).
 - **Known.** "3일 뒤 오전 9시" is `AMBIGUOUS_TIME` in the reminder grammar, so that phrase asks for the time at execution.
+- **Changed (review round).** Spans hide no veto unless quote- or colon-enclosed; unpaired quotes in a span are refused;
+  new `wish` and `deferred` vetoes, hearsay, relay and quoted-command checks, a final -다 / -야 is a statement, `action.undo`
+  needs its undo word and no recipient; Hangul speaker labels are refused by the input guard. A local write outside a DM is
+  refused at selection while ADR-0122 enforcement is off (`dm-only`). R5a seam: `nlActionWordGrounded` kept,
+  `NlValidationContext.requestFrame` added. 22 corpus negatives added; the selector-pool audit needs regenerating.
 
 ## Unreleased — ADR-0123 pool batch 2 (pending owner approval) and the runner's selector transport and exact scorer (2026-10-16)
 

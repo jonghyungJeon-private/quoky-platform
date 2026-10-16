@@ -199,6 +199,14 @@ export function renderQuestionOpen(language: Lang): string {
   return language === 'en' ? 'A question is still open, so I did not do that. Please tell me again.' : '질문이 열려 있어 실행하지 않았어요. 다시 말씀해 주세요.';
 }
 
+/**
+ * A6-D3a amendment 1 (CA P2): a local write asked for outside a DM while ADR-0122 enforcement is off; nothing ran, and no
+ * target question is asked. The same copy as the handlers' A6-D1 DM-only refusal at dispatch.
+ */
+export function renderDmOnlyAction(language: Lang): string {
+  return language === 'en' ? 'I do that only in a direct message. Nothing was changed.' : '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.';
+}
+
 /** A6-D6 stale-command guard and every "say it again" answer. */
 export function renderRestate(language: Lang): string {
   return language === 'en' ? 'Please tell me again what to do and which item.' : '무엇을/어느 항목을 다시 말씀해 주세요.';

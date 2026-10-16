@@ -57,6 +57,7 @@ import {
   renderInputRefusal,
   renderReferenceQuestion,
   renderQuestionOpen,
+  renderDmOnlyAction,
   renderRestate,
   renderTimeInTitle,
   renderTimeOutsideWhen,
@@ -202,6 +203,16 @@ export interface NlSelectionTurn {
   readonly turnId?: string;
   /** ADR-0120 A6: the platform marked part of the text as code (`InboundMessage.formatting.code`); never an action. */
   readonly codeFormatted?: boolean;
+  /**
+   * A6-D3a amendment 1 (CA P2): the turn is a direct conversation (`isDirectConversation`). A LOCAL_WRITE acts only in a
+   * DM unless `surfaceEnforced`; absent means not direct (fail closed).
+   */
+  readonly direct?: boolean;
+  /**
+   * ADR-0122 enforcement is on (`SurfaceGate.enforced`): the surface gate already decided this channel may use the
+   * group, so a LOCAL_WRITE may act outside a DM. Absent or false: DM only (the setting may become configurable later).
+   */
+  readonly surfaceEnforced?: boolean;
 }
 
 export type NlSelectionSkipReason =
@@ -1037,6 +1048,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: inputRefusal };
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
       return this.actionAnswer(audit, renderInputRefusal(language));
+    }
+    // A6-D3a amendment 1 (CA P2): while ADR-0122 enforcement is off, a local write acts only in a DM (R5a is DM-only too).
+    if (ctx.offered.get(entryId)?.risk === 'LOCAL_WRITE' && turn.direct !== true && turn.surfaceEnforced !== true) {
+      const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'dm-only' };
+      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      return this.actionAnswer(audit, renderDmOnlyAction(language));
     }
     if (!validated.ok) {
       // An entry that is not offered (an external write before R3, an unconfigured source) is honest chat's to explain.

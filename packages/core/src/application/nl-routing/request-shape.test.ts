@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { NL_ACTION_ENTRIES, NL_ACTION_WORDS } from './action-entries';
+import { NL_ACTION_ENTRIES, NL_ACTION_WORDS, containsNlTimeExpression, nlActionInputRefusal, nlActionWordGrounded } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
 import { nlRequestVeto } from './request-shape';
 import { prepareSelectionInput } from './selection-input';
@@ -83,17 +83,133 @@ describe('A6-D3a amendment 1: the frame excludes the content spans; spans stay g
   });
 });
 
-describe('A6-D3a amendment 1: corpus negatives (nl-action.v1 + seed)', () => {
+describe('A6-D3a amendment 1, review round (CA P1/P2, Codex P2)', () => {
+  const v = (entryId: string, args: Record<string, string>, text: string, extra: Partial<NlValidationContext> = {}) => validateSelection({ entryId, args }, { ...ctx(text), ...extra });
+
+  it('CA P1: a span never hides a veto unless a quote pair or a colon form to the end encloses it', () => {
+    expect(v('todo.complete', { match: '회의 준비' }, '회의 준비 완료하지 마 진짜로')).toMatchObject({ ok: false, reason: 'not-request', arg: 'negation' });
+    expect(v('todo.complete', { match: '회의 준비 완료하지 마' }, '회의 준비 완료하지 마 진짜로')).toMatchObject({ ok: false, reason: 'not-request', arg: 'negation' });
+    expect(v('todo.add', { title: '우유 사기 추가하지 마' }, '할 일에 우유 사기 추가하지 마, 그냥 메모야')).toMatchObject({ ok: false, reason: 'not-request', arg: 'negation' });
+    // A span running past a closing quote has an unpaired quote: refused.
+    expect(v('todo.add', { title: "우유' 사기 추가하지 마" }, "할 일에 '우유' 사기 추가하지 마")).toMatchObject({ ok: false, reason: 'invalid-arg', arg: 'title' });
+    expect(v('todo.add', { title: '우유' }, "할 일에 '우유' 사기 추가하지 마")).toMatchObject({ ok: false, reason: 'not-request', arg: 'negation' });
+    // The span's own negated action always counts, enclosed or not (here the quoted command is also reported speech).
+    expect(v('todo.add', { title: '우유 사기 추가하지 마' }, "할 일에 '우유 사기 추가하지 마' 추가해줘")).toMatchObject({ ok: false, reason: 'not-request' });
+    expect(v('todo.add', { title: '우유 사기 추가 안 함' }, '할 일 추가: 우유 사기 추가 안 함')).toMatchObject({ ok: false, reason: 'not-request', arg: 'negation' });
+    // Enclosed content stays content; an apostrophe between letters is no quote.
+    expect(v('todo.add', { title: '야식 먹지 않기' }, "할 일에 '야식 먹지 않기' 추가해줘").ok).toBe(true);
+    expect(v('reminder.create', { body: '가스 밸브 잠그지 마', when: '오늘 밤 10시' }, '오늘 밤 10시에 알림: 가스 밸브 잠그지 마').ok).toBe(true);
+    expect(v('todo.add', { title: "Kim's report" }, "add Kim's report to my todos").ok).toBe(true);
+    // A title's own inner nouns never veto ("라면"), a span that runs to the end swallows nothing ("…하는 법 알려줘").
+    expect(v('reminder.create', { body: '라면 불 끄기', when: '5분 뒤' }, '5분 뒤에 라면 불 끄기 알려줘').ok).toBe(true);
+    expect(v('todo.add', { title: '추가하는 법 알려줘' }, '할 일 추가하는 법 알려줘')).toMatchObject({ ok: false, reason: 'not-request', arg: 'question' });
+  });
+
+  it('CA P1: a plain declarative -다 is a statement; action.undo needs its undo word and no recipient', () => {
+    for (const text of ['피곤하다', '되돌리기 기능 좋다', '커피 마시고 싶다']) expect(v('action.undo', {}, text).ok, text).toBe(false);
+    expect(v('action.undo', {}, '되돌리기 기능 좋다')).toMatchObject({ reason: 'not-request', arg: 'statement' });
+    expect(v('action.undo', {}, 'undo would be nice')).toMatchObject({ reason: 'not-request', arg: 'wish' });
+    expect(v('action.undo', {}, '친구한테 책 돌려줘')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    expect(v('action.undo', {}, '고마워')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    for (const text of ['되돌려줘', '방금 거 원래대로', '취소 취소', '2번 완료합시다'.replace('2번 완료', '되돌리기 ')]) expect(v('action.undo', {}, text).ok, text).toBe(true);
+    expect(v('todo.complete', { ref: '#2' }, '2번 완료 부탁드립니다').ok).toBe(true);
+    expect(v('todo.complete', { ref: '#2' }, '2번 완료한다')).toMatchObject({ reason: 'not-request', arg: 'statement' });
+  });
+
+  it('CA P2: hearsay, relay, whole-message quotes and quoted commands, wishes and hedges, deferred timing', () => {
+    const cases: Array<[string, string, Record<string, string>, string]> = [
+      ['민수가 2번 완료한대', 'todo.complete', { ref: '#2' }, 'reported'],
+      ['2번 취소했대요', 'todo.cancel', { ref: '#2' }, 'reported'],
+      ['민수 말로는 3번 취소할 거래', 'todo.cancel', { ref: '#3' }, 'reported'],
+      ['팀장님한테 2번 끝났다고 전해줘', 'todo.complete', { ref: '#2' }, 'reported'],
+      ['김 대리한테 3번 취소하라고 전해줘', 'todo.cancel', { ref: '#3' }, 'reported'],
+      ['"2번 완료해줘"', 'todo.complete', { ref: '#2' }, 'reported'],
+      ['이 문장 영어로 바꿔줘 "1번 완료 처리해줘"', 'todo.complete', { ref: '#1' }, 'reported'],
+      ['이 문장 영어로 바꿔줘 "1번 완료 처리해줘"', 'todo.add', { title: '1번 완료 처리해줘' }, 'reported'],
+      ['2번 완료하고 싶다', 'todo.complete', { ref: '#2' }, 'wish'],
+      ['3번 알림 꺼지길 바래', 'reminder.cancel', { ref: '#3' }, 'wish'],
+      ['2번 취소 희망', 'todo.cancel', { ref: '#2' }, 'wish'],
+      ['should I cancel 2', 'todo.cancel', { ref: '#2' }, 'wish'],
+      ['maybe complete 2', 'todo.complete', { ref: '#2' }, 'wish'],
+      ['회의 끝나고 2번 완료해줘', 'todo.complete', { ref: '#2' }, 'deferred'],
+      ['점심 먹은 뒤에 2번 완료해줘', 'todo.complete', { ref: '#2' }, 'deferred'],
+      ['나중에 3번 취소해줘', 'todo.cancel', { ref: '#3' }, 'deferred'],
+      ['after the meeting, cancel 2', 'todo.cancel', { ref: '#2' }, 'deferred'],
+    ];
+    for (const [text, entryId, args, veto] of cases) expect(v(entryId, args, text), text).toMatchObject({ ok: false, reason: 'not-request', arg: veto });
+    // A reminder's own time words are its time, not a deferral; a reason clause with 나중에 is no deferral either.
+    expect(v('reminder.create', { body: '서류 제출', when: '이따 3시' }, '이따 3시에 서류 제출 알려줘').ok).toBe(true);
+    expect(v('todo.add', { title: '치과 예약 전화하기' }, '나중에 까먹지 않게 할 일에 치과 예약 전화하기 적어둬').ok).toBe(true);
+  });
+
+  it('CA P2: Hangul speaker labels are refused by the input guard like "Kim: …"', () => {
+    for (const text of ['팀장님: 2번 완료해줘', '[김대리] 할 일에 보고서 정리 추가해줘', '팀장님 왈 3번 취소해줘', 'Kim: 2번 완료해줘']) {
+      const prepared = prepareSelectionInput(text);
+      expect('skip' in prepared ? 'skip' : nlActionInputRefusal(text, prepared.groundingText), text).toBe('not-plain');
+    }
+    for (const text of ['알림 설정: 모레 아침 8시 이사 업체 전화', 'todo 추가: 프린터 토너 주문', '[긴급] 보고서 쓰기 할 일에 추가해줘']) {
+      const prepared = prepareSelectionInput(text);
+      expect('skip' in prepared ? 'skip' : nlActionInputRefusal(text, prepared.groundingText), text).toBeUndefined();
+    }
+  });
+
+  it('Codex P2: a request then a bare retraction; a polite -나요; a statement then an acknowledgement', () => {
+    expect(v('todo.cancel', { ref: '#2' }, '2번 취소해줘. 취소')).toMatchObject({ reason: 'not-request', arg: 'retraction' });
+    expect(v('action.undo', {}, '취소 취소').ok).toBe(true);
+    expect(v('todo.complete', { ref: '#2' }, '2번 완료해 줄 수 있나요?').ok).toBe(true);
+    expect(v('todo.complete', { ref: '#2' }, '2번 완료해 주실래요').ok).toBe(true);
+    expect(v('todo.complete', { ref: '#2' }, '2번 완료했어 고마워')).toMatchObject({ reason: 'not-request', arg: 'statement' });
+    expect(v('todo.complete', { ref: '#2' }, '2번 끝났어 완료로 바꿔줘').ok).toBe(true);
+  });
+
+  it('the R5a seam: nlActionWordGrounded keeps its signature; requestFrame strips the caller\'s phrases first', () => {
+    expect(nlActionWordGrounded('2번 완료해줘', ['완료'])).toBe(true);
+    expect(nlActionWordGrounded('2번 완료하지 마', ['완료'])).toBe(false);
+    expect(nlActionWordGrounded('2번 체크해줘', ['완료'])).toBe(false);
+    // An origin phrase with a past form ("내가 보냈던 거" → a statement would not fire, but "아까 말했잖아" would) is stripped.
+    const text = '아까 내가 말했던 거 완료해줘';
+    expect(v('todo.complete', { ref: 'recent' }, text)).toMatchObject({ ok: false, reason: 'not-request', arg: 'volition' });
+    expect(v('todo.complete', { ref: 'recent' }, text, { requestFrame: (prose) => prose.replace('내가 말했던 거', ' ') }).ok).toBe(true);
+  });
+});
+
+describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-action.v1 + seed)', () => {
   const load = (name: string) => (JSON.parse(readFileSync(new URL(`../golden/${name}`, import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string; expect: unknown }> }).cases;
   const negatives = [...load('nl-action.v1.json'), ...load('nl-action.seed.v1.json')].filter((golden) => golden.expect === 'none');
-  const grounding = (text: string) => {
+
+  /**
+   * Every selection a wrong selector could plausibly return for the text, each with grounded-looking args taken from the
+   * text itself: the whole prose (and each contiguous run of words) as a title, body or match; every numeral as `#n`;
+   * `this`; a reminder `when` from each run of words that is a time; the arg-less undo.
+   */
+  function lures(text: string): Array<{ entryId: string; args: Record<string, string> }> {
+    const words = text.split(/\s+/u).filter((word) => word.length > 0);
+    const runs = new Set<string>([text.trim()]);
+    for (let from = 0; from < words.length; from += 1) for (let to = from + 1; to <= Math.min(words.length, from + 6); to += 1) runs.add(words.slice(from, to).join(' '));
+    const refs = ['this', ...[...text.matchAll(/(\d{1,2})/gu)].map((match) => `#${match[1]}`)];
+    const out: Array<{ entryId: string; args: Record<string, string> }> = [{ entryId: 'action.undo', args: {} }];
+    for (const run of runs) {
+      out.push({ entryId: 'todo.add', args: { title: run } });
+      for (const entryId of ['todo.complete', 'todo.cancel']) out.push({ entryId, args: { match: run } });
+      if (containsNlTimeExpression(run)) for (const body of runs) if (body !== run && !body.includes(run) && !run.includes(body)) out.push({ entryId: 'reminder.create', args: { body, when: run } });
+    }
+    for (const ref of refs) for (const entryId of ['todo.complete', 'todo.cancel', 'reminder.cancel']) out.push({ entryId, args: { ref } });
+    return out;
+  }
+  /** Whether Core lets any lure through (spans, entry words and every check of the real validator). */
+  const anyLureValidates = (text: string): boolean => {
     const prepared = prepareSelectionInput(text);
-    return 'skip' in prepared ? undefined : prepared.groundingText;
+    if ('skip' in prepared) return false;
+    if (nlActionInputRefusal(text, prepared.groundingText) !== undefined) return false;
+    return lures(text).some((lure) => validateSelection(lure, ctx(text)).ok);
   };
 
-  // Core refuses these for every LOCAL_WRITE entry, whatever the selector answers: must never execute.
-  const VETOED = [
-    'a6-paraphrase-todo.add-009', // "할 일 하나 추가할게. …": first-person volition (owner decision 2026-10-16: none)
+  // Core refuses these for every LOCAL_WRITE lure, whatever the selector answers: must never execute.
+  const VETOED: readonly string[] = [
+    'a6-paraphrase-todo.add-009', // "할 일 하나 추가할게. …": first-person volition (owner 2026-10-16: none)
+    'a6-reference-none-001',
+    'a6-reference-none-003',
+    'a6-reference-none-004',
     'a6-negative-none-001',
     'a6-negative-none-002',
     'a6-negative-none-003',
@@ -109,6 +225,8 @@ describe('A6-D3a amendment 1: corpus negatives (nl-action.v1 + seed)', () => {
     'a6-negative-none-013',
     'a6-negative-none-014',
     'a6-negative-none-015',
+    'a6-negative-none-016',
+    'a6-negative-none-017',
     'a6-negative-none-018',
     'a6-negative-none-019',
     'a6-negative-none-020',
@@ -138,9 +256,16 @@ describe('A6-D3a amendment 1: corpus negatives (nl-action.v1 + seed)', () => {
     'a6-negative-none-055',
     'a6-negative-none-056',
     'a6-negative-none-057',
+    'a6-negative-none-058',
     'a6-negative-none-059',
+    'a6-negative-none-060',
+    'a6-negative-none-063',
+    'a6-negative-none-065',
+    'a6-negative-none-068',
     'a6-negative-none-069',
+    'a6-negative-none-070',
     'a6-negative-none-072',
+    'a6-negative-none-075',
     'a6-negative-none-077',
     'a6-negative-none-078',
     'a6-negative-none-079',
@@ -153,6 +278,8 @@ describe('A6-D3a amendment 1: corpus negatives (nl-action.v1 + seed)', () => {
     'a6-negative-none-086',
     'a6-negative-none-087',
     'a6-negative-none-088',
+    'a6-negative-none-089',
+    'a6-negative-none-090',
     'a6-negative-none-091',
     'a6-negative-none-092',
     'a6-negative-none-093',
@@ -160,95 +287,99 @@ describe('A6-D3a amendment 1: corpus negatives (nl-action.v1 + seed)', () => {
     'a6-negative-none-096',
     'a6-negative-none-097',
     'a6-negative-none-098',
+    'a6-negative-none-101',
+    'a6-negative-none-106',
     'a6-negative-none-109',
     'a6-negative-none-111',
     'a6-negative-none-112',
+    'a6-negative-none-113',
+    'a6-negative-none-115',
+    'a6-negative-none-117',
+    'a6-negative-none-118',
+    'a6-negative-none-119',
     'a6-negative-none-120',
+    'a6-negative-none-121',
     'a6-negative-none-122',
     'a6-negative-none-123',
     'a6-negative-none-124',
     'a6-negative-none-125',
     'a6-negative-none-126',
     'a6-negative-none-130',
+    'a6-negative-none-131',
+    'a6-negative-none-132',
+    'a6-negative-none-133',
+    'a6-negative-none-134',
+    'a6-negative-none-135',
+    'a6-negative-none-136',
+    'a6-negative-none-138',
+    'a6-negative-none-139',
+    'a6-negative-none-140',
+    'a6-negative-none-141',
+    'a6-negative-none-142',
+    'a6-negative-none-143',
+    'a6-negative-none-144',
+    'a6-negative-none-145',
+    'a6-negative-none-146',
+    'a6-negative-none-147',
+    'a6-negative-none-148',
+    'a6-negative-none-152',
+    'a6-negative-none-153',
     'a6-seed-neg-001',
     'a6-seed-neg-002',
     'a6-seed-neg-003',
   ];
-  // These carry no grammatical veto: whether they act is the selector's choice (it should answer none), and many cannot
-  // act anyway (no grounded ref, no action expressed, another source). The D12 gate's "negative captures 0" measures them.
-  const SELECTOR_DEPENDENT = [
-    'a6-reference-none-001',
+  // Some lure validates: whether they act rests on the selector (it should answer none), on reference resolution or on
+  // the reminder grammar at execution. The D12 gate's "negative captures 0" measures them.
+  const SELECTOR_DEPENDENT: readonly string[] = [
     'a6-reference-none-002',
-    'a6-reference-none-003',
-    'a6-reference-none-004',
     'a6-reference-none-005',
-    'a6-negative-none-016',
-    'a6-negative-none-017',
     'a6-negative-none-047',
     'a6-negative-none-050',
     'a6-negative-none-052',
     'a6-negative-none-053',
     'a6-negative-none-054',
-    'a6-negative-none-058',
-    'a6-negative-none-060',
     'a6-negative-none-061',
     'a6-negative-none-062',
-    'a6-negative-none-063',
     'a6-negative-none-064',
-    'a6-negative-none-065',
     'a6-negative-none-066',
     'a6-negative-none-067',
-    'a6-negative-none-068',
-    'a6-negative-none-070',
     'a6-negative-none-071',
     'a6-negative-none-073',
     'a6-negative-none-074',
-    'a6-negative-none-075',
     'a6-negative-none-076',
-    'a6-negative-none-089',
-    'a6-negative-none-090',
     'a6-negative-none-095',
     'a6-negative-none-099',
     'a6-negative-none-100',
-    'a6-negative-none-101',
     'a6-negative-none-102',
     'a6-negative-none-103',
     'a6-negative-none-104',
     'a6-negative-none-105',
-    'a6-negative-none-106',
     'a6-negative-none-107',
     'a6-negative-none-108',
     'a6-negative-none-110',
-    'a6-negative-none-113',
     'a6-negative-none-114',
-    'a6-negative-none-115',
     'a6-negative-none-116',
-    'a6-negative-none-117',
-    'a6-negative-none-118',
-    'a6-negative-none-119',
-    'a6-negative-none-121',
     'a6-negative-none-127',
     'a6-negative-none-128',
     'a6-negative-none-129',
-    'a6-negative-none-131',
+    'a6-negative-none-137',
+    'a6-negative-none-149',
+    'a6-negative-none-150',
+    'a6-negative-none-151',
     'a6-seed-live-005',
   ];
 
-  it('every pinned must-not-execute negative is vetoed by structure alone', () => {
+  it('every pinned must-not-execute negative is refused for every lure', () => {
     for (const id of VETOED) {
       const golden = negatives.find((entry) => entry.id === id);
       expect(golden, id).toBeDefined();
-      const text = grounding(golden!.text);
-      expect(text === undefined || veto(text) !== undefined, id).toBe(true);
+      expect(anyLureValidates(golden!.text), id).toBe(false);
     }
   });
 
-  it('the negatives without a structural veto are exactly the pinned, gate-measured list', () => {
-    const open = negatives.filter((golden) => {
-      const text = grounding(golden.text);
-      return text !== undefined && veto(text) === undefined;
-    });
-    expect(open.map((golden) => golden.id).sort()).toEqual([...SELECTOR_DEPENDENT].sort());
+  it('the negatives some lure passes are exactly the pinned, gate-measured list', () => {
+    const open = negatives.filter((golden) => anyLureValidates(golden.text)).map((golden) => golden.id);
+    expect(open.sort()).toEqual([...SELECTOR_DEPENDENT].sort());
     expect(VETOED.length + SELECTOR_DEPENDENT.length).toBe(negatives.length);
   });
 });

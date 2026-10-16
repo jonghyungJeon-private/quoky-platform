@@ -137,6 +137,11 @@ export interface NlValidationContext {
    * step (2) refuses every entry that is not `READ`, exactly as before A6.
    */
   readonly actions?: boolean;
+  /**
+   * A6-D3a amendment 1, the R5a seam: strips the caller's own phrases (an origin phrase such as "내가 말한 거") from the
+   * owner's prose before the request-shape vetoes read it. Spans are still grounded in the whole prose.
+   */
+  readonly requestFrame?: (prose: string) => string;
 }
 
 // eslint-disable-next-line no-control-regex
@@ -144,30 +149,82 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
 /** The content spans of a LOCAL_WRITE: the owner's content, never the request around it (a `when` stays in the frame). */
 const CONTENT_SPAN_ARGS = ['title', 'body', 'match'] as const;
-/** A span is delimited content when a colon or an opening quote stands right before it. */
-const SPAN_DELIMITER_BEFORE = /[:：'"「“‘『]\s*$/u;
+const QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [["'", "'"], ['"', '"'], ['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』']];
+/** A dative recipient ("친구한테", "팀장님께"): something is given to someone, never Quoky's own undo. */
+const DATIVE = /(?:한테|에게|께)(?=$|\s|[.,!?~])/u;
 
 /**
- * A6-D3a amendment 1: the request shape of a LOCAL_WRITE. The frame is the owner's prose (pasted structures removed)
- * without the selector's content spans; the vetoes read it. A content span that ends the message without a delimiter
- * (no colon, no quote before it) also lends its own negation or question mark, so "할 일에 우유 추가하지 마" stays vetoed
- * even when a span swallows "추가하지 마".
+ * A quote character without its pair inside a span ("우유' 사기 추가하지 마" runs past a closing quote). An apostrophe
+ * between letters ("Kim's") is not a quote.
  */
-export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingText: string): { readonly veto?: NlRequestVeto; readonly expressesAction: boolean } {
-  const prose = withoutStructures(groundingText).normalize('NFC').replace(/\s+/g, ' ');
-  let frame = prose;
-  let tail: string | undefined;
+export function nlSpanHasUnbalancedQuote(span: string): boolean {
+  const text = span.replace(/(?<=\p{L})['’](?=\p{L})/gu, '');
+  return QUOTE_PAIRS.some(([open, close]) => {
+    const opens = text.split(open).length - 1;
+    if (open === close) return opens % 2 !== 0;
+    return opens !== text.split(close).length - 1;
+  });
+}
+
+/**
+ * Whether the owner's prose fully encloses the span as content: a matching quote pair right around it, or a colon form
+ * ("할 일 추가: …", "알림: …") whose span runs to the end of the message.
+ */
+function spanEnclosure(prose: string, span: string): 'quote' | 'colon' | undefined {
+  const at = prose.indexOf(span);
+  if (at < 0) return undefined;
+  const before = prose.slice(0, at).replace(/\s+$/u, '');
+  const after = prose.slice(at + span.length);
+  const opened = before.at(-1);
+  const closed = after.replace(/^\s+/u, '').at(0);
+  if (QUOTE_PAIRS.some(([open, close]) => opened === open && closed === close)) return 'quote';
+  return /[:：]$/u.test(before) && /^[\s.!?~^ㅋㅎ]*$/u.test(after) ? 'colon' : undefined;
+}
+
+/** A6-D3a amendment 1: the request shape of a LOCAL_WRITE (see {@link requestShapeOf}). */
+export interface NlRequestShape {
+  readonly veto?: NlRequestVeto;
+  readonly expressesAction: boolean;
+  /** A content span with an unpaired quote: refused as `invalid-arg`. */
+  readonly unbalancedSpan?: string;
+}
+
+/**
+ * A6-D3a amendment 1: the request shape of a LOCAL_WRITE. The vetoes read the owner's prose (pasted structures removed)
+ * without the content spans that a quote pair or a colon form running to the end fully encloses; an undelimited span stays
+ * in the frame, so "할 일에 우유 사기 추가하지 마, 그냥 메모야" stays vetoed whatever span the selector returns. Every span's
+ * own negated action always counts. `stripFrame` is the R5a seam: a caller may remove its own phrases ("내가 말한 거",
+ * "아까 보냈던 거") from the prose before the vetoes run. An arg-less entry (`action.undo`) also needs its own action word
+ * (an undo word) in the frame and no dative recipient ("친구한테 책 돌려줘").
+ */
+export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingText: string, stripFrame?: (prose: string) => string): NlRequestShape {
+  const base = withoutStructures(groundingText).normalize('NFC').replace(/\s+/g, ' ');
+  const prose = stripFrame === undefined ? base : stripFrame(base).normalize('NFC').replace(/\s+/g, ' ');
+  let vetoFrame = prose;
+  let contentFrame = prose;
+  const content: string[] = [];
+  const quoted: string[] = [];
   for (const name of CONTENT_SPAN_ARGS) {
     const span = args[name];
     if (typeof span !== 'string' || span.length === 0) continue;
-    const at = prose.indexOf(span);
-    if (at >= 0 && /^[\s.!?~^ㅋㅎ]*$/u.test(prose.slice(at + span.length)) && !SPAN_DELIMITER_BEFORE.test(prose.slice(0, at))) tail = span;
-    frame = withoutSpan(frame, span);
+    if (nlSpanHasUnbalancedQuote(span)) return { expressesAction: false, unbalancedSpan: name };
+    content.push(span);
+    const enclosure = spanEnclosure(prose, span);
+    if (enclosure !== undefined) vetoFrame = withoutSpan(vetoFrame, span);
+    if (enclosure === 'quote') quoted.push(span);
+    contentFrame = withoutSpan(contentFrame, span);
   }
-  const veto = nlRequestVeto(frame, entry.actionGrounding ?? [], NL_ACTION_WORDS, tail);
+  const words = entry.actionGrounding ?? [];
+  const when = typeof args.when === 'string' ? args.when : undefined;
+  const veto = nlRequestVeto(vetoFrame, words, NL_ACTION_WORDS, { content, quoted, ...(when !== undefined ? { when } : {}) });
   // For a target entry an item-source noun is part of the reference; a payload entry has no reference.
   const payload = entry.args.some((spec) => spec.kind === 'span' && spec.required === true);
-  return { ...(veto !== undefined ? { veto } : {}), expressesAction: nlFrameExpressesAction(frame, !payload) };
+  let expressesAction = nlFrameExpressesAction(contentFrame, !payload);
+  if (entry.args.length === 0 && words.length > 0) {
+    const text = normalizeForMatch(contentFrame);
+    expressesAction &&= words.some((word) => text.includes(normalizeForMatch(word))) && !DATIVE.test(contentFrame);
+  }
+  return { ...(veto !== undefined ? { veto } : {}), expressesAction };
 }
 
 export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValidationContext): NlValidationResult {
@@ -193,7 +250,8 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // a frame with nothing but references ("2번도", "그걸로요", "13번 알림") or nothing but content ("내일 9시 우유")
   // expresses no action.
   if (entry.risk === 'LOCAL_WRITE') {
-    const shape = requestShapeOf(entry, args, ctx.groundingText);
+    const shape = requestShapeOf(entry, args, ctx.groundingText, ctx.requestFrame);
+    if (shape.unbalancedSpan !== undefined) return { ok: false, reason: 'invalid-arg', entryId, arg: shape.unbalancedSpan };
     if (shape.veto !== undefined) return { ok: false, reason: 'not-request', entryId, arg: shape.veto };
     if (!shape.expressesAction) return { ok: false, reason: 'ungrounded', entryId, arg: 'action' };
   }

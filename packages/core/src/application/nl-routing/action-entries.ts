@@ -456,6 +456,12 @@ export const NL_ACTION_WORDS: readonly string[] = [...new Set([...TODO_COMPLETE_
  * 우유" (a payload entry, frame "") express no action. For a target entry an item-source noun is part of the reference
  * ("13번 알림" names the item); for a payload entry it names what to make ("… 월세 이체 리마인더"), so it counts.
  */
+/**
+ * The R5a seam (A6-D3a amendment 1): `nlActionWordGrounded` keeps its name and signature; it now means "an action word is
+ * present and no structural veto applies" (`request-shape.ts`), not the removed request-form rule.
+ */
+export { nlActionWordGrounded } from './request-shape';
+
 export function nlFrameExpressesAction(frame: string, sourceNounIsReference: boolean): boolean {
   return contentTokens(frame, sourceNounIsReference).length > 0;
 }
@@ -733,6 +739,17 @@ const COMMAND_FORMS: readonly RegExp[] = [
 
 export type NlActionInputRefusal = 'too-long' | 'hidden-characters' | 'not-plain' | 'embedded-command';
 
+/**
+ * A Hangul speaker label, refused like the Latin "Kim: …" key (A6-D3a amendment 1, CA): a name or title with an address
+ * suffix and a colon ("팀장님: …"), the same in brackets ("[김대리] …"), or "X 왈". The suffixes are the closed class of
+ * Korean address terms (님, 씨 and the office titles), never a routing word.
+ */
+const ADDRESS_SUFFIX = '(?:님|씨|대리|과장|차장|부장|팀장|실장|사장|대표|이사|주임|사원|선배|선생)';
+const HANGUL_SPEAKER_LABEL = new RegExp(
+  `(?<![가-힣])[가-힣]{0,10}${ADDRESS_SUFFIX}\\s*[:：]|\\[\\s*[가-힣]{0,10}${ADDRESS_SUFFIX}\\s*\\]|(?<![가-힣])[가-힣]{1,10}\\s+왈(?=$|\\s|[:：])`,
+  'u',
+);
+
 /** A bracket whose content looks like data: a quote, an identifier key with a colon, or a comma list. */
 export function looksLikeData(inner: string): boolean {
   return /["“”'`]|[\p{L}\p{N}_]\s*:|,/u.test(inner);
@@ -791,6 +808,7 @@ export function nlActionInputRefusal(rawText: string, groundingText: string, quo
   if (Array.from(text).length > NL_ACTION_MAX_INPUT_CHARS) return 'too-long';
   if (HIDDEN.test(text.replace(EMOJI_SEQUENCE, '')) || HIDDEN.test(folded.replace(EMOJI_SEQUENCE, ''))) return 'hidden-characters';
   if (quoted || LINE_SEPARATOR.test(rawText) || LINE_SEPARATOR.test(folded) || hasStructureMarker(text) || hasStructureMarker(folded)) return 'not-plain';
+  if (HANGUL_SPEAKER_LABEL.test(text) || HANGUL_SPEAKER_LABEL.test(folded)) return 'not-plain';
   // Only a plain space may pad the line: any other leading or trailing whitespace (NBSP, ideographic, em space …) refuses.
   if (/^[^\S ]|[^\S ]$/u.test(text)) return 'hidden-characters';
   const groundingFolded = groundingText.normalize('NFKC');

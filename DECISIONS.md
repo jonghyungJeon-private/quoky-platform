@@ -26758,10 +26758,12 @@ list phrase by phrase is the hardcoding the owner forbids (D10).
 - A write still needs the selector's entry, grounded refs (the owner's own numeral, ordinal or deictic, resolved against
   the listing the owner saw), verbatim spans from this turn, the entry checks (time-in-title, time-outside-when, bulk)
   and the A6-D3a input guard. The vetoes can only turn an action into chat.
-- On the corpus, every execute gold now validates with its gold arguments (the old request-form cost list is empty except
-  a bare "1번" that the answer path handles), and 80 of the 135 `none` negatives are vetoed by structure alone. The other
-  55 rely on the selector (chit-chat, other sources, translation requests, polite capability questions; many cannot act
-  anyway: no grounded ref, no action expressed, other-source). They are pinned in `request-shape.test.ts`.
+- On the corpus, every execute gold validates with its gold arguments (the old request-form cost list is empty except a
+  bare "1번" that the answer path handles). Of the 157 `none` negatives (22 added in the review round below), 121 are
+  refused by Core for every lure a wrong selector could return (`validateSelection` with spans taken from the text, every
+  numeral as a ref, every time run as a reminder `when`, the undo); 36 have some lure that validates (chit-chat, other
+  sources, polite capability questions, deferral or a recipient inside a to-do title) and rest on the selector. Both lists
+  are pinned in `request-shape.test.ts`.
 
 ### The typo case "3번 완룐 처리해줘"
 
@@ -26808,3 +26810,36 @@ done here (no model calls; the prompt is being changed on another branch).
 3. Shadow (`QUOKY_NL_ACTIONS=shadow`) on the owner's live traffic: every `not-request:*` and every would-execute line is
    reviewed; no write that the owner labels wrong.
 4. Then `local`, with the Chief Architect review recorded here.
+
+### Review round (CA CHANGES REQUIRED and Codex P2, 2026-10-16)
+
+- **Spans (CA P1).** The vetoes read the frame without only those content spans that a matching quote pair, or a colon form
+  running to the end of the message, fully encloses; an undelimited span stays in the frame. A span with an unpaired quote
+  (one that runs past a closing quote) is refused (`invalid-arg`). Every span's own negated action is checked whether
+  enclosed or not, and a quoted span that is itself a request is reported speech (neg-090). The lexical classes (wh-words,
+  -면, wishes, deferral) ignore a hit that lies inside an undelimited span before its last word ("5분 뒤에 라면 불 끄기
+  알려줘"), unless that span runs to the end of the message and so swallowed the predicate ("할 일 추가하는 법 알려줘").
+- **Anchors (CA P1).** A plain declarative -다 on the last word is a statement (-ㅂ시다 and 부탁드립니다 are not); a final
+  -야 after a vowel (copula or obligation) is a statement. `action.undo`, which has no argument, still needs a word of
+  its undo vocabulary in the frame (any form, no request form) and no dative recipient ("친구한테 책 돌려줘").
+- **New veto classes and gaps (CA P2).** `wish` (-고 싶다, 바래/바라, 희망, should I, maybe, would be nice) and `deferred`
+  (-고 나서, 끝나고/마치고, -ㄴ 뒤에/후에/다음에, 나중에, 이따 without a time, after/later/once; in the main clause for Korean,
+  outside a reminder's own `when`) end as chat. Hearsay -ㄴ대/-는대/-았대 and -ㄹ 거래, the relay "-라고/-다고 전해줘",
+  whole-message quotes and quoted commands are `reported`. Hangul speaker labels ("팀장님: …", "[김대리] …", "X 왈") are
+  refused by the A6-D3a input guard as `not-plain`, like the Latin "Kim: …" key; the address suffixes (님, 씨, office
+  titles) are the closed class of Korean address terms.
+- **Codex P2.** "2번 취소해줘. 취소" is retracted (a request ending makes a cancel word a command; bare "취소 취소" stays an
+  undo); a polite request form exempts the interrogative -나요 ending ("완료해 줄 수 있나요?"); a past or report statement
+  holds unless a later clause makes a request ("2번 완료했어 고마워" is chat, "3번 끝났어 완료로 바꿔줘" acts).
+- **DM only (CA P2).** While ADR-0122 enforcement is off, the selection service refuses a LOCAL_WRITE outside a DM before
+  any resolution or question (`nl_action.decided` reason `dm-only`, the handlers' A6-D1 copy "이 작업은 DM에서만 해요.
+  아무것도 바꾸지 않았어요."). `NlSelectionTurn.direct` (absent = not direct, fail closed) and `surfaceEnforced` carry it;
+  with enforcement on, the surface gate and the handlers' A6-D1 check decide. Making it configurable is left for later.
+- **R5a seam (CA P2).** `nlActionWordGrounded(prose, words)` keeps its export and signature: an action word is present and
+  no structural veto applies. `NlValidationContext.requestFrame` (and the `stripFrame` argument of `requestShapeOf`) lets
+  a caller remove its own phrases ("내가 말한 거", "아까 보냈던 거") from the prose before the vetoes run.
+- **Corpus.** 22 negatives added (`a6-negative-none-132` … `-153`), one per finding. The ADR-0123 selector-pool audit record
+  hashes the gold files, so it must be regenerated (`pnpm eval:rag -- --mode dry-run --write-audit true`, a local embedding
+  run) before `selector-rag/pool.test.ts` passes again.
+- **Typo case.** Unchanged: execute when the selector is CLEAR, ask on NEEDS_CLARIFICATION; `complete-018` stays execute
+  pending the owner's answer.
