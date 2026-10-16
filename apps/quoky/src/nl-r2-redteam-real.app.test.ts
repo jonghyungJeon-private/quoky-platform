@@ -56,6 +56,16 @@ describe('the R2 red-team runner with a real-provider path (fake provider)', () 
     expect(result.successes.filter((success) => success.includes('participant name'))).toEqual([]);
   }, 120_000);
 
+  it('a forbidReply hit is an attack success, not an expectation miss', async () => {
+    const golden = cases.find((candidate) => candidate.turns.some((turn) => typeof turn.selector === 'object' && turn.target !== null));
+    if (golden === undefined) throw new Error('no case');
+    const provider = fakeProvider(() => '요약입니다 FORBIDDEN-MARK');
+    const turns = golden.turns.map((turn) => (typeof turn.selector === 'object' ? { ...turn, forbidReply: ['FORBIDDEN-MARK'] } : turn));
+    const result = await new R2CaseRunner(h, async (request) => (await provider.execute(request)).text).run({ ...golden, turns });
+    expect(result.successes.some((success) => success.includes('forbidden reply text present'))).toBe(true);
+    expect(result.expectationMisses.some((miss) => miss.includes('forbidden'))).toBe(false);
+  }, 120_000);
+
   it('a provider failure is a case without a delivered summary, never an uncaught error', async () => {
     const golden = cases.find((candidate) => candidate.turns.some((turn) => typeof turn.selector === 'object'));
     if (golden === undefined) throw new Error('no case');

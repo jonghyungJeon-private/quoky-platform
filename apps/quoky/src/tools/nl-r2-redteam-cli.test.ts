@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, type AiProvider } from '@quoky/core';
-import { EXIT_ATTACK_SUCCEEDED, EXIT_BLOCKED, EXIT_OK, EXIT_USAGE, buildRedTeamPlan, computeRedTeamPlanDigest, maxSummaryCalls, runCli, summarizeRedTeam, type RedTeamCaseRecord, type RedTeamDeps } from './nl-r2-redteam-cli';
+import { EXIT_ATTACK_SUCCEEDED, countingProvider, EXIT_BLOCKED, EXIT_OK, EXIT_USAGE, buildRedTeamPlan, computeRedTeamPlanDigest, maxSummaryCalls, runCli, summarizeRedTeam, type RedTeamCaseRecord, type RedTeamDeps } from './nl-r2-redteam-cli';
 import { loadR2RedTeam, type R2RedTeamCase } from './nl-r2-redteam';
 
 // `eval:r2-redteam` offline: the plan and its Strict digest, BLOCKED before any provider exists, successes per family, a
@@ -52,7 +52,7 @@ function deps(overrides: Partial<RedTeamDeps> = {}): RedTeamDeps & { out: string
 
 const digestOf = (out: readonly string[]): string => /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] ?? '';
 const recordsFor = (runs: number, successesOf: (golden: R2RedTeamCase) => string[]): RedTeamCaseRecord[] =>
-  Array.from({ length: runs }, (_, index) => index + 1).flatMap((run) => cases.map((golden) => ({ run, id: golden.id, attack: golden.attack, successes: successesOf(golden), expectationMisses: 0, summaryCalls: 1 })));
+  Array.from({ length: runs }, (_, index) => index + 1).flatMap((run) => cases.map((golden) => ({ run, id: golden.id, attack: golden.attack, successes: successesOf(golden), expectationMisses: 0, summaryCalls: 1, summaryOk: 1, summaryFailures: 0 })));
 
 describe('eval:r2-redteam plan', () => {
   it('prints the plan, the digest and the call bound; nothing is booted or constructed', async () => {
@@ -132,6 +132,33 @@ describe('eval:r2-redteam run (Strict)', () => {
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], d)).toBe(EXIT_ATTACK_SUCCEEDED);
     expect(d.out.join('\n')).toMatch(/card-spoof-near-miss\s+cases\s+\d+\s+successes 1/);
     expect(d.out.join('\n')).toContain('FAILED');
+  });
+
+  it('a real summarisation call that failed fails the evaluation even with 0 successes', async () => {
+    const planned = deps();
+    await runCli(['--mode', 'plan'], planned);
+    const d = deps({ runCases: async ({ runs }) => recordsFor(runs, () => []).map((record, index) => (index === 0 ? { ...record, summaryOk: 0, summaryFailures: 1 } : record)) });
+    expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], d)).toBe(EXIT_ATTACK_SUCCEEDED);
+    expect(d.out.join('\n')).toContain('NOT EXERCISED');
+  });
+
+  it('fewer real answers than prompts issued, or none at all, fails the evaluation', async () => {
+    const planned = deps();
+    await runCli(['--mode', 'plan'], planned);
+    const fewer = deps({ runCases: async ({ runs }) => recordsFor(runs, () => []).map((record, index) => (index === 0 ? { ...record, summaryOk: 0 } : record)) });
+    expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], fewer)).toBe(EXIT_ATTACK_SUCCEEDED);
+    const none = deps({ runCases: async ({ runs }) => recordsFor(runs, () => []).map((record) => ({ ...record, summaryCalls: 0, summaryOk: 0 })) });
+    expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], none)).toBe(EXIT_ATTACK_SUCCEEDED);
+  });
+
+  it('countingProvider counts answers and rethrows failures at the provider boundary', async () => {
+    let fail = false;
+    const inner: AiProvider = { id: 'x', capabilities: [], isAvailable: async () => true, execute: async () => { if (fail) throw new Error('timeout'); return { text: 'ok', artifacts: [] }; } };
+    const counting = countingProvider(inner);
+    await counting.provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' });
+    fail = true;
+    await expect(counting.provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' })).rejects.toThrow('timeout');
+    expect(counting.counts()).toEqual({ ok: 1, failed: 1 });
   });
 
   it('an errored case also fails the gate (never a silent pass)', async () => {
