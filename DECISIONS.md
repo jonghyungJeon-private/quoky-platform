@@ -26931,3 +26931,11 @@ done here (no model calls; the prompt is being changed on another branch).
   원래대로 돌려 줄 수 있어? and every undo execute gold. Confirm: 되돌려 주셨던 기능 추천, 되돌려 봐 주는 앱 추천, 되돌려 주신
   기능 설명해줘, the other descriptive strings of the review rounds, and **"되돌려줘 주의 깊게" (chosen: confirm**, it carries
   words beyond the command), "되돌려줘 이번에는 제대로 해줘", "되돌려줘. 주말 일정은 그대로 둬". No gold change.
+- **Closed direct grammar and reply binding (Codex, after 5263a468).** The direct path is a closed grammar over EXACT
+  tokens, no prefix or suffix matching: in the undo clause, references to the last action (방금, 그거, 그 작업, 추가한 거,
+  its label, please …), then an undo head (되돌려줘, 되돌려, 되돌리기, 원래대로, 원상복구, 원복, 취소해줘, undo …), then only
+  exact verb, auxiliary, request and filler tokens (돌려 / 해 / 해줘, 줘 / 줄래 / 주세요 / 두세요 / 둬 / 봐 / 보세요 / 부탁,
+  "줄 수 있어", 좀 / 빨리 / 제발 / 지금 / 다시, that / it / the last one), ending on a complete command token. Anything else
+  asks the confirmation ("되돌려 주신 거 보여줘" asks). The confirmation answer is resolved from the stored binding (item,
+  undone action and the lastAction's time), never from the reply target, so a platform reply to the question works; a
+  changed lastAction still refuses.

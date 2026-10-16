@@ -909,6 +909,24 @@ describe('A6-D3a amendment 1, undo confirmation rule: only an unambiguous undo e
     expect(await answer(other.w, '응 근데 3번은?')).toBeUndefined();
   });
 
+  it('Codex P2: the answer may be a platform reply to the confirmation message; it is bound to the stored action', async () => {
+    const { w } = await asked('되돌려 주신 기능 설명해줘');
+    const reply = await w.service.answerActionPending({
+      text: '응', attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(2), entries: ALL, route: 'chat', direct: true,
+      replyToMessageId: 'confirm-question-1', pending: readPendingQuestion(w.session(), 'owner', at(2)) ?? null,
+    });
+    expect(reply).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-2' }, undo: { entryId: 'todo.complete' } } });
+    // A changed lastAction still refuses, with or without a reply.
+    const changed = await asked('되돌려 주신 기능 설명해줘');
+    changed.w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.complete', source: 'todo', itemId: 'todo-2', label: 2, at: at(1), undoable: true, undone: false, echoReplyIds: [] }, at(1)));
+    const refused = await changed.w.service.answerActionPending({
+      text: '응', attachmentCount: 0, session: changed.w.session(), actor: changed.w.actor(), now: at(2), entries: ALL, route: 'chat', direct: true,
+      replyToMessageId: 'confirm-question-1', pending: readPendingQuestion(changed.w.session(), 'owner', at(2)) ?? null,
+    });
+    expect(refused?.kind).toBe('ask');
+    expect(actionLogs(changed.w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'undo-changed' });
+  });
+
   it('a confirmation runs only if the last action is still the one it named', async () => {
     const { w } = await asked('되돌려 주신 기능 설명해줘');
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-7', label: 7, at: at(1), undoable: true, undone: false, echoReplyIds: [] }, at(1)));

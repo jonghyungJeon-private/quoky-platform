@@ -1113,7 +1113,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       }
       // A6-D3a amendment 1, undo confirmation rule: an undo cannot itself be undone, so only an unambiguous undo command
       // executes directly; any other selected undo asks a one-step confirmation that names the action.
-      if (!nlUndoIsDirect(prepared.groundingText, entry.actionGrounding ?? [])) return this.askUndoConfirm(turn, language, latencyMs, reference);
+      if (!nlUndoIsDirect(prepared.groundingText)) return this.askUndoConfirm(turn, language, latencyMs, reference);
       return this.decideUndo(turn, language, latencyMs, 'none', reference);
     }
     // A6-D2: resolve the target in code (most recent listing only, display numbers, lastAction).
@@ -1235,7 +1235,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const undoEntryId = resolved.undo.entryId;
     if (!isNlActionEntryId(undoEntryId)) return this.decideUndo(turn, language, latencyMs, 'none', reference);
     await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
-      pendingQuestionRecord(turn.actor.id, { kind: 'action-undo-confirm', at: turn.now, language, target: resolved.target, undoEntryId }),
+      pendingQuestionRecord(turn.actor.id, {
+        kind: 'action-undo-confirm',
+        at: turn.now,
+        language,
+        target: resolved.target,
+        undoEntryId,
+        ...(reference.lastAction?.record.at !== undefined ? { actionAt: reference.lastAction.record.at } : {}),
+      }),
     );
     return this.actionAnswer(audit, renderUndoConfirm(undoEntryId, resolved.target.source, resolved.target.label, language));
   }
@@ -1384,10 +1391,18 @@ export class NlSelectionService implements TurnDeliveryObserver {
       const reply = interpretUndoConfirmReply(answerText);
       if (reply === 'none') return undefined;
       if (reply === 'deny') return { kind: 'ask', text: renderCancelled(language) };
-      // Only when the last action is still exactly the one named in the question (same item, same undone action).
-      const reference = this.referenceState(turn);
+      // Resolved from the stored binding, never from the reply target: the answer may be a plain next turn or a platform
+      // reply to the question itself (Codex P2). Only when the last action is still exactly the one named in the question
+      // (same item, same undone action, same time).
+      const { replyTo: _replyTo, ...withoutReply } = this.referenceState(turn);
+      const reference: NlReferenceState = withoutReply;
       const resolved = resolveUndo(reference);
-      const same = resolved.kind === 'resolved' && resolved.target.id === pending.target.id && resolved.target.source === pending.target.source && resolved.undo.entryId === pending.undoEntryId;
+      const same =
+        resolved.kind === 'resolved' &&
+        resolved.target.id === pending.target.id &&
+        resolved.target.source === pending.target.source &&
+        resolved.undo.entryId === pending.undoEntryId &&
+        (pending.actionAt === undefined || reference.lastAction?.record.at === pending.actionAt);
       if (!same) {
         return this.actionAnswer(
           { entryId: 'action.undo', risk: 'LOCAL_WRITE', refKind: 'none', resolution: 'none', result: 'refused', reason: 'undo-changed', ...correlationOf(turn) },

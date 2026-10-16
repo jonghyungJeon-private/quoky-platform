@@ -1,4 +1,3 @@
-import { nlIsRequestForm } from './request-shape';
 import { normalizeForMatch } from './selection-input';
 
 /**
@@ -9,91 +8,72 @@ import { normalizeForMatch } from './selection-input';
  * Pure.
  */
 
-/** Adverbs, fillers and interjections that add nothing to the command ("좀", "빨리", "제발", "아니", "please"). */
-const FILLERS = new Set(['좀', '다시', '지금', '빨리', '얼른', '어서', '바로', '당장', '제발', '요', '아', '앗', '헉', '아니', '아이고', 'please', 'pls', 'now', 'quickly', 'just', 'oh', 'oops']);
-/** References to the last action ("방금 거", "그 작업", "the last one"). */
+/**
+ * The direct path is a small CLOSED grammar over EXACT tokens (Codex P1: no prefix or suffix matching, so "되돌려 주신 거
+ * 보여줘" never matches). In the clause that holds the undo (earlier clauses are reasons: "잘못 눌렀어 되돌려줘"):
+ *   REFERENCE* HEAD (HEAD | VERB | AUX | FILLER | EN)*  end
+ * and the last non-filler token is in {@link COMPLETE}. Every set is exact; anything else goes to the confirmation.
+ */
+/** References to the last action, before the head ("방금 거", "그 작업", "방금 추가한 거", "5번", "please"). */
 const REFERENCES = new Set([
-  '그', '이', '저', '그거', '이거', '저거', '그것', '이것', '방금', '아까', '거', '것', '건', '걸', '한', '했던', '하신', '처리한',
-  '처리했던', '작업', '마지막', '실행', '없었던', '없던', '걸로', '원래', '방금거', '아까거',
-  '할', '일', '할일', '투두', '알림', '리마인더', '알람',
-  'that', 'it', 'this', 'the', 'last', 'one', 'can', 'could', 'would', 'will', 'you', 'todo', 'reminder',
+  '방금', '아까', '그거', '이거', '저거', '그것', '이것', '그', '이', '거', '것', '건', '걸', '한', '했던', '처리한', '처리했던', '추가한', '완료한',
+  '취소한', '만든', '넣은', '작업', '마지막', '실행', '없었던', '없던', '걸로', '방금거', '아까거', '취소하고', '아니', '아', '앗', '헉', '아이고',
+  '할', '일', '할일', '알림', 'please', 'can', 'could', 'would', 'you', 'oh', 'oops',
 ]);
-/** The last action's shown label ("5번 되돌려줘"; the service asks when it is another number). */
-const LABEL = /^#?\d{1,2}(?:번|번째)?$/u;
-/** The tail of the capability request after 줄 / 주실 ("줄 수 있어?"). */
-const CAPABILITY_TAIL = /^(?:수|있어|있어요|있나요|있니|있을까|있을까요|있겠어|있겠어요)$/u;
-/** A request or auxiliary token that carries the command (해줘, 줘, 봐, 두세요, 돌려놔, 부탁 …). */
-const COMMAND_PART = /^(?:해|하|합|주|줘|줄|드리|드려|드릴|보|봐|놔|두|둬|돌려|부탁)/u;
-/** The undo nouns that are a complete command on their own ("되돌리기", "원래대로", "원복 좀", "undo"). */
-const BARE_UNDO = /(?:되돌리기|원래대로|원상복구|원상|원복|롤백|취소|무르기|undo|revert|rollback)$/u;
-const PARTICLE_TAIL = /(?:을|를|은|는|도|만|요|로)$/u;
+/** The undo head itself. */
+const HEADS = new Set([
+  '되돌려줘', '되돌려줘요', '되돌려죠', '되돌려', '되돌려요', '되돌려줄래', '되돌려줄래요', '되돌려주세요', '되돌리기', '원래대로', '원상복구', '원복', '롤백',
+  '취소', '취소해줘', '취소해', '취소하세요', '원복해줘', '원복해주십시오', '원상복구해줘', 'undo', 'revert', 'rollback',
+]);
+/** The light or undo verb after a bare head ("원래대로 돌려 놔", "원상복구 해 줄 수 있어?", "되돌리기 합시다"). */
+const VERBS = new Set(['돌려', '돌려줘', '돌려놔', '돌려줘요', '해', '해줘', '해요', '해줘요', '해주세요', '하세요', '합시다']);
+/** Auxiliary and request tokens ("되돌려 두세요", "되돌려 봐", "… 줄 수 있어?", "원상복구 부탁"). */
+const AUX = new Set(['줘', '줘요', '줄래', '줄래요', '주세요', '주실래요', '두세요', '둬', '둬요', '봐', '봐요', '보세요', '줘봐', '놔', '놔요', '부탁', '부탁해', '부탁해요', '줄', '수', '있어', '있어요', '있나요']);
+/** Fillers after the head ("빨리요", "제발", "please", "the last one"). */
+const FILLERS = new Set(['좀', '빨리', '빨리요', '제발', '제발요', '지금', '다시', '방금', '그거', '요', 'please', 'now', 'that', 'it', 'this', 'the', 'last', 'one']);
+/** What the clause may end on (after fillers): a head or verb that is a command, a request auxiliary, the capability tail. */
+const COMPLETE = new Set([
+  ...HEADS, '돌려', '돌려줘', '돌려놔', '돌려줘요', '해', '해줘', '해요', '해줘요', '해주세요', '하세요', '합시다',
+  '줘', '줘요', '줄래', '줄래요', '주세요', '주실래요', '두세요', '둬', '둬요', '봐', '봐요', '보세요', '줘봐', '놔', '놔요', '부탁', '부탁해', '부탁해요',
+  'that', 'it', 'one',
+]);
+/** A label of the last action before the head ("5번 되돌려줘"; the service asks when it is another number). */
+const LABEL = /^#?\d{1,2}번?$/u;
 const NOISE = /[.,!?~…ㅋㅎㅠㅜ^"'“”‘’()]+$/u;
 /** Where a Korean clause ends: sentence punctuation, or a final ending followed by a space ("잘못 눌렀어 되돌려줘"). */
 const CLAUSE_BOUNDARY = /[.!?。;\n]|(?:야|어|요|다|네|지)(?=\s)/gu;
 
-function holdsUndo(token: string, undoWords: readonly string[]): boolean {
-  return undoWords.some((raw) => {
-    const word = normalizeForMatch(raw);
-    if (word === '돌려') return /되돌려/u.test(token);
-    return /^[a-z ]+$/u.test(word) ? token === word || token.startsWith(`${word} `) : token.includes(word);
-  });
+function tokensOf(text: string): string[] {
+  return text
+    .split(/\s+/u)
+    .map((token) => token.replace(NOISE, '').replace(/요{2,}$/u, '요'))
+    .filter((token) => token.length > 0);
 }
 
-/**
- * Whether the message is an unambiguous undo command: from the clause holding the (last) undo word to the end, every token
- * is the undo word, a command part (request ending, auxiliary, the capability tail), a filler or a reference to the last
- * action, and the last meaningful token is a request form or a bare undo noun. Earlier clauses are reasons ("잘못
- * 눌렀어 되돌려줘"); the structural vetoes have already judged them.
- */
-export function nlUndoIsDirect(text: string, undoWords: readonly string[]): boolean {
+/** Whether the message is an unambiguous undo command (the closed grammar above). */
+export function nlUndoIsDirect(text: string): boolean {
   const normalized = normalizeForMatch(text).replace(/\broll back\b/gu, 'rollback');
   let start = 0;
   for (const match of normalized.matchAll(CLAUSE_BOUNDARY)) {
     const end = (match.index ?? 0) + match[0].length;
-    if (holdsUndoIn(normalized.slice(end), undoWords)) start = end;
+    if (tokensOf(normalized.slice(end)).some((token) => HEADS.has(token))) start = end;
   }
-  const tokens = normalized
-    .slice(start)
-    .split(/\s+/u)
-    .map((token) => token.replace(NOISE, ''))
-    .filter((token) => token.length > 0);
-  if (!tokens.some((token) => holdsUndo(token, undoWords))) return false;
-  let lastMeaningful: string | undefined;
-  let afterCapability = false;
-  let seenUndo = false;
-  for (const [index, token] of tokens.entries()) {
-    const bare = token.replace(PARTICLE_TAIL, '');
-    if (FILLERS.has(token) || FILLERS.has(bare)) continue;
-    if (REFERENCES.has(token) || REFERENCES.has(bare) || LABEL.test(bare)) continue;
-    // Before the undo word, a modifier of a reference noun names the last action ("방금 추가한 거 취소해줘"); after it, an
-    // adnominal form is descriptive ("되돌려 주신 거").
-    if (!seenUndo && isModifier(token) && REFERENCE_NOUN.test(tokens[index + 1] ?? '')) continue;
-    if (afterCapability && CAPABILITY_TAIL.test(token)) continue;
-    if (holdsUndo(token, undoWords) || COMMAND_PART.test(token)) {
-      if (holdsUndo(token, undoWords)) seenUndo = true;
-      lastMeaningful = token;
-      afterCapability = /(?:줄|주실)$/u.test(token);
+  const tokens = tokensOf(normalized.slice(start));
+  const head = tokens.findIndex((token) => HEADS.has(token));
+  if (head < 0) return false;
+  if (!tokens.slice(0, head).every((token) => REFERENCES.has(token) || LABEL.test(token))) return false;
+  let last = tokens[head] as string;
+  for (const [offset, token] of tokens.slice(head + 1).entries()) {
+    if (FILLERS.has(token) && !COMPLETE.has(token)) continue;
+    if (HEADS.has(token) || VERBS.has(token) || AUX.has(token) || FILLERS.has(token)) {
+      // The capability tail is complete only as "줄 수 있어" (exactly those three tokens).
+      if ((token === '있어' || token === '있어요' || token === '있나요') && !(tokens[head + offset] === '수' && tokens[head + offset - 1] === '줄')) return false;
+      last = token;
       continue;
     }
     return false;
   }
-  if (lastMeaningful === undefined) return false;
-  return nlIsRequestForm(lastMeaningful) || /(?:줄|주실)$/u.test(lastMeaningful) && afterCapability || BARE_UNDO.test(lastMeaningful) || BARE_UNDO.test(lastMeaningful.replace(PARTICLE_TAIL, '')) || /^부탁/u.test(lastMeaningful);
-}
-
-/** A reference noun after a modifier ("… 거", "… 작업", "… 할 일"). */
-const REFERENCE_NOUN = /^(?:거|것|건|걸|작업|일|할|알림)/u;
-
-/** An adnominal modifier: the last syllable has the final ㄴ, or is 던 / 는 ("추가한", "처리했던", "만든"). */
-function isModifier(word: string): boolean {
-  const last = Array.from(word).at(-1);
-  if (last === undefined) return false;
-  const code = last.charCodeAt(0) - 0xac00;
-  return (code >= 0 && code <= 11171 && code % 28 === 4) || last === '던' || last === '는';
-}
-
-function holdsUndoIn(text: string, undoWords: readonly string[]): boolean {
-  return text.split(/\s+/u).some((token) => token.length > 0 && holdsUndo(token.replace(NOISE, ''), undoWords));
+  return COMPLETE.has(last) || ((last === '있어' || last === '있어요' || last === '있나요') && tokens.includes('줄'));
 }
 
 export type NlUndoConfirmReply = 'approve' | 'deny' | 'none';

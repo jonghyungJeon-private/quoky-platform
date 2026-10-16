@@ -114,6 +114,8 @@ export type PendingQuestion =
       readonly language: 'ko' | 'en';
       readonly target: NlItemTarget;
       readonly undoEntryId: NlActionEntryId;
+      /** The `at` of the lastAction record the question named (the binding a reply is checked against). */
+      readonly actionAt?: IsoTimestamp;
     };
 
 /** Whether a pending question belongs to A6 (answered before any grammar, only while actions are live). */
@@ -265,7 +267,8 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
   if (record.kind === 'action-undo-confirm') {
     const target = targetOf(record.target);
     if (target === undefined || (target.source !== 'todo' && target.source !== 'reminder') || !isNlActionEntryId(record.undoEntryId)) return undefined;
-    return { kind: 'action-undo-confirm', at, language, target, undoEntryId: record.undoEntryId };
+    const actionAt = typeof record.actionAt === 'string' && Number.isFinite(Date.parse(record.actionAt)) ? (record.actionAt as IsoTimestamp) : undefined;
+    return { kind: 'action-undo-confirm', at, language, target, undoEntryId: record.undoEntryId, ...(actionAt !== undefined ? { actionAt } : {}) };
   }
   if (record.kind === 'preference' && typeof record.key === 'string' && Array.isArray(record.values)) {
     const values = record.values.filter((value): value is string => typeof value === 'string' && value.length <= 40);
@@ -295,7 +298,7 @@ export function pendingQuestionRecord(actorId: Id, question: PendingQuestion): M
     case 'action-reschedule':
       return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target }, version: question.version };
     case 'action-undo-confirm':
-      return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target }, undoEntryId: question.undoEntryId };
+      return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target }, undoEntryId: question.undoEntryId, ...(question.actionAt !== undefined ? { actionAt: question.actionAt } : {}) };
     default:
       break;
   }

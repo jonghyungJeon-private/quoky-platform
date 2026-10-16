@@ -245,7 +245,7 @@ describe('A6-D3a amendment 1, review round 3 (CA over-blocks and gaps, Codex P2)
     // Undo look-alikes have no undo head: chat.
     // Undo look-alikes never execute directly (undo confirmation rule): a bare 돌려 is no undo; a descriptive use asks.
     expect(v('action.undo', {}, '돈 좀 돌려줘')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
-    expect(nlUndoIsDirect('되돌리기 해주는 앱 추천', ENTRIES_FOR_UNDO['action.undo']!.actionGrounding!)).toBe(false);
+    expect(nlUndoIsDirect('되돌리기 해주는 앱 추천')).toBe(false);
     for (const text of ['되돌려줘', '원래대로 돌려놔', 'undo that please', '아까 거 원래대로 해줘']) expect(v('action.undo', {}, text).ok, text).toBe(true);
   });
 });
@@ -267,7 +267,7 @@ describe('A6-D3a amendment 1, review round 4 (Codex P1/P2, CA P3)', () => {
     expect(v('todo.add', { title: '농담 모음' }, "할 일에 '농담 모음' 추가해줘").ok).toBe(true);
     expect(v('todo.add', { title: '농담' }, '할 일에 농담 추가해줘')).toMatchObject({ ok: false, reason: 'not-request', arg: 'joke' });
     expect(v('action.undo', {}, '되돌려줘 이번에는 제대로 해줘').ok).toBe(true);
-    expect(nlUndoIsDirect('되돌리기 해주는 앱 추천', ENTRIES_FOR_UNDO['action.undo']!.actionGrounding!)).toBe(false);
+    expect(nlUndoIsDirect('되돌리기 해주는 앱 추천')).toBe(false);
   });
 
   it('CA P3: plans, guesses, sarcasm, -더라, state nouns, thanks and relief, English hedges, afterthoughts', () => {
@@ -297,10 +297,9 @@ describe('A6-D3a amendment 1, review round 4 (Codex P1/P2, CA P3)', () => {
 
 describe('A6-D3a amendment 1, final round (Codex P2) and the undo confirmation rule', () => {
   const undo = (text: string) => validateSelection({ entryId: 'action.undo', args: {} }, ctx(text));
-  const words = ENTRIES_FOR_UNDO['action.undo']!.actionGrounding!;
   const direct = (text: string) => {
     const prepared = prepareSelectionInput(text);
-    return !('skip' in prepared) && nlUndoIsDirect(prepared.groundingText, words);
+    return !('skip' in prepared) && nlUndoIsDirect(prepared.groundingText);
   };
 
   it('executes directly only an unambiguous undo command (every string of the last review rounds)', () => {
@@ -323,6 +322,8 @@ describe('A6-D3a amendment 1, final round (Codex P2) and the undo confirmation r
       '되돌려 주셨던 기능 추천', '되돌려 봐 주는 앱 추천', '되돌려 주신 기능 설명해줘', '되돌려 주시는 앱 추천', '되돌려 보던 기능 설명해줘', '되돌려 드린 거 뭐였지',
       '되돌려 주는 앱 추천', '되돌려 주는 기능 설명해줘', '되돌려 준 거 고마워', '원래대로 돌려 주는 버튼', '되돌려 보는 중', '되돌리기 돕는 앱 추천', '되돌리기 해주는 앱 추천',
       '되돌리기 기능', '되돌리는 앱 있어', '되돌리기 버튼 위치', '되돌려 주었던 기능', '되돌려 보았던 기능',
+      // Codex P1 (closed grammar, exact tokens): a prefix of an auxiliary is no auxiliary.
+      '되돌려 주신 거 보여줘', '되돌려 주는 거', '되돌려 주실 분', '원래대로 돌려 주신 거',
       // the choice for "되돌려줘 주의 깊게": confirm (it carries words beyond the command); likewise "…이번에는 제대로 해줘"
       '되돌려줘 주의 깊게', '되돌려줘 이번에는 제대로 해줘', '되돌려줘. 주말 일정은 그대로 둬',
     ]) {
