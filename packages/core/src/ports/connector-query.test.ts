@@ -52,6 +52,7 @@ describe('connector query vocabulary', () => {
       'UNAVAILABLE',
       'INVALID_RESPONSE',
       'MOVED',
+      'TOO_LARGE',
     ]);
   });
 

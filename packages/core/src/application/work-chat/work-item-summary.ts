@@ -5,6 +5,7 @@ import { messageBody, messageContent, messageLink, untrustedText } from '../mess
 import {
   UNTRUSTED_DOCUMENT_SECTIONS_MAX,
   buildUntrustedDocumentReadout,
+  isUntrustedTextCredentialShaped,
   preparedBodyLength,
   type UntrustedDocumentReadout,
   type UntrustedDocumentRefusal,
@@ -100,6 +101,11 @@ function sectionTitle(source: WorkItemSource, scope: WorkItemScope, section: Con
 export function buildWorkItemReadout(input: WorkItemReadoutInput): WorkItemReadoutResult {
   const { item, source, scope, mode } = input;
   const detail = item.detail;
+  // Codex P1: the strict credential guard reads every COMPLETE, normalised original field BEFORE anything is clipped or
+  // pseudonymised (a clip could keep a value while cutting its "password:" key; a pseudonym could split one). A match
+  // withholds the whole item. The builder below still guards the exact final payload.
+  const originals = [item.title, item.status ?? '', ...(detail?.sections ?? []).flatMap((section) => [section.text, section.author ?? '']), ...(detail?.people ?? [])];
+  if (originals.some((field) => isUntrustedTextCredentialShaped(field))) return { ok: false, refusal: 'CREDENTIAL_SHAPED' };
   const anonymous = mode === 'summary' || source === 'slack';
   const names = anonymous ? pseudonymsOf(item) : new Map<string, string>();
   const people = (text: string): string => (anonymous ? pseudonymise(text, names) : text);
@@ -112,7 +118,9 @@ export function buildWorkItemReadout(input: WorkItemReadoutInput): WorkItemReado
   }
   let comment = 0;
   let clipped = false;
-  const built: UntrustedDocumentSection[] = sections.map((section, index) => {
+  // Codex P2: the fetched Jira status is part of the readout (its own Quoky-titled section, guarded like the rest).
+  const status = source === 'jira' && item.status !== undefined && item.status.trim().length > 0 ? [{ title: '상태', body: people(item.status) }] : [];
+  const built: UntrustedDocumentSection[] = [...status, ...sections.map((section, index) => {
     if (section.kind === 'comment') comment += 1;
     const author = section.author?.trim();
     const shownAuthor = author === undefined || author.length === 0 || author === 'unknown' ? undefined : anonymous ? (names.get(author) ?? pseudonymLabel(names.size)) : author;
@@ -120,7 +128,7 @@ export function buildWorkItemReadout(input: WorkItemReadoutInput): WorkItemReado
     const text = clipHeadAndTail(people(section.text), WORK_ITEM_SECTION_MAX_CHARS);
     if (text.truncated) clipped = true;
     return { title, body: text.text, ...(text.truncated ? { truncated: true } : {}) };
-  });
+  })];
   const result = buildUntrustedDocumentReadout({
     source: workItemDocumentSource(source, scope),
     title: people(item.title),
@@ -184,11 +192,14 @@ export function renderWorkItemFailure(source: WorkItemSource, failure: WorkChatL
       return jira ? '그 이슈는 다른 곳으로 옮겨졌어요. 목록을 다시 보여 드릴까요?' : '메시지가 삭제됐거나 찾을 수 없어요.';
     case 'RATE_LIMITED':
       return '지금은 요청이 많아요. 잠시 후 다시 말씀해 주세요.';
-    case 'INVALID_RESPONSE': {
+    case 'TOO_LARGE': {
       const text = jira ? '이 이슈는 너무 커서 읽지 못했어요. 지라에서 직접 열어 주세요.' : '이 메시지는 너무 커서 읽지 못했어요. 슬랙에서 직접 열어 주세요.';
       const url = safeLinkUrl(link);
       return url === undefined ? text : messageBody(text, ' ', messageLink(url));
     }
+    case 'INVALID_RESPONSE':
+      // CA P3: a malformed answer has its own reply (never called "too large").
+      return jira ? '지라의 응답을 해석하지 못했어요. 잠시 후 다시 말씀해 주세요.' : '슬랙의 응답을 해석하지 못했어요. 잠시 후 다시 말씀해 주세요.';
     case 'NOT_CONFIGURED':
     case 'IDENTITY_MISSING':
     case 'UNSUPPORTED_QUERY':
@@ -212,8 +223,10 @@ export function workItemFetchOutcome(failure: WorkChatLookupFailure): string {
       return 'moved';
     case 'RATE_LIMITED':
       return 'rate-limited';
-    case 'INVALID_RESPONSE':
+    case 'TOO_LARGE':
       return 'too-large';
+    case 'INVALID_RESPONSE':
+      return 'invalid-response';
     default:
       return 'unavailable';
   }
@@ -246,6 +259,10 @@ export function workItemNotes(input: { readonly source: WorkItemSource; readonly
         ? `댓글 ${comments.total}개 중 최근 ${comments.kept}개만 읽었어요.`
         : `댓글 ${comments.total}개 중 앞쪽 ${comments.returned}개만 받았어요. 최근 댓글 ${comments.total - comments.returned}개는 읽지 않았어요.`,
     );
+  }
+  // Codex P2: comments of the returned page dropped locally (only the last ones are read) are said too.
+  if (detail.descriptionOnly !== true && comments !== undefined && comments.newest !== true && comments.kept < comments.returned) {
+    notes.push(`받은 댓글 ${comments.returned}개 중 최근 ${comments.kept}개만 읽었어요.`);
   }
   if (detail.movedTo !== undefined && input.listedKey !== undefined && detail.movedTo !== input.listedKey) {
     notes.push(`${input.listedKey} → ${detail.movedTo}으로 옮겨졌어요.`);

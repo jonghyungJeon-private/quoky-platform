@@ -27231,14 +27231,33 @@ calls, today's reply). Where the code is more specific than the proposal:
    holds it). Every R2 outcome (summary, `full`, fallback, refusal) writes only the fixed history note.
 6. **D12** is a Jira adapter option (`itemSecondRequest`, default `false`) and is not wired to configuration; turning it on
    is its own owner decision. Both exclusive branches are covered by adapter tests.
-7. **Slack thread reply.** The one-request form (`ts=threadTs&oldest=ts&latest=ts&inclusive=true&limit=2`, selecting
-   exactly the listed `ts`, `messages[1]` only after the parent) is pinned by a documented-shape fixture (no live call was
-   made); the explicit refusal path is therefore not shipped.
+7. **Slack thread reply (revised after the CA review).** The adapter implements the one-request form
+   (`ts=threadTs&oldest=ts&latest=ts&inclusive=true&limit=2`, selecting exactly the listed `ts`), pinned only by a
+   documented-shape fixture. Until a RECORDED Slack fixture proves it (a Strict, owner-approved live step; TODO), Core
+   refuses a single listed thread reply explicitly before any fetch, as §2.1 permits ("스레드 답글 하나만 따로 읽을 수는
+   없어요 …"); its whole thread and every top-level message stay supported.
 8. **Corpus and red team.** The R2 corpus is an agent-drafted batch in its own file `golden/nl-action.r2.v1.json` (212
    cases: 71 paraphrases, 68 references, 73 negatives; 6 negatives are `selectorOnly`, the §1.1 known gap that only the
    selector's `none` keeps safe) awaiting the owner's batch approval; `nl-action.v1.json` is unchanged. The red-team
    family is 77 agent-drafted cases (`agent-redteam.v1.json`, `subFamily: "r2"`, all 15 families of §6.3) run offline with
    a worst-case stub echo summariser; the real-model run is the separate Strict step.
+
+**Review round (CA CHANGES REQUIRED, Codex P1 + 3 P2, 2026-10-16).** Fixed on the same branch:
+
+- CA P1 (inertness): the Jira / Slack nouns (지라, 이슈, 티켓, 슬랙) and the Jira key ref exist only while the offered
+  `item.summarize` lists those sources, and only for `item.summarize` resolution; a LOCAL_WRITE and every R2-`off` turn
+  use the R1 noun tables exactly (`nlNamedItemSources` / determiners / `parseNlRef` take the offered R2 sources).
+- Codex P1: the strict credential guard runs on every complete, normalised original field (title, status, each section,
+  each author) before any clip or pseudonym; the final-payload check stays.
+- Codex P2: the Jira status is a Quoky-titled section of the readout; comments dropped locally (only the last 10 of the
+  returned page are read) mark the read partial and are disclosed; Slack freshness is the latest create or `edited.ts`.
+- CA P2: the card-spoof filter also applies the approval matcher's own logic (`isApprovalDecisionLine`: a plain approval
+  as `interpretApprovalDecision` accepts it, or a whole deny / cancel phrase with its Korean ending) to each normalised
+  line; red-team cases with polite endings added.
+- CA P3: `isConnectorQueryError` recognises another module copy's error only by the `Symbol.for('quoky.ConnectorQueryError')`
+  brand the class sets (the offline app tests load adapters from `dist` while Core runs from source). A too-large item
+  response is its own neutral reason `TOO_LARGE` (an addition to amendment C11), apart from a malformed
+  `INVALID_RESPONSE`, with its own reply and `fetchOutcome`.
 
 ### READ structural guard for reason-clause statements and quoted requests (v5 neg captures)
 

@@ -238,11 +238,11 @@ describe('renderWorkItemFailure (proposal §5)', () => {
     expect(copy('jira', 'MOVED')).toBe('그 이슈는 다른 곳으로 옮겨졌어요. 목록을 다시 보여 드릴까요?');
     expect(copy('jira', 'RATE_LIMITED')).toBe('지금은 요청이 많아요. 잠시 후 다시 말씀해 주세요.');
     expect(copy('jira', 'UNAVAILABLE')).toBe('지라에 지금 연결할 수 없어요.');
-    expect(copy('jira', 'INVALID_RESPONSE')).toBe('이 이슈는 너무 커서 읽지 못했어요. 지라에서 직접 열어 주세요.');
+    expect(copy('jira', 'TOO_LARGE')).toBe('이 이슈는 너무 커서 읽지 못했어요. 지라에서 직접 열어 주세요.');
   });
 
   it('Jira too-large reply carries the deterministic link', () => {
-    const out = copy('jira', 'INVALID_RESPONSE', 'https://acme.atlassian.net/browse/PROJ-1');
+    const out = copy('jira', 'TOO_LARGE', 'https://acme.atlassian.net/browse/PROJ-1');
     expect(out).toContain('지라에서 직접 열어 주세요.');
     expect(out).toContain('https://acme.atlassian.net/browse/PROJ-1');
   });
@@ -254,7 +254,7 @@ describe('renderWorkItemFailure (proposal §5)', () => {
     expect(copy('slack', 'FORBIDDEN')).toBe('그 채널 메시지를 읽을 권한이 없어요.');
     expect(copy('slack', 'MOVED')).toBe('메시지가 삭제됐거나 찾을 수 없어요.');
     expect(copy('slack', 'UNAVAILABLE')).toBe('슬랙에 지금 연결할 수 없어요.');
-    expect(copy('slack', 'INVALID_RESPONSE')).toBe('이 메시지는 너무 커서 읽지 못했어요. 슬랙에서 직접 열어 주세요.');
+    expect(copy('slack', 'TOO_LARGE')).toBe('이 메시지는 너무 커서 읽지 못했어요. 슬랙에서 직접 열어 주세요.');
   });
 });
 
@@ -265,7 +265,8 @@ describe('audit helpers', () => {
     expect(workItemFetchOutcome('INSUFFICIENT_SCOPE')).toBe('scope');
     expect(workItemFetchOutcome('MOVED')).toBe('moved');
     expect(workItemFetchOutcome('RATE_LIMITED')).toBe('rate-limited');
-    expect(workItemFetchOutcome('INVALID_RESPONSE')).toBe('too-large');
+    expect(workItemFetchOutcome('TOO_LARGE')).toBe('too-large');
+    expect(workItemFetchOutcome('INVALID_RESPONSE')).toBe('invalid-response');
     expect(workItemFetchOutcome('UNAVAILABLE')).toBe('unavailable');
     expect(workItemFetchOutcome('UNAUTHORIZED')).toBe('unavailable');
     expect(workItemFetchOutcome('TIMEOUT')).toBe('unavailable');

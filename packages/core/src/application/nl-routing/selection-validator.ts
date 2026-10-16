@@ -23,6 +23,7 @@ import {
   isNlRefGrounded,
   isNlSpanGrounded,
   nlActionSourceOf,
+  nlR2SourcesOffered,
   normalizeNlSpan,
   parseNlRef,
 } from './action-entries';
@@ -289,10 +290,13 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   if (entry.risk !== 'READ' && ctx.actions !== true) return { ok: false, reason: 'not-read', entryId };
   const specs = new Map(entry.args.map((spec) => [spec.name, spec] as const));
   const args: Record<string, NlArgValue> = {};
+  // A6 R2 (CA P1): the Jira / Slack nouns and the Jira key ref exist only while the offered item.summarize lists them.
+  const r2Sources = entryId === 'item.summarize' ? nlR2SourcesOffered([entry]) : [];
+  const keys = r2Sources.includes('jira');
   for (const [name, value] of Object.entries(candidate.args)) {
     const spec = specs.get(name);
     if (spec === undefined) return { ok: false, reason: 'unknown-arg', entryId, arg: name };
-    const checked = checkArg(spec, value);
+    const checked = checkArg(spec, value, keys);
     if (checked === undefined) return { ok: false, reason: 'invalid-arg', entryId, arg: name };
     args[name] = checked;
   }
@@ -372,8 +376,8 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     // A6-D2: a ref needs a numeral, ordinal or deictic in this turn's own words (a determiner + noun only for the entry's
     // own source, and 저 only for a read).
     if (spec.kind === 'ref') {
-      const ref = parseNlRef(value);
-      const target = isNlActionEntryId(entryId) ? { entryId, source: nlActionSourceOf(entryId, args) } : undefined;
+      const ref = parseNlRef(value, { keys });
+      const target = isNlActionEntryId(entryId) ? { entryId, source: nlActionSourceOf(entryId, args), r2Sources } : undefined;
       if (ref === undefined || !isNlRefGrounded(ref, groundingText, target)) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
     }
     if (containsCredentialMaterial(value)) return { ok: false, reason: 'credential', entryId, arg: spec.name };
@@ -484,7 +488,7 @@ export function canonicalArgs(entry: NlCatalogEntry, args: Readonly<Record<strin
 }
 
 /** Type check of one argument (D4 steps 1 and 3); the normalized value or `undefined`. */
-function checkArg(spec: NlArgSpec, value: NlArgValue): NlArgValue | undefined {
+function checkArg(spec: NlArgSpec, value: NlArgValue, keys = false): NlArgValue | undefined {
   switch (spec.kind) {
     case 'enum':
       return typeof value === 'string' && (spec.values ?? []).includes(value) ? value : undefined;
@@ -514,7 +518,7 @@ function checkArg(spec: NlArgSpec, value: NlArgValue): NlArgValue | undefined {
       return span;
     }
     case 'ref': {
-      const ref = parseNlRef(value);
+      const ref = parseNlRef(value, { keys });
       return ref === undefined ? undefined : formatNlRef(ref);
     }
   }

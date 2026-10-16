@@ -48,6 +48,11 @@ export interface NlReferenceState {
    * `item.summarize` only, in place of `lastAction`; never by a LOCAL_WRITE.
    */
   readonly lastRead?: LastReadRecord;
+  /**
+   * A6 R2: the Jira / Slack sources `item.summarize` offers this turn. Their nouns join the source cross-check for
+   * `item.summarize` only; a LOCAL_WRITE and every turn with R2 `off` keep the R1 nouns exactly (CA P1).
+   */
+  readonly r2Sources?: readonly ('jira' | 'slack')[];
   /** The owner's message is a platform reply: what its target is (a listing, or nothing Quoky recorded). */
   readonly replyTo?: { readonly messageId: string; readonly listing?: AnyListingReplyMatch };
   readonly now: IsoTimestamp;
@@ -129,7 +134,7 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
   const localWrite = input.entryId !== 'item.summarize';
   // Same source only: the owner's own source noun wins over the selector's `source` (and entry), for every ref kind. Fail
   // closed (A6 R1 review): a message naming more than one source ("할 일 말고 2번 메일 취소해줘") or another source asks.
-  const named = nlNamedItemSources(input.groundingText);
+  const named = nlNamedItemSources(input.groundingText, localWrite ? {} : { r2Sources: state.r2Sources ?? [] });
   if (named.size > 1 || (named.size === 1 && !named.has(source))) {
     const meant = named.size === 1 ? [...named][0] : undefined;
     const found = state.replyTo?.listing?.kind === 'listing' ? state.replyTo.listing.slot.source : state.listings.mostRecent?.source;

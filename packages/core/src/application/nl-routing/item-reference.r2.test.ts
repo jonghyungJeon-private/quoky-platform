@@ -28,14 +28,14 @@ function listings(...rows: Array<[ListingSource, ListingItem[], number, string?]
 }
 
 function state(value: unknown, now: number, extra: Partial<NlReferenceState> = {}): NlReferenceState {
-  return { listings: readListingRecord(value, ACTOR, at(now)), now: at(now), ...extra };
+  return { listings: readListingRecord(value, ACTOR, at(now)), now: at(now), r2Sources: ['jira', 'slack'], ...extra };
 }
 
 function resolve(source: NlItemSource, ref: NlRef, groundingText: string, st: NlReferenceState, entryId: NlActionEntryId = 'item.summarize') {
   return resolveItemReference({ entryId, source, ref, groundingText, state: st });
 }
 
-const ref = (value: string): NlRef => parseNlRef(value) as NlRef;
+const ref = (value: string): NlRef => parseNlRef(value, { keys: true }) as NlRef;
 const lastRead = (source: 'jira' | 'slack', id: string, offset: number, extra: Partial<LastReadRecord> = {}): LastReadRecord => ({ source, id, at: at(offset), ...extra });
 
 describe('resolveItemReference item.summarize jira and slack', () => {
@@ -104,32 +104,33 @@ describe('resolveItemReference item.summarize jira and slack', () => {
     it('within 24 h picks from the replied listing even after 30 minutes', () => {
       const now = 3 * 60 * MIN;
       const match = findAnyListingByReply(base, ACTOR, 'msg-1', at(now));
-      const st: NlReferenceState = { listings: readListingRecord(base, ACTOR, at(now)), now: at(now), replyTo: { messageId: 'msg-1', ...(match !== undefined ? { listing: match } : {}) } };
+      const st: NlReferenceState = { listings: readListingRecord(base, ACTOR, at(now)), now: at(now), r2Sources: ['jira', 'slack'], replyTo: { messageId: 'msg-1', ...(match !== undefined ? { listing: match } : {}) } };
       expect(resolve('jira', ref('#2'), '2번 요약해줘', st)).toMatchObject({ kind: 'resolved', target: { id: 'PROJ-14:10014' } });
     });
     it('after 24 h the reply is expired', () => {
       const now = 25 * 60 * MIN;
       const match = findAnyListingByReply(base, ACTOR, 'msg-1', at(now));
       expect(match).toEqual({ kind: 'expired', source: 'jira' });
-      const st: NlReferenceState = { listings: readListingRecord(base, ACTOR, at(now)), now: at(now), replyTo: { messageId: 'msg-1', listing: match! } };
+      const st: NlReferenceState = { listings: readListingRecord(base, ACTOR, at(now)), now: at(now), r2Sources: ['jira', 'slack'], replyTo: { messageId: 'msg-1', listing: match! } };
       expect(resolve('jira', ref('#2'), '2번 요약해줘', st)).toMatchObject({ outcome: 'expired', found: 'jira' });
     });
     it('a replied listing slot aged beyond the window is expired even when passed as a listing', () => {
       const match = findAnyListingByReply(base, ACTOR, 'msg-1', at(MIN));
-      const st: NlReferenceState = { listings: { slots: {} }, now: at(24 * 60 * MIN + 1), replyTo: { messageId: 'msg-1', listing: match! } };
+      const st: NlReferenceState = { listings: { slots: {} }, now: at(24 * 60 * MIN + 1), r2Sources: ['jira', 'slack'], replyTo: { messageId: 'msg-1', listing: match! } };
       expect(resolve('jira', ref('#1'), '1번 요약해줘', st)).toMatchObject({ outcome: 'expired' });
     });
     it('a reply to another source listing asks other-source', () => {
       const mailBase = withListingReplies(withListing(undefined, ACTOR, 'mail', ['m1'], T0, 'req-m'), ACTOR, 'mail', 'req-m', ['msg-m'], T0).next;
       const match = findAnyListingByReply(mailBase, ACTOR, 'msg-m', at(MIN));
-      const st: NlReferenceState = { listings: readListingRecord(mailBase, ACTOR, at(MIN)), now: at(MIN), replyTo: { messageId: 'msg-m', listing: match! } };
+      const st: NlReferenceState = { listings: readListingRecord(mailBase, ACTOR, at(MIN)), now: at(MIN), r2Sources: ['jira', 'slack'], replyTo: { messageId: 'msg-m', listing: match! } };
       expect(resolve('jira', ref('#1'), '1번 요약해줘', st)).toMatchObject({ outcome: 'other-source', found: 'mail' });
     });
   });
 
   describe('the D2 key ref', () => {
     it('parses a key', () => {
-      expect(parseNlRef('PROJ-12')).toEqual({ kind: 'key', key: 'PROJ-12' });
+      expect(parseNlRef('PROJ-12', { keys: true })).toEqual({ kind: 'key', key: 'PROJ-12' });
+      expect(parseNlRef('PROJ-12')).toBeUndefined();
     });
     it('resolves by id prefix against the fresh jira slot, not by prefix of a longer key', () => {
       const items = [{ label: 4, id: 'PROJ-123:1' }, ...JIRA_ITEMS];

@@ -422,6 +422,9 @@ export function renderLookupFailure(source: WorkChatSource, failure: WorkChatLoo
     case 'MOVED':
       // A6 R2: only an `item` read can answer MOVED; a listing never does. Neutral, no destination.
       return `${label}에서 조회 대상이 다른 곳으로 옮겨졌어요.`;
+    case 'TOO_LARGE':
+      // A6 R2: only an `item` read can answer TOO_LARGE.
+      return `${label}의 응답이 너무 커서 읽지 못했어요.`;
     case 'TIMEOUT':
       return `${label}이 제한 시간 안에 응답하지 않았어요. 잠시 후 다시 시도해 주세요.`;
   }

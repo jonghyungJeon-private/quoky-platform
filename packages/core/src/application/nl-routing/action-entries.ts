@@ -43,11 +43,14 @@ export type NlRef =
 /** A6 R2 (D2): the shape of a Jira issue key as a `ref` value (upper-case project key, a dash, a number). */
 export const NL_REF_JIRA_KEY = /^[A-Z][A-Z0-9_]{1,19}-[1-9][0-9]{0,9}$/;
 
-/** `#3` → index 3, `recent` / `this` / `last`, a Jira key → `key`; anything else `undefined`. */
-export function parseNlRef(value: unknown): NlRef | undefined {
+/**
+ * `#3` → index 3, `recent` / `this` / `last`; a Jira key → `key` only with `{ keys: true }` (A6 R2 offering Jira, CA P1:
+ * with R2 `off` a key-shaped value parses exactly as before, to `undefined`); anything else `undefined`.
+ */
+export function parseNlRef(value: unknown, options: { readonly keys?: boolean } = {}): NlRef | undefined {
   if (typeof value !== 'string') return undefined;
   const raw = value.trim();
-  if (NL_REF_JIRA_KEY.test(raw)) return { kind: 'key', key: raw };
+  if (options.keys === true && NL_REF_JIRA_KEY.test(raw)) return { kind: 'key', key: raw };
   const trimmed = raw.toLowerCase();
   if (trimmed === 'recent' || trimmed === 'this' || trimmed === 'last') return { kind: trimmed };
   const match = /^#?([1-9][0-9]?)$/.exec(trimmed);
@@ -100,64 +103,89 @@ const ITEM_SOURCE_LIST_ENTRIES: Readonly<Record<NlItemSource, NlWave1EntryId>> =
   jira: 'jira.issues',
   slack: 'slack.search',
 };
-/** The catalog's Korean words for each item source (Latin aliases are left to this / that). */
-const ITEM_SOURCE_WORDS_KO: ReadonlyArray<readonly [string, NlItemSource]> = (Object.entries(ITEM_SOURCE_LIST_ENTRIES) as Array<[NlItemSource, NlWave1EntryId]>).flatMap(
-  ([source, id]) =>
-    [...NL_WAVE1_ENTRIES[id].aliases, ...(NL_WAVE1_ENTRIES[id].sourceNames ?? [])]
-      .map(normalizeForMatch)
-      .filter((noun) => !/^[a-z0-9 .-]+$/.test(noun))
-      .map((noun) => [noun, source] as const),
-);
+/** The A6 R2 sources whose nouns count only while R2 is offered (CA P1: with R2 `off` the R1 noun set is exact). */
+export type NlR2NounSources = readonly ('jira' | 'slack')[];
 const nounKey = (noun: string): string => noun.replace(/\s+/g, '');
-/** Each noun (spaces removed) → the item sources it names. */
-const ITEM_SOURCE_NOUNS_KO: ReadonlyMap<string, ReadonlySet<NlItemSource>> = ITEM_SOURCE_WORDS_KO.reduce((nouns, [noun, source]) => {
-  nouns.set(nounKey(noun), new Set([...(nouns.get(nounKey(noun)) ?? []), source]));
-  return nouns;
-}, new Map<string, ReadonlySet<NlItemSource>>());
-const NOUN_ALTERNATION = [...new Set(ITEM_SOURCE_WORDS_KO.map(([noun]) => noun))]
-  .sort((a, b) => b.length - a.length)
-  .map((noun) => noun.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*'))
-  .join('|');
 /**
  * Where a noun (or its particles) may end: the end of the text, whitespace, or a closed set of sentence punctuation. A
  * letter, digit, `_` or any other word-joining character never ends it ("이 알림_봇", "그 문서화").
  */
 const NOUN_END = '(?:$|\\s|[.,!?~…])';
-/** A determiner word, then an item-source noun that ends there or with particles (captures: determiner, noun). */
-const DETERMINER_NOUN_SOURCE = `(?<=^|\\s)(${DETERMINERS_KO.join('|')})\\s+(${NOUN_ALTERNATION})(?=${PARTICLE_WORDS}*${NOUN_END})`;
-const DETERMINER_NOUN_ALL = new RegExp(DETERMINER_NOUN_SOURCE, 'gu');
 
-/** The determiner references of the owner's words: which determiner, and which item sources its noun names. */
-function determinerReferences(groundingText: string): Array<{ readonly determiner: NlDeterminer; readonly sources: ReadonlySet<NlItemSource> }> {
+/** The noun tables of one source set: the R1 sources, plus the R2 sources R2 offers (CA P1). Built once per set. */
+interface NounTable {
+  readonly nouns: ReadonlyMap<string, ReadonlySet<NlItemSource>>;
+  readonly alternation: string;
+  readonly determinerAll: RegExp;
+  readonly namedAll: RegExp;
+  readonly latin: ReadonlyArray<readonly [string, NlItemSource]>;
+  glued?: RegExp;
+}
+const NOUN_TABLES = new Map<string, NounTable>();
+
+function nounTable(r2: NlR2NounSources = []): NounTable {
+  const offered = (['jira', 'slack'] as const).filter((source) => r2.includes(source));
+  const key = offered.join(',');
+  const cached = NOUN_TABLES.get(key);
+  if (cached !== undefined) return cached;
+  const entries = (Object.entries(ITEM_SOURCE_LIST_ENTRIES) as Array<[NlItemSource, NlWave1EntryId]>).filter(
+    ([source]) => (source !== 'jira' && source !== 'slack') || (offered as readonly string[]).includes(source),
+  );
+  const words = (latinOnly: boolean): Array<readonly [string, NlItemSource]> =>
+    entries.flatMap(([source, id]) =>
+      [...NL_WAVE1_ENTRIES[id].aliases, ...(NL_WAVE1_ENTRIES[id].sourceNames ?? [])]
+        .map(normalizeForMatch)
+        .filter((noun) => /^[a-z0-9 .-]+$/.test(noun) === latinOnly)
+        .map((noun) => [noun, source] as const),
+    );
+  const ko = words(false);
+  const nouns = ko.reduce((map, [noun, source]) => {
+    map.set(nounKey(noun), new Set([...(map.get(nounKey(noun)) ?? []), source]));
+    return map;
+  }, new Map<string, ReadonlySet<NlItemSource>>());
+  const alternation = [...new Set(ko.map(([noun]) => noun))]
+    .sort((a, b) => b.length - a.length)
+    .map((noun) => noun.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*'))
+    .join('|');
+  const table: NounTable = {
+    nouns,
+    alternation,
+    // A determiner word, then an item-source noun that ends there or with particles (captures: determiner, noun).
+    determinerAll: new RegExp(`(?<=^|\\s)(${DETERMINERS_KO.join('|')})\\s+(${alternation})(?=${PARTICLE_WORDS}*${NOUN_END})`, 'gu'),
+    // A noun standing as its own word: after the start, whitespace or a number word ("1번 문서", "13번알림").
+    namedAll: new RegExp(`(?<=^|\\s|\\d|번|째)(${alternation})(?=${PARTICLE_WORDS}*${NOUN_END})`, 'gu'),
+    latin: words(true),
+  };
+  NOUN_TABLES.set(key, table);
+  return table;
+}
+
+/**
+ * The determiner references of the owner's words: which determiner, and which item sources its noun names. The R2 nouns
+ * (지라, 이슈, 티켓, 슬랙) count only for the R2 sources offered (`r2`).
+ */
+function determinerReferences(groundingText: string, r2: NlR2NounSources = []): Array<{ readonly determiner: NlDeterminer; readonly sources: ReadonlySet<NlItemSource> }> {
+  const table = nounTable(r2);
   const found: Array<{ determiner: NlDeterminer; sources: ReadonlySet<NlItemSource> }> = [];
-  for (const match of normalizeForMatch(groundingText).matchAll(DETERMINER_NOUN_ALL)) {
-    const sources = ITEM_SOURCE_NOUNS_KO.get(nounKey(match[2] as string));
+  for (const match of normalizeForMatch(groundingText).matchAll(table.determinerAll)) {
+    const sources = table.nouns.get(nounKey(match[2] as string));
     if (sources !== undefined) found.push({ determiner: match[1] as NlDeterminer, sources });
   }
   return found;
 }
 
 /**
- * A Korean item-source noun standing as its own word: after the start, whitespace or a number word ("1번 문서", "두 번째
- * 메일", "13번알림"), ending at a whole-noun end (particles allowed: "문서를", "메일에서는"). "이메일" is its own noun.
- */
-const NAMED_NOUN_ALL = new RegExp(`(?<=^|\\s|\\d|번|째)(${NOUN_ALTERNATION})(?=${PARTICLE_WORDS}*${NOUN_END})`, 'gu');
-/** The catalog's Latin words for each item source ("mail", "inbox", "drive", "todo", "reminder"), whole words only. */
-const ITEM_SOURCE_WORDS_LATIN: ReadonlyArray<readonly [string, NlItemSource]> = (Object.entries(ITEM_SOURCE_LIST_ENTRIES) as Array<[NlItemSource, NlWave1EntryId]>).flatMap(
-  ([source, id]) =>
-    [...NL_WAVE1_ENTRIES[id].aliases, ...(NL_WAVE1_ENTRIES[id].sourceNames ?? [])]
-      .map(normalizeForMatch)
-      .filter((noun) => /^[a-z0-9 .-]+$/.test(noun))
-      .map((noun) => [noun, source] as const),
-);
-
-/**
  * ADR-0120 A6-D2 "Same source only" (A6 R1 fix): the item sources the owner's own words name with the catalog's words
  * for them ("1번 문서" names drive, "2번 메일" mail, "그 알림" a reminder). Core cross-checks a `ref` against them for every
  * ref kind, so a selector `source` (or entry) that disagrees with the noun the owner wrote can never read or change an
- * item of another source. The nouns are the catalog's own aliases and source names, never a phrase list.
+ * item of another source. The nouns are the catalog's own aliases and source names, never a phrase list. A6 R2: the Jira
+ * and Slack nouns count only for the R2 sources offered (`r2Sources`); absent, the R1 set is exactly as before (CA P1).
  */
-export function nlNamedItemSources(groundingText: string, options: { readonly withoutVocabulary?: readonly string[] } = {}): ReadonlySet<NlItemSource> {
+export function nlNamedItemSources(
+  groundingText: string,
+  options: { readonly withoutVocabulary?: readonly string[]; readonly r2Sources?: NlR2NounSources } = {},
+): ReadonlySet<NlItemSource> {
+  const table = nounTable(options.r2Sources);
   // Brackets and other punctuation, and a digit glued to a letter ("메일2번", "2번메일", "mail2"), are word boundaries
   // here, so "2번 (메일)" and "메일2번" name the mail source too (Codex review).
   const text = normalizeForMatch(groundingText)
@@ -166,34 +194,33 @@ export function nlNamedItemSources(groundingText: string, options: { readonly wi
     .replace(/\s+/g, ' ')
     .trim();
   const named = new Set<NlItemSource>();
-  for (const match of text.matchAll(NAMED_NOUN_ALL)) for (const source of ITEM_SOURCE_NOUNS_KO.get(nounKey(match[1] as string)) ?? []) named.add(source);
+  for (const match of text.matchAll(table.namedAll)) for (const source of table.nouns.get(nounKey(match[1] as string)) ?? []) named.add(source);
   // A noun glued to a following action or content word of the catalog's own vocabularies ("메일취소해줘", "알림취소해줘",
   // "문서요약해줘"; A6 R1 review); a noun glued to anything else ("알림장") is still no source.
-  const glued = options.withoutVocabulary === undefined ? gluedNounPattern() : buildGluedNounPattern(options.withoutVocabulary);
-  for (const match of text.matchAll(glued)) for (const source of ITEM_SOURCE_NOUNS_KO.get(nounKey(match[1] as string)) ?? []) named.add(source);
-  for (const [word, source] of ITEM_SOURCE_WORDS_LATIN) if (latinWordIn(text, word)) named.add(source);
+  const glued = options.withoutVocabulary === undefined ? gluedNounPattern(table) : buildGluedNounPattern(options.withoutVocabulary, table);
+  for (const match of text.matchAll(glued)) for (const source of table.nouns.get(nounKey(match[1] as string)) ?? []) named.add(source);
+  for (const [word, source] of table.latin) if (latinWordIn(text, word)) named.add(source);
   return named;
 }
 
-let gluedNoun: RegExp | undefined;
 /** Built on first use: the vocabularies are declared further down this module. */
-function gluedNounPattern(): RegExp {
-  gluedNoun ??= buildGluedNounPattern([]);
-  return gluedNoun;
+function gluedNounPattern(table: NounTable): RegExp {
+  table.glued ??= buildGluedNounPattern([], table);
+  return table.glued;
 }
 
 /** The glued-noun pattern over the action and content vocabularies, `without` some words (the R5a no-regression gate). */
-function buildGluedNounPattern(without: readonly string[]): RegExp {
+function buildGluedNounPattern(without: readonly string[], table: NounTable = nounTable()): RegExp {
   const dropped = new Set(without.map(normalizeForMatch));
   const verbs = [...new Set([...NL_ACTION_WORDS, ...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS].map(normalizeForMatch).filter((word) => !/^[a-z0-9 .;-]+$/.test(word) && !dropped.has(word)))]
     .sort((a, b) => b.length - a.length)
     .map((word) => word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*'));
-  return new RegExp(`(?<=^|\\s|\\d|번|째)(${NOUN_ALTERNATION})(?=${verbs.join('|')})`, 'gu');
+  return new RegExp(`(?<=^|\\s|\\d|번|째)(${table.alternation})(?=${verbs.join('|')})`, 'gu');
 }
 
 /** Whether the owner's words point with a determiner at an item-source noun ("이 문서", "그 메일"), whatever the entry. */
-export function hasNlDeterminerReference(groundingText: string): boolean {
-  return determinerReferences(groundingText).length > 0;
+export function hasNlDeterminerReference(groundingText: string, r2Sources: NlR2NounSources = []): boolean {
+  return determinerReferences(groundingText, r2Sources).length > 0;
 }
 
 /**
@@ -213,13 +240,15 @@ export function nlDeterminerSources(groundingText: string): ReadonlySet<NlItemSo
 export interface NlRefTarget {
   readonly entryId: NlActionEntryId;
   readonly source?: NlItemSource;
+  /** A6 R2: the R2 sources offered this turn (their nouns ground a determiner, and a Jira key is a ref, only then). */
+  readonly r2Sources?: NlR2NounSources;
 }
 
 /** A determiner reference grounds `target` only for the noun of its own source; 저 only for a read (`item.summarize`). */
 function groundsByDeterminer(groundingText: string, target: NlRefTarget | undefined): boolean {
   if (target?.source === undefined) return false;
   const source = target.source;
-  return determinerReferences(groundingText).some(
+  return determinerReferences(groundingText, target.r2Sources).some(
     (reference) => reference.sources.has(source) && (!READ_ONLY_DETERMINERS.has(reference.determiner) || target.entryId === 'item.summarize'),
   );
 }
@@ -296,7 +325,7 @@ export function isNlRefGrounded(ref: NlRef, groundingText: string, target?: NlRe
       return hasLastWord(groundingText);
     case 'key':
       // A6 R2 (D2): only `item.summarize` over Jira, and only a key the owner wrote verbatim as its own token.
-      return target?.entryId === 'item.summarize' && target.source === 'jira' && keyWrittenVerbatim(ref.key, groundingText);
+      return target?.entryId === 'item.summarize' && target.source === 'jira' && target.r2Sources?.includes('jira') === true && keyWrittenVerbatim(ref.key, groundingText);
   }
 }
 
@@ -349,16 +378,21 @@ const KO_ORDINAL_WITH_PARTICLES = new RegExp(`(?:첫|두|세|네|다섯|여섯|�
 const NUMBER_WITH_PARTICLES = new RegExp(`#?\\d+\\s*번\\s*째?${GLUED_PARTICLES}`, 'gu');
 const DEICTIC_WITH_PARTICLES = new RegExp(`(?:${[...DEICTIC_KO, ...LAST_KO].sort((a, b) => b.length - a.length).join('|')})${GLUED_PARTICLES}`, 'gu');
 /** An item-source noun of the catalog standing as its own word, with its particles ("13번 알림", "메일을"). */
-const SOURCE_NOUN_WITH_PARTICLES = new RegExp(`(?<=^|\\s)(?:${NOUN_ALTERNATION})${GLUED_PARTICLES}(?=${NOUN_END})`, 'gu');
+let sourceNounWithParticles: RegExp | undefined;
+/** Built on first use over the R1 noun table: an R2 noun is never stripped from a to-do or reminder payload (CA P1). */
+function SOURCE_NOUN_WITH_PARTICLES(): RegExp {
+  sourceNounWithParticles ??= new RegExp(`(?<=^|\\s)(?:${nounTable().alternation})${GLUED_PARTICLES}(?=${NOUN_END})`, 'gu');
+  return sourceNounWithParticles;
+}
 
 function contentTokens(span: string, stripSourceNouns = true): string[] {
   let text = normalizeForMatch(span);
   text = text.replace(KO_ORDINAL_WITH_PARTICLES, ' ').replace(EN_ORDINAL_PATTERN, ' ');
   text = text.replace(NUMBER_WITH_PARTICLES, ' ');
-  text = text.replace(DETERMINER_NOUN_ALL, ' ');
+  text = text.replace(nounTable().determinerAll, ' ');
   text = text.replace(DEICTIC_WITH_PARTICLES, ' ');
   // A6 R1 review: an item-source noun names where an item lives, never what a to-do or reminder says ("13번 알림").
-  if (stripSourceNouns) text = text.replace(SOURCE_NOUN_WITH_PARTICLES, ' ');
+  if (stripSourceNouns) text = text.replace(SOURCE_NOUN_WITH_PARTICLES(), ' ');
   const tokens = text
     .replace(/[\p{P}\p{S}]+/gu, ' ')
     .split(/\s+/u)
@@ -777,10 +811,20 @@ export function nlItemSummarizeEntry(sources: Iterable<string>): NlCatalogEntry 
       if (!asksForItemContent(groundingText)) return { reason: 'ungrounded', arg: 'mode' };
       if (args.scope === 'thread' && !threadSources.includes(String(args.source))) return { reason: 'invalid-arg', arg: 'scope' };
       // A Jira key ref names a Jira issue only (D2).
-      if (parseNlRef(args.ref)?.kind === 'key' && args.source !== 'jira') return { reason: 'invalid-arg', arg: 'ref' };
+      if (parseNlRef(args.ref, { keys: true })?.kind === 'key' && args.source !== 'jira') return { reason: 'invalid-arg', arg: 'ref' };
       return undefined;
     },
   };
+}
+
+/** A6 R2: the Jira / Slack sources the offered `item.summarize` entry lists (empty while R2 is `off`). */
+export function nlR2SourcesOffered(entries: Iterable<NlCatalogEntry>): NlR2NounSources {
+  for (const entry of entries) {
+    if (entry.id !== 'item.summarize') continue;
+    const values = itemSummarizeSources(entry);
+    return (['jira', 'slack'] as const).filter((source) => values.includes(source));
+  }
+  return [];
 }
 
 /** The `source` values an `item.summarize` entry offers. */

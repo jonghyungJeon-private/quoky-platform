@@ -236,11 +236,11 @@ describe('Slack item query: errors and transport', () => {
       expect(result.items[0]!.detail!.bytes).toBe(CONNECTOR_ITEM_RESPONSE_MAX_BYTES);
     });
 
-    it('one byte more is a too-large INVALID_RESPONSE', async () => {
+    it('one byte more is a too-large TOO_LARGE', async () => {
       const error = await slack(recorder({ raw: padded(CONNECTOR_ITEM_RESPONSE_MAX_BYTES + 1) }).fetchImpl).query(item(TOP)).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(SlackConnectorItemTooLargeError);
       expect((error as SlackConnectorItemTooLargeError).tooLarge).toBe(true);
-      expect((error as ConnectorQueryError).reason).toBe('INVALID_RESPONSE');
+      expect((error as ConnectorQueryError).reason).toBe('TOO_LARGE');
     });
 
     it('falls back to arrayBuffer() when there is no body stream', async () => {
@@ -336,5 +336,15 @@ describe('Slack search carries itemRef', () => {
   it('a ts that is not a Slack timestamp has no itemRef', async () => {
     const result = await search(`https://x.slack.com/archives/${CH}/p1`, '123.4');
     expect(result.items[0]).not.toHaveProperty('itemRef');
+  });
+});
+
+describe('A6 R2 review fixes (Slack)', () => {
+  it('Codex P2: updatedAt is the latest create or edit time (edited.ts)', async () => {
+    const fake = recorder(ok([msg(TS, 'edited later', { edited: { user: 'U111', ts: '1700009000.000000' } })]));
+    const result = await slack(fake.fetchImpl).query(item(TOP));
+    expect(result.items[0]?.updatedAt).toBe(new Date(1700009000 * 1000).toISOString());
+    const plain = recorder(ok([msg(TS, 'never edited')]));
+    expect((await slack(plain.fetchImpl).query(item(TOP))).items[0]?.updatedAt).toBe(new Date(Number(TS) * 1000).toISOString());
   });
 });

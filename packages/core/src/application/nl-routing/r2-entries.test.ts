@@ -4,20 +4,21 @@ import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { NL_ACTION_R2_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import type { NlCatalogEntry } from './catalog';
 
-const ref = (value: string): NlRef => parseNlRef(value) as NlRef;
-const JIRA = { entryId: 'item.summarize', source: 'jira' } as const;
-const SLACK = { entryId: 'item.summarize', source: 'slack' } as const;
+const ref = (value: string): NlRef => parseNlRef(value, { keys: true }) as NlRef;
+const R2 = ['jira', 'slack'] as const;
+const JIRA = { entryId: 'item.summarize', source: 'jira', r2Sources: R2 } as const;
+const SLACK = { entryId: 'item.summarize', source: 'slack', r2Sources: R2 } as const;
 
 describe('R2 item source nouns', () => {
   it.each(['지라', '이슈', '티켓', 'jira'])('%s names jira', (noun) => {
-    expect([...nlNamedItemSources(`1번 ${noun} 요약해줘`)]).toEqual(['jira']);
+    expect([...nlNamedItemSources(`1번 ${noun} 요약해줘`, { r2Sources: R2 })]).toEqual(['jira']);
   });
   it.each(['슬랙', 'slack'])('%s names slack', (noun) => {
-    expect([...nlNamedItemSources(`1번 ${noun} 요약해줘`)]).toEqual(['slack']);
+    expect([...nlNamedItemSources(`1번 ${noun} 요약해줘`, { r2Sources: R2 })]).toEqual(['slack']);
   });
   it('메시지 alone names nothing', () => {
-    expect(nlNamedItemSources('1번 메시지 요약해줘').size).toBe(0);
-    expect(nlNamedItemSources('그 메시지 요약해줘').size).toBe(0);
+    expect(nlNamedItemSources('1번 메시지 요약해줘', { r2Sources: R2 }).size).toBe(0);
+    expect(nlNamedItemSources('그 메시지 요약해줘', { r2Sources: R2 }).size).toBe(0);
   });
 });
 
@@ -39,7 +40,7 @@ describe('R2 ref grounding', () => {
     expect(isNlRefGrounded(ref('PROJ-12'), 'XPROJ-12 요약', JIRA)).toBe(false);
     expect(isNlRefGrounded(ref('PROJ-12'), 'proj-12 요약', JIRA)).toBe(false);
     expect(isNlRefGrounded(ref('PROJ-12'), 'PROJ-12 요약해줘', SLACK)).toBe(false);
-    expect(isNlRefGrounded(ref('PROJ-12'), 'PROJ-12 요약해줘', { entryId: 'item.summarize', source: 'mail' })).toBe(false);
+    expect(isNlRefGrounded(ref('PROJ-12'), 'PROJ-12 요약해줘', { entryId: 'item.summarize', source: 'mail', r2Sources: R2 })).toBe(false);
     expect(isNlRefGrounded(ref('PROJ-12'), 'PROJ-12 완료', { entryId: 'todo.complete', source: 'todo' })).toBe(false);
     expect(isNlRefGrounded(ref('PROJ-12'), 'PROJ-12 요약해줘')).toBe(false);
   });

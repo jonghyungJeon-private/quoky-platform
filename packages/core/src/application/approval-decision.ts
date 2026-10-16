@@ -333,3 +333,17 @@ export function isPendingCancelUtterance(text: string): boolean {
     .replace(PENDING_CANCEL_FILLER, ' ');
   return remainder.trim().length === 0;
 }
+
+/**
+ * A6 R2 (CA P2, D11): whether one line, on its own, is a decision the approval matcher would accept: a plain approval
+ * (`interpretApprovalDecision` → approve: "승인해줘", "네 진행할게요", "ok please"), or a whole deny / cancel phrase with
+ * its allowed Korean ending and nothing else ("거절합니다", "취소해요"). The card-spoof filter applies it to each
+ * normalised summary line, so a polite-ending look-alike is caught by the matcher's own logic. A sentence that merely
+ * contains a phrase ("회의가 취소됐어요", "승인 절차는 다음 주") is not a decision line.
+ */
+export function isApprovalDecisionLine(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (t.length === 0) return false;
+  if (interpretApprovalDecision(t) === 'approve') return true;
+  return [DENY, CANCEL].some((matchers) => new RegExp(`^\\s*(?:${matchers.exact.source})[\\s.!~]*$`).test(t));
+}

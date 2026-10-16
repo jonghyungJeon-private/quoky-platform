@@ -406,3 +406,31 @@ describe('WorkChatTurnHandler.handleSelected item.summarize (A6 R2)', () => {
     expect(footer).toContain('목록 이후 수정됨');
   });
 });
+
+describe('A6 R2 review fixes (handler)', () => {
+  it('CA P2: a listed Slack thread reply (channel:ts:threadTs) is refused before any fetch; its thread and a top-level message are read', async () => {
+    const reply = handler({ read: () => ({ kind: 'item', item: itemWith({ itemRef: 'C0123456:1700000003.000100:1700000001.000100' }) }) });
+    const target = { source: 'slack' as const, id: 'C0123456:1700000003.000100:1700000001.000100' };
+    const refused = await reply.h.handleSelected(selected('slack', { mode: 'full' }, target), ctxOf(DM));
+    expect(plainTextOf(((refused as { reply: { text: string } }).reply.text))).toContain('스레드 답글 하나만 따로 읽을 수는 없어요');
+    expect((refused as { nlAction?: { reason?: string } }).nlAction?.reason).toBe('reply-not-isolable');
+    expect(reply.calls).toEqual([]);
+    await reply.h.handleSelected(selected('slack', { mode: 'full', scope: 'thread' }, target), ctxOf(DM));
+    expect(reply.calls).toEqual([{ source: 'slack', ref: 'C0123456:1700000003.000100:1700000001.000100', scope: 'thread' }]);
+    const top = handler({ read: () => ({ kind: 'item', item: itemWith({ itemRef: 'C0123456:1700000001.000100' }) }) });
+    await top.h.handleSelected(selected('slack', { mode: 'full' }, { source: 'slack', id: 'C0123456:1700000001.000100' }), ctxOf(DM));
+    expect(top.calls).toHaveLength(1);
+  });
+
+  it('CA P3: a malformed answer and a too-large one have their own reply and fetch outcome', async () => {
+    for (const [reason, copy, outcome] of [
+      ['INVALID_RESPONSE', '지라의 응답을 해석하지 못했어요', 'invalid-response'],
+      ['TOO_LARGE', '이 이슈는 너무 커서 읽지 못했어요', 'too-large'],
+    ] as const) {
+      const { h } = handler({ read: () => ({ kind: 'failure', reason }) });
+      const out = (await h.handleSelected(selected('jira', { mode: 'full' }), ctxOf(DM))) as { reply: { text: string }; nlAction?: { fetch?: { outcome: string } } };
+      expect(out.reply.text).toContain(copy);
+      expect(out.nlAction?.fetch?.outcome).toBe(outcome);
+    }
+  });
+});

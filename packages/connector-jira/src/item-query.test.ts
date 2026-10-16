@@ -169,7 +169,7 @@ describe('Jira item query: transport', () => {
       expect(result.items[0]!.detail!.bytes).toBe(CONNECTOR_ITEM_RESPONSE_MAX_BYTES);
     });
 
-    it('a body of one byte more is a too-large INVALID_RESPONSE and the reader is cancelled', async () => {
+    it('a body of one byte more is a too-large TOO_LARGE and the reader is cancelled', async () => {
       const raw = padded(CONNECTOR_ITEM_RESPONSE_MAX_BYTES + 1);
       let cancelled = false;
       const bytes = new TextEncoder().encode(raw);
@@ -185,7 +185,7 @@ describe('Jira item query: transport', () => {
       const error = await jira(fetchImpl).query(item()).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(JiraConnectorItemTooLargeError);
       expect((error as JiraConnectorItemTooLargeError).tooLarge).toBe(true);
-      expect((error as ConnectorQueryError).reason).toBe('INVALID_RESPONSE');
+      expect((error as ConnectorQueryError).reason).toBe('TOO_LARGE');
       expect(cancelled).toBe(true);
     });
 
@@ -446,5 +446,24 @@ describe('Jira listings carry itemRef', () => {
     const fake = recorder({ body: { issues: [{ id: '10042', key: 'PROJ-12', fields: { summary: 'a' } }, { key: 'PROJ-13', fields: {} }], isLast: true } });
     const result = await jira(fake.fetchImpl).query({ query: 'release-items', params: { container: 'PROJ', releaseId: '1' } });
     expect(result.items.map((i) => i.itemRef)).toEqual([REF, undefined]);
+  });
+});
+
+describe('A6 R2 review fixes (Jira)', () => {
+  it('Codex P2: comments dropped locally make the read partial (a complete 15-comment page keeps the last 10)', async () => {
+    const comments = Array.from({ length: 15 }, (_, index) => comment(index + 1));
+    const fake = recorder({ body: issue({ comments, total: 15 }) });
+    const result = await jira(fake.fetchImpl).query(item());
+    const detail = result.items[0]?.detail;
+    expect(detail?.comments).toEqual({ total: 15, returned: 15, kept: 10 });
+    expect(detail?.partial).toBe(true);
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it('CA P3: an oversize body is TOO_LARGE, a malformed one INVALID_RESPONSE', async () => {
+    const big = recorder({ raw: 'x'.repeat(CONNECTOR_ITEM_RESPONSE_MAX_BYTES + 1) });
+    await expect(jira(big.fetchImpl).query(item())).rejects.toMatchObject({ reason: 'TOO_LARGE' });
+    const bad = recorder({ raw: '{nope' });
+    await expect(jira(bad.fetchImpl).query(item())).rejects.toMatchObject({ reason: 'INVALID_RESPONSE' });
   });
 });

@@ -161,6 +161,11 @@ export const CONNECTOR_QUERY_ERROR_REASONS = [
    * never followed; the outcome is neutral and names no destination.
    */
   'MOVED',
+  /**
+   * A6 R2 (CA P3): an `item` response over CONNECTOR_ITEM_RESPONSE_MAX_BYTES, aborted while streaming. Kept apart from
+   * `INVALID_RESPONSE` (a malformed answer) so each has its own log reason and reply.
+   */
+  'TOO_LARGE',
 ] as const;
 export type ConnectorQueryErrorReason = (typeof CONNECTOR_QUERY_ERROR_REASONS)[number];
 
@@ -168,7 +173,18 @@ export type ConnectorQueryErrorReason = (typeof CONNECTOR_QUERY_ERROR_REASONS)[n
  * A value-free connector failure. The message names the reason (and optionally the source) only: it never carries
  * request parameters, response content, credentials or headers. Adapter-specific errors extend this class.
  */
+/**
+ * The brand every `ConnectorQueryError` carries, from the process-wide symbol registry. A6 R2 (CA P3): an adapter package
+ * built and loaded with its own copy of this module (the app's offline tests load the adapters from their `dist` while
+ * Core runs from source; a bundled deployment can do the same) throws a `ConnectorQueryError` of another class identity,
+ * which `instanceof` misses and would misreport as `UNAVAILABLE`. `Symbol.for` is shared across module copies, so the
+ * brand recognises exactly the errors this class constructed, never an arbitrary error with a `reason` field.
+ */
+export const CONNECTOR_QUERY_ERROR_BRAND: unique symbol = Symbol.for('quoky.ConnectorQueryError') as never;
+
 export class ConnectorQueryError extends Error {
+  readonly [CONNECTOR_QUERY_ERROR_BRAND] = true;
+
   constructor(
     readonly reason: ConnectorQueryErrorReason,
     message?: string,
@@ -180,9 +196,7 @@ export class ConnectorQueryError extends Error {
 
 export function isConnectorQueryError(value: unknown): value is ConnectorQueryError {
   if (value instanceof ConnectorQueryError) return true;
-  // A6 R2: an adapter loaded with its own copy of this module (a separately built package) throws an equal error of
-  // another class identity. Recognised structurally: an Error whose `reason` is one of the closed neutral reasons.
-  if (!(value instanceof Error)) return false;
+  if (!(value instanceof Error) || (value as unknown as Record<symbol, unknown>)[CONNECTOR_QUERY_ERROR_BRAND] !== true) return false;
   const reason: unknown = (value as unknown as { readonly reason?: unknown }).reason;
   return typeof reason === 'string' && (CONNECTOR_QUERY_ERROR_REASONS as readonly string[]).includes(reason);
 }

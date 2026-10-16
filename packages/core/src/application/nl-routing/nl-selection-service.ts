@@ -39,7 +39,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, nlR2SourcesOffered, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -895,7 +895,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // they are dropped here too (the runtime already drops them), so the prompt is v24 byte for byte.
     const actionsOn = this.actionsOffered(turn.actor) && turn.entries.some(isNlActionEntry);
     const effective: NlSelectionTurn = actionsOn ? turn : { ...turn, entries: turn.entries.filter((entry) => !isNlActionEntry(entry)) };
-    const reference = actionsOn ? this.referenceState(turn) : undefined;
+    const reference = actionsOn ? { ...this.referenceState(turn), r2Sources: nlR2SourcesOffered(effective.entries) } : undefined;
     const last = readLastSelection(turn.session, turn.actor.id, turn.now);
     const prepared = this.prepare(effective, last);
     if ('skip' in prepared) {
@@ -1208,7 +1208,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const shadow = this.shadowed(entryId, output.args);
     const ctx = this.validationContext(turn, prepared.groundingText, undefined, true);
     const validated = validateSelection({ entryId, args: output.args }, ctx);
-    const base = { entryId, risk: ctx.offered.get(entryId)?.risk ?? 'LOCAL_WRITE', refKind: refKindOf(output.args), latencyMs, ...correlationOf(turn) } as const;
+    const keys = entryId === 'item.summarize' && nlR2SourcesOffered(turn.entries).includes('jira');
+    const base = { entryId, risk: ctx.offered.get(entryId)?.risk ?? 'LOCAL_WRITE', refKind: refKindOf(output.args, keys), latencyMs, ...correlationOf(turn) } as const;
     // The A6 input guard (red team): a long paste, hidden characters or an embedded command form never act.
     const inputRefusal = ctx.offered.has(entryId) ? nlActionInputRefusal(turn.text, prepared.groundingText, markedMaterial(turn)) : undefined;
     if (inputRefusal !== undefined) {
@@ -1312,7 +1313,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // A6-D2: resolve the target in code (most recent listing only, display numbers, lastAction).
     let target: NlItemTarget | undefined;
     let resolution: NlResolutionOutcome = 'none';
-    const ref = parseNlRef(args.ref);
+    const ref = parseNlRef(args.ref, { keys });
     const source = nlActionSourceOf(entryId, args);
     if (ref !== undefined && source !== undefined) {
       const resolved = resolveItemReference({ entryId, source, ref, groundingText: prepared.groundingText, state: reference });
@@ -2204,9 +2205,9 @@ function isCacheableOutput(output: NlSelectionOutput): boolean {
 }
 
 /** The closed ref kind of a selector output, for the audit line. */
-function refKindOf(args: NlArgs): NlActionAudit['refKind'] {
+function refKindOf(args: NlArgs, keys = false): NlActionAudit['refKind'] {
   if (typeof args.match === 'string') return 'match';
-  const ref = parseNlRef(args.ref);
+  const ref = parseNlRef(args.ref, { keys });
   return ref === undefined ? 'none' : ref.kind;
 }
 

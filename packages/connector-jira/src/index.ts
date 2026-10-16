@@ -90,10 +90,11 @@ export class JiraConnectorResponseError extends ConnectorQueryError {
 }
 
 /** A6 R2: a response over CONNECTOR_ITEM_RESPONSE_MAX_BYTES, aborted while streaming. Distinguishable by `tooLarge`. */
-export class JiraConnectorItemTooLargeError extends JiraConnectorResponseError {
+export class JiraConnectorItemTooLargeError extends ConnectorQueryError {
   readonly tooLarge = true;
   constructor(readonly bytes: number = CONNECTOR_ITEM_RESPONSE_MAX_BYTES) {
-    super();
+    // CA P3: its own neutral reason, apart from a malformed answer (INVALID_RESPONSE).
+    super('TOO_LARGE', 'jira connector: item response too large');
     this.name = 'JiraConnectorItemTooLargeError';
   }
 }
@@ -373,7 +374,8 @@ export class JiraConnectorProvider implements ConnectorProvider {
     const kept = comments.length;
     const detail: ConnectorItemDetail = {
       sections,
-      partial: descriptionOnly || total > returned,
+      // Codex P2: comments dropped here (older than the last ITEM_COMMENTS_KEPT of the page) make the read partial too.
+      partial: descriptionOnly || total > returned || kept < returned,
       people: people.values(),
       requests,
       bytes,

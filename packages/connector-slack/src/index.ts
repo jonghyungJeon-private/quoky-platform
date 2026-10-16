@@ -96,10 +96,11 @@ export class SlackConnectorResponseError extends ConnectorQueryError {
 }
 
 /** A6 R2: a response over CONNECTOR_ITEM_RESPONSE_MAX_BYTES, aborted while streaming. Distinguishable by `tooLarge`. */
-export class SlackConnectorItemTooLargeError extends SlackConnectorResponseError {
+export class SlackConnectorItemTooLargeError extends ConnectorQueryError {
   readonly tooLarge = true;
   constructor(readonly bytes: number = CONNECTOR_ITEM_RESPONSE_MAX_BYTES) {
-    super();
+    // CA P3: its own neutral reason, apart from a malformed answer (INVALID_RESPONSE).
+    super('TOO_LARGE', 'slack connector: item response too large');
     this.name = 'SlackConnectorItemTooLargeError';
   }
 }
@@ -343,8 +344,15 @@ export class SlackConnectorProvider implements ConnectorProvider {
     };
     if (replyCount !== undefined) detail.replyCount = replyCount;
     if (hasMore !== undefined) detail.hasMore = hasMore;
-    const stamp = kept.length > 0 ? tsOf(kept[kept.length - 1]) : undefined;
-    const updatedAt = stamp !== undefined ? toConnectorTimestamp(Number(stamp) * 1000) : undefined;
+    // Codex P2: freshness is the latest create OR edit time of what was read (`edited.ts`), so an edit after the listing
+    // is reported ("목록 이후 수정됨").
+    const stamps = kept.flatMap((message) => {
+      const record = isRecord(message) ? message : {};
+      const edited = isRecord(record.edited) && typeof record.edited.ts === 'string' ? record.edited.ts : undefined;
+      return [tsOf(message), edited].filter((value): value is string => typeof value === 'string' && /^\d{10}\.\d{6}$/.test(value)).map(Number);
+    });
+    const latest = stamps.length > 0 ? Math.max(...stamps) : undefined;
+    const updatedAt = latest !== undefined ? toConnectorTimestamp(latest * 1000) : undefined;
     const item: ConnectorItem = {
       id: `${channel}:${ts}`,
       title: (firstLine ?? EMPTY_MESSAGE_TITLE).slice(0, TITLE_LIMIT),

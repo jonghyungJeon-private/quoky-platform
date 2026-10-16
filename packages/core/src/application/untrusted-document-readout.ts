@@ -162,6 +162,17 @@ function isCredentialShaped(text: string): boolean {
 }
 
 /**
+ * A6 R2 (Codex P1): the strict guard on one COMPLETE original field, normalised exactly as the builder normalises it
+ * (terminal framing, invisible characters, NFKC; links neutralised as in a body). Callers that clip or rewrite fields
+ * before building a readout run it first, so no clip can separate a credential's key from its value.
+ */
+export function isUntrustedTextCredentialShaped(value: string): boolean {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  const normalized = prepareUntrustedBody(value);
+  return isCredentialShaped(normalized) || isCredentialShaped(neutralizeLinks(normalized, 'body'));
+}
+
+/**
  * Build the readout, or refuse it. The credential guard runs on every full normalized field BEFORE clipping, then on
  * every clipped field and the exact rendered prompt text; a match anywhere refuses the whole item (ADR-0111 D3:
  * withheld, never redacted).

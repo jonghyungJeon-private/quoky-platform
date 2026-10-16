@@ -239,6 +239,13 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     if (!isDirectConversation(ctx.message.context)) return answer(renderWorkItemDmOnly(), receipt('refused', { reason: 'not-dm' }));
     // A Jira issue has no thread; a Slack thread is read whole, never one reply apart (D4).
     if (source === 'jira' && scope === 'thread') return answer(renderWorkItemReplyNotIsolable(), receipt('refused', { reason: 'reply-not-isolable' }));
+    // CA P2 (proposal §2.1 fixture gate): until a RECORDED Slack fixture proves that one `conversations.replies` request
+    // isolates a single thread reply, a listed reply (`channel:ts:threadTs`) is refused explicitly before any fetch; its
+    // whole thread ('스레드 요약') and every top-level message stay supported.
+    // TODO(A6 R2): record the live Slack fixture (Strict, owner-approved) and lift this refusal when it passes.
+    if (source === 'slack' && scope === 'item' && itemRef.split(':').length === 3) {
+      return answer(renderWorkItemReplyNotIsolable(), receipt('refused', { reason: 'reply-not-isolable' }));
+    }
     // D6: QUOKY_WORK_SUMMARY_ENABLED=false keeps its meaning — no Jira or Slack text reaches a model; 0 GETs.
     if (mode === 'summary' && !this.deps.summaryEnabled) return answer(renderWorkItemSummaryOff(), receipt('refused', { reason: 'summary-off' }));
     let read: Awaited<ReturnType<NonNullable<WorkDesk['readItem']>>>;

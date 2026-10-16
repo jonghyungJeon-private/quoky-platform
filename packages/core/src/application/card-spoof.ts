@@ -1,4 +1,4 @@
-import { APPROVAL_DECISION_PHRASES } from './approval-decision';
+import { APPROVAL_DECISION_PHRASES, isApprovalDecisionLine } from './approval-decision';
 import { connectorWriteLabel } from './connector-writes/connector-write-copy';
 import { EXECUTION_PHRASES } from './execution-command-guard';
 import { DEICTIC_APPROVE_TOKENS, DEICTIC_DENY_TOKENS } from './nl-routing/deictic-draft-reply';
@@ -75,12 +75,28 @@ export function cardSpoofHeaders(): readonly string[] {
   return headers;
 }
 
-/** Whether one line is a card spoof (equal to a phrase, or beginning with a card header marker). Pure. */
+/** The line with invisible characters and leading markup removed, symbols turned to spaces (the matchers' own view). */
+function spacedForm(line: string): string {
+  let text = line.normalize('NFKC');
+  for (let round = 0; round < 3; round += 1) {
+    const next = text.replace(INVISIBLE, '').normalize('NFKC');
+    if (next === text) break;
+    text = next;
+  }
+  return text.replace(LEADING_MARKUP, '').replace(/[^\p{L}\p{N}\s.,!~'’]+/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Whether one line is a card spoof: its normalised form equals a phrase or begins with a card header marker, or (CA P2)
+ * the approval matcher's own logic accepts the line as a decision, polite endings included ("승인해줘", "승인합니다",
+ * "진행해요"), on the spaced form and on the fully normalised form. Pure.
+ */
 export function isCardSpoofLine(line: string): boolean {
   const normalized = normalizeCardSpoofLine(line);
   if (normalized.length === 0) return false;
   if (cardSpoofPhrases().has(normalized)) return true;
-  return cardSpoofHeaders().some((marker) => normalized.startsWith(marker));
+  if (cardSpoofHeaders().some((marker) => normalized.startsWith(marker))) return true;
+  return isApprovalDecisionLine(spacedForm(line)) || isApprovalDecisionLine(normalized);
 }
 
 /** Whether any line of a summary is a card spoof. Pure. */
