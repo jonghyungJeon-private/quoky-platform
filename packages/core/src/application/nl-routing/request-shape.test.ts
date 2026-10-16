@@ -298,6 +298,13 @@ describe('A6-D3a amendment 1, final round (Codex P2)', () => {
     for (const text of ['되돌려줘', '되돌려 줄래', '되돌려 줄래?', '되돌리기 해줘', '원래대로 해줘', '되돌리기', '방금 거 원래대로', '원래대로 돌려놔', '실행 취소해줘', '원상복구 해줘', '취소 취소', '되돌려줘요요', '되돌려죠', 'undo', 'undo that', 'undo the last one', 'please revert that', '아까 거 undo 해줘', '되돌려줘 이번에는 제대로 해줘']) {
       expect(undo(text).ok, text).toBe(true);
     }
+    // Codex P2 (after the final round): every request ending request-shape knows, spaced auxiliaries judged at the chain end.
+    for (const text of ['원상복구 하세요', '취소하세요', '원복해주십시오', '되돌려 주세요', '되돌려 줄 수 있어?', '되돌려 주실래요', '원래대로 돌려 놔', '되돌리기 합시다']) {
+      expect(undo(text).ok, text).toBe(true);
+    }
+    for (const text of ['되돌려 주는 앱 추천', '되돌려 주는 기능 설명해줘', '되돌려 준 거 고마워', '원래대로 돌려 주는 버튼']) {
+      expect(undo(text).ok, text).toBe(false);
+    }
     for (const text of ['되돌리기 돕는 앱 추천', '되돌리기 해주는 앱 추천', '되돌리기 기능', '되돌리는 앱 있어', '되돌리기 버튼 위치', '돈 좀 돌려줘', 'the undo button is missing']) {
       expect(undo(text).ok, text).toBe(false);
     }

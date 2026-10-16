@@ -521,6 +521,18 @@ export function nlRequestEndsBefore(before: string, actionWords: readonly string
   return /^(?:to|that)$/u.test(last) && (EN_REQUEST_SIGNAL.test(text) || wordsOf(text).some((word) => /^[a-z]+$/u.test(word) && holdsActionWord(word, actionWords)));
 }
 
+/** Imperative endings beside the request words ("되돌려", "취소해", "되돌려죠", "합시다", "하십시오"). */
+const IMPERATIVE_TAIL = /(?:해|해요|려|려요|죠|합시다|십시오)$/u;
+
+/**
+ * Whether one word ends in a request or imperative form: the closed request endings (줘, 주세요, 주십시오, 줄래, 하세요, 해라,
+ * 하자, 둬, 놔, 부탁 …) and the imperative tails. The single recogniser for the undo anchor (selection-validator).
+ */
+export function nlIsRequestForm(raw: string): boolean {
+  const word = raw.replace(WORD_NOISE, '').replace(/요{2,}$/u, '요');
+  return word.length > 0 && !isAdnominal(word) && (REQUEST_WORD_KO.test(word) || IMPERATIVE_TAIL.test(word));
+}
+
 /** Whether `text` makes a request of its own (a request word, an action word as a command, an English request lead). */
 export function nlRequestsSomething(text: string, actionWords: readonly string[]): boolean {
   return requestsSomething(normalizeForMatch(text), actionWords);
