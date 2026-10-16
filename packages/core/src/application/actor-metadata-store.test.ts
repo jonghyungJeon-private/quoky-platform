@@ -128,6 +128,8 @@ describe('source rule: no Actor.metadata save outside the store (D3)', () => {
     'packages/core/src/application/actor-metadata-store.ts': 'the one metadata writer (per-actor lock)',
     'packages/core/src/application/actor-manager.ts': 'creates a new Actor (no metadata)',
     'apps/quoky/src/actor-identity-provisioner.ts': 'startup identities only, before any metadata writer runs',
+    // Test-only harness (imported by *.test.ts and a type import in tools/nl-r2-redteam.ts); it seeds an extra Jira identity on the owner fixture and never runs in the service.
+    'apps/quoky/src/a6-r2-harness.ts': 'offline R2 test harness: seeds a fixture identity, never part of the service runtime',
     // Composition only: they hand the live repository to the store-backed writers (no write of their own).
     'apps/quoky/src/features/nl-selection.providers.ts': 'binds the live repository into NlActionSwitch / NlSelectionService (both write through the store)',
     'apps/quoky/src/features/surface-grants.providers.ts': 'binds the live repository into the ActorMetadataStore',

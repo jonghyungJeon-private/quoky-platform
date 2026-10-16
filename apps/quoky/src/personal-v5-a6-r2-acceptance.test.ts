@@ -290,5 +290,56 @@ describe('A6 R2 inertness: QUOKY_NL_ITEM_R2=off keeps every list and record as b
   });
 });
 
+describe('A6 R2 live state: QUOKY_NL_ACTIONS=shadow with QUOKY_NL_ITEM_R2=off', () => {
+  let h: R2Harness;
+  beforeAll(async () => {
+    h = await bootR2Harness({ QUOKY_NL_ACTIONS: 'shadow', QUOKY_NL_ITEM_R2: 'off', QUOKY_WORK_SUMMARY_ENABLED: 'false' });
+    h.jira = ISSUES;
+    h.slack = SLACK;
+  }, 120_000);
+  afterAll(async () => {
+    await h?.close();
+  });
+
+  it('boots shadow with R2 off, lists stay unnumbered, and no Jira / Slack slot is written', async () => {
+    expect(h.service().actionLevel()).toBe('shadow');
+    expect(h.service().itemR2Level()).toBe('off');
+    const listed = await h.turn('내 Jira 이슈 보여줘');
+    expect(listed.text).toMatch(/^- \[jira:PROJ-1\]/mu);
+    expect(listed.text).not.toMatch(/^\d+\. /mu);
+    await h.turn('Slack에서 배포 검색');
+    const byActor = ((await h.sessionMetadata())['quoky.lastListing'] as { byActor?: Record<string, Record<string, unknown>> } | undefined)?.byActor?.[h.owner.id] ?? {};
+    expect(byActor.jira).toBeUndefined();
+    expect(byActor.slack).toBeUndefined();
+  });
+
+  it('R2 phrases make 0 item fetches and 0 SUMMARIZATION calls, and the reply is today\'s chat', async () => {
+    for (const [text, args] of [
+      ['2번 이슈 요약해줘', { source: 'jira', ref: '#2', mode: 'summary' }],
+      ['그 슬랙 메시지 원문 보여줘', { source: 'slack', ref: 'this', mode: 'full' }],
+    ] as const) {
+      const turn = await h.turn(text, pick('item.summarize', args));
+      expect(turn.items).toEqual([]);
+      expect(turn.summaries).toHaveLength(0);
+      expect(turn.text).toBe('R2 stub chat reply');
+    }
+    expect(h.itemFetches()).toEqual([]);
+    expect((await h.sessionMetadata())['quoky.lastRead']).toBeUndefined();
+  });
+
+  it('the selector prompt stays the v42 A6 prompt (no R2 source) and R1 shadow decisions are unchanged', async () => {
+    for (const text of ['아무 말', '오늘 일정 알려줘']) {
+      const turn = await h.turn(text, none);
+      const prompt = turn.selects[0]?.prompt ?? '';
+      expect(prompt).not.toContain('Jira issue or Slack message');
+      expect(prompt).not.toContain('jira|slack');
+      expect(prompt).not.toMatch(/source \(required\): mail\|drive\|jira/u);
+      expect(turn.items).toEqual([]);
+      expect(turn.summaries).toHaveLength(0);
+      expect(turn.text).toBe('R2 stub chat reply');
+    }
+  });
+});
+
 // Keep the ADF helper referenced (fixtures above use plain text through the harness).
 void adf;
