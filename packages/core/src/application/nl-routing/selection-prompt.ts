@@ -303,7 +303,7 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   Search keyword (Slack, Confluence): only the core topic term(s); drop conversational filler such as 얘기, 나온, 관련, 거.',
     '   Mail: a period the mail was received in is `range` ("이번 주에 도착한 메일" = this-week); a question about ONE listed mail by its',
     '   number ("N번째 건 누가 보냈어?") is `item`; summarizing, replying to or reading one mail ("이 메일 요점만 알려줘") is none, not a list.',
-    '   Jira order: sort oldest/newest/recently-updated only when the owner asks for an order ("오래 묵은 것부터"); keep the previous args.',
+    '   Jira order: sort oldest/newest/recently-updated only when the owner asks for an order ("가장 오래 열려 있는 것 먼저"); keep the previous args.',
     '6. Follow-ups: when a previous selection is given and the message narrows or corrects it ("그 중에 X만", "아니 보고자만",',
     '   "모레는 어때?"), return the same entryId with the previous args plus only the change the message states.',
     '   A count follow-up ("총 몇 건이야", "how many is that") with a previous selection is the same entry and args plus',

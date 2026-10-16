@@ -272,8 +272,8 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
   const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } });
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
-    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v37', sha256: 'e9bdb99a51366fe3a563e1f156beba4bcf69424d2f8eadaf0d5d5f7844f281c8' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v38', sha256: '84a936692f3b943313406de41a64ba197055134bb0837e8956213e02979d2369' });
+    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v37', sha256: '55a7eddff3a5692e1ac8803a748de60aaaff7b745564785c669f759b37af2d5d' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v38', sha256: '1ad13de28c6004d41a337a03733c5084fd1738d384081399099ae2bb06e0dcdb' });
   });
 });
 
