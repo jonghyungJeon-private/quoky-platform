@@ -150,12 +150,10 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 /** The content spans of a LOCAL_WRITE: the owner's content, never the request around it (a `when` stays in the frame). */
 const CONTENT_SPAN_ARGS = ['title', 'body', 'match'] as const;
 const QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [["'", "'"], ['"', '"'], ['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』']];
-/**
- * A complete spaced auxiliary verb token that continues the undo word ("되돌려 주는", "되돌려 줄래", "되돌려 봐", "원래대로 돌려
- * 놔"): its request, imperative, capability (줄 / 주실 before 수) and descriptive forms. Whole tokens only, so 주의 / 주말 never
- * chain (Codex P2).
- */
-const AUXILIARY_WORD = /^(?:주|줘|줘요|줘봐|줘 봐|줄|줄래|줄래요|주세요|주십시오|주실|주실래요|주시겠어요|준|주는|주던|드려|드려요|드릴|드릴게|드릴까요|드리는|드린|드리세요|봐|봐요|보세요|보십시오|보는|본|볼|놔|놔요|놓는|놓은|둬|둬요|두세요|두는|둔)$/u;
+/** A token that begins with an auxiliary-verb stem (주다 / 드리다 / 보다 / 놓다 / 두다) after a connective form. */
+const AUXILIARY_STEM = /^(?:주|줘|줄|드리|드려|보|봐|놔|둬)/u;
+/** A bare stem or connective form of the undo verb ("되돌려", "돌려", "취소해"): a request only by structure (below). */
+const CONNECTIVE_FORM = /(?:려|어|아|워|해)$/u;
 /** A dative recipient ("친구한테", "팀장님께"): something is given to someone, never Quoky's own undo. */
 const DATIVE = /(?:한테|에게|께)(?=$|\s|[.,!?~])/u;
 
@@ -244,22 +242,23 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
     const tokens = frameText.split(/\s+/u).map((token) => token.replace(/[.,!?~…ㅋㅎㅠㅜ^]+$/u, '')).filter((token) => token.length > 0);
     const korean = words.map(normalizeForMatch).filter((word) => !/^[a-z ]+$/u.test(word));
     const latin = words.map(normalizeForMatch).filter((word) => /^[a-z ]+$/u.test(word));
-    // The undo word with its auxiliary chain: the request check applies to the END of the chain, so "되돌려 주는 앱" (an
-    // adnominal end) is descriptive and "되돌려 줄래" a request (Codex P2). A chain stops at a sentence boundary.
+    // Structural (Codex P1): no list of inflections. A connective form ("되돌려", "돌려", "취소해") is a request only when it
+    // ends its clause, or when the next token begins with an auxiliary stem AND is itself a request form or the capability
+    // request ("되돌려 줘", "되돌려 봐", "되돌려 줄 수 있어?"); any other auxiliary form is descriptive ("되돌려 주신 기능",
+    // "되돌려 보던 기능", "되돌려 드린 거"). A token that already carries a request ending ("되돌려줘", "원상복구해줘",
+    // "취소하세요") is a request whatever follows. A sentence boundary ends a clause.
     const rawTokens = frameText.split(/\s+/u).filter((token) => token.replace(/[.,!?~…ㅋㅎㅠㅜ^]+$/u, '').length > 0);
-    const boundaryAfter = (index: number): boolean => /[.,!?;。~]$/u.test(rawTokens[index] ?? '');
-    const chainEnd = (index: number): number => {
-      let end = index;
-      while (end + 1 < tokens.length && !boundaryAfter(end) && AUXILIARY_WORD.test(tokens[end + 1] ?? '')) end += 1;
-      return end;
-    };
-    // A request at the end of the chain that starts at `index`: a request or imperative form, or the polite capability
-    // request "… 줄 수 있어(요)?" (also after a bare anchor: "원래대로 돌려 줄 수 있어?", "원상복구 해 줄 수 있어?").
-    const requestAt = (index: number): boolean => {
-      const end = chainEnd(index);
-      const last = tokens[end] ?? '';
-      if (nlIsRequestForm(last)) return true;
-      return /(?:줄|주실)$/u.test(last) && tokens[end + 1] === '수' && /^있/u.test(tokens[end + 2] ?? '');
+    const endsClause = (index: number): boolean => index + 1 >= tokens.length || /[.,!?;。~]$/u.test(rawTokens[index] ?? '');
+    const capabilityAt = (index: number): boolean => /(?:줄|주실)$/u.test(tokens[index] ?? '') && tokens[index + 1] === '수' && /^있/u.test(tokens[index + 2] ?? '');
+    const requestFrom = (index: number): boolean => {
+      const word = tokens[index];
+      if (word === undefined) return false;
+      if (CONNECTIVE_FORM.test(word)) {
+        if (endsClause(index)) return true;
+        const next = tokens[index + 1] ?? '';
+        return AUXILIARY_STEM.test(next) && (nlIsRequestForm(next) || capabilityAt(index + 1));
+      }
+      return nlIsRequestForm(word) || capabilityAt(index);
     };
     const holdsUndo = (token: string): boolean => korean.some((word) => (word === '돌려' ? /되돌려/u.test(token) : token.includes(word)));
     const bareUndo = (token: string): boolean => {
@@ -271,12 +270,11 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
       latin.some((word) => new RegExp(`(?<![a-z])${word.replace(/ /g, '\\s+')}\\s+(?:해|해줘|해 줘|해주세요|좀)`, 'u').test(frameText)) ||
       tokens.some((token, index) => {
         if (!holdsUndo(token)) return false;
-        if (requestAt(index)) return true;
-        if (chainEnd(index) !== index) return false;
-        // A bare command at the end, or before a request judged at the end of that word's own auxiliary chain ("원래대로 돌려
-        // 놔" grounds, "원래대로 돌려 주는 버튼" does not).
+        if (requestFrom(index)) return true;
+        // A bare command ("되돌리기", "원래대로", "원상복구") at the end of its clause or before a request ("원래대로 돌려 놔",
+        // "원상복구 해 줄 수 있어?"; "원래대로 돌려 주는 버튼" does not ground).
         const next = tokens[index + 1];
-        return bareUndo(token) && (next === undefined || (!boundaryAfter(index) && (requestAt(index + 1) || /^(?:좀|부탁)/u.test(next))) || boundaryAfter(index));
+        return bareUndo(token) && (endsClause(index) || requestFrom(index + 1) || /^(?:좀|부탁)/u.test(next ?? ''));
       });
     expressesAction &&= anchored && !DATIVE.test(contentFrame);
   }
