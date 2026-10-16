@@ -26896,3 +26896,13 @@ done here (no model calls; the prompt is being changed on another branch).
   later 근데 / but clause ends as a statement even when the owner still wants the action: "2번 완료해줘. 근데 3번은 진행
   중이네" and "2번 완료해줘. 근데 아직이네. 그래도 완료해줘". Both fail closed (chat, nothing written) and are pinned in
   `request-shape.test.ts` in their current behaviour. No gold change in this round.
+
+- **Undo grounding, whole-chain rule (Codex, after 80b4ad5e).** The token checks are replaced by one rule. The chain is
+  the undo-bearing token (a bare undo noun takes its light or undo verb: "되돌리기 해줘", "원래대로 돌려 놔"), then every
+  consecutive auxiliary token of 주다 / 드리다 / 보다 / 놓다 / 두다 in any inflection (the stem syllable followed only by
+  closed verbal ending syllables, so "주의", "주말", "보고서" are not auxiliaries), up to a sentence boundary. The undo grounds
+  only when the chain's final token is a request form (`nlIsRequestForm`, or the capability request "… 줄 수 있어?") and no
+  other request or predicate follows the chain; trailing adverbs and a repeated light verb ("되돌려줘 이번에는 제대로 해줘")
+  are fine. "되돌려 봐 주는 앱 추천" and "되돌려 주신 기능 설명해줘" are refused; "되돌려 두세요" and "원래대로 돌려 두세요"
+  act. **Known residual:** "되돌려줘. 주말 일정은 그대로 둬" (a second request after a sentence boundary) fails closed as
+  chat; pinned in `request-shape.test.ts` for D12 and the shadow review.

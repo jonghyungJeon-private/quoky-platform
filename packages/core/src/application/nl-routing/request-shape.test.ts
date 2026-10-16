@@ -304,7 +304,12 @@ describe('A6-D3a amendment 1, final round (Codex P2)', () => {
     }
     // Codex P2 (after 9dadff1b): whole auxiliary tokens only, sentence boundaries stop the chain, auxiliary imperatives, the
     // capability request after a bare anchor.
-    for (const text of ['되돌려줘 주의 깊게', '되돌려줘. 주말 일정은 그대로 둬', '되돌려 봐', '되돌려 보세요', '되돌려 줘봐', '원래대로 돌려 줄 수 있어?', '원상복구 해 줄 수 있어?']) {
+    // The whole-chain rule (Codex, after 80b4ad5e): 두 stem, an adnominal chain end, a second request after the chain.
+    for (const text of ['되돌려 두세요', '원래대로 돌려 두세요']) expect(undo(text).ok, text).toBe(true);
+    for (const text of ['되돌려 봐 주는 앱 추천', '되돌려 주신 기능 설명해줘']) expect(undo(text).ok, text).toBe(false);
+    // Known residual (DECISIONS, final rounds): a second request after a sentence boundary fails closed (chat).
+    expect(undo('되돌려줘. 주말 일정은 그대로 둬').ok).toBe(false);
+    for (const text of ['되돌려줘 주의 깊게', '되돌려 봐', '되돌려 보세요', '되돌려 줘봐', '원래대로 돌려 줄 수 있어?', '원상복구 해 줄 수 있어?']) {
       expect(undo(text).ok, text).toBe(true);
     }
     for (const text of ['되돌려 주는 앱 추천', '되돌려 주는 기능 설명해줘', '되돌려 준 거 고마워', '원래대로 돌려 주는 버튼', '되돌려 보는 중', '되돌리기 돕는 앱 추천', '되돌려 주신 기능 설명해줘', '되돌려 주시는 앱 추천', '되돌려 보던 기능 설명해줘', '되돌려 드린 거 뭐였지']) {

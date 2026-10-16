@@ -150,10 +150,18 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 /** The content spans of a LOCAL_WRITE: the owner's content, never the request around it (a `when` stays in the frame). */
 const CONTENT_SPAN_ARGS = ['title', 'body', 'match'] as const;
 const QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [["'", "'"], ['"', '"'], ['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』']];
-/** A token that begins with an auxiliary-verb stem (주다 / 드리다 / 보다 / 놓다 / 두다) after a connective form. */
-const AUXILIARY_STEM = /^(?:주|줘|줄|드리|드려|보|봐|놔|둬)/u;
-/** A bare stem or connective form of the undo verb ("되돌려", "돌려", "취소해"): a request only by structure (below). */
-const CONNECTIVE_FORM = /(?:려|어|아|워|해)$/u;
+/**
+ * An auxiliary-verb token (주다 / 드리다 / 보다 / 놓다 / 두다) in any inflection: the stem syllable, then only closed verbal
+ * ending syllables ("주는", "주신", "주시는", "주세요", "줘봐", "보던", "두세요"). A noun that merely begins with the syllable
+ * ("주의", "주말", "보고서") is not one.
+ */
+const AUXILIARY_TOKEN = /^(?:주|줘|줄|준|줬|드리|드려|드릴|드린|드렸|보|봐|볼|본|봤|놔|놓|놨|두|둬|둘|둔|뒀)(?:시|세|셔|실|신|십|는|던|고|면|래|요|겠|어|라|자|봐|보|세요|십시오|오|게)*$/u;
+/** The light verb or the undo verb after a bare undo noun ("되돌리기 해줘", "원래대로 돌려 놔", "되돌리기 합시다"). */
+const UNDO_VERB_TOKEN = /^(?:해|하|합|돌려|되돌려)/u;
+/** A trailing request that repeats the light verb 하다 or only says please ("…제대로 해줘", "되돌려줘 부탁"): the same act. */
+const LIGHT_REQUEST = /^(?:해|해요|해줘|해줘요|해주세요|하세요|해 줘|부탁|부탁해|부탁해요|부탁드려요|부탁드립니다|제발)$/u;
+/** A predicate or request form after the undo chain: another sentence of its own (fail closed). */
+const PREDICATE_TAIL = /(?:다|어|아|요|지|네|니|까|야|죠|음|함|래|자|라|줘|둬|놔|봐|세요)$/u;
 /** A dative recipient ("친구한테", "팀장님께"): something is given to someone, never Quoky's own undo. */
 const DATIVE = /(?:한테|에게|께)(?=$|\s|[.,!?~])/u;
 
@@ -242,23 +250,23 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
     const tokens = frameText.split(/\s+/u).map((token) => token.replace(/[.,!?~…ㅋㅎㅠㅜ^]+$/u, '')).filter((token) => token.length > 0);
     const korean = words.map(normalizeForMatch).filter((word) => !/^[a-z ]+$/u.test(word));
     const latin = words.map(normalizeForMatch).filter((word) => /^[a-z ]+$/u.test(word));
-    // Structural (Codex P1): no list of inflections. A connective form ("되돌려", "돌려", "취소해") is a request only when it
-    // ends its clause, or when the next token begins with an auxiliary stem AND is itself a request form or the capability
-    // request ("되돌려 줘", "되돌려 봐", "되돌려 줄 수 있어?"); any other auxiliary form is descriptive ("되돌려 주신 기능",
-    // "되돌려 보던 기능", "되돌려 드린 거"). A token that already carries a request ending ("되돌려줘", "원상복구해줘",
-    // "취소하세요") is a request whatever follows. A sentence boundary ends a clause.
+    // One whole-chain rule (Codex, after 80b4ad5e): the chain is the undo-bearing token (a bare undo noun takes its light or
+    // undo verb with it), then every consecutive auxiliary token, up to a sentence boundary. The undo grounds only when the
+    // chain's final token is a request form (or the capability request "… 줄 수 있어?"), and no other request or predicate
+    // follows the chain in the message (trailing adverbs and fillers are fine; repeating the light verb "제대로 해줘" is the
+    // same act).
     const rawTokens = frameText.split(/\s+/u).filter((token) => token.replace(/[.,!?~…ㅋㅎㅠㅜ^]+$/u, '').length > 0);
-    const endsClause = (index: number): boolean => index + 1 >= tokens.length || /[.,!?;。~]$/u.test(rawTokens[index] ?? '');
+    const boundaryAfter = (index: number): boolean => /[.,!?;。~]$/u.test(rawTokens[index] ?? '');
     const capabilityAt = (index: number): boolean => /(?:줄|주실)$/u.test(tokens[index] ?? '') && tokens[index + 1] === '수' && /^있/u.test(tokens[index + 2] ?? '');
-    const requestFrom = (index: number): boolean => {
-      const word = tokens[index];
-      if (word === undefined) return false;
-      if (CONNECTIVE_FORM.test(word)) {
-        if (endsClause(index)) return true;
-        const next = tokens[index + 1] ?? '';
-        return AUXILIARY_STEM.test(next) && (nlIsRequestForm(next) || capabilityAt(index + 1));
-      }
-      return nlIsRequestForm(word) || capabilityAt(index);
+    const chainGrounds = (start: number, bare: boolean): boolean => {
+      let end = start;
+      if (bare && !boundaryAfter(end) && UNDO_VERB_TOKEN.test(tokens[end + 1] ?? '')) end += 1;
+      while (!boundaryAfter(end) && AUXILIARY_TOKEN.test(tokens[end + 1] ?? '')) end += 1;
+      const last = tokens[end] ?? '';
+      let tail = end;
+      if (capabilityAt(end)) tail = end + 2;
+      else if (!nlIsRequestForm(last) && !(bare && end === start && (end + 1 >= tokens.length || boundaryAfter(end)))) return false;
+      return tokens.slice(tail + 1).every((token) => LIGHT_REQUEST.test(token) || (!nlIsRequestForm(token) && !PREDICATE_TAIL.test(token)));
     };
     const holdsUndo = (token: string): boolean => korean.some((word) => (word === '돌려' ? /되돌려/u.test(token) : token.includes(word)));
     const bareUndo = (token: string): boolean => {
@@ -268,14 +276,7 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
     const anchored =
       latin.some((word) => new RegExp(`^(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?${word.replace(/ /g, '\\s+')}(?![a-z])`, 'u').test(frameText)) ||
       latin.some((word) => new RegExp(`(?<![a-z])${word.replace(/ /g, '\\s+')}\\s+(?:해|해줘|해 줘|해주세요|좀)`, 'u').test(frameText)) ||
-      tokens.some((token, index) => {
-        if (!holdsUndo(token)) return false;
-        if (requestFrom(index)) return true;
-        // A bare command ("되돌리기", "원래대로", "원상복구") at the end of its clause or before a request ("원래대로 돌려 놔",
-        // "원상복구 해 줄 수 있어?"; "원래대로 돌려 주는 버튼" does not ground).
-        const next = tokens[index + 1];
-        return bareUndo(token) && (endsClause(index) || requestFrom(index + 1) || /^(?:좀|부탁)/u.test(next ?? ''));
-      });
+      tokens.some((token, index) => holdsUndo(token) && chainGrounds(index, bareUndo(token)));
     expressesAction &&= anchored && !DATIVE.test(contentFrame);
   }
   return { ...(veto !== undefined ? { veto } : {}), expressesAction };
