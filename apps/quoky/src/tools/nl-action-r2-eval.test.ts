@@ -41,6 +41,7 @@ function deps(overrides: Partial<CliDeps> = {}): CliDeps & { out: string[]; err:
     stdout: (line) => void out.push(line),
     stderr: (line) => void err.push(line),
     now: () => NOW,
+    gitHead: () => 'rev-1',
     loadCorpus: () => {
       throw new Error('not used');
     },
@@ -68,7 +69,7 @@ describe('eval:nl --mode r2 plan', () => {
   it('prints the plan: the R2 prompt v45, the corpus digest, runs, the call count, the gate; nothing is constructed', async () => {
     const d = deps();
     expect(await runCli(['--mode', 'r2', '--runs', '3'], d)).toBe(EXIT_OK);
-    const plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', runs: 3, concurrency: 4 });
+    const plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', runs: 3, concurrency: 4, gitHead: 'rev-1' });
     expect(plan.promptVersion).toBe('nl-select.v45');
     expect(plan).toMatchObject({ corpusSha256: sha256, runs: 3, itemR2: 'all', calls: corpus.cases.length * 3, gate: NL_ACTION_R2_EVAL_GATE });
     expect(digestOf(d.out)).toBe(computeActionPlanDigest(plan));
@@ -79,12 +80,14 @@ describe('eval:nl --mode r2 plan', () => {
 
   it('the digest binds the runs, the model, the corpus and the prompt (a change is a different digest)', () => {
     const ids = corpus.cases.map((golden) => golden.id);
-    const base = computeActionPlanDigest(buildActionPlan('nl-action-r2-eval', ids, sha256, { model: 'haiku', runs: 3, concurrency: 4 }));
-    expect(computeActionPlanDigest(buildActionPlan('nl-action-r2-eval', ids, sha256, { model: 'haiku', runs: 2, concurrency: 4 }))).not.toBe(base);
-    expect(computeActionPlanDigest(buildActionPlan('nl-action-r2-eval', ids, sha256, { model: 'sonnet', runs: 3, concurrency: 4 }))).not.toBe(base);
-    expect(computeActionPlanDigest(buildActionPlan('nl-action-r2-eval', ids, `${sha256.slice(1)}0`, { model: 'haiku', runs: 3, concurrency: 4 }))).not.toBe(base);
+    const base = computeActionPlanDigest(buildActionPlan('nl-action-r2-eval', ids, sha256, { model: 'haiku', runs: 3, concurrency: 4, gitHead: 'rev-1' }));
+    expect(computeActionPlanDigest(buildActionPlan('nl-action-r2-eval', ids, sha256, { model: 'haiku', runs: 2, concurrency: 4, gitHead: 'rev-1' }))).not.toBe(base);
+    expect(computeActionPlanDigest(buildActionPlan('nl-action-r2-eval', ids, sha256, { model: 'sonnet', runs: 3, concurrency: 4, gitHead: 'rev-1' }))).not.toBe(base);
+    expect(computeActionPlanDigest(buildActionPlan('nl-action-r2-eval', ids, `${sha256.slice(1)}0`, { model: 'haiku', runs: 3, concurrency: 4, gitHead: 'rev-1' }))).not.toBe(base);
+    // The git revision is bound too.
+    expect(computeActionPlanDigest(buildActionPlan('nl-action-r2-eval', ids, sha256, { model: 'haiku', runs: 3, concurrency: 4, gitHead: 'rev-2' }))).not.toBe(base);
     // The action plan of the same corpus is another plan (other prompt bytes, no R2 offer).
-    expect(computeActionPlanDigest(buildActionPlan('nl-action-eval', ids, sha256, { model: 'haiku', runs: 3, concurrency: 4 }))).not.toBe(base);
+    expect(computeActionPlanDigest(buildActionPlan('nl-action-eval', ids, sha256, { model: 'haiku', runs: 3, concurrency: 4, gitHead: 'rev-1' }))).not.toBe(base);
   });
 
   it('never reads QUOKY_NL_ITEM_R2: R2 is offered whatever the environment says', async () => {

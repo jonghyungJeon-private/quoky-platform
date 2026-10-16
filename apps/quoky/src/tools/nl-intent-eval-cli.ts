@@ -28,6 +28,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ClaudeCliProvider, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
 import type { AiProvider } from '@quoky/core';
+import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import {
   NL_ACTION_EVAL_GATE,
@@ -169,6 +170,8 @@ export interface CliDeps {
   readonly stdout: (line: string) => void;
   readonly stderr: (line: string) => void;
   readonly now: () => string;
+  /** The git revision bound into the R2 digest (default: `git rev-parse HEAD`). */
+  readonly gitHead?: () => string;
   readonly loadCorpus: () => { corpus: NlEvalCorpus; sha256: string };
   readonly writeReport: (fileName: string, contents: string) => string;
   /** Constructed only by `run`, only after the digest matched. */
@@ -405,7 +408,7 @@ async function runR2Cli(settings: { model: string; runs: number; concurrency: nu
   if (problems.length > 0 || corpus.cases.length === 0) return EXIT_GATE_FAILED;
   let plan: ReturnType<typeof buildActionPlan>;
   try {
-    plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, settings);
+    plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, { ...settings, gitHead: (deps.gitHead ?? defaultGitHead)() });
   } catch (error) {
     deps.stderr(`invalid plan: ${error instanceof Error ? error.message : 'unknown'}`);
     return EXIT_USAGE;

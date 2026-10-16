@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, type AiProvider } from '@quoky/core';
 import { EXIT_ATTACK_SUCCEEDED, countingProvider, expectsSummary, EXIT_BLOCKED, EXIT_OK, EXIT_USAGE, buildRedTeamPlan, computeRedTeamPlanDigest, maxSummaryCalls, runCli, summarizeRedTeam, type RedTeamCaseRecord, type RedTeamDeps } from './nl-r2-redteam-cli';
+import { summaryPromptSha256s } from './nl-r2-prompt-binding';
 import { loadR2RedTeam, type R2RedTeamCase } from './nl-r2-redteam';
 
 // `eval:r2-redteam` offline: the plan and its Strict digest, BLOCKED before any provider exists, successes per family, a
@@ -37,6 +38,7 @@ function deps(overrides: Partial<RedTeamDeps> = {}): RedTeamDeps & { out: string
     stdout: (line) => void out.push(line),
     stderr: (line) => void err.push(line),
     now: () => '2026-10-17T03:00:00.000Z',
+    gitHead: () => 'rev-1',
     loadCases: () => ({ cases, sha256: sha }),
     writeReport: (name, contents) => {
       written.push({ name, contents });
@@ -58,7 +60,7 @@ describe('eval:r2-redteam plan', () => {
   it('prints the plan, the digest and the call bound; nothing is booted or constructed', async () => {
     const d = deps();
     expect(await runCli(['--mode', 'plan'], d)).toBe(EXIT_OK);
-    const plan = buildRedTeamPlan(cases, sha, { runs: 3, timeoutMs: 60_000, attacks: [] });
+    const plan = buildRedTeamPlan(cases, sha, { runs: 3, timeoutMs: 60_000, attacks: [], gitHead: 'rev-1' });
     expect(plan).toMatchObject({ kind: 'nl-r2-redteam-real', promptVersion: 'nl-select.v45', runs: 3, corpusSha256: sha });
     expect(plan.caseIds).toHaveLength(cases.length);
     expect(new Set(plan.attacks).size).toBe(15);
@@ -70,19 +72,35 @@ describe('eval:r2-redteam plan', () => {
   });
 
   it('the digest binds the corpus, the runs, the model, the families and the timeout', () => {
-    const base = computeRedTeamPlanDigest(buildRedTeamPlan(cases, sha, { runs: 3, timeoutMs: 60_000, attacks: [] }));
-    const other = (patch: Partial<Parameters<typeof buildRedTeamPlan>[2]>, corpusSha = sha) => computeRedTeamPlanDigest(buildRedTeamPlan(cases, corpusSha, { runs: 3, timeoutMs: 60_000, attacks: [], ...patch }));
+    const base = computeRedTeamPlanDigest(buildRedTeamPlan(cases, sha, { runs: 3, timeoutMs: 60_000, attacks: [], gitHead: 'rev-1' }));
+    const other = (patch: Partial<Parameters<typeof buildRedTeamPlan>[2]>, corpusSha = sha) => computeRedTeamPlanDigest(buildRedTeamPlan(cases, corpusSha, { runs: 3, timeoutMs: 60_000, attacks: [], gitHead: 'rev-1', ...patch }));
     expect(other({ runs: 2 })).not.toBe(base);
     expect(other({ model: 'sonnet' })).not.toBe(base);
     expect(other({ attacks: ['chain'] })).not.toBe(base);
     expect(other({ timeoutMs: 30_000 })).not.toBe(base);
+    expect(other({ gitHead: 'rev-2' })).not.toBe(base);
     expect(other({}, 'b'.repeat(64))).not.toBe(base);
+  });
+
+  it('the digest binds the summarisation prompt text, regeneration included: a prompt edit is another digest', () => {
+    const hashes = summaryPromptSha256s();
+    expect(Object.keys(hashes).sort()).toEqual(['jira-issue:first', 'jira-issue:regeneration', 'slack-message:first', 'slack-message:regeneration', 'slack-thread:first', 'slack-thread:regeneration']);
+    expect(hashes['jira-issue:first']).not.toBe(hashes['jira-issue:regeneration']);
+    const base = computeRedTeamPlanDigest(buildRedTeamPlan(cases, sha, { runs: 3, timeoutMs: 60_000, attacks: [], gitHead: 'rev-1', summaryPromptSha256: hashes }));
+    const edited = { ...hashes, 'jira-issue:regeneration': 'f'.repeat(64) };
+    expect(computeRedTeamPlanDigest(buildRedTeamPlan(cases, sha, { runs: 3, timeoutMs: 60_000, attacks: [], gitHead: 'rev-1', summaryPromptSha256: edited }))).not.toBe(base);
+    // The live hashes are what the default plan carries.
+    expect(buildRedTeamPlan(cases, sha, { runs: 3, timeoutMs: 60_000, attacks: [], gitHead: 'rev-1' }).summaryPromptSha256).toEqual(hashes);
   });
 
   it('bounds the real calls by each case: summarise turns, capped by the hourly item-read cap', () => {
     const capped = cases.find((golden) => golden.attack === 'cap-exhaustion');
     if (capped === undefined) throw new Error('no cap case');
-    expect(maxSummaryCalls(capped)).toBeLessThanOrEqual(capped.caps?.itemReadPerHour ?? 30);
+    expect(maxSummaryCalls(capped)).toBeLessThanOrEqual(2 * (capped.caps?.itemReadPerHour ?? 30));
+    const single = cases.find((golden) => golden.attack === 'jira-description' && expectsSummary(golden));
+    if (single === undefined) throw new Error('no case');
+    // A summarising turn can be regenerated once: 2 calls per turn.
+    expect(maxSummaryCalls(single)).toBe(2 * single.turns.filter((turn) => typeof turn.selector === 'object' && turn.selector.entryId === 'item.summarize').length);
     const none = { ...capped, turns: [{ text: 'x', selector: 'none' as const }] };
     expect(maxSummaryCalls(none)).toBe(0);
   });
@@ -191,6 +209,25 @@ describe('eval:r2-redteam run (Strict)', () => {
     expect(cases.filter((golden) => golden.expectsSummarizerCall === false)).toHaveLength(1);
   });
 
+  it('a run that made more calls than the bound fails (refused calls are counted)', async () => {
+    const planned = deps();
+    await runCli(['--mode', 'plan'], planned);
+    const d = deps({ runCases: async ({ runs }) => recordsFor(runs, () => []).map((record, index) => (index === 0 ? { ...record, summaryRefused: 1 } : record)) });
+    expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], d)).toBe(EXIT_ATTACK_SUCCEEDED);
+    expect(d.out.join('\n')).toContain('BOUND EXCEEDED');
+  });
+
+  it('countingProvider refuses, and counts, every call once the limit is reached', async () => {
+    const inner: AiProvider = { id: 'x', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: 'ok', artifacts: [] }) };
+    const counting = countingProvider(inner, 2);
+    const call = () => counting.provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' });
+    await call();
+    await call();
+    await expect(call()).rejects.toThrow('bound was reached');
+    await expect(call()).rejects.toThrow('bound was reached');
+    expect(counting.counts()).toEqual({ ok: 2, failed: 0, refused: 2 });
+  });
+
   it('countingProvider counts answers and rethrows failures at the provider boundary', async () => {
     let fail = false;
     const inner: AiProvider = { id: 'x', capabilities: [], isAvailable: async () => true, execute: async () => { if (fail) throw new Error('timeout'); return { text: 'ok', artifacts: [] }; } };
@@ -198,7 +235,7 @@ describe('eval:r2-redteam run (Strict)', () => {
     await counting.provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' });
     fail = true;
     await expect(counting.provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' })).rejects.toThrow('timeout');
-    expect(counting.counts()).toEqual({ ok: 1, failed: 1 });
+    expect(counting.counts()).toEqual({ ok: 1, failed: 1, refused: 0 });
   });
 
   it('an errored case also fails the gate (never a silent pass)', async () => {

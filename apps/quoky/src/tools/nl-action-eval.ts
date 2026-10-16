@@ -591,6 +591,8 @@ export interface NlActionPlan {
   readonly caseIds: readonly string[];
   /** `nl-action-r2-eval` only: R2 is offered as with `QUOKY_NL_ITEM_R2=all` (fixed by the mode; the environment is never read). */
   readonly itemR2?: 'all';
+  /** `nl-action-r2-eval` only: the git revision the plan was made at. */
+  readonly gitHead?: string;
   /** `nl-action-r2-eval` only: the model-call count this plan authorises (cases x runs; one selector call per case). */
   readonly calls?: number;
   /** `nl-action-r2-eval` only: the gate (A6 R2 proposal §6.4), bound into the digest. */
@@ -606,7 +608,7 @@ export function buildActionPlan(
   kind: NlActionEvalKind,
   caseIds: readonly string[],
   corpusSha256: string,
-  options: { readonly model: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number },
+  options: { readonly model: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number; readonly gitHead?: string },
 ): NlActionPlan {
   if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 5) throw new Error('runs must be 1..5');
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
@@ -622,7 +624,7 @@ export function buildActionPlan(
     concurrency: options.concurrency,
     callTimeoutMs: options.timeoutMs ?? NL_SELECTION_TIMEOUT_MS,
     caseIds: [...caseIds],
-    ...(r2 ? { itemR2: 'all' as const, calls: caseIds.length * options.runs, gate: NL_ACTION_R2_EVAL_GATE } : {}),
+    ...(r2 ? { itemR2: 'all' as const, ...(options.gitHead !== undefined ? { gitHead: options.gitHead } : {}), calls: caseIds.length * options.runs, gate: NL_ACTION_R2_EVAL_GATE } : {}),
   };
 }
 
