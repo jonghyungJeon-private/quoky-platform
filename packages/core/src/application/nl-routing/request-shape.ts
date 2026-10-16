@@ -201,6 +201,23 @@ function requestsSomething(clause: string, actionWords: readonly string[]): bool
   return EN_REQUEST_SIGNAL.test(clause.trim()) || clause.split(/\s+/u).some((word) => word.length > 0 && isCommandWord(word, actionWords));
 }
 
+/**
+ * A quoted text that is itself a request: it ENDS in a request or imperative form ("1번 완료 처리해줘", "지워", "추가하자")
+ * or, in English, starts with a request lead or an action verb ("please add this …"). An action noun inside a content phrase
+ * ("보고서 추가 검토") or a nominal ending ("작업 완료", "추가하기") is content, not a quoted command (Codex P2).
+ */
+function isQuotedRequest(inner: string, actionWords: readonly string[]): boolean {
+  const words = wordsOf(inner);
+  const last = words.at(-1) ?? '';
+  if (REQUEST_WORD_KO.test(last)) return true;
+  if (/(?:해|해요|하세요|해라|하자|합시다)$/u.test(last) && holdsActionWord(last, actionWords)) return true;
+  // A Korean action verb in its own imperative ending ("지워", "되돌려", "꺼"); a verbal noun ("추가", "완료") or a
+  // nominalised form ("추가하기") is not.
+  if (holdsActionWord(last, actionWords) && /[가-힣]$/u.test(last) && /(?:어|아|워|려|빼|꺼|줘)$/u.test(last)) return true;
+  const first = words[0] ?? '';
+  return EN_REQUEST_SIGNAL.test(inner.trim()) || (/^[a-z]+$/u.test(first) && holdsActionWord(first, actionWords));
+}
+
 const RETRACTION_FINAL = /^(?:취소|취소요|캔슬|철회|아니|아니야|아냐|아님|ㄴㄴ|노노|됐어|됐다|잠깐|그만|그만해|nope|nah|cancel|undo)$/u;
 const RETRACTION_ANYWHERE = /철회|그만\s*(?:해|하|둬|두)/u;
 
@@ -269,11 +286,11 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
   // also when a span carries the quotes with it.
   for (const match of [frame, ...(spans.content ?? [])].flatMap((part) => [...normalizeForMatch(part).matchAll(QUOTED_SEGMENT)])) {
     const inner = match.slice(1).find((group) => group !== undefined) ?? '';
-    if (requestsSomething(inner, actionWords) || REQUEST_ENDING_KO.test(inner)) return 'reported';
+    if (isQuotedRequest(inner, actionWords)) return 'reported';
   }
   for (const span of spans.quoted ?? []) {
     const inner = normalizeForMatch(span);
-    if (requestsSomething(inner, actionWords) || REQUEST_ENDING_KO.test(inner)) return 'reported';
+    if (isQuotedRequest(inner, actionWords)) return 'reported';
   }
 
   const clauses = clausesOf(text);

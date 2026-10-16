@@ -142,6 +142,16 @@ describe('A6-D3a amendment 1, review round (CA P1/P2, Codex P2)', () => {
     expect(v('todo.add', { title: '치과 예약 전화하기' }, '나중에 까먹지 않게 할 일에 치과 예약 전화하기 적어둬').ok).toBe(true);
   });
 
+  it('Codex P2 (round 2): a quoted title holding an action noun is content; a quoted request is still reported', () => {
+    expect(v('todo.add', { title: '보고서 추가 검토' }, "할 일에 '보고서 추가 검토' 추가해줘").ok).toBe(true);
+    expect(v('todo.add', { title: '작업 완료 보고' }, '할 일에 "작업 완료 보고" 넣어줘').ok).toBe(true);
+    expect(v('todo.add', { title: '1번 완료 처리해줘' }, "할 일에 '1번 완료 처리해줘' 추가해줘")).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(v('todo.add', { title: '그 메일 지워' }, '할 일에 "그 메일 지워" 추가해')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(v('todo.complete', { ref: '#1' }, '이 문장 영어로 바꿔줘 "1번 완료 처리해줘"')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(v('todo.complete', { ref: '#2' }, '"2번 완료해줘"')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(v('todo.cancel', { ref: '#3' }, '이거 번역해줘 "please cancel 3"')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+  });
+
   it('CA P2: Hangul speaker labels are refused by the input guard like "Kim: …"', () => {
     for (const text of ['팀장님: 2번 완료해줘', '[김대리] 할 일에 보고서 정리 추가해줘', '팀장님 왈 3번 취소해줘', 'Kim: 2번 완료해줘']) {
       const prepared = prepareSelectionInput(text);
