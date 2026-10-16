@@ -27207,6 +27207,39 @@ Strict owner item. A Chief Architect review is required before the code merges.
 
 There is no new port, DI token, migration, host or runtime deps key; scopes are unchanged.
 
+### A6 R2 implementation note (2026-10-16, branch `claude/v5-a6-r2-impl`)
+
+Implemented as written in the proposal, inert (`QUOKY_NL_ITEM_R2` default `off`; R2 acts only with `QUOKY_NL_ACTIONS=local`;
+under the live `shadow` an R2 selection resolves and logs `nl_action.decided` with `result: shadow`: 0 fetches, 0 model
+calls, today's reply). Where the code is more specific than the proposal:
+
+1. **Redirects.** The ADR-0121 D8 egress guard strips `maxRedirections` but does not itself refuse a redirect that
+   `fetch` follows, so the adapters set `redirect: 'manual'` on the item GET and map any `3xx` (or an opaque redirect) to
+   `MOVED`; nothing is ever followed. Every other request keeps the adapter's existing transport.
+2. **Port shape.** `ConnectorItem.itemRef` (additive) carries the slot id (`KEY:numericId`, `channel:ts[:threadTs]`).
+   `ConnectorItem.detail.sections` carry a structural `kind` (description / comment / message) instead of a title, because
+   Core titles every section with its own copy; `detail` also states `people`, the Jira comment counts, `replyCount`,
+   `hasMore`, `movedTo`, `descriptionOnly`, `requests` and `bytes`. `isConnectorQueryError` also recognises an error of
+   another class identity that carries a closed neutral `reason` (an adapter built with its own copy of the port module).
+3. **Labels.** The numbered list and the index record only the rows that certainly survive the reply budget under the
+   worst-case (twice) rendering, as the to-do receipts do; the index renders only those rows, so every index line written
+   is delivered. The fallback list and the summary index each carry their receipt and the runtime records the delivered one.
+4. **Scope kept to R2 where the proposal is silent.** `quoky.lastRead` is written for Jira / Slack reads only, and the
+   card-spoof check runs on Jira / Slack summaries only: mail and Drive (R1) are byte-identical. The D8 daily cap (100) is
+   per actor for every `item.summarize`, as decided.
+5. **Copy.** The oversize / malformed reply carries no link (Core builds no Jira URL; the listing message the owner saw
+   holds it). Every R2 outcome (summary, `full`, fallback, refusal) writes only the fixed history note.
+6. **D12** is a Jira adapter option (`itemSecondRequest`, default `false`) and is not wired to configuration; turning it on
+   is its own owner decision. Both exclusive branches are covered by adapter tests.
+7. **Slack thread reply.** The one-request form (`ts=threadTs&oldest=ts&latest=ts&inclusive=true&limit=2`, selecting
+   exactly the listed `ts`, `messages[1]` only after the parent) is pinned by a documented-shape fixture (no live call was
+   made); the explicit refusal path is therefore not shipped.
+8. **Corpus and red team.** The R2 corpus is an agent-drafted batch in its own file `golden/nl-action.r2.v1.json` (212
+   cases: 71 paraphrases, 68 references, 73 negatives; 6 negatives are `selectorOnly`, the §1.1 known gap that only the
+   selector's `none` keeps safe) awaiting the owner's batch approval; `nl-action.v1.json` is unchanged. The red-team
+   family is 77 agent-drafted cases (`agent-redteam.v1.json`, `subFamily: "r2"`, all 15 families of §6.3) run offline with
+   a worst-case stub echo summariser; the real-model run is the separate Strict step.
+
 ### READ structural guard for reason-clause statements and quoted requests (v5 neg captures)
 
 - `read-statement.ts` (`nlReadNotRequest`, message-level, READ only, next to the A7 past-statement guard) turns a READ capture
