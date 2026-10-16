@@ -521,8 +521,11 @@ export function nlRequestEndsBefore(before: string, actionWords: readonly string
   return /^(?:to|that)$/u.test(last) && (EN_REQUEST_SIGNAL.test(text) || wordsOf(text).some((word) => /^[a-z]+$/u.test(word) && holdsActionWord(word, actionWords)));
 }
 
-/** Imperative endings beside the request words ("되돌려", "취소해", "되돌려죠", "합시다", "하십시오"). */
-const IMPERATIVE_TAIL = /(?:해|해요|려|려요|죠|합시다|십시오)$/u;
+/**
+ * Imperative endings beside the request words ("되돌려", "취소해", "되돌려죠", "합시다", "하십시오"), and the imperatives of the
+ * auxiliaries 보다 / 두다 / 드리다 ("되돌려 봐", "되돌려 보세요", "되돌려 줘봐"); their descriptive forms (보는, 본) stay out.
+ */
+const IMPERATIVE_TAIL = /(?:해|해요|려|려요|죠|합시다|십시오|봐|봐요|보세요|두세요|드리세요)$/u;
 
 /**
  * Whether one word ends in a request or imperative form: the closed request endings (줘, 주세요, 주십시오, 줄래, 하세요, 해라,

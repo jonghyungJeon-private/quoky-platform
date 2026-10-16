@@ -150,8 +150,12 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 /** The content spans of a LOCAL_WRITE: the owner's content, never the request around it (a `when` stays in the frame). */
 const CONTENT_SPAN_ARGS = ['title', 'body', 'match'] as const;
 const QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [["'", "'"], ['"', '"'], ['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』']];
-/** A spaced auxiliary verb that continues the undo word ("되돌려 주는", "되돌려 줄래", "되돌려 드릴게", "원래대로 돌려 놔"). */
-const AUXILIARY_WORD = /^(?:주|줘|줄|준|드리|드려|드릴|드린|보|봐|볼|놔|놓|둬|두|둘)/u;
+/**
+ * A complete spaced auxiliary verb token that continues the undo word ("되돌려 주는", "되돌려 줄래", "되돌려 봐", "원래대로 돌려
+ * 놔"): its request, imperative, capability (줄 / 주실 before 수) and descriptive forms. Whole tokens only, so 주의 / 주말 never
+ * chain (Codex P2).
+ */
+const AUXILIARY_WORD = /^(?:주|줘|줘요|줘봐|줘 봐|줄|줄래|줄래요|주세요|주십시오|주실|주실래요|주시겠어요|준|주는|주던|드려|드려요|드릴|드릴게|드릴까요|드리는|드린|드리세요|봐|봐요|보세요|보십시오|보는|본|볼|놔|놔요|놓는|놓은|둬|둬요|두세요|두는|둔)$/u;
 /** A dative recipient ("친구한테", "팀장님께"): something is given to someone, never Quoky's own undo. */
 const DATIVE = /(?:한테|에게|께)(?=$|\s|[.,!?~])/u;
 
@@ -241,11 +245,21 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
     const korean = words.map(normalizeForMatch).filter((word) => !/^[a-z ]+$/u.test(word));
     const latin = words.map(normalizeForMatch).filter((word) => /^[a-z ]+$/u.test(word));
     // The undo word with its auxiliary chain: the request check applies to the END of the chain, so "되돌려 주는 앱" (an
-    // adnominal end) is descriptive and "되돌려 줄래" a request (Codex P2).
-    const chainEnd = (index: number): string => {
+    // adnominal end) is descriptive and "되돌려 줄래" a request (Codex P2). A chain stops at a sentence boundary.
+    const rawTokens = frameText.split(/\s+/u).filter((token) => token.replace(/[.,!?~…ㅋㅎㅠㅜ^]+$/u, '').length > 0);
+    const boundaryAfter = (index: number): boolean => /[.,!?;。~]$/u.test(rawTokens[index] ?? '');
+    const chainEnd = (index: number): number => {
       let end = index;
-      while (end + 1 < tokens.length && AUXILIARY_WORD.test(tokens[end + 1] ?? '')) end += 1;
-      return tokens[end] ?? '';
+      while (end + 1 < tokens.length && !boundaryAfter(end) && AUXILIARY_WORD.test(tokens[end + 1] ?? '')) end += 1;
+      return end;
+    };
+    // A request at the end of the chain that starts at `index`: a request or imperative form, or the polite capability
+    // request "… 줄 수 있어(요)?" (also after a bare anchor: "원래대로 돌려 줄 수 있어?", "원상복구 해 줄 수 있어?").
+    const requestAt = (index: number): boolean => {
+      const end = chainEnd(index);
+      const last = tokens[end] ?? '';
+      if (nlIsRequestForm(last)) return true;
+      return /(?:줄|주실)$/u.test(last) && tokens[end + 1] === '수' && /^있/u.test(tokens[end + 2] ?? '');
     };
     const holdsUndo = (token: string): boolean => korean.some((word) => (word === '돌려' ? /되돌려/u.test(token) : token.includes(word)));
     const bareUndo = (token: string): boolean => {
@@ -257,15 +271,12 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
       latin.some((word) => new RegExp(`(?<![a-z])${word.replace(/ /g, '\\s+')}\\s+(?:해|해줘|해 줘|해주세요|좀)`, 'u').test(frameText)) ||
       tokens.some((token, index) => {
         if (!holdsUndo(token)) return false;
-        const end = chainEnd(index);
-        if (nlIsRequestForm(end)) return true;
-        // The polite capability request "되돌려 줄 수 있어(요)?" ends its chain on 줄.
-        if (/^(?:줄|주실)$/u.test(end) && /^(?:줄|주실)\s+수\s+있/u.test(tokens.slice(tokens.indexOf(end, index), tokens.indexOf(end, index) + 3).join(' '))) return true;
-        if (end !== token) return false;
+        if (requestAt(index)) return true;
+        if (chainEnd(index) !== index) return false;
+        // A bare command at the end, or before a request judged at the end of that word's own auxiliary chain ("원래대로 돌려
+        // 놔" grounds, "원래대로 돌려 주는 버튼" does not).
         const next = tokens[index + 1];
-        // A bare command before a request word, judged at the end of that word's own auxiliary chain ("원래대로 돌려 놔"
-        // grounds, "원래대로 돌려 주는 버튼" does not).
-        return bareUndo(token) && (next === undefined || nlIsRequestForm(chainEnd(index + 1)) || /^(?:좀|부탁)/u.test(next));
+        return bareUndo(token) && (next === undefined || (!boundaryAfter(index) && (requestAt(index + 1) || /^(?:좀|부탁)/u.test(next))) || boundaryAfter(index));
       });
     expressesAction &&= anchored && !DATIVE.test(contentFrame);
   }
