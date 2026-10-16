@@ -61,6 +61,7 @@ import {
   renderReferenceQuestion,
   renderQuestionOpen,
   renderDmOnlyAction,
+  renderGarbledAction,
   renderRestate,
   renderTimeInTitle,
   renderTimeOutsideWhen,
@@ -1213,6 +1214,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
         if (entryId === 'todo.add' || entryId === 'reminder.create') return this.actionAnswer({ ...audit, result: 'asked' }, renderRestate(language));
         this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
         return { kind: 'none' };
+      }
+      // A6-D3a amendment 1, garbled action word addendum (owner decision 2026-10-16): the action word itself is uncertain
+      // ("3번 완룐 처리해줘"), so the owner is asked with the vocabulary word it may stand for; nothing is written.
+      if (validated.reason === 'garbled-action' && validated.candidate !== undefined) {
+        const asked: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'garbled-action' };
+        if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...asked, result: 'shadow' });
+        return this.actionAnswer(asked, renderGarbledAction(validated.candidate, language));
       }
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: validated.reason };
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });

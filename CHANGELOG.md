@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6: a garbled action word asks (2026-10-16)
+
+- **Changed.** A LOCAL_WRITE selection whose action word is garbled ("3번 완룐 처리해줘") now asks, offering the vocabulary
+  word ("'완료'(이)라고 하신 건가요? …"), instead of executing. Structural rule, no typo list (`nl-routing/garbled-action.ts`):
+  a word in the action word's slot (a glued request ending, or right before a request form or 처리; English imperative slot)
+  at jamo edit distance 1 (Latin: one letter, five letters or more) from an `NL_ACTION_WORDS` word, that neither holds an
+  action word nor is a normal inflection of one. Runs after the request-shape vetoes; new validation reason
+  `garbled-action`. Read entries, R5a and the undo own-word anchor are unchanged.
+- **Gate.** Every LOCAL_WRITE gold of the action corpora validated with its gold selection: only
+  `a6-paraphrase-todo.complete-018` asks; no execute gold asks. Prompts and gold data unchanged.
+
 ## Unreleased — A6 open-question take is atomic and fails closed (2026-10-16)
 
 - **Fixed.** `NlSelectionService.takePending` now reads and deletes the session's open question in one field-scoped update

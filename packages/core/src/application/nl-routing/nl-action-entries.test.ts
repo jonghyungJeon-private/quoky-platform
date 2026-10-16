@@ -500,12 +500,14 @@ describe('A6 R1 review: the payload rule before a missing argument', () => {
 });
 
 describe('A6-D3a amendment 1: the vocabulary no longer decides a write; questions and statements still never write', () => {
-  it('"1번 할일 체크해줘" and "3번 완룐 처리해줘" validate (the selector chose the entry); questions and past statements do not', () => {
+  it('"1번 할일 체크해줘" validates (the selector chose the entry); questions and past statements do not; "완룐" asks', () => {
     const complete = (text: string) => validateSelection({ entryId: 'todo.complete', args: { ref: '#2' } }, ctx(text));
     for (const [text, veto] of [['2번 처리 방법 알려줘', 'question'], ['2번 언제 끝나?', 'question'], ['2번 끝냈어', 'statement'], ['2번 해치웠어', 'statement']] as const) {
       expect(complete(text), text).toMatchObject({ ok: false, reason: 'not-request', arg: veto });
     }
-    for (const text of ['2번 끝내줘', '2번 완료해줘', '2번 완료 처리 부탁드립니다', '2번 완료로 표시해줘', '2번 할일 체크해줘', '2번 완룐 처리해줘']) expect(complete(text).ok, text).toBe(true);
+    for (const text of ['2번 끝내줘', '2번 완료해줘', '2번 완료 처리 부탁드립니다', '2번 완료로 표시해줘', '2번 할일 체크해줘']) expect(complete(text).ok, text).toBe(true);
+    // Garbled action word addendum (owner decision 2026-10-16): the garbled 완료 asks (garbled-action.test.ts).
+    expect(complete('2번 완룐 처리해줘')).toMatchObject({ ok: false, reason: 'garbled-action', candidate: '완료' });
   });
 });
 
