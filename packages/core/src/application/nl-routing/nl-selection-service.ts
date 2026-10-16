@@ -71,6 +71,7 @@ import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput
 import { nlSelectionMeaning } from './selection-meaning';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
+import { interpretUndoConfirmReply, nlUndoIsDirect, renderUndoConfirm } from './undo-confirm';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   LAST_SELECTION_METADATA_KEY,
@@ -1009,7 +1010,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     language: 'ko' | 'en',
     reference: NlReferenceState,
     latencyMs: number,
-    openQuestion?: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' }>,
+    openQuestion?: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' | 'action-undo-confirm' }>,
   ): Promise<NlSelectionDecision> {
     const decision = await this.decideActionOutcome(output, turn, prepared, language, reference, latencyMs, openQuestion);
     // A6-D3: a turn that executes, previews or asks for an A6 entry clears `lastSelection` (never refinable); a turn that
@@ -1020,7 +1021,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
 
   /** Whether a selector-path action may run while an A6 question is open: only the questioned entry on a candidate. */
   private allowedWhileAsked(
-    openQuestion: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' }> | undefined,
+    openQuestion: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' | 'action-undo-confirm' }> | undefined,
     entryId: NlActionEntryId,
     target: NlItemTarget | undefined,
   ): boolean {
@@ -1040,7 +1041,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     language: 'ko' | 'en',
     reference: NlReferenceState,
     latencyMs: number,
-    openQuestion: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' }> | undefined,
+    openQuestion: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' | 'action-undo-confirm' }> | undefined,
   ): Promise<NlSelectionDecision> {
     const entryId = output.entryId as NlActionEntryId;
     const ctx = this.validationContext(turn, prepared.groundingText, undefined, true);
@@ -1110,6 +1111,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
           return this.actionAnswer(audit, renderRestate(language));
         }
       }
+      // A6-D3a amendment 1, undo confirmation rule: an undo cannot itself be undone, so only an unambiguous undo command
+      // executes directly; any other selected undo asks a one-step confirmation that names the action.
+      if (!nlUndoIsDirect(prepared.groundingText, entry.actionGrounding ?? [])) return this.askUndoConfirm(turn, language, latencyMs, reference);
       return this.decideUndo(turn, language, latencyMs, 'none', reference);
     }
     // A6-D2: resolve the target in code (most recent listing only, display numbers, lastAction).
@@ -1219,6 +1223,23 @@ export class NlSelectionService implements TurnDeliveryObserver {
     return { kind: 'execute', command: { entryId: 'action.undo', args: {}, language, target: resolved.target, undo: resolved.undo }, action: audit };
   }
 
+  /**
+   * A6-D3a amendment 1: "방금 한 '할 일 2번 완료'를 되돌릴까요?". Resolves the undo as {@link decideUndo} would (an unresolved
+   * undo answers exactly as there) and saves the item and the undone action as the open question; nothing is written.
+   */
+  private async askUndoConfirm(turn: NlSelectionTurn, language: 'ko' | 'en', latencyMs: number, reference: NlReferenceState): Promise<NlSelectionDecision> {
+    const resolved = resolveUndo(reference);
+    if (resolved.kind === 'unresolved') return this.decideUndo(turn, language, latencyMs, 'none', reference);
+    const audit: NlActionAudit = { entryId: 'action.undo', risk: 'LOCAL_WRITE', refKind: 'none', resolution: 'resolved', target: resolved.target, result: 'asked', reason: 'undo-confirm', latencyMs, ...correlationOf(turn) };
+    if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+    const undoEntryId = resolved.undo.entryId;
+    if (!isNlActionEntryId(undoEntryId)) return this.decideUndo(turn, language, latencyMs, 'none', reference);
+    await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
+      pendingQuestionRecord(turn.actor.id, { kind: 'action-undo-confirm', at: turn.now, language, target: resolved.target, undoEntryId }),
+    );
+    return this.actionAnswer(audit, renderUndoConfirm(undoEntryId, resolved.target.source, resolved.target.label, language));
+  }
+
   /** Record C: an explicit mode word wins (and overwrites the stored choice); else the stored choice; else ask once. */
   private async contentMode(
     turn: NlSelectionTurn,
@@ -1273,7 +1294,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * decision meets the same guard). Logs the refusal.
    */
   private answerRefused(
-    pending: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' }>,
+    pending: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' | 'action-undo-confirm' }>,
     turn: NlSelectionTurn,
     groundingText: string,
   ): boolean {
@@ -1286,7 +1307,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
 
   /** A6: the owner's answer to an open A6 question; `undefined` when the text is not an answer. */
   private async answerActionQuestion(
-    pending: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' }>,
+    pending: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' | 'action-undo-confirm' }>,
     turn: NlSelectionTurn,
     answerText: string,
     language: 'ko' | 'en',
@@ -1357,6 +1378,23 @@ export class NlSelectionService implements TurnDeliveryObserver {
         basis: renderBasis(modeLabel(mode, language), language, 'saved'),
         action: audit,
       };
+    }
+    if (pending.kind === 'action-undo-confirm') {
+      if (!offered.has('action.undo')) return undefined;
+      const reply = interpretUndoConfirmReply(answerText);
+      if (reply === 'none') return undefined;
+      if (reply === 'deny') return { kind: 'ask', text: renderCancelled(language) };
+      // Only when the last action is still exactly the one named in the question (same item, same undone action).
+      const reference = this.referenceState(turn);
+      const resolved = resolveUndo(reference);
+      const same = resolved.kind === 'resolved' && resolved.target.id === pending.target.id && resolved.target.source === pending.target.source && resolved.undo.entryId === pending.undoEntryId;
+      if (!same) {
+        return this.actionAnswer(
+          { entryId: 'action.undo', risk: 'LOCAL_WRITE', refKind: 'none', resolution: 'none', result: 'refused', reason: 'undo-changed', ...correlationOf(turn) },
+          renderUndoUnresolved(resolved.kind === 'unresolved' ? resolved.outcome : 'echo-mismatch', language),
+        );
+      }
+      return this.decideUndo(turn, language, 0, 'none', reference);
     }
     // action-reschedule: the owner's own words carry the new time (parsed by the deterministic grammar in the handler).
     if (!offered.has('action.undo') || !containsNlTimeExpression(answerText)) return undefined;

@@ -370,6 +370,26 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect(await reminders()).toContainEqual(expect.objectContaining({ id: valve?.id, displayNo: valve?.displayNo, status: 'SCHEDULED' }));
   }));
 
+  it('A6-D3a amendment 1, undo confirmation rule: a descriptive undo asks first; "응" undoes the SAME item, "아니" changes nothing', () => withOwnCaps(async () => {
+    await send('할 일 추가: 확인 대상');
+    await turn('내 할 일 보여줘');
+    const item = (await todos()).find((entry) => entry.title === '확인 대상' && entry.status === 'ACTIVE');
+    const label = (await todos()).filter((entry) => entry.status === 'ACTIVE').findIndex((entry) => entry.id === item?.id) + 1;
+    await turn(`${label}번 할일 체크해줘`, answer('todo.complete', { ref: `#${label}` }));
+    expect((await storage.workItems.get(item?.id ?? ''))?.status).toBe('COMPLETED');
+    const asked = await turn('되돌려 주신 기능 설명해줘', answer('action.undo'));
+    expect(asked.text).toBe(`방금 한 '할 일 ${label}번 완료'를 되돌릴까요? (응 / 아니)`);
+    expect((await storage.workItems.get(item?.id ?? ''))?.status).toBe('COMPLETED');
+    const declined = await turn('아니');
+    expect(declined.selects).toHaveLength(0);
+    expect((await storage.workItems.get(item?.id ?? ''))?.status).toBe('COMPLETED');
+    await turn('되돌려 주신 기능 설명해줘', answer('action.undo'));
+    const confirmed = await turn('응');
+    expect(confirmed.selects).toHaveLength(0);
+    expect(confirmed.text).toContain('다시 열었어요: "확인 대상"');
+    expect((await storage.workItems.get(item?.id ?? ''))?.status).toBe('ACTIVE');
+  }));
+
   it('A6-D3a amendment 1: first-person volition "할 일 하나 추가할게. 도서관 책 반납" is plain chat; nothing is written or asked', async () => {
     const before = (await todos()).length;
     const result = await turn('할 일 하나 추가할게. 도서관 책 반납', answer('todo.add', { title: '도서관 책 반납' }));

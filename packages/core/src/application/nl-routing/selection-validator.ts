@@ -25,7 +25,7 @@ import {
 } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
-import { nlIsRequestForm, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
+import { nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
 import {
   isNlRangeSymbol,
   isWeekdayOrTimeKeyword,
@@ -150,18 +150,6 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 /** The content spans of a LOCAL_WRITE: the owner's content, never the request around it (a `when` stays in the frame). */
 const CONTENT_SPAN_ARGS = ['title', 'body', 'match'] as const;
 const QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [["'", "'"], ['"', '"'], ['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』']];
-/**
- * An auxiliary-verb token (주다 / 드리다 / 보다 / 놓다 / 두다) in any inflection: the stem syllable, then only closed verbal
- * ending syllables ("주는", "주신", "주시는", "주세요", "줘봐", "보던", "두세요"). A noun that merely begins with the syllable
- * ("주의", "주말", "보고서") is not one.
- */
-const AUXILIARY_TOKEN = /^(?:주|줘|줄|준|줬|드리|드려|드릴|드린|드렸|보|봐|볼|본|봤|놔|놓|놨|두|둬|둘|둔|뒀)(?:시|세|셔|실|신|십|는|던|고|면|래|요|겠|어|라|자|봐|보|세요|십시오|오|게)*$/u;
-/** The light verb or the undo verb after a bare undo noun ("되돌리기 해줘", "원래대로 돌려 놔", "되돌리기 합시다"). */
-const UNDO_VERB_TOKEN = /^(?:해|하|합|돌려|되돌려)/u;
-/** A trailing request that repeats the light verb 하다 or only says please ("…제대로 해줘", "되돌려줘 부탁"): the same act. */
-const LIGHT_REQUEST = /^(?:해|해요|해줘|해줘요|해주세요|하세요|해 줘|부탁|부탁해|부탁해요|부탁드려요|부탁드립니다|제발)$/u;
-/** A predicate or request form after the undo chain: another sentence of its own (fail closed). */
-const PREDICATE_TAIL = /(?:다|어|아|요|지|네|니|까|야|죠|음|함|래|자|라|줘|둬|놔|봐|세요)$/u;
 /** A dative recipient ("친구한테", "팀장님께"): something is given to someone, never Quoky's own undo. */
 const DATIVE = /(?:한테|에게|께)(?=$|\s|[.,!?~])/u;
 
@@ -241,42 +229,15 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
   const payload = entry.args.some((spec) => spec.kind === 'span' && spec.required === true);
   let expressesAction = nlFrameExpressesAction(contentFrame, !payload);
   if (entry.args.length === 0 && words.length > 0) {
-    // Structural (Codex, final round): the undo grounds only when its own word is the command, either carrying a request
-    // form itself ("되돌려줘", "되돌려 줄래", "취소해줘", "원복해줘") or standing bare as the command, at the end or followed
-    // by a request word ("되돌리기", "되돌리기 해줘", "원래대로 해줘", "방금 거 원래대로"); in English the undo word leads the
-    // sentence ("undo", "undo that", "please revert that"). A descriptive or nominal use never grounds ("되돌리기 돕는 앱 추천",
-    // "되돌리기 기능", "되돌리는 앱"), nor a bare 돌려 without 되 ("돈 좀 돌려줘").
+    // A6-D3a amendment 1, undo confirmation rule: the undo needs one of its own words (a bare 돌려 is "give back": "돈 좀
+    // 돌려줘") and no dative recipient ("친구한테 책 돌려줘"). Whether it executes directly or asks a confirmation is decided
+    // at the message level by `nlUndoIsDirect` (undo-confirm.ts); no token heuristics here.
     const frameText = normalizeForMatch(contentFrame);
-    const tokens = frameText.split(/\s+/u).map((token) => token.replace(/[.,!?~…ㅋㅎㅠㅜ^]+$/u, '')).filter((token) => token.length > 0);
-    const korean = words.map(normalizeForMatch).filter((word) => !/^[a-z ]+$/u.test(word));
-    const latin = words.map(normalizeForMatch).filter((word) => /^[a-z ]+$/u.test(word));
-    // One whole-chain rule (Codex, after 80b4ad5e): the chain is the undo-bearing token (a bare undo noun takes its light or
-    // undo verb with it), then every consecutive auxiliary token, up to a sentence boundary. The undo grounds only when the
-    // chain's final token is a request form (or the capability request "… 줄 수 있어?"), and no other request or predicate
-    // follows the chain in the message (trailing adverbs and fillers are fine; repeating the light verb "제대로 해줘" is the
-    // same act).
-    const rawTokens = frameText.split(/\s+/u).filter((token) => token.replace(/[.,!?~…ㅋㅎㅠㅜ^]+$/u, '').length > 0);
-    const boundaryAfter = (index: number): boolean => /[.,!?;。~]$/u.test(rawTokens[index] ?? '');
-    const capabilityAt = (index: number): boolean => /(?:줄|주실)$/u.test(tokens[index] ?? '') && tokens[index + 1] === '수' && /^있/u.test(tokens[index + 2] ?? '');
-    const chainGrounds = (start: number, bare: boolean): boolean => {
-      let end = start;
-      if (bare && !boundaryAfter(end) && UNDO_VERB_TOKEN.test(tokens[end + 1] ?? '')) end += 1;
-      while (!boundaryAfter(end) && AUXILIARY_TOKEN.test(tokens[end + 1] ?? '')) end += 1;
-      const last = tokens[end] ?? '';
-      let tail = end;
-      if (capabilityAt(end)) tail = end + 2;
-      else if (!nlIsRequestForm(last) && !(bare && end === start && (end + 1 >= tokens.length || boundaryAfter(end)))) return false;
-      return tokens.slice(tail + 1).every((token) => LIGHT_REQUEST.test(token) || (!nlIsRequestForm(token) && !PREDICATE_TAIL.test(token)));
-    };
-    const holdsUndo = (token: string): boolean => korean.some((word) => (word === '돌려' ? /되돌려/u.test(token) : token.includes(word)));
-    const bareUndo = (token: string): boolean => {
-      const stripped = token.replace(/(?:을|를|은|는|도|만|좀)$/u, '');
-      return korean.some((word) => word !== '돌려' && (stripped === word || stripped.endsWith(word))) || /되돌리기$/u.test(stripped);
-    };
-    const anchored =
-      latin.some((word) => new RegExp(`^(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?${word.replace(/ /g, '\\s+')}(?![a-z])`, 'u').test(frameText)) ||
-      latin.some((word) => new RegExp(`(?<![a-z])${word.replace(/ /g, '\\s+')}\\s+(?:해|해줘|해 줘|해주세요|좀)`, 'u').test(frameText)) ||
-      tokens.some((token, index) => holdsUndo(token) && chainGrounds(index, bareUndo(token)));
+    const anchored = words.some((raw) => {
+      const word = normalizeForMatch(raw);
+      if (word === '돌려') return /되돌려/u.test(frameText);
+      return /^[a-z ]+$/u.test(word) ? new RegExp(`(?<![a-z])${word.replace(/ /g, '\\s+')}(?![a-z])`, 'u').test(frameText) : frameText.includes(word);
+    });
     expressesAction &&= anchored && !DATIVE.test(contentFrame);
   }
   return { ...(veto !== undefined ? { veto } : {}), expressesAction };

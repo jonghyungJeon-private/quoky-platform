@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES, NL_ACTION_WORDS, containsNlTimeExpression, nlActionInputRefusal, nlActionWordGrounded } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
 import { nlRequestVeto } from './request-shape';
+import { NL_ACTION_ENTRIES as ENTRIES_FOR_UNDO } from './action-entries';
+import { interpretUndoConfirmReply, nlUndoIsDirect } from './undo-confirm';
 import { prepareSelectionInput } from './selection-input';
 import { validateSelection, type NlValidationContext } from './selection-validator';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
@@ -241,7 +243,9 @@ describe('A6-D3a amendment 1, review round 3 (CA over-blocks and gaps, Codex P2)
     ];
     for (const [text, entryId, args, veto] of refused) expect(v(entryId, args, text), text).toMatchObject({ ok: false, reason: 'not-request', arg: veto });
     // Undo look-alikes have no undo head: chat.
-    for (const text of ['되돌리기 해주는 앱 추천', '돈 좀 돌려줘']) expect(v('action.undo', {}, text), text).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    // Undo look-alikes never execute directly (undo confirmation rule): a bare 돌려 is no undo; a descriptive use asks.
+    expect(v('action.undo', {}, '돈 좀 돌려줘')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    expect(nlUndoIsDirect('되돌리기 해주는 앱 추천', ENTRIES_FOR_UNDO['action.undo']!.actionGrounding!)).toBe(false);
     for (const text of ['되돌려줘', '원래대로 돌려놔', 'undo that please', '아까 거 원래대로 해줘']) expect(v('action.undo', {}, text).ok, text).toBe(true);
   });
 });
@@ -263,7 +267,7 @@ describe('A6-D3a amendment 1, review round 4 (Codex P1/P2, CA P3)', () => {
     expect(v('todo.add', { title: '농담 모음' }, "할 일에 '농담 모음' 추가해줘").ok).toBe(true);
     expect(v('todo.add', { title: '농담' }, '할 일에 농담 추가해줘')).toMatchObject({ ok: false, reason: 'not-request', arg: 'joke' });
     expect(v('action.undo', {}, '되돌려줘 이번에는 제대로 해줘').ok).toBe(true);
-    expect(v('action.undo', {}, '되돌리기 해주는 앱 추천')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    expect(nlUndoIsDirect('되돌리기 해주는 앱 추천', ENTRIES_FOR_UNDO['action.undo']!.actionGrounding!)).toBe(false);
   });
 
   it('CA P3: plans, guesses, sarcasm, -더라, state nouns, thanks and relief, English hedges, afterthoughts', () => {
@@ -291,33 +295,47 @@ describe('A6-D3a amendment 1, review round 4 (Codex P1/P2, CA P3)', () => {
   });
 });
 
-describe('A6-D3a amendment 1, final round (Codex P2)', () => {
+describe('A6-D3a amendment 1, final round (Codex P2) and the undo confirmation rule', () => {
   const undo = (text: string) => validateSelection({ entryId: 'action.undo', args: {} }, ctx(text));
+  const words = ENTRIES_FOR_UNDO['action.undo']!.actionGrounding!;
+  const direct = (text: string) => {
+    const prepared = prepareSelectionInput(text);
+    return !('skip' in prepared) && nlUndoIsDirect(prepared.groundingText, words);
+  };
 
-  it('action.undo grounds only when the undo word is the command (a request form, or bare as the command)', () => {
-    for (const text of ['되돌려줘', '되돌려 줄래', '되돌려 줄래?', '되돌리기 해줘', '원래대로 해줘', '되돌리기', '방금 거 원래대로', '원래대로 돌려놔', '실행 취소해줘', '원상복구 해줘', '취소 취소', '되돌려줘요요', '되돌려죠', 'undo', 'undo that', 'undo the last one', 'please revert that', '아까 거 undo 해줘', '되돌려줘 이번에는 제대로 해줘']) {
+  it('executes directly only an unambiguous undo command (every string of the last review rounds)', () => {
+    for (const text of [
+      // the coordinator's direct list
+      '되돌려줘', '되돌려 두세요', '원상복구 부탁', '원복 좀', '되돌리기 좀 해줘', '되돌려줘 빨리요', '되돌려줘 제발요', '되돌려 봐', '원래대로 돌려 줄 수 있어?',
+      // earlier rounds
+      '되돌려 줄래', '되돌려 줄래?', '되돌리기 해줘', '원래대로 해줘', '되돌리기', '방금 거 원래대로', '원래대로 돌려놔', '실행 취소해줘', '원상복구 해줘', '취소 취소',
+      '되돌려줘요요', '되돌려죠', 'undo', 'undo that', 'undo the last one', 'please revert that', '아까 거 undo 해줘', '원상복구 하세요', '취소하세요', '원복해주십시오',
+      '되돌려 주세요', '되돌려 줄 수 있어?', '되돌려 주실래요', '원래대로 돌려 놔', '되돌리기 합시다', '원래대로 돌려 두세요', '되돌려 보세요', '되돌려 줘봐', '원상복구 해 줄 수 있어?',
+      '잘못 눌렀어 되돌려줘', '아니 방금 거 되돌려줘', '5번 되돌려줘', '방금 추가한 거 취소해줘', '방금 처리한 거 되돌려줘',
+    ]) {
       expect(undo(text).ok, text).toBe(true);
+      expect(direct(text), text).toBe(true);
     }
-    // Codex P2 (after the final round): every request ending request-shape knows, spaced auxiliaries judged at the chain end.
-    for (const text of ['원상복구 하세요', '취소하세요', '원복해주십시오', '되돌려 주세요', '되돌려 줄 수 있어?', '되돌려 주실래요', '원래대로 돌려 놔', '되돌리기 합시다']) {
-      expect(undo(text).ok, text).toBe(true);
+  });
+
+  it('asks a confirmation instead (never executes directly): descriptive, mixed or extra-content messages with an undo word', () => {
+    for (const text of [
+      '되돌려 주셨던 기능 추천', '되돌려 봐 주는 앱 추천', '되돌려 주신 기능 설명해줘', '되돌려 주시는 앱 추천', '되돌려 보던 기능 설명해줘', '되돌려 드린 거 뭐였지',
+      '되돌려 주는 앱 추천', '되돌려 주는 기능 설명해줘', '되돌려 준 거 고마워', '원래대로 돌려 주는 버튼', '되돌려 보는 중', '되돌리기 돕는 앱 추천', '되돌리기 해주는 앱 추천',
+      '되돌리기 기능', '되돌리는 앱 있어', '되돌리기 버튼 위치', '되돌려 주었던 기능', '되돌려 보았던 기능',
+      // the choice for "되돌려줘 주의 깊게": confirm (it carries words beyond the command); likewise "…이번에는 제대로 해줘"
+      '되돌려줘 주의 깊게', '되돌려줘 이번에는 제대로 해줘', '되돌려줘. 주말 일정은 그대로 둬',
+    ]) {
+      expect(direct(text), text).toBe(false);
     }
-    // Codex P2 (after 9dadff1b): whole auxiliary tokens only, sentence boundaries stop the chain, auxiliary imperatives, the
-    // capability request after a bare anchor.
-    // The whole-chain rule (Codex, after 80b4ad5e): 두 stem, an adnominal chain end, a second request after the chain.
-    for (const text of ['되돌려 두세요', '원래대로 돌려 두세요']) expect(undo(text).ok, text).toBe(true);
-    for (const text of ['되돌려 봐 주는 앱 추천', '되돌려 주신 기능 설명해줘']) expect(undo(text).ok, text).toBe(false);
-    // Known residual (DECISIONS, final rounds): a second request after a sentence boundary fails closed (chat).
-    expect(undo('되돌려줘. 주말 일정은 그대로 둬').ok).toBe(false);
-    for (const text of ['되돌려줘 주의 깊게', '되돌려 봐', '되돌려 보세요', '되돌려 줘봐', '원래대로 돌려 줄 수 있어?', '원상복구 해 줄 수 있어?']) {
-      expect(undo(text).ok, text).toBe(true);
-    }
-    for (const text of ['되돌려 주는 앱 추천', '되돌려 주는 기능 설명해줘', '되돌려 준 거 고마워', '원래대로 돌려 주는 버튼', '되돌려 보는 중', '되돌리기 돕는 앱 추천', '되돌려 주신 기능 설명해줘', '되돌려 주시는 앱 추천', '되돌려 보던 기능 설명해줘', '되돌려 드린 거 뭐였지']) {
-      expect(undo(text).ok, text).toBe(false);
-    }
-    for (const text of ['되돌리기 돕는 앱 추천', '되돌리기 해주는 앱 추천', '되돌리기 기능', '되돌리는 앱 있어', '되돌리기 버튼 위치', '돈 좀 돌려줘', 'the undo button is missing']) {
-      expect(undo(text).ok, text).toBe(false);
-    }
+    // Refused before any confirmation: no undo word, or a statement.
+    for (const text of ['돈 좀 돌려줘', 'the undo button is missing', '되돌리기 기능 좋다']) expect(undo(text).ok, text).toBe(false);
+  });
+
+  it('the confirmation answer is a narrow whole-message yes / no', () => {
+    for (const text of ['응', '네', '좋아', 'yes', 'OK', '되돌려줘', '응!']) expect(interpretUndoConfirmReply(text), text).toBe('approve');
+    for (const text of ['아니', '취소', '됐어', 'no']) expect(interpretUndoConfirmReply(text), text).toBe('deny');
+    for (const text of ['응 근데 2번은?', '응?', '글쎄', '응 아니']) expect(interpretUndoConfirmReply(text), text).toBe('none');
   });
 
   it('known residual over-blocks (recorded in DECISIONS for D12 / shadow): an afterthought with 근데 / 그래도 goes to chat', () => {

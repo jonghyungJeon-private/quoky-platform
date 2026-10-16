@@ -12,7 +12,7 @@ import { NL_ACTION_LOG_EVENT, NlActionCaps, type NlActionLevel } from './nl-acti
 import { NlActionsConfigError, NlSelectionService, nlSelectionCacheKey, type NlSelectionDecision } from './nl-selection-service';
 import { prepareSelectionInput } from './selection-input';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
-import { INTERPRETATION_PREFERENCES_METADATA_KEY, LAST_SELECTION_METADATA_KEY, NL_PENDING_METADATA_KEY, type PendingQuestion } from './selection-state';
+import { INTERPRETATION_PREFERENCES_METADATA_KEY, LAST_SELECTION_METADATA_KEY, NL_PENDING_METADATA_KEY, readPendingQuestion, type PendingQuestion } from './selection-state';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 // ADR-0120 amendment A6 (NLA-5) at the selection service: the flag levels and the startup refusals, `off` byte-identical
@@ -870,5 +870,57 @@ describe('A6-D3a amendment 1 (owner-approved direction 2026-10-16): a chosen LOC
     // A negation inside delimited content is content ("…알림: 가스 밸브 잠그지 마"); undelimited at the end it vetoes.
     expect((await run('오늘 밤 10시에 알림: 가스 밸브 잠그지 마', 'reminder.create', { body: '가스 밸브 잠그지 마', when: '오늘 밤 10시' })).decision.kind).toBe('execute');
     expect((await run('할 일에 우유 추가하지 마', 'todo.add', { title: '우유 추가하지 마' })).decision).toEqual({ kind: 'none' });
+  });
+});
+
+describe('A6-D3a amendment 1, undo confirmation rule: only an unambiguous undo executes directly', () => {
+  const completed = (minute = 0) => withLastAction(undefined, 'owner', { entryId: 'todo.complete', source: 'todo', itemId: 'todo-2', label: 2, at: at(minute), undoable: true, undone: false, echoReplyIds: [] }, at(minute));
+  const asked = async (text: string) => {
+    const w = world({ level: 'local', script: () => out('action.undo') });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, completed());
+    const decision = await w.decide(text, { now: at(1) });
+    return { w, decision };
+  };
+  const answer = (w: World, text: string, minute = 2) =>
+    w.service.answerActionPending({ text, attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(minute), entries: ALL, route: 'chat', direct: true, pending: readPendingQuestion(w.session(), 'owner', at(minute)) ?? null });
+
+  it('an unambiguous undo command executes directly', async () => {
+    for (const text of ['되돌려줘', '원상복구 부탁', '되돌려줘 빨리요', '원래대로 돌려 줄 수 있어?']) {
+      const { decision } = await asked(text);
+      expect(decision, text).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-2' }, undo: { entryId: 'todo.complete' } } });
+    }
+  });
+
+  it('any other selected undo asks a one-step confirmation naming the action; 응 executes it, 아니 does nothing', async () => {
+    for (const text of ['되돌려 주셨던 기능 추천', '되돌려 봐 주는 앱 추천', '되돌려 주신 기능 설명해줘', '되돌려줘 주의 깊게']) {
+      const { w, decision } = await asked(text);
+      expect(decision, text).toMatchObject({ kind: 'ask', text: "방금 한 '할 일 2번 완료'를 되돌릴까요? (응 / 아니)" });
+      expect(actionLogs(w).at(-1)?.fields, text).toMatchObject({ entryId: 'action.undo', result: 'asked', reason: 'undo-confirm' });
+      expect(readPendingQuestion(w.session(), 'owner', at(2)), text).toMatchObject({ kind: 'action-undo-confirm', target: { id: 'todo-2' }, undoEntryId: 'todo.complete' });
+    }
+    const yes = await asked('되돌려 주신 기능 설명해줘');
+    expect(await answer(yes.w, '응')).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-2' }, undo: { entryId: 'todo.complete' } } });
+    const no = await asked('되돌려 주신 기능 설명해줘');
+    const denied = await answer(no.w, '아니');
+    expect(denied?.kind).toBe('ask');
+    expect(denied).not.toMatchObject({ kind: 'execute' });
+    // Not an answer: the question ends and the turn routes normally.
+    const other = await asked('되돌려 주신 기능 설명해줘');
+    expect(await answer(other.w, '응 근데 3번은?')).toBeUndefined();
+  });
+
+  it('a confirmation runs only if the last action is still the one it named', async () => {
+    const { w } = await asked('되돌려 주신 기능 설명해줘');
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-7', label: 7, at: at(1), undoable: true, undone: false, echoReplyIds: [] }, at(1)));
+    const decision = await answer(w, '응');
+    expect(decision?.kind).toBe('ask');
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'undo-changed' });
+  });
+
+  it('shadow logs the confirmation as shadow and asks nothing', async () => {
+    const w = world({ level: 'shadow', script: () => out('action.undo') });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, completed());
+    expect((await w.decide('되돌려 주신 기능 설명해줘', { now: at(1) })).kind).toBe('none');
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'undo-confirm' });
   });
 });

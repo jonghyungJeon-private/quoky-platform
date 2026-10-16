@@ -26906,3 +26906,28 @@ done here (no model calls; the prompt is being changed on another branch).
   are fine. "되돌려 봐 주는 앱 추천" and "되돌려 주신 기능 설명해줘" are refused; "되돌려 두세요" and "원래대로 돌려 두세요"
   act. **Known residual:** "되돌려줘. 주말 일정은 그대로 둬" (a second request after a sentence boundary) fails closed as
   chat; pinned in `request-shape.test.ts` for D12 and the shadow review.
+
+### A6-D3a amendment 1: undo confirmation rule (2026-10-16, supersedes the undo token-chain rules above)
+
+- **Why.** Five review rounds of token heuristics for `action.undo` kept leaking in both directions (주셨던 / 주었던 / 보았던
+  grounded; "원상복구 부탁", "원복 좀", "되돌려줘 빨리요" were refused). Korean morphology is open-ended, so no token list closes
+  this. The owner's approved principle reserves a confirmation for irreversible or ambiguous actions, and an undo cannot
+  itself be undone.
+- **Rule.** `action.undo` executes directly only when the message is an unambiguous undo command: from the clause holding
+  the undo word to the end, every token is the undo word, a command part (a request or auxiliary ending, the capability
+  tail "줄 수 있어"), a closed filler or adverb (좀, 다시, 지금, 빨리, 제발, 부탁, 요, 아니, please, now …) or a reference to
+  the last action (방금 거, 그 작업, its shown label, the last one …), and the last meaningful token is a request form or a bare
+  undo noun (되돌리기, 원래대로, 원복, undo). Earlier clauses are reasons ("잘못 눌렀어 되돌려줘"). The closed sets are
+  fillers and references only, never routing (`undo-confirm.ts`, `nlUndoIsDirect`).
+- **Every other selected undo** whose vetoes pass and that holds an undo word (descriptive, mixed or extra-content
+  messages) asks a one-step confirmation naming the exact action: "방금 한 '할 일 2번 완료'를 되돌릴까요? (응 / 아니)". It is
+  the existing A6 open question (new pending kind `action-undo-confirm`, item and undone action only). A narrow
+  whole-message reply decides: 응 / 네 / 좋아 / yes / 되돌려줘 undoes, and only if the last action is still the one named
+  (otherwise `undo-changed`, nothing written); 아니 / 취소 / 됐어 / no does nothing; anything else ends the question and routes
+  normally. Shadow logs `undo-confirm` as `shadow`.
+- **Simplified.** The validator keeps only the undo word (a bare 돌려 is "give back") and the dative check; the auxiliary
+  chain, the light-request and predicate-tail heuristics are removed. The structural vetoes stay.
+- **Buckets.** Direct: 되돌려줘, 되돌려 두세요, 원상복구 부탁, 원복 좀, 되돌리기 좀 해줘, 되돌려줘 빨리요 / 제발요, 되돌려 봐,
+  원래대로 돌려 줄 수 있어? and every undo execute gold. Confirm: 되돌려 주셨던 기능 추천, 되돌려 봐 주는 앱 추천, 되돌려 주신
+  기능 설명해줘, the other descriptive strings of the review rounds, and **"되돌려줘 주의 깊게" (chosen: confirm**, it carries
+  words beyond the command), "되돌려줘 이번에는 제대로 해줘", "되돌려줘. 주말 일정은 그대로 둬". No gold change.

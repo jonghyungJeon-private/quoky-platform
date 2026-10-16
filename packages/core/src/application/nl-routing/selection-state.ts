@@ -103,11 +103,22 @@ export type PendingQuestion =
       readonly target: NlItemTarget;
       /** The canceled reminder's version (`updatedAt`): the reactivation is a compare-and-set against it. */
       readonly version: string;
+    }
+  /**
+   * A6-D3a amendment 1, undo confirmation rule: "방금 한 '할 일 2번 완료'를 되돌릴까요?". The undone item and the action it
+   * undoes, so the confirmation runs only if the last action is still exactly that one.
+   */
+  | {
+      readonly kind: 'action-undo-confirm';
+      readonly at: IsoTimestamp;
+      readonly language: 'ko' | 'en';
+      readonly target: NlItemTarget;
+      readonly undoEntryId: NlActionEntryId;
     };
 
 /** Whether a pending question belongs to A6 (answered before any grammar, only while actions are live). */
 export function isActionPendingQuestion(question: PendingQuestion | null | undefined): question is Extract<PendingQuestion, { kind: `action-${string}` }> {
-  return question?.kind === 'action-target' || question?.kind === 'action-mode' || question?.kind === 'action-reschedule';
+  return question?.kind === 'action-target' || question?.kind === 'action-mode' || question?.kind === 'action-reschedule' || question?.kind === 'action-undo-confirm';
 }
 
 const ITEM_SOURCES: readonly NlItemSource[] = ['todo', 'reminder', 'mail', 'drive'];
@@ -251,6 +262,11 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
     const version = typeof record.version === 'string' && record.version.length > 0 && record.version.length <= 64 ? record.version : undefined;
     return target === undefined || target.source !== 'reminder' || version === undefined ? undefined : { kind: 'action-reschedule', at, language, target, version };
   }
+  if (record.kind === 'action-undo-confirm') {
+    const target = targetOf(record.target);
+    if (target === undefined || (target.source !== 'todo' && target.source !== 'reminder') || !isNlActionEntryId(record.undoEntryId)) return undefined;
+    return { kind: 'action-undo-confirm', at, language, target, undoEntryId: record.undoEntryId };
+  }
   if (record.kind === 'preference' && typeof record.key === 'string' && Array.isArray(record.values)) {
     const values = record.values.filter((value): value is string => typeof value === 'string' && value.length <= 40);
     const selection = selectionOf(record.selection);
@@ -278,6 +294,8 @@ export function pendingQuestionRecord(actorId: Id, question: PendingQuestion): M
       return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target }, ...(question.scope !== undefined ? { scope: question.scope } : {}) };
     case 'action-reschedule':
       return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target }, version: question.version };
+    case 'action-undo-confirm':
+      return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target }, undoEntryId: question.undoEntryId };
     default:
       break;
   }

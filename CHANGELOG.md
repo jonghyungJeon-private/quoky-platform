@@ -32,6 +32,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   inside enclosed content and topic-marked nouns after an undo word no longer refuse; new refusals for plans, -ㄹ걸, -더라,
   state nouns, thanks/relief, English hedges, third-party wants and afterthoughts. 16 corpus negatives added; the
   selector-pool audit needs regenerating.
+- **Changed (undo confirmation rule).** `action.undo` executes directly only for an unambiguous undo command; any other
+  selected undo asks "방금 한 '…'를 되돌릴까요? (응 / 아니)" (new open question `action-undo-confirm`; 응 undoes the same item,
+  아니 does nothing). The undo token-chain heuristics are removed.
 
 ## Unreleased — ADR-0123 pool batch 2 (pending owner approval) and the runner's selector transport and exact scorer (2026-10-16)
 
