@@ -12,6 +12,7 @@ export * from './nl-selection-service';
 export * from './action-entries';
 export * from './action-switch';
 export * from './item-reference';
+export * from './reference-recency';
 export * from './last-action';
 export * from './nl-action-policy';
 export * from './statement-guard';

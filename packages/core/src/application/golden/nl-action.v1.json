@@ -12848,6 +12848,112 @@
     "reason": "other-source"
    },
    "note": "added during R0-schema conversion (reference-count floor after exec-time cases moved out)"
+  },
+  {
+   "id": "a6-reference-todo.complete-044",
+   "family": "reference",
+   "text": "그거 완료해 줘요",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       4
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.complete",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "entryId": "todo.complete",
+    "args": {
+     "ref": "this"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous"
+   },
+   "note": "A6 reference priority (owner-approved 2026-10-16, docs/plans/a6-reference-priority-proposal.md §3 test 1): a listing newer than the fresh lastAction of the same source with several items asks"
+  },
+  {
+   "id": "a6-reference-todo.cancel-011",
+   "family": "reference",
+   "text": "그거 취소해 줘요",
+   "fixture": {
+    "listings": [
+     {
+      "source": "reminder",
+      "labels": [
+       11,
+       12
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.complete",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "entryId": "todo.cancel",
+    "args": {
+     "ref": "this"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "note": "A6 reference priority (owner-approved 2026-10-16, docs/plans/a6-reference-priority-proposal.md §3 test 2): a listing newer than the fresh lastAction of another source asks"
+  },
+  {
+   "id": "a6-reference-todo.cancel-012",
+   "family": "reference",
+   "text": "그 할 일 취소해 줘요",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       3
+      ],
+      "ageMinutes": 3
+     },
+     {
+      "source": "reminder",
+      "labels": [
+       11
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.complete",
+     "source": "todo",
+     "itemId": "todo-3",
+     "label": 3,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "entryId": "todo.cancel",
+    "args": {
+     "ref": "this"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "note": "A6 reference priority (owner-approved 2026-10-16, docs/plans/a6-reference-priority-proposal.md §3 test 11): a listing newer than the fresh lastAction of another source asks, also after the action's own echo merged into the to-do list"
   }
  ]
 }

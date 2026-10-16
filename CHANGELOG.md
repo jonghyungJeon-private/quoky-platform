@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 reference priority: a newer listing vs a fresh lastAction (2026-10-16)
+
+- **Fixed (inert, `QUOKY_NL_ACTIONS` off).** "그거" no longer acts on the last action when the owner has since seen a newer
+  list: a newer list of another source or with several items asks, one newer item resolves only when it is the same item,
+  and a tie within one second asks. "방금 거" stays on the last action unless such a newer list exists. Numbers still use
+  only the most recent list of their own source (reminder `#N` excepted), and "되돌려줘" still uses only the last action.
+  Owner-approved A6-D2 clarification, see DECISIONS.
+- **Changed.** Listing slots carry the `requestId` of the turn that wrote them, so the action's own echo is never counted
+  as a newer list. New pure helper `nl-routing/reference-recency.ts`. Three golden rows added to `nl-action.v1.json`.
+
 ## Unreleased — owner gold decisions and approvals (2026-10-16)
 
 - **Changed (gold only, no runtime change).** `golden/nl-action.v1.json`: `a6-paraphrase-todo.complete-018` and `-009` are

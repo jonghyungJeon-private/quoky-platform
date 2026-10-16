@@ -610,8 +610,10 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
   it('positive request-form rule (fix-loop cap): only an affirmative request writes; CA round 3 and Codex strings never do', async () => {
     const run = async (text: string, entryId: string, args: Record<string, unknown>) => {
       const w = world({ level: 'local', script: () => out(entryId, args) });
-      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
-      w.setMetadata(LAST_ACTION_METADATA_KEY, todoAction());
+      // The add's echo label merged into the listing in the add's own turn (same requestId), as recordReceipt writes it,
+      // so the slot is the action's echo and never a tied newer listing (A6 reference priority, owner 2026-10-16).
+      w.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(todoListing([1, 2, 3], 0), 'owner', 'todo', [{ label: 2, id: 'todo-2' }], at(0), 'merge', 'req-add'));
+      w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-2', label: 2, at: at(0), undoable: true, undone: false, requestId: 'req-add', echoReplyIds: [] }, at(0)));
       return w.decide(text, { now: at(1) });
     };
     const complete = { ref: '#2' };

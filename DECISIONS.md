@@ -24730,6 +24730,8 @@ extends the closed deictic set; the resolution steps, the most-recent-listing ru
    - **Known, ratified behaviour (Codex review).** A6-D2 step 3 uses a fresh `lastAction` of the entry's source before
      the most recent listing, even when that listing is newer: "그 할 일 완료해줘" (like "그거 완료해줘") after a newer
      listing [A, B] resolves to the fresh `lastAction` A. Unchanged here; an owner follow-up question in CURRENT_STATE.
+     *(Answered 2026-10-16: a newer listing now asks, see "ADR-0120 amendment A6-D2 clarification — reference priority"
+     at the end of this file.)*
 2. **Structural, no phrase list.** The determiners are a closed set of three. The nouns are the catalog's own words for
    the item sources: the Korean aliases and source names of the `mail.list`, `drive.files`, `todo.list` and
    `reminder.list` entries (`ITEM_SOURCE_NOUNS_KO` in `nl-routing/action-entries.ts`, derived, never listed by hand). A
@@ -26588,3 +26590,38 @@ here, and `QUOKY_NL_ACTIONS` stays `off`. The owner may revise the gold relabels
   plumbing, the `todo` claim under the gate), `reminder-actions.test.ts` (stable `#N` after a reminder fired),
   `personal-v5-a6-acceptance.test.ts` (list → NL → anchored end to end on the production composition) and
   `surface-grants-acceptance.test.ts` (numbered writes in an ungranted channel).
+
+## ADR-0120 amendment A6-D2 clarification — reference priority: a newer listing vs a fresh `lastAction` (owner-approved 2026-10-16)
+
+Status: **owner-approved** (2026-10-16), implemented. A clarification of A6-D2 resolution step 3 as proposed in
+`docs/plans/a6-reference-priority-proposal.md` (merged in #232). It only turns a resolution into a question or keeps it;
+it never widens a write. Inert while `QUOKY_NL_ACTIONS` is `off`. No prompt, TTL, migration or port change.
+
+1. **Bug B1 fixed.** "그거" / "방금 거" used a fresh `lastAction` of the entry's source even when the owner had since looked
+   at a newer listing (of the same source with several items, or of another source). Now:
+   - **Plain deictic ("그거", "이거", "이/그 + noun").** The action and the fresh listing slots are ordered by timestamp
+     (`nl-routing/reference-recency.ts`). A newer listing of another source asks `other-source`; a newer listing of the
+     same source with several items asks `ambiguous` with its shown labels; one newer item resolves to it when it is the
+     action's item and asks `conflict` otherwise. A tie within one second (not the echo) asks.
+   - **Recency word ("방금 거", "아까 거").** Stays on the action unless a strictly newer listing of another source or a
+     newer multi-item listing of the same source exists (then it asks as above). It is never rebound to a listing item.
+   - **Echo exclusion.** The slot written by the action's own echo (`merge`, same source and same `requestId`) is never a
+     newer listing. `ListingSlot` gains an optional `requestId`, filled by `readListingRecord` and so carried by the
+     selection service's `referenceState`; it is opaque and never rendered (the Reference context line is unchanged).
+2. **Numbers (rule 2), unchanged.** `#n` / `last` resolve only against the most recent listing when it is the entry's
+   source; another source asks `other-source`; never `lastAction`. The one exception stays the reminder display number
+   `#N`. Owner decision O1: keep this even when the owner's noun names an older source.
+3. **Undo (rule 5), unchanged.** "되돌려줘" stays `lastAction`-only (per-action inverse, same item, never a listing).
+4. **Deferred.** The `newest` label on the selector's Reference context line (proposal §2.3) is not adopted now (owner
+   decision 3: later, after the Core rule is live); it would need a prompt bump and a gate run.
+5. **Tests and corpus.** Proposal §3 tests 1-10 and 14 in `nl-routing/item-reference.test.ts` (test 6 builds the state
+   through the real record/read path), 11-13 in `apps/quoky/src/personal-v5-a6-acceptance.test.ts`. Golden rows
+   `a6-reference-todo.complete-044`, `a6-reference-todo.cancel-011` and `-012` (asked, `ambiguous` / `other-source`). The
+   offline evaluator's fixture world gives a listing of the action's source at the action's own age the action's
+   `requestId` (it models the echo merged in the same turn). Two existing fixtures that modelled the echo as an untagged
+   listing at the same instant now tag it; one acceptance step ages earlier listings by a minute so a same-second
+   listing does not tie with the next write.
+6. **To-do snapshot compatibility (#233, the clarification above).** The anchored "N번 완료" resolves against the to-do
+   slot and is not touched. Its listings and drift lists are written to the same `quoky.lastListing` record, so they are
+   ordered by the same timestamps (a drift list is the owner's newest view and outranks an older `lastAction` for
+   "그거"), and `recordReceipt` still writes every echo with the inbound message id.
