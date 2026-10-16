@@ -47,7 +47,10 @@ function provider(respond: (request: AiRequest) => string): AiProvider & { calls
 const goldProvider = (cases: readonly NlActionCase[]) =>
   provider((request) => {
     const golden = cases.find((candidate) => request.prompt.endsWith(`<<<\n${candidate.text}\n>>>`));
-    return golden === undefined || golden.expect === 'none' ? answer('none') : answer(golden.expect.entryId, golden.expect.args);
+    if (golden === undefined || golden.expect === 'none') return answer('none');
+    // A clarification gold with a resolvable target (a garbled action word, 2026-10-16) is the selector's own NEEDS_CLARIFICATION.
+    const clarifies = golden.expect.outcome === 'ask' && golden.expect.acceptsAnyQuestion === true && golden.expect.reason === 'ambiguous';
+    return answer(golden.expect.entryId, golden.expect.args, clarifies ? 'NEEDS_CLARIFICATION' : 'CLEAR');
   });
 
 describe('the action corpus (A6-D7)', () => {

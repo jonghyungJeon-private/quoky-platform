@@ -51,6 +51,6 @@ describe('ADR-0123 D8 retrievedExamples slot', () => {
   });
 
   it('adds the +rkN suffix to the prompt version', () => {
-    expect(retrievalPromptVersion('nl-select.v39', 3)).toBe('nl-select.v39+rk3');
+    expect(retrievalPromptVersion('nl-select.v41', 3)).toBe('nl-select.v41+rk3');
   });
 });

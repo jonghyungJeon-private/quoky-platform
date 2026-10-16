@@ -27029,3 +27029,29 @@ every `nl-action` gold (no grounding or glued-noun change; the seven `deictic-pa
 - The R5a review's corpus grew to 183 cases. The three channel must-not golds now expect the amendment's `dm-only`
   reply ("이 작업은 DM에서만 해요. …"), which precedes R5a. The selector-RAG gold digest (nl-intent / nl-action golds)
   is unchanged, so the audit record was not regenerated.
+
+### Owner decisions of 2026-10-16 (second): prompts nl-select.v41 (read) and v42 (A6)
+
+- **`a6-paraphrase-todo.complete-018` ("3번 완룐 처리해줘") is an ASK.** The action word itself is garbled, so whether the
+  owner means 완료 is uncertain; the assistant asks (gold: `todo.complete` `#3`, outcome ask, reason `ambiguous`,
+  `acceptsAnyQuestion`). It replaces the earlier same-day "execute" gold. Implemented as one general A6 rule-8 line
+  (a garbled or misspelled action word, so the intended action is uncertain, is NEEDS_CLARIFICATION with the candidate as the
+  one alternative); no typo list. A structural validator rule was considered and not built: "the frame needs an exact
+  `NL_ACTION_WORDS` hit for the entry's own action, or the generic 처리해줘" would pass this very message (처리해줘 is the
+  generic request), and requiring an exact hit alone would undo A6-D3a amendment 1 (the vocabularies only veto; "1번 할일
+  체크해줘" and "다 해치워줘" run without a listed word). Only the selector can tell that a word is garbled.
+- **`confluence-047` ("컨플루언스에서 비용 정산 방법 검색해줘", keyword "비용 정산 방법") keeps its gold.** The owner rejected a
+  relabel: for a Confluence document search the full phrase matters. The keyword filler-drop rule does not list 방법 (its
+  generic words are 문서, 자료, 페이지, 파일, 관련, 얘기, 내용, 메시지, 건, 거) and the v39 gate scored the case 3/3, so
+  the rule text is unchanged.
+- **Read wrong captures (v39 gate).** `neg-037` (a feeling about not knowing one's issues, jira.issues) and `neg-051` (a
+  question about what a quoted phrase would do, help.topic work-lookup) are fixed by general rule lines in v41: a feeling or
+  complaint that only mentions a source or lookup subject is none (rule 2); a question about what a given phrase or command
+  would do or mean is none, while a question about which command or way Quoky itself has for something is help.topic
+  (rule 3).
+- **A6 action gate help.topic 5/6.** The miss was `a6-negative-none-031` ("문서 요약 명령어가 뭐야", gold help.topic `{}`),
+  3/3 runs answered none because rule 8 said a question about what a command would do is none. The gold agrees with rules 3
+  and 8 (a question about Quoky's own command), so it is kept; v42 adds "or which command Quoky has for it" to the how-to
+  line and the rule-3 distinction above.
+- The selector-RAG gold digest changed (complete-018), so the audit record was regenerated (`pnpm eval:rag --mode dry-run
+  --write-audit true`, local Ollama only, RAG-0 lint PASSED).
