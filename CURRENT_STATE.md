@@ -19,9 +19,17 @@ UAT fixes #197; INT-4 acceptance #198; A6 design #200, ratification #201, R0 mer
   (selection runs in the background on grammar-answered turns and logs `nl_selection.agreement`; the replies are unchanged).
 - `QUOKY_BRIEF_MAIL_ENABLED=true` (the unread-mail section of the daily brief, DM-only).
 - `QUOKY_EGRESS_GUARD=observe` (the in-process egress ledger, `audit/egress-YYYY-MM-DD.jsonl`; logs only, never blocks).
-- `QUOKY_NL_ACTIONS` unset, which means `off`: the A6 natural-language actions are merged but inert (R0).
+- `QUOKY_NL_ACTIONS=shadow` (set in `.env.local`, owner-approved, live since 2026-10-16 09:14): A6 logs its decisions (`nl_action.decided`) and executes nothing. `local` is not set; promotion needs the D12 gate, the labelled live session, and the owner's yes (A6-D8).
 - Also applied live: the STO-1 migration v16 on the service DB (#192). The Node 22 LTS runtime (#187) and the Telegram
   keep-alive (#188) are merged; their live status is in the CHANGELOG entries.
+
+**A6 merges #245–#250 (2026-10-16, all on `main`):**
+- #245 read prompt `nl-select.v39` (read regression path).
+- #246 A6 R5a deictic writes (owner-text referents, preview, next-turn "응"), behind `QUOKY_NL_DEICTIC_WRITES` (default `off`; requires `QUOKY_NL_ACTIONS=local`, so inert on the live `shadow` service).
+- #247 atomic take of pending questions and drafts.
+- #248 A6 prompt `nl-select.v42` and the garbled-action rule: a garbled action word asks (`garbled-action`) and never executes a local write; blocks R5a previews.
+- #249 selector-RAG pool batch 2 approved; ADR-0123 phase 1 plan digests recorded.
+- #250 ADR-0123 D6 dev tuning: no measured gain from retrieval (k and similarity-floor variants).
 
 **Security hotfix (2026-10-15, branch `claude/v5-recall-dm-only`).** Durable recall, curated examples, the memory and
 learning commands and `피드백 요약` are DM-only (P0 ahead of ADR-0122 D7; DECISIONS "… owner memory/learning commands
@@ -107,7 +115,7 @@ Details and the review record for each item are in the matching notes in `DECISI
   latest Haiku runs (1 each): action 97.3%, 0 wrong targets, 0 negative captures, gate passed; read regression passed.
   The `complete-018` and `-009` relabels were decided by the owner on 2026-10-16 (DECISIONS "Owner decisions on A6 gold").
 - **Final Haiku gate (3 runs, read v27 / A6 v29, 2026-10-15).** Action 95.8% / 96.8% / 95.5%, wrong target 0/0/0, negative captures 0/0/0; run 1 below gate only on the READ entry `reminder.list` 5/6. Read regression 95.7% / 95.4% / 96.4%, A6 captures 0/0/0; run 2 has 1 wrong capture (`neg-051` → `help.topic`, read-only). Summary: safety 3/3, utility 2/3 per corpus; not a full pass. The owner decides the flag after the 100-turn live session. Reported-speech residuals ("…완료해줘 했어", "…하길래", "…해서", "…하니까") are recorded in DECISIONS as accepted.
-- **A6-D3a amendment 1, act-and-undo (Proposed, branch `claude/v5-a6-act-undo`, 2026-10-16).** The closed request-verb /
+- **A6-D3a amendment 1, act-and-undo (Accepted 2026-10-16, merged #244 and deployed; Chief Architect APPROVE after five review rounds).** The closed request-verb /
   request-form rule is removed: a local write the selector chose runs unless a grammar veto (question, negation,
   retraction, reported speech, conditional, statement, first-person volition, example) makes it chat; receipts end with
   `되돌리려면 "되돌려줘" (10분 안)`. Gold: `todo.add-016/-025`, `reminder.create-020/-022/-024` execute, `todo.add-009` none.

@@ -26751,10 +26751,9 @@ it never widens a write. Inert while `QUOKY_NL_ACTIONS` is `off`. No prompt, TTL
    ordered by the same timestamps (a drift list is the owner's newest view and outranks an older `lastAction` for
    "그거"), and `recordReceipt` still writes every echo with the inbound message id.
 
-## ADR-0120 amendment A6-D3a amendment 1 — act-and-undo for local writes: a LOCAL_WRITE the selector chose runs unless a structural veto says the sentence is not a request; the closed request-verb and request-form requirement is removed (Proposed, 2026-10-16)
+## ADR-0120 amendment A6-D3a amendment 1 — act-and-undo for local writes: a LOCAL_WRITE the selector chose runs unless a structural veto says the sentence is not a request; the closed request-verb and request-form requirement is removed (Accepted, 2026-10-16)
 
-- **Status:** **Proposed.** Owner-approved direction on 2026-10-16; Chief Architect review pending. Implemented on branch
-  `claude/v5-a6-act-undo`, inert while `QUOKY_NL_ACTIONS` is `off` (the default). Promotion is shadow-first (gates below).
+- **Status:** **Accepted (2026-10-16):** owner-approved direction ("AI 개인 비서, not a chatbot"); Chief Architect APPROVE after five review rounds. Merged as #244 and deployed. Promotion to `local` is still gated by D12, the labelled live session, and the owner's yes. Inert while `QUOKY_NL_ACTIONS` is `off`; the live service runs `shadow` (gates below).
 - **Date:** 2026-10-16
 - **Amends:** the A6 R1 "positive request-form rule" (A6 R1 scope reduction, orchestrator decision 2026-10-15) and the A6 R1
   review rule that every LOCAL_WRITE needs a word of its entry's closed action vocabulary (`actionGrounding`). The A6-D3a
