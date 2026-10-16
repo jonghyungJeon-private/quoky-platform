@@ -190,6 +190,7 @@ export class ReminderConversationService {
         if (containsCredentialMaterial(command.body)) return { body: composer.credentialRefused() };
         let draft;
         try {
+          // creator-origin: owner-text-or-brief (the anchored grammar; a BRIEF body is excluded from deictic referents by its kind)
           draft = createReminderDraft({
             id: this.newReminderId(),
             actorId: input.actorId,
@@ -264,6 +265,7 @@ export class ReminderConversationService {
     }
     let draft;
     try {
+      // creator-origin: event-linked (may hold the event title; excluded from deictic referents by the event link)
       draft = createReminderDraft({
         id: this.newReminderId(),
         actorId: input.actorId,
@@ -377,7 +379,10 @@ export class ReminderConversationService {
     const whenText = typeof command.args.when === 'string' ? command.args.when : '';
     const refuse = (text: MessageBody, reason: string): ReminderTurnResult => ({ reply: this.reply(input, text), action: refusedReceipt(command, reason) });
     if (containsCredentialMaterial(body)) return refuse(composer.credentialRefused(), 'credential');
-    const when = parseReminderWhen(whenText, { now: input.now, timeZone: this.deps.timeZone });
+    // A6 R5a: an approved deictic preview carries the instant its time words were read at (`whenAt`, set by Core only:
+    // the selector's args are closed), so the reminder fires exactly when the preview said.
+    const whenAt = typeof command.args.whenAt === 'string' && Number.isFinite(Date.parse(command.args.whenAt)) ? command.args.whenAt : undefined;
+    const when = parseReminderWhen(whenText, { now: whenAt ?? input.now, timeZone: this.deps.timeZone, ...(whenAt !== undefined ? { eventRelative: false } : {}) });
     if (when.kind === 'clarify') return refuse(composer.clarify(when.reason), 'when-unparsed');
     if (when.kind === 'event') {
       // BRF-2 resolves the event; the reminder keeps the owner's own words (the event title only when they are empty).
@@ -387,6 +392,7 @@ export class ReminderConversationService {
     }
     let draft;
     try {
+      // creator-origin: owner-text (a TEXT reminder body the owner typed, never an event title)
       draft = createReminderDraft({
         id: this.newReminderId(),
         actorId: input.actorId,

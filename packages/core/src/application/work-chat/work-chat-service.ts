@@ -509,6 +509,7 @@ export class WorkChatService implements WorkDesk {
     }
     if (containsCredentialMaterial(title)) return { body: renderTodoCredentialRefused() };
     try {
+      // creator-origin: owner-text (a to-do made from the owner's own words: origin 'conversation')
       const item = await this.deps.work.create(
         {
           actorId: actor.id,

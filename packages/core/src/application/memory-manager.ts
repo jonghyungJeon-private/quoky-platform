@@ -100,6 +100,21 @@ export class MemoryManager {
   }
 
   /**
+   * ADR-0120 A6 R5a (§7 interfaces): one recorded SHORT_TERM turn by id — its text, session and role — or `null` when it
+   * is absent or not SHORT_TERM. Read-only; a deictic write re-reads the owner's message here and re-checks its hash.
+   */
+  async findShortTerm(id: Id): Promise<{ readonly content: string; readonly sessionId?: Id; readonly role?: string } | null> {
+    const record = await this.storage.memories.get(id);
+    if (record === null || record.type !== MemoryType.SHORT_TERM) return null;
+    const role = record.metadata?.role;
+    return {
+      content: record.content,
+      ...(record.scope.sessionId !== undefined ? { sessionId: record.scope.sessionId } : {}),
+      ...(typeof role === 'string' ? { role } : {}),
+    };
+  }
+
+  /**
    * ADR-0106 D5 fail-closed fallback: remove one recorded SHORT_TERM turn whose redaction could not be applied. An
    * absent or non-SHORT_TERM record is left alone.
    */

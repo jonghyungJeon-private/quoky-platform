@@ -181,6 +181,15 @@ export function reminderRepeatLabel(schedule: ReminderSchedule): string {
   }
 }
 
+/**
+ * A6 R5a preview (§3.1): when a reminder the owner has not created yet would fire, in absolute terms: `10월 17일(금) 오전
+ * 9:00 · 한 번`, or `매일 오전 9:00 (첫 알림 10월 17일(금) 오전 9:00)`.
+ */
+export function reminderWhenPreviewLabel(schedule: ReminderSchedule, firstFireAt: IsoTimestamp, timeZone: string, now: IsoTimestamp): string {
+  if (schedule.type === 'ONCE') return `${formatAbsolute(firstFireAt, timeZone, now)} · 한 번`;
+  return `${reminderRepeatLabel(schedule)} ${recurringClock(schedule)} (첫 알림 ${formatAbsolute(firstFireAt, timeZone, now)})`;
+}
+
 function recurringClock(schedule: ReminderSchedule): string {
   return schedule.type === 'ONCE' ? '' : formatKoreanClock(schedule.time.hour, schedule.time.minute);
 }

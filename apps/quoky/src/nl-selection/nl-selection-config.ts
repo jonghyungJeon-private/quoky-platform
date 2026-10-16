@@ -25,10 +25,14 @@ import { NL_SELECTION_TIMEOUT_MS } from '@quoky/core';
  *   `QUOKY_NL_INTENT_MODE=active` (`NL_ACTIONS_REQUIRES_ACTIVE`, a startup refusal); the composition root always builds
  *   the persisted kill switch, and the service refuses to start without it. Each non-`off` level is a Strict owner step.
  *   `external` (R3) is refused at startup (`NL_ACTIONS_EXTERNAL_NOT_AVAILABLE`) until its stage is built.
+ * - `QUOKY_NL_DEICTIC_WRITES` (ADR-0120 amendment A6 R5a, owner decision 7): exactly `off`, `shadow` or `on`; default
+ *   `off` (nothing recorded, every reply byte-identical). Any other value requires `QUOKY_NL_ACTIONS=local`
+ *   (`NL_DEICTIC_WRITES_REQUIRES_LOCAL`, a startup refusal), so with the live `QUOKY_NL_ACTIONS=shadow` it cannot be on.
  */
 export type NlIntentModeConfig = 'off' | 'shadow' | 'active';
 export type NlPhaseConfig = 'a' | 'c' | 'c-shadow';
 export type NlActionsConfig = 'off' | 'shadow' | 'local' | 'external';
+export type NlDeicticWritesConfig = 'off' | 'shadow' | 'on';
 
 export interface NlSelectionConfig {
   readonly mode: NlIntentModeConfig;
@@ -41,6 +45,8 @@ export interface NlSelectionConfig {
   readonly timeoutMs: number;
   /** `QUOKY_NL_ACTIONS` (amendment A6): `off` (default), `shadow`, `local` or `external`. */
   readonly actions: NlActionsConfig;
+  /** `QUOKY_NL_DEICTIC_WRITES` (A6 R5a): `off` (default), `shadow` or `on`; only with `actions: 'local'`. */
+  readonly deicticWrites: NlDeicticWritesConfig;
 }
 
 export const DEFAULT_NL_INTENT_MODEL = 'haiku';
@@ -55,6 +61,8 @@ export const NlSelectionConfigErrorCode = {
   NL_ACTIONS_INVALID: 'NL_ACTIONS_INVALID',
   NL_ACTIONS_REQUIRES_ACTIVE: 'NL_ACTIONS_REQUIRES_ACTIVE',
   NL_ACTIONS_EXTERNAL_NOT_AVAILABLE: 'NL_ACTIONS_EXTERNAL_NOT_AVAILABLE',
+  NL_DEICTIC_WRITES_INVALID: 'NL_DEICTIC_WRITES_INVALID',
+  NL_DEICTIC_WRITES_REQUIRES_LOCAL: 'NL_DEICTIC_WRITES_REQUIRES_LOCAL',
 } as const;
 export type NlSelectionConfigErrorCode = (typeof NlSelectionConfigErrorCode)[keyof typeof NlSelectionConfigErrorCode];
 
@@ -121,8 +129,17 @@ export function parseNlSelectionConfig(env: NodeJS.ProcessEnv): NlSelectionConfi
   if (rawActions !== undefined && rawActions !== 'off' && rawMode !== 'active') {
     throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_ACTIONS_REQUIRES_ACTIVE);
   }
+  const rawDeictic = env.QUOKY_NL_DEICTIC_WRITES;
+  if (rawDeictic !== undefined && rawDeictic !== 'off' && rawDeictic !== 'shadow' && rawDeictic !== 'on') {
+    throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_DEICTIC_WRITES_INVALID);
+  }
+  // A6 R5a (owner decision 7): deictic writes only on top of live local actions.
+  if (rawDeictic !== undefined && rawDeictic !== 'off' && rawActions !== 'local') {
+    throw new NlSelectionConfigError(NlSelectionConfigErrorCode.NL_DEICTIC_WRITES_REQUIRES_LOCAL);
+  }
   return {
     actions: (rawActions as NlActionsConfig | undefined) ?? 'off',
+    deicticWrites: (rawDeictic as NlDeicticWritesConfig | undefined) ?? 'off',
     mode: (rawMode as NlIntentModeConfig | undefined) ?? 'off',
     model: rawModel ?? DEFAULT_NL_INTENT_MODEL,
     grammarYield: rawYield === 'on',

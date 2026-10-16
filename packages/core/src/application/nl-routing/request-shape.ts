@@ -544,9 +544,10 @@ export function nlRequestsSomething(text: string, actionWords: readonly string[]
 /**
  * The R5a seam: the replacement of the A6 R1 `nlActionWordGrounded` (removed with the request-form rule). True when one of
  * `words` occurs in the prose and the prose carries no structural veto. Callers that strip their own phrases first (R5a:
- * "내가 말한 거", "아까 보냈던 거") pass the stripped prose.
+ * "내가 말한 거", "아까 보냈던 거") pass the stripped prose, and the selector's `when` span (`spans.when`) so a reminder
+ * time ("… 30분 뒤") is read as the time, not as a deferral.
  */
-export function nlActionWordGrounded(prose: string, words: readonly string[]): boolean {
+export function nlActionWordGrounded(prose: string, words: readonly string[], spans: NlRequestSpans = {}): boolean {
   const text = normalizeForMatch(prose);
-  return words.some((word) => text.includes(normalizeForMatch(word))) && nlRequestVeto(prose, words, words) === undefined;
+  return words.some((word) => text.includes(normalizeForMatch(word))) && nlRequestVeto(prose, words, words, spans) === undefined;
 }

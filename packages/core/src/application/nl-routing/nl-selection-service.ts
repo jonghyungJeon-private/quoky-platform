@@ -1,10 +1,13 @@
 import { AiProviderError } from '../../errors';
-import { AiFailureKind, Capability, type Actor, type ConversationContext, type InboundQuotedRange, type IsoTimestamp, type Session } from '../../domain';
+import { AiFailureKind, Capability, type Actor, type ConversationContext, type InboundQuotedRange, type IsoTimestamp, type MessageBody, type Session } from '../../domain';
 import { executionLocalityOf, type AiExecutionLocality, type AiProvider } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import type { SessionManager } from '../session-manager';
+import type { SessionWriteLock } from '../session-write-lock';
+import { NlDeicticWrites, type DeicticAnswer, type DeicticTurn, type NlDeicticTextReader, type NlDeicticWritesMode } from './deictic-writes';
+import type { LastTurnReplyKind } from './last-turn';
 import { ActorMetadataStore } from '../actor-metadata-store';
 import {
   LAST_LISTING_METADATA_KEY,
@@ -35,7 +38,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -244,7 +247,17 @@ export type NlSelectionDecision =
    * entry the question is about (a usage, preference or A6 question), so the runtime gates it like that entry; absent for
    * a data-free question between several entries or a fixed cancel note.
    */
-  | { readonly kind: 'ask'; readonly text: string; readonly entryId?: NlCatalogEntryId };
+  | {
+      readonly kind: 'ask';
+      readonly text: string;
+      readonly entryId?: NlCatalogEntryId;
+      /** A6 R5a: the reply body when it carries an untrusted span (a preview's quoted payload); `text` is its plain form. */
+      readonly body?: MessageBody;
+      /** A6 R5a: the SHORT_TERM assistant record instead of the text (a fixed note when the reply shows owner items). */
+      readonly history?: string;
+      /** A6 R5a: what kind of reply this is for `quoky.lastTurn` (default `question`). */
+      readonly replyKind?: Extract<LastTurnReplyKind, 'preview' | 'question' | 'refusal'>;
+    };
 
 export interface NlSelectionServiceDeps {
   readonly mode: NlIntentMode;
@@ -275,6 +288,19 @@ export interface NlSelectionServiceDeps {
     /** Tests only: other caps. */
     readonly caps?: NlActionCaps;
   };
+  /**
+   * ADR-0120 amendment A6 R5a (`QUOKY_NL_DEICTIC_WRITES`, default `off`): deictic writes with a preview and next-turn
+   * approval. Any mode but `off` requires the action level `local` (the constructor throws otherwise). Absent or `off`:
+   * nothing is recorded and every reply is byte-identical.
+   */
+  readonly deictic?: {
+    readonly mode: NlDeicticWritesMode;
+    readonly texts: NlDeicticTextReader;
+    /** Tests only: an isolated session lock. */
+    readonly sessionLock?: SessionWriteLock;
+    /** Tests only: other preview caps. */
+    readonly previewCaps?: NlActionCaps;
+  };
 }
 
 /** A6: the content-free record of a turn that will be completed by `recordActionReceipt` after dispatch. */
@@ -293,7 +319,7 @@ const ECHO_RECEIPT_TTL_MS = 5 * 60_000;
 
 /** A6 configuration errors (value-free codes; the app maps them to a startup refusal). */
 export class NlActionsConfigError extends Error {
-  constructor(readonly code: 'NL_ACTIONS_REQUIRES_ACTIVE' | 'NL_ACTIONS_REQUIRES_KILL_SWITCH' | 'NL_ACTIONS_EXTERNAL_NOT_AVAILABLE') {
+  constructor(readonly code: 'NL_ACTIONS_REQUIRES_ACTIVE' | 'NL_ACTIONS_REQUIRES_KILL_SWITCH' | 'NL_ACTIONS_EXTERNAL_NOT_AVAILABLE' | 'NL_DEICTIC_WRITES_REQUIRES_LOCAL') {
     super(code);
     this.name = 'NlActionsConfigError';
   }
@@ -343,6 +369,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
 
   /** ADR-0122 D3: the one per-actor metadata writer (preferences go through its lock). */
   private readonly actorMetadata: ActorMetadataStore;
+  /** A6 R5a deictic writes; absent while `QUOKY_NL_DEICTIC_WRITES` is `off`. */
+  private readonly deictic: NlDeicticWrites | undefined;
 
   /** Process start (service construction) and the end of the last completed selector call, on the injected clock. */
   private readonly startedAtMs: number;
@@ -359,6 +387,77 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (this.actionLevelValue !== 'off' && deps.actions?.killSwitch === undefined) throw new NlActionsConfigError('NL_ACTIONS_REQUIRES_KILL_SWITCH');
     // R3 (external previews, the banner, the yield) is not built: `external` is refused, never silently treated as local.
     if (this.actionLevelValue === 'external') throw new NlActionsConfigError('NL_ACTIONS_EXTERNAL_NOT_AVAILABLE');
+    // A6 R5a (owner decision 7): deictic writes only on top of live local actions.
+    const deictic = deps.deictic;
+    if (deictic !== undefined && deictic.mode !== 'off' && this.actionLevelValue !== 'local') throw new NlActionsConfigError('NL_DEICTIC_WRITES_REQUIRES_LOCAL');
+    this.deictic =
+      deictic === undefined || deictic.mode === 'off'
+        ? undefined
+        : new NlDeicticWrites({
+            mode: deictic.mode,
+            texts: deictic.texts,
+            sessions: deps.sessions,
+            timeZone: deps.timeZone,
+            log: (level, event, fields) => this.log(level, event, fields),
+            actionCaps: this.actionCaps,
+            stillActing: (actor) => this.actionsStillActing(actor),
+            ...(deictic.sessionLock !== undefined ? { sessionLock: deictic.sessionLock } : {}),
+            ...(deictic.previewCaps !== undefined ? { previewCaps: deictic.previewCaps } : {}),
+          });
+  }
+
+  /** `QUOKY_NL_DEICTIC_WRITES` (A6 R5a); `off` unless configured. */
+  deicticWritesMode(): NlDeicticWritesMode {
+    return this.deictic?.mode ?? 'off';
+  }
+
+  /**
+   * A6 R5a §3.2/§3.3: the owner's turn after a deictic draft (a preview, a candidate question or the time question), in
+   * the owner's DM while actions are acting. The consume step holds ONE session write lock; `execute` runs the existing
+   * handler path inside it and must not write the session. `undefined`: no draft (the turn routes normally). No selector
+   * call is ever made here. Never throws for a store failure (the draft is dropped).
+   */
+  async answerDeicticDraft<T>(
+    turn: Pick<NlSelectionTurn, 'text' | 'session' | 'actor' | 'now' | 'quotedRanges' | 'codeFormatted' | 'replyToMessageId' | 'turnId' | 'direct'>,
+    execute: (command: NlSelectedCommand) => Promise<T>,
+    options: { readonly actionQuestionOpen?: boolean } = {},
+  ): Promise<DeicticAnswer<T> | undefined> {
+    const deictic = this.deictic;
+    if (deictic === undefined || deictic.mode !== 'on' || turn.direct !== true) return undefined;
+    if (!deictic.hasDraft(turn.session, turn.actor.id)) return undefined;
+    // One next-turn question per session: an A6 question taken at the start of this turn (`action-undo-confirm` among
+    // them) is always the newer one (a draft is never saved while one is open, and asking one drops the draft), so it
+    // answers this turn ("응" undoes) and the draft is dropped unanswered.
+    if (options.actionQuestionOpen === true) {
+      await deictic.clearDraft(turn.session, turn.actor.id, turn.now, 'undo-confirm-open');
+      return undefined;
+    }
+    if (!this.actionsActing(turn.actor)) return undefined;
+    return deictic.answer(this.deicticTurn(turn), execute);
+  }
+
+  /**
+   * A6 R5a §1.2: record the turn just answered as `quoky.lastTurn` (owner DM, flag not `off`): the owner's SHORT_TERM id and
+   * its eligibility at receipt, and the kind of reply. Content-free; under the session write lock. Never throws.
+   */
+  async recordLastTurn(input: Parameters<NlDeicticWrites['recordLastTurn']>[0] & { readonly direct: boolean }): Promise<void> {
+    if (this.deictic === undefined || !input.direct) return;
+    await this.deictic.recordLastTurn(input);
+  }
+
+  private deicticTurn(turn: Pick<NlSelectionTurn, 'text' | 'session' | 'actor' | 'now' | 'quotedRanges' | 'codeFormatted' | 'replyToMessageId' | 'turnId'>): DeicticTurn {
+    const prepared = prepareSelectionInput(turn.text, 0, turn.quotedRanges ?? []);
+    return {
+      session: turn.session,
+      actor: turn.actor,
+      now: turn.now,
+      text: turn.text,
+      groundingText: 'skip' in prepared ? '' : prepared.groundingText,
+      language: languageOf(turn.text),
+      ...(turn.replyToMessageId !== undefined ? { replyToMessageId: turn.replyToMessageId } : {}),
+      ...(turn.turnId !== undefined ? { turnId: turn.turnId } : {}),
+      marked: markedMaterial(turn),
+    };
   }
 
   /**
@@ -695,6 +794,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * listing to its reply ids (reply-to-pick). Best-effort; never throws.
    */
   async observeDelivery(turn: DeliveredTurn): Promise<void> {
+    if (this.deictic !== undefined) await this.deictic.observeDelivery(turn);
     try {
       const key = echoKey(turn.messageId, turn.context);
       const pending = this.echoReceipts.get(key);
@@ -1060,6 +1160,30 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
       return this.actionAnswer(audit, renderDmOnlyAction(language));
     }
+    // A6 R5a: a deictic payload ("그거 할 일로 추가해줘", "내가 말한 거 …") resolves its referent in code and previews it.
+    // The request-shape vetoes read the owner's frame WITHOUT origin phrases (the `requestFrame` seam: "내가 말한 거" is not
+    // volition, "내가 아까 보냈던 거" is not a past statement); every other veto still applies (`not-request` blocks). That
+    // stripped validation decides only whether R5a may handle the turn; every other path keeps the unstripped `validated`.
+    const deicticCandidate = this.deictic !== undefined && ctx.offered.has(entryId) && this.deictic.isDeicticRequest(entryId, output.args, prepared.groundingText);
+    const deicticValidated = deicticCandidate ? validateSelection({ entryId, args: output.args }, { ...ctx, requestFrame: nlOriginRequestFrame }) : validated;
+    if (this.deictic !== undefined && deicticCandidate && (deicticValidated.ok || !DEICTIC_BLOCKING_FAILURES.has(deicticValidated.reason))) {
+      const reply = await this.deictic.decide({
+        entryId,
+        args: output.args,
+        turn: this.deicticTurn(turn),
+        reference,
+        direct: turn.direct === true,
+        questionOpen: openQuestion !== undefined,
+        latencyMs,
+      });
+      if (reply !== undefined) return { kind: 'ask', text: reply.text, body: reply.body, entryId, replyKind: reply.replyKind, ...(reply.history !== undefined ? { history: reply.history } : {}) };
+      // Shadow, nothing referable or not a DM: today's reply, unchanged. With `on`, a title that is only a deictic once its
+      // origin words are removed ("네가 추천한 거") is never stored as written either.
+      if (deicticValidated.ok && this.deictic.mode === 'on') {
+        const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'deictic-payload' };
+        return this.actionAnswer(audit, validationReply('deictic-payload', language));
+      }
+    }
     if (!validated.ok) {
       // An entry that is not offered (an external write before R3, an unconfigured source) is honest chat's to explain.
       if (validated.reason === 'not-offered' || validated.reason === 'unknown-entry' || validated.reason === 'not-read') return { kind: 'none' };
@@ -1244,6 +1368,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
         ...(reference.lastAction?.record.at !== undefined ? { actionAt: reference.lastAction.record.at } : {}),
       }),
     );
+    // One next-turn question per session: the undo confirmation supersedes any R5a draft, so "응" can only mean this.
+    if (this.deictic !== undefined) await this.deictic.clearDraft(turn.session, turn.actor.id, turn.now, 'undo-confirm-asked');
     return this.actionAnswer(audit, renderUndoConfirm(undoEntryId, resolved.target.source, resolved.target.label, language));
   }
 
@@ -2034,6 +2160,13 @@ function echoKey(messageId: string, context: { readonly platform: string; readon
 function correlationOf(turn: Pick<NlSelectionTurn, 'session' | 'turnId'>): { readonly sessionId: string; readonly turnId?: string } {
   return { sessionId: turn.session.id, ...(turn.turnId !== undefined ? { turnId: turn.turnId } : {}) };
 }
+
+/**
+ * A6 R5a: validation failures a deictic request never overrides (an unknown or invalid argument, a credential, a bulk
+ * request) and, since A6-D3a amendment 1, `not-request`: a question, negation, retraction, reported speech, conditional,
+ * statement, volition or example veto always ends the turn as chat, deictic or not (CA review (b)).
+ */
+export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-entry', 'not-offered', 'not-read', 'unknown-arg', 'invalid-arg', 'credential', 'bulk', 'not-request']);
 
 /** A6: the platform marked part of the message as quoted or as code: material, never one plain instruction. */
 function markedMaterial(turn: Pick<NlSelectionTurn, 'quotedRanges' | 'codeFormatted'>): boolean {

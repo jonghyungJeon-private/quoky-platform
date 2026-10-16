@@ -120,6 +120,8 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.NL_ACTIONS_INVALID]: 'QUOKY_NL_ACTIONS must be unset, "off", "shadow", "local", or "external".',
   [QuokyConfigErrorCode.NL_ACTIONS_REQUIRES_ACTIVE]: 'QUOKY_NL_ACTIONS other than "off" needs QUOKY_NL_INTENT_MODE=active.',
   [QuokyConfigErrorCode.NL_ACTIONS_EXTERNAL_NOT_AVAILABLE]: 'QUOKY_NL_ACTIONS=external is not available before stage R3; use off, shadow or local.',
+  [QuokyConfigErrorCode.NL_DEICTIC_WRITES_INVALID]: 'QUOKY_NL_DEICTIC_WRITES must be unset, "off", "shadow", or "on".',
+  [QuokyConfigErrorCode.NL_DEICTIC_WRITES_REQUIRES_LOCAL]: 'QUOKY_NL_DEICTIC_WRITES other than "off" needs QUOKY_NL_ACTIONS=local.',
   [QuokyConfigErrorCode.NL_INTENT_TIMEOUT_INVALID]:
     'QUOKY_NL_INTENT_TIMEOUT_MS must be unset or a whole number of milliseconds from 2000 to 8000.',
   // ADR-0122 channel grants. Names and shapes only, never a value.
