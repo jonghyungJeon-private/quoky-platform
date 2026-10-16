@@ -333,11 +333,13 @@ describe('pseudonymiseParticipants (D5, live test 3: a name inside free text)', 
   it.each([
     ['혜정님에게 전달', '참여자 A에게 전달'],
     ['전혜정님이 확인', '참여자 A이 확인'],
+    ['전혜정 님이 확인', '참여자 A이 확인'],
     ['전혜정 확인 부탁', '참여자 A 확인 부탁'],
     ['혜정씨 의견대로', '참여자 A 의견대로'],
-    ['혜정이 맡기로 함', '참여자 A이 맡기로 함'],
+    ['혜정 씨 의견대로', '참여자 A 의견대로'],
     ['혜정에게 넘김', '참여자 A에게 넘김'],
-    ['(혜정) 메모', '(참여자 A) 메모'],
+    ['혜정께 보고', '참여자 A께 보고'],
+    ['혜정아 이거 봐줘', '참여자 A 이거 봐줘'],
     ['Minsu Kim will review', '참여자 B will review'],
     ['ask Minsu tomorrow', 'ask 참여자 B tomorrow'],
     ['Minsu님 확인', '참여자 B 확인'],
@@ -347,8 +349,17 @@ describe('pseudonymiseParticipants (D5, live test 3: a name inside free text)', 
     expect(pseudonymiseParticipants(input, people)).toBe(expected);
   });
 
-  it.each(['정혜정리', '혜정리 작업', 'Minsukim', '준비 완료', '기준 변경', '수준 높음'])('leaves %s untouched (not a written name)', (line) => {
+  it.each(['정혜정리', '혜정리 작업', 'Minsukim', '준비 완료', '기준 변경', '수준 높음', '혜정이 맡기로 함'])('leaves %s untouched (not a certain name form)', (line) => {
     expect(pseudonymiseParticipants(line, people)).toBe(line);
+  });
+
+  it('CA P2: a bare given name that is an ordinary word stays intact ("버그 수정이 필요하고 서버 지원도")', () => {
+    const words = [
+      { handle: '김수정', label: '참여자 A' },
+      { handle: '박지원', label: '참여자 B' },
+    ];
+    expect(pseudonymiseParticipants('버그 수정이 필요하고 서버 지원도 확인해 주세요. 수정 완료.', words)).toBe('버그 수정이 필요하고 서버 지원도 확인해 주세요. 수정 완료.');
+    expect(pseudonymiseParticipants('수정님이 버그 수정을, 지원씨가 서버 지원을, 김수정 확인', words)).toBe('참여자 A이 버그 수정을, 참여자 B가 서버 지원을, 참여자 A 확인');
   });
 
   it('a given name two participants share becomes the plain "참여자", never the wrong person', () => {
@@ -366,6 +377,6 @@ describe('pseudonymiseParticipants (D5, live test 3: a name inside free text)', 
     const prompt = renderUntrustedDocumentForPrompt(r.readout);
     expect(prompt).not.toMatch(/혜정|전혜정|민수|김민수/u);
     expect(prompt).toContain('참여자 A에게 전달');
-    expect(prompt).toContain('참여자 B 씨도');
+    expect(prompt).toContain('참여자 B도 참고');
   });
 });

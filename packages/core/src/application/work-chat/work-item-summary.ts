@@ -84,9 +84,14 @@ function pseudonymsOf(item: ConnectorItem): Map<string, string> {
 }
 
 const HANGUL = '가-힣';
-/** Closed particle class a bare given name may carry ("혜정이", "혜정에게", "혜정도"); nothing else may follow it. */
-const NAME_PARTICLES = '이랑|이에게|이한테|이가|이는|이도|이를|이의|에게서|에게|한테|께서|께|으로|로|처럼|보다|부터|까지|이|가|은|는|을|를|도|만|과|와|의|랑|아|야|에';
-const HONORIFIC = '(?:님|씨)';
+/** An honorific written after a name (consumed with it): "혜정님", "혜정씨", "혜정 씨". */
+const HONORIFIC = String.raw`(?:\s?(?:님|씨))`;
+/**
+ * The forms in which a bare Korean given name is certainly a person (CA P2 on 274bb2e0): with an honorific, as a vocative
+ * ("혜정아", consumed), or before an addressee particle ("혜정에게", "혜정께", "혜정한테", kept). Any other bare use
+ * ("버그 수정이 필요하고 서버 지원도") is left alone: a given name is often an ordinary word.
+ */
+const GIVEN_NAME_FORM = String.raw`(?:${HONORIFIC}|(?:아|야)(?![${HANGUL}])|(?=께|에게|한테))`;
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -94,25 +99,25 @@ function escapeRegExp(text: string): string {
 
 /**
  * The patterns one participant's name is written as in free text, all derived from the handle itself (no name list):
- * the whole handle, each Hangul or Latin part of it, a Korean given name (the part after a one-syllable family name, the
- * last two syllables of a three- or four-syllable name) bare or with an honorific, and a one-syllable given name only
- * with an honorific (님 / 씨, consumed with the name). A bare given name counts only before a particle or a non-Hangul
- * character, so a word that merely contains it is left alone.
+ * the whole handle and each Hangul part of three or more syllables or Latin part of three or more letters, anywhere
+ * (an honorific consumed); a Korean given name (the last two syllables of a three- or four-syllable name, the last
+ * syllable of a two-syllable one) and a two-syllable Hangul part only in {@link GIVEN_NAME_FORM}.
  */
 function namePatterns(handle: string): { readonly key: string; readonly source: string }[] {
   const patterns: { key: string; source: string }[] = [{ key: handle, source: `${escapeRegExp(handle)}${HONORIFIC}?` }];
-  const bareGiven = (given: string): string => `(?<![${HANGUL}])${given}(?:${HONORIFIC}|(?=(?:${NAME_PARTICLES})?(?![${HANGUL}])))`;
+  const given = (name: string): { key: string; source: string } => ({ key: name, source: `(?<![${HANGUL}])${name}${GIVEN_NAME_FORM}` });
   for (const part of handle.split(/[^A-Za-z가-힣]+/u)) {
     if (part.length === 0 || part === handle) continue;
     if (/^[가-힣]+$/u.test(part)) {
-      if (part.length >= 2) patterns.push({ key: part, source: `(?<![${HANGUL}])${part}${HONORIFIC}?` });
+      if (part.length >= 3) patterns.push({ key: part, source: `(?<![${HANGUL}])${part}${HONORIFIC}?` });
+      else if (part.length === 2) patterns.push(given(part));
     } else if (/^[A-Za-z]{3,}$/u.test(part)) {
       patterns.push({ key: part, source: `(?<![A-Za-z])${part}(?![A-Za-z])${HONORIFIC}?` });
     }
   }
   for (const part of handle.split(/[^가-힣]+/u)) {
-    if (part.length === 3 || part.length === 4) patterns.push({ key: part.slice(-2), source: bareGiven(part.slice(-2)) });
-    if (part.length === 2) patterns.push({ key: part.slice(-1), source: `(?<![${HANGUL}])${part.slice(-1)}${HONORIFIC}` });
+    if (part.length === 3 || part.length === 4) patterns.push(given(part.slice(-2)));
+    if (part.length === 2) patterns.push(given(part.slice(-1)));
   }
   return patterns;
 }

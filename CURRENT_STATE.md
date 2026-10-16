@@ -60,8 +60,10 @@ the live `shadow` service. Pending: the owner's D12 batch for the 16 agent-draft
 
 **Live test 3 fixes (2026-10-17), branch `claude/v5-live3-fixes`** (DECISIONS "Live test 3 fixes"): R2 summary bodies carry
 the deterministic labels (the footer index follows the same order; labels recorded = numbers shown); every written form of
-a participant's name (given name + 님/씨 included; Jira assignee / reporter added as participants) is pseudonymised in the
-summariser input and scrubbed from its output; "할 일에 … 일정 … 추가해줘" is no longer a calendar external action. The
+a participant's name (given name only with 님/씨, vocative or addressee particle; Jira assignee / reporter added as
+participants) is pseudonymised in the summariser input and scrubbed from its output, with recorded residual gaps (romanised
+vs Hangul names, Slack ids, third parties); "할 일에 … 일정 … 추가해줘" is no longer a calendar external action (not inert:
+the live shadow reply for that shape changes from the refusal to the ordinary route). The
 bare "<title> 할 일" selector variance (T7a ask / T7b execute / T7d none) is a measured residual noted for the D12 batch.
 
 **Pending with the owner.**

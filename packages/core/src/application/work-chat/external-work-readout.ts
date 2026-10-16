@@ -380,22 +380,23 @@ export function stripLeadingListMarkers(text: string): string {
 }
 
 /** A bulleted line (what {@link stripLeadingListMarkers} leaves of a list line). */
-const BULLET = /^[-*•]\s+/u;
-/** The shortest title that may identify an item by itself inside a summary line. */
-const TITLE_MATCH_MIN_CHARS = 6;
+const BULLET = /^[-*•]\s+/u;/** Emphasis or code marks a model may wrap a leading key in ("**PROJ-1**", "`PROJ-1`"). */
+const LEADING_MARKS = /^(?:\*\*|__|\*|_|`)?/u;
 
-/** The used items one summary line names: by bracketed reference, by bare id (key) or by the whole title. */
-function itemsNamedBy(line: string, items: readonly ExternalWorkReadoutItem[]): number[] {
-  const named: number[] = [];
-  items.forEach((item, index) => {
+/**
+ * The ONE used item a summary line leads with, or `undefined` (CA P1 on 274bb2e0). After the bullet (and an emphasis
+ * mark), the line must START with the bracketed reference (`[jira:KEY]`) or the bare key of exactly one used item. A key
+ * or title elsewhere in the line never counts: "- 배포 준비: 로그인 오류 수정 이후 진행" names no item.
+ */
+function itemLedBy(line: string, items: readonly ExternalWorkReadoutItem[]): number | undefined {
+  const head = line.trimStart().replace(BULLET, '').replace(LEADING_MARKS, '');
+  const led = items.flatMap((item, index) => {
     const id = item.ref.slice(item.ref.indexOf(':') + 1);
-    const idPattern = new RegExp(`(?<![A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`, 'u');
-    const title = item.title.trim();
-    if (line.includes(`[${item.ref}]`) || (id.length > 0 && idPattern.test(line)) || (Array.from(title).length >= TITLE_MATCH_MIN_CHARS && line.includes(title))) {
-      named.push(index);
-    }
+    if (head.startsWith(`[${item.ref}]`)) return [index];
+    if (id.length === 0 || !head.startsWith(id)) return [];
+    return /^[A-Za-z0-9_-]/u.test(head.slice(id.length)) ? [] : [index];
   });
-  return named;
+  return led.length === 1 ? led[0] : undefined;
 }
 
 export interface NumberedExternalWorkSummary {
@@ -410,8 +411,8 @@ export interface NumberedExternalWorkSummary {
 /**
  * A6 R2 (owner decision D1, CA finding 1; live test 3): the owner's "3번" must mean the third numbered line they SEE.
  * The model's own list markers are stripped (they are never labels). Then every item line (a list line, or a line that
- * starts with a bracketed reference) that names exactly ONE used item, the first time that item is named, gets the next
- * label `1.`, `2.`, … in reading order, so the visible numbers always run in order. Items the body never names follow in
+ * starts with a bracketed reference) that LEADS with the reference or bare key of exactly ONE used item, the first time
+ * that item leads a line, gets the next label `1.`, `2.`, … in reading order (a title never identifies an item), so the visible numbers always run in order. Items the body never names follow in
  * readout order. The index footer is rendered in that same order, so body and footer show one numbering, and only the
  * labels the footer certainly delivers number a body line or are recorded. A line naming several items, a repeat
  * mention and a line past the delivered labels stay plain bullets.
@@ -424,10 +425,10 @@ export function numberExternalWorkSummary(summaryText: string, readout: External
   lines.forEach((line, at) => {
     const trimmed = line.trimStart();
     if (!BULLET.test(trimmed) && !/^\[[a-z]+:[^\]\s]+\]/u.test(trimmed)) return;
-    const named = itemsNamedBy(line, used);
-    if (named.length !== 1 || order.includes(named[0] as number)) return;
-    order.push(named[0] as number);
-    lineItem.set(at, named[0] as number);
+    const led = itemLedBy(line, used);
+    if (led === undefined || order.includes(led)) return;
+    order.push(led);
+    lineItem.set(at, led);
   });
   used.forEach((_item, index) => {
     if (!order.includes(index)) order.push(index);

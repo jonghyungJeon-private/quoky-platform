@@ -953,7 +953,18 @@ describe('IntentClassifier — live test 3 T2: a local to-do add with "일정" i
     expect(detectPolicySensitiveChat(text)).toBeUndefined();
   });
 
-  it.each(['캘린더에 주차장 일정 추가해줘', '내일 3시에 일정 추가해줘', '할 일에 메모 추가하고 캘린더에 일정 등록해줘'])('%s is still a calendar action', (text) => {
+  it.each([
+    '캘린더에 주차장 일정 추가해줘',
+    '내일 3시에 일정 추가해줘',
+    '할 일에 메모 추가하고 캘린더에 일정 등록해줘',
+    // Codex P2: the exemption covers only the local-list sub-clause; the rest is still checked.
+    '할 일에 주차장 일정 확인 추가해줘 그리고 내일 3시에 일정 추가해줘',
+    '할 일에 주차장 일정 확인 추가해줘. 내일 3시에 일정 추가해줘',
+  ])('%s is still a calendar action', (text) => {
     expect(detectExternalActionRequest(text)).toEqual({ kind: 'calendar' });
+  });
+
+  it('the local-list sub-clause does not hide another action of the same message', () => {
+    expect(detectExternalActionRequest('할 일에 주차장 일정 확인 추가해줘 그리고 팀장님께 메일 보내줘')).toEqual({ kind: 'email' });
   });
 });

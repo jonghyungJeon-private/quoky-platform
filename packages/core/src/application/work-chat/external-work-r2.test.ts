@@ -228,12 +228,30 @@ describe('numberExternalWorkSummary (D1, live test 3: the body carries the label
     expect(text(shown.footer)).not.toContain('3. 이슈 CPDT-68');
   });
 
-  it('strips the model numbers; a line naming no item, several items or a repeated item stays a plain bullet', () => {
+  it('strips the model numbers; a line that does not LEAD with one item, or repeats one, stays a plain bullet', () => {
     const readout = refs(3);
-    const summary = ['3. 전체 요약', '1) PROJ-1 과 PROJ-2 는 같은 작업', '- [jira:PROJ-2] 둘째', '- PROJ-2 다시 언급', '- [jira:PROJ-9] 없는 이슈'].join('\n');
+    const summary = ['3. 전체 요약', '1) 같은 작업: PROJ-1 과 PROJ-2', '- [jira:PROJ-2] 둘째', '- PROJ-2 다시 언급', '- [jira:PROJ-9] 없는 이슈', '- PROJ-3 은 PROJ-1 이후'].join('\n');
     const shown = numberExternalWorkSummary(summary, readout);
-    expect(shown.text).toBe(['- 전체 요약', '- PROJ-1 과 PROJ-2 는 같은 작업', '1. [jira:PROJ-2] 둘째', '- PROJ-2 다시 언급', '- [jira:PROJ-9] 없는 이슈'].join('\n'));
-    expect(shown.labels).toEqual(['PROJ-2:10002', 'PROJ-1:10001', 'PROJ-3:10003']);
+    expect(shown.text).toBe(['- 전체 요약', '- 같은 작업: PROJ-1 과 PROJ-2', '1. [jira:PROJ-2] 둘째', '- PROJ-2 다시 언급', '- [jira:PROJ-9] 없는 이슈', '2. PROJ-3 은 PROJ-1 이후'].join('\n'));
+    expect(shown.labels).toEqual(['PROJ-2:10002', 'PROJ-3:10003', 'PROJ-1:10001']);
+  });
+
+  it('CA P1: a title never identifies an item — "- 배포 준비: 로그인 오류 수정 이후 진행" gets no label', () => {
+    const readout = build([
+      { id: 'PROJ-1', title: '배포 준비', itemRef: 'PROJ-1:10001' },
+      { id: 'PROJ-2', title: '로그인 오류 수정', itemRef: 'PROJ-2:10002' },
+    ]);
+    const shown = numberExternalWorkSummary(['- 배포 준비: 로그인 오류 수정 이후 진행', '- 로그인 오류 수정 확인 중'].join('\n'), readout);
+    expect(shown.text).toBe(['- 배포 준비: 로그인 오류 수정 이후 진행', '- 로그인 오류 수정 확인 중'].join('\n'));
+    expect(shown.labels).toEqual(['PROJ-1:10001', 'PROJ-2:10002']);
+    expect(text(shown.footer)).toContain('1. 배포 준비');
+  });
+
+  it('a key wrapped in emphasis or code still leads; a longer key never matches its prefix', () => {
+    const readout = build(items(3, (i) => ({ id: `PROJ-${i + 1}0`, itemRef: `PROJ-${i + 1}0:1${i}` })).concat([{ id: 'PROJ-1', title: 'short', itemRef: 'PROJ-1:9' }]));
+    const shown = numberExternalWorkSummary(['- **PROJ-20** 둘째', '- `PROJ-1` 짧은 키'].join('\n'), readout);
+    expect(shown.text).toBe(['1. **PROJ-20** 둘째', '2. `PROJ-1` 짧은 키'].join('\n'));
+    expect(shown.labels.slice(0, 2)).toEqual(['PROJ-20:11', 'PROJ-1:9']);
   });
 
   it('a prose line that mentions an item is not numbered; a key prefix of another key does not match ("PROJ-1" in "PROJ-12")', () => {

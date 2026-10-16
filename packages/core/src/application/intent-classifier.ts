@@ -594,11 +594,22 @@ export function detectExternalActionRequest(text: string): ExternalActionRequest
   const clauses = isMetaFraming(requests) ? requests.split(CLAUSE_BOUNDARY).filter((c) => !isMetaFraming(c)) : [requests];
   for (const clause of clauses) {
     const kind = externalActionKindOf(clause);
+    if (kind === undefined) continue;
     // Live test 3 (T2): "할 일에 주차장 일정 확인 추가해줘" names Quoky's own to-do list as the place of the add; "일정" is
     // part of the title, not a calendar. The #256 local-list shape narrows the calendar action exactly as it narrows the
-    // calendar write grammar, unless the clause names a calendar itself.
-    if (kind === 'calendar' && nlLocalListTarget(clause) !== undefined && !EXPLICIT_CALENDAR.test(clause)) continue;
-    if (kind !== undefined) return { kind };
+    // calendar write grammar, but only for its own sub-clause (Codex P2): every other sub-clause is still checked, so
+    // "… 할 일에 … 추가해줘 그리고 내일 3시에 일정 추가해줘" stays a calendar action. A clause naming a calendar is never exempt.
+    if (kind === 'calendar' && nlLocalListTarget(clause) !== undefined) {
+      const remaining = clause
+        .split(CLAUSE_BOUNDARY)
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0)
+        .map((part) => ({ part, kind: externalActionKindOf(part) }))
+        .find(({ part, kind: partKind }) => partKind !== undefined && !(partKind === 'calendar' && nlLocalListTarget(part) !== undefined && !EXPLICIT_CALENDAR.test(part)));
+      if (remaining?.kind !== undefined) return { kind: remaining.kind };
+      if (!EXPLICIT_CALENDAR.test(clause)) continue;
+    }
+    return { kind };
   }
   return undefined;
 }
