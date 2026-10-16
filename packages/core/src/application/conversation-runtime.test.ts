@@ -3199,7 +3199,7 @@ describe('Explicit Preview Apply Approval — runtime (Sprint 2s, ADR-0040)', ()
     expect(result.status).not.toBe('AWAITING_APPROVAL');
   });
 
-  it.each(['반영해줘', '이대로 반영해줘', '피드백 반영해줘'])('counter-case: "%s" with an ELIGIBLE anchor still asks the apply approval', async (text) => {
+  it.each(['반영해줘', '이대로 반영해줘', '피드백 반영해줘', "디자인에 '할 일 완료' 문구를 반영해줘", '할 일에 추가한 시안 반영해줘'])('counter-case: "%s" with an ELIGIBLE anchor still asks the apply approval', async (text) => {
     const { deps, calls } = makeDeps({ applyAnchor: applyAnchorOf() });
     const result = await new ConversationRuntime(deps).handle(messageOf(text));
     expect(calls.requestForRisk).toBe(1);

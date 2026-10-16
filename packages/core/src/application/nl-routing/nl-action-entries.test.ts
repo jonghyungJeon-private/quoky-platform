@@ -631,7 +631,25 @@ describe('live test 2 (A09, C01, D02): the local-list request shape', () => {
     // A list noun glued into another word is not the list.
     '알림장에 숙제 추가해줘',
     '해야할일로 바빠서 회의 등록해줘',
+    // Codex P2: an adnominal, past or descriptive verb form is not the clause's request.
+    '할 일에 추가한 내일 3시 회의 취소해줘',
+    '할 일에 등록된 회의 일정 옮겨줘',
+    '할 일에 추가했어',
+    '할 일 완료한 거 보여줘',
+    '알림으로 걸어둔 회의 취소해줘',
+    // Codex P2: a list phrase inside quotes is content.
+    "디자인에 '할 일 완료' 문구를 반영해줘",
+    '"할 일에 추가해줘" 영어로 번역해줘',
   ])('counter-case: "%s" names no local list', (text) => {
     expect(nlLocalListTarget(text)).toBeUndefined();
+  });
+
+  it('a quoted title before a real list command still counts; platform-quoted ranges are content too', () => {
+    expect(nlLocalListTarget("'할 일 완료 문구 반영' 할 일로 등록해줘")).toBe('todo');
+    expect(nlLocalListTarget('"알림 취소" 문구 정리 할 일에 추가해줘')).toBe('todo');
+    expect(nlLocalListTarget('완료로 바꿔줘 할 일 목록에서')).toBeUndefined();
+    expect(nlLocalListTarget('보고서 할 일 완료로 바꿔줘')).toBe('todo');
+    const pasted = '할 일에 추가해줘 라고 적힌 문구 반영해줘';
+    expect(nlLocalListTarget(pasted, [{ start: 0, end: '할 일에 추가해줘'.length }])).toBeUndefined();
   });
 });

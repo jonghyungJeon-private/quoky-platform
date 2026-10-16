@@ -259,6 +259,9 @@ describe('live test 2 (C01, D02): a local to-do / reminder request is not a cale
     '할 일 빼고 내일 3시 회의 잡아줘',
     '할 일 마치고 내일 3시 회의 잡아줘',
     '내일 3시 회의 잡아줘 알림도 설정해줘',
+    // Codex P2: an adnominal list verb modifies the event; the request is the calendar write.
+    '할 일에 추가한 내일 3시 회의 취소해줘',
+    '알림으로 걸어둔 내일 3시 회의 취소해줘',
   ])('counter-case: "%s" stays a calendar write', (text) => {
     expect(parseCalendarQuestion(text)?.kind).toBe('write-refused');
   });

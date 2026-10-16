@@ -1,5 +1,7 @@
 import type { NlActionEntryId, NlAmbiguityKey, NlArgValue, NlArgs, NlCatalogEntry, NlEntryCheckFailure, NlItemSource, NlWave1EntryId } from './catalog';
+import type { InboundQuotedRange } from '../../domain';
 import { normalizeForMatch } from './selection-input';
+import { nlIsRequestForm } from './request-shape';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { isNlTimeWord } from './symbolic-time';
 import { ANCHORED_TODO_PREFIX_HEADS } from '../reminders/reminder-grammar';
@@ -567,19 +569,20 @@ const REMINDER_NOUN_HEAD = /^(?:알림|리마인더|알람)(?:으로)?\s?/u;
 const REMINDER_CREATE_VERBS = REMINDER_CREATE_WORDS.filter((word) => REMINDER_NOUN_HEAD.test(word))
   .map((word) => word.replace(REMINDER_NOUN_HEAD, ''))
   .filter((verb) => verb.length > 0 && verb !== '해' && verb !== '줘');
+/** The closed particles a verbal noun may carry before a separate request word ("완료로 바꿔줘", "추가 좀 해줘"). */
+const VERB_PARTICLE = /^(?:으로|로|을|를|좀)?$/u;
 
 interface LocalListShape {
   readonly list: 'todo' | 'reminder';
-  /** The list noun with a destination particle, and an add verb of that list later in the clause ("할 일로 … 등록"). */
+  /** The list noun with a destination particle; an add verb of that list follows later in the clause ("할 일로 … 등록"). */
   readonly destination: RegExp;
-  /** The list noun as the object of a cancel / complete verb right after it ("… 할 일 취소", "… 알림 꺼줘"). */
+  /** The list noun as the object of a verb right after it ("… 할 일 취소", "… 알림 꺼줘"). */
   readonly object: RegExp;
-  /** The list noun as the source of a cancel / complete verb later in the clause ("할 일 목록에서 … 빼줘"). */
+  /** The list noun as the source; a cancel / complete verb follows later in the clause ("할 일 목록에서 … 빼줘"). */
   readonly source: RegExp;
+  readonly addVerb: RegExp;
+  readonly changeVerb: RegExp;
 }
-
-/** The closed class of Korean connective endings, at the end of a word. */
-const CONNECTIVE_ENDING = '(?:고|면|면서|니까|는데|지만|서)(?![가-힣])';
 
 let localListShapes: readonly LocalListShape[] | undefined;
 
@@ -590,13 +593,13 @@ function localListShapesOf(): readonly LocalListShape[] {
     const noun = `(?<![가-힣A-Za-z])(?:${alternationOf(nouns.map(normalizeForMatch))})(?:\\s*목록)?`;
     const addVerb = alternationOf(hangulOnly(add));
     const changeVerb = alternationOf(hangulOnly(change).filter((word) => !isPastForm(word)));
-    // A verb whose word ends in a connective ending ("빼고", "마치고", "추가하면") only joins the next clause: not the request.
-    const requested = `(?![가-힣]*${CONNECTIVE_ENDING})`;
     return {
       list,
-      destination: new RegExp(`${noun}\\s*(?:으로|로|에다가|에다|에)(?![가-힣])[^]*?(?:${addVerb})${requested}`, 'u'),
-      object: new RegExp(`${noun}\\s*(?:을|를|은|는|도|좀)?\\s*(?:${changeVerb})${requested}`, 'u'),
-      source: new RegExp(`${noun}\\s*에서(?![가-힣])[^]*?(?:${changeVerb})${requested}`, 'u'),
+      destination: new RegExp(`${noun}\\s*(?:으로|로|에다가|에다|에)(?![가-힣])`, 'gu'),
+      object: new RegExp(`${noun}\\s*(?:을|를|은|는|도|좀)?\\s*(?=${changeVerb})`, 'gu'),
+      source: new RegExp(`${noun}\\s*에서(?![가-힣])`, 'gu'),
+      addVerb: new RegExp(addVerb, 'gu'),
+      changeVerb: new RegExp(`^(?:${changeVerb})`, 'u'),
     };
   };
   localListShapes = [
@@ -606,8 +609,48 @@ function localListShapesOf(): readonly LocalListShape[] {
   return localListShapes;
 }
 
+/**
+ * Whether the vocabulary verb at `index` of `clause` is the clause's request: its word ends in a request form (the
+ * request-shape recogniser `nlIsRequestForm`: "추가해줘", "취소해", "등록해 주세요"), or the bare verbal noun (a closed
+ * particle at most) is followed by a request word ("완료로 바꿔줘", "취소 처리해줘"), or the bare verb ends the clause (the
+ * terse command "… 하나 추가"). An adnominal ("추가한 회의"), past ("추가했어"), connective ("빼고") or descriptive form never is.
+ */
+function isRequestedVerbAt(clause: string, index: number, verb: string): boolean {
+  const start = clause.lastIndexOf(' ', index) + 1;
+  const spaceAfter = clause.indexOf(' ', index + verb.length);
+  const end = spaceAfter === -1 ? clause.length : spaceAfter;
+  const word = clause.slice(start, end);
+  if (nlIsRequestForm(word)) return true;
+  if (!VERB_PARTICLE.test(clause.slice(index + verb.length, end))) return false;
+  const next = clause.slice(end).trim().split(' ')[0] ?? '';
+  if (next.length === 0) return clause.slice(index + verb.length, end).length === 0;
+  return nlIsRequestForm(next);
+}
+
+/** Whether a verb of `verbs` after `from` in the clause is the clause's request. */
+function requestedVerbAfter(clause: string, from: number, verbs: RegExp): boolean {
+  verbs.lastIndex = 0;
+  for (const match of clause.slice(from).matchAll(verbs)) {
+    if (isRequestedVerbAt(clause, from + (match.index ?? 0), match[0])) return true;
+  }
+  return false;
+}
+
 /** Clause boundaries: sentence ends, commas and the coordinating connectives (the calendar grammar's own clause rule). */
 const LOCAL_LIST_CLAUSE_SPLIT = /[.!?。！？\r\n]+|[,;]\s*|\s+(?:그리고|하지만|근데|그런데)\s+/u;
+/** Quoted text is content (a title, a phrase), never the request's own list noun or verb. */
+const LOCAL_LIST_QUOTED = /"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』/gu;
+
+function withoutQuotedPayloads(text: string, quotedRanges: readonly InboundQuotedRange[]): string {
+  let out = text;
+  for (const range of quotedRanges) {
+    if (!Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 0 || range.end <= range.start) continue;
+    const end = Math.min(range.end, out.length);
+    if (range.start >= end) continue;
+    out = `${out.slice(0, range.start)}${' '.repeat(end - range.start)}${out.slice(end)}`;
+  }
+  return out.replace(LOCAL_LIST_QUOTED, ' ');
+}
 
 /**
  * Live test 2 (2026-10-16, A09 / C01 / D02): the local list (Quoky's own to-dos or reminders) one clause of the owner's
@@ -616,20 +659,35 @@ const LOCAL_LIST_CLAUSE_SPLIT = /[.!?。！？\r\n]+|[,;]\s*|\s+(?:그리고|하
  *  - a destination particle (로 / 으로 / 에 / 에다) and an add verb of that list's A6 vocabulary later in the clause
  *    ("'…' 할 일로 등록해줘", "할 일에 … 추가해줘", "… 알림으로 … 등록해줘");
  *  - or directly followed (a particle at most) by a cancel / complete verb of that list ("… 일정 잡기 할 일 취소해줘");
- *  - or 에서 and such a verb later ("할 일 목록에서 … 빼줘").
- * A past form (끝냈, 다 했) never counts. Quoted words count as written: a quoted title stays the payload of the request.
+ *  - or 에서 and such a verb later ("할 일 목록에서 … 빼줘");
+ * and the verb is the clause's request ({@link isRequestedVerbAt}: an adnominal, past or connective form never counts).
+ * Quoted text (quote marks, or the platform's quoted ranges) is blanked first: a quoted title is the payload of a request
+ * around it ("'시안 반영' 할 일로 등록해줘" still names the to-do list), and a list phrase inside quotes is never one
+ * ("디자인에 '할 일 완료' 문구를 반영해줘").
  *
  * Class A grammars that would otherwise claim the words around it (the calendar write grammar's "일정 … 취소해줘" and
  * "모레 3시 … 통화 등록해줘", the code-change chain's apply word 반영) read this so a local-list request is not mistaken
  * for theirs. It narrows their recognition (the message is not a calendar write or a code apply); it is not a yield to
  * selection and adds no phrase: every word is a catalog noun, an A6 vocabulary word or a closed particle.
  */
-export function nlLocalListTarget(text: string): 'todo' | 'reminder' | undefined {
-  const normalized = normalizeForMatch(text);
+export function nlLocalListTarget(text: string, quotedRanges: readonly InboundQuotedRange[] = []): 'todo' | 'reminder' | undefined {
+  const normalized = normalizeForMatch(withoutQuotedPayloads(text, quotedRanges));
   if (normalized.length === 0) return undefined;
-  for (const clause of normalized.split(LOCAL_LIST_CLAUSE_SPLIT)) {
+  for (const clause of normalized.split(LOCAL_LIST_CLAUSE_SPLIT).map((part) => part.trim())) {
     for (const shape of localListShapesOf()) {
-      if (shape.destination.test(clause) || shape.object.test(clause) || shape.source.test(clause)) return shape.list;
+      for (const anchor of clause.matchAll(shape.destination)) {
+        if (requestedVerbAfter(clause, (anchor.index ?? 0) + anchor[0].length, shape.addVerb)) return shape.list;
+      }
+      for (const anchor of clause.matchAll(shape.object)) {
+        const at = (anchor.index ?? 0) + anchor[0].length;
+        const verb = shape.changeVerb.exec(clause.slice(at))?.[0];
+        if (verb !== undefined && isRequestedVerbAt(clause, at, verb)) return shape.list;
+      }
+      for (const anchor of clause.matchAll(shape.source)) {
+        const from = (anchor.index ?? 0) + anchor[0].length;
+        const verbs = new RegExp(shape.changeVerb.source.slice(1), 'gu');
+        if (requestedVerbAfter(clause, from, verbs)) return shape.list;
+      }
     }
   }
   return undefined;
