@@ -16,6 +16,7 @@ export * from './reference-recency';
 export * from './last-action';
 export * from './nl-action-policy';
 export * from './statement-guard';
+export * from './read-statement';
 export * from './example-contamination';
 export * from './request-shape';
 export * from './undo-confirm';
