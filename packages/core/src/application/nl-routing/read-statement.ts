@@ -25,7 +25,7 @@ const INTERROGATIVE = /(?:니|냐|냐고|까|까요|나요|가요|는가|은가|
 const REASON_CONNECTIVE = /(?:[아어여라]서|니까|느라)$/u;
 const TRAILING_NOISE = /[ㄱ-ㆎ\p{Extended_Pictographic}️‍]+$/u;
 /** The quotative particle directly after a quote (이)라고 / (이)라는 / (이)란. */
-const QUOTATIVE_AFTER = /^\s*(?:이?라고|이?라는|이?란)(?=\s|$)/u;
+const QUOTATIVE_AFTER = /^\s*(?:이?라고|이?라는|이?란)(?:만|도|는|은|까지|조차|마저|요)?(?=\s|$|[.,!?~])/u;
 const QUOTED = /"([^"]+)"|“([^”]+)”|'([^']+)'|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
 
 function tokensOf(text: string): string[] {

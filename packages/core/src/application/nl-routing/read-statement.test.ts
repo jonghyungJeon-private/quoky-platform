@@ -36,6 +36,10 @@ describe('nlReadNotRequest (READ message-level structural guard)', () => {
     expect(nlReadNotRequest('"오늘 이슈 알려줘"라는 표현이 뭐야', {})).toBe('quoted-request');
   });
 
+  it('reads a quotative with an attached auxiliary particle as a mention', () => {
+    for (const text of ['"오늘 이슈 알려줘"라고만 말하면 무슨 뜻이야?', '"오늘 이슈 알려줘"라고도 하면 뭐가 돼', '"오늘 이슈 알려줘"라는 건 뭐야']) expect(nlReadNotRequest(text, {}), text).toBe('quoted-request');
+  });
+
   it('keeps a quote that is an argument value, and a reason clause that ends in a request or a wider main clause', () => {
     expect(nlReadNotRequest('슬랙에서 "서버 점검 공지" 찾아줘', { keyword: '서버 점검 공지' })).toBeUndefined();
     expect(nlReadNotRequest('이슈가 뭐 있는지 몰라서 알려줘', {})).toBeUndefined();
