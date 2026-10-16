@@ -958,10 +958,11 @@ const R2_REF_DESCRIPTION = `${REF_DESCRIPTION} For a Jira issue only: the issue 
 /**
  * A6 R2 (v46): the `mode` vocabulary as the selector reads it, built from the words Core grounds `mode` with
  * ({@link NL_MODE_SUMMARY_WORDS}, {@link NL_MODE_FULL_WORDS}), so the prompt and the validator cannot drift (v45 listed
- * five of nine summary words and five of ten full words by hand). Used by the R2 entry and the R2 rule 8 line.
+ * five of nine summary words and five of ten full words by hand). v47 adds {@link NL_CONTENT_WORDS}: a content word alone
+ * leaves `mode` unset (Core asks the content-mode question). Used by the R2 entry and the R2 rule 8 line.
  */
-export function nlModeVocabularyText(): { readonly summary: string; readonly full: string } {
-  return { summary: NL_MODE_SUMMARY_WORDS.join('/'), full: NL_MODE_FULL_WORDS.join('/') };
+export function nlModeVocabularyText(): { readonly summary: string; readonly full: string; readonly content: string } {
+  return { summary: NL_MODE_SUMMARY_WORDS.join('/'), full: NL_MODE_FULL_WORDS.join('/'), content: NL_CONTENT_WORDS.join('/') };
 }
 
 /**
@@ -996,7 +997,7 @@ export function nlItemSummarizeEntry(sources: Iterable<string>): NlCatalogEntry 
       }
       if (spec.name === 'mode') {
         const vocabulary = nlModeVocabularyText();
-        return { ...spec, description: `summary ONLY for ${vocabulary.summary}; full ONLY for ${vocabulary.full}. Omit it otherwise; scope never sets it.` };
+        return { ...spec, description: `summary ONLY for ${vocabulary.summary}; full ONLY for ${vocabulary.full}. Omit it otherwise (a content word alone, a show or tell verb); scope never sets it.` };
       }
       if (spec.name === 'ref' && r2.includes('jira')) return { ...spec, description: R2_REF_DESCRIPTION };
       if (spec.name === 'scope') {

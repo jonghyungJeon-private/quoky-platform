@@ -18,6 +18,9 @@ import {
   NL_ACTION_LOANWORDS,
   NL_ACTION_VERBAL_NOUNS,
   NL_ACTION_WORDS,
+  NL_CONTENT_WORDS,
+  NL_MODE_FULL_WORDS,
+  NL_MODE_SUMMARY_WORDS,
   nlFrameExpressesAction,
   withoutSpan,
   withoutStructures,
@@ -207,6 +210,28 @@ function spanEnclosure(prose: string, span: string): 'quote' | 'colon' | 'after-
   return toEnd && nlRequestEndsBefore(before, NL_ACTION_WORDS) ? 'after-request' : undefined;
 }
 
+/**
+ * A6 R2 (v47): the request-shape classes that also veto an `ITEM_READ` (`item.summarize`). The same grammar as the
+ * LOCAL_WRITE vetoes (request-shape.ts): reported or quoted speech and hearsay, negation, retraction, an example or joke
+ * frame, a conditional or wish, a past or report statement. NOT `question`: "3번 티켓 뭐라고 적혀 있어?" and polite
+ * question forms are how an owner asks for a read. Not `deferred` or `volition` either (not in the R2 negative classes).
+ * Each class only turns a read into `none` (chat); nothing is ever selected or read because of it.
+ */
+const ITEM_READ_VETOES: ReadonlySet<NlRequestVeto> = new Set<NlRequestVeto>(['example', 'joke', 'reported', 'negation', 'retraction', 'conditional', 'wish', 'statement']);
+/** The words that name a read of one item: Core's mode and content vocabulary (the entry has no `actionGrounding`). */
+const ITEM_READ_WORDS: readonly string[] = [...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS];
+
+/**
+ * A6 R2 (v47): the veto class of an `ITEM_READ` request, or `undefined` when the owner's own sentence asks for the read.
+ * Read on the owner's prose with pasted structures removed (no content spans: `item.summarize` has none). A first class
+ * of `question` passes: a question is a read request, whatever a later class would say.
+ */
+export function nlItemReadVeto(groundingText: string): NlRequestVeto | undefined {
+  const frame = withoutStructures(groundingText).normalize('NFC').replace(/\s+/g, ' ');
+  const veto = nlRequestVeto(frame, [], [...NL_ACTION_WORDS, ...ITEM_READ_WORDS]);
+  return veto !== undefined && ITEM_READ_VETOES.has(veto) ? veto : undefined;
+}
+
 /** A6-D3a amendment 1: the request shape of a LOCAL_WRITE (see {@link requestShapeOf}). */
 export interface NlRequestShape {
   readonly veto?: NlRequestVeto;
@@ -331,6 +356,12 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     // After the garble (a garbled action word is its own question): an elliptical frame names no action at all, so the
     // action is only inferred and nothing is written ("이번엔 3번" after "1번 완료"; D12 gate v44 run 3).
     if (shape.elliptical === true) return { ok: false, reason: 'elliptical', entryId, arg: 'action' };
+  }
+  // A6 R2 (v47): an ITEM_READ whose own sentence is not a read request (reported, quoted, negated, retracted, example,
+  // conditional, wish, past statement) is chat, like a LOCAL_WRITE veto; a question form still reads.
+  if (entry.risk === 'ITEM_READ') {
+    const veto = nlItemReadVeto(ctx.groundingText);
+    if (veto !== undefined) return { ok: false, reason: 'not-request', entryId, arg: veto };
   }
   // A6-D3 (A6 R1 fix): a payload made only of deictic, ordinal or time words gets its fixed reply ("내용을 직접 적어
   // 주세요") before any missing argument is named: "그거 알림으로 만들어줘" has no time either, and the content is the problem.

@@ -107,17 +107,19 @@ describe('the A6 R2 corpus (agent-drafted, awaiting the owner batch approval)', 
     expect(captured).toEqual([]);
   });
 
-  it('pins the known gap: exactly six selector-only negatives, which Core executes if the selector mistakes them', async () => {
+  it('closes the known gap: the six selector-only negatives are vetoed by Core now (v47 ITEM_READ request-shape veto)', async () => {
+    // The gold still flags them `selectorOnly` (proposal 1.1); the flag is the owner's to retire. Since the v47 veto
+    // (negation, reported speech, past statement) none of them executes, whatever item.summarize the selector mistakes it for.
     const selectorOnly = cases.filter((golden) => golden.selectorOnly === true);
     expect(selectorOnly).toHaveLength(6);
     expect(selectorOnly.every((golden) => golden.expect === 'none' && golden.family === 'negative')).toBe(true);
+    const executed: string[] = [];
     for (const golden of selectorOnly) {
-      let executed = false;
       for (const args of worstCases(golden.text)) {
         const { decision } = await decideActionCase(golden, scripted(answer('item.summarize', args)), NOW, { itemR2: 'all' });
-        if (decision.kind === 'execute') executed = true;
+        if (decision.kind === 'execute') executed.push(`${golden.id}: ${JSON.stringify(args)}`);
       }
-      expect(executed, golden.id).toBe(true);
     }
+    expect(executed).toEqual([]);
   });
 });

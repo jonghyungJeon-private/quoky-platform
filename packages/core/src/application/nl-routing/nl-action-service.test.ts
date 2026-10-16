@@ -1132,13 +1132,16 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
     normal.setMetadata(LAST_ACTION_METADATA_KEY, echoed);
     const selected = await normal.decide('되돌려줘', { now: at(2), replyTo: 'echo-1' });
     expect(shortcut).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' } } });
-    expect(shortcut).toEqual(selected);
+    // The audit's wall-clock latency differs by a millisecond under load (the observed flake): compare everything else.
+    const withoutLatency = (decision: unknown): unknown =>
+      decision !== null && typeof decision === 'object' && 'action' in decision ? { ...decision, action: { ...(decision as { action: object }).action, latencyMs: 0 } } : decision;
+    expect(withoutLatency(shortcut)).toEqual(withoutLatency(selected));
     // And the unrelated reply on the selected path refuses the same way.
     const normalUnrelated = world({ level: 'local', script: () => out('action.undo') });
     normalUnrelated.setMetadata(LAST_ACTION_METADATA_KEY, echoed);
     expect((await normalUnrelated.decide('되돌려줘', { now: at(2), replyTo: 'some-other-message' })).kind).toBe('ask');
     expect(actionLogs(normalUnrelated).at(-1)?.fields).toMatchObject({ reason: 'echo-mismatch' });
-  });
+  }, 20_000);
 
   it('a bare reference reads the same way: "3번" / "3번도" after completing 1 ask; with no last action they stay chat as before', async () => {
     for (const text of ['3번', '3번도', '그럼 3번']) {

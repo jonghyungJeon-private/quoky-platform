@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  NL_CONTENT_WORDS,
   NL_MODE_FULL_WORDS,
   NL_MODE_SUMMARY_WORDS,
   isNlRefGrounded,
@@ -13,6 +15,8 @@ import {
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { NL_ACTION_R2_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import { extractPromptExamples } from './example-contamination';
+import { nlItemReadVeto } from './selection-validator';
+import { prepareSelectionInput } from './selection-input';
 import type { NlCatalogEntry } from './catalog';
 
 const ref = (value: string): NlRef => parseNlRef(value, { keys: true }) as NlRef;
@@ -101,13 +105,13 @@ describe('nlItemSummarizeEntry', () => {
   });
 });
 
-describe('selection prompt v46', () => {
+describe('selection prompt v47', () => {
   const READS = [NL_WAVE1_ENTRIES['jira.issues'], NL_WAVE1_ENTRIES['mail.list']];
   const build = (item: NlCatalogEntry) =>
     buildSelectionPrompt({ entries: [...READS, item], text: '그 이슈 요약해줘', actions: { referenceContext: 'none' } });
 
   it('names the version and detects R2 entries', () => {
-    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v46');
+    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v47');
     expect(offersR2ItemSources([nlActionEntry('item.summarize')])).toBe(false);
     expect(offersR2ItemSources([nlItemSummarizeEntry(['jira'])])).toBe(true);
     expect(offersR2ItemSources([nlItemSummarizeEntry(['slack'])])).toBe(true);
@@ -197,5 +201,52 @@ describe('selection prompt v46', () => {
       expect(entry.check?.(args, example.text)).toBeUndefined();
       expect(isNlRefGrounded(ref(args.ref), example.text, { entryId: 'item.summarize', source: args.source, r2Sources: R2 })).toBe(true);
     }
+  });
+
+  it('v47: a content word alone and a show or tell verb leave mode unset (Core NL_CONTENT_WORDS, listed from the constant)', () => {
+    const both = build(nlItemSummarizeEntry(['jira', 'slack']));
+    expect(both).toContain(`   leaves mode unset (${NL_CONTENT_WORDS.join('/')}),`);
+    expect(both).toContain('a show or tell verb (보여줘, 알려줘, 봐줘, show, tell) never sets mode; Core asks the owner once.');
+    expect(build(nlActionEntry('item.summarize'))).not.toContain('leaves mode unset');
+  });
+});
+
+describe('A6 R2 (v47): the ITEM_READ request-shape veto', () => {
+  const grounding = (text: string): string => {
+    const prepared = prepareSelectionInput(text);
+    return 'skip' in prepared ? '' : prepared.groundingText;
+  };
+  const load = (file: string) =>
+    (JSON.parse(readFileSync(new URL(`../golden/${file}`, import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string; expect: unknown }> }).cases;
+  const positive = (expect: unknown): boolean =>
+    typeof expect === 'object' && expect !== null && (expect as { entryId?: string }).entryId === 'item.summarize' && (expect as { outcome?: string }).outcome !== 'none';
+
+  it('vetoes the reported command of a6r2-negative-070 and passes question forms', () => {
+    expect(nlItemReadVeto(grounding('동료가 "슬랙 3번 요약해줘"라고 했어'))).toBe('reported');
+    expect(nlItemReadVeto(grounding('그 슬랙 메시지 내용이 뭐야?'))).toBeUndefined();
+    expect(nlItemReadVeto(grounding('3번 티켓 뭐라고 적혀 있어?'))).toBeUndefined();
+    expect(nlItemReadVeto(grounding('1번 지라 이슈 내용 좀 봐줘'))).toBeUndefined();
+  });
+
+  it('blocks no item.summarize positive of the D12 corpora (R2, A6, seed): 0 of 234', () => {
+    let positives = 0;
+    const blocked: string[] = [];
+    for (const file of ['nl-action.r2.v1.json', 'nl-action.v1.json', 'nl-action.seed.v1.json']) {
+      for (const c of load(file)) {
+        if (!positive(c.expect)) continue;
+        positives += 1;
+        const veto = nlItemReadVeto(grounding(c.text));
+        if (veto !== undefined) blocked.push(`${c.id} ${veto}`);
+      }
+    }
+    expect(positives).toBe(234);
+    expect(blocked).toEqual([]);
+  });
+
+  it('settles these R2 negatives deterministically (the rest stay with the selector and Core)', () => {
+    const settled = load('nl-action.r2.v1.json')
+      .filter((c) => !positive(c.expect) && nlItemReadVeto(grounding(c.text)) !== undefined)
+      .map((c) => c.id.replace('a6r2-negative-', ''));
+    expect(settled).toEqual(['001', '002', '003', '005', '007', '008', '023', '032', '034', '035', '036', '037', '039', '040', '042', '043', '058', '059', '060', '064', '067', '068', '069', '070', '071', '072', '073']);
   });
 });

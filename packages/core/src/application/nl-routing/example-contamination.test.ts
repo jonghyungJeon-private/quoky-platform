@@ -103,7 +103,7 @@ function loadGold(): GoldCase[] {
 // ---- the examples the model sees ------------------------------------------------------------------------------------
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
 const ACTIONS: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined);
-/** A6 R2: the action catalog with `item.summarize` offering Jira and Slack (the R2 prompt, nl-select.v46). */
+/** A6 R2: the action catalog with `item.summarize` offering Jira and Slack (the R2 prompt, nl-select.v47). */
 const R2_ACTIONS: readonly NlCatalogEntry[] = ACTIONS.map((entry) => (entry.id === 'item.summarize' ? nlItemSummarizeEntry(['jira', 'slack']) : entry));
 
 function renderedExamples(): RenderedExample[] {

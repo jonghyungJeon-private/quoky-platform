@@ -87,8 +87,13 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v44';
  * the context; the `mode` words are built from Core's NL_MODE_* vocabulary and are independent of scope; the R2 entry's
  * description and its `source` / `mode` arg descriptions say the same; one Jira and one Slack example, shown only while
  * that R2 source is offered.
+ * v47 (the v46 gate: content-only asks 031/069 missed 3/3 because the selector wrote a mode Core does not ground) = v46
+ * with the mode block saying a content word alone (Core's NL_CONTENT_WORDS, listed from the constant) and a show or tell
+ * verb never set mode, so Core asks the content-mode question; the show-verb clause of the one-item rule says the same.
+ * Only R2 bytes change: A6 stays v44 and read v39 byte for byte. Core also vetoes an ITEM_READ whose own sentence is not
+ * a read request (`nlItemReadVeto`, selection-validator.ts), which is not a prompt change.
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v46';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v47';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -535,13 +540,15 @@ function R2_RULE_REPLACEMENTS(r2: readonly string[]): Readonly<Record<string, re
     '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.': [
       `   mode summary only for ${mode.summary};`,
       `   full only for ${mode.full};`,
-      '   omit mode when the owner only asks what it said. Only these words set mode, with or without scope thread.',
+      '   Only these words set mode, with or without scope thread. A content word alone, with no summary or full word above,',
+      `   leaves mode unset (${mode.content}),`,
+      '   whatever the verb: a show or tell verb (보여줘, 알려줘, 봐줘, show, tell) never sets mode; Core asks the owner once.',
       ...(slack ? ['   scope thread only for 스레드/thread (a mail or Slack thread); otherwise omit it.'] : []),
       ...(jira ? ['   A Jira issue key the owner wrote (PROJ-12) may be the ref, copied exactly; never a key the owner did not write.'] : []),
       '   ONE listed item, not a list query: when the owner points at one item of a list already shown (a number or ordinal,',
       '   마지막/last, a determiner + source noun, or a Jira key) and asks for its text, its content or a summary, the entry is',
       `   item.summarize, also when the message names the source (${nouns})`,
-      '   or uses a show verb (보여줘, 알려줘, show).',
+      '   or uses a show verb (보여줘, 알려줘, show); the mode stays what the mode words above say.',
       `   ${lists} ${listQueries} (a period, a status, a keyword, my items), never one pointed item.`,
       '   Never item.summarize: a question about one field of the item (assignee, status, due date, sender, channel, time,',
       '   link) asks for no content; a negated or declined request, a how-to or feature question, a remark about what was',
