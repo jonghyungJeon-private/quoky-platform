@@ -1,0 +1,447 @@
+{
+  "version": 1,
+  "description": "ADR-0123 D5 embedding audit record. Regenerate with `pnpm eval:rag -- --mode dry-run --write-audit true`; a stale record (pool or gold digest) fails the suite.",
+  "poolDigest": "3cbbe27ea111001097a33ce4fdb9272edd7f639ec3f00c8e57460418f2d5c026",
+  "goldDigest": "44854b0b36382cd2b48d25ae91848e2e16efd9cd78c1d28132c23cf87403f204",
+  "splitSha256": "9002704ab784b9d9dd967685af96594605dbc43d19e0e536dc465f5fa90cf0ad",
+  "prefixPolicy": "search_query: on both sides (pool and gold)",
+  "models": [
+    {
+      "model": "nomic-embed-text",
+      "spaceId": "nomic-embed-text@0a109f422b47@ollama0.40.5",
+      "tau": 0.9247,
+      "tauLow": 0.8,
+      "minPositive": 0.9447,
+      "positives": 9,
+      "negatives": 329,
+      "falsePositiveRate": 0.0122,
+      "flaggedPairs": [
+        {
+          "poolId": "b1-jira-issues-01",
+          "goldId": "jira-020",
+          "cosine": 0.9439
+        },
+        {
+          "poolId": "b1-jira-issues-01",
+          "goldId": "jira-027",
+          "cosine": 0.9334
+        },
+        {
+          "poolId": "b1-jira-issues-02",
+          "goldId": "v5int4-004",
+          "cosine": 0.9275
+        },
+        {
+          "poolId": "b1-github-items-03",
+          "goldId": "drive-020",
+          "cosine": 0.9278
+        },
+        {
+          "poolId": "b1-github-items-04",
+          "goldId": "neg-220",
+          "cosine": 0.9268
+        },
+        {
+          "poolId": "b1-github-items-04",
+          "goldId": "v5int4-034",
+          "cosine": 0.9366
+        },
+        {
+          "poolId": "b1-slack-search-01",
+          "goldId": "slack-011",
+          "cosine": 0.9354
+        },
+        {
+          "poolId": "b1-slack-search-01",
+          "goldId": "neg-010",
+          "cosine": 0.9376
+        },
+        {
+          "poolId": "b1-slack-search-01",
+          "goldId": "slack-045",
+          "cosine": 0.925
+        },
+        {
+          "poolId": "b1-slack-search-02",
+          "goldId": "slack-021",
+          "cosine": 0.9371
+        },
+        {
+          "poolId": "b1-slack-search-02",
+          "goldId": "slack-035",
+          "cosine": 0.9257
+        },
+        {
+          "poolId": "b1-slack-search-02",
+          "goldId": "slack-046",
+          "cosine": 0.9311
+        },
+        {
+          "poolId": "b1-slack-search-02",
+          "goldId": "v5int4-032",
+          "cosine": 0.926
+        },
+        {
+          "poolId": "b1-slack-search-02",
+          "goldId": "a6-paraphrase-item.summarize-023",
+          "cosine": 0.9277
+        },
+        {
+          "poolId": "b1-slack-search-04",
+          "goldId": "slack-019",
+          "cosine": 0.9264
+        },
+        {
+          "poolId": "b1-confluence-search-04",
+          "goldId": "confluence-009",
+          "cosine": 0.9341
+        },
+        {
+          "poolId": "b1-calendar-events-02",
+          "goldId": "mail-001",
+          "cosine": 0.939
+        },
+        {
+          "poolId": "b1-calendar-events-02",
+          "goldId": "mail-012",
+          "cosine": 0.9345
+        },
+        {
+          "poolId": "b1-calendar-events-02",
+          "goldId": "brief-012",
+          "cosine": 0.9268
+        },
+        {
+          "poolId": "b1-calendar-events-02",
+          "goldId": "brief-035",
+          "cosine": 0.93
+        },
+        {
+          "poolId": "b1-calendar-events-02",
+          "goldId": "mail-042",
+          "cosine": 0.9425
+        },
+        {
+          "poolId": "b1-calendar-events-02",
+          "goldId": "a6-negative-mail.list-001",
+          "cosine": 0.9304
+        },
+        {
+          "poolId": "b1-calendar-events-04",
+          "goldId": "todo-043",
+          "cosine": 0.9266
+        },
+        {
+          "poolId": "b1-calendar-events-04",
+          "goldId": "v5int4-006",
+          "cosine": 0.9274
+        },
+        {
+          "poolId": "b1-calendar-events-04",
+          "goldId": "uat5r2-08",
+          "cosine": 0.9351
+        },
+        {
+          "poolId": "b1-mail-list-05",
+          "goldId": "calendar-020",
+          "cosine": 0.927
+        },
+        {
+          "poolId": "b1-mail-list-05",
+          "goldId": "calendar-025",
+          "cosine": 0.93
+        },
+        {
+          "poolId": "b1-mail-list-05",
+          "goldId": "mail-005",
+          "cosine": 0.9412
+        },
+        {
+          "poolId": "b1-mail-list-05",
+          "goldId": "mail-012",
+          "cosine": 0.9336
+        },
+        {
+          "poolId": "b1-mail-list-05",
+          "goldId": "mail-023",
+          "cosine": 0.9354
+        },
+        {
+          "poolId": "b1-mail-list-05",
+          "goldId": "help-014",
+          "cosine": 0.9324
+        },
+        {
+          "poolId": "b1-mail-list-05",
+          "goldId": "neg-038",
+          "cosine": 0.9375
+        },
+        {
+          "poolId": "b1-mail-list-05",
+          "goldId": "mail-042",
+          "cosine": 0.9278
+        },
+        {
+          "poolId": "b1-mail-list-05",
+          "goldId": "uat5r1-05",
+          "cosine": 0.9377
+        },
+        {
+          "poolId": "b1-drive-files-02",
+          "goldId": "drive-035",
+          "cosine": 0.9467
+        },
+        {
+          "poolId": "b1-drive-files-02",
+          "goldId": "v5int4-013",
+          "cosine": 0.9382
+        },
+        {
+          "poolId": "b1-drive-files-03",
+          "goldId": "jira-074",
+          "cosine": 0.9373
+        },
+        {
+          "poolId": "b1-drive-files-04",
+          "goldId": "jira-030",
+          "cosine": 0.9383
+        },
+        {
+          "poolId": "b1-drive-files-04",
+          "goldId": "drive-003",
+          "cosine": 0.9441
+        },
+        {
+          "poolId": "b1-drive-files-04",
+          "goldId": "drive-049",
+          "cosine": 0.926
+        },
+        {
+          "poolId": "b1-todo-list-01",
+          "goldId": "a6-paraphrase-todo.complete-007",
+          "cosine": 0.9252
+        },
+        {
+          "poolId": "b1-todo-list-01",
+          "goldId": "a6-paraphrase-todo.complete-014",
+          "cosine": 0.9311
+        },
+        {
+          "poolId": "b1-todo-list-01",
+          "goldId": "a6-negative-none-025",
+          "cosine": 0.9303
+        },
+        {
+          "poolId": "b1-todo-list-01",
+          "goldId": "a6-negative-none-035",
+          "cosine": 0.9424
+        },
+        {
+          "poolId": "b1-reminder-list-01",
+          "goldId": "calendar-024",
+          "cosine": 0.9391
+        },
+        {
+          "poolId": "b1-reminder-list-01",
+          "goldId": "a6-negative-reminder.list-003",
+          "cosine": 0.9332
+        },
+        {
+          "poolId": "b1-reminder-list-02",
+          "goldId": "a6-paraphrase-reminder.create-034",
+          "cosine": 0.9276
+        },
+        {
+          "poolId": "b1-reminder-list-02",
+          "goldId": "a6-negative-none-047",
+          "cosine": 0.9321
+        },
+        {
+          "poolId": "b1-reminder-list-03",
+          "goldId": "a6-negative-todo.list-007",
+          "cosine": 0.9431
+        },
+        {
+          "poolId": "b1-brief-today-01",
+          "goldId": "todo-006",
+          "cosine": 0.9333
+        },
+        {
+          "poolId": "b1-brief-today-01",
+          "goldId": "slack-033",
+          "cosine": 0.9321
+        },
+        {
+          "poolId": "b1-brief-today-02",
+          "goldId": "neg-118",
+          "cosine": 0.9259
+        },
+        {
+          "poolId": "b1-brief-today-02",
+          "goldId": "a6-paraphrase-todo.complete-007",
+          "cosine": 0.9349
+        },
+        {
+          "poolId": "b1-brief-today-03",
+          "goldId": "a6-paraphrase-todo.add-037",
+          "cosine": 0.936
+        },
+        {
+          "poolId": "b1-help-topic-04",
+          "goldId": "github-001",
+          "cosine": 0.9317
+        },
+        {
+          "poolId": "b1-help-topic-04",
+          "goldId": "github-012",
+          "cosine": 0.9289
+        },
+        {
+          "poolId": "b1-help-topic-04",
+          "goldId": "github-021",
+          "cosine": 0.9265
+        },
+        {
+          "poolId": "b1-help-topic-04",
+          "goldId": "v5int4-033",
+          "cosine": 0.9271
+        },
+        {
+          "poolId": "b1-help-topic-04",
+          "goldId": "v5int4-034",
+          "cosine": 0.9293
+        },
+        {
+          "poolId": "b1-todo-add-02",
+          "goldId": "a6-paraphrase-todo.add-007",
+          "cosine": 0.9398
+        },
+        {
+          "poolId": "b1-todo-add-03",
+          "goldId": "a6-paraphrase-todo.add-012",
+          "cosine": 0.9352
+        },
+        {
+          "poolId": "b1-todo-add-03",
+          "goldId": "a6-paraphrase-todo.add-023",
+          "cosine": 0.9262
+        },
+        {
+          "poolId": "b1-todo-add-04",
+          "goldId": "a7u-05",
+          "cosine": 0.9264
+        },
+        {
+          "poolId": "b1-todo-complete-01",
+          "goldId": "calendar-016",
+          "cosine": 0.9267
+        },
+        {
+          "poolId": "b1-todo-complete-01",
+          "goldId": "a6-reference-todo.cancel-002",
+          "cosine": 0.9355
+        },
+        {
+          "poolId": "b1-todo-complete-03",
+          "goldId": "uat5r8-22",
+          "cosine": 0.9507
+        },
+        {
+          "poolId": "b1-todo-complete-03",
+          "goldId": "a6-paraphrase-todo.complete-029",
+          "cosine": 0.9345
+        },
+        {
+          "poolId": "b1-todo-complete-04",
+          "goldId": "neg-099",
+          "cosine": 0.9423
+        },
+        {
+          "poolId": "b1-todo-complete-04",
+          "goldId": "a6-negative-none-031",
+          "cosine": 0.9386
+        },
+        {
+          "poolId": "b1-todo-cancel-02",
+          "goldId": "jira-010",
+          "cosine": 0.943
+        },
+        {
+          "poolId": "b1-todo-cancel-04",
+          "goldId": "a7u-07",
+          "cosine": 0.9293
+        },
+        {
+          "poolId": "b1-reminder-create-02",
+          "goldId": "a6-paraphrase-reminder.create-002",
+          "cosine": 0.9332
+        },
+        {
+          "poolId": "b1-reminder-cancel-01",
+          "goldId": "a6-paraphrase-todo.complete-023",
+          "cosine": 0.925
+        },
+        {
+          "poolId": "b1-reminder-cancel-01",
+          "goldId": "a6-reference-todo.complete-022",
+          "cosine": 0.9325
+        },
+        {
+          "poolId": "b1-reminder-cancel-01",
+          "goldId": "a6-reference-todo.complete-039",
+          "cosine": 0.9383
+        },
+        {
+          "poolId": "b1-reminder-cancel-03",
+          "goldId": "calendar-046",
+          "cosine": 0.9257
+        },
+        {
+          "poolId": "b1-action-undo-01",
+          "goldId": "jira-051",
+          "cosine": 0.9349
+        },
+        {
+          "poolId": "b1-action-undo-02",
+          "goldId": "jira-065",
+          "cosine": 0.9345
+        },
+        {
+          "poolId": "b1-action-undo-03",
+          "goldId": "jira-018",
+          "cosine": 0.9393
+        },
+        {
+          "poolId": "b1-item-summarize-02",
+          "goldId": "a6-paraphrase-item.summarize-023",
+          "cosine": 0.9337
+        },
+        {
+          "poolId": "b1-none-09",
+          "goldId": "todo-006",
+          "cosine": 0.928
+        },
+        {
+          "poolId": "b1-none-10",
+          "goldId": "slack-004",
+          "cosine": 0.942
+        }
+      ],
+      "heldOutLowShare": 0.267,
+      "lowStratumValid": false
+    },
+    {
+      "model": "nomic-embed-text-v2-moe",
+      "spaceId": "nomic-embed-text-v2-moe@ff9c2f10ef5e@ollama0.40.5",
+      "tau": 0.7941,
+      "tauLow": 0.7441,
+      "minPositive": 0.8141,
+      "positives": 9,
+      "negatives": 329,
+      "falsePositiveRate": 0.003,
+      "flaggedPairs": [],
+      "heldOutLowShare": 0.9929,
+      "lowStratumValid": true
+    }
+  ]
+}

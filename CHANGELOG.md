@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0123 phase 1: offline selector-retrieval experiment harness and pool batch 1 (2026-10-16)
+
+- **Added (tooling only; no runtime path, no flag, no selector call).** `apps/quoky/src/tools/selector-rag/` and
+  `pnpm eval:rag` (`--mode lint | dry-run | plan | run`): the stratified 30/70 dev / held-out split by a seeded hash, the pool
+  admission lint (closed-catalog args, placeholders-only identifier rule, credential guard, RAG-0 n-gram measures with no
+  ratchet), the embedding audit with tau calibration (positive and negative pairs) and the leakage buckets, arms A0 / A0-swap /
+  A1 (once per embedding model) / A2 interleaved per session, the paired bootstrap (10,000 seeded resamples) and McNemar, the traffic
+  ledger (hard budget) and rate gate (4 concurrent, 1 call/s), and space ids `<model>@<digest12>@ollama<version>`. The pool uses
+  `LocalVectorProvider` with `overflow: 'reject'`. `run` keeps the Strict digest rule and stops before any provider is built:
+  the selector arms need `retrievedExamples` in `buildSelectionPrompt` (RAG-2, a separate reviewed change).
+- **Added.** Pool batch 1 (100 drafted examples, `status: pending-owner-approval`) and the committed embedding audit record for
+  `nomic-embed-text` and `nomic-embed-text-v2-moe`; a stale audit fails the suite.
+- **Changed.** `@quoky/core` now exports the RAG-0 helpers (`example-contamination`); no behaviour change.
+- **Note.** The pool lint exempts containment of a gold text that is one bare word of at most 8 characters (for example
+  "깃허브"); exact and near-copy findings still apply. Calibration positives are exact copies and near-copies with
+  character-3-gram Jaccard >= 0.6 only.
+
 ## Unreleased — vitest worker caps and forks pool (2026-10-16)
 
 - **Changed (test tooling only).** `vitest.config.ts` now pins `pool: 'forks'`, caps workers at `maxWorkers: 2` (`minWorkers: 1`),
