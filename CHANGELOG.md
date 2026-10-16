@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 open-question take is atomic and fails closed (2026-10-16)
+
+- **Fixed.** `NlSelectionService.takePending` now reads and deletes the session's open question in one field-scoped update
+  on the live row under the session write lock, so two concurrent turns never both receive the same question (A6 open
+  questions, including `action-undo-confirm`). Turns within a session are not serialized end to end, only the writes are.
+- **Fixed.** A failed clear now fails closed: the take returns nothing instead of leaving the question live for 5 minutes.
+  Logs stay content-free (error name only).
+
 ## Unreleased — A6 R5a deictic writes: "그거 할 일로 추가해줘" with a preview and next-turn approval (2026-10-16)
 
 - **Added (inert: `QUOKY_NL_DEICTIC_WRITES` defaults to `off`).** New flag `QUOKY_NL_DEICTIC_WRITES=off|shadow|on`; any value

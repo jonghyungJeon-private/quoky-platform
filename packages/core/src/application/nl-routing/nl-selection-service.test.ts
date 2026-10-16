@@ -506,6 +506,34 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(await harness({ mode: 'shadow' }).service.takePending(snapshot, 'owner', at(1000))).toBeNull();
   });
 
+  it('takePending is atomic: two concurrent takes hand the question to exactly one', async () => {
+    const ask = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'github.items', args: {} }] });
+    const h = harness({ script: [ask] });
+    await h.decide('내 이슈');
+    const snapshot = h.session;
+    const taken = await Promise.all([h.service.takePending(snapshot, 'owner', at(1000)), h.service.takePending(snapshot, 'owner', at(1000))]);
+    expect(taken.filter((question) => question !== null)).toHaveLength(1);
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+  });
+
+  it('a failed clear fails closed: the question is not handed out and logs stay content-free', async () => {
+    const ask = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'github.items', args: {} }] });
+    const h = harness({ script: [ask] });
+    await h.decide('내 이슈');
+    const snapshot = h.session;
+    const failing = new NlSelectionService({
+      mode: 'active',
+      router: { select: async () => { throw new Error('unused'); } },
+      sessions: { async updateMetadataEntry() { throw new Error('secret 내 이슈'); } },
+      actors: { async get() { return h.actor(); }, async save(next) { return next; } },
+      timeZone: 'Asia/Seoul',
+      logger: { info() {}, warn: (event, fields) => void h.logs.push({ level: 'warn', event, ...(fields ? { fields } : {}) }), error() {} },
+    });
+    expect(await failing.takePending(snapshot, 'owner', at(1000))).toBeNull();
+    expect(JSON.stringify(h.logs)).not.toContain('secret');
+    expect(JSON.stringify(h.logs)).not.toContain('내 이슈');
+  });
+
   it('a pending question expires after 5 minutes, and an unrelated reply ends it (routed normally)', async () => {
     const ask = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'github.items', args: {} }] });
     const h = harness({ script: [ask, NONE] });
