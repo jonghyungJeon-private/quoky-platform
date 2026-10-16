@@ -329,7 +329,7 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     const otherSource = await turn('이 메일 무슨 내용이야', answer('item.summarize', { source: 'mail', ref: 'this' }));
     expect(otherSource.selects).toHaveLength(1);
     expect(otherSource.summaries).toHaveLength(0);
-    expect(otherSource.text).toBe('가장 최근에 보여 드린 건 드라이브 파일 목록이에요. 어느 메일인지 다시 말씀해 주세요.');
+    expect(otherSource.text).toBe("어느 메일인지 헷갈려요. '메일 목록'을 다시 보여 달라고 하시거나 제목으로 말씀해 주세요.");
     // Several listed mails: a question under their own numbers, nothing read.
     await turn('안 읽은 메일 보여줘');
     const several = await turn('그 메일 무슨 내용이야', answer('item.summarize', { source: 'mail', ref: 'this' }));
@@ -556,15 +556,15 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     await send('할 일 추가: 마지막 작업을 to-do 로');
     await turn('안 읽은 메일 보여줘');
     const mail = await turn(`${keep.displayNo}번 취소해줘`, answer('reminder.cancel', { ref: `#${keep.displayNo}` }));
-    expect(mail.text).toContain('가장 최근에 보여 드린 건 메일 목록이에요');
+    expect(mail.text).toContain("'알림 목록'을 다시 보여 달라고");
     await nothingCanceled('013');
     const mail12 = await turn('12번 지워줘', answer('reminder.cancel', { ref: '#12' }));
-    expect(mail12.text).toContain('가장 최근에 보여 드린 건 메일 목록이에요');
+    expect(mail12.text).toContain("'알림 목록'을 다시 보여 달라고");
     await nothingCanceled('017');
     // 014: the same with a Drive list.
     await turn('드라이브 최근 파일 보여줘');
     const drive = await turn(`${keep.displayNo}번 취소해줘`, answer('reminder.cancel', { ref: `#${keep.displayNo}` }));
-    expect(drive.text).toContain('가장 최근에 보여 드린 건 드라이브 파일 목록이에요');
+    expect(drive.text).toContain("'알림 목록'을 다시 보여 달라고");
     await nothingCanceled('014');
     // 015: no list and no recent action at all.
     await resetNlState();
@@ -575,7 +575,7 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     await resetNlState();
     await turn("할 일에 '번호 헷갈림' 추가", answer('todo.add', { title: '번호 헷갈림' }));
     const todoNo = await turn(`${keep.displayNo}번 취소`, answer('reminder.cancel', { ref: `#${keep.displayNo}` }));
-    expect(todoNo.text).toContain('가장 최근에 보여 드린 건 할 일 목록이에요');
+    expect(todoNo.text).toContain("'알림 목록'을 다시 보여 달라고");
     await nothingCanceled('016');
     // 020: reminder wording, a listing without that number, and no reminder 49: said plainly, nothing canceled.
     await turn('알림 목록');
@@ -727,7 +727,7 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     const before = (await todos()).map((entry) => `${entry.id}:${entry.status}:${entry.updatedAt}`).join(',');
     const asked = await turn('그거 취소해', answer('todo.cancel', { ref: 'this' }));
     expect(asked.selects).toHaveLength(1);
-    expect(asked.text).toMatch(/^가장 최근에 보여 드린 건 .+ 목록이에요\. 어느 할 일인지 다시 말씀해 주세요\.$/u);
+    expect(asked.text).toBe("어느 할 일인지 헷갈려요. '할 일 목록'을 다시 보여 달라고 하시거나 제목으로 말씀해 주세요.");
     expect((await todos()).map((entry) => `${entry.id}:${entry.status}:${entry.updatedAt}`).join(',')).toBe(before);
     expect(JSON.stringify(await sessionState('quoky.lastAction'))).toBe(lastAction);
   });

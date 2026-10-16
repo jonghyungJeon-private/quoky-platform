@@ -292,7 +292,7 @@ describe('references, questions and the audit line', () => {
     const w = world({ script: [out('reminder.cancel', { ref: '#13' })] });
     w.setMetadata(LAST_LISTING_METADATA_KEY, withListing(undefined, 'owner', 'mail', ['m1', 'm2'], at(0)));
     const decision = await w.decide('13번 취소해줘', { now: at(1) });
-    expect(decision).toEqual({ kind: 'ask', entryId: expect.any(String), text: '가장 최근에 보여 드린 건 메일 목록이에요. 어느 알림인지 다시 말씀해 주세요.' });
+    expect(decision).toEqual({ kind: 'ask', entryId: expect.any(String), text: '어느 알림인지 헷갈려요. \'알림 목록\'을 다시 보여 달라고 하시거나 제목으로 말씀해 주세요.' });
     expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.cancel', resolution: 'other-source', result: 'asked', sessionId: 'sess-1', turnId: 'turn-1' });
   });
 

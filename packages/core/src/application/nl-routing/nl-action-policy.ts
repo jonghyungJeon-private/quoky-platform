@@ -262,7 +262,6 @@ export function renderReferenceQuestion(
   extra: { readonly found?: NlItemSource; readonly count?: number; readonly index?: number; readonly labels?: readonly number[] } = {},
 ): string {
   const noun = NOUN[source][language];
-  const foundNoun = extra.found !== undefined ? NOUN[extra.found][language] : undefined;
   switch (outcome) {
     case 'out-of-range':
       return language === 'en'
@@ -278,8 +277,8 @@ export function renderReferenceQuestion(
         : '그 목록은 시간이 지나서 고를 수 없어요. 목록을 다시 보여 드릴까요?';
     case 'other-source':
       return language === 'en'
-        ? `The most recent list I showed is a ${foundNoun ?? 'different'} list. Which ${noun} do you mean?`
-        : `가장 최근에 보여 드린 건 ${foundNoun ?? '다른'} 목록이에요. 어느 ${noun}인지 다시 말씀해 주세요.`;
+        ? `I am not sure which ${noun} you mean. Ask me to show the ${noun} list again, or tell me its title.`
+        : `어느 ${noun}인지 헷갈려요. '${noun} 목록'을 다시 보여 달라고 하시거나 제목으로 말씀해 주세요.`;
     case 'conflict':
     case 'ambiguous': {
       const labels = (extra.labels ?? []).map((label) => renderShownLabel(source, label, language));
