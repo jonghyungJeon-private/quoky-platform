@@ -1,6 +1,6 @@
 {
  "version": 1,
- "promptVersion": "nl-select.v36",
+ "promptVersion": "nl-select.v38",
  "description": "Action-corpus cases whose outcome is decided at execution time against the local store (undo cannot-run rows, stale targets, reminder display numbers without a listing). The R0 offline decision path cannot score them (the scorer needs a target id that only the store gives); for NLA-8 acceptance. Not loaded by any code.",
  "cases": [
   {

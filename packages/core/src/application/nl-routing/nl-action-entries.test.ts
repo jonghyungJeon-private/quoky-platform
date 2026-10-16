@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
@@ -265,7 +266,18 @@ describe('item.summarize (record C): the owner must ask for the content; mode on
   });
 });
 
-describe('the selection prompt (A6-D7): v37 byte for byte with the flag off, v36 with actions', () => {
+describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
+  const sha = (text: string): string => createHash('sha256').update(text).digest('hex');
+  const readPrompt = buildSelectionPrompt({ entries: READS, text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never });
+  const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } });
+
+  it('pins the full rendered read prompt and A6 prompt by version', () => {
+    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v37', sha256: '530cd058202a9479a1c948fadd6f6243b510ba8dc3cfc6dee25792e5c65d3aef' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v38', sha256: '1fd675d9bfcbac36b81ed184551f347b9532f6c8ccb38079347659d976002f0d' });
+  });
+});
+
+describe('the selection prompt (A6-D7): v37 byte for byte with the flag off, v38 with actions', () => {
   const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v37.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
@@ -281,8 +293,8 @@ describe('the selection prompt (A6-D7): v37 byte for byte with the flag off, v36
     }
   });
 
-  it('the A6 prompt (v36) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v36');
+  it('the A6 prompt (v38) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v38');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
@@ -567,7 +579,7 @@ describe('A6 prompt v36 (CA review): the rule-8 lines and examples teach the rul
       expect(actionPrompt, gone).not.toContain(`Message: ${gone}\n`);
     }
     // The read prompt (A6 off) still carries its v37 example byte for byte.
-    expect(readMessages.has('저 메일 내용 한 줄로 줄여줘')).toBe(true);
+    expect(readMessages.has('저거 요약 좀 해줄래')).toBe(true);
   });
 
   it('the near-copy measure flags the removed examples (calibration)', () => {

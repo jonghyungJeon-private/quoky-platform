@@ -50,11 +50,11 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * v36 (A6 only) = v35 with rules 3 and 8 made consistent as rules, no new examples: a how-to or method question about a
  * Quoky feature in any form is help.topic, the same about other software is none, a command-shaped message (imperative or
  * "label: value") is never help.topic (rule 8 no longer lists "…하는 법" forms as none).
- * v37 (the read prompt; the A6 prompt stays v36) = v30 with the read examples that copied or nearly copied scored gold cases rewritten
- * in another form (ADR-0123 Q2, RAG-0): "오후만" -> "아침 시간대 일정만 다시 보여줘" (partOfDay follow-up), "목요일 거는?" ->
- * "수요일 일정은 어때?" (weekday follow-up), "그거 요약해줘" -> "저 메일 내용 한 줄로 줄여줘" (deictic summarize is none), and the
- * near-copies "그 중에 스프린트 건만", "오늘까지 마감인 지라 일 있어?", "어제 도착한 메일 보여줘", "드라이브에서 폴더 공유하는 법
- * 알려줘"; no rule line changes. The A6 override of the summarize example is re-keyed to the new text and is otherwise unchanged.
+ * v37 (the read prompt) = v30 with the read examples that copied or nearly copied scored gold cases rewritten in another form
+ * (ADR-0123 Q2, RAG-0): "오후만" -> "아침 것만", "목요일 거는?" -> "토요일 쪽은?", "그거 요약해줘" -> "저거 요약 좀 해줄래", and the near-copies
+ * "그 중에 스프린트 건만", "오늘까지 마감인 지라 일 있어?", "어제 도착한 메일 보여줘", "드라이브에서 폴더 공유하는 법 알려줘"; the rule line quotes
+ * "목요일 거는?" and "그거 요약해줘" and the partOfDay description quote "오후만" are reworded too. v38 (A6) = the v36 text on top of v37
+ * (the shared examples and quotes changed the A6 bytes, so A6 moves to the next free number); its summarize override is re-keyed.
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v37';
 /**
@@ -62,7 +62,7 @@ export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v37';
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
  * for byte (pinned by `golden/nl-select.v37.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v36';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v38';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -111,14 +111,14 @@ const EXAMPLES: readonly PromptExample[] = [
   { text: '하루 일정 할 일 싹 정리', output: '{"entryId":"brief.today","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['brief.today'] },
   { text: '메일함', output: '{"entryId":"mail.list","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
   { text: '몇 건이야?', previous: '{"entryId":"mail.list","args":{"unread":true}}', output: '{"entryId":"mail.list","args":{"unread":true,"count":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
-  { text: '지난주 분으로 어떤 게 왔는지 알려줘', output: '{"entryId":"mail.list","args":{"range":"last-week"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
+  { text: '지난주 수신 메일을 한데 모아서 보여줄래', output: '{"entryId":"mail.list","args":{"range":"last-week"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
   { text: '두 번째 건 누구한테 온 거야?', previous: '{"entryId":"mail.list","args":{}}', output: '{"entryId":"mail.list","args":{"item":2},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
-  { text: '저 메일 내용 한 줄로 줄여줘', previous: '{"entryId":"mail.list","args":{}}', output: none, needs: ['mail.list'] },
+  { text: '저거 요약 좀 해줄래', previous: '{"entryId":"mail.list","args":{}}', output: none, needs: ['mail.list'] },
   { text: '모레 저녁에 한가해?', output: '{"entryId":"calendar.events","args":{"range":"day-after-tomorrow","partOfDay":"evening","availability":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
-  { text: '아침 시간대 일정만 다시 보여줘', previous: '{"entryId":"calendar.events","args":{"range":"tomorrow"}}', output: '{"entryId":"calendar.events","args":{"range":"tomorrow","partOfDay":"morning"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '아침 것만', previous: '{"entryId":"calendar.events","args":{"range":"tomorrow"}}', output: '{"entryId":"calendar.events","args":{"range":"tomorrow","partOfDay":"morning"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '지난주 금요일에 뭐 있었지', output: '{"entryId":"calendar.events","args":{"range":"last-fri"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '다다음 주는?', previous: '{"entryId":"calendar.events","args":{"range":"next-week"}}', output: '{"entryId":"calendar.events","args":{"range":"week-after-next"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
-  { text: '수요일 일정은 어때?', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-wed"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '토요일 쪽은?', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-sat"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '그 중에 미팅 시간 있는 것만', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-week","timedOnly":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '가장 오래된 것부터 보여줘', previous: '{"entryId":"jira.issues","args":{"status":"in-progress"}}', output: '{"entryId":"jira.issues","args":{"status":"in-progress","sort":"oldest"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   // ADR-0120 amendment A8 (v27): a release for every assignee (stated), a release (the owner's own by default), a
@@ -158,7 +158,7 @@ const EXAMPLES: readonly PromptExample[] = [
  * action examples. Generic patterns, not corpus phrases.
  */
 const ACTION_EXAMPLE_OVERRIDES: Readonly<Record<string, Omit<PromptExample, 'text'> & { readonly text?: string }>> = {
-  '저 메일 내용 한 줄로 줄여줘': {
+  '저거 요약 좀 해줄래': {
     // v35: the short form in another wording (the v24 text equals the scored case a6-reference-item.summarize-001).
     text: '이거 요약 좀',
     previous: '{"entryId":"mail.list","args":{}}',
@@ -244,7 +244,7 @@ const ACTION_LINE_REPLACEMENTS: Readonly<Record<string, readonly string[]>> = {
   '   asked politely ("can you post this for me?"). Writes are never an entry. "<time>에 … 알려줘" sets a reminder: none.': [
     '   asked politely ("can you post this for me?"), EXCEPT the action entries of rule 8 that are in the catalog.',
   ],
-  '   number ("N번째 건 누가 보냈어?") is `item`; summarizing, replying to or reading one mail ("그거 요약해줘") is none, not a list.': [
+  '   number ("N번째 건 누가 보냈어?") is `item`; summarizing, replying to or reading one mail ("이 메일 요점만 알려줘") is none, not a list.': [
     '   number ("N번째 건 누가 보냈어?") is `item`; reading or summarizing one listed mail is item.summarize (rule 8); replying is none.',
   ],
 };
@@ -298,11 +298,11 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   args {}; a bare "슬랙" or "컨플루언스" has no keyword, so answer NEEDS_CLARIFICATION with that entry.',
     '   Time: use only the range symbols below; never write a timestamp or a year the owner did not write. A weekday, date or',
     '   period word (목요일, 어제, 다다음 주, 이번 달 말까지) is ALWAYS `range`, never a keyword, from, or name; a part of the day',
-    '   (오전, 오후, 저녁) is `partOfDay`. A follow-up that names another day ("목요일 거는?" after a week) changes `range` only',
-    '   (this-thu), keeps the other previous args, and never makes the day word a keyword.',
+    '   (오전, 오후, 저녁) is `partOfDay`. A follow-up that names another day ("일요일 것도 알려줘" after a week) changes `range` only',
+    '   (this-sun), keeps the other previous args, and never makes the day word a keyword.',
     '   Search keyword (Slack, Confluence): only the core topic term(s); drop conversational filler such as 얘기, 나온, 관련, 거.',
     '   Mail: a period the mail was received in is `range` ("어제 온 메일" = yesterday); a question about ONE listed mail by its',
-    '   number ("N번째 건 누가 보냈어?") is `item`; summarizing, replying to or reading one mail ("그거 요약해줘") is none, not a list.',
+    '   number ("N번째 건 누가 보냈어?") is `item`; summarizing, replying to or reading one mail ("이 메일 요점만 알려줘") is none, not a list.',
     '   Jira order: sort oldest/newest/recently-updated only when the owner asks for an order ("제일 오래된 건"); keep the previous args.',
     '6. Follow-ups: when a previous selection is given and the message narrows or corrects it ("그 중에 X만", "아니 보고자만",',
     '   "내일은?"), return the same entryId with the previous args plus only the change the message states.',

@@ -223,7 +223,7 @@ describe('R6 mail item picks', () => {
     expect(validateSelection({ entryId: 'mail.list', args: { item: 3 } }, ctx('3번은 누가 보냈어?'))).toMatchObject({ ok: true, value: { args: { item: 3 } } });
     expect(validateSelection({ entryId: 'mail.list', args: { item: 0 } }, ctx('0번'))).toMatchObject({ ok: false, reason: 'invalid-arg' });
     const prompt = buildSelectionPrompt({ entries: [NL_WAVE1_ENTRIES['mail.list']], text: '' });
-    expect(prompt).toContain('"그거 요약해줘") is none, not a list');
+    expect(prompt).toContain('"이 메일 요점만 알려줘") is none, not a list');
     expect(prompt).toContain('item: 1-10');
   });
 });
