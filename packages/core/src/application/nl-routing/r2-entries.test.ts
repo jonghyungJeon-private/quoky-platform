@@ -248,6 +248,9 @@ describe('A6 R2 (v47): the ITEM_READ veto is a relayed request only (quoted comm
       '1번 메일을 "요약" 모드로 보여줘',
       '1번 메일 중 엄마가 전화하랬던 부분까지 요약해줘',
       '1번 메일의 아기 달래는데 필요한 장난감 목록을 요약해줘',
+      // round 5 (Codex): a quoted English mode noun
+      'Show email #1 in "summary" mode',
+      'Show the "original" of email #1',
       // plain question forms
       '그 슬랙 메시지 내용이 뭐야?',
       '3번 티켓 뭐라고 적혀 있어?',
@@ -265,6 +268,8 @@ describe('A6 R2 (v47): the ITEM_READ veto is a relayed request only (quoted comm
       '김 대리가 3번 요약해 달랬는데',
       '민수가 2번 메일 요약해 달래',
       '팀장이 3번 메일 요약하라고 했어',
+      'He said "summarize 3"',
+      '동료가 "3번 요약해줘"라고 했어',
     ]) {
       expect(nlItemReadVeto(grounding(text)), text).toBe('reported');
     }

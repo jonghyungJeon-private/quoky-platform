@@ -211,7 +211,18 @@ function spanEnclosure(prose: string, span: string): 'quote' | 'colon' | 'after-
 }
 
 /** The words that name a read of one item (Core's mode and content vocabulary) beside every action word. */
-const ITEM_READ_ACTION_WORDS: readonly string[] = [...NL_ACTION_WORDS, ...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS];
+/**
+ * The command words of a quoted read request (Codex P2, round 5): every action word, the Korean mode and content words (a
+ * Korean quoted command still needs its request ending, so a bare "요약" is a label), and the English command verbs only.
+ * The English mode and content NOUNS (summary, original, whole, content …) never make a quoted span a command, so
+ * `Show the "original" of email #1` reads while `He said "summarize 3"` is relayed.
+ */
+const ITEM_READ_EN_COMMAND_VERBS: readonly string[] = ['summarize', 'sum up', 'show', 'tell', 'explain', 'read', 'open', 'give', 'send'];
+const ITEM_READ_ACTION_WORDS: readonly string[] = [
+  ...NL_ACTION_WORDS,
+  ...[...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS].filter((word) => !/^[a-z0-9 .;-]+$/u.test(word)),
+  ...ITEM_READ_EN_COMMAND_VERBS,
+];
 
 /**
  * A6 R2 (v47, final narrowing after review): the veto of an `ITEM_READ` request, or `undefined` when it may read. ONLY a
