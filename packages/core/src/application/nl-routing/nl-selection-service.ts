@@ -75,6 +75,7 @@ import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput
 import { nlSelectionMeaning } from './selection-meaning';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
+import { nlReadNotRequest } from './read-statement';
 import { interpretUndoConfirmReply, nlUndoIsDirect, renderUndoConfirm } from './undo-confirm';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
@@ -913,6 +914,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
       this.log('info', 'nl_selection.statement', { entryId: output.entryId });
       return { kind: 'none' };
     }
+    // A reason-clause statement of feeling or a quoted request that is only talked about is not a request either.
+    if (!isNlActionEntryId(output.entryId)) {
+      const notRequest = nlReadNotRequest(prepared.groundingText, output.args);
+      if (notRequest !== undefined) {
+        this.log('info', 'nl_selection.statement', { entryId: output.entryId, shape: notRequest });
+        return { kind: 'none' };
+      }
+    }
     const ctx = this.validationContext(turn, prepared.groundingText, last?.args);
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
     this.forgetRefusedPeriod(cacheKey, main);
@@ -1666,7 +1675,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     let outcome = output.entryId === null ? 'none' : output.ambiguity;
     let executable: NlGrammarSelection | undefined;
     // A7: the shadow sees what active would do: a clear past-tense statement is `none`.
-    if (output.entryId !== null && !isNlActionEntryId(output.entryId) && nlIsPastStatement(prepared.groundingText)) outcome = 'none';
+    if (output.entryId !== null && !isNlActionEntryId(output.entryId) && (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined)) outcome = 'none';
     else if (output.entryId !== null) {
       const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args));
       this.forgetRefusedPeriod(selected.cacheKey, validated);
