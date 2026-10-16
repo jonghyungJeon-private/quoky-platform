@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
-import { vi } from 'vitest';
 import type { Actor, AiProvider, AiRequest, ConversationContext, InboundMessage, PlatformAdapter, StorageProvider, TurnResult } from '@quoky/core';
 
 /**
@@ -78,6 +77,11 @@ export interface R2Harness {
   selector: string;
   /** The stub summariser: gets the SUMMARIZATION prompt, returns the summary text. Default: echo the prompt. */
   summarizer: (prompt: string) => string;
+  /**
+   * When set, it answers every SUMMARIZATION request instead of `summarizer` (the real-model red-team runner routes the R2
+   * item prompts to the real provider and everything else to a stub). Its text is the summary; a throw is a provider failure.
+   */
+  summarizeRequest: ((request: AiRequest) => Promise<string>) | undefined;
   /** The stub chat answer (`GENERAL_CHAT` and every other capability). */
   chat: string;
   /** How the Slack fixture answers a single thread-reply read (`normal`, the parent alone, or the parent and a neighbour). */
@@ -95,8 +99,18 @@ export interface R2Harness {
   close(): Promise<void>;
 }
 
+type VitestVi = typeof import('vitest').vi;
+
+/**
+ * The harness runs under vitest (CI) and under the plain-node `eval:r2-redteam` CLI: it needs no test runner (console
+ * capture and the fetch stub are plain assignments); only the module-registry reset is vitest's, and only when vitest runs.
+ */
 export async function bootR2Harness(env: Record<string, string>): Promise<R2Harness> {
-  for (const method of ['log', 'warn', 'error', 'info'] as const) vi.spyOn(console, method).mockImplementation(() => undefined);
+  const vi: VitestVi | undefined = process.env.VITEST !== undefined ? (await import('vitest')).vi : undefined;
+  const consoleLines: string[] = [];
+  const savedConsole = { log: console.log, warn: console.warn, error: console.error, info: console.info };
+  for (const method of ['log', 'warn', 'error', 'info'] as const) console[method] = (...args: unknown[]) => void consoleLines.push(args.map(String).join(' '));
+  const savedFetch = globalThis.fetch;
   const savedEnv = { ...process.env };
   for (const key of Object.keys(process.env)) if (ENV_PREFIXES.test(key)) delete process.env[key];
   const tempDir = mkdtempSync(join(tmpdir(), 'quoky-a6-r2-'));
@@ -107,12 +121,13 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
     slack: [] as SlackFixtureMessage[],
     selector: none,
     summarizer: (prompt: string) => prompt,
+    summarizeRequest: undefined as ((request: AiRequest) => Promise<string>) | undefined,
     chat: R2_CHAT_REPLY,
     slackReplyMode: 'normal' as 'normal' | 'parent-only' | 'neighbour',
     extraReplies: (_ts: string): SlackFixtureMessage[] => [],
   };
 
-  vi.stubGlobal('fetch', async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
+  globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
     const url = new URL(String(input));
     const method = (init.method ?? 'GET').toUpperCase();
     fetched.push(`${method} ${url.toString()}`);
@@ -191,7 +206,7 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
       }
     }
     throw new Error('A6 R2 harness: network is not available in this test');
-  });
+  }) as typeof fetch;
 
   Object.assign(process.env, {
     QUOKY_DISCORD_OWNER_IDS: R2_OWNER,
@@ -209,7 +224,7 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
     ...env,
   });
 
-  vi.resetModules();
+  vi?.resetModules();
   const core = await import('@quoky/core');
   const { AppModule } = await import('./app.module');
   const { stubProviderSelection } = await import('./provider-selection/test-support');
@@ -226,7 +241,7 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
       async execute(request: AiRequest) {
         requests.push(request);
         if (request.capability === SELECTION) return { text: state.selector, artifacts: [] };
-        if (request.capability === SUMMARIZATION) return { text: state.summarizer(request.prompt), artifacts: [] };
+        if (request.capability === SUMMARIZATION) return { text: state.summarizeRequest !== undefined ? await state.summarizeRequest(request) : state.summarizer(request.prompt), artifacts: [] };
         return { text: state.chat, artifacts: [] };
       },
     });
@@ -276,6 +291,12 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
     set summarizer(value) {
       state.summarizer = value;
     },
+    get summarizeRequest() {
+      return state.summarizeRequest;
+    },
+    set summarizeRequest(value) {
+      state.summarizeRequest = value;
+    },
     get chat() {
       return state.chat;
     },
@@ -295,9 +316,7 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
       state.extraReplies = value;
     },
     logLines() {
-      return (['log', 'warn', 'error', 'info'] as const).flatMap((method) =>
-        ((console[method] as unknown as { mock?: { calls: unknown[][] } }).mock?.calls ?? []).map((call) => call.map(String).join(' ')),
-      );
+      return [...consoleLines];
     },
     dm,
     channel,
@@ -332,8 +351,9 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
       await storage.close().catch(() => undefined);
       await app.close().catch(() => undefined);
       process.env = savedEnv;
-      vi.unstubAllGlobals();
-      vi.restoreAllMocks();
+      globalThis.fetch = savedFetch;
+      Object.assign(console, savedConsole);
+      vi?.restoreAllMocks();
       rmSync(tempDir, { recursive: true, force: true });
     },
   };

@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc -b",
     "start": "node dist/main.js",
-    "nl-eval": "node dist/tools/nl-intent-eval-cli.js"
+    "nl-eval": "node dist/tools/nl-intent-eval-cli.js",
+    "r2-redteam": "node dist/tools/nl-r2-redteam-cli.js"
   },
   "dependencies": {
     "@quoky/core": "workspace:*",

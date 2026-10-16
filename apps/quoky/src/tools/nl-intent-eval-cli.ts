@@ -31,16 +31,20 @@ import type { AiProvider } from '@quoky/core';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import {
   NL_ACTION_EVAL_GATE,
+  NL_ACTION_R2_EVAL_GATE,
   buildActionPlan,
   computeActionPlanDigest,
   loadActionCorpus,
+  loadR2ActionCorpus,
   loadReadRegressionCorpus,
   runActionEvaluation,
   runReadRegression,
   scoreActionGrammarSide,
   summarizeAction,
+  summarizeActionR2,
   summarizeReadRegression,
   validateActionCorpus,
+  NL_ACTION_R2_EVAL_ENTRIES,
 } from './nl-action-eval';
 import {
   NL_EVAL_GATE,
@@ -83,6 +87,12 @@ Without --approved-plan-digest these are offline (schema check, plan, digest, gr
 Action gate: >= ${NL_ACTION_EVAL_GATE.overall * 100}% exact {entry, args, target}, >= ${NL_ACTION_EVAL_GATE.perEntry * 100}% per entry, spans >= ${NL_ACTION_EVAL_GATE.spanExact * 100}%,
              ${NL_ACTION_EVAL_GATE.wrongTarget} wrong targets, ${NL_ACTION_EVAL_GATE.negativeCaptures} negative captures, questions on references <= ${NL_ACTION_EVAL_GATE.questionRateOnReferences * 100}%.
 Read regression: the D12 gate on the read cases and 0 read cases captured by an action entry.
+
+A6 R2 (Jira / Slack item.summarize; the R2 prompt, R2 offered as with QUOKY_NL_ITEM_R2=all; the environment is never read):
+          pnpm eval:nl -- --mode r2 [--model M] [--runs N] [--concurrency N] [--approved-plan-digest <sha256>]
+Without --approved-plan-digest it is offline (schema check, plan, digest, call count). With it, a Strict run.
+R2 gate: >= ${NL_ACTION_R2_EVAL_GATE.overall * 100}% exact {entry, args, target} overall and >= ${NL_ACTION_R2_EVAL_GATE.perSource * 100}% for each of the jira and slack slices, ${NL_ACTION_R2_EVAL_GATE.wrongTarget} wrong targets,
+         ${NL_ACTION_R2_EVAL_GATE.negativeCaptures} negative captures, questions on positive references <= ${NL_ACTION_R2_EVAL_GATE.questionRateOnReferences * 100}%, calls over the bound <= ${NL_ACTION_R2_EVAL_GATE.overBoundRate * 100}%.
 `;
 
 const OPTIONS = new Set([
@@ -99,7 +109,7 @@ const OPTIONS = new Set([
 
 export class UsageError extends Error {}
 
-export type NlEvalMode = 'plan' | 'run' | 'action' | 'read-regression' | 'help';
+export type NlEvalMode = 'plan' | 'run' | 'action' | 'read-regression' | 'r2' | 'help';
 
 export function parseArguments(argv: readonly string[]): { mode: NlEvalMode; options: Record<string, string> } {
   const tokens = argv[0] === '--' ? argv.slice(1) : [...argv];
@@ -114,11 +124,11 @@ export function parseArguments(argv: readonly string[]): { mode: NlEvalMode; opt
     options[name] = value;
   }
   const mode = options['--mode'];
-  if (mode === 'action' || mode === 'read-regression') {
+  if (mode === 'action' || mode === 'read-regression' || mode === 'r2') {
     for (const name of ['--entries', '--negatives', '--per-entry']) if (name in options) throw new UsageError(`${name} is not an option of --mode ${mode}`);
     return { mode, options };
   }
-  if (mode !== 'plan' && mode !== 'run') throw new UsageError('--mode must be plan, run, action or read-regression');
+  if (mode !== 'plan' && mode !== 'run') throw new UsageError('--mode must be plan, run, action, read-regression or r2');
   if (mode === 'run' && options['--approved-plan-digest'] === undefined) throw new UsageError('run requires --approved-plan-digest');
   if (mode === 'plan' && options['--approved-plan-digest'] !== undefined) throw new UsageError('--approved-plan-digest is only for run');
   return { mode, options };
@@ -219,7 +229,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
       deps.stdout(HELP);
       return EXIT_OK;
     }
-    if (parsed.mode === 'action' || parsed.mode === 'read-regression') return await runActionCli(parsed.mode, parsed.options, deps);
+    if (parsed.mode === 'action' || parsed.mode === 'read-regression' || parsed.mode === 'r2') return await runActionCli(parsed.mode, parsed.options, deps);
     options = planOptions(parsed.options);
   } catch (error) {
     deps.stderr(error instanceof UsageError ? error.message : 'invalid arguments');
@@ -290,11 +300,12 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
 /** Optional collaborators of the A6 modes (tests inject them; production reads the corpora from the repository). */
 export interface ActionCliDeps {
   readonly loadActionCorpus?: typeof loadActionCorpus;
+  readonly loadR2ActionCorpus?: typeof loadR2ActionCorpus;
   readonly loadReadRegressionCorpus?: typeof loadReadRegressionCorpus;
 }
 
 /** `--mode action` / `--mode read-regression` (ADR-0120 amendment A6-D7). */
-export async function runActionCli(mode: 'action' | 'read-regression', options: Readonly<Record<string, string>>, deps: CliDeps & ActionCliDeps): Promise<number> {
+export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', options: Readonly<Record<string, string>>, deps: CliDeps & ActionCliDeps): Promise<number> {
   const flag = options['--timeout-ms'];
   const timeoutMs = flag === undefined ? undefined : parseNlIntentTimeoutMs(flag);
   if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 8000');
@@ -305,6 +316,7 @@ export async function runActionCli(mode: 'action' | 'read-regression', options: 
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   };
   const approved = options['--approved-plan-digest'];
+  if (mode === 'r2') return await runR2Cli(settings, approved, deps);
   if (mode === 'action') {
     const { corpus, sha256, files } = (deps.loadActionCorpus ?? loadActionCorpus)();
     const problems = validateActionCorpus(corpus);
@@ -380,6 +392,51 @@ export async function runActionCli(mode: 'action' | 'read-regression', options: 
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeReadRegression(records.filter((record) => record.run === index + 1), goldOf));
   for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
   const path = deps.writeReport(`nl-read-regression-${startedAt.replace(/[:.]/g, '-')}.json`, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, records }, null, 2)}\n`);
+  deps.stdout(`results written to ${path}`);
+  return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
+}
+
+/** `--mode r2` (A6 R2): the agent-drafted, owner-approved R2 corpus through the real selector with R2 offered. */
+async function runR2Cli(settings: { model: string; runs: number; concurrency: number; timeoutMs?: number }, approved: string | undefined, deps: CliDeps & ActionCliDeps): Promise<number> {
+  const { corpus, sha256, files } = (deps.loadR2ActionCorpus ?? loadR2ActionCorpus)();
+  const problems = validateActionCorpus(corpus, NL_ACTION_R2_EVAL_ENTRIES);
+  deps.stdout(`R2 corpus: ${corpus.cases.length} cases from ${files.length} file(s); schema problems: ${problems.length}`);
+  for (const problem of problems.slice(0, 50)) deps.stdout(`  ${problem}`);
+  if (problems.length > 0 || corpus.cases.length === 0) return EXIT_GATE_FAILED;
+  let plan: ReturnType<typeof buildActionPlan>;
+  try {
+    plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, settings);
+  } catch (error) {
+    deps.stderr(`invalid plan: ${error instanceof Error ? error.message : 'unknown'}`);
+    return EXIT_USAGE;
+  }
+  const digest = computeActionPlanDigest(plan);
+  if (approved === undefined) {
+    deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
+    deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(`model calls this plan authorises: at most ${plan.calls} (${plan.caseIds.length} cases x ${plan.runs} run(s), one selector call each; a case a deterministic veto settles makes none; no summarisation call)`);
+    for (const [entry, side] of Object.entries(scoreActionGrammarSide(corpus, deps.now()))) {
+      deps.stdout(`  grammar side ${entry.padEnd(16)} ${entry === 'none' ? 'acted on' : 'claimed'} ${side.claimed}/${side.total}`);
+    }
+    deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
+    return EXIT_OK;
+  }
+  if (approved !== digest) {
+    deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
+    return EXIT_BLOCKED;
+  }
+  const provider = deps.createProvider(plan.model);
+  if (!(await provider.isAvailable().catch(() => false))) {
+    deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
+    return EXIT_BLOCKED;
+  }
+  const startedAt = deps.now();
+  const records = await runActionEvaluation({ corpus, plan, provider, now: deps.now });
+  const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeActionR2(records.filter((record) => record.run === index + 1), corpus, plan.callTimeoutMs));
+  for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
+  deps.stdout(`R2 gate (${plan.promptVersion}): ${summaries.every((summary) => summary.gatePassed) ? 'PASSED' : 'FAILED'} in every one of ${plan.runs} run(s)`);
+  // Content-free: ids, outcomes, entries and reasons only (never an owner text or a raw model answer).
+  const path = deps.writeReport(`nl-action-r2-${startedAt.replace(/[:.]/g, '-')}.json`, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
 }
