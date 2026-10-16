@@ -482,6 +482,24 @@ export const NL_R5A_VOCABULARY_ADDITIONS: Readonly<Record<'todo.add' | 'reminder
 export const NL_ACTION_WORDS: readonly string[] = [...new Set([...TODO_COMPLETE_WORDS, ...TODO_CANCEL_WORDS, ...REMINDER_CANCEL_WORDS, ...UNDO_WORDS, ...TODO_ADD_WORDS, ...REMINDER_CREATE_WORDS])];
 
 /**
+ * Garbled action word addendum (CA review, 2026-10-16): the word class of the Hangul action words that are verbal NOUNS
+ * (Sino-Korean or loan nouns taking 하다 / 되다 / 처리, and nominal forms). A noun does not inflect by itself, so a one-jamo
+ * change to it is a garble ("완룐"); every other Hangul action word is a verb form, whose ending consonants (끝냄, 마침,
+ * 해치워 ↔ 해치웠) and vowel contraction (마쳐) are inflection (`garbled-action.ts`). A part-of-speech tag, not a phrase list.
+ */
+export const NL_ACTION_VERBAL_NOUNS: readonly string[] = ['완료', '마무리', '취소', '캔슬', '삭제', '제거', '제외', '추가', '등록', '리마인드', '원상복구', '원상', '원복', '롤백', '넣기', '되돌리기', '원래대로'];
+
+/** The canonical action word of each LOCAL_WRITE entry, offered when a garbled word asks (never the raw vocabulary stem). */
+export const NL_ACTION_CANONICAL_WORDS: Readonly<Record<'todo.add' | 'todo.complete' | 'todo.cancel' | 'reminder.create' | 'reminder.cancel' | 'action.undo', { readonly ko: string; readonly en: string }>> = Object.freeze({
+  'todo.add': { ko: '추가', en: 'add' },
+  'todo.complete': { ko: '완료', en: 'complete' },
+  'todo.cancel': { ko: '취소', en: 'cancel' },
+  'reminder.create': { ko: '알림', en: 'remind' },
+  'reminder.cancel': { ko: '취소', en: 'cancel' },
+  'action.undo': { ko: '되돌리기', en: 'undo' },
+});
+
+/**
  * A6-D3a amendment 1: whether the owner's frame (the prose without the selector's content spans) expresses anything beyond
  * references, deictics, numbers, time words and fillers. "2번도", "그걸로요", "13번 알림" (a target entry) and "내일 9시
  * 우유" (a payload entry, frame "") express no action. For a target entry an item-source noun is part of the reference

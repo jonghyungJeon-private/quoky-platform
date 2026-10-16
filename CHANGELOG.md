@@ -11,8 +11,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   word ("'완료'(이)라고 하신 건가요? …"), instead of executing. Structural rule, no typo list (`nl-routing/garbled-action.ts`):
   a word in the action word's slot (a glued request ending, or right before a request form or 처리; English imperative slot)
   at jamo edit distance 1 (Latin: one letter, five letters or more) from an `NL_ACTION_WORDS` word, that neither holds an
-  action word nor is a normal inflection of one. Runs after the request-shape vetoes; new validation reason
-  `garbled-action`. Read entries, R5a and the undo own-word anchor are unchanged.
+  action word nor is a normal inflection of one (verb forms only: ending consonants ㄴ/ㄹ/ㅁ/ㅂ/ㅆ, present/past pairs and
+  the 어/아 contraction; verbal nouns such as 완료 never inflect). Catalog aliases are known words. Runs after the
+  request-shape vetoes; new validation reason `garbled-action`, which also blocks the R5a deictic path. The question
+  offers the entry's canonical word (완료 / 취소 / 추가 / 알림 / 되돌리기). Read entries and the undo own-word anchor are
+  unchanged.
 - **Gate.** Every LOCAL_WRITE gold of the action corpora validated with its gold selection: only
   `a6-paraphrase-todo.complete-018` asks; no execute gold asks. Prompts and gold data unchanged.
 

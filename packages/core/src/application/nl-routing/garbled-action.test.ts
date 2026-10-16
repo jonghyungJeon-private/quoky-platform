@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { NL_ACTION_ENTRIES, NL_ACTION_WORDS } from './action-entries';
+import { NL_ACTION_ENTRIES, NL_ACTION_VERBAL_NOUNS } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
 import { nlGarbledActionWord, nlJamoDistance } from './garbled-action';
 import { prepareSelectionInput } from './selection-input';
@@ -20,8 +20,11 @@ const ctx = (text: string): NlValidationContext => {
   return { offered, groundingText: prepared.groundingText, now: NOW, timeZone: 'Asia/Seoul', actions: true };
 };
 const complete = (text: string, args: Record<string, string> = { ref: '#3' }) => validateSelection({ entryId: 'todo.complete', args }, ctx(text));
-const COMPLETE_WORDS = NL_ACTION_ENTRIES['todo.complete']?.actionGrounding ?? [];
-const garbled = (text: string, own: readonly string[] = COMPLETE_WORDS) => nlGarbledActionWord(text, own, NL_ACTION_WORDS);
+const vocabularies = (own: string) => {
+  const all = ACTIONS.flatMap((entry) => (entry.risk === 'LOCAL_WRITE' && entry.actionGrounding !== undefined ? [{ owner: entry.id, words: entry.actionGrounding }] : []));
+  return [...all.filter((v) => v.owner === own), ...all.filter((v) => v.owner !== own)];
+};
+const garbled = (text: string, own = 'todo.complete') => nlGarbledActionWord(text, vocabularies(own), NL_ACTION_VERBAL_NOUNS)?.word;
 
 describe('jamo distance', () => {
   it('decomposes Hangul into initial, medial and final', () => {
@@ -49,7 +52,14 @@ describe('garbled action words ask (LOCAL_WRITE)', () => {
   });
 
   it('a garbled verb with its request ending glued on asks too ("지웨줘" for 지워)', () => {
-    expect(validateSelection({ entryId: 'todo.cancel', args: { ref: '#2' } }, ctx('2번 지웨줘'))).toMatchObject({ ok: false, reason: 'garbled-action', candidate: '지워' });
+    // The question offers the entry's canonical word (취소), never the raw vocabulary stem (지워).
+    expect(validateSelection({ entryId: 'todo.cancel', args: { ref: '#2' } }, ctx('2번 지웨줘'))).toMatchObject({ ok: false, reason: 'garbled-action', candidate: '취소' });
+  });
+
+  it('a verbal noun does not inflect by itself: any one-jamo change to 완료 / 취소 / 추가 asks', () => {
+    expect(garbled('3번 완룐 처리해줘')).toBe('완료');
+    expect(garbled('3번 취솨해줘', 'todo.cancel')).toBe('취소');
+    expect(validateSelection({ entryId: 'todo.add', args: { title: '우유' } }, ctx('우유 할 일 츄가해줘'))).toMatchObject({ ok: false, reason: 'garbled-action', candidate: '추가' });
   });
 });
 
@@ -79,9 +89,20 @@ describe('valid forms and noise never ask', () => {
 
   it('normal inflections in the slot are forms, not garbles: the 어/아 contraction, English -s / -d', () => {
     expect(garbled('2번 마쳐줘')).toBeUndefined(); // 마치 + 어
-    expect(nlGarbledActionWord('13번 알림 멈추세요', NL_ACTION_ENTRIES['reminder.cancel']?.actionGrounding ?? [], NL_ACTION_WORDS)).toBeUndefined(); // 멈춰 ↔ 멈추
+    expect(garbled('13번 알림 멈추세요', 'reminder.cancel')).toBeUndefined(); // 멈춰 ↔ 멈추
     expect(garbled('completes 3')).toBeUndefined();
-    expect(nlGarbledActionWord('removed 3', [], NL_ACTION_WORDS)).toBeUndefined();
+    expect(garbled('removed 3', 'todo.cancel')).toBeUndefined();
+  });
+
+  it('verb forms: ending consonants ㄴ / ㄹ / ㅁ / ㅂ / ㅆ and present / past pairs are inflection (Codex P2, CA review)', () => {
+    for (const text of ['2번 해치워줘', '2번 끝냄 처리해줘', '2번 마침 처리해줘', '2번 끝남으로 해줘', '2번 지움 처리해줘', '2번 없앰 처리해줘']) {
+      expect(garbled(text), text).toBeUndefined();
+      expect(garbled(text, 'todo.cancel'), text).toBeUndefined();
+    }
+    expect(complete('2번 해치워줘', { ref: '#2' })).toMatchObject({ ok: true });
+    expect(complete('2번 끝냄 처리해줘', { ref: '#2' })).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'todo.cancel', args: { ref: '#2' } }, ctx('2번 지움 처리해줘'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'todo.cancel', args: { ref: '#2' } }, ctx('2번 없앰 처리해줘'))).toMatchObject({ ok: true });
   });
 
   it('runs after the vetoes and only for LOCAL_WRITE; content spans are content', () => {

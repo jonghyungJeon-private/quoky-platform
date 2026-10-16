@@ -13,6 +13,9 @@ import {
 import {
   formatNlRef,
   isNlDeicticOnlyPayload,
+  NL_ACTION_CANONICAL_WORDS,
+  NL_ACTION_ENTRIES,
+  NL_ACTION_VERBAL_NOUNS,
   NL_ACTION_WORDS,
   nlFrameExpressesAction,
   withoutSpan,
@@ -26,7 +29,7 @@ import {
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
 import { nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
-import { nlGarbledActionWord } from './garbled-action';
+import { nlGarbledActionWord, type NlActionVocabulary } from './garbled-action';
 import {
   isNlRangeSymbol,
   isWeekdayOrTimeKeyword,
@@ -44,6 +47,7 @@ import {
   type NlWeekdayMention,
 } from './symbolic-time';
 import { canonicalNlKeyword } from './keyword-canonical';
+import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 export { canonicalNlKeyword } from './keyword-canonical';
 
@@ -128,7 +132,7 @@ export type NlValidationResult =
       readonly arg?: string;
       /** ADR-0120 A8: the entry whose usage question the clarification uses instead (an entry check's hint). */
       readonly askEntryId?: NlCatalogEntryId;
-      /** `garbled-action`: the closed vocabulary word the garbled word may stand for (never the owner's text). */
+      /** `garbled-action`: the canonical action word of the entry whose vocabulary holds the near word (never the owner's text). */
       readonly candidate?: string;
     };
 
@@ -253,8 +257,26 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
   }
   // A6-D3a amendment 1, garbled action word addendum: read on the frame without the content spans (a title "완룐 보고서"
   // is content), against the selected entry's own words first.
-  const garbled = nlGarbledActionWord(contentFrame, words, NL_ACTION_WORDS);
+  const near = nlGarbledActionWord(contentFrame, actionVocabularies(entry), NL_ACTION_VERBAL_NOUNS, CATALOG_WORDS);
+  const garbled = near === undefined ? undefined : canonicalActionWord(near.owner, /^[a-z]+$/u.test(near.word));
   return { ...(veto !== undefined ? { veto } : {}), expressesAction, ...(garbled !== undefined ? { garbled } : {}) };
+}
+
+/** The catalog's own words (aliases and source names of every read and action entry): known words, never a garble. */
+const CATALOG_WORDS: readonly string[] = [...Object.values(NL_WAVE1_ENTRIES), ...Object.values(NL_ACTION_ENTRIES)].flatMap((candidate) =>
+  candidate === undefined ? [] : [...candidate.aliases, ...(candidate.sourceNames ?? [])],
+);
+
+/** The LOCAL_WRITE action vocabularies, the selected entry's first. */
+function actionVocabularies(entry: NlCatalogEntry): NlActionVocabulary[] {
+  const all = Object.values(NL_ACTION_ENTRIES).flatMap((candidate) => (candidate !== undefined && candidate.risk === 'LOCAL_WRITE' && candidate.actionGrounding !== undefined ? [{ owner: candidate.id, words: candidate.actionGrounding }] : []));
+  return [...all.filter((vocabulary) => vocabulary.owner === entry.id), ...all.filter((vocabulary) => vocabulary.owner !== entry.id)];
+}
+
+/** The canonical word of the vocabulary's entry (Latin for a Latin near word). */
+function canonicalActionWord(owner: string, latin: boolean): string | undefined {
+  const words = (NL_ACTION_CANONICAL_WORDS as Readonly<Record<string, { readonly ko: string; readonly en: string }>>)[owner];
+  return words === undefined ? undefined : latin ? words.en : words.ko;
 }
 
 export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValidationContext): NlValidationResult {

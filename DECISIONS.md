@@ -27067,15 +27067,22 @@ owner approved a structural Core rule (`nl-routing/garbled-action.ts`), with no 
   frame (the owner's prose without the selector's content spans) whose stem is at edit distance exactly 1 from an action
   word of the closed vocabularies (`NL_ACTION_WORDS`, the selected entry's own words preferred as the candidate) is garbled
   when it neither holds a known action word nor is a normal inflection of one. Validation fails with the new reason
-  `garbled-action` (arg `action`, `candidate`: the vocabulary word, never owner text); the service asks "'완료'(이)라고 하신
-  건가요? 아직 아무것도 바꾸지 않았어요. …" (audit `result: asked`, `reason: garbled-action`); nothing is written.
+  `garbled-action` (arg `action`, `candidate`: the canonical word of the entry whose vocabulary holds the near word,
+  `NL_ACTION_CANONICAL_WORDS`: 완료 / 취소 / 추가 / 알림 / 되돌리기, never the raw stem or owner text); the service asks
+  "'완료'(이)라고 하신 건가요? 아직 아무것도 바꾸지 않았어요. …" (audit `result: asked`, `reason: garbled-action`); nothing
+  is written.
 - **Distance.** Hangul is decomposed into initial, medial and final jamo (완룐 / 완요 / 완뇨 are each 1 from 완료); Latin is
   compared by letters. Short words are noise and never compared: a Hangul action word needs two syllables (one edit turns
   꺼 into 거, 빼 into 해), a Latin one five letters.
 - **Valid forms.** A word that holds an action word is never garbled ("완료해줘", "완료로", "완료됨", "완료하고"). Stems are
   compared after removing a glued request tail (the light verb 처리 / 해 / 하 and the closed request endings, recognised with
-  `nlIsRequestForm`) and up to two closed particles. Normal inflections are forms: the 어/아 infinitive contraction of a
-  stem's last vowel (마치 → "마쳐줘", 멈추 ↔ 멈춰: ㅣ/ㅕ, ㅜ/ㅝ, ㅗ/ㅘ, ㅡ/ㅓ, ㅡ/ㅏ, ㅚ/ㅙ) and English -s / -d.
+  `nlIsRequestForm`) and up to two closed particles. The catalog's own aliases and source names are known words too
+  ("리마인더" beside 리마인드). Normal inflections are forms, for VERB forms only (review fix, Codex P2 and CA): on the
+  last syllable the ending consonants ㄴ / ㄹ / ㅁ / ㅂ / ㅆ come and go on the same initial and vowel ("2번 해치워줘" ↔
+  해치웠, "끝냄 처리해줘", "마침 처리해줘", "끝남으로 해줘", "지움 처리해줘", "없앰 처리해줘"), and the 어/아 infinitive
+  contracts the last vowel (마치 → "마쳐줘", 멈추 ↔ 멈춰: ㅣ/ㅕ, ㅜ/ㅝ, ㅗ/ㅘ, ㅡ/ㅓ, ㅡ/ㅏ, ㅚ/ㅙ); English -s / -d. The
+  verbal nouns of the vocabularies (`NL_ACTION_VERBAL_NOUNS`: 완료, 취소, 추가, 등록, 삭제 …, a part-of-speech tag) take
+  하다 / 되다 / 처리 and never inflect by themselves, so any one-jamo change to them is a garble: 완룐 and 취솨 ask.
 - **Anchor (the action word's slot).** Only a word in the predicate slot counts. Korean: a word carrying a glued request
   ending ("완룐해줘", "지웨줘"), or a word right before a request form or the light verb 처리 ("완룐 처리해줘", "완룐 (좀) 해줘")
   when that next word holds no action word of its own ("필요 없어 취소해줘": 취소 is the action). English: the imperative slot
@@ -27086,8 +27093,9 @@ owner approved a structural Core rule (`nl-routing/garbled-action.ts`), with no 
   제거, 없어 / 없애) out of the rule.
 - **Scope.** Read entries are untouched (only LOCAL_WRITE). `action.undo` is a LOCAL_WRITE, but its own-word anchor (an
   undo word in the frame) runs first, so a garbled undo word alone ("원볶해줘") stays chat exactly as before; the rule
-  could only add a question beside a real undo word. R5a is untouched: `garbled-action` is not a
-  `DEICTIC_BLOCKING_FAILURES` reason, so a deictic request still goes to its preview, which is itself a confirmation.
+  could only add a question beside a real undo word. R5a (#246, on main): `garbled-action` is in
+  `DEICTIC_BLOCKING_FAILURES` (review fix), so a deictic request with a garbled action word ("그거 할 일로 츄가해줘") asks the
+  garbled-word question and never reaches a preview.
 - **Corpus.** All LOCAL_WRITE golds of `nl-action.v1`, `seed`, `exec-time` and `deictic` validated with their gold selections:
   the only `garbled-action` is `a6-paraphrase-todo.complete-018` (ask); no execute gold asks ("1번 할일 체크해줘" executes).
   Pinned in `garbled-action.test.ts`. A raw scan of every golden text found one other slot hit outside any LOCAL_WRITE

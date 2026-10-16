@@ -2179,9 +2179,10 @@ function correlationOf(turn: Pick<NlSelectionTurn, 'session' | 'turnId'>): { rea
 /**
  * A6 R5a: validation failures a deictic request never overrides (an unknown or invalid argument, a credential, a bulk
  * request) and, since A6-D3a amendment 1, `not-request`: a question, negation, retraction, reported speech, conditional,
- * statement, volition or example veto always ends the turn as chat, deictic or not (CA review (b)).
+ * statement, volition or example veto always ends the turn as chat, deictic or not (CA review (b)). `garbled-action` too: a
+ * garbled action word asks its own question before any preview (garbled action word addendum, CA review).
  */
-export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-entry', 'not-offered', 'not-read', 'unknown-arg', 'invalid-arg', 'credential', 'bulk', 'not-request']);
+export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-entry', 'not-offered', 'not-read', 'unknown-arg', 'invalid-arg', 'credential', 'bulk', 'not-request', 'garbled-action']);
 
 /** A6: the platform marked part of the message as quoted or as code: material, never one plain instruction. */
 function markedMaterial(turn: Pick<NlSelectionTurn, 'quotedRanges' | 'codeFormatted'>): boolean {
