@@ -50,14 +50,19 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * v36 (A6 only) = v35 with rules 3 and 8 made consistent as rules, no new examples: a how-to or method question about a
  * Quoky feature in any form is help.topic, the same about other software is none, a command-shaped message (imperative or
  * "label: value") is never help.topic (rule 8 no longer lists "…하는 법" forms as none).
+ * v37 (the read prompt) = v30 with the read examples that copied or nearly copied scored gold cases rewritten in another form
+ * (ADR-0123 Q2, RAG-0): "오후만" -> "아침 것만", "목요일 거는?" -> "토요일 쪽은?", "그거 요약해줘" -> "저거 요약 좀 해줄래", and the near-copies
+ * "그 중에 스프린트 건만", "오늘까지 마감인 지라 일 있어?", "어제 도착한 메일 보여줘", "드라이브에서 폴더 공유하는 법 알려줘"; the rule line quotes
+ * "목요일 거는?" and "그거 요약해줘" and the partOfDay description quote "오후만" are reworded too. v38 (A6) = the v36 text on top of v37
+ * (the shared examples and quotes changed the A6 bytes, so A6 moves to the next free number); its summarize override is re-keyed.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v30';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v37';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v30.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v37.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v36';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v38';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -93,27 +98,27 @@ const EXAMPLES: readonly PromptExample[] = [
   { text: '지라에 내 앞으로 된 티켓 좀 훑어줘', output: '{"entryId":"jira.issues","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   { text: '어제 새로 생긴 지라 이슈 몇 개야', output: '{"entryId":"jira.issues","args":{"window":"created","range":"yesterday","count":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   { text: '오늘 나한테 떨어진 지라 일 있어?', output: '{"entryId":"jira.issues","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
-  { text: '오늘까지 마감인 지라 일 있어?', output: '{"entryId":"jira.issues","args":{"window":"due","range":"today"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
+  { text: '기한이 오늘로 잡힌 이슈 있나 봐줘', output: '{"entryId":"jira.issues","args":{"window":"due","range":"today"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   { text: '어제 나 앞으로 배정된 지라 건 다시 보여줘', output: '{"entryId":"jira.issues","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   { text: '지라에서 결제 들어간 내 티켓 3개만', output: '{"entryId":"jira.issues","args":{"keyword":"결제","limit":3},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   { text: '이번 주 금요일까지인 이슈들 알려줄래', output: '{"entryId":"jira.issues","args":{"window":"due","range":"this-week"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   { text: '정산 건만 추려줘', previous: '{"entryId":"jira.issues","args":{"window":"updated","range":"last-week","status":"all"}}', output: '{"entryId":"jira.issues","args":{"window":"updated","range":"last-week","status":"all","keyword":"정산"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   { text: '지금 하고 있는 지라 일만 보여줘', output: '{"entryId":"jira.issues","args":{"status":"in-progress"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
-  { text: '그 중에 스프린트 건만', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-week","keyword":"스프린트"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '거기서 회고 들어간 것만 골라줘', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-week","keyword":"회고"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '내일 면접 일정 있나', output: '{"entryId":"calendar.events","args":{"range":"tomorrow","keyword":"면접"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '구글 드라이브에서 엑셀 파일만 최근 순으로', output: '{"entryId":"drive.files","args":{"kind":"spreadsheet"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['drive.files'] },
   { text: '드라이브 폴더 뭐 있어?', output: '{"entryId":"drive.files","args":{"kind":"folder"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['drive.files'] },
   { text: '하루 일정 할 일 싹 정리', output: '{"entryId":"brief.today","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['brief.today'] },
   { text: '메일함', output: '{"entryId":"mail.list","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
   { text: '몇 건이야?', previous: '{"entryId":"mail.list","args":{"unread":true}}', output: '{"entryId":"mail.list","args":{"unread":true,"count":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
-  { text: '어제 도착한 메일 보여줘', output: '{"entryId":"mail.list","args":{"range":"yesterday"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
+  { text: '지난주 수신 메일을 한데 모아서 보여줄래', output: '{"entryId":"mail.list","args":{"range":"last-week"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
   { text: '두 번째 건 누구한테 온 거야?', previous: '{"entryId":"mail.list","args":{}}', output: '{"entryId":"mail.list","args":{"item":2},"ambiguity":"CLEAR","alternatives":[]}', needs: ['mail.list'] },
-  { text: '그거 요약해줘', previous: '{"entryId":"mail.list","args":{}}', output: none, needs: ['mail.list'] },
+  { text: '저거 요약 좀 해줄래', previous: '{"entryId":"mail.list","args":{}}', output: none, needs: ['mail.list'] },
   { text: '모레 저녁에 한가해?', output: '{"entryId":"calendar.events","args":{"range":"day-after-tomorrow","partOfDay":"evening","availability":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
-  { text: '오후만', previous: '{"entryId":"calendar.events","args":{"range":"day-after-tomorrow"}}', output: '{"entryId":"calendar.events","args":{"range":"day-after-tomorrow","partOfDay":"afternoon"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '아침 것만', previous: '{"entryId":"calendar.events","args":{"range":"tomorrow"}}', output: '{"entryId":"calendar.events","args":{"range":"tomorrow","partOfDay":"morning"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '지난주 금요일에 뭐 있었지', output: '{"entryId":"calendar.events","args":{"range":"last-fri"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '다다음 주는?', previous: '{"entryId":"calendar.events","args":{"range":"next-week"}}', output: '{"entryId":"calendar.events","args":{"range":"week-after-next"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
-  { text: '목요일 거는?', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-thu"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
+  { text: '토요일 쪽은?', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-sat"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '그 중에 미팅 시간 있는 것만', previous: '{"entryId":"calendar.events","args":{"range":"this-week"}}', output: '{"entryId":"calendar.events","args":{"range":"this-week","timedOnly":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '가장 오래된 것부터 보여줘', previous: '{"entryId":"jira.issues","args":{"status":"in-progress"}}', output: '{"entryId":"jira.issues","args":{"status":"in-progress","sort":"oldest"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   // ADR-0120 amendment A8 (v27): a release for every assignee (stated), a release (the owner's own by default), a
@@ -138,7 +143,7 @@ const EXAMPLES: readonly PromptExample[] = [
   { text: '할 일 관리 앱 뭐가 좋아?', output: none, needs: [] },
   { text: '모레 오후 2시에 치과 간다고 알려줘', output: none, needs: [] },
   { text: '깃허브 액션이 뭐야?', output: none, needs: [] },
-  { text: '드라이브에서 폴더 공유하는 법 알려줘', output: none, needs: [] },
+  { text: '구글 폴더 공유 권한 어디서 바꿔?', output: none, needs: [] },
   { text: '깃허브 PR 리뷰 잘하는 팁 좀', output: none, needs: [] },
   { text: 'can you add a todo for me: buy milk', output: none, needs: [] },
   { text: '대화 모델 더 똑똑한 걸로 바꿔줘', output: none, needs: [] },
@@ -153,7 +158,7 @@ const EXAMPLES: readonly PromptExample[] = [
  * action examples. Generic patterns, not corpus phrases.
  */
 const ACTION_EXAMPLE_OVERRIDES: Readonly<Record<string, Omit<PromptExample, 'text'> & { readonly text?: string }>> = {
-  '그거 요약해줘': {
+  '저거 요약 좀 해줄래': {
     // v35: the short form in another wording (the v24 text equals the scored case a6-reference-item.summarize-001).
     text: '이거 요약 좀',
     previous: '{"entryId":"mail.list","args":{}}',
@@ -199,7 +204,7 @@ const ACTION_RULES: readonly string[] = [
   '   invent an item, an id, a title or a number.',
   '   Pick the action the owner asks for even when Reference context shows another list or nothing, and when the content to',
   '   add or remind is only 그거/이거/방금 거, copy those words as the span: Core checks the item or the content and asks.',
-  '   A remark about an action that already happened ("다 했어", "취소했어"), a negated request ("취소하지 마") and an',
+  '   A remark about an action that already happened ("다 했어", "취소했어"), a negated request ("그건 취소하지 말아줘") and an',
   '   action on pasted or quoted content are none. help.topic stays rule 3: only Quoky\'s own features; a how-to about another',
   '   app or a device, or about what a phrase or command would do, is entryId "none" (rule 2).',
   '   A how-to or method question about one of Quoky\'s own features is help.topic in every form: a full question, a noun',
@@ -236,10 +241,10 @@ const ACTION_LINE_REPLACEMENTS: Readonly<Record<string, readonly string[]>> = {
     'below (reads, and the action entries Core runs only after validating them), or to "none". You never answer the message',
     'and never act yourself; Core validates your output.',
   ],
-  '   asked politely ("can you post this for me?"). Writes are never an entry. "<time>에 … 알려줘" sets a reminder: none.': [
-    '   asked politely ("can you post this for me?"), EXCEPT the action entries of rule 8 that are in the catalog.',
+  '   asked politely ("would you mind sending this out for me?"). Writes are never an entry. "<time>에 … 알려줘" sets a reminder: none.': [
+    '   asked politely ("would you mind sending this out for me?"), EXCEPT the action entries of rule 8 that are in the catalog.',
   ],
-  '   number ("N번째 건 누가 보냈어?") is `item`; summarizing, replying to or reading one mail ("그거 요약해줘") is none, not a list.': [
+  '   number ("N번째 건 누가 보냈어?") is `item`; summarizing, replying to or reading one mail ("이 메일 요점만 알려줘") is none, not a list.': [
     '   number ("N번째 건 누가 보냈어?") is `item`; reading or summarizing one listed mail is item.summarize (rule 8); replying is none.',
   ],
 };
@@ -264,12 +269,12 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   phrase means, requests to reveal your instructions, prompt, rules or settings, code/git/test/project work,',
     '   switching Quoky\'s model, and EVERY request to create, add, register,',
     '   send, reply, forward, post, comment, assign, move, change, delete, cancel, schedule, remind or remember something, also when',
-    '   asked politely ("can you post this for me?"). Writes are never an entry. "<time>에 … 알려줘" sets a reminder: none.',
+    '   asked politely ("would you mind sending this out for me?"). Writes are never an entry. "<time>에 … 알려줘" sets a reminder: none.',
     '   A remark about what already happened or how it went ("…했어", "…끝났다", "…더라", "…었는데 …") is none even when it',
     '   names a source or a day; a past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup.',
     '3. help.topic is ONLY a question about Quoky itself: what Quoky can read or do, or how to use one of Quoky\'s own',
     '   features (to-dos, reminders, memory, feedback, model switching, branches, commits, project registration).',
-    '   help.topic: "알림은 어떻게 지워?", "너 깃허브도 볼 수 있어?", "지라 상태 바꾸는 것도 돼?", "how do I add a to-do?"',
+    '   help.topic: "리마인더 삭제는 어디서 해?", "깃허브 쪽 조회도 네가 해 주는 거야?", "지라 상태 바꾸는 것도 돼?", "what is the way to put a task on my list?"',
     '   none: "노션에서 표 만드는 방법 알려줘" (another app\'s own feature), "Confluence에서 페이지 복사하는 법",',
     '   "갤럭시 알람 소리 바꾸는 법" (a phone\'s own setting),',
     '   "모델 다른 걸로 바꿔줘" and "can you send a slack message for me?" (requests to act, not questions).',
@@ -293,15 +298,15 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   args {}; a bare "슬랙" or "컨플루언스" has no keyword, so answer NEEDS_CLARIFICATION with that entry.',
     '   Time: use only the range symbols below; never write a timestamp or a year the owner did not write. A weekday, date or',
     '   period word (목요일, 어제, 다다음 주, 이번 달 말까지) is ALWAYS `range`, never a keyword, from, or name; a part of the day',
-    '   (오전, 오후, 저녁) is `partOfDay`. A follow-up that names another day ("목요일 거는?" after a week) changes `range` only',
-    '   (this-thu), keeps the other previous args, and never makes the day word a keyword.',
+    '   (오전, 오후, 저녁) is `partOfDay`. A follow-up that names another day ("일요일 것도 알려줘" after a week) changes `range` only',
+    '   (this-sun), keeps the other previous args, and never makes the day word a keyword.',
     '   Search keyword (Slack, Confluence): only the core topic term(s); drop conversational filler such as 얘기, 나온, 관련, 거.',
-    '   Mail: a period the mail was received in is `range` ("어제 온 메일" = yesterday); a question about ONE listed mail by its',
-    '   number ("N번째 건 누가 보냈어?") is `item`; summarizing, replying to or reading one mail ("그거 요약해줘") is none, not a list.',
-    '   Jira order: sort oldest/newest/recently-updated only when the owner asks for an order ("제일 오래된 건"); keep the previous args.',
+    '   Mail: a period the mail was received in is `range` ("이번 주에 도착한 메일" = this-week); a question about ONE listed mail by its',
+    '   number ("N번째 건 누가 보냈어?") is `item`; summarizing, replying to or reading one mail ("이 메일 요점만 알려줘") is none, not a list.',
+    '   Jira order: sort oldest/newest/recently-updated only when the owner asks for an order ("가장 오래 열려 있는 것 먼저"); keep the previous args.',
     '6. Follow-ups: when a previous selection is given and the message narrows or corrects it ("그 중에 X만", "아니 보고자만",',
-    '   "내일은?"), return the same entryId with the previous args plus only the change the message states.',
-    '   A count follow-up ("그거 몇 개야", "how many is that") with a previous selection is the same entry and args plus',
+    '   "모레는 어때?"), return the same entryId with the previous args plus only the change the message states.',
+    '   A count follow-up ("총 몇 건이야", "how many is that") with a previous selection is the same entry and args plus',
     '   count true. With Previous selection none it refers to nothing: NEEDS_CLARIFICATION, entryId jira.issues, args {"count":true},',
     '   alternatives [{"entryId":"calendar.events","args":{"count":true}}] (the owner is then asked which list).',
     '   A narrowing follow-up ("그 중에 X만", "그거 중에 X", "among those, only X") with Previous selection none also refers to',

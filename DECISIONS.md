@@ -26388,6 +26388,12 @@ The owner accepted ADR-0123 Q1 (keep the JSON `LocalVectorProvider`) on 2026-10-
     positives are exact copies and near-copies with character-3-gram Jaccard >= 0.6.* A near-copy that fired on the shape tokens
     alone (digits and URLs collapse to `#`, so two different issue links match) is not a semantic copy; with it tau fell to 0.64
     (v1.5) and flagged every pool entry. The examples removed in v33-v35 are not on `main`, so the RAG-0 known list stands in.
+    **Calibration source (amended 2026-10-16, read prompt v37 / A6 v38).** The v37/v38 prompts no longer copy any gold case,
+    so the live RAG-0 known list can no longer supply positives. The positives are frozen in
+    `apps/quoky/src/tools/selector-rag/calibration-positives.v1.json`: the exact copies and the near copies
+    (character-3-gram Jaccard >= 0.6) that the RAG-0 list recorded on `origin/main` before the rewording (e.g. `오후만`/uat5r2-10,
+    `목요일 거는?`/uat5r4-16, `그거 요약해줘`/uat5r6-07). The harness reads only this fixture for positives and fails if it is
+    empty or malformed; negatives are unchanged. The fixture changes only by an ADR-0123 amendment.
     **Dry-run result and recommendation:** `nomic-embed-text` (v1.5) fails (tau 0.925 flags 39 of 100 pool entries; only 26.7% of
     held-out cases fall in the low-similarity stratum, below the 50% rule), while `nomic-embed-text-v2-moe` passes (0 flagged,
     99.3%, at least 10 per entry). The plan therefore binds `nomic-embed-text-v2-moe` as the only retrieval model; v1.5 is

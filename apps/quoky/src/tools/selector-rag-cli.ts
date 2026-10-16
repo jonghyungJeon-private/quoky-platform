@@ -19,7 +19,7 @@ import { resolve } from 'node:path';
 import { DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
 import { runEmbedAudit, type ModelAudit } from './selector-rag/audit';
 import { DEFAULT_OLLAMA_URL, OllamaHttpEmbedder, readPin } from './selector-rag/embed';
-import { contaminatedGoldIds, loadGold, loadKnownFindings } from './selector-rag/gold';
+import { contaminatedGoldIds, loadCalibrationPositives, loadGold, loadKnownFindings } from './selector-rag/gold';
 import { buildRagPlan, ragPlanDigest } from './selector-rag/plan';
 import { approvedEntries, checkPool, loadPoolFile, poolDigest, type PoolEntry } from './selector-rag/pool';
 import { splitCases } from './selector-rag/split';
@@ -185,6 +185,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
           goldDigest: gold.sha256,
           split,
           known,
+          positives: loadCalibrationPositives(),
           storeDirectory: resolve(EVAL_DIR, 'store'),
           latencySample: options['--latency-sample'] === undefined ? 50 : Number(options['--latency-sample']),
           log: deps.stderr,
