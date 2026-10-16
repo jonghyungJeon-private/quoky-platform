@@ -79,6 +79,47 @@ export interface NlSelectionPromptInput {
    * "Reference context" line (A6-D2: kinds, counts and ages only, never an item, title or id). Absent: the v24 prompt.
    */
   readonly actions?: { readonly referenceContext: string };
+  /**
+   * ADR-0123 D8 (RAG-2, experiment only; nothing at runtime sets it): extra examples rendered after the static `Examples:`
+   * block under {@link NL_RETRIEVED_EXAMPLES_HEADER}. Absent or empty: the prompt is byte-identical to today's.
+   */
+  readonly retrievedExamples?: readonly NlRetrievedExample[];
+  /**
+   * A0-swap only (ADR-0123 D6): render `retrievedExamples` under `Examples:` INSTEAD of the static examples. Ignored when
+   * `retrievedExamples` is absent or empty.
+   */
+  readonly replaceStaticExamples?: boolean;
+}
+
+export interface NlRetrievedExample {
+  readonly text: string;
+  /** The exact output string, as a static example renders it. */
+  readonly output: string;
+  readonly previous?: string;
+  readonly context?: string;
+}
+
+/** ADR-0123 D8: the fixed header of the retrieved block (pinned by `golden/nl-select.retrieved-block.v1.json`). */
+export const NL_RETRIEVED_EXAMPLES_HEADER = 'More examples (same output format; the rules above still decide):';
+
+/** The retrieval suffix of the prompt version, `nl-select.vNN+rk3` (ADR-0123 D8). */
+export function retrievalPromptVersion(baseVersion: string, k: number): string {
+  return `${baseVersion}+rk${k}`;
+}
+
+function exampleLines(example: NlRetrievedExample): string[] {
+  return [
+    ...(example.previous !== undefined ? [`Previous selection: ${example.previous}`] : []),
+    ...(example.context !== undefined ? [`Reference context: ${example.context}`] : []),
+    `Message: ${example.text.replace(/\n/g, ' ')}`,
+    `Output: ${example.output}`,
+  ];
+}
+
+/** The lines the retrieved block adds after the static examples (empty when there is nothing to add); the harness hashes this. */
+export function renderRetrievedBlock(examples: readonly NlRetrievedExample[] | undefined): string {
+  if (examples === undefined || examples.length === 0) return '';
+  return [NL_RETRIEVED_EXAMPLES_HEADER, ...examples.flatMap(exampleLines)].join('\n');
 }
 
 interface PromptExample {
@@ -344,8 +385,13 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
       lines.push(`  ${spec.name}${spec.required === true ? ' (required)' : ''}: ${values}. ${bounded(spec.description)}`);
     }
   }
-  const examples = examplesFor(offered, input.actions);
-  if (examples.length > 0) {
+  const retrieved = input.retrievedExamples !== undefined && input.retrievedExamples.length > 0 ? input.retrievedExamples : undefined;
+  const swap = retrieved !== undefined && input.replaceStaticExamples === true;
+  const examples = swap ? [] : examplesFor(offered, input.actions);
+  if (swap) {
+    lines.push('', 'Examples:');
+    for (const example of retrieved) lines.push(...exampleLines(example));
+  } else if (examples.length > 0) {
     lines.push('', 'Examples:');
     for (const example of examples) {
       if (example.previous !== undefined) lines.push(`Previous selection: ${example.previous}`);
@@ -353,6 +399,7 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
       lines.push(`Message: ${example.text.replace(/\n/g, ' ')}`, `Output: ${example.output}`);
     }
   }
+  if (retrieved !== undefined && !swap) lines.push('', renderRetrievedBlock(retrieved));
   lines.push(
     '',
     `Previous selection: ${input.previous === undefined ? 'none' : JSON.stringify({ entryId: input.previous.entryId, args: input.previous.args })}`,

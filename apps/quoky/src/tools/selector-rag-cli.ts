@@ -5,13 +5,15 @@
  *   pnpm eval:rag -- --mode dry-run [--models a,b] [--write-audit] embeds pool and gold (local Ollama, loopback), calibrates tau,
  *                                                                  buckets, simulates retrieval; makes NO selector call
  *   pnpm eval:rag -- --mode plan  [--selector-model haiku]        offline: prints the pre-registered plan and its digest
- *   pnpm eval:rag -- --mode run --approved-plan-digest <sha256>   Strict: the same digest rule as eval:nl; the selector arms are
- *                                                                  NOT wired in this phase-1 harness (see below)
+ *   pnpm eval:rag -- --mode run --approved-plan-digest <sha256>   Strict: the same digest rule as eval:nl. Renders every arm through
+ *                                                                  Core's `retrievedExamples` slot and walks the interleaved schedule
+ *                                                                  with an injected selector transport
  *
- * Phase 1 changes no runtime path: nothing here is read by the running service. `run` recomputes the plan digest and exits 3
- * unless `--approved-plan-digest` equals it; even then it stops before any provider is constructed, because arms A1 and A0-swap
- * need `retrievedExamples` in `buildSelectionPrompt` (RAG-2, a separate reviewed change). The traffic ledger and the rate gate
- * (`ledger.ts`) are what the runner will call before every selector call.
+ * RAG-2 is experiment-only: nothing here is read by the running service and `QUOKY_NL_EXAMPLE_RETRIEVAL` (RAG-3, ADR-0123 D10)
+ * is not wired. `run` recomputes the plan digest and exits 3 unless `--approved-plan-digest` equals it; even then it stops
+ * before any embedding or provider unless the caller injects a selector transport (`CliDeps.selector`); this CLI never
+ * constructs one, so it makes no selector call. The traffic ledger and the rate gate (`ledger.ts`) are what the transport
+ * must call before every selector call.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -23,6 +25,12 @@ import { contaminatedGoldIds, loadCalibrationPositives, loadGold, loadKnownFindi
 import { buildRagPlan, ragPlanDigest } from './selector-rag/plan';
 import { approvedEntries, checkPool, loadPoolFile, poolDigest, type PoolEntry } from './selector-rag/pool';
 import { splitCases } from './selector-rag/split';
+import { A6_ENTRY_IDS, READ_ENTRY_IDS, staticExamples } from './selector-rag/audit';
+import { buildSchedule } from './selector-rag/arms';
+import { outputEntryId, type PoolVector } from './selector-rag/retrieve';
+import { runExperiment, type ExperimentCase, type PromptContext, type RetrievalRecord } from './selector-rag/selector-rag-eval';
+import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION } from '@quoky/core';
+import type { GoldCase } from './selector-rag/gold';
 
 export const EXIT_OK = 0;
 export const EXIT_FAILED = 1;
@@ -37,7 +45,7 @@ const repoRoot = resolve(__dirname, '../../../..');
 const EVAL_DIR = resolve(repoRoot, 'data/eval/selector-rag');
 export const AUDIT_RECORD_PATH = resolve(__dirname, '../../../../apps/quoky/src/tools/selector-rag/selector-pool.audit.v1.json');
 
-const OPTIONS = new Set(['--mode', '--models', '--pool', '--write-audit', '--selector-model', '--runs', '--sessions', '--approved-plan-digest', '--ollama-url', '--latency-sample', '--audit']);
+const OPTIONS = new Set(['--mode', '--models', '--pool', '--write-audit', '--selector-model', '--runs', '--sessions', '--approved-plan-digest', '--ollama-url', '--latency-sample', '--audit', '--split']);
 export class UsageError extends Error {}
 
 export function parseArguments(argv: readonly string[]): { mode: 'lint' | 'dry-run' | 'plan' | 'run' | 'help'; options: Record<string, string> } {
@@ -63,7 +71,7 @@ const HELP = `ADR-0123 selector example retrieval harness (phase 1, offline)
   pnpm eval:rag -- --mode lint [--pool <file>]
   pnpm eval:rag -- --mode dry-run [--models nomic-embed-text-v2-moe] [--write-audit true] [--latency-sample 50]
   pnpm eval:rag -- --mode plan [--selector-model ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}] [--runs 5] [--sessions 3]
-  pnpm eval:rag -- --mode run --approved-plan-digest <sha256 from plan>   (Strict; selector arms not wired in phase 1)
+  pnpm eval:rag -- --mode run --approved-plan-digest <sha256 from plan>   (Strict; needs an injected selector transport, none is built in)
 No mode makes a selector call. dry-run embeds through the local Ollama on loopback only.
 `;
 
@@ -71,6 +79,14 @@ export interface CliDeps {
   readonly stdout: (line: string) => void;
   readonly stderr: (line: string) => void;
   readonly now: () => string;
+  /** The selector transport and per-case prompt context for `run`. Never set by the CLI entry point (no call is possible). */
+  readonly selector?: SelectorTransport;
+}
+
+export interface SelectorTransport {
+  readonly select: (prompt: string, record: RetrievalRecord) => Promise<string>;
+  readonly parseEntry: (raw: string) => string;
+  readonly contextFor: (golden: GoldCase) => PromptContext;
 }
 export const defaultDeps = (): CliDeps => ({
   stdout: (line) => process.stdout.write(`${line}\n`),
@@ -255,8 +271,52 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
     return EXIT_BLOCKED;
   }
-  deps.stderr('BLOCKED: the selector arms are not wired in the phase-1 harness (needs retrievedExamples in buildSelectionPrompt, RAG-2); no provider was constructed and no call was made');
-  return EXIT_BLOCKED;
+  const transport = deps.selector;
+  if (transport === undefined) {
+    deps.stderr('BLOCKED: the digest matches, but no selector transport is injected; this harness build makes no selector call (nothing was embedded or executed)');
+    return EXIT_BLOCKED;
+  }
+  const split_ = options['--split'] ?? 'heldout';
+  if (split_ !== 'dev' && split_ !== 'heldout') {
+    deps.stderr('--split must be dev or heldout');
+    return EXIT_USAGE;
+  }
+  const modelPin = usable[0] as (typeof usable)[number];
+  const embedder = new OllamaHttpEmbedder(await readPin(modelPin.model, options['--ollama-url'] ?? DEFAULT_OLLAMA_URL), options['--ollama-url'] ?? DEFAULT_OLLAMA_URL);
+  if (embedder.pin.spaceId !== modelPin.spaceId) {
+    deps.stderr('BLOCKED: the live embedding space differs from the approved plan; nothing was executed');
+    return EXIT_BLOCKED;
+  }
+  const ids = new Set(split_ === 'dev' ? split.dev : split.heldOut.filter((id) => !contaminated.has(id)));
+  const goldCases = gold.cases.filter((golden) => ids.has(golden.id));
+  const poolEmbed = await embedder.embed(entries.map((entry) => entry.text));
+  const poolVectors: PoolVector[] = entries.map((entry, index) => ({ entry, entryId: outputEntryId(entry), vector: poolEmbed[index] as number[] }));
+  const queryEmbed = await embedder.embed(goldCases.map((golden) => golden.queryText));
+  const cases = new Map<string, ExperimentCase>(
+    goldCases.map((golden, index) => [golden.id, { id: golden.id, entry: golden.entry, context: transport.contextFor(golden), offered: golden.corpus === 'read' ? READ_ENTRY_IDS : A6_ENTRY_IDS, queryVector: queryEmbed[index] as number[] }] as const),
+  );
+  const statics = staticExamples();
+  // the dev smoke run is one A0 + one A1 run; the held-out run is every arm for `plan.runs` runs
+  const arms = split_ === 'dev' ? plan.arms.filter((arm) => arm.kind === 'A0' || arm.kind === 'A1') : plan.arms;
+  const schedule = buildSchedule({ caseIds: goldCases.map((golden) => golden.id), arms, runs: split_ === 'dev' ? 1 : plan.runs, sessions: plan.sessions, seed: `${digest}:${split_}` });
+  const results = await runExperiment({
+    schedule,
+    arms,
+    cases,
+    pool: poolVectors,
+    poolDigest: plan.poolDigest,
+    spaceId: modelPin.spaceId,
+    staticTexts: statics.texts,
+    staticCounts: statics.counts,
+    baseVersion: (offered) => (offered === READ_ENTRY_IDS ? NL_SELECTION_PROMPT_VERSION : NL_ACTION_PROMPT_VERSION),
+    select: transport.select,
+    parseEntry: transport.parseEntry,
+  });
+  mkdirSync(EVAL_DIR, { recursive: true });
+  const path = resolve(EVAL_DIR, `run-${split_}-${deps.now().replace(/[:.]/g, '-')}.json`);
+  writeFileSync(path, `${JSON.stringify({ at: deps.now(), planDigest: digest, split: split_, results }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+  deps.stdout(`run record (content-free): ${path}`);
+  return EXIT_OK;
 }
 
 function printAudit(deps: CliDeps, audit: ModelAudit, contaminatedKnown: number): void {

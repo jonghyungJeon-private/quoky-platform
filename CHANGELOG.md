@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0123 RAG-2: `retrievedExamples` prompt slot and arm rendering in the harness (2026-10-16)
+
+- **Added (experiment only; no runtime path, `QUOKY_NL_EXAMPLE_RETRIEVAL` not wired).** `buildSelectionPrompt` takes an optional
+  `retrievedExamples` (and `replaceStaticExamples` for A0-swap), rendered after the static examples under a fixed header. Absent or
+  empty keeps the read (v37) and A6 (v38) prompts byte-identical; the v37 byte-pin test passes unchanged. New golden
+  `nl-select.retrieved-block.v1.json` pins the block.
+- **Added.** `selector-rag/selector-rag-eval.ts`: arm prompt rendering (A0, A0-swap, A1, A2) with filtering by the prompt mode's offered
+  entries, seeded A2 / swap draws, and content-free records (ids, rounded scores, block and prompt SHA-256). `eval:rag --mode run`
+  walks the schedule through it but still needs the Strict digest and an injected selector transport (none is built in).
+
 ## Unreleased — ADR-0123 owner decisions: v2-moe sole retrieval model, pool batch 1 approved (2026-10-16)
 
 - **Changed.** `nomic-embed-text-v2-moe` (digest `ff9c2f10ef5e`) is the sole retrieval embedding model. `pnpm eval:rag` dry-run defaults to it
