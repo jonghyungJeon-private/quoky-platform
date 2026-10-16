@@ -26381,7 +26381,18 @@ The owner accepted ADR-0123 Q1 (keep the JSON `LocalVectorProvider`) on 2026-10-
      >= 0.3 close (token or character-3-gram Jaccard) to the gold message and not already a text-level finding for that gold
      case, because a shared previous-selection JSON otherwise dominates the concatenation (58 pair findings became 8). The
      thresholds above are unchanged.
-   - **Calibration test.** As in v35, a test asserts the measure flags the known near-copies, so a weaker tokenizer cannot
+   - **Documented deviations of the phase-1 harness (2026-10-16, dry run on pool batch 1).** (1) *Single-bare-word containment
+    exemption (pool lint only).* Containment of a gold text that is one whitespace-free word of at most 8 characters ("깃허브",
+    "컨플루언스", "되돌려줘") is not a finding: such a word sits inside any natural example that names that source or verb, so
+    it cannot be avoided and carries no copy signal. Exact and near-copy (Jaccard) findings are unchanged. (2) *Calibration
+    positives are exact copies and near-copies with character-3-gram Jaccard >= 0.6.* A near-copy that fired on the shape tokens
+    alone (digits and URLs collapse to `#`, so two different issue links match) is not a semantic copy; with it tau fell to 0.64
+    (v1.5) and flagged every pool entry. The examples removed in v33-v35 are not on `main`, so the RAG-0 known list stands in.
+    **Dry-run result and recommendation:** `nomic-embed-text` (v1.5) fails (tau 0.925 flags 39 of 100 pool entries; only 26.7% of
+    held-out cases fall in the low-similarity stratum, below the 50% rule), while `nomic-embed-text-v2-moe` passes (0 flagged,
+    99.3%, at least 10 per entry). The plan therefore binds `nomic-embed-text-v2-moe` as the only retrieval model; v1.5 is
+    dropped, not bent to fit.
+  - **Calibration test.** As in v35, a test asserts the measure flags the known near-copies, so a weaker tokenizer cannot
      silently pass everything.
 
 6. **D6 — The experiment (phase 1, offline, Strict per run).**
