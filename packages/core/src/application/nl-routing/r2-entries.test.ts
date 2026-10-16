@@ -389,6 +389,11 @@ describe('A6 R2 (v48 gate): item.summarize mode and source come from the owner w
     expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#3', mode: 'summary' }, '3번 메일 요약 안 해도 되고 원문 보여줘'))).toEqual({ source: 'mail', ref: '#3', mode: 'full' });
     expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }, 'Show the full text of email #1, not a summary'))).toEqual({ source: 'mail', ref: '#1', mode: 'full' });
     expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }, "don't summarize email #1, show the original"))).toEqual({ source: 'mail', ref: '#1', mode: 'full' });
+    // English negation governs only its own mention (Codex P2), and tl;dr stays one term.
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }, 'Show the full text of email #1 not a summary'))).toEqual({ source: 'mail', ref: '#1', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1' }, 'Summarize email #1 not the attachments'))).toEqual({ source: 'mail', ref: '#1', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1' }, 'tl;dr of email #1 please'))).toEqual({ source: 'mail', ref: '#1', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: '#2', mode: 'summary' }, 'no need to summarize issue 2, what does it say'))).toEqual({ source: 'jira', ref: '#2' });
   });
 
   it('a pasted structure grounds neither the mode nor the source (Codex P1)', () => {

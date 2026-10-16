@@ -612,7 +612,9 @@ export function nlIsRequestForm(raw: string): boolean {
 
 /**
  * Whether `word` is mentioned in `text` outside every negation scope (A6 R2 mode grounding, Codex P2). English: a mention
- * in a clause with a negator ("not a summary", "don't summarize") does not count. Korean: the mention's own stretch runs to
+ * governed by a negator among the (at most three) words right before it, within its sentence part, does not count ("not a
+ * summary", "don't summarize", "no need to summarize"); another mention in the same clause still does ("Show the full
+ * text of email #1 not a summary" grounds full). The term is matched on the whole text, so "tl;dr" stays one term. Korean: the mention's own stretch runs to
  * the next of `stopWords`, the next sentence punctuation or the end of the first request-form word, whichever comes
  * first; a stretch negated by the request-shape negators ("요약하지 말고 …", "요약 말고", "요약 안 해도 되고") does not count.
  * The same negation grammar as the LOCAL_WRITE vetoes; no phrase list.
@@ -622,8 +624,14 @@ export function nlHasUnnegatedMention(text: string, word: string, stopWords: rea
   if (target.length === 0) return false;
   const normalized = normalizeForMatch(text);
   if (/^[a-z0-9][a-z0-9 ;.-]*$/u.test(target)) {
-    const pattern = new RegExp(`(?<![a-z0-9])${target.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}s?(?![a-z0-9])`, 'u');
-    return normalized.split(/[,.!?;]+/u).some((clause) => pattern.test(clause) && !NEGATION_EN.test(clause));
+    const pattern = new RegExp(`(?<![a-z0-9])${target.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}s?(?![a-z0-9])`, 'gu');
+    for (const match of normalized.matchAll(pattern)) {
+      const before = normalized.slice(0, match.index ?? 0);
+      const part = before.slice(before.search(/[^,.!?]*$/u));
+      const governing = part.trim().split(/\s+/u).filter((token) => token.length > 0).slice(-3);
+      if (!governing.some((token) => NEGATION_EN.test(token))) return true;
+    }
+    return false;
   }
   const stops = stopWords.map((stop) => normalizeForMatch(stop)).filter((stop) => stop.length > 0 && stop !== target);
   for (let at = normalized.indexOf(target); at >= 0; at = normalized.indexOf(target, at + 1)) {

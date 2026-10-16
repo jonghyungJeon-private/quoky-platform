@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Capability, type AiProvider, type AiRequest, type NlSelectionDecision } from '@quoky/core';
-import { NL_ACTION_R2_EVAL_GATE, buildActionPlan, computeActionPlanDigest, loadR2ActionCorpus, r2DiagnosticArgs, scoreActionDecision, summarizeActionR2, type NlActionCase, type NlActionRecord } from './nl-action-eval';
+import { NL_ACTION_R2_EVAL_GATE, buildActionPlan, computeActionPlanDigest, loadR2ActionCorpus, r2DiagnosticArgs, recordArgs, scoreActionDecision, summarizeActionR2, type NlActionCase, type NlActionRecord } from './nl-action-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // `eval:nl --mode r2` offline: the plan and its Strict digest (prompt v48, corpus, runs, calls, gate), the digest rule
@@ -215,5 +215,17 @@ describe('eval:nl --mode r2 diagnosis args', () => {
     expect(r2DiagnosticArgs(golden, raw, 'hit')).toEqual({ gotArgs: { source: 'jira', ref: '#9', mode: 'full' } });
     expect(r2DiagnosticArgs(golden, answer('todo.add', { title: '비밀 메모' }), 'miss').gotArgs).toEqual({});
     expect(r2DiagnosticArgs(golden, 'not json', 'error')).toEqual({ expectedArgs: golden.expect !== 'none' ? golden.expect.args : {} });
+  });
+
+  it('records only the closed diagnostic fields; free text becomes "<invalid>" (Codex P2)', () => {
+    expect(recordArgs({ source: 'private text', ref: 'private text', mode: 'whole thing', scope: 'thread', query: 'private text', title: 'private text' })).toEqual({
+      source: '<invalid>',
+      ref: '<invalid>',
+      mode: '<invalid>',
+      scope: 'thread',
+    });
+    expect(recordArgs({ source: 'jira', ref: 'PROJ-12', mode: 'summary' })).toEqual({ source: 'jira', ref: 'PROJ-12', mode: 'summary' });
+    expect(recordArgs({ source: 'slack', ref: '#3' })).toEqual({ source: 'slack', ref: '#3' });
+    expect(JSON.stringify(recordArgs({ source: 'private text', query: 'private text' }))).not.toContain('private');
   });
 });

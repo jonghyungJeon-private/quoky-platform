@@ -70,7 +70,7 @@ import {
   type Session,
 } from '@quoky/core';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
-import { LAST_READ_METADATA_KEY, withLastRead } from '@quoky/core';
+import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, parseNlRef, withLastRead } from '@quoky/core';
 
 export const NL_ACTION_EVAL_GATE = Object.freeze({
   overall: 0.95,
@@ -431,16 +431,34 @@ export interface NlActionRecord {
   readonly latencyMs: number;
   readonly reason?: string;
   /**
-   * R2 mode only (diagnosis, v47 gate): the selector's own args, and the gold args for a non-hit. Span args (title, match,
-   * body, when) are never recorded, so the report stays content-free; the R2 entry has none.
+   * R2 mode only (diagnosis, v47 gate): the selector's own args, and the gold args for a non-hit. Only the closed
+   * diagnostic fields (source, ref, mode, scope) are recorded, each only as a catalog enum value or a canonical ref;
+   * anything else is "<invalid>", so no free text ever reaches the report (Codex P2).
    */
   readonly gotArgs?: NlArgs;
   readonly expectedArgs?: NlArgs;
 }
 
-/** The args of a record without span values (content-free). */
-function recordArgs(args: NlArgs): NlArgs {
-  return Object.fromEntries(Object.entries(args).filter(([name]) => !SPAN_ARGS.includes(name)));
+const DIAGNOSTIC_VALUES: Readonly<Record<string, readonly string[]>> = {
+  source: NL_ITEM_SUMMARIZE_SOURCES,
+  mode: ['summary', 'full'],
+  scope: ['item', 'thread'],
+};
+
+/** The diagnostic args of a record: source, ref, mode and scope only, each a closed value or "<invalid>" (content-free). */
+export function recordArgs(args: NlArgs): NlArgs {
+  const out: Record<string, string> = {};
+  for (const name of ['source', 'ref', 'mode', 'scope'] as const) {
+    const value = args[name];
+    if (value === undefined) continue;
+    if (name === 'ref') {
+      const ref = parseNlRef(value, { keys: true });
+      out.ref = ref === undefined ? '<invalid>' : formatNlRef(ref);
+      continue;
+    }
+    out[name] = typeof value === 'string' && (DIAGNOSTIC_VALUES[name] ?? []).includes(value) ? value : '<invalid>';
+  }
+  return out;
 }
 
 /** R2 mode: the selector's args and, for a non-hit, the gold args (see {@link NlActionRecord.gotArgs}). */
