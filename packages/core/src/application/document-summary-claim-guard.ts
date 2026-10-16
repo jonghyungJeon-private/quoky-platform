@@ -762,6 +762,31 @@ const WITHHELD_NOTICE: Readonly<Record<UntrustedDocumentSource, { readonly ko: s
       '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 문서를 읽기만 했고, 수정·공유·이동·이름 변경·' +
       '삭제·권한 변경을 하지 않았으며 할 일이나 알림도 만들지 않았어요.',
   },
+  // A6 R2: Jira and Slack items are only read.
+  'jira-issue': {
+    en:
+      'The summary claimed an action that was never taken, so it was not shown. Quoky only read the Jira issue: nothing ' +
+      'was commented, transitioned, assigned, closed, edited or created, and no to-do or reminder was created.',
+    ko:
+      '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 지라 이슈를 읽기만 했고, 댓글·상태 변경·담당자 지정·' +
+      '닫기·수정·생성을 하지 않았으며 할 일이나 알림도 만들지 않았어요.',
+  },
+  'slack-message': {
+    en:
+      'The summary claimed an action that was never taken, so it was not shown. Quoky only read the Slack message: ' +
+      'nothing was posted, replied to, reacted to, edited or deleted, and no to-do or reminder was created.',
+    ko:
+      '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 슬랙 메시지를 읽기만 했고, 게시·답글·반응·수정·삭제를 ' +
+      '하지 않았으며 할 일이나 알림도 만들지 않았어요.',
+  },
+  'slack-thread': {
+    en:
+      'The summary claimed an action that was never taken, so it was not shown. Quoky only read the Slack thread: ' +
+      'nothing was posted, replied to, reacted to, edited or deleted, and no to-do or reminder was created.',
+    ko:
+      '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 슬랙 스레드를 읽기만 했고, 게시·답글·반응·수정·삭제를 ' +
+      '하지 않았으며 할 일이나 알림도 만들지 않았어요.',
+  },
 };
 
 /**

@@ -13,6 +13,13 @@ export interface ProviderSelectionContext {
    * shared by several Actors never applies one Actor's preference to another.
    */
   readonly actorId?: Id;
+  /**
+   * ADR-0120 amendment A6 R2, owner decision D6 (ADR-0115 amendment C9): the request summarizes ONE Jira issue or Slack
+   * message read through A6. A data-only constraint the composition root's policy resolves: unless the owner opted in
+   * separately (`QUOKY_WORK_TEXT_VENDOR_ALLOWED=true`), no HTTP API vendor adapter is eligible for it. Core never names a
+   * provider; absent means no constraint (every other request, mail and Drive included).
+   */
+  readonly workText?: true;
 }
 
 /**

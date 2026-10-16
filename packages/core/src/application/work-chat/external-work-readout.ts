@@ -1,7 +1,7 @@
 import type { MessageBody } from '../../domain';
 import type { ConnectorItem } from '../../ports';
 import { containsCredentialMaterial } from '../credential-guard';
-import { messageBody, messageContent, messageLink, takeLines, untrustedText } from '../message-rendering';
+import { messageBody, messageContent, messageLink, plainTextOf, takeLines, untrustedText } from '../message-rendering';
 import type { WorkChatLookupQuery, WorkChatSource } from './work-chat-command';
 
 /**
@@ -41,6 +41,11 @@ export interface ExternalWorkReadoutItem {
   readonly container?: string;
   /** At most 300 characters, one line; absent when empty or credential-bearing. */
   readonly excerpt?: string;
+  /**
+   * ADR-0120 amendment A6 R2: the connector's opaque single-item reference (`ConnectorItem.itemRef`), host-only. Never
+   * rendered, never in the prompt; it becomes the listing slot id of the row's shown label.
+   */
+  readonly itemRef?: string;
 }
 
 export interface ExternalWorkReadout {
@@ -135,6 +140,7 @@ export function buildExternalWorkReadout(input: BuildExternalWorkReadoutInput): 
     }
     const url = safeUrl(raw.url);
     const dueDate = safeDueDate(raw.dueDate);
+    const itemRef = typeof raw.itemRef === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(raw.itemRef) ? raw.itemRef : undefined;
     items.push({
       ref: `${input.source}:${id}`,
       title,
@@ -143,6 +149,7 @@ export function buildExternalWorkReadout(input: BuildExternalWorkReadoutInput): 
       ...(dueDate ? { dueDate } : {}),
       ...(container ? { container } : {}),
       ...(excerpt ? { excerpt } : {}),
+      ...(itemRef !== undefined ? { itemRef } : {}),
     });
   }
 
@@ -291,4 +298,71 @@ export function renderExternalWorkFooter(readout: ExternalWorkReadout): MessageB
       lines: linkLines,
     }),
   );
+}
+
+// ── ADR-0120 amendment A6 R2 (owner decision D1, amendment C3): the numbered index of a model-summarised list ─────────
+
+/** The title length an index line shows (as the link lines did). */
+const INDEX_TITLE_MAX_CHARS = 50;
+/** Worst-case rendering of an untrusted span (every code point escaped as two), as the to-do receipts assume. */
+const INDEX_WORST_CASE_EXPANSION = 2;
+
+/**
+ * A6 R2: the footer of a model-summarised Jira / Slack list while `QUOKY_NL_ITEM_R2` is not `off`. A deterministic
+ * numbered index of EVERY item the prompt used (whether or not it has a URL) replaces the link lines:
+ * `N. <title as an untrusted span> <link if any>`, then the disclosure line unchanged. Only the rows that certainly fit
+ * the footer budget under the worst-case rendering are written, so every index line written is delivered and `labelled`
+ * (the rows `1..labelled`) is exactly what the listing slot may record.
+ */
+export function renderExternalWorkIndexFooter(readout: ExternalWorkReadout): { readonly footer: MessageBody; readonly labelled: number } {
+  const usedItems = readout.items.slice(0, countExternalWorkPromptItems(readout));
+  const disclosure = [`외부 항목 ${usedItems.length}건을 요약에 사용했어요.`];
+  if (readout.omittedSensitive > 0) disclosure.push(`민감정보가 있는 ${readout.omittedSensitive}건은 제외했어요.`);
+  if (readout.truncated) disclosure.push('더 많은 항목이 있지만 일부만 보여드려요.');
+  const disclosureText = disclosure.join(' ');
+  const lines = usedItems.map((item, index) => ({
+    content: messageContent(
+      `${index + 1}. `,
+      untrustedText(Array.from(item.title).slice(0, INDEX_TITLE_MAX_CHARS).join('').replace(/\s+/g, ' ')),
+      ...(item.url ? [' ', messageLink(item.url)] : []),
+    ),
+  }));
+  // The budget the footer node evaluates against, minus its head, tail and separators, every line at worst case.
+  let room = EXTERNAL_WORK_FOOTER_MAX_CHARS - FOOTER_HEADROOM_CHARS - '출처:'.length - disclosureText.length - 2;
+  let labelled = 0;
+  for (const line of lines) {
+    const cost = INDEX_WORST_CASE_EXPANSION * Array.from(plainTextOf(messageBody(line.content))).length + 1;
+    if (cost > room) break;
+    room -= cost;
+    labelled += 1;
+  }
+  const footer = messageBody(
+    takeLines({
+      unit: 'utf16',
+      maxChars: EXTERNAL_WORK_FOOTER_MAX_CHARS,
+      baseChars: FOOTER_HEADROOM_CHARS,
+      head: ['출처:'],
+      tail: [disclosureText],
+      headOnlyWithLines: true,
+      lines: lines.slice(0, labelled),
+    }),
+  );
+  return { footer, labelled };
+}
+
+/**
+ * A6 R2 (D1): the model's own list numbering is never a label. Each line's leading list marker (after NFKC: `2.`, `3)`,
+ * `(4)`, `5번`, `①`, optionally after a bullet as in `- 2. …`) is replaced by a plain `- ` bullet. A number word inside a
+ * sentence ("두 번째 이슈") and a number that is not followed by a space ("10.5% 증가") are left alone.
+ */
+const LEADING_LIST_MARKER = /^\s*(?:[-*•]\s*)?(?:\d+[.)](?=\s)|\(\d+\)|\d+\s*번[.:)]?|[①-⑳])\s*/u;
+export function stripLeadingListMarkers(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const normalized = line.normalize('NFKC');
+      const match = LEADING_LIST_MARKER.exec(normalized);
+      return match === null ? line : `- ${normalized.slice(match[0].length)}`;
+    })
+    .join('\n');
 }

@@ -28,7 +28,15 @@ export const UNTRUSTED_DOCUMENT_READOUT_KIND = 'untrusted-document';
  * The sources a readout may come from: a mail message (GML-1), a Drive file's text export (DRV-1) or a mail thread
  * (GML-2, ADR-0118 amendment of 2026-10-12: its messages in order, each under a fixed `[i/n]` header line).
  */
-export const UNTRUSTED_DOCUMENT_SOURCES = ['mail', 'drive', 'mail-thread'] as const;
+export const UNTRUSTED_DOCUMENT_SOURCES = ['mail', 'drive', 'mail-thread', 'jira-issue', 'slack-message', 'slack-thread'] as const;
+/**
+ * ADR-0120 amendment A6 R2 (ADR-0118 amendment C4): the Jira and Slack sources. Bounds, normalisation and the credential
+ * guard are unchanged; their sections are titled by Quoky ("설명", "댓글 3", "참여자 B"), never by content.
+ */
+export const UNTRUSTED_DOCUMENT_R2_SOURCES: readonly UntrustedDocumentSource[] = ['jira-issue', 'slack-message', 'slack-thread'];
+export function isR2DocumentSource(source: unknown): boolean {
+  return source === 'jira-issue' || source === 'slack-message' || source === 'slack-thread';
+}
 export type UntrustedDocumentSource = (typeof UNTRUSTED_DOCUMENT_SOURCES)[number];
 
 /**
@@ -159,7 +167,7 @@ function isCredentialShaped(text: string): boolean {
  * withheld, never redacted).
  */
 export function buildUntrustedDocumentReadout(input: BuildUntrustedDocumentReadoutInput): UntrustedDocumentBuildResult {
-  const sections = preparedSections(input.sections);
+  const sections = preparedSections(input.sections, input.source === 'drive' ? 'Sheet' : 'Part');
   const body = sections !== undefined ? sections.full : neutralizeLinks(prepareUntrustedBody(typeof input.body === 'string' ? input.body : ''), 'body');
   if (body.length === 0) return { ok: false, refusal: 'EMPTY' };
   // Review P1: the guard runs on the FULL normalized fields before any clip — a clip could cut a credential's key
@@ -211,7 +219,7 @@ interface PreparedSections {
  * {@link UNTRUSTED_DOCUMENT_SECTION_TITLE_MAX_CHARS} code points of it. `undefined` when there are no sections, or when
  * every section is empty (then the item has no text: `EMPTY`).
  */
-function preparedSections(sections: readonly UntrustedDocumentSection[] | undefined): PreparedSections | undefined {
+function preparedSections(sections: readonly UntrustedDocumentSection[] | undefined, word: 'Sheet' | 'Part' = 'Sheet'): PreparedSections | undefined {
   if (!Array.isArray(sections) || sections.length === 0) return undefined;
   const kept = sections.slice(0, UNTRUSTED_DOCUMENT_SECTIONS_MAX);
   const total = kept.length;
@@ -219,7 +227,7 @@ function preparedSections(sections: readonly UntrustedDocumentSection[] | undefi
     const rawTitle = typeof section?.title === 'string' ? section.title : '';
     const text = neutralizeLinks(prepareUntrustedBody(typeof section?.body === 'string' ? section.body : ''), 'body');
     const partial = section?.truncated === true ? ' (partial)' : '';
-    const frame = (title: string): string => `[Sheet ${index + 1}/${total}] ${JSON.stringify(title)}${partial}`;
+    const frame = (title: string): string => `[${word} ${index + 1}/${total}] ${JSON.stringify(title)}${partial}`;
     return {
       header: frame(oneLine(rawTitle, UNTRUSTED_DOCUMENT_SECTION_TITLE_MAX_CHARS)),
       fullHeader: frame(neutralizeLinks(normalizeUntrustedText(rawTitle), 'display').replace(/\s+/g, ' ').trim()),
@@ -311,6 +319,9 @@ const SOURCE_LABEL: Readonly<Record<UntrustedDocumentSource, string>> = {
   mail: 'EMAIL MESSAGE',
   drive: 'DRIVE DOCUMENT',
   'mail-thread': 'EMAIL THREAD',
+  'jira-issue': 'JIRA ISSUE',
+  'slack-message': 'SLACK MESSAGE',
+  'slack-thread': 'SLACK THREAD',
 };
 
 /**
@@ -348,6 +359,9 @@ const SOURCE_NOUN: Readonly<Record<UntrustedDocumentSource, { readonly ko: strin
   mail: { ko: '메일', en: 'email' },
   drive: { ko: '문서', en: 'document' },
   'mail-thread': { ko: '메일 스레드', en: 'email thread' },
+  'jira-issue': { ko: '지라 이슈', en: 'Jira issue' },
+  'slack-message': { ko: '슬랙 메시지', en: 'Slack message' },
+  'slack-thread': { ko: '슬랙 스레드', en: 'Slack thread' },
 };
 
 export function renderUntrustedDocumentHistoryNote(source: UntrustedDocumentSource, language: 'ko' | 'en'): string {

@@ -71,7 +71,9 @@ export function createNlSelectionProviders(
         };
         const killSwitch = new NlActionSwitch({ actors, logger });
         return new NlSelectionService({
-          ...(config.nlSelection.actions !== 'off' ? { actions: { level: config.nlSelection.actions, killSwitch } } : {}),
+          ...(config.nlSelection.actions !== 'off'
+            ? { actions: { level: config.nlSelection.actions, killSwitch, ...(config.nlSelection.itemR2 !== 'off' ? { itemR2: config.nlSelection.itemR2 } : {}) } }
+            : {}),
           ...(deicticMode !== 'off' ? { deictic: { mode: deicticMode, texts: deicticTextReader(storage, memory, reminders) } } : {}),
           mode: config.nlSelection.mode,
           grammarYield: config.nlSelection.grammarYield,

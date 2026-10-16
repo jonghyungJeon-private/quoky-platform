@@ -41,6 +41,8 @@ export interface WorkChatCompositionOptions {
    * it points at that site (any other link is ignored and never fetched).
    */
   readonly jiraSiteHost?: () => string | undefined;
+  /** ADR-0120 amendment A6 R2: `QUOKY_NL_ITEM_R2` (numbered Jira / Slack lists and `item.summarize` over them). */
+  readonly itemR2?: () => 'off' | 'shadow' | 'jira' | 'all';
 }
 
 export function createWorkChatProviders(
@@ -65,6 +67,7 @@ export function createWorkChatProviders(
             summaryEnabled: config.summaryEnabled,
             ...(options.actionReceipts?.() === true ? { actionReceipts: true } : {}),
             ...(jiraSiteHost !== undefined ? { linkHosts: { jira: jiraSiteHost } } : {}),
+            ...((options.itemR2?.() ?? 'off') !== 'off' ? { numberedLists: true } : {}),
           },
         );
       },
@@ -73,7 +76,7 @@ export function createWorkChatProviders(
     {
       provide: WORK_CHAT_TURN_HANDLERS,
       useFactory: (config: WorkChatFeatureConfig, desk: WorkChatService): readonly ConversationTurnHandler[] =>
-        createWorkChatTurnHandlers({ desk, summaryEnabled: config.summaryEnabled, logger }),
+        createWorkChatTurnHandlers({ desk, summaryEnabled: config.summaryEnabled, logger, itemR2: options.itemR2?.() ?? 'off' }),
       inject: [WORK_CHAT_FEATURE_CONFIG, WorkChatService],
     },
   ];
@@ -82,4 +85,5 @@ export function createWorkChatProviders(
 export const workChatProviders: Provider[] = createWorkChatProviders(() => loadConfig().work, {
   actionReceipts: () => loadConfig().nlSelection.actions !== 'off',
   jiraSiteHost: () => loadConfig().connectors.jira?.host,
+  itemR2: () => loadConfig().nlSelection.itemR2,
 });

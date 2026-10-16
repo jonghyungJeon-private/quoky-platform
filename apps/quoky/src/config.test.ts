@@ -539,12 +539,34 @@ describe('loadConfig — egress guard (ADR-0121 S0)', () => {
 
 describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
   it('defaults to off with the haiku selection model, and accepts exactly off, shadow or active', () => {
-    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, phase: 'a', timeoutMs: 6000, actions: 'off', deicticWrites: 'off' });
+    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, phase: 'a', timeoutMs: 6000, actions: 'off', deicticWrites: 'off', itemR2: 'off' });
     expect(loadConfig(env({})).ai.intentSelectionModel).toBe('haiku');
     for (const mode of ['off', 'shadow', 'active'] as const) {
       expect(loadConfig(env({ QUOKY_NL_INTENT_MODE: mode })).nlSelection.mode).toBe(mode);
     }
     expect(loadConfig(env({ QUOKY_NL_INTENT_MODEL: 'claude-haiku-4-5' })).ai.intentSelectionModel).toBe('claude-haiku-4-5');
+  });
+
+  it('QUOKY_NL_ITEM_R2 (amendment A6 R2, D10): default off, exact values, any value but off needs QUOKY_NL_ACTIONS', () => {
+    expect(loadConfig(env({})).nlSelection.itemR2).toBe('off');
+    for (const level of ['off', 'shadow', 'jira', 'all'] as const) {
+      expect(loadConfig(env({ QUOKY_NL_INTENT_MODE: 'active', QUOKY_NL_ACTIONS: 'shadow', QUOKY_NL_ITEM_R2: level })).nlSelection.itemR2).toBe(level);
+    }
+    for (const bad of ['', 'on', 'ALL', 'slack', ' jira']) {
+      expect(() => loadConfig(env({ QUOKY_NL_INTENT_MODE: 'active', QUOKY_NL_ACTIONS: 'local', QUOKY_NL_ITEM_R2: bad }))).toThrow(/NL_ITEM_R2_INVALID/);
+    }
+    for (const level of ['shadow', 'jira', 'all']) {
+      expect(() => loadConfig(env({ QUOKY_NL_ITEM_R2: level }))).toThrow(/NL_ITEM_R2_REQUIRES_ACTIONS/);
+      expect(() => loadConfig(env({ QUOKY_NL_INTENT_MODE: 'active', QUOKY_NL_ACTIONS: 'off', QUOKY_NL_ITEM_R2: level }))).toThrow(/NL_ITEM_R2_REQUIRES_ACTIONS/);
+    }
+    expect(loadConfig(env({ QUOKY_NL_ITEM_R2: 'off' })).nlSelection.itemR2).toBe('off');
+  });
+
+  it('QUOKY_WORK_TEXT_VENDOR_ALLOWED (A6 R2, D6): exact true / false, default false', () => {
+    expect(loadConfig(env({})).work.textVendorAllowed).toBe(false);
+    expect(loadConfig(env({ QUOKY_WORK_TEXT_VENDOR_ALLOWED: 'true' })).work.textVendorAllowed).toBe(true);
+    expect(loadConfig(env({ QUOKY_WORK_TEXT_VENDOR_ALLOWED: 'false' })).work.textVendorAllowed).toBe(false);
+    for (const bad of ['', 'yes', 'TRUE', '1']) expect(() => loadConfig(env({ QUOKY_WORK_TEXT_VENDOR_ALLOWED: bad }))).toThrow(/WORK_TEXT_VENDOR_ALLOWED_INVALID/);
   });
 
   it('QUOKY_NL_ACTIONS (amendment A6-D8): default off, exact values, any level but off needs QUOKY_NL_INTENT_MODE=active', () => {
@@ -878,7 +900,7 @@ describe('loadConfig — Personal v2 inert configuration (ADR-0096 D9)', () => {
   it('has safe inert defaults with nothing set', () => {
     const cfg = loadConfig(env({}));
     expect(cfg.git).toEqual({ remoteEnabled: false, mergeEnabled: false });
-    expect(cfg.work).toEqual({ summaryEnabled: true });
+    expect(cfg.work).toEqual({ summaryEnabled: true, textVendorAllowed: false });
     // ADR-0102 D9 (owner decision 8): reminders default on once SUB-1 is live; channel delivery stays opt-in.
     // ADR-0117 D2 (owner decision 21): the brief's Jira section is opt-in.
     expect(cfg.reminders).toEqual({ enabled: true, channelDelivery: false, timeZone: 'Asia/Seoul', briefJiraEnabled: false, briefMailEnabled: false });

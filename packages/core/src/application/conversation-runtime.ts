@@ -250,10 +250,14 @@ import {
   type PromptCompositionOptions,
 } from './prompt-composer';
 import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from './work-chat/work-chat-turn-handler';
+import { stripLeadingListMarkers } from './work-chat/external-work-readout';
+import { containsCardSpoofLine, renderCardSpoofNotice } from './card-spoof';
+import { mergeItemSummarizeEntries } from './nl-routing/action-entries';
 import {
   documentSummaryReply,
   documentSummaryReplyBody,
   isSummarizableDocumentReadout,
+  isR2DocumentSource,
   isUntrustedDocumentReadout,
   renderUntrustedDocumentHistoryNote,
   renderUntrustedDocumentReplyWithheld,
@@ -3668,6 +3672,7 @@ export class ConversationRuntime {
   private nlCatalog(actor?: Actor): Map<string, { readonly entry: NlCatalogEntry; readonly handler: ConversationTurnHandler }> {
     const owned = new Map<string, { readonly entry: NlCatalogEntry; readonly handler: ConversationTurnHandler }>();
     const actions = actor !== undefined && this.deps.nlSelection?.actionsOffered?.(actor) === true;
+    const summarize: NlCatalogEntry[] = [];
     for (const handler of this.turnHandlerRegistry) {
       if (typeof handler.handleSelected !== 'function') continue;
       let entries: readonly NlCatalogEntry[];
@@ -3678,9 +3683,14 @@ export class ConversationRuntime {
       }
       for (const entry of entries) {
         if (entry.risk !== 'READ' && !actions) continue;
+        if (entry.id === 'item.summarize') summarize.push(entry);
         if (!owned.has(entry.id)) owned.set(entry.id, { entry, handler });
       }
     }
+    // A6 R2: several handlers contribute `item.summarize` (mail, Drive, the work-chat lookup for Jira / Slack): the
+    // selector sees ONE entry whose `source` enum is their union (the R1 entry itself while no R2 source is offered).
+    const first = owned.get('item.summarize');
+    if (first !== undefined && summarize.length > 1) owned.set('item.summarize', { ...first, entry: mergeItemSummarizeEntries(summarize) });
     return owned;
   }
 
@@ -4230,17 +4240,21 @@ export class ConversationRuntime {
     // QUOKY_NL_ACTIONS is `off`; the reply is never changed.
     this.nlReplyKinds.set(message, ConversationRuntime.nlReplyKindOf(handled));
     const decided = this.nlActionTurns.get(message);
+    // A6 R2: a summarize outcome may carry the `item.summarize` read it reports (its listing is recorded after the
+    // summary, once the delivered form is known).
+    const summarizeAction = handled.kind === 'summarize' ? handled.nlAction : undefined;
     if (
       this.deps.nlSelection?.recordActionReceipt !== undefined &&
-      (decided !== undefined || (handled.kind !== 'summarize' && handled.kind !== 'write-draft' && (handled.nlAction !== undefined || handled.nlListing !== undefined)))
+      (decided !== undefined || summarizeAction !== undefined || (handled.kind !== 'summarize' && handled.kind !== 'write-draft' && (handled.nlAction !== undefined || handled.nlListing !== undefined)))
     ) {
       const receipt = handled.kind !== 'summarize' && handled.kind !== 'write-draft' ? handled : undefined;
+      const action = receipt?.nlAction ?? summarizeAction;
       await this.deps.nlSelection.recordActionReceipt({
         session,
         actor,
         message: { id: message.id, context: message.context },
         now: this.clock(),
-        ...(receipt?.nlAction !== undefined ? { action: receipt.nlAction } : {}),
+        ...(action !== undefined ? { action } : {}),
         ...(receipt?.nlListing !== undefined ? { listing: receipt.nlListing } : {}),
         ...(decided !== undefined ? { decided: decided.audit, language: decided.language } : {}),
       });
@@ -4327,8 +4341,26 @@ export class ConversationRuntime {
     userMemoryId: Id,
     summary: TurnHandlerSummarizeReply,
   ): Promise<TurnResult> {
-    const fallback = (): Promise<TurnResult> =>
-      this.respondComposed(message, session, outboundMessage(message.context, summary.fallbackText));
+    // A6 R2 (D1): a numbered list records the labels of the form that was delivered (the index or the fallback list).
+    const numbered = summary.numbered;
+    const recordListing = async (delivered: 'summary' | 'fallback'): Promise<void> => {
+      if (numbered === undefined || this.deps.nlSelection?.recordActionReceipt === undefined) return;
+      await this.deps.nlSelection.recordActionReceipt({
+        session,
+        actor,
+        message: { id: message.id, context: message.context },
+        now: this.clock(),
+        listing: delivered === 'summary' ? numbered.summary : numbered.fallback,
+      });
+    };
+    const fallback = async (): Promise<TurnResult> => {
+      await recordListing('fallback');
+      // A6 R2 (amendment C10): an item read's fallback names the item; SHORT_TERM keeps only the fixed note.
+      const history = summary.history?.assistant;
+      if (history === undefined) return this.respondComposed(message, session, outboundMessage(message.context, summary.fallbackText));
+      await this.deps.memory.recordAssistant(history, message.context, session.id);
+      return { status: 'RESPONDED', reply: outboundMessage(message.context, summary.fallbackText), sessionId: session.id };
+    };
     if (isUntrustedDocumentReadout(summary.readout)) {
       return this.handleDocumentSummary(message, session, actor, userMemoryId, summary, summary.readout, fallback);
     }
@@ -4366,7 +4398,10 @@ export class ConversationRuntime {
       return fallback();
     }
     if (result.status !== 'RESPONDED') return fallback();
-    return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(result.reply.text, summary.footer)) };
+    await recordListing('summary');
+    // A6 R2 (D1): the model's own list numbering is never a label: its leading list markers are stripped.
+    const summaryText = numbered !== undefined ? stripLeadingListMarkers(result.reply.text) : result.reply.text;
+    return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(summaryText, summary.footer)) };
   }
 
   /**
@@ -4417,6 +4452,12 @@ export class ConversationRuntime {
     // otherwise the whole summary is replaced by the fixed notice. A fixed notice is Quoky copy as written.
     if (isFixedDocumentSummaryNotice(result.reply.text, readout.source)) return { ...result, reply: withOutboundBody(result.reply, reply.body) };
     const language = noticeLanguage(undefined, message.text);
+    // A6 R2 (D11, proposal §3.3 item 4): a delivered line that normalises to an approval / execution phrase or begins with
+    // a card header replaces the whole Jira / Slack summary with the fixed notice.
+    if (isR2DocumentSource(readout.source) && containsCardSpoofLine(reply.shown)) {
+      this.deps.logger.info('document summary replaced after the card-spoof check', { messageId: message.id });
+      return { ...result, reply: withOutboundBody(result.reply, documentSummaryReplyBody(renderCardSpoofNotice(language), summary.footer)) };
+    }
     const verdict = checkDocumentSummaryClaims(reply.shown, message.text, readout.source, language, generalChatReplyPolicy(message.text));
     if (verdict.kind === 'clean') return { ...result, reply: withOutboundBody(result.reply, reply.body) };
     this.deps.logger.info('document summary replaced after the delivered-text check', { messageId: message.id });
@@ -8776,7 +8817,12 @@ export class ConversationRuntime {
         return { status: 'FAILED', reply, sessionId: session.id, workFacts: workFacts(undefined) };
       }
 
-      const selectionContext = { sessionId: session.id, actorId: actor.id };
+      // A6 R2 (D6, amendment C9): a Jira / Slack item summary carries the data-only work-text constraint.
+      const selectionContext = {
+        sessionId: session.id,
+        actorId: actor.id,
+        ...(isUntrustedDocumentReadout(readout) && isR2DocumentSource(readout.source) ? { workText: true as const } : {}),
+      };
       // ADR-0116 D3: the selector reports, with the provider, whether it is the owner's explicit selection; a selector
       // without `resolve` reports nothing, which counts as "not an owner selection" (fail closed).
       const resolved = this.deps.router.resolve

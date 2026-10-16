@@ -19,6 +19,11 @@ export type ApprovalDecisionResult = 'approve' | 'deny' | 'cancel' | 'ambiguous'
 const APPROVE_PHRASES = ['승인', '진행', '좋아', 'yes', 'ok', 'okay', 'approve', 'approved', 'proceed', 'go ahead'];
 const DENY_PHRASES = ['거절', '거부', '아니', 'no', 'deny', 'denied', 'reject', 'rejected', 'refuse', 'refused'];
 const CANCEL_PHRASES = ['취소', '철회', '중단', '중지', '멈춰', '멈춰줘', '멈춰요', '멈추자', '그만', 'cancel', 'stop', 'abort'];
+/**
+ * A6 R2 (proposal §3.3 item 4): the closed approve / deny / cancel phrases, read by the card-spoof filter so a summary
+ * line equal to one of them (after normalisation) is never shown. Derived, never copied.
+ */
+export const APPROVAL_DECISION_PHRASES: readonly string[] = Object.freeze([...APPROVE_PHRASES, ...DENY_PHRASES, ...CANCEL_PHRASES]);
 
 /** Polite endings / particles that may follow a Korean stem and still be the same whole word
  *  ("승인해줘", "진행할게요", "아니요"). Anything outside this list ("승인하지", "진행상황") is NOT a match. */

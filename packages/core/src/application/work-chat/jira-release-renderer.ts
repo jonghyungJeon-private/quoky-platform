@@ -2,7 +2,7 @@ import type { MessageBody, UntrustedTextNode } from '../../domain';
 import type { ConnectorItem } from '../../ports';
 import { fitLines, joinMessage, messageBody, messageContent, messageLink, untrustedText } from '../message-rendering';
 import type { MessagePart } from '../message-rendering';
-import { WORK_CHAT_REPLY_MAX_CHARS, safeLinkUrl } from './work-chat-renderer';
+import { WORK_CHAT_REPLY_MAX_CHARS, certainlyRenderedRows, safeLinkUrl } from './work-chat-renderer';
 
 /**
  * ADR-0120 amendment A8: deterministic Korean copy for a Jira release listing, in the shape of Jira's release report:
@@ -73,11 +73,30 @@ export interface ReleaseIssuesView {
   readonly ignoredLink?: boolean;
   /** A DM: an empty own-items answer says how to ask for every assignee. */
   readonly offerAllScope?: boolean;
+  /** A6 R2 (D1): number the issue rows `1.` … `n.` in display order (while `QUOKY_NL_ITEM_R2` is not `off`). */
+  readonly numbered?: boolean;
+}
+
+/** A6 R2: the issues in the order the report shows them (grouped: to do, in progress, done). */
+export function releaseIssuesInDisplayOrder(items: readonly ConnectorItem[]): ConnectorItem[] {
+  return GROUPS.flatMap((group) => items.filter((item) => groupOf(item) === group.key));
 }
 
 /** The release report: header, counts per group, the grouped items, the release page link. */
 export function renderReleaseIssues(view: ReleaseIssuesView): MessageBody {
-  const lines: Array<{ text: MessagePart; droppable?: boolean }> = [];
+  return releaseIssues(view).body;
+}
+
+/**
+ * A6 R2: the release report numbered (`view.numbered`) and how many leading issue rows it certainly shows (the group
+ * headings are droppable too and are charged as rows, so the count stays conservative).
+ */
+export function renderNumberedReleaseIssues(view: ReleaseIssuesView): { readonly body: MessageBody; readonly labelled: number } {
+  return releaseIssues({ ...view, numbered: true });
+}
+
+function releaseIssues(view: ReleaseIssuesView): { readonly body: MessageBody; readonly labelled: number } {
+  const lines: Array<{ text: MessagePart; droppable?: boolean; row?: boolean }> = [];
   if (view.ignoredLink === true) lines.push({ text: renderIgnoredLinkNote() });
   const release = view.releaseName !== undefined ? messageContent('릴리스 ', display(view.releaseName, NAME_MAX_CHARS)) : '링크의 릴리스';
   const where = view.project !== undefined ? messageContent(' · ', projectLabel(view.project)) : '';
@@ -93,22 +112,37 @@ export function renderReleaseIssues(view: ReleaseIssuesView): MessageBody {
         ? `이슈 ${view.items.length}건 이상 — 표시한 ${view.items.length}건 기준: ${summary} (일부만 표시, 전체는 릴리스 페이지에서)`
         : `이슈 ${view.items.length}건: ${summary}`,
     });
+    let shown = 0;
     for (const group of counts) {
       if (group.items.length === 0) continue;
       lines.push({ text: `${group.label} (${group.items.length})`, droppable: true });
-      for (const item of group.items) lines.push({ text: renderItemLine(item), droppable: true });
+      for (const item of group.items) {
+        shown += 1;
+        lines.push({ text: renderItemLine(item, view.numbered === true ? shown : undefined), droppable: true, ...(view.numbered === true ? { row: true } : {}) });
+      }
     }
   }
   const pageUrl = safeLinkUrl(view.releaseUrl);
   if (pageUrl !== undefined) lines.push({ text: messageContent('릴리스 페이지: ', messageLink(pageUrl)) });
-  return fit(lines);
+  if (view.numbered !== true) return { body: fit(lines), labelled: 0 };
+  // Rows and headings drop from the end together: count the issue rows inside the droppable prefix that certainly fits.
+  const fits = certainlyRenderedRows(lines);
+  let droppable = 0;
+  let labelled = 0;
+  for (const line of lines) {
+    if (line.droppable !== true) continue;
+    if (droppable >= fits) break;
+    droppable += 1;
+    if (line.row === true) labelled += 1;
+  }
+  return { body: fit(lines), labelled };
 }
 
-function renderItemLine(item: ConnectorItem): MessagePart {
+function renderItemLine(item: ConnectorItem, number?: number): MessagePart {
   const meta = [item.assignee ?? '담당자 없음', item.status].filter((part): part is string => part !== undefined && part.length > 0).map((part) => display(part, NAME_MAX_CHARS));
   const url = safeLinkUrl(item.url);
   return messageContent(
-    '- [',
+    number !== undefined ? `${number}. [` : '- [',
     untrustedText(item.id.replace(/\s+/g, ' ')),
     '] ',
     display(item.title),

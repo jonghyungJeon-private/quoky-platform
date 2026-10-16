@@ -2,7 +2,7 @@ import { WorkItemStatus } from '../../domain';
 import type { MessageBody, ResourceRef, UntrustedTextNode, WorkItem } from '../../domain';
 import { CONNECTOR_QUERY_MAX_LIMIT } from '../../ports';
 import type { ConnectorQueryErrorReason } from '../../ports';
-import { fitLines, joinMessage, messageBody, messageContent, messageLink, untrustedText } from '../message-rendering';
+import { fitLines, joinMessage, messageBody, messageContent, messageLink, plainTextOf, untrustedText } from '../message-rendering';
 import type { MessagePart } from '../message-rendering';
 import type { WorkSurface, WorkSurfaceSource, WorkSurfaceSourceStatus } from '../work-surface-query';
 import type { ExternalWorkReadout } from './external-work-readout';
@@ -456,6 +456,21 @@ function dueText(dueDate: string): string {
  * an empty result of a successful lookup, never as a failure.
  */
 export function renderExternalWorkList(readout: ExternalWorkReadout): MessageBody {
+  return externalWorkList(readout, false).body;
+}
+
+/**
+ * ADR-0120 amendment A6 R2 (owner decision D1, amendment C3): the deterministic list with each item row prefixed `1.` …
+ * `n.` in readout order (while `QUOKY_NL_ITEM_R2` is not `off`), and `labelled`: how many leading rows the reply
+ * certainly shows. The reply is fitted on the platform's rendering (droppable rows go from the end), so each row is
+ * counted at twice its plain length (the worst escaping) against the budget minus a reserve for the fixed lines, as the
+ * to-do receipts do. A row beyond `labelled` may still be shown, but its number is never recorded as a label.
+ */
+export function renderNumberedExternalWorkList(readout: ExternalWorkReadout): { readonly body: MessageBody; readonly labelled: number } {
+  return externalWorkList(readout, true);
+}
+
+function externalWorkList(readout: ExternalWorkReadout, numbered: boolean): { readonly body: MessageBody; readonly labelled: number } {
   const { source, query, text } = readout.request;
   const label = sourceLabel(source);
   const subject =
@@ -475,14 +490,14 @@ export function renderExternalWorkList(readout: ExternalWorkReadout): MessageBod
     lines.push({ text: messageContent(`${label} `, subject, ' 결과가 없어요.') });
   } else {
     lines.push({ text: messageContent(`**${label} `, subject, `** (${readout.items.length}건${readout.truncated ? ', 일부만 표시' : ''})`) });
-    for (const item of readout.items) {
+    for (const [index, item] of readout.items.entries()) {
       const meta = [item.status, item.dueDate ? dueText(item.dueDate) : undefined, item.container]
         .filter((part): part is string => Boolean(part))
         .map((part) => display(part, 60));
       const url = safeLinkUrl(item.url);
       lines.push({
         text: messageContent(
-          '- [',
+          numbered ? `${index + 1}. [` : '- [',
           inline(item.ref),
           '] ',
           display(item.title),
@@ -496,7 +511,26 @@ export function renderExternalWorkList(readout: ExternalWorkReadout): MessageBod
   if (readout.omittedSensitive > 0) {
     lines.push({ text: `민감정보가 있는 ${readout.omittedSensitive}건은 제외했어요.` });
   }
-  return fit(lines);
+  return { body: fit(lines), labelled: numbered ? certainlyRenderedRows(lines) : 0 };
+}
+
+/**
+ * A6 R2: how many droppable rows of a fitted reply certainly survive (worst-case rendering, rows dropped from the end):
+ * the fixed lines are charged first at twice their plain length, then each row in order, against the reply budget minus
+ * the omitted-note reserve.
+ */
+export function certainlyRenderedRows(lines: ReadonlyArray<{ text: MessagePart; droppable?: boolean }>, maxChars = WORK_CHAT_REPLY_MAX_CHARS): number {
+  const length = (part: MessagePart): number => 2 * Array.from(plainTextOf(messageBody(part))).length + 1;
+  let room = maxChars - OMITTED_NOTE.length - 2 - lines.filter((line) => line.droppable !== true).reduce((sum, line) => sum + length(line.text), 0);
+  let rows = 0;
+  for (const line of lines) {
+    if (line.droppable !== true) continue;
+    const cost = length(line.text);
+    if (cost > room) break;
+    room -= cost;
+    rows += 1;
+  }
+  return rows;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

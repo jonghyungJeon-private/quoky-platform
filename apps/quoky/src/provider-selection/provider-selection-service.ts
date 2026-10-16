@@ -181,7 +181,17 @@ export interface ProviderSelectionServiceDeps {
   readonly ollamaModels: () => Promise<OllamaModelInventory>;
   readonly logger: Pick<Logger, 'info' | 'warn'>;
   readonly clock?: () => IsoTimestamp;
+  /**
+   * ADR-0120 amendment A6 R2, owner decision D6 (`QUOKY_WORK_TEXT_VENDOR_ALLOWED`, default false): whether a request that
+   * carries the work-text constraint (one Jira / Slack item summary) may reach an HTTP API vendor (the OpenAI or Gemini
+   * API adapters) the owner selected for chat. False: such a vendor is not eligible for it; the Claude CLI fallback (and
+   * a local selection) still are. The owner's selection itself is never changed.
+   */
+  readonly workTextVendorAllowed?: boolean;
 }
+
+/** A6 R2 (D6): the chat choices this composition root knows to be HTTP API vendor adapters (ADR-0115). */
+const HTTP_API_CHAT_PROVIDERS: ReadonlySet<string> = new Set(['openai', 'gemini']);
 
 const CHAT_TIER = new Set<Capability>(CHAT_TIER_CAPABILITIES);
 
@@ -254,7 +264,7 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
   async preferenceFor(capability: Capability, context: ProviderSelectionContext): Promise<ProviderPreference | null> {
     const claudeKey = this.deps.catalog.claude.id;
     try {
-      return this.preferenceFrom(capability, await this.sessionSelection(context));
+      return this.preferenceFrom(capability, await this.sessionSelection(context), context.workText === true);
     } catch {
       // Fail safe: the chat tier and pinned work go to Claude, images go nowhere.
       this.deps.logger.warn('provider selection unavailable; using the safe default', { capability });
@@ -280,7 +290,7 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
         if (mirrored === undefined) return false;
         session = mirrored;
       }
-      const preference = this.preferenceFrom(capability, session);
+      const preference = this.preferenceFrom(capability, session, context.workText === true);
       return preference === null || preference.eligible.includes(providerKey);
     } catch {
       return false;
@@ -288,9 +298,15 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
   }
 
   /** The policy's answer for a known session selection (synchronous). */
-  private preferenceFrom(capability: Capability, session: SessionSelection): ProviderPreference | null {
+  private preferenceFrom(capability: Capability, session: SessionSelection, workText = false): ProviderPreference | null {
     if (CHAT_TIER.has(capability)) {
       const chat = this.chatFromLayers(session);
+      // A6 R2 (D6, amendment C9): Jira / Slack text never reaches an HTTP API vendor without the separate opt-in. The
+      // vendor is skipped for this request only (the next eligible provider, the Claude CLI, serves it); the owner's
+      // selection is unchanged and nothing names a provider to the owner.
+      if (workText && this.deps.workTextVendorAllowed !== true && HTTP_API_CHAT_PROVIDERS.has(chat.choice.provider)) {
+        return { eligible: [this.deps.catalog.claude.id], order: 'listed' };
+      }
       // ADR-0116 D2/D3: only an allow-listed source (OWNER_SELECTION_SOURCES) names the owner-selected key. The Claude
       // fallback entry is never named here, so reaching it only as the selection-time fallback is not an owner
       // selection either.
