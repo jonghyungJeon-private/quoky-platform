@@ -50,8 +50,11 @@ export function renderDeicticPreview(input: {
   readonly language: Lang;
   /** Reminders: the absolute time the owner's words give. */
   readonly whenLabel?: string;
-  /** To-dos: the open to-do number with the same title. */
-  readonly duplicateOf?: number;
+  /**
+   * To-dos: an open to-do with the same title exists; `label` is the number to name it by (the fresh listing's label, the
+   * live number without a listing), absent when the fresh listing never showed it (the note then names no number).
+   */
+  readonly duplicate?: { readonly label?: number };
   /** Reminders: the referenced text itself names a time (never used). */
   readonly textHasTime?: boolean;
 }): MessageBody {
@@ -63,7 +66,10 @@ export function renderDeicticPreview(input: {
   if (input.whenLabel !== undefined) lines.push(ko ? `언제: ${input.whenLabel}` : `When: ${input.whenLabel}`);
   lines.push(originText(input.origin, input.language));
   if (input.textHasTime === true) lines.push(ko ? '(내용에 있는 시간은 쓰지 않고, 말씀하신 시간으로 알려 드려요)' : '(A time inside the text is not used; your stated time is.)');
-  if (input.duplicateOf !== undefined) lines.push(ko ? `같은 제목의 할 일이 이미 있어요 (${input.duplicateOf}번)` : `A to-do with the same title already exists (#${input.duplicateOf})`);
+  if (input.duplicate !== undefined) {
+    const label = input.duplicate.label;
+    lines.push(ko ? `같은 제목의 할 일이 이미 있어요${label === undefined ? '' : ` (${label}번)`}` : `A to-do with the same title already exists${label === undefined ? '' : ` (#${label})`}`);
+  }
   lines.push(APPROVE_HINT[input.language]);
   return joinBody(lines);
 }

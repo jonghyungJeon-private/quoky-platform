@@ -27197,7 +27197,9 @@ Three local writes executed that the kit expected not to (all cleaned). Fixes, e
   B=2, C=3; complete A; "D 추가" echoed as 3 re-pointed 3 from C to D). `todo.add` and the undo's reopen show the item's
   listing label or append it as the next unused label (max + 1); a title-matched complete / cancel shows the listing label
   or no number; a ref-resolved complete / cancel already carries the listing label. Without a fresh listing the live
-  number stays. Reminders were audited and need nothing: every echo, receipt and listing uses the stable `displayNo`. The anchored command
+  number stays. Reminders were audited and need nothing: every echo, receipt and listing uses the stable `displayNo`.
+  The R5a preview's duplicate note follows the duplicate reply's rule: the fresh listing's label, no number when that
+  listing never showed the item, the live number only without a listing (`duplicateTodo` now returns the id too). The anchored command
   ("할 일 추가: …", the owner's explicit form) still adds a second item. The red-team cap positive control now reaches the
   cap with distinct titles; the corpus cap case (one title repeated) writes once.
 
