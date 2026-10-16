@@ -4,6 +4,7 @@ import { detectReplyLanguage } from '../chat-policy/chat-response-policy';
 import { detectExternalActionRequest, isPersonalScheduleQuestion } from '../intent-classifier';
 import { containsGroundingWord, leavesUnexpressedContent } from '../nl-routing/grammar-residual';
 import { nlExpressedWeekday } from '../nl-routing/symbolic-time';
+import { nlLocalListTarget } from '../nl-routing/action-entries';
 import { CALENDAR_PART_OF_DAY_WORDS } from '../nl-routing/wave1-entries';
 import {
   addLocalDays,
@@ -194,6 +195,9 @@ const LEADING_CONNECTIVE = /^\s*(?:and|but|then|so|그리고|하지만|근데|�
 function clauseIsWriteRequest(rawClause: string): boolean {
   const clause = rawClause.replace(LEADING_CONNECTIVE, '');
   if (clause.trim().length === 0 || NOT_A_REQUEST.test(clause)) return false;
+  // Live test 2 (C01, D02): a clause that names Quoky's own to-do or reminder list as the place of its write ("… 일정 잡기
+  // 할 일 취소해줘", "모레 3시 알림으로 … 통화 등록해줘") is a local-list request, not a calendar write.
+  if (nlLocalListTarget(clause) !== undefined) return false;
   if (detectExternalActionRequest(clause)?.kind === 'calendar') return true;
   return WRITE_KO.test(clause) || CREATE_KO.test(clause) || CHANGE_KO.test(clause) || WRITE_EN.test(clause);
 }

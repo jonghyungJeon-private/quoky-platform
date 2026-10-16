@@ -552,6 +552,89 @@ export const NL_R5A_VOCABULARY_ADDITIONS: Readonly<Record<'todo.add' | 'reminder
  */
 export const NL_ACTION_WORDS: readonly string[] = [...new Set([...TODO_COMPLETE_WORDS, ...TODO_CANCEL_WORDS, ...REMINDER_CANCEL_WORDS, ...UNDO_WORDS, ...TODO_ADD_WORDS, ...REMINDER_CREATE_WORDS])];
 
+// ── the local-list request shape (live test 2, 2026-10-16: A09, C01, D02) ───────────────────────────────────────────
+
+const escapeForPattern = (word: string): string => word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*');
+const hangulOnly = (words: readonly string[]): string[] => words.filter((word) => /[가-힣]/u.test(word));
+/** A past form (its last syllable closes with ㅆ: 끝냈, 마쳤, 다 했) states what happened; it never asks for a write. */
+const isPastForm = (word: string): boolean => {
+  const last = word.codePointAt(word.length - 1) ?? 0;
+  return last >= 0xac00 && last <= 0xd7a3 && (last - 0xac00) % 28 === 20;
+};
+const alternationOf = (words: readonly string[]): string => [...new Set(words)].sort((a, b) => b.length - a.length).map(escapeForPattern).join('|');
+/** The verb a reminder noun carries in its own create words ("알림 걸", "알림으로 만들" → 걸, 만들); never a bare 해 / 줘. */
+const REMINDER_NOUN_HEAD = /^(?:알림|리마인더|알람)(?:으로)?\s?/u;
+const REMINDER_CREATE_VERBS = REMINDER_CREATE_WORDS.filter((word) => REMINDER_NOUN_HEAD.test(word))
+  .map((word) => word.replace(REMINDER_NOUN_HEAD, ''))
+  .filter((verb) => verb.length > 0 && verb !== '해' && verb !== '줘');
+
+interface LocalListShape {
+  readonly list: 'todo' | 'reminder';
+  /** The list noun with a destination particle, and an add verb of that list later in the clause ("할 일로 … 등록"). */
+  readonly destination: RegExp;
+  /** The list noun as the object of a cancel / complete verb right after it ("… 할 일 취소", "… 알림 꺼줘"). */
+  readonly object: RegExp;
+  /** The list noun as the source of a cancel / complete verb later in the clause ("할 일 목록에서 … 빼줘"). */
+  readonly source: RegExp;
+}
+
+/** The closed class of Korean connective endings, at the end of a word. */
+const CONNECTIVE_ENDING = '(?:고|면|면서|니까|는데|지만|서)(?![가-힣])';
+
+let localListShapes: readonly LocalListShape[] | undefined;
+
+/** Built on first use from the catalog's own list nouns and the A6 vocabularies (one source of truth, no phrase list). */
+function localListShapesOf(): readonly LocalListShape[] {
+  if (localListShapes !== undefined) return localListShapes;
+  const shape = (list: 'todo' | 'reminder', nouns: readonly string[], add: readonly string[], change: readonly string[]): LocalListShape => {
+    const noun = `(?<![가-힣A-Za-z])(?:${alternationOf(nouns.map(normalizeForMatch))})(?:\\s*목록)?`;
+    const addVerb = alternationOf(hangulOnly(add));
+    const changeVerb = alternationOf(hangulOnly(change).filter((word) => !isPastForm(word)));
+    // A verb whose word ends in a connective ending ("빼고", "마치고", "추가하면") only joins the next clause: not the request.
+    const requested = `(?![가-힣]*${CONNECTIVE_ENDING})`;
+    return {
+      list,
+      destination: new RegExp(`${noun}\\s*(?:으로|로|에다가|에다|에)(?![가-힣])[^]*?(?:${addVerb})${requested}`, 'u'),
+      object: new RegExp(`${noun}\\s*(?:을|를|은|는|도|좀)?\\s*(?:${changeVerb})${requested}`, 'u'),
+      source: new RegExp(`${noun}\\s*에서(?![가-힣])[^]*?(?:${changeVerb})${requested}`, 'u'),
+    };
+  };
+  localListShapes = [
+    shape('todo', NL_WAVE1_ENTRIES['todo.list'].aliases, TODO_ADD_WORDS, [...TODO_CANCEL_WORDS, ...TODO_COMPLETE_WORDS]),
+    shape('reminder', NL_WAVE1_ENTRIES['reminder.list'].aliases, [...TODO_ADD_WORDS, ...REMINDER_CREATE_VERBS], REMINDER_CANCEL_WORDS),
+  ];
+  return localListShapes;
+}
+
+/** Clause boundaries: sentence ends, commas and the coordinating connectives (the calendar grammar's own clause rule). */
+const LOCAL_LIST_CLAUSE_SPLIT = /[.!?。！？\r\n]+|[,;]\s*|\s+(?:그리고|하지만|근데|그런데)\s+/u;
+
+/**
+ * Live test 2 (2026-10-16, A09 / C01 / D02): the local list (Quoky's own to-dos or reminders) one clause of the owner's
+ * sentence names as the place of a write, or `undefined`. The shape is structural: a list noun of the catalog
+ * (`todo.list` / `reminder.list` aliases) with
+ *  - a destination particle (로 / 으로 / 에 / 에다) and an add verb of that list's A6 vocabulary later in the clause
+ *    ("'…' 할 일로 등록해줘", "할 일에 … 추가해줘", "… 알림으로 … 등록해줘");
+ *  - or directly followed (a particle at most) by a cancel / complete verb of that list ("… 일정 잡기 할 일 취소해줘");
+ *  - or 에서 and such a verb later ("할 일 목록에서 … 빼줘").
+ * A past form (끝냈, 다 했) never counts. Quoted words count as written: a quoted title stays the payload of the request.
+ *
+ * Class A grammars that would otherwise claim the words around it (the calendar write grammar's "일정 … 취소해줘" and
+ * "모레 3시 … 통화 등록해줘", the code-change chain's apply word 반영) read this so a local-list request is not mistaken
+ * for theirs. It narrows their recognition (the message is not a calendar write or a code apply); it is not a yield to
+ * selection and adds no phrase: every word is a catalog noun, an A6 vocabulary word or a closed particle.
+ */
+export function nlLocalListTarget(text: string): 'todo' | 'reminder' | undefined {
+  const normalized = normalizeForMatch(text);
+  if (normalized.length === 0) return undefined;
+  for (const clause of normalized.split(LOCAL_LIST_CLAUSE_SPLIT)) {
+    for (const shape of localListShapesOf()) {
+      if (shape.destination.test(clause) || shape.object.test(clause) || shape.source.test(clause)) return shape.list;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Garbled action word addendum (CA review, 2026-10-16): the word class of the Hangul action words that are verbal NOUNS
  * (Sino-Korean or loan nouns taking 하다 / 되다 / 처리, and nominal forms). A noun does not inflect by itself, so a one-jamo

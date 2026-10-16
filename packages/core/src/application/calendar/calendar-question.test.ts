@@ -236,3 +236,30 @@ describe('ADR-0120 amendment A7: with yield on, a weekday at an inclusive end bo
     expect(parseCalendarQuestion('일요일 일정 뭐 있어?', { yieldToSelection: true })).toMatchObject({ kind: 'events' });
   });
 });
+
+describe('live test 2 (C01, D02): a local to-do / reminder request is not a calendar write', () => {
+  it.each([
+    '창고 정리 일정 잡기 할 일 취소해줘',
+    '모레 오후 3시 알림으로 세무사 통화 등록해줘',
+    '내일 3시 회의 준비 할 일에 추가해줘',
+    '주간 일정 정리 할 일 목록에서 빼줘',
+    '금요일 일정 공유 할일 완료해줘',
+  ])('"%s" is not claimed', (text) => {
+    expect(isCalendarWriteRequest(text)).toBe(false);
+    expect(parseCalendarQuestion(text)).toBeNull();
+  });
+
+  it.each([
+    '내일 오후 3시에 회의 잡아줘',
+    '내일 3시 회의 취소해줘',
+    '금요일 일정 삭제해줘',
+    '내일 3시 회의 4시로 옮겨줘',
+    '모레 오후 3시 세무사 통화 등록해줘',
+    // A list word that is not the place of the write keeps the calendar request.
+    '할 일 빼고 내일 3시 회의 잡아줘',
+    '할 일 마치고 내일 3시 회의 잡아줘',
+    '내일 3시 회의 잡아줘 알림도 설정해줘',
+  ])('counter-case: "%s" stays a calendar write', (text) => {
+    expect(parseCalendarQuestion(text)?.kind).toBe('write-refused');
+  });
+});

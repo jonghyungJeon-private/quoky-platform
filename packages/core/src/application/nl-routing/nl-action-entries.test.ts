@@ -26,6 +26,7 @@ import {
   isNlWave1EntryId,
   type NlCatalogEntry,
 } from './catalog';
+import { nlLocalListTarget } from './action-entries';
 import { prepareSelectionInput } from './selection-input';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
 import { validateSelection, type NlValidationContext } from './selection-validator';
@@ -594,5 +595,43 @@ describe('A6 prompt v36 (CA review): the rule-8 lines and examples teach the rul
   it('no A6 example equals or near-copies a scored corpus case (shape-aware token overlap < 0.6)', () => {
     expect(a6Examples.length).toBeGreaterThanOrEqual(15);
     for (const message of a6Examples) expect(nearest(message), message).toBeLessThan(NEAR_COPY);
+  });
+});
+
+describe('live test 2 (A09, C01, D02): the local-list request shape', () => {
+  it.each([
+    ["'시안 2차 피드백 반영' 할 일로 등록해줘", 'todo'],
+    ['창고 정리 일정 잡기 할 일 취소해줘', 'todo'],
+    ['할 일에 분기 실적 메모 정리 추가해줘', 'todo'],
+    ['할 일 목록에 주간 공유 자료 검토 넣어줘', 'todo'],
+    ['투두에 고객 미팅 자료 업데이트 하나 추가', 'todo'],
+    ['할 일 목록에서 보고서 빼줘', 'todo'],
+    ['보고서 초안 할일 완료해줘', 'todo'],
+    ['todo에 보고서 추가', 'todo'],
+    ['모레 오후 3시 알림으로 세무사 통화 등록해줘', 'reminder'],
+    ['내일 9시 알림으로 병원 접수 확인 걸어줘', 'reminder'],
+    ['치과 예약 확인 알림 취소해줘', 'reminder'],
+    ['17번 알림 꺼줘', 'reminder'],
+  ] as const)('"%s" names the %s list', (text, list) => {
+    expect(nlLocalListTarget(text)).toBe(list);
+  });
+
+  it.each([
+    '내 할 일 보여줘',
+    '할 일 관리 앱 추천해줘',
+    '알림 설정 어떻게 해?',
+    '내일 오전 9시에 알림 걸어줘 치과 예약 확인',
+    '내일 3시 회의 취소해줘',
+    '반영해줘',
+    // A past form states what happened; a connective ending only joins the next clause.
+    '오늘 할 일 다 했어',
+    '할 일 끝냈으니 쉬자',
+    '할 일 빼고 내일 3시 회의 잡아줘',
+    '할 일 마치고 내일 3시 회의 잡아줘',
+    // A list noun glued into another word is not the list.
+    '알림장에 숙제 추가해줘',
+    '해야할일로 바빠서 회의 등록해줘',
+  ])('counter-case: "%s" names no local list', (text) => {
+    expect(nlLocalListTarget(text)).toBeUndefined();
   });
 });
