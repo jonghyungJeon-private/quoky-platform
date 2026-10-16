@@ -558,6 +558,22 @@ describe('lookupJiraRelease: a key repeated inside the release words', () => {
     expect(text).toContain('**Jira 릴리스 20261015**');
   });
 
+  it('an exact release named with the key wins over the key-stripped name; the stripped name is the fallback', async () => {
+    const both: ConnectorProvider = {
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) =>
+        query.query === 'containers' ? { source: 'jira', items: PROJECTS }
+        : query.query === 'releases' ? { source: 'jira', items: [{ id: '1', title: '20261015' }, { id: '2', title: 'OP26 20261015' }] }
+        : { source: 'jira', items: ISSUES },
+    };
+    const seen: ConnectorQuery[] = [];
+    const spy: ConnectorProvider = { ...both, query: async (query) => { seen.push(query); return both.query(query); } };
+    await lookupJiraRelease({ connector: spy, command: { scope: 'all', links: [], project: 'OP26', release: 'OP26 20261015' }, siteHost: SITE });
+    expect(seen.at(-1)?.params).toMatchObject({ container: 'OP26', releaseId: '2' });
+    const fallback = await run({ project: 'OP26', release: 'OP26 20261015' });
+    expect(fallback.queries.at(-1)?.params).toMatchObject({ releaseId: '16555' });
+  });
+
   it('leaves a different key alone when a project is set, and a key-shaped word that is no visible project', async () => {
     expect(stripRedundantProjectKey(PROJECTS, 'OP26', 'WEB 20261015')).toBeUndefined();
     expect(stripRedundantProjectKey(PROJECTS, 'RC', 'RC 2026')).toBeUndefined();

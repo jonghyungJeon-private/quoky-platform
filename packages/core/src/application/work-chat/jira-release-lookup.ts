@@ -74,6 +74,8 @@ export async function lookupJiraRelease(input: {
   readonly inChannel?: boolean;
 }): Promise<ReleaseLookupResult> {
   let command = input.command;
+  // The release text before a repeated project key was stripped: a release of exactly that name wins over the stripped one.
+  let keyedRelease: string | undefined;
   const connector = guarded(input.connector, input.signal);
   const onSite = releaseLinkOnSite(command.links, input.siteHost);
   const ignoredLink = command.links.length > 0 && onSite === undefined;
@@ -92,7 +94,10 @@ export async function lookupJiraRelease(input: {
         if (split !== undefined) command = { ...command, project: split.project, release: split.release };
       } else {
         const stripped = stripRedundantProjectKey(itemsOf(listed), command.project, command.release);
-        if (stripped !== undefined) command = { ...command, release: stripped };
+        if (stripped !== undefined) {
+          keyedRelease = command.release;
+          command = { ...command, release: stripped };
+        }
       }
     }
     // 1. The project.
@@ -135,7 +140,8 @@ export async function lookupJiraRelease(input: {
         let match = preResolved;
         if (match === undefined) {
           const known = await releasesOf(connector, project.key);
-          match = resolveRelease(known.items, command.release, known.truncated === true).item;
+          const wantedKeyed = keyedRelease === undefined ? undefined : fold(keyedRelease);
+          match = (wantedKeyed === undefined ? undefined : known.items.find((item) => fold(item.title) === wantedKeyed)) ?? resolveRelease(known.items, command.release, known.truncated === true).item;
           if (match === undefined) return body(renderReleaseNotFound(command.release, project, input.inChannel === true ? [] : nearbyReleases(known.items, command.release)));
         }
         release = { id: match.id, name: match.title, ...(match.url !== undefined ? { url: match.url } : {}) };
