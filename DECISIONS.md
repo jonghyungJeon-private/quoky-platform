@@ -27163,6 +27163,50 @@ owner approved a structural Core rule (`nl-routing/garbled-action.ts`), with no 
   selector-RAG gold digest is unchanged and the audit record was not regenerated. The eval scorer counts `garbled-action` as a
   clarification reason.
 
+## ADR-0120 amendment A6 R2 — `item.summarize` over Jira and Slack (owner-approved 2026-10-16, D1–D12 at the recommended defaults)
+
+Status: **Accepted** (owner, 2026-10-16). The owner approved `docs/plans/a6-r2-jira-slack-summarize-proposal.md`
+(revision 2, merged in #252) with every open decision D1–D12 at its recommended default. The code ships **inert**: the new
+sub-flag `QUOKY_NL_ITEM_R2` defaults to `off`, R2 acts only with `QUOKY_NL_ACTIONS=local`, and the live service runs
+`QUOKY_NL_ACTIONS=shadow`, where R2 makes **0 connector fetches and 0 model calls**. Each promotion step (§7 of the
+proposal: corpus and red-team batches, the Strict model and real-model red-team gates, `shadow`, `jira`, `all`) is its own
+Strict owner item. A Chief Architect review is required before the code merges.
+
+**Owner decisions (all at the recommended default).**
+
+| # | Decision |
+|---|---|
+| D1 | Shown labels for every `QUOKY_NL_ITEM_R2` value except `off`: a deterministic numbered list, or, for a model-summarised list, the model text with leading list numbers stripped plus a deterministic numbered index of every used item that replaces the footer's link lines. Labels are recorded only for lines actually delivered. |
+| D2 | A Jira key ("PROJ-12 요약해줘") is a ref only when it appears verbatim in the owner's words and is the id of a delivered label of the fresh Jira listing. An arbitrary key read is deferred to its own READ entry. |
+| D3 | Private Slack channels are refused ("비공개 채널 메시지는 읽을 권한이 없어요"); no `groups:history` scope is added. |
+| D4 | Slack default scope is the message only, with a "스레드 답글 N개" note; the thread only on 스레드/thread. A single thread reply is read only in the one-request form proved by fixture, otherwise refused. |
+| D5 | Pseudonyms ("참여자 A, B, …") for Jira and Slack in `summary` mode; real names only in `full` mode (Jira `displayName`; Slack stays pseudonymous). |
+| D6 | Summary provider: local first, then the Claude CLI fallback; HTTP API vendors excluded unless `QUOKY_WORK_TEXT_VENDOR_ALLOWED=true` (exact value; default `false`). `QUOKY_WORK_SUMMARY_ENABLED=false` means `full` only, with 0 GETs for `summary`. |
+| D7 | No content cache: every request fetches fresh; nothing fetched outlives the turn. |
+| D8 | Rate limits: 30 `item.summarize` an hour per actor shared across mail, Drive, Jira and Slack, plus 100 a day per actor; no retry on 429. |
+| D9 | `quoky.lastRead`, a third content-free reference record (10 min), for `item.summarize` only, under the #235 recency rules. |
+| D10 | Sub-flag `QUOKY_NL_ITEM_R2` = `off` \| `shadow` \| `jira` \| `all` (§7 table), Jira-first promotion, live gate ≥ 100 turns in total with ≥ 40 per source. |
+| D11 | The normalised card-spoof replacement of a summary (§3.3 item 4); `full` shows such lines inert. |
+| D12 | One optional second bounded Jira GET in exclusive branches (A: newest 10 comments after a partial page; B: a description-only retry after an oversize response), never more than 2 requests counting the aborted one. **Off at first.** |
+
+**Amendments of settled text (the proposal's §0 rows C1–C11, as accepted).**
+
+| # | Settled text | Amendment |
+|---|---|---|
+| C1 | A6-D8 R2: a "single-item readout through the ADR-0100 D8 `summarize` path" | **Interpretation (accepted).** R2 uses the D8 `summarize` reply variant (`TurnHandlerSummarizeReply`), carrying the single-item `UntrustedDocumentReadout` (ADR-0118 D7 shape, `handleDocumentSummary`), not the list-shaped `ExternalWorkReadout`. |
+| C2 | ADR-0100 D7: closed named queries | **ADR-0100 D7 amendment.** One new read-only named query `item`, params `{ id, scope }`, GET only; unknown params are `UNSUPPORTED_QUERY`. |
+| C3 | ADR-0100 D8 deterministic list (unnumbered bullets) and footer (link lines only) | **ADR-0100 D8 amendment (behind the flag).** While `QUOKY_NL_ITEM_R2` is not `off`: the deterministic list rows are numbered `1.` … `n.`; on a model-summarised list the leading list markers are stripped from the model text and a deterministic numbered index of every used item replaces the footer's link lines. Labels are recorded only for delivered lines. With `off` every list and stored record is byte-identical. |
+| C4 | ADR-0118: `UNTRUSTED_DOCUMENT_SOURCES = ['mail', 'drive', 'mail-thread']` | **ADR-0118 amendment.** Adds `jira-issue`, `slack-message`, `slack-thread`; bounds, normalisation and the credential guard unchanged. |
+| C5 | Design §2.4 and ADR-0121 D4: work text has one egress label, `REMOTE_OK` | **ADR-0121 D4 and design §2.4 amendment.** The label is set by the read path, not only by the source: the ADR-0100 D8 list summary keeps `REMOTE_OK`; a single Jira / Slack item read through A6 carries `REMOTE_ON_SUMMARY_REQUEST` and scope `OWNER_DM_ONLY`. |
+| C6 | A6-D2: two reference records (listing slots, `lastAction`) | **A6-D2 amendment (D9).** A third, content-free record `quoky.lastRead = { source, id, label, at }`, 10 minutes, read by `item.summarize` only; never a referent for a LOCAL_WRITE, an R5a deictic draft or `action.undo`. |
+| C7 | ADR-0100 Consequences: a "user token with `search:read`", "no history scan" | **ADR-0100 amendment.** One message or one thread page through `conversations.replies` with the `channels:history` scope the user token already holds: a bounded single-item read, not a history scan. No new scope (D3). |
+| C8 | A6-D1 / A6-D2: `ref` is `#n`, `recent`, `this`, `last` | **A6-D1 / A6-D2 amendment (D2).** A `key` ref kind: a Jira key, verbatim in the owner's words, accepted only as a delivered label's id of the fresh Jira slot. |
+| C9 | ADR-0115 / ADR-0116: the summary provider is the effective chat-tier choice | **ADR-0115 amendment (D6).** An additive, data-only work-text constraint on `ProviderSelectionContext`, resolved by the composition root's `ProviderSelectionPolicy` (it knows which keys are HTTP API adapters): without the opt-in an HTTP API vendor is not eligible for Jira / Slack text. Core never branches on a provider id. Mail and Drive are unaffected. |
+| C10 | ADR-0118 history rule | **Reaffirmed and extended.** Every R2 outcome (summary, `full`, each fallback, a refusal that echoes a title) writes only the fixed `renderUntrustedDocumentHistoryNote` note to SHORT_TERM history. |
+| C11 | ADR-0100 D7: the closed `ConnectorQueryErrorReason` set | **ADR-0100 D7 amendment.** One neutral reason `MOVED` (a Jira `3xx`, never followed). With D12 (off) one more bounded Jira GET for Jira only. |
+
+There is no new port, DI token, migration, host or runtime deps key; scopes are unchanged.
+
 ### READ structural guard for reason-clause statements and quoted requests (v5 neg captures)
 
 - `read-statement.ts` (`nlReadNotRequest`, message-level, READ only, next to the A7 past-statement guard) turns a READ capture
