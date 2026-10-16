@@ -10,7 +10,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Added (experiment only; no runtime path, `QUOKY_NL_EXAMPLE_RETRIEVAL` not wired).** `buildSelectionPrompt` takes an optional
   `retrievedExamples` (and `replaceStaticExamples` for A0-swap), rendered after the static examples under a fixed header. Absent or
   empty keeps the read (v37) and A6 (v38) prompts byte-identical; the v37 byte-pin test passes unchanged. New golden
-  `nl-select.retrieved-block.v1.json` pins the block.
+  `nl-select.retrieved-block.fixture.json` pins the block.
 - **Added.** `selector-rag/selector-rag-eval.ts`: arm prompt rendering (A0, A0-swap, A1, A2) with filtering by the prompt mode's offered
   entries, seeded A2 / swap draws, and content-free records (ids, rounded scores, block and prompt SHA-256). `eval:rag --mode run`
   walks the schedule through it but still needs the Strict digest and an injected selector transport (none is built in).

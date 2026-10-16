@@ -99,7 +99,7 @@ export interface NlRetrievedExample {
   readonly context?: string;
 }
 
-/** ADR-0123 D8: the fixed header of the retrieved block (pinned by `golden/nl-select.retrieved-block.v1.json`). */
+/** ADR-0123 D8: the fixed header of the retrieved block (pinned by `golden/nl-select.retrieved-block.fixture.json`). */
 export const NL_RETRIEVED_EXAMPLES_HEADER = 'More examples (same output format; the rules above still decide):';
 
 /** The retrieval suffix of the prompt version, `nl-select.vNN+rk3` (ADR-0123 D8). */

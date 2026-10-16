@@ -26594,7 +26594,7 @@ The owner accepted ADR-0123 Q1 (keep the JSON `LocalVectorProvider`) on 2026-10-
 
 - `NlSelectionPromptInput.retrievedExamples` (plus `replaceStaticExamples` for A0-swap only) is implemented in Core. Absent or
   empty is byte-identical (v37 and A6 goldens unchanged, no re-pin); the block goes after the static `Examples:` and before
-  `Previous selection:`, pinned by `golden/nl-select.retrieved-block.v1.json`. Each arm record stores the `+rk3` version, pool
+  `Previous selection:`, pinned by `golden/nl-select.retrieved-block.fixture.json`. Each arm record stores the `+rk3` version, pool
   digest, space id, retrieved ids, 2-decimal scores and the SHA-256 of the block and prompt, never text.
 - RAG-2 stays experiment-only: nothing at runtime sets the slot, and `QUOKY_NL_EXAMPLE_RETRIEVAL` (RAG-3, D10) is not wired.
   `pnpm eval:rag --mode run` renders every arm through the slot but needs the Strict digest and an injected selector

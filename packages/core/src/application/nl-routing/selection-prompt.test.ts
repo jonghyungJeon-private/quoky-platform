@@ -43,8 +43,8 @@ describe('ADR-0123 D8 retrievedExamples slot', () => {
     expect(swapped.length).toBeLessThan(base.length);
   });
 
-  it('pins the rendered block for a fixed slice (golden/nl-select.retrieved-block.v1.json)', () => {
-    const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.retrieved-block.v1.json', import.meta.url), 'utf8')) as { header: string; examples: NlRetrievedExample[]; block: string };
+  it('pins the rendered block for a fixed slice (golden/nl-select.retrieved-block.fixture.json)', () => {
+    const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.retrieved-block.fixture.json', import.meta.url), 'utf8')) as { header: string; examples: NlRetrievedExample[]; block: string };
     expect(golden.header).toBe(NL_RETRIEVED_EXAMPLES_HEADER);
     expect(renderRetrievedBlock(golden.examples)).toBe(golden.block);
     expect(renderRetrievedBlock(undefined)).toBe('');
