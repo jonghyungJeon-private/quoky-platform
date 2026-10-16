@@ -411,7 +411,8 @@ function hearsayEnding(clauses: readonly string[]): boolean {
  * A6 R2 ITEM_READ veto (final narrowing, review round 4): whether the owner relays someone else's request instead of making
  * one. Two structural forms only:
  *  - a quoted span that holds a request FORM (a request or imperative ending, or an English request lead or action verb
- *    first: {@link isQuotedRequest}); a bare quoted noun ("\"요약\" 모드로") is a label, not a command;
+ *    first: {@link isQuotedRequest}) next to a reporting frame ({@link KO_REPORT_AFTER_QUOTE}, {@link EN_REPORT_BEFORE_QUOTE});
+ *    a bare quoted noun ("\"요약\" 모드로") or an unframed quoted title is a label, not a command;
  *  - a Korean quotative or hearsay form (…해 달래, …하랬는데, …하라고 했어, …한대) that is the message-final predicate: it
  *    ends inside the last word, which may carry a connective tail (-는데, -거든, -서) and sentence punctuation. A hearsay
  *    form that modifies a noun ("엄마가 전화하랬던 부분까지 요약해줘") or sits before the owner's own final request
@@ -419,10 +420,21 @@ function hearsayEnding(clauses: readonly string[]): boolean {
  * The English "asked me to" is no relay for a read (it describes the item). Example, joke, retraction, negation and
  * statements stay with the selector. The LOCAL_WRITE `reported` class is unchanged.
  */
+/**
+ * The reporting frame of a quoted read command (Codex P2, round 6): a Korean quotative right after the closing quote
+ * (…"라고 했어", …"이라고 적혀 있네", …" 하고 말했어, …" 했더니) or an English reporting verb right before the opening quote
+ * (said / says / told me / wrote / asked / goes "…"). Without one, a quoted span is a description or a title
+ * (`email #1 about "open source"`, `titled "Read receipts"`) and never relays a request.
+ */
+const KO_REPORT_AFTER_QUOTE = /^\s*(?:(?:이)?라고|(?:하고\s*)?(?:했|하더|하셨|하시|말했|말하|그러|그랬|적혀|써|쓰))/u;
+const EN_REPORT_BEFORE_QUOTE = /\b(?:said|says|say|told|tells|tell|wrote|writes|write|asked|asks|ask|goes|went)(?:\s+(?:me|us|him|her|them|you))?\s*[,:]?\s*$/u;
+
 export function nlRelaysRequest(frame: string, actionWords: readonly string[]): boolean {
   const text = normalizeForMatch(frame).replace(/[\u2018\u2019`\u00b4]/gu, "'");
   for (const match of text.matchAll(QUOTED_SEGMENT)) {
-    if (isQuotedRequest(match.slice(1).find((group) => group !== undefined) ?? '', actionWords)) return true;
+    const start = match.index ?? 0;
+    const framed = KO_REPORT_AFTER_QUOTE.test(text.slice(start + match[0].length)) || EN_REPORT_BEFORE_QUOTE.test(text.slice(0, start));
+    if (framed && isQuotedRequest(match.slice(1).find((group) => group !== undefined) ?? '', actionWords)) return true;
   }
   // The final predicate: the last word once trailing punctuation, laughter and emoticons are set aside.
   const body = text.replace(/[\s.,!?~\u2026;:"'\u3131-\u318e^\p{Extended_Pictographic}\uFE0F\u200D]+$/u, '');

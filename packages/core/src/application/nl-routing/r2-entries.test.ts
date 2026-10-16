@@ -251,6 +251,9 @@ describe('A6 R2 (v47): the ITEM_READ veto is a relayed request only (quoted comm
       // round 5 (Codex): a quoted English mode noun
       'Show email #1 in "summary" mode',
       'Show the "original" of email #1',
+      // round 6 (Codex): an unframed quoted title or topic
+      'Summarize email #1 about "open source"',
+      'Show the full text of email #1 titled "Read receipts"',
       // plain question forms
       '그 슬랙 메시지 내용이 뭐야?',
       '3번 티켓 뭐라고 적혀 있어?',
@@ -269,6 +272,7 @@ describe('A6 R2 (v47): the ITEM_READ veto is a relayed request only (quoted comm
       '민수가 2번 메일 요약해 달래',
       '팀장이 3번 메일 요약하라고 했어',
       'He said "summarize 3"',
+      'She wrote "show me #2"',
       '동료가 "3번 요약해줘"라고 했어',
     ]) {
       expect(nlItemReadVeto(grounding(text)), text).toBe('reported');
@@ -321,7 +325,7 @@ describe('A6 R2 (v47): the ITEM_READ veto is a relayed request only (quoted comm
     const settled = load('nl-action.r2.v1.json')
       .filter((c) => !positive(c.expect) && nlItemReadVeto(grounding(c.text)) !== undefined)
       .map((c) => c.id.replace('a6r2-negative-', ''));
-    expect(settled).toEqual(['039', '040', '042', '043', '070']);
+    expect(settled).toEqual(['039', '040', '070']);
   });
 });
 
