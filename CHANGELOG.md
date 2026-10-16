@@ -124,6 +124,18 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   approval cannot authorize the held-out run. A0-swap counts come from the current prompt mode and draw only offered entries; its block hash
   covers the block as rendered under `Examples:`.
 
+## Unreleased — ADR-0123 owner decisions: pool batch 2 approved, phase 1 run approved (2026-10-16)
+
+- **Changed.** Pool batch 2 (53 examples) set to `status: approved`, `approvedBy: owner:jonghyung.jeon`, `approvedOn: 2026-10-16`.
+  The drafter stays `agent`. The pool is now 153 entries; lint PASSED (0 findings); dry-run (`nomic-embed-text-v2-moe`) 0 flagged,
+  low-similarity stratum 98.8%. The embedding audit record is regenerated for the 153-entry pool.
+- **Plan digests (no selector call made).** dev `5447bb9cc36518a87204218c807a6cc415cbb1f44db3065fce1c940ae0179007` (898 calls);
+  heldout `cb07e359d1054f47ca7347961f819b7a430a0c8ece7486554bdc8cc0b2775734` (20780 calls). The owner approved the Strict phase 1 run;
+  the dev smoke runs first, and the heldout run waits for its own go.
+- **Superseded.** The digests above are stale after the rebase onto main (#248: A6 prompt v42). Current digests: dev
+  `5447bb9cc36518a87204218c807a6cc415cbb1f44db3065fce1c940ae0179007` (898 calls), heldout
+  `cb07e359d1054f47ca7347961f819b7a430a0c8ece7486554bdc8cc0b2775734` (20780 calls).
+
 ## Unreleased — ADR-0123 owner decisions: v2-moe sole retrieval model, pool batch 1 approved (2026-10-16)
 
 - **Changed.** `nomic-embed-text-v2-moe` (digest `ff9c2f10ef5e`) is the sole retrieval embedding model. `pnpm eval:rag` dry-run defaults to it

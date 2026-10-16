@@ -82,7 +82,9 @@ describe('dry-run audit uses the approved subset, so plan accepts it', () => {
     const dir = mkdtempSync(join(tmpdir(), 'rag-audit-'));
     const poolPath = join(dir, 'pool.json');
     const auditPath = join(dir, 'audit.json');
-    const pool = loadPoolFile();
+    const shipped = loadPoolFile();
+    // Batch 2 is approved on main, so the mixed pool is built here: batch 2 is set pending in this temp copy only.
+    const pool = { ...shipped, batches: shipped.batches.map((b) => (b.batch === 2 ? { ...b, status: 'pending-owner-approval', approvedBy: null, approvedOn: null } : b)) } as typeof shipped;
     expect(pool.entries.length).toBeGreaterThan(approvedEntries(pool).length); // mixed: a pending batch is present
     writeFileSync(poolPath, JSON.stringify(pool));
     const deps = {

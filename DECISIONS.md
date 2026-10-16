@@ -26191,6 +26191,21 @@ The owner accepted ADR-0123 Q1 (keep the JSON `LocalVectorProvider`) on 2026-10-
   first run: no warning, no quarantine. No caller is wired yet: memory recall has no rebuild source, and the pool does not exist
   on `main`; the pool must wire `onCorrupt` to re-upsert from the checked-in pool file (ADR-0123 D2).
 
+## Owner decisions on ADR-0123 pool batch 2 and the phase 1 run (2026-10-16)
+
+The owner decided the items below on 2026-10-16.
+
+- **Pool batch 2 approved.** The 53 examples in `apps/quoky/src/tools/selector-rag/selector-pool.v1.json` (batch 2) are set to
+  `status: approved`, `approvedBy: owner:jonghyung.jeon`, `approvedOn: 2026-10-16`. The drafter stays `agent`. The pool now holds 153
+  entries (batches 1 and 2), lint PASSED with 0 findings, and the dry-run has 0 flagged pairs with 98.8% of held-out cases in the low
+  similarity stratum (gate >= 50%).
+- **ADR-0123 phase 1 experiment approved as a Strict run.** Plan digests for the pool above (the run takes `--approved-plan-digest`):
+  - dev: `5447bb9cc36518a87204218c807a6cc415cbb1f44db3065fce1c940ae0179007` (449 cases, 2 arms, 1 run, 898 selector calls).
+  - heldout: `cb07e359d1054f47ca7347961f819b7a430a0c8ece7486554bdc8cc0b2775734` (1039 cases, 20780 selector calls).
+- **Superseded digests (2026-10-16, after rebase onto main with #248: A6 prompt v42, read v39).** The digests above are stale. They are superseded by dev `5447bb9cc36518a87204218c807a6cc415cbb1f44db3065fce1c940ae0179007` (898 calls) and heldout `cb07e359d1054f47ca7347961f819b7a430a0c8ece7486554bdc8cc0b2775734` (20780 calls). The owner approval is unchanged. The dev smoke (run `run-dev-2026-10-16T05-44-49-416Z.json`) ran on the pre-rebase digest `9d185b9c...`, and its result is recorded separately.
+- **Run order.** The dev split runs first as a smoke run. The heldout run is not started by this decision; it needs its own go after the
+  dev smoke is reviewed. Selector calls stay Haiku, effort low, no tools, at most 1 call/s and 4 concurrent.
+
 ## ADR-0123 — Retrieval for the selector's few-shot examples, measured first: an offline, pre-registered four-arm experiment over a held-out split of the D12 gate, the existing `LocalVectorProvider` (no new vector database) and local `nomic-embed-text` embeddings pinned by digest, an owner-approved example pool kept disjoint from every gold corpus by a contamination lint, and runtime retrieval only behind a default-off flag after the experiment passes. Knowledge RAG over Jira / Confluence is out of scope. Phase 1 amends nothing; phase 2 would amend ADR-0120 D3 / D12 / A6-D7 and the ADR-0098 D8 limits.
 
 - **Status update (2026-10-16):** **Q1 accepted by the owner** (keep the JSON `LocalVectorProvider`), conditional on two
