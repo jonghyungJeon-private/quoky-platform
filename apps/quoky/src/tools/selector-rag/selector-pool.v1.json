@@ -4,11 +4,11 @@
   "batches": [
     {
       "batch": 1,
-      "status": "pending-owner-approval",
+      "status": "approved",
       "drafter": "agent",
       "draftedOn": "2026-10-16",
-      "approvedBy": null,
-      "approvedOn": null
+      "approvedBy": "owner:jonghyung.jeon",
+      "approvedOn": "2026-10-16"
     }
   ],
   "entries": [

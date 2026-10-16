@@ -26574,6 +26574,16 @@ The owner accepted ADR-0123 Q1 (keep the JSON `LocalVectorProvider`) on 2026-10-
    audit run, one plan-digest approval for the dev smoke run, and one for the held-out set.
 7. Cloud embeddings: confirm "not now" (separate ADR if ever).
 
+### Owner decisions (2026-10-16)
+
+- **Embedding model (sole retrieval model).** `nomic-embed-text-v2-moe` (digest `ff9c2f10ef5e`, space `nomic-embed-text-v2-moe@ff9c2f10ef5e@ollama0.40.5`)
+  is the only retrieval embedding model for ADR-0123. `nomic-embed-text` (v1.5) is not a retrieval candidate: its dry run failed
+  the audit (tau 0.925 flags 39 of 100 pool entries; low-stratum share 26.7%). The harness default (`DEFAULT_EMBEDDING_MODELS`)
+  and the plan both pin `RETRIEVAL_EMBEDDING_MODEL = 'nomic-embed-text-v2-moe'`.
+- **Pool batch 1 approved.** The 100 drafted examples of batch 1 (merged in #239) are approved by the owner
+  (`approvedBy: owner:jonghyung.jeon`, `approvedOn: 2026-10-16`). The drafter stays `agent`; the approver differs from it.
+  Pool entries and digest are unchanged by the approval (status and approval fields only).
+
 ### V1 / V2
 
 - `[NOW]` Phase 0 lint; phase 1 pool, audit, harness and experiment (offline).

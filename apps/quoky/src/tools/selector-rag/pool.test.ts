@@ -23,9 +23,16 @@ const entry = (over: Partial<PoolEntry> = {}): PoolEntry => ({
 });
 
 describe('ADR-0123 pool batch 1', () => {
-  it('has the documented status: pending the owner, never self-approved', () => {
-    expect(pool.batches).toEqual([expect.objectContaining({ batch: 1, status: 'pending-owner-approval', drafter: 'agent', approvedBy: null })]);
-    expect(approvedEntries(pool)).toEqual([]);
+  it('is owner-approved by someone other than the drafter (2026-10-16)', () => {
+    expect(pool.batches).toEqual([
+      expect.objectContaining({ batch: 1, status: 'approved', drafter: 'agent', approvedBy: 'owner:jonghyung.jeon', approvedOn: '2026-10-16' }),
+    ]);
+    expect(approvedEntries(pool)).toHaveLength(100);
+  });
+
+  it('never admits a batch approved by its own drafter', () => {
+    const selfApproved = { ...pool, batches: pool.batches.map((batch) => ({ ...batch, approvedBy: batch.drafter })) };
+    expect(approvedEntries(selfApproved)).toEqual([]);
   });
 
   it('passes the schema, identifier, credential, duplicate and n-gram lint against every gold case', () => {
