@@ -73,14 +73,17 @@ describe('the action corpus (A6-D7)', () => {
         { id: 'a6-bad-3', family: 'negative' as never, text: '안녕', expect: { entryId: 'todo.add', args: {}, outcome: 'ask' } },
       ],
     });
-    expect(problems).toEqual(['a6-bad-1: expect target', 'a6-bad-2: gold does not validate (ungrounded title)', 'a6-bad-3: expect reason']);
+    // A6-D3a amendment 1: "안녕" is no longer hidden as a request-form cost; the gold's empty args fail as they are.
+    expect(problems).toEqual(['a6-bad-1: expect target', 'a6-bad-2: gold does not validate (ungrounded title)', 'a6-bad-3: expect reason', 'a6-bad-3: gold does not validate (missing-arg title)']);
   });
 
   it('a perfect selector passes every gate on the seed through Core\'s own decision path', async () => {
     const plan = buildActionPlan('nl-action-eval', corpus.cases.map((golden) => golden.id), 'sha', { model: 'haiku', runs: 1, concurrency: 2 });
     const records = await runActionEvaluation({ corpus, plan, provider: goldProvider(corpus.cases), now: () => NOW });
-    // The golds out of reach under the positive request-form rule (its measured cost) are left out of this check.
+    // A6-D3a amendment 1: no execute gold is out of reach for its request shape any more (the old request-form cost). The
+    // one left is a bare "1번" answering an open question (answer path, never the selector).
     const cost = new Set(corpus.cases.filter(isRequestFormCost).map((golden) => golden.id));
+    expect([...cost]).toEqual(['a6-reference-todo.complete-034']);
     const misses = records.filter((record) => record.outcome !== 'hit' && record.outcome !== 'none' && !cost.has(record.id));
     expect(misses).toEqual([]);
     expect(summarizeAction(records.filter((record) => !cost.has(record.id)))).toMatchObject({ gatePassed: true, wrongTargets: 0, negativeCaptures: 0, spanExact: 1 });
@@ -259,12 +262,8 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
       const prepared = prepareSelectionInput(golden.text);
       if ('skip' in prepared) throw new Error(`${golden.id} skipped`);
       const validated = validateSelection(relabel, { offered, groundingText: prepared.groundingText, now: NOW, timeZone: 'Asia/Seoul', actions: true });
-      // An anchored colon head ("할 일 추가: …", "add todo: …") is the grammar's at runtime; under the positive request-form
-      // rule it is no request form for A6, so the relabel is a clarify there (scored apart).
-      if (/[가-힣]\s*[:：]/u.test(golden.text)) {
-        expect(validated, golden.id).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
-        continue;
-      }
+      // An anchored colon head ("할 일 추가: …") is the grammar's at runtime; since A6-D3a amendment 1 (no closed request form)
+      // its A6 relabel validates like every other one.
       expect(validated.ok && validated.value.args, golden.id).toEqual(relabel.args);
       // With the A6 entries offered the action is a relabeled hit, not an action capture; another action entry is a miss.
       expect(scoreReadRegression(golden, answer(relabel.entryId, relabel.args), NOW), golden.id).toMatchObject({ outcome: 'hit', relabeled: true });

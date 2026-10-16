@@ -156,7 +156,7 @@ let gluedNoun: RegExp | undefined;
 /** Built on first use: the vocabularies are declared further down this module. */
 function gluedNounPattern(): RegExp {
   if (gluedNoun !== undefined) return gluedNoun;
-  const verbs = [...new Set([...ACTION_VOCABULARY_KO, ...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS].map(normalizeForMatch).filter((word) => !/^[a-z0-9 .;-]+$/.test(word)))]
+  const verbs = [...new Set([...NL_ACTION_WORDS, ...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS].map(normalizeForMatch).filter((word) => !/^[a-z0-9 .;-]+$/.test(word)))]
     .sort((a, b) => b.length - a.length)
     .map((word) => word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*'));
   gluedNoun = new RegExp(`(?<=^|\\s|\\d|번|째)(${NOUN_ALTERNATION})(?=${verbs.join('|')})`, 'gu');
@@ -295,14 +295,14 @@ const DEICTIC_WITH_PARTICLES = new RegExp(`(?:${[...DEICTIC_KO, ...LAST_KO].sort
 /** An item-source noun of the catalog standing as its own word, with its particles ("13번 알림", "메일을"). */
 const SOURCE_NOUN_WITH_PARTICLES = new RegExp(`(?<=^|\\s)(?:${NOUN_ALTERNATION})${GLUED_PARTICLES}(?=${NOUN_END})`, 'gu');
 
-function contentTokens(span: string): string[] {
+function contentTokens(span: string, stripSourceNouns = true): string[] {
   let text = normalizeForMatch(span);
   text = text.replace(KO_ORDINAL_WITH_PARTICLES, ' ').replace(EN_ORDINAL_PATTERN, ' ');
   text = text.replace(NUMBER_WITH_PARTICLES, ' ');
   text = text.replace(DETERMINER_NOUN_ALL, ' ');
   text = text.replace(DEICTIC_WITH_PARTICLES, ' ');
   // A6 R1 review: an item-source noun names where an item lives, never what a to-do or reminder says ("13번 알림").
-  text = text.replace(SOURCE_NOUN_WITH_PARTICLES, ' ');
+  if (stripSourceNouns) text = text.replace(SOURCE_NOUN_WITH_PARTICLES, ' ');
   const tokens = text
     .replace(/[\p{P}\p{S}]+/gu, ' ')
     .split(/\s+/u)
@@ -422,9 +422,9 @@ export function isNlBulkRequest(groundingText: string): boolean {
 }
 
 /**
- * The closed action vocabularies of the A6 entries that act on an existing item (A6 R1 review, `actionGrounding`): the
- * owner must say the action itself. Stems match inside a word (Korean endings follow: 완료해줘, 지워줘, 꺼줘, 되돌려
- * 놔); Latin words are whole words. A message with only a reference ("2번도", "그걸로요", "13번 알림") grounds none.
+ * The closed action vocabularies of the A6 entries (A6 R1 review, `actionGrounding`). Since A6-D3a amendment 1 they only
+ * VETO (a negated clause that names the entry's action, a command before a retraction, the glued-noun boundary of
+ * {@link nlNamedItemSources}); a write no longer needs one of these words ("1번 할일 체크해줘"). Stems match inside a word.
  */
 // 끝 only in its completion forms (끝냈 / 끝났 / 끝내 / 끝마치): "언제 끝나?" is a question, not a completion. No 처리 or 체크:
 // "처리 방법", "체크해봐" are not completions (CA review).
@@ -444,177 +444,20 @@ const REMINDER_CREATE_WORDS: readonly string[] = [
   'remind', 'set a reminder', 'notify', 'alert me', 'ping me',
 ];
 const UNDO_WORDS: readonly string[] = ['원상복구', '되돌리기', '되돌', '돌려', '원래대로', '원상', '원복', '롤백', '무르', '물러', '취소', 'undo', 'revert', 'roll back', 'rollback'];
-/** Every Korean action word of the vocabularies above (for the glued-noun boundary of {@link nlNamedItemSources}). */
-const ACTION_VOCABULARY_KO: readonly string[] = [...TODO_COMPLETE_WORDS, ...TODO_CANCEL_WORDS, ...REMINDER_CANCEL_WORDS, ...UNDO_WORDS, ...TODO_ADD_WORDS, ...REMINDER_CREATE_WORDS];
-
-/** Where a clause ends after an action word: 말고, sentence punctuation or a line break. */
-const CLAUSE_END = /말고|[,.!?。;:~\n]/u;
 /**
- * A negation anywhere in the WHOLE message vetoes every write (Codex and CA reviews: a later retraction such as "완료해줄래?
- * 아니 하지마" counts): "-지 마/말아/않", "-진 마", a standalone or glued 안/못, 금지, 아니, 필요 없, 싫, 말고.
+ * Every action word of every A6 vocabulary. A6-D3a amendment 1: the vocabularies only VETO now (a negated clause that names
+ * the entry's action, a command before a retraction; see `request-shape.ts`); they never decide that a write runs.
  */
-const NEGATION_KO = /[지진](?:는|도|만)?\s*(?:마|말|않)|(?:^|\s)(?:안|못)(?=\s|$|되|돼|됐|해|했|하|할)|안\s*(?:해|하|되|돼|됐|할|함)|(?<!잘)못\s*(?:해|하|했|함)|금지|아니|아냐|아님|ㄴㄴ|노노|됐어|됐다|잠깐|필요\s*없|싫|말아|말고/u;
-const NEGATION_EN = /(?:^|\s)(?:don't|dont|do not|doesn't|didn't|shouldn't|won't|wouldn't|can't|cannot|never|not|no|nope|nah)(?=\s|$|[,.!?])/u;
-/**
- * After a request, a cancel / undo / stop word retracts it ("2번 완료해줘 취소", "2번 취소 그만해"), CA delta: the request
- * does not ground.
- */
-const RETRACTION_AFTER = /취소|캔슬|되돌|그만|철회|undo|cancel|nope|nah/u;
-/** A first-person subject makes the sentence the owner's own statement or volition, not a request ("내가 2번 완료할래"). */
-const FIRST_PERSON_KO = /(?:^|\s)(?:내가|제가|나는|저는|나도|저도)(?=\s)/u;
-/**
- * Reported speech or an example: a request form followed by 했던 / 했잖아 / 라고 / 하면 / 하고 / 했더니 / 그랬 quotes a
- * request instead of making one ("2번 완료해줘 했던 거", "undo 해줘 했더니"); 예를 들어 / 예컨대 frame an example.
- */
-const REPORTED_AFTER_REQUEST = /^\s*(?:했던|했잖아|했는데|했더니|라고|이라고|하면|하고|그랬|란|래서)/u;
-const QUOTED_REQUEST = /(?:줘|주세요|줄래|해)\s*(?:했던|했잖아|했는데|했더니|라고|이라고|하면|하고|그랬)/u;
-const EXAMPLE_FRAME = /예를\s*들어|예컨대|for example|e\.g\./u;
-/** A bare 해 / 꺼 / 지워 + space + an auxiliary is a done-statement or a thank-you, not a request ("완료해 뒀어", "꺼 놨어"). */
-const AUXILIARY_AFTER_BARE = /^\s+(?:줘서|줬|놨|놓|뒀|둔|둘|버렸|봤)/u;
-/**
- * Non-request modalities in the clause (veto): a deliberation (할까, 할지), an obligation (해야), an intention (하려고,
- * 할게), a supposition (겠지, 려나): "2번 취소할까 해", "완료해야 해", "취소하려고 해".
- */
-const NON_REQUEST_IN_CLAUSE = /(?:할|될|볼|줄|을|일|걸)까(?=\s|$|요)|(?:할|될|을)지(?=\s|$)|(?:해|돼|되어|줘|어)야(?=\s|$)|려고|할게|겠지|려나/u;
-/**
- * The POSITIVE request-form rule (orchestrator decision under the fix-loop cap, CA round 3): the action word must be the
- * head of an affirmative request — right after it (its own verb ending, an optional 처리 / 좀) comes a request ending from
- * this closed grammatical set (해줘, 해 주세요, 해줄래, 해 줄 수 있어, 해주실래요, 해 주시겠어요, 하자, 해, 해라, 놔, 둬,
- * 부탁해 …), or the word is itself a bare imperative (지워, 빼, 꺼, 넣어, 만들어 …). A request whose head is another verb
- * ("완료됐는지 보여줄래?") does not ground the action. A question grounds only in a polite request form (해줄래?, 해 줄 수
- * 있어?, 해 주시겠어요?). Anything else — a question, a wish, a statement, a bare noun ("2번 완료") — grounds nothing.
- */
-const KO_REQUEST_ENDING = '(?:할래요|할래|줘요|줘라|줘|주라|주세요|주십시오|줄래요|줄래|줄\\s*수\\s*있어요|줄\\s*수\\s*있어|줄\\s*수\\s*있나요|주실래요|주시겠어요|주실\\s*수\\s*있어요|주시겠습니까|놔요|놔|둬요|둬|두세요|해요|해라|하자|합시다|하세요|해|부탁해요|부탁해|부탁드려요|부탁드립니다|부탁합니다|부탁)';
-/**
- * Between the action word and the request ending only this closed light-verb material may stand: the word's own verb
- * ending, a complement marker (로, 다고: "완료로 바꿔줘", "끝냈다고 처리해줘"), a light noun (처리, 표시, 기록, 복구), 좀,
- * and a carrier verb (해, 바꿔, 옮겨, 시켜, 돌려: "완료시켜줘").
- */
-const KO_HEAD_REQUEST = new RegExp(
-  `^(?:려|어|아|워)?(?:으로|로|했다고|다고)?\\s*(?:처리|표시|기록|복구)?\\s*(?:좀\\s*)?(?:(?:해|바꿔|옮겨|시켜|돌려)\\s*)?${KO_REQUEST_ENDING}요*(?=$|\\s|[~!.?,:ㅎㅋ])`,
-  'u',
-);
-/** A bare imperative of a verb stem ("만들어", "되돌려", "지워"): the word's own ending, then the end of the word. */
-const KO_BARE_IMPERATIVE = /^(?:려|어|아|워)?(?=$|\s|[~!.,:ㅎㅋ])/u;
-const KO_IMPERATIVE_STEMS = /(?:지워|빼|꺼|끝내|없애|돌려|되돌|넣어|올려|적어|깨워|알려|만들)$/u;
-/**
- * The nominal command (명사형 종결): a verbal-noun action word that ENDS the whole message, only 처리 / 요 / 좀 / 부탁 after
- * it ("할 일에 'UAT 결과 정리' 추가", "2번도 완료", "13번 알림 취소"). Kept because the ratified A6 live phrases U4 and
- * U8c are in this form and the anchored Class A grammar already acts on it ("1번 완료"); questions and negations stay
- * vetoed. (A deliberate deviation from the stricter "bare noun never writes" proposal, reported for the owner.)
- */
-const KO_VERBAL_NOUN = /(?:완료|취소|삭제|추가|제거|제외|캔슬|등록|롤백|원복|원상복구|리마인드|되돌리기|원래대로)$/u;
-const KO_NOMINAL_COMMAND_TAIL = /^\s*(?:처리)?\s*(?:요|좀|부탁(?:해요|해|드려요|드립니다|합니다)?)?[\s~!.ㅎㅋ^]*$/u;
-/** The stems that are complete imperatives on their own (만들 and 되돌 need their ending). */
-const KO_COMPLETE_IMPERATIVES = /(?:지워|빼|꺼|끝내|없애|돌려|넣어|올려|적어|깨워|알려)$/u;
-const KO_POLITE_QUESTION = /줄래|줄\s*수\s*있|주실래요|주시겠|주실\s*수/u;
-/** English: the action word heads the clause, after "please" / "can-could-would-will you", or a carrier verb leads it. */
-const EN_REQUEST_LEAD = /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?/u;
-const EN_CARRIER = /^(?:mark|set|make|turn|put)\b/u;
-/** A statement or question verb that makes a message not a command ("2 is done", "did you cancel 2"). */
-const EN_STATEMENT = /(?:^|\s)(?:is|are|was|were|did|does|do|has|have|had|be|been|it's|i'm|i've)(?=\s|$)/u;
-const CLAUSE_START_EN = /.*(?:[,.!?;]|\bbut\b|\binstead\b)/su;
-const CLAUSE_END_EN = /[,.!?;]|\bbut\b|\binstead\b/u;
+export const NL_ACTION_WORDS: readonly string[] = [...new Set([...TODO_COMPLETE_WORDS, ...TODO_CANCEL_WORDS, ...REMINDER_CANCEL_WORDS, ...UNDO_WORDS, ...TODO_ADD_WORDS, ...REMINDER_CREATE_WORDS])];
 
 /**
- * Where a Korean clause ends: sentence punctuation, 말고, or a word ending in a sentence-final or connective ending
- * followed by a space ("필요 없어 취소해줘", "안 할 거야 삭제해줘", "아니 되돌려줘", "까먹지 않게 적어둬").
+ * A6-D3a amendment 1: whether the owner's frame (the prose without the selector's content spans) expresses anything beyond
+ * references, deictics, numbers, time words and fillers. "2번도", "그걸로요", "13번 알림" (a target entry) and "내일 9시
+ * 우유" (a payload entry, frame "") express no action. For a target entry an item-source noun is part of the reference
+ * ("13번 알림" names the item); for a payload entry it names what to make ("… 월세 이체 리마인더"), so it counts.
  */
-const KO_CLAUSE_BOUNDARY = /[,.!?。;:~\n]|말고|(?:야|어|요|다|래|니|게|지|음|함|돼|대)(?=\s)/gu;
-
-/** The part of `before` that belongs to the same clause as the word right after it. */
-function ownClauseBefore(before: string): string {
-  let start = 0;
-  for (const match of before.matchAll(KO_CLAUSE_BOUNDARY)) start = (match.index ?? 0) + match[0].length;
-  return before.slice(start);
-}
-
-/**
- * A negated clause that itself names this entry's action vetoes every write of the entry ("2번 취소하지 마 3번 빼줘"):
- * the owner refused that action somewhere in the message.
- */
-function negatedClauseNamesTheAction(text: string, words: readonly string[]): boolean {
-  const clauses: string[] = [];
-  let start = 0;
-  for (const match of text.matchAll(KO_CLAUSE_BOUNDARY)) {
-    const end = (match.index ?? 0) + match[0].length;
-    clauses.push(text.slice(start, end));
-    start = end;
-  }
-  clauses.push(text.slice(start));
-  // A clause ending in 말고 / -지 마 negates the words it holds; the next clause holds the negation of a "말고" pair too.
-  return clauses.some((clause, index) => {
-    const negated = NEGATION_KO.test(clause) || (index + 1 < clauses.length && /^\s*(?:마|말|않)/u.test(clauses[index + 1] ?? ''));
-    return negated && words.some((word) => clause.includes(normalizeForMatch(word)));
-  });
-}
-
-/**
- * A6 R1 review: whether one of an entry's action words occurs in the owner's prose as the head of an affirmative request
- * (the positive rule above). Any negation in the whole message vetoes every write.
- */
-export function nlActionWordGrounded(prose: string, words: readonly string[]): boolean {
-  const text = normalizeForMatch(prose).replace(/[’‘`´]/gu, "'");
-  // English: a negation anywhere vetoes. Korean: see koreanVeto (a reason clause such as "필요 없어 취소해줘" is not one).
-  // A quoted or reported request anywhere ("2번 완료해줘 했던 거 되돌려줘") or an example frame refuses the message.
-  if (NEGATION_EN.test(text) || EXAMPLE_FRAME.test(text) || QUOTED_REQUEST.test(text) || FIRST_PERSON_KO.test(text)) return false;
-  if (negatedClauseNamesTheAction(text, words)) return false;
-  for (const raw of words) {
-    const word = normalizeForMatch(raw);
-    if (/^[a-z0-9][a-z0-9 -]*$/.test(word)) {
-      const pattern = new RegExp(`(?<![a-z0-9])${word.replace(/ /g, '\\s+')}s?(?![a-z0-9])`, 'gu');
-      for (const match of text.matchAll(pattern)) {
-        const head = text.slice(0, match.index).replace(CLAUSE_START_EN, '').trim();
-        const after = text.slice((match.index ?? 0) + match[0].length);
-        const end = CLAUSE_END_EN.exec(after);
-        const clause = `${head} ${match[0]}`.trim();
-        const lead = EN_REQUEST_LEAD.exec(clause)?.[0] ?? '';
-        const body = clause.slice(lead.length);
-        const polite = /(?:can|could|would|will)\s+you/u.test(lead) || /please/u.test(lead);
-        // A nominal command: the action word ends the whole message with no statement verb ("reminder 12 cancel").
-        const nominal = /^[\s.!~]*(?:please)?[\s.!~]*$/u.test(after) && !EN_STATEMENT.test(text);
-        const headed = body.startsWith(match[0]) || EN_CARRIER.test(body) || nominal;
-        // A Latin action word inside a Korean request ("1번 done 처리해줘", "아까 거 undo 해줘").
-        const korean = KO_HEAD_REQUEST.exec(after);
-        const koreanRequest =
-          korean !== null && !NEGATION_KO.test(after) && end?.[0] !== '?' && !RETRACTION_AFTER.test(after.slice(korean[0].length)) && !REPORTED_AFTER_REQUEST.test(after.slice(korean[0].length));
-        if (koreanRequest) return true;
-        // A Korean request form was there but refused (quoted, retracted): the English reading does not rescue it.
-        if (korean !== null || RETRACTION_AFTER.test(after)) continue;
-        if (!headed || NEGATION_KO.test(text)) continue;
-        if (end?.[0] === '?' ? polite : true) return true;
-      }
-      continue;
-    }
-    for (let at = text.indexOf(word); at >= 0; at = text.indexOf(word, at + 1)) {
-      const after = text.slice(at + word.length);
-      const end = CLAUSE_END.exec(after);
-      const clause = end === null ? after : after.slice(0, end.index);
-      // A negation after the word anywhere in the message (a retraction: "완료해줄래? 아니 하지마"), or before it in its
-      // own clause ("2번 안 완료"), vetoes; a negation in an earlier clause is a reason ("필요 없어 취소해줘").
-      if (NEGATION_KO.test(after) || NEGATION_KO.test(ownClauseBefore(text.slice(0, at)))) continue;
-      if (NON_REQUEST_IN_CLAUSE.test(clause)) continue;
-      const request = KO_HEAD_REQUEST.exec(after);
-      // A bare imperative: a stem with its own ending ("만들어", "되돌려"), or a stem that is already one ("지워", "빼").
-      const bare = request === null && KO_IMPERATIVE_STEMS.test(word) ? KO_BARE_IMPERATIVE.exec(after) : null;
-      const bareOk = bare !== null && (bare[0] !== '' || KO_COMPLETE_IMPERATIVES.test(word));
-      // A nominal command never follows another request ("2번 완료해줘 취소" retracts the first, it cancels nothing).
-      const nominal = KO_VERBAL_NOUN.test(word) && KO_NOMINAL_COMMAND_TAIL.test(after) && !/(?:줘|주세요|줄래|해)(?=\s|$|[~!.?,])/u.test(text.slice(0, at));
-      if (request === null && !bareOk && !nominal) continue;
-      // What follows the request decides too: a retraction, reported speech or a done-statement auxiliary refuses (CA).
-      const following = after.slice((request ?? bare)?.[0].length ?? 0);
-      if (RETRACTION_AFTER.test(following) || REPORTED_AFTER_REQUEST.test(following) || AUXILIARY_AFTER_BARE.test(following)) continue;
-      if (end?.[0] === '?' && !(request !== null && KO_POLITE_QUESTION.test(request[0]))) continue;
-      return true;
-    }
-  }
-  return false;
-}
-
-/** Whether an entry's action word occurs at all (in any form): the service then asks for a request instead of chatting. */
-export function nlActionWordPresent(prose: string, words: readonly string[]): boolean {
-  const text = normalizeForMatch(prose);
-  return words.some((word) => text.includes(normalizeForMatch(word)));
+export function nlFrameExpressesAction(frame: string, sourceNounIsReference: boolean): boolean {
+  return contentTokens(frame, sourceNounIsReference).length > 0;
 }
 
 const todoAdd: NlCatalogEntry = {

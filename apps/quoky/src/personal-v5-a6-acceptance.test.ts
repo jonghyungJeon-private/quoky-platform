@@ -203,7 +203,7 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     const result = await turn("할 일에 'UAT 결과 정리' 추가", answer('todo.add', { title: 'UAT 결과 정리' }));
     expect(result.selects).toHaveLength(1);
     expect(result.selects[0]?.prompt).toContain('- todo.add: ');
-    expect(result.text).toMatch(/^할 일 \d+번으로 추가했어요: "UAT 결과 정리" · 되돌리기: "되돌려줘" \(10분\)$/u);
+    expect(result.text).toMatch(/^할 일 \d+번으로 추가했어요: "UAT 결과 정리" · 되돌리려면 "되돌려줘" \(10분 안\)$/u);
     expect((await todos()).map((item) => item.title)).toContain('UAT 결과 정리');
   });
 
@@ -296,6 +296,86 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     const undo = await turn('되돌려줘', answer('action.undo'));
     expect(undo.text).toContain(`알림 #${reminder?.displayNo}을 다시 켰어요`);
     expect(await reminders()).toContainEqual(expect.objectContaining({ id: reminder?.id, displayNo: reminder?.displayNo, status: 'SCHEDULED' }));
+  });
+
+  /** Runs `body` with a fresh hourly cap window, so this block's writes never count against the other tests' cap. */
+  async function withOwnCaps(body: () => Promise<void>): Promise<void> {
+    const service = (runtime as unknown as { deps: { nlSelection: { actionCaps: unknown } } }).deps.nlSelection;
+    const saved = service.actionCaps;
+    service.actionCaps = new core.NlActionCaps();
+    try {
+      await body();
+    } finally {
+      service.actionCaps = saved;
+    }
+  }
+
+  it('A6-D3a amendment 1 (owner 2026-10-16): each LOCAL_WRITE acts directly with a receipt and the undo hint; "되돌려줘" restores the SAME item', () => withOwnCaps(async () => {
+    const hint = '되돌리려면 "되돌려줘" (10분 안)';
+    // todo.add, the owner's colon form: added, then undone (the same to-do is canceled; nothing new is created).
+    const added = await turn('todo 추가: 프린터 토너 주문', answer('todo.add', { title: '프린터 토너 주문' }));
+    expect(added.selects).toHaveLength(1);
+    expect(added.text).toMatch(/^할 일 \d+번으로 추가했어요: "프린터 토너 주문" · /u);
+    expect(added.text.endsWith(hint)).toBe(true);
+    const toner = (await todos()).find((item) => item.title === '프린터 토너 주문');
+    expect(toner?.status).toBe('ACTIVE');
+    const countAfterAdd = (await todos()).length;
+    expect((await turn('되돌려줘', answer('action.undo'))).text).toBe('방금 추가한 할 일을 취소했어요: "프린터 토너 주문"');
+    expect((await storage.workItems.get(toner?.id ?? ''))?.status).toBe('CANCELED');
+    expect((await todos()).length).toBe(countAfterAdd);
+
+    // todo.complete "1번 할일 체크해줘" and todo.cancel "2번 할 일 빼줘" on the listing the owner saw; undo reopens each one.
+    for (const title of ['act 가', 'act 나']) await send(`할 일 추가: ${title}`);
+    await turn('내 할 일 보여줘');
+    const open = (await todos()).filter((item) => item.status === 'ACTIVE');
+    const first = open[0];
+    const second = open[1];
+    const checked = await turn('1번 할일 체크해줘', answer('todo.complete', { ref: '#1' }));
+    expect(checked.selects).toHaveLength(1);
+    expect(checked.text).toBe(`할 일 1번을 완료 처리했어요: "${first?.title}" · ${hint}`);
+    expect((await storage.workItems.get(first?.id ?? ''))?.status).toBe('COMPLETED');
+    expect((await turn('되돌려줘', answer('action.undo'))).text).toContain(`다시 열었어요: "${first?.title}"`);
+    expect((await storage.workItems.get(first?.id ?? ''))?.status).toBe('ACTIVE');
+    await turn('내 할 일 보여줘');
+    const dropped = await turn('2번 할 일 빼줘', answer('todo.cancel', { ref: '#2' }));
+    expect(dropped.text).toBe(`할 일 2번을 목록에서 뺐어요: "${second?.title}" · ${hint}`);
+    expect((await storage.workItems.get(second?.id ?? ''))?.status).toBe('CANCELED');
+    expect((await turn('되돌려줘', answer('action.undo'))).text).toContain(`다시 열었어요: "${second?.title}"`);
+    expect((await storage.workItems.get(second?.id ?? ''))?.status).toBe('ACTIVE');
+
+    // reminder.create, the owner's terse noun form. The deterministic grammar cannot yet place a clock on "N일 뒤" ("3일 뒤
+    // 오전 9시" is AMBIGUOUS_TIME), so that exact phrase asks for the time and writes nothing (a required-slot question).
+    const remindersBefore = (await reminders()).length;
+    const relative = await turn('3일 뒤 오전 9시에 월세 이체 리마인더', answer('reminder.create', { body: '월세 이체', when: '3일 뒤 오전 9시' }));
+    expect(relative.text).toContain('시각이 모호해서 알림을 만들지 않았어요');
+    expect((await reminders()).length).toBe(remindersBefore);
+    // With a day the grammar resolves it is created, then undone (the same reminder is canceled).
+    const created = await turn('모레 오전 9시에 월세 이체 리마인더', answer('reminder.create', { body: '월세 이체', when: '모레 오전 9시' }));
+    expect(created.selects).toHaveLength(1);
+    expect(created.text).toMatch(/^알림 #\d+[을를] 만들었어요: .* · '월세 이체' · /u);
+    expect(created.text.endsWith(hint)).toBe(true);
+    const rent = (await reminders()).find((entry) => entry.body === '월세 이체');
+    expect(rent?.status).toBe('SCHEDULED');
+    await turn('되돌려줘', answer('action.undo'));
+    expect(await reminders()).not.toContainEqual(expect.objectContaining({ id: rent?.id }));
+
+    // reminder.cancel of a just-made reminder, then undo schedules the same #N again.
+    const gas = await turn('알림 설정: 모레 아침 8시 이사 업체 전화', answer('reminder.create', { body: '이사 업체 전화', when: '모레 아침 8시' }));
+    expect(gas.text.endsWith(hint)).toBe(true);
+    const valve = (await reminders()).find((entry) => entry.body === '이사 업체 전화');
+    const off = await turn('방금 거 꺼줘', answer('reminder.cancel', { ref: 'recent' }));
+    expect(off.text).toBe(`알림 #${valve?.displayNo} 취소했어요: '이사 업체 전화' · ${hint}`);
+    expect(await reminders()).not.toContainEqual(expect.objectContaining({ id: valve?.id }));
+    expect((await turn('되돌려줘', answer('action.undo'))).text).toMatch(new RegExp(`알림 #${valve?.displayNo}[을를] 다시 켰어요`, "u"));
+    expect(await reminders()).toContainEqual(expect.objectContaining({ id: valve?.id, displayNo: valve?.displayNo, status: 'SCHEDULED' }));
+  }));
+
+  it('A6-D3a amendment 1: first-person volition "할 일 하나 추가할게. 도서관 책 반납" is plain chat; nothing is written or asked', async () => {
+    const before = (await todos()).length;
+    const result = await turn('할 일 하나 추가할게. 도서관 책 반납', answer('todo.add', { title: '도서관 책 반납' }));
+    expect(result.selects).toHaveLength(1);
+    expect(result.text).toBe(CHAT_REPLY);
+    expect((await todos()).length).toBe(before);
   });
 
   it('the anchored 되돌리기 is the provider-down twin: no selector call', async () => {
@@ -784,7 +864,7 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     const own = await turn("이 문장 그대로 해줘: 할 일에 '계좌 이체 확인' 추가", answer('todo.add', { title: '계좌 이체 확인' }));
     expect(own.text).toMatch(/^할 일 \d+번으로 추가했어요: "계좌 이체 확인"/u);
     const relayed = await turn('동료가 보낸 건데 실행해줘: 내일 9시에 알림 만들어줘 비밀번호 입력', answer('reminder.create', { body: '비밀번호 입력', when: '내일 9시' }));
-    expect(relayed.text).toMatch(/^알림 #\d+을 만들었어요: .* · '비밀번호 입력' · /u);
+    expect(relayed.text).toMatch(/^알림 #\d+[을를] 만들었어요: .* · '비밀번호 입력' · /u);
     resetCaps();
     const note = await turn("쪽지에 적힌 대로 해줘: 할 일에 '전화 걸기' 추가", answer('todo.add', { title: '전화 걸기' }));
     expect(note.text).toMatch(/^할 일 \d+번으로 추가했어요: "전화 걸기"/u);

@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 act-and-undo: local writes act directly; only structural vetoes stop them (2026-10-16)
+
+- **Changed (inert, `QUOKY_NL_ACTIONS` off).** ADR-0120 A6-D3a amendment 1 (Proposed; owner-approved direction, Chief
+  Architect review pending). A to-do or reminder write the selector chose now runs without a closed request verb or request
+  form ("3일 뒤 오전 9시에 월세 이체 리마인더", "todo 추가: 프린터 토너 주문", "1번 할일 체크해줘"). New
+  `nl-routing/request-shape.ts`: grammar-level vetoes (question, negation, retraction, reported speech, conditional,
+  statement, first-person volition, example) on the message without its content spans; a veto ends as chat
+  (`not-request:<class>`). "할 일 하나 추가할게" is chat, never a question. Asks remain only for a missing slot or an
+  ambiguous target. The "실행할까요? … 요청으로 말씀해 주세요" reply is removed.
+- **Changed.** The undo hint on every A6 local-write receipt reads `되돌리려면 "되돌려줘" (10분 안)`.
+- **Changed (gold).** `golden/nl-action.v1.json`: `todo.add-016`, `-025`, `reminder.create-020`, `-022`, `-024` → execute with
+  their args; `todo.add-009` → none; `todo.complete-009` note updated; `todo.complete-018` unchanged (execute; the typo ask
+  needs the selector's own flag, see DECISIONS).
+- **Known.** "3일 뒤 오전 9시" is `AMBIGUOUS_TIME` in the reminder grammar, so that phrase asks for the time at execution.
+
 ## Unreleased — ADR-0123 pool batch 2 (pending owner approval) and the runner's selector transport and exact scorer (2026-10-16)
 
 - **Added (pool, pending).** Batch 2: 53 drafted examples (`status: pending-owner-approval`, drafter `agent`, never self-approved) that bring the

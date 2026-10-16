@@ -236,7 +236,7 @@ export interface ReminderBriefTextInput {
 }
 
 /** ADR-0120 amendment A6-D3: the undo hint of a natural-language reminder action (the 10-minute window). */
-const A6_UNDO_HINT = '되돌리기: "되돌려줘" (10분)';
+const A6_UNDO_HINT = '되돌리려면 "되돌려줘" (10분 안)';
 
 export class ReminderReplyComposer {
   /** "10월 3일(토) 오전 9:00에 '회의 준비' 알려드릴게요. (#4 · 취소: '알림 4 취소')" */
@@ -266,7 +266,7 @@ export class ReminderReplyComposer {
     return `${reminderRepeatLabel(reminder.schedule)} ${recurringClock(reminder.schedule)} (첫 알림 ${formatAbsolute(first, reminder.timeZone, now)})`;
   }
 
-  /** A6-D3 echo: `알림 #N을 만들었어요: 10월 15일(목) 오전 9:00 · '물 마시기' · 되돌리기: "되돌려줘" (10분)`. */
+  /** A6-D3 echo: `알림 #N을 만들었어요: 10월 15일(목) 오전 9:00 · '물 마시기' · 되돌리려면 "되돌려줘" (10분 안)`. */
   actionCreated(reminder: Reminder, now: IsoTimestamp): string {
     const what = reminder.kind === 'BRIEF' ? '오늘의 브리핑' : `'${reminder.body}'`;
     return `${withObjectParticle(`알림 #${reminder.displayNo}`)} 만들었어요: ${this.scheduleText(reminder, now)} · ${what} · ${A6_UNDO_HINT}`;

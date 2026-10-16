@@ -153,14 +153,8 @@
    "id": "a6-paraphrase-todo.add-009",
    "family": "paraphrase",
    "text": "할 일 하나 추가할게. 도서관 책 반납",
-   "expect": {
-    "entryId": "todo.add",
-    "args": {},
-    "outcome": "ask",
-    "reason": "ambiguous",
-    "acceptsAnyQuestion": true
-   },
-   "note": "was act-todo-add-009 [owner gold decision 2026-10-16: ask; was execute]"
+   "expect": "none",
+   "note": "was act-todo-add-009 [owner decision 2026-10-16 (A6-D3a amendment 1, act directly + undo): none; first-person volition \"추가할게\" is the owner's own act, never a question; was ask]"
   },
   {
    "id": "a6-paraphrase-todo.add-010",
@@ -246,12 +240,12 @@
    "text": "todo 추가: 프린터 토너 주문",
    "expect": {
     "entryId": "todo.add",
-    "args": {},
-    "outcome": "ask",
-    "reason": "ambiguous",
-    "acceptsAnyQuestion": true
+    "args": {
+     "title": "프린터 토너 주문"
+    },
+    "outcome": "execute"
    },
-   "note": "was act-todo-add-016 [owner gold decision 2026-10-16: ask; was execute]"
+   "note": "was act-todo-add-016 [owner decision 2026-10-16 (A6-D3a amendment 1, act directly + undo): execute; was ask (the closed request-form rule refused it)]"
   },
   {
    "id": "a6-paraphrase-todo.add-017",
@@ -363,12 +357,12 @@
    "text": "투두에 \"회의실 정리\" 추가 ㄱㄱ",
    "expect": {
     "entryId": "todo.add",
-    "args": {},
-    "outcome": "ask",
-    "reason": "ambiguous",
-    "acceptsAnyQuestion": true
+    "args": {
+     "title": "회의실 정리"
+    },
+    "outcome": "execute"
    },
-   "note": "was act-todo-add-025 [owner gold decision 2026-10-16: ask; was execute]"
+   "note": "was act-todo-add-025 [owner decision 2026-10-16 (A6-D3a amendment 1, act directly + undo): execute; was ask (the closed request-form rule refused it)]"
   },
   {
    "id": "a6-paraphrase-todo.add-026",
@@ -887,7 +881,7 @@
      "id": "todo-1"
     }
    },
-   "note": "was act-todo-complete-009 [owner gold decision 2026-10-16: execute todo.complete #1 (체크해줘 read as 완료); was none, PENDING owner approval]"
+   "note": "was act-todo-complete-009 [owner decision 2026-10-16 (A6-D3a amendment 1, act directly + undo): execute todo.complete #1, unchanged since the 2026-10-16 gold decision; now reachable without a completion word]"
   },
   {
    "id": "a6-paraphrase-todo.complete-010",
@@ -2863,12 +2857,13 @@
    "text": "오늘 밤 10시에 알림: 가스 밸브 잠그기",
    "expect": {
     "entryId": "reminder.create",
-    "args": {},
-    "outcome": "ask",
-    "reason": "ambiguous",
-    "acceptsAnyQuestion": true
+    "args": {
+     "body": "가스 밸브 잠그기",
+     "when": "오늘 밤 10시"
+    },
+    "outcome": "execute"
    },
-   "note": "was act-reminder-create-020 [owner gold decision 2026-10-16: ask (terse form asks to restate); was execute, PENDING owner approval (A6 R1 CA delta, 2026-10-15)]"
+   "note": "was act-reminder-create-020 [owner decision 2026-10-16 (A6-D3a amendment 1, act directly + undo): execute; was ask (the closed request-form rule refused it)]"
   },
   {
    "id": "a6-paraphrase-reminder.create-021",
@@ -2890,12 +2885,13 @@
    "text": "3일 뒤 오전 9시에 월세 이체 리마인더",
    "expect": {
     "entryId": "reminder.create",
-    "args": {},
-    "outcome": "ask",
-    "reason": "ambiguous",
-    "acceptsAnyQuestion": true
+    "args": {
+     "body": "월세 이체",
+     "when": "3일 뒤 오전 9시"
+    },
+    "outcome": "execute"
    },
-   "note": "was act-reminder-create-022 [owner gold decision 2026-10-16: ask (terse form asks to restate); was execute, PENDING owner approval (A6 R1 CA delta, 2026-10-15)]"
+   "note": "was act-reminder-create-022 [owner decision 2026-10-16 (A6-D3a amendment 1, act directly + undo): execute; was ask (the closed request-form rule refused it)]"
   },
   {
    "id": "a6-paraphrase-reminder.create-023",
@@ -2917,12 +2913,13 @@
    "text": "알림 설정: 모레 아침 8시 이사 업체 전화",
    "expect": {
     "entryId": "reminder.create",
-    "args": {},
-    "outcome": "ask",
-    "reason": "ambiguous",
-    "acceptsAnyQuestion": true
+    "args": {
+     "body": "이사 업체 전화",
+     "when": "모레 아침 8시"
+    },
+    "outcome": "execute"
    },
-   "note": "was act-reminder-create-024 [owner gold decision 2026-10-16: ask; was execute]"
+   "note": "was act-reminder-create-024 [owner decision 2026-10-16 (A6-D3a amendment 1, act directly + undo): execute; was ask (the closed request-form rule refused it)]"
   },
   {
    "id": "a6-paraphrase-reminder.create-025",

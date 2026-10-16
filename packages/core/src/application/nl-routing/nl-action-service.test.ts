@@ -731,3 +731,110 @@ describe('A6 R1 review: a scripted wrong selector never writes (Codex P1 strings
     expect(w.session().metadata?.[LAST_SELECTION_METADATA_KEY]).toBeUndefined();
   });
 });
+
+describe('A6-D3a amendment 1 (owner-approved direction 2026-10-16): a chosen LOCAL_WRITE acts; only structure vetoes it', () => {
+  const run = async (text: string, entryId: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
+    const w = world({ level: 'local', script: () => out(entryId, args, extra) });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3, 4], 0));
+    const decision = await w.decide(text, { now: at(1) });
+    return { w, decision };
+  };
+
+  it('the owner\'s live shadow phrases execute directly with the args from the text (no "할까요?")', async () => {
+    const cases: Array<[string, string, Record<string, unknown>]> = [
+      ['3일 뒤 오전 9시에 월세 이체 리마인더', 'reminder.create', { body: '월세 이체', when: '3일 뒤 오전 9시' }],
+      ['오늘 밤 10시에 알림: 가스 밸브 잠그기', 'reminder.create', { body: '가스 밸브 잠그기', when: '오늘 밤 10시' }],
+      ['알림 설정: 모레 아침 8시 이사 업체 전화', 'reminder.create', { body: '이사 업체 전화', when: '모레 아침 8시' }],
+      ['todo 추가: 프린터 토너 주문', 'todo.add', { title: '프린터 토너 주문' }],
+      ['투두에 "회의실 정리" 추가 ㄱㄱ', 'todo.add', { title: '회의실 정리' }],
+      ['1번 할일 체크해줘', 'todo.complete', { ref: '#1' }],
+      ['2번 할 일 빼', 'todo.cancel', { ref: '#2' }],
+    ];
+    for (const [text, entryId, args] of cases) {
+      const { w, decision } = await run(text, entryId, args);
+      expect(decision, text).toMatchObject({ kind: 'execute', command: { entryId, args } });
+      expect(actionLogs(w).some((log) => typeof log.fields?.reason === 'string' && String(log.fields.reason).startsWith('not-request')), text).toBe(false);
+    }
+    const { decision } = await run('1번 할일 체크해줘', 'todo.complete', { ref: '#1' });
+    expect(decision).toMatchObject({ kind: 'execute', command: { target: { source: 'todo', id: 'todo-1' } } });
+  });
+
+  it('first-person volition is chat (none), never a question: "할 일 하나 추가할게. 도서관 책 반납"', async () => {
+    for (const [text, entryId, args] of [
+      ['할 일 하나 추가할게. 도서관 책 반납', 'todo.add', { title: '도서관 책 반납' }],
+      ['할 일 하나 추가할게. 도서관 책 반납', 'todo.add', { title: '책 반납' }],
+      ['도서관 책 반납 내가 할 일에 추가할게요', 'todo.add', { title: '도서관 책 반납' }],
+      ['2번은 내가 완료할래', 'todo.complete', { ref: '#2' }],
+      ['내일 9시에 병원 가는 거 알아서 적어둘게', 'reminder.create', { body: '병원 가는 거', when: '내일 9시' }],
+      ["I'll add milk to my todos", 'todo.add', { title: 'milk' }],
+    ] as const) {
+      const { w, decision } = await run(text, entryId, args);
+      expect(decision, text).toEqual({ kind: 'none' });
+      expect(actionLogs(w).at(-1)?.fields, text).toMatchObject({ entryId, result: 'refused', reason: 'not-request:volition' });
+    }
+    // Shadow logs the same refusal as `shadow`.
+    const shadow = world({ level: 'shadow', script: () => out('todo.add', { title: '도서관 책 반납' }) });
+    expect((await shadow.decide('할 일 하나 추가할게. 도서관 책 반납', { now: at(1) })).kind).toBe('none');
+    expect(actionLogs(shadow).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'not-request:volition' });
+  });
+
+  it('every veto class ends as chat with its own closed reason (Korean and English)', async () => {
+    const vetoed: Array<[string, string, Record<string, unknown>, string]> = [
+      ['2번 완료하는 법 알려줘', 'todo.complete', { ref: '#2' }, 'question'],
+      ['how do I complete 2?', 'todo.complete', { ref: '#2' }, 'question'],
+      ['2번 완료하지 마', 'todo.complete', { ref: '#2' }, 'negation'],
+      ["don't complete 2", 'todo.complete', { ref: '#2' }, 'negation'],
+      ['2번 완료해줘 아 취소', 'todo.complete', { ref: '#2' }, 'retraction'],
+      ['팀장님이 할 일에 보고서 추가하래', 'todo.add', { title: '보고서' }, 'reported'],
+      ['my boss told me to add the report to my todos', 'todo.add', { title: 'the report' }, 'reported'],
+      ['비 오면 내일 9시에 우산 알려줘', 'reminder.create', { body: '우산', when: '내일 9시' }, 'conditional'],
+      ['if it rains remind me tomorrow at 9am to take an umbrella', 'reminder.create', { body: 'take an umbrella', when: 'tomorrow at 9am' }, 'conditional'],
+      ['2번 완료했어', 'todo.complete', { ref: '#2' }, 'statement'],
+      ['I already finished 2', 'todo.complete', { ref: '#2' }, 'statement'],
+      ['제가 2번 취소할게요', 'todo.cancel', { ref: '#2' }, 'volition'],
+      ['예를 들어 2번 완료해줘', 'todo.complete', { ref: '#2' }, 'example'],
+    ];
+    for (const [text, entryId, args, veto] of vetoed) {
+      const { w, decision } = await run(text, entryId, args);
+      expect(decision, text).toEqual({ kind: 'none' });
+      expect(actionLogs(w).at(-1)?.fields?.reason, text).toBe(`not-request:${veto}`);
+    }
+  });
+
+  it('asks only for a missing required slot or an ambiguous target', async () => {
+    // A reminder without a time: the slot question, nothing written.
+    const noTime = await run('월세 이체 리마인더 걸어줘', 'reminder.create', { body: '월세 이체' });
+    expect(noTime.decision.kind).toBe('ask');
+    expect(actionLogs(noTime.w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'missing-arg' });
+    // A number the owner never saw in the listing: the target question.
+    const outOfRange = await run('9번 할일 체크해줘', 'todo.complete', { ref: '#9' });
+    expect(outOfRange.decision.kind).toBe('ask');
+    expect(actionLogs(outOfRange.w).at(-1)?.fields).toMatchObject({ result: 'asked', reason: 'out-of-range' });
+    // A payload with nothing else said is content, not an action: restate ("내일 9시 우유").
+    expect((await run('내일 9시 우유', 'reminder.create', { body: '우유', when: '내일 9시' })).decision.kind).toBe('ask');
+    // A reference with nothing else said is chat ("2번도").
+    expect((await run('2번도', 'todo.complete', { ref: '#2' })).decision).toEqual({ kind: 'none' });
+  });
+
+  it('typo case "3번 완룐 처리해줘": Core has no typo list; the selector\'s own NEEDS_CLARIFICATION flag is what asks', async () => {
+    const flagged = await run('3번 완룐 처리해줘', 'todo.complete', { ref: '#3' }, { ambiguity: 'NEEDS_CLARIFICATION' });
+    expect(flagged.decision.kind).toBe('ask');
+    expect(actionLogs(flagged.w).at(-1)?.fields).toMatchObject({ result: 'asked', reason: 'ambiguous' });
+    // A CLEAR selection of the same words executes: nothing in Core recognises the misspelling.
+    expect((await run('3번 완룐 처리해줘', 'todo.complete', { ref: '#3' })).decision).toMatchObject({ kind: 'execute', command: { target: { id: 'todo-3' } } });
+  });
+
+  it('span grounding stays: a title or body that is not verbatim in the message never writes', async () => {
+    for (const [text, entryId, args] of [
+      ['todo 추가: 프린터 토너 주문', 'todo.add', { title: '프린터 토너 주문하기' }],
+      ['3일 뒤 오전 9시에 월세 이체 리마인더', 'reminder.create', { body: '월세 송금', when: '3일 뒤 오전 9시' }],
+      ['3일 뒤 오전 9시에 월세 이체 리마인더', 'reminder.create', { body: '월세 이체', when: '사흘 뒤 9시' }],
+    ] as const) {
+      const { decision } = await run(text, entryId, args);
+      expect(decision.kind, `${text} ${JSON.stringify(args)}`).not.toBe('execute');
+    }
+    // A negation inside delimited content is content ("…알림: 가스 밸브 잠그지 마"); undelimited at the end it vetoes.
+    expect((await run('오늘 밤 10시에 알림: 가스 밸브 잠그지 마', 'reminder.create', { body: '가스 밸브 잠그지 마', when: '오늘 밤 10시' })).decision.kind).toBe('execute');
+    expect((await run('할 일에 우유 추가하지 마', 'todo.add', { title: '우유 추가하지 마' })).decision).toEqual({ kind: 'none' });
+  });
+});

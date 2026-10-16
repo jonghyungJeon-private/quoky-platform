@@ -26690,3 +26690,121 @@ it never widens a write. Inert while `QUOKY_NL_ACTIONS` is `off`. No prompt, TTL
    slot and is not touched. Its listings and drift lists are written to the same `quoky.lastListing` record, so they are
    ordered by the same timestamps (a drift list is the owner's newest view and outranks an older `lastAction` for
    "그거"), and `recordReceipt` still writes every echo with the inbound message id.
+
+## ADR-0120 amendment A6-D3a amendment 1 — act-and-undo for local writes: a LOCAL_WRITE the selector chose runs unless a structural veto says the sentence is not a request; the closed request-verb and request-form requirement is removed (Proposed, 2026-10-16)
+
+- **Status:** **Proposed.** Owner-approved direction on 2026-10-16; Chief Architect review pending. Implemented on branch
+  `claude/v5-a6-act-undo`, inert while `QUOKY_NL_ACTIONS` is `off` (the default). Promotion is shadow-first (gates below).
+- **Date:** 2026-10-16
+- **Amends:** the A6 R1 "positive request-form rule" (A6 R1 scope reduction, orchestrator decision 2026-10-15) and the A6 R1
+  review rule that every LOCAL_WRITE needs a word of its entry's closed action vocabulary (`actionGrounding`). The A6-D3a
+  input guard (one plain line, no hidden characters, no structure markers, no exact-command form) is **unchanged**.
+- **Reaffirms unchanged:** ADR-0120 D10 (no new phrase, verb or pattern; a miss becomes a corpus case), A6-D1 (closed
+  entries), A6-D2 (ref grounding, resolution, the #233 listing snapshot and the #235 reference priority), A6-D3 span
+  grounding and payload rules, A6-D3b (kill switch atomic with the write), the caps, the per-action inverse undo, and the
+  R3/R4 external writes (`slack.post`, `calendar.create`, Jira) with their preview and one-time approval.
+
+### Context
+
+The owner wants Quoky to act like a personal assistant, not a chatbot that asks "할까요?" each time. In a shadow-mode live
+test the A6 selector chose the correct entry and target for all 8 write requests the owner sent, and the closed-set
+request-form grounding refused every one (`nl_action.decided` reason `no-action-word`): for example "3일 뒤 오전 9시에 월세
+이체 리마인더", "오늘 밤 10시에 알림: 가스 밸브 잠그기", "todo 추가: 프린터 토너 주문", "1번 할일 체크해줘". The rule
+needed both a word of a closed action vocabulary and an affirmative request ending from a closed set. Extending either
+list phrase by phrase is the hardcoding the owner forbids (D10).
+
+### Decision
+
+1. **A LOCAL_WRITE acts when the selector chose it, its arguments validate and no structural veto applies.** Entries:
+   `todo.add`, `todo.complete`, `todo.cancel`, `reminder.create`, `reminder.cancel`, `action.undo`. `item.summarize`
+   (ITEM_READ) is not affected: it never had the request-form rule and keeps its content-word check. No request verb and
+   no request form is required. The execution receipt states what was done and ends with the undo hint
+   `되돌리려면 "되돌려줘" (10분 안)`; "되돌려줘" restores the same item to its original state (the per-action inverse).
+2. **Structural vetoes (grammar, never topics or verbs).** They run on the frame: the owner's prose (pasted structures
+   removed) without the selector's content spans (`title`, `body`, `match`; `when` stays), so content such as a to-do
+   "야식 먹지 않기" is not read as a negation. A content span that ends the message undelimited (no colon or quote before
+   it) still lends its negation and question mark, so a span cannot swallow "…추가하지 마". Classes (`request-shape.ts`):
+   - `question`: a question mark without a polite request form (줄래, 줄 수 있어, 주시겠어요, can/could/would/will you,
+     please); a how-to or wh-form (어떻게, -는 법, 방법, 언제, 왜, how/what/…); capability or deliberation (할 수 있어,
+     할까, 할지); an interrogative ending; the entry's action named only in an embedded question ("완료됐는지 보여줄래?");
+   - `negation`: Korean per clause (the last clause, a negator spanning the last clause boundary, or a negated clause
+     that names the entry's own action; a negation in an earlier clause is a reason: "필요 없어 취소해줘"); English anywhere;
+   - `retraction`: a bare retraction after a command ("…완료해줘 취소", "…추가 ㄱㄱ 아니 취소"), 철회, 그만해;
+   - `reported`: a quoted request ("…해줘 했더니"), the quotative -라고/-자고/-달라고/-다고 + a speech verb, hearsay
+     endings, the contracted quotatives on 하/으/달/주 ("추가하래", "해 달래"), "told/asked me to";
+   - `conditional`: -면, -거든, 만약/만일, -ㄹ 경우, if/unless/in case/wish;
+   - `statement`: a finite past form in the last clause (the past marker followed only by a sentence ending), a
+     thank-you for a done act (줘서), an existential or copular last predicate (있어, -이야), a copular sentence ending on
+     a topic-marked noun, the action named only as a modifier with no request ending ("2번 완료된거 맞아"), is/was/did/
+     already in the last English clause;
+   - `volition`: a first-person subject (내가/제가/나는/저는), a promise ending -(으)ㄹ게 that ends its sentence,
+     intention/obligation in the last clause (-려고, -야지, -야 해), "I'll", "let me";
+   - `example`: 예를 들어, 예컨대, for example.
+   Every veto ends the turn as chat (`none`), logged `not-request:<class>`; shadow logs it as `shadow`. **First-person
+   volition is `none`, never a question** (owner: "추가할게" means the owner will do it).
+3. **No action expressed.** A frame with nothing but references, deictics, numbers, time words and fillers expresses no
+   action: a target entry is chat ("2번도", "그걸로요", "13번 알림": the item-source noun is part of the reference); a
+   payload entry asks to restate ("내일 9시 우유"; here a source noun such as 리마인더 does count, it names what to make).
+4. **Asking is only for a missing required slot or an ambiguous target** (a reminder without a time, several matches, an
+   out-of-range or stale listing, other-source), plus the existing selector `NEEDS_CLARIFICATION` flag. The
+   "실행할까요? 요청으로 말씀해 주세요" reply is removed.
+5. **The vocabularies only veto.** `actionGrounding` stays on the entries for the negated-clause check, the
+   command-before-retraction check and the glued-noun boundary; no word in it is needed for a write.
+
+### Safety argument
+
+- The writes are local, capped (20/hour, 100/day), kill-switch-atomic and undoable for 10 minutes by a per-action inverse
+  that restores the same item; external writes keep preview and approval.
+- A write still needs the selector's entry, grounded refs (the owner's own numeral, ordinal or deictic, resolved against
+  the listing the owner saw), verbatim spans from this turn, the entry checks (time-in-title, time-outside-when, bulk)
+  and the A6-D3a input guard. The vetoes can only turn an action into chat.
+- On the corpus, every execute gold now validates with its gold arguments (the old request-form cost list is empty except
+  a bare "1번" that the answer path handles), and 80 of the 135 `none` negatives are vetoed by structure alone. The other
+  55 rely on the selector (chit-chat, other sources, translation requests, polite capability questions; many cannot act
+  anyway: no grounded ref, no action expressed, other-source). They are pinned in `request-shape.test.ts`.
+
+### The typo case "3번 완룐 처리해줘"
+
+Core cannot recognise a misspelling without a typo or phrase list, so it does not try. The design asks only when the
+selector itself sets `ambiguity: NEEDS_CLARIFICATION` (existing behaviour, tested); a CLEAR selection executes `#3`. Note:
+the repository's owner gold decision of 2026-10-16 ("Owner decisions on A6 gold") is **execute** for
+`a6-paraphrase-todo.complete-018`, and that gold is left unchanged. If the owner wants **ask**, the only non-hardcoded
+route is a selector prompt rule ("an action word you had to guess is NEEDS_CLARIFICATION") plus a D12 run; that is not
+done here (no model calls; the prompt is being changed on another branch).
+
+### Gold changes (`golden/nl-action.v1.json`, owner decisions of 2026-10-16)
+
+- `a6-paraphrase-todo.add-016` "todo 추가: 프린터 토너 주문" → execute `{title: "프린터 토너 주문"}` (was ask).
+- `a6-paraphrase-todo.add-025` "투두에 \"회의실 정리\" 추가 ㄱㄱ" → execute `{title: "회의실 정리"}` (was ask).
+- `a6-paraphrase-reminder.create-020` → execute `{body: "가스 밸브 잠그기", when: "오늘 밤 10시"}` (was ask).
+- `a6-paraphrase-reminder.create-022` → execute `{body: "월세 이체", when: "3일 뒤 오전 9시"}` (was ask).
+- `a6-paraphrase-reminder.create-024` → execute `{body: "이사 업체 전화", when: "모레 아침 8시"}` (was ask).
+- `a6-paraphrase-todo.add-009` "할 일 하나 추가할게. 도서관 책 반납" → `none` (was ask): first-person volition.
+- `a6-paraphrase-todo.complete-009` "1번 할일 체크해줘": already execute `#1`; note updated (now reachable).
+- `a6-paraphrase-todo.complete-018`: unchanged (execute), see the typo case.
+- Re-checked, unchanged: the reference-family `ambiguous` asks (target ambiguity with listing fixtures), the
+  `a6-reference-none-001..005` golds ("2번도", "이번엔 3번", "2번": no action expressed → chat; "내일 아침 9시": restate;
+  "할 일 제목은 '보고서 마감'": copular statement → chat), and every other `none`/ask gold. The read-regression relabels of the
+  anchored colon commands (`neg-085` …) now validate as A6 hits instead of a request-form clarify.
+
+### Risks
+
+- **Selector-dependent negatives.** A wrong selector choice on a message with no grammatical veto can now write (e.g.
+  "내일 오후 3시에 테스트 회의 잡아줘" as a reminder; a translation request carrying an English command). Bounded by the
+  caps, the receipt and the 10-minute undo; measured by the D12 gate.
+- **Over-vetoing (utility).** Fail-closed grammar can refuse real requests: a reason clause with a first-person subject
+  ("내가 깜빡하니까 9시에 약 알려줘"), a noun ending in 면/는/은 in the frame (가면, 화면), "-ㄹ게" adverbs at a sentence end,
+  an undelimited title that ends in a negation ("…추가해줘 야식 먹지 않기"). These end as chat, never as a wrong write.
+- **Execution-time time grammar.** "3일 뒤 오전 9시" is `AMBIGUOUS_TIME` in the deterministic reminder grammar (it cannot
+  put a clock on "N일 뒤"), so the owner's example `reminder.create-022` selects and validates but asks for the time at
+  execution and writes nothing. A grammar follow-up, out of scope here.
+- `고고학`-style strings: no list decides them either way; the selector's `none` is what keeps them from acting.
+
+### Gates (promotion shadow-first)
+
+1. Offline: build, typecheck, the targeted suites (done on the branch).
+2. D12 on Haiku, 3 runs each for the action corpus and the read regression: **wrong target 0 and negative captures 0 in
+   every run** (hard), plus the existing per-entry utility thresholds. Strict: needs the owner's yes on the plan digest.
+3. Shadow (`QUOKY_NL_ACTIONS=shadow`) on the owner's live traffic: every `not-request:*` and every would-execute line is
+   reviewed; no write that the owner labels wrong.
+4. Then `local`, with the Chief Architect review recorded here.

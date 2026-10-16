@@ -499,13 +499,13 @@ describe('A6 R1 review: the payload rule before a missing argument', () => {
   });
 });
 
-describe('A6 R1 review: the completion vocabulary is closed (CA delta)', () => {
-  it('처리, 체크 and a bare 끝 ground no completion; statements do not either (positive request-form rule)', () => {
+describe('A6-D3a amendment 1: the vocabulary no longer decides a write; questions and statements still never write', () => {
+  it('"1번 할일 체크해줘" and "3번 완룐 처리해줘" validate (the selector chose the entry); questions and past statements do not', () => {
     const complete = (text: string) => validateSelection({ entryId: 'todo.complete', args: { ref: '#2' } }, ctx(text));
-    for (const text of ['2번 처리 방법 알려줘', '2번 체크해봐', '1번 할일 체크해줘', '2번 언제 끝나?', '3번 완룐 처리해줘', '2번 끝냈어', '2번 해치웠어']) {
-      expect(complete(text), text).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    for (const [text, veto] of [['2번 처리 방법 알려줘', 'question'], ['2번 언제 끝나?', 'question'], ['2번 끝냈어', 'statement'], ['2번 해치웠어', 'statement']] as const) {
+      expect(complete(text), text).toMatchObject({ ok: false, reason: 'not-request', arg: veto });
     }
-    for (const text of ['2번 끝내줘', '2번 완료해줘', '2번 완료 처리 부탁드립니다', '2번 완료로 표시해줘']) expect(complete(text).ok, text).toBe(true);
+    for (const text of ['2번 끝내줘', '2번 완료해줘', '2번 완료 처리 부탁드립니다', '2번 완료로 표시해줘', '2번 할일 체크해줘', '2번 완룐 처리해줘']) expect(complete(text).ok, text).toBe(true);
   });
 });
 
@@ -520,28 +520,29 @@ describe('A6 R1 gate (v32): the canonical `when`; ㄱㄱ / 고고 are not reques
     expect(validateSelection({ entryId: 'reminder.create', args: { body: '회의', when: '내일까지' } }, ctx('내일까지 회의 알려줘'))).toMatchObject({ ok: true, value: { args: { when: '내일까지' } } });
   });
 
-  it('ㄱㄱ / 고고 never ground a write (gold a6-paraphrase-todo.add-025 is an owner gold decision; Codex P1 and CA strings)', () => {
+  it('ㄱㄱ / 고고 misuse never writes; a plain "… 추가 ㄱㄱ" is an ordinary request (A6-D3a amendment 1, gold a6-paraphrase-todo.add-025)', () => {
     const add = (text: string) => validateSelection({ entryId: 'todo.add', args: { title: '회의실 정리' } }, ctx(text));
-    for (const text of [
-      '할 일에 회의실 정리 추가하지 마 ㄱㄱ',
-      '할 일에 회의실 정리 추가 ㄱㄱ?',
-      '할 일에 회의실 정리 추가 안 해 ㄱㄱ',
-      '할 일에 회의실 정리 추가 ㄱㄱ 했더니',
-      '할 일에 회의실 정리 추가 ㄱㄱ 아니 취소',
-      '할 일에 회의실 정리 추가 ㄱㄱ 취소',
-      '내가 할 일에 회의실 정리 추가 ㄱㄱ',
-      '할 일에 회의실 정리 추가 ㄱㄱ할까',
-      '할 일에 회의실 정리 추가 고고학',
-      '할 일에 회의실 정리 추가 고고 했다',
-      '할 일에 회의실 정리 추가 ㄱㄱ 하는 법',
-      '투두에 "회의실 정리" 추가 ㄱㄱ',
-      '할 일에 회의실 정리 추가 고고',
-      '팀장님이 할 일에 회의실 정리 추가 ㄱㄱ 하래',
-      '할 일에 회의실 정리 추가 ㄱㄱ 하자고 했었지',
-    ]) {
-      expect(add(text), text).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    for (const [text, veto] of [
+      ['할 일에 회의실 정리 추가하지 마 ㄱㄱ', 'negation'],
+      ['할 일에 회의실 정리 추가 ㄱㄱ?', 'question'],
+      ['할 일에 회의실 정리 추가 안 해 ㄱㄱ', 'negation'],
+      ['할 일에 회의실 정리 추가 ㄱㄱ 했더니', 'statement'],
+      ['할 일에 회의실 정리 추가 ㄱㄱ 아니 취소', 'negation'],
+      ['할 일에 회의실 정리 추가 ㄱㄱ 취소', 'retraction'],
+      ['내가 할 일에 회의실 정리 추가 ㄱㄱ', 'volition'],
+      ['할 일에 회의실 정리 추가 ㄱㄱ할까', 'question'],
+      ['할 일에 회의실 정리 추가 고고 했다', 'statement'],
+      ['할 일에 회의실 정리 추가 ㄱㄱ 하는 법', 'question'],
+      ['팀장님이 할 일에 회의실 정리 추가 ㄱㄱ 하래', 'reported'],
+      ['할 일에 회의실 정리 추가 ㄱㄱ 하자고 했었지', 'reported'],
+    ] as const) {
+      expect(add(text), text).toMatchObject({ ok: false, reason: 'not-request', arg: veto });
     }
-    expect(validateSelection({ entryId: 'reminder.cancel', args: { ref: '#2' } }, ctx('2번 알림 취소 ㄱㄱ')), '2번 알림 취소 ㄱㄱ').toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    for (const text of ['투두에 "회의실 정리" 추가 ㄱㄱ', '할 일에 회의실 정리 추가 고고']) expect(add(text).ok, text).toBe(true);
+    expect(validateSelection({ entryId: 'reminder.cancel', args: { ref: '#2' } }, ctx('2번 알림 취소 ㄱㄱ')).ok).toBe(true);
+    // No word list decides "고고학" either way: Core finds no veto, so whether it acts is the selector's call (it should
+    // answer none; measured by the corpus gate, never fixed with a phrase).
+    expect(add('할 일에 회의실 정리 추가 고고학').ok).toBe(true);
   });
 });
 

@@ -130,7 +130,7 @@ describe('A6 reminder actions', () => {
   it('reminder.create parses `when` with the deterministic grammar and echoes #N, the absolute time and the undo hint', async () => {
     const { conversation, repository } = service();
     const result = await conversation.handleAction(cmd('reminder.create', { body: '물 마시기', when: '내일 9시' }), base());
-    expect(text(result)).toMatch(/^알림 #13을 만들었어요: 10월 15일\(목\) 오전 9:00 · '물 마시기' · 되돌리기: "되돌려줘" \(10분\)$/u);
+    expect(text(result)).toMatch(/^알림 #13을 만들었어요: 10월 15일\(목\) 오전 9:00 · '물 마시기' · 되돌리려면 "되돌려줘" \(10분 안\)$/u);
     expect(repository.rows[0]).toMatchObject({ body: '물 마시기', schedule: { type: 'ONCE' }, nextFireAt: '2026-10-15T00:00:00.000Z' });
     const unclear = await conversation.handleAction(cmd('reminder.create', { body: '물', when: '회의' }), base());
     expect(unclear.action).toMatchObject({ result: 'refused', reason: 'when-unparsed' });
