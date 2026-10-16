@@ -274,10 +274,10 @@ export function summarize(records: readonly NlEvalRecord[], boundMs: number = NL
   };
 }
 
-class EvalCallTimeout extends Error {}
+export class EvalCallTimeout extends Error {}
 
 /** The runtime's bound around one call (the provider also gets `timeoutMs`; this guards a provider that ignores it). */
-async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+export async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(new EvalCallTimeout('timeout')), timeoutMs);

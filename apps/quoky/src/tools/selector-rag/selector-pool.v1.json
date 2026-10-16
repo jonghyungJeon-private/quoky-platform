@@ -9,6 +9,14 @@
       "draftedOn": "2026-10-16",
       "approvedBy": "owner:jonghyung.jeon",
       "approvedOn": "2026-10-16"
+    },
+    {
+      "batch": 2,
+      "status": "pending-owner-approval",
+      "drafter": "agent",
+      "draftedOn": "2026-10-16",
+      "approvedBy": null,
+      "approvedOn": null
     }
   ],
   "entries": [
@@ -1095,6 +1103,563 @@
       "needs": [],
       "source": "drafted",
       "batch": 1,
+      "language": "ko"
+    },
+    {
+      "id": "b2-action-undo-01",
+      "text": "방금 바꾼 거 원상복구 부탁해",
+      "context": "last action: todo.cancel (1 min ago, undoable)",
+      "output": "{\"entryId\":\"action.undo\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "action.undo"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-action-undo-02",
+      "text": "그거 하기 전 상태로 되돌릴 수 있을까",
+      "context": "last action: reminder.create (2 min ago, undoable)",
+      "output": "{\"entryId\":\"action.undo\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "action.undo"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-brief-today-01",
+      "text": "하루 시작하며 일정, 할 일, 알림 상황을 한 묶음으로 받아보고 싶어",
+      "output": "{\"entryId\":\"brief.today\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "brief.today"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-brief-today-02",
+      "text": "출근했는데 오늘 뭐 있는지 종합해서 알려줘",
+      "output": "{\"entryId\":\"brief.today\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "brief.today"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-confluence-search-01",
+      "text": "컨플루언스 뒤져서 롤백 방법 정리된 글 있나 확인해줘",
+      "output": "{\"entryId\":\"confluence.search\",\"args\":{\"keyword\":\"롤백 방법\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "confluence.search"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-confluence-search-02",
+      "text": "컨플루언스에 온콜 인수인계 페이지 2개만 보여줘",
+      "output": "{\"entryId\":\"confluence.search\",\"args\":{\"keyword\":\"온콜 인수인계\",\"limit\":2},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "confluence.search"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-drive-files-01",
+      "text": "구글 드라이브 안의 스프레드시트 파일들만 추려서 나열해줘",
+      "output": "{\"entryId\":\"drive.files\",\"args\":{\"kind\":\"spreadsheet\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "drive.files"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-drive-files-02",
+      "text": "드라이브에 만들어 둔 디렉터리들이 어떤 게 있는지 폴더 단위로 쭉 훑어봐",
+      "output": "{\"entryId\":\"drive.files\",\"args\":{\"kind\":\"folder\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "drive.files"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-github-items-01",
+      "text": "동료가 코드 검토를 맡긴 깃허브 변경 요청서들 정리해서 줘",
+      "output": "{\"entryId\":\"github.items\",\"args\":{\"query\":\"review-requests\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "github.items"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-github-items-02",
+      "text": "내가 걸려 있는 깃허브 이슈와 PR 중 결제 모듈 건만 남겨줘",
+      "output": "{\"entryId\":\"github.items\",\"args\":{\"query\":\"my-items\",\"keyword\":\"결제 모듈\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "github.items"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-item-summarize-01",
+      "text": "맨 위 메일이 뭐라고 왔는지 짧게 풀어줘",
+      "context": "last listing: mail (4 items, 2 min ago)",
+      "output": "{\"entryId\":\"item.summarize\",\"args\":{\"source\":\"mail\",\"ref\":\"#1\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "item.summarize"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-item-summarize-02",
+      "text": "다섯 번째 문서 전체 내용을 있는 그대로 보여줘",
+      "context": "last listing: drive (6 items, 1 min ago)",
+      "output": "{\"entryId\":\"item.summarize\",\"args\":{\"source\":\"drive\",\"ref\":\"#5\",\"mode\":\"full\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "item.summarize"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-jira-release-01",
+      "text": "6.0.0 버전에 포함된 이슈들 보여줘",
+      "output": "{\"entryId\":\"jira.release\",\"args\":{\"release\":\"6.0.0\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "jira.release"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-jira-release-02",
+      "text": "모든 담당자 기준으로 2.4.1 릴리스 현황을 알고 싶어",
+      "output": "{\"entryId\":\"jira.release\",\"args\":{\"release\":\"2.4.1\",\"scope\":\"all\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "jira.release"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-reminder-cancel-01",
+      "text": "네 번째 알림은 지워줘",
+      "context": "last listing: reminder (5 items, 2 min ago)",
+      "output": "{\"entryId\":\"reminder.cancel\",\"args\":{\"ref\":\"#4\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "reminder.cancel"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-reminder-cancel-02",
+      "text": "방금 걸어둔 리마인더 없던 걸로 해줘",
+      "context": "last action: reminder.create (1 min ago, undoable)",
+      "output": "{\"entryId\":\"reminder.cancel\",\"args\":{\"ref\":\"recent\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "reminder.cancel"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-reminder-create-01",
+      "text": "내일 오전 9시에 약 먹으라고 알려줘",
+      "output": "{\"entryId\":\"reminder.create\",\"args\":{\"body\":\"약 먹\",\"when\":\"내일 오전 9시\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "reminder.create"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-reminder-create-02",
+      "text": "매주 월요일 아침 10시에 주간 보고 쓰라고 리마인드 해줘",
+      "output": "{\"entryId\":\"reminder.create\",\"args\":{\"body\":\"주간 보고 쓰\",\"when\":\"매주 월요일 아침 10시\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "reminder.create"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-reminder-list-01",
+      "text": "앞으로 울릴 리마인더가 뭐가 잡혀 있는지 펼쳐줘",
+      "output": "{\"entryId\":\"reminder.list\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "reminder.list"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-reminder-list-02",
+      "text": "곧 울릴 리마인더들을 날짜 순서대로 쭉 보여줘",
+      "output": "{\"entryId\":\"reminder.list\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "reminder.list"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-slack-search-01",
+      "text": "슬랙 대화 중 릴리스 일정 알린 글 좀 검색해줘",
+      "output": "{\"entryId\":\"slack.search\",\"args\":{\"keyword\":\"릴리스 일정\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "slack.search"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-slack-search-02",
+      "text": "슬랙에 회식 장소 얘기한 메시지 4개만 보여줘",
+      "output": "{\"entryId\":\"slack.search\",\"args\":{\"keyword\":\"회식 장소\",\"limit\":4},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "slack.search"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-todo-cancel-01",
+      "text": "두 번째 일은 안 하기로 해서 지워줘",
+      "context": "last listing: todo (4 items, 2 min ago)",
+      "output": "{\"entryId\":\"todo.cancel\",\"args\":{\"ref\":\"#2\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "todo.cancel"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-todo-cancel-02",
+      "text": "세금 신고 준비는 이제 필요 없어졌으니 빼줘",
+      "context": "last listing: todo (5 items, 3 min ago)",
+      "output": "{\"entryId\":\"todo.cancel\",\"args\":{\"match\":\"세금 신고 준비\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "todo.cancel"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-todo-complete-01",
+      "text": "네 번째 건 방금 끝냈어",
+      "context": "last listing: todo (5 items, 1 min ago)",
+      "output": "{\"entryId\":\"todo.complete\",\"args\":{\"ref\":\"#4\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "todo.complete"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-todo-complete-02",
+      "text": "세탁소 맡기기는 이미 했으니 완료로 처리해줘",
+      "context": "last listing: todo (3 items, 2 min ago)",
+      "output": "{\"entryId\":\"todo.complete\",\"args\":{\"match\":\"세탁소 맡기기\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "todo.complete"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-todo-list-01",
+      "text": "남아 있는 투두 갯수만 알려줘",
+      "output": "{\"entryId\":\"todo.list\",\"args\":{\"count\":true},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "todo.list"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-todo-list-02",
+      "text": "끝낸 항목까지 전부 펼쳐서 보여줘",
+      "output": "{\"entryId\":\"todo.list\",\"args\":{\"status\":\"all\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "todo.list"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-jira-issues-01",
+      "text": "이번 주에 마감인 내 지라 이슈만 보여줘",
+      "output": "{\"entryId\":\"jira.issues\",\"args\":{\"window\":\"due\",\"range\":\"this-week\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "jira.issues"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-jira-issues-02",
+      "text": "내가 담당자인 진행 중인 이슈 몇 개나 돼",
+      "output": "{\"entryId\":\"jira.issues\",\"args\":{\"status\":\"in-progress\",\"count\":true},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "jira.issues"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-mail-list-01",
+      "text": "어제 받은 편지함에서 읽지 않은 것들 추려줘",
+      "output": "{\"entryId\":\"mail.list\",\"args\":{\"range\":\"yesterday\",\"unread\":true},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "mail.list"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-calendar-events-01",
+      "text": "모레 오후에 일정 비는 시간 있어",
+      "output": "{\"entryId\":\"calendar.events\",\"args\":{\"range\":\"day-after-tomorrow\",\"partOfDay\":\"afternoon\",\"availability\":true},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "calendar.events"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-help-topic-01",
+      "text": "기억해 둔 내용을 넣고 빼는 방법이 적힌 도움말 좀 띄워줘",
+      "output": "{\"entryId\":\"help.topic\",\"args\":{\"topic\":\"memory\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "help.topic"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-todo-add-01",
+      "text": "수영장 등록하기 할 일에 추가해줘",
+      "output": "{\"entryId\":\"todo.add\",\"args\":{\"title\":\"수영장 등록하기\"},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "todo.add"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-slack-search-03",
+      "text": "슬랙에서 장애 보고 나온 메시지가 몇 건인지 세어줘",
+      "output": "{\"entryId\":\"slack.search\",\"args\":{\"keyword\":\"장애 보고\",\"count\":true},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [
+        "slack.search"
+      ],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-01",
+      "text": "주말에 가볼 만한 맛집 좀 추천해줘",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-02",
+      "text": "이 문장 더 자연스럽게 다듬어줘",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-03",
+      "text": "도커 컨테이너 로그 보는 명령어가 뭐야",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-04",
+      "text": "다음 달 환율이 오를까",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-05",
+      "text": "SQL 조인 종류 설명해줘",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-06",
+      "text": "슬랙 #channel-a 에 인사말 보내줘",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-07",
+      "text": "지라 ABC-123 담당자를 <person>으로 바꿔줘",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-08",
+      "text": "참석자 명단을 user@example.com 앞으로 발송해",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-09",
+      "text": "내일 비 오는지 궁금해",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-10",
+      "text": "고마워 덕분에 해결됐어",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-11",
+      "text": "방금 그 일은 이미 끝났어",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-12",
+      "text": "잠깐 쉬었다 할게",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-13",
+      "text": "CSS 레이아웃이 깨지는 이유가 뭘까",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-14",
+      "text": "write a haiku about monday mornings",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "en"
+    },
+    {
+      "id": "b2-none-15",
+      "text": "what is the capital of Australia",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "en"
+    },
+    {
+      "id": "b2-none-16",
+      "text": "https://example.invalid/page 이 페이지 내용 요약해줘",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-17",
+      "text": "내 일정에 회의 하나 새로 잡아줘",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
+      "language": "ko"
+    },
+    {
+      "id": "b2-none-18",
+      "text": "새 브랜치 따서 변경분 올리고 병합 요청 만들어줘",
+      "output": "{\"entryId\":\"none\",\"args\":{},\"ambiguity\":\"CLEAR\",\"alternatives\":[]}",
+      "needs": [],
+      "source": "drafted",
+      "batch": 2,
       "language": "ko"
     }
   ]
