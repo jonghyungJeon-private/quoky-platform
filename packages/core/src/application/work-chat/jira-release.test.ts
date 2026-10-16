@@ -574,6 +574,26 @@ describe('lookupJiraRelease: a key repeated inside the release words', () => {
     expect(fallback.queries.at(-1)?.params).toMatchObject({ releaseId: '16555' });
   });
 
+  it('the original wording with release words resolves to the key-named release; a truncated listing never falls back to the stripped name', async () => {
+    const listing = (truncated: boolean, withKeyed = true): ConnectorProvider => ({
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) =>
+        query.query === 'containers' ? { source: 'jira', items: PROJECTS }
+        : query.query === 'releases' ? { source: 'jira', items: [{ id: '1', title: '20261015' }, ...(withKeyed ? [{ id: '2', title: 'OP26 20261015' }] : [])], ...(truncated ? { truncated: true } : {}) }
+        : { source: 'jira', items: ISSUES },
+    });
+    const ask = async (provider: ConnectorProvider, release: string) => {
+      const seen: ConnectorQuery[] = [];
+      const spy: ConnectorProvider = { ...provider, query: async (query) => { seen.push(query); return provider.query(query); } };
+      const result = await lookupJiraRelease({ connector: spy, command: { scope: 'all', links: [], project: 'OP26', release }, siteHost: SITE });
+      return { seen, text: result.kind === 'body' ? plainTextOf(result.body) : result.reason };
+    };
+    expect((await ask(listing(false), 'OP26 20261015 배포건')).seen.at(-1)?.params).toMatchObject({ releaseId: '2' });
+    const partial = await ask(listing(true, false), 'OP26 20261015 배포건');
+    expect(partial.seen.some((query) => query.query === 'release-items')).toBe(false);
+    expect(partial.text).toContain('찾지 못했어요');
+  });
+
   it('leaves a different key alone when a project is set, and a key-shaped word that is no visible project', async () => {
     expect(stripRedundantProjectKey(PROJECTS, 'OP26', 'WEB 20261015')).toBeUndefined();
     expect(stripRedundantProjectKey(PROJECTS, 'RC', 'RC 2026')).toBeUndefined();

@@ -140,8 +140,17 @@ export async function lookupJiraRelease(input: {
         let match = preResolved;
         if (match === undefined) {
           const known = await releasesOf(connector, project.key);
-          const wantedKeyed = keyedRelease === undefined ? undefined : fold(keyedRelease);
-          match = (wantedKeyed === undefined ? undefined : known.items.find((item) => fold(item.title) === wantedKeyed)) ?? resolveRelease(known.items, command.release, known.truncated === true).item;
+          const truncated = known.truncated === true;
+          if (keyedRelease !== undefined) {
+            // The owner's own wording (key included, release words normalized) first; the key-stripped name only when the
+            // listing is complete and holds no release of the original name (a partial listing proves nothing absent).
+            const original = resolveRelease(known.items, keyedRelease, truncated);
+            match = original.item;
+            if (match === undefined && !truncated && !original.ambiguous) match = resolveRelease(known.items, command.release, false).item;
+            if (match === undefined) return body(renderReleaseNotFound(keyedRelease, project, input.inChannel === true ? [] : nearbyReleases(known.items, keyedRelease)));
+          } else {
+            match = resolveRelease(known.items, command.release, truncated).item;
+          }
           if (match === undefined) return body(renderReleaseNotFound(command.release, project, input.inChannel === true ? [] : nearbyReleases(known.items, command.release)));
         }
         release = { id: match.id, name: match.title, ...(match.url !== undefined ? { url: match.url } : {}) };
