@@ -7,13 +7,13 @@
  *   pnpm eval:rag -- --mode plan  --split dev|heldout [--selector-model haiku]        offline: prints the pre-registered plan and its digest
  *   pnpm eval:rag -- --mode run --split dev|heldout --approved-plan-digest <sha256>   Strict: the same digest rule as eval:nl; the digest binds the split. Renders every arm through
  *                                                                  Core's `retrievedExamples` slot and walks the interleaved schedule
- *                                                                  with an injected selector transport
+ *                                                                  with the Claude CLI transport (built only after the digest matches)
  *
  * RAG-2 is experiment-only: nothing here is read by the running service and `QUOKY_NL_EXAMPLE_RETRIEVAL` (RAG-3, ADR-0123 D10)
- * is not wired. `run` recomputes the plan digest and exits 3 unless `--approved-plan-digest` equals it; even then it stops
- * before any embedding or provider unless the caller injects a selector transport (`CliDeps.selector`); this CLI never
- * constructs one, so it makes no selector call. The traffic ledger and the rate gate (`ledger.ts`) are what the transport
- * must call before every selector call.
+ * is not wired. `run` recomputes the plan digest and exits 3 unless `--approved-plan-digest` equals it. Only after that does it
+ * build the selector transport (`transport.ts`: Claude CLI at the plan's selector model, the eval's timeout handling, the traffic
+ * ledger at the plan's budget, <= 1 call/s and 4 concurrent) and embed; scoring is the existing eval scorer (`score.ts`).
+ * `lint`, `dry-run` and `plan` never construct a provider or make a selector call.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -28,9 +28,10 @@ import { splitCases } from './selector-rag/split';
 import { A6_ENTRY_IDS, READ_ENTRY_IDS, staticExamples } from './selector-rag/audit';
 import { buildSchedule } from './selector-rag/arms';
 import { outputEntryId, type PoolVector } from './selector-rag/retrieve';
+import { createClaudeSelectorTransport } from './selector-rag/transport';
+import { loadScoringCases } from './selector-rag/score';
 import { runExperiment, type ExperimentCase, type PromptContext, type RetrievalRecord } from './selector-rag/selector-rag-eval';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION } from '@quoky/core';
-import type { GoldCase } from './selector-rag/gold';
 
 export const EXIT_OK = 0;
 export const EXIT_FAILED = 1;
@@ -73,27 +74,32 @@ const HELP = `ADR-0123 selector example retrieval harness (phase 1, offline)
   pnpm eval:rag -- --mode lint [--pool <file>]
   pnpm eval:rag -- --mode dry-run [--models nomic-embed-text-v2-moe] [--write-audit true] [--latency-sample 50]
   pnpm eval:rag -- --mode plan --split dev|heldout [--selector-model ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}] [--runs 5] [--sessions 3]
-  pnpm eval:rag -- --mode run --split dev|heldout --approved-plan-digest <sha256 from plan>   (Strict; needs an injected selector transport, none is built in)
-No mode makes a selector call. dry-run embeds through the local Ollama on loopback only.
+  pnpm eval:rag -- --mode run --split dev|heldout --approved-plan-digest <sha256 from plan>   (Strict; the Claude CLI transport is built only after the digest matches)
+plan, lint and dry-run make no selector call. dry-run embeds through the local Ollama on loopback only.
 `;
 
 export interface CliDeps {
   readonly stdout: (line: string) => void;
   readonly stderr: (line: string) => void;
   readonly now: () => string;
-  /** The selector transport and per-case prompt context for `run`. Never set by the CLI entry point (no call is possible). */
+  /** A transport injected by a caller (the tests use a fake one); wins over `createSelector`. */
   readonly selector?: SelectorTransport;
+  /** Builds the real transport. Called by `run` only after the approved plan digest matched; `defaultDeps` wires the Claude CLI. */
+  readonly createSelector?: (input: { readonly model: string; readonly budget: number; readonly now: () => string }) => SelectorTransport;
 }
 
 export interface SelectorTransport {
   readonly select: (prompt: string, record: RetrievalRecord) => Promise<string>;
   readonly parseEntry: (raw: string) => string;
-  readonly contextFor: (golden: GoldCase) => PromptContext;
+  readonly contextFor: (caseId: string) => PromptContext | Promise<PromptContext>;
+  readonly score?: (caseId: string, raw: string, record: RetrievalRecord) => Promise<{ readonly correct: boolean; readonly outcome: string }>;
+  readonly summary?: () => { readonly calls: number; readonly timeouts: number; readonly errors: number };
 }
 export const defaultDeps = (): CliDeps => ({
   stdout: (line) => process.stdout.write(`${line}\n`),
   stderr: (line) => process.stderr.write(`${line}\n`),
   now: () => new Date().toISOString(),
+  createSelector: ({ model, budget, now }) => createClaudeSelectorTransport({ model, budget, now, scoring: loadScoringCases() }),
 });
 
 export interface AuditRecord {
@@ -274,9 +280,10 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const transport = deps.selector;
+  // The digest matched: only now is a transport built (constructing it makes no call; `select` does, behind the ledger and the rate gate).
+  const transport = deps.selector ?? deps.createSelector?.({ model: plan.selector.model, budget: plan.traffic.budget, now: deps.now });
   if (transport === undefined) {
-    deps.stderr('BLOCKED: the digest matches, but no selector transport is injected; this harness build makes no selector call (nothing was embedded or executed)');
+    deps.stderr('BLOCKED: the digest matches, but no selector transport is available; nothing was embedded or executed');
     return EXIT_BLOCKED;
   }
   const split_ = plan.split_scope;
@@ -291,8 +298,10 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   const poolEmbed = await embedder.embed(entries.map((entry) => entry.text));
   const poolVectors: PoolVector[] = entries.map((entry, index) => ({ entry, entryId: outputEntryId(entry), vector: poolEmbed[index] as number[] }));
   const queryEmbed = await embedder.embed(goldCases.map((golden) => golden.queryText));
+  // contexts first: a case whose prompt cannot be rebuilt stops the run before any selector call
+  const contexts = await Promise.all(goldCases.map((golden) => transport.contextFor(golden.id)));
   const cases = new Map<string, ExperimentCase>(
-    goldCases.map((golden, index) => [golden.id, { id: golden.id, entry: golden.entry, context: transport.contextFor(golden), offered: golden.corpus === 'read' ? READ_ENTRY_IDS : A6_ENTRY_IDS, queryVector: queryEmbed[index] as number[] }] as const),
+    goldCases.map((golden, index) => [golden.id, { id: golden.id, entry: golden.entry, context: contexts[index] as PromptContext, offered: golden.corpus === 'read' ? READ_ENTRY_IDS : A6_ENTRY_IDS, queryVector: queryEmbed[index] as number[] }] as const),
   );
   const statics = staticExamples();
   // arms and runs come from the approved plan (its split scope), never from a flag read after the digest check
@@ -309,11 +318,14 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     baseVersion: (offered) => (offered === READ_ENTRY_IDS ? NL_SELECTION_PROMPT_VERSION : NL_ACTION_PROMPT_VERSION),
     select: transport.select,
     parseEntry: transport.parseEntry,
+    ...(transport.score !== undefined ? { score: transport.score } : {}),
   });
   mkdirSync(EVAL_DIR, { recursive: true });
   const path = resolve(EVAL_DIR, `run-${split_}-${deps.now().replace(/[:.]/g, '-')}.json`);
   writeFileSync(path, `${JSON.stringify({ at: deps.now(), planDigest: digest, split: split_, results }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
   deps.stdout(`run record (content-free): ${path}`);
+  const traffic = transport.summary?.();
+  if (traffic !== undefined) deps.stdout(`selector calls ${traffic.calls}, timeouts ${traffic.timeouts}, errors ${traffic.errors}`);
   return EXIT_OK;
 }
 

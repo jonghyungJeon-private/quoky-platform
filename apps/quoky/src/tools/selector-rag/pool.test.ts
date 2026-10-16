@@ -24,10 +24,24 @@ const entry = (over: Partial<PoolEntry> = {}): PoolEntry => ({
 
 describe('ADR-0123 pool batch 1', () => {
   it('is owner-approved by someone other than the drafter (2026-10-16)', () => {
-    expect(pool.batches).toEqual([
-      expect.objectContaining({ batch: 1, status: 'approved', drafter: 'agent', approvedBy: 'owner:jonghyung.jeon', approvedOn: '2026-10-16' }),
-    ]);
-    expect(approvedEntries(pool)).toHaveLength(100);
+    expect(pool.batches[0]).toEqual(expect.objectContaining({ batch: 1, status: 'approved', drafter: 'agent', approvedBy: 'owner:jonghyung.jeon', approvedOn: '2026-10-16' }));
+    expect(approvedEntries(pool).filter((candidate) => candidate.batch === 1)).toHaveLength(100);
+  });
+
+  it('batch 2 stays pending-owner-approval (drafted by the agent, never self-approved) and adds no usable entry until the owner approves', () => {
+    const batch2 = pool.batches.find((batch) => batch.batch === 2);
+    if (batch2?.status === 'pending-owner-approval') {
+      expect(batch2).toEqual(expect.objectContaining({ drafter: 'agent', approvedBy: null, approvedOn: null }));
+      expect(approvedEntries(pool).some((candidate) => candidate.batch === 2)).toBe(false);
+    } else {
+      expect(batch2?.approvedBy).toMatch(/^owner:/);
+    }
+  });
+
+  it('the whole pool (every drafted batch) meets the coverage target with 0 findings', () => {
+    const report = checkPool(pool.entries, gold.cases);
+    expect(report.coverage.targetMet).toBe(true);
+    expect(report.ok).toBe(true);
   });
 
   it('never admits a batch approved by its own drafter', () => {
@@ -43,16 +57,17 @@ describe('ADR-0123 pool batch 1', () => {
 
   it('covers the read and the A6 entries and holds a share of negatives', () => {
     const coverage = coverageOf(pool.entries);
-    expect(coverage.total).toBeGreaterThanOrEqual(60);
-    expect(coverage.total).toBeLessThanOrEqual(100);
-    expect(Object.entries(coverage.perEntry).filter(([, count]) => count < 3)).toEqual([]);
-    expect(coverage.negativeShare).toBeGreaterThanOrEqual(0.15);
+    expect(coverage.total).toBeGreaterThanOrEqual(150);
+    expect(coverage.total).toBeLessThanOrEqual(200);
+    expect(Object.entries(coverage.perEntry).filter(([, count]) => count < 5)).toEqual([]);
+    expect(coverage.negativeShare).toBeGreaterThanOrEqual(0.2);
   });
 
   it('the committed audit record is fresh for this pool, gold and split (a stale audit fails the suite)', () => {
     const audit = JSON.parse(readFileSync(AUDIT_RECORD_PATH, 'utf8')) as AuditRecord;
     const split = splitCases(gold.cases.map((golden) => ({ id: golden.id, entry: golden.entry })));
-    expect(audit.poolDigest).toBe(poolDigest(pool.entries));
+    // the audit binds the owner-approved entries (what a plan may use); a pending batch does not move it
+    expect(audit.poolDigest).toBe(poolDigest(approvedEntries(pool)));
     expect(audit.goldDigest).toBe(gold.sha256);
     expect(audit.splitSha256).toBe(createHash('sha256').update(JSON.stringify(split)).digest('hex'));
     // ADR-0123 owner decision (2026-10-16): v2-moe is the sole retrieval model; v1.5 is not required in the record.
@@ -91,7 +106,7 @@ describe('pool admission rules', () => {
 
   it('only owner-approved batches are usable', () => {
     const approved = { ...pool, batches: [{ ...pool.batches[0]!, status: 'approved' as const, approvedBy: 'owner', approvedOn: '2026-10-17' }] };
-    expect(approvedEntries(approved)).toHaveLength(pool.entries.length);
+    expect(approvedEntries(approved)).toHaveLength(pool.entries.filter((candidate) => candidate.batch === 1).length);
     expect(approvedEntries({ ...approved, batches: [{ ...approved.batches[0]!, approvedBy: null }] })).toEqual([]);
   });
 
@@ -101,7 +116,7 @@ describe('pool admission rules', () => {
     expect(approvedEntries(make('agent'))).toEqual([]);
     expect(approvedEntries(make(' Agent '))).toEqual([]);
     expect(approvedEntries(make(''))).toEqual([]);
-    expect(approvedEntries(make('owner'))).toHaveLength(pool.entries.length);
+    expect(approvedEntries(make('owner'))).toHaveLength(pool.entries.filter((candidate) => candidate.batch === 1).length);
   });
 
   it('validates the output through Core parseSelectionOutput', () => {

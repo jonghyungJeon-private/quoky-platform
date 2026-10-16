@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0123 pool batch 2 (pending owner approval) and the runner's selector transport and exact scorer (2026-10-16)
+
+- **Added (pool, pending).** Batch 2: 53 drafted examples (`status: pending-owner-approval`, drafter `agent`, never self-approved) that bring the
+  whole pool to 153 entries, at least 5 per offered entry and 36 negatives (24%). RAG-0 n-gram lint and the v2-moe embedding audit (tau 0.7941)
+  show 0 findings. Until the owner approves it, `approvedEntries` and plans use batch 1 only; approving it changes the pool digest, so the
+  audit record must be regenerated (`--mode dry-run --write-audit true`) before the next plan.
+- **Added (experiment only).** `selector-rag/transport.ts`: the selector transport of `eval:rag --mode run`, reusing the eval:nl plumbing
+  (Claude CLI, haiku, `INTENT_SELECTION`, the runtime selection bound and the eval's `withTimeout`). Each call reserves the traffic ledger
+  and waits at the rate gate (at most 1 call/s, 4 concurrent); a timeout or failure is a record, not a thrown error. It is built only after the
+  approved plan digest matched. `selector-rag/score.ts`: the exact `{entry, args, target}` scorer, reusing `scoreOutput` (read corpus) and
+  `decideActionCase` + `scoreActionDecision` (action corpus), and the per-case prompt contexts from the same fixtures. Unit tests use a
+  fake provider; no selector call was made.
+- **Changed.** `pool.test.ts` binds the audit record to the owner-approved entries and checks coverage over the whole pool.
+
 ## Unreleased — ADR-0123 RAG-2: `retrievedExamples` prompt slot and arm rendering in the harness (2026-10-16)
 
 - **Added (experiment only; no runtime path, `QUOKY_NL_EXAMPLE_RETRIEVAL` not wired).** `buildSelectionPrompt` takes an optional

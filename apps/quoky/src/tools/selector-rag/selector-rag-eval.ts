@@ -130,8 +130,10 @@ export interface ExperimentCase {
 
 export interface UnitResult {
   readonly record: RetrievalRecord;
-  /** Entry-level exactness only (the exact args / target scorer is the existing nl-action-eval scorer, joined at the first approved run). */
+  /** Entry-level exactness only. */
   readonly entryCorrect: boolean;
+  /** Exact `{entry, args, target}` through the existing eval scorers (`score.ts`); absent when no scorer is injected. */
+  readonly exact?: { readonly correct: boolean; readonly outcome: string };
   readonly session: number;
 }
 
@@ -147,6 +149,8 @@ export interface ExperimentInput {
   /** The injected selector transport: prompt in, raw model text out. Absent in this harness build (no call is possible). */
   readonly select: (prompt: string, record: RetrievalRecord) => Promise<string>;
   readonly parseEntry: (raw: string) => string;
+  /** The exact-args scorer (`score.ts`), given the case id, the raw text and the record of the call. */
+  readonly score?: (caseId: string, raw: string, record: RetrievalRecord) => Promise<{ readonly correct: boolean; readonly outcome: string }>;
   readonly k?: number;
 }
 
@@ -172,7 +176,8 @@ export async function runExperiment(input: ExperimentInput): Promise<UnitResult[
         ...(input.k !== undefined ? { k: input.k } : {}),
       });
       const raw = await input.select(prompt, record);
-      results.push({ record, entryCorrect: input.parseEntry(raw) === golden.entry, session: unit.session });
+      const exact = input.score === undefined ? undefined : await input.score(golden.id, raw, record);
+      results.push({ record, entryCorrect: input.parseEntry(raw) === golden.entry, ...(exact !== undefined ? { exact } : {}), session: unit.session });
     }
   }
   return results;
