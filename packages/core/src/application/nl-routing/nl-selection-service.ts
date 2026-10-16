@@ -61,6 +61,7 @@ import {
   renderReferenceQuestion,
   renderQuestionOpen,
   renderDmOnlyAction,
+  renderGarbledAction,
   renderRestate,
   renderTimeInTitle,
   renderTimeOutsideWhen,
@@ -1214,6 +1215,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
         this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
         return { kind: 'none' };
       }
+      // A6-D3a amendment 1, garbled action word addendum (owner decision 2026-10-16): the action word itself is uncertain
+      // ("3번 완룐 처리해줘"), so the owner is asked with the vocabulary word it may stand for; nothing is written.
+      if (validated.reason === 'garbled-action' && validated.candidate !== undefined) {
+        const asked: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'garbled-action' };
+        if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...asked, result: 'shadow' });
+        return this.actionAnswer(asked, renderGarbledAction(validated.candidate, language));
+      }
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: validated.reason };
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
       return this.actionAnswer(audit, validationReply(validated.reason, language));
@@ -2171,9 +2179,10 @@ function correlationOf(turn: Pick<NlSelectionTurn, 'session' | 'turnId'>): { rea
 /**
  * A6 R5a: validation failures a deictic request never overrides (an unknown or invalid argument, a credential, a bulk
  * request) and, since A6-D3a amendment 1, `not-request`: a question, negation, retraction, reported speech, conditional,
- * statement, volition or example veto always ends the turn as chat, deictic or not (CA review (b)).
+ * statement, volition or example veto always ends the turn as chat, deictic or not (CA review (b)). `garbled-action` too: a
+ * garbled action word asks its own question before any preview (garbled action word addendum, CA review).
  */
-export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-entry', 'not-offered', 'not-read', 'unknown-arg', 'invalid-arg', 'credential', 'bulk', 'not-request']);
+export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-entry', 'not-offered', 'not-read', 'unknown-arg', 'invalid-arg', 'credential', 'bulk', 'not-request', 'garbled-action']);
 
 /** A6: the platform marked part of the message as quoted or as code: material, never one plain instruction. */
 function markedMaterial(turn: Pick<NlSelectionTurn, 'quotedRanges' | 'codeFormatted'>): boolean {

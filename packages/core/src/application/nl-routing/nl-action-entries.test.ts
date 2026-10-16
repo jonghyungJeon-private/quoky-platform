@@ -273,11 +273,11 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
     expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v39', sha256: 'fe13de80a8b71bc67b138e834036575819a76013fa86164bb7455ca0df3a4555' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v40', sha256: '9ef062c8899456b3034351a43d5cc9eeaf710eea7366653f4cb3ed689efab317' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v42', sha256: '6bd5932340fc1a47c97973a4d741a6be24a63f1d91b33d3c0da04a1e17904092' });
   });
 });
 
-describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v40 with actions', () => {
+describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v42 with actions', () => {
   const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v39.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
@@ -293,8 +293,8 @@ describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v40
     }
   });
 
-  it('the A6 prompt (v40) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v40');
+  it('the A6 prompt (v42) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v42');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
@@ -500,12 +500,14 @@ describe('A6 R1 review: the payload rule before a missing argument', () => {
 });
 
 describe('A6-D3a amendment 1: the vocabulary no longer decides a write; questions and statements still never write', () => {
-  it('"1번 할일 체크해줘" and "3번 완룐 처리해줘" validate (the selector chose the entry); questions and past statements do not', () => {
+  it('"1번 할일 체크해줘" validates (the selector chose the entry); questions and past statements do not; "완룐" asks', () => {
     const complete = (text: string) => validateSelection({ entryId: 'todo.complete', args: { ref: '#2' } }, ctx(text));
     for (const [text, veto] of [['2번 처리 방법 알려줘', 'question'], ['2번 언제 끝나?', 'question'], ['2번 끝냈어', 'statement'], ['2번 해치웠어', 'statement']] as const) {
       expect(complete(text), text).toMatchObject({ ok: false, reason: 'not-request', arg: veto });
     }
-    for (const text of ['2번 끝내줘', '2번 완료해줘', '2번 완료 처리 부탁드립니다', '2번 완료로 표시해줘', '2번 할일 체크해줘', '2번 완룐 처리해줘']) expect(complete(text).ok, text).toBe(true);
+    for (const text of ['2번 끝내줘', '2번 완료해줘', '2번 완료 처리 부탁드립니다', '2번 완료로 표시해줘', '2번 할일 체크해줘']) expect(complete(text).ok, text).toBe(true);
+    // Garbled action word addendum (owner decision 2026-10-16): the garbled 완료 asks (garbled-action.test.ts).
+    expect(complete('2번 완룐 처리해줘')).toMatchObject({ ok: false, reason: 'garbled-action', candidate: '완료' });
   });
 });
 

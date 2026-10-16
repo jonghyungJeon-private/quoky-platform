@@ -59,6 +59,10 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * `confluence.search` example, sharper slack.search / confluence.search descriptions, and the `jira.release` arg wording
  * (a bare number is a release name, project and release are separate args, a follow-up keeps the project); the validator
  * also canonicalizes `jira.release` args structurally. v40 (A6) = the v36 text on top of v39.
+ * v41 (read, two new rule lines) regressed calendar.events and was abandoned: the read prompt stays v39. v42 (A6) = the v36
+ * text on top of v39, plus one rule-8 line (a garbled or misspelled action word, so the intended action is uncertain, is
+ * NEEDS_CLARIFICATION with the candidate as the one alternative, never a silent pick; owner decision 2026-10-16) and "or
+ * which command Quoky has for it" on the how-to line (the help.topic miss of the v40 action gate).
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v39';
 /**
@@ -66,7 +70,7 @@ export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v39';
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
  * for byte (pinned by `golden/nl-select.v39.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v40';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v42';
 
 const DESCRIPTION_MAX_CHARS = 320;
 
@@ -255,11 +259,15 @@ const ACTION_RULES: readonly string[] = [
   '   invent an item, an id, a title or a number.',
   '   Pick the action the owner asks for even when Reference context shows another list or nothing, and when the content to',
   '   add or remind is only 그거/이거/방금 거, copy those words as the span: Core checks the item or the content and asks.',
+  '   When the word that names the action is itself garbled or misspelled, so that the action the owner means is uncertain,',
+  '   return NEEDS_CLARIFICATION with the most likely entry and its args, and that same entry and args as the one alternative:',
+  '   never silently pick the action a garbled word might stand for.',
   '   A remark about an action that already happened ("다 했어", "취소했어"), a negated request ("그건 취소하지 말아줘") and an',
   '   action on pasted or quoted content are none. help.topic stays rule 3: only Quoky\'s own features; a how-to about another',
   '   app or a device, or about what a phrase or command would do, is entryId "none" (rule 2).',
   '   A how-to or method question about one of Quoky\'s own features is help.topic in every form: a full question, a noun',
-  '   form ("…하는 법", "…하는 방법") or a clipped one ("방법 좀"), also when it asks you to explain or tell the method.',
+  '   form ("…하는 법", "…하는 방법") or a clipped one ("방법 좀"), also when it asks you to explain or tell the method, or',
+  '   which command Quoky has for it.',
   '   The same how-to about any other software is none.',
   '   A command-shaped message is never help.topic: an imperative that asks Quoky to do or change something, or a',
   '   "<label>: <value>" colon form that hands Quoky a value to register, delete or set, is none even when it names one of',

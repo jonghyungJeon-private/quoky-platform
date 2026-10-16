@@ -41,6 +41,15 @@ describe('exact-args scorer', () => {
     expect((await scoreExact(firstAction, answer('none'), NOW)).correct).toBe(false);
   });
 
+  it('a gold ask is correct only when the selector asks (NEEDS_CLARIFICATION), never for a CLEAR selection that does not ask', async () => {
+    const askCase = [...scoring.values()].find((candidate) => candidate.corpus === 'action' && candidate.golden.expect !== 'none' && candidate.golden.expect.outcome === 'ask' && candidate.golden.expect.acceptsAnyQuestion === true && candidate.golden.expect.reason === 'ambiguous');
+    if (askCase?.corpus !== 'action' || askCase.golden.expect === 'none') throw new Error('no ask case');
+    const target = askCase.golden.expect;
+    const clarifying = JSON.stringify({ entryId: target.entryId, args: target.args, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: target.entryId, args: target.args }] });
+    expect((await scoreExact(askCase, clarifying, NOW)).correct).toBe(true);
+    expect((await scoreExact(askCase, answer('none'), NOW)).correct).toBe(false);
+  });
+
   it('a transport failure is never correct and keeps its kind', async () => {
     const some = [...scoring.values()][0] as NonNullable<ReturnType<typeof scoring.get>>;
     expect(await scoreExact(some, '', NOW, 'timeout')).toEqual({ correct: false, outcome: 'timeout' });

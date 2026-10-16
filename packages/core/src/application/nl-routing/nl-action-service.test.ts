@@ -8,7 +8,7 @@ import { ACTION_SWITCH_METADATA_KEY, NlActionSwitch } from './action-switch';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
 import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
 import { LAST_ACTION_METADATA_KEY, withLastAction } from './last-action';
-import { NL_ACTION_LOG_EVENT, NlActionCaps, type NlActionLevel } from './nl-action-policy';
+import { NL_ACTION_LOG_EVENT, NlActionCaps, renderGarbledAction, type NlActionLevel } from './nl-action-policy';
 import { NlActionsConfigError, NlSelectionService, nlSelectionCacheKey, type NlSelectionDecision } from './nl-selection-service';
 import { prepareSelectionInput } from './selection-input';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
@@ -237,7 +237,7 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', 'nl-select.v24', 'nl-select.v25', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
     expect(new Set(keys).size).toBe(9);
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v39');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v40');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v42');
     // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
@@ -830,12 +830,13 @@ describe('A6-D3a amendment 1 (owner-approved direction 2026-10-16): a chosen LOC
     expect((await run('2번도', 'todo.complete', { ref: '#2' })).decision).toEqual({ kind: 'none' });
   });
 
-  it('typo case "3번 완룐 처리해줘": Core has no typo list; the selector\'s own NEEDS_CLARIFICATION flag is what asks', async () => {
-    const flagged = await run('3번 완룐 처리해줘', 'todo.complete', { ref: '#3' }, { ambiguity: 'NEEDS_CLARIFICATION' });
-    expect(flagged.decision.kind).toBe('ask');
-    expect(actionLogs(flagged.w).at(-1)?.fields).toMatchObject({ result: 'asked', reason: 'ambiguous' });
-    // A CLEAR selection of the same words executes: nothing in Core recognises the misspelling.
-    expect((await run('3번 완룐 처리해줘', 'todo.complete', { ref: '#3' })).decision).toMatchObject({ kind: 'execute', command: { target: { id: 'todo-3' } } });
+  it('typo case "3번 완룐 처리해줘": the garbled action word asks whether the selector flags it or not (owner decision 2026-10-16)', async () => {
+    // The structural rule (garbled-action.ts, no typo list) replaces "Core has no typo list; a CLEAR selection executes".
+    for (const extra of [{ ambiguity: 'NEEDS_CLARIFICATION' }, {}]) {
+      const asked = await run('3번 완룐 처리해줘', 'todo.complete', { ref: '#3' }, extra);
+      expect(asked.decision.kind).toBe('ask');
+      expect(actionLogs(asked.w).at(-1)?.fields).toMatchObject({ result: 'asked', reason: 'garbled-action' });
+    }
   });
 
   it('CA P2: while ADR-0122 enforcement is off a local write acts only in a DM; reads are unaffected', async () => {
@@ -940,5 +941,24 @@ describe('A6-D3a amendment 1, undo confirmation rule: only an unambiguous undo e
     w.setMetadata(LAST_ACTION_METADATA_KEY, completed());
     expect((await w.decide('되돌려 주신 기능 설명해줘', { now: at(1) })).kind).toBe('none');
     expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'undo-confirm' });
+  });
+});
+
+describe('A6-D3a amendment 1, garbled action word addendum (owner decision 2026-10-16)', () => {
+  it('"3번 완룐 처리해줘" asks, offering 완료; nothing is written and the audit carries no text', async () => {
+    const w = world({ script: [out('todo.complete', { ref: '#3' })] });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3, 4]));
+    const decision = await w.decide('3번 완룐 처리해줘', { now: at(1) });
+    expect(decision).toEqual({ kind: 'ask', text: renderGarbledAction('완료', 'ko'), entryId: 'todo.complete' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'asked', reason: 'garbled-action' });
+    expect(JSON.stringify(w.logs)).not.toContain('완룐');
+  });
+
+  it('"3번 완료 처리해줘" and "1번 할일 체크해줘" still execute', async () => {
+    for (const [text, ref, id] of [['3번 완료 처리해줘', '#3', 'todo-3'], ['1번 할일 체크해줘', '#1', 'todo-1']] as const) {
+      const w = world({ script: [out('todo.complete', { ref })] });
+      w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3, 4]));
+      expect(await w.decide(text, { now: at(1) }), text).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { id } } });
+    }
   });
 });

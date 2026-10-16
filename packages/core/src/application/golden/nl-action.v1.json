@@ -1,7 +1,7 @@
 {
  "version": 1,
  "description": "ADR-0120 amendment A6 action corpus (NLA-6 data), schema docs/plans/nl-action-corpus-schema.md. Agent-drafted; owner batch APPROVED 2026-10-15. Names, titles and ids are invented. Old draft ids are kept in each note (was ...).",
- "promptVersion": "nl-select.v40",
+ "promptVersion": "nl-select.v42",
  "cases": [
   {
    "id": "a6-paraphrase-todo.add-001",
@@ -1154,13 +1154,11 @@
     "args": {
      "ref": "#3"
     },
-    "outcome": "execute",
-    "target": {
-     "source": "todo",
-     "id": "todo-3"
-    }
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
    },
-   "note": "was act-todo-complete-018 [owner gold decision 2026-10-16: execute todo.complete #3 (typo 완룐 read as 완료); was none, PENDING owner approval]"
+   "note": "was act-todo-complete-018 [owner gold decision 2026-10-16 (second): ASK. The action word 완룐 is garbled, so whether the owner means 완료 is uncertain and the assistant asks; it was execute todo.complete #3 earlier the same day, and none before that]"
   },
   {
    "id": "a6-paraphrase-todo.complete-019",

@@ -26772,7 +26772,8 @@ selector itself sets `ambiguity: NEEDS_CLARIFICATION` (existing behaviour, teste
 the repository's owner gold decision of 2026-10-16 ("Owner decisions on A6 gold") is **execute** for
 `a6-paraphrase-todo.complete-018`, and that gold is left unchanged. If the owner wants **ask**, the only non-hardcoded
 route is a selector prompt rule ("an action word you had to guess is NEEDS_CLARIFICATION") plus a D12 run; that is not
-done here (no model calls; the prompt is being changed on another branch).
+done here (no model calls; the prompt is being changed on another branch). *(Superseded 2026-10-16: the gold is ask and Core
+asks structurally; see "A6-D3a amendment 1 addendum: a garbled action word asks" at the end of this ADR's records.)*
 
 ### Gold changes (`golden/nl-action.v1.json`, owner decisions of 2026-10-16)
 
@@ -27029,3 +27030,76 @@ every `nl-action` gold (no grounding or glued-noun change; the seven `deictic-pa
 - The R5a review's corpus grew to 183 cases. The three channel must-not golds now expect the amendment's `dm-only`
   reply ("이 작업은 DM에서만 해요. …"), which precedes R5a. The selector-RAG gold digest (nl-intent / nl-action golds)
   is unchanged, so the audit record was not regenerated.
+
+### Owner decisions of 2026-10-16 (second): read prompt stays nl-select.v39, A6 prompt nl-select.v42
+
+- **`a6-paraphrase-todo.complete-018` ("3번 완룐 처리해줘") is an ASK.** The action word itself is garbled, so whether the
+  owner means 완료 is uncertain; the assistant asks (gold: `todo.complete` `#3`, outcome ask, reason `ambiguous`,
+  `acceptsAnyQuestion`). It replaces the earlier same-day "execute" gold. Implemented as one general A6 rule-8 line
+  (a garbled or misspelled action word, so the intended action is uncertain, is NEEDS_CLARIFICATION with the candidate as the
+  one alternative); no typo list. A structural validator rule was considered and not built: "the frame needs an exact
+  `NL_ACTION_WORDS` hit for the entry's own action, or the generic 처리해줘" would pass this very message (처리해줘 is the
+  generic request), and requiring an exact hit alone would undo A6-D3a amendment 1 (the vocabularies only veto; "1번 할일
+  체크해줘" and "다 해치워줘" run without a listed word). Only the selector can tell that a word is garbled. *(Superseded the
+  same day: the prompt line alone failed 3/3, and the owner approved the structural rule of the "garbled action word
+  addendum" below, which compares jamo, not exact hits.)*
+- **`confluence-047` ("컨플루언스에서 비용 정산 방법 검색해줘", keyword "비용 정산 방법") keeps its gold.** The owner rejected a
+  relabel: for a Confluence document search the full phrase matters. The keyword filler-drop rule does not list 방법 (its
+  generic words are 문서, 자료, 페이지, 파일, 관련, 얘기, 내용, 메시지, 건, 거) and the v39 gate scored the case 3/3, so
+  the rule text is unchanged.
+- **Read prompt back to v39.** The v41 read rules (a feeling or complaint that only mentions a source is none; a phrase-meaning
+  question is none) regressed `calendar.events` about 1 point (89-91/95 to 86-89/95) and A6 read-regression 2/3 to 0/3, so the
+  read prompt stays `nl-select.v39` byte for byte. `neg-037` and `neg-051` stay residual wrong captures.
+- **Eval scorer.** A gold `ask` is a hit only when the selector actually asks (Core's ask outcome or the selector's own
+  NEEDS_CLARIFICATION); naming the gold entry with the gold args while the turn ends as none, or executing it, is a miss.
+- **A6 action gate help.topic 5/6.** The miss was `a6-negative-none-031` ("문서 요약 명령어가 뭐야", gold help.topic `{}`),
+  3/3 runs answered none because rule 8 said a question about what a command would do is none. v42 adds "or which command
+  Quoky has for it" to the how-to line; help.topic was 6/6.
+- The selector-RAG gold digest changed (complete-018), so the audit record was regenerated (`pnpm eval:rag --mode dry-run
+  --write-audit true`, local Ollama only, RAG-0 lint PASSED).
+
+### A6-D3a amendment 1 addendum: a garbled action word asks (owner decision 2026-10-16, third)
+
+The A6 prompt line of v42 did not hold: the selector executed `todo.complete` `#3` for "3번 완룐 처리해줘" in 3/3 runs. The
+owner approved a structural Core rule (`nl-routing/garbled-action.ts`), with no typo list:
+
+- **Rule.** For a LOCAL_WRITE selection, after the request-shape vetoes (a question or negation stays chat), a word of the
+  frame (the owner's prose without the selector's content spans) whose stem is at edit distance exactly 1 from an action
+  word of the closed vocabularies (`NL_ACTION_WORDS`, the selected entry's own words preferred as the candidate) is garbled
+  when it neither holds a known action word nor is a normal inflection of one. Validation fails with the new reason
+  `garbled-action` (arg `action`, `candidate`: the canonical word of the entry whose vocabulary holds the near word,
+  `NL_ACTION_CANONICAL_WORDS`: 완료 / 취소 / 추가 / 알림 / 되돌리기, never the raw stem or owner text); the service asks
+  "'완료'(이)라고 하신 건가요? 아직 아무것도 바꾸지 않았어요. …" (audit `result: asked`, `reason: garbled-action`); nothing
+  is written.
+- **Distance.** Hangul is decomposed into initial, medial and final jamo (완룐 / 완요 / 완뇨 are each 1 from 완료); Latin is
+  compared by letters. Short words are noise and never compared: a Hangul action word needs two syllables (one edit turns
+  꺼 into 거, 빼 into 해), a Latin one five letters.
+- **Valid forms.** A word that holds an action word is never garbled ("완료해줘", "완료로", "완료됨", "완료하고"). Stems are
+  compared after removing a glued request tail (the light verb 처리 / 해 / 하 and the closed request endings, recognised with
+  `nlIsRequestForm`) and up to two closed particles. The catalog's own aliases and source names are known words too
+  ("리마인더" beside 리마인드). Normal inflections are forms, for VERB forms only (review fix, Codex P2 and CA): on the
+  last syllable the ending consonants ㄴ / ㄹ / ㅁ / ㅂ / ㅆ come and go on the same initial and vowel ("2번 해치워줘" ↔
+  해치웠, "끝냄 처리해줘", "마침 처리해줘", "끝남으로 해줘", "지움 처리해줘", "없앰 처리해줘"), and the 어/아 infinitive
+  contracts the last vowel (마치 → "마쳐줘", 멈추 ↔ 멈춰: ㅣ/ㅕ, ㅜ/ㅝ, ㅗ/ㅘ, ㅡ/ㅓ, ㅡ/ㅏ, ㅚ/ㅙ); English -s / -d. The
+  verbal nouns of the vocabularies (`NL_ACTION_VERBAL_NOUNS`: 완료, 취소, 추가, 등록, 삭제 …, a part-of-speech tag) take
+  하다 / 되다 / 처리 and never inflect by themselves, so any one-jamo change to them is a garble: 완룐 and 취솨 ask.
+- **Anchor (the action word's slot).** Only a word in the predicate slot counts. Korean: a word carrying a glued request
+  ending ("완룐해줘", "지웨줘"), or a word right before a request form or the light verb 처리 ("완룐 처리해줘", "완룐 (좀) 해줘")
+  when that next word holds no action word of its own ("필요 없어 취소해줘": 취소 is the action). English: the imperative slot
+  (the first word, after "please" / "can you", or after "as"). Why this anchor rather than adjacency to the ref span: a jamo
+  comparison cannot tell 완료 + final ㄴ (완룐) from the adnominal 끝내 + ㄴ (끝낸) or 마치 + ㄴ (마친), and adnominals do sit
+  right after a ref ("1번 끝낸 거"). An adnominal modifies the noun after it and never carries the request ending, so the
+  predicate slot separates garbling from inflection and also keeps nouns that merely sit one jamo away (원본 / 원복, 제가 /
+  제거, 없어 / 없애) out of the rule.
+- **Scope.** Read entries are untouched (only LOCAL_WRITE). `action.undo` is a LOCAL_WRITE, but its own-word anchor (an
+  undo word in the frame) runs first, so a garbled undo word alone ("원볶해줘") stays chat exactly as before; the rule
+  could only add a question beside a real undo word. R5a (#246, on main): `garbled-action` is in
+  `DEICTIC_BLOCKING_FAILURES` (review fix), so a deictic request with a garbled action word ("그거 할 일로 츄가해줘") asks the
+  garbled-word question and never reaches a preview.
+- **Corpus.** All LOCAL_WRITE golds of `nl-action.v1`, `seed`, `exec-time` and `deictic` validated with their gold selections:
+  the only `garbled-action` is `a6-paraphrase-todo.complete-018` (ask); no execute gold asks ("1번 할일 체크해줘" executes).
+  Pinned in `garbled-action.test.ts`. A raw scan of every golden text found one other slot hit outside any LOCAL_WRITE
+  ("테스트 없이 진행해", 없이 / 없애): the residual noise class of the rule, which can only ever ask.
+- The A6 prompt's garbled-word line (v42) is now redundant and is kept; the prompts and the gold data are unchanged, so the
+  selector-RAG gold digest is unchanged and the audit record was not regenerated. The eval scorer counts `garbled-action` as a
+  clarification reason.

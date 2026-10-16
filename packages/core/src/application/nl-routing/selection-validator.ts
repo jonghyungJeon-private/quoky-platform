@@ -13,6 +13,9 @@ import {
 import {
   formatNlRef,
   isNlDeicticOnlyPayload,
+  NL_ACTION_CANONICAL_WORDS,
+  NL_ACTION_ENTRIES,
+  NL_ACTION_VERBAL_NOUNS,
   NL_ACTION_WORDS,
   nlFrameExpressesAction,
   withoutSpan,
@@ -26,6 +29,7 @@ import {
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
 import { nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
+import { nlGarbledActionWord, type NlActionVocabulary } from './garbled-action';
 import {
   isNlRangeSymbol,
   isWeekdayOrTimeKeyword,
@@ -43,6 +47,7 @@ import {
   type NlWeekdayMention,
 } from './symbolic-time';
 import { canonicalNlKeyword } from './keyword-canonical';
+import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 export { canonicalNlKeyword } from './keyword-canonical';
 
@@ -100,7 +105,13 @@ export type NlValidationFailureReason =
    * A6-D3a amendment 1: the owner's own sentence is not a request (a question, a negation, a retraction, reported speech, a
    * hypothetical, a past statement or first-person volition); `arg` names the class ({@link NlRequestVeto}). The turn is chat.
    */
-  | 'not-request';
+  | 'not-request'
+  /**
+   * A6-D3a amendment 1, garbled action word addendum (owner decision 2026-10-16): a word in the action word's slot is one
+   * jamo (Latin: one letter) away from an action word without being it or a form of it ("3번 완룐 처리해줘"). The owner is
+   * asked, offered `candidate`; nothing is written.
+   */
+  | 'garbled-action';
 
 export interface NlValidatedSelection {
   readonly entry: NlCatalogEntry;
@@ -121,6 +132,8 @@ export type NlValidationResult =
       readonly arg?: string;
       /** ADR-0120 A8: the entry whose usage question the clarification uses instead (an entry check's hint). */
       readonly askEntryId?: NlCatalogEntryId;
+      /** `garbled-action`: the canonical action word of the entry whose vocabulary holds the near word (never the owner's text). */
+      readonly candidate?: string;
     };
 
 export interface NlValidationContext {
@@ -191,6 +204,8 @@ export interface NlRequestShape {
   readonly expressesAction: boolean;
   /** A content span with an unpaired quote: refused as `invalid-arg`. */
   readonly unbalancedSpan?: string;
+  /** The action word a garbled word of the frame may stand for (see `garbled-action.ts`); the selection asks. */
+  readonly garbled?: string;
 }
 
 /**
@@ -240,7 +255,28 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
     });
     expressesAction &&= anchored && !DATIVE.test(contentFrame);
   }
-  return { ...(veto !== undefined ? { veto } : {}), expressesAction };
+  // A6-D3a amendment 1, garbled action word addendum: read on the frame without the content spans (a title "완룐 보고서"
+  // is content), against the selected entry's own words first.
+  const near = nlGarbledActionWord(contentFrame, actionVocabularies(entry), NL_ACTION_VERBAL_NOUNS, CATALOG_WORDS);
+  const garbled = near === undefined ? undefined : canonicalActionWord(near.owner, /^[a-z]+$/u.test(near.word));
+  return { ...(veto !== undefined ? { veto } : {}), expressesAction, ...(garbled !== undefined ? { garbled } : {}) };
+}
+
+/** The catalog's own words (aliases and source names of every read and action entry): known words, never a garble. */
+const CATALOG_WORDS: readonly string[] = [...Object.values(NL_WAVE1_ENTRIES), ...Object.values(NL_ACTION_ENTRIES)].flatMap((candidate) =>
+  candidate === undefined ? [] : [...candidate.aliases, ...(candidate.sourceNames ?? [])],
+);
+
+/** The LOCAL_WRITE action vocabularies, the selected entry's first. */
+function actionVocabularies(entry: NlCatalogEntry): NlActionVocabulary[] {
+  const all = Object.values(NL_ACTION_ENTRIES).flatMap((candidate) => (candidate !== undefined && candidate.risk === 'LOCAL_WRITE' && candidate.actionGrounding !== undefined ? [{ owner: candidate.id, words: candidate.actionGrounding }] : []));
+  return [...all.filter((vocabulary) => vocabulary.owner === entry.id), ...all.filter((vocabulary) => vocabulary.owner !== entry.id)];
+}
+
+/** The canonical word of the vocabulary's entry (Latin for a Latin near word). */
+function canonicalActionWord(owner: string, latin: boolean): string | undefined {
+  const words = (NL_ACTION_CANONICAL_WORDS as Readonly<Record<string, { readonly ko: string; readonly en: string }>>)[owner];
+  return words === undefined ? undefined : latin ? words.en : words.ko;
 }
 
 export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValidationContext): NlValidationResult {
@@ -270,6 +306,9 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     if (shape.unbalancedSpan !== undefined) return { ok: false, reason: 'invalid-arg', entryId, arg: shape.unbalancedSpan };
     if (shape.veto !== undefined) return { ok: false, reason: 'not-request', entryId, arg: shape.veto };
     if (!shape.expressesAction) return { ok: false, reason: 'ungrounded', entryId, arg: 'action' };
+    // After the vetoes (a garbled word in a question or a negation is still chat): the action word itself is uncertain, so
+    // the owner is asked with the candidate instead of the write running (owner decision 2026-10-16, "3번 완룐 처리해줘").
+    if (shape.garbled !== undefined) return { ok: false, reason: 'garbled-action', entryId, arg: 'action', candidate: shape.garbled };
   }
   // A6-D3 (A6 R1 fix): a payload made only of deictic, ordinal or time words gets its fixed reply ("내용을 직접 적어
   // 주세요") before any missing argument is named: "그거 알림으로 만들어줘" has no time either, and the content is the problem.

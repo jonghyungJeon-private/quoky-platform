@@ -233,6 +233,16 @@ export function renderRestate(language: Lang): string {
   return language === 'en' ? 'Please tell me again what to do and which item.' : '무엇을/어느 항목을 다시 말씀해 주세요.';
 }
 
+/**
+ * A6-D3a amendment 1, garbled action word addendum: the question when the action word looks garbled ("3번 완룐 처리해줘"),
+ * offering the closed vocabulary word it may stand for. Nothing was changed; the owner restates with the word.
+ */
+export function renderGarbledAction(candidate: string, language: Lang): string {
+  return language === 'en'
+    ? `Did you mean "${candidate}"? Nothing was changed yet. If so, please say it again with that word.`
+    : `'${candidate}'(이)라고 하신 건가요? 아직 아무것도 바꾸지 않았어요. 맞으면 '${candidate}'로 다시 말씀해 주세요.`;
+}
+
 export function renderTimeInTitle(language: Lang): string {
   return language === 'en'
     ? 'To-dos have no time. Should this be a to-do or a reminder at that time? Please tell me again the way you want it.'

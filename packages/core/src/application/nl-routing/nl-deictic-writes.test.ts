@@ -19,7 +19,7 @@ import { interpretDeicticDraftReply } from './deictic-draft-reply';
 import type { NlDeicticTextReader } from './deictic-writes';
 import { LAST_ACTION_METADATA_KEY, withLastAction } from './last-action';
 import { LAST_TURN_METADATA_KEY, nlOwnerMessageEligibility, readLastTurn, withLastTurnReplies } from './last-turn';
-import { NL_ACTION_LOG_EVENT, NlActionCaps, renderDeicticPayload } from './nl-action-policy';
+import { NL_ACTION_LOG_EVENT, NlActionCaps, renderDeicticPayload, renderGarbledAction } from './nl-action-policy';
 import { DEICTIC_BLOCKING_FAILURES, NlActionsConfigError, NlSelectionService, type NlSelectionDecision } from './nl-selection-service';
 import { NL_PENDING_METADATA_KEY, pendingQuestionRecord, readPendingQuestion } from './selection-state';
 import { NL_ACTION_WORDS } from './action-entries';
@@ -461,6 +461,18 @@ describe('R5a on top of A6-D3a amendment 1 (act-then-undo)', () => {
       const logged = w.logs.filter((log) => log.event === NL_ACTION_LOG_EVENT).at(-1);
       expect(logged?.fields?.reason, text).toBe(`not-request:${veto}`);
     }
+  });
+
+  it('garbled-action blocks the deictic path: a garbled action word asks its own question, never a preview', async () => {
+    expect(DEICTIC_BLOCKING_FAILURES.has('garbled-action')).toBe(true);
+    const w = world();
+    await w.record({ text: '자료 정리', replyKind: 'question' });
+    (w.service as unknown as { deictic: { isDeicticRequest(): boolean } }).deictic.isDeicticRequest = () => true;
+    const decision = await w.decide('그거 할 일로 츄가해줘', out('todo.add', { title: '그거' }));
+    expect(decision).toEqual({ kind: 'ask', text: renderGarbledAction('추가', 'ko'), entryId: 'todo.add' });
+    expect(readDeicticDraft(w.session().metadata?.[DEICTIC_DRAFT_METADATA_KEY], ACTOR)).toBeUndefined();
+    expect(deicticLogs(w)).toEqual([]);
+    expect(w.logs.filter((log) => log.event === NL_ACTION_LOG_EVENT).at(-1)?.fields?.reason).toBe('garbled-action');
   });
 
   it('(c) origin phrases are stripped (requestFrame) before the vetoes, for the deictic path only', async () => {
