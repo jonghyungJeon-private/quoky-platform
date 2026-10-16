@@ -126,6 +126,10 @@ Details and the review record for each item are in the matching notes in `DECISI
 - **Backlog (owner request 2026-10-15, not R1):** a separate safe design proposal for "그거로 추가해줘", bringing earlier
   reply content into a to-do: a preview showing the exact text, explicit approval, and defenses against content-borne
   injection (ADR-0121 S3 territory). Until then the A6-D3 deictic-payload refusal stays.
+  **Update 2026-10-16:** proposal approved (decisions 1a, 2-9; 1b deferred) and A6 R5a implemented on branch
+  `claude/v5-a6-r5a` behind `QUOKY_NL_DEICTIC_WRITES` (default `off`; requires `QUOKY_NL_ACTIONS=local`, so it stays inert
+  on the live service, which runs `shadow`). Owner-text referents only, preview, next-turn "응". Live gate (≥ 100 attended
+  turns, 3 strict model runs) not run.
 
 ### ADR-0120 amendment A8: Jira release listings (`jira.release`) — Accepted 2026-10-15, on branch `claude/v5-jira-release`
 

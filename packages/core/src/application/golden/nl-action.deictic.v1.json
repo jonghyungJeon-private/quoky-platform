@@ -1,0 +1,7106 @@
+{
+ "version": "nl-action.deictic.v1",
+ "description": "ADR-0120 amendment A6 R5a deictic-write corpus (§6.1; schema: docs/plans/a6-deictic-write-proposal.md §6.1, nl-action-corpus-schema.md). Agent-drafted per D12 (owner decision 9, 2026-10-16). Fixture: `turn` (the previous owner message, its eligibility at receipt and the reply kind), `items` (eventLinked, kind BRIEF, origin connector), `lastAction`, `listing`, `replyTo`, `direct`, `switch`, `questionOpen`, `capped`. Outcomes: preview (payload, referent), ask, refuse or chat. Names and titles are invented.",
+ "cases": [
+  {
+   "id": "dx-positive-echo-001",
+   "family": "positive",
+   "path": "echo",
+   "text": "방금 거 알림으로 걸어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "방금 거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 주간 보고 제출",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "주간 보고 제출"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 3
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      3
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "주간 보고 제출",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-echo-002",
+   "family": "positive",
+   "path": "echo",
+   "text": "그거 알림으로 걸어 줘 금요일 오전 10시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 분기 결산 검토",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 4,
+      "title": "분기 결산 검토"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 4
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      4
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "분기 결산 검토",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-echo-003",
+   "family": "positive",
+   "path": "echo",
+   "text": "이거 알림으로 만들어줘 모레 오후 3시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 팀 회고 자료 준비",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 5,
+      "title": "팀 회고 자료 준비"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 5
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      5
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "팀 회고 자료 준비",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-echo-004",
+   "family": "positive",
+   "path": "echo",
+   "text": "아까 거 내일 오후 2시 알림으로 걸어줘",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "아까 거",
+     "when": "내일 오후 2시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 견적서 회신",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 6,
+      "title": "견적서 회신"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 6
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      6
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "견적서 회신",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-echo-005",
+   "family": "positive",
+   "path": "echo",
+   "text": "방금 거 알림으로 걸어줘 다음 주 월요일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "방금 거",
+     "when": "다음 주 월요일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 서버 점검 결과 공유",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 7,
+      "title": "서버 점검 결과 공유"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 7
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      7
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "서버 점검 결과 공유",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-echo-006",
+   "family": "positive",
+   "path": "echo",
+   "text": "그거 알림으로 걸어 줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 신규 입사자 온보딩 정리",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 8,
+      "title": "신규 입사자 온보딩 정리"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 8
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      8
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "신규 입사자 온보딩 정리",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-echo-007",
+   "family": "positive",
+   "path": "echo",
+   "text": "이거 알림으로 만들어줘 금요일 오전 10시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 예산안 초안 작성",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 9,
+      "title": "예산안 초안 작성"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 9
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      9
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "예산안 초안 작성",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-echo-008",
+   "family": "positive",
+   "path": "echo",
+   "text": "아까 거 모레 오후 3시 알림으로 걸어줘",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "아까 거",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 고객 피드백 분류",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 10,
+      "title": "고객 피드백 분류"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 10
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      10
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "고객 피드백 분류",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-echo-009",
+   "family": "positive",
+   "path": "echo",
+   "text": "그거 할 일로도 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 약 먹기 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 11,
+      "title": "약 먹기"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 11
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      11
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "약 먹기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-echo-010",
+   "family": "positive",
+   "path": "echo",
+   "text": "방금 거 할 일에도 넣어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "방금 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 비타민 챙기기 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 12,
+      "title": "비타민 챙기기"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 12
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      12
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "비타민 챙기기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-echo-011",
+   "family": "positive",
+   "path": "echo",
+   "text": "이거 할일 만들어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 택배 찾기 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 13,
+      "title": "택배 찾기"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 13
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      13
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "택배 찾기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-echo-012",
+   "family": "positive",
+   "path": "echo",
+   "text": "그걸로 할 일 만들어 주세요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 우산 챙기기 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 14,
+      "title": "우산 챙기기"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 14
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      14
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "우산 챙기기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-001",
+   "family": "positive",
+   "path": "listing",
+   "text": "1번 알림으로 걸어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "1번",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "신규 입사자 온보딩 정리"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "고객 피드백 분류"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "디자인 시안 검토"
+     },
+     {
+      "source": "todo",
+      "label": 4,
+      "title": "계약서 서명 받기"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "신규 입사자 온보딩 정리",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-002",
+   "family": "positive",
+   "path": "listing",
+   "text": "2번 알림으로 걸어줘 금요일 오전 10시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "2번",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "고객 피드백 분류"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "예산안 초안 작성"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "계약서 서명 받기"
+     },
+     {
+      "source": "todo",
+      "label": 4,
+      "title": "세미나 발표 연습"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "예산안 초안 작성",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-003",
+   "family": "positive",
+   "path": "listing",
+   "text": "3번 알림으로 걸어줘 모레 오후 3시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "3번",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "디자인 시안 검토"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "계약서 서명 받기"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "고객 피드백 분류"
+     },
+     {
+      "source": "todo",
+      "label": 4,
+      "title": "보험 서류 제출"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "고객 피드백 분류",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-004",
+   "family": "positive",
+   "path": "listing",
+   "text": "4번 알림으로 걸어줘 내일 오후 2시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "4번",
+     "when": "내일 오후 2시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "계약서 서명 받기"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "세미나 발표 연습"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "보험 서류 제출"
+     },
+     {
+      "source": "todo",
+      "label": 4,
+      "title": "디자인 시안 검토"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "디자인 시안 검토",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-005",
+   "family": "positive",
+   "path": "listing",
+   "text": "1번 알림으로 걸어줘 다음 주 월요일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "1번",
+     "when": "다음 주 월요일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "계약서 서명 받기"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "보험 서류 제출"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "장비 반납 처리"
+     },
+     {
+      "source": "todo",
+      "label": 4,
+      "title": "출장 정산 올리기"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "계약서 서명 받기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-006",
+   "family": "positive",
+   "path": "listing",
+   "text": "2번 알림으로 걸어줘 30분 뒤",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "2번",
+     "when": "30분 뒤"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "보험 서류 제출"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "세미나 발표 연습"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "출장 정산 올리기"
+     },
+     {
+      "source": "todo",
+      "label": 4,
+      "title": "릴리스 노트 정리"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "세미나 발표 연습",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-007",
+   "family": "positive",
+   "path": "listing",
+   "text": "그거 꼭 알림으로 걸어줘 모레 오후 3시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 목록 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "보험 서류 제출"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "보험 서류 제출",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-008",
+   "family": "positive",
+   "path": "listing",
+   "text": "그거 알림 걸어줘 내일 오후 2시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 오후 2시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 목록 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "장비 반납 처리"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "장비 반납 처리",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-009",
+   "family": "positive",
+   "path": "listing",
+   "text": "이거 다음 주 월요일 9시 알림으로 만들어줘",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거",
+     "when": "다음 주 월요일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 목록 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "출장 정산 올리기"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "출장 정산 올리기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-010",
+   "family": "positive",
+   "path": "listing",
+   "text": "4번 할 일로 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "4번"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "알림 목록 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 4,
+      "title": "우산 챙기기"
+     },
+     {
+      "source": "reminder",
+      "label": 7,
+      "title": "도시락 챙기기"
+     },
+     {
+      "source": "reminder",
+      "label": 9,
+      "title": "차 키 챙기기"
+     }
+    ],
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      4,
+      7,
+      9
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "우산 챙기기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-011",
+   "family": "positive",
+   "path": "listing",
+   "text": "7번 할 일에 넣어 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "7번"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "알림 목록 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 4,
+      "title": "영수증 정리"
+     },
+     {
+      "source": "reminder",
+      "label": 7,
+      "title": "화분 물 주기"
+     },
+     {
+      "source": "reminder",
+      "label": 9,
+      "title": "약 먹기"
+     }
+    ],
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      4,
+      7,
+      9
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "화분 물 주기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-listing-012",
+   "family": "positive",
+   "path": "listing",
+   "text": "9번 할일 만들어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "9번"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "알림 목록 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 4,
+      "title": "스트레칭"
+     },
+     {
+      "source": "reminder",
+      "label": 7,
+      "title": "차 키 챙기기"
+     },
+     {
+      "source": "reminder",
+      "label": 9,
+      "title": "영수증 정리"
+     }
+    ],
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      4,
+      7,
+      9
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "영수증 정리",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-001",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "그걸로 할 일 만들어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "UAT 결과 정리",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-002",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "그거 할 일에 넣어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "거래처 견적 비교표 만들기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "refusal"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "거래처 견적 비교표 만들기",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-003",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "그거 할 일로 등록해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "회의실 예약 확인",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "회의실 예약 확인",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-004",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "이거 할일 만들어 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "부서 워크숍 장소 알아보기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "refusal"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "부서 워크숍 장소 알아보기",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-005",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "그걸로 할 일 만들어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "노트북 백업 하기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "노트북 백업 하기",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-006",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "그거 할 일에 넣어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "인턴 평가서 작성",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "refusal"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "인턴 평가서 작성",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-007",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "그거 할 일로 등록해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "사내 공지 초안 쓰기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "사내 공지 초안 쓰기",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-008",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "이거 할일 만들어 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "분기 목표 다시 보기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "refusal"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "분기 목표 다시 보기",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-009",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "내가 말한 거 할 일로 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "내가 말한 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "보안 교육 이수하기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "보안 교육 이수하기",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-010",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "제가 적은 거 할 일에 넣어 주세요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "제가 적은 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "프린터 토너 주문",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "프린터 토너 주문",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-011",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "내가 보낸 거 할 일로 넣어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "내가 보낸 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "협력사 연락처 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "협력사 연락처 정리",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-012",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "내가 쓴 거 할 일에 추가",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "내가 쓴 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "데모 시나리오 다듬기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "데모 시나리오 다듬기",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-013",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "그거 알림으로 걸어줘 내일 9시 꼭",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "UAT 결과 정리",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-owner-message-014",
+   "family": "positive",
+   "path": "owner-message",
+   "text": "그거 알림으로 걸어줘 금요일 오전 10시 꼭",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "거래처 견적 비교표 만들기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "거래처 견적 비교표 만들기",
+    "referent": "owner.message"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-001",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "이거 알림으로 걸어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "오늘 날씨 어때",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 20,
+      "title": "주간 보고 제출"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 20,
+     "own": false,
+     "ageMinutes": 15
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      20
+     ],
+     "own": false
+    },
+    "replyTo": "echo"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "주간 보고 제출",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-002",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "이거 알림 걸어 줘요 금요일 오전 10시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "오늘 날씨 어때",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 21,
+      "title": "분기 결산 검토"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 21,
+     "own": false,
+     "ageMinutes": 15
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      21
+     ],
+     "own": false
+    },
+    "replyTo": "echo"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "분기 결산 검토",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-003",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "이걸로 알림 만들어줘 모레 오후 3시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이걸로",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "오늘 날씨 어때",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 22,
+      "title": "팀 회고 자료 준비"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 22,
+     "own": false,
+     "ageMinutes": 15
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      22
+     ],
+     "own": false
+    },
+    "replyTo": "echo"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "팀 회고 자료 준비",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-004",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "이거 알림으로 걸어줘 내일 오후 2시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거",
+     "when": "내일 오후 2시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "오늘 날씨 어때",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 23,
+      "title": "견적서 회신"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 23,
+     "own": false,
+     "ageMinutes": 15
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      23
+     ],
+     "own": false
+    },
+    "replyTo": "echo"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "견적서 회신",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-005",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "이거 알림 걸어 줘요 다음 주 월요일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거",
+     "when": "다음 주 월요일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "오늘 날씨 어때",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 24,
+      "title": "서버 점검 결과 공유"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 24,
+     "own": false,
+     "ageMinutes": 15
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      24
+     ],
+     "own": false
+    },
+    "replyTo": "echo"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "서버 점검 결과 공유",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-006",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "이걸로 알림 만들어줘 30분 뒤",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이걸로",
+     "when": "30분 뒤"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "오늘 날씨 어때",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 25,
+      "title": "신규 입사자 온보딩 정리"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 25,
+     "own": false,
+     "ageMinutes": 15
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      25
+     ],
+     "own": false
+    },
+    "replyTo": "echo"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "신규 입사자 온보딩 정리",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-007",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "1번 알림으로 걸어 줘 금요일 오전 10시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "1번",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "분기 결산 검토"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "팀 회고 자료 준비"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "견적서 회신"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3
+     ],
+     "own": false
+    },
+    "replyTo": "listing"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "분기 결산 검토",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-008",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "2번 항목은 모레 오후 3시 알림으로 걸어 줘요",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "2번",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "견적서 회신"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "서버 점검 결과 공유"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "신규 입사자 온보딩 정리"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3
+     ],
+     "own": false
+    },
+    "replyTo": "listing"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "서버 점검 결과 공유",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-009",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "3번 거 알림으로 만들어줘 내일 오후 2시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "3번 거",
+     "when": "내일 오후 2시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "신규 입사자 온보딩 정리"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "예산안 초안 작성"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "고객 피드백 분류"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3
+     ],
+     "own": false
+    },
+    "replyTo": "listing"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "고객 피드백 분류",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-010",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "1번 알림으로 걸어 줘 다음 주 월요일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "1번",
+     "when": "다음 주 월요일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "고객 피드백 분류"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "디자인 시안 검토"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "계약서 서명 받기"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3
+     ],
+     "own": false
+    },
+    "replyTo": "listing"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "고객 피드백 분류",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-011",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "2번 항목은 30분 뒤 알림으로 걸어 줘요",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "2번",
+     "when": "30분 뒤"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "계약서 서명 받기"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "세미나 발표 연습"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "보험 서류 제출"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3
+     ],
+     "own": false
+    },
+    "replyTo": "listing"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "세미나 발표 연습",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-reply-to-012",
+   "family": "positive",
+   "path": "reply-to",
+   "text": "3번 거 알림으로 만들어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "3번 거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "보험 서류 제출"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "장비 반납 처리"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "출장 정산 올리기"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3
+     ],
+     "own": false
+    },
+    "replyTo": "listing"
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "출장 정산 올리기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-001",
+   "family": "positive",
+   "path": "determiner",
+   "text": "그 할 일 알림으로 걸어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그 할 일",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워요",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 30,
+      "title": "고객 피드백 분류"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 30,
+     "own": false,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "고객 피드백 분류",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-002",
+   "family": "positive",
+   "path": "determiner",
+   "text": "그 할 일 알림으로 걸어 줘 금요일 오전 10시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그 할 일",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워요",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 31,
+      "title": "디자인 시안 검토"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 31,
+     "own": false,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "디자인 시안 검토",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-003",
+   "family": "positive",
+   "path": "determiner",
+   "text": "그 할 일 알림 만들어줘 모레 오후 3시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그 할 일",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워요",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 32,
+      "title": "계약서 서명 받기"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 32,
+     "own": false,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "계약서 서명 받기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-004",
+   "family": "positive",
+   "path": "determiner",
+   "text": "이 할 일 내일 오후 2시 알림으로 걸어줘",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이 할 일",
+     "when": "내일 오후 2시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워요",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 33,
+      "title": "세미나 발표 연습"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 33,
+     "own": false,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "세미나 발표 연습",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-005",
+   "family": "positive",
+   "path": "determiner",
+   "text": "그 할 일 알림으로 걸어줘 다음 주 월요일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그 할 일",
+     "when": "다음 주 월요일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워요",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 34,
+      "title": "보험 서류 제출"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 34,
+     "own": false,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "보험 서류 제출",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-006",
+   "family": "positive",
+   "path": "determiner",
+   "text": "그 할 일 알림으로 걸어 줘 30분 뒤",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그 할 일",
+     "when": "30분 뒤"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워요",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 35,
+      "title": "장비 반납 처리"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 35,
+     "own": false,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "장비 반납 처리",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-007",
+   "family": "positive",
+   "path": "determiner",
+   "text": "그 할 일 알림 만들어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그 할 일",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워요",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 36,
+      "title": "출장 정산 올리기"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 36,
+     "own": false,
+     "ageMinutes": 3
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "출장 정산 올리기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-008",
+   "family": "positive",
+   "path": "determiner",
+   "text": "그 알림 할 일로 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그 알림"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "잘했어",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 40,
+      "title": "영수증 정리"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 40,
+     "own": false,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "영수증 정리",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-009",
+   "family": "positive",
+   "path": "determiner",
+   "text": "그 알림 할 일에 넣어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그 알림"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "잘했어",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 41,
+      "title": "스트레칭"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 41,
+     "own": false,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "스트레칭",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-010",
+   "family": "positive",
+   "path": "determiner",
+   "text": "그 알림 할일 만들어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그 알림"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "잘했어",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 42,
+      "title": "도시락 챙기기"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 42,
+     "own": false,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "도시락 챙기기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-011",
+   "family": "positive",
+   "path": "determiner",
+   "text": "이 알림 할 일로 등록해 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이 알림"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "잘했어",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 43,
+      "title": "카드 대금 확인"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 43,
+     "own": false,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "카드 대금 확인",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-positive-determiner-012",
+   "family": "positive",
+   "path": "determiner",
+   "text": "그 알림 할 일로 올려줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그 알림"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "잘했어",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 44,
+      "title": "차 키 챙기기"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 44,
+     "own": false,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "outcome": "preview",
+    "payload": "차 키 챙기기",
+    "referent": "item.local"
+   }
+  },
+  {
+   "id": "dx-ask-several-001",
+   "family": "ask",
+   "path": "several",
+   "text": "그거 알림으로 걸어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "분기 결산 검토"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "팀 회고 자료 준비"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-several-002",
+   "family": "ask",
+   "path": "several",
+   "text": "그거 알림으로 걸어줘 금요일 오전 10시 부탁해",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "팀 회고 자료 준비"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "견적서 회신"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "서버 점검 결과 공유"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-several-003",
+   "family": "ask",
+   "path": "several",
+   "text": "이거 알림 만들어줘 모레 오후 3시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "견적서 회신"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "서버 점검 결과 공유"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-several-004",
+   "family": "ask",
+   "path": "several",
+   "text": "그걸로 알림 걸어 줘 내일 오후 2시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그걸로",
+     "when": "내일 오후 2시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "서버 점검 결과 공유"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "신규 입사자 온보딩 정리"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "예산안 초안 작성"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-several-005",
+   "family": "ask",
+   "path": "several",
+   "text": "저거 말고 그거 알림으로 걸어줘 다음 주 월요일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "다음 주 월요일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "신규 입사자 온보딩 정리"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "예산안 초안 작성"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-several-006",
+   "family": "ask",
+   "path": "several",
+   "text": "그거 알림으로 걸어줘 30분 뒤",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "30분 뒤"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "예산안 초안 작성"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "고객 피드백 분류"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "디자인 시안 검토"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-several-007",
+   "family": "ask",
+   "path": "several",
+   "text": "그거 알림으로 걸어줘 내일 9시 부탁해",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "고객 피드백 분류"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "디자인 시안 검토"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-several-008",
+   "family": "ask",
+   "path": "several",
+   "text": "이거 알림 만들어줘 금요일 오전 10시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "디자인 시안 검토"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "계약서 서명 받기"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "세미나 발표 연습"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-several-009",
+   "family": "ask",
+   "path": "several",
+   "text": "그걸로 알림 걸어 줘 모레 오후 3시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그걸로",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "계약서 서명 받기"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "세미나 발표 연습"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-several-010",
+   "family": "ask",
+   "path": "several",
+   "text": "저거 말고 그거 알림으로 걸어줘 내일 오후 2시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 오후 2시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "세미나 발표 연습"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "보험 서류 제출"
+     },
+     {
+      "source": "todo",
+      "label": 3,
+      "title": "장비 반납 처리"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2,
+      3
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-conflict-001",
+   "family": "ask",
+   "path": "conflict",
+   "text": "방금 거 알림으로 걸어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "방금 거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "주간 보고 제출"
+     },
+     {
+      "source": "todo",
+      "label": 7,
+      "title": "신규 입사자 온보딩 정리"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      2
+     ]
+    },
+    "lastAction": {
+     "source": "todo",
+     "label": 7,
+     "own": false,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-conflict-002",
+   "family": "ask",
+   "path": "conflict",
+   "text": "아까 거 알림으로 걸어줘 금요일 오전 10시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "아까 거",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "분기 결산 검토"
+     },
+     {
+      "source": "todo",
+      "label": 7,
+      "title": "예산안 초안 작성"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      2
+     ]
+    },
+    "lastAction": {
+     "source": "todo",
+     "label": 7,
+     "own": false,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-conflict-003",
+   "family": "ask",
+   "path": "conflict",
+   "text": "방금 거 모레 오후 3시 알림 만들어줘",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "방금 거",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "팀 회고 자료 준비"
+     },
+     {
+      "source": "todo",
+      "label": 7,
+      "title": "고객 피드백 분류"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      2
+     ]
+    },
+    "lastAction": {
+     "source": "todo",
+     "label": 7,
+     "own": false,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-conflict-004",
+   "family": "ask",
+   "path": "conflict",
+   "text": "아까 거 알림으로 걸어 줘 내일 오후 2시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "아까 거",
+     "when": "내일 오후 2시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "견적서 회신"
+     },
+     {
+      "source": "todo",
+      "label": 7,
+      "title": "디자인 시안 검토"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      2
+     ]
+    },
+    "lastAction": {
+     "source": "todo",
+     "label": 7,
+     "own": false,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-conflict-005",
+   "family": "ask",
+   "path": "conflict",
+   "text": "방금 거 알림 걸어줘 다음 주 월요일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "방금 거",
+     "when": "다음 주 월요일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "서버 점검 결과 공유"
+     },
+     {
+      "source": "todo",
+      "label": 7,
+      "title": "계약서 서명 받기"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      2
+     ]
+    },
+    "lastAction": {
+     "source": "todo",
+     "label": 7,
+     "own": false,
+     "ageMinutes": 2
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 걸 알림으로 만들까요?"
+   }
+  },
+  {
+   "id": "dx-ask-stale-number-001",
+   "family": "ask",
+   "path": "stale-number",
+   "text": "2번 알림으로 걸어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "2번",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "오늘 어땠어",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "주간 보고 제출"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ],
+     "own": false
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 목록의 번호인지 확인할 수 없어요."
+   }
+  },
+  {
+   "id": "dx-ask-stale-number-002",
+   "family": "ask",
+   "path": "stale-number",
+   "text": "2번 알림 걸어 줘 금요일 오전 10시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "2번",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "오늘 어땠어",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "분기 결산 검토"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ],
+     "own": false
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 목록의 번호인지 확인할 수 없어요."
+   }
+  },
+  {
+   "id": "dx-ask-stale-number-003",
+   "family": "ask",
+   "path": "stale-number",
+   "text": "두 번째 거 알림으로 만들어줘 모레 오후 3시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "두 번째 거",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "오늘 어땠어",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "팀 회고 자료 준비"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ],
+     "own": false
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 목록의 번호인지 확인할 수 없어요."
+   }
+  },
+  {
+   "id": "dx-ask-stale-number-004",
+   "family": "ask",
+   "path": "stale-number",
+   "text": "1번 알림 걸어줘 내일 오후 2시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "1번",
+     "when": "내일 오후 2시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "오늘 어땠어",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "견적서 회신"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ],
+     "own": false
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 목록의 번호인지 확인할 수 없어요."
+   }
+  },
+  {
+   "id": "dx-ask-stale-number-005",
+   "family": "ask",
+   "path": "stale-number",
+   "text": "첫 번째 거 알림으로 걸어줘 다음 주 월요일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "첫 번째 거",
+     "when": "다음 주 월요일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "오늘 어땠어",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "서버 점검 결과 공유"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ],
+     "own": false
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "어느 목록의 번호인지 확인할 수 없어요."
+   }
+  },
+  {
+   "id": "dx-ask-no-owner-message-001",
+   "family": "ask",
+   "path": "no-owner-message",
+   "text": "내가 말한 거 할 일로 추가해줘 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "내가 말한 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "그거 할 일로 추가해줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "말씀하신 메시지를 찾지 못했어요."
+   }
+  },
+  {
+   "id": "dx-ask-no-owner-message-002",
+   "family": "ask",
+   "path": "no-owner-message",
+   "text": "제가 쓴 거 할 일에 넣어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "제가 쓴 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과\n정리",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "말씀하신 메시지를 찾지 못했어요."
+   }
+  },
+  {
+   "id": "dx-ask-no-owner-message-003",
+   "family": "ask",
+   "path": "no-owner-message",
+   "text": "내가 보낸 거 할 일로 넣어 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "내가 보낸 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "> 인용한 문장",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "말씀하신 메시지를 찾지 못했어요."
+   }
+  },
+  {
+   "id": "dx-ask-no-owner-message-004",
+   "family": "ask",
+   "path": "no-owner-message",
+   "text": "내가 적은 거 할 일에 추가해 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "내가 적은 거"
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "말씀하신 메시지를 찾지 못했어요."
+   }
+  },
+  {
+   "id": "dx-ask-too-long-001",
+   "family": "ask",
+   "path": "too-long",
+   "text": "그거 할 일로 넣어 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 0",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "내용이 길어서 그대로 넣지 않았어요."
+   }
+  },
+  {
+   "id": "dx-ask-too-long-002",
+   "family": "ask",
+   "path": "too-long",
+   "text": "그거 할 일로 넣어 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 1",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "내용이 길어서 그대로 넣지 않았어요."
+   }
+  },
+  {
+   "id": "dx-ask-too-long-003",
+   "family": "ask",
+   "path": "too-long",
+   "text": "그걸로 할 일 등록해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 긴 문장 2",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "내용이 길어서 그대로 넣지 않았어요."
+   }
+  },
+  {
+   "id": "dx-ask-expired-001",
+   "family": "ask",
+   "path": "expired",
+   "text": "그거 할 일에 넣어 줘요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     },
+     "ageMinutes": 40
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-ask-expired-002",
+   "family": "ask",
+   "path": "expired",
+   "text": "그걸로 할 일 추가 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "거래처 견적 비교표 만들기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     },
+     "ageMinutes": 40
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-ask-expired-003",
+   "family": "ask",
+   "path": "expired",
+   "text": "이거 할 일로 추가해 주세요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "회의실 예약 확인",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     },
+     "ageMinutes": 40
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-ask-changed-001",
+   "family": "ask",
+   "path": "changed",
+   "text": "그거 할 일로 넣어줘요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "부서 워크숍 장소 알아보기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "refusal"
+     },
+     "changed": true
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "그 내용은 더 이상 찾을 수 없어요."
+   }
+  },
+  {
+   "id": "dx-ask-changed-002",
+   "family": "ask",
+   "path": "changed",
+   "text": "그걸로 할 일 만들어줘요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "노트북 백업 하기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "refusal"
+     },
+     "changed": true
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "그 내용은 더 이상 찾을 수 없어요."
+   }
+  },
+  {
+   "id": "dx-ask-changed-003",
+   "family": "ask",
+   "path": "changed",
+   "text": "이거 할 일에 넣어 둬",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "인턴 평가서 작성",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "refusal"
+     },
+     "changed": true
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "그 내용은 더 이상 찾을 수 없어요."
+   }
+  },
+  {
+   "id": "dx-ask-no-time-001",
+   "family": "ask",
+   "path": "no-time",
+   "text": "방금 거 알림으로 걸어줘",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "방금 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 팀 회고 자료 준비",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 50,
+      "title": "팀 회고 자료 준비"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 50
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      50
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "언제 알려 드릴까요?"
+   }
+  },
+  {
+   "id": "dx-ask-no-time-002",
+   "family": "ask",
+   "path": "no-time",
+   "text": "그거 알림으로 만들어 줘요",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 견적서 회신",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 51,
+      "title": "견적서 회신"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 51
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      51
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "언제 알려 드릴까요?"
+   }
+  },
+  {
+   "id": "dx-ask-no-time-003",
+   "family": "ask",
+   "path": "no-time",
+   "text": "이거 알림 걸어줘 부탁해요",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 서버 점검 결과 공유",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 52,
+      "title": "서버 점검 결과 공유"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 52
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      52
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "언제 알려 드릴까요?"
+   }
+  },
+  {
+   "id": "dx-ask-no-time-004",
+   "family": "ask",
+   "path": "no-time",
+   "text": "아까 거 알림 걸어 줘요",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "아까 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 신규 입사자 온보딩 정리",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 53,
+      "title": "신규 입사자 온보딩 정리"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 53
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      53
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "언제 알려 드릴까요?"
+   }
+  },
+  {
+   "id": "dx-ask-out-of-range-001",
+   "family": "ask",
+   "path": "out-of-range",
+   "text": "5번 알림으로 걸어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "5번",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "분기 결산 검토"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "팀 회고 자료 준비"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "목록에 없는 번호예요."
+   }
+  },
+  {
+   "id": "dx-ask-out-of-range-002",
+   "family": "ask",
+   "path": "out-of-range",
+   "text": "9번 알림으로 걸어 줘 금요일 오전 10시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "9번",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "분기 결산 검토"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "팀 회고 자료 준비"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "목록에 없는 번호예요."
+   }
+  },
+  {
+   "id": "dx-ask-out-of-range-003",
+   "family": "ask",
+   "path": "out-of-range",
+   "text": "7번 알림 만들어줘 모레 오후 3시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "7번",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내 할 일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "listing",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 1,
+      "title": "분기 결산 검토"
+     },
+     {
+      "source": "todo",
+      "label": 2,
+      "title": "팀 회고 자료 준비"
+     }
+    ],
+    "listing": {
+     "source": "todo",
+     "labels": [
+      1,
+      2
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "목록에 없는 번호예요."
+   }
+  },
+  {
+   "id": "dx-ask-reply-other-001",
+   "family": "ask",
+   "path": "reply-other",
+   "text": "이거 할 일로 추가해 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "replyTo": "other"
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-ask-reply-other-002",
+   "family": "ask",
+   "path": "reply-other",
+   "text": "이거 할 일에 넣어 줘요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "고마워",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    },
+    "replyTo": "other"
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-ask-time-in-title-001",
+   "family": "ask",
+   "path": "time-in-title",
+   "text": "그거 할 일로도 넣어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 3시 회의 자료 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 60,
+      "title": "3시 회의 자료"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 60
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      60
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "할 일에는 시간을 넣지 않아요."
+   }
+  },
+  {
+   "id": "dx-ask-time-in-title-002",
+   "family": "ask",
+   "path": "time-in-title",
+   "text": "방금 거 할 일로도 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "방금 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 오후 2시 통화 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 61,
+      "title": "오후 2시 통화"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 61
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      61
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "ask",
+    "text": "할 일에는 시간을 넣지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-model-drafted-001",
+   "family": "must-not",
+   "path": "model-drafted",
+   "text": "그거 할 일로 추가해줘요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "제 답변 내용은 아직 바로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-model-drafted-002",
+   "family": "must-not",
+   "path": "model-drafted",
+   "text": "그거 할 일에 넣어 줄래?",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "거래처 견적 비교표 만들기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "제 답변 내용은 아직 바로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-model-drafted-003",
+   "family": "must-not",
+   "path": "model-drafted",
+   "text": "그걸로 할 일 만들어 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "회의실 예약 확인",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "제 답변 내용은 아직 바로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-model-drafted-004",
+   "family": "must-not",
+   "path": "model-drafted",
+   "text": "이거 할 일로 등록해 줘요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "부서 워크숍 장소 알아보기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "제 답변 내용은 아직 바로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-model-drafted-005",
+   "family": "must-not",
+   "path": "model-drafted",
+   "text": "네가 추천한 거 할 일로 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "네가 추천한 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "노트북 백업 하기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "제 답변 내용은 아직 바로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-model-drafted-006",
+   "family": "must-not",
+   "path": "model-drafted",
+   "text": "니가 알려준 거 할 일에 넣어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "니가 알려준 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "인턴 평가서 작성",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "제 답변 내용은 아직 바로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-model-drafted-007",
+   "family": "must-not",
+   "path": "model-drafted",
+   "text": "그 답변 할 일로 넣어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그 답변"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "사내 공지 초안 쓰기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "제 답변 내용은 아직 바로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-model-drafted-008",
+   "family": "must-not",
+   "path": "model-drafted",
+   "text": "네 대답 할 일에 추가해 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "네 대답"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "분기 목표 다시 보기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "chat"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "제 답변 내용은 아직 바로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-event-linked-001",
+   "family": "must-not",
+   "path": "event-linked",
+   "text": "그거 할 일로 넣어 주세요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 주간 회의 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 70,
+      "title": "주간 회의",
+      "eventLinked": true
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 70
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      70
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-event-linked-002",
+   "family": "must-not",
+   "path": "event-linked",
+   "text": "방금 거 할 일로도 넣어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "방금 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 디자인 리뷰 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 71,
+      "title": "디자인 리뷰",
+      "eventLinked": true
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 71
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      71
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-event-linked-003",
+   "family": "must-not",
+   "path": "event-linked",
+   "text": "이거 할일 만들어줘요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 1:1 면담 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 72,
+      "title": "1:1 면담",
+      "eventLinked": true
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 72
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      72
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-event-linked-004",
+   "family": "must-not",
+   "path": "event-linked",
+   "text": "그 알림 할 일로 추가해 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그 알림"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 자료 출력 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 73,
+      "title": "자료 출력",
+      "eventLinked": true
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 73
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      73
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-event-linked-005",
+   "family": "must-not",
+   "path": "event-linked",
+   "text": "그 알림 할 일에 넣어 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그 알림"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 고객 미팅 준비 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 74,
+      "title": "고객 미팅 준비",
+      "eventLinked": true
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 74
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      74
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-brief-001",
+   "family": "must-not",
+   "path": "brief",
+   "text": "그거 할 일로 넣어 줘요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 오늘의 브리핑 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 80,
+      "title": "오늘의 브리핑",
+      "kind": "BRIEF"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 80
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      80
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-brief-002",
+   "family": "must-not",
+   "path": "brief",
+   "text": "방금 거 할 일에도 추가해 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "방금 거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 오늘의 브리핑 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 81,
+      "title": "오늘의 브리핑",
+      "kind": "BRIEF"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 81
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      81
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-brief-003",
+   "family": "must-not",
+   "path": "brief",
+   "text": "이거 할 일로 넣어 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 오늘의 브리핑 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 82,
+      "title": "오늘의 브리핑",
+      "kind": "BRIEF"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 82
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      82
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-brief-004",
+   "family": "must-not",
+   "path": "brief",
+   "text": "그 알림 할일 만들어 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그 알림"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "내일 9시에 오늘의 브리핑 알려줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "reminder"
+     }
+    },
+    "items": [
+     {
+      "source": "reminder",
+      "label": 83,
+      "title": "오늘의 브리핑",
+      "kind": "BRIEF"
+     }
+    ],
+    "lastAction": {
+     "source": "reminder",
+     "label": 83
+    },
+    "listing": {
+     "source": "reminder",
+     "labels": [
+      83
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-connector-todo-001",
+   "family": "must-not",
+   "path": "connector-todo",
+   "text": "그거 알림으로 걸어 주세요 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 주간 보고 제출",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 90,
+      "title": "주간 보고 제출",
+      "origin": "connector"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 90
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      90
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-connector-todo-002",
+   "family": "must-not",
+   "path": "connector-todo",
+   "text": "방금 거 알림으로 걸어 줘요 금요일 오전 10시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "방금 거",
+     "when": "금요일 오전 10시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 분기 결산 검토",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 91,
+      "title": "분기 결산 검토",
+      "origin": "connector"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 91
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      91
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-connector-todo-003",
+   "family": "must-not",
+   "path": "connector-todo",
+   "text": "이거 모레 오후 3시 알림 걸어 줘",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거",
+     "when": "모레 오후 3시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 팀 회고 자료 준비",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 92,
+      "title": "팀 회고 자료 준비",
+      "origin": "connector"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 92
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      92
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "그 내용은 그대로 옮길 수 없어요."
+   }
+  },
+  {
+   "id": "dx-must-not-multiline-001",
+   "family": "must-not",
+   "path": "multiline",
+   "text": "그거 할 일로 넣어줘 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "회의록\n정리하기",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-multiline-002",
+   "family": "must-not",
+   "path": "multiline",
+   "text": "그걸로 할 일 만들어 주라",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "첫 줄\r\n둘째 줄",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-multiline-003",
+   "family": "must-not",
+   "path": "multiline",
+   "text": "이거 할 일에 넣어 주세요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "보고서 작성",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-multiline-004",
+   "family": "must-not",
+   "path": "multiline",
+   "text": "그거 할 일로 추가 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일\n- 송금하기",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-quoted-001",
+   "family": "must-not",
+   "path": "quoted",
+   "text": "그거 할 일로 넣어줘 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "견적서 다시 보내기",
+      "eligible": false,
+      "quoted": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-quoted-002",
+   "family": "must-not",
+   "path": "quoted",
+   "text": "그걸로 할 일 만들어 주라",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "> 송금 확인하기",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-quoted-003",
+   "family": "must-not",
+   "path": "quoted",
+   "text": "이거 할 일에 넣어 주세요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "[{\"title\":\"송금\"}]",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-attachment-001",
+   "family": "must-not",
+   "path": "attachment",
+   "text": "그거 할 일로 추가 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "첨부 파일 정리",
+      "eligible": false,
+      "attachment": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-attachment-002",
+   "family": "must-not",
+   "path": "attachment",
+   "text": "그거 할 일로 넣어줘 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "이미지 확인",
+      "eligible": false,
+      "attachment": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-attachment-003",
+   "family": "must-not",
+   "path": "attachment",
+   "text": "그걸로 할 일 만들어 주라",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "스캔본 정리",
+      "eligible": false,
+      "attachment": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-fenced-001",
+   "family": "must-not",
+   "path": "fenced",
+   "text": "이거 할 일에 넣어 주세요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "배포 스크립트 실행",
+      "eligible": false,
+      "code": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-fenced-002",
+   "family": "must-not",
+   "path": "fenced",
+   "text": "그거 할 일로 추가 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "`rm -rf` 정리",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-invisible-001",
+   "family": "must-not",
+   "path": "invisible",
+   "text": "그거 할 일로 넣어줘 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "송금​하기",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-invisible-002",
+   "family": "must-not",
+   "path": "invisible",
+   "text": "그걸로 할 일 만들어 주라",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "계좌 ‮확인",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-invisible-003",
+   "family": "must-not",
+   "path": "invisible",
+   "text": "이거 할 일에 넣어 주세요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "⁦비밀 작업⁩",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-credential-001",
+   "family": "must-not",
+   "path": "credential",
+   "text": "그거 할 일로 추가 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "토큰 ghp_abcdefghijklmnopqrstuvwxyz0123456789 저장",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-credential-002",
+   "family": "must-not",
+   "path": "credential",
+   "text": "그거 할 일로 넣어줘 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "password: Hunter2-Secret!9",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-own-deictic-001",
+   "family": "must-not",
+   "path": "own-deictic",
+   "text": "그걸로 할 일 만들어 주라",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "그거 할 일로 추가해줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-own-deictic-002",
+   "family": "must-not",
+   "path": "own-deictic",
+   "text": "이거 할 일에 넣어 주세요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "그 할 일 알림으로 걸어줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-command-001",
+   "family": "must-not",
+   "path": "command",
+   "text": "그거 할 일로 추가 부탁해",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 송금하기",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "내용을 직접 적어 주세요."
+   }
+  },
+  {
+   "id": "dx-must-not-external-noun-001",
+   "family": "must-not",
+   "path": "external-noun",
+   "text": "그 메일 할 일로 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그 메일"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "메일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "note"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "메일·문서·일정 같은 외부 내용은 그대로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-external-noun-002",
+   "family": "must-not",
+   "path": "external-noun",
+   "text": "이 메일 할 일로 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이 메일"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "메일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "note"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "메일·문서·일정 같은 외부 내용은 그대로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-external-noun-003",
+   "family": "must-not",
+   "path": "external-noun",
+   "text": "그 문서 할 일로 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그 문서"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "메일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "note"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "메일·문서·일정 같은 외부 내용은 그대로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-external-noun-004",
+   "family": "must-not",
+   "path": "external-noun",
+   "text": "이 파일 할 일로 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이 파일"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "메일 보여줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "note"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "메일·문서·일정 같은 외부 내용은 그대로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-summary-note-001",
+   "family": "must-not",
+   "path": "summary-note",
+   "text": "그거 할 일로 넣어 주라",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "1번 메일 요약해줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "note"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "메일·문서·일정 같은 외부 내용은 그대로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-summary-note-002",
+   "family": "must-not",
+   "path": "summary-note",
+   "text": "그걸로 할 일 만들어 주세요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "1번 메일 요약해줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "note"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "메일·문서·일정 같은 외부 내용은 그대로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-summary-note-003",
+   "family": "must-not",
+   "path": "summary-note",
+   "text": "이거 할일 만들어 주세요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "이거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "1번 메일 요약해줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "note"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "메일·문서·일정 같은 외부 내용은 그대로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-summary-note-004",
+   "family": "must-not",
+   "path": "summary-note",
+   "text": "그거 할 일로 등록해줘요",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "1번 메일 요약해줘",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "note"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "메일·문서·일정 같은 외부 내용은 그대로 옮기지 않아요."
+   }
+  },
+  {
+   "id": "dx-must-not-external-target-001",
+   "family": "must-not",
+   "path": "external-target",
+   "text": "그거 슬랙에 올려줘",
+   "selector": {
+    "entryId": "slack.post",
+    "args": {
+     "channel": "#general",
+     "text": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "chat"
+   }
+  },
+  {
+   "id": "dx-must-not-external-target-002",
+   "family": "must-not",
+   "path": "external-target",
+   "text": "그거 슬랙 채널에 게시해줘",
+   "selector": {
+    "entryId": "slack.post",
+    "args": {
+     "channel": "#general",
+     "text": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "거래처 견적 비교표 만들기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "chat"
+   }
+  },
+  {
+   "id": "dx-must-not-channel-001",
+   "family": "must-not",
+   "path": "channel",
+   "text": "그거 할 일로도 넣어 줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 주간 보고 제출",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 100,
+      "title": "주간 보고 제출"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 100
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      100
+     ]
+    },
+    "direct": false
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요."
+   }
+  },
+  {
+   "id": "dx-must-not-channel-002",
+   "family": "must-not",
+   "path": "channel",
+   "text": "방금 거 알림으로 걸어줘 내일 9시 꼭",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "방금 거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 분기 결산 검토",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 101,
+      "title": "분기 결산 검토"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 101
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      101
+     ]
+    },
+    "direct": false
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요."
+   }
+  },
+  {
+   "id": "dx-must-not-channel-003",
+   "family": "must-not",
+   "path": "channel",
+   "text": "이거 알림으로 걸어줘요 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "이거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 팀 회고 자료 준비",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 102,
+      "title": "팀 회고 자료 준비"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 102
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      102
+     ]
+    },
+    "direct": false
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요."
+   }
+  },
+  {
+   "id": "dx-must-not-stopped-001",
+   "family": "must-not",
+   "path": "stopped",
+   "text": "그거 알림으로 걸어 주라 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 주간 보고 제출",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 110,
+      "title": "주간 보고 제출"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 110
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      110
+     ]
+    },
+    "switch": "stopped"
+   },
+   "expect": {
+    "outcome": "chat"
+   }
+  },
+  {
+   "id": "dx-must-not-stopped-002",
+   "family": "must-not",
+   "path": "stopped",
+   "text": "방금 거 알림으로 만들어 줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "방금 거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 분기 결산 검토",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 111,
+      "title": "분기 결산 검토"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 111
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      111
+     ]
+    },
+    "switch": "stopped"
+   },
+   "expect": {
+    "outcome": "chat"
+   }
+  },
+  {
+   "id": "dx-must-not-capped-001",
+   "family": "must-not",
+   "path": "capped",
+   "text": "그거 알림으로 걸어 줘요 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 주간 보고 제출",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 120,
+      "title": "주간 보고 제출"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 120
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      120
+     ]
+    },
+    "capped": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "미리보기를 너무 많이 만들었어요."
+   }
+  },
+  {
+   "id": "dx-must-not-capped-002",
+   "family": "must-not",
+   "path": "capped",
+   "text": "방금 거 알림 걸어 줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "방금 거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 분기 결산 검토",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 121,
+      "title": "분기 결산 검토"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 121
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      121
+     ]
+    },
+    "capped": true
+   },
+   "expect": {
+    "outcome": "refuse",
+    "text": "미리보기를 너무 많이 만들었어요."
+   }
+  },
+  {
+   "id": "dx-must-not-question-001",
+   "family": "must-not",
+   "path": "question",
+   "text": "할 일 만들기 어떻게 해?",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "만들기"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-question-002",
+   "family": "must-not",
+   "path": "question",
+   "text": "알림으로 걸려면 어떻게 해?",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 주간 보고 제출",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 165,
+      "title": "주간 보고 제출"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 165
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      165
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-question-003",
+   "family": "must-not",
+   "path": "question",
+   "text": "그거 할 일로 추가할까?",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-question-004",
+   "family": "must-not",
+   "path": "question",
+   "text": "그거 알림으로 걸 수 있어?",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 주간 보고 제출",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 165,
+      "title": "주간 보고 제출"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 165
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      165
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-statement-001",
+   "family": "must-not",
+   "path": "statement",
+   "text": "알림으로 설정돼 있어?",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "설정"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 주간 보고 제출",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 165,
+      "title": "주간 보고 제출"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 165
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      165
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-statement-002",
+   "family": "must-not",
+   "path": "statement",
+   "text": "그 할 일 만들어진 거 맞지?",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그 할 일"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-statement-003",
+   "family": "must-not",
+   "path": "statement",
+   "text": "그거 할 일로 추가했었지",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-statement-004",
+   "family": "must-not",
+   "path": "statement",
+   "text": "내가 그거 할 일로 추가할게",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-negation-001",
+   "family": "must-not",
+   "path": "negation",
+   "text": "그거 할 일로 추가하지 마",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-negation-002",
+   "family": "must-not",
+   "path": "negation",
+   "text": "그거 할 일에 넣지 마",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-negation-003",
+   "family": "must-not",
+   "path": "negation",
+   "text": "그거 알림으로 걸지 마 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 주간 보고 제출",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 167,
+      "title": "주간 보고 제출"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 167
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      167
+     ]
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-reported-001",
+   "family": "must-not",
+   "path": "reported",
+   "text": "그거 할 일로 추가해줘 했던 거 기억나?",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-reported-002",
+   "family": "must-not",
+   "path": "reported",
+   "text": "예를 들어 그거 할 일로 추가해줘 같은 거",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "UAT 결과 정리",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-question-open-001",
+   "family": "must-not",
+   "path": "question-open",
+   "text": "그거 알림으로 걸어 주라고 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 주간 보고 제출",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 140,
+      "title": "주간 보고 제출"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 140
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      140
+     ]
+    },
+    "questionOpen": true
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-question-open-002",
+   "family": "must-not",
+   "path": "question-open",
+   "text": "방금 거 알림 만들어 줘 내일 9시에",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "방금 거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "할 일 추가: 분기 결산 검토",
+      "eligible": false
+     },
+     "reply": {
+      "kind": "echo",
+      "listingSource": "todo"
+     }
+    },
+    "items": [
+     {
+      "source": "todo",
+      "label": 141,
+      "title": "분기 결산 검토"
+     }
+    ],
+    "lastAction": {
+     "source": "todo",
+     "label": 141
+    },
+    "listing": {
+     "source": "todo",
+     "labels": [
+      141
+     ]
+    },
+    "questionOpen": true
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-ungrounded-span-001",
+   "family": "must-not",
+   "path": "ungrounded-span",
+   "text": "할 일로 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "견적서 다시 보내기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-ungrounded-span-002",
+   "family": "must-not",
+   "path": "ungrounded-span",
+   "text": "알림으로 걸어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "견적서 다시 보내기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-explicit-content-001",
+   "family": "must-not",
+   "path": "explicit-content",
+   "text": "그거 보고서 정리 할 일로 추가해줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그거"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "견적서 다시 보내기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-explicit-content-002",
+   "family": "must-not",
+   "path": "explicit-content",
+   "text": "그거 보고서 정리 알림으로 걸어줘 내일 9시",
+   "selector": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "그거",
+     "when": "내일 9시"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "견적서 다시 보내기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  },
+  {
+   "id": "dx-must-not-explicit-content-003",
+   "family": "must-not",
+   "path": "explicit-content",
+   "text": "보고서 정리 그걸로 할 일 만들어줘",
+   "selector": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "그걸로"
+    }
+   },
+   "fixture": {
+    "turn": {
+     "owner": {
+      "text": "견적서 다시 보내기",
+      "eligible": true
+     },
+     "reply": {
+      "kind": "question"
+     }
+    }
+   },
+   "expect": {
+    "outcome": "refuse"
+   }
+  }
+ ]
+}

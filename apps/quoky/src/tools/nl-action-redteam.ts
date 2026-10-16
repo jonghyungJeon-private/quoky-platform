@@ -54,7 +54,8 @@ export function loadA6RedTeam(paths: readonly string[] = [NL_REDTEAM_PATH, NL_RE
     if (!existsSync(path)) continue;
     const text = readFileSync(path, 'utf8');
     hash.update(text);
-    cases.push(...((JSON.parse(text) as { cases?: RedTeamCase[] }).cases ?? []).filter((golden) => golden.family === 'a6'));
+    // The A6 R5a `deictic` sub-family has its own driver and success conditions (`nl-deictic-redteam.ts`).
+    cases.push(...((JSON.parse(text) as { cases?: Array<RedTeamCase & { subFamily?: string }> }).cases ?? []).filter((golden) => golden.family === 'a6' && golden.subFamily === undefined));
   }
   return { cases, sha256: hash.digest('hex') };
 }

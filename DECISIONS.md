@@ -26939,3 +26939,93 @@ done here (no model calls; the prompt is being changed on another branch).
   asks the confirmation ("되돌려 주신 거 보여줘" asks). The confirmation answer is resolved from the stored binding (item,
   undone action and the lastAction's time), never from the reply target, so a platform reply to the question works; a
   changed lastAction still refuses.
+
+## ADR-0120 amendment A6 R5a — deictic writes from the owner's own earlier text (owner-approved 2026-10-16), implemented
+
+Status: **owner-approved** (2026-10-16: decisions 1a and 2-9 of `docs/plans/a6-deictic-write-proposal.md`; 1b deferred),
+implemented on branch `claude/v5-a6-r5a` behind `QUOKY_NL_DEICTIC_WRITES` (default `off`). Inert on the live service
+(`QUOKY_NL_ACTIONS=shadow`). The live gate (proposal §6.4: 3 strict model runs, ≥ 100 attended labelled turns, the
+owner's yes) has not been run. No prompt version, port, DI token, migration, deps key or host changes.
+
+**Amendments of settled text, as approved.**
+
+- **A6-D3 (payload rules), decision 1a.** A resolved referent may become the payload of `todo.add` / `reminder.create`
+  only when it is the owner's verbatim earlier text: a to-do made in conversation (`WorkItem.origin = 'conversation'`), a
+  `TEXT` reminder with no event link, or the owner's previous plain message recorded as eligible at receipt. It is
+  previewed and needs the owner's next-turn approval. Text from a Quoky answer stays S3 territory (decision 1b,
+  deferred: R5b). External-origin content and external targets stay refused (decision 6, R5c/R5d not proposed).
+- **A6-D1 (`span` kind).** A new payload provenance `referent` beside `span`; a span is unchanged and always wins.
+- **A6-D2 (questions and records).** A deictic-referent question (several candidates, or the time of a reminder) may
+  resume, but only into a preview, never into an execution. The new records (`quoky.lastTurn`, `quoky.deicticDraft`)
+  hold ids, labels, closed values, hashes and the owner's own time words, never payload text.
+- **Decision 2.** Event-linked (BRF-2, with or without owner words) and BRIEF reminders are never referents. Any future
+  creator of non-owner text must add an origin marker before its items can be referents.
+- **Decision 3.** `interpretDeicticDraftReply` (Core, pure) is the only approval of a deictic draft: a whole-message token
+  of a closed approve / deny set, next turn only, same session, 5 minutes, a platform reply bound to `previewReplyIds`.
+  ADR-0095 D1 and `APPROVE_FILLERS` are not touched.
+- **Decisions 4, 5, 7.** A reminder without a time asks for it. Vocabulary: "할 일 만들", "할일 만들" (`todo.add`) and "알림으로
+  걸" (`reminder.create`) — the three phrases the owner listed; the proposal's "할 일로 만들" and "알림으로 설정" were not
+  added ("알림으로 설정돼 있어?" stays a statement). The flag requires `QUOKY_NL_ACTIONS=local` (`external` is refused by A6
+  anyway).
+
+**Implementation notes (where the code is stricter or more specific than the proposal).**
+
+1. `quoky.lastTurn` is written at the end of every owner-DM turn while the flag is not `off` (control turns included), so
+   "next turn only" is checked as: the draft's `requestId` equals the previous turn's. A turn a deterministic handler
+   answered (an echo, a listing, a note) records its owner message as `command` (ineligible).
+2. Owner-message eligibility is fail-closed: one line; no platform quote, `>` line, fence, backtick or structure marker,
+   attachment or code formatting; no invisible / bidi / control character; no credential; no anchored command form;
+   and no closed deictic, determiner reference or origin word at all (stricter than "not only a deictic"; English
+   "it / that / this" included). `InboundMessage` has no forward marker; forwards are covered by the quote and structure
+   markers only.
+3. Invisible characters are refused on the raw text before `normalizeWorkItemTitle`; the payload hash covers the
+   normalised title (reminders: NFC, whitespace collapsed). A to-do payload with a time asks (A6-D1 time-in-title).
+4. A previewed reminder stores the time words and the instant they were read; the approved write passes `whenAt` (set by
+   Core only; the selector's args are closed) so it fires when the preview said, and a time already passed is refused.
+   Event-relative times are not previewed (the time question is asked).
+5. The consume step holds one `SESSION_WRITE_LOCK`: read and clear the draft, check adjacency, expiry and the platform
+   reply, re-read and re-hash the referent, re-read the kill switch, check the caps, then run the existing handler path.
+   The handler's receipt (lastAction, echo, undo hint) is recorded after the lock is released. A concurrent second
+   "응" gets "이미 처리했어요"; a sequential second "응" finds no draft and is an ordinary turn (nothing written).
+6. `shadow` resolves and logs (`nl_action.decided`, `refKind: deictic:<kind>`, `result: shadow`) and replies as today. With
+   `on`, a title that is only a deictic once its origin words are removed ("네가 추천한 거") is never stored as written.
+7. Audit: `nl_action.decided` gains `refKind deictic:item.local | deictic:owner.message | deictic:none`, the results
+   `previewed | confirmed | declined | expired | changed | stale-reply`, `referentLabel` and `payloadOrigin`; never text.
+8. Caps: 10 previews an hour and 30 a day per actor; an approved write counts toward LOCAL_WRITE.
+
+**Interfaces (additive).** `Session.metadata['quoky.lastTurn' | 'quoky.deicticDraft']`; `NlSelectionService`
+`answerDeicticDraft`, `recordLastTurn`, `deicticWritesMode` (same `nlSelection` deps slot); `NlSelectionDecision.ask`
+gains optional `body`, `history`, `replyKind`; `NlSelectionTurn.direct`; `MemoryManager.findShortTerm`;
+`reminderWhenPreviewLabel`; the origin-word value class and `nlDeterminerSources` in `action-entries.ts`.
+
+**Evaluation (offline, no model call).** `golden/nl-action.deictic.v1.json` (agent-drafted per D12, decision 9; 183
+cases) runs through the selection service with scripted outputs (`nl-deictic-writes.test.ts`) and is in the RAG-0 lint
+with no finding. The red-team `deictic` sub-family (51 cases, `agent-redteam.v1.json`, `subFamily: "deictic"`) has its
+own AppModule driver (`nl-deictic-redteam.app.test.ts`); the existing A6 driver excludes it, so its count is unchanged.
+§6.2 end-to-end tests: `personal-v5-a6-deictic-acceptance.test.ts`. The vocabulary no-regression gate runs with R5 off over
+every `nl-action` gold (no grounding or glued-noun change; the seven `deictic-payload` golds keep their reason).
+
+**Integration with A6-D3a amendment 1 (#244, act-and-undo), rebased 2026-10-16 (Chief Architect review items (a)–(c)).**
+
+- (a) The removed `ACTION_VOCABULARY_KO` is replaced by `NL_ACTION_WORDS`. The R5a additions ("할 일 만들", "할일 만들",
+  "알림으로 걸") stay merged into the `todo.add` / `reminder.create` vocabularies, so they are in `NL_ACTION_WORDS`;
+  `NL_R5A_VOCABULARY_ADDITIONS` remains only as the no-regression gate's manifest. Under amendment 1 the vocabularies only
+  veto, so the gate now also compares the request-shape veto class (`nlRequestVeto`, entry and all action words) of every
+  `nl-action` gold with and without the additions: no change. The removed request-form constants are gone.
+- (b) `DEICTIC_BLOCKING_FAILURES` includes `not-request`: a question, negation, retraction, reported speech, conditional,
+  statement, volition or example veto always ends the turn as chat, deictic or not. `isDeicticRequest` also requires
+  `nlActionWordGrounded` (action word present, no veto; it now takes the selector's `when` so "… 30분 뒤" is the time,
+  not a deferral). Each gate is tested on its own.
+- (c) The deictic path validates through the `requestFrame` hook with `nlOriginRequestFrame` (origin phrases blanked, case
+  and spacing kept): "아까 내가 썼던 거 할 일에 추가" is no longer volition. The stripped validation only decides whether
+  R5a may handle the turn; every other path keeps the unstripped result, so a message with its own content ("아까 내가
+  썼던 보고서 할 일에 추가") stays chat, and `off` / `shadow` replies are unchanged.
+- **One next-turn question per session.** A deictic draft (preview, candidate or time question) and an open A6 question
+  (`action-undo-confirm` included) are never both answerable: R5a refuses a new draft while an A6 question is open
+  (`pending-question`, unchanged); asking the undo confirmation drops any draft (`nl_deictic.draft_superseded`,
+  `why: undo-confirm-asked`); and if both are found at the start of a turn (a race), the A6 question, always the newer
+  one, answers ("응" undoes the named action) and the draft is dropped unanswered (`why: undo-confirm-open`). Before
+  this rule such a "응" was taken by the stale draft ("미리보기가 만료됐어요") and the undo confirmation was lost.
+- The R5a review's corpus grew to 183 cases. The three channel must-not golds now expect the amendment's `dm-only`
+  reply ("이 작업은 DM에서만 해요. …"), which precedes R5a. The selector-RAG gold digest (nl-intent / nl-action golds)
+  is unchanged, so the audit record was not regenerated.

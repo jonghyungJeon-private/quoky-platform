@@ -539,7 +539,7 @@ describe('loadConfig — egress guard (ADR-0121 S0)', () => {
 
 describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
   it('defaults to off with the haiku selection model, and accepts exactly off, shadow or active', () => {
-    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, phase: 'a', timeoutMs: 6000, actions: 'off' });
+    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, phase: 'a', timeoutMs: 6000, actions: 'off', deicticWrites: 'off' });
     expect(loadConfig(env({})).ai.intentSelectionModel).toBe('haiku');
     for (const mode of ['off', 'shadow', 'active'] as const) {
       expect(loadConfig(env({ QUOKY_NL_INTENT_MODE: mode })).nlSelection.mode).toBe(mode);
@@ -561,6 +561,21 @@ describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
     for (const mode of [undefined, 'off', 'shadow'] as const) {
       const vars = mode === undefined ? { QUOKY_NL_ACTIONS: 'local' } : { QUOKY_NL_INTENT_MODE: mode, QUOKY_NL_ACTIONS: 'local' };
       expect(() => loadConfig(env(vars)), String(mode)).toThrow(/^NL_ACTIONS_REQUIRES_ACTIVE$/);
+    }
+  });
+
+  it('QUOKY_NL_DEICTIC_WRITES (A6 R5a, owner decision 7): default off, exact values, any mode but off only with QUOKY_NL_ACTIONS=local', () => {
+    const local = { QUOKY_NL_INTENT_MODE: 'active', QUOKY_NL_ACTIONS: 'local' };
+    expect(loadConfig(env(local)).nlSelection.deicticWrites).toBe('off');
+    for (const mode of ['off', 'shadow', 'on'] as const) expect(loadConfig(env({ ...local, QUOKY_NL_DEICTIC_WRITES: mode })).nlSelection.deicticWrites).toBe(mode);
+    for (const value of ['', 'ON', 'true', 'local', ' on']) {
+      expect(() => loadConfig(env({ ...local, QUOKY_NL_DEICTIC_WRITES: value })), value).toThrow(/^NL_DEICTIC_WRITES_INVALID$/);
+    }
+    // The live service runs QUOKY_NL_ACTIONS=shadow: R5a cannot be switched on there.
+    for (const actions of [undefined, 'off', 'shadow'] as const) {
+      const vars = { QUOKY_NL_INTENT_MODE: 'active', ...(actions !== undefined ? { QUOKY_NL_ACTIONS: actions } : {}) };
+      for (const mode of ['shadow', 'on']) expect(() => loadConfig(env({ ...vars, QUOKY_NL_DEICTIC_WRITES: mode })), `${actions} ${mode}`).toThrow(/^NL_DEICTIC_WRITES_REQUIRES_LOCAL$/);
+      expect(loadConfig(env({ ...vars, QUOKY_NL_DEICTIC_WRITES: 'off' })).nlSelection.deicticWrites).toBe('off');
     }
   });
 

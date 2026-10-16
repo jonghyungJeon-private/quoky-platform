@@ -5,6 +5,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 R5a deictic writes: "그거 할 일로 추가해줘" with a preview and next-turn approval (2026-10-16)
+
+- **Added (inert: `QUOKY_NL_DEICTIC_WRITES` defaults to `off`).** New flag `QUOKY_NL_DEICTIC_WRITES=off|shadow|on`; any value
+  but `off` requires `QUOKY_NL_ACTIONS=local` (`NL_DEICTIC_WRITES_REQUIRES_LOCAL` at startup). The live service runs
+  `QUOKY_NL_ACTIONS=shadow`, so R5a stays inert there. DM only.
+- **Behaviour with `on`.** Where Core refused a deictic payload (`deictic-payload`), it now resolves the referent in code
+  (`nl-routing/deictic-referent.ts`: platform reply-to, a number in the last shown listing, "그 할 일 / 그 알림", "내가 말한
+  거", then the last reply kind) and accepts only the owner's verbatim earlier text: a to-do made in conversation, a TEXT
+  reminder with no event link (BRIEF and event-linked reminders are excluded), or the owner's previous single plain message
+  that was eligible when received. Quoky answers (`model-drafted`), mail, Drive, summaries and event titles
+  (`external-origin`) are refused with fixed copy. Several candidates ask; a reminder without a time asks for it.
+  The preview quotes the normalised payload as an untrusted span; only the owner's next turn in the same session, within
+  5 minutes, approves it through the whole-message matcher `interpretDeicticDraftReply` (approve: 응/어/네/넵/예/그래/좋아/
+  맞아/추가해/추가해줘/만들어줘/yes/ok/okay; deny: 아니/아니요/아니야/아뇨/취소/취소해/취소해줘/됐어/그만/되돌려줘/no/cancel).
+  A deny makes no selector call; a platform reply must name the current preview. The consume step (read, re-hash, clear,
+  execute) holds one `SESSION_WRITE_LOCK`; the write goes through the existing to-do / reminder path, so the echo, the
+  undo hint and the per-action undo of the same item are unchanged. ADR-0095 D1 is untouched.
+- **Added records (Session.metadata, no migration).** `quoky.lastTurn` (the owner's SHORT_TERM id, eligibility at receipt,
+  a hash, the reply kind and ids) and `quoky.deicticDraft` (ids, labels, hashes, the owner's time words). Content-free.
+- **Vocabulary (owner decision 5).** `todo.add` gains "할 일 만들" / "할일 만들"; `reminder.create` gains "알림으로 걸". These
+  apply with R5 off too; the no-regression gate over every `nl-action` gold shows no grounding or glued-noun change.
+- **Other.** `MemoryManager.findShortTerm`; the reminder action honours a Core-set `whenAt` (the instant the previewed
+  time words were read at); `NlActionAudit` gains `referentLabel` / `payloadOrigin` and the results `confirmed`,
+  `declined`, `expired`, `changed`, `stale-reply`.
+- **Tests and data.** `golden/nl-action.deictic.v1.json` (183 cases) run offline and
+  added to the RAG-0 contamination lint (no finding); 51 `deictic` red-team cases in `agent-redteam.v1.json` with their own
+  AppModule driver (0 successes); end-to-end provenance and lifecycle tests over the production `AppModule`
+  (`personal-v5-a6-deictic-acceptance.test.ts`).
+- **Changed (rebase onto A6-D3a amendment 1, #244).** `NL_ACTION_WORDS` replaces the removed `ACTION_VOCABULARY_KO`
+  (the R5a words stay in the entry vocabularies; `NL_R5A_VOCABULARY_ADDITIONS` is the gate's manifest, and the gate now
+  also compares the request-shape veto of every gold). `DEICTIC_BLOCKING_FAILURES` includes `not-request`. The deictic
+  path validates with the `requestFrame` hook (`nlOriginRequestFrame`), so "아까 내가 썼던 거 …" is not volition;
+  `nlActionWordGrounded` takes the `when` span ("… 30분 뒤" is no deferral). One next-turn question per session: asking
+  `action-undo-confirm` drops a deictic draft, and with both open "응" answers the undo confirmation. Channel deictic
+  writes get the amendment's `dm-only` reply. Corpus: 183 cases.
+
 ## Unreleased — A6 act-and-undo: local writes act directly; only structural vetoes stop them (2026-10-16)
 
 - **Changed (inert, `QUOKY_NL_ACTIONS` off).** ADR-0120 A6-D3a amendment 1 (Proposed; owner-approved direction, Chief

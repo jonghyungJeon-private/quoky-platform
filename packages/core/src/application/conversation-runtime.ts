@@ -96,6 +96,8 @@ import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlItem
 import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
 import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from './nl-routing/nl-action-policy';
+import type { LastTurnReplyKind } from './nl-routing/last-turn';
+import type { MessageBody } from '../domain';
 import { LAST_SELECTION_METADATA_KEY, isActionPendingQuestion, type PendingQuestion } from './nl-routing/selection-state';
 import { parseActionSwitchPhrase, renderActionSwitchReply } from './nl-routing/action-switch';
 import { allowedSurfaceGroups, decideSurface, isSurfaceDirect, type SurfaceDecision, type SurfaceGate, type SurfaceGateAudit } from './surface-grants/surface-gate';
@@ -1106,6 +1108,10 @@ export interface ConversationRuntimeDeps {
         | 'recordActionReceipt'
         | 'logActionUnserved'
         | 'actionsStillActing'
+        // ADR-0120 amendment A6 R5a (no new deps key): deictic writes; inert while QUOKY_NL_DEICTIC_WRITES is off.
+        | 'answerDeicticDraft'
+        | 'recordLastTurn'
+        | 'deicticWritesMode'
       >
     >;
   /**
@@ -2336,13 +2342,19 @@ export class ConversationRuntime {
    */
   async handle(message: InboundMessage): Promise<TurnResult> {
     try {
-      const result = await this.handleInner(message);
+      let result = await this.handleInner(message);
+      // A6 R5a §3.2 `none`: a turn that ended an unanswered preview says so before its own reply.
+      const prefix = this.nlDeicticPrefix.get(message);
+      if (prefix !== undefined) result = { ...result, reply: withOutboundBody(result.reply, messageBody(prefix, '\n', outboundBody(result.reply))) };
       await this.settleNlLastSelection(message);
+      await this.recordNlLastTurn(message);
       this.startAfterReply(message);
       return result;
     } catch (err) {
       // An error turn ends the follow-up window too: whatever was recorded this turn no longer describes a shown listing.
       await this.settleNlLastSelection(message, true).catch(() => undefined);
+      this.nlReplyKinds.set(message, { kind: 'note' });
+      await this.recordNlLastTurn(message).catch(() => undefined);
       const safe = toSafeError(err);
       this.deps.logger.error('inbound handling failed', {
         errorName: err instanceof Error ? err.name : typeof err,
@@ -2371,6 +2383,8 @@ export class ConversationRuntime {
     // ADR-0113 D7: the activity touch runs under the shared session write lock, field-scoped on the live row, so this
     // turn's snapshot never overwrites an operations-UI decision's re-anchor; the turn continues on the touched copy.
     session = (await this.deps.sessions.touch(session)) ?? session;
+    // A6 R5a: who and where this turn is, for `quoky.lastTurn` at the end of the turn (nothing is written while off).
+    this.nlTurnFacts.set(message, { sessionId: session.id, actorId: actor.id });
     // ADR-0120 D7: an open selection question ends with this owner turn whatever route answers it; selection below gets
     // the question only when the turn reaches it (`active` only; nothing is written when there is none).
     const nlPending = this.deps.nlSelection?.takePending ? await this.deps.nlSelection.takePending(session, actor.id, this.clock()) : undefined;
@@ -2483,6 +2497,7 @@ export class ConversationRuntime {
     }
 
     const userMemory = await this.deps.memory.recordShortTerm(message, session.id);
+    this.nlTurnFacts.set(message, { sessionId: session.id, actorId: actor.id, memoryId: userMemory.id });
     if (expiryNotice) {
       await this.deps.memory.recordAssistant(expiryNotice.text, message.context, session.id);
       return { status: 'DENIED', reply: expiryNotice, sessionId: session.id };
@@ -2496,6 +2511,9 @@ export class ConversationRuntime {
     // else), and the anchored `되돌리기` (owner decision 8) runs the undo with no selector call. Both only while actions are
     // acting and no approval is pending; with QUOKY_NL_ACTIONS `off` neither exists.
     if (!lookup.pending && this.deps.nlSelection?.actionsActing?.(actor) === true) {
+      // A6 R5a: the owner's answer to a deictic-write preview or question (no selector call), before anything else.
+      const deictic = await this.handleDeicticDraft(message, session, actor, lookup.applyAnchor, userMemory.id, isActionPendingQuestion(nlPending));
+      if (deictic !== undefined) return deictic;
       const early = await this.handleEarlyNlAction(message, session, actor, lookup.applyAnchor, userMemory.id, nlPending);
       if (early !== undefined) return early;
     }
@@ -3305,6 +3323,124 @@ export class ConversationRuntime {
 
   /** Per turn (by message object): a previous `lastSelection` exists and this turn has not yet replaced it. */
   private readonly nlTurns = new WeakMap<InboundMessage, { sessionId: Id; keep: boolean }>();
+  /** A6 R5a: who and where each turn is (and its SHORT_TERM user record), for `quoky.lastTurn`. */
+  private readonly nlTurnFacts = new WeakMap<InboundMessage, { readonly sessionId: Id; readonly actorId: Id; readonly memoryId?: Id }>();
+  /** A6 R5a: what kind of reply each turn gave (unmarked: `chat`). */
+  private readonly nlReplyKinds = new WeakMap<InboundMessage, { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' }>();
+  /** A6 R5a: the prefix of a turn that ended an unanswered preview. */
+  private readonly nlDeicticPrefix = new WeakMap<InboundMessage, string>();
+
+  /** A6 R5a: what a handler's reply was, for `quoky.lastTurn` (an echo, a to-do / reminder listing, a question, a note). */
+  private static nlReplyKindOf(handled: TurnHandlerOutcome): { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' } {
+    if (handled.kind === 'summarize' || handled.kind === 'write-draft') return { kind: 'note' };
+    const action = handled.nlAction;
+    const local = (source: string | undefined): 'todo' | 'reminder' | undefined => (source === 'todo' || source === 'reminder' ? source : undefined);
+    if (action !== undefined && (action.result === 'executed' || action.result === 'undone') && local(action.source) !== undefined) {
+      return { kind: 'echo', listingSource: local(action.source) as 'todo' | 'reminder' };
+    }
+    if (handled.nlListing !== undefined && handled.nlListing.items.length > 0) return { kind: 'listing', listingSource: handled.nlListing.source };
+    if (action !== undefined && action.result === 'asked' && (action.candidates?.length ?? 0) > 0 && local(action.source) !== undefined) {
+      return { kind: 'question', listingSource: local(action.source) as 'todo' | 'reminder' };
+    }
+    return { kind: 'note' };
+  }
+
+  /** A6 R5a §1.2: write `quoky.lastTurn` for an owner DM turn (the service writes nothing while the flag is off). */
+  private async recordNlLastTurn(message: InboundMessage): Promise<void> {
+    const nl = this.deps.nlSelection;
+    const facts = this.nlTurnFacts.get(message);
+    if (nl?.recordLastTurn === undefined || facts === undefined || nl.deicticWritesMode?.() === 'off') return;
+    const kind = this.nlReplyKinds.get(message) ?? { kind: 'chat' as const };
+    await nl.recordLastTurn({
+      session: { id: facts.sessionId },
+      actorId: facts.actorId,
+      message: {
+        id: message.id,
+        text: message.text,
+        attachmentCount: message.attachments?.length ?? 0,
+        quoted: (message.quotedRanges?.length ?? 0) > 0,
+        codeFormatted: message.formatting?.code === true,
+      },
+      ...(facts.memoryId !== undefined ? { memoryId: facts.memoryId } : {}),
+      replyKind: kind.kind,
+      ...(kind.listingSource !== undefined ? { listingSource: kind.listingSource } : {}),
+      now: this.clock(),
+      direct: isDirectConversation(message.context),
+    });
+  }
+
+  /** An A6 question, refusal or (R5a) preview: its body, and its fixed history note when it shows the owner's items. */
+  private async respondNlAsk(
+    message: InboundMessage,
+    session: Session,
+    decision: { readonly text: string; readonly body?: MessageBody; readonly history?: string; readonly replyKind?: LastTurnReplyKind },
+  ): Promise<TurnResult> {
+    this.nlReplyKinds.set(message, { kind: decision.replyKind ?? 'question' });
+    const reply = outboundMessage(message.context, decision.body ?? decision.text);
+    await this.deps.memory.recordAssistant(decision.history ?? reply.text, message.context, session.id);
+    return { status: 'RESPONDED', reply, sessionId: session.id };
+  }
+
+  /**
+   * A6 R5a §3.2/§3.3: the owner's answer to a pending deictic draft. An approval runs the existing handler path INSIDE the
+   * service's session lock (the handler writes no session row); its receipt (lastAction, echo, undo hint) is recorded
+   * after the lock is released, like any A6 dispatch. A deny or a stale answer gets a fixed reply; anything else drops the
+   * draft and the turn routes normally. `undefined` continues the turn.
+   */
+  private async handleDeicticDraft(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    applyAnchor: ApplyPreviewAnchor | null,
+    userMemoryId: Id,
+    actionQuestionOpen: boolean,
+  ): Promise<TurnResult | undefined> {
+    const nl = this.deps.nlSelection;
+    if (nl?.answerDeicticDraft === undefined || !isDirectConversation(message.context)) return undefined;
+    let answered: Awaited<ReturnType<NlSelectionService['answerDeicticDraft']>>;
+    try {
+      answered = await nl.answerDeicticDraft(
+        {
+          text: message.text,
+          session,
+          actor,
+          now: this.clock(),
+          ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
+          ...(message.formatting?.code === true ? { codeFormatted: true } : {}),
+          ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}),
+          turnId: message.id,
+          direct: true,
+        },
+        async (command): Promise<TurnHandlerOutcome | null> => {
+          // Every write the handler makes carries the kill switch as a condition its store checks with the write.
+          const ctx = this.turnHandlerContext(message, session, actor, applyAnchor, { actionSwitchOf: actor.id });
+          for (const handler of this.nlActionServers(command.entryId)) {
+            const outcome = (await handler.handleSelected?.(command, ctx)) ?? null;
+            if (outcome !== null) return outcome;
+          }
+          return null;
+        },
+        { actionQuestionOpen },
+      );
+    } catch (err) {
+      this.deps.logger.warn('nl deictic draft failed', { errorName: err instanceof Error ? err.name : typeof err, sessionId: session.id });
+      return undefined;
+    }
+    if (answered === undefined) return undefined;
+    if (answered.kind === 'dropped') {
+      if (answered.prefix !== undefined) this.nlDeicticPrefix.set(message, answered.prefix);
+      return undefined;
+    }
+    this.nlTurns.set(message, { sessionId: session.id, keep: false });
+    if (answered.kind === 'reply') return this.respondNlAsk(message, session, answered);
+    const outcome = answered.value as TurnHandlerOutcome | null;
+    if (outcome === null) {
+      this.deps.nlSelection?.logActionUnserved?.(answered.audit, 'unserved', message.id);
+      return this.respondComposed(message, session, outboundMessage(message.context, renderActionUnavailable(answered.command.language)));
+    }
+    this.nlActionTurns.set(message, { audit: answered.audit, language: answered.command.language });
+    return this.respondTurnHandler(message, session, actor, userMemoryId, outcome);
+  }
 
   /**
    * ADR-0120 follow-up: after a turn, a `lastSelection` that this turn did not itself write or record (a selection, or a
@@ -3660,7 +3796,7 @@ export class ConversationRuntime {
       // ADR-0122 D2.2: an A6 question lists the owner's items; in a channel it is the A6 DM-only copy instead.
       const deniedAsk = await this.surfaceDeniedAsk(message, session, actor, { ...decision, entryId: decision.entryId ?? 'action.undo' });
       if (deniedAsk) return deniedAsk;
-      return this.respondComposed(message, session, outboundMessage(message.context, decision.text));
+      return this.respondNlAsk(message, session, decision);
     }
     if (decision.kind !== 'execute') return undefined;
     try {
@@ -3728,7 +3864,7 @@ export class ConversationRuntime {
         const deniedAsk = await this.surfaceDeniedAsk(message, session, actor, decision);
         if (deniedAsk) return { kind: 'responded', result: deniedAsk };
         this.deps.logger.info('nl selection asked', { sessionId: session.id });
-        return { kind: 'responded', result: await this.respondComposed(message, session, outboundMessage(message.context, decision.text)) };
+        return { kind: 'responded', result: await this.respondNlAsk(message, session, decision) };
       }
       case 'execute': {
         // ADR-0120 amendment A6: an action (or ITEM_READ) decision goes to the handler that serves its source.
@@ -4088,6 +4224,7 @@ export class ConversationRuntime {
     // ADR-0120 amendment A6-D2/D3: the content-free receipts of a to-do / reminder listing or action (an A6 dispatch or an
     // anchored command) become `quoky.lastAction`, the echo label and the listing slot. The service writes nothing while
     // QUOKY_NL_ACTIONS is `off`; the reply is never changed.
+    this.nlReplyKinds.set(message, ConversationRuntime.nlReplyKindOf(handled));
     const decided = this.nlActionTurns.get(message);
     if (
       this.deps.nlSelection?.recordActionReceipt !== undefined &&

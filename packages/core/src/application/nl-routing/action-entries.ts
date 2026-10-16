@@ -135,7 +135,7 @@ const ITEM_SOURCE_WORDS_LATIN: ReadonlyArray<readonly [string, NlItemSource]> = 
  * ref kind, so a selector `source` (or entry) that disagrees with the noun the owner wrote can never read or change an
  * item of another source. The nouns are the catalog's own aliases and source names, never a phrase list.
  */
-export function nlNamedItemSources(groundingText: string): ReadonlySet<NlItemSource> {
+export function nlNamedItemSources(groundingText: string, options: { readonly withoutVocabulary?: readonly string[] } = {}): ReadonlySet<NlItemSource> {
   // Brackets and other punctuation, and a digit glued to a letter ("메일2번", "2번메일", "mail2"), are word boundaries
   // here, so "2번 (메일)" and "메일2번" name the mail source too (Codex review).
   const text = normalizeForMatch(groundingText)
@@ -147,7 +147,8 @@ export function nlNamedItemSources(groundingText: string): ReadonlySet<NlItemSou
   for (const match of text.matchAll(NAMED_NOUN_ALL)) for (const source of ITEM_SOURCE_NOUNS_KO.get(nounKey(match[1] as string)) ?? []) named.add(source);
   // A noun glued to a following action or content word of the catalog's own vocabularies ("메일취소해줘", "알림취소해줘",
   // "문서요약해줘"; A6 R1 review); a noun glued to anything else ("알림장") is still no source.
-  for (const match of text.matchAll(gluedNounPattern())) for (const source of ITEM_SOURCE_NOUNS_KO.get(nounKey(match[1] as string)) ?? []) named.add(source);
+  const glued = options.withoutVocabulary === undefined ? gluedNounPattern() : buildGluedNounPattern(options.withoutVocabulary);
+  for (const match of text.matchAll(glued)) for (const source of ITEM_SOURCE_NOUNS_KO.get(nounKey(match[1] as string)) ?? []) named.add(source);
   for (const [word, source] of ITEM_SOURCE_WORDS_LATIN) if (latinWordIn(text, word)) named.add(source);
   return named;
 }
@@ -155,17 +156,35 @@ export function nlNamedItemSources(groundingText: string): ReadonlySet<NlItemSou
 let gluedNoun: RegExp | undefined;
 /** Built on first use: the vocabularies are declared further down this module. */
 function gluedNounPattern(): RegExp {
-  if (gluedNoun !== undefined) return gluedNoun;
-  const verbs = [...new Set([...NL_ACTION_WORDS, ...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS].map(normalizeForMatch).filter((word) => !/^[a-z0-9 .;-]+$/.test(word)))]
+  gluedNoun ??= buildGluedNounPattern([]);
+  return gluedNoun;
+}
+
+/** The glued-noun pattern over the action and content vocabularies, `without` some words (the R5a no-regression gate). */
+function buildGluedNounPattern(without: readonly string[]): RegExp {
+  const dropped = new Set(without.map(normalizeForMatch));
+  const verbs = [...new Set([...NL_ACTION_WORDS, ...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS, ...NL_CONTENT_WORDS].map(normalizeForMatch).filter((word) => !/^[a-z0-9 .;-]+$/.test(word) && !dropped.has(word)))]
     .sort((a, b) => b.length - a.length)
     .map((word) => word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s*'));
-  gluedNoun = new RegExp(`(?<=^|\\s|\\d|번|째)(${NOUN_ALTERNATION})(?=${verbs.join('|')})`, 'gu');
-  return gluedNoun;
+  return new RegExp(`(?<=^|\\s|\\d|번|째)(${NOUN_ALTERNATION})(?=${verbs.join('|')})`, 'gu');
 }
 
 /** Whether the owner's words point with a determiner at an item-source noun ("이 문서", "그 메일"), whatever the entry. */
 export function hasNlDeterminerReference(groundingText: string): boolean {
   return determinerReferences(groundingText).length > 0;
+}
+
+/**
+ * A6 R5a (§1.4 step 3): the item sources a determiner reference names ("그 할 일", "그 알림", "이 메일"); 이 and 그 only (저 is
+ * also "I"). The noun names where the referent lives, never the entry's target.
+ */
+export function nlDeterminerSources(groundingText: string): ReadonlySet<NlItemSource> {
+  const sources = new Set<NlItemSource>();
+  for (const reference of determinerReferences(groundingText)) {
+    if (READ_ONLY_DETERMINERS.has(reference.determiner)) continue;
+    for (const source of reference.sources) sources.add(source);
+  }
+  return sources;
 }
 
 /** What a `ref` is for: the entry and the item source it acts on (the determiner rule needs both). */
@@ -435,15 +454,27 @@ const CANCEL_WORDS: readonly string[] = ['취소', '캔슬', '삭제', '지워',
 const TODO_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '빼'];
 const REMINDER_CANCEL_WORDS: readonly string[] = [...CANCEL_WORDS, '꺼', '끄', '끈', '멈춰', 'stop', 'turn off', 'disable'];
 // Verbs only, never a source noun (CA review: "메모장 열어줘", "알림 설정 어떻게 해?" must not ground a write).
-const TODO_ADD_WORDS: readonly string[] = ['추가', '넣어', '넣자', '넣기', '올려', '적어', '등록', 'add', 'put', 'jot down'];
+// A6 R5a (owner decision 5, 2026-10-16): "할 일 만들" and its unspaced twin "할일 만들" (`normalizeForMatch` keeps spaces).
+const TODO_ADD_WORDS: readonly string[] = ['추가', '넣어', '넣자', '넣기', '올려', '적어', '등록', '할 일 만들', '할일 만들', 'add', 'put', 'jot down'];
 const REMINDER_CREATE_WORDS: readonly string[] = [
   '알려', '리마인드', '깨워', '상기시켜',
   // A reminder noun only together with its verb ("알림해줘", "리마인더 설정해줘", "알림 부탁해"), never the noun alone.
   '알림해', '알림 해', '알림 줘', '알림 걸', '알림 만들', '알림으로 만들', '알림 설정', '알림 맞춰', '알림 부탁',
+  // A6 R5a (owner decision 5, 2026-10-16).
+  '알림으로 걸',
   '리마인더 설정', '리마인더 만들', '리마인더 걸', '리마인더 부탁', '알람 맞춰', '알람 걸', '알람 설정',
   'remind', 'set a reminder', 'notify', 'alert me', 'ping me',
 ];
 const UNDO_WORDS: readonly string[] = ['원상복구', '되돌리기', '되돌', '돌려', '원래대로', '원상', '원복', '롤백', '무르', '물러', '취소', 'undo', 'revert', 'roll back', 'rollback'];
+/**
+ * A6 R5a (owner decision 5): the closed vocabulary additions. They live in `TODO_ADD_WORDS` / `REMINDER_CREATE_WORDS` (so in
+ * {@link NL_ACTION_WORDS}); this manifest only lets the no-regression gate compare every gold with and without them (they
+ * change the glued-noun boundary and the negated-clause veto even while R5 is off).
+ */
+export const NL_R5A_VOCABULARY_ADDITIONS: Readonly<Record<'todo.add' | 'reminder.create', readonly string[]>> = Object.freeze({
+  'todo.add': Object.freeze(['할 일 만들', '할일 만들']),
+  'reminder.create': Object.freeze(['알림으로 걸']),
+});
 /**
  * Every action word of every A6 vocabulary. A6-D3a amendment 1: the vocabularies only VETO now (a negated clause that names
  * the entry's action, a command before a retraction; see `request-shape.ts`); they never decide that a write runs.
@@ -842,4 +873,84 @@ export function withoutStructures(groundingText: string): string {
 export function isNlSpanInsideStructure(span: string, groundingText: string): boolean {
   const text = groundingText.normalize('NFC').replace(/\s+/g, ' ');
   return text.includes(span) && !withoutStructures(groundingText).includes(span);
+}
+
+// ── A6 R5a: deictic writes (owner decisions 1a–9 of 2026-10-16) ─────────────────────────────────────────────────────
+
+/**
+ * §1.4 step 4, a closed VALUE class (a validator, never a router): the words that say whose earlier text a deictic means.
+ * First person plus a speech verb ("내가 말한 거", "what I said") is the owner's own message; a second-person or answer word
+ * ("네가 추천한 거", "답변", "your answer") is a Quoky answer, which R5a refuses (`model-drafted`, decision 1b deferred).
+ */
+const OWNER_ORIGIN_KO = /(?<=^|\s)(?:내가|제가|나|저)\s*(?:아까\s*|방금\s*)?(?:말한|말했던|보낸|보냈던|쓴|썼던|적은|적었던)/u;
+const OWNER_ORIGIN_EN = /\b(?:what\s+i\s+(?:said|wrote|sent|typed)|my\s+(?:last\s+)?message)\b/u;
+const ASSISTANT_ORIGIN_KO = /(?<=^|\s)(?:네가|니가|너가|당신이|쿼키가)\s*(?:아까\s*|방금\s*)?(?:말한|말해\s?준|알려\s?준|추천한|추천해\s?준|제안한|정리해\s?준|써\s?준)|(?:네|니|그|이|방금|아까)?\s*(?:답변|대답|추천)(?:한|해\s?준)?/u;
+const ASSISTANT_ORIGIN_EN = /\b(?:your\s+(?:answer|reply|suggestion|recommendation)|what\s+you\s+(?:said|wrote|suggested|recommended))\b/u;
+
+/** Whose earlier text the owner's words name: `owner`, `assistant` (both: `assistant`, fail closed), or `undefined`. */
+export function nlDeicticOriginOf(groundingText: string): 'owner' | 'assistant' | undefined {
+  const text = normalizeForMatch(groundingText);
+  if (ASSISTANT_ORIGIN_KO.test(text) || ASSISTANT_ORIGIN_EN.test(text)) return 'assistant';
+  if (OWNER_ORIGIN_KO.test(text) || OWNER_ORIGIN_EN.test(text)) return 'owner';
+  return undefined;
+}
+
+/** `text` with every origin phrase removed (a payload span "내가 말한 거" is then only a deictic). */
+export function withoutNlOriginPhrases(text: string): string {
+  const flags = 'gu';
+  return normalizeForMatch(text)
+    .replace(new RegExp(ASSISTANT_ORIGIN_KO.source, flags), ' ')
+    .replace(new RegExp(ASSISTANT_ORIGIN_EN.source, flags), ' ')
+    .replace(new RegExp(OWNER_ORIGIN_KO.source, flags), ' ')
+    .replace(new RegExp(OWNER_ORIGIN_EN.source, flags), ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * A6 R5a, the `NlValidationContext.requestFrame` hook (A6-D3a amendment 1, CA review (c)): the owner's prose with every
+ * origin phrase blanked, case and spacing kept so content spans still match the rest of the prose. "내가 말한 거 할 일로
+ * 추가해줘" would otherwise be read as first-person volition, "아까 내가 보냈던 거 …" as a past statement; the phrase names
+ * WHOSE text, never what the sentence does. Every other veto still reads the remaining frame.
+ */
+export function nlOriginRequestFrame(prose: string): string {
+  const flags = 'giu';
+  return prose
+    .normalize('NFC')
+    .replace(new RegExp(ASSISTANT_ORIGIN_KO.source, flags), ' ')
+    .replace(new RegExp(ASSISTANT_ORIGIN_EN.source, flags), ' ')
+    .replace(new RegExp(OWNER_ORIGIN_KO.source, flags), ' ')
+    .replace(new RegExp(OWNER_ORIGIN_EN.source, flags), ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Whether `text` holds an invisible, bidi, format or control character or a line break (§1.3 rule 6), checked on the RAW
+ * text BEFORE any normalisation and with no emoji exemption (fail closed): `normalizeWorkItemTitle` would strip some of
+ * them silently, so the previewed text could differ from what the owner sees.
+ */
+export function nlHasInvisibleCharacters(text: string): boolean {
+  return HIDDEN.test(text) || HIDDEN.test(text.normalize('NFKC')) || LINE_SEPARATOR.test(text);
+}
+
+/** Why an owner message can never be a referent (§1.2), from its text alone; `undefined` when the text is eligible. */
+export type NlOwnerTextIneligibility = 'multiline' | 'quoted' | 'fenced' | 'invisible' | 'command' | 'deictic' | 'credential';
+
+/**
+ * §1.2 owner-message eligibility, the text-intrinsic part (fail closed). One plain line with no `>` quote, fence or other
+ * structure marker, no invisible / bidi / control character, no credential material, no anchored Class A command form, and
+ * no deictic or determiner reference of its own ("그거 할 일로 추가해줘" never becomes the text of a later "그거").
+ */
+export function nlOwnerTextIneligibility(rawText: string, containsCredential: (text: string) => boolean): NlOwnerTextIneligibility | undefined {
+  const text = rawText.normalize('NFC');
+  const folded = rawText.normalize('NFKC');
+  if (LINE_SEPARATOR.test(rawText) || LINE_SEPARATOR.test(folded)) return 'multiline';
+  if (HIDDEN.test(text) || HIDDEN.test(folded) || /^[^\S ]|[^\S ]$/u.test(text)) return 'invisible';
+  if (/^\s*>/u.test(text) || /^\s*>/u.test(folded)) return 'quoted';
+  if (/```|~~~|`/u.test(folded) || hasStructureMarker(text) || hasStructureMarker(folded)) return 'fenced';
+  if (COMMAND_FORMS.some((form) => form.test(folded))) return 'command';
+  if (containsCredential(text)) return 'credential';
+  if (hasNlDeictic(text) || hasNlDeterminerReference(text) || nlDeicticOriginOf(text) !== undefined) return 'deictic';
+  return undefined;
 }

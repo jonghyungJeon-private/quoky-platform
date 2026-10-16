@@ -36,7 +36,7 @@ const MAX_TRACKED_ACTORS = 256;
 export class NlActionCaps {
   private readonly windows = new Map<string, number[]>();
 
-  constructor(private readonly caps: typeof NL_ACTION_CAPS = NL_ACTION_CAPS) {}
+  constructor(private readonly caps: { readonly [K in keyof typeof NL_ACTION_CAPS]: number } = NL_ACTION_CAPS) {}
 
   /** Whether one more execution of `risk` stays within the caps at `nowMs`. */
   allows(actorId: string, risk: NlCatalogRisk, nowMs: number): boolean {
@@ -82,12 +82,28 @@ export class NlActionCaps {
 
 export const NL_ACTION_LOG_EVENT = 'nl_action.decided';
 
-export type NlActionResult = 'executed' | 'previewed' | 'asked' | 'refused' | 'undone' | 'capped' | 'shadow';
+export type NlActionResult =
+  | 'executed'
+  | 'previewed'
+  | 'asked'
+  | 'refused'
+  | 'undone'
+  | 'capped'
+  | 'shadow'
+  // A6 R5a deictic writes (§4 audit): the owner's answer to a preview.
+  | 'confirmed'
+  | 'declined'
+  | 'expired'
+  | 'changed'
+  | 'stale-reply';
+
+/** A6 R5a: the ref kind of a deictic write (`deictic:<referent kind>`; `deictic:none` when nothing resolved). */
+export type NlDeicticRefKind = 'deictic:item.local' | 'deictic:owner.message' | 'deictic:none';
 
 export interface NlActionAudit {
   readonly entryId: string;
   readonly risk: NlCatalogRisk;
-  readonly refKind: NlRefKind | 'match' | 'none';
+  readonly refKind: NlRefKind | 'match' | 'none' | NlDeicticRefKind;
   readonly resolution: NlResolutionOutcome;
   readonly result: NlActionResult;
   readonly latencyMs?: number;
@@ -97,6 +113,9 @@ export interface NlActionAudit {
   /** A6-D3 correlation: the session and the turn (inbound message) ids. */
   readonly sessionId?: string;
   readonly turnId?: string;
+  /** A6 R5a: the referent's shown label (a to-do number or a reminder `#N`) and whose text the payload is. */
+  readonly referentLabel?: number;
+  readonly payloadOrigin?: 'owner-item' | 'owner-message';
 }
 
 /**
@@ -120,6 +139,8 @@ export function nlActionLogFields(audit: NlActionAudit): LogFields {
     ...(local && target.id !== undefined ? { targetId: target.id } : {}),
     ...(target !== undefined && target.label !== undefined ? { targetLabel: target.label } : {}),
     ...(!local && target?.listingAt !== undefined ? { targetListingAt: target.listingAt } : {}),
+    ...(audit.referentLabel !== undefined ? { referentLabel: audit.referentLabel } : {}),
+    ...(audit.payloadOrigin !== undefined ? { payloadOrigin: audit.payloadOrigin } : {}),
   };
 }
 
