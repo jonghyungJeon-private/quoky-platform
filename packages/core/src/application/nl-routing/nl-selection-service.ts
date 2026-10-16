@@ -79,7 +79,7 @@ import { nlSelectionMeaning } from './selection-meaning';
 import { NL_ACTION_PROMPT_VERSION, NL_ACTION_R2_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
 import { nlReadNotRequest } from './read-statement';
-import { interpretContinuationConfirmReply, interpretUndoConfirmReply, nlUndoIsDirect, renderUndoConfirm } from './undo-confirm';
+import { interpretContinuationConfirmReply, interpretUndoConfirmReply, nlHasExplicitUndoWord, nlUndoIsDirect, renderUndoConfirm } from './undo-confirm';
 import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   LAST_SELECTION_METADATA_KEY,
@@ -1310,18 +1310,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // A6 R1 review: the selector's undo undoes only what the owner's words can mean. A source noun of another source (or a
       // second one), or a number / ordinal other than the last action's shown label ("2번 취소해줘" after "할 일 5번으로
       // 추가했어요"), asks instead of undoing the last action.
-      const record = reference.lastAction?.record;
-      if (record !== undefined) {
-        const named = nlNamedItemSources(prepared.groundingText);
-        const numbers = [...nlNumeralsIn(prepared.groundingText), ...nlOrdinalsIn(prepared.groundingText)];
-        const otherSource = named.size > 1 || (named.size === 1 && !named.has(record.source));
-        const otherNumber = numbers.some((number) => number !== record.label);
-        if (otherSource || otherNumber) {
-          const audit: NlActionAudit = { ...base, risk: entry.risk, resolution: otherSource ? 'other-source' : 'ambiguous', result: 'asked', reason: otherSource ? 'other-source' : 'ambiguous' };
-          if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
-          return this.actionAnswer(audit, renderRestate(language));
-        }
-      }
+      const mismatch = this.undoTargetMismatch(prepared.groundingText, reference, { ...base, risk: entry.risk }, language, shadow);
+      if (mismatch !== undefined) return mismatch;
       // A6-D3a amendment 1, undo confirmation rule: an undo cannot itself be undone, so only an unambiguous undo command
       // executes directly; any other selected undo asks a one-step confirmation that names the action.
       if (!nlUndoIsDirect(prepared.groundingText)) return this.askUndoConfirm(turn, language, latencyMs, reference);
@@ -1460,6 +1450,24 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // One next-turn question per session: the confirmation supersedes any R5a draft, so "응" can only mean this.
     if (this.deictic !== undefined) await this.deictic.clearDraft(turn.session, turn.actor.id, turn.now, 'continuation-confirm-asked');
     return this.actionAnswer(audit, renderContinuationConfirm(entryId, source, label, language, continued));
+  }
+
+  /**
+   * A6 R1 review: an undo undoes only what the owner's words can mean. A source noun of another source (or a second one),
+   * or a number / ordinal other than the last action's shown label ("2번 취소해줘" after "할 일 5번으로 추가했어요"), asks
+   * instead of undoing the last action. `undefined` when the words fit the last action (or there is none).
+   */
+  private undoTargetMismatch(groundingText: string, reference: NlReferenceState, base: Omit<NlActionAudit, 'resolution' | 'result'>, language: 'ko' | 'en', shadow: boolean): NlSelectionDecision | undefined {
+    const record = reference.lastAction?.record;
+    if (record === undefined) return undefined;
+    const named = nlNamedItemSources(groundingText);
+    const numbers = [...nlNumeralsIn(groundingText), ...nlOrdinalsIn(groundingText)];
+    const otherSource = named.size > 1 || (named.size === 1 && !named.has(record.source));
+    const otherNumber = numbers.some((number) => number !== record.label);
+    if (!otherSource && !otherNumber) return undefined;
+    const audit: NlActionAudit = { ...base, resolution: otherSource ? 'other-source' : 'ambiguous', result: 'asked', reason: otherSource ? 'other-source' : 'ambiguous' };
+    if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
+    return this.actionAnswer(audit, renderRestate(language));
   }
 
   /**
@@ -1607,15 +1615,21 @@ export class NlSelectionService implements TurnDeliveryObserver {
       const labels = pending.candidates.map((candidate) => candidate.label);
       // A6-D3a amendment 1, elliptical continuation: a one-candidate confirmation takes a yes ("응") as the candidate and a
       // no as the end of the question; a number still answers it as any target question. An undo word ("되돌려줘") is never
-      // a yes (Codex P1). An explicit undo command (the closed `nlUndoIsDirect` grammar) closes the question and undoes the
-      // last action in this same turn, so the owner is never ignored for a turn; only this confirmation does so, every
-      // other A6 question keeps its one-turn lock.
-      if (pending.confirm === true && offered.has('action.undo') && (turn.direct === true || turn.surfaceEnforced === true) && nlUndoIsDirect(answerText)) {
-        await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => undefined);
-        return this.decideUndo(turn, language, 0, 'none');
-      }
+      // a yes (Codex P1). A no comes first (Codex / CA P1): "취소", "취소해줘", "아니 취소" close the question and change
+      // nothing. Then an explicit undo command (an explicit undo word, never the 취소 family, in the closed `nlUndoIsDirect`
+      // grammar) closes the question and undoes the last action in this same turn, under the same source and number
+      // cross-checks as a selected undo ("2번 되돌려줘", "알림 되돌려줘" after completing to-do 1 ask, never undo it). Only
+      // this confirmation does so; every other A6 question keeps its one-turn lock.
       const yesNo = pending.confirm === true ? interpretContinuationConfirmReply(answerText) : 'none';
       if (yesNo === 'deny') return { kind: 'ask', text: renderCancelled(language) };
+      if (pending.confirm === true && offered.has('action.undo') && (turn.direct === true || turn.surfaceEnforced === true) && nlHasExplicitUndoWord(answerText) && nlUndoIsDirect(answerText)) {
+        await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => undefined);
+        const { replyTo: _replyTo, ...reference } = this.referenceState(turn);
+        const base = { entryId: 'action.undo', risk: 'LOCAL_WRITE' as NlCatalogRisk, refKind: 'none' as const, latencyMs: 0, ...correlationOf(turn) };
+        const mismatch = this.undoTargetMismatch(answerText, reference, base, language, this.actionLevelValue === 'shadow');
+        if (mismatch !== undefined) return mismatch;
+        return this.decideUndo(turn, language, 0, 'none', reference);
+      }
       const choice: ReturnType<typeof resolveLabelChoice> = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveLabelChoice(answerText, labels);
       if (choice.kind === 'none') return undefined;
       // A6 R1 review: a bare number or ordinal that is none of the offered labels asks the same question again; it never

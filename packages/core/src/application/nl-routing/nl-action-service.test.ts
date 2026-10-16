@@ -1051,6 +1051,26 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
     expect(await answer(again.w, '되돌려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' } } });
     const loose = await run('이번엔 3번');
     expect(await answer(loose.w, '되돌려 주신 기능 설명해줘')).toBeUndefined();
+    // Codex / CA P1: a no comes first. "취소", "아니 취소", "취소해줘" close the question and change nothing.
+    for (const text of ['취소', '아니 취소', '취소해줘']) {
+      const denied = await run('이번엔 3번');
+      const reply = await answer(denied.w, text);
+      expect(reply, text).toMatchObject({ kind: 'ask' });
+      expect(reply, text).not.toMatchObject({ kind: 'execute' });
+      expect(actionLogs(denied.w).some((log) => log.fields?.entryId === 'action.undo'), text).toBe(false);
+    }
+    // The undo shortcut keeps the selected undo's cross-checks: another number or another source asks, never undoes #1.
+    const otherNumber = await run('이번엔 3번');
+    const numbered = await answer(otherNumber.w, '2번 되돌려줘');
+    expect(numbered).toMatchObject({ kind: 'ask' });
+    expect(actionLogs(otherNumber.w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'asked', reason: 'ambiguous' });
+    const otherSource = await run('이번엔 3번');
+    const sourced = await answer(otherSource.w, '알림 되돌려줘');
+    expect(sourced).toMatchObject({ kind: 'ask' });
+    expect(actionLogs(otherSource.w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'asked', reason: 'other-source' });
+    // The plain explicit undo still undoes #1 in the same turn.
+    const plain = await run('이번엔 3번');
+    expect(await answer(plain.w, '되돌려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' }, undo: { entryId: 'todo.complete' } } });
     // Other A6 questions keep their one-turn lock: an open multi-candidate target question still holds the undo.
     const locked = world({ level: 'local', script: () => out('action.undo') });
     locked.setMetadata(LAST_ACTION_METADATA_KEY, completedOne());
@@ -1061,6 +1081,7 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
     expect(interpretUndoConfirmReply('되돌려줘')).toBe('approve');
     expect(interpretContinuationConfirmReply('되돌려줘')).toBe('none');
     expect(interpretContinuationConfirmReply('응')).toBe('approve');
+    for (const text of ['취소', '취소해', '취소해줘', '아니 취소', '아니요, 됐어', 'no, cancel']) expect(interpretContinuationConfirmReply(text), text).toBe('deny');
   });
 
   it('a bare reference reads the same way: "3번" / "3번도" after completing 1 ask; with no last action they stay chat as before', async () => {

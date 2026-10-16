@@ -98,13 +98,30 @@ export function interpretUndoConfirmReply(text: string): NlUndoConfirmReply {
   return 'none';
 }
 
-/** The owner's answer to the continuation confirmation: as {@link interpretUndoConfirmReply}, but an undo word is no answer. */
+/** A no to the continuation confirmation (Codex / CA P1): the undo confirmation's noes and the 취소 request forms. */
+const CONTINUATION_DENY: ReadonlySet<string> = new Set([...DENY, '취소요', '취소해', '취소해요', '취소해줘', '취소해줘요', '취소해 줘', '취소할게', '취소할게요', '취소합니다']);
+/** A leading no before the answer ("아니 취소", "아니요, 됐어", "no, cancel"). */
+const LEADING_NO = /^(?:아니|아니요|아니야|아뇨|아냐|ㄴㄴ|no)[,\s]+/u;
+
+/**
+ * The owner's answer to the continuation confirmation: as {@link interpretUndoConfirmReply}, but an undo word is no yes,
+ * and "취소" / "취소해줘" / "아니 취소" are a no (in the question's context they decline the inferred action).
+ */
 export function interpretContinuationConfirmReply(text: string): NlUndoConfirmReply {
   const normalized = text.normalize('NFC').trim().replace(/[.!~\s]+$/u, '');
-  const key = /^[A-Za-z]+$/u.test(normalized) ? normalized.toLowerCase() : normalized;
+  const key = /^[A-Za-z, ]+$/u.test(normalized) ? normalized.toLowerCase() : normalized;
   if (CONTINUATION_APPROVE.has(key)) return 'approve';
-  if (DENY.has(key)) return 'deny';
+  const rest = key.replace(LEADING_NO, '');
+  if (CONTINUATION_DENY.has(key) || CONTINUATION_DENY.has(rest)) return 'deny';
   return 'none';
+}
+
+/**
+ * Whether the text holds an EXPLICIT undo word (되돌-, 원래대로, 원상복구, 원복, 롤백, undo, revert, roll back): the closed undo
+ * heads without the 취소 family, which in a confirmation's context declines rather than undoes.
+ */
+export function nlHasExplicitUndoWord(text: string): boolean {
+  return /되돌|원래대로|원상복구|원복|롤백|\bundo\b|\brevert\b|\broll\s?back\b/iu.test(text.normalize('NFC'));
 }
 
 const ACTION_NAMES: Readonly<Record<string, { readonly ko: string; readonly en: string }>> = {
