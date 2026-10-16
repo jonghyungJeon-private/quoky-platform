@@ -4,9 +4,9 @@
 - 승격 조건 (A6-D8): 라벨 턴 100개 이상, 오실행(wrong-target execute) 0, undo 는 실행 20건당 1건 이하, 그리고 소유자의 yes.
 - 이 문서는 문서만 추가한다. 코드 변경 없음, 모델 호출 없음, push 없음.
 - 기준 상태 (DECISIONS / CURRENT_STATE 대조, 2026-10-16):
-  - `QUOKY_NL_ACTIONS` 는 현재 `shadow` 로 시험할 수 있다 (소유자 지시). 단 CURRENT_STATE 22행은 "unset (off)", 130행은 "live service 는 shadow" 라고 적혀 있어 서로 다르다. 시작 전에 `.env.local` 의 실제 값을 확인한다.
+  - `QUOKY_NL_ACTIONS=shadow` 가 라이브 서비스에서 2026-10-16 09:14 부터 켜져 있다 (`.env.local`, 소유자 승인). CURRENT_STATE 와 맞춘 값이다. 시작 전에 실제 값을 한 번 확인한다.
   - 킬 스위치 `에이전트 중지` / `에이전트 재개` 는 코드에 있다 (`nl-routing/action-switch.ts`, A6-D3). 오실행 시 이것을 먼저 쓴다.
-  - A6-D3a 수정 1 (act-and-undo, #244) 은 Proposed 상태다. 이 문서의 기대 결과는 #244 적용 기준이다. 미병합 상태이면 요청 동사가 없는 쓰기가 ask/none 으로 나올 수 있다. 그것은 기록만 하고 오실행으로 세지 않는다.
+  - A6-D3a 수정 1 (act-and-undo, #244) 은 Accepted 이고 main 에 병합·배포됐다. 이 문서의 기대 결과는 #244 적용 기준이다. 그래도 요청 동사가 없는 쓰기가 ask/none 으로 나오면 기록만 하고 오실행으로 세지 않는다.
   - undo 확인 (A6-D3a): "되돌려줘" 정확한 명령만 실행하고, 서술형은 확인 질문을 한다.
   - 깨진 행동어 (garbled-action, #248): 행동어가 깨졌으면 실행하지 않고 질문한다.
   - R5a (#246) 는 `QUOKY_NL_DEICTIC_WRITES` 뒤에 있고 기본 `off` 다. 이 키트에서는 켜지 않는다. 따라서 "그거 투두로 넣어줘" (L05) 류는 대화로 남는 것이 기대값이다.
