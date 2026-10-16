@@ -34,7 +34,7 @@ import {
 } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
-import { nlFrameIsElliptical, nlRelaysRequest, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
+import { nlFrameIsElliptical, nlHasUnnegatedMention, nlRelaysRequest, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
 import { nlFrameHasActionInflection, nlGarbledActionWord, type NlActionVocabulary } from './garbled-action';
 import {
   isNlRangeSymbol,
@@ -340,15 +340,19 @@ function canonicalActionWord(owner: string, latin: boolean): string | undefined 
  * Closed vocabularies only; no phrase list.
  */
 function groundItemSummarizeArgs(entry: NlCatalogEntry, args: Record<string, NlArgValue>, groundingText: string, r2Sources: ReturnType<typeof nlR2SourcesOffered>): void {
-  const text = normalizeForMatch(groundingText);
+  // Pasted structures ground nothing, as in the later grounding checks (Codex P1: `… {"source":"jira"}`).
+  const prose = withoutStructures(groundingText);
+  const text = normalizeForMatch(prose);
   const modeSpec = entry.args.find((spec) => spec.name === 'mode');
+  const modeWords = Object.values(modeSpec?.valueGrounding ?? {}).flatMap((words) => [...(words ?? [])]);
+  // A negated mention ("요약하지 말고", "not a summary") grounds no mode (Codex P2).
   const grounded = Object.entries(modeSpec?.valueGrounding ?? {})
-    .filter(([, words]) => (words ?? []).some((word) => groundingWordIn(text, normalizeForMatch(word))))
+    .filter(([, words]) => (words ?? []).some((word) => groundingWordIn(text, normalizeForMatch(word)) && nlHasUnnegatedMention(prose, word, modeWords)))
     .map(([value]) => value);
   if (grounded.length === 1) args.mode = grounded[0] as string;
   else if (grounded.length === 0) delete args.mode;
   const offered = (entry.args.find((spec) => spec.name === 'source')?.values ?? []).map(String);
-  const named = [...nlNamedItemSources(groundingText, { r2Sources })].filter((source) => offered.includes(source));
+  const named = [...nlNamedItemSources(prose, { r2Sources })].filter((source) => offered.includes(source));
   if (named.length === 1) args.source = named[0] as string;
 }
 

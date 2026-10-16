@@ -107,7 +107,7 @@ describe('the A6 R2 corpus (agent-drafted, awaiting the owner batch approval)', 
     expect(captured).toEqual([]);
   });
 
-  it('pins the known gap: of the six selector-only negatives, Core vetoes only the reported 070 (v47 ITEM_READ veto)', async () => {
+  it('pins the known gap: of the six selector-only negatives, Core executes only the past statements 071 and 072 if mistaken', async () => {
     // Negation and past statements stay with the selector (the v47 veto covers a relayed request only: a quoted command or a Korean quotative or hearsay):
     // Core executes them if the selector mistakes them; the reported command 070 is refused whatever the selector says.
     const selectorOnly = cases.filter((golden) => golden.selectorOnly === true);
@@ -123,6 +123,8 @@ describe('the A6 R2 corpus (agent-drafted, awaiting the owner batch approval)', 
         }
       }
     }
-    expect(executed).toEqual(['a6r2-negative-068', 'a6r2-negative-069', 'a6r2-negative-071', 'a6r2-negative-072', 'a6r2-negative-073']);
+    // Since the R2 mode grounding skips a negated mode mention, the negations 068, 069 and 073 no longer execute either (the
+    // mode is unset, so Core asks the content-mode question); the past statements 071 and 072 remain selector-only.
+    expect(executed).toEqual(['a6r2-negative-071', 'a6r2-negative-072']);
   });
 });

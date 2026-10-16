@@ -27506,3 +27506,25 @@ Approved, exactly:
 Not approved by this record: the R2 red-team batch (`agent-redteam.v1.json`, `subFamily: "r2"`), the Strict 3-run R2 model gate and real-model red team, the `QUOKY_NL_ITEM_R2` / `QUOKY_NL_ACTIONS` flags (they stay `off` / `local`-gated and inert), and Chief Architect review before merge. Each needs its own owner yes. No code behaviour changed.
 
 The gold digest changes with these marker edits (the digest hashes the raw golden files), so `selector-pool.audit.v1.json` is regenerated with `pnpm eval:rag -- --mode dry-run --write-audit true`.
+
+## A6 R2 item.summarize mode and source grounding — scope (2026-10-17, CA P3 follow-up)
+
+Status: **recorded** (implementation note under ADR-0120 amendment A6 R2; CA approved fb5df854 with this follow-up).
+
+- **Scope.** Core grounds `item.summarize`'s `mode` and `source` in the owner's own words (fb5df854 and its review fix)
+  **only while `item.summarize` offers an R2 source (Jira or Slack)**. `mode` comes from the NL_MODE_SUMMARY_WORDS /
+  NL_MODE_FULL_WORDS classes present in the message, a negated mention excluded (one class: that mode; none: unset, so
+  the content-mode question or the stored preference applies; both: the selector's value stays and is checked as
+  before); `source` comes from exactly one offered source named by the owner's noun (`nlNamedItemSources`, the
+  other-source cross-check vocabulary); pasted structures ground neither. Closed vocabularies only, no phrase list; it
+  never selects `item.summarize`.
+- **R2 off.** With R2 off, the A6 mail / Drive path validates exactly as before: the selector's `mode` is kept and checked
+  against the mode vocabulary (an ungrounded one is refused), nothing is filled from the message. Reason: 11 owner-approved
+  A6 gold labels carry no `mode` although their text holds a summary word, so grounding would make them non-canonical:
+  `a6-reference-item.summarize-005`, `-006`, `-007`, `-008`, `-009`, `-010`, `-011`, `-012`, `-013`, `-014`, `-015`
+  (`golden/nl-action.v1.json`).
+- **Before R2 promotion** the owner either reconciles those 11 labels (adds the grounded `mode`) and grounding is applied
+  to both paths, or the asymmetry stays as recorded here.
+- **Accepted residual (CA P3).** A mode word inside an item's name the owner writes (a file called "요약본") grounds that
+  mode. Accepted as low risk: the action is a read of the item the owner named, and the owner can ask again for the other
+  mode.

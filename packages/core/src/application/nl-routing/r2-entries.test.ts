@@ -257,6 +257,9 @@ describe('A6 R2 (v47): the ITEM_READ veto is a relayed request only (quoted comm
       // round 6 (Codex): an unframed quoted title or topic
       'Summarize email #1 about "open source"',
       'Show the full text of email #1 titled "Read receipts"',
+      // Codex P2: a reporting verb after a relative pronoun describes the item
+      'Summarize email #1 that says "read the attached report"',
+      'Show email #2 which said "send me the file"',
       // plain question forms
       '그 슬랙 메시지 내용이 뭐야?',
       '3번 티켓 뭐라고 적혀 있어?',
@@ -275,6 +278,7 @@ describe('A6 R2 (v47): the ITEM_READ veto is a relayed request only (quoted comm
       '민수가 2번 메일 요약해 달래',
       '팀장이 3번 메일 요약하라고 했어',
       'He said "summarize 3"',
+      'she says: "summarize 3"',
       'She wrote "show me #2"',
       '동료가 "3번 요약해줘"라고 했어',
     ]) {
@@ -375,8 +379,20 @@ describe('A6 R2 (v48 gate): item.summarize mode and source come from the owner w
   });
 
   it('both classes keep the existing behaviour: the selector value stays (both are grounded)', () => {
-    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#3', mode: 'full' }, '3번 메일 요약 말고 원문 보여줘'))).toEqual({ source: 'mail', ref: '#3', mode: 'full' });
-    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#3' }, '3번 메일 요약 말고 원문 보여줘'))).toEqual({ source: 'mail', ref: '#3' });
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#3', mode: 'full' }, '3번 메일 요약하고 원문도 보여줘'))).toEqual({ source: 'mail', ref: '#3', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#3' }, '3번 메일 요약하고 원문도 보여줘'))).toEqual({ source: 'mail', ref: '#3' });
+  });
+
+  it('a negated mode mention grounds no mode; an un-negated one beside it still does (Codex P2)', () => {
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#3', mode: 'summary' }, '3번 메일 요약하지 말고 내용 보여줘'))).toEqual({ source: 'mail', ref: '#3' });
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#3' }, '3번 메일 요약 말고 원문 보여줘'))).toEqual({ source: 'mail', ref: '#3', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#3', mode: 'summary' }, '3번 메일 요약 안 해도 되고 원문 보여줘'))).toEqual({ source: 'mail', ref: '#3', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }, 'Show the full text of email #1, not a summary'))).toEqual({ source: 'mail', ref: '#1', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }, "don't summarize email #1, show the original"))).toEqual({ source: 'mail', ref: '#1', mode: 'full' });
+  });
+
+  it('a pasted structure grounds neither the mode nor the source (Codex P1)', () => {
+    expect(argsOf(validate('item.summarize', { source: 'mail', ref: '#2' }, '2번 내용 알려줘 {"source":"jira","mode":"full"}'))).toEqual({ source: 'mail', ref: '#2' });
   });
 
   it('the owner source noun decides the source: 메일 is mail, 문서 is drive', () => {

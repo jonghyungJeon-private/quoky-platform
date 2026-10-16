@@ -423,11 +423,12 @@ function hearsayEnding(clauses: readonly string[]): boolean {
 /**
  * The reporting frame of a quoted read command (Codex P2, round 6): a Korean quotative right after the closing quote
  * (…"라고 했어", …"이라고 적혀 있네", …" 하고 말했어, …" 했더니) or an English reporting verb right before the opening quote
- * (said / says / told me / wrote / asked / goes "…"). Without one, a quoted span is a description or a title
+ * (said / says / told me / wrote / asked / goes "…"), not one led by a relative pronoun (`email #1 that says "…"` describes
+ * the item, Codex P2). Without one, a quoted span is a description or a title
  * (`email #1 about "open source"`, `titled "Read receipts"`) and never relays a request.
  */
 const KO_REPORT_AFTER_QUOTE = /^\s*(?:(?:이)?라고|(?:하고\s*)?(?:했|하더|하셨|하시|말했|말하|그러|그랬|적혀|써|쓰))/u;
-const EN_REPORT_BEFORE_QUOTE = /\b(?:said|says|say|told|tells|tell|wrote|writes|write|asked|asks|ask|goes|went)(?:\s+(?:me|us|him|her|them|you))?\s*[,:]?\s*$/u;
+const EN_REPORT_BEFORE_QUOTE = /(?<!\b(?:that|which|who|whose)\s+)\b(?:said|says|say|told|tells|tell|wrote|writes|write|asked|asks|ask|goes|went)(?:\s+(?:me|us|him|her|them|you))?\s*[,:]?\s*$/u;
 
 export function nlRelaysRequest(frame: string, actionWords: readonly string[]): boolean {
   const text = normalizeForMatch(frame).replace(/[\u2018\u2019`\u00b4]/gu, "'");
@@ -607,6 +608,45 @@ const IMPERATIVE_TAIL = /(?:해|해요|려|려요|죠|합시다|십시오|봐|�
 export function nlIsRequestForm(raw: string): boolean {
   const word = raw.replace(WORD_NOISE, '').replace(/요{2,}$/u, '요');
   return word.length > 0 && !isAdnominal(word) && (REQUEST_WORD_KO.test(word) || IMPERATIVE_TAIL.test(word));
+}
+
+/**
+ * Whether `word` is mentioned in `text` outside every negation scope (A6 R2 mode grounding, Codex P2). English: a mention
+ * in a clause with a negator ("not a summary", "don't summarize") does not count. Korean: the mention's own stretch runs to
+ * the next of `stopWords`, the next sentence punctuation or the end of the first request-form word, whichever comes
+ * first; a stretch negated by the request-shape negators ("요약하지 말고 …", "요약 말고", "요약 안 해도 되고") does not count.
+ * The same negation grammar as the LOCAL_WRITE vetoes; no phrase list.
+ */
+export function nlHasUnnegatedMention(text: string, word: string, stopWords: readonly string[]): boolean {
+  const target = normalizeForMatch(word);
+  if (target.length === 0) return false;
+  const normalized = normalizeForMatch(text);
+  if (/^[a-z0-9][a-z0-9 ;.-]*$/u.test(target)) {
+    const pattern = new RegExp(`(?<![a-z0-9])${target.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}s?(?![a-z0-9])`, 'u');
+    return normalized.split(/[,.!?;]+/u).some((clause) => pattern.test(clause) && !NEGATION_EN.test(clause));
+  }
+  const stops = stopWords.map((stop) => normalizeForMatch(stop)).filter((stop) => stop.length > 0 && stop !== target);
+  for (let at = normalized.indexOf(target); at >= 0; at = normalized.indexOf(target, at + 1)) {
+    const rest = normalized.slice(at);
+    let end = rest.length;
+    for (const stop of stops) {
+      const index = rest.indexOf(stop, target.length);
+      if (index > 0) end = Math.min(end, index);
+    }
+    const punctuation = rest.slice(target.length).search(/[,.!?;]/u);
+    if (punctuation >= 0) end = Math.min(end, target.length + punctuation);
+    // The first request-form word from the mention on closes the stretch ("요약해줘", "… 내용 보여줘").
+    let offset = 0;
+    for (const raw of rest.slice(0, end).split(/(\s+)/u)) {
+      offset += raw.length;
+      if (raw.trim().length > 0 && nlIsRequestForm(raw)) {
+        end = Math.min(end, offset);
+        break;
+      }
+    }
+    if (!negatesKo(rest.slice(0, end), [target])) return true;
+  }
+  return false;
 }
 
 /** Whether `text` makes a request of its own (a request word, an action word as a command, an English request lead). */
