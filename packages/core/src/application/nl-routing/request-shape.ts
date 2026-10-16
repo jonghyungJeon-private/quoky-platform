@@ -56,6 +56,12 @@ const QUOTATIVE_KO = /(?:라|자|달라|냐|다)고\s*(?:했|하더|하던|하�
 // The past 랬 is hearsay with any ending after it (달랬어, 하랬는데, 주랬잖아); the present 래 also before the connective
 // 는데 (달래는데): the same contracted quotative followed by a connective, never a phrase (A6 R2 review, CA P3).
 const CONTRACTED_QUOTATIVE_KO = /(?:하|으|달|주)(?:(?:래|래요|래서|라셔|라시|란다|재|재요)(?=$|[\s.!?~,]|[\u3131-\u318e]|는데)|랬)/u;
+/**
+ * The word-final contracted quotatives (하래, 달래, 주래, 으래 … at a word end): hearsay wherever a content span puts them
+ * (CA review: "김 대리가 보고서 작성하래 추가" as a title is still reported). Only the forms that go on inside the word
+ * and modify a noun (-랬던, -래는데, -랬다는) are exempt inside a content span.
+ */
+const CONTRACTED_QUOTATIVE_FINAL_KO = /(?:하|으|달|주)(?:래|래요|래서|랬|라셔|라시|란다|재|재요)(?=$|[\s.!?~,]|[\u3131-\u318e])/u;
 /** A quoted segment of the frame (content spans already removed): '…', "…", “…”, ‘…’, 「…」, 『…』. */
 const QUOTED_SEGMENT = /'([^']+)'|"([^"]+)"|“([^”]+)”|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
 const REPORTED_EN = /\b(?:told|asked|wants?|wanted|said|says)\s+(?:(?:me|us|him|her|them)\s+)?to\b|\b(?:you|someone|somebody|they|he|she)\s+(?:should|must|might|could|said|says|told|wants?|wanted)\b/u;
@@ -373,7 +379,7 @@ function isConditionalWord(word: string): boolean {
  * reminder body, "아기 달래는데" in a title); on the span's last word or outside every span it counts (CA review).
  */
 function koreanQuotative(text: string, regions: ReadonlyArray<readonly [number, number]> = []): boolean {
-  return QUOTED_REQUEST_KO.test(text) || QUOTATIVE_KO.test(text) || hitOutside(CONTRACTED_QUOTATIVE_KO, text, regions);
+  return QUOTED_REQUEST_KO.test(text) || QUOTATIVE_KO.test(text) || CONTRACTED_QUOTATIVE_FINAL_KO.test(text) || hitOutside(CONTRACTED_QUOTATIVE_KO, text, regions);
 }
 
 /**
@@ -402,14 +408,29 @@ function hearsayEnding(clauses: readonly string[]): boolean {
 }
 
 /**
- * A6 R2 ITEM_READ veto (final narrowing): whether the owner relays someone else's request instead of making one: a quoted
- * span holding a request form, or a Korean quotative or hearsay ending (…해 달래, …하랬는데, …하라고 했어, …한대). The same
- * grammar as the LOCAL_WRITE `reported` class, without the English "asked me to" form (for a read it describes the item:
- * "email #1 that John asked me to review"). Example, joke, retraction, negation and statements stay with the selector.
+ * A6 R2 ITEM_READ veto (final narrowing, review round 4): whether the owner relays someone else's request instead of making
+ * one. Two structural forms only:
+ *  - a quoted span that holds a request FORM (a request or imperative ending, or an English request lead or action verb
+ *    first: {@link isQuotedRequest}); a bare quoted noun ("\"요약\" 모드로") is a label, not a command;
+ *  - a Korean quotative or hearsay form (…해 달래, …하랬는데, …하라고 했어, …한대) that is the message-final predicate: it
+ *    ends inside the last word, which may carry a connective tail (-는데, -거든, -서) and sentence punctuation. A hearsay
+ *    form that modifies a noun ("엄마가 전화하랬던 부분까지 요약해줘") or sits before the owner's own final request
+ *    ("팀장이 3번 요약해달래. 요약해줘": the owner asks, so it reads) does not relay.
+ * The English "asked me to" is no relay for a read (it describes the item). Example, joke, retraction, negation and
+ * statements stay with the selector. The LOCAL_WRITE `reported` class is unchanged.
  */
 export function nlRelaysRequest(frame: string, actionWords: readonly string[]): boolean {
-  const text = normalizeForMatch(frame).replace(/[’‘`´]/gu, "'");
-  return quotedCommand(text, actionWords) || koreanQuotative(text) || hearsayEnding(clausesOf(text));
+  const text = normalizeForMatch(frame).replace(/[\u2018\u2019`\u00b4]/gu, "'");
+  for (const match of text.matchAll(QUOTED_SEGMENT)) {
+    if (isQuotedRequest(match.slice(1).find((group) => group !== undefined) ?? '', actionWords)) return true;
+  }
+  // The final predicate: the last word once trailing punctuation, laughter and emoticons are set aside.
+  const body = text.replace(/[\s.,!?~\u2026;:"'\u3131-\u318e^\p{Extended_Pictographic}\uFE0F\u200D]+$/u, '');
+  const lastStart = body.lastIndexOf(' ') + 1;
+  const endsInLast = (pattern: RegExp): boolean =>
+    [...body.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))].some((match) => (match.index ?? 0) + match[0].length > lastStart);
+  if (endsInLast(QUOTED_REQUEST_KO) || endsInLast(QUOTATIVE_KO) || endsInLast(CONTRACTED_QUOTATIVE_KO)) return true;
+  return hearsayEnding([body]);
 }
 
 /**

@@ -15,7 +15,7 @@ import {
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { NL_ACTION_R2_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import { extractPromptExamples } from './example-contamination';
-import { nlItemReadVeto } from './selection-validator';
+import { nlItemReadVeto, requestShapeOf } from './selection-validator';
 import { prepareSelectionInput } from './selection-input';
 import type { NlCatalogEntry } from './catalog';
 
@@ -244,6 +244,10 @@ describe('A6 R2 (v47): the ITEM_READ veto is a relayed request only (quoted comm
       '1번 메일 원문 보여줘, 첨부파일 말고',
       'Summarize email #1 that John asked me to review',
       '1번 메일 농담 부분까지 요약해줘',
+      // round 4 (Codex): a quoted mode noun, hearsay that modifies a noun
+      '1번 메일을 "요약" 모드로 보여줘',
+      '1번 메일 중 엄마가 전화하랬던 부분까지 요약해줘',
+      '1번 메일의 아기 달래는데 필요한 장난감 목록을 요약해줘',
       // plain question forms
       '그 슬랙 메시지 내용이 뭐야?',
       '3번 티켓 뭐라고 적혀 있어?',
@@ -266,8 +270,12 @@ describe('A6 R2 (v47): the ITEM_READ veto is a relayed request only (quoted comm
     }
   });
 
-  it('an own request appended to a relayed one does not read the relayed target: the whole message is chat', () => {
-    expect(nlItemReadVeto(grounding('팀장이 3번 요약해달래. 요약해줘'))).toBe('reported');
+  it('hearsay vetoes only as the message-final predicate; a quoted command anywhere still vetoes', () => {
+    // The owner's own request is the final predicate: the owner asks, so it reads (accepted by the coordinator).
+    expect(nlItemReadVeto(grounding('팀장이 3번 요약해달래. 요약해줘'))).toBeUndefined();
+    // A connective tail and punctuation after the hearsay form keep it final.
+    expect(nlItemReadVeto(grounding('팀장이 3번 요약해 달랬거든!'))).toBe('reported');
+    expect(nlItemReadVeto(grounding('팀장이 3번 요약해 달래서 ㅋㅋ'))).toBe('reported');
     expect(nlItemReadVeto(grounding('요약해줘. 동료가 "3번 요약해줘"라고 했거든'))).toBe('reported');
   });
 
@@ -309,5 +317,22 @@ describe('A6 R2 (v47): the ITEM_READ veto is a relayed request only (quoted comm
       .filter((c) => !positive(c.expect) && nlItemReadVeto(grounding(c.text)) !== undefined)
       .map((c) => c.id.replace('a6r2-negative-', ''));
     expect(settled).toEqual(['039', '040', '042', '043', '070']);
+  });
+});
+
+describe('A6 R2 review (CA): the contracted quotative in a LOCAL_WRITE content span', () => {
+  const shape = (entryId: 'todo.add' | 'reminder.create' | 'todo.complete', args: Record<string, string>, text: string) =>
+    requestShapeOf(nlActionEntry(entryId), args, text);
+
+  it('a word-final quotative is reported wherever the span puts it (as on main)', () => {
+    expect(shape('todo.add', { title: '김 대리가 보고서 작성하래 추가' }, '할 일에 김 대리가 보고서 작성하래 추가해줘').veto).toBe('reported');
+    expect(shape('reminder.create', { body: '팀장이 회의 하래 알려', when: '3시' }, '3시에 팀장이 회의 하래 알려줘').veto).toBe('reported');
+    expect(shape('todo.complete', { match: '팀장님이 회의 준비 완료하래 완료' }, '팀장님이 회의 준비 완료하래 완료해줘').veto).toBe('reported');
+    expect(shape('todo.add', { title: '보고서 쓰기' }, '팀장이 할 일에 보고서 쓰기 추가하래').veto).toBe('reported');
+  });
+
+  it('a quotative that modifies a noun inside the span is the content', () => {
+    expect(shape('reminder.create', { body: '엄마가 전화하랬던 거', when: '내일 9시' }, '내일 9시에 엄마가 전화하랬던 거 알려줘').veto).toBeUndefined();
+    expect(shape('todo.add', { title: '아기 달래는데 필요한 장난감 사기' }, '할 일에 아기 달래는데 필요한 장난감 사기 추가해줘').veto).toBeUndefined();
   });
 });
