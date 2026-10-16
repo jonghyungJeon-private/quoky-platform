@@ -367,7 +367,7 @@ export class NlDeicticWrites {
    * One next-turn question per session (R5a × A6-D3a amendment 1): opening the `action-undo-confirm` question, or finding
    * one open at the start of a turn, drops this actor's draft without answering it. Content-free; never throws.
    */
-  async clearDraft(session: Pick<Session, 'id' | 'metadata'>, actorId: Id, now: IsoTimestamp, why: 'undo-confirm-asked' | 'undo-confirm-open'): Promise<void> {
+  async clearDraft(session: Pick<Session, 'id' | 'metadata'>, actorId: Id, now: IsoTimestamp, why: 'undo-confirm-asked' | 'undo-confirm-open' | 'continuation-confirm-asked'): Promise<void> {
     if (!this.hasDraft(session, actorId)) return;
     try {
       await this.deps.sessions.updateMetadataEntry({ id: session.id }, DEICTIC_DRAFT_METADATA_KEY, (current) => withDeicticDraft(current, actorId, undefined, now));

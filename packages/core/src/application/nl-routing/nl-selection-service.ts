@@ -63,6 +63,7 @@ import {
   renderReferenceQuestion,
   renderQuestionOpen,
   renderDmOnlyAction,
+  renderContinuationConfirm,
   renderGarbledAction,
   renderRestate,
   renderTimeInTitle,
@@ -1263,6 +1264,20 @@ export class NlSelectionService implements TurnDeliveryObserver {
         this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
         return { kind: 'none' };
       }
+      // A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, "이번엔 3번"): a target frame with no action word and
+      // no request form never executes. Right after the same action on the same list, the inferred action is asked as a
+      // confirmation ("할 일 3번도 완료할까요?", "응" runs it); a bare reference ("3번도") reads the same way. Anything else
+      // stays chat, as a reference alone always was.
+      if (validated.reason === 'elliptical' || (validated.reason === 'ungrounded' && validated.arg === 'action')) {
+        const confirm = await this.askContinuation(entryId, output.args, turn, prepared, language, reference, base, openQuestion, shadow);
+        if (confirm !== undefined) return confirm;
+      }
+      if (validated.reason === 'elliptical') {
+        const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'elliptical' };
+        if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
+        this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
+        return { kind: 'none' };
+      }
       // The frame expresses no action: a reference alone ("2번도", "그걸로요", "13번 알림") is chat; a payload alone ("내일 9시
       // 우유") asks the owner to restate what to do with it.
       if (validated.reason === 'ungrounded' && validated.arg === 'action') {
@@ -1377,6 +1392,56 @@ export class NlSelectionService implements TurnDeliveryObserver {
     this.actionCaps.note(turn.actor.id, entry.risk, Date.parse(turn.now));
     const command: NlSelectedCommand = { entryId, args, language, ...(target !== undefined ? { target } : {}) };
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}), action: audit };
+  }
+
+  /**
+   * A6-D3a amendment 1, elliptical continuation: the confirmation of an inferred action, or `undefined` (the caller then
+   * answers as before). Asked only when the selected target entry is the fresh, not undone last action's entry on the same
+   * list, the reference is a display number the owner actually wrote, and it resolves to another item than the last
+   * action's. The question is the one-candidate `action-target` confirmation; nothing is written.
+   */
+  private async askContinuation(
+    entryId: NlActionEntryId,
+    rawArgs: NlArgs,
+    turn: NlSelectionTurn,
+    prepared: PreparedSelectionInput,
+    language: 'ko' | 'en',
+    reference: NlReferenceState,
+    base: Omit<NlActionAudit, 'resolution' | 'result'>,
+    openQuestion: Extract<PendingQuestion, { kind: 'action-target' | 'action-mode' | 'action-reschedule' | 'action-undo-confirm' }> | undefined,
+    shadow: boolean,
+  ): Promise<NlSelectionDecision | undefined> {
+    if (entryId !== 'todo.complete' && entryId !== 'todo.cancel' && entryId !== 'reminder.cancel') return undefined;
+    if (openQuestion !== undefined) return undefined;
+    const last = reference.lastAction;
+    const source = nlActionSourceOf(entryId, rawArgs);
+    if (last === undefined || !last.fresh || last.record.undone || last.record.entryId !== entryId || source === undefined || last.record.source !== source) return undefined;
+    const ref = parseNlRef(rawArgs.ref);
+    if (ref?.kind !== 'index') return undefined;
+    const written = [...nlNumeralsIn(prepared.groundingText), ...nlOrdinalsIn(prepared.groundingText)];
+    if (written.length !== 1 || written[0] !== ref.index) return undefined;
+    const resolved = resolveItemReference({ entryId, source, ref, groundingText: prepared.groundingText, state: reference });
+    if (resolved.kind !== 'resolved' || resolved.target.id === undefined || resolved.target.id === last.record.itemId || resolved.target.label === undefined) return undefined;
+    const target = resolved.target;
+    const label = target.label as number;
+    const audit: NlActionAudit = { ...base, resolution: 'resolved', target, result: 'asked', reason: 'elliptical-confirm' };
+    if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
+    await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
+      pendingQuestionRecord(turn.actor.id, {
+        kind: 'action-target',
+        at: turn.now,
+        language,
+        entryId,
+        source,
+        candidates: [{ label, id: target.id as string }],
+        args: {},
+        ...(target.listingAt !== undefined ? { listingAt: target.listingAt } : {}),
+        confirm: true,
+      }),
+    );
+    // One next-turn question per session: the confirmation supersedes any R5a draft, so "응" can only mean this.
+    if (this.deictic !== undefined) await this.deictic.clearDraft(turn.session, turn.actor.id, turn.now, 'continuation-confirm-asked');
+    return this.actionAnswer(audit, renderContinuationConfirm(entryId, source, label, language));
   }
 
   /**
@@ -1522,7 +1587,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
       const entry = offered.get(pending.entryId);
       if (entry === undefined) return undefined;
       const labels = pending.candidates.map((candidate) => candidate.label);
-      const choice = resolveLabelChoice(answerText, labels);
+      // A6-D3a amendment 1, elliptical continuation: a one-candidate confirmation takes a yes ("응") as the candidate and a
+      // no as the end of the question; a number still answers it as any target question.
+      const yesNo = pending.confirm === true ? interpretUndoConfirmReply(answerText) : 'none';
+      if (yesNo === 'deny') return { kind: 'ask', text: renderCancelled(language) };
+      const choice: ReturnType<typeof resolveLabelChoice> = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveLabelChoice(answerText, labels);
       if (choice.kind === 'none') return undefined;
       // A6 R1 review: a bare number or ordinal that is none of the offered labels asks the same question again; it never
       // reaches the selector (where it could become another entry or item).

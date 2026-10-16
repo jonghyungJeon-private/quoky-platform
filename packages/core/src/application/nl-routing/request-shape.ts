@@ -557,3 +557,22 @@ export function nlActionWordGrounded(prose: string, words: readonly string[], sp
   const text = normalizeForMatch(prose);
   return words.some((word) => text.includes(normalizeForMatch(word))) && nlRequestVeto(prose, words, words, spans) === undefined;
 }
+
+/**
+ * ADR-0120 A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold a6-reference-none-002 "이번엔 3번"): whether
+ * a LOCAL_WRITE frame (the owner's prose without the selector's content spans) is ELLIPTICAL: it names no action word of any
+ * A6 vocabulary (`actionWords`) and makes no request of its own (no request or imperative form, no command word, no English
+ * request lead). "이번엔 3번", "그럼 3번", "3번도" are; "3번 완료", "1번 할일 체크해줘", "2번 빼" are not. The action such
+ * a message means is only inferred (from the last action, or by the selector), so it never executes: the owner's rule is
+ * "ambiguous: ask, clear: act". Closed classes only (the A6 vocabularies and the request endings); no phrase list. Pure.
+ */
+export function nlFrameIsElliptical(frame: string, actionWords: readonly string[]): boolean {
+  const text = normalizeForMatch(frame);
+  const namesAction = actionWords.some((raw) => {
+    const word = normalizeForMatch(raw);
+    if (word.length === 0) return false;
+    return /^[a-z0-9 -]+$/u.test(word) ? new RegExp(`(?<![a-z0-9])${word.replace(/[-]/g, '\\-').replace(/ /g, '\\s+')}(?![a-z0-9])`, 'u').test(text) : text.includes(word);
+  });
+  if (namesAction) return false;
+  return !requestsSomething(text, actionWords) && !wordsOf(text).some((word) => nlIsRequestForm(word));
+}

@@ -997,3 +997,86 @@ describe('owner decision C (2026-10-17, A6-D1 amendment): reminder.cancel by tit
     expect(actionLogs(channel.w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'dm-only' });
   });
 });
+
+describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold a6-reference-none-002 "이번엔 3번")', () => {
+  // The gold fixture: a to-do listing labelled 1..3 and a fresh lastAction todo.complete on label 1.
+  const completedOne = (entryId: 'todo.complete' | 'todo.add' = 'todo.complete', minute = 0) =>
+    withLastAction(undefined, 'owner', { entryId, source: 'todo', itemId: 'todo-1', label: 1, at: at(minute), undoable: true, undone: false, echoReplyIds: [] }, at(minute));
+  const run = async (text: string, args: Record<string, unknown> = { ref: '#3' }, options: { lastAction?: 'todo.complete' | 'todo.add' | 'none'; entryId?: string } = {}) => {
+    const w = world({ level: 'local', script: () => out(options.entryId ?? 'todo.complete', args) });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    if (options.lastAction !== 'none') w.setMetadata(LAST_ACTION_METADATA_KEY, completedOne(options.lastAction ?? 'todo.complete'));
+    const decision = await w.decide(text, { now: at(1) });
+    return { w, decision };
+  };
+  const answer = (w: World, text: string, minute = 2) =>
+    w.service.answerActionPending({ text, attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(minute), entries: ALL, route: 'chat', direct: true, pending: readPendingQuestion(w.session(), 'owner', at(minute)) ?? null });
+
+  it('"이번엔 3번" right after completing 1 asks with the inferred action and writes nothing (the selector chose todo.complete #3)', async () => {
+    const { w, decision } = await run('이번엔 3번');
+    expect(decision).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+    expect(decision.kind).not.toBe('execute');
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'todo.complete', result: 'asked', reason: 'elliptical-confirm', targetId: 'todo-3' });
+    expect(readPendingQuestion(w.session(), 'owner', at(2))).toMatchObject({ kind: 'action-target', entryId: 'todo.complete', candidates: [{ label: 3, id: 'todo-3' }], confirm: true });
+  });
+
+  it('"응" executes the asked action on the asked item; "아니" ends it; a number still answers it', async () => {
+    const yes = await run('이번엔 3번');
+    expect(await answer(yes.w, '응')).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { source: 'todo', id: 'todo-3', label: 3 } } });
+    const no = await run('이번엔 3번');
+    const denied = await answer(no.w, '아니');
+    expect(denied?.kind).toBe('ask');
+    expect(denied).not.toMatchObject({ kind: 'execute' });
+    const number = await run('이번엔 3번');
+    expect(await answer(number.w, '3')).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { id: 'todo-3' } } });
+    // Not an answer: the question ends and nothing runs from it.
+    const other = await run('이번엔 3번');
+    expect(await answer(other.w, '응 근데 날씨는?')).toBeUndefined();
+  });
+
+  it('a bare reference reads the same way: "3번" / "3번도" after completing 1 ask; with no last action they stay chat as before', async () => {
+    for (const text of ['3번', '3번도', '그럼 3번']) {
+      const { decision } = await run(text);
+      expect(decision, text).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+    }
+    for (const text of ['3번', '3번도']) {
+      const { w, decision } = await run(text, { ref: '#3' }, { lastAction: 'none' });
+      expect(decision, text).toEqual({ kind: 'none' });
+      expect(actionLogs(w).at(-1)?.fields?.reason, text).toBe('no-action-word');
+    }
+  });
+
+  it('an elliptical message with nothing to infer the action from never writes and is chat', async () => {
+    // No last action, a last action of another entry, the same item again, or a cancel the selector guessed.
+    const cases: Array<[string, Parameters<typeof run>[2], Record<string, unknown>]> = [
+      ['이번엔 3번', { lastAction: 'none' }, { ref: '#3' }],
+      ['그럼 3번', { lastAction: 'none' }, { ref: '#3' }],
+      ['이번엔 3번', { lastAction: 'todo.add' }, { ref: '#3' }],
+      ['이번엔 1번', {}, { ref: '#1' }],
+      ['이번엔 3번', { entryId: 'todo.cancel' }, { ref: '#3' }],
+      ['now 3', { lastAction: 'none' }, { ref: '#3' }],
+    ];
+    for (const [text, options, args] of cases) {
+      const { w, decision } = await run(text, args, options);
+      expect(decision, `${text} ${JSON.stringify(options)}`).toEqual({ kind: 'none' });
+      expect(actionLogs(w).at(-1)?.fields?.reason, text).toBe('elliptical');
+      expect(readPendingQuestion(w.session(), 'owner', at(2)), text).toBeUndefined();
+    }
+  });
+
+  it('a clear request still acts directly: an action word or a request form ("이번엔 3번 완료", "3번도 체크해줘")', async () => {
+    for (const text of ['이번엔 3번 완료', '이번엔 3번 완료해줘', '3번도 체크해줘', 'complete 3 too']) {
+      const { decision } = await run(text);
+      expect(decision, text).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { id: 'todo-3' } } });
+    }
+  });
+
+  it('shadow logs the confirmation as shadow and asks nothing', async () => {
+    const w = world({ level: 'shadow', script: () => out('todo.complete', { ref: '#3' }) });
+    w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+    w.setMetadata(LAST_ACTION_METADATA_KEY, completedOne());
+    expect((await w.decide('이번엔 3번', { now: at(1) })).kind).toBe('none');
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'elliptical-confirm' });
+    expect(readPendingQuestion(w.session(), 'owner', at(2))).toBeUndefined();
+  });
+});

@@ -86,6 +86,11 @@ export type PendingQuestion =
       readonly candidates: readonly { readonly label: number; readonly id: string }[];
       readonly args: NlArgs;
       readonly listingAt?: IsoTimestamp;
+      /**
+       * A6-D3a amendment 1, elliptical continuation: a one-candidate confirmation ("할 일 3번도 완료할까요?"), where a yes
+       * ("응") picks the candidate and a no ends the question.
+       */
+      readonly confirm?: true;
     }
   /** Ratification record C: summary or full? The resolved item id only; the answer is kept as the D7 preference. */
   | {
@@ -251,6 +256,7 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
       candidates,
       args: actionArgsOf(record.args),
       ...(listingAt !== undefined ? { listingAt } : {}),
+      ...(record.confirm === true && candidates.length === 1 ? { confirm: true as const } : {}),
     };
   }
   if (record.kind === 'action-mode') {
@@ -292,6 +298,7 @@ export function pendingQuestionRecord(actorId: Id, question: PendingQuestion): M
         candidates: question.candidates.slice(0, MAX_CANDIDATES).map((candidate) => ({ label: candidate.label, id: candidate.id })),
         args: actionArgsOf(question.args),
         ...(question.listingAt !== undefined ? { listingAt: question.listingAt } : {}),
+        ...(question.confirm === true ? { confirm: true } : {}),
       };
     case 'action-mode':
       return { actorId, kind: question.kind, at: question.at, language: question.language, target: { ...question.target }, ...(question.scope !== undefined ? { scope: question.scope } : {}) };
