@@ -56,7 +56,7 @@ A bare "<title> 할 일" executes `todo.add` (duplicate guard kept); `QUOKY_WORK
 tests (record only); `reminder.cancel` by title (`match`, A6-D1 amendment; A6 prompt `nl-select.v44`, R2 `nl-select.v45`,
 read prompt `nl-select.v39` unchanged); English colon labels ("Add a to-do: …", "Remind me: …", "Todo: …") pass the input
 guard (A6-D3a known refusals amended); a vowel-only variant of a loanword action word (캔슬, 리마인드, 롤백) asks. Inert on
-the live `shadow` service. Pending: the owner's D12 batch for the 16 agent-drafted golds, and the D12 model gate for v44.
+the live `shadow` service. The owner's D12 batch for the agent-drafted golds was approved on 2026-10-17 (DECISIONS "A6 D12 batch and A6 R2 corpus — owner approval"); the D12 model gate for v44 is still pending.
 
 **Live test 3 fixes (2026-10-17), branch `claude/v5-live3-fixes`** (DECISIONS "Live test 3 fixes"): R2 summary bodies carry
 the deterministic labels (the footer index follows the same order; labels recorded = numbers shown); every written form of
@@ -90,7 +90,7 @@ bare "<title> 할 일" selector variance (T7a ask / T7b execute / T7d none) is a
 - D12 batch: approved by the owner on 2026-10-15 (`uat5r*` 23, `uat5gy-*` 6, `uat5wd-*` 7, `uat5ca-*` 10, the 8 #204
   metadata edits, the calendar relabels and the T1 extension); the 148 S1 cases are marked with their 2026-10-13
   approval. They gate no live behaviour.
-- Next owner batch: the 2 agent-drafted A6 negatives `a6-negative-none-130` / `-131` (저 = "I", below). The INT-4 cases
+- Next owner batch: none for A6 golds (the 21 pending A6 golds, incl. `a6-negative-none-130` / `-131`, were approved on 2026-10-17). The INT-4 cases
   `v5int4-001..041` were owner-approved on 2026-10-15 (D12), and the held relabels `neg-099` and `uat5r6-07` are applied
   after the owner's A6-D2 clarification (below).
 - Owner follow-up question (Codex review of the A6-D2 clarification): should a newer listing override a fresh lastAction
@@ -119,8 +119,8 @@ Details and the review record for each item are in the matching notes in `DECISI
 - **Inert:** `QUOKY_NL_ITEM_R2` default `off`; acts only with `QUOKY_NL_ACTIONS=local`; the live `shadow` service makes 0
   fetches and 0 model calls for R2 (acceptance-tested). Nothing live changes until the owner's Strict promotion steps
   (corpus and red-team batch approval, the model gate and real-model red team, then `shadow`, `jira`, `all`).
-- **Pending owner items:** approve the agent-drafted R2 corpus (`golden/nl-action.r2.v1.json`) and red-team batch
-  (`subFamily: "r2"`); the Strict 3-run model gate and real-model red team; Chief Architect review before merge.
+- **Corpus:** approved by the owner on 2026-10-17 (`golden/nl-action.r2.v1.json`, 212 cases).
+- **Pending owner items:** approve the agent-drafted R2 red-team batch (`subFamily: "r2"`); the Strict 3-run model gate and real-model red team; Chief Architect review before merge.
 
 ### A6 R1 gate fixes — on branch `claude/v5-a6-r1-fix` (2026-10-15)
 

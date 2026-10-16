@@ -12585,7 +12585,7 @@
     ]
    },
    "expect": "none",
-   "note": "저 = I: \"저 + noun\" never grounds a LOCAL_WRITE ref (A6-D2 clarification 2026-10-15); a one-item to-do list must stay untouched [agent-drafted 2026-10-15, PENDING the owner's D12 batch]"
+   "note": "저 = I: \"저 + noun\" never grounds a LOCAL_WRITE ref (A6-D2 clarification 2026-10-15); a one-item to-do list must stay untouched [agent-drafted 2026-10-15, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-negative-none-131",
@@ -12603,7 +12603,7 @@
     ]
    },
    "expect": "none",
-   "note": "저 = I (turn off my notifications): \"저 + noun\" never grounds reminder.cancel (A6-D2 clarification 2026-10-15) [agent-drafted 2026-10-15, PENDING the owner's D12 batch]"
+   "note": "저 = I (turn off my notifications): \"저 + noun\" never grounds reminder.cancel (A6-D2 clarification 2026-10-15) [agent-drafted 2026-10-15, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-reference-item.summarize-016",
@@ -14419,14 +14419,14 @@
     },
     "outcome": "execute"
    },
-   "note": "owner decision A (2026-10-17): a bare \"<title> 할 일\" with no action word executes todo.add, like reminder.create-022; live test 2026-10-16 G09 [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision A (2026-10-17): a bare \"<title> 할 일\" with no action word executes todo.add, like reminder.create-022; live test 2026-10-16 G09 [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-negative-none-186",
    "family": "negative",
    "text": "세금 서류 챙기기 할 일 있었나?",
    "expect": "none",
-   "note": "owner decision A counter-case (2026-10-17): the bare \"<title> 할 일\" shape as a question is chat [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision A counter-case (2026-10-17): the bare \"<title> 할 일\" shape as a question is chat [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-paraphrase-reminder.cancel-901",
@@ -14457,7 +14457,7 @@
     },
     "outcome": "execute"
    },
-   "note": "owner decision C (2026-10-17, A6-D1 amendment): reminder.cancel by title; the handler resolves the match against the scheduled list [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision C (2026-10-17, A6-D1 amendment): reminder.cancel by title; the handler resolves the match against the scheduled list [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-paraphrase-reminder.cancel-902",
@@ -14488,7 +14488,7 @@
     },
     "outcome": "execute"
    },
-   "note": "owner decision C (2026-10-17): a quoted reminder text [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision C (2026-10-17): a quoted reminder text [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-paraphrase-reminder.cancel-903",
@@ -14513,7 +14513,7 @@
     },
     "outcome": "execute"
    },
-   "note": "owner decision C (2026-10-17): English [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision C (2026-10-17): English [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-paraphrase-reminder.cancel-904",
@@ -14539,21 +14539,21 @@
     "outcome": "ask",
     "reason": "other-source"
    },
-   "note": "owner decision C (2026-10-17): live kit F09. Known residual: the reminder text holds another source noun (메일), so the A6 R1 whole-prose source rule (unchanged) asks which list; nothing is written [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision C (2026-10-17): live kit F09. Known residual: the reminder text holds another source noun (메일), so the A6 R1 whole-prose source rule (unchanged) asks which list; nothing is written [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-negative-none-187",
    "family": "negative",
    "text": "치과 예약 확인 알림 취소하지 마",
    "expect": "none",
-   "note": "owner decision C counter-case (2026-10-17): a negated cancel by title is chat [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision C counter-case (2026-10-17): a negated cancel by title is chat [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-negative-none-188",
    "family": "negative",
    "text": "치과 예약 확인 알림 취소됐어?",
    "expect": "none",
-   "note": "owner decision C counter-case (2026-10-17): a question about a cancel by title is chat [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision C counter-case (2026-10-17): a question about a cancel by title is chat [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-paraphrase-todo.add-904",
@@ -14566,7 +14566,7 @@
     },
     "outcome": "execute"
    },
-   "note": "owner decision D (2026-10-17, A6-D3a known refusals amended): an English colon label leading with the action word executes like the Korean colon forms [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision D (2026-10-17, A6-D3a known refusals amended): an English colon label leading with the action word executes like the Korean colon forms [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-paraphrase-todo.add-905",
@@ -14579,7 +14579,7 @@
     },
     "outcome": "execute"
    },
-   "note": "owner decision D (2026-10-17): the list-noun label, live kit G05 [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision D (2026-10-17): the list-noun label, live kit G05 [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-paraphrase-reminder.create-902",
@@ -14593,42 +14593,42 @@
     },
     "outcome": "execute"
    },
-   "note": "owner decision D (2026-10-17): \"Remind me: …\" (a Korean time: the reminder grammar parses no English time at execution, a pre-existing limit) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision D (2026-10-17): \"Remind me: …\" (a Korean time: the reminder grammar parses no English time at execution, a pre-existing limit) [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-negative-none-189",
    "family": "negative",
    "text": "Todo: renew passport?",
    "expect": "none",
-   "note": "owner decision D counter-case (2026-10-17): the question veto holds for an English colon label [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision D counter-case (2026-10-17): the question veto holds for an English colon label [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-negative-none-190",
    "family": "negative",
    "text": "I added a to-do: renew passport",
    "expect": "none",
-   "note": "owner decision D counter-case (2026-10-17): a label that does not lead with the command word stays refused by the input guard [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision D counter-case (2026-10-17): a label that does not lead with the command word stays refused by the input guard [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-negative-none-191",
    "family": "negative",
    "text": "Done: shipped the release",
    "expect": "none",
-   "note": "owner decision D review (2026-10-17): a status-report label (\"Done:\") with no open title to match is chat; no fixture, so nothing can execute; recorded gap, not a code change [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision D review (2026-10-17): a status-report label (\"Done:\") with no open title to match is chat; no fixture, so nothing can execute; recorded gap, not a code change [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-negative-none-192",
    "family": "negative",
    "text": "Completed: 보고서 작성",
    "expect": "none",
-   "note": "owner decision D review (2026-10-17): a status-report label (\"Completed:\") with no open title to match is chat; no fixture, so nothing can execute; recorded gap, not a code change [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision D review (2026-10-17): a status-report label (\"Completed:\") with no open title to match is chat; no fixture, so nothing can execute; recorded gap, not a code change [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-negative-none-193",
    "family": "negative",
    "text": "Todo: buy milk he told me",
    "expect": "none",
-   "note": "owner decision D review (2026-10-17): reported speech without a comma is not a command; recorded gap, not a code change [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision D review (2026-10-17): reported speech without a comma is not a command; recorded gap, not a code change [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-paraphrase-reminder.cancel-905",
@@ -14655,7 +14655,7 @@
     "reason": "ambiguous",
     "acceptsAnyQuestion": true
    },
-   "note": "owner decision E (2026-10-17): a vowel-only variant of the loanword 캔슬 asks, live kit H03; written like complete-018 (reason ambiguous, any question; Core asks `garbled-action` structurally) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision E (2026-10-17): a vowel-only variant of the loanword 캔슬 asks, live kit H03; written like complete-018 (reason ambiguous, any question; Core asks `garbled-action` structurally) [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-paraphrase-reminder.cancel-906",
@@ -14683,7 +14683,7 @@
     "reason": "ambiguous",
     "acceptsAnyQuestion": true
    },
-   "note": "owner decision E (2026-10-17): 캔설, a vowel-only variant of 캔슬, asks; written like complete-018 (reason ambiguous, any question; Core asks `garbled-action` structurally) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision E (2026-10-17): 캔설, a vowel-only variant of 캔슬, asks; written like complete-018 (reason ambiguous, any question; Core asks `garbled-action` structurally) [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   },
   {
    "id": "a6-paraphrase-reminder.cancel-907",
@@ -14708,7 +14708,7 @@
     },
     "outcome": "execute"
    },
-   "note": "owner decision E counter-case (2026-10-17): the loanword 캔슬 itself executes (decision C, by title) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+   "note": "owner decision E counter-case (2026-10-17): the loanword 캔슬 itself executes (decision C, by title) [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
   }
  ]
 }
