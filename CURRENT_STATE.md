@@ -51,6 +51,13 @@ check, recall and the memory / learning commands in channels holding `memory`, s
 A8 release lists by `jira-project`, help lines. Code default stays `off` (owner amendment); with `off` everything is
 byte-identical. Chief Architect review required before merge (port and runtime dispatch change).
 
+**Owner decisions of 2026-10-17 (A–E), branch `claude/v5-owner-decisions-ae`** (DECISIONS "Owner decisions of 2026-10-17"):
+A bare "<title> 할 일" executes `todo.add` (duplicate guard kept); `QUOKY_WORK_SUMMARY_ENABLED` on only during the R2 live
+tests (record only); `reminder.cancel` by title (`match`, A6-D1 amendment; A6 prompt `nl-select.v44`, R2 `nl-select.v45`,
+read prompt `nl-select.v39` unchanged); English colon labels ("Add a to-do: …", "Remind me: …", "Todo: …") pass the input
+guard (A6-D3a known refusals amended); a vowel-only variant of a loanword action word (캔슬, 리마인드, 롤백) asks. Inert on
+the live `shadow` service. Pending: the owner's D12 batch for the 16 agent-drafted golds, and the D12 model gate for v44.
+
 **Pending with the owner.**
 
 - S1 per-grammar Phase C decision: a grammar moves to `c` only on its own `nl_selection.agreement` data, with the owner's yes.

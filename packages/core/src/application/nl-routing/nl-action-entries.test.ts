@@ -274,11 +274,11 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
     expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v39', sha256: 'fe13de80a8b71bc67b138e834036575819a76013fa86164bb7455ca0df3a4555' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v42', sha256: '6bd5932340fc1a47c97973a4d741a6be24a63f1d91b33d3c0da04a1e17904092' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v44', sha256: '7a2fafc8e1d462d8ea4b90a660f1466980f060442a1d592ac928b3507ed1709c' });
   });
 });
 
-describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v42 with actions', () => {
+describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v44 with actions', () => {
   const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v39.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
@@ -294,8 +294,8 @@ describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v42
     }
   });
 
-  it('the A6 prompt (v42) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v42');
+  it('the A6 prompt (v44) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v44');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
@@ -446,13 +446,27 @@ describe('round 5: TAB is a control, only a plain space pads, URLs and times are
     expect(nlActionInputRefusal(text, text)).toBe('hidden-characters');
   });
 
-  it('a URL scheme and an HH:MM time are not a key; a key before a URL and English labels still refuse (A6-D3a known refusals)', () => {
+  it('a URL scheme and an HH:MM time are not a key; a key before a URL and other English labels still refuse (A6-D3a known refusals)', () => {
     for (const text of ['할 일에 https://jira.example.com/browse/BE-12 확인 추가', '할 일에 HTTP://intra.example/a?b=c 보기 추가', '9:30 회의 준비 할 일로', '14:05에 회의 준비 할 일로', '  되돌려줘 ']) {
       expect(nlActionInputRefusal(text, text), text).toBeUndefined();
     }
-    for (const text of ['request: https://jira.example.com/BE-12', 'Q4: 예산 검토 할 일로', 'remind me: call mom', 'url: 9:30']) {
+    for (const text of ['request: https://jira.example.com/BE-12', 'Q4: 예산 검토 할 일로', 'url: 9:30']) {
       expect(nlActionInputRefusal(text, text), text).toBe('not-plain');
     }
+  });
+
+  it('owner decision D (2026-10-17): an English command label leading with a catalog action or list word passes, like the Korean colon forms', () => {
+    for (const text of ['Add a to-do: buy milk', 'Todo: buy milk', 'To-do: 사무실 와이파이 비밀번호 변경', 'Remind me: call mom', 'remind me: call mom', 'Remind me tomorrow at 9am: call mom', 'Please add a todo: renew passport', 'Reminder: 내일 오전 9시 회의록 공유', 'Done: 장보기', 'Cancel: 창고 정리', 'Remind me: call mom at 5:30', 'Todo: https://jira.example.com/BE-12 확인']) {
+      expect(nlActionInputRefusal(text, text), text).toBeUndefined();
+    }
+  });
+
+  it('owner decision D counter-cases: another label, a second key, a non-leading action word, a non-Latin label and the anchored heads still refuse', () => {
+    for (const text of ['Q4: 예산 검토 할 일로', 'request: add a todo', 'password: Hunter2-Secret!9', 'remember: buy milk', 'Todo: request: buy milk', 'Add a to-do: note: x', 'I added a to-do: buy milk', 'Did you add a to-do: buy milk', 'My todo: buy milk', 'New reminder: call mom', '내일 todo: buy milk', 'Todo list item no. 1 two three four five: x']) {
+      expect(nlActionInputRefusal(text, text), text).toBe('not-plain');
+    }
+    // The anchored ADR-0100 D1 heads stay the exact-command form (the deterministic grammar owns them).
+    for (const text of ['Add todo: buy milk', 'todo add: buy milk', 'todo done: 1']) expect(nlActionInputRefusal(text, text), text).toBe('embedded-command');
   });
 });
 

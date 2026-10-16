@@ -22,7 +22,7 @@ closed values, spans are verbatim.
 | `todo.complete` | LOCAL_WRITE | exactly one of `ref: ref` or `match: span` | `match` must equal exactly one open title. |
 | `todo.cancel` | LOCAL_WRITE | as `todo.complete` | Echo says "목록에서 뺐어요". |
 | `reminder.create` | LOCAL_WRITE | `body: span`, `when: span` (both required) | `when` is parsed by the deterministic reminder grammar; a time word outside `when` gets a question. |
-| `reminder.cancel` | LOCAL_WRITE | `ref: ref` (required) | No bulk. |
+| `reminder.cancel` | LOCAL_WRITE | `ref: ref`, `match: span` (exactly one; `match` since owner decision C, 2026-10-17) | No bulk. |
 | `action.undo` | LOCAL_WRITE | none (`{}`) | Only Quoky's fresh `lastAction`. |
 | `item.summarize` | ITEM_READ | `source: mail\|drive` (required), `ref: ref` (required), `scope?: item\|thread` (mail only; default `item`, omitted), `mode?: summary\|full` | `mode` is set only when the owner states it (요약/정리/간추려/짧게/summarize vs 원문/전체/전문/그대로 보여/다 보여/full text/whole/original). |
 | `slack.post`, `calendar.create` | EXTERNAL_WRITE | reserved ids | **Not offered before R3.** Gold for an external write request in R0/R1 is `none`. |

@@ -363,7 +363,8 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     const out: Array<{ entryId: string; args: Record<string, string> }> = [{ entryId: 'action.undo', args: {} }];
     for (const run of runs) {
       out.push({ entryId: 'todo.add', args: { title: run } });
-      for (const entryId of ['todo.complete', 'todo.cancel']) out.push({ entryId, args: { match: run } });
+      // Owner decision C (2026-10-17): reminder.cancel takes a `match` too.
+      for (const entryId of ['todo.complete', 'todo.cancel', 'reminder.cancel']) out.push({ entryId, args: { match: run } });
       if (containsNlTimeExpression(run)) for (const body of runs) if (body !== run && !body.includes(run) && !run.includes(body)) out.push({ entryId: 'reminder.create', args: { body, when: run } });
     }
     for (const ref of refs) for (const entryId of ['todo.complete', 'todo.cancel', 'reminder.cancel']) out.push({ entryId, args: { ref } });
@@ -525,6 +526,10 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-182',
     'a6-negative-none-183',
     'a6-negative-none-185',
+    'a6-negative-none-186', // owner decision A counter-case: the bare "<title> 할 일" as a question
+    'a6-negative-none-187', // owner decision C counter-cases: a negated / questioned cancel by title
+    'a6-negative-none-188',
+    'a6-negative-none-190', // owner decision D counter-case: a label not led by the command word (input guard)
     'a6-seed-neg-001',
     'a6-seed-neg-002',
     'a6-seed-neg-003',
@@ -571,6 +576,14 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-168',
     'a6-negative-none-175',
     'a6-negative-none-184',
+    // Owner decision D: "Todo: renew passport?" - a lure whose colon-enclosed title swallows the question mark validates (as
+    // for the Korean colon forms); the selector's none keeps it chat.
+    'a6-negative-none-189',
+    // Agent-drafted recorded gaps (owner decision D review, pending the D12 batch): a status-report label and reported
+    // speech without a comma validate for some lure; the selector's none is the only guard. No code change for them.
+    'a6-negative-none-191',
+    'a6-negative-none-192',
+    'a6-negative-none-193',
     'a6-seed-live-005',
   ];
 
@@ -606,10 +619,67 @@ describe('live test 2026-10-16 negative captures (QUOKY_NL_ACTIONS=local)', () =
     expect(v('reminder.create', { body: '장난감 반납', when: '내일 9시' }, '내일 9시에 장난감 반납 알려줘')).toMatchObject({ ok: true });
   });
 
-  it('G09: a bare "<title> 할 일" frame acts under A6-D3a amendment 1 (the shape of owner gold reminder.create-022); ask proposal pending', () => {
-    // Amendment 1 D1/D3: no action word and no request form is needed, and for a payload entry the source noun names what
-    // to make ("3일 뒤 오전 9시에 월세 이체 리마인더" executes by owner decision). Changing this to ask needs an amendment.
+  it('G09 (owner decision A, 2026-10-17): a bare "<title> 할 일" with no action word executes todo.add, like owner gold reminder.create-022', () => {
+    // Amendment 1 D1/D3, confirmed by the owner: no action word and no request form is needed, and for a payload entry the
+    // source noun names what to make. The duplicate guard (an open to-do with the same title writes nothing) stays in the
+    // handler (`work-chat-actions.test.ts`).
     expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일')).toMatchObject({ ok: true });
+    expect(v('todo.add', { title: '분기 보고서 표지 교체' }, '분기 보고서 표지 교체 할일')).toMatchObject({ ok: true });
     expect(v('reminder.create', { body: '월세 이체', when: '3일 뒤 오전 9시' }, '3일 뒤 오전 9시에 월세 이체 리마인더')).toMatchObject({ ok: true });
+  });
+
+  it('G09 counter-cases: the same bare shape as a question, a negation, a statement or with a time in the title never executes', () => {
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일 있어?')).toMatchObject({ ok: false, reason: 'not-request', arg: 'question' });
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일 맞지?')).toMatchObject({ ok: false, reason: 'not-request', arg: 'question' });
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일 아니야')).toMatchObject({ ok: false, reason: 'not-request', arg: 'negation' });
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일 하지 마')).toMatchObject({ ok: false, reason: 'not-request', arg: 'negation' });
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일이었어')).toMatchObject({ ok: false, reason: 'not-request', arg: 'statement' });
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일이야')).toMatchObject({ ok: false, reason: 'not-request', arg: 'statement' });
+    expect(v('todo.add', { title: '내일 세금 서류 챙기기' }, '내일 세금 서류 챙기기 할 일')).toMatchObject({ ok: false, reason: 'time-in-title' });
+  });
+});
+
+describe('owner decision D (2026-10-17): English colon label forms execute like the Korean colon forms', () => {
+  const eligible = (text: string, entryId: string, args: Record<string, string>) => {
+    const prepared = prepareSelectionInput(text);
+    if ('skip' in prepared) throw new Error(text);
+    return { guard: nlActionInputRefusal(text, prepared.groundingText), result: validateSelection({ entryId, args }, ctx(text)) };
+  };
+
+  it('"Add a to-do: X", "Todo: X", "To-do: X", "Remind me: …" pass the input guard and validate, the content colon-enclosed', () => {
+    const cases: Array<[string, string, Record<string, string>]> = [
+      ['Add a to-do: buy milk', 'todo.add', { title: 'buy milk' }],
+      ['Todo: renew passport', 'todo.add', { title: 'renew passport' }],
+      ['To-do: 사무실 와이파이 비밀번호 변경', 'todo.add', { title: '사무실 와이파이 비밀번호 변경' }],
+      ['Please add a todo: 분기 메모 정리', 'todo.add', { title: '분기 메모 정리' }],
+      ['Remind me: tomorrow 9am call mom', 'reminder.create', { body: 'call mom', when: 'tomorrow 9am' }],
+      ['Remind me tomorrow at 9am: call mom', 'reminder.create', { body: 'call mom', when: 'tomorrow at 9am' }],
+      ['Done: 장보기', 'todo.complete', { match: '장보기' }],
+      ['Todo: "buy milk"', 'todo.add', { title: 'buy milk' }],
+    ];
+    for (const [text, entryId, args] of cases) {
+      const { guard, result } = eligible(text, entryId, args);
+      expect(guard, text).toBeUndefined();
+      expect(result, text).toMatchObject({ ok: true });
+    }
+  });
+
+  it('counter-cases: questions and quoted or reported text keep their vetoes; other labels stay refused by the guard', () => {
+    const vetoed: Array<[string, string, Record<string, string>, string]> = [
+      ['Todo: buy milk?', 'todo.add', { title: 'buy milk' }, 'question'],
+      ['Remind me: tomorrow 9am call mom?', 'reminder.create', { body: 'call mom', when: 'tomorrow 9am' }, 'question'],
+      ['Add a to-do: buy milk, he said', 'todo.add', { title: 'buy milk' }, 'reported'],
+      ['Todo: buy milk 라고 했어', 'todo.add', { title: 'buy milk' }, 'reported'],
+      ['Add a to-do: buy milk, not now', 'todo.add', { title: 'buy milk' }, 'negation'],
+    ];
+    for (const [text, entryId, args, veto] of vetoed) {
+      const { guard, result } = eligible(text, entryId, args);
+      expect(guard, text).toBeUndefined();
+      expect(result, text).toMatchObject({ ok: false, reason: 'not-request', arg: veto });
+    }
+    // A quoted label, a label that does not lead with the command word, a question form and a second key: the guard refuses.
+    for (const text of ['"Todo: buy milk" he said', 'he told me to write "Todo: buy milk"', 'How do I add a to-do: buy milk', 'I added a to-do: buy milk', 'Todo: request: buy milk', 'Q4: 예산 검토 할 일로']) {
+      expect(eligible(text, 'todo.add', { title: 'buy milk' }).guard, text).toBe('not-plain');
+    }
   });
 });

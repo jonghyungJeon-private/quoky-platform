@@ -2,6 +2,7 @@ import type { NlActionEntryId, NlAmbiguityKey, NlArgValue, NlArgs, NlCatalogEntr
 import type { InboundQuotedRange } from '../../domain';
 import { normalizeForMatch } from './selection-input';
 import { nlIsRequestForm } from './request-shape';
+import { NL_EN_REQUEST_LEADS } from './garbled-action';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { isNlTimeWord } from './symbolic-time';
 import { ANCHORED_TODO_PREFIX_HEADS } from '../reminders/reminder-grammar';
@@ -715,6 +716,14 @@ export function nlLocalListTarget(text: string, quotedRanges: readonly InboundQu
  */
 export const NL_ACTION_VERBAL_NOUNS: readonly string[] = ['완료', '마무리', '취소', '캔슬', '삭제', '제거', '제외', '추가', '등록', '리마인드', '원상복구', '원상', '원복', '롤백', '넣기', '되돌리기', '원래대로'];
 
+/**
+ * Owner decision E (2026-10-17): the Hangul action words of the vocabularies that are LOANWORDS (spelled from an English
+ * sound: cancel, remind, roll back). A tag on the existing vocabulary, like {@link NL_ACTION_VERBAL_NOUNS}; no word is added.
+ * A loanword's vowels drift in spelling while its consonant frame stays, so a vowel-only variant of one is garbled and asks
+ * ("칸셀해줘"; `garbled-action.ts`). Only single-word entries are tagged: a phrase such as "알람 맞춰" is never compared.
+ */
+export const NL_ACTION_LOANWORDS: readonly string[] = ['캔슬', '리마인드', '롤백'];
+
 /** The canonical action word of each LOCAL_WRITE entry, offered when a garbled word asks (never the raw vocabulary stem). */
 export const NL_ACTION_CANONICAL_WORDS: Readonly<Record<'todo.add' | 'todo.complete' | 'todo.cancel' | 'reminder.create' | 'reminder.cancel' | 'action.undo', { readonly ko: string; readonly en: string }>> = Object.freeze({
   'todo.add': { ko: '추가', en: 'add' },
@@ -866,11 +875,22 @@ const reminderCancel: NlCatalogEntry = {
     en: 'Cancel ONE of the owner\'s scheduled reminders now.',
     ko: '예정된 알림 하나를 지금 취소.',
   },
-  args: [{ name: 'ref', kind: 'ref', required: true, description: REF_DESCRIPTION }],
+  // Owner decision C (2026-10-17, A6-D1 amendment): like the to-do transitions, a reminder is named by `ref` or by the
+  // owner's own words (`match`), exactly one of them. The handler resolves a match against the scheduled list only.
+  args: [
+    { name: 'ref', kind: 'ref', description: REF_DESCRIPTION },
+    {
+      name: 'match',
+      kind: 'span',
+      maxChars: NL_SPAN_MAX_CHARS,
+      description: 'Instead of ref: the reminder text the owner wrote, verbatim, without the verb and 알림. Exactly one of ref and match.',
+    },
+  ],
   usage: { ko: '"알림 N 취소"', en: '"알림 N 취소"' },
   staleCommands: [/알림\s?(?:\d+|N|번호)\s?(?:번\s?)?취소/u],
-  check(_args: NlArgs, groundingText: string): NlEntryCheckFailure | undefined {
-    return isNlBulkRequest(groundingText) ? { reason: 'bulk' } : undefined;
+  check(args: NlArgs, groundingText: string): NlEntryCheckFailure | undefined {
+    if (isNlBulkRequest(groundingText)) return { reason: 'bulk' };
+    return exactlyOneTarget(args);
   },
 };
 
@@ -937,7 +957,7 @@ const R2_REF_DESCRIPTION = `${REF_DESCRIPTION} For a Jira issue only: the issue 
 
 /**
  * A6 R2: the `item.summarize` entry for the offered sources. Without Jira or Slack it is the R1 entry itself (byte for
- * byte, so the A6 prompt stays nl-select.v42). With them, the `source` enum and the description list only the offered
+ * byte, so the A6 prompt stays nl-select.v44). With them, the `source` enum and the description list only the offered
  * R2 sources (mail and Drive stay as in R1), `scope: thread` is valid for mail and Slack, and `ref` may be a Jira key.
  */
 export function nlItemSummarizeEntry(sources: Iterable<string>): NlCatalogEntry {
@@ -1102,14 +1122,57 @@ export function looksLikeData(inner: string): boolean {
  * braces, a data-like square bracket, backticks, a tilde fence, a line-leading `>`, or an ASCII identifier key followed
  * by a colon and a value (`request: …`, YAML-like). An ordinary bracketed phrase ("[긴급] 보고서 쓰기") is not a marker.
  */
-function hasStructureMarker(rawText: string): boolean {
+function hasStructureMarker(rawText: string, allowActionLabel = false): boolean {
   // Nothing is removed from the checked text: only the URL and time colons below are neutralised, character for character.
   const text = neutraliseUrlAndTimeColons(rawText);
   if (/[{}`]/u.test(text) || /~~~/u.test(text) || /^\s*>/u.test(text)) return true;
   for (const match of text.matchAll(/\[([^[\]]*)\]/gu)) if (looksLikeData(match[1] ?? '')) return true;
   if (/[[\]]/u.test(text.replace(/\[[^[\]]*\]/gu, ''))) return true;
   // A key is an ASCII identifier not glued to a preceding letter ("12:00request:" and "x,request:" are keys).
-  return /(?<![A-Za-z_])[A-Za-z_][A-Za-z0-9_-]*\s*:\s*\S/u.test(text);
+  const keys = [...text.matchAll(KEY_COLON)];
+  if (keys.length === 0) return false;
+  // Owner decision D (2026-10-17): the one English command label of an action request ("Add a to-do: …", "Todo: …").
+  return !(allowActionLabel && keys.length === 1 && isNlActionColonLabel(text.slice(0, text.indexOf(':', keys[0]?.index ?? 0))));
+}
+
+/** An ASCII identifier key followed by a colon and a value (`request: …`, YAML-like). */
+const KEY_COLON = /(?<![A-Za-z_])[A-Za-z_][A-Za-z0-9_-]*\s*:(?=\s*\S)/gu;
+/** A label of at most six Latin words (letters, digits, a hyphen or an apostrophe inside a word). */
+const LATIN_LABEL = /^\s*[A-Za-z0-9][A-Za-z0-9'’-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'’-]*){0,5}\s*$/u;
+
+/**
+ * Owner decision D (2026-10-17, amends the A6-D3a "known refusals"): an English colon label is the owner's command head,
+ * like the Korean colon forms the owner approved ("todo 추가: …", "알림: …"), when it is the message's own start, holds the
+ * message's only key colon, is made of Latin words only, and LEADS with a word the catalog already has for a LOCAL_WRITE
+ * action or a local list (the LOCAL_WRITE action vocabularies and aliases, the to-do and reminder list aliases), after at
+ * most the closed request leads of the imperative slot ("please"). A hyphen inside a word is ignored ("to-do" is "todo").
+ * The leading position is the imperative or the bare list head, so "I added a to-do: …" and "Did you add a to-do: …" stay
+ * refused. "Add a to-do: …", "Remind me: …", "Todo: …" pass; "Q4: …", "request: …", "password: …" and a second key
+ * ("Todo: request: …") stay refused. No word is added for this.
+ */
+function isNlActionColonLabel(label: string): boolean {
+  if (!LATIN_LABEL.test(label)) return false;
+  const words = label.trim().toLowerCase().replace(/(?<=[a-z0-9])-(?=[a-z0-9])/gu, '').split(/\s+/u);
+  while (words.length > 1 && NL_EN_REQUEST_LEADS.has(words[0] ?? '')) words.shift();
+  const head = words.join(' ');
+  return nlActionLabelWords().some((word) => head === word || head.startsWith(`${word} `));
+}
+
+let actionLabelWords: readonly string[] | undefined;
+/** The catalog's own Latin words for the LOCAL_WRITE actions and the local lists (built on first use). */
+function nlActionLabelWords(): readonly string[] {
+  actionLabelWords ??= [
+    ...new Set(
+      [
+        ...Object.values(NL_ACTION_ENTRIES).flatMap((entry) => (entry !== undefined && entry.risk === 'LOCAL_WRITE' ? [...(entry.actionGrounding ?? []), ...entry.aliases] : [])),
+        ...NL_WAVE1_ENTRIES['todo.list'].aliases,
+        ...NL_WAVE1_ENTRIES['reminder.list'].aliases,
+      ]
+        .map((word) => word.toLowerCase().replace(/-/gu, ''))
+        .filter((word) => /^[a-z][a-z ]*$/u.test(word)),
+    ),
+  ];
+  return actionLabelWords;
 }
 
 /**
@@ -1149,7 +1212,7 @@ export function nlActionInputRefusal(rawText: string, groundingText: string, quo
   const folded = rawText.normalize('NFKC');
   if (Array.from(text).length > NL_ACTION_MAX_INPUT_CHARS) return 'too-long';
   if (HIDDEN.test(text.replace(EMOJI_SEQUENCE, '')) || HIDDEN.test(folded.replace(EMOJI_SEQUENCE, ''))) return 'hidden-characters';
-  if (quoted || LINE_SEPARATOR.test(rawText) || LINE_SEPARATOR.test(folded) || hasStructureMarker(text) || hasStructureMarker(folded)) return 'not-plain';
+  if (quoted || LINE_SEPARATOR.test(rawText) || LINE_SEPARATOR.test(folded) || hasStructureMarker(text, true) || hasStructureMarker(folded, true)) return 'not-plain';
   if (HANGUL_SPEAKER_LABEL.test(text) || HANGUL_SPEAKER_LABEL.test(folded)) return 'not-plain';
   // Only a plain space may pad the line: any other leading or trailing whitespace (NBSP, ideographic, em space …) refuses.
   if (/^[^\S ]|[^\S ]$/u.test(text)) return 'hidden-characters';

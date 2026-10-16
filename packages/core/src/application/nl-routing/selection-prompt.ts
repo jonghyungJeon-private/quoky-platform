@@ -62,7 +62,9 @@ import { NL_RANGE_SYMBOLS } from './symbolic-time';
  * v41 (read, two new rule lines) regressed calendar.events and was abandoned: the read prompt stays v39. v42 (A6) = the v36
  * text on top of v39, plus one rule-8 line (a garbled or misspelled action word, so the intended action is uncertain, is
  * NEEDS_CLARIFICATION with the candidate as the one alternative, never a silent pick; owner decision 2026-10-16) and "or
- * which command Quoky has for it" on the how-to line (the help.topic miss of the v40 action gate).
+ * which command Quoky has for it" on the how-to line (the help.topic miss of the v40 action gate). v44 (A6) = v42 with the
+ * `reminder.cancel` catalog entry taking `match` beside `ref` (owner decision C, 2026-10-17: a reminder named by its
+ * text); the rule lines are unchanged and the read prompt stays v39 byte for byte.
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v39';
 /**
@@ -70,13 +72,14 @@ export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v39';
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
  * for byte (pinned by `golden/nl-select.v39.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v42';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v44';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
- * Jira key ref; every other byte is v42. With R2 `off` the prompt is v42 byte for byte.
+ * Jira key ref; every other byte is v42. v45 = the same R2 lines on top of v44 (the `reminder.cancel` entry of owner
+ * decision C changed the shared catalog bytes). With R2 `off` the prompt is v44 byte for byte.
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v43';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v45';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {

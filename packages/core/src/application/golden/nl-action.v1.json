@@ -14407,6 +14407,308 @@
    },
    "expect": "none",
    "note": "A6-D3a amendment 1 review round 4 negative (2026-10-16): retraction in trailing content (Codex P1)"
+  },
+  {
+   "id": "a6-paraphrase-todo.add-903",
+   "family": "paraphrase",
+   "text": "세금 서류 챙기기 할 일",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "세금 서류 챙기기"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision A (2026-10-17): a bare \"<title> 할 일\" with no action word executes todo.add, like reminder.create-022; live test 2026-10-16 G09 [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-186",
+   "family": "negative",
+   "text": "세금 서류 챙기기 할 일 있었나?",
+   "expect": "none",
+   "note": "owner decision A counter-case (2026-10-17): the bare \"<title> 할 일\" shape as a question is chat [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-901",
+   "family": "paraphrase",
+   "text": "치과 예약 확인 알림 취소해줘",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "치과 예약 확인",
+       "status": "SCHEDULED"
+      },
+      {
+       "id": "reminder-12",
+       "displayNo": 12,
+       "body": "세무사 통화",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "치과 예약 확인"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision C (2026-10-17, A6-D1 amendment): reminder.cancel by title; the handler resolves the match against the scheduled list [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-902",
+   "family": "paraphrase",
+   "text": "'세무사 통화' 알림 꺼줘",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "치과 예약 확인",
+       "status": "SCHEDULED"
+      },
+      {
+       "id": "reminder-12",
+       "displayNo": 12,
+       "body": "세무사 통화",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "세무사 통화"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision C (2026-10-17): a quoted reminder text [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-903",
+   "family": "paraphrase",
+   "text": "cancel the call mom reminder",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "call mom",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "call mom"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision C (2026-10-17): English [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-904",
+   "family": "paraphrase",
+   "text": "번거롭게 해서 미안한데, 경비 승인 메일 확인 알림 취소 부탁드려요",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "경비 승인 메일 확인",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "경비 승인 메일 확인"
+    },
+    "outcome": "ask",
+    "reason": "other-source"
+   },
+   "note": "owner decision C (2026-10-17): live kit F09. Known residual: the reminder text holds another source noun (메일), so the A6 R1 whole-prose source rule (unchanged) asks which list; nothing is written [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-187",
+   "family": "negative",
+   "text": "치과 예약 확인 알림 취소하지 마",
+   "expect": "none",
+   "note": "owner decision C counter-case (2026-10-17): a negated cancel by title is chat [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-188",
+   "family": "negative",
+   "text": "치과 예약 확인 알림 취소됐어?",
+   "expect": "none",
+   "note": "owner decision C counter-case (2026-10-17): a question about a cancel by title is chat [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-todo.add-904",
+   "family": "paraphrase",
+   "text": "Add a to-do: renew passport",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "renew passport"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision D (2026-10-17, A6-D3a known refusals amended): an English colon label leading with the action word executes like the Korean colon forms [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-todo.add-905",
+   "family": "paraphrase",
+   "text": "To-do: 사무실 와이파이 비밀번호 변경",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "사무실 와이파이 비밀번호 변경"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision D (2026-10-17): the list-noun label, live kit G05 [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.create-902",
+   "family": "paraphrase",
+   "text": "Remind me: 모레 저녁 7시 은행에 전화",
+   "expect": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "은행에 전화",
+     "when": "모레 저녁 7시"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision D (2026-10-17): \"Remind me: …\" (a Korean time: the reminder grammar parses no English time at execution, a pre-existing limit) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-189",
+   "family": "negative",
+   "text": "Todo: renew passport?",
+   "expect": "none",
+   "note": "owner decision D counter-case (2026-10-17): the question veto holds for an English colon label [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-190",
+   "family": "negative",
+   "text": "I added a to-do: renew passport",
+   "expect": "none",
+   "note": "owner decision D counter-case (2026-10-17): a label that does not lead with the command word stays refused by the input guard [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-191",
+   "family": "negative",
+   "text": "Done: shipped the release",
+   "expect": "none",
+   "note": "owner decision D review (2026-10-17): a status-report label (\"Done:\") with no open title to match is chat; no fixture, so nothing can execute; recorded gap, not a code change [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-192",
+   "family": "negative",
+   "text": "Completed: 보고서 작성",
+   "expect": "none",
+   "note": "owner decision D review (2026-10-17): a status-report label (\"Completed:\") with no open title to match is chat; no fixture, so nothing can execute; recorded gap, not a code change [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-193",
+   "family": "negative",
+   "text": "Todo: buy milk he told me",
+   "expect": "none",
+   "note": "owner decision D review (2026-10-17): reported speech without a comma is not a command; recorded gap, not a code change [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-905",
+   "family": "paraphrase",
+   "text": "치과 예약 확인 알림 칸셀해줘",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "치과 예약 확인",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "치과 예약 확인"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
+   },
+   "note": "owner decision E (2026-10-17): a vowel-only variant of the loanword 캔슬 asks, live kit H03; written like complete-018 (reason ambiguous, any question; Core asks `garbled-action` structurally) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-906",
+   "family": "paraphrase",
+   "text": "11번 알림 캔설해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "reminder",
+      "labels": [
+       11,
+       12,
+       13
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#11"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
+   },
+   "note": "owner decision E (2026-10-17): 캔설, a vowel-only variant of 캔슬, asks; written like complete-018 (reason ambiguous, any question; Core asks `garbled-action` structurally) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-907",
+   "family": "paraphrase",
+   "text": "치과 예약 확인 알림 캔슬해줘",
+   "fixture": {
+    "items": {
+     "reminders": [
+      {
+       "id": "reminder-11",
+       "displayNo": 11,
+       "body": "치과 예약 확인",
+       "status": "SCHEDULED"
+      }
+     ]
+    }
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "match": "치과 예약 확인"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision E counter-case (2026-10-17): the loanword 캔슬 itself executes (decision C, by title) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
   }
  ]
 }

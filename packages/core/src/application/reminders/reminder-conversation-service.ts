@@ -424,6 +424,8 @@ export class ReminderConversationService {
   }
 
   private async actionCancel(command: NlSelectedCommand, input: ReminderTurnInput): Promise<ReminderTurnResult> {
+    // Owner decision C (2026-10-17, A6-D1 amendment): a `match` names the reminder by the owner's own words.
+    if (command.target === undefined && typeof command.args.match === 'string') return await this.actionCancelByTitle(command, command.args.match, input);
     const reminder = await this.targetReminder(command, input.actorId);
     const displayNo = command.target?.label ?? 0;
     if (reminder === null) return { reply: this.reply(input, this.deps.composer.cancelNotFound(displayNo)), action: refusedReceipt(command, 'not-found') };
@@ -432,6 +434,31 @@ export class ReminderConversationService {
       return { reply: this.reply(input, canceled.result.reply), action: refusedReceipt(command, canceled.stopped === true ? 'stopped' : canceled.result.status.toLowerCase()) };
     }
     return { reply: this.reply(input, this.deps.composer.actionCanceled(canceled.reminder)), action: receiptOf('reminder.cancel', canceled.reminder) };
+  }
+
+  /**
+   * Owner decision C (2026-10-17, A6-D1 amendment): `reminder.cancel` by title. The owner's `match` span (verbatim, folded
+   * like a to-do match: NFC, case, whitespace) is compared with the body of each reminder on the scheduled list (the
+   * reminders "알림 목록" shows); a delivered, failed or cancelled reminder is never on it, so it never matches, and the
+   * brief has no body to match. Exactly one: the ordinary cancel of that `#N` (receipt and undo hint; "되돌려줘" schedules the
+   * same reminder again). Several: a question naming each candidate by its stable `#N` (the `asked` receipt makes it the
+   * open A6 question and merges the labels into the reminder listing). None: said plainly. Nothing is written unless one
+   * matches.
+   */
+  private async actionCancelByTitle(command: NlSelectedCommand, match: string, input: ReminderTurnInput): Promise<ReminderTurnResult> {
+    const wanted = foldTitle(match);
+    const active = wanted.length === 0 ? [] : await this.deps.repository.listActiveByActor(input.actorId);
+    // listActiveByActor also returns FIRING rows (in flight, not cancelable): only SCHEDULED ones are candidates, so a
+    // FIRING copy of the same text can never make the match ambiguous.
+    const matches = active.filter((reminder) => reminder.status === ReminderStatus.SCHEDULED && reminder.kind === 'TEXT' && foldTitle(reminder.body) === wanted);
+    const only = matches.length === 1 ? matches[0] : undefined;
+    if (only !== undefined) return await this.actionCancel({ ...command, target: { source: 'reminder', id: only.id, label: only.displayNo } }, input);
+    if (matches.length === 0) return { reply: this.reply(input, this.deps.composer.cancelMatchNotFound()), action: refusedReceipt(command, 'not-found') };
+    const asked = matches.slice(0, REMINDER_MATCH_MAX_CANDIDATES);
+    return {
+      reply: this.reply(input, this.deps.composer.actionWhich(asked, input.now)),
+      action: { entryId: 'reminder.cancel', result: 'asked', source: 'reminder', reason: 'ambiguous', candidates: asked.map((reminder) => ({ label: reminder.displayNo, id: reminder.id })) },
+    };
   }
 
   /** Record A: the per-action inverse of a reminder action. */
@@ -575,6 +602,14 @@ const REMINDER_STATUS_VIEW: Readonly<Record<ReminderListStatusFilter, readonly R
   done: [ReminderStatus.COMPLETED, ReminderStatus.FAILED, ReminderStatus.DELIVERY_UNCERTAIN],
   all: Object.values(ReminderStatus),
 };
+
+/** The most candidates a title question names (the open A6 question's bound). */
+const REMINDER_MATCH_MAX_CANDIDATES = 10;
+
+/** A `match` span and a reminder body compared as the to-do title match folds them: NFC, lower case, whitespace collapsed. */
+function foldTitle(text: string): string {
+  return text.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
 
 /** The A6 write condition of a turn, as a cancel input field. */
 function conditionOf(input: { readonly actionCondition?: ActionWriteCondition; readonly language?: 'ko' | 'en' }): { readonly condition?: ActionWriteCondition; readonly language?: 'ko' | 'en' } {

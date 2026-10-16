@@ -940,6 +940,94 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect({ todos: (await todos()).length, reminders: (await reminders()).length }).toEqual(before);
   });
 
+  it('owner decision A (2026-10-17): a bare "<title> 할 일" executes todo.add; the same title again is the duplicate refusal', async () => {
+    resetCaps();
+    await resetNlState();
+    const added = await turn('세금 서류 챙기기 할 일', answer('todo.add', { title: '세금 서류 챙기기' }));
+    expect(added.selects).toHaveLength(1);
+    expect(added.text).toMatch(/^할 일 \d+번으로 추가했어요: "세금 서류 챙기기" · 되돌리려면 "되돌려줘" \(10분 안\)$/u);
+    const open = async () => (await todos()).filter((item) => item.title === '세금 서류 챙기기' && item.status === 'ACTIVE');
+    expect(await open()).toHaveLength(1);
+    const again = await turn('세금 서류 챙기기 할 일', answer('todo.add', { title: '세금 서류 챙기기' }));
+    expect(again.text).toContain('같은 제목의 할 일이 이미 있어요');
+    expect(await open()).toHaveLength(1);
+    // Counter-case: the same shape as a question is chat; nothing is written.
+    const asked = await turn('세금 서류 챙기기 할 일 있었나?', answer('todo.add', { title: '세금 서류 챙기기' }));
+    expect(asked.text).not.toContain('추가했어요');
+    expect(await open()).toHaveLength(1);
+  });
+
+  it('owner decision C (2026-10-17): "<text> 알림 취소해줘" cancels the one scheduled reminder with that text; "되돌려줘" restores the same #N; several ask by #N', () => withOwnCaps(async () => {
+    await resetNlState();
+    await send('모레 9시에 치과 예약 확인 알려줘');
+    const dentist = (await reminders()).find((entry) => entry.body === '치과 예약 확인');
+    expect(dentist?.status).toBe('SCHEDULED');
+    const canceled = await turn('치과 예약 확인 알림 취소해줘', answer('reminder.cancel', { match: '치과 예약 확인' }));
+    expect(canceled.selects).toHaveLength(1);
+    expect(canceled.text).toBe(`알림 #${dentist?.displayNo} 취소했어요: '치과 예약 확인' · 되돌리려면 "되돌려줘" (10분 안)`);
+    expect(await reminders()).not.toContainEqual(expect.objectContaining({ id: dentist?.id }));
+    const undo = await turn('되돌려줘', answer('action.undo'));
+    expect(undo.text).toMatch(new RegExp(`^알림 #${dentist?.displayNo}[을를] 다시 켰어요`, 'u'));
+    expect(await reminders()).toContainEqual(expect.objectContaining({ id: dentist?.id, displayNo: dentist?.displayNo, status: 'SCHEDULED' }));
+
+    // Several scheduled reminders with the same text: the question names each by its #N; the answer cancels that one only.
+    await send('모레 10시에 우편물 찾기 알려줘');
+    await send('모레 11시에 우편물 찾기 알려줘');
+    const mail = (await reminders()).filter((entry) => entry.body === '우편물 찾기');
+    expect(mail).toHaveLength(2);
+    const asked = await turn('우편물 찾기 알림 꺼줘', answer('reminder.cancel', { match: '우편물 찾기' }));
+    expect(asked.text).toContain('어느 알림인가요? 번호로 답해 주세요. 아직 아무것도 바꾸지 않았어요.');
+    for (const entry of mail) expect(asked.text).toContain(`#${entry.displayNo} `);
+    expect((await reminders()).filter((entry) => entry.body === '우편물 찾기')).toHaveLength(2);
+    const second = mail[1]!;
+    const answered = await turn(`${second.displayNo}번`);
+    expect(answered.text).toContain(`알림 #${second.displayNo} 취소했어요: '우편물 찾기'`);
+    expect((await reminders()).filter((entry) => entry.body === '우편물 찾기').map((entry) => entry.id)).toEqual([mail[0]!.id]);
+
+    // No scheduled reminder with that text: said plainly, nothing changes.
+    const before = (await reminders()).map((entry) => entry.id).join(',');
+    const missing = await turn('은행 방문 알림 취소해줘', answer('reminder.cancel', { match: '은행 방문' }));
+    expect(missing.text).toBe('그 내용의 예정된 알림을 찾지 못했어요. 아무것도 바꾸지 않았어요. "알림 목록"에서 번호를 확인해 주세요.');
+    expect((await reminders()).map((entry) => entry.id).join(',')).toBe(before);
+  }));
+
+  it('owner decision D (2026-10-17): English colon labels execute like the Korean colon forms; other labels and questions do not', () => withOwnCaps(async () => {
+    await resetNlState();
+    const g05 = await turn('To-do: 사무실 와이파이 비밀번호 변경', answer('todo.add', { title: '사무실 와이파이 비밀번호 변경' }));
+    expect(g05.selects).toHaveLength(1);
+    expect(g05.text).toMatch(/^할 일 \d+번으로 추가했어요: "사무실 와이파이 비밀번호 변경" · /u);
+    const added = await turn('Add a to-do: renew passport', answer('todo.add', { title: 'renew passport' }));
+    expect(added.text).toMatch(/^할 일 \d+번으로 추가했어요: "renew passport" · /u);
+    const remind = await turn('Remind me: 모레 저녁 7시 은행에 전화', answer('reminder.create', { body: '은행에 전화', when: '모레 저녁 7시' }));
+    expect(remind.text).toMatch(/^알림 #\d+[을를] 만들었어요: .* · '은행에 전화' · /u);
+    expect((await reminders()).find((entry) => entry.body === '은행에 전화')?.status).toBe('SCHEDULED');
+    // Counter-cases: nothing is written.
+    const stores = async () => JSON.stringify([(await todos()).map((item) => `${item.id}:${item.status}`), (await reminders()).map((entry) => entry.id)]);
+    const before = await stores();
+    for (const [text, selector] of [
+      ['Q4: 예산 검토 할 일로', answer('todo.add', { title: '예산 검토' })],
+      ['I added a to-do: water plants', answer('todo.add', { title: 'water plants' })],
+      ['Todo: water plants?', answer('todo.add', { title: 'water plants' })],
+      ['Todo: request: water plants', answer('todo.add', { title: 'water plants' })],
+    ] as const) {
+      const result = await turn(text, selector);
+      expect(result.text, text).not.toContain('추가했어요');
+    }
+    expect(await stores()).toBe(before);
+  }));
+
+  it('owner decision E (2026-10-17): "칸셀해줘" (a vowel-only variant of the loanword 캔슬) asks and writes nothing; "캔슬해줘" cancels', () => withOwnCaps(async () => {
+    await resetNlState();
+    await send('모레 8시에 세탁소 들르기 알려줘');
+    const laundry = (await reminders()).find((entry) => entry.body === '세탁소 들르기');
+    expect(laundry?.status).toBe('SCHEDULED');
+    const asked = await turn('세탁소 들르기 알림 칸셀해줘', answer('reminder.cancel', { match: '세탁소 들르기' }));
+    expect(asked.text).toContain("'취소'(이)라고 하신 건가요? 아직 아무것도 바꾸지 않았어요.");
+    expect(await reminders()).toContainEqual(expect.objectContaining({ id: laundry?.id, status: 'SCHEDULED' }));
+    const canceled = await turn('세탁소 들르기 알림 캔슬해줘', answer('reminder.cancel', { match: '세탁소 들르기' }));
+    expect(canceled.text).toContain(`알림 #${laundry?.displayNo} 취소했어요: '세탁소 들르기'`);
+  }));
+
   it('exec-time: every case of nl-action.exec-time.v1.json is covered by an acceptance test above', async () => {
     const { readFileSync } = await import('node:fs');
     const file = new URL('../../../packages/core/src/application/golden/nl-action.exec-time.v1.json', import.meta.url);

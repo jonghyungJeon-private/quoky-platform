@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { NL_ACTION_ENTRIES, NL_ACTION_VERBAL_NOUNS } from './action-entries';
+import { NL_ACTION_ENTRIES, NL_ACTION_LOANWORDS, NL_ACTION_VERBAL_NOUNS, NL_ACTION_WORDS } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
 import { nlGarbledActionWord, nlJamoDistance } from './garbled-action';
 import { prepareSelectionInput } from './selection-input';
@@ -118,7 +118,7 @@ describe('the whole action corpus with the gold selections', () => {
     (JSON.parse(readFileSync(new URL(`../golden/${file}`, import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string; expect: unknown }> }).cases.map((golden) => ({ ...golden, id: `${file}:${golden.id}` })),
   );
 
-  it('only complete-018 newly asks; no execute gold asks', () => {
+  it('only the ask golds ask (complete-018, and the loanword golds of owner decision E); no execute gold asks', () => {
     const asking: string[] = [];
     let checked = 0;
     for (const golden of golds) {
@@ -131,7 +131,11 @@ describe('the whole action corpus with the gold selections', () => {
       if (!result.ok && result.reason === 'garbled-action') asking.push(`${golden.id} ${expectation.outcome ?? ''}`);
     }
     expect(checked).toBeGreaterThan(300);
-    expect(asking).toEqual(['nl-action.v1.json:a6-paraphrase-todo.complete-018 ask']);
+    expect(asking).toEqual([
+      'nl-action.v1.json:a6-paraphrase-todo.complete-018 ask',
+      'nl-action.v1.json:a6-paraphrase-reminder.cancel-905 ask',
+      'nl-action.v1.json:a6-paraphrase-reminder.cancel-906 ask',
+    ]);
   });
 });
 
@@ -159,5 +163,44 @@ describe('verb-final slot: a bare garbled word that ends the message (live test 
     // The last word belongs to the content span: the frame's last word is not the message's ("할 일 추가해줘 완룐 보고서").
     expect(add('할 일 추가해줘 완룐 보고서', '완룐 보고서')).toMatchObject({ ok: true });
     expect(add('할 일에 넣어줘 보고서 츄가', '보고서 츄가')).toMatchObject({ ok: true });
+  });
+});
+
+describe('owner decision E (2026-10-17): a vowel-only variant of a loanword action word asks', () => {
+  const cancel = (text: string, entryId = 'reminder.cancel', args: Record<string, string> = { ref: '#11' }) => validateSelection({ entryId, args }, ctx(text));
+
+  it('the loanword set is a tag on the existing vocabulary (no word added): each is an action word and a verbal noun', () => {
+    for (const word of NL_ACTION_LOANWORDS) {
+      expect(NL_ACTION_WORDS, word).toContain(word);
+      expect(NL_ACTION_VERBAL_NOUNS, word).toContain(word);
+    }
+    expect(NL_ACTION_LOANWORDS).toEqual(['캔슬', '리마인드', '롤백']);
+  });
+
+  it('same syllables, same initial and final consonant per syllable, other vowels: asks, whatever the jamo distance', () => {
+    // 칸셀 is two vowels from 캔슬 (distance 2): the one-jamo rule alone let it execute.
+    expect(nlJamoDistance('칸셀', '캔슬')).toBe(2);
+    for (const text of ['11번 알림 칸셀해줘', '11번 알림 칸셀', '11번 알림 캔설해줘', '11번 알림 켄슬 해줘']) {
+      expect(cancel(text), text).toEqual({ ok: false, reason: 'garbled-action', entryId: 'reminder.cancel', arg: 'action', candidate: '취소' });
+    }
+    expect(cancel('치과 예약 확인 알림 칸셀해줘', 'reminder.cancel', { match: '치과 예약 확인' })).toMatchObject({ ok: false, reason: 'garbled-action', candidate: '취소' });
+    expect(cancel('2번 할 일 칸셀', 'todo.cancel', { ref: '#2' })).toMatchObject({ ok: false, reason: 'garbled-action', candidate: '취소' });
+    expect(validateSelection({ entryId: 'reminder.create', args: { body: '약 먹기', when: '내일 9시' } }, ctx('내일 9시 약 먹기 레마인드해줘'))).toMatchObject({ ok: false, reason: 'garbled-action', candidate: '알림' });
+  });
+
+  it('counter-cases: the loanword itself, a known catalog word, another consonant frame, a non-loanword and the undo anchor', () => {
+    for (const text of ['11번 알림 캔슬', '11번 알림 캔슬해줘']) expect(cancel(text), text).toMatchObject({ ok: true });
+    expect(cancel('치과 예약 확인 알림 캔슬해줘', 'reminder.cancel', { match: '치과 예약 확인' })).toMatchObject({ ok: true });
+    // 리마인더 is the catalog's own alias (vowel-only beside 리마인드) and 알림 is never compared with the untagged 알람.
+    for (const text of ['내일 9시 약 먹기 리마인드해줘', '내일 9시 약 먹기 리마인더 설정해줘', '내일 9시 약 먹기 알림해줘']) {
+      expect(validateSelection({ entryId: 'reminder.create', args: { body: '약 먹기', when: '내일 9시' } }, ctx(text)), text).toMatchObject({ ok: true });
+    }
+    // Another consonant frame (a final consonant changes too) is not a vowel-only variant, and three jamo away.
+    expect(cancel('11번 알림 칸시해줘')).toMatchObject({ ok: true });
+    // The rule is for loanwords only: a two-vowel change of the Sino-Korean 완료 stays outside it.
+    expect(complete('2번 운류해줘', { ref: '#2' })).toMatchObject({ ok: true });
+    // action.undo keeps its own-word anchor first: a garbled undo word alone stays chat, as before.
+    expect(validateSelection({ entryId: 'action.undo', args: {} }, ctx('랄백해줘'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    expect(validateSelection({ entryId: 'action.undo', args: {} }, ctx('롤백해줘'))).toMatchObject({ ok: true });
   });
 });

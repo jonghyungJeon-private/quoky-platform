@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 owner decisions of 2026-10-17 (A–E)
+
+- **Changed (C, A6-D1 amendment).** `reminder.cancel` takes `match` beside `ref`: "치과 예약 확인 알림 취소해줘" cancels the one
+  scheduled reminder with that text (receipt and undo hint; "되돌려줘" restores the same `#N`), several ask by `#N`, none
+  says so. Delivered or cancelled reminders never match. A6 prompt `nl-select.v44` (R2 prompt `nl-select.v45`); the read
+  prompt stays `nl-select.v39` byte for byte.
+- **Changed (D, A6-D3a known refusals amended).** "Add a to-do: X", "Remind me: …", "Todo: X" pass the A6 input guard like
+  the Korean colon forms: one key colon, at the start, led by a catalog action or list word. "Q4: …", "request: …", a second
+  key and "I added a to-do: …" stay refused; questions and quoted or reported text keep their vetoes.
+- **Changed (E).** A vowel-only variant of a loanword action word (캔슬, 리마인드, 롤백; a tag on the existing vocabulary)
+  asks like a garbled word: "칸셀해줘" asks, "캔슬해줘" acts. No execute gold newly asks.
+- **Decided (A, B).** A bare "<title> 할 일" executes `todo.add` (duplicate guard unchanged); `QUOKY_WORK_SUMMARY_ENABLED`
+  is on only for the R2 live tests (record only).
+
 ## Unreleased — A6 live test 1 negative captures (2026-10-16)
 
 - **Fixed (garbled word, H09).** A bare garbled action word that ends the message ("사무실 청소 할 일 츄가") is in the Korean
@@ -13,7 +27,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   "장난삼아", "장난임"; English "jokingly", "as a joke", "just joking"); compounds such as "장난감" are other nouns.
 - **Fixed (duplicate, G09).** A selected `todo.add` whose title is an open to-do's exact title writes nothing and answers
   "같은 제목의 할 일이 이미 있어요 (N번)" (receipt `refused` / `duplicate`); the anchored "할 일 추가: …" is unchanged. The
-  bare "<title> 할 일" itself still acts under A6-D3a amendment 1 (proposal recorded in `DECISIONS.md`).
+  bare "<title> 할 일" itself still acts under A6-D3a amendment 1 (confirmed by owner decision A of 2026-10-17).
 
 ## Unreleased — A6 R2: `item.summarize` over Jira and Slack (2026-10-16)
 

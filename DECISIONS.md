@@ -22559,7 +22559,7 @@ The owner was asked to accept amendment A4, approve the 148-case corpus batch (`
    | `todo.complete` | LOCAL_WRITE | `ref: ref`, or `match: span` | Exactly one `ACTIVE` to-do (A6-D2). `match` must equal exactly one open title, otherwise a question | `transitionTodo(COMPLETED)` given the resolved **id** |
    | `todo.cancel` (only if owner decision 3 says yes) | LOCAL_WRITE | as `todo.complete` | as `todo.complete` | `transitionTodo(CANCELED)` given the resolved id |
    | `reminder.create` | LOCAL_WRITE | `body: span`, `when: span` | `body` is a payload span. `when` is parsed by the **deterministic reminder time grammar** (the ADR-0101 parser and clarify reasons, BRF-2 for event-relative spans). The model never produces a time. The time grammar also runs over the whole message: a time expression outside `when`, or inside `body`, leads to a question | The existing `ReminderConversationService` create |
-   | `reminder.cancel` | LOCAL_WRITE | `ref: ref` | Exactly one `SCHEDULED` reminder (A6-D2, including the display-number rule). No bulk requests | The existing cancel, given the resolved id |
+   | `reminder.cancel` | LOCAL_WRITE | `ref: ref` *(amended 2026-10-17, owner decision C: `ref` or `match: span`, exactly one)* | Exactly one `SCHEDULED` reminder (A6-D2, including the display-number rule). No bulk requests | The existing cancel, given the resolved id |
    | `action.undo` | LOCAL_WRITE | none | Only Quoky's fresh `lastAction` of this (Session, Actor), not yet undone (A6-D3) | A compensating local write |
    | `item.summarize` | ITEM_READ | `source: enum` (`mail`, `drive`; `jira`, `slack` from R2), `ref: ref`, `scope: enum` (`item` \| `thread`, mail only) | The owner must ask for the content. A closed content-request class (요약, 정리, 내용, 무슨 얘기, summarize, what … say) is a `flagGrounding` (owner decision 5). `source` must equal the most recent listing's source (A6-D2). `thread` needs 스레드/thread | The existing summary commands (`N번 메일 요약`, the GML-2 thread summary, `N번 문서 요약` with DRV-2b sheets) given the resolved id |
    | `slack.post` | EXTERNAL_WRITE | `channel: span`, `text: span` (1–4000) | `channel` is grounded in **this turn**, normalised to `#name` and present in `QUOKY_CONNECTOR_WRITE_SLACK_CHANNELS`. `text` is a payload span | A `channel-post` `ConnectorWriteDraft` through `connectorWriteFlow` only (preview with the A6-D4 banner, then CRITICAL approval, "승인" and "Slack 게시 실행") |
@@ -23196,7 +23196,9 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
      `12:00request: …` are still refused. **Known refusals (trade-off for owner confirmation):** a message with an
      English label and a colon, e.g. "Q4: 예산 검토 할 일로" or "remind me: call mom", is refused as YAML-like and gets
      the one-sentence hint; the owner rephrases ("Q4 예산 검토 할 일로") or uses the exact command. Allowing such labels
-     would let `key: value` payloads through, so the rule stays fail closed;
+     would let `key: value` payloads through, so the rule stays fail closed; *(amended 2026-10-17, owner decision D: an
+     English command label that leads with an action or list word of the catalog, "Add a to-do: …", "Remind me: …",
+     "Todo: …", is no longer refused; "Q4: …" and every other key stay refused. See "Owner decisions of 2026-10-17 (A–E)".)*
   4. has **no exact-command form**: a to-do head with a colon ("할 일 추가:"), the Slack post head ("#채널에 게시:") or
      the Slack post execution phrase, each taken from its own grammar.
   Checks 2–4 also run on an NFKC-folded copy, so full-width and compatibility forms (`｛ ｝ ［ ］ ｀ ＞ ：`) count as
@@ -27186,6 +27188,8 @@ Three local writes executed that the kit expected not to (all cleaned). Fixes, e
   confirmation "할 일로 추가할까요?" / "알림으로 만들까요?" instead of acting. Options: (a) both entries, which moves
   `reminder.create-022` from execute to ask; (b) `todo.add` only, keeping 022 (a reminder carries a `when` the owner
   stated, a to-do has nothing beyond the title). Either needs the owner's gold decision, a D12 rerun and a shadow review.
+  *(Decided 2026-10-17, owner decision A: neither option; the bare form executes as written. See "Owner decisions of
+  2026-10-17 (A–E)" at the end of this file.)*
 - **G09 duplicate (changed).** A selected `todo.add` whose normalised title equals an ACTIVE to-do's title writes nothing
   and answers "같은 제목의 할 일이 이미 있어요 (N번): "…" · 아무것도 바꾸지 않았어요." (receipt `refused`, reason
   `duplicate`, not undoable): the same check and wording as the R5a preview's duplicate note. The number is the label
@@ -27318,3 +27322,121 @@ calls, today's reply). Where the code is more specific than the proposal:
   particle right after the quote ("…" 라고 / 라는), so a request outside the quote is the owner's own; the reason-statement
   veto needs a declarative or state ending (-다, -네, -어/-아/-워), so nominal and -시오 mains pass. Leaks accepted: a state
   main ending in 나/해 ("짜증나") and a quote mentioned without a quotative particle stay captured.
+
+## Owner decisions of 2026-10-17 (A–E)
+
+On 2026-10-17 at 00:39 the owner approved every recommended answer of the open A6 items ("일단 전부 권장안으로"). Each item is
+recorded below as an owner decision; where it changes settled text it is an amendment of that text. New gold cases added
+for these items are agent-drafted and marked `PENDING the owner's D12 batch` in their notes, as the corpus convention
+requires. No live configuration was changed by this record (`QUOKY_NL_ACTIONS` stays `shadow` on the service).
+
+### A. A bare "<title> 할 일" executes `todo.add` (owner decision, no amendment)
+
+- **Decision.** A message that is only a title and the to-do source noun, with no action word and no request form
+  ("세금 서류 챙기기 할 일", live test 2026-10-16 G09), **executes** `todo.add` when the selector chose it. This is the
+  current behaviour of A6-D3a amendment 1 (decisions 1 and 3: no action word is needed, and for a payload entry the
+  source noun names what to make) and the same shape as the owner gold `a6-paraphrase-reminder.create-022`. Neither
+  option of the G09 proposal (asking "할 일로 추가할까요?") is adopted, so the A6-D3a amendment 1 text is unchanged.
+- **The duplicate guard stays.** A selected `todo.add` whose normalised title equals an open to-do's title writes nothing
+  and names the existing one (live test 2026-10-16, "G09 duplicate").
+- **Pinned.** `request-shape.test.ts` (the bare form and its counter-cases: a question, a negation, a copular or past
+  statement, a time in the title), the acceptance test `personal-v5-a6-acceptance.test.ts` (executes, then the duplicate
+  refusal), gold `a6-paraphrase-todo.add-903` (execute) and `a6-negative-none-186` (question, `none`). The "pending" note
+  of the G09 proposal and the live kit row G09 (now execute) are updated.
+
+### B. `QUOKY_WORK_SUMMARY_ENABLED` during the R2 live tests (owner decision, record only)
+
+- **Decision.** `QUOKY_WORK_SUMMARY_ENABLED` may be turned **on only for the duration of the A6 R2 live tests**
+  (`item.summarize` over Jira and Slack, `summary` mode), and is turned **off again** when they end. It is not left on
+  between test sessions.
+- **Scope.** A record only: no configuration, code default or `.env.local` value is changed here. Each switch is still a
+  Strict runtime step (a restart) taken by the operator within the approved R2 live test; the R2 promotion steps of
+  "ADR-0120 amendment A6 R2" (D6, D10) are unchanged.
+
+### C. `reminder.cancel` by title (owner decision; amends A6-D1)
+
+- **Amends A6-D1** (the closed action entries): `reminder.cancel` takes `match` beside `ref`, like `todo.complete` /
+  `todo.cancel`: a span (the reminder text the owner wrote, verbatim, `NL_SPAN_MAX_CHARS`), exactly one of `ref` and `match`
+  (`invalid-arg` for both, `missing-arg` `ref` for neither). "치과 예약 확인 알림 취소해줘" → `{match: "치과 예약 확인"}`.
+- **Resolution (the handler, `ReminderConversationService.actionCancelByTitle`).** The match is folded like a to-do match
+  (NFC, case, whitespace) and compared with the body of each reminder on the scheduled list (`listActiveByActor`, what "알림
+  목록" shows). A delivered, failed or cancelled reminder is never on that list, so it never matches; a brief has no body.
+  - exactly one: the ordinary cancel of that `#N`, with the receipt and the undo hint; "되돌려줘" schedules the same
+    reminder (same id and `#N`) again (ratification record A, unchanged);
+  - several: "어느 알림인가요? 번호로 답해 주세요. 아직 아무것도 바꾸지 않았어요." with each candidate under its stable
+    `#N` (at most 10); the `asked` receipt makes it the open A6 question and merges the labels into the reminder listing,
+    so "15번" cancels exactly that one;
+  - none: "그 내용의 예정된 알림을 찾지 못했어요. 아무것도 바꾸지 않았어요. …" (receipt `refused` / `not-found`).
+- **Kept unchanged:** span grounding (the match must be the owner's verbatim words of this turn), every structural veto of
+  A6-D3a amendment 1, the source cross-check (the rest of the message must not name another list), the garbled-word rule,
+  DM-only, the caps and the kill switch. Core never resolves a match itself (no new Core lookup, port or migration).
+- **Prompt.** The A6 prompt changes only by the catalog lines of `reminder.cancel` (`ref` loses "(required)", a `match` line
+  is added): **`nl-select.v44`** (from v42; v43 is the R2 prompt). The R2 prompt carries the same catalog, so it moves to
+  **`nl-select.v45`** (= the v43 R2 lines on top of v44). The read prompt stays **`nl-select.v39` byte for byte** (pinned).
+  A prompt change needs the D12 model gate before any promotion; no model call was made here.
+- **Corpus** (`nl-action.v1.json`, agent-drafted, pending the owner's D12 batch): `a6-paraphrase-reminder.cancel-901` …
+  `-903` (execute), `-904` (live kit F09, an ask, see below), `a6-negative-none-187` / `-188` (negated or questioned cancel
+  by title, `none`). The request-shape lure set now also tries `reminder.cancel` with every word run as a `match`: no
+  negative of the corpus moved from "refused for every lure" to "selector-dependent".
+- **Known residual.** A reminder text that itself holds another source noun ("경비 승인 메일 확인 알림 취소 부탁드려요", kit
+  F09) asks which list, because the A6 R1 whole-prose source rule (two source nouns in the message ask) is unchanged; it
+  writes nothing. Relaxing that rule for nouns inside the match span is a separate decision.
+
+### D. English colon label forms execute like the Korean colon forms (owner decision; amends the A6-D3a known refusals)
+
+- **Amends A6-D3a rule 3** (structure markers), its "known refusals" entry for "remind me: call mom" (confirmed in the A6 R1
+  owner batch as written): the English command labels "Add a to-do: X", "Remind me: …", "Todo: X" now act like the Korean
+  colon forms the owner approved ("todo 추가: …", "알림: …", gold `a6-paraphrase-todo.add-016`). "Q4: 예산 검토 할 일로" stays
+  a known refusal.
+- **Rule (input guard only, `isNlActionColonLabel` in `action-entries.ts`).** The ASCII `key: value` check of the A6 input
+  guard exempts exactly one label, when all hold: it is the message's only key colon (a second key, "Todo: request: …",
+  refuses; the key check no longer consumes the value, so a key right after the colon is counted); it starts the message
+  and is at most six Latin words; and it LEADS, after at most the closed request leads of the imperative slot ("please"),
+  with a word the catalog already has for a LOCAL_WRITE action or a local list (the LOCAL_WRITE action vocabularies and
+  aliases, the to-do and reminder list aliases; a hyphen inside a word is ignored, "to-do" = "todo"). No word is added.
+  The leading position is grammar: "I added a to-do: …", "Did you add a to-do: …", "My todo: …" stay refused.
+- **Unchanged.** Every other structure marker, the exact-command forms ("Add todo: …", "todo add: …" stay the anchored
+  ADR-0100 D1 commands), the R5a owner-text eligibility (still refuses any key colon), and the request-shape vetoes: a
+  question ("Todo: buy milk?"), reported or quoted text ("…, he said", "\"Todo: buy milk\" he said", "… 라고 했어") and a
+  negation are chat. The validator needed no change: a colon form running to the end already encloses the content span
+  for English as for Korean.
+- **Shared guard, answer paths.** The relaxed label check sits in the shared `nlActionInputRefusal`, so it also reaches
+  the R5a deictic answers (`deictic-writes.ts:400,508`) and the open A6-question answers (`answerRefused` in
+  `nl-selection-service.ts`). Those paths still only preview or validate a draft; the label guard is relaxed there too, and
+  no write happens on the label alone.
+- **Corpus scan.** Over all 3,938 texts of the golden files (red team included), the guard's answer changed only for the
+  seven texts that start with an anchored head ("add todo: …", "todo done: …"): they now refuse as `embedded-command`
+  instead of `not-plain` (still refused). No red-team text became eligible.
+- **Corpus** (agent-drafted, pending the owner's D12 batch): `a6-paraphrase-todo.add-904` / `-905` (kit G05),
+  `a6-paraphrase-reminder.create-902` (with a Korean time: the reminder grammar parses no English time at execution, a
+  pre-existing limit), `a6-negative-none-189` (question; selector-dependent like the Korean colon forms, since a lure title
+  can swallow the question mark) and `-190` (not led by the command word; refused by the guard).
+
+### E. A vowel-only variant of a loanword action word asks (owner decision; extends the garbled-word addendum)
+
+- **Extends** "A6-D3a amendment 1 addendum: a garbled action word asks": for a **loanword** action word, a token in the
+  action word's slot with the same number of syllables and the same initial and final consonant in every syllable, but
+  with at least one other vowel, is garbled and asks, however many vowels differ ("칸셀해줘" asks, two vowels from 캔슬;
+  "캔슬해줘" executes). The one-jamo rule for every other action word is unchanged (a two-vowel change of the Sino-Korean
+  완료, "운류해줘", stays outside the rule). Same anchor (the predicate or imperative slot), same order (after the
+  request-shape vetoes; known words, catalog aliases and normal inflections first), same question and reason
+  (`garbled-action`, the entry's canonical word), and `action.undo` keeps its own-word anchor first.
+- **The loanword set is a tag on the existing vocabulary** (`NL_ACTION_LOANWORDS` in `action-entries.ts`, like the
+  verbal-noun tag), not new words: 캔슬 (cancel), 리마인드 (remind), 롤백 (roll back), the single-word Hangul loanwords of
+  `NL_ACTION_WORDS`. The owner's other examples are not in the vocabulary and were not added: 체크 and 클리어 are no action
+  words (the vocabulary comment explains why 체크 is excluded), and 알람 appears only inside phrases ("알람 맞춰"), which the
+  rule never compares. The catalog alias 리마인더 is a known word, so it never counts as a variant of 리마인드.
+- **Gold proof.** Every LOCAL_WRITE gold of `nl-action.v1`, `seed`, `exec-time` and `deictic` validated with its gold
+  selection: the only `garbled-action` results are the ask golds (`a6-paraphrase-todo.complete-018` and the two new ones
+  below); **no execute gold newly asks** (pinned in `garbled-action.test.ts`). Noise class, as before: the rule can only ask;
+  e.g. "큰술해줘" beside 캔슬 would ask if a selector chose a cancel for it.
+- **Corpus** (agent-drafted, pending the owner's D12 batch): `a6-paraphrase-reminder.cancel-905` (kit H03, "칸셀해줘", ask)
+  and `-906` ("캔설해줘", ask), and the counter-case `-907` ("캔슬해줘", execute by title).
+
+### Offline gold proof for A–E (no model call)
+
+The gold selection of every case of `nl-action.v1` and `seed` was run through `NlSelectionService` (a scripted selector
+returning the gold, the `nl-action-eval` path), and every LOCAL_WRITE gold of `nl-action.v1`, `seed`, `exec-time` and
+`deictic` through `validateSelection` and the input guard, before and after the five changes. **No existing gold changed
+its outcome or reason** (execute golds included); the 16 new cases all score as their gold (`reminder.cancel-904` is an
+honest ask, see C).
