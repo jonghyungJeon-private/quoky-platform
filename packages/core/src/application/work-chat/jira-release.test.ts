@@ -8,7 +8,7 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
 import { NL_WAVE1_ENTRIES, jiraKeywordCarriesQualifier, nlWave1Entry } from '../nl-routing/wave1-entries';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { hasJiraReleaseLink, normalizeSiteHost, parseJiraReleaseLinks, releaseLinkOnSite } from './jira-release-link';
-import { lookupJiraRelease, splitKeyFromRelease, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
+import { lookupJiraRelease, splitKeyFromRelease, stripRedundantProjectKey, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
 import { renderReleaseIssues } from './jira-release-renderer';
 import { detectWorkChatCommand } from './work-chat-command';
 import { workChatCommandForSelection } from './work-chat-selection';
@@ -548,5 +548,22 @@ describe('jira.release arg canonicalization (structural, v39)', () => {
     expect(argsOf(validate('jira.release', { release: '16555' }, `16555 확인 ${link}`))).toEqual({ release: '16555' });
     expect(argsOf(validate('jira.release', { release: '16555' }, '16555 확인'))).toEqual({ release: '16555' });
     expect(argsOf(validate('jira.release', { release: '20261015' }, '이 프로젝트에서도 보여줘 https://example.atlassian.net/projects/WEB', { release: '20261015' }))).toEqual({ release: '20261015' });
+  });
+});
+
+describe('lookupJiraRelease: a key repeated inside the release words', () => {
+  it('strips the key when project already is that same visible key', async () => {
+    const { text, queries } = await run({ project: 'OP26', release: 'OP26 20261015' });
+    expect(queries.at(-1)?.params).toEqual({ container: 'OP26', releaseId: '16555', limit: 20 });
+    expect(text).toContain('**Jira 릴리스 20261015**');
+  });
+
+  it('leaves a different key alone when a project is set, and a key-shaped word that is no visible project', async () => {
+    expect(stripRedundantProjectKey(PROJECTS, 'OP26', 'WEB 20261015')).toBeUndefined();
+    expect(stripRedundantProjectKey(PROJECTS, 'RC', 'RC 2026')).toBeUndefined();
+    const { text } = await run({ project: 'OP26', release: 'WEB 20261015' });
+    expect(text).toContain('찾지 못했어요');
+    const none = await run({ release: 'RC 2026' });
+    expect(none.text).not.toContain('프로젝트 "RC"');
   });
 });
