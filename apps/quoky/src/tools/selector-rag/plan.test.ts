@@ -43,6 +43,29 @@ describe('ADR-0123 D6 plan binds the split (exact-scope approval)', () => {
   });
 });
 
+describe('ADR-0123 D6 tuning log: a dev tuning plan', () => {
+  const plain = buildRagPlan({ ...base, split: 'dev' });
+  const tuned = buildRagPlan({ ...base, split: 'dev', tune: 'dev-tune-1' });
+
+  it('binds the variants and their params into the digest, and leaves the plain dev plan untouched', () => {
+    expect(plain).not.toHaveProperty('tuning');
+    expect(tuned.arms.map((arm) => arm.id)).toEqual(['A0', 'A1:k3-floor050@m', 'A1:k1-floor050@m']);
+    expect(tuned.tuning?.set).toBe('dev-tune-1');
+    expect(tuned.calls).toEqual({ split: 'dev', cases: 10, arms: 3, runs: 1, total: 30 });
+    expect(ragPlanDigest(tuned)).not.toBe(ragPlanDigest(plain));
+    const changed = { ...tuned, arms: tuned.arms.map((arm) => (arm.variant !== undefined ? { ...arm, variant: { ...arm.variant, minSimilarity: 0.4 } } : arm)) };
+    expect(ragPlanDigest(changed)).not.toBe(ragPlanDigest(tuned));
+  });
+
+  it('is dev only and refuses an unknown set', () => {
+    expect(() => buildRagPlan({ ...base, split: 'heldout', tune: 'dev-tune-1' })).toThrow(/dev only/);
+    expect(() => buildRagPlan({ ...base, split: 'dev', tune: 'nope' })).toThrow(/unknown tuning set/);
+    expect(() => parseArguments(['--mode', 'plan', '--split', 'heldout', '--tune', 'dev-tune-1'])).toThrow(UsageError);
+    expect(() => parseArguments(['--mode', 'lint', '--tune', 'dev-tune-1'])).toThrow(UsageError);
+    expect(parseArguments(['--mode', 'plan', '--split', 'dev', '--tune', 'dev-tune-1']).options['--tune']).toBe('dev-tune-1');
+  });
+});
+
 describe('plan over a pool with a pending batch (approved subset only)', () => {
   it('plans dev and heldout, excludes the pending entries, and validates the audit against the approved subset', async () => {
     for (const split of ['dev', 'heldout']) {

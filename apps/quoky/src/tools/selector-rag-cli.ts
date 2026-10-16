@@ -46,7 +46,7 @@ const repoRoot = resolve(__dirname, '../../../..');
 const EVAL_DIR = resolve(repoRoot, 'data/eval/selector-rag');
 export const AUDIT_RECORD_PATH = resolve(__dirname, '../../../../apps/quoky/src/tools/selector-rag/selector-pool.audit.v1.json');
 
-const OPTIONS = new Set(['--mode', '--models', '--pool', '--write-audit', '--selector-model', '--runs', '--sessions', '--approved-plan-digest', '--ollama-url', '--latency-sample', '--audit', '--split']);
+const OPTIONS = new Set(['--mode', '--models', '--pool', '--write-audit', '--selector-model', '--runs', '--sessions', '--approved-plan-digest', '--ollama-url', '--latency-sample', '--audit', '--split', '--tune']);
 export class UsageError extends Error {}
 
 export function parseArguments(argv: readonly string[]): { mode: 'lint' | 'dry-run' | 'plan' | 'run' | 'help'; options: Record<string, string> } {
@@ -65,6 +65,7 @@ export function parseArguments(argv: readonly string[]): { mode: 'lint' | 'dry-r
   if (mode !== 'lint' && mode !== 'dry-run' && mode !== 'plan' && mode !== 'run') throw new UsageError('--mode must be lint, dry-run, plan or run');
   if ((mode === 'plan' || mode === 'run') && options['--split'] !== 'dev' && options['--split'] !== 'heldout') throw new UsageError(`${mode} requires --split dev|heldout (each split has its own approval)`);
   if (mode !== 'plan' && mode !== 'run' && options['--split'] !== undefined) throw new UsageError('--split is only for plan and run');
+  if (options['--tune'] !== undefined && ((mode !== 'plan' && mode !== 'run') || options['--split'] !== 'dev')) throw new UsageError('--tune is only for plan and run on --split dev');
   if (mode === 'run' && options['--approved-plan-digest'] === undefined) throw new UsageError('run requires --approved-plan-digest');
   if (mode !== 'run' && options['--approved-plan-digest'] !== undefined) throw new UsageError('--approved-plan-digest is only for run');
   return { mode, options };
@@ -73,7 +74,7 @@ export function parseArguments(argv: readonly string[]): { mode: 'lint' | 'dry-r
 const HELP = `ADR-0123 selector example retrieval harness (phase 1, offline)
   pnpm eval:rag -- --mode lint [--pool <file>]
   pnpm eval:rag -- --mode dry-run [--models nomic-embed-text-v2-moe] [--write-audit true] [--latency-sample 50]
-  pnpm eval:rag -- --mode plan --split dev|heldout [--selector-model ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}] [--runs 5] [--sessions 3]
+  pnpm eval:rag -- --mode plan --split dev|heldout [--tune dev-tune-1 (dev only)] [--selector-model ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}] [--runs 5] [--sessions 3]
   pnpm eval:rag -- --mode run --split dev|heldout --approved-plan-digest <sha256 from plan>   (Strict; the Claude CLI transport is built only after the digest matches)
 plan, lint and dry-run make no selector call. dry-run embeds through the local Ollama on loopback only.
 `;
@@ -287,6 +288,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     excludedContaminated: split.heldOut.filter((id) => contaminated.has(id)).length,
     models: usable.map((model) => ({ model: model.model, spaceId: model.spaceId, prefix: audit.prefixPolicy, tau: model.tau, tauLow: model.tauLow as number })),
     split: options['--split'] as 'dev' | 'heldout',
+    ...(options['--tune'] !== undefined ? { tune: options['--tune'] } : {}),
     selectorModel: options['--selector-model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
     ...(options['--runs'] !== undefined ? { runs: Number(options['--runs']) } : {}),
     ...(options['--sessions'] !== undefined ? { sessions: Number(options['--sessions']) } : {}),

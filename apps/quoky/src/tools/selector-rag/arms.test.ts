@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { armsFor, budgetFor, buildSchedule, expectedCalls } from './arms';
+import { DEV_TUNE_SETS, armsFor, budgetFor, buildSchedule, expectedCalls, tuneArmsFor } from './arms';
 
 describe('ADR-0123 D6 arms and schedule', () => {
   const arms = armsFor(['m1', 'm2']);
@@ -24,5 +24,12 @@ describe('ADR-0123 D6 arms and schedule', () => {
     expect(calls).toEqual({ heldOut: 19860, devSmoke: 850, total: 20710 });
     expect(budgetFor(calls.total)).toBeGreaterThanOrEqual(21500);
     expect(budgetFor(calls.total)).toBeLessThan(21600);
+  });
+
+  it('builds the dev tuning arms: A0 plus one A1 per variant, each carrying its params', () => {
+    const tune = tuneArmsFor('m', DEV_TUNE_SETS['dev-tune-1'] ?? []);
+    expect(tune.map((arm) => arm.id)).toEqual(['A0', 'A1:k3-floor050@m', 'A1:k1-floor050@m']);
+    expect(tune[2]?.variant).toEqual({ name: 'k1-floor050', k: 1, minSimilarity: 0.5 });
+    expect(() => tuneArmsFor('m', [])).toThrow();
   });
 });

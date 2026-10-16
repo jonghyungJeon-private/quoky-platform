@@ -58,8 +58,9 @@ function takeOnePerEntry(ordered: readonly PoolVector[], k: number): PoolVector[
   return taken;
 }
 
-export function retrieveTopK(query: readonly number[], candidates: readonly PoolVector[], k: number = DEFAULT_K): Array<PoolVector & { readonly score: number }> {
-  const scored = candidates.map((candidate) => ({ ...candidate, score: cosine(query, candidate.vector) }));
+/** `minScore`: a floor (tuning variants): a candidate below it is never retrieved, so a weak neighbourhood retrieves nothing. */
+export function retrieveTopK(query: readonly number[], candidates: readonly PoolVector[], k: number = DEFAULT_K, minScore: number | null = null): Array<PoolVector & { readonly score: number }> {
+  const scored = candidates.map((candidate) => ({ ...candidate, score: cosine(query, candidate.vector) })).filter((candidate) => minScore === null || candidate.score >= minScore);
   scored.sort((a, b) => b.score - a.score || (a.entry.id < b.entry.id ? -1 : a.entry.id > b.entry.id ? 1 : 0));
   return takeOnePerEntry(scored, k) as Array<PoolVector & { readonly score: number }>;
 }

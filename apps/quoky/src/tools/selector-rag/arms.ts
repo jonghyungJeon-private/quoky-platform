@@ -5,11 +5,38 @@ import { seedFromString, seededRandom } from './stats';
 
 export type ArmKind = 'A0' | 'A0-swap' | 'A1' | 'A2';
 
+/** A tuned A1 (ADR-0123 D6 tuning log): top-k and an optional minimum cosine, bound into the plan digest through the arm. */
+export interface A1Variant {
+  readonly name: string;
+  readonly k: number;
+  /** No example below this cosine is placed in the prompt (null: no floor, the original A1). */
+  readonly minSimilarity: number | null;
+}
+
 export interface Arm {
-  /** `A0`, `A0-swap`, `A1@<embedding model>`, `A2`. */
+  /** `A0`, `A0-swap`, `A1@<embedding model>`, `A1:<variant>@<embedding model>`, `A2`. */
   readonly id: string;
   readonly kind: ArmKind;
   readonly embeddingModel?: string;
+  /** Present only on a tuned A1 arm. */
+  readonly variant?: A1Variant;
+}
+
+/** Dev tuning sets (owner decision 2026-10-16): chosen from the dev smoke error analysis, frozen here before any run. */
+export const DEV_TUNE_SETS: Readonly<Record<string, readonly A1Variant[]>> = {
+  'dev-tune-1': [
+    { name: 'k3-floor050', k: 3, minSimilarity: 0.5 },
+    { name: 'k1-floor050', k: 1, minSimilarity: 0.5 },
+  ],
+};
+
+/** The dev tuning arms: A0 (re-measured: the A6 prompt changed after the first smoke) and one A1 arm per variant. */
+export function tuneArmsFor(embeddingModel: string, variants: readonly A1Variant[]): Arm[] {
+  if (variants.length === 0) throw new Error('no tuning variant');
+  return [
+    { id: 'A0', kind: 'A0' },
+    ...variants.map((variant): Arm => ({ id: `A1:${variant.name}@${embeddingModel}`, kind: 'A1', embeddingModel, variant })),
+  ];
 }
 
 /** A1 once per embedding model (the two-model dimension); A2 draws at random, so one arm covers it. */
