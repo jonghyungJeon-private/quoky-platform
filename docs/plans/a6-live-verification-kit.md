@@ -15,12 +15,11 @@
 
 ### 1-1. 시작 전 준비 (fixture)
 
-shadow 에서는 A6 가 아무것도 쓰지 않으므로, 목록과 대상은 기존 고정 명령으로 미리 만든다. 시작 전에 목록에 보이는지 확인한다.
+shadow 에서는 A6 가 아무것도 쓰지 않으므로, 목록과 대상은 기존 고정 명령으로 미리 만든다. 고정 명령 `할 일 추가: <내용>` 은 A6 쓰기 상한 (1-3) 을 세지 않으므로 아래 "재시드" 는 상한 밖이다. 시작 전에 목록에 보이는지 확인한다.
 
 - 할 일 (열린 상태): `장보기`, `보고서 초안 작성`, `세금 서류 챙기기`, `창고 정리 일정 잡기`, `분기 회의록 정리`, `법인카드 정산 메모`
-- 알림 (예약 상태): `치과 예약 확인`, `법무팀 서명 요청`, `택배 수령`, `운동 가기`, `세무사 통화`
-- 고정 명령으로 만든 fixture 는 A6 쓰기 상한 (아래 1-3) 을 세지 않는다. A6 경로의 `actionCaps.note` 호출만 센다. 그래서 재시드는 상한에 들어가지 않는다.
-- 로컬 단계에서 완료·취소된 항목은 배치 사이에 다시 채운다 (배치 5 전에 E 그룹이 `치과 예약 확인` 알림을 취소하므로 다시 만든다).
+- 알림: 시작 시 없다. 알림은 D 그룹이 만든다 (E, F, K, L, M 이 취소 대상으로 쓴다).
+- 재시드 (의존성 복원): 1-5 의 표에 있는 `할 일 추가: <제목>` 을 그 케이스 바로 앞에 한 번 보낸다. 고정 명령이라 상한에 들지 않는다.
 
 ### 1-2. 1단계: shadow (지금 가능)
 
@@ -36,27 +35,26 @@ shadow 에서는 A6 가 아무것도 쓰지 않으므로, 목록과 대상은 �
 - `QUOKY_NL_DEICTIC_WRITES` 는 `off` 로 둔다.
 
 **쓰기 상한 (NL_ACTION_CAPS, `nl-action-policy.ts`)**
-- `localWritePerHour = 20`, `localWritePerDay = 100`, 사용자(actor)별 슬라이딩 창. LOCAL_WRITE 위험 등급이면 되돌리기 (`action.undo`) 도 같은 창에 든다.
-- 상한에 걸리면 `result=capped` 로 기록되고 "잠시 후 다시" 답이 간다. 상한을 넘긴 쓰기는 세지 않는다.
-- 이 키트는 쓰기 84개 + 되돌리기 6개 = **90** 을 쓴다. 한 시간에 18 을 넘기지 않도록 5개 배치로 나눈다. 하루 100 이하이므로 하루에 다른 A6 쓰기가 있으면 안 된다.
+- `localWritePerHour = 20`, `localWritePerDay = 100`, 사용자(actor)별 슬라이딩 창. LOCAL_WRITE 위험 등급이면 되돌리기 (`action.undo`) 도 같은 창에 든다. 상한 쓰기는 세지 않는다.
+- 상한에 걸리면 `result=capped` 로 기록되고 "잠시 후 다시" 답이 간다.
+- 이 키트의 A6 쓰기는 **83 + 되돌리기 6 = 89** 이다. 시간당 18 을 넘기지 않도록 배치 1–5 로 나눈다. 하루 100 이하이므로 하루에 다른 A6 쓰기가 있으면 안 된다.
 
-**배치 계획** (각 배치의 쓰기 + 되돌리기 합계가 18 이하. 기대 수치는 실행 기대 (execute) 메시지 수다)
+**배치 계획** (쓰기 + 되돌리기 합계 ≤ 18. 재시드는 상한 밖)
 
-| 배치 | 메시지 | 쓰기 | 되돌리기 | 합계 (상한 20/시간 대비) | 시작 조건 |
+| 배치 | 메시지 | 쓰기 | 되돌리기 | 합계 | 시작 조건 |
 |---|---|---|---|---|---|
-| 0 | 쓰기 없는 턴: H01–H09, I01–I18, G08–G10, L01·L03·L05·L06·L07·L09·L10, M07–M09, K03–K06 (44개) | 0 | 0 | 0 | 시작 전에 아무 때나 (상태를 바꾸지 않음) |
-| 1 | A01–A14, B01–B04 | 18 | 0 | 18 | 1-1 fixture 가 채워진 뒤 |
-| 2 | B05–B10, C01–C06, D01–D06 | 18 | 0 | 18 | 배치 1 의 마지막 쓰기 + 60분 이후 |
-| 3 | D07–D12, E01–E06, F01–F06 | 18 | 0 | 18 | 배치 2 의 마지막 쓰기 + 60분 이후 |
-| 4 | F07–F10, G01–G07, H10, M01–M06 | 18 | 0 | 18 | 배치 3 의 마지막 쓰기 + 60분 이후 |
-| 재시드 | 1-1 의 fixture 를 다시 채움 (고정 명령, 상한 밖) | — | — | — | 배치 4 의 마지막 쓰기 + 60분 이후 |
-| 5 | K01–K02, L02·L04·L08 (목록을 먼저 띄움), J01–J17 | 12 | 6 | 18 | 재시드 뒤 |
+| 0 | 쓰기 없는 턴 44개: H01–H09, I01–I18, G08–G10, L01·L03·L05·L06·L07·L09, M07–M10, K03–K06 | 0 | 0 | 0 | 아무 때나 (상태를 바꾸지 않음) |
+| 1 | A01–A14, B01–B04 (B04 앞 재시드 1) | 18 | 0 | 18 | 1-1 의 fixture 가 채워진 뒤 |
+| 2 | B05–B10, C01–C06, D01–D06 (재시드 9) | 18 | 0 | 18 | 배치 1 마지막 쓰기 + 60분 |
+| 3 | D07–D12, E01–E06, F01–F06 (재시드 3) | 18 | 0 | 18 | 배치 2 마지막 쓰기 + 60분 |
+| 4 | F07–F10, G01–G07, H10, M01–M06 (재시드 4) | 18 | 0 | 18 | 배치 3 마지막 쓰기 + 60분 |
+| 5 | K01·K02, L02·L08 (쓰기 4), J01–J17 (쓰기 7 + 되돌리기 6), L04·L10 (쓰기 없음) | 11 | 6 | 17 | 배치 4 마지막 쓰기 + 60분 |
 
-- 배치 5 의 쓰기는 K01·K02 (2) + L02·L04·L08 (3) + J 쓰기 7 = 12, 되돌리기는 J 6 개. 합계 18.
-- **대기 규칙 (rolling hour)**: 다음 배치의 첫 메시지는 이전 배치의 **마지막 쓰기 시각 + 60분** 이후에 보낸다. 그렇게 하면 이전 배치의 쓰기가 모두 창 밖으로 나가서 두 배치가 한 창에 겹치지 않는다. 배치 0 은 쓰기가 없으므로 대기가 없다.
-- 배치 중간에 `capped` 가 한 번이라도 보이면 그 배치를 멈추고, 마지막 쓰기 + 60분을 기다린 뒤 남은 메시지부터 다시 보낸다. `capped` 턴은 라벨을 "상한" 으로 적는다 (실행 기대의 오답이 아니다).
-- 전체 최소 소요: 배치 1–5 사이 대기 4회 × 60분 이상 (약 4시간 이상).
-- J 그룹 규칙: 되돌리기 (undo) 는 바로 앞의 쓰기가 있어야 한다. J01·J06·J08·J10·J12·J14·J16 은 쓰기 (todo.add) 이고, 그 바로 뒤가 되돌리기다. J02–J05 는 확인 질문 (쓰기 없음).
+- 쓰기 합계: 배치 1–4 각 18, 배치 5 는 11 + 되돌리기 6 = 17. 총 89.
+- **대기 규칙 (rolling hour)**: 다음 배치의 첫 메시지는 이전 배치의 **마지막 쓰기 시각 + 60분** 이후에 보낸다. 그러면 이전 배치의 쓰기가 전부 창 밖으로 나가 두 배치가 한 창에 겹치지 않는다.
+- 배치 중간에 `capped` 가 보이면 그 배치를 멈추고, 마지막 쓰기 + 60분을 기다린 뒤 남은 메시지부터 다시 보낸다. `capped` 턴은 라벨을 "상한" 으로 적는다.
+- 최소 소요: 대기 4회 × 60분 이상 (약 4시간 이상).
+- J 그룹 규칙: 되돌리기는 바로 앞에 쓰기 (todo.add) 가 있어야 한다. J01·J06·J08·J10·J12·J14·J16 이 쓰기 (7), J07·J09·J11·J13·J15·J17 이 되돌리기 (6). J02–J05 는 확인 질문이며 쓰기가 없다.
 
 ### 1-4. 로그 줄 읽는 법
 
@@ -68,29 +66,65 @@ grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 
 **중요 (shadow)**: `shadowAction` 은 `result` 를 항상 `shadow` 로 덮어쓰고 `kind: none` 을 돌려준다. 그래서
 - `nl_action.decided.result=shadow` 는 실행 후보, 질문, 거절을 **구별하지 못한다**. 단독으로 실행 후보라고 판정하지 않는다.
-- `nl_selection.decided.outcome` 도 shadow 에서는 항상 `none` 이다. 이 칸으로 판정하지 않는다. `entryId` 만 셀 수 있다 (selector 가 고른 엔트리).
+- `nl_selection.decided.outcome` 도 shadow 에서는 항상 `none` 이다. 이 칸으로 판정하지 않는다. `entryId` 만 쓴다 (selector 가 고른 엔트리).
 
 **`nl_action.decided`** (A6 판정 줄)
 - `entryId`, `risk`: 엔트리와 위험 등급.
-- `resolution`: 대상 해석 결과 (`resolved`, `none`, `ambiguous`, `out-of-range`, `stale`, `other-source`, `expired`, `conflict`).
-- `reason`: 질문이나 거절의 사유. 값 목록: `garbled-action`, `undo-confirm`, `ambiguous`, `other-source`, `content-mode`, `capped`, `not-request:<인자>`, `dm-only`, `no-action-word`, `deictic-payload`, 그리고 검증 사유 (예: `not-offered`, `ungrounded`).
+- `resolution`: 대상 해석 결과.
+- `reason`: 질문이나 거절의 사유.
 - `result` (local 만 실제 값): `executed` / `previewed` / `asked` / `refused` / `undone` / `capped`.
 - `targetSource`, `targetId` (로컬 항목은 UUID), `targetLabel`, `turnId`, `sessionId`.
 
-**`nl_selection.decided`** (선택 줄, 턴마다 1줄): `outcome` (local 에서만 `execute` / `ask` / `none` 이 실제 값), `entryId`, `ambiguity`, `confidence`, `route`, `latencyMs`, `cached`.
+**`nl_selection.decided`** (턴마다 1줄): `outcome` (local 에서만 `execute` / `ask` / `none` 이 실제 값), `entryId`, `ambiguity`, `confidence`, `route`, `latencyMs`, `cached`.
 
-**판정 규칙 (shadow)** — 아래 순서로 본다.
+**판정 규칙 (shadow)** — 위에서 아래로 본다.
 1. `nl_action.decided` 줄이 **없음** → 대화 (none). 기대 none 이면 맞음.
-2. 줄이 있고 `reason` 이 **있음** → 질문 또는 거절이다. `reason=garbled-action`, `undo-confirm`, `ambiguous`, `other-source`, `content-mode` 는 질문 쪽이고, `not-request:*`, `dm-only`, `no-action-word`, `deictic-payload` 와 검증 사유는 거절 쪽이다. 기대가 ask 면 질문 쪽이 맞고, 기대가 none 이면 거절 쪽이 맞다.
-3. 줄이 있고 `reason` 이 **없고** `resolution` 이 `resolved` (대상 있는 쓰기) 또는 `none` (대상 없는 쓰기: todo.add, reminder.create) 이면 → **실행 후보 (would-execute)**. 기대 execute 이고 `entryId` 가 기대 엔트리와 같으면 맞음.
-4. 실행 후보인데 기대가 ask 나 none 이면 → **부정 포착 (negative capture)**. 중단 규칙 (4장) 을 적용한다.
+2. 줄에 `reason` 이 **있음** → 질문 또는 거절. 아래 표로 분류한다.
+3. `reason` 이 **없고** `resolution` 이 `resolved` (대상 있는 쓰기) 또는 `none` (대상 없는 쓰기: todo.add, reminder.create) → **실행 후보 (would-execute)**. 기대 execute 이고 `entryId` 가 같으면 맞음.
+4. 실행 후보인데 기대가 ask 나 none 이면 → **부정 포착 (negative capture)**. 중단 규칙 (4장).
 5. 실행 후보의 `targetId` / `targetLabel` 이 말한 대상과 다르면 → **오실행 (wrong-target)**. 즉시 중단.
+
+**`reason` 분류 (shadow)** — 소스: `item-reference.ts` 의 `NlResolutionOutcome` 과 `nl-selection-service.ts` 의 `decideActionOutcome`, `decideUndo`.
+
+| 경로 | `reason` 값 | 판정 (shadow) | 기대가 ask 면 | 기대가 none 이면 |
+|---|---|---|---|---|
+| 대상 해석 실패 (항목 참조) | `out-of-range`, `expired`, `ambiguous`, `stale`, `other-source`, `none`, `conflict` | **would ask** (`asked`) | 맞음 | 부정 포착 |
+| 되돌리기 확인 | `undo-confirm` | would ask | 맞음 | 부정 포착 |
+| 되돌리기 해석 실패 | `no-action`, `undo-of-undo`, `echo-mismatch`, `stale` | **would refuse** (질문 아님, `refused`) | 틀림 (질문이 아니라 거절) | 맞음 |
+| 행동어 깨짐 | `garbled-action` | would ask | 맞음 | 부정 포착 |
+| 행동어 없음 / 모호 | `ambiguous`, `other-source`, `content-mode`, `no-action-word` | ask 또는 refuse (아래 참고) | `ambiguous`, `other-source`, `content-mode` 는 맞음 | 부정 포착 |
+| 거절 (veto, 입력, DM) | `not-request:<인자>`, `dm-only`, `deictic-payload`, 검증 사유 | would refuse (대화) | 틀림 | 맞음 |
+| 상한 | `capped` | 해당 없음 (shadow 는 상한을 세지 않음) | — | — |
+
+- `no-action-word` 는 todo.add / reminder.create 에서 `asked` (재질문), 그 밖에서는 대화. 기대 ask 면 todo.add·reminder.create 에서만 맞다.
+- 되돌리기 해석 실패는 질문이 아니라 거절이다 (`renderUndoUnresolved`). "would ask" 로 세지 않는다.
 
 **판정 규칙 (local)**: `result=executed` 또는 `undone` 이 execute 기대에 맞다. `asked` 는 ask, `refused` 또는 줄 없음은 none 이다. `executed` 가 none 기대에 나오면 부정 포착이다. `capped` 가 나오면 1-3 의 배치 중단 규칙을 따른다.
 
-**판정 방법 요약**
-- 오실행 (wrong-target): 실행된 항목 (`targetId`/`targetLabel`) 이 말한 대상과 다름. 기대 엔트리와 다른 엔트리 실행도 포함.
-- 부정 포착: 기대가 ask/none 인데 실행 후보 (shadow) 또는 `executed` (local).
+### 1-5. 의존성 정리 (복원 목록)
+
+같은 배치 안이나 뒤의 케이스가 앞 케이스가 쓴 항목을 다시 쓰면 실패한다 (이미 완료 또는 취소된 항목). 아래 표의 케이스 바로 앞에 `할 일 추가: <제목>` 을 한 번 보내 항목을 다시 연다 (고정 명령, 상한 밖). 표에 없는 케이스는 앞 케이스가 쓰지 않은 항목을 쓴다.
+
+| 항목 | 최초 소비 | 복원 앞 케이스 (재시드) |
+|---|---|---|
+| 장보기 (할 일) | B01 | B04, B07, B09, F02, F10, G06 |
+| 보고서 초안 작성 (할 일) | B02 | B05, B08, F04 |
+| 세금 서류 챙기기 (할 일) | B03 | B06, B10 |
+| 창고 정리 일정 잡기 (할 일) | C01 | C04, C05, G07, M05 |
+| 분기 회의록 정리 (할 일) | C02 | C06 |
+| 법인카드 정산 메모 (할 일) | C03 | F06 |
+
+이전에 있던 의존성 충돌과 고친 방법 (표 밖의 것):
+- **알림 제목 중복 (E01 vs D01 등)**: 고정 알림을 두지 않고 D 그룹이 만든 알림을 E 그룹이 취소하도록 했다 (E01 치과 ← D01, E02 법무팀 ← D04, E03 택배 ← D05, E04 운동 ← D06, E05 세무사 ← D02). 중복 제목으로 생기던 모호함이 사라졌다.
+- **E06** 은 "치과 예약 확인" 대신 D03 의 "주간 지표 확인" 을 취소한다 (치과는 E01 이 이미 취소).
+- **F09** 는 "경비 승인 메일 확인" (D12) 을 취소한다. **M06** 은 "보고서 제출" (D07) 을 취소한다. **K02** 는 "협력사 방문" (D08) 을 취소한다. 셋 다 그 전에 만들어진 알림이고 다른 케이스가 쓰지 않는다.
+- **C04** 는 없는 항목 ("창고 점검 항목") 이던 것을 "창고 정리 일정 잡기" 로 바꿨다. 기대 execute 가 맞도록.
+- **L04** 는 알림 목록이 여럿이면 "그거" 가 모호하므로 기대를 ask 로 바꿨다 (목록 1개 보장 없이 execute 를 기대하지 않는다).
+- **L08** 은 "1번" 을 쓰므로 목록을 바로 앞에 띄운다. 어떤 알림이든 상관없다.
+- **H10** 은 알림 제목을 "병원 접수 확인" 으로 바꿨다 (치과 예약 확인과 겹치지 않게).
+- **M04** 은 D11 과 같은 문장이었으므로 "Friday 5pm: check the invoice" 로 바꿨다. **M05** 은 C05 와 같은 문장이었으므로 "task" 로 바꿨다.
+- **J 그룹**: 되돌리기마다 바로 앞에 쓰기 (todo.add 시드) 를 둬서, 앞 되돌리기가 쓴 상태를 다음 되돌리기가 쓰지 않게 했다.
+- 같은 문장이 의도적으로 두 번 나오는 쌍: K01 ↔ K03 (DM 과 채널), K05 ↔ B01 (채널), K04 ↔ E01 계열 문장 (채널). 채널은 DM 전용이라 상태를 바꾸지 않는다.
 
 
 ## 2. 테스트 메시지 (139개)
@@ -128,13 +162,13 @@ grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 | B01 | 장보기 완료 처리해줘 | 실행 (execute) | todo.complete | 새 상태 |  |
 | B02 | 보고서 초안 작성 완료로 바꿔줘 | 실행 (execute) | todo.complete | 새 상태 |  |
 | B03 | 세금 서류 챙기기 체크해줘 | 실행 (execute) | todo.complete | 새 상태 |  |
-| B04 | 장보기 완료로 해줘 | 실행 (execute) | todo.complete | 새 상태 |  |
-| B05 | 보고서 초안 작성 완료 처리 부탁해 | 실행 (execute) | todo.complete | 새 상태 |  |
-| B06 | 세금 서류 챙기기 끝냄 표시 해줘 | 실행 (execute) | todo.complete | 새 상태 |  |
-| B07 | 할 일 장보기 체크해 줘 | 실행 (execute) | todo.complete | 새 상태 |  |
-| B08 | 보고서 초안 작성 완료 처리해줘 | 실행 (execute) | todo.complete | 새 상태 |  |
-| B09 | Mark the 장보기 to-do as done | 실행 (execute) | todo.complete | 새 상태 |  |
-| B10 | Complete the 세금 서류 챙기기 to-do | 실행 (execute) | todo.complete | 새 상태 |  |
+| B04 | 장보기 완료로 해줘 | 실행 (execute) | todo.complete | 새 상태 | 앞에 재시드: 할 일 추가: 장보기 |
+| B05 | 보고서 초안 작성 완료 처리 부탁해 | 실행 (execute) | todo.complete | 새 상태 | 앞에 재시드: 할 일 추가: 보고서 초안 작성 |
+| B06 | 세금 서류 챙기기 끝냄 표시 해줘 | 실행 (execute) | todo.complete | 새 상태 | 앞에 재시드: 할 일 추가: 세금 서류 챙기기 |
+| B07 | 할 일 장보기 체크해 줘 | 실행 (execute) | todo.complete | 새 상태 | 앞에 재시드: 할 일 추가: 장보기 |
+| B08 | 보고서 초안 작성 완료 처리해줘 | 실행 (execute) | todo.complete | 새 상태 | 앞에 재시드: 할 일 추가: 보고서 초안 작성 |
+| B09 | Mark the 장보기 to-do as done | 실행 (execute) | todo.complete | 새 상태 | 앞에 재시드: 할 일 추가: 장보기 |
+| B10 | Complete the 세금 서류 챙기기 to-do | 실행 (execute) | todo.complete | 새 상태 | 앞에 재시드: 할 일 추가: 세금 서류 챙기기 |
 
 ### C. 할 일 취소 (todo.cancel) — 6개
 
@@ -143,9 +177,9 @@ grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 | C01 | 창고 정리 일정 잡기 할 일 취소해줘 | 실행 (execute) | todo.cancel | 새 상태 |  |
 | C02 | 분기 회의록 정리 취소해 줘 | 실행 (execute) | todo.cancel | 새 상태 |  |
 | C03 | 법인카드 정산 메모 취소 처리해줘 | 실행 (execute) | todo.cancel | 새 상태 |  |
-| C04 | 할 일에서 창고 점검 항목 없애줘 | 실행 (execute) | todo.cancel | 새 상태 |  |
-| C05 | Cancel the 창고 정리 일정 잡기 to-do | 실행 (execute) | todo.cancel | 새 상태 |  |
-| C06 | Cancel the 분기 회의록 정리 to-do | 실행 (execute) | todo.cancel | 새 상태 |  |
+| C04 | 할 일에서 창고 정리 일정 잡기 없애줘 | 실행 (execute) | todo.cancel | 새 상태 | 앞에 재시드: 할 일 추가: 창고 정리 일정 잡기 |
+| C05 | Cancel the 창고 정리 일정 잡기 to-do | 실행 (execute) | todo.cancel | 새 상태 | 앞에 재시드: 할 일 추가: 창고 정리 일정 잡기 |
+| C06 | Cancel the 분기 회의록 정리 to-do | 실행 (execute) | todo.cancel | 새 상태 | 앞에 재시드: 할 일 추가: 분기 회의록 정리 |
 
 ### D. 알림 등록 (reminder.create) — 12개
 
@@ -173,22 +207,22 @@ grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 | E03 | 택배 수령 알림 취소해 줘 | 실행 (execute) | reminder.cancel | 새 상태 |  |
 | E04 | 운동 가기 알림 없애줘 | 실행 (execute) | reminder.cancel | 새 상태 |  |
 | E05 | 세무사 통화 알림 취소 처리해줘 | 실행 (execute) | reminder.cancel | 새 상태 |  |
-| E06 | Cancel the reminder for 치과 예약 확인 | 실행 (execute) | reminder.cancel | 새 상태 |  |
+| E06 | Cancel the reminder for 주간 지표 확인 | 실행 (execute) | reminder.cancel | 새 상태 |  |
 
 ### F. 공손한 요청 — 10개
 
 | ID | 메시지 | 기대 결과 | 기대 엔트리 | 상태 | 비고 |
 |---|---|---|---|---|---|
 | F01 | 번거로우시겠지만 할 일에 자료 백업 확인 추가해 주시겠어요? | 실행 (execute) | todo.add | 새 상태 |  |
-| F02 | 바쁘시겠지만 장보기 완료 처리 부탁드립니다 | 실행 (execute) | todo.complete | 새 상태 |  |
+| F02 | 바쁘시겠지만 장보기 완료 처리 부탁드립니다 | 실행 (execute) | todo.complete | 새 상태 | 앞에 재시드: 할 일 추가: 장보기 |
 | F03 | 죄송한데 내일 오전 9시에 알림 걸어 주실 수 있을까요? 발송 확인 | 실행 (execute) | reminder.create | 새 상태 |  |
-| F04 | 수고하셨어요, 보고서 초안 작성 완료로 해 주세요 | 실행 (execute) | todo.complete | 새 상태 |  |
+| F04 | 수고하셨어요, 보고서 초안 작성 완료로 해 주세요 | 실행 (execute) | todo.complete | 새 상태 | 앞에 재시드: 할 일 추가: 보고서 초안 작성 |
 | F05 | 괜찮으시면 할 일에 사무실 장비 정비 넣어 주세요 | 실행 (execute) | todo.add | 새 상태 |  |
-| F06 | 혹시 가능하면 법인카드 정산 메모 취소해 주시면 감사하겠습니다 | 실행 (execute) | todo.cancel | 새 상태 |  |
+| F06 | 혹시 가능하면 법인카드 정산 메모 취소해 주시면 감사하겠습니다 | 실행 (execute) | todo.cancel | 새 상태 | 앞에 재시드: 할 일 추가: 법인카드 정산 메모 |
 | F07 | 감사합니다, 이번 주 금요일 오전 10시 알림 한 번만 걸어 주세요, 회의 자료 발송 | 실행 (execute) | reminder.create | 새 상태 |  |
 | F08 | 부탁해요, 할 일에 주차권 정산 추가해 주세요 | 실행 (execute) | todo.add | 새 상태 |  |
-| F09 | 번거롭게 해서 미안한데, 치과 예약 확인 알림 취소 부탁드려요 | 실행 (execute) | reminder.cancel | 새 상태 |  |
-| F10 | 정중하게 부탁드릴게요, 장보기 체크 처리해 주세요 | 실행 (execute) | todo.complete | 새 상태 |  |
+| F09 | 번거롭게 해서 미안한데, 경비 승인 메일 확인 알림 취소 부탁드려요 | 실행 (execute) | reminder.cancel | 새 상태 |  |
+| F10 | 정중하게 부탁드릴게요, 장보기 체크 처리해 주세요 | 실행 (execute) | todo.complete | 새 상태 | 앞에 재시드: 할 일 추가: 장보기 |
 
 ### G. 제목만 / 콜론 형식 — 10개
 
@@ -199,8 +233,8 @@ grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 | G03 | 알림: 내일 오후 4시 물품 입고 확인 | 실행 (execute) | reminder.create | 새 상태 |  |
 | G04 | 리마인더: 금요일 오전 9시 주간 회의록 공유 | 실행 (execute) | reminder.create | 새 상태 |  |
 | G05 | To-do: 사무실 와이파이 비밀번호 변경 | 실행 (execute) | todo.add | 새 상태 |  |
-| G06 | 완료: 장보기 | 실행 (execute) | todo.complete | 새 상태 |  |
-| G07 | 취소: 창고 정리 일정 잡기 | 실행 (execute) | todo.cancel | 새 상태 |  |
+| G06 | 완료: 장보기 | 실행 (execute) | todo.complete | 새 상태 | 앞에 재시드: 할 일 추가: 장보기 |
+| G07 | 취소: 창고 정리 일정 잡기 | 실행 (execute) | todo.cancel | 새 상태 | 앞에 재시드: 할 일 추가: 창고 정리 일정 잡기 |
 | G08 | 초안 작성 건 확인 | 대화 (none) | — | 새 상태 |  |
 | G09 | 세금 서류 챙기기 할 일 | 대화 (none) | — | 새 상태 |  |
 | G10 | 할 일 - 프로젝트 킥오프 자료 | 대화 (none) | — | 새 상태 |  |
@@ -218,7 +252,7 @@ grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 | H07 | 창고 정리 일정 잡기 칸셀 부탁 | 질문 (ask) | — | 새 상태 |  |
 | H08 | 할 일에 발송 확인 추갸해줘 | 질문 (ask) | — | 새 상태 |  |
 | H09 | 사무실 청소 할 일 츄가 | 질문 (ask) | — | 새 상태 |  |
-| H10 | 내일 9시 알림 걸어줘 치과 | 실행 (execute) | reminder.create | 새 상태 | control: valid word, must execute |
+| H10 | 내일 9시 알림 걸어줘 병원 접수 확인 | 실행 (execute) | reminder.create | 새 상태 | control: valid word, must execute |
 
 ### I. 거부 문장 (veto 9종, 전부 대화로 처리) — 18개
 
@@ -270,7 +304,7 @@ grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 | ID | 메시지 | 기대 결과 | 기대 엔트리 | 상태 | 비고 |
 |---|---|---|---|---|---|
 | K01 | 할 일에 주간 점검표 추가해줘 | 실행 (execute) | todo.add | 새 상태 | DM 에서 보냄 |
-| K02 | 치과 예약 확인 알림 취소해줘 | 실행 (execute) | reminder.cancel | 새 상태 | DM 에서 보냄 |
+| K02 | 협력사 방문 알림 취소해줘 | 실행 (execute) | reminder.cancel | 새 상태 | DM 에서 보냄 |
 | K03 | 할 일에 주간 점검표 추가해줘 | 대화 (none) | — | 새 상태 | channel 에서 보냄 |
 | K04 | 치과 예약 확인 알림 취소해줘 | 대화 (none) | — | 새 상태 | channel 에서 보냄 |
 | K05 | 장보기 완료 처리해줘 | 대화 (none) | — | 새 상태 | channel 에서 보냄 |
@@ -283,7 +317,7 @@ grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 | L01 | 그거 완료로 표시해줘 | 질문 (ask) | todo.complete | 할 일 목록 표시 뒤 | LT: 할 일 3개 목록 |
 | L02 | 2번 항목 완료로 바꿔줘 | 실행 (execute) | todo.complete | 할 일 목록 표시 뒤 | LT: 할 일 3개 목록 |
 | L03 | 그 할 일 완료해줘 | 질문 (ask) | todo.complete | 할 일 목록 표시 뒤 | LT: 할 일 3개 목록 |
-| L04 | 그거 알림 지워줘 | 실행 (execute) | reminder.cancel | 알림 목록 표시 뒤 | LR: 알림 1개 목록 '치과 예약 확인' |
+| L04 | 그거 알림 지워줘 | 질문 (ask) | reminder.cancel | 알림 목록 표시 뒤 | LR: 알림 여러 개 목록 |
 | L05 | 그거 투두로 넣어줘 | 대화 (none) | — | 메일 목록 표시 뒤 | LM: 메일 3개 목록 |
 | L06 | 그거 내일 9시에 알림으로 걸어둬 | 질문 (ask) | reminder.create | 할 일 목록 표시 뒤 | LT: 할 일 3개 목록 |
 | L07 | 그거 체크 처리해줘 | 질문 (ask) | todo.complete | 새 상태 | 새 세션, 목록 없음 |
@@ -298,9 +332,9 @@ grep -E 'nl_action.decided|nl_selection.decided' <서비스 로그 파일>
 | M01 | Please add the 'UAT notes' to-do | 실행 (execute) | todo.add | 새 상태 |  |
 | M02 | Add to my to-do list: renew the office Wi-Fi contract | 실행 (execute) | todo.add | 새 상태 |  |
 | M03 | Remind me at 9am tomorrow to phone the bank | 실행 (execute) | reminder.create | 새 상태 |  |
-| M04 | Set a reminder for Friday 4pm: send the invoice | 실행 (execute) | reminder.create | 새 상태 |  |
-| M05 | Cancel the 창고 정리 일정 잡기 to-do | 실행 (execute) | todo.cancel | 새 상태 |  |
-| M06 | Cancel the reminder for 세무사 통화 | 실행 (execute) | reminder.cancel | 새 상태 |  |
+| M04 | Set a reminder for Friday 5pm: check the invoice | 실행 (execute) | reminder.create | 새 상태 |  |
+| M05 | Cancel the 창고 정리 일정 잡기 task | 실행 (execute) | todo.cancel | 새 상태 | 앞에 재시드: 할 일 추가: 창고 정리 일정 잡기 |
+| M06 | Cancel the reminder for 보고서 제출 | 실행 (execute) | reminder.cancel | 새 상태 |  |
 | M07 | Don't add a to-do for the report | 대화 (none) | — | 새 상태 |  |
 | M08 | Should I add a to-do for the report? | 대화 (none) | — | 새 상태 |  |
 | M09 | I wish I had added a to-do for the report | 대화 (none) | — | 새 상태 |  |
