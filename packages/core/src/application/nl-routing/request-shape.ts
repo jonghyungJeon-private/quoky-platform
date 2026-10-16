@@ -53,7 +53,9 @@ const WORD_NOISE = /[\u3131-\u318e\p{Extended_Pictographic}\uFE0F\u200D~^!.?,…
 // the contracted quotatives on the light verb 하, the linking vowel 으, 달(라) and 주 (하래, 넣으래, 해 달래, 해 주래, 하재).
 const QUOTED_REQUEST_KO = /(?:줘|주세요|줄래|해)\s*(?:했던|했잖아|했는데|했더니|했어|했지|했다|했었|라고|이라고|라는|란|하면|하고|그랬|하길래|해서|하니까|하더라|하던데|하셨)/u;
 const QUOTATIVE_KO = /(?:라|자|달라|냐|다)고\s*(?:했|하더|하던|하셨|하시|하네|하대|해서|하길래|하니까|그러|그랬|말했|들었|한다|합니다|하는데|해(?!\s*(?:줘|주세요|줄래|주실|주시|줘요))|전해|전달|말해|얘기해|이야기해)|(?:라|다)(?:는데|던데|더라)/u;
-const CONTRACTED_QUOTATIVE_KO = /(?:하|으|달|주)(?:래|래요|래서|랬|라셔|라시|란다|재|재요)(?=$|[\s.!?~,]|[\u3131-\u318e])/u;
+// The past 랬 is hearsay with any ending after it (달랬어, 하랬는데, 주랬잖아); the present 래 also before the connective
+// 는데 (달래는데): the same contracted quotative followed by a connective, never a phrase (A6 R2 review, CA P3).
+const CONTRACTED_QUOTATIVE_KO = /(?:하|으|달|주)(?:(?:래|래요|래서|라셔|라시|란다|재|재요)(?=$|[\s.!?~,]|[\u3131-\u318e]|는데)|랬)/u;
 /** A quoted segment of the frame (content spans already removed): '…', "…", “…”, ‘…’, 「…」, 『…』. */
 const QUOTED_SEGMENT = /'([^']+)'|"([^"]+)"|“([^”]+)”|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
 const REPORTED_EN = /\b(?:told|asked|wants?|wanted|said|says)\s+(?:(?:me|us|him|her|them)\s+)?to\b|\b(?:you|someone|somebody|they|he|she)\s+(?:should|must|might|could|said|says|told|wants?|wanted)\b/u;
@@ -543,24 +545,19 @@ export function nlIsRequestForm(raw: string): boolean {
 }
 
 /**
- * Whether `text` makes a FINITE request: a request ending, a 하다 verb of an action word or an action verb in its own
- * imperative ending anywhere, or an English request lead or action verb first (the {@link isQuotedRequest} grammar, on the
- * owner's own prose). A verbal noun, a connective ("요약해서") or a past form ("요약했어") is no request. The A6 R2
- * ITEM_READ veto reads it to keep a read whose request stands beside a description or a reason (v47 review).
+ * The retraction class on its own (A6 R2 ITEM_READ veto): a request followed by a later clause that only takes it back
+ * ("3번 요약해줘 아 아니다", "… 아 취소", "…, never mind"): the last clause negates or retracts (the negators, the
+ * retraction words) and makes no request of its own, and an earlier clause makes one. A later clause that names an action
+ * or a mode ("원문 보여줘, 요약하지 마", "…, not a summary") is no retraction. `nlRequestVeto` reports such a message as
+ * `negation` (its first class), so a caller that does not veto negation reads the retraction here. Grammar only.
  */
-export function nlMakesFiniteRequest(text: string, actionWords: readonly string[]): boolean {
-  return isQuotedRequest(normalizeForMatch(text), actionWords);
-}
-
-/**
- * The connective segments of `text`: split after a word in the connective -고 ("되고", "말고", "하고") and at a comma or
- * semicolon. Grammar only; the A6 R2 ITEM_READ veto reads the last segment ("요약 안 해도 되고 | 원문 보여줘").
- */
-export function nlConnectiveSegments(text: string): string[] {
-  return normalizeForMatch(text)
-    .split(/(?<=고)\s+|[,;]\s*/u)
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0);
+export function nlRequestRetracted(text: string, actionWords: readonly string[]): boolean {
+  const clauses = clausesOf(normalizeForMatch(text).replace(/[’‘`´]/gu, "'"));
+  if (clauses.length < 2) return false;
+  const last = clauses.at(-1) ?? '';
+  const lastWord = wordsOf(last).at(-1) ?? '';
+  const takesBack = NEGATION_KO.test(last) || NEGATION_EN.test(last) || RETRACTION_FINAL.test(lastWord) || RETRACTION_ANYWHERE.test(last) || /never mind|forget it/u.test(last);
+  return takesBack && !requestsSomething(last, actionWords) && clauses.slice(0, -1).some((clause) => requestsSomething(clause, actionWords));
 }
 
 /** Whether `text` makes a request of its own (a request word, an action word as a command, an English request lead). */

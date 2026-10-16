@@ -107,9 +107,9 @@ describe('the A6 R2 corpus (agent-drafted, awaiting the owner batch approval)', 
     expect(captured).toEqual([]);
   });
 
-  it('closes the known gap: the six selector-only negatives are vetoed by Core now (v47 ITEM_READ request-shape veto)', async () => {
-    // The gold still flags them `selectorOnly` (proposal 1.1); the flag is the owner's to retire. Since the v47 veto
-    // (negation, reported speech, past statement) none of them executes, whatever item.summarize the selector mistakes it for.
+  it('pins the known gap: of the six selector-only negatives, Core vetoes only the reported 070 (v47 ITEM_READ veto)', async () => {
+    // Negation and past statements stay with the selector (the v47 veto covers reported, example, joke and retraction only):
+    // Core executes them if the selector mistakes them; the reported command 070 is refused whatever the selector says.
     const selectorOnly = cases.filter((golden) => golden.selectorOnly === true);
     expect(selectorOnly).toHaveLength(6);
     expect(selectorOnly.every((golden) => golden.expect === 'none' && golden.family === 'negative')).toBe(true);
@@ -117,9 +117,12 @@ describe('the A6 R2 corpus (agent-drafted, awaiting the owner batch approval)', 
     for (const golden of selectorOnly) {
       for (const args of worstCases(golden.text)) {
         const { decision } = await decideActionCase(golden, scripted(answer('item.summarize', args)), NOW, { itemR2: 'all' });
-        if (decision.kind === 'execute') executed.push(`${golden.id}: ${JSON.stringify(args)}`);
+        if (decision.kind === 'execute') {
+          executed.push(golden.id);
+          break;
+        }
       }
     }
-    expect(executed).toEqual([]);
+    expect(executed).toEqual(['a6r2-negative-068', 'a6r2-negative-069', 'a6r2-negative-071', 'a6r2-negative-072', 'a6r2-negative-073']);
   });
 });
