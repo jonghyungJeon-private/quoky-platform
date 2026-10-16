@@ -1,7 +1,6 @@
 import type { NlAmbiguityKey, NlArgs, NlArgValue, NlCatalogEntry, NlWave1EntryId } from './catalog';
 import { containsGroundingWord } from './grammar-residual';
 import { hasJiraReleaseLink } from '../work-chat/jira-release-link';
-import { CONNECTOR_CONTAINER_KEY } from '../../ports/connector-query';
 import { nlRangeLabel, type NlResolvedRange } from './symbolic-time';
 
 /**
@@ -210,30 +209,19 @@ const jiraIssues: NlCatalogEntry = {
  */
 /**
  * Structural canonicalization of `jira.release` args (no phrase list; it reads only the arg values and the shape of the
- * owner's text):
- *  - a `release` that is only digits copied from a pasted link (the digits occur nowhere outside the URLs) is dropped:
- *    Core reads the link itself, so the owner's own words name no release;
- *  - a `release` of the form "<PROJECTKEY> <version>" (first token matches the connector's project-key pattern, the rest
- *    holds a digit) is split into `project` and `release` when `project` is absent or already that key.
+ * owner's text): a `release` of digits that occur inside a pasted link, and nowhere in the owner's prose or in the previous
+ * selection's release, is dropped: Core reads the link itself, so the owner's own words name no release. A "<KEY> <version>"
+ * release is NOT split here: only the lookup can verify the key against the visible projects (`splitKeyFromRelease`).
  */
-export function normalizeJiraReleaseArgs(args: Record<string, NlArgValue>, groundingText?: string): void {
+export function normalizeJiraReleaseArgs(args: Record<string, NlArgValue>, groundingText?: string, previousArgs?: NlArgs): void {
   const release = args.release;
-  if (typeof release !== 'string') return;
-  if (groundingText !== undefined && /^\d+$/u.test(release.trim())) {
-    const withoutLinks = groundingText.normalize('NFC').replace(/https?:\/\/[^\s<>"'`]+/giu, ' ');
-    if (hasJiraReleaseLink(groundingText) && !withoutLinks.includes(release.trim())) {
-      delete args.release;
-      return;
-    }
-  }
-  const parts = release.trim().split(/\s+/u);
-  if (parts.length < 2) return;
-  const [key, ...rest] = parts as [string, ...string[]];
-  const version = rest.join(' ');
-  if (!CONNECTOR_CONTAINER_KEY.test(key) || !/\d/u.test(version)) return;
-  if (args.project !== undefined && args.project !== key) return;
-  args.project = key;
-  args.release = version;
+  if (typeof release !== 'string' || groundingText === undefined || !/^\d+$/u.test(release.trim())) return;
+  const digits = release.trim();
+  const text = groundingText.normalize('NFC');
+  if (!hasJiraReleaseLink(text) || previousArgs?.release === digits) return;
+  const links = text.match(/https?:\/\/[^\s<>"'`]+/giu) ?? [];
+  const prose = text.replace(/https?:\/\/[^\s<>"'`]+/giu, ' ');
+  if (links.some((link) => link.includes(digits)) && !prose.includes(digits)) delete args.release;
 }
 
 const jiraRelease: NlCatalogEntry = {
@@ -254,8 +242,8 @@ const jiraRelease: NlCatalogEntry = {
   ],
   usage: { ko: '"ABC 프로젝트 1.2.0 릴리스 보여줘"', en: '"ABC 프로젝트 1.2.0 릴리스 보여줘"' },
   sourceNames: ['jira', '지라'],
-  normalize(args: Record<string, NlArgValue>, groundingText?: string): void {
-    normalizeJiraReleaseArgs(args, groundingText);
+  normalize(args: Record<string, NlArgValue>, groundingText?: string, previousArgs?: NlArgs): void {
+    normalizeJiraReleaseArgs(args, groundingText, previousArgs);
   },
   check(args: NlArgs, groundingText: string) {
     // A release listing is bounded by what the owner named: a release, a project or a release link (any host here;

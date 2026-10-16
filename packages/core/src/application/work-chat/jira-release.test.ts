@@ -537,21 +537,16 @@ describe('prompt nl-select.v39 (A8): the jira.release examples appear only while
 describe('jira.release arg canonicalization (structural, v39)', () => {
   const argsOf = (result: ReturnType<typeof validate>) => (result.ok ? result.value.args : result);
 
-  it('splits "<PROJECTKEY> <version>" held in release into project and release', () => {
-    expect(argsOf(validate('jira.release', { release: 'ZQX9 20990101' }, 'ZQX9 20990101 보여줘'))).toEqual({ project: 'ZQX9', release: '20990101' });
-    expect(argsOf(validate('jira.release', { project: 'ZQX9', release: 'ZQX9 4.5.6' }, 'ZQX9 4.5.6 릴리스'))).toEqual({ project: 'ZQX9', release: '4.5.6' });
+  it('never splits "<KEY> <version>" in the validator (the lookup verifies the key against visible projects)', () => {
+    expect(argsOf(validate('jira.release', { release: 'RC 2026' }, 'RC 2026 보여줘'))).toEqual({ release: 'RC 2026' });
+    expect(argsOf(validate('jira.release', { release: 'ZQX9 20990101' }, 'ZQX9 20990101 보여줘'))).toEqual({ release: 'ZQX9 20990101' });
   });
 
-  it('leaves a release that is not key + version-with-a-digit, or whose project differs, untouched', () => {
-    expect(argsOf(validate('jira.release', { release: 'Spring Release' }, 'Spring Release 보여줘'))).toEqual({ release: 'Spring Release' });
-    expect(argsOf(validate('jira.release', { release: 'RC final' }, 'RC final 보여줘'))).toEqual({ release: 'RC final' });
-    expect(argsOf(validate('jira.release', { project: 'OTHER', release: 'ZQX9 7' }, 'OTHER ZQX9 7'))).toEqual({ project: 'OTHER', release: 'ZQX9 7' });
-  });
-
-  it('drops digits that come only from a pasted link, keeps digits the owner wrote outside it', () => {
+  it('drops digits that come only from a pasted link, keeps digits the owner wrote or the previous selection holds', () => {
     const link = 'https://example.atlassian.net/projects/ZQX9/versions/16555/tab/release-report-all-issues';
     expect(argsOf(validate('jira.release', { release: '16555' }, `확인 ${link}`))).toEqual({});
     expect(argsOf(validate('jira.release', { release: '16555' }, `16555 확인 ${link}`))).toEqual({ release: '16555' });
     expect(argsOf(validate('jira.release', { release: '16555' }, '16555 확인'))).toEqual({ release: '16555' });
+    expect(argsOf(validate('jira.release', { release: '20261015' }, '이 프로젝트에서도 보여줘 https://example.atlassian.net/projects/WEB', { release: '20261015' }))).toEqual({ release: '20261015' });
   });
 });
