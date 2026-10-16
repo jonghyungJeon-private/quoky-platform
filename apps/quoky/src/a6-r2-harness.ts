@@ -36,6 +36,10 @@ export interface JiraFixtureIssue {
   /** What the single-issue GET answers instead of the issue. */
   readonly answer?: 'redirect' | 'other-id' | 'not-found' | 'oversize' | 'forbidden';
   readonly commentTotal?: number;
+  /** Text hidden in a collapsed ADF `expand` node of the description (an injection's favourite place). */
+  readonly hidden?: string;
+  /** A person @-mentioned (an ADF `mention` node) in the first comment. */
+  readonly mention?: string;
 }
 
 export interface SlackFixtureMessage {
@@ -48,8 +52,11 @@ export interface SlackFixtureMessage {
 }
 
 /** A plain ADF document of one paragraph per line. */
-export function adf(text: string): unknown {
-  return { type: 'doc', version: 1, content: text.split('\n').map((line) => ({ type: 'paragraph', content: line.length > 0 ? [{ type: 'text', text: line }] : [] })) };
+export function adf(text: string, extra: { readonly hidden?: string; readonly mention?: string } = {}): unknown {
+  const content: unknown[] = text.split('\n').map((line) => ({ type: 'paragraph', content: line.length > 0 ? [{ type: 'text', text: line }] : [] }));
+  if (extra.mention !== undefined) content.push({ type: 'paragraph', content: [{ type: 'mention', attrs: { id: 'acc-1', text: `@${extra.mention}` } }, { type: 'text', text: ' 확인 부탁해요.' }] });
+  if (extra.hidden !== undefined) content.push({ type: 'expand', attrs: { title: '' }, content: [{ type: 'paragraph', content: [{ type: 'text', text: extra.hidden }] }] });
+  return { type: 'doc', version: 1, content };
 }
 
 const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -70,6 +77,12 @@ export interface R2Harness {
   summarizer: (prompt: string) => string;
   /** The stub chat answer (`GENERAL_CHAT` and every other capability). */
   chat: string;
+  /** How the Slack fixture answers a single thread-reply read (`normal`, the parent alone, or the parent and a neighbour). */
+  slackReplyMode: 'normal' | 'parent-only' | 'neighbour';
+  /** Extra generated replies of a thread (a 1,000-reply thread). */
+  extraReplies: (ts: string) => SlackFixtureMessage[];
+  /** Every console line the app logged (the ConsoleLogger writes through console). */
+  logLines(): string[];
   turn(text: string, selector?: string, context?: ConversationContext, extra?: Partial<InboundMessage>): Promise<{ result: TurnResult; text: string; selects: AiRequest[]; summaries: AiRequest[]; chats: AiRequest[]; items: string[] }>;
   dm: ConversationContext;
   channel: ConversationContext;
@@ -92,6 +105,8 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
     selector: none,
     summarizer: (prompt: string) => prompt,
     chat: R2_CHAT_REPLY,
+    slackReplyMode: 'normal' as 'normal' | 'parent-only' | 'neighbour',
+    extraReplies: (_ts: string): SlackFixtureMessage[] => [],
   };
 
   vi.stubGlobal('fetch', async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
@@ -112,7 +127,12 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
         if (issue.answer === 'forbidden') return json({}, 403);
         if (issue.answer === 'redirect') return new Response(null, { status: 301, headers: { Location: `https://${R2_JIRA_HOST}/rest/api/3/issue/99999` } });
         if (issue.answer === 'oversize') return new Response('x'.repeat(1_048_577), { status: 200, headers: { 'Content-Type': 'application/json' } });
-        const comments = (issue.comments ?? []).map((comment, index) => ({ id: String(index + 1), author: { displayName: comment.author }, created: `2026-10-15T0${index}:00:00.000+0000`, body: adf(comment.text) }));
+        const comments = (issue.comments ?? []).map((comment, index) => ({
+          id: String(index + 1),
+          author: { displayName: comment.author },
+          created: new Date(Date.parse('2026-10-15T00:00:00.000Z') + index * 60_000).toISOString(),
+          body: adf(comment.text, index === 0 && issue.mention !== undefined ? { mention: issue.mention } : {}),
+        }));
         return json({
           id: issue.answer === 'other-id' ? '77777' : issue.id,
           key: issue.currentKey ?? issue.key,
@@ -121,7 +141,7 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
             status: { name: 'Open' },
             issuetype: { name: 'Task' },
             updated: '2026-10-15T00:00:00.000+0000',
-            description: adf(issue.description),
+            description: adf(issue.description, issue.hidden !== undefined ? { hidden: issue.hidden } : {}),
             comment: { comments, startAt: 0, maxResults: 50, total: issue.commentTotal ?? comments.length },
           },
         });
@@ -146,10 +166,18 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
         const ts = url.searchParams.get('ts') as string;
         const oldest = url.searchParams.get('oldest');
         const parent = state.slack.find((message) => message.ts === ts) ?? { ts, user: 'U0PARENT01', text: '원글', replyCount: 1 };
-        const replies = state.slack.filter((message) => message.threadTs === ts);
+        const replies = [...state.slack.filter((message) => message.threadTs === ts), ...state.extraReplies(ts)];
         let messages: SlackFixtureMessage[] = [parent, ...replies];
-        if (oldest !== null) messages = [parent, ...replies.filter((message) => message.ts === oldest)];
-        else if (url.searchParams.get('limit') === '1') messages = [parent];
+        if (oldest !== null) {
+          // A hostile or broken answer for a reply read: the parent alone, or the parent and a neighbour.
+          const neighbour: SlackFixtureMessage = { ts: '1700009999.000100', user: 'U0NEIGH001', text: 'NEIGHBOUR-CANARY 다른 메시지', threadTs: ts };
+          messages =
+            state.slackReplyMode === 'parent-only'
+              ? [parent]
+              : state.slackReplyMode === 'neighbour'
+                ? [parent, neighbour]
+                : [parent, ...replies.filter((message) => message.ts === oldest)];
+        } else if (url.searchParams.get('limit') === '1') messages = [parent];
         return json({
           ok: true,
           messages: messages.map((message) => ({ ts: message.ts, user: message.user, text: message.text, ...(message.replyCount !== undefined ? { reply_count: message.replyCount } : {}), ...(message.threadTs !== undefined ? { thread_ts: message.threadTs } : {}) })),
@@ -248,6 +276,23 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
     },
     set chat(value) {
       state.chat = value;
+    },
+    get slackReplyMode() {
+      return state.slackReplyMode;
+    },
+    set slackReplyMode(value) {
+      state.slackReplyMode = value;
+    },
+    get extraReplies() {
+      return state.extraReplies;
+    },
+    set extraReplies(value) {
+      state.extraReplies = value;
+    },
+    logLines() {
+      return (['log', 'warn', 'error', 'info'] as const).flatMap((method) =>
+        ((console[method] as unknown as { mock?: { calls: unknown[][] } }).mock?.calls ?? []).map((call) => call.map(String).join(' ')),
+      );
     },
     dm,
     channel,

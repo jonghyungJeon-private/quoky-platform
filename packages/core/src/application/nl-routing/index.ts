@@ -26,3 +26,4 @@ export * from './deictic-draft-reply';
 export * from './deictic-referent';
 export * from './deictic-render';
 export * from './deictic-writes';
+export * from './last-read';
