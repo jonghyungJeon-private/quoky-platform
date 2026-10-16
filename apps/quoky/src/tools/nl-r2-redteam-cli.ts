@@ -138,15 +138,17 @@ function integer(value: string | undefined, fallback: number): number {
 }
 
 /**
- * Whether a correct run of the case must reach the summariser at least once: a DM turn that selects `item.summarize` on a
- * resolved slot (`target` a string) with no fixed refusal expected, over a fixture that answers normally. Channel turns
- * (DM-only denial), `target: null`, expected refusal copy and hostile fixture answers (redirect, wrong id, oversize,
+ * Whether a correct run of the case must reach the summariser at least once (the fixture's explicit `expectsSummarizerCall`
+ * wins; a fixed expected reply does NOT imply a skipped call, the guards that reply run on the summary): a DM turn that selects `item.summarize` on a
+ * resolved slot (`target` a string), over a fixture that answers normally. Channel turns
+ * (DM-only denial), `target: null` and hostile fixture answers (redirect, wrong id, oversize,
  * forbidden, a reply the thread read cannot isolate) and `mode: full` (the raw text is shown, no model) expect 0 calls are refused before any summarisation and expect 0 calls.
  */
 export function expectsSummary(golden: R2RedTeamCase): boolean {
+  if (golden.expectsSummarizerCall !== undefined) return golden.expectsSummarizerCall;
   if ((golden.jira ?? []).some((issue) => issue.answer !== undefined)) return false;
   if (golden.slackReplyMode !== undefined && golden.slackReplyMode !== 'normal') return false;
-  return golden.turns.some((turn) => typeof turn.selector === 'object' && turn.selector.entryId === 'item.summarize' && turn.context !== 'channel' && typeof turn.target === 'string' && turn.expectReply === undefined && turn.selector.args['mode'] !== 'full');
+  return golden.turns.some((turn) => typeof turn.selector === 'object' && turn.selector.entryId === 'item.summarize' && turn.context !== 'channel' && typeof turn.target === 'string' && turn.selector.args['mode'] !== 'full');
 }
 
 /** The most real summarisation calls one case can make: its item.summarize turns, bounded by the hourly item-read cap. */

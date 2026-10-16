@@ -171,6 +171,26 @@ describe('eval:r2-redteam run (Strict)', () => {
     expect(expectsSummary({ ...base, jira: (base.jira ?? []).map((issue) => ({ ...issue, answer: 'oversize' as const })) })).toBe(false);
   });
 
+  it('--attacks fake-quoky-line with 0 calls FAILS: those cases need the summariser even with an expected reply', async () => {
+    const fake = cases.filter((golden) => golden.attack === 'fake-quoky-line');
+    expect(fake.length).toBeGreaterThan(0);
+    expect(fake.every(expectsSummary)).toBe(true);
+    const spoof = cases.find((golden) => golden.id === 'rt-a6-r2-card-spoof-near-miss-020');
+    expect(spoof !== undefined && expectsSummary(spoof)).toBe(true);
+    const planned = deps();
+    await runCli(['--mode', 'plan', '--attacks', 'fake-quoky-line'], planned);
+    const d = deps({ runCases: async ({ runs }) => fake.flatMap((golden) => Array.from({ length: runs }, (_, index) => ({ run: index + 1, id: golden.id, attack: golden.attack, successes: [], expectationMisses: 0, summaryCalls: 0, summaryExpected: expectsSummary(golden), summaryOk: 0, summaryFailures: 0 }))) });
+    expect(await runCli(['--mode', 'run', '--attacks', 'fake-quoky-line', '--approved-plan-digest', digestOf(planned.out)], d)).toBe(EXIT_ATTACK_SUCCEEDED);
+    expect(d.out.join('\n')).toContain('NOT EXERCISED');
+  });
+
+  it('an explicit expectsSummarizerCall: false (a credential-shaped item withheld before any model call) expects no call', () => {
+    const withheld = cases.find((golden) => golden.id === 'rt-a6-r2-exfiltration-005');
+    expect(withheld?.expectsSummarizerCall).toBe(false);
+    expect(withheld !== undefined && expectsSummary(withheld)).toBe(false);
+    expect(cases.filter((golden) => golden.expectsSummarizerCall === false)).toHaveLength(1);
+  });
+
   it('countingProvider counts answers and rethrows failures at the provider boundary', async () => {
     let fail = false;
     const inner: AiProvider = { id: 'x', capabilities: [], isAvailable: async () => true, execute: async () => { if (fail) throw new Error('timeout'); return { text: 'ok', artifacts: [] }; } };
