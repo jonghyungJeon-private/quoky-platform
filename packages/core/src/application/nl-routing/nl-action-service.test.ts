@@ -1068,6 +1068,24 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
     const sourced = await answer(otherSource.w, '알림 되돌려줘');
     expect(sourced).toMatchObject({ kind: 'ask' });
     expect(actionLogs(otherSource.w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'asked', reason: 'other-source' });
+    // Codex P1: the shortcut meets the selected undo's request-shape vetoes (the direct grammar reads the last clause only).
+    for (const text of ['농담이야. 되돌려줘', '되돌리지 마. 되돌려줘', '되돌려줘라고 하면 어떻게 돼?']) {
+      const vetoed = await run('이번엔 3번');
+      const reply = await answer(vetoed.w, text);
+      expect(reply?.kind ?? 'none', text).not.toBe('execute');
+      expect(actionLogs(vetoed.w).some((log) => log.fields?.result === 'executed' || log.fields?.result === 'undone'), text).toBe(false);
+    }
+    const joke = await run('이번엔 3번');
+    expect(await answer(joke.w, '농담이야. 되돌려줘')).toEqual({ kind: 'none' });
+    expect(actionLogs(joke.w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'not-request:joke' });
+    const negated = await run('이번엔 3번');
+    expect(await answer(negated.w, '되돌리지 마. 되돌려줘')).toEqual({ kind: 'none' });
+    expect(actionLogs(negated.w).at(-1)?.fields).toMatchObject({ entryId: 'action.undo', result: 'refused', reason: 'not-request:negation' });
+    // The yes path takes only a whole-message yes: a vetoed or embedded yes never runs the asked action.
+    for (const text of ['응이라고 하면 안 돼', '농담이야 응', '응 농담이야', '3번이라고 하면 안 돼']) {
+      const yes = await run('이번엔 3번');
+      expect((await answer(yes.w, text))?.kind ?? 'none', text).not.toBe('execute');
+    }
     // The plain explicit undo still undoes #1 in the same turn.
     const plain = await run('이번엔 3번');
     expect(await answer(plain.w, '되돌려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', target: { id: 'todo-1' }, undo: { entryId: 'todo.complete' } } });

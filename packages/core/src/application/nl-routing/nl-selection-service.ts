@@ -1310,12 +1310,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // A6 R1 review: the selector's undo undoes only what the owner's words can mean. A source noun of another source (or a
       // second one), or a number / ordinal other than the last action's shown label ("2번 취소해줘" after "할 일 5번으로
       // 추가했어요"), asks instead of undoing the last action.
-      const mismatch = this.undoTargetMismatch(prepared.groundingText, reference, { ...base, risk: entry.risk }, language, shadow);
-      if (mismatch !== undefined) return mismatch;
-      // A6-D3a amendment 1, undo confirmation rule: an undo cannot itself be undone, so only an unambiguous undo command
-      // executes directly; any other selected undo asks a one-step confirmation that names the action.
-      if (!nlUndoIsDirect(prepared.groundingText)) return this.askUndoConfirm(turn, language, latencyMs, reference);
-      return this.decideUndo(turn, language, latencyMs, 'none', reference);
+      return this.routeValidatedUndo(turn, prepared.groundingText, reference, { ...base, risk: entry.risk }, language, latencyMs, shadow);
     }
     // A6-D2: resolve the target in code (most recent listing only, display numbers, lastAction).
     let target: NlItemTarget | undefined;
@@ -1450,6 +1445,27 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // One next-turn question per session: the confirmation supersedes any R5a draft, so "응" can only mean this.
     if (this.deictic !== undefined) await this.deictic.clearDraft(turn.session, turn.actor.id, turn.now, 'continuation-confirm-asked');
     return this.actionAnswer(audit, renderContinuationConfirm(entryId, source, label, language, continued));
+  }
+
+  /**
+   * The one route of a VALIDATED undo request (the selected `action.undo`, and the explicit undo answering a continuation
+   * confirmation), so the two paths cannot drift: the source and number cross-checks, then the undo confirmation rule (an
+   * undo cannot itself be undone, so only an unambiguous undo command executes directly; any other asks a one-step
+   * confirmation that names the action).
+   */
+  private async routeValidatedUndo(
+    turn: NlSelectionTurn,
+    groundingText: string,
+    reference: NlReferenceState,
+    base: Omit<NlActionAudit, 'resolution' | 'result'>,
+    language: 'ko' | 'en',
+    latencyMs: number,
+    shadow: boolean,
+  ): Promise<NlSelectionDecision> {
+    const mismatch = this.undoTargetMismatch(groundingText, reference, base, language, shadow);
+    if (mismatch !== undefined) return mismatch;
+    if (!nlUndoIsDirect(groundingText)) return this.askUndoConfirm(turn, language, latencyMs, reference);
+    return this.decideUndo(turn, language, latencyMs, 'none', reference);
   }
 
   /**
@@ -1626,9 +1642,17 @@ export class NlSelectionService implements TurnDeliveryObserver {
         await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => undefined);
         const { replyTo: _replyTo, ...reference } = this.referenceState(turn);
         const base = { entryId: 'action.undo', risk: 'LOCAL_WRITE' as NlCatalogRisk, refKind: 'none' as const, latencyMs: 0, ...correlationOf(turn) };
-        const mismatch = this.undoTargetMismatch(answerText, reference, base, language, this.actionLevelValue === 'shadow');
-        if (mismatch !== undefined) return mismatch;
-        return this.decideUndo(turn, language, 0, 'none', reference);
+        const shadow = this.actionLevelValue === 'shadow';
+        // Codex P1: the same request-shape validation as a selected undo (`nlUndoIsDirect` reads the last clause only, so
+        // "농담이야. 되돌려줘" and "되돌리지 마. 되돌려줘" must meet the joke and negation vetoes). A vetoed reply has closed
+        // the question and is chat, exactly as on the selected path; nothing is written.
+        const validated = validateSelection({ entryId: 'action.undo', args: {} }, this.validationContext(turn, answerText, undefined, true));
+        if (!validated.ok) {
+          const audit: NlActionAudit = { ...base, resolution: 'none', result: shadow ? 'shadow' : 'refused', reason: validated.reason === 'not-request' ? `not-request:${validated.arg ?? 'unknown'}` : validated.reason };
+          this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
+          return { kind: 'none' };
+        }
+        return this.routeValidatedUndo(turn, answerText, reference, base, language, 0, shadow);
       }
       const choice: ReturnType<typeof resolveLabelChoice> = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveLabelChoice(answerText, labels);
       if (choice.kind === 'none') return undefined;
