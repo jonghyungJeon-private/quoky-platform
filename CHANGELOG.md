@@ -11,6 +11,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   scheduled reminder with that text (receipt and undo hint; "되돌려줘" restores the same `#N`), several ask by `#N`, none
   says so. Delivered or cancelled reminders never match. A6 prompt `nl-select.v44` (R2 prompt `nl-select.v45`); the read
   prompt stays `nl-select.v39` byte for byte.
+- **Changed (D, A6-D3a known refusals amended).** "Add a to-do: X", "Remind me: …", "Todo: X" pass the A6 input guard like
+  the Korean colon forms: one key colon, at the start, led by a catalog action or list word. "Q4: …", "request: …", a second
+  key and "I added a to-do: …" stay refused; questions and quoted or reported text keep their vetoes.
 - **Decided (A, B).** A bare "<title> 할 일" executes `todo.add` (duplicate guard unchanged); `QUOKY_WORK_SUMMARY_ENABLED`
   is on only for the R2 live tests (record only).
 

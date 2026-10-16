@@ -446,13 +446,27 @@ describe('round 5: TAB is a control, only a plain space pads, URLs and times are
     expect(nlActionInputRefusal(text, text)).toBe('hidden-characters');
   });
 
-  it('a URL scheme and an HH:MM time are not a key; a key before a URL and English labels still refuse (A6-D3a known refusals)', () => {
+  it('a URL scheme and an HH:MM time are not a key; a key before a URL and other English labels still refuse (A6-D3a known refusals)', () => {
     for (const text of ['할 일에 https://jira.example.com/browse/BE-12 확인 추가', '할 일에 HTTP://intra.example/a?b=c 보기 추가', '9:30 회의 준비 할 일로', '14:05에 회의 준비 할 일로', '  되돌려줘 ']) {
       expect(nlActionInputRefusal(text, text), text).toBeUndefined();
     }
-    for (const text of ['request: https://jira.example.com/BE-12', 'Q4: 예산 검토 할 일로', 'remind me: call mom', 'url: 9:30']) {
+    for (const text of ['request: https://jira.example.com/BE-12', 'Q4: 예산 검토 할 일로', 'url: 9:30']) {
       expect(nlActionInputRefusal(text, text), text).toBe('not-plain');
     }
+  });
+
+  it('owner decision D (2026-10-17): an English command label leading with a catalog action or list word passes, like the Korean colon forms', () => {
+    for (const text of ['Add a to-do: buy milk', 'Todo: buy milk', 'To-do: 사무실 와이파이 비밀번호 변경', 'Remind me: call mom', 'remind me: call mom', 'Remind me tomorrow at 9am: call mom', 'Please add a todo: renew passport', 'Reminder: 내일 오전 9시 회의록 공유', 'Done: 장보기', 'Cancel: 창고 정리', 'Remind me: call mom at 5:30', 'Todo: https://jira.example.com/BE-12 확인']) {
+      expect(nlActionInputRefusal(text, text), text).toBeUndefined();
+    }
+  });
+
+  it('owner decision D counter-cases: another label, a second key, a non-leading action word, a non-Latin label and the anchored heads still refuse', () => {
+    for (const text of ['Q4: 예산 검토 할 일로', 'request: add a todo', 'password: Hunter2-Secret!9', 'remember: buy milk', 'Todo: request: buy milk', 'Add a to-do: note: x', 'I added a to-do: buy milk', 'Did you add a to-do: buy milk', 'My todo: buy milk', 'New reminder: call mom', '내일 todo: buy milk', 'Todo list item no. 1 two three four five: x']) {
+      expect(nlActionInputRefusal(text, text), text).toBe('not-plain');
+    }
+    // The anchored ADR-0100 D1 heads stay the exact-command form (the deterministic grammar owns them).
+    for (const text of ['Add todo: buy milk', 'todo add: buy milk', 'todo done: 1']) expect(nlActionInputRefusal(text, text), text).toBe('embedded-command');
   });
 });
 

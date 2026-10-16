@@ -23196,7 +23196,9 @@ confirmation in the R1 batch**; until confirmed they are interpretations recorde
      `12:00request: …` are still refused. **Known refusals (trade-off for owner confirmation):** a message with an
      English label and a colon, e.g. "Q4: 예산 검토 할 일로" or "remind me: call mom", is refused as YAML-like and gets
      the one-sentence hint; the owner rephrases ("Q4 예산 검토 할 일로") or uses the exact command. Allowing such labels
-     would let `key: value` payloads through, so the rule stays fail closed;
+     would let `key: value` payloads through, so the rule stays fail closed; *(amended 2026-10-17, owner decision D: an
+     English command label that leads with an action or list word of the catalog, "Add a to-do: …", "Remind me: …",
+     "Todo: …", is no longer refused; "Q4: …" and every other key stay refused. See "Owner decisions of 2026-10-17 (A–E)".)*
   4. has **no exact-command form**: a to-do head with a colon ("할 일 추가:"), the Slack post head ("#채널에 게시:") or
      the Slack post execution phrase, each taken from its own grammar.
   Checks 2–4 also run on an NFKC-folded copy, so full-width and compatibility forms (`｛ ｝ ［ ］ ｀ ＞ ：`) count as
@@ -27379,3 +27381,29 @@ requires. No live configuration was changed by this record (`QUOKY_NL_ACTIONS` s
 - **Known residual.** A reminder text that itself holds another source noun ("경비 승인 메일 확인 알림 취소 부탁드려요", kit
   F09) asks which list, because the A6 R1 whole-prose source rule (two source nouns in the message ask) is unchanged; it
   writes nothing. Relaxing that rule for nouns inside the match span is a separate decision.
+
+### D. English colon label forms execute like the Korean colon forms (owner decision; amends the A6-D3a known refusals)
+
+- **Amends A6-D3a rule 3** (structure markers), its "known refusals" entry for "remind me: call mom" (confirmed in the A6 R1
+  owner batch as written): the English command labels "Add a to-do: X", "Remind me: …", "Todo: X" now act like the Korean
+  colon forms the owner approved ("todo 추가: …", "알림: …", gold `a6-paraphrase-todo.add-016`). "Q4: 예산 검토 할 일로" stays
+  a known refusal.
+- **Rule (input guard only, `isNlActionColonLabel` in `action-entries.ts`).** The ASCII `key: value` check of the A6 input
+  guard exempts exactly one label, when all hold: it is the message's only key colon (a second key, "Todo: request: …",
+  refuses; the key check no longer consumes the value, so a key right after the colon is counted); it starts the message
+  and is at most six Latin words; and it LEADS, after at most the closed request leads of the imperative slot ("please"),
+  with a word the catalog already has for a LOCAL_WRITE action or a local list (the LOCAL_WRITE action vocabularies and
+  aliases, the to-do and reminder list aliases; a hyphen inside a word is ignored, "to-do" = "todo"). No word is added.
+  The leading position is grammar: "I added a to-do: …", "Did you add a to-do: …", "My todo: …" stay refused.
+- **Unchanged.** Every other structure marker, the exact-command forms ("Add todo: …", "todo add: …" stay the anchored
+  ADR-0100 D1 commands), the R5a owner-text eligibility (still refuses any key colon), and the request-shape vetoes: a
+  question ("Todo: buy milk?"), reported or quoted text ("…, he said", "\"Todo: buy milk\" he said", "… 라고 했어") and a
+  negation are chat. The validator needed no change: a colon form running to the end already encloses the content span
+  for English as for Korean.
+- **Corpus scan.** Over all 3,938 texts of the golden files (red team included), the guard's answer changed only for the
+  seven texts that start with an anchored head ("add todo: …", "todo done: …"): they now refuse as `embedded-command`
+  instead of `not-plain` (still refused). No red-team text became eligible.
+- **Corpus** (agent-drafted, pending the owner's D12 batch): `a6-paraphrase-todo.add-904` / `-905` (kit G05),
+  `a6-paraphrase-reminder.create-902` (with a Korean time: the reminder grammar parses no English time at execution, a
+  pre-existing limit), `a6-negative-none-189` (question; selector-dependent like the Korean colon forms, since a lure title
+  can swallow the question mark) and `-190` (not led by the command word; refused by the guard).

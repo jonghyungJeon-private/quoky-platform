@@ -14554,6 +14554,60 @@
    "text": "치과 예약 확인 알림 취소됐어?",
    "expect": "none",
    "note": "owner decision C counter-case (2026-10-17): a question about a cancel by title is chat [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-todo.add-904",
+   "family": "paraphrase",
+   "text": "Add a to-do: renew passport",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "renew passport"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision D (2026-10-17, A6-D3a known refusals amended): an English colon label leading with the action word executes like the Korean colon forms [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-todo.add-905",
+   "family": "paraphrase",
+   "text": "To-do: 사무실 와이파이 비밀번호 변경",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "사무실 와이파이 비밀번호 변경"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision D (2026-10-17): the list-noun label, live kit G05 [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.create-902",
+   "family": "paraphrase",
+   "text": "Remind me: 내일 오전 9시 은행에 전화",
+   "expect": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "은행에 전화",
+     "when": "내일 오전 9시"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision D (2026-10-17): \"Remind me: …\" (a Korean time: the reminder grammar parses no English time at execution, a pre-existing limit) [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-189",
+   "family": "negative",
+   "text": "Todo: renew passport?",
+   "expect": "none",
+   "note": "owner decision D counter-case (2026-10-17): the question veto holds for an English colon label [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-negative-none-190",
+   "family": "negative",
+   "text": "I added a to-do: renew passport",
+   "expect": "none",
+   "note": "owner decision D counter-case (2026-10-17): a label that does not lead with the command word stays refused by the input guard [agent-drafted 2026-10-17, PENDING the owner's D12 batch]"
   }
  ]
 }

@@ -2,6 +2,7 @@ import type { NlActionEntryId, NlAmbiguityKey, NlArgValue, NlArgs, NlCatalogEntr
 import type { InboundQuotedRange } from '../../domain';
 import { normalizeForMatch } from './selection-input';
 import { nlIsRequestForm } from './request-shape';
+import { NL_EN_REQUEST_LEADS } from './garbled-action';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { isNlTimeWord } from './symbolic-time';
 import { ANCHORED_TODO_PREFIX_HEADS } from '../reminders/reminder-grammar';
@@ -1113,14 +1114,57 @@ export function looksLikeData(inner: string): boolean {
  * braces, a data-like square bracket, backticks, a tilde fence, a line-leading `>`, or an ASCII identifier key followed
  * by a colon and a value (`request: …`, YAML-like). An ordinary bracketed phrase ("[긴급] 보고서 쓰기") is not a marker.
  */
-function hasStructureMarker(rawText: string): boolean {
+function hasStructureMarker(rawText: string, allowActionLabel = false): boolean {
   // Nothing is removed from the checked text: only the URL and time colons below are neutralised, character for character.
   const text = neutraliseUrlAndTimeColons(rawText);
   if (/[{}`]/u.test(text) || /~~~/u.test(text) || /^\s*>/u.test(text)) return true;
   for (const match of text.matchAll(/\[([^[\]]*)\]/gu)) if (looksLikeData(match[1] ?? '')) return true;
   if (/[[\]]/u.test(text.replace(/\[[^[\]]*\]/gu, ''))) return true;
   // A key is an ASCII identifier not glued to a preceding letter ("12:00request:" and "x,request:" are keys).
-  return /(?<![A-Za-z_])[A-Za-z_][A-Za-z0-9_-]*\s*:\s*\S/u.test(text);
+  const keys = [...text.matchAll(KEY_COLON)];
+  if (keys.length === 0) return false;
+  // Owner decision D (2026-10-17): the one English command label of an action request ("Add a to-do: …", "Todo: …").
+  return !(allowActionLabel && keys.length === 1 && isNlActionColonLabel(text.slice(0, text.indexOf(':', keys[0]?.index ?? 0))));
+}
+
+/** An ASCII identifier key followed by a colon and a value (`request: …`, YAML-like). */
+const KEY_COLON = /(?<![A-Za-z_])[A-Za-z_][A-Za-z0-9_-]*\s*:(?=\s*\S)/gu;
+/** A label of at most six Latin words (letters, digits, a hyphen or an apostrophe inside a word). */
+const LATIN_LABEL = /^\s*[A-Za-z0-9][A-Za-z0-9'’-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'’-]*){0,5}\s*$/u;
+
+/**
+ * Owner decision D (2026-10-17, amends the A6-D3a "known refusals"): an English colon label is the owner's command head,
+ * like the Korean colon forms the owner approved ("todo 추가: …", "알림: …"), when it is the message's own start, holds the
+ * message's only key colon, is made of Latin words only, and LEADS with a word the catalog already has for a LOCAL_WRITE
+ * action or a local list (the LOCAL_WRITE action vocabularies and aliases, the to-do and reminder list aliases), after at
+ * most the closed request leads of the imperative slot ("please"). A hyphen inside a word is ignored ("to-do" is "todo").
+ * The leading position is the imperative or the bare list head, so "I added a to-do: …" and "Did you add a to-do: …" stay
+ * refused. "Add a to-do: …", "Remind me: …", "Todo: …" pass; "Q4: …", "request: …", "password: …" and a second key
+ * ("Todo: request: …") stay refused. No word is added for this.
+ */
+function isNlActionColonLabel(label: string): boolean {
+  if (!LATIN_LABEL.test(label)) return false;
+  const words = label.trim().toLowerCase().replace(/(?<=[a-z0-9])-(?=[a-z0-9])/gu, '').split(/\s+/u);
+  while (words.length > 1 && NL_EN_REQUEST_LEADS.has(words[0] ?? '')) words.shift();
+  const head = words.join(' ');
+  return nlActionLabelWords().some((word) => head === word || head.startsWith(`${word} `));
+}
+
+let actionLabelWords: readonly string[] | undefined;
+/** The catalog's own Latin words for the LOCAL_WRITE actions and the local lists (built on first use). */
+function nlActionLabelWords(): readonly string[] {
+  actionLabelWords ??= [
+    ...new Set(
+      [
+        ...Object.values(NL_ACTION_ENTRIES).flatMap((entry) => (entry !== undefined && entry.risk === 'LOCAL_WRITE' ? [...(entry.actionGrounding ?? []), ...entry.aliases] : [])),
+        ...NL_WAVE1_ENTRIES['todo.list'].aliases,
+        ...NL_WAVE1_ENTRIES['reminder.list'].aliases,
+      ]
+        .map((word) => word.toLowerCase().replace(/-/gu, ''))
+        .filter((word) => /^[a-z][a-z ]*$/u.test(word)),
+    ),
+  ];
+  return actionLabelWords;
 }
 
 /**
@@ -1160,7 +1204,7 @@ export function nlActionInputRefusal(rawText: string, groundingText: string, quo
   const folded = rawText.normalize('NFKC');
   if (Array.from(text).length > NL_ACTION_MAX_INPUT_CHARS) return 'too-long';
   if (HIDDEN.test(text.replace(EMOJI_SEQUENCE, '')) || HIDDEN.test(folded.replace(EMOJI_SEQUENCE, ''))) return 'hidden-characters';
-  if (quoted || LINE_SEPARATOR.test(rawText) || LINE_SEPARATOR.test(folded) || hasStructureMarker(text) || hasStructureMarker(folded)) return 'not-plain';
+  if (quoted || LINE_SEPARATOR.test(rawText) || LINE_SEPARATOR.test(folded) || hasStructureMarker(text, true) || hasStructureMarker(folded, true)) return 'not-plain';
   if (HANGUL_SPEAKER_LABEL.test(text) || HANGUL_SPEAKER_LABEL.test(folded)) return 'not-plain';
   // Only a plain space may pad the line: any other leading or trailing whitespace (NBSP, ideographic, em space …) refuses.
   if (/^[^\S ]|[^\S ]$/u.test(text)) return 'hidden-characters';

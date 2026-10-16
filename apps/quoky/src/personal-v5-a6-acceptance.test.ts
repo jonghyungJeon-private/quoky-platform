@@ -991,6 +991,31 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
     expect((await reminders()).map((entry) => entry.id).join(',')).toBe(before);
   }));
 
+  it('owner decision D (2026-10-17): English colon labels execute like the Korean colon forms; other labels and questions do not', () => withOwnCaps(async () => {
+    await resetNlState();
+    const g05 = await turn('To-do: 사무실 와이파이 비밀번호 변경', answer('todo.add', { title: '사무실 와이파이 비밀번호 변경' }));
+    expect(g05.selects).toHaveLength(1);
+    expect(g05.text).toMatch(/^할 일 \d+번으로 추가했어요: "사무실 와이파이 비밀번호 변경" · /u);
+    const added = await turn('Add a to-do: renew passport', answer('todo.add', { title: 'renew passport' }));
+    expect(added.text).toMatch(/^할 일 \d+번으로 추가했어요: "renew passport" · /u);
+    const remind = await turn('Remind me: 내일 오전 9시 은행에 전화', answer('reminder.create', { body: '은행에 전화', when: '내일 오전 9시' }));
+    expect(remind.text).toMatch(/^알림 #\d+[을를] 만들었어요: .* · '은행에 전화' · /u);
+    expect((await reminders()).find((entry) => entry.body === '은행에 전화')?.status).toBe('SCHEDULED');
+    // Counter-cases: nothing is written.
+    const stores = async () => JSON.stringify([(await todos()).map((item) => `${item.id}:${item.status}`), (await reminders()).map((entry) => entry.id)]);
+    const before = await stores();
+    for (const [text, selector] of [
+      ['Q4: 예산 검토 할 일로', answer('todo.add', { title: '예산 검토' })],
+      ['I added a to-do: water plants', answer('todo.add', { title: 'water plants' })],
+      ['Todo: water plants?', answer('todo.add', { title: 'water plants' })],
+      ['Todo: request: water plants', answer('todo.add', { title: 'water plants' })],
+    ] as const) {
+      const result = await turn(text, selector);
+      expect(result.text, text).not.toContain('추가했어요');
+    }
+    expect(await stores()).toBe(before);
+  }));
+
   it('exec-time: every case of nl-action.exec-time.v1.json is covered by an acceptance test above', async () => {
     const { readFileSync } = await import('node:fs');
     const file = new URL('../../../packages/core/src/application/golden/nl-action.exec-time.v1.json', import.meta.url);

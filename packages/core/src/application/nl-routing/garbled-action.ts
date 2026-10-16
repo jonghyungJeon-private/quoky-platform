@@ -42,8 +42,9 @@ const ENDING_FINALS: ReadonlySet<number> = new Set([0, 4, 8, 16, 17, 20]);
 const CONTRACTION_PAIRS: ReadonlyArray<readonly [number, number]> = [[20, 6], [13, 14], [8, 9], [18, 4], [18, 0], [11, 10]];
 /** A request tail glued on a word: the light verb (처리)(해/하) and the closed request endings, or the ending alone. */
 const GLUED_REQUEST_TAIL = /(?:처리)?(?:해|하)?(?:줘요|줘|주세요|주십시오|줄래요|줄래|세요|십시오)$|(?:처리)?(?:해요|해라|해|하자)$/u;
-/** English request leads before the imperative slot. */
-const EN_LEADS = new Set(['please', 'pls', 'plz', 'kindly']);
+/** English request leads before the imperative slot (also the colon-label head of owner decision D, `action-entries.ts`). */
+export const NL_EN_REQUEST_LEADS: ReadonlySet<string> = new Set(['please', 'pls', 'plz', 'kindly']);
+const EN_LEADS = NL_EN_REQUEST_LEADS;
 const EN_MODAL_LEAD = /^(?:can|could|would|will)$/u;
 /** Closed particles glued on a Korean word ("완룐로", "완룐을"): up to two stacked. */
 const PARTICLE_TAIL = /(?:으로|에서|까지|부터|에는|이랑|하고|은|는|이|가|을|를|에|의|도|만|로|랑|요)$/u;
