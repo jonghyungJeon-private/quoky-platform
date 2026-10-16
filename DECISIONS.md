@@ -27163,6 +27163,52 @@ owner approved a structural Core rule (`nl-routing/garbled-action.ts`), with no 
   selector-RAG gold digest is unchanged and the audit record was not regenerated. The eval scorer counts `garbled-action` as a
   clarification reason.
 
+### A6-D3a amendment 1: live test 1 negative captures (2026-10-16, QUOKY_NL_ACTIONS=local)
+
+Three local writes executed that the kit expected not to (all cleaned). Fixes, each structural, no phrase list:
+
+- **H09 "사무실 청소 할 일 츄가" (garbled word at the end).** The garbled-word anchor adds the Korean verb-final slot: a bare
+  word that ends the owner's MESSAGE (followed by nothing or punctuation only) is the predicate. A word that ends the frame
+  only because a content span after it was removed is not. Corpus: the LOCAL_WRITE golds of `nl-action.v1`, `seed`,
+  `exec-time` and `deictic` validated with their gold selections still ask only for `a6-paraphrase-todo.complete-018`
+  (0 execute golds newly ask). A raw scan of all 3,023 golden texts adds final-word hits only behind an earlier veto
+  ("… 필요 없어", "언제 울려?", "취소해서 다행") or outside any LOCAL_WRITE; the rule can only ever ask.
+- **I16 "장난으로 알림 걸어줘 …" (joke).** The `joke` class is the closed class of joke nouns (농담, 장난; English joke) in two
+  grammatical slots: the copula predicate ("장난이야", "장난임", "장난이었어") and the manner adverbial of the act, the
+  instrumental -(으)로 or 삼아 ("장난으로", "장난삼아"; "jokingly", "as a joke", "just joking"). 장난 counts only as a word of
+  its own ("장난감 정리 할 일 추가해줘", "말장난 모음" act); enclosed content stays content.
+- **G09 "세금 서류 챙기기 할 일" (bare noun phrase).** Why it executed: the selector chose `todo.add` with the title span; the
+  frame left is "할 일", the entry's source noun, which for a payload entry counts as expressing the action (decision 3);
+  no veto applies. This is amendment 1 working as written (decisions 1 and 3, #244): it is the same shape as the owner gold
+  `a6-paraphrase-reminder.create-022` "3일 뒤 오전 9시에 월세 이체 리마인더" (execute). It is the only execute gold whose
+  frame, without its spans and `when`, is the source noun alone. **Not changed; proposal for the owner:** amend decision 3
+  so that a payload frame made of nothing but the entry's source noun (no action word, no request form) asks the
+  confirmation "할 일로 추가할까요?" / "알림으로 만들까요?" instead of acting. Options: (a) both entries, which moves
+  `reminder.create-022` from execute to ask; (b) `todo.add` only, keeping 022 (a reminder carries a `when` the owner
+  stated, a to-do has nothing beyond the title). Either needs the owner's gold decision, a D12 rerun and a shadow review.
+- **G09 duplicate (changed).** A selected `todo.add` whose normalised title equals an ACTIVE to-do's title writes nothing
+  and answers "같은 제목의 할 일이 이미 있어요 (N번): "…" · 아무것도 바꾸지 않았어요." (receipt `refused`, reason
+  `duplicate`, not undoable): the same check and wording as the R5a preview's duplicate note. The number is the label
+  of the fresh listing the owner saw (#233; Codex P1), the title alone when that listing never showed the item, and the
+  live number only without a listing, so a following "N번" never resolves to another item. An add approved through an R5a
+  preview (which already showed the duplicate note) runs as approved (`NlSelectedCommand.previewApproved`).
+- **Write echo labels (Codex P1, same review).** While a to-do listing is fresh, an A6 write's echo and receipt never use
+  the live open-list number, which the receipt's merge would pin onto a label the owner saw for another item (list A=1,
+  B=2, C=3; complete A; "D 추가" echoed as 3 re-pointed 3 from C to D). `todo.add` and the undo's reopen show the item's
+  listing label or append it as the next unused label (max + 1); a title-matched complete / cancel shows the listing label
+  or no number; a ref-resolved complete / cancel already carries the listing label. Without a fresh listing the live
+  number stays. Reminders were audited and need nothing: every echo, receipt and listing uses the stable `displayNo`.
+  The R5a preview's duplicate note follows the duplicate reply's rule: the fresh listing's label, no number when that
+  listing never showed the item, the live number only without a listing (`duplicateTodo` now returns the id too).
+- **CA review (CHANGES REQUIRED) and Codex P2.** The A6 ambiguous title question names each candidate by its listing label
+  or the next unused labels (max + 1, max + 2 …), so the `asked` merge never re-points a shown label. Appended labels stop
+  at `NL_REF_MAX_INDEX` (50) and the slot size: past either the item is named by its title only (a question row "· title")
+  and no label is recorded. The anchored add records the next unused label with a fresh listing (never a gap label the
+  owner did not see) and none without one. The preview's duplicate note reads the listing only while receipts are on
+  (`NlDeicticWritesDeps.actionReceipts`, which is always the case while deictic writes run, since they need `local`). The anchored command
+  ("할 일 추가: …", the owner's explicit form) still adds a second item. The red-team cap positive control now reaches the
+  cap with distinct titles; the corpus cap case (one title repeated) writes once.
+
 ## ADR-0120 amendment A6 R2 — `item.summarize` over Jira and Slack (owner-approved 2026-10-16, D1–D12 at the recommended defaults)
 
 Status: **Accepted** (owner, 2026-10-16). The owner approved `docs/plans/a6-r2-jira-slack-summarize-proposal.md`

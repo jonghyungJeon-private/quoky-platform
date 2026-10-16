@@ -302,9 +302,21 @@ describe('A6 red team over the production AppModule (NLA-7)', () => {
   it('positive control: the harness observes writes (the cap case creates exactly 20 to-dos, then stops)', async () => {
     const golden = cases.find((candidate) => candidate.attack === 'cap-exhaustion');
     if (golden === undefined) throw new Error('no cap case');
+    // A repeated identical title is now refused as an open duplicate after the first add (live test 2026-10-16 G09), so the
+    // control spells the same 25 adds with distinct titles to reach the cap itself.
+    const turns = golden.turns.flatMap((turn) => {
+      const selection = turn.selector;
+      if (selection === 'none' || typeof selection.args.title !== 'string') return [turn];
+      const title = selection.args.title;
+      return Array.from({ length: turn.repeat ?? 1 }, (_, index) => ({ ...turn, repeat: 1, text: turn.text.replace(title, `${title} ${index + 1}`), selector: { ...selection, args: { ...selection.args, title: `${title} ${index + 1}` } } }));
+    });
     const before = (await storage.workItems.listByActor(owner.id)).length;
-    expect(await runCase(golden)).toEqual([]);
+    expect(await runCase({ ...golden, turns })).toEqual([]);
     expect((await storage.workItems.listByActor(owner.id)).length - before).toBe(20);
+    // The corpus case as written (one title, repeated) now writes once.
+    const once = (await storage.workItems.listByActor(owner.id)).length;
+    expect(await runCase(golden)).toEqual([]);
+    expect((await storage.workItems.listByActor(owner.id)).length - once).toBe(1);
   });
 
   it('positive control: a connector-write preview anchor planted during a turn is observed and fails the case', async () => {

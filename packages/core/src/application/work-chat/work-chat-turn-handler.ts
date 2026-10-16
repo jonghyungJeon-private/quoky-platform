@@ -194,7 +194,8 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     }
     let outcome: WorkChatOutcome;
     try {
-      outcome = await handleAction.call(this.deps.desk, selected, ctx.actor, ctx.nlActionWriteCondition);
+      // The fresh listing lets an answer name an existing to-do by the number the owner saw (A6-D2 amendment, #233).
+      outcome = await handleAction.call(this.deps.desk, selected, ctx.actor, ctx.nlActionWriteCondition, todoListingOptions(ctx));
     } catch (error) {
       this.deps.logger.error('work_chat.turn_handler.failed', { handlerId: this.id, errorName: error instanceof Error ? error.name : 'unknown' });
       return { reply: outboundMessage(ctx.message.context, renderTodoFailure()), status: 'FAILED' };
@@ -415,6 +416,11 @@ function handleOptionsOf(command: WorkChatCommand, ctx: TurnHandlerContext): Wor
   ) {
     return undefined;
   }
+  return todoListingOptions(ctx);
+}
+
+/** The owner's fresh to-do listing slot of this (Session, Actor) as desk options, or `undefined` (none, expired, unreadable). */
+function todoListingOptions(ctx: TurnHandlerContext): WorkDeskHandleOptions | undefined {
   let todoListing: WorkDeskHandleOptions['todoListing'];
   try {
     todoListing = readListingRecord(ctx.session.metadata?.[LAST_LISTING_METADATA_KEY], ctx.actor.id, ctx.now).slots.todo;

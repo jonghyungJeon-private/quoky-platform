@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 live test 1 negative captures (2026-10-16)
+
+- **Fixed (garbled word, H09).** A bare garbled action word that ends the message ("사무실 청소 할 일 츄가") is in the Korean
+  verb-final predicate slot and asks ("'추가'(이)라고 하신 건가요?"); no execute gold of the action corpus newly asks.
+- **Fixed (joke, I16).** The joke veto reads 장난 as the copula predicate or the manner adverbial ("장난으로 알림 걸어줘",
+  "장난삼아", "장난임"; English "jokingly", "as a joke", "just joking"); compounds such as "장난감" are other nouns.
+- **Fixed (duplicate, G09).** A selected `todo.add` whose title is an open to-do's exact title writes nothing and answers
+  "같은 제목의 할 일이 이미 있어요 (N번)" (receipt `refused` / `duplicate`); the anchored "할 일 추가: …" is unchanged. The
+  bare "<title> 할 일" itself still acts under A6-D3a amendment 1 (proposal recorded in `DECISIONS.md`).
+
 ## Unreleased — A6 R2: `item.summarize` over Jira and Slack (2026-10-16)
 
 - **Added (inert: `QUOKY_NL_ITEM_R2` defaults to `off`).** New flag `QUOKY_NL_ITEM_R2=off|shadow|jira|all`; any value but

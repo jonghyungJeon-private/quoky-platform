@@ -588,3 +588,28 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     expect(VETOED.length + SELECTOR_DEPENDENT.length).toBe(negatives.length);
   });
 });
+
+describe('live test 2026-10-16 negative captures (QUOKY_NL_ACTIONS=local)', () => {
+  const v = (entryId: string, args: Record<string, string>, text: string) => validateSelection({ entryId, args }, ctx(text));
+
+  it('I16: 장난 as the manner adverbial or the copula predicate is a joke (none), like 농담', () => {
+    expect(v('reminder.create', { body: '우주 여행', when: '내일 9시' }, '장난으로 알림 걸어줘 내일 9시 우주 여행')).toMatchObject({ ok: false, reason: 'not-request', arg: 'joke' });
+    for (const text of ['장난삼아 2번 완료해줘', '2번 완료해줘 장난임', '2번 취소해줘 ㅋㅋ 장난이야ㅋㅋ', 'jokingly cancel 2', 'cancel 2 as a joke', 'cancel 2, just joking']) {
+      expect(veto(text), text).toBe('joke');
+    }
+  });
+
+  it('I16 counter-cases: a compound of 장난 is another noun, and enclosed content is content', () => {
+    expect(v('todo.add', { title: '장난감 정리' }, '장난감 정리 할 일 추가해줘')).toMatchObject({ ok: true });
+    expect(v('todo.add', { title: '말장난 모음 정리' }, '말장난 모음 정리 할 일에 추가해줘')).toMatchObject({ ok: true });
+    expect(v('todo.add', { title: '장난으로 만든 노래 정리' }, "할 일에 '장난으로 만든 노래 정리' 추가해줘")).toMatchObject({ ok: true });
+    expect(v('reminder.create', { body: '장난감 반납', when: '내일 9시' }, '내일 9시에 장난감 반납 알려줘')).toMatchObject({ ok: true });
+  });
+
+  it('G09: a bare "<title> 할 일" frame acts under A6-D3a amendment 1 (the shape of owner gold reminder.create-022); ask proposal pending', () => {
+    // Amendment 1 D1/D3: no action word and no request form is needed, and for a payload entry the source noun names what
+    // to make ("3일 뒤 오전 9시에 월세 이체 리마인더" executes by owner decision). Changing this to ask needs an amendment.
+    expect(v('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일')).toMatchObject({ ok: true });
+    expect(v('reminder.create', { body: '월세 이체', when: '3일 뒤 오전 9시' }, '3일 뒤 오전 9시에 월세 이체 리마인더')).toMatchObject({ ok: true });
+  });
+});

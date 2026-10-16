@@ -113,8 +113,10 @@ function world(options: { deictic?: 'off' | 'shadow' | 'on' | 'absent'; level?: 
       return memories.get(memoryId) ?? null;
     },
     async duplicateTodo(_actorId, title) {
-      const index = items.filter((item) => item.source === 'todo').findIndex((item) => item.title === title);
-      return index >= 0 ? index + 1 : undefined;
+      const todos = items.filter((item) => item.source === 'todo');
+      const index = todos.findIndex((item) => item.title === title);
+      const item = todos[index];
+      return item === undefined ? undefined : { id: `todo-${item.label}`, no: index + 1 };
     },
   };
   const level = options.level ?? 'local';
@@ -283,6 +285,28 @@ describe('QUOKY_NL_DEICTIC_WRITES at the service', () => {
     expect(deicticLogs(w)[0]?.fields?.refKind).toBe('deictic:owner.message');
   });
 
+  it('the duplicate note names the open to-do by the label the owner saw, never a live number a fresh listing disagrees with (Codex P1)', async () => {
+    const preview = async (listing?: ReadonlyArray<{ label: number; id: string }>): Promise<string> => {
+      const w = world();
+      w.items.push({ source: 'todo', label: 1, title: '보고서 쓰기' }, { source: 'todo', label: 2, title: '은행 서류' }, { source: 'todo', label: 3, title: 'UAT 결과 정리' });
+      if (listing !== undefined) w.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, ACTOR, 'todo', listing, at(-1), 'listing', 'older-turn'));
+      await w.record({ text: 'UAT 결과 정리', replyKind: 'question' });
+      const decision = await w.decide('그걸로 할 일 만들어줘', out('todo.add', { title: '그걸로' }));
+      expect(isPreview(decision)).toBe(true);
+      const text = decision.kind === 'ask' ? decision.text : '';
+      expect(text).toContain('> UAT 결과 정리');
+      return text;
+    };
+    // No listing: the live open-list number (3).
+    expect(await preview()).toContain('같은 제목의 할 일이 이미 있어요 (3번)');
+    // A fresh listing showed it as 4 (1 was completed since): the shown 4, never the live 3 (which the listing gives to another item).
+    expect(await preview([{ label: 3, id: 'todo-9' }, { label: 4, id: 'todo-3' }])).toContain('같은 제목의 할 일이 이미 있어요 (4번)');
+    // A fresh listing that never showed it: no number.
+    const unshown = await preview([{ label: 1, id: 'todo-1' }]);
+    expect(unshown).toContain('같은 제목의 할 일이 이미 있어요');
+    expect(unshown).not.toMatch(/이미 있어요 \(/u);
+  });
+
   it('on: preview → "응" executes once with the previewed payload; the audit carries kinds, labels and origins, never text', async () => {
     const w = world();
     await w.record({ text: 'UAT  결과 정리', replyKind: 'question' });
@@ -292,7 +316,7 @@ describe('QUOKY_NL_DEICTIC_WRITES at the service', () => {
     expect(decision.kind === 'ask' && decision.history).toBe('[할 일 추가 미리보기]');
     const approved = await w.answer('응');
     expect(approved?.kind).toBe('executed');
-    expect(w.executed).toEqual([{ entryId: 'todo.add', args: { title: 'UAT 결과 정리' }, language: 'ko' }]);
+    expect(w.executed).toEqual([{ entryId: 'todo.add', args: { title: 'UAT 결과 정리' }, language: 'ko', previewApproved: true }]);
     expect(await w.answer('응')).toBeUndefined();
     expect(w.executed).toHaveLength(1);
     const results = deicticLogs(w).map((log) => log.fields?.result);

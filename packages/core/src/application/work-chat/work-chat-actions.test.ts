@@ -124,8 +124,30 @@ describe('A6 to-do actions (A6-D1/D3)', () => {
     await addThree(desk);
     expect(await desk.handleAction(cmd('todo.complete', { match: '회의록 공유' }), owner)).toMatchObject({ action: { result: 'executed', label: 3 } });
     expect(await desk.handleAction(cmd('todo.complete', { match: '없는 일' }), owner)).toMatchObject({ action: { result: 'refused' } });
-    await desk.handleAction(cmd('todo.add', { title: '보고서 쓰기' }), owner);
+    // A second open '보고서 쓰기' comes from the anchored command (the A6 add refuses an exact duplicate, below).
+    const again = detectWorkChatCommand('할 일 추가: 보고서 쓰기');
+    if (again === null) throw new Error('no command');
+    await desk.handle(again, owner);
     expect(await desk.handleAction(cmd('todo.complete', { match: '보고서 쓰기' }), owner)).toMatchObject({ action: { result: 'asked', candidates: [{ label: 1 }, { label: 3 }] } });
+  });
+
+  it('todo.add never silently duplicates an open to-do with the same title (live test 2026-10-16 G09)', async () => {
+    const { desk, rows } = world();
+    await addThree(desk);
+    const before = rows.size;
+    const outcome = await desk.handleAction(cmd('todo.add', { title: 'UAT 결과 정리' }), owner);
+    expect(text(outcome)).toBe('같은 제목의 할 일이 이미 있어요 (2번): "UAT 결과 정리" · 아무것도 바꾸지 않았어요.');
+    expect(outcome).toMatchObject({ action: { entryId: 'todo.add', result: 'refused', reason: 'duplicate' } });
+    expect((outcome as { action?: { undoable?: boolean } }).action?.undoable).toBeUndefined();
+    expect(rows.size).toBe(before);
+    // Surrounding whitespace is normalised like a new title; a different title, or one that is no longer open, still adds.
+    expect(await desk.handleAction(cmd('todo.add', { title: '  UAT 결과 정리 ' }), owner)).toMatchObject({ action: { result: 'refused', reason: 'duplicate' } });
+    expect(await desk.handleAction(cmd('todo.add', { title: 'UAT 결과 정리 2차' }), owner)).toMatchObject({ action: { result: 'executed', label: 4 } });
+    const second = [...rows.values()].find((item) => item.title === 'UAT 결과 정리') as WorkItem;
+    await desk.handleAction(cmd('todo.complete', { ref: '#2' }, { target: { source: 'todo', id: second.id, label: 2 } }), owner);
+    expect(await desk.handleAction(cmd('todo.add', { title: 'UAT 결과 정리' }), owner)).toMatchObject({ action: { result: 'executed' } });
+    // An approved R5a preview already named the duplicate: the owner's approval adds it.
+    expect(await desk.handleAction(cmd('todo.add', { title: '회의록 공유' }, { previewApproved: true }), owner)).toMatchObject({ action: { result: 'executed' } });
   });
 });
 
@@ -286,6 +308,97 @@ describe('numbered to-do commands resolve against the fresh listing snapshot (A6
   const byTitle = (rows: Map<string, WorkItem>, title: string) => [...rows.values()].find((item) => item.title === title) as WorkItem;
   const statuses = (rows: Map<string, WorkItem>) => Object.fromEntries([...rows.values()].map((item) => [item.title, item.status]));
 
+  it('an A6 add after drift takes the next unused label (max + 1), so the shown "3번" stays C (Codex P1, #233)', async () => {
+    const { desk, rows, work } = world();
+    await addThree(desk); // A 보고서 쓰기 = 1, B UAT 결과 정리 = 2, C 회의록 공유 = 3
+    const snapshot = await listed(desk);
+    await work.transition(byTitle(rows, '보고서 쓰기').id, WorkItemStatus.COMPLETED); // live: B = 1, C = 2, D would be 3
+    const added = await desk.handleAction(cmd('todo.add', { title: '예산안 검토' }), owner, undefined, { todoListing: snapshot });
+    expect(text(added)).toBe('할 일 4번으로 추가했어요: "예산안 검토" · 되돌리려면 "되돌려줘" (10분 안)');
+    const d = byTitle(rows, '예산안 검토');
+    expect(added).toMatchObject({ action: { entryId: 'todo.add', result: 'executed', itemId: d.id, label: 4 } });
+    // The runtime merges the receipt label into the fresh listing (nl-selection-service); 3 still names C.
+    const merged = readListingRecord(withLabelledListing(withLabelledListing(undefined, owner.id, 'todo', snapshot.items, NOW, 'listing'), owner.id, 'todo', [{ label: 4, id: d.id }], NOW, 'merge'), owner.id, NOW).slots.todo as ListingSlot;
+    expect(merged.items.find((entry) => entry.label === 3)?.id).toBe(byTitle(rows, '회의록 공유').id);
+    await say(desk, '3번 완료', merged);
+    expect(statuses(rows)).toMatchObject({ '회의록 공유': WorkItemStatus.COMPLETED, '예산안 검토': WorkItemStatus.ACTIVE });
+    await say(desk, '4번 완료', merged);
+    expect(statuses(rows)).toMatchObject({ '예산안 검토': WorkItemStatus.COMPLETED });
+    // Without a fresh listing the echo keeps the live number.
+    expect(text(await desk.handleAction(cmd('todo.add', { title: '새 일' }), owner))).toBe('할 일 2번으로 추가했어요: "새 일" · 되돌리려면 "되돌려줘" (10분 안)');
+  });
+
+  it('an ambiguous title question names each candidate by its listing label or the next unused ones, never a live number (CA review)', async () => {
+    const { desk, rows, work } = world();
+    await addThree(desk); // A 보고서 쓰기 = 1, B UAT 결과 정리 = 2, C 회의록 공유 = 3
+    const snapshot = await listed(desk);
+    await work.transition(byTitle(rows, 'UAT 결과 정리').id, WorkItemStatus.COMPLETED);
+    const again = detectWorkChatCommand('할 일 추가: 보고서 쓰기');
+    if (again === null) throw new Error('no command');
+    await desk.handle(again, owner); // D 보고서 쓰기: live A = 1, C = 2, D = 3
+    const a = [...rows.values()].find((item) => item.title === '보고서 쓰기' && item.id === snapshot.items[0]?.id) as WorkItem;
+    const d = [...rows.values()].find((item) => item.title === '보고서 쓰기' && item.id !== a.id) as WorkItem;
+    const asked = await desk.handleAction(cmd('todo.complete', { match: '보고서 쓰기' }), owner, undefined, { todoListing: snapshot });
+    expect(text(asked)).toBe('어느 할 일인가요? 번호로 답해 주세요. 아직 아무것도 바꾸지 않았어요.\n1. 보고서 쓰기\n4. 보고서 쓰기');
+    expect(asked).toMatchObject({ action: { result: 'asked', candidates: [{ label: 1, id: a.id }, { label: 4, id: d.id }] } });
+    // The runtime merges the asked candidates into the fresh listing: 3 still names C, and "4번" names D.
+    const merged = readListingRecord(withLabelledListing(withLabelledListing(undefined, owner.id, 'todo', snapshot.items, NOW, 'listing'), owner.id, 'todo', [{ label: 1, id: a.id }, { label: 4, id: d.id }], NOW, 'merge'), owner.id, NOW).slots.todo as ListingSlot;
+    expect(merged.items.find((entry) => entry.label === 3)?.id).toBe(byTitle(rows, '회의록 공유').id);
+    await say(desk, '4번 완료', merged);
+    expect(rows.get(d.id)?.status).toBe(WorkItemStatus.COMPLETED);
+    expect(rows.get(a.id)?.status).toBe(WorkItemStatus.ACTIVE);
+    expect(byTitle(rows, '회의록 공유').status).toBe(WorkItemStatus.ACTIVE);
+  });
+
+  it('appended labels stop at NL_REF_MAX_INDEX (50): past it the to-do is named by its title only, and no label is recorded (Codex P2)', async () => {
+    const { desk, rows } = world();
+    await addThree(desk);
+    const full: ListingSlot = { source: 'todo', at: NOW, items: [...(await listed(desk)).items, { label: 50, id: 'shown-elsewhere' }] };
+    const added = await desk.handleAction(cmd('todo.add', { title: '쉰한 번째' }), owner, undefined, { todoListing: full });
+    expect(text(added)).toBe('할 일로 추가했어요: "쉰한 번째" · 되돌리려면 "되돌려줘" (10분 안)');
+    expect((added as { action: { label?: number } }).action.label).toBeUndefined();
+    const anchored = detectWorkChatCommand('할 일 추가: 쉰두 번째');
+    if (anchored === null) throw new Error('no command');
+    expect((await desk.handle(anchored, owner, { todoListing: full }) as { action: { label?: number } }).action.label).toBeUndefined();
+    expect(byTitle(rows, '쉰한 번째').status).toBe(WorkItemStatus.ACTIVE);
+    // An ambiguous question past the bound: the unlabelled candidate is named by its title only and not recorded.
+    const again = detectWorkChatCommand('할 일 추가: 보고서 쓰기');
+    if (again === null) throw new Error('no command');
+    await desk.handle(again, owner);
+    const asked = await desk.handleAction(cmd('todo.complete', { match: '보고서 쓰기' }), owner, undefined, { todoListing: full });
+    expect(text(asked)).toBe('어느 할 일인가요? 번호로 답해 주세요. 아직 아무것도 바꾸지 않았어요.\n1. 보고서 쓰기\n· 보고서 쓰기');
+    expect((asked as { action: { candidates: unknown[] } }).action.candidates).toHaveLength(1);
+  });
+
+  it('a title-matched complete echoes the shown label, never the live number, while a listing is fresh (Codex P1)', async () => {
+    const { desk, rows, work } = world();
+    await addThree(desk);
+    const snapshot = await listed(desk);
+    await work.transition(byTitle(rows, '보고서 쓰기').id, WorkItemStatus.COMPLETED); // live: C = 2
+    const done = await desk.handleAction(cmd('todo.complete', { match: '회의록 공유' }), owner, undefined, { todoListing: snapshot });
+    expect(text(done)).toContain('할 일 3번을 완료 처리했어요');
+    expect(done).toMatchObject({ action: { result: 'executed', label: 3 } });
+  });
+
+  it('a duplicate add names the existing to-do by its SHOWN label, never a live number the snapshot disagrees with (Codex P1)', async () => {
+    const { desk, rows, work } = world();
+    await addThree(desk); // 1 보고서 쓰기, 2 UAT 결과 정리, 3 회의록 공유
+    const snapshot = await listed(desk);
+    await work.transition(byTitle(rows, '보고서 쓰기').id, WorkItemStatus.COMPLETED); // live: 회의록 공유 is now 2
+    const dup = await desk.handleAction(cmd('todo.add', { title: '회의록 공유' }), owner, undefined, { todoListing: snapshot });
+    expect(text(dup)).toBe('같은 제목의 할 일이 이미 있어요 (3번): "회의록 공유" · 아무것도 바꾸지 않았어요.');
+    // "2번 완료" against the same snapshot is the shown 2, not the live 2 the reply would otherwise have named.
+    await say(desk, '2번 완료', snapshot);
+    expect(statuses(rows)).toMatchObject({ 'UAT 결과 정리': WorkItemStatus.COMPLETED, '회의록 공유': WorkItemStatus.ACTIVE });
+    // An open to-do the fresh listing never showed: the title only, no number.
+    const extra = await desk.handleAction(cmd('todo.add', { title: '새 할 일' }), owner);
+    expect(extra).toMatchObject({ action: { result: 'executed' } });
+    const unshown = await desk.handleAction(cmd('todo.add', { title: '새 할 일' }), owner, undefined, { todoListing: snapshot });
+    expect(text(unshown)).toBe('같은 제목의 할 일이 이미 있어요: "새 할 일" · 아무것도 바꾸지 않았어요.');
+    // Without a listing the live number is the one "N번" resolves by.
+    expect(text(await desk.handleAction(cmd('todo.add', { title: '회의록 공유' }), owner))).toBe('같은 제목의 할 일이 이미 있어요 (1번): "회의록 공유" · 아무것도 바꾸지 않았어요.');
+  });
+
   it('drift by completion: after 1 is completed elsewhere, "2번 완료" completes the SHOWN 2 (not today\'s 2) and keeps label 2', async () => {
     const { desk, rows, work } = world();
     await addThree(desk);
@@ -419,14 +532,16 @@ describe('numbered to-do commands resolve against the fresh listing snapshot (A6
     };
     await work.transition(ids[0] as string, WorkItemStatus.COMPLETED);
     merge(await say(desk, '2번 완료', snapshot));
-    // A deterministic add after the list changed: its live number 2 would rename a shown label, so it carries none.
+    // A deterministic add after the list changed: its live number 2 would rename a shown label, so it is appended under
+    // the next unused label (4), never a live or gap number the owner did not see (CA review).
     const added = await say(desk, '할 일 추가: 늦게 온 일', snapshot);
-    expect((added as { action: { label?: number } }).action.label).toBeUndefined();
+    const addedId = (added as { action: { itemId: string } }).action.itemId;
+    expect((added as { action: { label?: number } }).action.label).toBe(4);
     merge(added);
     const labels = readListingRecord(record, owner.id, NOW).slots.todo?.items;
-    expect(labels).toEqual([{ label: 1, id: ids[0] }, { label: 2, id: ids[1] }, { label: 3, id: ids[2] }]);
+    expect(labels).toEqual([{ label: 1, id: ids[0] }, { label: 2, id: ids[1] }, { label: 3, id: ids[2] }, { label: 4, id: addedId }]);
     expect(rows.get(ids[2] as string)?.status).toBe(WorkItemStatus.ACTIVE);
-    // An add that does not collide extends the listing with its live number, so "4번 완료" then names it.
+    // Without drift the next unused label is the live number too, so "4번 완료" then names it.
     const fresh = world();
     await addThree(fresh.desk);
     const shown = await listed(fresh.desk);

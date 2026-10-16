@@ -114,7 +114,8 @@ export function deicticTextReader(storage: StorageProvider, memory: Pick<MemoryM
         .filter((item) => item.status === WorkItemStatus.ACTIVE)
         .sort((left, right) => (left.createdAt < right.createdAt ? -1 : left.createdAt > right.createdAt ? 1 : left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
       const index = open.findIndex((item) => item.title === title);
-      return index >= 0 ? index + 1 : undefined;
+      const item = open[index];
+      return item === undefined ? undefined : { id: item.id, no: index + 1 };
     },
   };
 }
