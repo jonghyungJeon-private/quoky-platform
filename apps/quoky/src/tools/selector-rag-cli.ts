@@ -29,7 +29,10 @@ export const EXIT_FAILED = 1;
 export const EXIT_USAGE = 2;
 export const EXIT_BLOCKED = 3;
 
-export const DEFAULT_EMBEDDING_MODELS = ['nomic-embed-text', 'nomic-embed-text-v2-moe'] as const;
+// ADR-0123 (owner decision 2026-10-16): nomic-embed-text-v2-moe (digest ff9c2f10ef5e) is the sole retrieval embedding model.
+// nomic-embed-text (v1.5) failed its audit and is not a retrieval candidate; the plan binds only this model.
+export const RETRIEVAL_EMBEDDING_MODEL = 'nomic-embed-text-v2-moe';
+export const DEFAULT_EMBEDDING_MODELS = [RETRIEVAL_EMBEDDING_MODEL] as const;
 const repoRoot = resolve(__dirname, '../../../..');
 const EVAL_DIR = resolve(repoRoot, 'data/eval/selector-rag');
 export const AUDIT_RECORD_PATH = resolve(__dirname, '../../../../apps/quoky/src/tools/selector-rag/selector-pool.audit.v1.json');
@@ -58,7 +61,7 @@ export function parseArguments(argv: readonly string[]): { mode: 'lint' | 'dry-r
 
 const HELP = `ADR-0123 selector example retrieval harness (phase 1, offline)
   pnpm eval:rag -- --mode lint [--pool <file>]
-  pnpm eval:rag -- --mode dry-run [--models nomic-embed-text,nomic-embed-text-v2-moe] [--write-audit true] [--latency-sample 50]
+  pnpm eval:rag -- --mode dry-run [--models nomic-embed-text-v2-moe] [--write-audit true] [--latency-sample 50]
   pnpm eval:rag -- --mode plan [--selector-model ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}] [--runs 5] [--sessions 3]
   pnpm eval:rag -- --mode run --approved-plan-digest <sha256 from plan>   (Strict; selector arms not wired in phase 1)
 No mode makes a selector call. dry-run embeds through the local Ollama on loopback only.
@@ -220,8 +223,8 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   }
   // A model whose audit failed (flagged pool pairs, an aborted tau, an invalid low-similarity stratum) is dropped from the
   // plan, never bent to fit; the plan is blocked only when no model is left.
-  const usable = audit.models.filter((model) => model.tauLow !== null && model.flaggedPairs.length === 0 && model.lowStratumValid === true);
-  for (const dropped of audit.models.filter((model) => !usable.includes(model))) deps.stderr(`dropped from the plan: ${dropped.model} (its audit failed: flagged pairs, aborted tau or invalid low-similarity stratum)`);
+  const usable = audit.models.filter((model) => model.model === RETRIEVAL_EMBEDDING_MODEL && model.tauLow !== null && model.flaggedPairs.length === 0 && model.lowStratumValid === true);
+  for (const dropped of audit.models.filter((model) => !usable.includes(model))) deps.stderr(`dropped from the plan: ${dropped.model} (not the pinned retrieval model, or its audit failed: flagged pairs, aborted tau or invalid low-similarity stratum)`);
   if (usable.length === 0) {
     deps.stderr('BLOCKED: no embedding model passed its audit; fix the pool, not the plan');
     return EXIT_BLOCKED;

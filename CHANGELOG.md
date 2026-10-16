@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0123 owner decisions: v2-moe sole retrieval model, pool batch 1 approved (2026-10-16)
+
+- **Changed.** `nomic-embed-text-v2-moe` (digest `ff9c2f10ef5e`) is the sole retrieval embedding model. `pnpm eval:rag` dry-run defaults to it
+  and `--mode plan` admits only that model's audit (`RETRIEVAL_EMBEDDING_MODEL` in `selector-rag-cli.ts`).
+- **Changed.** Pool batch 1 (100 examples) set to `status: approved`, `approvedBy: owner:jonghyung.jeon`, `approvedOn: 2026-10-16`.
+  The drafter stays `agent`; the pool digest is unchanged.
+
 ## Unreleased — ADR-0123 phase 1: offline selector-retrieval experiment harness and pool batch 1 (2026-10-16)
 
 - **Added (tooling only; no runtime path, no flag, no selector call).** `apps/quoky/src/tools/selector-rag/` and
