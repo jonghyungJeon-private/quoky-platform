@@ -535,13 +535,20 @@ export class NlSelectionService implements TurnDeliveryObserver {
   async takePending(session: Pick<Session, 'id' | 'metadata'>, actorId: string, now: IsoTimestamp): Promise<PendingQuestion | null> {
     if (this.mode !== 'active') return null;
     if (session.metadata?.[NL_PENDING_METADATA_KEY] === undefined) return null;
-    const question = readPendingQuestion(session, actorId, now) ?? null;
+    // Atomic take: read and delete the LIVE value in one field-scoped update under the session write lock, so two
+    // concurrent turns never both receive the same question. A failed clear fails closed (nothing is returned).
+    let question: PendingQuestion | null = null;
     try {
-      await this.deps.sessions.updateMetadataEntry({ id: session.id }, NL_PENDING_METADATA_KEY, () => undefined);
+      const saved = await this.deps.sessions.updateMetadataEntry({ id: session.id }, NL_PENDING_METADATA_KEY, (current) => {
+        if (current === undefined) return undefined;
+        question = readPendingQuestion({ metadata: { [NL_PENDING_METADATA_KEY]: current } }, actorId, now) ?? null;
+        return undefined;
+      });
+      return saved === null ? null : question;
     } catch (error) {
       this.log('warn', 'nl_selection.session_write_failed', { key: NL_PENDING_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+      return null;
     }
-    return question;
   }
 
   /**
