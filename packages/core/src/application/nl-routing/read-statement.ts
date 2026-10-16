@@ -48,6 +48,12 @@ function isReasonStatement(text: string): boolean {
   if (main.length !== 1 || last === undefined || !/\p{Script=Hangul}$/u.test(last)) return false;
   // Nothing before the connective may be a request; a wh-word there is the embedded question of the reason clause.
   if (tokens.slice(0, connective + 1).some((token) => REQUEST_ENDING.test(token))) return false;
+  // A one-word main clause in a request or imperative form stays a request ("…해서 확인해", "…니까 보여줘"). Bare -해 is both
+  // the imperative of an action and the plain form of a state adjective; only a reduplicated state stem ("답답해") is read
+  // as the state, every other -해 stays a request (the conservative side).
+  const chars = Array.from(last.replace(/요$/u, ''));
+  const reduplicatedState = chars.length === 3 && chars[0] === chars[1] && chars[2] === '해';
+  if (nlIsRequestForm(last) && !reduplicatedState) return false;
   return !asksOrRequests(last) && !INTERROGATIVE.test(last) && !/싶/u.test(last);
 }
 

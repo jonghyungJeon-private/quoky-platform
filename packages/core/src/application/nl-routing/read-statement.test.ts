@@ -25,10 +25,15 @@ describe('nlReadNotRequest (READ message-level structural guard)', () => {
     expect(nlReadNotRequest('"오늘 jira 이슈 브리핑해줘" 라고 말하면 뭐가 되는지 설명해줘', { topic: 'work-lookup' })).toBe('quoted-request');
   });
 
+  it('still reads a lone state or plain-declarative predicate after a reason clause as a statement', () => {
+    for (const text of ['일이 많아서 정신없어', '이슈가 너무 많아서 지친다', '몰라서 답답해', '이슈 몰라서 짜증나']) expect(nlReadNotRequest(text, {}), text).toBe('reason-statement');
+  });
+
   it('keeps a quote that is an argument value, and a reason clause that ends in a request or a wider main clause', () => {
     expect(nlReadNotRequest('슬랙에서 "서버 점검 공지" 찾아줘', { keyword: '서버 점검 공지' })).toBeUndefined();
     expect(nlReadNotRequest('이슈가 뭐 있는지 몰라서 알려줘', {})).toBeUndefined();
     expect(nlReadNotRequest('급해서 jira 이슈 확인해', {})).toBeUndefined();
+    for (const text of ['바빠서 확인해', '급하니까 보여줘', '몰라서 알려줘', '몰라서 알려줄래요', '궁금해서 확인해요', '바빠서 알려주세요', '시간 없어서 보여줘']) expect(nlReadNotRequest(text, {}), text).toBeUndefined();
     expect(nlReadNotRequest('몰라서 답답한데 이슈 뭐야?', {})).toBeUndefined();
     expect(nlReadNotRequest('이슈 몰라서 어떻게 해야 돼?', {})).toBeUndefined();
   });
