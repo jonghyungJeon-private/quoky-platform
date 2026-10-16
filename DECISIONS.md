@@ -27493,3 +27493,16 @@ policy-sensitive chat refusal to the ordinary route (shadow selection, then the 
   for the local-list sub-clause (Codex P2: the other sub-clauses of the message are still checked, so "… 추가해줘 그리고
   내일 3시에 일정 추가해줘" stays a calendar action), and never for a clause naming a calendar (캘린더 / 달력 / calendar).
   Narrowing only; no phrase added.
+
+## A6 D12 batch and A6 R2 corpus — owner approval (2026-10-17)
+
+Status: **recorded.** On 2026-10-17 at 03:17 the owner (jonghyung.jeon) approved the pending agent-drafted gold batches ("1,2,3,4,5 다 승인할게"), as recommended.
+
+Approved, exactly:
+
+1. **A6 D12 batch** (`golden/nl-action.v1.json`): the 21 cases still marked `PENDING the owner's D12 batch` are now owner-approved, their notes re-marked `owner-approved D12 batch 2026-10-17`: `a6-negative-none-130`, `-131`, `-186` to `-191`, `-192`, `-193`; `a6-paraphrase-todo.add-903`, `-904`, `-905`; `a6-paraphrase-reminder.create-902`; `a6-paraphrase-reminder.cancel-901` to `-907`. Expected outcomes, text and fixtures are unchanged; only the approval marker changes.
+2. **A6 R2 corpus** (`golden/nl-action.r2.v1.json`, 212 cases, `R2-batch-1`, Jira / Slack `item.summarize`): approved as drafted. Its description now reads owner batch APPROVED 2026-10-17.
+
+Not approved by this record: the R2 red-team batch (`agent-redteam.v1.json`, `subFamily: "r2"`), the Strict 3-run R2 model gate and real-model red team, the `QUOKY_NL_ITEM_R2` / `QUOKY_NL_ACTIONS` flags (they stay `off` / `local`-gated and inert), and Chief Architect review before merge. Each needs its own owner yes. No code behaviour changed.
+
+The gold digest changes with these marker edits (the digest hashes the raw golden files), so `selector-pool.audit.v1.json` is regenerated with `pnpm eval:rag -- --mode dry-run --write-audit true`.

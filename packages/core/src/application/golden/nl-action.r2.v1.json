@@ -1,6 +1,6 @@
 {
  "version": 1,
- "description": "ADR-0120 amendment A6 R2 action corpus (Jira / Slack item.summarize), schema docs/plans/nl-action-corpus-schema.md. Agent-drafted for A6 R2; awaiting the owner batch approval per ADR-0120 D12. Names, keys and ids are invented (PROJ-n:1000n, C0123456:ts).",
+ "description": "ADR-0120 amendment A6 R2 action corpus (Jira / Slack item.summarize), schema docs/plans/nl-action-corpus-schema.md. Agent-drafted for A6 R2; owner batch APPROVED 2026-10-17 (owner jonghyung.jeon) per ADR-0120 D12. Names, keys and ids are invented (PROJ-n:1000n, C0123456:ts).",
  "promptVersion": "nl-select.v43",
  "cases": [
   {
