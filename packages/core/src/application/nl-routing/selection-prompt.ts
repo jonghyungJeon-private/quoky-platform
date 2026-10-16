@@ -1,5 +1,6 @@
 import type { NlArgs, NlCatalogEntry, NlCatalogEntryId } from './catalog';
 import { NL_RANGE_SYMBOLS } from './symbolic-time';
+import { nlModeVocabularyText } from './action-entries';
 
 /**
  * The provider-neutral selection prompt (ADR-0120 D2, D3, D8). Core writes the whole instruction text; the adapter only
@@ -78,8 +79,16 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v44';
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
  * Jira key ref; every other byte is v42. v45 = the same R2 lines on top of v44 (the `reminder.cancel` entry of owner
  * decision C changed the shared catalog bytes). With R2 `off` the prompt is v44 byte for byte.
+ * v46 (the v45 D12 gate failure analysis, F1-F4; only R2 bytes change, so the A6 prompt stays v44 and the read prompt
+ * v39 byte for byte): rule 8 says when one pointed listed item is item.summarize rather than a list query (also with a
+ * source noun or a show verb) and which item questions are not, and drops the stale "Jira issues … still none" tail
+ * (creating or changing a Jira issue); a determiner + source noun is "this", a one-item list is no "#N", and the
+ * Reference context "last read:" part is explained; `source` follows the owner's noun, then the recency target, then
+ * the context; the `mode` words are built from Core's NL_MODE_* vocabulary and are independent of scope; the R2 entry's
+ * description and its `source` / `mode` arg descriptions say the same; one Jira and one Slack example, shown only while
+ * that R2 source is offered.
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v45';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v46';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -158,6 +167,8 @@ interface PromptExample {
   readonly previous?: string;
   /** v25 only (the A6 prompt): the example's "Reference context" line. */
   readonly context?: string;
+  /** A6 R2 (v46): shown only while `item.summarize` offers this R2 source (so the v44 prompt stays byte for byte). */
+  readonly r2Source?: 'jira' | 'slack';
 }
 
 const none = '{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]}';
@@ -261,6 +272,16 @@ const ACTION_EXAMPLES: readonly PromptExample[] = [
   { text: '남은 거 모두 완료 처리해', context: 'last listing: todo (3 items, 1 min ago)', output: '{"entryId":"todo.complete","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['todo.complete'] },
 ];
 
+/**
+ * A6 R2 (v46): generic examples of one pointed Jira / Slack item, each shown only while its source is offered. The Jira
+ * one names the source and uses a show verb (still one item, not a list query) with a full-text word; the Slack one is a
+ * determiner + source noun over a one-item list ("this", never "#1") with a summary word. Not corpus phrases (RAG-0).
+ */
+const R2_EXAMPLES: readonly PromptExample[] = [
+  { text: '지라 목록 세 번째 티켓 본문 통째로 띄워 줘', context: 'last listing: jira (6 items, 2 min ago)', output: '{"entryId":"item.summarize","args":{"source":"jira","ref":"#3","mode":"full"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['item.summarize'], r2Source: 'jira' },
+  { text: '저 슬랙 글 한 줄로 간추려 줄래', context: 'last listing: slack (1 items, 3 min ago)', output: '{"entryId":"item.summarize","args":{"source":"slack","ref":"this","mode":"summary"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['item.summarize'], r2Source: 'slack' },
+];
+
 /** The v25 rule lines (A6) inserted after rule 7. */
 const ACTION_RULES: readonly string[] = [
   '8. Action entries (only those in the catalog): pick one when the owner asks Quoky to do it NOW: todo.add, todo.complete,',
@@ -297,13 +318,20 @@ const ACTION_RULES: readonly string[] = [
   '   Posting, sending, replying, calendar events, Jira issues and every other write not in the catalog are still none.',
 ];
 
-function examplesFor(offered: ReadonlySet<string>, actions: NlSelectionPromptInput['actions']): PromptExample[] {
+function examplesFor(offered: ReadonlySet<string>, actions: NlSelectionPromptInput['actions'], r2: readonly string[] = []): PromptExample[] {
   if (actions === undefined) return EXAMPLES.filter((example) => example.needs.every((id) => offered.has(id)));
   const base = EXAMPLES.map((example) => {
     const override = ACTION_EXAMPLE_OVERRIDES[example.text];
     return override !== undefined && override.needs.every((id) => offered.has(id)) ? { ...override, text: override.text ?? example.text } : example;
   });
-  return [...base, ...ACTION_EXAMPLES].filter((example) => example.needs.every((id) => offered.has(id)));
+  const r2Examples = R2_EXAMPLES.filter((example) => example.r2Source !== undefined && r2.includes(example.r2Source));
+  return [...base, ...ACTION_EXAMPLES, ...r2Examples].filter((example) => example.needs.every((id) => offered.has(id)));
+}
+
+/** A6 R2: the Jira / Slack sources the offered `item.summarize` lists (empty when R2 is not offered). */
+function r2SourcesOf(entries: readonly NlCatalogEntry[]): string[] {
+  const values = entries.find((entry) => entry.id === 'item.summarize')?.args.find((spec) => spec.name === 'source')?.values ?? [];
+  return ['jira', 'slack'].filter((source) => values.includes(source));
 }
 
 /** v25 (A6) replacements of whole v24 lines; a line not listed is kept byte for byte. */
@@ -422,7 +450,8 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
   }
   const retrieved = input.retrievedExamples !== undefined && input.retrievedExamples.length > 0 ? input.retrievedExamples : undefined;
   const swap = retrieved !== undefined && input.replaceStaticExamples === true;
-  const examples = swap ? [] : examplesFor(offered, input.actions);
+  const r2 = r2SourcesOf(input.entries);
+  const examples = swap ? [] : examplesFor(offered, input.actions, r2);
   if (swap) {
     lines.push('', renderSwappedExamplesBlock(retrieved));
   } else if (examples.length > 0) {
@@ -445,8 +474,7 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '>>>',
   );
   if (input.actions === undefined) return lines.join('\n');
-  const values = input.entries.find((entry) => entry.id === 'item.summarize')?.args.find((spec) => spec.name === 'source')?.values ?? [];
-  return withActionRules(lines, ['jira', 'slack'].filter((source) => values.includes(source))).join('\n');
+  return withActionRules(lines, r2).join('\n');
 }
 
 /**
@@ -472,13 +500,19 @@ function withActionRules(lines: readonly string[], r2: readonly string[] = []): 
 
 /**
  * A6 R2 (v43): rule 8 lines rewritten when `item.summarize` offers Jira and/or Slack. Only the named sources appear, so a
- * catalog without Slack never mentions Slack messages.
+ * catalog without Slack never mentions Slack messages. v46 adds the one-item-versus-list rule (F1), the determiner,
+ * one-item list and "last read:" ref lines (F2), the source precedence (F3) and the mode words built from Core's
+ * vocabulary (F4); all of them are generic rules, none is a phrase route.
  */
 function R2_RULE_REPLACEMENTS(r2: readonly string[]): Readonly<Record<string, readonly string[]>> {
   const jira = r2.includes('jira');
   const slack = r2.includes('slack');
   const items = ['mail', 'Drive file', ...(jira ? ['Jira issue'] : []), ...(slack ? ['Slack message'] : [])];
   const what = `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+  const nouns = [...(jira ? ['지라', '이슈', '티켓', 'Jira'] : []), ...(slack ? ['슬랙', 'Slack'] : [])].join(', ');
+  const lists = [...(jira ? ['jira.issues'] : []), ...(slack ? ['slack.search'] : [])].join(' and ');
+  const listQueries = jira && slack ? 'are list queries' : 'is a list query';
+  const mode = nlModeVocabularyText();
   return {
     "   todo.cancel, reminder.create, reminder.cancel, action.undo (undo what Quoky itself just did), item.summarize (what ONE": [
       "   todo.cancel, reminder.create, reminder.cancel, action.undo (undo what Quoky itself just did), item.summarize (what ONE",
@@ -486,10 +520,36 @@ function R2_RULE_REPLACEMENTS(r2: readonly string[]): Readonly<Record<string, re
     '   listed mail or Drive file says). One action per message; a request for several items is NEEDS_CLARIFICATION.': [
       `   listed ${what} says). One action per message; a request for several items is NEEDS_CLARIFICATION.`,
     ],
+    '   invent an item, an id, a title or a number.': [
+      '   invent an item, an id, a title or a number.',
+      '   item.summarize ref: 이/그/저 or this/that standing before a source noun is "this", exactly like 그거; a list of one',
+      '   item does not make it "#1" ("#N" and "last" only for a number, ordinal or 마지막/last the owner wrote). The Reference',
+      '   context part `last read: <source>` is the item the owner opened last: a plain 그거 or a determiner + its source noun',
+      '   may mean it ("this"), and 방금/아까 mean it ("recent"); Core decides which item and asks when two could be meant.',
+    ],
+    '   item.summarize: source is the list the owner means (see Reference context); mode summary only for 요약/정리/짧게/': [
+      '   item.summarize source, in this order: (1) the source of the noun the owner wrote (메일, 문서, 파일, 드라이브,',
+      `   ${nouns}), also when Reference context shows only another list (Core then asks); (2) with no source noun,`,
+      '   방금/아까 take the source of `last read`; (3) otherwise the list in Reference context the owner means.',
+    ],
     '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.': [
-      '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.',
+      `   mode summary only for ${mode.summary};`,
+      `   full only for ${mode.full};`,
+      '   omit mode when the owner only asks what it said. Only these words set mode, with or without scope thread.',
       ...(slack ? ['   scope thread only for 스레드/thread (a mail or Slack thread); otherwise omit it.'] : []),
       ...(jira ? ['   A Jira issue key the owner wrote (PROJ-12) may be the ref, copied exactly; never a key the owner did not write.'] : []),
+      '   ONE listed item, not a list query: when the owner points at one item of a list already shown (a number or ordinal,',
+      '   마지막/last, a determiner + source noun, or a Jira key) and asks for its text, its content or a summary, the entry is',
+      `   item.summarize, also when the message names the source (${nouns})`,
+      '   or uses a show verb (보여줘, 알려줘, show).',
+      `   ${lists} ${listQueries} (a period, a status, a keyword, my items), never one pointed item.`,
+      '   Never item.summarize: a question about one field of the item (assignee, status, due date, sender, channel, time,',
+      '   link) asks for no content; a negated or declined request, a how-to or feature question, a remark about what was',
+      '   already done or read, and quoted or pasted text are decided by rules 2 and 3.',
+    ],
+    '   Posting, sending, replying, calendar events, Jira issues and every other write not in the catalog are still none.': [
+      '   Posting, sending, replying, calendar events, creating or changing a Jira issue and every other write not in the',
+      '   catalog are still none.',
     ],
   };
 }

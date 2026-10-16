@@ -956,6 +956,15 @@ export type NlItemSummarizeSource = (typeof NL_ITEM_SUMMARIZE_SOURCES)[number];
 const R2_REF_DESCRIPTION = `${REF_DESCRIPTION} For a Jira issue only: the issue key exactly as the owner wrote it (PROJ-12).`;
 
 /**
+ * A6 R2 (v46): the `mode` vocabulary as the selector reads it, built from the words Core grounds `mode` with
+ * ({@link NL_MODE_SUMMARY_WORDS}, {@link NL_MODE_FULL_WORDS}), so the prompt and the validator cannot drift (v45 listed
+ * five of nine summary words and five of ten full words by hand). Used by the R2 entry and the R2 rule 8 line.
+ */
+export function nlModeVocabularyText(): { readonly summary: string; readonly full: string } {
+  return { summary: NL_MODE_SUMMARY_WORDS.join('/'), full: NL_MODE_FULL_WORDS.join('/') };
+}
+
+/**
  * A6 R2: the `item.summarize` entry for the offered sources. Without Jira or Slack it is the R1 entry itself (byte for
  * byte, so the A6 prompt stays nl-select.v44). With them, the `source` enum and the description list only the offered
  * R2 sources (mail and Drive stay as in R1), `scope: thread` is valid for mail and Slack, and `ref` may be a Jira key.
@@ -971,11 +980,24 @@ export function nlItemSummarizeEntry(sources: Iterable<string>): NlCatalogEntry 
   return {
     ...itemSummarize,
     description: {
-      en: `Summarize or show ONE ${en.slice(0, -1).join(', ')} or ${en[en.length - 1]} from the list Quoky just showed, when the owner asks what it says.`,
-      ko: `방금 보여준 ${ko.join('·')} 목록의 항목 하나를 요약하거나 보여주기(내용을 물을 때).`,
+      // v46 (F1): one pointed item is this entry even when the message names its source or uses a show verb; the list
+      // entries answer queries over a list.
+      en: `Summarize or show ONE ${en.slice(0, -1).join(', ')} or ${en[en.length - 1]} from the list Quoky just showed, when the owner asks what it says. Also when the owner names the source or says show: one pointed item is this entry, a query over a list is the list entry.`,
+      ko: `방금 보여준 ${ko.join('·')} 목록의 항목 하나를 요약하거나 보여주기(내용을 물을 때). 출처 이름이나 보여 달라는 말이 있어도 항목 하나를 가리키면 이 항목.`,
     },
     args: itemSummarize.args.map((spec) => {
-      if (spec.name === 'source') return { ...spec, values: ['mail', 'drive', ...r2] };
+      // v46 (F3): the owner's noun first, then the recency target, then the context.
+      if (spec.name === 'source') {
+        return {
+          ...spec,
+          values: ['mail', 'drive', ...r2],
+          description: "The source the owner's own noun names; with no noun, 방금/아까 take the source of last read; otherwise the list in Reference context.",
+        };
+      }
+      if (spec.name === 'mode') {
+        const vocabulary = nlModeVocabularyText();
+        return { ...spec, description: `summary ONLY for ${vocabulary.summary}; full ONLY for ${vocabulary.full}. Omit it otherwise; scope never sets it.` };
+      }
       if (spec.name === 'ref' && r2.includes('jira')) return { ...spec, description: R2_REF_DESCRIPTION };
       if (spec.name === 'scope') {
         return { ...spec, description: `thread ONLY when the owner asks about the whole thread (스레드/thread); ${threadSources.join(' and ')} only.` };

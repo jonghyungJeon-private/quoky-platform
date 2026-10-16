@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { isNlRefGrounded, mergeItemSummarizeEntries, nlActionEntry, nlItemSummarizeEntry, nlNamedItemSources, parseNlRef, type NlRef } from './action-entries';
+import {
+  NL_MODE_FULL_WORDS,
+  NL_MODE_SUMMARY_WORDS,
+  isNlRefGrounded,
+  mergeItemSummarizeEntries,
+  nlActionEntry,
+  nlItemSummarizeEntry,
+  nlNamedItemSources,
+  parseNlRef,
+  type NlRef,
+} from './action-entries';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { NL_ACTION_R2_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
+import { extractPromptExamples } from './example-contamination';
 import type { NlCatalogEntry } from './catalog';
 
 const ref = (value: string): NlRef => parseNlRef(value, { keys: true }) as NlRef;
@@ -90,13 +101,13 @@ describe('nlItemSummarizeEntry', () => {
   });
 });
 
-describe('selection prompt v45', () => {
+describe('selection prompt v46', () => {
   const READS = [NL_WAVE1_ENTRIES['jira.issues'], NL_WAVE1_ENTRIES['mail.list']];
   const build = (item: NlCatalogEntry) =>
     buildSelectionPrompt({ entries: [...READS, item], text: '그 이슈 요약해줘', actions: { referenceContext: 'none' } });
 
   it('names the version and detects R2 entries', () => {
-    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v45');
+    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v46');
     expect(offersR2ItemSources([nlActionEntry('item.summarize')])).toBe(false);
     expect(offersR2ItemSources([nlItemSummarizeEntry(['jira'])])).toBe(true);
     expect(offersR2ItemSources([nlItemSummarizeEntry(['slack'])])).toBe(true);
@@ -133,5 +144,58 @@ describe('selection prompt v45', () => {
     const header = (lines: string[]) => lines.slice(0, lines.indexOf('Catalog:'));
     expect(r2.slice(r2.indexOf('Catalog:') + 1).join('\n').length).toBeGreaterThan(0);
     expect(header(r2).length).toBeGreaterThan(header(r1).length);
+  });
+
+  it('v46 F1: one pointed item versus a list query, the exclusions, and no stale "Jira issues ... still none" tail', () => {
+    const both = build(nlItemSummarizeEntry(['jira', 'slack']));
+    expect(both).toContain('   ONE listed item, not a list query: when the owner points at one item of a list already shown');
+    expect(both).toContain('   jira.issues and slack.search are list queries (a period, a status, a keyword, my items), never one pointed item.');
+    expect(both).toContain('   Never item.summarize: a question about one field of the item');
+    expect(both).toContain('creating or changing a Jira issue and every other write');
+    expect(both).not.toContain('calendar events, Jira issues and every other write');
+    const jiraOnly = build(nlItemSummarizeEntry(['jira']));
+    expect(jiraOnly).toContain('   jira.issues is a list query (');
+    expect(jiraOnly).not.toContain('slack.search is a list query');
+    const slackOnly = build(nlItemSummarizeEntry(['slack']));
+    expect(slackOnly).toContain('   slack.search is a list query (');
+    expect(slackOnly).toContain('   슬랙, Slack), also when Reference context shows only another list');
+    expect(slackOnly).not.toContain('지라, 이슈, 티켓, Jira');
+  });
+
+  it('v46 F2/F3: determiner + source noun is this, a one-item list is no #1, last read, and the source order', () => {
+    const both = build(nlItemSummarizeEntry(['jira', 'slack']));
+    expect(both).toContain('   item.summarize ref: 이/그/저 or this/that standing before a source noun is "this", exactly like 그거; a list of one');
+    expect(both).toContain('item does not make it "#1"');
+    expect(both).toContain('`last read: <source>`');
+    expect(both).toContain('   item.summarize source, in this order: (1) the source of the noun the owner wrote');
+    expect(both).toContain('(2) with no source noun,');
+    expect(both).toContain('(3) otherwise the list in Reference context the owner means.');
+    const entry = nlItemSummarizeEntry(['jira', 'slack']);
+    expect(entry.args.find((spec) => spec.name === 'source')?.description).toContain("the owner's own noun");
+    expect(entry.description.en).toContain('one pointed item is this entry');
+  });
+
+  it('v46 F4: the mode vocabulary of the prompt and the R2 entry is the Core grounding vocabulary, word for word', () => {
+    const both = build(nlItemSummarizeEntry(['jira', 'slack']));
+    expect(both).toContain(`   mode summary only for ${NL_MODE_SUMMARY_WORDS.join('/')};`);
+    expect(both).toContain(`   full only for ${NL_MODE_FULL_WORDS.join('/')};`);
+    expect(both).toContain('Only these words set mode, with or without scope thread.');
+    const mode = nlItemSummarizeEntry(['slack']).args.find((spec) => spec.name === 'mode');
+    for (const word of [...NL_MODE_SUMMARY_WORDS, ...NL_MODE_FULL_WORDS]) expect(mode?.description).toContain(word);
+  });
+
+  it('v46: each R2 example is shown only while its source is offered, and Core grounds its output', () => {
+    const examples = (item: NlCatalogEntry) => extractPromptExamples(build(item)).filter((example) => example.output.includes('"source":"jira"') || example.output.includes('"source":"slack"'));
+    const both = examples(nlItemSummarizeEntry(['jira', 'slack']));
+    expect(both).toHaveLength(2);
+    expect(examples(nlItemSummarizeEntry(['jira'])).map((example) => example.output)).toEqual([expect.stringContaining('"source":"jira"')]);
+    expect(examples(nlItemSummarizeEntry(['slack'])).map((example) => example.output)).toEqual([expect.stringContaining('"source":"slack"')]);
+    expect(examples(nlActionEntry('item.summarize'))).toEqual([]);
+    const entry = nlItemSummarizeEntry(['jira', 'slack']);
+    for (const example of both) {
+      const args = (JSON.parse(example.output) as { args: { source: 'jira' | 'slack'; ref: string } }).args;
+      expect(entry.check?.(args, example.text)).toBeUndefined();
+      expect(isNlRefGrounded(ref(args.ref), example.text, { entryId: 'item.summarize', source: args.source, r2Sources: R2 })).toBe(true);
+    }
   });
 });
