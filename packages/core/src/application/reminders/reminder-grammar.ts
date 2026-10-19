@@ -1308,21 +1308,37 @@ const EN_COMPONENTS: ReadonlyArray<{ re: RegExp; apply: (spec: TimeSpec, m: RegE
 
 type EnComponent = (typeof EN_COMPONENTS)[number];
 
+/** The month-day date forms this grammar reads (English month names, "12월 25일", "12/25"), an explicit year kept. */
+function monthDatePatterns(): readonly RegExp[] {
+  return [
+    new RegExp(`\\b${EN_MONTH}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?\\b`, 'gi'),
+    new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${EN_MONTH}(?:,?\\s+(\\d{4}))?\\b`, 'gi'),
+    /(?:(\d{4})\s?년\s?)?(?<!\d)(\d{1,2})\s?월\s?(\d{1,2})\s?일/gu,
+    /(?<![\d/-])(?:(\d{4})[/-])?(\d{1,2})[/-](\d{1,2})(?![\d/-])/gu,
+  ];
+}
+
 /** The month-day dates `text` names (English month names, "12월 25일", "12/25"), with this grammar's own month vocabulary. */
 export function reminderMonthDates(text: string): Array<{ readonly year?: number; readonly month: number; readonly day: number }> {
   const normalized = text.normalize('NFC');
   const dates: Array<{ year?: number; month: number; day: number }> = [];
   // Codex P2 (2026-10-19): an explicit year is kept ("2027년 10월 22일", "Oct 22, 2027", "2027-10-22", "2027/10/22").
   const year = (raw: string | undefined): { year?: number } => (raw === undefined ? {} : { year: Number(raw) });
-  for (const m of normalized.matchAll(new RegExp(`\\b${EN_MONTH}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?\\b`, 'gi'))) dates.push({ ...year(m[3]), month: enMonth(m[1] ?? ''), day: Number(m[2]) });
-  for (const m of normalized.matchAll(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${EN_MONTH}(?:,?\\s+(\\d{4}))?\\b`, 'gi'))) dates.push({ ...year(m[3]), month: enMonth(m[2] ?? ''), day: Number(m[1]) });
-  for (const m of normalized.matchAll(/(?:(\d{4})\s?년\s?)?(?<!\d)(\d{1,2})\s?월\s?(\d{1,2})\s?일/gu)) dates.push({ ...year(m[1]), month: Number(m[2]), day: Number(m[3]) });
-  for (const m of normalized.matchAll(/(?<![\d/-])(?:(\d{4})[/-])?(\d{1,2})[/-](\d{1,2})(?![\d/-])/gu)) {
+  const [enMonthDay, enDayMonth, koDate, numeric] = monthDatePatterns() as [RegExp, RegExp, RegExp, RegExp];
+  for (const m of normalized.matchAll(enMonthDay)) dates.push({ ...year(m[3]), month: enMonth(m[1] ?? ''), day: Number(m[2]) });
+  for (const m of normalized.matchAll(enDayMonth)) dates.push({ ...year(m[3]), month: enMonth(m[2] ?? ''), day: Number(m[1]) });
+  for (const m of normalized.matchAll(koDate)) dates.push({ ...year(m[1]), month: Number(m[2]), day: Number(m[3]) });
+  for (const m of normalized.matchAll(numeric)) {
     // A bare "10-22" is no date form the owner writes (a range or a score); "12/25" and "2027-10-22" are.
     if (m[1] === undefined && m[0].includes('-')) continue;
     dates.push({ ...year(m[1]), month: Number(m[2]), day: Number(m[3]) });
   }
   return dates.filter((date) => date.month >= 1 && date.month <= 12 && date.day >= 1 && date.day <= 31);
+}
+
+/** `text` with every month-day date form of {@link reminderMonthDates} replaced by a space (its year too). Pure. */
+export function withoutReminderMonthDates(text: string): string {
+  return monthDatePatterns().reduce((rest, pattern) => rest.replace(pattern, ' '), text.normalize('NFC'));
 }
 
 /**

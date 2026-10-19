@@ -4,8 +4,8 @@ import { normalizeForMatch } from './selection-input';
 import { nlIsRequestForm } from './request-shape';
 import { NL_EN_REQUEST_LEADS } from './garbled-action';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
-import { isNlTimeWord, nlRangeSymbolWords, type NlWeekdayMention } from './symbolic-time';
-import { ANCHORED_TODO_PREFIX_HEADS, reminderMonthDates, reminderTextNamesDay } from '../reminders/reminder-grammar';
+import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentions, type NlWeekdayMention } from './symbolic-time';
+import { ANCHORED_TODO_PREFIX_HEADS, reminderMonthDates, reminderTextNamesDay, withoutReminderMonthDates } from '../reminders/reminder-grammar';
 import { SLACK_POST_COLON_HEAD } from '../work-chat/work-chat-command';
 import { EXECUTION_PHRASES } from '../execution-command-guard';
 
@@ -1143,37 +1143,84 @@ export function nlExpressedRangeSymbols(text: string): string[] {
  */
 export type NlReminderPeriod = { readonly kind: 'none' } | { readonly kind: 'supported'; readonly symbol: string } | { readonly kind: 'unsupported' };
 
-const REMINDER_RELATIVE_PERIODS: ReadonlySet<string> = new Set(['today', 'tomorrow', 'this-week', 'next-week']);
+const REMINDER_RELATIVE_PERIODS = ['today', 'tomorrow', 'this-week', 'next-week'] as const;
 const WEEKDAY_BY_INDEX = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 /**
- * A span or an open bound (부터 … 까지, 이후, 이전, until, through, from, since, after, before, a "~" between dates): a
+ * A span or an open bound (부터 … 까지, 이후, 이전, until, through, from, since, after, before, a "~" before a number): a
  * period with an edge the closed set has no symbol for.
  */
 const PERIOD_SPAN = /부터|까지|이후|이전|이내|(?<![a-z])(?:until|till|through|thru|from|since|after|before|within|between)(?![a-z])|[~〜–]\s*\d/u;
 /** A duration counted from now (앞으로 7일, 향후 2주, 3일 동안, next 7 days, in 3 days). */
 const PERIOD_DURATION = /(?:앞으로|향후|최근|지난)\s*\d+\s*(?:일|주|개월|달)|\d+\s*(?:일|주|개월)\s*(?:동안|간|뒤|후|이내)|(?<![a-z])(?:next|past|last|coming|in)\s+\d+\s+(?:days?|weeks?|months?)(?![a-z])/u;
+/** A number with a calendar or clock unit ("25일", "2월", "2주", "7 days", "3시간"): never placed by a guess. */
+const NUMBER_TIME_UNIT = /\d+\s*(?:일|주|개월|달|월|년|시간|시|분|(?<![a-z])(?:days?|weeks?|months?|years?|hours?|hrs?|minutes?|mins?)(?![a-z]))/u;
+/** A weekday form with its optional this / next week word ("다음 주 수요일", "이번주 금", "next Wednesday"). */
+const WEEKDAY_FORM = /(?:(?:이번|다음|담|차|금)\s*주\s*)?[월화수목금토일](?:요일|욜)날?|(?:이번|다음|담|차|금)\s*주\s*[월화수목금토일](?![가-힣])|(?<![a-z])(?:(?:this|next)\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues?|wed|thur?s?|fri|sat|sun)(?![a-z])/gu;
 
-export function nlReminderPeriod(text: string, weekdays: readonly NlWeekdayMention[] = []): NlReminderPeriod {
+/**
+ * Whether `text` carries any time expression Core knows: the A6 time-expression detector, the period words and the
+ * reminder grammar's own day recognizer (`nlNamesPeriod`), a range symbol word or date, a weekday, a duration or a number
+ * with a calendar or clock unit.
+ */
+function hasReminderTimeExpression(text: string): boolean {
   const normalized = normalizeForMatch(text);
-  const symbols = nlExpressedRangeSymbols(text);
-  const named = symbols.length > 0 || weekdays.length > 0 || nlNamesPeriod(text);
-  if (!named) return { kind: 'none' };
-  if (PERIOD_SPAN.test(normalized) || PERIOD_DURATION.test(normalized)) return { kind: 'unsupported' };
-  // A day-only date ("25일") or a month without a day ("2월") is never placed by a guess.
-  const withoutDates = normalized.replace(/(\d{1,2})\s?월\s?(\d{1,2})\s?일/gu, ' ');
-  if (/(?<!\d)\d{1,2}\s?일/u.test(withoutDates) || /(?<!\d)\d{1,2}\s?월/u.test(withoutDates)) return { kind: 'unsupported' };
+  return (
+    nlNamesPeriod(text) ||
+    PERIOD_DURATION.test(normalized) ||
+    NUMBER_TIME_UNIT.test(normalized) ||
+    nlExpressedRangeSymbols(text).length > 0 ||
+    nlWeekdayMentions(text).length > 0
+  );
+}
+
+/** The one supported period the symbols and weekdays name, or `undefined` (none, several, or one outside the set). */
+function supportedReminderPeriod(symbols: readonly string[], weekdays: readonly NlWeekdayMention[]): string | undefined {
   if (weekdays.length > 0) {
     // One weekday of this or next week: its week word is its only other period word ("다음 주 수요일" = next-wed).
     const day = weekdays[0] as NlWeekdayMention;
     const anchor = day.week === 'next' ? 'next-week' : day.week === 'this' ? 'this-week' : undefined;
-    if (weekdays.length !== 1 || day.bound || (day.week !== undefined && anchor === undefined)) return { kind: 'unsupported' };
-    if (symbols.some((symbol) => symbol !== anchor)) return { kind: 'unsupported' };
-    const prefix = anchor === 'next-week' ? 'next-' : anchor === 'this-week' ? 'this-' : '';
-    return { kind: 'supported', symbol: `${prefix}${WEEKDAY_BY_INDEX[day.weekday]}` };
+    if (weekdays.length !== 1 || day.bound || (day.week !== undefined && anchor === undefined)) return undefined;
+    if (symbols.some((symbol) => symbol !== anchor)) return undefined;
+    return `${anchor === 'next-week' ? 'next-' : anchor === 'this-week' ? 'this-' : ''}${WEEKDAY_BY_INDEX[day.weekday]}`;
   }
-  if (symbols.length !== 1) return { kind: 'unsupported' };
+  if (symbols.length !== 1) return undefined;
   const symbol = symbols[0] as string;
-  return REMINDER_RELATIVE_PERIODS.has(symbol) || /^(?:\d{4}-)?\d{2}-\d{2}$/u.test(symbol) ? { kind: 'supported', symbol } : { kind: 'unsupported' };
+  return (REMINDER_RELATIVE_PERIODS as readonly string[]).includes(symbol) || /^(?:\d{4}-)?\d{2}-\d{2}$/u.test(symbol) ? symbol : undefined;
+}
+
+/** `text` without the supported period forms: the four relative period words, month-day dates and weekday forms. */
+function withoutSupportedPeriodForms(text: string): string {
+  let rest = ` ${normalizeForMatch(withoutReminderMonthDates(text))} `.replace(WEEKDAY_FORM, ' ');
+  const phrases = nlRangeSymbolWords()
+    .filter(([symbol]) => (REMINDER_RELATIVE_PERIODS as readonly string[]).includes(symbol))
+    .flatMap(([, ko, en]) => [normalizeForMatch(ko), normalizeForMatch(ko).replace(/\s+/gu, ''), normalizeForMatch(en)])
+    .sort((a, b) => b.length - a.length);
+  for (const phrase of phrases) {
+    const latin = /^[a-z0-9 -]+$/u.test(phrase);
+    rest = rest.replace(new RegExp(latin ? `(?<![a-z0-9])${phrase.replace(/ /g, '\\s+')}(?![a-z0-9])` : `(?<![가-힣])${phrase.replace(/ /g, '\\s*')}`, 'gu'), ' ');
+  }
+  return rest;
+}
+
+/**
+ * Owner decision of 2026-10-19, bounded in review (Codex P2, four rounds): the CLOSED set of periods `reminder.list`
+ * filters by: today, tomorrow, this-week, next-week, one calendar date with month and day (an explicit year kept: `MM-DD` /
+ * `YYYY-MM-DD`), or one weekday of this or next week ("다음 주 수요일" = next-wed, "수요일" = wed).
+ * One residual rule closes the class: the owner's prose (without structures) must name exactly one supported period, and
+ * once its forms are removed NO time expression may remain (a clock "오전 9시", a part of the day "morning" / "저녁", a
+ * duration "next 7 days", a span, a month, a day-only date, another period). `none`: the prose has no time expression at
+ * all (no range). `unsupported`: any other prose with a time expression; Core asks with the fixed restate and never
+ * filters with it or drops it. `weekdays` defaults to the prose's own weekday mentions.
+ */
+export function nlReminderPeriod(text: string, weekdays?: readonly NlWeekdayMention[]): NlReminderPeriod {
+  const prose = withoutStructures(text);
+  const days = weekdays ?? nlWeekdayMentions(prose);
+  const symbols = nlExpressedRangeSymbols(prose);
+  if (symbols.length === 0 && days.length === 0 && !hasReminderTimeExpression(prose)) return { kind: 'none' };
+  if (PERIOD_SPAN.test(normalizeForMatch(prose))) return { kind: 'unsupported' };
+  const symbol = supportedReminderPeriod(symbols, days);
+  if (symbol === undefined || hasReminderTimeExpression(withoutSupportedPeriodForms(prose))) return { kind: 'unsupported' };
+  return { kind: 'supported', symbol };
 }
 
 /**

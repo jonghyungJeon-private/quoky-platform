@@ -27627,6 +27627,12 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   day (an explicit year kept: "10월 22일", "Oct 22", "2027년 10월 22일"), and one weekday of this or next week ("다음 주
   수요일" = next-wed, "금요일" = fri). Core resolves the owner's words to exactly ONE supported period
   (`nlReminderPeriod`) and requires the selected range to equal it (same clock); a missing or different range asks.
+  One residual rule closes the class (Codex P2, fourth round): after the supported period forms are removed from the
+  owner's prose (without structures), no time expression may remain (the A6 time-expression detector, the period words
+  and the reminder grammar's day recognizer, a range symbol word or date, a weekday, a duration, a number with a calendar
+  or clock unit), so "내일 오전 9시", "tomorrow morning", "오늘 저녁" and "다음 주 수요일 오후" ask instead of widening to the
+  day; a time expression with no supported period ("show reminders next 7 days") asks instead of listing everything.
+  Only prose with no time expression at all has no range.
   Anything else the owner names (a span with 부터/까지/until/~, a duration "앞으로 7일" / "next 7 days", a month "2월", a
   day-only date "25일", a past period or date, any other symbol, several periods) asks with the fixed, content-free
   restate "알림 목록은 오늘·내일·이번 주·다음 주·특정 날짜로 볼 수 있어요. 예: \"내일 알림 보여줘\"" (catalog

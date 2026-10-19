@@ -1331,13 +1331,25 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
       ['2월 알림 보여줘', {}],
       ['25일 알림 보여줘', { range: '10-25' }],
       ['지난주 알림 보여줘', { range: 'last-week' }],
+      ['내일 오전 9시 알림 보여줘', { range: 'tomorrow' }],
+      ['오늘 저녁 알림 보여줘', { range: 'today' }],
+      ['다음 주 수요일 오후 알림 보여줘', { range: 'next-wed' }],
     ] as const) {
       const { w, decision } = await run(text, out('reminder.list', args));
       expect(decision, text).toEqual({ kind: 'ask', text: restate, entryId: 'reminder.list' });
       expect(w.logs.some((log) => log.event === 'nl_selection.detail_dropped'), text).toBe(false);
     }
-    const en = await run('reminders in the next 7 days', out('reminder.list', { range: 'next-7-days' }));
-    expect(en.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('today, tomorrow, this week, next week or one date') });
+    for (const [text, args] of [
+      ['reminders in the next 7 days', { range: 'next-7-days' }],
+      // Codex P2: no supported period, a duration only: the empty range is never "every reminder".
+      ['show reminders next 7 days', {}],
+      ['tomorrow morning reminders', { range: 'tomorrow' }],
+    ] as const) {
+      const en = await run(text, out('reminder.list', args));
+      expect(en.decision, text).toMatchObject({ kind: 'ask', text: expect.stringContaining('today, tomorrow, this week, next week or one date') });
+    }
+    const wednesday = await run('다음 주 수요일 알림 보여줘', out('reminder.list', { range: 'next-wed' }));
+    expect(wednesday.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
     const ok = await run('내일 알림 보여줘', out('reminder.list', { range: 'tomorrow' }));
     expect(ok.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
   });
