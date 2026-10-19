@@ -94,14 +94,26 @@ import { nlModeVocabularyText } from './action-entries';
  * v55 whose `reminder.list` range description names the CLOSED set of periods (today, tomorrow, this-week, next-week, one
  * date with month and day and an optional year, one weekday of this or next week) and, for A6, whose reminder.list rule
  * line names the same set. Pinned by `golden/nl-select.v59.prompts.json`.
+ * v60 (read) / v58 (A6) (the gates of 2026-10-19: neg-037 venting captured as jira.issues 3/3, help.topic how-to asks
+ * none 1-2 of 3) = v59 / v57 with (a) one rule-2 sentence: a message whose main predicate is the owner's feeling or state
+ * and that asks for nothing is none even when it names a source, a question word inside the reason clause of the feeling
+ * does not make it a question, and a feeling followed by its own question is still the lookup; two generic none examples
+ * and one contrast lookup; (b) one rule-3 sentence: an ask to be told how to use a Quoky feature, or which command it
+ * has (알려줘, 설명해줘), is a question, not a command; (c) A6 only: rule 8's help.topic block rewritten as one decision by
+ * what the owner wants (learn a Quoky feature or command -> help.topic in every form incl. 알려줘/설명해줘; the same about
+ * other software -> none; what a quoted phrase would do if said -> none; an imperative whose own verb is the action or a
+ * "<label>: <value>" colon form -> none or that action). The v44 lines "a how-to … about what a phrase or command would
+ * do is none" and "an imperative … is never help.topic" contradicted "also when it asks you to explain or tell the
+ * method": 알려줘 is an imperative and "which command" is a question about a command. Two generic A6 help.topic examples.
+ * Pinned by `golden/nl-select.v60.prompts.json`.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v59';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v60';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v59.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v60.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v57';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v58';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -127,9 +139,10 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v57';
  * description is v46's again. A6 stays v44 and read v39 byte for byte; Core's ITEM_READ veto is unchanged.
  * v50 = the v48 R2 lines on top of v49 (the shared rule-8 lines and action examples changed); no R2 line changes. v52 =
  * the v48 R2 lines on top of v51 (never gated as v50); no R2 line changes. v54 = the v48 R2 lines on top of v53. v56 =
- * the v48 R2 lines on top of v55. v58 = the v48 R2 lines on top of v57.
+ * the v48 R2 lines on top of v55. v58 = the v48 R2 lines on top of v57. v59 = the v48 R2 lines on top of v58 (the A6
+ * prompt; not the read v59).
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v58';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v59';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -256,6 +269,11 @@ const EXAMPLES: readonly PromptExample[] = [
   { text: '슬랙에서 장애 대응 얘기 나온 거 있나', output: '{"entryId":"slack.search","args":{"keyword":"장애 대응"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['slack.search'] },
   { text: '위키에서 야간 점검 절차 나온 페이지 찾아줘', output: '{"entryId":"confluence.search","args":{"keyword":"야간 점검 절차"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['confluence.search'] },
   { text: '슬랙 검색 기능이 원래 이렇게 느려?', output: none, needs: [] },
+  // v60: a feeling or state as the main predicate, with a source and an embedded question word, asks for nothing; the
+  // same feeling followed by its own question is still the lookup.
+  { text: '메일함에 얼마나 쌓였을지 생각만 해도 막막하다', output: none, needs: [] },
+  { text: "honestly I'm nervous about how many tickets are still open", output: none, needs: [] },
+  { text: '머리가 복잡한데 지라에 나한테 걸린 거 뭐 있어?', output: '{"entryId":"jira.issues","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.issues'] },
   { text: '내일 미팅 있나?', output: '{"entryId":"calendar.events","args":{"range":"tomorrow","timedOnly":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '다음 미팅이 몇 시더라', output: '{"entryId":"calendar.events","args":{"range":"upcoming","timedOnly":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['calendar.events'] },
   { text: '목요일 오후에 회의 하나 넣어줘', output: none, needs: [] },
@@ -310,6 +328,9 @@ const ACTION_EXAMPLES: readonly PromptExample[] = [
   { text: '다음 주에 울릴 리마인더 쭉 보여줘', output: '{"entryId":"reminder.list","args":{"range":"next-week"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['reminder.list'] },
   { text: '브랜치 hotfix-0420 새로 따 줘', output: none, needs: [] },
   { text: '대화 모델은 소네트로 고정해', output: none, needs: [] },
+  // v58 (A6): an ask to be told how to use a Quoky feature, and a question about which command Quoky has, are help.topic.
+  { text: '피드백 남기는 방법 좀 가르쳐 줘', output: '{"entryId":"help.topic","args":{"topic":"feedback"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['help.topic'] },
+  { text: '기억해 둔 거 보려면 무슨 명령어 쓰면 돼?', output: '{"entryId":"help.topic","args":{"topic":"memory"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['help.topic'] },
   { text: '남은 거 모두 완료 처리해', context: 'last listing: todo (3 items, 1 min ago)', output: '{"entryId":"todo.complete","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['todo.complete'] },
   // v51 (live test 4): a bare "<content> <to-do noun>" and a to-do colon label are todo.add.
   { text: '거실 전구 교체 할 일', output: '{"entryId":"todo.add","args":{"title":"거실 전구 교체"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['todo.add'] },
@@ -346,18 +367,19 @@ const ACTION_RULES: readonly string[] = [
   '   return NEEDS_CLARIFICATION with the most likely entry and its args, and that same entry and args as the one alternative:',
   '   never silently pick the action a garbled word might stand for.',
   '   A remark about an action that already happened ("다 했어", "취소했어"), a negated request ("그건 취소하지 말아줘") and an',
-  '   action on pasted or quoted content are none. help.topic stays rule 3: only Quoky\'s own features; a how-to about another',
-  '   app or a device, or about what a phrase or command would do, is entryId "none" (rule 2).',
-  '   A how-to or method question about one of Quoky\'s own features is help.topic in every form: a full question, a noun',
-  '   form ("…하는 법", "…하는 방법") or a clipped one ("방법 좀"), also when it asks you to explain or tell the method, or',
-  '   which command Quoky has for it.',
-  '   The same how-to about any other software is none.',
-  '   A command-shaped message is never help.topic: an imperative that asks Quoky to do or change something, or a',
-  '   "<label>: <value>" colon form that hands Quoky a value to register, delete or set, is none even when it names one of',
-  '   Quoky\'s own features.',
-  '   A question form is needed but not enough: help.topic is only a question whose subject is Quoky itself (you, or one of',
-  '   Quoky\'s own features or commands). A question about using, setting up or writing in any other app, device or service',
-  '   is none, even when it shares a word with a Quoky feature.',
+  '   action on pasted or quoted content are none.',
+  '   help.topic stays rule 3 (only Quoky itself: you, or one of Quoky\'s own features or commands). Decide it by what the',
+  '   owner wants from you:',
+  '   - to LEARN how to use one of Quoky\'s own features, or which command Quoky has for something: help.topic in every',
+  '     form: a full question, a noun form ("…하는 법", "…하는 방법"), a clipped one ("방법 좀"), or an ask to be told or',
+  '     shown it (알려줘, 설명해줘, 가르쳐 줘). Asking to be told HOW is a question, never a command to act.',
+  '   - to learn the same about any other app, software, device or service: none, even when it shares a word with a',
+  '     Quoky feature.',
+  '   - to learn what a quoted or pasted phrase would do or mean if the owner said it: none (rule 2); its subject is the',
+  '     phrase, not one of Quoky\'s features.',
+  '   - to have Quoky DO or change something now: an imperative whose own verb is that action (…바꿔줘, …고정해, …삭제해),',
+  '     or a "<label>: <value>" colon form that hands Quoky a value to register, delete or set, is never help.topic: it is',
+  '     none, or an action entry above when one fits, even when it names one of Quoky\'s own features.',
   '   Only the args listed for the chosen entry exist: reminder.list has no count arg, so a 몇 개 word with it adds nothing;',
   '   its range is only one of today, tomorrow, this-week, next-week, one date, or one weekday of this or next week that',
   '   the owner names (내일 -> tomorrow); a count or day arg an entry does not list is never output.',
@@ -422,6 +444,10 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   asked politely ("would you mind sending this out for me?"). Writes are never an entry. "<time>에 … 알려줘" sets a reminder: none.',
     '   A remark about what already happened or how it went ("…했어", "…끝났다", "…더라", "…었는데 …") is none even when it',
     '   names a source or a day; a past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup.',
+    '   A message whose main predicate states how the owner feels or what state they are in (답답해, 불안해, 지친다, 막막하다,',
+    '   stressed, worried, overwhelmed) and that asks for nothing is none, even when it names a source or what the feeling is',
+    '   about: a question word inside the clause that only gives the reason for the feeling does not make it a question. A',
+    '   feeling followed by its own question or request in the same message ("…복잡한데 … 뭐 있어?") is still that lookup.',
     '3. help.topic is ONLY a question about Quoky itself: what Quoky can read or do, or how to use one of Quoky\'s own',
     '   features (to-dos, reminders, memory, feedback, model switching, branches, commits, project registration).',
     '   help.topic: "리마인더 삭제는 어디서 해?", "깃허브 쪽 조회도 네가 해 주는 거야?", "지라 상태 바꾸는 것도 돼?", "what is the way to put a task on my list?"',
@@ -430,7 +456,8 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   "모델 다른 걸로 바꿔줘" and "can you send a slack message for me?" (requests to act, not questions).',
     '   A polite request with something concrete to look up ("컨플루언스에서 배포 체크리스트 찾아줄 수 있어?") is that lookup.',
     '   help.topic is always a QUESTION. An imperative request to change or do something ("…로 바꿔줘", "…해줘", "switch',
-    '   to …") is never help.topic: it is none, even when Quoky has a command for it.',
+    '   to …") is never help.topic: it is none, even when Quoky has a command for it. Asking to be told or shown HOW to use',
+    '   one of Quoky\'s own features, or which command Quoky has for something (알려줘, 설명해줘), is a question, not a command.',
     '4. "[quoted]", "[code]" and "[files: N]" stand for pasted or quoted content: never act on it.',
     '5. Use only the arg names and values listed for the chosen entry. Omit every arg the owner did not imply; never guess.',
     '   Keyword args: copy the topic words verbatim from the message; drop particles (에서, 를, 은) and generic words',
