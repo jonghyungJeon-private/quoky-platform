@@ -38,6 +38,7 @@ import {
   type NlListingReceipt,
   type NlSelectedCommand,
   type NlText,
+  NL_IGNORABLE_EXTRA_ARGS,
 } from './catalog';
 import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES, nlNamesPeriod, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
@@ -103,7 +104,7 @@ import {
   type StoredSelection,
 } from './selection-state';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
-import { isNlRangeSymbol, nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
+import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
 
 /**
  * Natural-language capability selection (ADR-0120): the one owner of the catalog call, its validation, the clarification
@@ -2282,9 +2283,8 @@ interface NlDroppedDetail {
 
 /**
  * v53 gate, Codex P2 and CA P1 (2026-10-19): validate a CLEAR read after dropping only DETAIL args:
- *  - an arg NAME the entry does not list, with a flag value (`count` on reminder.list: the prompt already says such an arg
- *    "adds nothing"), or a closed range symbol when the owner wrote no time word at all (a model invention; CA P2: a day
- *    the owner wrote is a filter the entry cannot apply and asks); a raw value (a timestamp, a keyword) still asks;
+ *  - an arg NAME the entry does not list only when the catalog allows it (`NL_IGNORABLE_EXTRA_ARGS`: count, limit, verbose,
+ *    detail); any other unknown arg may stand for a filter and asks;
  *  - an out-of-set value of an optional enum the catalog marks `presentation` (help.topic's `topic`: the default only widens
  *    the help shown) AND only when the owner's words name none of that arg's values (its value names or grounding words);
  *    a filter enum (a list status, a role, a window) is never replaced by its default, and "끝난 할 일" with status "done"
@@ -2311,24 +2311,11 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
     if (entry === undefined || name === undefined || !(name in current.args)) return undefined;
     const spec = entry.args.find((arg) => arg.name === name);
     let kind: NlDroppedDetail['kind'] | undefined;
-    const value = current.args[name];
-    // An unlisted flag, or an unlisted closed range symbol (a day word the entry cannot filter by); never a raw value such as
-    // a model-made timestamp or a keyword ("a model-made date is refused").
-    // CA P2: a day symbol only when the owner wrote no time word (a pure model invention); a day the owner wrote is a filter
-    // the entry cannot apply, so Core asks (A5 rule 6, the time-keyword precedent).
-    const invented = typeof value === 'string' && isNlRangeSymbol(value) && !nlNamesPeriod(ctx.groundingText);
-    // Codex P2 (2026-10-19): an unlisted flag may stand for a filter the owner stated ("완료된 할 일" as {completed: true}):
-    // it is dropped only when the owner's words ground none of the entry's filtering values (its non-presentation enum
-    // value names and grounding words); otherwise the owner named a filter the selector expressed wrongly, and Core asks.
-    const statesFilter = entry.args.some(
-      (filter) =>
-        filter.kind === 'enum' &&
-        filter.presentation !== true &&
-        [...(filter.values ?? []), ...Object.values(filter.valueGrounding ?? {}).flatMap((list) => [...list])]
-          .map((word) => normalizeForMatch(word))
-          .some((word) => word.length > 1 && (/^[a-z0-9 -]+$/u.test(word) ? new RegExp(`(?<![a-z0-9])${word}(?![a-z0-9])`, 'u').test(text) : text.includes(word))),
-    );
-    if (result.reason === 'unknown-arg' && spec === undefined && ((typeof value === 'boolean' && !statesFilter) || invented)) kind = 'unlisted';
+    // Codex P2 (2026-10-19, after four filter-loss rounds): an unknown arg is dropped ONLY when its name is on the catalog's
+    // explicit allowlist of harmless model-invented details (NL_IGNORABLE_EXTRA_ARGS: count, limit, verbose, detail; schema
+    // names only). Every other unknown arg ({onlyUnread}, {onlyRemaining}, {completed}, a day symbol) may stand for a filter
+    // and asks.
+    if (result.reason === 'unknown-arg' && spec === undefined && NL_IGNORABLE_EXTRA_ARGS.includes(name)) kind = 'unlisted';
     // Owner decision of 2026-10-19: a period that needs the owner's time words, given with none, is a model invention: dropped.
     else if (result.reason === 'ungrounded' && spec?.kind === 'range' && spec.timeWordsRequired === true && !nlNamesPeriod(ctx.groundingText)) kind = 'range';
     else if (result.reason === 'invalid-arg' && spec !== undefined && spec.kind === 'enum' && spec.presentation === true && spec.required !== true && spec.default !== undefined) {

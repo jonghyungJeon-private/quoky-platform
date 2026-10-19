@@ -87,6 +87,10 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
     const decide = async (input: string, entryId: string, args: Record<string, unknown>) =>
       (await decideActionCase({ text: input }, scripted(JSON.stringify({ entryId, args, ambiguity: 'CLEAR', alternatives: [] })), NOW)).decision;
     expect((await decide('완료된 할 일 보여줘', 'todo.list', { completed: true })).kind).toBe('ask');
+    // Codex P2: only the catalog's ignorable extra args (count, limit, verbose, detail) are dropped; any other asks.
+    expect((await decide('안 읽은 메일만', 'mail.list', { onlyUnread: true })).kind).toBe('ask');
+    expect((await decide('남은 일정만', 'calendar.events', { onlyRemaining: true })).kind).toBe('ask');
+    expect(await decide('알림 목록 자세히', 'reminder.list', { verbose: true })).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
     expect(await decide('알림 몇 개 걸려 있어?', 'reminder.list', { count: true })).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
     expect(await decide('any reminders to call mom later?', 'reminder.list', { count: true })).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
     // Codex P2: a period the owner stated but the selector wrote as a detail ({tomorrow: true}) is never dropped: ask.

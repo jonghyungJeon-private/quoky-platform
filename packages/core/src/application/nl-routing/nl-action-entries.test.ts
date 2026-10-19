@@ -336,6 +336,10 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
     expect(validateSelection({ entryId: 'reminder.list', args: { range: '2027-10-22' } }, ctx('2027년 10월 22일 알림 보여줘'))).toMatchObject({ ok: true });
     expect(validateSelection({ entryId: 'reminder.list', args: { range: '10-22' } }, ctx('2027년 10월 22일 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range' });
     expect(nlExpressedRangeSymbols('Oct 22, 2027 reminders')).toEqual(['2027-10-22']);
+    // Codex P2: a weekday the owner named narrows the period: next-wed inside "다음 주", a weekday span too.
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-wed' } }, ctx('다음 주 수요일 알림 보여줘'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: '10-19..10-21' } }, ctx('다음 주 월요일부터 수요일까지 알림 보여줘'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-thu' } }, ctx('다음 주 수요일 알림 보여줘'))).toMatchObject({ ok: false });
     // No period words and no range is fine.
     expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('알림 뭐 있어?'))).toMatchObject({ ok: true });
     // Codex P2: futureOnly holds on the FINAL range: Mon..Tue of this week is past on Wed 2026-10-14 noon.

@@ -763,7 +763,10 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     const expressed = nlExpressedRangeSymbols(ctx.groundingText);
     if (range !== undefined && !carried && expressed.length === 1) {
       const owner = resolveNlRange(expressed[0] as string, ctx.now, ctx.timeZone);
-      if (owner !== undefined && (owner.from !== range.from || owner.to !== range.to)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+      // Codex P2: a weekday the owner named narrows the period ("다음 주 수요일" = next-wed inside next week; a weekday span
+      // too); the weekday consistency above has validated it, so a range inside the owner's period matches.
+      const narrowed = mentions.length > 0 && owner !== undefined && Date.parse(range.from) >= Date.parse(owner.from) && Date.parse(range.to) <= Date.parse(owner.to);
+      if (owner !== undefined && !narrowed && (owner.from !== range.from || owner.to !== range.to)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
     }
   }
   // A6: the entry's own check after the per-arg checks.

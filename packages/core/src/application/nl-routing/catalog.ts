@@ -295,6 +295,13 @@ export interface NlActionReceipt {
  * A6-D2: a to-do or reminder listing a handler showed (the labels the owner saw and the ids), content-free. A6 R2: a
  * Jira or Slack listing (labels of the delivered numbered rows and the opaque item references).
  */
+/**
+ * Codex P2 (2026-10-19): the arg NAMES a selector may invent harmlessly on an entry that does not list them (a count, a
+ * limit, a verbosity), which Core may drop from a CLEAR read. Schema names only, never an owner phrase; every other unknown
+ * arg may stand for a filter and asks.
+ */
+export const NL_IGNORABLE_EXTRA_ARGS: readonly string[] = Object.freeze(['count', 'limit', 'verbose', 'detail']);
+
 export interface NlListingReceipt {
   readonly source: 'todo' | 'reminder' | 'jira' | 'slack';
   readonly items: readonly { readonly label: number; readonly id: string }[];

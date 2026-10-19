@@ -27614,3 +27614,10 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   A6 to `v55`, R2 to `v56`. Gold `a6-negative-reminder.list-002` now expects `{range: tomorrow}`, and, following the same
   owner decision, the read-corpus golds `reminder-012` ("내일 울릴 알림 뭐 있어?") now expects `{range: tomorrow}` and
   `reminder-027` ("any reminders set for today?") `{range: today}` (both were `{}`).
+- **(d) A read keeps every filter the owner stated (review record, 2026-10-19).** A CLEAR read whose only defect is a detail
+  Core cannot use runs without it only for: an unknown arg whose NAME is on the catalog's explicit allowlist
+  `NL_IGNORABLE_EXTRA_ARGS` (count, limit, verbose, detail: schema names, never owner phrases), an out-of-set value of an
+  enum the catalog marks `presentation` (help.topic `topic`) whose values the owner did not name, and a reminder.list
+  period the owner never wrote. Every other unknown arg ({onlyUnread}, {onlyRemaining}, {completed}) asks, and a repaired
+  read that loses a period the owner named asks; each drop is logged (`nl_selection.detail_dropped`, arg name and kind).
+  This replaces the earlier boolean and day-symbol heuristics after four review rounds of filter-loss cases.
