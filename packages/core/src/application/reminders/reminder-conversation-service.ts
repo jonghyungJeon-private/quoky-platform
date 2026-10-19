@@ -23,6 +23,7 @@ import { newId } from '../../util/id';
 import { containsCredentialMaterial } from '../credential-guard';
 import { parseReminderMessage, parseReminderWhen, type ReminderClarifyReason, type ReminderCommand } from './reminder-grammar';
 import { nextOccurrenceAfter } from './reminder-schedule';
+import { nlRangeLabel, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import type { NlActionReceipt, NlListingReceipt, NlSelectedCommand } from '../nl-routing/catalog';
 import { renderActionStopped } from '../nl-routing/nl-action-policy';
 
@@ -559,15 +560,15 @@ export class ReminderConversationService {
    * The reminder list as a typed entry (ADR-0120: a `reminder.list` selection maps to the existing LIST, ADR-0101 D2
    * amended narrowly). Same copy as "알림 목록"; the disabled copy while reminders are off. Never throws.
    */
-  async listReply(input: Omit<ReminderTurnInput, 'text'>, status?: ReminderListStatusFilter): Promise<OutboundMessage> {
-    return (await this.listReplyDetailed(input, status)).reply;
+  async listReply(input: Omit<ReminderTurnInput, 'text'>, status?: ReminderListStatusFilter, range?: NlResolvedRange): Promise<OutboundMessage> {
+    return (await this.listReplyDetailed(input, status, range)).reply;
   }
 
   /**
    * {@link listReply} plus the A6 listing receipt (only with `actionReceipts`): the reminders exactly as rendered, so a
    * selector-chosen list refreshes the reminder slot like "알림 목록" does (CA review P1). Never throws.
    */
-  async listReplyDetailed(input: Omit<ReminderTurnInput, 'text'>, status?: ReminderListStatusFilter): Promise<ReminderTurnResult> {
+  async listReplyDetailed(input: Omit<ReminderTurnInput, 'text'>, status?: ReminderListStatusFilter, range?: NlResolvedRange): Promise<ReminderTurnResult> {
     const turn: ReminderTurnInput = { ...input, text: '' };
     if (!this.deps.enabled) return { reply: this.reply(turn, this.deps.composer.disabled()) };
     try {
@@ -577,9 +578,15 @@ export class ReminderConversationService {
         const reminders = await this.deps.repository.listByActorStatuses(input.actorId, REMINDER_STATUS_VIEW[status]);
         return { reply: this.reply(turn, this.deps.composer.statusListRendered(reminders, status, input.now).body) };
       }
-      const active = await this.deps.repository.listActiveByActor(input.actorId);
-      const rendered = this.deps.composer.listRendered(active, input.now);
-      const listing = this.deps.actionReceipts === true ? listingOf(active.slice(0, rendered.shown)).listing : undefined;
+      const all = await this.deps.repository.listActiveByActor(input.actorId);
+      // Owner decision of 2026-10-19: with a period, only the scheduled reminders with an occurrence in it (a recurring
+      // reminder counts when one of its occurrences falls in it), in the owner's time zone. Display numbers stay the stable
+      // `#N`, so "2번 취소" after a filtered list still means the reminder shown as #2.
+      const active = range === undefined ? all : remindersIn(all, range);
+      const period = range === undefined ? undefined : nlRangeLabel(range, input.language ?? 'ko');
+      const rendered = this.deps.composer.listRendered(active, input.now, period);
+      const listing = this.deps.actionReceipts === true ? listingOf(active.slice(0, rendered.shown), range !== undefined).listing : undefined;
+      // An empty filtered view is still reported (its empty, filtered receipt keeps unshown numbers from resolving).
       return { reply: this.reply(turn, rendered.body), ...(listing !== undefined ? { listing } : {}) };
     } catch (error) {
       this.deps.logger.error('reminder.conversation.failed', {
@@ -629,7 +636,40 @@ function refusedReceipt(command: NlSelectedCommand, reason: string): NlActionRec
   return { entryId, result: 'refused', source: 'reminder', reason };
 }
 
+/**
+ * The first occurrence of a scheduled reminder in `[range.from, range.to)`, or `undefined`. Its next occurrence first; for
+ * a recurring clock schedule (DAILY, WEEKLY: the domain has no monthly rule) Core seeks straight to the first occurrence
+ * at or after `range.from` with the schedule's own rule (`nextOccurrenceAfter` from just before `from`, a bounded
+ * local-day search), never by stepping from the next occurrence, so a period months ahead is found (Codex P2). A one-shot
+ * or an event-relative reminder has this one occurrence.
+ */
+function occurrenceIn(reminder: Reminder, range: NlResolvedRange): IsoTimestamp | undefined {
+  const from = Date.parse(range.from);
+  const to = Date.parse(range.to);
+  const next = reminder.nextFireAt ?? reminder.occurrenceAt;
+  const nextMs = next === undefined ? Number.NaN : Date.parse(next);
+  if (next === undefined || !Number.isFinite(nextMs) || nextMs >= to) return undefined;
+  if (nextMs >= from) return next;
+  if (reminder.schedule.type === 'ONCE' || reminder.event !== undefined) return undefined;
+  const first = nextOccurrenceAfter(reminder.schedule, reminder.timeZone, new Date(from - 1).toISOString());
+  return first !== null && Date.parse(first) < to ? first : undefined;
+}
+
+/**
+ * Codex P2 (2026-10-19): the reminders due in `range`, each as SHOWN: a display copy whose next fire time is the matching
+ * occurrence (a daily reminder listed for tomorrow shows tomorrow's time, not today's). The stored reminder is unchanged;
+ * the schedule label ([매일], [매주]) is the schedule's own.
+ */
+function remindersIn(reminders: readonly Reminder[], range: NlResolvedRange): Reminder[] {
+  return reminders.flatMap((reminder) => {
+    const at = occurrenceIn(reminder, range);
+    if (at === undefined) return [];
+    const shown = reminder.nextFireAt !== undefined ? { ...reminder, nextFireAt: at } : { ...reminder, occurrenceAt: at };
+    return [shown];
+  });
+}
+
 /** A6-D2: the reminder listing exactly as shown (display numbers in list order; an empty list clears the slot). */
-function listingOf(shown: readonly Reminder[]): { readonly listing: NlListingReceipt } {
-  return { listing: { source: 'reminder', items: shown.slice(0, 50).map((reminder) => ({ label: reminder.displayNo, id: reminder.id })) } };
+function listingOf(shown: readonly Reminder[], filtered = false): { readonly listing: NlListingReceipt } {
+  return { listing: { source: 'reminder', items: shown.slice(0, 50).map((reminder) => ({ label: reminder.displayNo, id: reminder.id })), ...(filtered ? { filtered: true as const } : {}) } };
 }

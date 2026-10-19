@@ -25,6 +25,10 @@ const HEADS = new Set([
   '되돌려줘', '되돌려줘요', '되돌려죠', '되돌려', '되돌려요', '되돌려줄래', '되돌려줄래요', '되돌려주세요', '되돌리기', '원래대로', '원상복구', '원복', '롤백',
   '취소', '취소해줘', '취소해', '취소하세요', '원복해줘', '원복해주십시오', '원상복구해줘', 'undo', 'revert', 'rollback',
 ]);
+/** The 취소 heads: also the cancel of an item, so direct only without an object. */
+const CANCEL_HEADS: ReadonlySet<string> = new Set(['취소', '취소해줘', '취소해', '취소하세요']);
+/** A deictic or list-noun object of 취소 (it may name an item, not the last action). */
+const CANCEL_OBJECTS: ReadonlySet<string> = new Set(['그거', '이거', '저거', '그것', '이것', '저것', '그', '이', '저', '할', '일', '할일', '알림', 'that', 'it', 'this']);
 /** The light or undo verb after a bare head ("원래대로 돌려 놔", "원상복구 해 줄 수 있어?", "되돌리기 합시다"). */
 const VERBS = new Set(['돌려', '돌려줘', '돌려놔', '돌려줘요', '해', '해줘', '해요', '해줘요', '해주세요', '하세요', '합시다']);
 /** Auxiliary and request tokens ("되돌려 두세요", "되돌려 봐", "… 줄 수 있어?", "원상복구 부탁"). */
@@ -62,6 +66,13 @@ export function nlUndoIsDirect(text: string): boolean {
   const head = tokens.findIndex((token) => HEADS.has(token));
   if (head < 0) return false;
   if (!tokens.slice(0, head).every((token) => REFERENCES.has(token) || LABEL.test(token))) return false;
+  // Gate 2026-10-19 (a6-reference-todo.cancel-011, "그거 취소해 줘요" undid the last action): 취소 is also cancelling an item,
+  // so with an object (a deictic, a number, a list noun) it is never a direct undo; only a bare 취소 or one that points at
+  // the last action by recency or its verb ("취소해줘", "방금 거 취소", "방금 추가한 거 취소해줘") is.
+  if (CANCEL_HEADS.has(tokens[head] as string)) {
+    if (tokens.slice(0, head).some((token) => CANCEL_OBJECTS.has(token) || LABEL.test(token))) return false;
+    if (tokens.slice(head + 1).some((token) => CANCEL_OBJECTS.has(token))) return false;
+  }
   let last = tokens[head] as string;
   for (const [offset, token] of tokens.slice(head + 1).entries()) {
     if (FILLERS.has(token) && !COMPLETE.has(token)) continue;

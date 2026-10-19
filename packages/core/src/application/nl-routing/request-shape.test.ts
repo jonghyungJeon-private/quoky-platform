@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES, NL_ACTION_WORDS, containsNlTimeExpression, nlActionInputRefusal, nlActionWordGrounded } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { nlFrameIsElliptical, nlRequestVeto } from './request-shape';
+import { nlFrameIsCopularReference, nlFrameIsElliptical, nlRequestVeto } from './request-shape';
 import { NL_ACTION_ENTRIES as ENTRIES_FOR_UNDO } from './action-entries';
 import { interpretUndoConfirmReply, nlUndoIsDirect } from './undo-confirm';
 import { prepareSelectionInput } from './selection-input';
@@ -142,6 +142,51 @@ describe('A6-D3a amendment 1, review round (CA P1/P2, Codex P2)', () => {
     // A reminder's own time words are its time, not a deferral; a reason clause with 나중에 is no deferral either.
     expect(v('reminder.create', { body: '서류 제출', when: '이따 3시' }, '이따 3시에 서류 제출 알려줘').ok).toBe(true);
     expect(v('todo.add', { title: '치과 예약 전화하기' }, '나중에 까먹지 않게 할 일에 치과 예약 전화하기 적어둬').ok).toBe(true);
+    // Owner decision (a) of 2026-10-19, amended: a temporal clause right before the task's own words says when the task is
+    // done (the title excludes it); a temporal clause before anything else still defers the request.
+    expect(v('todo.add', { title: '검증 회의록 정리' }, '회의 끝나고 검증 회의록 정리 할 일에 넣어줘').ok).toBe(true);
+    expect(v('todo.add', { title: '검증 회의록 정리' }, '회의 끝난 후 검증 회의록 정리 할 일에 넣어줘').ok).toBe(true);
+    expect(v('todo.add', { title: '회의록 정리' }, '회의 끝나고 할 일에 회의록 정리 넣어줘')).toMatchObject({ ok: false, reason: 'not-request', arg: 'deferred' });
+    expect(v('todo.add', { title: '회의록 정리' }, '회의 끝난 후 할 일에 회의록 정리 넣어줘')).toMatchObject({ ok: false, reason: 'not-request', arg: 'deferred' });
+  });
+
+  it('CA P2 (2026-10-19): only an event clause with its own predicate right before a todo.add title times the task', () => {
+    const deferred = { ok: false, reason: 'not-request', arg: 'deferred' };
+    // Event clauses (-고, -고 나서, -ㄴ 뒤에, -ㄴ 후에, -은 다음에) right before a to-do title: the task's own time.
+    for (const text of [
+      '회의 끝나고 검증 회의록 정리 할 일에 넣어줘',
+      '회의 끝나고 나서 검증 회의록 정리 할 일에 넣어줘',
+      '점심 먹은 뒤에 검증 회의록 정리 할 일에 넣어줘',
+      '점심 먹은 후에 검증 회의록 정리 할 일에 넣어줘',
+      '점심 먹은 다음에 검증 회의록 정리 할 일에 넣어줘',
+    ]) expect(v('todo.add', { title: '검증 회의록 정리' }, text).ok, text).toBe(true);
+    // Bare adverbs still defer, even right before the title.
+    for (const text of ['나중에 우유 사기 할 일 추가해줘', '이따가 우유 사기 할 일에 넣어줘', '좀 있다가 우유 사기 할 일에 넣어줘']) {
+      expect(v('todo.add', { title: '우유 사기' }, text), text).toMatchObject(deferred);
+    }
+    // A day or time word right before the request verb defers the write; a present-day word does not.
+    expect(v('todo.add', { title: '우유 사기' }, '우유 사기 할 일에 내일 추가해줘')).toMatchObject(deferred);
+    expect(v('todo.add', { title: '우유 사기' }, '우유 사기 할 일에 저녁에 추가 해줘')).toMatchObject(deferred);
+    expect(v('todo.add', { title: '우유 사기' }, '우유 사기 할 일에 추가해줘').ok).toBe(true);
+    expect(v('todo.complete', { ref: '#2' }, '2번 내일 완료해줘')).toMatchObject(deferred);
+    // Complete and cancel have no task to time: an event clause before their target defers them, by title or by number.
+    expect(v('todo.complete', { match: '회의 준비' }, '회의 끝나고 회의 준비 완료해줘')).toMatchObject(deferred);
+    expect(v('todo.complete', { ref: '#2' }, '회의 끝나고 2번 완료해줘')).toMatchObject(deferred);
+    expect(v('todo.cancel', { match: '회의 준비' }, '점심 먹은 뒤에 회의 준비 취소해줘')).toMatchObject(deferred);
+    expect(v('todo.cancel', { match: '회의 준비' }, '회의 끝나고 나서 회의 준비 취소해줘')).toMatchObject(deferred);
+  });
+
+  it('CA follow-up (2026-10-19): a non-today day word on a to-do complete / cancel defers it (to-dos have no dates)', () => {
+    const deferred = { ok: false, reason: 'not-request', arg: 'deferred' };
+    expect(v('todo.complete', { ref: '#2' }, '내일 2번 완료해줘')).toMatchObject(deferred);
+    expect(v('todo.cancel', { ref: '#3' }, '다음 주에 3번 취소해줘')).toMatchObject(deferred);
+    expect(v('todo.complete', { ref: '#2' }, 'complete 2 tomorrow')).toMatchObject(deferred);
+    expect(v('todo.complete', { ref: '#2' }, '오늘 2번 완료해줘').ok).toBe(true);
+    expect(v('todo.complete', { ref: '#2' }, '2번 완료해줘').ok).toBe(true);
+    // The target's own words are content: a title holding a time is no deferral.
+    expect(v('todo.complete', { match: '1시 회의 준비' }, '1시 회의 준비 완료해줘').ok).toBe(true);
+    // Accepted fail-closed residual (CA P3): a reminder with its own time after an event clause is refused as deferred.
+    expect(v('reminder.create', { when: '3시', body: '회의록 정리' }, '회의 끝나고 3시에 회의록 정리 알려줘')).toMatchObject(deferred);
   });
 
   it('Codex P2 (round 2): a quoted title holding an action noun is content; a quoted request is still reported', () => {
@@ -311,6 +356,8 @@ describe('A6-D3a amendment 1, final round (Codex P2) and the undo confirmation r
       '되돌려줘요요', '되돌려죠', 'undo', 'undo that', 'undo the last one', 'please revert that', '아까 거 undo 해줘', '원상복구 하세요', '취소하세요', '원복해주십시오',
       '되돌려 주세요', '되돌려 줄 수 있어?', '되돌려 주실래요', '원래대로 돌려 놔', '되돌리기 합시다', '원래대로 돌려 두세요', '되돌려 보세요', '되돌려 줘봐', '원상복구 해 줄 수 있어?',
       '잘못 눌렀어 되돌려줘', '아니 방금 거 되돌려줘', '5번 되돌려줘', '방금 추가한 거 취소해줘', '방금 처리한 거 되돌려줘',
+      // A bare 취소, or one pointing at the last action by recency, stays the direct undo (gate 2026-10-19).
+      '취소해줘', '취소', '방금 거 취소',
     ]) {
       expect(undo(text).ok, text).toBe(true);
       expect(direct(text), text).toBe(true);
@@ -326,6 +373,8 @@ describe('A6-D3a amendment 1, final round (Codex P2) and the undo confirmation r
       '되돌려 주신 거 보여줘', '되돌려 주는 거', '되돌려 주실 분', '원래대로 돌려 주신 거',
       // the choice for "되돌려줘 주의 깊게": confirm (it carries words beyond the command); likewise "…이번에는 제대로 해줘"
       '되돌려줘 주의 깊게', '되돌려줘 이번에는 제대로 해줘', '되돌려줘. 주말 일정은 그대로 둬',
+      // Gate 2026-10-19 (a6-reference-todo.cancel-011): 취소 with an object may cancel an item, never a direct undo.
+      '그거 취소해 줘요', '이거 취소해줘', '3번 취소해줘', '할 일 취소해줘', '알림 취소', '취소해줘 그거',
     ]) {
       expect(direct(text), text).toBe(false);
     }
@@ -534,6 +583,10 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-187', // owner decision C counter-cases: a negated / questioned cancel by title
     'a6-negative-none-188',
     'a6-negative-none-190', // owner decision D counter-case: a label not led by the command word (input guard)
+    // A6 v49 gate (2026-10-19): the trailing clause of a label's content meets the vetoes (`nlLabelTailVeto`): a final
+    // question mark and a hearsay tail are refused for every lure (both were the gate's negative captures).
+    'a6-negative-none-189',
+    'a6-negative-none-193',
     'a6-seed-neg-001',
     'a6-seed-neg-002',
     'a6-seed-neg-003',
@@ -578,14 +631,10 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-168',
     'a6-negative-none-175',
     'a6-negative-none-184',
-    // Owner decision D: "Todo: renew passport?" - a lure whose colon-enclosed title swallows the question mark validates (as
-    // for the Korean colon forms); the selector's none keeps it chat.
-    'a6-negative-none-189',
-    // Agent-drafted recorded gaps (owner decision D review, pending the D12 batch): a status-report label and reported
-    // speech without a comma validate for some lure; the selector's none is the only guard. No code change for them.
+    // Agent-drafted recorded gaps (owner decision D review): a status-report label validates for some lure; the selector's
+    // none is the only guard. No code change for them (owner: recorded gap).
     'a6-negative-none-191',
     'a6-negative-none-192',
-    'a6-negative-none-193',
     'a6-seed-live-005',
   ];
 
@@ -716,5 +765,118 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3): no a
     expect(v('todo.complete', { ref: '#2' }, '2번 체크')).toMatchObject({ ok: false, reason: 'elliptical' });
     // The garbled action word keeps its own question first.
     expect(v('todo.complete', { ref: '#3' }, '3번 완룐 처리해줘')).toMatchObject({ ok: false, reason: 'garbled-action' });
+  });
+});
+
+describe('live test 4 (turn 39): a bare reference with the copula is a copular reference, not a fact (nlFrameIsCopularReference)', () => {
+  it('a numeral or ordinal reference with the copula, in an elliptical frame', () => {
+    for (const text of ['이번엔 3번이야', '그럼 3번이요', '이번엔 4번입니다', '세 번째야', '그 다음은 2번이에요']) expect(nlFrameIsCopularReference(text, NL_ACTION_WORDS), text).toBe(true);
+  });
+
+  it('not a reference, an action word, a request or no copula', () => {
+    for (const text of ['3번은 회의야', '그냥 메모야', '3번 완료야', '3번 완료해줘', '이번엔 3번', '3번이 문제야']) expect(nlFrameIsCopularReference(text, NL_ACTION_WORDS), text).toBe(false);
+  });
+});
+
+describe('CA review of 2026-10-19: colon labels act only as the owner\'s own command; a bare list phrase is no task', () => {
+  const NOW_ = '2026-10-14T03:00:00.000Z';
+  const offered_ = new Map([...NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]), ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined)].map((entry) => [entry.id, entry] as const));
+  const check = (entryId: string, args: Record<string, string>, text: string) => {
+    const prepared = prepareSelectionInput(text);
+    if ('skip' in prepared) throw new Error('skipped');
+    return validateSelection({ entryId, args }, { offered: offered_, groundingText: prepared.groundingText, now: NOW_, timeZone: 'Asia/Seoul', actions: true });
+  };
+
+  it('P1: a whole-message quote, a label that does not open the message, and a second key inside the content are reported', () => {
+    expect(check('todo.add', { title: '우유 사기' }, '"할 일: 우유 사기"')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '보고서 제출' }, '회의록 중 할 일: 보고서 제출')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '보고서 제출, 담당: 김대리' }, '회의록 붙여넣기 할 일: 보고서 제출, 담당: 김대리')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '보고서 제출' }, '회의록 붙여넣기 할 일: 보고서 제출, 담당: 김대리')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '보고서 제출, 담당: 김대리' }, '할 일: 보고서 제출, 담당: 김대리')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('reminder.create', { when: '내일 9시', body: '보고서' }, '회의록 중 알림: 내일 9시 보고서')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+  });
+
+  it('P1: the English label forms the input guard already refuses stay refused', () => {
+    for (const text of ['I added a to-do: renew passport', 'My todo: buy milk', 'Did you add a to-do: renew passport', 'Q4: 예산 검토 할 일로', 'Todo: request: buy milk']) {
+      const prepared = prepareSelectionInput(text);
+      if ('skip' in prepared) continue;
+      expect(nlActionInputRefusal(text, prepared.groundingText, false), text).toBeDefined();
+    }
+  });
+
+  it('P1: the owner\'s own labels still act (opening the message, after a time, or after a request)', () => {
+    expect(check('todo.add', { title: 'return the library books' }, 'To-do: return the library books')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '세탁소에서 셔츠 찾아오기' }, '할 일: 세탁소에서 셔츠 찾아오기')).toMatchObject({ ok: true });
+    expect(check('reminder.create', { when: '10월 23일 오후 6시', body: '팀 회식 예약' }, '알림: 10월 23일 오후 6시 팀 회식 예약')).toMatchObject({ ok: true });
+    expect(check('reminder.create', { when: '10월 23일 오후 6시', body: '팀 회식 예약' }, '10월 23일 오후 6시 알림: 팀 회식 예약')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: 'buy milk' }, 'can you add a todo for me: buy milk')).toMatchObject({ ok: true });
+    expect(check('reminder.create', { when: '모레 저녁 7시', body: '은행에 전화' }, 'Remind me: 모레 저녁 7시 은행에 전화')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '보고서 쓰기' }, '할 일에 추가해줘: 보고서 쓰기')).toMatchObject({ ok: true });
+    // A colon inside the content is the content's own.
+    expect(check('todo.add', { title: '회의: 안건 정리' }, "할 일에 '회의: 안건 정리' 추가해줘")).toMatchObject({ ok: true });
+  });
+
+  it('P2: a modifier before 할 일 names a list (chat); one bare or owner noun asks; a multi-word task title executes', () => {
+    for (const [text, title] of [['남은 할 일', '남은'], ['밀린 할 일', '밀린'], ['제일 급한 할 일', '제일 급한']] as const) {
+      expect(check('todo.add', { title }, text), text).toMatchObject({ ok: false, reason: 'not-request', arg: 'statement' });
+    }
+    for (const [text, title] of [['회사 할 일', '회사'], ['팀장님 할 일', '팀장님'], ['우리 팀 할 일', '우리 팀'], ['청소 할 일', '청소']] as const) {
+      expect(check('todo.add', { title }, text), text).toMatchObject({ ok: false, reason: 'uncertain-title', arg: 'title' });
+    }
+    expect(check('todo.add', { title: '검증 노트북 점검' }, '검증 노트북 점검 할 일')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '회의 안건 정리' }, '회의 안건 정리 할 일')).toMatchObject({ ok: true });
+  });
+
+  it('Codex P2: a ㄴ-final noun is no modifier: a noun phrase before it executes, an uncertain one asks; never refused as a list', () => {
+    for (const title of ['직원 정기 건강 검진', '분기 정산', '서버 점검', '도서관 책 반납']) {
+      expect(check('todo.add', { title }, `${title} 할 일`), title).toMatchObject({ ok: true });
+    }
+    for (const title of ['검진', '정산', '점검', '반납']) {
+      expect(check('todo.add', { title }, `${title} 할 일`), title).toMatchObject({ ok: false, reason: 'uncertain-title' });
+    }
+    // A strong adnominal after other words is uncertain: asked, never chat or a write.
+    expect(check('todo.add', { title: '어제 받은' }, '어제 받은 할 일')).toMatchObject({ ok: false, reason: 'uncertain-title' });
+  });
+
+  it('CA P3 #6: a one-word title in the -기 nominalizer is a task by form and executes', () => {
+    for (const title of ['장보기', '빨래하기']) expect(check('todo.add', { title }, `${title} 할 일`), title).toMatchObject({ ok: true });
+  });
+
+  it('Codex P2: the time before a colon label is read by the reminder grammar (반, 분, a date)', () => {
+    for (const [text, when, body] of [
+      ['내일 오전 9시 반 알림: 약 먹기', '내일 오전 9시 반', '약 먹기'],
+      ['내일 오전 9시 30분 알림: 약 먹기', '내일 오전 9시 30분', '약 먹기'],
+      ['오후 3시 15분 알림: 회의 준비', '오후 3시 15분', '회의 준비'],
+      ['10월 22일 오후 3시 알림: 서류 제출', '10월 22일 오후 3시', '서류 제출'],
+    ] as const) {
+      expect(check('reminder.create', { when, body }, text), text).toMatchObject({ ok: true });
+    }
+    expect(check('reminder.create', { when: '내일 9시', body: '보고서' }, '회의록 중 알림: 내일 9시 보고서')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+  });
+
+  it('A6 v49 gate: the trailing clause of a label\'s content meets the vetoes (a6-negative-none-189 / -193); the rest stays content', () => {
+    // The gate captures: the selector's span swallowed the question mark and the hearsay tail.
+    expect(check('todo.add', { title: 'renew passport?' }, 'Todo: renew passport?')).toMatchObject({ ok: false, reason: 'not-request', arg: 'question' });
+    expect(check('todo.add', { title: 'renew passport' }, 'Todo: renew passport?')).toMatchObject({ ok: false, reason: 'not-request', arg: 'question' });
+    expect(check('todo.add', { title: 'buy milk he told me' }, 'Todo: buy milk he told me')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: 'call the bank my boss said' }, 'To-do: call the bank my boss said')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '우유 사기 하래' }, '할 일: 우유 사기 하래')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '우유 사기 하랬어' }, '할 일: 우유 사기 하랬어')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '우유 사기 그가 말했어' }, '할 일: 우유 사기 그가 말했어')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '우유 사기, 아니 취소' }, '할 일: 우유 사기, 아니 취소')).toMatchObject({ ok: false, reason: 'not-request' });
+    // Still executing: the labels themselves, a negation inside the content, a polite question form.
+    expect(check('todo.add', { title: 'return the library books' }, 'To-do: return the library books')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: "don't forget the keys" }, "Todo: don't forget the keys")).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '하지 말아야 할 것 정리' }, '할 일: 하지 말아야 할 것 정리')).toMatchObject({ ok: true });
+    expect(check('reminder.create', { when: '10월 23일 오후 6시', body: '검증 팀 회식 예약' }, '알림: 10월 23일 오후 6시 검증 팀 회식 예약')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '검증 vendor invoice recheck' }, 'To-do: 검증 vendor invoice recheck')).toMatchObject({ ok: true });
+    // Codex P2: a reporting clause led by a relative or wh-word is content (the R2 relative-clause rule).
+    expect(check('todo.add', { title: 'Read what she wrote' }, 'To-do: Read what she wrote')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: 'reply to the mail that my boss mentioned' }, 'To-do: reply to the mail that my boss mentioned')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: 'buy milk he told me' }, 'Todo: buy milk he told me')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    // Codex P2: an explicit request label keeps a titled colon in its content; a bare label with a second key is pasted.
+    expect(check('todo.add', { title: '회의: 안건 정리' }, '할 일 추가해줘: 회의: 안건 정리')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '회의: 안건 정리' }, '할 일: 회의: 안건 정리')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
   });
 });

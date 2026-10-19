@@ -32,6 +32,22 @@ const TODO_STATUS = {
   },
   description: 'Omit for the open to-dos. canceled (취소된/뺀), completed (완료된/끝난) or all (전체/전부) only when the owner asks for those.',
 } as const;
+/**
+ * Owner decision of 2026-10-19: the period a scheduled reminder is due in (its next occurrence, or any occurrence of a
+ * recurring one). The calendar's symbolic `range`: only from the owner's time words, never in the past.
+ */
+const REMINDER_RANGE = {
+  name: 'range',
+  kind: 'range',
+  futureOnly: true,
+  timeWordsRequired: true,
+  description: 'Only one of these periods the owner names: today (오늘), tomorrow (내일), this-week (이번 주), next-week (다음 주), one date with month and day (10월 22일, Oct 22; a stated year kept: 2027-10-22), or one weekday of this or next week (다음 주 수요일 -> next-wed). Omit otherwise.',
+  periodHelp: {
+    ko: '알림 목록은 오늘·내일·이번 주·다음 주·특정 날짜로 볼 수 있어요. 예: "내일 알림 보여줘"',
+    en: 'Reminders can be listed for today, tomorrow, this week, next week or one date. For example: "show tomorrow\'s reminders"',
+  },
+} as const;
+
 const REMINDER_STATUS = {
   name: 'status',
   kind: 'enum',
@@ -470,10 +486,17 @@ const reminderList: NlCatalogEntry = {
   label: { ko: '예정된 알림 목록', en: 'Scheduled reminders' },
   aliases: ['알림', '리마인더', 'reminder', '알람'],
   description: {
-    en: "The owner's Quoky reminders (scheduled ones unless the owner asks for canceled or past ones). Listing only: creating or cancelling a reminder is not this entry.",
-    ko: '알림(리마인더) 목록 보기(기본은 예정된 것, 취소된·지난 알림은 물을 때만). 만들기·취소는 아님.',
+    en: "The owner's Quoky reminders (scheduled ones unless the owner asks for canceled or past ones), optionally only those due in a period the owner names. Listing only: creating or cancelling a reminder is not this entry.",
+    ko: '알림(리마인더) 목록 보기(기본은 예정된 것, 취소된·지난 알림은 물을 때만; 기간을 말하면 그때 울릴 것만). 만들기·취소는 아님.',
   },
-  args: [REMINDER_STATUS],
+  // Owner decision of 2026-10-19 ("내일 알림 뭐 있어?" lists tomorrow's): the shared range symbols, grounded in the owner's
+  // own time words only (A5 rule 6), today or later.
+  args: [REMINDER_STATUS, REMINDER_RANGE],
+  // Codex / CA P2: a period applies to scheduled reminders (it is never past); canceled or done ones with a period cannot
+  // be answered, so the period is refused and Core asks rather than listing them without it.
+  check(args: NlArgs) {
+    return args.range !== undefined && (args.status === 'canceled' || args.status === 'done') ? { reason: 'invalid-arg', arg: 'range' } : undefined;
+  },
   usage: { ko: '"알림 목록"', en: '"알림 목록"' },
 };
 
@@ -526,6 +549,8 @@ const helpTopic: NlCatalogEntry = {
       kind: 'enum',
       values: NL_HELP_TOPICS,
       default: 'all',
+      // v53 gate (Codex P2): the topic narrows nothing the owner sees except which help is shown; 'all' only widens it.
+      presentation: true,
       description: 'The Quoky feature asked about: todo, todo.complete, reminder, calendar, mail, drive, work-lookup (Jira/GitHub/Slack/Confluence lookups), memory, feedback, branch, commit, project, model, connector-write; all for "which things are you able to help with".',
     },
   ],

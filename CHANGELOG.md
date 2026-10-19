@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 live test 4 gaps (2026-10-19)
+
+- **Changed (A6 prompt `nl-select.v57`, R2 `nl-select.v58`, read `nl-select.v59`; v49-v56 were gated or superseded; reminder.list filters only by a closed set of periods (today, tomorrow, this week, next week, one date, one weekday of this or next week) and asks with a fixed restate for any other period, DECISIONS (e)); the v44 help.topic block byte for byte, the label and bare-form lines after the span lines, and reminder.list `range` per the owner decision of 2026-10-19).** The rule-8 colon-form line said
+  a "<label>: <value>" form is none even when it names a Quoky feature, so "To-do: …" and "알림: …" went to `none`; a label
+  naming a to-do or a reminder is now that action entry with the text after the label as its span. One line makes a bare
+  "<content> 할 일" `todo.add` (owner decision A). Three generic examples (RAG-0 lint clean).
+- **Added (`garbled-noun`, owner decision (b) of 2026-10-19).** The garbled-word rule covers the list noun that decides a
+  to-do / reminder write (the catalog's list aliases): a one-keystroke typo ("리마이너") asks "'리마인더' 말씀이세요?", an
+  unknown word in the noun's slot asks what it means; a correct list noun anywhere in the frame never asks.
+- **Changed.** "이번엔 3번이야" (a bare reference with the copula) right after the same action asks the continuation
+  confirmation instead of the statement veto; a selected undo without a closed undo word that points at the last action
+  ("방금 추가한 거 없던 일로 해줘") asks the undo confirmation; a reminder with no time asks "언제 알려 드릴까요?"; the English
+  reminder grammar ends a time at a label colon ("on Oct 22 at 9:30am: …"); with action entries offered, a chat reply that
+  offers an action as a yes/no question or says Quoky cannot do it becomes the restate, and the chat fact says so.
+- **Gold.** Owner-approved: `a6-paraphrase-todo.add-906` (decision (a), execute) and `a6-paraphrase-reminder.create-903`
+  (decision (b), ask). Candidates pending the owner: `golden/nl-action.live4-pending.v1.json` (13).
+
 ## Unreleased — A6 R2 evaluation tooling (2026-10-17)
 
 - **Added (`eval:nl --mode r2`).** Runs the owner-approved R2 corpus (`nl-action.r2.v1.json`, 212 cases) through the real

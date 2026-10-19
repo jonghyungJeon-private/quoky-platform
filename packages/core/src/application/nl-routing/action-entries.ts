@@ -4,8 +4,8 @@ import { normalizeForMatch } from './selection-input';
 import { nlIsRequestForm } from './request-shape';
 import { NL_EN_REQUEST_LEADS } from './garbled-action';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
-import { isNlTimeWord } from './symbolic-time';
-import { ANCHORED_TODO_PREFIX_HEADS } from '../reminders/reminder-grammar';
+import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentions, type NlWeekdayMention } from './symbolic-time';
+import { ANCHORED_TODO_PREFIX_HEADS, reminderMonthDates, reminderTextNamesDay, withoutReminderMonthDates } from '../reminders/reminder-grammar';
 import { SLACK_POST_COLON_HEAD } from '../work-chat/work-chat-command';
 import { EXECUTION_PHRASES } from '../execution-command-guard';
 
@@ -743,6 +743,30 @@ export const NL_ACTION_VERBAL_NOUNS: readonly string[] = ['완료', '마무리',
  */
 export const NL_ACTION_LOANWORDS: readonly string[] = ['캔슬', '리마인드', '롤백'];
 
+/**
+ * Owner decision (b) of 2026-10-19 (garbled entry noun, `garbled-action.ts` `nlGarbledEntryNoun`): the nouns that decide
+ * which list a local write touches are the catalog's own list aliases (`todo.list`, `reminder.list`); no word is added.
+ */
+export const NL_ENTRY_NOUNS: readonly { readonly owner: 'todo' | 'reminder'; readonly words: readonly string[] }[] = Object.freeze([
+  { owner: 'todo', words: NL_WAVE1_ENTRIES['todo.list'].aliases },
+  { owner: 'reminder', words: NL_WAVE1_ENTRIES['reminder.list'].aliases },
+]);
+/** The list aliases spelled from an English sound (a tag, like {@link NL_ACTION_LOANWORDS}). */
+export const NL_ENTRY_NOUN_LOANWORDS: readonly string[] = ['리마인더', '투두'];
+/**
+ * The verbs the vocabularies pair with a list noun ("알림 걸", "리마인더 설정", "할 일 만들" → 걸, 설정, 만들), derived from
+ * the vocabularies themselves; the bare light verbs and request words (해, 줘, 부탁) carry no object of their own.
+ */
+const ENTRY_NOUN_HEAD = new RegExp(`^(?:${[...NL_ENTRY_NOUNS.flatMap((list) => list.words)].filter((word) => /[가-힣]/u.test(word)).sort((a, b) => b.length - a.length).map((word) => word.replace(/ /g, '\\s?')).join('|')})(?:으로|로)?\\s?`, 'u');
+export const NL_ENTRY_NOUN_VERBS: readonly string[] = [
+  ...new Set(
+    [...TODO_ADD_WORDS, ...REMINDER_CREATE_WORDS]
+      .filter((word) => ENTRY_NOUN_HEAD.test(word))
+      .map((word) => word.replace(ENTRY_NOUN_HEAD, ''))
+      .filter((verb) => verb.length > 0 && !/^(?:해|줘|부탁)$/u.test(verb)),
+  ),
+];
+
 /** The canonical action word of each LOCAL_WRITE entry, offered when a garbled word asks (never the raw vocabulary stem). */
 export const NL_ACTION_CANONICAL_WORDS: Readonly<Record<'todo.add' | 'todo.complete' | 'todo.cancel' | 'reminder.create' | 'reminder.cancel' | 'action.undo', { readonly ko: string; readonly en: string }>> = Object.freeze({
   'todo.add': { ko: '추가', en: 'add' },
@@ -1068,6 +1092,158 @@ export const NL_ACTION_ENTRIES: Readonly<Partial<Record<NlActionEntryId, NlCatal
   'action.undo': actionUndo,
   'item.summarize': itemSummarize,
 });
+
+/**
+ * Owner decision of 2026-10-19 (reminder.list `range`, A5 rule 6): whether the owner's words name a period at all. The title
+ * time check ({@link containsNlTimeExpression}) treats a spaced "이번 주" as two weak words; a period word written with a
+ * space ("이번 주", "다음 달") is one period here, as in its unspaced form; and the reminder grammar's own day recognizer
+ * (`reminderTextNamesDay`: "December 25", "Dec 25", "next week", weekdays, Korean dates) counts too (Codex P2).
+ */
+export function nlNamesPeriod(text: string): boolean {
+  return containsNlTimeExpression(text) || containsNlTimeExpression(text.replace(/(이번|다음|다다음|지난|저번)\s+(주|달)/gu, '$1$2')) || reminderTextNamesDay(text);
+}
+
+/**
+ * Codex P2 (2026-10-19, reminder.list `range`): the range symbols the owner's own words name, longest phrase first so a
+ * shorter one inside it does not count ("이번 주말" is not also "이번 주"): the symbol words of `symbolic-time` (Korean with
+ * or without the space, English) and the dates the reminder grammar reads (`reminderMonthDates`: "12월 25일", "12/25",
+ * "Dec 25") as `MM-DD`. Weekdays are left to the weekday consistency rule. Pure.
+ */
+export function nlExpressedRangeSymbols(text: string): string[] {
+  let rest = ` ${normalizeForMatch(text)} `;
+  const symbols: string[] = [];
+  const phrases = nlRangeSymbolWords()
+    .flatMap(([symbol, ko, en]) => [
+      [symbol, normalizeForMatch(ko)],
+      [symbol, normalizeForMatch(ko).replace(/\s+/gu, '')],
+      [symbol, normalizeForMatch(en)],
+    ] as const)
+    .sort((a, b) => b[1].length - a[1].length);
+  for (const [symbol, phrase] of phrases) {
+    const latin = /^[a-z0-9 -]+$/u.test(phrase);
+    const pattern = new RegExp(latin ? `(?<![a-z0-9])${phrase.replace(/ /g, '\\s+')}(?![a-z0-9])` : `(?<![가-힣])${phrase.replace(/ /g, '\\s*')}`, 'u');
+    if (!pattern.test(rest)) continue;
+    rest = rest.replace(pattern, ' ');
+    if (!symbols.includes(symbol)) symbols.push(symbol);
+  }
+  for (const date of reminderMonthDates(text)) {
+    const symbol = `${date.year !== undefined ? `${date.year}-` : ''}${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
+    if (!symbols.includes(symbol)) symbols.push(symbol);
+  }
+  return symbols;
+}
+
+/**
+ * Owner decision of 2026-10-19, bounded in review (Codex P2, three rounds): the CLOSED set of periods `reminder.list`
+ * filters by. The owner's words resolve to exactly one of: today, tomorrow, this-week, next-week, one calendar date with
+ * month and day (an explicit year kept: `MM-DD` / `YYYY-MM-DD`), or one weekday of this or next week ("다음 주 수요일" =
+ * next-wed, "수요일" = wed). `none`: the words name no period. `unsupported`: anything else the words name (a span with
+ * 부터/까지/until/~, a duration such as 앞으로 7일 / next 7 days, a month, a day-only date "25일", a past or other symbol,
+ * several periods): Core asks with the fixed restate and never filters or drops it.
+ */
+export type NlReminderPeriod =
+  | { readonly kind: 'none' }
+  /**
+   * `weekday`: the period is that one weekday mention, placed by the weekday validation's own rules (an English "next" /
+   * "this" is a direction, not a week: `nlWeekdayMentionRanges`); `symbol` is then its Korean-week spelling or bare stem.
+   */
+  | { readonly kind: 'supported'; readonly symbol: string; readonly weekday?: NlWeekdayMention }
+  | { readonly kind: 'unsupported' };
+
+const REMINDER_RELATIVE_PERIODS = ['today', 'tomorrow', 'this-week', 'next-week'] as const;
+const WEEKDAY_BY_INDEX = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+/**
+ * A span or an open bound (부터 … 까지, 이후, 이전, until, through, from, since, after, before, a "~" before a number): a
+ * period with an edge the closed set has no symbol for.
+ */
+const PERIOD_SPAN = /부터|까지|이후|이전|이내|(?<![a-z])(?:until|till|through|thru|from|since|after|before|within|between)(?![a-z])|[~〜–]\s*\d/u;
+/** A duration counted from now (앞으로 7일, 향후 2주, 3일 동안, next 7 days, in 3 days). */
+const PERIOD_DURATION = /(?:앞으로|향후|최근|지난)\s*\d+\s*(?:일|주|개월|달)|\d+\s*(?:일|주|개월)\s*(?:동안|간|뒤|후|이내)|(?<![a-z])(?:next|past|last|coming|in)\s+\d+\s+(?:days?|weeks?|months?)(?![a-z])/u;
+/** A number with a calendar or clock unit ("25일", "2월", "2주", "7 days", "3시간"): never placed by a guess. */
+const NUMBER_TIME_UNIT = /\d+\s*(?:일|주|개월|달|월|년|시간|시|분|(?<![a-z])(?:days?|weeks?|months?|years?|hours?|hrs?|minutes?|mins?)(?![a-z]))/u;
+/**
+ * Codex P2 (2026-10-19): an English month name on its own ("in November", "Dec reminders"): a month the closed set has no
+ * symbol for. "may" and "march" are also a modal and a verb, so they count only after a period preposition or determiner
+ * ("in May", "this March"). The Korean "11월" is a number with a unit (`NUMBER_TIME_UNIT`).
+ */
+const EN_MONTH_NAME = /(?<![a-z])(?:january|february|april|june|july|august|september|october|november|december|jan|feb|apr|jun|jul|aug|sept?|oct|nov|dec)(?![a-z])|(?<![a-z])(?:in|for|during|of|this|next|last|until|by|since)\s+(?:may|march|mar)(?![a-z])/u;
+/** A weekday form with its optional this / next week word ("다음 주 수요일", "이번주 금", "next Wednesday"). */
+const WEEKDAY_FORM = /(?:(?:이번|다음|담|차|금)\s*주\s*)?[월화수목금토일](?:요일|욜)날?|(?:이번|다음|담|차|금)\s*주\s*[월화수목금토일](?![가-힣])|(?<![a-z])(?:(?:this|next)\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues?|wed|thur?s?|fri|sat|sun)(?![a-z])/gu;
+
+/**
+ * Whether `text` carries any time expression Core knows: the A6 time-expression detector, the period words and the
+ * reminder grammar's own day recognizer (`nlNamesPeriod`), a range symbol word or date, a weekday, a duration or a number
+ * with a calendar or clock unit.
+ */
+function hasReminderTimeExpression(text: string): boolean {
+  const normalized = normalizeForMatch(text);
+  return (
+    nlNamesPeriod(text) ||
+    PERIOD_DURATION.test(normalized) ||
+    NUMBER_TIME_UNIT.test(normalized) ||
+    EN_MONTH_NAME.test(normalized) ||
+    nlExpressedRangeSymbols(text).length > 0 ||
+    nlWeekdayMentions(text).length > 0
+  );
+}
+
+/** The one supported period the symbols and weekdays name, or `undefined` (none, several, or one outside the set). */
+function supportedReminderPeriod(symbols: readonly string[], weekdays: readonly NlWeekdayMention[]): string | undefined {
+  if (weekdays.length > 0) {
+    // One weekday of this or next week: its week word is its only other period word ("다음 주 수요일" = next-wed).
+    const day = weekdays[0] as NlWeekdayMention;
+    const anchor = day.week === 'next' ? 'next-week' : day.week === 'this' ? 'this-week' : undefined;
+    if (weekdays.length !== 1 || day.bound || (day.week !== undefined && anchor === undefined) || day.direction === 'past') return undefined;
+    if (symbols.some((symbol) => symbol !== anchor)) return undefined;
+    return `${anchor === 'next-week' ? 'next-' : anchor === 'this-week' ? 'this-' : ''}${WEEKDAY_BY_INDEX[day.weekday]}`;
+  }
+  if (symbols.length !== 1) return undefined;
+  const symbol = symbols[0] as string;
+  return (REMINDER_RELATIVE_PERIODS as readonly string[]).includes(symbol) || /^(?:\d{4}-)?\d{2}-\d{2}$/u.test(symbol) ? symbol : undefined;
+}
+
+/** `text` without the supported period forms: the four relative period words, month-day dates and weekday forms. */
+function withoutSupportedPeriodForms(text: string): string {
+  let rest = ` ${normalizeForMatch(withoutReminderMonthDates(text))} `.replace(WEEKDAY_FORM, ' ');
+  const phrases = nlRangeSymbolWords()
+    .filter(([symbol]) => (REMINDER_RELATIVE_PERIODS as readonly string[]).includes(symbol))
+    .flatMap(([, ko, en]) => [normalizeForMatch(ko), normalizeForMatch(ko).replace(/\s+/gu, ''), normalizeForMatch(en)])
+    .sort((a, b) => b.length - a.length);
+  for (const phrase of phrases) {
+    const latin = /^[a-z0-9 -]+$/u.test(phrase);
+    rest = rest.replace(new RegExp(latin ? `(?<![a-z0-9])${phrase.replace(/ /g, '\\s+')}(?![a-z0-9])` : `(?<![가-힣])${phrase.replace(/ /g, '\\s*')}`, 'gu'), ' ');
+  }
+  return rest;
+}
+
+/**
+ * Owner decision of 2026-10-19, bounded in review (Codex P2, four rounds): the CLOSED set of periods `reminder.list`
+ * filters by: today, tomorrow, this-week, next-week, one calendar date with month and day (an explicit year kept: `MM-DD` /
+ * `YYYY-MM-DD`), or one weekday of this or next week ("다음 주 수요일" = next-wed, "수요일" = wed).
+ * One residual rule closes the class: the owner's prose (without structures) must name exactly one supported period, and
+ * once its forms are removed NO time expression may remain (a clock "오전 9시", a part of the day "morning" / "저녁", a
+ * duration "next 7 days", a span, a month, a day-only date, another period). `none`: the prose has no time expression at
+ * all (no range). `unsupported`: any other prose with a time expression; Core asks with the fixed restate and never
+ * filters with it or drops it. `weekdays` defaults to the prose's own weekday mentions.
+ */
+export function nlReminderPeriod(text: string, weekdays?: readonly NlWeekdayMention[]): NlReminderPeriod {
+  const prose = withoutStructures(text);
+  const days = weekdays ?? nlWeekdayMentions(prose);
+  const symbols = nlExpressedRangeSymbols(prose);
+  if (symbols.length === 0 && days.length === 0 && !hasReminderTimeExpression(prose)) return { kind: 'none' };
+  if (PERIOD_SPAN.test(normalizeForMatch(prose))) return { kind: 'unsupported' };
+  const symbol = supportedReminderPeriod(symbols, days);
+  if (symbol === undefined || hasReminderTimeExpression(withoutSupportedPeriodForms(prose))) return { kind: 'unsupported' };
+  return days.length === 1 ? { kind: 'supported', symbol, weekday: days[0] as NlWeekdayMention } : { kind: 'supported', symbol };
+}
+
+/**
+ * Codex P2 (2026-10-19): every arg name the catalog defines (read and action entries). A diagnostic names an arg only when
+ * it is one of these; any other key the model generated is reported without its name, so nothing it wrote reaches a log.
+ */
+export const NL_CATALOG_ARG_NAMES: ReadonlySet<string> = new Set(
+  [...Object.values(NL_WAVE1_ENTRIES), ...Object.values(NL_ACTION_ENTRIES)].flatMap((entry) => (entry === undefined ? [] : entry.args.map((spec) => spec.name))),
+);
 
 /** The A6 entry of `id` (throws for an id with no entry yet: `slack.post`, `calendar.create`). */
 export function nlActionEntry(id: 'todo.add' | 'todo.complete' | 'todo.cancel' | 'reminder.create' | 'reminder.cancel' | 'action.undo' | 'item.summarize'): NlCatalogEntry {

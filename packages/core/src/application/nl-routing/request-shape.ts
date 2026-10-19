@@ -1,5 +1,6 @@
 import { normalizeForMatch } from './selection-input';
 import { isPastSyllable } from './statement-guard';
+import { isNlTimeWord } from './symbolic-time';
 
 /**
  * ADR-0120 A6-D3a amendment 1 (owner-approved direction 2026-10-16, Proposed): the structural vetoes of a LOCAL_WRITE.
@@ -107,8 +108,15 @@ const QUESTION_EN = /(?:^|[,.;!?]\s*)(?:how|what|why|when|where|who|which|whose)
 // wishes, hedges and deferred timing
 const WISH_KO = /싶|바래|바라|바랍|희망|아마(?=$|\s)|듯(?=$|\s|해|하|함|요|싶|[.!~])|(?:^|\s)각(?=$|\s|[.!~ㅋㅎ])/u;
 const WISH_EN = /\bshould i\b|\bmaybe\b|\bperhaps\b|\bprobably\b|\bmight\b|thinking (?:of|about)|would be nice|\bi wish\b|\bi hope\b|\bhopefully\b/u;
-/** -고 나서, the aspectual 끝나고 / 마치고, 나중에, 이따(가) without a time of its own; English after / later / once. */
-const DEFERRED_KO = /고\s*나서|(?:끝나|마치|끝내)고(?=$|\s)|나중에|이따가?(?=$|\s)(?!\s*\d)/u;
+/**
+ * Deferred timing. An event clause with its own predicate (-고 나서, the aspectual 끝나고 / 마치고 / 끝내고, and the -ㄴ 뒤에 /
+ * -ㄴ 후에 / -은 다음에 forms read below) may instead time a `todo.add` task (owner decision (a)); the bare adverbs 나중에,
+ * 이따(가) without a time of its own and 좀 있다가 always defer the request. English after / later / once.
+ */
+const DEFERRED_CLAUSE_KO = /고\s*나서|(?:끝나|마치|끝내)고(?=$|\s)/u;
+const DEFERRED_ADVERB_KO = /나중에|이따가?(?=$|\s)(?!\s*\d)|좀\s*있다가(?=$|\s)/u;
+/** A word that names the present, not a later time ("오늘 추가해줘" is now). */
+const PRESENT_TIME_WORD = /^(?:오늘|today)$/u;
 const DEFERRED_EN = /\b(?:after|later|once)\b/u;
 
 // conditionals and hypotheticals
@@ -335,6 +343,13 @@ export interface NlRequestSpans {
    * its retraction, negation and joke still count (Codex P1: "할 일 추가해줘 우유 사기, 아니 취소").
    */
   readonly trailing?: readonly string[];
+  /**
+   * Owner decision (a) of 2026-10-19, amended (CA P2): a `todo.add` title. An event clause with its own predicate right
+   * before it ("회의 끝나고 검증 회의록 정리 할 일에 넣어줘") says when the owner will do the task, not when to write it.
+   */
+  readonly taskTitle?: string;
+  /** The entry takes a `when` (a reminder): a time word before its verb is the reminder's own time, never a deferral. */
+  readonly takesWhen?: true;
 }
 
 /**
@@ -358,17 +373,34 @@ function spanRegions(text: string, content: readonly string[]): Array<readonly [
   return regions;
 }
 
-function hitOutside(pattern: RegExp, text: string, regions: ReadonlyArray<readonly [number, number]>, inside?: (hit: string, start: number) => boolean): boolean {
+function hitOutside(
+  pattern: RegExp,
+  text: string,
+  regions: ReadonlyArray<readonly [number, number]>,
+  inside?: (hit: string, start: number) => boolean,
+  exempt?: (end: number) => boolean,
+): boolean {
   const global = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
   for (const match of text.matchAll(global)) {
     const start = match.index ?? 0;
     const end = start + match[0].length;
+    if (exempt?.(end) === true) continue;
     const enclosed = regions.some(([from, to]) => start >= from && end <= to);
     // A one-word span that IS the veto word ("방법", "maybe", "나중에") is no content of its own.
     const whole = regions.some(([from, to]) => start === from && end === to && !/\s/u.test(text.slice(from, to)));
     if (!enclosed || whole || inside?.(match[0], start) === true) return true;
   }
   return false;
+}
+
+/**
+ * Whether the words right after position `end` (past whitespace and a 나서) begin a `todo.add` title: the clause that
+ * ends at `end` times the task itself, not the request predicate that follows it.
+ */
+function modifiesTask(text: string, end: number, regions: ReadonlyArray<readonly [number, number]>): boolean {
+  // "끝나고 나서": the clause runs through its 나서.
+  const next = end + (/^\s*(?:나서\s*)?/u.exec(text.slice(end))?.[0].length ?? 0);
+  return next > end && regions.some(([from]) => from === next);
 }
 
 /** The word of `text` around position `at`. */
@@ -541,12 +573,34 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
   const mainClause = clausesOf(untimed).at(-1) ?? '';
   const mainStart = untimed.lastIndexOf(mainClause);
   const mainRegions = untimedRegions.map(([from, to]) => [from - mainStart, to - mainStart] as const);
-  if (hitOutside(DEFERRED_KO, mainClause, mainRegions) || hitOutside(DEFERRED_EN, untimed, untimedRegions)) return 'deferred';
+  // Owner decision (a) of 2026-10-19, amended (CA P2): an event clause with its own predicate right before a `todo.add`
+  // title ("회의 끝나고 검증 회의록 정리 할 일에 넣어줘", title "검증 회의록 정리") only says when the owner will do the task;
+  // the request itself is now. Nothing else is exempt: a bare adverb (나중에, 이따가), a clause before anything else ("회의
+  // 끝나고 할 일에 회의록 정리 넣어줘") and any clause before a complete / cancel target still defer the request.
+  const titleRegions = spans.taskTitle === undefined ? [] : spanRegions(mainClause, [spans.taskTitle]);
+  const timesTask = (end: number): boolean => modifiesTask(mainClause, end, titleRegions);
+  if (hitOutside(DEFERRED_CLAUSE_KO, mainClause, mainRegions, undefined, timesTask) || hitOutside(DEFERRED_ADVERB_KO, mainClause, mainRegions)) return 'deferred';
+  if (hitOutside(DEFERRED_EN, untimed, untimedRegions)) return 'deferred';
   for (const match of mainClause.matchAll(/(\S+)\s+(?:뒤|후|다음)(?:에|에는)?(?=$|\s)/gu)) {
     const previous = Array.from(match[1] ?? '').at(-1);
     const start = match.index ?? 0;
-    const enclosed = mainRegions.some(([from, to]) => start >= from && start + match[0].length <= to);
-    if (!enclosed && (finalConsonant(previous) === 4 || previous === '는')) return 'deferred';
+    const end = start + match[0].length;
+    const enclosed = mainRegions.some(([from, to]) => start >= from && end <= to);
+    if (!enclosed && !timesTask(end) && (finalConsonant(previous) === 4 || previous === '는')) return 'deferred';
+  }
+  // CA P2: a day or time word right before the write's request verb ("우유 사기 할 일에 내일 추가해줘") defers the write. A
+  // reminder's own time is its `when`, so this reads only writes that take none.
+  const verbWords = wordsOf(mainClause);
+  // Only a Korean request verb ending the clause ("… 내일 추가해줘"); a noun ending ("… 9시에 리마인더") or English word order
+  // ("undo the last one") has no verb slot to read.
+  if (spans.when === undefined && spans.takesWhen !== true && /[가-힣]/u.test(verbWords.at(-1) ?? '') && isCommandWord(verbWords.at(-1) ?? '', actionWords)) {
+    let at = verbWords.length - 2;
+    // A spaced light verb ("추가 해줘"): the action noun is part of the verb.
+    if (at >= 0 && holdsActionWord(verbWords[at] ?? '', actionWords) && !holdsActionWord(verbWords.at(-1) ?? '', actionWords)) at -= 1;
+    const beforeVerb = at >= 0 ? (verbWords[at] ?? '') : '';
+    const beforeStart = at >= 0 ? mainClause.lastIndexOf(beforeVerb) : -1;
+    const inContent = mainRegions.some(([from, to]) => beforeStart >= from && beforeStart + beforeVerb.length <= to);
+    if (beforeVerb.length > 0 && !inContent && isNlTimeWord(beforeVerb) && !PRESENT_TIME_WORD.test(beforeVerb.replace(/(?:에|은|는|도)$/u, ''))) return 'deferred';
   }
   if (lexicalHit(PLANNED_KO)) return 'statement';
 
@@ -596,6 +650,49 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
   // A last word in the copula or obligation -야 after a vowel ("그냥 메모야", "사야"): never a request.
   const lastWordChars = Array.from(lastWord);
   if (lastWordChars.length >= 2 && lastWordChars.at(-1) === '야' && finalConsonant(lastWordChars.at(-2)) === 0) return 'statement';
+  return undefined;
+}
+
+/** A reporting clause that ends the content in English ("… he told me", "… my boss said", "… she asked"). */
+const EN_REPORT_TAIL = /\b(?:he|she|they|someone|somebody|everyone|my\s+\w+|the\s+\w+|\w+)\s+(?:told|tells|said|says|asked|asks|wrote|writes|mentioned)(?:\s+(?:me|us|him|her|them))?\s*$/u;
+/** The relative and wh-words that make a reporting clause part of the content (the R2 relative-clause rule of #263). */
+const EN_RELATIVE_LEAD = /^(?:what|that|which|who|whom|whose|where|when|how|whatever)$/u;
+
+/**
+ * Codex P2 (2026-10-19): an English reporting clause ends the content ("… he told me") unless a relative or wh-word leads it
+ * ("Read what she wrote", "the doc that my boss mentioned"): then it is a noun phrase of the content, as the R2 rule treats
+ * `email #1 that says "…"`. The lead is looked for among the words right before the reporting verb.
+ */
+function englishReportingTail(body: string): boolean {
+  const match = EN_REPORT_TAIL.exec(body);
+  if (match === null) return false;
+  const before = body.slice(0, (match.index ?? 0) + match[0].length).trim().split(/\s+/u).slice(0, -1).slice(-4);
+  return !before.some((word) => EN_RELATIVE_LEAD.test(word.replace(/[^a-z]/gu, '')));
+}
+
+/** A Korean speech verb that ends the content as its own finite clause ("… 그가 말했어", "… 팀장이 그랬어"). */
+const KO_SPEECH_TAIL = /(?:말했|말하더|얘기했|이야기했|그랬|그러더|전했|시켰)(?:어|어요|다|대|음|지|는데|더라)?$/u;
+
+/**
+ * A6 v49 gate (2026-10-19, a6-negative-none-189 / -193): the request-shape vetoes on the TRAILING clause of a colon label's
+ * content ("Todo: renew passport?", "Todo: buy milk he told me", "할 일: 우유 사기 하래"). A label form exempts its content
+ * from the vetoes, so without this the message-final question mark or hearsay sits inside the span. Only the end of the
+ * span is read, like the last-word rules of the frame: a final question mark (not a polite request form) is a question; a
+ * reporting clause, a Korean quotative or hearsay ending, or a speech verb ending the span is reported; a bare retraction
+ * after the content is a retraction. The rest of the content stays exempt ("Todo: don't forget the keys" is content).
+ */
+export function nlLabelTailVeto(span: string): NlRequestVeto | undefined {
+  const text = normalizeForMatch(span).replace(/[’‘`´]/gu, "'").trim();
+  if (text.length === 0) return undefined;
+  if (/[?？]\s*$/u.test(text) && !POLITE_REQUEST.test(text)) return 'question';
+  const body = text.replace(/[\s.,!~…;:"'“”‘’)\]]+$/u, '');
+  const clauses = clausesOf(body);
+  const last = clauses.at(-1) ?? body;
+  if (englishReportingTail(body) || hearsayEnding([last]) || KO_SPEECH_TAIL.test(wordsOf(last).at(-1) ?? '')) return 'reported';
+  const lastStart = body.lastIndexOf(' ') + 1;
+  const endsInLast = (pattern: RegExp): boolean => [...body.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))].some((match) => (match.index ?? 0) + match[0].length > lastStart);
+  if (endsInLast(QUOTATIVE_KO) || endsInLast(CONTRACTED_QUOTATIVE_KO) || endsInLast(CONTRACTED_QUOTATIVE_FINAL_KO) || endsInLast(QUOTED_REQUEST_KO)) return 'reported';
+  if (clauses.length > 1 && RETRACTION_FINAL.test(wordsOf(last).at(-1) ?? '') && clauses.slice(0, -1).some((clause) => wordsOf(clause).length > 0)) return 'retraction';
   return undefined;
 }
 
@@ -701,6 +798,29 @@ export function nlActionWordGrounded(prose: string, words: readonly string[], sp
  */
 const LIGHT_VERB_WORD = /^(?:(?:처리|부탁)?(?:해|하)(?:줘|줘요|주세요|주십시오|줄래|줄래요|주실래요|라|자|요|세요|십시오)?|주세요|줘|줘요|(?:처리|부탁)(?:해요|합니다|드려요|드립니다|드릴게요)?|똑같이|do|please|pls|plz)$/u;
 const GO_SIGNAL = /^(?:ㄱ{2,}|(?:고){2,})[!~.]*$/u;
+
+/** The copula on a word's end (-이야, -야, -이에요, -예요, -입니다, -이다, -임, -이요). */
+const COPULA_TAIL = /(?:이야|야|이에요|예요|에요|입니다|이다|임|이요)$/u;
+/** A bare item reference: a numeral (with 번 / #), or an ordinal ending in 번째 / 째. */
+const REFERENCE_STEM = /^(?:#?\d{1,3}(?:번(?:째)?)?|[가-힣]{0,3}번째|[가-힣]{1,3}째)$/u;
+
+/**
+ * Live test 4 (2026-10-17, turn 39 "이번엔 3번이야" right after "2번 완료"): a frame whose last word is a bare item
+ * reference carrying the copula, and which is elliptical once the copula is set aside ({@link nlFrameIsElliptical}). The
+ * copula names WHICH item ("this time it's #3"), not a fact about one, so the statement veto does not decide such a frame:
+ * the caller offers the continuation confirmation (only right after the same action), else the turn stays chat. Closed
+ * classes only (the copula endings, numerals and ordinals); no phrase list. Pure.
+ */
+export function nlFrameIsCopularReference(frame: string, actionWords: readonly string[]): boolean {
+  const words = wordsOf(normalizeForMatch(frame));
+  const last = words.at(-1);
+  if (last === undefined || !COPULA_TAIL.test(last)) return false;
+  const stem = last.replace(COPULA_TAIL, '');
+  const previous = words.at(-2) ?? '';
+  // "세 번째야": the ordinal spans two words.
+  const reference = REFERENCE_STEM.test(stem) || (/^번째$/u.test(stem) && /^[가-힣]{1,2}$/u.test(previous));
+  return reference && nlFrameIsElliptical([...words.slice(0, -1), stem].join(' '), actionWords);
+}
 
 /**
  * ADR-0120 A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold a6-reference-none-002 "이번엔 3번"): whether

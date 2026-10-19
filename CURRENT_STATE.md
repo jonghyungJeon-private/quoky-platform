@@ -113,6 +113,18 @@ bare "<title> 할 일" selector variance (T7a ask / T7b execute / T7d none) is a
 
 Details and the review record for each item are in the matching notes in `DECISIONS.md`.
 
+### A6 live test 4 gaps — on branch `claude/v5-live4-gaps` (2026-10-19)
+
+- **Fixed (no-state misses of `docs/plans/a6-live-test-4-record.md`):** colon labels and a bare "<content> 할 일" (A6 prompt
+  `nl-select.v57`, R2 `nl-select.v58`, read `nl-select.v59` (reminder.list `range` as a closed set of periods, owner decision 2026-10-19 (c)/(e)); v49-v56 gated or superseded); "이번엔 3번이야" takes the continuation confirmation; an undo
+  paraphrase pointing at the last action asks the undo confirmation; a reminder with no time asks for the time; "Remind me
+  on Oct 22 at 9:30am: …" parses; a chat reply never offers an offered action as a yes/no question or denies it.
+- **Owner decisions of 2026-10-19:** (a) "회의 끝나고 … 할 일에 넣어줘" executes (gold todo.add-906); (b) a garbled list noun
+  asks (`garbled-noun`, gold reminder.create-903). Gold candidates for the other fixes: `golden/nl-action.live4-pending.v1.json`
+  (13 cases, pending the owner's D12 batch).
+- **Pending:** the D12 model gates for v55/v56 and the read prompt v57 (owner-run); the selector-rag audit regeneration done (`pnpm eval:rag -- --mode
+  dry-run --write-audit true`, local Ollama) for the new gold digest.
+
 ### A6 R2 `item.summarize` over Jira and Slack — on branch `claude/v5-a6-r2-impl` (2026-10-16)
 
 - **Owner:** R2 accepted with D1–D12 at the recommended defaults (DECISIONS "ADR-0120 amendment A6 R2", amendments C1–C11).

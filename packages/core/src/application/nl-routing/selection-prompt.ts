@@ -65,15 +65,43 @@ import { nlModeVocabularyText } from './action-entries';
  * NEEDS_CLARIFICATION with the candidate as the one alternative, never a silent pick; owner decision 2026-10-16) and "or
  * which command Quoky has for it" on the how-to line (the help.topic miss of the v40 action gate). v44 (A6) = v42 with the
  * `reminder.cancel` catalog entry taking `match` beside `ref` (owner decision C, 2026-10-17: a reminder named by its
- * text); the rule lines are unchanged and the read prompt stays v39 byte for byte.
+ * text); the rule lines are unchanged and the read prompt stays v39 byte for byte. v57 (the read prompt; owner decision of
+ * 2026-10-19, "내일 알림 뭐 있어?" lists tomorrow's reminders) = v39 whose catalog gives `reminder.list` a `range` arg (the
+ * shared range symbols, grounded in the owner's time words, never past) and a description that says so; no rule line
+ * changes. Pinned by `golden/nl-select.v57.prompts.json`. v49 (A6; live test 4 of 2026-10-17,
+ * turns 8, 29 and 78-80 went to `none`; v45-v48 are R2 numbers) = v44 with the rule-8 colon-form line saying that a label
+ * naming a to-do or a reminder is that action entry with the text after the label as its span (the v32 line read "a
+ * '<label>: <value>' colon form … is none even when it names one of Quoky's own features", so "To-do: …" and "알림: …"
+ * were none), one line that a bare "<content> 할 일" is todo.add (owner decision A), and three generic examples ("거실 전구
+ * 교체 할 일", "To-do: return the library books", "알림: 모레 오전 8시 반 분리수거 내놓기"). The read prompt stays v39.
+ * v51 (A6; the v49 action gate of 2026-10-19 scored 95.3-96.7% but regressed on imperatives and help questions: "4번 할 일
+ * 목록에서 삭제해주세요" and "delete todo 2" went to none, "문서 요약 명령어가 뭐야" lost help.topic, "알림 몇 개 걸려 있어?"
+ * asked) = v44's colon-form sentence byte for byte (v49 had split it so that "any other such command is none" read as a
+ * rule over every imperative and every question about a command), plus one scoped exception line for a to-do or reminder
+ * colon label, one line for a bare "<content> 할 일" limited to the to-do noun (v49 also named the reminder noun, pulling
+ * reminder questions toward reminder.create), and two examples; the reminder label example is dropped (its normalised body
+ * "분리수거 내놓기" sat next to the ungrounded "운동 가라고" body of seed-para-001). The read prompt stays v39.
+ * v53 (A6; the v51 gate of 2026-10-19 still lost help.topic on "문서 요약 명령어가 뭐야" in 2 of 3 runs) = v51 with its two
+ * new lines moved OUT of the help.topic block, which is now v44's run of lines byte for byte (v51 had put the label and
+ * bare-form lines between "… is none even when it names one of Quoky's own features." and "A question form is needed but
+ * not enough: help.topic is only a question whose subject is Quoky itself (… features or commands)", splitting the
+ * command-question rule from the help.topic rule it qualifies). They now follow the span lines of the action rule, as one
+ * standalone sentence pair. No word changes; the examples are v51's. The read prompt stays v39.
+ * v55 (A6; owner decision of 2026-10-19) = v53 on the v57 catalog (reminder.list `range`), the reminder.list rule line saying
+ * it has no count arg and its range is only a period the owner names (it said "no range or count arg … a day … adds
+ * nothing"), and the "다음 주에 울릴 리마인더 쭉 보여줘" example with range next-week.
+ * v59 (read) / v57 (A6) (owner decision of 2026-10-19, bounded after three Codex P2 rounds on period semantics) = v57 /
+ * v55 whose `reminder.list` range description names the CLOSED set of periods (today, tomorrow, this-week, next-week, one
+ * date with month and day and an optional year, one weekday of this or next week) and, for A6, whose reminder.list rule
+ * line names the same set. Pinned by `golden/nl-select.v59.prompts.json`.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v39';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v59';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v39.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v59.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v44';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v57';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -97,8 +125,11 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v44';
  * byte, plus one line: a content word alone (Core's NL_CONTENT_WORDS) with no summary or full word leaves mode unset. The
  * v47 "never sets mode" show/tell sentence and the mode clause of the one-item rule are gone; the R2 entry's mode
  * description is v46's again. A6 stays v44 and read v39 byte for byte; Core's ITEM_READ veto is unchanged.
+ * v50 = the v48 R2 lines on top of v49 (the shared rule-8 lines and action examples changed); no R2 line changes. v52 =
+ * the v48 R2 lines on top of v51 (never gated as v50); no R2 line changes. v54 = the v48 R2 lines on top of v53. v56 =
+ * the v48 R2 lines on top of v55. v58 = the v48 R2 lines on top of v57.
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v48';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v58';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -276,10 +307,13 @@ const ACTION_EXAMPLES: readonly PromptExample[] = [
   { text: '1번은 뭐라고 왔어?', context: 'last listing: mail (6 items, 4 min ago)', output: '{"entryId":"item.summarize","args":{"source":"mail","ref":"#1"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['item.summarize'] },
   { text: '그 할 일 아까 다 했었어', context: 'last listing: todo (2 items, 5 min ago)', output: none, needs: [] },
   { text: '[quoted]\n이대로 할 일에 넣어줘', output: none, needs: [] },
-  { text: '다음 주에 울릴 리마인더 쭉 보여줘', output: '{"entryId":"reminder.list","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['reminder.list'] },
+  { text: '다음 주에 울릴 리마인더 쭉 보여줘', output: '{"entryId":"reminder.list","args":{"range":"next-week"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['reminder.list'] },
   { text: '브랜치 hotfix-0420 새로 따 줘', output: none, needs: [] },
   { text: '대화 모델은 소네트로 고정해', output: none, needs: [] },
   { text: '남은 거 모두 완료 처리해', context: 'last listing: todo (3 items, 1 min ago)', output: '{"entryId":"todo.complete","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['todo.complete'] },
+  // v51 (live test 4): a bare "<content> <to-do noun>" and a to-do colon label are todo.add.
+  { text: '거실 전구 교체 할 일', output: '{"entryId":"todo.add","args":{"title":"거실 전구 교체"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['todo.add'] },
+  { text: 'To-do: return the library books', output: '{"entryId":"todo.add","args":{"title":"return the library books"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['todo.add'] },
 ];
 
 /**
@@ -305,6 +339,9 @@ const ACTION_RULES: readonly string[] = [
   '   invent an item, an id, a title or a number.',
   '   Pick the action the owner asks for even when Reference context shows another list or nothing, and when the content to',
   '   add or remind is only 그거/이거/방금 거, copy those words as the span: Core checks the item or the content and asks.',
+  '   A colon label that names a to-do or a reminder ("할 일: …", "To-do: …", "알림: …") is todo.add or reminder.create, with',
+  '   the text after the colon as its span. Content followed only by the to-do noun, with no verb ("<content> 할 일"), is',
+  '   todo.add now; the noun is not in the title.',
   '   When the word that names the action is itself garbled or misspelled, so that the action the owner means is uncertain,',
   '   return NEEDS_CLARIFICATION with the most likely entry and its args, and that same entry and args as the one alternative:',
   '   never silently pick the action a garbled word might stand for.',
@@ -321,8 +358,9 @@ const ACTION_RULES: readonly string[] = [
   '   A question form is needed but not enough: help.topic is only a question whose subject is Quoky itself (you, or one of',
   '   Quoky\'s own features or commands). A question about using, setting up or writing in any other app, device or service',
   '   is none, even when it shares a word with a Quoky feature.',
-  '   Only the args listed for the chosen entry exist: reminder.list has no range or count arg, so a day or 몇 개 word with it',
-  '   adds nothing (args {} or status only); a count or day arg an entry does not list is never output.',
+  '   Only the args listed for the chosen entry exist: reminder.list has no count arg, so a 몇 개 word with it adds nothing;',
+  '   its range is only one of today, tomorrow, this-week, next-week, one date, or one weekday of this or next week that',
+  '   the owner names (내일 -> tomorrow); a count or day arg an entry does not list is never output.',
   '   item.summarize: source is the list the owner means (see Reference context); mode summary only for 요약/정리/짧게/',
   '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.',
   '   Posting, sending, replying, calendar events, Jira issues and every other write not in the catalog are still none.',

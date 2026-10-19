@@ -11654,10 +11654,12 @@
    "text": "내일 알림 뭐 있어?",
    "expect": {
     "entryId": "reminder.list",
-    "args": {},
+    "args": {
+     "range": "tomorrow"
+    },
     "outcome": "execute"
    },
-   "note": "was neg-097"
+   "note": "was neg-097 [owner decision 2026-10-19: reminder.list has a range arg; \"내일 알림 뭐 있어?\" lists tomorrow's reminders, args {range: tomorrow} (was {})]"
   },
   {
    "id": "a6-negative-reminder.list-003",
@@ -14720,6 +14722,35 @@
     "outcome": "execute"
    },
    "note": "owner decision E counter-case (2026-10-17): the loanword 캔슬 itself executes (decision C, by title) [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
+  },
+  {
+   "id": "a6-paraphrase-todo.add-906",
+   "family": "paraphrase",
+   "text": "회의 끝나고 검증 회의록 정리 할 일에 넣어줘",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "검증 회의록 정리"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision (a) of 2026-10-19 (live test 4, turn 69, label disputed), title amended by the owner the same day: the to-do is added NOW and titled \"검증 회의록 정리\"; the leading \"회의 끝나고\" only says when the owner will do the task (it sits right before the title, inside the task's own words), so it is neither part of the title nor a deferral of the request [owner-approved 2026-10-19]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.create-903",
+   "family": "paraphrase",
+   "text": "10월 21일 오전 9시에 리마이너 걸어줘, 검증 도면 회신",
+   "expect": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "검증 도면 회신",
+     "when": "10월 21일 오전 9시"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
+   },
+   "note": "owner decision (b) of 2026-10-19 (live test 4, turn 25, executed live): the noun that decides the entry is garbled (리마이너 for 리마인더) and no correct list noun is present, so Core asks \"'리마인더' 말씀이세요?\" (`garbled-noun`); written like complete-018 (reason ambiguous, any question) [owner-approved 2026-10-19]"
   }
  ]
 }

@@ -2,8 +2,8 @@
   "version": 1,
   "description": "ADR-0123 D5 embedding audit record. Regenerate with `pnpm eval:rag -- --mode dry-run --write-audit true`; a stale record (pool or gold digest) fails the suite.",
   "poolDigest": "1578cba96ecb20d2c12a5415b99e5ebc4451e769130f85e76fd02770ff525df8",
-  "goldDigest": "5316ed3e70843837b4866df94490f6f9691baaf4ee2198d6be468c4ec3565592",
-  "splitSha256": "a7b020ea7220c95e6b5f613fc31d505ad49374dec9f9190aa69e264d97cde930",
+  "goldDigest": "26d035c12218457055ab319a0c7871ba0ae17eda96c3d7e439da0661b5738283",
+  "splitSha256": "fdb30a6955aafa20c9ab103d1b9dbaccce2734739352e04b866198bd1e5b8b73",
   "poolScope": {
     "entries": 153,
     "approvedBatches": [
@@ -20,8 +20,8 @@
       "tauLow": 0.7441,
       "minPositive": 0.8141,
       "positives": 9,
-      "negatives": 379,
-      "falsePositiveRate": 0.0079,
+      "negatives": 377,
+      "falsePositiveRate": 0,
       "flaggedPairs": [],
       "heldOutLowShare": 0.9858,
       "lowStratumValid": true

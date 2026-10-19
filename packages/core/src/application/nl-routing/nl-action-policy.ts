@@ -249,6 +249,61 @@ export function renderGarbledAction(candidate: string, language: Lang): string {
     : `'${candidate}'(이)라고 하신 건가요? 아직 아무것도 바꾸지 않았어요. 맞으면 '${candidate}'로 다시 말씀해 주세요.`;
 }
 
+/** A Korean particle pair chosen by the word's last syllable (final consonant or not); both forms for anything else. */
+function particle(word: string, afterConsonant: string, afterVowel: string): string {
+  const code = (Array.from(word).at(-1) ?? '').charCodeAt(0) - 0xac00;
+  if (code < 0 || code > 11171) return `${afterConsonant}(${afterVowel})`;
+  return code % 28 === 0 ? afterVowel : afterConsonant;
+}
+
+/*
+ * The four asks below keep NO open question (A6-D2 pending questions are content-free, so a bare "응" or "3시" could not
+ * complete them). Each is a RESTATE prompt: it says what to send and never ends in a question a reply cannot bind to (live
+ * test 4, turns 39-40: a question Quoky cannot act on is the anti-pattern this branch removes).
+ */
+
+/**
+ * Owner decision (b) of 2026-10-19: the noun that decides the list looks like a typo of a catalog list noun ("리마이너 걸어줘").
+ * Nothing was changed; the owner restates with the noun.
+ */
+export function renderGarbledNoun(candidate: string, language: Lang): string {
+  return language === 'en'
+    ? `If you meant "${candidate}", please say it again with that word. Nothing was changed yet.`
+    : `'${candidate}' 말씀이시면 '${candidate}'${particle(candidate, '을', '를')} 넣어 다시 말씀해 주세요. 아직 아무것도 바꾸지 않았어요.`;
+}
+
+/**
+ * Owner decision (b) of 2026-10-19: a word in the list noun's slot that is close to no known noun (the owner's own word,
+ * echoed back in a DM only). Nothing was changed; the owner restates with the list.
+ */
+export function renderUnknownNoun(word: string, language: Lang): string {
+  return language === 'en'
+    ? `I don't know what "${word}" means here. Please say it again with "to-do" or "reminder". Nothing was changed yet.`
+    : `'${word}'${particle(word, '이', '가')} 무슨 뜻인지 모르겠어요. '할 일'인지 '알림'인지 넣어 다시 말씀해 주세요. 아직 아무것도 바꾸지 않았어요.`;
+}
+
+/**
+ * CA / Codex P2 (2026-10-19): a bare "<title> 할 일" whose title may not be a task ("회사 할 일", "정산 할 일"). The title is
+ * the owner's own words (echoed in a DM only, like a receipt). The prompt gives the exact sentence to send.
+ */
+export function renderConfirmTitle(title: string, language: Lang): string {
+  if (language === 'en') return `To add "${title}" as a to-do, please say "add ${title} to my to-dos". Nothing was added yet.`;
+  return `'${title}'${particle(title, '을', '를')} 할 일로 추가하려면 "${title} 할 일에 추가해줘"라고 말씀해 주세요. 아직 아무것도 추가하지 않았어요.`;
+}
+
+/**
+ * Live test 4 (2026-10-17, turns 26 / 58 / 60): a reminder request with no time. The prompt names what is missing (the time)
+ * instead of the generic "무엇을/어느 항목을 다시 말씀해 주세요", with an example sentence built from the owner's own body
+ * (echoed in a DM only, like a receipt) or a generic one. A following "3시" alone cannot complete it, so it asks for the
+ * whole request again.
+ */
+export function renderAskWhen(language: Lang, body?: string): string {
+  const own = body !== undefined && body.trim().length > 0 && Array.from(body).length <= 80 ? body.trim() : undefined;
+  return language === 'en'
+    ? `Please include the time. For example: "remind me tomorrow at 9am to ${own ?? 'call the bank'}". Nothing was created yet.`
+    : `알림 시간을 함께 말씀해 주세요. 예: "내일 오전 9시에 ${own ?? '은행에 전화하기'} 알려줘". 아직 아무것도 만들지 않았어요.`;
+}
+
 /**
  * A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3): "이번엔 3번" right after "1번 완료" plausibly means
  * "complete 3 too", but the action is only inferred, so Core asks with it: "할 일 3번도 완료할까요? (응 / 아니)"; with no

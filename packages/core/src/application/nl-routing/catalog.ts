@@ -118,6 +118,27 @@ export interface NlArgSpec {
    * `lastSelection`, so a follow-up ("안 읽은 것만") refines the listing, not the pick.
    */
   readonly transient?: boolean;
+  /**
+   * `enum` only (v53 gate, Codex P2): the value is a presentation detail, not a filter, so an out-of-set value may be dropped
+   * for the default and the read only widens (help.topic's `topic`: the general help). Absent: a FILTER (a list status, a
+   * window): an out-of-set value is never replaced by the default, the owner is asked.
+   */
+  readonly presentation?: true;
+  /**
+   * `range` only (owner decision of 2026-10-19, reminder.list): the period must lie in the future (a reminder's next
+   * occurrence is never past): a period that ended before now is refused (`range`) and asked.
+   */
+  readonly futureOnly?: true;
+  /**
+   * `range` only (A5 rule 6, owner decision of 2026-10-19): the period is grounded only in the owner's own time words; with
+   * none in the message it is `ungrounded` (a model-made period), never applied.
+   */
+  readonly timeWordsRequired?: true;
+  /**
+   * `range` with `timeWordsRequired` only (owner decision of 2026-10-19, bounded): the fixed restate Core sends when the
+   * owner names a period outside the entry's closed set (`unsupported-period`). Content-free: it never echoes the owner.
+   */
+  readonly periodHelp?: { readonly ko: string; readonly en: string };
   /** The value the entry uses when the argument is absent; canonical args omit an argument equal to it. */
   readonly default?: string | boolean;
   /** `span` only: the maximum length in code points (A6-D1: a title or body 1..200). */
@@ -279,9 +300,18 @@ export interface NlActionReceipt {
  * A6-D2: a to-do or reminder listing a handler showed (the labels the owner saw and the ids), content-free. A6 R2: a
  * Jira or Slack listing (labels of the delivered numbered rows and the opaque item references).
  */
+/**
+ * Codex P2 (2026-10-19): the arg NAMES a selector may invent harmlessly on an entry that does not list them (a count, a
+ * limit, a verbosity), which Core may drop from a CLEAR read. Schema names only, never an owner phrase; every other unknown
+ * arg may stand for a filter and asks.
+ */
+export const NL_IGNORABLE_EXTRA_ARGS: readonly string[] = Object.freeze(['count', 'limit', 'verbose', 'detail']);
+
 export interface NlListingReceipt {
   readonly source: 'todo' | 'reminder' | 'jira' | 'slack';
   readonly items: readonly { readonly label: number; readonly id: string }[];
+  /** CA P3 (2026-10-19): a filtered subset (a reminder period); a number it did not show asks instead of resolving. */
+  readonly filtered?: true;
 }
 
 /** A6 undo: what the inverse undoes (the `lastAction` record's entry and the item version it left behind). */

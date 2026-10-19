@@ -271,6 +271,11 @@ const EN_SYMBOL_LABEL: Readonly<Record<string, string>> = {
   upcoming: 'upcoming',
 };
 
+/** Codex P2 (2026-10-19): the named range symbols with their Korean and English owner words (the label maps above). */
+export function nlRangeSymbolWords(): ReadonlyArray<readonly [symbol: string, ko: string, en: string]> {
+  return Object.keys(KO_SYMBOL_LABEL).map((symbol) => [symbol, KO_SYMBOL_LABEL[symbol] as string, EN_SYMBOL_LABEL[symbol] ?? symbol] as const);
+}
+
 /** The owner-facing name of a resolved period ("오늘", "10월 20일", "10월 1일~10월 7일"). */
 export function nlRangeLabel(range: NlResolvedRange, language: 'ko' | 'en'): string {
   const named = (language === 'en' ? EN_SYMBOL_LABEL : KO_SYMBOL_LABEL)[range.symbol];
@@ -614,6 +619,35 @@ function weekdayPlacement(
     return true;
   };
   return { weekStart, inWeek, named: (date) => weekdayOf(date) === expressed.weekday && inWeek(date) && inDirection(date) };
+}
+
+/**
+ * Codex P2 (2026-10-19, reminder.list): the single-day ranges one weekday mention may name, by the same placement as the
+ * weekday validation: a Korean week word that week's day; an English direction "next" / "last" the nearest such day that
+ * way; "this" the day of the current week or of the next seven days; no anchor the nearest such day from today (today
+ * included, as the bare `wed` symbol). Pure; `now` is an input.
+ */
+export function nlWeekdayMentionRanges(mention: NlWeekdayMention, now: IsoTimestamp, timeZone: string): NlResolvedRange[] {
+  if (!isValidTimeZone(timeZone)) return [];
+  const today = localDateOf(now, timeZone);
+  const monday = addLocalDays(today, -((weekdayOf(today) + 6) % 7));
+  const days: LocalDate[] =
+    mention.week !== undefined
+      ? [addLocalDays(monday, { last: -7, this: 0, next: 7, 'after-next': 14 }[mention.week] + ((mention.weekday + 6) % 7))]
+      : mention.direction === 'future'
+        ? [addLocalDays(today, (mention.weekday - weekdayOf(today) + 7) % 7 || 7)]
+        : mention.direction === 'past'
+          ? [addLocalDays(today, -((weekdayOf(today) - mention.weekday + 7) % 7 || 7))]
+          : mention.direction === 'this'
+            ? [addLocalDays(monday, (mention.weekday + 6) % 7), addLocalDays(today, (mention.weekday - weekdayOf(today) + 7) % 7)]
+            : [addLocalDays(today, (mention.weekday - weekdayOf(today) + 7) % 7)];
+  const ranges: NlResolvedRange[] = [];
+  for (const day of days) {
+    const symbol = `${day.year}-${String(day.month).padStart(2, '0')}-${String(day.day).padStart(2, '0')}`;
+    const range = resolveNlRange(symbol, now, timeZone);
+    if (range !== undefined && !ranges.some((known) => known.from === range.from)) ranges.push(range);
+  }
+  return ranges;
 }
 
 /** What the A7 end-bound rule does with a period: keep it, refuse it (`weekday`), or spell it as an `until-*` symbol. */

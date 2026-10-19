@@ -562,6 +562,11 @@ describe('reminder grammar — English', () => {
     ['hey, can you remind me tomorrow at 9am to call mom', 'call mom', '2026-10-03T09:00'],
     ['pls remind me in 45 minutes to stretch', 'stretch', '2026-10-02T14:45'],
     ['remind me at 9 that so and so is coming', 'so and so is coming', '2026-10-02T21:00'], // only text before the verb is a lead-in
+    // A6 live test 4 (turn 66): a label colon right after the time ends the time component ("9:30am:"), like a space.
+    ['Remind me on Oct 22 at 9:30am: check the shipping label', 'check the shipping label', '2026-10-22T09:30'],
+    ['remind me at 3pm on Oct 21: check the label', 'check the label', '2026-10-21T15:00'],
+    ['remind me tomorrow at 9am: call mom', 'call mom', '2026-10-03T09:00'],
+    ['remind me on Oct 22 at 10:15: pay rent', 'pay rent', '2026-10-22T10:15'],
   ])('%j → %j at %s', (message, body, local) => {
     expect(once(message)).toEqual({ body, at: kst(local), kind: 'TEXT' });
   });

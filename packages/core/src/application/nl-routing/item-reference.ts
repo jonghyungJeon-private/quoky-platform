@@ -124,6 +124,8 @@ function pickInSlot(input: NlReferenceInput, slot: ListingSlot): NlReferenceReso
     const item = slot.items[slot.items.length - 1];
     return item === undefined ? unresolved(input, 'none') : { kind: 'resolved', target: targetFrom(slot, item) };
   }
+  // Codex P2 (2026-10-19): an empty view (a filtered reminder period with nothing in it) names no item: ask, never pick.
+  if (slot.items.length === 0) return unresolved(input, 'ambiguous', { found: slot.source, listingAt: slot.at });
   if (slot.items.length === 1) return { kind: 'resolved', target: targetFrom(slot, slot.items[0] as ListingItem) };
   return unresolved(input, 'ambiguous', { candidates: slot.items.slice(0, 10), found: slot.source, listingAt: slot.at });
 }
@@ -170,7 +172,15 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
           : unresolved(input, 'none');
       }
       // The display number is stable: the listing (when fresh) supplies the id, the repository resolves it otherwise.
-      const listed = state.listings.slots.reminder?.items.find((item) => item.label === ref.index);
+      const slot = state.listings.slots.reminder;
+      const listed = slot?.items.find((item) => item.label === ref.index);
+      // CA P3 (2026-10-19): after a FILTERED reminder listing (a period) that is the owner's latest view, a number it did
+      // not show is not resolved by display number: Core asks with the numbers it did show.
+      if (listed === undefined && slot !== undefined && slot.filtered === true && state.listings.mostRecent === slot) {
+        // An empty filtered view showed nothing: "목록에 0건만 있어요. 13번은 없어요."
+        if (slot.items.length === 0) return unresolved(input, 'out-of-range', { count: 0, index: ref.index, found: 'reminder', listingAt: slot.at });
+        return unresolved(input, 'ambiguous', { candidates: slot.items.slice(0, 10), found: 'reminder', listingAt: slot.at });
+      }
       return { kind: 'resolved', target: { source: 'reminder', ...(listed !== undefined ? { id: listed.id } : {}), label: ref.index } };
     }
   }
@@ -195,6 +205,8 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
         if (newer.source !== source) return unresolved(input, 'other-source', { found: newer.source });
         // A newer (or tied) multi-item list of the same source: ask with its shown labels (both ref kinds).
         if (newer.items.length > 1) return unresolved(input, 'ambiguous', { candidates: newer.items.slice(0, 10), found: source, listingAt: newer.at });
+        // Codex P2 (2026-10-19): an EMPTY newer view (a filtered reminder period with nothing in it) names no item: ask.
+        if (newer.items.length === 0) return unresolved(input, 'ambiguous', { found: source, listingAt: newer.at });
         const shown = newer.items[0] as ListingItem;
         if (shown.id !== lastItem.itemId) {
           return unresolved(input, 'conflict', { candidates: [shown, { label: lastItem.label ?? 0, id: lastItem.itemId }].filter((item) => item.label > 0), found: source });

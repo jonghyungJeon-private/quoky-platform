@@ -1,5 +1,6 @@
 import { normalizeForMatch } from './selection-input';
 import { nlIsRequestForm } from './request-shape';
+import { isNlTimeWord } from './symbolic-time';
 
 /**
  * ADR-0120 A6-D3a amendment 1, garbled action word addendum (owner decision 2026-10-16): "3번 완룐 처리해줘" asks, because
@@ -256,6 +257,168 @@ export function nlGarbledActionWord(
     if (garbled !== undefined) return garbled;
   }
   return undefined;
+}
+
+// ── owner decision (b) of 2026-10-19: a garbled ENTRY noun ─────────────────────────────────────────────────────────
+
+/** Hangul initial consonants as keys (index into ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ), for each final consonant (0 = none). */
+const FINAL_KEYS: ReadonlyArray<readonly number[]> = [
+  [], [0], [1], [0, 9], [2], [2, 12], [2, 18], [3], [5], [5, 0], [5, 6], [5, 7], [5, 9], [5, 16], [5, 17], [5, 18],
+  [6], [7], [7, 9], [9], [10], [11], [12], [14], [15], [16], [17], [18],
+];
+
+/**
+ * The KEYSTROKES of a word: a Hangul syllable as its consonant and vowel keys, with an initial and a final consonant as the
+ * SAME key (the input method composes a syllable from keys and moves a final consonant to the next syllable when a vowel
+ * follows); other characters as they are. A one-key slip is distance 1 here even when the composition moved a consonant
+ * across a syllable boundary ("리마이너" is "리마인더" without its ㄷ key; on positional jamo the two are 2 apart).
+ */
+function keysOf(text: string): Unit[] {
+  const units: Unit[] = [];
+  for (const char of Array.from(text)) {
+    const parts = partsOf(char);
+    if (parts === undefined) {
+      if (!/\s/u.test(char)) units.push(char);
+      continue;
+    }
+    units.push(100 + parts[0], 200 + parts[1], ...(FINAL_KEYS[parts[2]] ?? []).map((key) => 100 + key));
+  }
+  return units;
+}
+
+/** The keystroke edit distance of two words (spaces ignored); see {@link keysOf}. */
+export function nlKeystrokeDistance(a: string, b: string): number {
+  return distance(keysOf(a), keysOf(b));
+}
+
+/** The nouns that name one item list (the catalog's own list aliases), and the list they name. */
+export interface NlEntryNouns {
+  readonly owner: string;
+  readonly words: readonly string[];
+}
+
+/** What a garbled entry noun asks: a typo of a known noun ("'리마인더' 말씀이시면 …"), or an unknown word in its slot. */
+export type NlGarbledEntryNoun = { readonly kind: 'typo'; readonly noun: string; readonly owner: string } | { readonly kind: 'unknown'; readonly word: string };
+
+/** Closed fillers and quantifiers that may stand between the entry noun and its verb ("알림 하나 걸어줘", "알림 좀 만들어줘"). */
+const NOUN_SLOT_FILLERS: ReadonlySet<string> = new Set(['좀', '좀만', '하나', '한개', '두개', '한번', '빨리', '다시', '제발', '지금', '꼭', '새로']);
+/** A destination or instrumental particle on the entry noun ("할 일에 넣어줘", "알림으로 만들어줘"). */
+const DESTINATION_PARTICLE = /(?:에다가|에다|으로|에|로)$/u;
+const MIN_UNKNOWN_SYLLABLES = 2;
+/** The object or topic particle an unknown noun may carry in the object slot ("뭐뭐를 걸어줘"). */
+const OBJECT_PARTICLE = /(?:을|를|은|는)$/u;
+/**
+ * Non-noun morphology on a token (Codex P2, 2026-10-19): an adverb in -게 / -히 / -이 ("새롭게", "천천히", "깨끗이"), a case
+ * ending -로 / -으로 / -에 / -에서 / -서, or a verb or adjective ending (-다, -고, -면, -며, -지, -요, -어/-아/-여, -던, a
+ * past or future marker, an adnominal -ㄴ / -ㄹ / -는). Such a token is no noun, so it is never asked about as one.
+ */
+const NON_NOUN_TAIL = /(?:게|히|이|로|에|서|다|고|면|며|지|요|어|아|여|던|었|았|였|겠|는|도|만|까지|부터)$/u;
+
+/**
+ * Codex P2 (2026-10-19, two rounds): the unknown-noun path is narrow and structural, since there is no dictionary. A token
+ * is asked about only when it carries an explicit OBJECT or TOPIC particle (을/를, 은/는) and stands directly before a
+ * list-noun verb (`verbs`: 걸, 만들, 설정, 맞춰): "삐용삐용을 걸어줘". Adverbs never take these particles, so "그냥 걸어줘",
+ * "얼른", "당장", "살짝" never ask; a bare unknown word with no entry noun ("타이머 걸어줘") is left to the selector and Core's
+ * usual validation (recorded residual). The stem is a Hangul word of two syllables or more with no adverbial, case or
+ * verbal morphology ({@link NON_NOUN_TAIL}), no closed filler and no time word. Returns the stem to name, or `undefined`.
+ * The typo-of-a-known-noun path (typed-key distance: "리마이너 걸어줘") is separate and unchanged.
+ */
+function isUnknownNounCandidate(raw: string, next: string, verbs: readonly string[]): string | undefined {
+  // CA P3 #7: a filler glued on the token ("꼭좀", "빨리좀만") is set aside first; the stem meets the same checks.
+  const word = raw.replace(/(?:좀만|좀)$/u, '');
+  if (word.length === 0) return undefined;
+  const particle = OBJECT_PARTICLE.exec(word);
+  // A bare token never asks (an adverb such as 그냥 would): only an explicit object or topic particle marks a noun.
+  if (particle === null) return undefined;
+  const stem = word.slice(0, particle.index);
+  const beforeVerb = verbs.some((verb) => next.startsWith(verb));
+  if (!beforeVerb || !isHangulWord(stem) || Array.from(stem).length < MIN_UNKNOWN_SYLLABLES) return undefined;
+  if (NOUN_SLOT_FILLERS.has(stem) || NOUN_SLOT_FILLERS.has(word) || isNlTimeWord(word) || isNlTimeWord(stem)) return undefined;
+  return NON_NOUN_TAIL.test(stem) ? undefined : stem;
+}
+
+/**
+ * Owner decision (b) of 2026-10-19 (live test 4, turn 25: "10월 21일 오전 9시에 리마이너 걸어줘, 검증 도면 회신" executed
+ * `reminder.create`): the garbled-action rule extended from the action word to the NOUN that decides which list an entry
+ * writes (the catalog's to-do and reminder list aliases: 할 일, 투두, todo, 알림, 리마인더, 알람, reminder). Read on the owner's
+ * frame (content and time spans removed), and only when no correct list noun is in it.
+ *
+ * The noun's SLOT is grammar, not a phrase: the object right before a verb the vocabularies pair with a list noun
+ * (`nounVerbs`: 걸, 만들, 설정, 맞춰 from "알림 걸", "리마인더 설정", "할 일 만들"; closed fillers such as 좀 / 하나 may stand
+ * between) or before a request form ("3번 리마이너 취소해줘"), a list noun with a destination particle before a request
+ * ("할릴에 넣어줘"), or the verb-final last word of the message (a bare "<title> 할 일"). A Latin word is checked anywhere in
+ * the frame (English puts the noun after its verb).
+ *  - `typo`: a word in the slot (particles stripped) is one KEYSTROKE from a list noun ({@link nlKeystrokeDistance}; on
+ *    Hangul the jamo distance of garbled-action plus the input method's syllable composition), or, for a loanword noun
+ *    (`loanwords`), a vowel-only variant of it (owner decision E). Latin: one letter, five letters or more.
+ *  - `unknown`: a noun-shaped token directly in the object slot of a list-noun verb ({@link isUnknownNounCandidate}), no
+ *    known word and near no list noun: the owner is asked what it means.
+ * Known words (`knownWords`: the catalog aliases and source names, every action word) are never garbled. Only a question;
+ * nothing here selects or executes. Pure; the owner's text is never logged.
+ */
+export function nlGarbledEntryNoun(
+  frame: string,
+  nouns: readonly NlEntryNouns[],
+  nounVerbs: readonly string[],
+  knownWords: readonly string[],
+  message: string = frame,
+  loanwords: readonly string[] = [],
+): NlGarbledEntryNoun | undefined {
+  const lists = nouns.map((list) => ({ owner: list.owner, words: list.words.map(normalizeForMatch) }));
+  const spaceless = (word: string): string => word.replace(/\s+/gu, '');
+  const text = normalizeForMatch(frame);
+  const flat = spaceless(text);
+  // A correct list noun anywhere in the frame decides the entry: nothing is garbled.
+  const present = lists.some((list) =>
+    list.words.some((noun) => (isLatinWord(spaceless(noun)) ? new RegExp(`(?<![a-z])${spaceless(noun)}(?![a-z])`, 'u').test(text.replace(/-/gu, '')) : flat.includes(spaceless(noun)))),
+  );
+  if (present) return undefined;
+  const known = [...new Set(knownWords.map((word) => spaceless(normalizeForMatch(word))).filter((word) => word.length > 0))];
+  const loans = new Set(loanwords.map((word) => spaceless(normalizeForMatch(word))));
+  const verbs = nounVerbs.map(normalizeForMatch).filter((verb) => verb.length > 0);
+  const words = wordsOf(frame);
+  const messageLast = wordsOf(message).at(-1);
+  const isKnown = (stem: string): boolean => known.some((word) => (isLatinWord(word) ? stem === word : stem === word || (Array.from(word).length >= MIN_HANGUL_SYLLABLES && stem.includes(word))));
+  const nextContent = (index: number): string => {
+    let at = index + 1;
+    while (NOUN_SLOT_FILLERS.has(words[at] ?? '')) at += 1;
+    return words[at] ?? '';
+  };
+  const near = (stem: string): { readonly noun: string; readonly owner: string } | undefined => {
+    for (const list of lists) {
+      for (const raw of list.words) {
+        const noun = spaceless(raw);
+        if (isLatinWord(noun)) {
+          if (isLatinWord(stem) && noun.length >= MIN_LATIN_LETTERS && stem !== `${noun}s` && distance(Array.from(stem), Array.from(noun)) === 1) return { noun: raw, owner: list.owner };
+          continue;
+        }
+        if (!isHangulWord(stem) || !isHangulWord(noun) || Array.from(noun).length < MIN_HANGUL_SYLLABLES || Array.from(stem).length < MIN_HANGUL_SYLLABLES) continue;
+        if (nlKeystrokeDistance(stem, noun) <= 1 || (loans.has(noun) && isVowelOnlyVariant(stem, noun))) return { noun: raw, owner: list.owner };
+      }
+    }
+    return undefined;
+  };
+  let unknown: string | undefined;
+  for (const [index, word] of words.entries()) {
+    const latin = isLatinWord(word.replace(/-/gu, ''));
+    const plain = word.replace(/-/gu, '');
+    const once = word.replace(PARTICLE_TAIL, '');
+    const stems = latin ? [plain] : [...new Set([word, once, once.replace(PARTICLE_TAIL, '')])].filter((stem) => isHangulWord(stem));
+    if (stems.length === 0 || stems.some(isKnown)) continue;
+    const next = nextContent(index);
+    const objectSlot = !latin && verbs.some((verb) => next.startsWith(verb));
+    // The object of the request itself ("3번 리마이너 취소해줘"): the word right before a request form.
+    const requestSlot = !latin && nlIsRequestForm(next);
+    const destinationSlot = !latin && DESTINATION_PARTICLE.test(word) && (requestSlot || objectSlot);
+    const finalSlot = !latin && index === words.length - 1 && word === messageLast;
+    if (!latin && !objectSlot && !requestSlot && !destinationSlot && !finalSlot) continue;
+    for (const stem of stems) {
+      const candidate = near(stem);
+      if (candidate !== undefined) return { kind: 'typo', ...candidate };
+    }
+    if (unknown === undefined) unknown = isUnknownNounCandidate(word, words[index + 1] ?? '', verbs);
+  }
+  return unknown === undefined ? undefined : { kind: 'unknown', word: unknown };
 }
 
 /**

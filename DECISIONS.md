@@ -27582,3 +27582,82 @@ not / instead / except / rather than and the English negators). With a marker th
 behaviour before this branch: "방금 요약한 그거 말고 이거 원문 보여줘", "아까 본 거 말고 이거" and "not the one I just now read,
 this one" keep `this`. Accepted cost: "방금 본 거 요약 말고 원문으로 보여줘" (a negated mode) also keeps `this`. CA P3: "아까 온 메일 요약해줘" (아까 dating the mail, not the
 reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-action.r2.v1.json`, not as gold.
+
+## Owner decisions of 2026-10-19 (A6 live test 4, `docs/plans/a6-live-test-4-record.md`)
+
+- **(a) Turn 69 executes.** "회의 끝나고 검증 회의록 정리 할 일에 넣어줘" adds the to-do now, titled "검증 회의록 정리"
+  (amended by the owner the same day: the timing qualifier is NOT part of the title). Narrowed in review (CA P2): ONLY an
+  event clause with its own predicate (-고, -고 나서, -ㄴ 뒤에, -ㄴ 후에, -은 다음에) immediately before a `todo.add` title
+  says when the owner will do the task, so the deferred-timing veto skips it. The bare adverbs 나중에 / 이따가 / 좀 있다가
+  still defer ("나중에 우유 사기 할 일 추가해줘" is chat); complete and cancel have no task to time ("회의 끝나고 회의 준비
+  완료해줘", "회의 끝나고 2번 완료해줘" stay chat); a clause before anything else ("회의 끝나고 할 일에 회의록 정리 넣어줘")
+  defers; and a day or time word right before a non-reminder write's Korean request verb ("우유 사기 할 일에 내일
+  추가해줘") defers the write (a present-day word such as 오늘 does not; a reminder's time words are its own time). A to-do
+  has no date, so any non-today day or time word outside the target on a `todo.complete` / `todo.cancel` ("내일 2번
+  완료해줘", "다음 주에 3번 취소해줘") is a deferral and is refused; "오늘 2번 완료해줘" executes (CA follow-up).
+  **Accepted fail-closed residual (CA P3):** a reminder with its own time after an event clause ("회의 끝나고 3시에 회의록
+  정리 알려줘") is refused as deferred; nothing is written and the owner restates it.
+  Gold `a6-paraphrase-todo.add-906` (execute, title "검증 회의록 정리").
+- **(b) A garbled list noun asks** (extends the garbled-action addendum and owner decision E to the noun that decides the
+  entry). For a to-do or reminder write, when no catalog list noun (`todo.list` / `reminder.list` aliases) is in the frame
+  and a word in the noun's slot (the object before a list-noun verb or a request form, a destination particle before a
+  request, or the verb-final last word) is one input-method keystroke from a list noun (initial and final consonant as one
+  key, so "리마이너" is "리마인더" without its ㄷ key) or a vowel-only variant of a loanword noun, Core asks "'리마인더'
+  말씀이세요?"; an unknown word in the object slot of a list-noun verb asks what it means. Nothing is written (`garbled-noun`).
+  Gold `a6-paraphrase-reminder.create-903` (ask). Narrowed in review (Codex P2): the unknown-word question needs an explicit
+  object or topic particle on the token ("블라블라를 걸어줘"); a bare token never asks, so adverbs ("그냥", "얼른", "당장") pass.
+  **Accepted residual:** an unknown bare word with no entry noun ("타이머 걸어줘") is left to the selector and Core's usual
+  validation; the typo-of-a-known-noun path ("리마이너 걸어줘") is unchanged.
+- **Implementation record (agent, same branch).** A6 prompt `nl-select.v55` (R2 `nl-select.v56`, read `nl-select.v57` for reminder.list `range`; v49-v54 gated and superseded): the
+  rule-8 colon-form line names to-do / reminder labels as those writes, and one line makes a bare "<content> 할 일" todo.add
+  (owner decision A). Core: the copula reference ("이번엔 3번이야") takes the continuation confirmation; an undo paraphrase
+  that points at the last action asks the undo confirmation; a reminder without a time asks for the time (an open question
+  would have to keep the reminder text, which the content-free A6-D2 pending questions do not hold: owner decision needed
+  if wanted); the English reminder grammar ends a time at a label colon; with action entries offered, a chat reply that
+  offers an action as a yes/no question or says Quoky cannot do it is replaced by the restate. Gold candidates for these
+  are in `golden/nl-action.live4-pending.v1.json`, pending the owner's D12 batch. The D12 model gate is owner-run.
+- **(c) reminder.list lists a period (owner decision of 2026-10-19).** "내일 알림 뭐 있어?" lists only tomorrow's reminders.
+  `reminder.list` takes the shared symbolic `range` (`futureOnly`, `timeWordsRequired`: grounded only in the owner's period
+  words, A5 rule 6; a model-made period is dropped and logged, a past period asks). The listing keeps the scheduled
+  reminders with an occurrence in the period (a recurring one when any occurrence falls in it), in the owner's time zone,
+  under their stable `#N`. The read prompt moves to `nl-select.v57` (the catalog line; golden `nl-select.v57.prompts.json`),
+  A6 to `v55`, R2 to `v56`. Gold `a6-negative-reminder.list-002` now expects `{range: tomorrow}`, and, following the same
+  owner decision, the read-corpus golds `reminder-012` ("내일 울릴 알림 뭐 있어?") now expects `{range: tomorrow}` and
+  `reminder-027` ("any reminders set for today?") `{range: today}` (both were `{}`).
+- **(d) A read keeps every filter the owner stated (review record, 2026-10-19).** A CLEAR read whose only defect is a detail
+  Core cannot use runs without it only for: an unknown arg whose NAME is on the catalog's explicit allowlist
+  `NL_IGNORABLE_EXTRA_ARGS` (count, limit, verbose, detail: schema names, never owner phrases), an out-of-set value of an
+  enum the catalog marks `presentation` (help.topic `topic`) whose values the owner did not name, and a reminder.list
+  period the owner never wrote. Every other unknown arg ({onlyUnread}, {onlyRemaining}, {completed}) asks, and a repaired
+  read that loses a period the owner named asks; each drop is logged (`nl_selection.detail_dropped`, arg name and kind).
+  This replaces the earlier boolean and day-symbol heuristics after four review rounds of filter-loss cases.
+- **(f) 취소 with an object is never a direct undo (gate of 2026-10-19, action run 2).** `a6-reference-todo.cancel-011` "그거
+  취소해 줘요" (lastAction todo.complete #3, a newer reminder listing) was selected as `action.undo` and EXECUTED, because the
+  closed direct-undo grammar (`nlUndoIsDirect`, unchanged since 2026-10-16, so pre-existing on main) let a deictic precede
+  the 취소 head. 취소 is also the cancel of an item, so a 취소 head is direct only when nothing before or after it is an
+  object (a deictic 그거/이거/저거, a number "3번", a list noun 할 일/알림): "취소해줘", "취소", "방금 거 취소", "방금 추가한
+  거 취소해줘" stay direct; "그거 취소해 줘요", "이거 취소해줘", "3번 취소해줘" go to the undo confirmation. The other undo
+  heads (되돌려줘, 원상복구, undo …) are unchanged.
+- **(e) The reminder.list period is a CLOSED set (bounded in review, 2026-10-19).** After three Codex P2 rounds on period
+  semantics (multi-period spans, "앞으로 7일" read as a day, whole months without the year) the feature is bounded instead
+  of extended. `reminder.list` filters only by: today, tomorrow, this-week, next-week, one calendar date with month and
+  day (an explicit year kept: "10월 22일", "Oct 22", "2027년 10월 22일"), and one weekday of this or next week ("다음 주
+  수요일" = next-wed, "금요일" = fri). Core resolves the owner's words to exactly ONE supported period
+  (`nlReminderPeriod`) and requires the selected range to equal it (same clock); a missing or different range asks.
+  One residual rule closes the class (Codex P2, fourth round): after the supported period forms are removed from the
+  owner's prose (without structures), no time expression may remain (the A6 time-expression detector, the period words
+  and the reminder grammar's day recognizer, a range symbol word or date, a weekday, a duration, a number with a calendar
+  or clock unit), so "내일 오전 9시", "tomorrow morning", "오늘 저녁" and "다음 주 수요일 오후" ask instead of widening to the
+  day; a time expression with no supported period ("show reminders next 7 days") asks instead of listing everything.
+  Only prose with no time expression at all has no range. A weekday is placed by the weekday validation's own rules
+  (`nlWeekdayMentionRanges`): a Korean week word fixes the week, an English "next" / "this" is a direction ("next
+  Wednesday" said on a Wednesday is a week later, never today); "last Friday" is past and asks. A month alone ("show
+  reminders in November", "Dec reminders", "11월 알림") is a named period outside the set and asks, whether the selector
+  wrote no range or a month range ("may" / "march" count only after a period preposition: "in May").
+  Anything else the owner names (a span with 부터/까지/until/~, a duration "앞으로 7일" / "next 7 days", a month "2월", a
+  day-only date "25일", a past period or date, any other symbol, several periods) asks with the fixed, content-free
+  restate "알림 목록은 오늘·내일·이번 주·다음 주·특정 날짜로 볼 수 있어요. 예: \"내일 알림 보여줘\"" (catalog
+  `periodHelp`, reason `unsupported-period`): never filtered with an unsupported range and never dropped. The
+  multi-period, duration and month paths are gone from the reminder range (other entries keep main's range symbols). The
+  catalog arg description and the A6 reminder.list rule line name the set: read `nl-select.v59` (golden
+  `nl-select.v59.prompts.json`), A6 `nl-select.v57`, R2 `nl-select.v58`.

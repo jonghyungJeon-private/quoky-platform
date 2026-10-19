@@ -38,8 +38,9 @@ import {
   type NlListingReceipt,
   type NlSelectedCommand,
   type NlText,
+  NL_IGNORABLE_EXTRA_ARGS,
 } from './catalog';
-import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, nlR2SourcesOffered, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES, nlNamesPeriod, nlReminderPeriod, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -64,8 +65,12 @@ import {
   renderQuestionOpen,
   renderDmOnlyAction,
   renderContinuationConfirm,
+  renderAskWhen,
+  renderConfirmTitle,
   renderGarbledAction,
+  renderGarbledNoun,
   renderRestate,
+  renderUnknownNoun,
   renderTimeInTitle,
   renderTimeOutsideWhen,
   renderUndoUnresolved,
@@ -74,10 +79,11 @@ import {
   type NlActionLevel,
 } from './nl-action-policy';
 import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput } from './selection-input';
-import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
+import { nlSelectionParseFailure, parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { nlSelectionMeaning } from './selection-meaning';
 import { NL_ACTION_PROMPT_VERSION, NL_ACTION_R2_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
+import { nlFrameIsCopularReference, nlIsRequestForm, nlRequestsSomething } from './request-shape';
 import { nlReadNotRequest } from './read-statement';
 import { interpretContinuationConfirmReply, interpretUndoConfirmReply, nlHasExplicitUndoWord, nlUndoIsDirect, renderUndoConfirm } from './undo-confirm';
 import {
@@ -285,7 +291,7 @@ export interface NlSelectionServiceDeps {
   readonly elapsed?: () => number;
   /**
    * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
-   * record is written and every prompt and reply is byte-identical to `nl-select.v39`. Any other level requires mode
+   * record is written and every prompt and reply is byte-identical to `nl-select.v59` (the read prompt). Any other level requires mode
    * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
    */
   readonly actions?: {
@@ -366,7 +372,14 @@ type SelectOutcome =
     }
   /** D6/D8: the selector is not the provider this turn's chat would reach; nothing was sent. */
   | { readonly kind: 'egress-refused'; readonly reason: 'chat-provider-differs' | 'chat-locality-differs' | 'chat-provider-unknown' }
-  | { readonly kind: 'unavailable'; readonly cause: 'no-provider' | 'timeout' | 'failed' | 'malformed'; readonly latencyMs: number; readonly call?: SelectionCallMeta };
+  | {
+      readonly kind: 'unavailable';
+      readonly cause: 'no-provider' | 'timeout' | 'failed' | 'malformed';
+      readonly latencyMs: number;
+      readonly call?: SelectionCallMeta;
+      /** Content-free detail (v49 gate diagnosis): the provider failure kind, or the parser's closed rejection reason. */
+      readonly detail?: string;
+    };
 
 class SelectionTimeout extends Error {
   constructor() {
@@ -737,7 +750,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /**
    * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
    * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
-   * prompt is `nl-select.v39` byte for byte.
+   * prompt is `nl-select.v59` (the read prompt) byte for byte.
    */
   actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
@@ -932,7 +945,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       return { kind: 'skip', reason: selected.reason };
     }
     if (selected.kind === 'unavailable') {
-      this.log('info', 'nl_selection.decided', { outcome: 'unavailable', cause: selected.cause, route: turn.route, latencyMs: selected.latencyMs, ...(selected.call ?? {}) });
+      this.log('info', 'nl_selection.decided', { outcome: 'unavailable', cause: selected.cause, route: turn.route, latencyMs: selected.latencyMs, ...(selected.detail !== undefined ? { detail: selected.detail } : {}), ...(selected.call ?? {}) });
       this.logAgreement(turn, { outcome: 'fallback', reason: selected.cause, latencyMs: selected.latencyMs, ...(selected.call !== undefined ? { call: selected.call } : {}) });
       return { kind: 'unavailable' };
     }
@@ -987,21 +1000,63 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const ctx = this.validationContext(turn, prepared.groundingText, last?.args);
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
     this.forgetRefusedPeriod(cacheKey, main);
+    // Owner decision of 2026-10-19, bounded: a period outside the entry's closed set (a span, a duration, a month, a
+    // day-only or past date) is never filtered with and never dropped: the fixed restate of the set asks (content-free).
+    if (!main.ok && main.reason === 'unsupported-period' && main.entryId !== undefined) {
+      const entry = ctx.offered.get(main.entryId);
+      const help = entry?.args.find((spec) => spec.name === main.arg)?.periodHelp;
+      if (entry !== undefined) {
+        this.log('info', 'nl_selection.validation_failed', { entryId: entry.id, reason: main.reason, ...(main.arg !== undefined ? { arg: main.arg } : {}) });
+        return { kind: 'ask', text: help?.[language] ?? renderUsageQuestion(entry, language), entryId: entry.id };
+      }
+    }
     if (main.ok && output.ambiguity === 'CLEAR') return this.complete(main.value, turn, last, language, prepared.groundingText);
+    // v53 gate (2026-10-19, reminder.list-006 {count}, none-030 help.topic {topic}): a CLEAR read with no alternative whose
+    // only defect is a detail Core cannot use (an unlisted flag or day symbol, or an out-of-set presentation value the owner
+    // did not name; `validateWithoutDetail`) runs as the read the selector named without that detail, instead of asking
+    // about one option. A filter value, a raw timestamp, a span or a keyword is never dropped: those still ask (A5 rule 6).
+    if (!main.ok && output.ambiguity === 'CLEAR' && output.alternatives.length === 0 && !isNlActionEntryId(output.entryId)) {
+      const lenient = validateWithoutDetail({ entryId: output.entryId, args: output.args }, ctx);
+      if (lenient !== undefined && lenient.result.ok && lenient.result.value.entry.risk === 'READ') {
+        // CA P3: every dropped detail is logged (arg name and kind only), so a silently widened read is visible in review.
+        // Arg names from the catalog only (Codex P2): a model-made name is logged as `other`.
+        this.log('info', 'nl_selection.detail_dropped', { entryId: lenient.result.value.entry.id, dropped: lenient.dropped.map((detail) => `${NL_CATALOG_ARG_NAMES.has(detail.arg) ? detail.arg : 'other'}:${detail.kind}`).join(',') });
+        return this.complete(lenient.result.value, turn, last, language, prepared.groundingText);
+      }
+    }
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action
     // candidate is never a numbered option (only READ entries are stored as options).
     const options: NlValidatedSelection[] = [];
     let weekdayRefused = isWeekdayRefusal(main, output.args, ctx);
+    let droppedAction = false;
+    // Codex P2: a read alternative that failed validation (an unconfigured source) or was repaired keeps the choice open.
+    let openRead = false;
+    const readCandidates = new Set<string>();
     for (const [index, candidate] of [{ entryId: output.entryId, args: output.args }, ...output.alternatives].entries()) {
-      if (actionsOn && isNlActionEntryId(candidate.entryId)) continue;
+      if (actionsOn && isNlActionEntryId(candidate.entryId)) {
+        droppedAction = true;
+        continue;
+      }
       const repaired = validateWithRepair(candidate, ctx);
       // A repair that drops another arg and then loses the owner's weekday ("지난주 수" with a future mail range) is asked
       // with the weekday hint as well.
       if (index === 0 && isWeekdayRefusal(repaired, candidate.args, ctx)) weekdayRefused = true;
+      if (repaired.ok && repaired.value.entry.risk === 'READ') readCandidates.add(`${repaired.value.entry.id}|${sortedArgs(repaired.value.args)}`);
+      if (index > 0 && (!repaired.ok || sortedArgs(repaired.value.args) !== sortedArgs(candidate.args))) openRead = true;
       if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) options.push(repaired.value);
     }
     // A refusal reached through the repair path is not kept in the cache either.
     if (weekdayRefused && cacheKey !== undefined) this.cache.delete(cacheKey);
+    // v51 gate (2026-10-19, reminder.list-006 / -002): with action entries offered, an action candidate is never an option,
+    // so a selector that hedged between a read and an action ("알림 몇 개 걸려 있어?": reminder.list or reminder.create)
+    // left ONE numbered option, the read it named and Core validated unchanged: "어떤 걸 찾으세요? 1. 예정된 알림 목록". A
+    // one-option question asks nothing; the read runs (no write is possible from it). Only when the ambiguity came SOLELY
+    // from discarded action candidates (Codex P2): at least one action was dropped and exactly one distinct validated read
+    // (entry + args) remains, the one named, unchanged. Two reads of one entry ("완료된 할 일 아니면 취소된 할 일") ask.
+    const onlyRead = `${main.ok ? main.value.entry.id : ''}|${main.ok ? sortedArgs(main.value.args) : ''}`;
+    if (actionsOn && main.ok && droppedAction && !openRead && !weekdayRefused && readCandidates.size === 1 && readCandidates.has(onlyRead)) {
+      return this.complete(main.value, turn, last, language, prepared.groundingText);
+    }
     if (options.length === 0) {
       // An entry that is not offered (an unconfigured source) or not in the catalog is honest chat's to explain.
       if (!main.ok && (main.reason === 'unknown-entry' || main.reason === 'not-offered' || main.reason === 'not-read')) {
@@ -1278,6 +1333,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // a hypothetical, a past statement, first-person volition such as "추가할게"). Nothing is written and, like a selector
       // `none`, the turn is chat: never a question (the owner's decision of 2026-10-16).
       if (validated.reason === 'not-request') {
+        // Live test 4 (turn 39, "이번엔 3번이야" right after a completion): a bare reference with the copula names WHICH
+        // item, not a fact about one. Right after the same action it takes the continuation confirmation of the elliptical
+        // path ("할 일 3번도 완료할까요?"); otherwise it stays chat, as every statement does.
+        if (validated.arg === 'statement' && nlFrameIsCopularReference(withoutStructures(prepared.groundingText), NL_ACTION_WORDS)) {
+          const confirm = await this.askInferredAction(entryId, output.args, false, turn, prepared, language, reference, base, openQuestion, shadow);
+          if (confirm !== undefined) return confirm;
+        }
         const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: `not-request:${validated.arg ?? 'unknown'}` };
         if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
         this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
@@ -1299,6 +1361,17 @@ export class NlSelectionService implements TurnDeliveryObserver {
       }
       // The frame expresses no action: a reference alone ("2번도", "그걸로요", "13번 알림") is chat; a payload alone ("내일 9시
       // 우유") asks the owner to restate what to do with it.
+      // Live test 4 (turn 53, "방금 추가한 거 없던 일로 해줘"): the selector chose the undo, but no closed undo word grounds it.
+      // When the owner's own words point at Quoky's last action (a recency deictic, or that action named in its adnominal
+      // form: "방금 거", "추가한 거") and make a request, the undo is plausible but unproven: it takes the undo confirmation
+      // ("방금 한 '…'를 되돌릴까요?"), never the direct undo.
+      if (entryId === 'action.undo' && validated.reason === 'ungrounded' && validated.arg === 'action' && this.undoParaphrase(prepared.groundingText, reference)) {
+        if (!this.allowedWhileAsked(openQuestion, entryId, undefined)) return this.blockedWhileAsked(base, language, shadow);
+        const mismatch = this.undoTargetMismatch(prepared.groundingText, reference, base, language, shadow);
+        if (mismatch !== undefined) return mismatch;
+        if (shadow) return this.shadowAction({ ...base, resolution: 'resolved', result: 'shadow', reason: 'undo-confirm' });
+        return this.askUndoConfirm(turn, language, latencyMs, reference);
+      }
       if (validated.reason === 'ungrounded' && validated.arg === 'action') {
         const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'no-action-word' };
         if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
@@ -1312,6 +1385,42 @@ export class NlSelectionService implements TurnDeliveryObserver {
         const asked: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'garbled-action' };
         if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
         return this.actionAnswer(asked, renderGarbledAction(validated.candidate, language));
+      }
+      // Owner decision (b) of 2026-10-19: the noun that decides the list is garbled ("리마이너 걸어줘") or unknown; asked.
+      // Codex P2 (2026-10-19, security): a resend instruction that would echo the owner's words (an unknown word, a title, a
+      // body) never echoes a password or token: the credential refusal answers instead; nothing is echoed or written.
+      const echoed = [validated.unknownWord, ...(validated.reason === 'uncertain-title' ? [output.args.title] : []), ...(validated.reason === 'missing-arg' ? [output.args.body] : [])];
+      const echoes = validated.reason === 'garbled-noun' || validated.reason === 'uncertain-title' || (validated.reason === 'missing-arg' && entryId === 'reminder.create');
+      if (echoes && echoed.some((text) => typeof text === 'string' && containsCredentialMaterial(text))) {
+        const refused: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'credential' };
+        if (shadow) return this.shadowAction({ ...refused, result: 'shadow' });
+        return this.actionAnswer(refused, validationReply('credential', language));
+      }
+      if (validated.reason === 'garbled-noun' && (validated.candidate !== undefined || validated.unknownWord !== undefined)) {
+        const asked: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'garbled-noun' };
+        if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
+        return this.actionAnswer(asked, validated.candidate !== undefined ? renderGarbledNoun(validated.candidate, language) : renderUnknownNoun(validated.unknownWord as string, language));
+      }
+      // CA / Codex P2 (2026-10-19): a bare "<title> 할 일" whose title may not be a task asks whether to add it.
+      if (validated.reason === 'uncertain-title' && entryId === 'todo.add' && typeof output.args.title === 'string') {
+        // Codex P2: the title is echoed only when it is the owner's own words of this turn; an ungrounded title is refused.
+        if (!isNlSpanGrounded(output.args.title, withoutStructures(prepared.groundingText))) {
+          const refused: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'ungrounded' };
+          if (shadow) return this.shadowAction({ ...refused, result: 'shadow' });
+          return this.actionAnswer(refused, renderRestate(language));
+        }
+        const asked: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'uncertain-title' };
+        if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
+        return this.actionAnswer(asked, renderConfirmTitle(output.args.title, language));
+      }
+      // Live test 4 (turns 26 / 58 / 60): a reminder with no time asks for the time, not the generic restate.
+      if (validated.reason === 'missing-arg' && entryId === 'reminder.create' && validated.arg === 'when') {
+        const asked: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'missing-arg' };
+        if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
+        // The example echoes the body only when it is the owner's own words of this turn (grounded; credentials refused above).
+        const body = output.args.body;
+        const own = typeof body === 'string' && isNlSpanGrounded(body, withoutStructures(prepared.groundingText)) ? body : undefined;
+        return this.actionAnswer(asked, renderAskWhen(language, own));
       }
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: validated.reason };
       if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
@@ -1487,6 +1596,31 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (mismatch !== undefined) return mismatch;
     if (!nlUndoIsDirect(groundingText)) return this.askUndoConfirm(turn, language, latencyMs, reference);
     return this.decideUndo(turn, language, latencyMs, 'none', reference);
+  }
+
+  /**
+   * Live test 4 (turn 53): whether a selected undo with no closed undo word still points at Quoky's last action. All hold:
+   * a fresh, undoable, not undone last action; the owner's words refer to it, by a recency or deictic word (방금, 아까,
+   * 그거: `hasNlDeictic`) or by that action's own verb in its adnominal form ("추가한 거", "완료한 거"); the message makes a
+   * request (a request or imperative form); and nothing is given to someone (no dative: "친구한테 그거 돌려줘"). Grammar
+   * classes and the entry's own vocabulary only; the caller asks the undo confirmation, never undoes directly.
+   */
+  private undoParaphrase(groundingText: string, reference: NlReferenceState): boolean {
+    const last = reference.lastAction;
+    if (last === undefined || !last.fresh || !last.record.undoable || last.record.undone) return false;
+    const prose = withoutStructures(groundingText);
+    if (/(?:한테|에게|께)(?=$|\s|[.,!?~])/u.test(prose)) return false;
+    const words = normalizeForMatch(prose).split(/\s+/u).filter((word) => word.length > 0);
+    if (!words.some((word) => nlIsRequestForm(word)) && !nlRequestsSomething(prose, NL_ACTION_WORDS)) return false;
+    const own = (NL_ACTION_ENTRIES[last.record.entryId as keyof typeof NL_ACTION_ENTRIES]?.actionGrounding ?? []).map(normalizeForMatch).filter((word) => /^[가-힣]+$/u.test(word));
+    const adnominal = words.some((word) => {
+      const stem = word.replace(/(?:거|걸|건|것)$/u, '');
+      const lastChar = stem.at(-1) ?? '';
+      const code = lastChar.charCodeAt(0) - 0xac00;
+      const closesWithN = code >= 0 && code <= 11171 && code % 28 === 4;
+      return (closesWithN || lastChar === '던') && own.some((verb) => stem.includes(verb));
+    });
+    return hasNlDeictic(prose) || adnominal;
   }
 
   /**
@@ -1795,7 +1929,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     let listed: ListingSource | undefined;
     if (listing !== undefined) {
       // An empty listing removes the slot: an older list of that source is never picked from after it.
-      await write(LAST_LISTING_METADATA_KEY, (current) => withLabelledListing(current, actor.id, listing.source, listing.items, now, 'listing', message.id));
+      await write(LAST_LISTING_METADATA_KEY, (current) => withLabelledListing(current, actor.id, listing.source, listing.items, now, 'listing', message.id, listing.filtered === true));
       if (listing.items.length > 0) listed = listing.source;
     }
     if (action !== undefined && (action.source === 'todo' || action.source === 'reminder')) {
@@ -2014,12 +2148,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // A provider-reported timeout is not a completed call either (it must not reset the idle clock).
       const timedOut = error instanceof SelectionTimeout || (error instanceof AiProviderError && error.kind === AiFailureKind.TIMEOUT);
       if (!timedOut) this.lastCompletedAtMs = clock();
-      return { kind: 'unavailable', cause: timedOut ? 'timeout' : 'failed', latencyMs: Math.max(0, clock() - started), call };
+      // Closed values only (Codex P2): the provider failure kind enum, never an error's own name or message.
+      const detail = error instanceof AiProviderError ? `provider-${String(error.kind).toLowerCase().replace(/[^a-z_-]/gu, '')}` : 'error';
+      return { kind: 'unavailable', cause: timedOut ? 'timeout' : 'failed', latencyMs: Math.max(0, clock() - started), call, detail };
     }
     this.lastCompletedAtMs = clock();
     const latencyMs = Math.max(0, clock() - started);
     const output = parseSelectionOutput(rawText);
-    if (output === null) return { kind: 'unavailable', cause: 'malformed', latencyMs, call };
+    if (output === null) return { kind: 'unavailable', cause: 'malformed', latencyMs, call, detail: nlSelectionParseFailure(rawText, NL_CATALOG_ARG_NAMES) ?? 'unknown' };
     const cacheable = !bypass && (!actionsOn || isCacheableOutput(output));
     if (cacheable) {
       this.cache.set(cacheKey, { at: clock(), output });
@@ -2149,6 +2285,69 @@ export class NlSelectionService implements TurnDeliveryObserver {
  * ADR-0120 D6/D8 plus the S1 hardening: a selection request may go only where this turn's chat would go — the same
  * provider family (or id) AND the same declared execution locality. Compared as opaque data, never as a name.
  */
+/** A detail `validateWithoutDetail` dropped: the arg name and its kind only (content-free, logged for the shadow review). */
+interface NlDroppedDetail {
+  readonly arg: string;
+  readonly kind: 'unlisted' | 'enum' | 'range';
+}
+
+/**
+ * v53 gate, Codex P2 and CA P1 (2026-10-19): validate a CLEAR read after dropping only DETAIL args:
+ *  - an arg NAME the entry does not list only when the catalog allows it (`NL_IGNORABLE_EXTRA_ARGS`: count, limit, verbose,
+ *    detail); any other unknown arg may stand for a filter and asks;
+ *  - an out-of-set value of an optional enum the catalog marks `presentation` (help.topic's `topic`: the default only widens
+ *    the help shown) AND only when the owner's words name none of that arg's values (its value names or grounding words);
+ *    a filter enum (a list status, a role, a window) is never replaced by its default, and "끝난 할 일" with status "done"
+ *    (the to-do value is `completed`) still asks.
+ * Both rules are used: the catalog marker says which args may widen at all, the grounding check that the owner did not ask
+ * for a particular value of it. A valid value the owner did not ground (a guess), a span, a time keyword or a weekday refusal
+ * is never dropped. `undefined`: nothing to drop or a non-detail failure (the caller asks as before).
+ */
+function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidationContext): { readonly result: NlValidationResult; readonly dropped: readonly NlDroppedDetail[] } | undefined {
+  let current = candidate;
+  const dropped: NlDroppedDetail[] = [];
+  const text = normalizeForMatch(ctx.groundingText);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const result = validateSelection(current, ctx);
+    if (result.ok) {
+      if (dropped.length === 0) return undefined;
+      // Codex P2 (2026-10-19): the owner stated a period ("내일 알림 보여줘") but the repaired read carries none (the selector
+      // wrote it as an unusable detail, e.g. {tomorrow: true}): the owner named a filter Core cannot apply as written: ask.
+      // The closed-set resolver (which also counts a bare month name) reads only an entry whose period needs the owner's
+      // words; any other entry keeps the period-word check (a sender called "Jan" is no period).
+      const ownerWords = result.value.entry.args.some((spec) => spec.kind === 'range' && spec.timeWordsRequired === true);
+      if (result.value.range === undefined && (ownerWords ? nlReminderPeriod(ctx.groundingText).kind !== 'none' : nlNamesPeriod(ctx.groundingText))) return undefined;
+      return { result, dropped };
+    }
+    const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);
+    const name = result.arg;
+    if (entry === undefined || name === undefined || !(name in current.args)) return undefined;
+    const spec = entry.args.find((arg) => arg.name === name);
+    let kind: NlDroppedDetail['kind'] | undefined;
+    // Codex P2 (2026-10-19, after four filter-loss rounds): an unknown arg is dropped ONLY when its name is on the catalog's
+    // explicit allowlist of harmless model-invented details (NL_IGNORABLE_EXTRA_ARGS: count, limit, verbose, detail; schema
+    // names only). Every other unknown arg ({onlyUnread}, {onlyRemaining}, {completed}, a day symbol) may stand for a filter
+    // and asks.
+    if (result.reason === 'unknown-arg' && spec === undefined && NL_IGNORABLE_EXTRA_ARGS.includes(name)) kind = 'unlisted';
+    // Owner decision of 2026-10-19: a period that needs the owner's time words, given with none, is a model invention: dropped.
+    else if (result.reason === 'ungrounded' && spec?.kind === 'range' && spec.timeWordsRequired === true && !(nlReminderPeriod(ctx.groundingText).kind !== 'none')) kind = 'range';
+    else if (result.reason === 'invalid-arg' && spec !== undefined && spec.kind === 'enum' && spec.presentation === true && spec.required !== true && spec.default !== undefined) {
+      const words = [...(spec.values ?? []), ...Object.values(spec.valueGrounding ?? {}).flatMap((list) => [...list])].map((word) => normalizeForMatch(word)).filter((word) => word.length > 1);
+      if (!words.some((word) => text.includes(word))) kind = 'enum';
+    }
+    if (kind === undefined) return undefined;
+    const { [name]: _dropped, ...rest } = current.args;
+    current = { entryId: current.entryId, args: rest };
+    dropped.push({ arg: name, kind });
+  }
+  return undefined;
+}
+
+/** Args as a canonical string (key order ignored), to tell an unchanged selection from a repaired one. */
+function sortedArgs(args: NlArgs): string {
+  return JSON.stringify(Object.entries(args).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
 function sameEgress(
   selector: Pick<AiProvider, 'id' | 'family' | 'executionLocality'>,
   chatProviderId: string,
@@ -2207,7 +2406,7 @@ function validateWithRepair(candidate: NlSelectionCandidate, ctx: NlValidationCo
     if (result.ok) return result;
     // A time word in a keyword, or a period that lost the owner's weekday, is never repaired by dropping it: the period it
     // names would be lost silently (A5 rule 6, A5 implementation note 2).
-    if (result.reason === 'time-keyword' || result.reason === 'weekday') return result;
+    if (result.reason === 'time-keyword' || result.reason === 'weekday' || result.reason === 'unsupported-period') return result;
     const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);
     const spec = entry?.args.find((arg) => arg.name === result.arg);
     if (spec === undefined || spec.required === true || !(spec.name in current.args)) return result;
@@ -2435,7 +2634,7 @@ function correlationOf(turn: Pick<NlSelectionTurn, 'session' | 'turnId'>): { rea
  * statement, volition or example veto always ends the turn as chat, deictic or not (CA review (b)). `garbled-action` too: a
  * garbled action word asks its own question before any preview (garbled action word addendum, CA review).
  */
-export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-entry', 'not-offered', 'not-read', 'unknown-arg', 'invalid-arg', 'credential', 'bulk', 'not-request', 'garbled-action']);
+export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-entry', 'not-offered', 'not-read', 'unknown-arg', 'invalid-arg', 'credential', 'bulk', 'not-request', 'garbled-action', 'garbled-noun', 'uncertain-title']);
 
 /** A6: the platform marked part of the message as quoted or as code: material, never one plain instruction. */
 function markedMaterial(turn: Pick<NlSelectionTurn, 'quotedRanges' | 'codeFormatted'>): boolean {

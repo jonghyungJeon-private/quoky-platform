@@ -237,8 +237,8 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     const base = { actorId: 'owner', text: '메일함', previous: undefined, entryIds: ['mail.list'] };
     const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', 'nl-select.v24', 'nl-select.v25', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
     expect(new Set(keys).size).toBe(9);
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v39');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v44');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v59');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v57');
     // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
@@ -1239,5 +1239,219 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
     expect((await w.decide('이번엔 3번', { now: at(1) })).kind).toBe('none');
     expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'elliptical-confirm' });
     expect(readPendingQuestion(w.session(), 'owner', at(2))).toBeUndefined();
+  });
+});
+
+describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, reminder time, garbled list noun', () => {
+  const lastAction = (entryId: 'todo.complete' | 'todo.add', itemId: string, label: number, minute = 0) =>
+    withLastAction(undefined, 'owner', { entryId, source: 'todo', itemId, label, at: at(minute), undoable: true, undone: false, echoReplyIds: [] }, at(minute));
+  const run = async (text: string, answerJson: string, setup: (w: World) => void = () => undefined) => {
+    const w = world({ level: 'local', script: () => answerJson });
+    setup(w);
+    return { w, decision: await w.decide(text, { now: at(1) }) };
+  };
+
+  it('turn 39: "이번엔 3번이야" right after completing 2 asks the continuation, never the statement veto; "응" completes 3', async () => {
+    const { w, decision } = await run('이번엔 3번이야', out('todo.complete', { ref: '#3' }), (setup) => {
+      setup.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3, 4, 5], 0));
+      setup.setMetadata(LAST_ACTION_METADATA_KEY, lastAction('todo.complete', 'todo-2', 2));
+    });
+    expect(decision).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'todo.complete', result: 'asked', reason: 'elliptical-confirm', targetId: 'todo-3' });
+    const pending = readPendingQuestion(w.session(), 'owner', at(2)) ?? null;
+    const yes = await w.service.answerActionPending({ text: '응', attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(2), entries: ALL, route: 'chat', direct: true, pending });
+    expect(yes).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { id: 'todo-3' } } });
+  });
+
+  it('turn 39 counter-cases: with no same-kind last action, or a copular statement about an item, it stays chat', async () => {
+    const none = await run('이번엔 3번이야', out('todo.complete', { ref: '#3' }), (setup) => setup.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0)));
+    expect(none.decision).toEqual({ kind: 'none' });
+    expect(actionLogs(none.w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'not-request:statement' });
+    const statement = await run('3번은 회의야', out('todo.complete', { ref: '#3' }), (setup) => {
+      setup.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      setup.setMetadata(LAST_ACTION_METADATA_KEY, lastAction('todo.complete', 'todo-2', 2));
+    });
+    expect(statement.decision).toEqual({ kind: 'none' });
+  });
+
+  it('turn 53: "방금 추가한 거 없던 일로 해줘" (the selector\'s undo, no closed undo word) asks the undo confirmation, never undoes directly', async () => {
+    const { w, decision } = await run('방금 추가한 거 없던 일로 해줘', out('action.undo'), (setup) => {
+      setup.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([4], 0));
+      setup.setMetadata(LAST_ACTION_METADATA_KEY, lastAction('todo.add', 'todo-4', 4));
+    });
+    expect(decision).toMatchObject({ kind: 'ask', text: "방금 한 '할 일 4번 추가'를 되돌릴까요? (응 / 아니)" });
+    expect(readPendingQuestion(w.session(), 'owner', at(2))).toMatchObject({ kind: 'action-undo-confirm', undoEntryId: 'todo.add' });
+    // Without a fresh undoable last action, or with a recipient ("친구한테"), nothing is asked: chat as before.
+    const stale = await run('방금 추가한 거 없던 일로 해줘', out('action.undo'));
+    expect(stale.decision).toEqual({ kind: 'none' });
+    const given = await run('방금 그거 친구한테 돌려줘', out('action.undo'), (setup) => setup.setMetadata(LAST_ACTION_METADATA_KEY, lastAction('todo.add', 'todo-4', 4)));
+    expect(given.decision.kind).not.toBe('ask');
+    expect(given.decision.kind).not.toBe('execute');
+  });
+
+  it('CA P3: after a filtered reminder listing, a number it did not show asks instead of resolving by display number', async () => {
+    const filtered = () => withLabelledListing(undefined, 'owner', 'reminder', [{ label: 15, id: 'r-15' }], at(0), 'listing', 'm-list', true);
+    const unshown = await run('13번 알림 취소해줘', out('reminder.cancel', { ref: '#13' }), (setup) => setup.setMetadata(LAST_LISTING_METADATA_KEY, filtered()));
+    expect(unshown.decision.kind).toBe('ask');
+    expect(unshown.decision.kind === 'ask' ? unshown.decision.text : '').toContain('15');
+    expect(actionLogs(unshown.w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.cancel', result: 'asked' });
+    const shown = await run('15번 알림 취소해줘', out('reminder.cancel', { ref: '#15' }), (setup) => setup.setMetadata(LAST_LISTING_METADATA_KEY, filtered()));
+    expect(shown.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.cancel', target: { id: 'r-15', label: 15 } } });
+    // Codex P2: an EMPTY filtered view keeps its marker; a number after it asks ("목록에 0건만 있어요"), never resolves.
+    const empty = await run('13번 알림 취소해줘', out('reminder.cancel', { ref: '#13' }), (setup) =>
+      setup.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, 'owner', 'reminder', [], at(0), 'listing', 'm-list', true)),
+    );
+    expect(empty.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('목록에 0건만 있어요') });
+    // Codex P2: after an action, an empty filtered view newer than it makes a deictic or recency reference ask (no throw).
+    const created = withLastAction(undefined, 'owner', { entryId: 'reminder.create', source: 'reminder', itemId: 'r-13', label: 13, at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0));
+    for (const [text, ref] of [['그 알림 취소해줘', 'this'], ['방금 거 알림 취소해줘', 'recent'], ['마지막 알림 취소해줘', 'last']] as const) {
+      const deictic = await run(text, out('reminder.cancel', { ref }), (setup) => {
+        setup.setMetadata(LAST_ACTION_METADATA_KEY, created);
+        setup.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, 'owner', 'reminder', [], new Date(Date.parse(at(0)) + 30_000).toISOString(), 'listing', 'm-empty', true));
+      });
+      expect(deictic.decision.kind, text).toBe('ask');
+      expect(deictic.decision.kind, text).not.toBe('execute');
+    }
+    // An unfiltered listing keeps the display-number rule.
+    const plain = await run('13번 알림 취소해줘', out('reminder.cancel', { ref: '#13' }), (setup) => setup.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, 'owner', 'reminder', [{ label: 15, id: 'r-15' }], at(0), 'listing', 'm-list')));
+    expect(plain.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.cancel', target: { label: 13 } } });
+  });
+
+  it('CA P3: a dropped read detail is logged with its arg name and kind only', async () => {
+    const { w, decision } = await run('알림 몇 개 걸려 있어?', out('reminder.list', { count: true }));
+    expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
+    expect(w.logs.find((log) => log.event === 'nl_selection.detail_dropped')?.fields).toEqual({ entryId: 'reminder.list', dropped: 'count:unlisted' });
+  });
+
+  it('owner decision 2026-10-19, bounded: a reminder period outside the closed set asks with the fixed restate; a supported one lists', async () => {
+    const restate = '알림 목록은 오늘·내일·이번 주·다음 주·특정 날짜로 볼 수 있어요. 예: "내일 알림 보여줘"';
+    for (const [text, args] of [
+      ['내일부터 금요일까지 알림 보여줘', { range: 'tomorrow' }],
+      ['앞으로 7일 알림 보여줘', { range: 'next-7-days' }],
+      ['2월 알림 보여줘', {}],
+      ['25일 알림 보여줘', { range: '10-25' }],
+      ['지난주 알림 보여줘', { range: 'last-week' }],
+      ['내일 오전 9시 알림 보여줘', { range: 'tomorrow' }],
+      ['오늘 저녁 알림 보여줘', { range: 'today' }],
+      ['다음 주 수요일 오후 알림 보여줘', { range: 'next-wed' }],
+    ] as const) {
+      const { w, decision } = await run(text, out('reminder.list', args));
+      expect(decision, text).toEqual({ kind: 'ask', text: restate, entryId: 'reminder.list' });
+      expect(w.logs.some((log) => log.event === 'nl_selection.detail_dropped'), text).toBe(false);
+    }
+    for (const [text, args] of [
+      ['reminders in the next 7 days', { range: 'next-7-days' }],
+      // Codex P2: no supported period, a duration only: the empty range is never "every reminder".
+      ['show reminders next 7 days', {}],
+      // Codex P2: a month alone asks; neither an unfiltered list nor a silently dropped month range.
+      ['show reminders in November', {}],
+      ['show reminders in November', { range: '11-01..11-30' }],
+      ['tomorrow morning reminders', { range: 'tomorrow' }],
+    ] as const) {
+      const en = await run(text, out('reminder.list', args));
+      expect(en.decision, text).toMatchObject({ kind: 'ask', text: expect.stringContaining('today, tomorrow, this week, next week or one date') });
+    }
+    const wednesday = await run('다음 주 수요일 알림 보여줘', out('reminder.list', { range: 'next-wed' }));
+    expect(wednesday.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
+    const ok = await run('내일 알림 보여줘', out('reminder.list', { range: 'tomorrow' }));
+    expect(ok.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
+  });
+
+  it('turns 26 / 58 / 60: a reminder with no time asks for the time (Korean and English)', async () => {
+    const ko = await run('검증 인쇄 맡기기 알림 하나 만들어줘', out('reminder.create', { body: '검증 인쇄 맡기기' }));
+    // A restate prompt, never a question a following "3시" could not complete; the example echoes the owner's own body.
+    expect(ko.decision).toMatchObject({ kind: 'ask', text: '알림 시간을 함께 말씀해 주세요. 예: "내일 오전 9시에 검증 인쇄 맡기기 알려줘". 아직 아무것도 만들지 않았어요.' });
+    const en = await run('Remind me to water the plants', out('reminder.create', { body: 'water the plants' }));
+    expect(en.decision).toMatchObject({ kind: 'ask', text: 'Please include the time. For example: "remind me tomorrow at 9am to water the plants". Nothing was created yet.' });
+    // A body the owner never wrote is not echoed: the example is generic.
+    const invented = await run('검증 인쇄 알림 하나 만들어줘', out('reminder.create', { body: '은행 업무 처리' }));
+    expect(invented.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('은행에 전화하기') });
+    expect(actionLogs(en.w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.create', result: 'refused', reason: 'missing-arg' });
+  });
+
+  it('owner decision (b): a garbled list noun asks with the noun; an unknown word in its slot asks what it means; the right noun executes', async () => {
+    const typo = await run('10월 21일 오전 9시에 리마이너 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
+    expect(typo.decision).toMatchObject({ kind: 'ask', text: "'리마인더' 말씀이시면 '리마인더'를 넣어 다시 말씀해 주세요. 아직 아무것도 바꾸지 않았어요." });
+    expect(actionLogs(typo.w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.create', result: 'asked', reason: 'garbled-noun' });
+    const unknown = await run('10월 21일 오전 9시에 삐용삐용을 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
+    expect(unknown.decision).toMatchObject({ kind: 'ask', text: "'삐용삐용'이 무슨 뜻인지 모르겠어요. '할 일'인지 '알림'인지 넣어 다시 말씀해 주세요. 아직 아무것도 바꾸지 않았어요." });
+    const right = await run('10월 21일 오전 9시에 리마인더 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
+    expect(right.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.create' } });
+  });
+
+  it('CA / Codex P2: an uncertain bare title gets a restate prompt with the exact sentence to send, never a yes/no question', async () => {
+    const { w, decision } = await run('정산 할 일', out('todo.add', { title: '정산' }));
+    expect(decision).toMatchObject({ kind: 'ask', text: '\'정산\'을 할 일로 추가하려면 "정산 할 일에 추가해줘"라고 말씀해 주세요. 아직 아무것도 추가하지 않았어요.' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'todo.add', result: 'asked', reason: 'uncertain-title' });
+    expect(readPendingQuestion(w.session(), 'owner', at(2))).toBeUndefined();
+    // The suggested sentence itself executes.
+    const again = await run('정산 할 일에 추가해줘', out('todo.add', { title: '정산' }));
+    expect(again.decision).toMatchObject({ kind: 'execute', command: { entryId: 'todo.add', args: { title: '정산' } } });
+  });
+
+  it('Codex P2 (security): no resend instruction echoes a credential; the credential refusal answers instead', async () => {
+    const secret = 'sk-abcdefghijklmnopqrstuvwxyz';
+    const cases = [
+      await run(`${secret} 할 일`, out('todo.add', { title: secret })),
+      await run(`${secret} 알림 하나 만들어줘`, out('reminder.create', { body: secret })),
+      await run(`10월 21일 오전 9시에 ${secret} 걸어줘, 도면 회신`, out('reminder.create', { when: '10월 21일 오전 9시', body: '도면 회신' })),
+    ];
+    // The whole message carries the token, so selection input skips it before the selector (credential); nothing is echoed.
+    for (const { decision } of cases) {
+      expect(decision).toMatchObject({ kind: 'skip', reason: 'credential' });
+      expect(JSON.stringify(decision)).not.toContain(secret);
+    }
+  });
+
+  it('Codex P2 (security): the service guard itself refuses an echo of a credential the selector put in a span', async () => {
+    // Defence in depth: the owner's text passes selection input, but the selector's span holds token material. The guard
+    // runs before any resend instruction renders the span, for each echo path.
+    // The input skip is bypassed here (the selection input sees a clean text), so the guard is what keeps the token out.
+    const token = 'sk-abcdefghijklmnopqrst';
+    const bypass = (w: World) => {
+      const service = w.service as unknown as { prepare: (turn: { text: string }, last: unknown) => Record<string, unknown> };
+      const original = service.prepare.bind(service);
+      service.prepare = (turn, last) => ({ ...original({ ...turn, text: '정산 할 일' }, last), text: turn.text, groundingText: turn.text });
+    };
+    const cases = [
+      await run(`${token} 할 일`, out('todo.add', { title: token }), bypass),
+      await run(`${token} 알림 하나 만들어줘`, out('reminder.create', { body: token }), bypass),
+    ];
+    for (const { w, decision } of cases) {
+      expect(decision).toMatchObject({ kind: 'ask', text: '비밀번호나 토큰처럼 보이는 내용은 저장하지 않아요. 아무것도 바꾸지 않았어요.' });
+      expect(JSON.stringify(decision)).not.toContain(token);
+      expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'credential' });
+    }
+    // The noun-slot echo: an unknown word is Hangul only, so a token is never one; it is neither asked about nor echoed.
+    const noun = await run(`10월 21일 오전 9시에 ${token} 걸어줘, 도면 회신`, out('reminder.create', { when: '10월 21일 오전 9시', body: '도면 회신' }), bypass);
+    expect(JSON.stringify(noun.decision)).not.toContain(token);
+  });
+
+  it('Codex P2: an uncertain title the owner never wrote is not echoed; it is refused as ungrounded', async () => {
+    const { w, decision } = await run('할 일', out('todo.add', { title: '청소' }));
+    expect(decision).toMatchObject({ kind: 'ask', text: '무엇을/어느 항목을 다시 말씀해 주세요.' });
+    expect(JSON.stringify(decision)).not.toContain('청소');
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'todo.add', result: 'refused', reason: 'ungrounded' });
+  });
+
+  it('the restate prompts of this branch keep no open question and end in no question mark', async () => {
+    const texts = [
+      (await run('정산 할 일', out('todo.add', { title: '정산' }))).decision,
+      (await run('검증 인쇄 맡기기 알림 하나 만들어줘', out('reminder.create', { body: '검증 인쇄 맡기기' }))).decision,
+      (await run('10월 21일 오전 9시에 리마이너 걸어줘, 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '도면 회신' }))).decision,
+      (await run('10월 21일 오전 9시에 삐용삐용을 걸어줘, 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '도면 회신' }))).decision,
+    ];
+    for (const decision of texts) {
+      expect(decision.kind).toBe('ask');
+      expect(decision.kind === 'ask' ? decision.text : '').not.toMatch(/[?？]/u);
+    }
+  });
+
+  it('owner decision (a): "회의 끝나고 검증 회의록 정리 할 일에 넣어줘" adds the to-do now, titled without the timing qualifier', async () => {
+    const { decision } = await run('회의 끝나고 검증 회의록 정리 할 일에 넣어줘', out('todo.add', { title: '검증 회의록 정리' }));
+    expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'todo.add', args: { title: '검증 회의록 정리' } } });
+    // The deferred-timing veto still reads the request frame: a deferral outside the title is chat.
+    const deferred = await run('회의 끝나고 할 일에 회의록 정리 넣어줘', out('todo.add', { title: '회의록 정리' }));
+    expect(deferred.decision).toEqual({ kind: 'none' });
   });
 });

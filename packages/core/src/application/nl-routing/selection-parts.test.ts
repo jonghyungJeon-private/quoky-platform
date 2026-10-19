@@ -1,8 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
+import { guardDeadEndActionReplies, guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
+import { NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, prepareSelectionInput } from './selection-input';
-import { NL_SELECTION_OUTPUT_MAX_BYTES, parseSelectionOutput } from './selection-output';
+import { NL_SELECTION_OUTPUT_MAX_BYTES, nlSelectionParseFailure, parseSelectionOutput } from './selection-output';
+
+describe('v49 gate diagnosis: the parser names why it rejected an output (closed, content-free)', () => {
+  it('returns undefined for a valid output and one closed reason otherwise', () => {
+    expect(nlSelectionParseFailure('{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]}')).toBeUndefined();
+    expect(nlSelectionParseFailure('')).toBe('empty');
+    expect(nlSelectionParseFailure('I think this is todo.add')).toBe('not-json');
+    expect(nlSelectionParseFailure('Sure: {"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]}')).toBe('prose-around-json');
+    expect(nlSelectionParseFailure('{"entryId": "none",}')).toBe('json-invalid');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{},"ambiguity":"CLEAR","alternatives":[],"span":"x"}')).toBe('unknown-key');
+    expect(nlSelectionParseFailure('{"entryId":"Todo Add","args":{},"ambiguity":"CLEAR","alternatives":[]}')).toBe('bad-entry');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{"title":["a"]},"ambiguity":"CLEAR","alternatives":[]}')).toBe('bad-arg-type');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{"the title":"a"},"ambiguity":"CLEAR","alternatives":[]}')).toBe('bad-arg-name');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{},"ambiguity":"LOW","alternatives":[]}')).toBe('bad-enum:ambiguity');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{},"ambiguity":"CLEAR","alternatives":[{"entryId":"a.b","ambiguity":"CLEAR"}]}')).toBe('bad-alternatives');
+    // A value never appears in the reason.
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{"title":"비밀 내용"},"ambiguity":"CLEAR","alternatives":[],"note":"비밀 내용"}')).toBe('unknown-key');
+  });
+
+  it('Codex P2: a name is reported only when the catalog defines it; a model-made key never reaches a log', () => {
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{},"ambiguity":"CLEAR","alternatives":[],"title":"x"}', NL_CATALOG_ARG_NAMES)).toBe('unknown-key:title');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{"title":["a"]},"ambiguity":"CLEAR","alternatives":[]}', NL_CATALOG_ARG_NAMES)).toBe('bad-arg-type:title');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{},"ambiguity":"CLEAR","alternatives":[],"sk-abcdefghijklmnopqrst":"x"}', NL_CATALOG_ARG_NAMES)).toBe('unknown-key');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{"skabcdefghijklmnopqrst":["x"]},"ambiguity":"CLEAR","alternatives":[]}', NL_CATALOG_ARG_NAMES)).toBe('bad-arg-type');
+  });
+});
 import { buildSelectionPrompt, NL_SELECTION_PROMPT_VERSION } from './selection-prompt';
 import { canonicalArgs, validateSelection, type NlValidationContext } from './selection-validator';
 import { isNlRangeSymbol, nlRangeLabel, resolveNlRange } from './symbolic-time';
@@ -145,7 +171,8 @@ describe('strict output parser (ADR-0120 D3)', () => {
       '{"entryId":"jira.issues","args":{"x":{"y":1}},"ambiguity":"CLEAR"}',
       '{"entryId":"jira.issues","args":{},"ambiguity":"MAYBE"}',
       '{"entryId":"Jira Issues","args":{},"ambiguity":"CLEAR"}',
-      '{"entryId":"jira.issues","args":{},"ambiguity":"CLEAR","alternatives":[{"entryId":"none","args":{}}]}',
+      '{"entryId":"jira.issues","args":{},"ambiguity":"CLEAR","alternatives":[{"entryId":"a.b"},{"entryId":"none"},{"entryId":"c.d"},{"entryId":"e.f"}]}',
+      '{"entryId":"jira.issues","args":{},"ambiguity":"CLEAR","alternatives":[{"entryId":"a.b","ambiguity":"CLEAR"}]}',
       `{"entryId":"jira.issues","args":{"keyword":"${'가'.repeat(250)}"},"ambiguity":"CLEAR"}`,
       `{"entryId":"slack.search","args":{"keyword":"${'a'.repeat(190)}","a":"${'b'.repeat(190)}","b":"${'b'.repeat(190)}","c":"${'b'.repeat(190)}","d":"${'b'.repeat(190)}","e":"${'b'.repeat(190)}","f":"${'b'.repeat(190)}","g":"${'b'.repeat(190)}","h":"${'b'.repeat(190)}","i":"${'b'.repeat(190)}","j":"${'b'.repeat(190)}"},"ambiguity":"CLEAR"}`,
       '[]',
@@ -154,6 +181,15 @@ describe('strict output parser (ADR-0120 D3)', () => {
       expect(parseSelectionOutput(raw)).toBeNull();
     }
     expect(NL_SELECTION_OUTPUT_MAX_BYTES).toBe(2048);
+  });
+
+  it('v51 gate: a "none" alternative is no candidate and is dropped, never failing the call (it only removes an option)', () => {
+    expect(parseSelectionOutput('{"entryId":"todo.complete","args":{"ref":"#2"},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[{"entryId":"none","args":{}}]}')).toMatchObject({
+      entryId: 'todo.complete',
+      ambiguity: 'NEEDS_CLARIFICATION',
+      alternatives: [],
+    });
+    expect(parseSelectionOutput('{"entryId":"jira.issues","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[{"entryId":"none"},{"entryId":"calendar.events","args":{}}]}')?.alternatives).toEqual([{ entryId: 'calendar.events', args: {} }]);
   });
 });
 
@@ -361,5 +397,64 @@ describe('honest chat (ADR-0120 D9)', () => {
     for (const reply of ['노션에는 접근할 수 없어요.', 'Jira는 이슈 추적 도구예요.', '메일에는 접근할 수 없어요.', '']) {
       expect(guardFalseIncapabilityClaims(reply, configured, 'ko').guarded).toBe(false);
     }
+  });
+
+  it('A6 live test 4 (turns 39, 53): while actions are offered, a yes/no offer of an action or a false "cannot" about one becomes the restate', () => {
+    const withActions = [...configured, ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined)];
+    const restate = '무엇을/어느 항목을 다시 말씀해 주세요.';
+    // CA P2 (2026-10-19): offers and denials in every form are handled alike ("리마인더로 만들어 드릴까요?", "…해 드릴 수는 없어요").
+    for (const reply of ['3번도 완료할까요?', '할 일은 제가 직접 취소할 수 없어요.', 'Shall I add it to your to-do list?', "I can't remove items from your to-do list here.", '리마인더로 만들어 드릴까요?', '저는 할 일을 대신 해 드릴 수는 없어요.', '할 일에 넣어 드릴까요?']) {
+      expect(guardFalseIncapabilityClaims(reply, withActions, 'ko'), reply).toEqual({ text: restate, guarded: true });
+    }
+    // CA P2: only the offending sentence goes; true sentences stay as written.
+    expect(guardFalseIncapabilityClaims('할 일 3번은 이미 완료됐어요. 4번도 완료할까요?', withActions, 'ko')).toEqual({ text: `할 일 3번은 이미 완료됐어요. ${restate}`, guarded: true });
+    // Codex P2: list grounding is per sentence; an explicit anaphor carries the previous sentence's list over.
+    expect(guardFalseIncapabilityClaims('방금 추가한 할 일을 취소하고 싶으시군요. 그건 제가 직접 취소할 수 없어요.', withActions, 'ko')).toEqual({ text: `방금 추가한 할 일을 취소하고 싶으시군요. ${restate}`, guarded: true });
+    const explanation = 'Your todo list is ready. Shall I add more detail to this explanation?';
+    expect(guardFalseIncapabilityClaims(explanation, withActions, 'en')).toEqual({ text: explanation, guarded: false });
+    const unrelated = 'Your todo list is ready. Shall I add a summary of the weather?';
+    expect(guardFalseIncapabilityClaims(unrelated, withActions, 'en')).toEqual({ text: unrelated, guarded: false });
+    expect(guardFalseIncapabilityClaims('I see the item on your to-do list. Shall I add it?', withActions, 'en')).toEqual({ text: 'I see the item on your to-do list. Please tell me again what to do and which item.', guarded: true });
+    // Recorded residual (best-effort guard): a denial with neither a list noun nor an anaphor in its own sentence is kept.
+    const residual = '방금 추가한 할 일을 취소하고 싶으시군요. 여기서는 제가 직접 취소할 수 없어요.';
+    expect(guardFalseIncapabilityClaims(residual, withActions, 'ko')).toEqual({ text: residual, guarded: false });
+    // Offers of nothing Quoky writes (Codex P2: 추가로 is no add), how-to and explanation offers (CA P2), true statements
+    // about read-only sources, and families that are not offered stay.
+    for (const reply of ['더 자세히 알려드릴까요?', '추가로 설명해 드릴까요?', '할 일 사용법을 추가로 설명해 드릴까요?', '할 일 목록을 추가로 보여드릴까요?', '할 일에 추가하는 방법을 알려드릴까요?', '할 일 3번은 이미 완료됐어요.', '캘린더 일정은 제가 취소할 수 없어요. 할 일은 말씀만 하세요.', '좋아요!']) {
+      expect(guardDeadEndActionReplies(reply, withActions, 'ko'), reply).toEqual({ text: reply, guarded: false });
+    }
+    expect(guardFalseIncapabilityClaims('3번도 완료할까요?', configured, 'ko')).toEqual({ text: '3번도 완료할까요?', guarded: false });
+    // Codex P2: list nouns and verbs come from the offered families; with reminders not offered the reminder denial is true.
+    const todosOnly = [...configured, ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined && !entry.id.startsWith('reminder.'))];
+    const denial = '리마인더를 대신 만들어 드릴 수는 없어요.';
+    expect(guardFalseIncapabilityClaims(denial, todosOnly, 'ko')).toEqual({ text: denial, guarded: false });
+    expect(guardFalseIncapabilityClaims('리마인더로 만들어 드릴까요?', todosOnly, 'ko')).toEqual({ text: '리마인더로 만들어 드릴까요?', guarded: false });
+    expect(guardFalseIncapabilityClaims(denial, withActions, 'ko')).toEqual({ text: restate, guarded: true });
+    // Codex P2: the offer ending decides, whatever the punctuation; how-to offers stay.
+    for (const reply of ['할 일을 추가해 드릴까요', '할 일을 추가해 드릴까요.', '할 일 3번을 완료할까요!']) {
+      expect(guardFalseIncapabilityClaims(reply, withActions, 'ko'), reply).toEqual({ text: restate, guarded: true });
+    }
+    for (const reply of ['할 일에 추가하는 방법을 알려드릴까요', '할 일에 추가하는 방법을 알려드릴까요.']) {
+      expect(guardFalseIncapabilityClaims(reply, withActions, 'ko'), reply).toEqual({ text: reply, guarded: false });
+    }
+    // Codex P2: the dead-end filter is partial; the rest of the reply still meets the source-incapability check.
+    const withMail = [NL_WAVE1_ENTRIES['mail.list'], ...withActions];
+    const mixed = guardFalseIncapabilityClaims('할 일을 추가할까요? 메일은 읽을 수 없어요.', withMail, 'ko');
+    expect(mixed.guarded).toBe(true);
+    expect(mixed.text).toContain('Quoky가 연결되어 있어서 바로 조회할 수 있어요.');
+    expect(mixed.text).not.toContain('메일은 읽을 수 없어요');
+    // Only the action offer: the partial filter's own result is returned.
+    expect(guardFalseIncapabilityClaims('할 일 3번은 이미 완료됐어요. 4번도 완료할까요?', withMail, 'ko')).toEqual({ text: `할 일 3번은 이미 완료됐어요. ${restate}`, guarded: true });
+    // Codex P2: a timed reminder offer counts with no list noun while reminders are offered; with reminders off it stays.
+    expect(guardFalseIncapabilityClaims('내일 9시에 알려드릴까요?', withActions, 'ko')).toEqual({ text: restate, guarded: true });
+    expect(guardFalseIncapabilityClaims('내일 9시에 알려드릴 수는 없어요.', withActions, 'ko')).toEqual({ text: restate, guarded: true });
+    expect(guardFalseIncapabilityClaims('내일 9시에 알려드릴까요?', todosOnly, 'ko')).toEqual({ text: '내일 9시에 알려드릴까요?', guarded: false });
+    expect(guardFalseIncapabilityClaims('내일 9시에 알려드릴 수는 없어요.', todosOnly, 'ko')).toEqual({ text: '내일 9시에 알려드릴 수는 없어요.', guarded: false });
+    expect(guardFalseIncapabilityClaims('더 자세히 알려드릴까요?', withActions, 'ko')).toEqual({ text: '더 자세히 알려드릴까요?', guarded: false });
+  });
+
+  it('A6 live test 4: the configured-sources fact tells the chat never to deny or offer an offered action as a yes/no question', () => {
+    const withActions = [...configured, ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined)];
+    expect(renderConfiguredSourcesFact(withActions, ['- 할 일 추가: "할 일 추가: 내용"'])).toContain('It never says Quoky cannot do them, and never offers one as a yes/no question');
   });
 });

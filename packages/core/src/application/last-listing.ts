@@ -92,6 +92,8 @@ interface Entry {
   readonly replyIds?: readonly string[];
   /** A6-D2: shown labels parallel to `ids` (absent = 1..n). */
   readonly labels?: readonly number[];
+  /** CA P3 (2026-10-19): the listing showed a filtered subset (a reminder period), so an unshown number is not "on it". */
+  readonly filtered?: true;
 }
 
 /** A listing that can no longer be picked from: only which replies it had (GML-2). */
@@ -130,7 +132,8 @@ function entryOf(raw: unknown, source: ListingSource | undefined, allowEmptyIds 
   if (source !== undefined && actual !== source) return undefined;
   if (typeof entry.at !== 'string' || !Number.isFinite(Date.parse(entry.at))) return undefined;
   const ids = boundedIds(entry.ids, MAX_IDS, MAX_ID_CHARS);
-  if (ids === undefined || (ids.length === 0 && !allowEmptyIds)) return undefined;
+  // Codex P2 (2026-10-19): an EMPTY filtered view (a reminder period with nothing in it) is kept as a marker.
+  if (ids === undefined || (ids.length === 0 && !allowEmptyIds && entry.filtered !== true)) return undefined;
   // The GML-2 fields are optional; a malformed one is dropped, never trusted.
   const requestId = typeof entry.requestId === 'string' && entry.requestId.length > 0 && entry.requestId.length <= MAX_REPLY_ID_CHARS ? entry.requestId : undefined;
   const replyIds = entry.replyIds === undefined ? undefined : boundedIds(entry.replyIds, MAX_REPLY_IDS, MAX_REPLY_ID_CHARS);
@@ -147,6 +150,7 @@ function entryOf(raw: unknown, source: ListingSource | undefined, allowEmptyIds 
     ...(requestId !== undefined ? { requestId } : {}),
     ...(replyIds !== undefined && replyIds.length > 0 ? { replyIds } : {}),
     ...(labels !== undefined ? { labels } : {}),
+    ...(entry.filtered === true ? { filtered: true as const } : {}),
   };
 }
 
@@ -235,6 +239,7 @@ function serializeEntry(entry: Entry): Record<string, unknown> {
     ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}),
     ...(entry.replyIds !== undefined ? { replyIds: [...entry.replyIds] } : {}),
     ...(entry.labels !== undefined ? { labels: [...entry.labels] } : {}),
+    ...(entry.filtered === true ? { filtered: true } : {}),
   };
 }
 
@@ -468,6 +473,7 @@ export function withLabelledListing(
   now: IsoTimestamp,
   mode: LabelledListingMode,
   requestId?: string,
+  filtered?: boolean,
 ): unknown {
   const valid = items.filter(
     (item, index) =>
@@ -494,17 +500,23 @@ export function withLabelledListing(
     // it. The pre-merge listing moves into `replied` with its reply ids, so a platform reply to the ORIGINAL message
     // resolves against exactly the labels it showed (Codex review P1), and the merged listing starts without reply ids.
     if (previous?.replyIds !== undefined) replied.push(previous);
+    const request = requestId !== undefined && requestId.length > 0 && requestId.length <= MAX_REPLY_ID_CHARS ? requestId : undefined;
     if (merged.length === 0) {
-      if (mode === 'listing') delete slots[source];
+      // Codex P2 (2026-10-19): an empty FILTERED view stays as an empty marker, so a number the owner then names asks
+      // instead of resolving by display number; any other empty listing clears the slot, as before.
+      if (mode === 'listing' && filtered === true) {
+        slots[source] = { source, ids: [], labels: [], at: now, filtered: true, ...(request !== undefined ? { requestId: request } : {}) };
+      } else if (mode === 'listing') delete slots[source];
       return { slots, ...settle(replied, own.expired, now) };
     }
-    const request = requestId !== undefined && requestId.length > 0 && requestId.length <= MAX_REPLY_ID_CHARS ? requestId : undefined;
     slots[source] = {
       source,
       ids: merged.map((item) => item.id),
       labels: merged.map((item) => item.label),
       at: now,
       ...(request !== undefined ? { requestId: request } : {}),
+      // A listing sets the marker; a merge keeps the listing's own.
+      ...((mode === 'listing' ? filtered === true : previous?.filtered === true) ? { filtered: true as const } : {}),
     };
     return { slots, ...settle(replied, own.expired, now) };
   });
@@ -520,6 +532,8 @@ export interface ListingSlot {
    * source and `requestId` as `quoky.lastAction` is that action's own echo, never a newer listing. Opaque; never shown.
    */
   readonly requestId?: string;
+  /** CA P3 (2026-10-19): the listing showed a filtered subset (a reminder period); an unshown number asks. */
+  readonly filtered?: true;
 }
 
 /** A6-D2: every fresh slot of this Actor and the most recently written one (the latest `at`). */
@@ -536,7 +550,13 @@ export function readListingRecord(value: unknown, actorId: Id, now: IsoTimestamp
     const entry = freshEntry(value, actorId, source, now);
     if (entry === undefined) continue;
     const listing: PersistedListing = { at: entry.at, ids: entry.ids, ...(entry.labels !== undefined ? { labels: entry.labels } : {}) };
-    const slot: ListingSlot = { source, at: entry.at, items: listingItems(listing), ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}) };
+    const slot: ListingSlot = {
+      source,
+      at: entry.at,
+      items: listingItems(listing),
+      ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}),
+      ...(entry.filtered === true ? { filtered: true as const } : {}),
+    };
     slots[source] = slot;
     if (mostRecent === undefined || Date.parse(slot.at) > Date.parse(mostRecent.at)) mostRecent = slot;
   }
