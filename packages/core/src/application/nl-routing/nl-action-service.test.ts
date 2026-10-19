@@ -1302,6 +1302,16 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
       setup.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, 'owner', 'reminder', [], at(0), 'listing', 'm-list', true)),
     );
     expect(empty.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('목록에 0건만 있어요') });
+    // Codex P2: after an action, an empty filtered view newer than it makes a deictic or recency reference ask (no throw).
+    const created = withLastAction(undefined, 'owner', { entryId: 'reminder.create', source: 'reminder', itemId: 'r-13', label: 13, at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0));
+    for (const [text, ref] of [['그 알림 취소해줘', 'this'], ['방금 거 알림 취소해줘', 'recent'], ['마지막 알림 취소해줘', 'last']] as const) {
+      const deictic = await run(text, out('reminder.cancel', { ref }), (setup) => {
+        setup.setMetadata(LAST_ACTION_METADATA_KEY, created);
+        setup.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, 'owner', 'reminder', [], new Date(Date.parse(at(0)) + 30_000).toISOString(), 'listing', 'm-empty', true));
+      });
+      expect(deictic.decision.kind, text).toBe('ask');
+      expect(deictic.decision.kind, text).not.toBe('execute');
+    }
     // An unfiltered listing keeps the display-number rule.
     const plain = await run('13번 알림 취소해줘', out('reminder.cancel', { ref: '#13' }), (setup) => setup.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, 'owner', 'reminder', [{ label: 15, id: 'r-15' }], at(0), 'listing', 'm-list')));
     expect(plain.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.cancel', target: { label: 13 } } });

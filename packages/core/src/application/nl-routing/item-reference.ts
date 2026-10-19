@@ -124,6 +124,8 @@ function pickInSlot(input: NlReferenceInput, slot: ListingSlot): NlReferenceReso
     const item = slot.items[slot.items.length - 1];
     return item === undefined ? unresolved(input, 'none') : { kind: 'resolved', target: targetFrom(slot, item) };
   }
+  // Codex P2 (2026-10-19): an empty view (a filtered reminder period with nothing in it) names no item: ask, never pick.
+  if (slot.items.length === 0) return unresolved(input, 'ambiguous', { found: slot.source, listingAt: slot.at });
   if (slot.items.length === 1) return { kind: 'resolved', target: targetFrom(slot, slot.items[0] as ListingItem) };
   return unresolved(input, 'ambiguous', { candidates: slot.items.slice(0, 10), found: slot.source, listingAt: slot.at });
 }
@@ -203,6 +205,8 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
         if (newer.source !== source) return unresolved(input, 'other-source', { found: newer.source });
         // A newer (or tied) multi-item list of the same source: ask with its shown labels (both ref kinds).
         if (newer.items.length > 1) return unresolved(input, 'ambiguous', { candidates: newer.items.slice(0, 10), found: source, listingAt: newer.at });
+        // Codex P2 (2026-10-19): an EMPTY newer view (a filtered reminder period with nothing in it) names no item: ask.
+        if (newer.items.length === 0) return unresolved(input, 'ambiguous', { found: source, listingAt: newer.at });
         const shown = newer.items[0] as ListingItem;
         if (shown.id !== lastItem.itemId) {
           return unresolved(input, 'conflict', { candidates: [shown, { label: lastItem.label ?? 0, id: lastItem.itemId }].filter((item) => item.label > 0), found: source });
