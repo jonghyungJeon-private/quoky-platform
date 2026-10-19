@@ -62,6 +62,17 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
     expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
   });
 
+  it('v53 gate shapes: a CLEAR read with only an unusable detail runs (reminder.list {count}, help.topic {topic}); a period still asks', async () => {
+    const count = await decideActionCase({ text }, scripted(answer({ count: true }, 'CLEAR', [])), NOW);
+    expect(count.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
+    const help = JSON.stringify({ entryId: 'help.topic', args: { topic: 'undo' }, ambiguity: 'CLEAR', alternatives: [] });
+    const how = await decideActionCase({ text: 'undo 하는 방법 알려줘' }, scripted(help), NOW);
+    expect(how.decision).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic' } });
+    // A dropped period would widen the content silently: it still asks (A5 rule 6).
+    const period = await decideActionCase({ text: '내일 알림 뭐 있어?' }, scripted(answer({ range: 'tomorrow' }, 'CLEAR', [])), NOW);
+    expect(period.decision.kind).toBe('ask');
+  });
+
   it('Codex P2: only an ambiguity made solely by dropped action candidates runs; a lone flag or two reads of one entry ask', async () => {
     const lone = await decideActionCase({ text }, scripted(answer({}, 'NEEDS_CLARIFICATION', [])), NOW);
     expect(lone.decision.kind).toBe('ask');
@@ -74,8 +85,11 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
   });
 
   it('a repaired or a two-read case still asks; the ask records its closed shape', async () => {
-    // An arg the read does not ground is repaired away: the one option differs from what was named, so Core asks.
-    const repaired = await decideActionCase({ text }, scripted(answer({ status: 'scheduled' }, 'CLEAR', [])), NOW);
+    // A valid value the owner did not say (a guess) is repaired away: the one option differs from what was named, so Core
+    // asks. An out-of-set value ('scheduled') is a detail and runs (v53 gate).
+    const repaired = await decideActionCase({ text }, scripted(answer({ status: 'canceled' }, 'CLEAR', [])), NOW);
+    const outOfSet = await decideActionCase({ text }, scripted(answer({ status: 'scheduled' }, 'CLEAR', [])), NOW);
+    expect(outOfSet.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
     expect(repaired.decision.kind).toBe('ask');
     const two = await decideActionCase({ text: '몇 건이야?' }, scripted(JSON.stringify({ entryId: 'jira.issues', args: { count: true }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'calendar.events', args: { count: true } }] })), NOW);
     expect(two.decision.kind).toBe('ask');

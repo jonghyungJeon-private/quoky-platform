@@ -1000,6 +1000,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
     this.forgetRefusedPeriod(cacheKey, main);
     if (main.ok && output.ambiguity === 'CLEAR') return this.complete(main.value, turn, last, language, prepared.groundingText);
+    // v53 gate (2026-10-19, reminder.list-006 {count}, none-030 help.topic {topic}): a CLEAR read with no alternative whose
+    // only defect is a detail Core cannot use (a flag the entry does not list, or an optional value outside its closed set)
+    // runs as the read the selector named without that detail, instead of asking about one option. Never with a dropped
+    // span, keyword, period or time word: those narrow the content and still ask (A5 rule 6).
+    if (!main.ok && output.ambiguity === 'CLEAR' && output.alternatives.length === 0 && !isNlActionEntryId(output.entryId)) {
+      const lenient = validateWithoutDetail({ entryId: output.entryId, args: output.args }, ctx);
+      if (lenient !== undefined && lenient.ok && lenient.value.entry.risk === 'READ') return this.complete(lenient.value, turn, last, language, prepared.groundingText);
+    }
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action
     // candidate is never a numbered option (only READ entries are stored as options).
     const options: NlValidatedSelection[] = [];
@@ -2251,6 +2259,34 @@ export class NlSelectionService implements TurnDeliveryObserver {
  * ADR-0120 D6/D8 plus the S1 hardening: a selection request may go only where this turn's chat would go — the same
  * provider family (or id) AND the same declared execution locality. Compared as opaque data, never as a name.
  */
+/**
+ * v53 gate: validate a CLEAR read after dropping only DETAIL args: an arg the entry does not list whose value is a flag
+ * (`count: true` on reminder.list), or an optional enum value with a default that is not one of its closed values (`topic` of
+ * help.topic). A valid value the owner did not ground is a guess and still asks; a dropped string the entry does not list (a
+ * range, a keyword), a span, a time keyword or a weekday refusal is never dropped here: `undefined` (the caller asks).
+ */
+function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidationContext): NlValidationResult | undefined {
+  let current = candidate;
+  let dropped = false;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const result = validateSelection(current, ctx);
+    if (result.ok) return dropped ? result : undefined;
+    const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);
+    const name = result.arg;
+    if (entry === undefined || name === undefined || !(name in current.args)) return undefined;
+    const value = current.args[name];
+    const spec = entry.args.find((arg) => arg.name === name);
+    const detail =
+      (result.reason === 'unknown-arg' && spec === undefined && typeof value === 'boolean') ||
+      (result.reason === 'invalid-arg' && spec !== undefined && spec.kind === 'enum' && spec.required !== true && spec.default !== undefined);
+    if (!detail) return undefined;
+    const { [name]: _dropped, ...rest } = current.args;
+    current = { entryId: current.entryId, args: rest };
+    dropped = true;
+  }
+  return undefined;
+}
+
 /** Args as a canonical string (key order ignored), to tell an unchanged selection from a repaired one. */
 function sortedArgs(args: NlArgs): string {
   return JSON.stringify(Object.entries(args).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
