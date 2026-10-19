@@ -1,9 +1,8 @@
 import type { ListingItem, ListingSlot } from '../last-listing';
-import { nlDeicticOriginOf, nlDeterminerSources, nlNumeralsIn, nlOrdinalsIn, withoutNlOriginPhrases, withoutSpan } from './action-entries';
+import { nlDeicticOriginOf, nlDeterminerSources, nlHasRecencyWord, nlNumeralsIn, nlOrdinalsIn, withoutNlOriginPhrases, withoutSpan } from './action-entries';
 import type { DeicticEntryId, DeicticReferentRef } from './deictic-draft';
 import { LOCAL_WRITE_REPLY_PICK_MS, type NlReferenceState } from './item-reference';
 import type { LastTurnRecord } from './last-turn';
-import { normalizeForMatch } from './selection-input';
 
 /**
  * ADR-0120 amendment A6 R5a (§1.4): which earlier text "그거" means when the owner asks to make it a to-do or a reminder.
@@ -55,8 +54,6 @@ export interface DeicticReferentInput {
   readonly lastTurn?: LastTurnRecord;
 }
 
-const RECENCY_KO = /방금|아까/u;
-const RECENCY_EN = /\bjust now\b/u;
 const MAX_CANDIDATES = 10;
 
 function itemRef(source: 'todo' | 'reminder', item: Pick<ListingItem, 'id' | 'label'>): DeicticReferentRef {
@@ -202,8 +199,7 @@ export function resolveDeicticReferent(input: DeicticReferentInput): DeicticReso
   }
 
   // 6. "방금" / "아까" naming a fresh last action that is not the last reply's referent: ask with both.
-  const text = normalizeForMatch(input.groundingText);
-  const recent = RECENCY_KO.test(text) || RECENCY_EN.test(text) ? lastActionItem(input) : undefined;
+  const recent = nlHasRecencyWord(input.groundingText) ? lastActionItem(input) : undefined;
   if (recent !== undefined && resolved.kind === 'resolved' && !sameReferent(recent, resolved.referent)) {
     return { kind: 'ask', reason: 'conflict', candidates: [recent, resolved.referent], path: resolved.path };
   }

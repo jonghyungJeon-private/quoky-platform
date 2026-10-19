@@ -7,7 +7,8 @@
  *
  * Per action case:
  *  - `hit`: Core executes the gold entry with the gold canonical args and the gold target (or, for a gold ask/refuse, Core
- *    does not execute and the selector named the gold entry and args, or, when the gold args are `{}`, Core's refusal or
+ *    does not execute, the selector named the gold entry and Core's own final args for it (validated and grounded, as an
+ *    execution carries; owner decision 2026-10-19) are the gold args, or, when the gold args are `{}`, Core's refusal or
  *    question reason equals the gold reason; or, for an execute gold marked `acceptsNone` by the owner, the selector
  *    answered `none`; owner D12 batch 2026-10-15: a READ gold is scored on the entry only, an `acceptsAnyQuestion` gold
  *    on any question, and `alsoAccepts` names other selections with the same effect on the same target);
@@ -54,6 +55,7 @@ import {
   parseSelectionOutput,
   pendingQuestionRecord,
   prepareSelectionInput,
+  nlCoreSelectionArgs,
   readListingRecord,
   renderReferenceContext,
   validateSelection,
@@ -107,7 +109,7 @@ const OUTCOMES = ['execute', 'ask', 'refuse'] as const;
 const REASONS = [
   'out-of-range', 'expired', 'ambiguous', 'stale', 'other-source', 'none', 'conflict',
   'deictic-payload', 'time-in-title', 'time-outside-when', 'when-unparsed', 'credential',
-  'content-mode',
+  'content-mode', 'missing-arg',
   'no-action', 'undo-of-undo', 'already-final', 'changed', 'fired', 'past-time', 'event-gone', 'limit', 'echo-mismatch',
   'bulk', 'not-dm', 'capped', 'stopped',
 ] as const;
@@ -208,6 +210,8 @@ export const NL_ACTION_R2_EVAL_ENTRIES: readonly NlCatalogEntry[] = NL_ACTION_EV
   entry.id === 'item.summarize' ? mergeItemSummarizeEntries([entry, nlItemSummarizeEntry(['jira', 'slack'])]) : entry,
 );
 const SPAN_ARGS = ['title', 'match', 'body', 'when'];
+/** The fixed `now` of the schema check and of the scorer's own validation (only a period arg reads it). */
+const VALIDATION_NOW = '2026-10-14T03:00:00.000Z' as IsoTimestamp;
 const TARGET_ENTRIES = new Set(['todo.complete', 'todo.cancel', 'reminder.cancel', 'item.summarize', 'action.undo']);
 
 /** The schema check of `docs/plans/nl-action-corpus-schema.md` (problems as `id: what`, never a value). */
@@ -258,8 +262,16 @@ export function validateActionCorpus(corpus: NlActionCorpus, evalEntries: readon
     if (isNlCatalogEntryId(expect.entryId) && !('skip' in prepareSelectionInput(golden.text))) {
       const prepared = prepareSelectionInput(golden.text) as { groundingText: string };
       const offered = new Map(evalEntries.map((entry) => [entry.id, entry] as const));
-      const result = validateSelection({ entryId: expect.entryId, args: expect.args }, { offered, groundingText: prepared.groundingText, now: '2026-10-14T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true, ...(golden.fixture?.prior !== undefined ? { previousArgs: golden.fixture.prior.args } : {}) });
+      const ctx = { offered, groundingText: prepared.groundingText, now: VALIDATION_NOW, timeZone: 'Asia/Seoul', actions: true as const, ...(golden.fixture?.prior !== undefined ? { previousArgs: golden.fixture.prior.args } : {}) };
+      const result = validateSelection({ entryId: expect.entryId, args: expect.args }, ctx);
       const refusedByRule = expect.outcome !== 'execute' && ['deictic-payload', 'time-in-title', 'time-outside-when', 'bulk', 'credential'].includes(expect.reason ?? '');
+      // A gold question that IS the validator's own refusal of the gold args ("그거 원문 보여줘" with no knowable source asks
+      // `missing-arg`; owner decision 2026-10-19): its args must be Core's own grounded args for that selection.
+      if (!result.ok && expect.outcome !== 'execute' && result.reason === expect.reason) {
+        const own = nlCoreSelectionArgs({ entryId: expect.entryId, args: expect.args }, ctx);
+        if (own === undefined || canonical(own) !== canonical(expect.args)) problems.push(`${where}: gold args not canonical`);
+        continue;
+      }
       // An `acceptsAnyQuestion` gold scores the question, not its args (owner D12 batch 2026-10-15).
       // A gold the request-shape vetoes refuse (A6-D3a amendment 1) is a measured cost, not a schema problem.
       const requestFormCost = !result.ok && (result.reason === 'not-request' || (result.reason === 'ungrounded' && result.arg === 'action'));
@@ -470,8 +482,33 @@ export function r2DiagnosticArgs(golden: NlActionCase, raw: string, outcome: NlA
   };
 }
 
-/** Score Core's decision against the gold (exported for the offline tests). */
-export function scoreActionDecision(golden: NlActionCase, raw: string, decision: NlSelectionDecision, audit?: Record<string, unknown>): Omit<NlActionRecord, 'run' | 'latencyMs'> {
+/** What the scorer validates the selector's output against: the turn's offered entries (A6 or R2) and its `now`. */
+export interface NlActionScoreContext {
+  readonly entries?: readonly NlCatalogEntry[];
+  readonly now?: IsoTimestamp;
+}
+
+/**
+ * Core's own final args for the selector's output (owner decision 2026-10-19): the args Core validated and grounded for
+ * it, exactly as `decideActionCase`'s turn validated them (same offered entries, same grounding text, no previous args),
+ * or, when a rule refused it, the args as Core checked and grounded them before that rule. `undefined` when there are none.
+ */
+function coreFinalArgs(golden: NlActionCase, output: NonNullable<ReturnType<typeof parseSelectionOutput>>, context: NlActionScoreContext): NlArgs | undefined {
+  if (output.entryId === null) return undefined;
+  const prepared = prepareSelectionInput(golden.text);
+  if ('skip' in prepared) return undefined;
+  const offered = new Map((context.entries ?? NL_ACTION_EVAL_ENTRIES).map((entry) => [entry.id, entry] as const));
+  return nlCoreSelectionArgs({ entryId: output.entryId, args: output.args }, { offered, groundingText: prepared.groundingText, now: context.now ?? VALIDATION_NOW, timeZone: 'Asia/Seoul', actions: true });
+}
+
+/**
+ * Score Core's decision against the gold (exported for the offline tests). One rule for every gold (owner decision
+ * 2026-10-19): the args compared are Core's FINAL args, never the selector's raw ones. An execution carries them; for a
+ * gold ask or refusal they are Core's own validated and grounded args for the selector's output ({@link coreFinalArgs}),
+ * so a grounded `mode`, `source` or recency `ref` counts the same whether Core executes or asks. This scorer serves the
+ * A6 action gate and the R2 gate alike.
+ */
+export function scoreActionDecision(golden: NlActionCase, raw: string, decision: NlSelectionDecision, audit?: Record<string, unknown>, context: NlActionScoreContext = {}): Omit<NlActionRecord, 'run' | 'latencyMs'> {
   const expected = golden.expect === 'none' ? 'none' : golden.expect.entryId;
   const base = { id: golden.id, family: golden.family, expected };
   const output = parseSelectionOutput(raw);
@@ -497,7 +534,8 @@ export function scoreActionDecision(golden: NlActionCase, raw: string, decision:
     // naming the gold entry with the gold args while the turn ends as none or anything else is a miss (2026-10-16).
     if (gold.outcome === 'ask' && decision.kind !== 'ask' && output?.ambiguity !== 'NEEDS_CLARIFICATION') return { ...base, outcome: 'miss', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
     if (gold.acceptsAnyQuestion === true && decision.kind === 'ask' && reason !== undefined && CLARIFICATION_REASONS.has(reason)) return { ...base, outcome: 'hit', got: output?.entryId ?? 'none', ...withSpan, ...(reason !== undefined ? { reason } : {}) };
-    const named = output?.entryId === gold.entryId && canonical(withoutMode(output.args, gold.args)) === canonical(withoutMode(gold.args, gold.args));
+    const final = output !== null && output.entryId === gold.entryId ? coreFinalArgs(golden, output, context) : undefined;
+    const named = final !== undefined && canonical(withoutMode(final, gold.args)) === canonical(gold.args);
     // A gold refusal or question with no args (`{}`: the refused argument has no canonical value) is scored by its closed
     // reason instead: the selector named the gold entry and Core refused or asked for exactly the gold reason (A6 R1).
     const sameReason = output?.entryId === gold.entryId && Object.keys(gold.args).length === 0 && reason !== undefined && reason === gold.reason;
@@ -714,7 +752,7 @@ export async function runActionEvaluation(input: {
         try {
           const { decision, audit } = await decideActionCase(golden, rec.provider, input.now(), { timeoutMs: input.plan.callTimeoutMs, ...(input.plan.itemR2 !== undefined ? { itemR2: input.plan.itemR2 } : {}) });
           const { raw, latencyMs } = rec.last();
-          const scored = scoreActionDecision(golden, raw, decision, audit);
+          const scored = scoreActionDecision(golden, raw, decision, audit, { entries: input.plan.itemR2 !== undefined ? NL_ACTION_R2_EVAL_ENTRIES : NL_ACTION_EVAL_ENTRIES });
           record = { run, latencyMs, ...scored, ...(input.plan.itemR2 !== undefined ? r2DiagnosticArgs(golden, raw, scored.outcome) : {}) };
         } catch (error) {
           record = { run, id: golden.id, family: golden.family, expected: golden.expect === 'none' ? 'none' : golden.expect.entryId, outcome: 'error', latencyMs: rec.last().latencyMs, reason: error instanceof Error ? error.name : 'unknown' };

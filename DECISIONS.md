@@ -27509,7 +27509,9 @@ The gold digest changes with these marker edits (the digest hashes the raw golde
 
 ## A6 R2 item.summarize mode and source grounding — scope (2026-10-17, CA P3 follow-up)
 
-Status: **recorded** (implementation note under ADR-0120 amendment A6 R2; CA approved fb5df854 with this follow-up).
+Status: **recorded; scope superseded 2026-10-19.** The asymmetry below is resolved: the owner reconciled the 11 labels
+and the grounding now applies to both paths (see "A6 R2 item.summarize scoring and labels — owner decisions
+(2026-10-19)"). The text below is kept as the record of the 2026-10-17 scope.
 
 - **Scope.** Core grounds `item.summarize`'s `mode` and `source` in the owner's own words (fb5df854 and its review fix)
   **only while `item.summarize` offers an R2 source (Jira or Slack)**. `mode` comes from the NL_MODE_SUMMARY_WORDS /
@@ -27528,3 +27530,55 @@ Status: **recorded** (implementation note under ADR-0120 amendment A6 R2; CA app
 - **Accepted residual (CA P3).** A mode word inside an item's name the owner writes (a file called "요약본") grounds that
   mode. Accepted as low risk: the action is a read of the item the owner named, and the owner can ask again for the other
   mode.
+
+## A6 R2 item.summarize scoring and labels — owner decisions (2026-10-19)
+
+Status: **recorded** (owner decisions of 2026-10-19 on the v48+grounding R2 gate of PR #263: 97.1 / 95.7 / 93.5, 2 of 3;
+implementation note under ADR-0120 amendment A6 R2). No real model was called for this change; the gates are re-run by
+the orchestrator.
+
+1. **Scoring: one rule, Core's final args.** A gold ask or refusal is scored on Core's FINAL args for the selector's
+   output, the same as an execute gold already is (the args of the command Core executes), never on the selector's raw
+   args. For a question the final args are what Core validated and grounded (`nlCoreSelectionArgs`: the validated args,
+   or, when a rule refuses, the args as Core checked and grounded them before that rule). `scoreActionDecision`
+   (`apps/quoky/src/tools/nl-action-eval.ts`) takes the turn's offered entries for this. **The A6 action gate shares this
+   scorer** (`nl-action-eval`, `nl-action-r2-eval` and the selector-RAG scoring all call it), so the A6 gate definition
+   changes the same way under this decision. A gold that is the validator's own refusal (its reason is the reason
+   `validateSelection` gives for its args) is schema-valid when its args are Core's grounded args; `missing-arg` joins
+   the closed gold reasons (`docs/plans/nl-action-corpus-schema.md`).
+2. **`a6r2-reference-065` relabelled** ("그거 원문 보여줘", last read 11 minutes ago). The source is unknowable, so an ask
+   is the correct answer: `ask`, args `{ ref: this, mode: full }` (no source), reason `missing-arg`, which is Core's own
+   behaviour when the selector names no source. A guessed source stays a miss. The case no longer carries a source, so it
+   counts in the overall rate but in neither the Jira nor the Slack slice (Jira slice 77 → 76 positives).
+3. **The 11 A6 labels reconciled; grounding on both paths.** `a6-reference-item.summarize-005` to `-015`
+   (`golden/nl-action.v1.json`) carry the grounded `mode: summary` (owner-approved). The mode / source grounding now runs
+   for every offered `item.summarize`, so the A6 mail / Drive path is grounded too and the asymmetry recorded on
+   2026-10-17 is resolved. The Jira / Slack nouns still count only while R2 offers them (CA P1). Checked: no other gold of
+   the A6 (620) or R2 (212) corpus changes (Core's grounded args equal every gold's args); both schema checks pass. Runtime
+   effect on the A6 path: a `mode` the owner never stated is dropped (the content-mode question or the stored preference
+   applies) instead of refused as ungrounded, as R2 already did.
+4. **`a6r2-reference-062` stays strict.** The ask must hold the source the owner just read (`other-source`); no change.
+5. **"방금 본 거" is `recent`.** Core already has the closed recency vocabulary (D9 / A6-D2: 방금 / 아까 / just now, the
+   `recent` line of the ref description and the R5a referent's recency check), now one exported list
+   (`NL_RECENCY_WORDS`). For `item.summarize`, a recency word in the owner's words (and no exclusion or negation marker
+   anywhere, see the follow-ups below) grounds the selector's
+   `this` to `recent`, and its `last` too when no `last` word (마지막 / last) stands behind it: the same principle as the
+   mode grounding, no phrase list. Local writes are unchanged (their tie rule never favours a write). 062 and 063 still ask
+   as their golds say (other-source, ambiguous).
+
+Offline estimate (the v48g records replayed through the new Core and scorer with a scripted provider; one record with
+an invalid recorded ref kept as recorded): overall 99.3 / 98.6 / 98.6, Jira 98.7 / 97.4 / 98.7, Slack 100 / 100 / 100,
+0 wrong targets, 0 negative captures; the remaining misses are 056 (selector source slack, runs 1 and 3), 062 (slack,
+run 2), 046 (invalid ref, run 2) and 065 (guessed mail, run 3).
+
+The gold digest changes with the label edits: `selector-pool.audit.v1.json` is regenerated with `pnpm eval:rag -- --mode
+dry-run --write-audit true` (local Ollama, loopback; CA P3). Only the gold digest and the embedding space id (Ollama
+0.40.5 → 0.40.6, same model digest) change; the split hash and every metric are unchanged.
+
+Follow-ups after review: the recency grounding is structural and fail-safe (Codex P2, two rounds; no scope parsing). It
+applies only when the owner's prose (structures removed) holds no exclusion or negation marker anywhere
+(`nlHasExclusionOrNegation`: 말고 / 아니고 / 빼고 / 대신 / 제외, the request-shape Korean negators, -지 마/말/않, English
+not / instead / except / rather than and the English negators). With a marker the selector's ref stays, which is the
+behaviour before this branch: "방금 요약한 그거 말고 이거 원문 보여줘", "아까 본 거 말고 이거" and "not the one I just now read,
+this one" keep `this`. Accepted cost: "방금 본 거 요약 말고 원문으로 보여줘" (a negated mode) also keeps `this`. CA P3: "아까 온 메일 요약해줘" (아까 dating the mail, not the
+reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-action.r2.v1.json`, not as gold.

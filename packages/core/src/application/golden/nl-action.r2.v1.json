@@ -4490,15 +4490,14 @@
    "expect": {
     "entryId": "item.summarize",
     "args": {
-     "source": "jira",
      "ref": "this",
      "mode": "full"
     },
     "outcome": "ask",
-    "reason": "none"
+    "reason": "missing-arg"
    },
    "batch": "R2-batch-1",
-   "note": "the last read is older than 10 minutes"
+   "note": "the last read is older than 10 minutes, so the source is unknowable: Core asks for it (missing-arg) [owner decision 2026-10-19: relabelled from ask none with source jira]"
   },
   {
    "id": "a6r2-reference-066",
@@ -7433,5 +7432,41 @@
    "batch": "R2-batch-1",
    "note": "selector-only negative (proposal 1.1 known gap): the deterministic layers do not veto it (the #244 vetoes cover LOCAL_WRITE only), so the model gate pins that the selector answers none"
   }
- ]
+ ],
+ "pendingOwnerApproval": {
+  "description": "Watch cases awaiting the owner's decision (D12). NOT approved gold: no code loads this section, no gate scores it. Each records what Core does today and the question for the owner.",
+  "cases": [
+   {
+    "id": "a6r2-watch-001",
+    "family": "reference",
+    "text": "아까 온 메일 요약해줘",
+    "fixture": {
+     "listings": [
+      {
+       "source": "mail",
+       "labels": [
+        4
+       ],
+       "ageMinutes": 3
+      }
+     ]
+    },
+    "observed": {
+     "entryId": "item.summarize",
+     "args": {
+      "source": "mail",
+      "ref": "recent",
+      "mode": "summary"
+     },
+     "outcome": "execute",
+     "target": {
+      "source": "mail",
+      "id": "mail-4"
+     }
+    },
+    "note": "CA P3 (2026-10-19): 아까 here dates the mail (\"the mail that came earlier\"), not the owner's reading of it; the recency grounding makes it `recent` and Core reads the one mail just shown (with a multi-item list it asks ambiguous). Owner to decide the gold: execute on the shown mail, or ask.",
+    "batch": "pending-owner-approval"
+   }
+  ]
+ }
 }

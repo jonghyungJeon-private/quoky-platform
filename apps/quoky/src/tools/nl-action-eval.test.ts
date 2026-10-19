@@ -149,7 +149,9 @@ describe('scoring (A6-D7): a wrong target is never a question; negatives capture
     expect(await score(relay, answer('none'))).toBe('hit');
     expect(await score(relay, answer('todo.add', { title: '보고서' }))).toBe('hit');
     expect(await score({ ...relay, expect: { entryId: 'todo.add', args: { title: '보고서' }, outcome: 'execute' } }, answer('none'))).toBe('miss');
-    // The owner wrote 문서 (Drive) while the newest list is mail: whatever source the selector names, nothing is read.
+    // The owner wrote 문서 (Drive) while the newest list is mail: whatever source the selector names, nothing is read. The
+    // gold ask is scored on Core's final args (owner decision 2026-10-19): the noun grounds drive, so a selector `mail` that
+    // Core corrects and then asks about is the gold question; a wrong item number is still a miss.
     const otherNoun: NlActionCase = {
       id: 'a6-t-7',
       family: 'reference',
@@ -157,7 +159,8 @@ describe('scoring (A6-D7): a wrong target is never a question; negatives capture
       fixture: { listings: [{ source: 'mail', labels: [1, 2], ageMinutes: 1 }] },
       expect: { entryId: 'item.summarize', args: { source: 'drive', ref: '#1' }, outcome: 'ask', reason: 'other-source' },
     };
-    expect(await score(otherNoun, answer('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }))).toBe('miss');
+    expect(await score(otherNoun, answer('item.summarize', { source: 'mail', ref: '#1', mode: 'summary' }))).toBe('hit');
+    expect(await score(otherNoun, answer('item.summarize', { source: 'drive', ref: '#2', mode: 'summary' }))).toBe('miss');
     expect(await score(otherNoun, answer('item.summarize', { source: 'drive', ref: '#1' }))).toBe('hit');
     // "2번도": a reference alone selects nothing (chat), so it is never a capture.
     const alone: NlActionCase = { id: 'a6-t-8', family: 'reference', text: '2번도', fixture: { listings: [{ source: 'todo', labels: [1, 2, 3], ageMinutes: 1 }] }, expect: 'none' };

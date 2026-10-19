@@ -38,6 +38,22 @@ export type NlRequestVeto = 'example' | 'joke' | 'reported' | 'negation' | 'retr
 const NEGATION_KO = /(?:^|\s)(?:안|못)(?=\s*(?:되|돼|됐|해|했|하|할|함)|$)|안\s*(?:해|하|되|돼|됐|할|함)|(?<!잘)못\s*(?:해|하|했|함)|금지|아니|아냐|아님|ㄴㄴ|노노|됐어|됐다|잠깐|필요\s*없|싫|말고/u;
 
 const NEGATION_EN = /(?:^|\s)(?:don't|dont|do not|doesn't|didn't|shouldn't|won't|wouldn't|can't|cannot|never|not|no|nope|nah)(?=\s|$|[,.!?])/u;
+/** Exclusion markers ("그거 말고 이거", "그거 대신", "그거 빼고", "not that one, this one", "instead of", "except", "rather than"). */
+const EXCLUSION_KO = /말고|아니고|빼고|대신|제외/u;
+const EXCLUSION_EN = /(?:^|[^a-z])(?:not|instead|except|rather than)(?![a-z])/u;
+/** The scoped Korean verb negators (-지 마 / -지 말 / -지 않). */
+const VERB_NEGATION_KO = /지\s*(?:마|말|않)/u;
+
+/**
+ * Whether the owner's prose holds any exclusion or negation marker anywhere: the exclusion markers above, the request-shape
+ * Korean and English negators and the scoped verb negators. No scope is read: a caller that only narrows a value when the
+ * prose is plain (the `item.summarize` recency grounding) keeps the selector's value whenever this is true (fail-safe).
+ */
+export function nlHasExclusionOrNegation(prose: string): boolean {
+  const text = normalizeForMatch(prose);
+  return EXCLUSION_KO.test(text) || NEGATION_KO.test(text) || VERB_NEGATION_KO.test(text) || EXCLUSION_EN.test(text) || NEGATION_EN.test(text);
+}
+
 /** A negator that spans a clause boundary of the split below ("필요 | 없어"); "하지 | 마" is the scoped verb negator. */
 const SPANNING_NEGATION = /필요\s*없|안\s*(?:해|하|되|돼|됐|할|함)/u;
 const EXAMPLE_FRAME = /예를\s*들어|예컨대|for example|e\.g\./u;

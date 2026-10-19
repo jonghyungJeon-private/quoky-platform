@@ -260,7 +260,9 @@ describe('item.summarize (record C): the owner must ask for the content; mode on
   it('needs a content word and grounds mode values', () => {
     expect(validateSelection({ entryId: 'item.summarize', args: { source: 'drive', ref: '#1' } }, ctx('첫 번째 거 보여줘'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'mode' });
     expect(validateSelection({ entryId: 'item.summarize', args: { source: 'drive', ref: '#1', mode: 'summary' } }, ctx('첫 번째 거 요약해줘'))).toMatchObject({ ok: true });
-    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1', mode: 'full' } }, ctx('아까 1번은 무슨 내용이었지'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'mode' });
+    // Owner decision 2026-10-19: the mode grounding covers the A6 path too, so a mode the owner never stated is dropped (the
+    // content-mode question or the stored preference applies) instead of refused.
+    expect(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1', mode: 'full' } }, ctx('아까 1번은 무슨 내용이었지'))).toMatchObject({ ok: true, value: { args: { source: 'mail', ref: '#1' } } });
     expect(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1' } }, ctx('아까 1번은 무슨 내용이었지'))).toMatchObject({ ok: true });
     expect(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1', mode: 'full' } }, ctx('1번 원문 보여줘'))).toMatchObject({ ok: true });
     expect(validateSelection({ entryId: 'item.summarize', args: { source: 'drive', ref: '#1', scope: 'thread' } }, ctx('1번 스레드 요약'))).toMatchObject({ ok: false, reason: 'invalid-arg', arg: 'scope' });

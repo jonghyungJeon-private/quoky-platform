@@ -412,12 +412,58 @@ describe('A6 R2 (v48 gate): item.summarize mode and source come from the owner w
     expect(argsOf(validate('item.summarize', { source: 'slack', ref: '#2', mode: 'full' }, '2번 원문 보여줘'))).toEqual({ source: 'slack', ref: '#2', mode: 'full' });
   });
 
-  it('with R2 off (the A6 entry) nothing is grounded: an ungrounded selector mode is refused as before', () => {
+  it('with R2 off (the A6 entry) the same grounding applies (owner decision 2026-10-19: the R2-only scope is gone)', () => {
     const r1 = new Map<string, NlCatalogEntry>([['item.summarize', nlActionEntry('item.summarize')]]) as NlValidationContext['offered'];
-    const prepared = prepareSelectionInput('아까 1번은 무슨 내용이었지');
+    const validateR1 = (args: Record<string, unknown>, text: string) => {
+      const prepared = prepareSelectionInput(text);
+      if ('skip' in prepared) throw new Error('skipped');
+      return validateSelection({ entryId: 'item.summarize', args } as never, { offered: r1, groundingText: prepared.groundingText, now: '2026-10-17T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true });
+    };
+    // No mode word: the selector's mode is dropped (the content-mode question or the stored preference applies).
+    expect(argsOf(validateR1({ source: 'mail', ref: '#1', mode: 'full' }, '아까 1번은 무슨 내용이었지'))).toEqual({ source: 'mail', ref: '#1' });
+    // The owner's mode word fills the mode, and the owner's noun decides the source (R1 nouns only).
+    expect(argsOf(validateR1({ source: 'drive', ref: '#2' }, '2번 메일 요약해줘'))).toEqual({ source: 'mail', ref: '#2', mode: 'summary' });
+    // The Jira / Slack nouns still count only while R2 is offered: "이슈" names no R1 source, so the selector's source stays.
+    expect(argsOf(validateR1({ source: 'mail', ref: '#2', mode: 'summary' }, '2번 이슈 요약해줘'))).toEqual({ source: 'mail', ref: '#2', mode: 'summary' });
+  });
+
+  it('a recency word grounds the recent ref (owner decision 2026-10-19; the closed 방금 / 아까 / just now vocabulary)', () => {
+    // "방금 본 거" is the item just read: a selector `this` becomes `recent` (055 / 056 / 057 / 063 of the v48 gate).
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'full' }, '방금 본 거 원문 보여줘'))).toEqual({ source: 'jira', ref: 'recent', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'slack', ref: 'this', mode: 'summary' }, '아까 그거 요약해줘'))).toEqual({ source: 'slack', ref: 'recent', mode: 'summary' });
+    // A `last` with no 마지막 / last word behind it is the recency word's ref too; a written 마지막 keeps `last`.
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, '방금 본 거 요약해줘'))).toEqual({ source: 'jira', ref: 'recent', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'last', mode: 'summary' }, '방금 본 거 요약해줘'))).toEqual({ source: 'jira', ref: 'recent', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'last', mode: 'summary' }, '방금 본 목록의 마지막 거 요약해줘'))).toEqual({ source: 'jira', ref: 'last', mode: 'summary' });
+    // No recency word, a negated one, or a numbered ref: the selector's ref stays.
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, '그거 요약해줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, '방금 거 말고 그거 요약해줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: '#2', mode: 'summary' }, '방금 본 목록 2번 요약해줘'))).toEqual({ source: 'jira', ref: '#2', mode: 'summary' });
+    // Codex P2 (structural, fail-safe): any exclusion or negation marker anywhere in the prose keeps the selector's ref.
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'full' }, '방금 요약한 거 말고 그거 원문 보여줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'full' }, '방금 요약한 그거 말고 이거 원문 보여줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, '아까 본 거 말고 이거 요약해줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, '아까 본 거 빼고 이거 요약해줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, '방금 본 거 아니고 이거 요약해줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, '방금 본 거 대신 이거 요약해줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, 'summarize not the one I just read, this one'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, 'summarize not the one I just now read, this one'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, 'summarize this one instead of the one I just now read'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    // Accepted cost of the fail-safe rule: a negated MODE also keeps the selector's `this` (no scope is parsed).
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'full' }, '방금 본 거 요약 말고 원문으로 보여줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'full' });
+    // The A6 mail / Drive path grounds it the same way.
+    const r1 = new Map<string, NlCatalogEntry>([['item.summarize', nlActionEntry('item.summarize')]]) as NlValidationContext['offered'];
+    const prepared = prepareSelectionInput('방금 열어본 거 원문 보여줘');
     if ('skip' in prepared) throw new Error('skipped');
-    const result = validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1', mode: 'full' } } as never, { offered: r1, groundingText: prepared.groundingText, now: '2026-10-17T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true });
-    expect(result).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'mode' });
+    expect(argsOf(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: 'this', mode: 'full' } } as never, { offered: r1, groundingText: prepared.groundingText, now: '2026-10-17T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true }))).toEqual({ source: 'mail', ref: 'recent', mode: 'full' });
+  });
+
+  it('never grounds a recency ref for a local write (the recency vocabulary only grounds item.summarize)', () => {
+    const writes = new Map<string, NlCatalogEntry>([['todo.complete', nlActionEntry('todo.complete')]]) as NlValidationContext['offered'];
+    const prepared = prepareSelectionInput('방금 그거 완료해줘');
+    if ('skip' in prepared) throw new Error('skipped');
+    const write = validateSelection({ entryId: 'todo.complete', args: { ref: 'this' } } as never, { offered: writes, groundingText: prepared.groundingText, now: '2026-10-17T03:00:00.000Z', timeZone: 'Asia/Seoul', actions: true });
+    expect(argsOf(write)).toEqual({ ref: 'this' });
   });
 
   it('never turns another selection into item.summarize', () => {
