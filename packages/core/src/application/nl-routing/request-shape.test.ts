@@ -176,6 +176,19 @@ describe('A6-D3a amendment 1, review round (CA P1/P2, Codex P2)', () => {
     expect(v('todo.cancel', { match: '회의 준비' }, '회의 끝나고 나서 회의 준비 취소해줘')).toMatchObject(deferred);
   });
 
+  it('CA follow-up (2026-10-19): a non-today day word on a to-do complete / cancel defers it (to-dos have no dates)', () => {
+    const deferred = { ok: false, reason: 'not-request', arg: 'deferred' };
+    expect(v('todo.complete', { ref: '#2' }, '내일 2번 완료해줘')).toMatchObject(deferred);
+    expect(v('todo.cancel', { ref: '#3' }, '다음 주에 3번 취소해줘')).toMatchObject(deferred);
+    expect(v('todo.complete', { ref: '#2' }, 'complete 2 tomorrow')).toMatchObject(deferred);
+    expect(v('todo.complete', { ref: '#2' }, '오늘 2번 완료해줘').ok).toBe(true);
+    expect(v('todo.complete', { ref: '#2' }, '2번 완료해줘').ok).toBe(true);
+    // The target's own words are content: a title holding a time is no deferral.
+    expect(v('todo.complete', { match: '1시 회의 준비' }, '1시 회의 준비 완료해줘').ok).toBe(true);
+    // Accepted fail-closed residual (CA P3): a reminder with its own time after an event clause is refused as deferred.
+    expect(v('reminder.create', { when: '3시', body: '회의록 정리' }, '회의 끝나고 3시에 회의록 정리 알려줘')).toMatchObject(deferred);
+  });
+
   it('Codex P2 (round 2): a quoted title holding an action noun is content; a quoted request is still reported', () => {
     expect(v('todo.add', { title: '보고서 추가 검토' }, "할 일에 '보고서 추가 검토' 추가해줘").ok).toBe(true);
     expect(v('todo.add', { title: '작업 완료 보고' }, '할 일에 "작업 완료 보고" 넣어줘').ok).toBe(true);

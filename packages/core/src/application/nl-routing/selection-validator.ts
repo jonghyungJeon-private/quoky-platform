@@ -20,6 +20,7 @@ import {
   NL_ACTION_WORDS,
   NL_CONTENT_WORDS,
   containsNlTimeExpression,
+  nlNamesPeriod,
   nlReminderPeriod,
   type NlReminderPeriod,
   NL_ENTRY_NOUN_LOANWORDS,
@@ -432,6 +433,13 @@ export function requestShapeOf(
   // speech, a label that does not open the message (only a time may precede it) is a line of pasted material ("회의록 중
   // 할 일: …"), and a second `key:` inside the content is a pasted record ("…, 담당: 김대리"): all reported, none acts.
   if (veto === undefined && (wholeMessageQuoted(prose) || colonLabelIsPasted(prose, content, clock))) veto = 'reported';
+  // CA follow-up (2026-10-19): a to-do has no date, so a day or time word outside the target on a complete / cancel can
+  // only say WHEN to do it ("내일 2번 완료해줘"): a deferral, refused like "내일 추가해줘". A present-day word ("오늘 2번
+  // 완료해줘") is now.
+  if (veto === undefined && (entry.id === 'todo.complete' || entry.id === 'todo.cancel')) {
+    const untargeted = contentFrame.replace(/(?<![가-힣a-z])(?:오늘|today)(?:은|는|도|에)?(?![가-힣a-z])/giu, ' ');
+    if (nlNamesPeriod(untargeted)) veto = 'deferred';
+  }
   // A6 v49 gate (2026-10-19): a colon label's content is exempt from the vetoes, but its TRAILING clause is read like the
   // frame's last word: "Todo: renew passport?" is a question, "Todo: buy milk he told me" is reported.
   if (veto === undefined) {

@@ -27592,7 +27592,11 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   still defer ("나중에 우유 사기 할 일 추가해줘" is chat); complete and cancel have no task to time ("회의 끝나고 회의 준비
   완료해줘", "회의 끝나고 2번 완료해줘" stay chat); a clause before anything else ("회의 끝나고 할 일에 회의록 정리 넣어줘")
   defers; and a day or time word right before a non-reminder write's Korean request verb ("우유 사기 할 일에 내일
-  추가해줘") defers the write (a present-day word such as 오늘 does not; a reminder's time words are its own time).
+  추가해줘") defers the write (a present-day word such as 오늘 does not; a reminder's time words are its own time). A to-do
+  has no date, so any non-today day or time word outside the target on a `todo.complete` / `todo.cancel` ("내일 2번
+  완료해줘", "다음 주에 3번 취소해줘") is a deferral and is refused; "오늘 2번 완료해줘" executes (CA follow-up).
+  **Accepted fail-closed residual (CA P3):** a reminder with its own time after an event clause ("회의 끝나고 3시에 회의록
+  정리 알려줘") is refused as deferred; nothing is written and the owner restates it.
   Gold `a6-paraphrase-todo.add-906` (execute, title "검증 회의록 정리").
 - **(b) A garbled list noun asks** (extends the garbled-action addendum and owner decision E to the noun that decides the
   entry). For a to-do or reminder write, when no catalog list noun (`todo.list` / `reminder.list` aliases) is in the frame
