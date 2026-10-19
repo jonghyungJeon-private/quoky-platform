@@ -14720,6 +14720,35 @@
     "outcome": "execute"
    },
    "note": "owner decision E counter-case (2026-10-17): the loanword 캔슬 itself executes (decision C, by title) [agent-drafted 2026-10-17, owner-approved D12 batch 2026-10-17]"
+  },
+  {
+   "id": "a6-paraphrase-todo.add-906",
+   "family": "paraphrase",
+   "text": "회의 끝나고 검증 회의록 정리 할 일에 넣어줘",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "회의 끝나고 검증 회의록 정리"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision (a) of 2026-10-19 (live test 4, turn 69, label disputed): \"회의 끝나고 …\" is the to-do's own wording, so the to-do is added NOW with the qualifier kept in the title; the deferred-timing veto reads the frame without the title span and must not refuse it [owner-approved 2026-10-19]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.create-903",
+   "family": "paraphrase",
+   "text": "10월 21일 오전 9시에 리마이너 걸어줘, 검증 도면 회신",
+   "expect": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "검증 도면 회신",
+     "when": "10월 21일 오전 9시"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
+   },
+   "note": "owner decision (b) of 2026-10-19 (live test 4, turn 25, executed live): the noun that decides the entry is garbled (리마이너 for 리마인더) and no correct list noun is present, so Core asks \"'리마인더' 말씀이세요?\" (`garbled-noun`); written like complete-018 (reason ambiguous, any question) [owner-approved 2026-10-19]"
   }
  ]
 }

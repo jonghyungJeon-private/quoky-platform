@@ -743,6 +743,30 @@ export const NL_ACTION_VERBAL_NOUNS: readonly string[] = ['완료', '마무리',
  */
 export const NL_ACTION_LOANWORDS: readonly string[] = ['캔슬', '리마인드', '롤백'];
 
+/**
+ * Owner decision (b) of 2026-10-19 (garbled entry noun, `garbled-action.ts` `nlGarbledEntryNoun`): the nouns that decide
+ * which list a local write touches are the catalog's own list aliases (`todo.list`, `reminder.list`); no word is added.
+ */
+export const NL_ENTRY_NOUNS: readonly { readonly owner: 'todo' | 'reminder'; readonly words: readonly string[] }[] = Object.freeze([
+  { owner: 'todo', words: NL_WAVE1_ENTRIES['todo.list'].aliases },
+  { owner: 'reminder', words: NL_WAVE1_ENTRIES['reminder.list'].aliases },
+]);
+/** The list aliases spelled from an English sound (a tag, like {@link NL_ACTION_LOANWORDS}). */
+export const NL_ENTRY_NOUN_LOANWORDS: readonly string[] = ['리마인더', '투두'];
+/**
+ * The verbs the vocabularies pair with a list noun ("알림 걸", "리마인더 설정", "할 일 만들" → 걸, 설정, 만들), derived from
+ * the vocabularies themselves; the bare light verbs and request words (해, 줘, 부탁) carry no object of their own.
+ */
+const ENTRY_NOUN_HEAD = new RegExp(`^(?:${[...NL_ENTRY_NOUNS.flatMap((list) => list.words)].filter((word) => /[가-힣]/u.test(word)).sort((a, b) => b.length - a.length).map((word) => word.replace(/ /g, '\\s?')).join('|')})(?:으로|로)?\\s?`, 'u');
+export const NL_ENTRY_NOUN_VERBS: readonly string[] = [
+  ...new Set(
+    [...TODO_ADD_WORDS, ...REMINDER_CREATE_WORDS]
+      .filter((word) => ENTRY_NOUN_HEAD.test(word))
+      .map((word) => word.replace(ENTRY_NOUN_HEAD, ''))
+      .filter((verb) => verb.length > 0 && !/^(?:해|줘|부탁)$/u.test(verb)),
+  ),
+];
+
 /** The canonical action word of each LOCAL_WRITE entry, offered when a garbled word asks (never the raw vocabulary stem). */
 export const NL_ACTION_CANONICAL_WORDS: Readonly<Record<'todo.add' | 'todo.complete' | 'todo.cancel' | 'reminder.create' | 'reminder.cancel' | 'action.undo', { readonly ko: string; readonly en: string }>> = Object.freeze({
   'todo.add': { ko: '추가', en: 'add' },

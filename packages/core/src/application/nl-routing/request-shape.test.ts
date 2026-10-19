@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES, NL_ACTION_WORDS, containsNlTimeExpression, nlActionInputRefusal, nlActionWordGrounded } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { nlFrameIsElliptical, nlRequestVeto } from './request-shape';
+import { nlFrameIsCopularReference, nlFrameIsElliptical, nlRequestVeto } from './request-shape';
 import { NL_ACTION_ENTRIES as ENTRIES_FOR_UNDO } from './action-entries';
 import { interpretUndoConfirmReply, nlUndoIsDirect } from './undo-confirm';
 import { prepareSelectionInput } from './selection-input';
@@ -716,5 +716,15 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3): no a
     expect(v('todo.complete', { ref: '#2' }, '2번 체크')).toMatchObject({ ok: false, reason: 'elliptical' });
     // The garbled action word keeps its own question first.
     expect(v('todo.complete', { ref: '#3' }, '3번 완룐 처리해줘')).toMatchObject({ ok: false, reason: 'garbled-action' });
+  });
+});
+
+describe('live test 4 (turn 39): a bare reference with the copula is a copular reference, not a fact (nlFrameIsCopularReference)', () => {
+  it('a numeral or ordinal reference with the copula, in an elliptical frame', () => {
+    for (const text of ['이번엔 3번이야', '그럼 3번이요', '이번엔 4번입니다', '세 번째야', '그 다음은 2번이에요']) expect(nlFrameIsCopularReference(text, NL_ACTION_WORDS), text).toBe(true);
+  });
+
+  it('not a reference, an action word, a request or no copula', () => {
+    for (const text of ['3번은 회의야', '그냥 메모야', '3번 완료야', '3번 완료해줘', '이번엔 3번', '3번이 문제야']) expect(nlFrameIsCopularReference(text, NL_ACTION_WORDS), text).toBe(false);
   });
 });

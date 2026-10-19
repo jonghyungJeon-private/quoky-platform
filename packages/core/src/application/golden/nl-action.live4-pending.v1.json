@@ -1,0 +1,244 @@
+{
+ "version": 1,
+ "description": "A6 live test 4 (2026-10-17) gold CANDIDATES, PENDING the owner's D12 batch: not scored by eval:nl until approved and moved into nl-action.v1.json (the RAG-0 lint reads it already). Same schema as nl-action.v1.json (docs/plans/nl-action-corpus-schema.md). The owner-approved items of 2026-10-19, (a) todo.add-906 and (b) reminder.create-903, are already in nl-action.v1.json. The live EN time case (turn 66, \"Remind me on Oct 22 at 9:30am: …\") is a reminder-grammar case, pinned in reminder-grammar.test.ts, not a selector gold.",
+ "promptVersion": "nl-select.v49",
+ "cases": [
+  {
+   "id": "a6-paraphrase-todo.add-907",
+   "family": "paraphrase",
+   "text": "To-do: 검증 vendor invoice recheck",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "검증 vendor invoice recheck"
+    },
+    "outcome": "execute"
+   },
+   "note": "live test 4 turn 8 (selector none): an English to-do colon label executes (owner decision D); the v49 rule-8 colon-label line [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.create-904",
+   "family": "paraphrase",
+   "text": "알림: 10월 23일 오후 6시 검증 팀 회식 예약",
+   "expect": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "검증 팀 회식 예약",
+     "when": "10월 23일 오후 6시"
+    },
+    "outcome": "execute"
+   },
+   "note": "live test 4 turn 29 (selector none): a Korean reminder colon label with its time executes (owner decision D extended to label forms in general) [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-todo.add-908",
+   "family": "paraphrase",
+   "text": "할 일: 검증 택배 반송 신청",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "검증 택배 반송 신청"
+    },
+    "outcome": "execute"
+   },
+   "note": "live test 4 follow-up: the Korean to-do label (not the anchored head \"할 일 추가:\") executes like \"알림: …\" [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-todo.add-909",
+   "family": "paraphrase",
+   "text": "검증 노트북 점검 할 일",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "검증 노트북 점검"
+    },
+    "outcome": "execute"
+   },
+   "note": "live test 4 turns 78-80 (selector none 0/3): a bare \"<title> 할 일\" executes, owner decision A (gold todo.add-903 is the same shape); the duplicate guard still names an open to-do with the same title [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-reference-todo.complete-901",
+   "family": "reference",
+   "text": "이번엔 3번이야",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.complete",
+     "source": "todo",
+     "itemId": "todo-2",
+     "label": 2,
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "todo.complete",
+    "args": {
+     "ref": "#3"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous"
+   },
+   "note": "live test 4 turn 39 (refused not-request:statement, copula -이야): a bare reference with the copula right after the same action asks the continuation confirmation \"할 일 3번도 완료할까요?\", never executes [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-undo-action.undo-901",
+   "family": "undo",
+   "text": "방금 추가한 거 없던 일로 해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "todo",
+      "labels": [
+       4
+      ],
+      "ageMinutes": 1
+     }
+    ],
+    "lastAction": {
+     "entryId": "todo.add",
+     "source": "todo",
+     "itemId": "todo-4",
+     "label": 4,
+     "ageMinutes": 1
+    }
+   },
+   "expect": {
+    "entryId": "action.undo",
+    "args": {},
+    "outcome": "ask",
+    "reason": "undo-confirm"
+   },
+   "note": "live test 4 turn 53 (refused no-action-word): an undo paraphrase without a closed undo word that points at the last action asks the undo confirmation (\"방금 한 '할 일 4번 추가'를 되돌릴까요?\"), never the direct undo [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.create-905",
+   "family": "paraphrase",
+   "text": "검증 인쇄 맡기기 알림 하나 만들어줘",
+   "expect": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "검증 인쇄 맡기기"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
+   },
+   "note": "live test 4 turn 26: a reminder with no time asks for the time (\"언제 알려 드릴까요? …\"), not the generic restate [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.create-906",
+   "family": "paraphrase",
+   "text": "검증 도면 회신 알림 걸어줘",
+   "expect": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "검증 도면 회신"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
+   },
+   "note": "live test 4 turn 58: a reminder with no time asks for the time [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.create-907",
+   "family": "paraphrase",
+   "text": "Remind me to 검증 water the plants",
+   "expect": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "검증 water the plants"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
+   },
+   "note": "live test 4 turn 60 (English, same shape): a reminder with no time asks \"When should I remind you? …\" [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.cancel-908",
+   "family": "paraphrase",
+   "text": "3번 리마이너 취소해줘",
+   "fixture": {
+    "listings": [
+     {
+      "source": "reminder",
+      "labels": [
+       1,
+       2,
+       3
+      ],
+      "ageMinutes": 1
+     }
+    ]
+   },
+   "expect": {
+    "entryId": "reminder.cancel",
+    "args": {
+     "ref": "#3"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
+   },
+   "note": "owner decision (b) of 2026-10-19, a variant: the garbled list noun on a cancel asks \"'리마인더' 말씀이세요?\" (`garbled-noun`) [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-todo.add-910",
+   "family": "paraphrase",
+   "text": "보고서 초안 검토 할릴에 넣어줘",
+   "expect": {
+    "entryId": "todo.add",
+    "args": {
+     "title": "보고서 초안 검토"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
+   },
+   "note": "owner decision (b) of 2026-10-19, a variant: 할릴 (one key from 할일) with a destination particle asks \"'할 일' 말씀이세요?\" [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.create-908",
+   "family": "paraphrase",
+   "text": "모레 오후 3시에 뭉게뭉게 걸어줘, 견적서 회신",
+   "expect": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "견적서 회신",
+     "when": "모레 오후 3시"
+    },
+    "outcome": "ask",
+    "reason": "ambiguous",
+    "acceptsAnyQuestion": true
+   },
+   "note": "owner decision (b) of 2026-10-19, unknown noun: a word close to no list noun in the noun's slot asks what it means [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "a6-paraphrase-reminder.create-909",
+   "family": "paraphrase",
+   "text": "모레 오후 3시에 리마인더 걸어줘, 견적서 회신",
+   "expect": {
+    "entryId": "reminder.create",
+    "args": {
+     "body": "견적서 회신",
+     "when": "모레 오후 3시"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner decision (b) of 2026-10-19, counter-case: the correct list noun executes [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+  }
+ ]
+}

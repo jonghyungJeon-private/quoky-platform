@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES, NL_ACTION_LOANWORDS, NL_ACTION_VERBAL_NOUNS, NL_ACTION_WORDS } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { nlGarbledActionWord, nlJamoDistance } from './garbled-action';
+import { nlGarbledActionWord, nlJamoDistance, nlKeystrokeDistance } from './garbled-action';
 import { prepareSelectionInput } from './selection-input';
 import { validateSelection, type NlValidationContext } from './selection-validator';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
@@ -136,6 +136,55 @@ describe('the whole action corpus with the gold selections', () => {
       'nl-action.v1.json:a6-paraphrase-reminder.cancel-905 ask',
       'nl-action.v1.json:a6-paraphrase-reminder.cancel-906 ask',
     ]);
+  });
+
+  it('owner decision (b) of 2026-10-19: only the approved 리마이너 gold asks for a garbled list noun; no execute gold does', () => {
+    const asking: string[] = [];
+    for (const golden of golds) {
+      const expectation = golden.expect as { entryId?: string; args?: Record<string, string>; outcome?: string } | 'none';
+      if (expectation === 'none' || expectation.entryId === undefined || offered.get(expectation.entryId)?.risk !== 'LOCAL_WRITE') continue;
+      const prepared = prepareSelectionInput(golden.text);
+      if ('skip' in prepared) continue;
+      const result = validateSelection({ entryId: expectation.entryId, args: expectation.args ?? {} }, { ...ctx('x'), groundingText: prepared.groundingText });
+      if (!result.ok && result.reason === 'garbled-noun') asking.push(`${golden.id} ${expectation.outcome ?? ''}`);
+    }
+    expect(asking).toEqual(['nl-action.v1.json:a6-paraphrase-reminder.create-903 ask']);
+  });
+});
+
+describe('owner decision (b) of 2026-10-19: a garbled or unknown list noun asks', () => {
+  const create = (text: string, args: Record<string, string>) => validateSelection({ entryId: 'reminder.create', args }, ctx(text));
+  const add = (text: string, title: string) => validateSelection({ entryId: 'todo.add', args: { title } }, ctx(text));
+
+  it('measures one input-method keystroke: a consonant moved across syllables by the composition is no extra edit', () => {
+    expect(nlKeystrokeDistance('리마이너', '리마인더')).toBe(1); // the ㄷ key missing; positional jamo says 2
+    expect(nlJamoDistance('리마이너', '리마인더')).toBe(2);
+    expect(nlKeystrokeDistance('할릴', '할 일')).toBe(1);
+    expect(nlKeystrokeDistance('알름', '알림')).toBe(1);
+    expect(nlKeystrokeDistance('리마인더', '리마인더')).toBe(0);
+    expect(nlKeystrokeDistance('보고서', '알림')).toBeGreaterThan(1);
+  });
+
+  it('a typo of a list noun in its slot asks with the catalog noun (live test 4 turn 25 and variants)', () => {
+    expect(create('10월 21일 오전 9시에 리마이너 걸어줘, 검증 도면 회신', { when: '10월 21일 오전 9시', body: '검증 도면 회신' })).toMatchObject({ ok: false, reason: 'garbled-noun', candidate: '리마인더' });
+    expect(add('우유 사기 할릴에 넣어줘', '우유 사기')).toMatchObject({ ok: false, reason: 'garbled-noun', candidate: '할 일' });
+    expect(add('검증 노트북 점검 할릴', '검증 노트북 점검')).toMatchObject({ ok: false, reason: 'garbled-noun', candidate: '할 일' });
+    expect(validateSelection({ entryId: 'reminder.cancel', args: { ref: '#3' } }, ctx('3번 리마이너 취소해줘'))).toMatchObject({ ok: false, reason: 'garbled-noun', candidate: '리마인더' });
+  });
+
+  it('an unknown word in the object slot of a list-noun verb asks what it means', () => {
+    expect(create('10월 21일 오전 9시에 뭉게뭉게 걸어줘, 검증 도면 회신', { when: '10월 21일 오전 9시', body: '검증 도면 회신' })).toMatchObject({ ok: false, reason: 'garbled-noun', unknownWord: '뭉게뭉게' });
+  });
+
+  it('a correct list noun, a filler, a time word or a request without a list noun never asks', () => {
+    expect(create('10월 21일 오전 9시에 리마인더 걸어줘, 검증 도면 회신', { when: '10월 21일 오전 9시', body: '검증 도면 회신' })).toMatchObject({ ok: true });
+    expect(create('내일 9시에 우유 사기 알려줘', { when: '내일 9시', body: '우유 사기' })).toMatchObject({ ok: true });
+    expect(create('내일 오전 9시에 알림 좀 걸어줘, 도면 회신', { when: '내일 오전 9시', body: '도면 회신' })).toMatchObject({ ok: true });
+    expect(add('할 일에 검증 분기 예산 대조 하나 올려줘', '검증 분기 예산 대조')).toMatchObject({ ok: true });
+    expect(add('검증 서버 로그 점검, 할 일로 적어 두세요', '검증 서버 로그 점검')).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'todo.complete', args: { ref: '#2' } }, ctx('2번 끝냈으니까 체크해줘'))).toMatchObject({ ok: true });
+    // A garbled noun inside the content span is content.
+    expect(add("할 일에 '리마이너 앱 정리' 추가해줘", '리마이너 앱 정리')).toMatchObject({ ok: true });
   });
 });
 

@@ -39,7 +39,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, nlR2SourcesOffered, containsNlTimeExpression, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -64,8 +64,11 @@ import {
   renderQuestionOpen,
   renderDmOnlyAction,
   renderContinuationConfirm,
+  renderAskWhen,
   renderGarbledAction,
+  renderGarbledNoun,
   renderRestate,
+  renderUnknownNoun,
   renderTimeInTitle,
   renderTimeOutsideWhen,
   renderUndoUnresolved,
@@ -78,6 +81,7 @@ import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput
 import { nlSelectionMeaning } from './selection-meaning';
 import { NL_ACTION_PROMPT_VERSION, NL_ACTION_R2_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
+import { nlFrameIsCopularReference, nlIsRequestForm, nlRequestsSomething } from './request-shape';
 import { nlReadNotRequest } from './read-statement';
 import { interpretContinuationConfirmReply, interpretUndoConfirmReply, nlHasExplicitUndoWord, nlUndoIsDirect, renderUndoConfirm } from './undo-confirm';
 import {
@@ -1278,6 +1282,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // a hypothetical, a past statement, first-person volition such as "추가할게"). Nothing is written and, like a selector
       // `none`, the turn is chat: never a question (the owner's decision of 2026-10-16).
       if (validated.reason === 'not-request') {
+        // Live test 4 (turn 39, "이번엔 3번이야" right after a completion): a bare reference with the copula names WHICH
+        // item, not a fact about one. Right after the same action it takes the continuation confirmation of the elliptical
+        // path ("할 일 3번도 완료할까요?"); otherwise it stays chat, as every statement does.
+        if (validated.arg === 'statement' && nlFrameIsCopularReference(withoutStructures(prepared.groundingText), NL_ACTION_WORDS)) {
+          const confirm = await this.askInferredAction(entryId, output.args, false, turn, prepared, language, reference, base, openQuestion, shadow);
+          if (confirm !== undefined) return confirm;
+        }
         const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: `not-request:${validated.arg ?? 'unknown'}` };
         if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
         this.log('info', NL_ACTION_LOG_EVENT, nlActionLogFields(audit));
@@ -1299,6 +1310,17 @@ export class NlSelectionService implements TurnDeliveryObserver {
       }
       // The frame expresses no action: a reference alone ("2번도", "그걸로요", "13번 알림") is chat; a payload alone ("내일 9시
       // 우유") asks the owner to restate what to do with it.
+      // Live test 4 (turn 53, "방금 추가한 거 없던 일로 해줘"): the selector chose the undo, but no closed undo word grounds it.
+      // When the owner's own words point at Quoky's last action (a recency deictic, or that action named in its adnominal
+      // form: "방금 거", "추가한 거") and make a request, the undo is plausible but unproven: it takes the undo confirmation
+      // ("방금 한 '…'를 되돌릴까요?"), never the direct undo.
+      if (entryId === 'action.undo' && validated.reason === 'ungrounded' && validated.arg === 'action' && this.undoParaphrase(prepared.groundingText, reference)) {
+        if (!this.allowedWhileAsked(openQuestion, entryId, undefined)) return this.blockedWhileAsked(base, language, shadow);
+        const mismatch = this.undoTargetMismatch(prepared.groundingText, reference, base, language, shadow);
+        if (mismatch !== undefined) return mismatch;
+        if (shadow) return this.shadowAction({ ...base, resolution: 'resolved', result: 'shadow', reason: 'undo-confirm' });
+        return this.askUndoConfirm(turn, language, latencyMs, reference);
+      }
       if (validated.reason === 'ungrounded' && validated.arg === 'action') {
         const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'no-action-word' };
         if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
@@ -1312,6 +1334,18 @@ export class NlSelectionService implements TurnDeliveryObserver {
         const asked: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'garbled-action' };
         if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
         return this.actionAnswer(asked, renderGarbledAction(validated.candidate, language));
+      }
+      // Owner decision (b) of 2026-10-19: the noun that decides the list is garbled ("리마이너 걸어줘") or unknown; asked.
+      if (validated.reason === 'garbled-noun' && (validated.candidate !== undefined || validated.unknownWord !== undefined)) {
+        const asked: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'garbled-noun' };
+        if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
+        return this.actionAnswer(asked, validated.candidate !== undefined ? renderGarbledNoun(validated.candidate, language) : renderUnknownNoun(validated.unknownWord as string, language));
+      }
+      // Live test 4 (turns 26 / 58 / 60): a reminder with no time asks for the time, not the generic restate.
+      if (validated.reason === 'missing-arg' && entryId === 'reminder.create' && validated.arg === 'when') {
+        const asked: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'missing-arg' };
+        if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
+        return this.actionAnswer(asked, renderAskWhen(language));
       }
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: validated.reason };
       if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });
@@ -1487,6 +1521,31 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (mismatch !== undefined) return mismatch;
     if (!nlUndoIsDirect(groundingText)) return this.askUndoConfirm(turn, language, latencyMs, reference);
     return this.decideUndo(turn, language, latencyMs, 'none', reference);
+  }
+
+  /**
+   * Live test 4 (turn 53): whether a selected undo with no closed undo word still points at Quoky's last action. All hold:
+   * a fresh, undoable, not undone last action; the owner's words refer to it, by a recency or deictic word (방금, 아까,
+   * 그거: `hasNlDeictic`) or by that action's own verb in its adnominal form ("추가한 거", "완료한 거"); the message makes a
+   * request (a request or imperative form); and nothing is given to someone (no dative: "친구한테 그거 돌려줘"). Grammar
+   * classes and the entry's own vocabulary only; the caller asks the undo confirmation, never undoes directly.
+   */
+  private undoParaphrase(groundingText: string, reference: NlReferenceState): boolean {
+    const last = reference.lastAction;
+    if (last === undefined || !last.fresh || !last.record.undoable || last.record.undone) return false;
+    const prose = withoutStructures(groundingText);
+    if (/(?:한테|에게|께)(?=$|\s|[.,!?~])/u.test(prose)) return false;
+    const words = normalizeForMatch(prose).split(/\s+/u).filter((word) => word.length > 0);
+    if (!words.some((word) => nlIsRequestForm(word)) && !nlRequestsSomething(prose, NL_ACTION_WORDS)) return false;
+    const own = (NL_ACTION_ENTRIES[last.record.entryId as keyof typeof NL_ACTION_ENTRIES]?.actionGrounding ?? []).map(normalizeForMatch).filter((word) => /^[가-힣]+$/u.test(word));
+    const adnominal = words.some((word) => {
+      const stem = word.replace(/(?:거|걸|건|것)$/u, '');
+      const lastChar = stem.at(-1) ?? '';
+      const code = lastChar.charCodeAt(0) - 0xac00;
+      const closesWithN = code >= 0 && code <= 11171 && code % 28 === 4;
+      return (closesWithN || lastChar === '던') && own.some((verb) => stem.includes(verb));
+    });
+    return hasNlDeictic(prose) || adnominal;
   }
 
   /**
@@ -2435,7 +2494,7 @@ function correlationOf(turn: Pick<NlSelectionTurn, 'session' | 'turnId'>): { rea
  * statement, volition or example veto always ends the turn as chat, deictic or not (CA review (b)). `garbled-action` too: a
  * garbled action word asks its own question before any preview (garbled action word addendum, CA review).
  */
-export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-entry', 'not-offered', 'not-read', 'unknown-arg', 'invalid-arg', 'credential', 'bulk', 'not-request', 'garbled-action']);
+export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-entry', 'not-offered', 'not-read', 'unknown-arg', 'invalid-arg', 'credential', 'bulk', 'not-request', 'garbled-action', 'garbled-noun']);
 
 /** A6: the platform marked part of the message as quoted or as code: material, never one plain instruction. */
 function markedMaterial(turn: Pick<NlSelectionTurn, 'quotedRanges' | 'codeFormatted'>): boolean {

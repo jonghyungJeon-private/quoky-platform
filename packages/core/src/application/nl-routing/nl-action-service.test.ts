@@ -238,7 +238,7 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', 'nl-select.v24', 'nl-select.v25', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
     expect(new Set(keys).size).toBe(9);
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v39');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v44');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v49');
     // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
@@ -1239,5 +1239,79 @@ describe('A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold 
     expect((await w.decide('이번엔 3번', { now: at(1) })).kind).toBe('none');
     expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'elliptical-confirm' });
     expect(readPendingQuestion(w.session(), 'owner', at(2))).toBeUndefined();
+  });
+});
+
+describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, reminder time, garbled list noun', () => {
+  const lastAction = (entryId: 'todo.complete' | 'todo.add', itemId: string, label: number, minute = 0) =>
+    withLastAction(undefined, 'owner', { entryId, source: 'todo', itemId, label, at: at(minute), undoable: true, undone: false, echoReplyIds: [] }, at(minute));
+  const run = async (text: string, answerJson: string, setup: (w: World) => void = () => undefined) => {
+    const w = world({ level: 'local', script: () => answerJson });
+    setup(w);
+    return { w, decision: await w.decide(text, { now: at(1) }) };
+  };
+
+  it('turn 39: "이번엔 3번이야" right after completing 2 asks the continuation, never the statement veto; "응" completes 3', async () => {
+    const { w, decision } = await run('이번엔 3번이야', out('todo.complete', { ref: '#3' }), (setup) => {
+      setup.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3, 4, 5], 0));
+      setup.setMetadata(LAST_ACTION_METADATA_KEY, lastAction('todo.complete', 'todo-2', 2));
+    });
+    expect(decision).toMatchObject({ kind: 'ask', text: '할 일 3번도 완료할까요? (응 / 아니)' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'todo.complete', result: 'asked', reason: 'elliptical-confirm', targetId: 'todo-3' });
+    const pending = readPendingQuestion(w.session(), 'owner', at(2)) ?? null;
+    const yes = await w.service.answerActionPending({ text: '응', attachmentCount: 0, session: w.session(), actor: w.actor(), now: at(2), entries: ALL, route: 'chat', direct: true, pending });
+    expect(yes).toMatchObject({ kind: 'execute', command: { entryId: 'todo.complete', target: { id: 'todo-3' } } });
+  });
+
+  it('turn 39 counter-cases: with no same-kind last action, or a copular statement about an item, it stays chat', async () => {
+    const none = await run('이번엔 3번이야', out('todo.complete', { ref: '#3' }), (setup) => setup.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0)));
+    expect(none.decision).toEqual({ kind: 'none' });
+    expect(actionLogs(none.w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'not-request:statement' });
+    const statement = await run('3번은 회의야', out('todo.complete', { ref: '#3' }), (setup) => {
+      setup.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3], 0));
+      setup.setMetadata(LAST_ACTION_METADATA_KEY, lastAction('todo.complete', 'todo-2', 2));
+    });
+    expect(statement.decision).toEqual({ kind: 'none' });
+  });
+
+  it('turn 53: "방금 추가한 거 없던 일로 해줘" (the selector\'s undo, no closed undo word) asks the undo confirmation, never undoes directly', async () => {
+    const { w, decision } = await run('방금 추가한 거 없던 일로 해줘', out('action.undo'), (setup) => {
+      setup.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([4], 0));
+      setup.setMetadata(LAST_ACTION_METADATA_KEY, lastAction('todo.add', 'todo-4', 4));
+    });
+    expect(decision).toMatchObject({ kind: 'ask', text: "방금 한 '할 일 4번 추가'를 되돌릴까요? (응 / 아니)" });
+    expect(readPendingQuestion(w.session(), 'owner', at(2))).toMatchObject({ kind: 'action-undo-confirm', undoEntryId: 'todo.add' });
+    // Without a fresh undoable last action, or with a recipient ("친구한테"), nothing is asked: chat as before.
+    const stale = await run('방금 추가한 거 없던 일로 해줘', out('action.undo'));
+    expect(stale.decision).toEqual({ kind: 'none' });
+    const given = await run('방금 그거 친구한테 돌려줘', out('action.undo'), (setup) => setup.setMetadata(LAST_ACTION_METADATA_KEY, lastAction('todo.add', 'todo-4', 4)));
+    expect(given.decision.kind).not.toBe('ask');
+    expect(given.decision.kind).not.toBe('execute');
+  });
+
+  it('turns 26 / 58 / 60: a reminder with no time asks for the time (Korean and English)', async () => {
+    const ko = await run('검증 인쇄 맡기기 알림 하나 만들어줘', out('reminder.create', { body: '검증 인쇄 맡기기' }));
+    expect(ko.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('언제 알려 드릴까요?') });
+    const en = await run('Remind me to water the plants', out('reminder.create', { body: 'water the plants' }));
+    expect(en.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('When should I remind you?') });
+    expect(actionLogs(en.w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.create', result: 'refused', reason: 'missing-arg' });
+  });
+
+  it('owner decision (b): a garbled list noun asks with the noun; an unknown word in its slot asks what it means; the right noun executes', async () => {
+    const typo = await run('10월 21일 오전 9시에 리마이너 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
+    expect(typo.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining("'리마인더' 말씀이세요?") });
+    expect(actionLogs(typo.w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.create', result: 'asked', reason: 'garbled-noun' });
+    const unknown = await run('10월 21일 오전 9시에 뭉게뭉게 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
+    expect(unknown.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining("'뭉게뭉게'(이)가 무슨 뜻인가요?") });
+    const right = await run('10월 21일 오전 9시에 리마인더 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
+    expect(right.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.create' } });
+  });
+
+  it('owner decision (a): "회의 끝나고 검증 회의록 정리 할 일에 넣어줘" adds the to-do now with the qualifier in the title', async () => {
+    const { decision } = await run('회의 끝나고 검증 회의록 정리 할 일에 넣어줘', out('todo.add', { title: '회의 끝나고 검증 회의록 정리' }));
+    expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'todo.add', args: { title: '회의 끝나고 검증 회의록 정리' } } });
+    // The deferred-timing veto still reads the request frame: a deferral outside the title is chat.
+    const deferred = await run('회의 끝나고 할 일에 회의록 정리 넣어줘', out('todo.add', { title: '회의록 정리' }));
+    expect(deferred.decision).toEqual({ kind: 'none' });
   });
 });

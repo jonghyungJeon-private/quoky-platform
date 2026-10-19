@@ -19,6 +19,9 @@ import {
   NL_ACTION_VERBAL_NOUNS,
   NL_ACTION_WORDS,
   NL_CONTENT_WORDS,
+  NL_ENTRY_NOUN_LOANWORDS,
+  NL_ENTRY_NOUN_VERBS,
+  NL_ENTRY_NOUNS,
   NL_MODE_FULL_WORDS,
   NL_MODE_SUMMARY_WORDS,
   NL_RECENCY_WORDS,
@@ -37,7 +40,7 @@ import {
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
 import { nlFrameIsElliptical, nlHasExclusionOrNegation, nlHasUnnegatedMention, nlRelaysRequest, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
-import { nlFrameHasActionInflection, nlGarbledActionWord, type NlActionVocabulary } from './garbled-action';
+import { nlFrameHasActionInflection, nlGarbledActionWord, nlGarbledEntryNoun, type NlActionVocabulary, type NlGarbledEntryNoun } from './garbled-action';
 import {
   isNlRangeSymbol,
   isWeekdayOrTimeKeyword,
@@ -121,6 +124,12 @@ export type NlValidationFailureReason =
    */
   | 'garbled-action'
   /**
+   * Owner decision (b) of 2026-10-19: the noun that decides which list a to-do / reminder write touches is garbled ("리마이너
+   * 걸어줘": `candidate` is the catalog noun it is near) or an unknown word in that noun's slot (`unknownWord`, the owner's
+   * own word, rendered back only in the question and never logged), and no correct list noun is present. Nothing is written.
+   */
+  | 'garbled-noun'
+  /**
    * A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, "이번엔 3번"): a target entry's frame names no action
    * word and makes no request of its own (`nlFrameIsElliptical`). The action is only inferred, so nothing is written: the
    * caller asks a confirmation of the inferred action ("할 일 3번도 완료할까요?") or, with nothing to infer it from, the turn
@@ -149,6 +158,8 @@ export type NlValidationResult =
       readonly askEntryId?: NlCatalogEntryId;
       /** `garbled-action`: the canonical action word of the entry whose vocabulary holds the near word (never the owner's text). */
       readonly candidate?: string;
+      /** `garbled-noun` (unknown): the owner's own word in the list noun's slot; rendered in the question only, never logged. */
+      readonly unknownWord?: string;
     };
 
 export interface NlValidationContext {
@@ -251,6 +262,8 @@ export interface NlRequestShape {
   readonly garbled?: string;
   /** A target entry's frame with no action word and no request form (`nlFrameIsElliptical`); the selection never executes. */
   readonly elliptical?: boolean;
+  /** Owner decision (b) of 2026-10-19: the list noun deciding the entry is garbled or unknown (`nlGarbledEntryNoun`); asks. */
+  readonly garbledNoun?: NlGarbledEntryNoun;
 }
 
 /**
@@ -309,7 +322,18 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
   // nothing beyond the light verb ("이번엔 3번", "3번도 해줘") never executes. Read on the content frame, against every A6
   // vocabulary; an inflected action word ("2번 끝냄 처리해줘") names its action.
   const elliptical = !payload && entry.args.length > 0 && nlFrameIsElliptical(contentFrame, NL_ACTION_WORDS) && !nlFrameHasActionInflection(contentFrame, NL_ACTION_WORDS, NL_ACTION_VERBAL_NOUNS);
-  return { ...(veto !== undefined ? { veto } : {}), expressesAction, ...(garbled !== undefined ? { garbled } : {}), ...(elliptical ? { elliptical } : {}) };
+  // Owner decision (b) of 2026-10-19: the noun that decides a to-do or reminder write is itself garbled ("리마이너 걸어줘")
+  // and no correct list noun is in the frame. Read without the content spans and the reminder's time span.
+  const listed = isNlActionEntryId(entry.id) ? nlActionSourceOf(entry.id, args) : undefined;
+  const nounFrame = when === undefined ? contentFrame : withoutSpan(contentFrame, when);
+  const garbledNoun = listed === 'todo' || listed === 'reminder' ? nlGarbledEntryNoun(nounFrame, NL_ENTRY_NOUNS, NL_ENTRY_NOUN_VERBS, [...CATALOG_WORDS, ...NL_ACTION_WORDS], prose, NL_ENTRY_NOUN_LOANWORDS) : undefined;
+  return {
+    ...(veto !== undefined ? { veto } : {}),
+    expressesAction,
+    ...(garbled !== undefined ? { garbled } : {}),
+    ...(garbledNoun !== undefined ? { garbledNoun } : {}),
+    ...(elliptical ? { elliptical } : {}),
+  };
 }
 
 /** The catalog's own words (aliases and source names of every read and action entry): known words, never a garble. */
@@ -435,6 +459,13 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     // After the vetoes (a garbled word in a question or a negation is still chat): the action word itself is uncertain, so
     // the owner is asked with the candidate instead of the write running (owner decision 2026-10-16, "3번 완룐 처리해줘").
     if (shape.garbled !== undefined) return { ok: false, reason: 'garbled-action', entryId, arg: 'action', candidate: shape.garbled };
+    // Owner decision (b) of 2026-10-19: the same for the noun that decides the list ("리마이너 걸어줘"): a typo of a list
+    // noun asks with that noun, an unknown word in its slot asks what it means.
+    if (shape.garbledNoun !== undefined) {
+      return shape.garbledNoun.kind === 'typo'
+        ? { ok: false, reason: 'garbled-noun', entryId, arg: 'entry', candidate: shape.garbledNoun.noun }
+        : { ok: false, reason: 'garbled-noun', entryId, arg: 'entry', unknownWord: shape.garbledNoun.word };
+    }
     // After the garble (a garbled action word is its own question): an elliptical frame names no action at all, so the
     // action is only inferred and nothing is written ("이번엔 3번" after "1번 완료"; D12 gate v44 run 3).
     if (shape.elliptical === true) return { ok: false, reason: 'elliptical', entryId, arg: 'action' };

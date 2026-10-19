@@ -1,5 +1,6 @@
 import type { NlCatalogEntry } from './catalog';
 import { renderRestate } from './nl-action-policy';
+import { NL_ENTRY_NOUNS } from './action-entries';
 
 /**
  * Honest chat after selection (ADR-0120 D9). When the selector finds no entry (or cannot run), the chat turn carries
@@ -41,8 +42,9 @@ export function renderConfiguredSourcesFact(entries: readonly NlCatalogEntry[], 
         : `Quoky's own commands (the User sends them exactly; a chat reply cannot run them or do the action): ${commands}. ` +
             `Quoky does these actions itself when the User asks in plain words: ${actions.map((entry) => entry.label.en).join(', ')}. ` +
             'A chat reply never performs them, never claims they are done and never tells the User to type a fixed command phrase ' +
-            'for them; it asks the User to say again what to do and which item. For any other request to create, change, send ' +
-            'or remember something, reply with the exact command to send.',
+            'for them; it asks the User to say again what to do and which item. It never says Quoky cannot do them, and never ' +
+            'offers one as a yes/no question ("…할까요?"): a yes to a chat reply runs nothing. For any other request to create, ' +
+            'change, send or remember something, reply with the exact command to send.',
     );
   }
   return parts.join(' ');
@@ -56,7 +58,59 @@ export function renderConfiguredSourcesFact(entries: readonly NlCatalogEntry[], 
 export function guardStaleActionCommands(text: string, entries: readonly NlCatalogEntry[], language: 'ko' | 'en'): FalseIncapabilityGuardResult {
   if (typeof text !== 'string' || text.length === 0) return { text, guarded: false };
   const quoted = entries.some((entry) => entry.risk !== 'READ' && (entry.staleCommands ?? []).some((pattern) => pattern.test(text)));
-  return quoted ? { text: renderRestate(language), guarded: true } : { text, guarded: false };
+  if (quoted) return { text: renderRestate(language), guarded: true };
+  return guardDeadEndActionReplies(text, entries, language);
+}
+
+/** A Korean offer that waits for a yes: -(으)ㄹ까요 / 드릴까요 / 할까 / 줄까, ending its sentence. */
+const KO_YES_NO_OFFER = /(?:까요|까)\s*[?？]?\s*$/u;
+/** An English offer that waits for a yes ("Shall I …?", "Do you want me to …?", "Should I …?"). */
+const EN_YES_NO_OFFER = /^(?:shall i|should i|do you want me to|would you like me to|want me to|can i|may i)\b[^?]*\?\s*$/iu;
+/** An incapability after the action word ("직접 취소할 수 없어요", "추가는 못 해요"). */
+const KO_ACTION_INCAPABLE = /(?:수\s*(?:가\s*)?없|못\s*(?:해|하|합|했|드려|드립)|불가|지원하지\s*않|기능이\s*없)/u;
+const EN_ACTION_INCAPABLE = /\b(?:can(?:no|['’])t|cannot|unable to|not able to)/iu;
+
+/**
+ * Live test 4 (2026-10-17, turns 39 and 53): while an action family is offered, a chat reply cannot act on a yes, and a
+ * chat reply saying Quoky cannot do an offered action is false. A sentence that names an offered action (that family's own
+ * closed vocabulary, `actionGrounding`) and either offers it as a yes/no question ("3번도 완료할까요?", "Shall I add it?")
+ * or states that Quoky cannot do it ("여기서는 제가 직접 취소할 수 없어요") turns the reply into the deterministic
+ * "무엇을/어느 항목을 다시 말씀해 주세요": the owner restates and Core decides. A sentence that names a source Quoky only
+ * reads (a calendar, Slack, a mail) is about that source and is left alone: "일정은 취소할 수 없어요" is true. Families
+ * that are not offered keep today's reply.
+ */
+export function guardDeadEndActionReplies(text: string, entries: readonly NlCatalogEntry[], language: 'ko' | 'en'): FalseIncapabilityGuardResult {
+  const actions = entries.filter((entry) => entry.risk === 'LOCAL_WRITE' && (entry.actionGrounding ?? []).length > 0);
+  if (actions.length === 0) return { text, guarded: false };
+  const words = [...new Set(actions.flatMap((entry) => entry.actionGrounding ?? []).map((word) => word.toLowerCase()))];
+  const readNouns = entries
+    .filter((entry) => entry.risk === 'READ' && entry.sourceNames !== undefined && entry.id !== 'todo.list' && entry.id !== 'reminder.list')
+    .flatMap((entry) => [...entry.aliases, ...(entry.sourceNames ?? [])])
+    .map((word) => word.toLowerCase())
+    .filter((word) => word.length >= 2);
+  const escape = (word: string): string => word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s+');
+  const latin = words.filter((word) => /^[a-z ]+$/u.test(word)).map(escape);
+  const hangul = words.filter((word) => !/^[a-z ]+$/u.test(word)).map(escape);
+  const latinWord = latin.length === 0 ? undefined : `\\b(?:${latin.join('|')})\\b`;
+  const hangulWord = hangul.length === 0 ? undefined : `(?:${hangul.join('|')})`;
+  // The incapability governs the action word: Korean after it in the same stretch, English before it within two words.
+  const koIncapable = hangulWord === undefined ? undefined : new RegExp(`${hangulWord}[^.!?\\n]{0,14}?${KO_ACTION_INCAPABLE.source}`, 'u');
+  const enIncapable = latinWord === undefined ? undefined : new RegExp(`${EN_ACTION_INCAPABLE.source}\\s+(?:\\S+\\s+){0,2}?${latinWord}`, 'iu');
+  const namesAction = (sentence: string): boolean => (latinWord !== undefined && new RegExp(latinWord, 'u').test(sentence)) || (hangulWord !== undefined && new RegExp(hangulWord, 'u').test(sentence));
+  // The reply is about Quoky's own items: it names a local list (the catalog's to-do / reminder nouns) or the sentence an
+  // item number ("3번", "#3"). "더 자세히 알려드릴까요?" or "추가로 설명해 드릴까요?" offer nothing Quoky would write.
+  const listNouns = NL_ENTRY_NOUNS.flatMap((list) => list.words).map((word) => word.toLowerCase());
+  const lowered = text.toLowerCase().replace(/to-do/gu, 'todo');
+  const namesList = listNouns.some((noun) => lowered.includes(noun));
+  for (const raw of text.split(/(?<=[.!?。？])\s+|\n+/u)) {
+    const sentence = raw.trim().toLowerCase();
+    if (sentence.length === 0 || !namesAction(sentence) || readNouns.some((noun) => sentence.includes(noun))) continue;
+    if (!namesList && !/\d+\s*번|#\s?\d+|\bnumber\s+\d+/u.test(sentence)) continue;
+    const offer = (KO_YES_NO_OFFER.test(sentence) && /[?？]\s*$/u.test(sentence)) || EN_YES_NO_OFFER.test(sentence);
+    const incapable = koIncapable?.test(sentence) === true || enIncapable?.test(sentence) === true;
+    if (offer || incapable) return { text: renderRestate(language), guarded: true };
+  }
+  return { text, guarded: false };
 }
 
 function bounded(text: string, max: number): string {

@@ -250,6 +250,38 @@ export function renderGarbledAction(candidate: string, language: Lang): string {
 }
 
 /**
+ * Owner decision (b) of 2026-10-19: the noun that decides the list looks like a typo of a catalog list noun ("리마이너 걸어줘"
+ * → "'리마인더' 말씀이세요?"). Nothing was changed; the owner restates with the noun.
+ */
+export function renderGarbledNoun(candidate: string, language: Lang): string {
+  return language === 'en'
+    ? `Did you mean "${candidate}"? Nothing was changed yet. If so, please say it again with that word.`
+    : `'${candidate}' 말씀이세요? 아직 아무것도 바꾸지 않았어요. 맞으면 '${candidate}'(으)로 다시 말씀해 주세요.`;
+}
+
+/**
+ * Owner decision (b) of 2026-10-19: a word in the list noun's slot that is close to no known noun: the owner is asked what it
+ * means (the owner's own word, echoed back in a DM only). Nothing was changed.
+ */
+export function renderUnknownNoun(word: string, language: Lang): string {
+  return language === 'en'
+    ? `What do you mean by "${word}"? Nothing was changed yet. Please tell me again whether it is a to-do or a reminder.`
+    : `'${word}'(이)가 무슨 뜻인가요? 아직 아무것도 바꾸지 않았어요. 할 일인지 알림인지 다시 말씀해 주세요.`;
+}
+
+/**
+ * Live test 4 (2026-10-17, turns 26 / 58 / 60): a reminder request with no time. The question names what is missing (the
+ * time) instead of the generic "무엇을/어느 항목을 다시 말씀해 주세요". No open question is kept: A6-D2 pending questions are
+ * content-free (ids and closed values only), so the reminder text cannot wait for the answer; the owner says it again with
+ * the time.
+ */
+export function renderAskWhen(language: Lang): string {
+  return language === 'en'
+    ? 'When should I remind you? Nothing was created yet. Please tell me again with the time (for example "tomorrow at 9am").'
+    : '언제 알려 드릴까요? 아직 아무것도 만들지 않았어요. 시간을 넣어 다시 말씀해 주세요 (예: 내일 오전 9시에).';
+}
+
+/**
  * A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3): "이번엔 3번" right after "1번 완료" plausibly means
  * "complete 3 too", but the action is only inferred, so Core asks with it: "할 일 3번도 완료할까요? (응 / 아니)"; with no
  * such last action (`continued` false) the selector's inferred action: "할 일 2번을 완료할까요? (응 / 아니)". "응" runs it

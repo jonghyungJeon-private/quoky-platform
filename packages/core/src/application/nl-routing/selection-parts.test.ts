@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
+import { guardDeadEndActionReplies, guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
+import { NL_ACTION_ENTRIES } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, prepareSelectionInput } from './selection-input';
 import { NL_SELECTION_OUTPUT_MAX_BYTES, parseSelectionOutput } from './selection-output';
 import { buildSelectionPrompt, NL_SELECTION_PROMPT_VERSION } from './selection-prompt';
@@ -361,5 +362,22 @@ describe('honest chat (ADR-0120 D9)', () => {
     for (const reply of ['노션에는 접근할 수 없어요.', 'Jira는 이슈 추적 도구예요.', '메일에는 접근할 수 없어요.', '']) {
       expect(guardFalseIncapabilityClaims(reply, configured, 'ko').guarded).toBe(false);
     }
+  });
+
+  it('A6 live test 4 (turns 39, 53): while actions are offered, a yes/no offer of an action or a false "cannot" about one becomes the restate', () => {
+    const withActions = [...configured, ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined)];
+    for (const reply of ['3번도 완료할까요?', '방금 추가한 할 일을 취소하고 싶으시군요. 여기서는 제가 직접 취소할 수 없어요.', 'Shall I add it to your to-do list?', "I can't remove items from your to-do list here."]) {
+      expect(guardFalseIncapabilityClaims(reply, withActions, 'ko'), reply).toEqual({ text: '무엇을/어느 항목을 다시 말씀해 주세요.', guarded: true });
+    }
+    // Offers of nothing Quoky writes, true statements about read-only sources, and families that are not offered stay.
+    for (const reply of ['더 자세히 알려드릴까요?', '추가로 설명해 드릴까요?', '캘린더 일정은 제가 취소할 수 없어요. 할 일은 말씀만 하세요.', '좋아요!']) {
+      expect(guardDeadEndActionReplies(reply, withActions, 'ko'), reply).toEqual({ text: reply, guarded: false });
+    }
+    expect(guardFalseIncapabilityClaims('3번도 완료할까요?', configured, 'ko')).toEqual({ text: '3번도 완료할까요?', guarded: false });
+  });
+
+  it('A6 live test 4: the configured-sources fact tells the chat never to deny or offer an offered action as a yes/no question', () => {
+    const withActions = [...configured, ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined)];
+    expect(renderConfiguredSourcesFact(withActions, ['- 할 일 추가: "할 일 추가: 내용"'])).toContain('It never says Quoky cannot do them, and never offers one as a yes/no question');
   });
 });

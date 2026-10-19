@@ -258,6 +258,138 @@ export function nlGarbledActionWord(
   return undefined;
 }
 
+// ── owner decision (b) of 2026-10-19: a garbled ENTRY noun ─────────────────────────────────────────────────────────
+
+/** Hangul initial consonants as keys (index into ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ), for each final consonant (0 = none). */
+const FINAL_KEYS: ReadonlyArray<readonly number[]> = [
+  [], [0], [1], [0, 9], [2], [2, 12], [2, 18], [3], [5], [5, 0], [5, 6], [5, 7], [5, 9], [5, 16], [5, 17], [5, 18],
+  [6], [7], [7, 9], [9], [10], [11], [12], [14], [15], [16], [17], [18],
+];
+
+/**
+ * The KEYSTROKES of a word: a Hangul syllable as its consonant and vowel keys, with an initial and a final consonant as the
+ * SAME key (the input method composes a syllable from keys and moves a final consonant to the next syllable when a vowel
+ * follows); other characters as they are. A one-key slip is distance 1 here even when the composition moved a consonant
+ * across a syllable boundary ("리마이너" is "리마인더" without its ㄷ key; on positional jamo the two are 2 apart).
+ */
+function keysOf(text: string): Unit[] {
+  const units: Unit[] = [];
+  for (const char of Array.from(text)) {
+    const parts = partsOf(char);
+    if (parts === undefined) {
+      if (!/\s/u.test(char)) units.push(char);
+      continue;
+    }
+    units.push(100 + parts[0], 200 + parts[1], ...(FINAL_KEYS[parts[2]] ?? []).map((key) => 100 + key));
+  }
+  return units;
+}
+
+/** The keystroke edit distance of two words (spaces ignored); see {@link keysOf}. */
+export function nlKeystrokeDistance(a: string, b: string): number {
+  return distance(keysOf(a), keysOf(b));
+}
+
+/** The nouns that name one item list (the catalog's own list aliases), and the list they name. */
+export interface NlEntryNouns {
+  readonly owner: string;
+  readonly words: readonly string[];
+}
+
+/** What a garbled entry noun asks: a typo of a known noun ("'리마인더' 말씀이세요?"), or an unknown word in its slot. */
+export type NlGarbledEntryNoun = { readonly kind: 'typo'; readonly noun: string; readonly owner: string } | { readonly kind: 'unknown'; readonly word: string };
+
+/** Closed fillers and quantifiers that may stand between the entry noun and its verb ("알림 하나 걸어줘", "알림 좀 만들어줘"). */
+const NOUN_SLOT_FILLERS: ReadonlySet<string> = new Set(['좀', '좀만', '하나', '한개', '두개', '한번', '빨리', '다시', '제발', '지금', '꼭', '새로']);
+/** A destination or instrumental particle on the entry noun ("할 일에 넣어줘", "알림으로 만들어줘"). */
+const DESTINATION_PARTICLE = /(?:에다가|에다|으로|에|로)$/u;
+const MIN_UNKNOWN_SYLLABLES = 2;
+
+/**
+ * Owner decision (b) of 2026-10-19 (live test 4, turn 25: "10월 21일 오전 9시에 리마이너 걸어줘, 검증 도면 회신" executed
+ * `reminder.create`): the garbled-action rule extended from the action word to the NOUN that decides which list an entry
+ * writes (the catalog's to-do and reminder list aliases: 할 일, 투두, todo, 알림, 리마인더, 알람, reminder). Read on the owner's
+ * frame (content and time spans removed), and only when no correct list noun is in it.
+ *
+ * The noun's SLOT is grammar, not a phrase: the object right before a verb the vocabularies pair with a list noun
+ * (`nounVerbs`: 걸, 만들, 설정, 맞춰 from "알림 걸", "리마인더 설정", "할 일 만들"; closed fillers such as 좀 / 하나 may stand
+ * between) or before a request form ("3번 리마이너 취소해줘"), a list noun with a destination particle before a request
+ * ("할릴에 넣어줘"), or the verb-final last word of the message (a bare "<title> 할 일"). A Latin word is checked anywhere in
+ * the frame (English puts the noun after its verb).
+ *  - `typo`: a word in the slot (particles stripped) is one KEYSTROKE from a list noun ({@link nlKeystrokeDistance}; on
+ *    Hangul the jamo distance of garbled-action plus the input method's syllable composition), or, for a loanword noun
+ *    (`loanwords`), a vowel-only variant of it (owner decision E). Latin: one letter, five letters or more.
+ *  - `unknown`: in the object slot of a list-noun verb, a Hangul word of two syllables or more that is no known word and
+ *    near no list noun: the owner is asked what it means.
+ * Known words (`knownWords`: the catalog aliases and source names, every action word) are never garbled. Only a question;
+ * nothing here selects or executes. Pure; the owner's text is never logged.
+ */
+export function nlGarbledEntryNoun(
+  frame: string,
+  nouns: readonly NlEntryNouns[],
+  nounVerbs: readonly string[],
+  knownWords: readonly string[],
+  message: string = frame,
+  loanwords: readonly string[] = [],
+): NlGarbledEntryNoun | undefined {
+  const lists = nouns.map((list) => ({ owner: list.owner, words: list.words.map(normalizeForMatch) }));
+  const spaceless = (word: string): string => word.replace(/\s+/gu, '');
+  const text = normalizeForMatch(frame);
+  const flat = spaceless(text);
+  // A correct list noun anywhere in the frame decides the entry: nothing is garbled.
+  const present = lists.some((list) =>
+    list.words.some((noun) => (isLatinWord(spaceless(noun)) ? new RegExp(`(?<![a-z])${spaceless(noun)}(?![a-z])`, 'u').test(text.replace(/-/gu, '')) : flat.includes(spaceless(noun)))),
+  );
+  if (present) return undefined;
+  const known = [...new Set(knownWords.map((word) => spaceless(normalizeForMatch(word))).filter((word) => word.length > 0))];
+  const loans = new Set(loanwords.map((word) => spaceless(normalizeForMatch(word))));
+  const verbs = nounVerbs.map(normalizeForMatch).filter((verb) => verb.length > 0);
+  const words = wordsOf(frame);
+  const messageLast = wordsOf(message).at(-1);
+  const isKnown = (stem: string): boolean => known.some((word) => (isLatinWord(word) ? stem === word : stem === word || (Array.from(word).length >= MIN_HANGUL_SYLLABLES && stem.includes(word))));
+  const nextContent = (index: number): string => {
+    let at = index + 1;
+    while (NOUN_SLOT_FILLERS.has(words[at] ?? '')) at += 1;
+    return words[at] ?? '';
+  };
+  const near = (stem: string): { readonly noun: string; readonly owner: string } | undefined => {
+    for (const list of lists) {
+      for (const raw of list.words) {
+        const noun = spaceless(raw);
+        if (isLatinWord(noun)) {
+          if (isLatinWord(stem) && noun.length >= MIN_LATIN_LETTERS && stem !== `${noun}s` && distance(Array.from(stem), Array.from(noun)) === 1) return { noun: raw, owner: list.owner };
+          continue;
+        }
+        if (!isHangulWord(stem) || !isHangulWord(noun) || Array.from(noun).length < MIN_HANGUL_SYLLABLES || Array.from(stem).length < MIN_HANGUL_SYLLABLES) continue;
+        if (nlKeystrokeDistance(stem, noun) <= 1 || (loans.has(noun) && isVowelOnlyVariant(stem, noun))) return { noun: raw, owner: list.owner };
+      }
+    }
+    return undefined;
+  };
+  let unknown: string | undefined;
+  for (const [index, word] of words.entries()) {
+    const latin = isLatinWord(word.replace(/-/gu, ''));
+    const plain = word.replace(/-/gu, '');
+    const once = word.replace(PARTICLE_TAIL, '');
+    const stems = latin ? [plain] : [...new Set([word, once, once.replace(PARTICLE_TAIL, '')])].filter((stem) => isHangulWord(stem));
+    if (stems.length === 0 || stems.some(isKnown)) continue;
+    const next = nextContent(index);
+    const objectSlot = !latin && verbs.some((verb) => next.startsWith(verb));
+    // The object of the request itself ("3번 리마이너 취소해줘"): the word right before a request form.
+    const requestSlot = !latin && nlIsRequestForm(next);
+    const destinationSlot = !latin && DESTINATION_PARTICLE.test(word) && (requestSlot || objectSlot);
+    const finalSlot = !latin && index === words.length - 1 && word === messageLast;
+    if (!latin && !objectSlot && !requestSlot && !destinationSlot && !finalSlot) continue;
+    for (const stem of stems) {
+      const candidate = near(stem);
+      if (candidate !== undefined) return { kind: 'typo', ...candidate };
+    }
+    const bare = stems.at(-1) ?? '';
+    if (objectSlot && unknown === undefined && Array.from(bare).length >= MIN_UNKNOWN_SYLLABLES && !NOUN_SLOT_FILLERS.has(bare)) unknown = word;
+  }
+  return unknown === undefined ? undefined : { kind: 'unknown', word: unknown };
+}
+
 /**
  * Elliptical continuation (CA review P2): whether a word of the owner's `frame` is a normal inflection of an action word
  * of the closed vocabularies (a verb form's ending consonant or contraction: "끝냄", "마침", "지움", "없앰", "마쳐"; English

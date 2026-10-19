@@ -276,11 +276,35 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
     expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v39', sha256: 'fe13de80a8b71bc67b138e834036575819a76013fa86164bb7455ca0df3a4555' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v44', sha256: '7a2fafc8e1d462d8ea4b90a660f1466980f060442a1d592ac928b3507ed1709c' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v49', sha256: '52cff987665aaa54923b6662455aa47db391b7652f240c8a9d392e5e4e125eef' });
   });
 });
 
-describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v44 with actions', () => {
+describe('A6 prompt v49 (live test 4): colon labels and a bare "<content> 할 일" are the to-do / reminder writes', () => {
+  const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: 'x', actions: { referenceContext: 'none' } });
+
+  it('the colon-form line no longer sends a to-do or reminder label to none, and the bare form is todo.add', () => {
+    expect(prompt).toContain('"<label>: <value>" colon form that hands Quoky a value to register, delete or set. When its label names a to-do or');
+    expect(prompt).toContain('reminder.create) with the text after the label as its span; any other such command is none');
+    expect(prompt).not.toContain('colon form that hands Quoky a value to register, delete or set, is none even when it names one of');
+    expect(prompt).toContain('A message that is only content and a to-do or reminder noun, with no verb ("<content> 할 일"), asks to add it now:');
+  });
+
+  it('its three new examples are what Core validates from their own text', () => {
+    const examples: Array<[string, string, Record<string, string>]> = [
+      ['거실 전구 교체 할 일', 'todo.add', { title: '거실 전구 교체' }],
+      ['To-do: return the library books', 'todo.add', { title: 'return the library books' }],
+      ['알림: 모레 오전 8시 반 분리수거 내놓기', 'reminder.create', { body: '분리수거 내놓기', when: '모레 오전 8시 반' }],
+    ];
+    for (const [text, entryId, args] of examples) {
+      expect(prompt).toContain(`Message: ${text}\nOutput: {"entryId":"${entryId}"`);
+      expect(nlActionInputRefusal(text, text, false), text).toBeUndefined();
+      expect(validateSelection({ entryId, args }, ctx(text)), text).toMatchObject({ ok: true });
+    }
+  });
+});
+
+describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v49 with actions', () => {
   const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v39.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
@@ -296,8 +320,8 @@ describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v44
     }
   });
 
-  it('the A6 prompt (v44) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v44');
+  it('the A6 prompt (v49) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v49');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');

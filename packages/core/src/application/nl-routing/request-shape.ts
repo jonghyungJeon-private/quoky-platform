@@ -702,6 +702,29 @@ export function nlActionWordGrounded(prose: string, words: readonly string[], sp
 const LIGHT_VERB_WORD = /^(?:(?:처리|부탁)?(?:해|하)(?:줘|줘요|주세요|주십시오|줄래|줄래요|주실래요|라|자|요|세요|십시오)?|주세요|줘|줘요|(?:처리|부탁)(?:해요|합니다|드려요|드립니다|드릴게요)?|똑같이|do|please|pls|plz)$/u;
 const GO_SIGNAL = /^(?:ㄱ{2,}|(?:고){2,})[!~.]*$/u;
 
+/** The copula on a word's end (-이야, -야, -이에요, -예요, -입니다, -이다, -임, -이요). */
+const COPULA_TAIL = /(?:이야|야|이에요|예요|에요|입니다|이다|임|이요)$/u;
+/** A bare item reference: a numeral (with 번 / #), or an ordinal ending in 번째 / 째. */
+const REFERENCE_STEM = /^(?:#?\d{1,3}(?:번(?:째)?)?|[가-힣]{0,3}번째|[가-힣]{1,3}째)$/u;
+
+/**
+ * Live test 4 (2026-10-17, turn 39 "이번엔 3번이야" right after "2번 완료"): a frame whose last word is a bare item
+ * reference carrying the copula, and which is elliptical once the copula is set aside ({@link nlFrameIsElliptical}). The
+ * copula names WHICH item ("this time it's #3"), not a fact about one, so the statement veto does not decide such a frame:
+ * the caller offers the continuation confirmation (only right after the same action), else the turn stays chat. Closed
+ * classes only (the copula endings, numerals and ordinals); no phrase list. Pure.
+ */
+export function nlFrameIsCopularReference(frame: string, actionWords: readonly string[]): boolean {
+  const words = wordsOf(normalizeForMatch(frame));
+  const last = words.at(-1);
+  if (last === undefined || !COPULA_TAIL.test(last)) return false;
+  const stem = last.replace(COPULA_TAIL, '');
+  const previous = words.at(-2) ?? '';
+  // "세 번째야": the ordinal spans two words.
+  const reference = REFERENCE_STEM.test(stem) || (/^번째$/u.test(stem) && /^[가-힣]{1,2}$/u.test(previous));
+  return reference && nlFrameIsElliptical([...words.slice(0, -1), stem].join(' '), actionWords);
+}
+
 /**
  * ADR-0120 A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, gold a6-reference-none-002 "이번엔 3번"): whether
  * a LOCAL_WRITE frame (the owner's prose without the selector's content spans) is ELLIPTICAL: once the light-verb class

@@ -111,13 +111,13 @@ const REASONS = [
   'deictic-payload', 'time-in-title', 'time-outside-when', 'when-unparsed', 'credential',
   'content-mode', 'missing-arg',
   'no-action', 'undo-of-undo', 'already-final', 'changed', 'fired', 'past-time', 'event-gone', 'limit', 'echo-mismatch',
-  'bulk', 'not-dm', 'capped', 'stopped',
+  'bulk', 'not-dm', 'capped', 'stopped', 'undo-confirm',
 ] as const;
 /**
  * The reasons of a clarification question (which item, which list, which mode, restate the item): `acceptsAnyQuestion`
  * counts only these, never a refusal (input guard, cap, kill switch, payload or time rule; CA review).
  */
-const CLARIFICATION_REASONS: ReadonlySet<string> = new Set(['garbled-action', 'out-of-range', 'expired', 'ambiguous', 'stale', 'other-source', 'none', 'conflict', 'content-mode', 'missing-arg', 'invalid-arg', 'ungrounded', 'no-action-word']);
+const CLARIFICATION_REASONS: ReadonlySet<string> = new Set(['garbled-action', 'garbled-noun', 'out-of-range', 'expired', 'ambiguous', 'stale', 'other-source', 'none', 'conflict', 'content-mode', 'missing-arg', 'invalid-arg', 'ungrounded', 'no-action-word']);
 const SOURCES = ['todo', 'reminder', 'mail', 'drive', 'jira', 'slack'] as const;
 type Source = (typeof SOURCES)[number];
 
