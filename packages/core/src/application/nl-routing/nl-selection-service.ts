@@ -40,7 +40,7 @@ import {
   type NlText,
   NL_IGNORABLE_EXTRA_ARGS,
 } from './catalog';
-import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES, nlNamesPeriod, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES, nlOwnerPeriod, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -2303,7 +2303,7 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
       if (dropped.length === 0) return undefined;
       // Codex P2 (2026-10-19): the owner stated a period ("내일 알림 보여줘") but the repaired read carries none (the selector
       // wrote it as an unusable detail, e.g. {tomorrow: true}): the owner named a filter Core cannot apply as written: ask.
-      if (result.value.range === undefined && nlNamesPeriod(ctx.groundingText)) return undefined;
+      if (result.value.range === undefined && nlOwnerPeriod(ctx.groundingText).named) return undefined;
       return { result, dropped };
     }
     const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);
@@ -2317,7 +2317,7 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
     // and asks.
     if (result.reason === 'unknown-arg' && spec === undefined && NL_IGNORABLE_EXTRA_ARGS.includes(name)) kind = 'unlisted';
     // Owner decision of 2026-10-19: a period that needs the owner's time words, given with none, is a model invention: dropped.
-    else if (result.reason === 'ungrounded' && spec?.kind === 'range' && spec.timeWordsRequired === true && !nlNamesPeriod(ctx.groundingText)) kind = 'range';
+    else if (result.reason === 'ungrounded' && spec?.kind === 'range' && spec.timeWordsRequired === true && !nlOwnerPeriod(ctx.groundingText).named) kind = 'range';
     else if (result.reason === 'invalid-arg' && spec !== undefined && spec.kind === 'enum' && spec.presentation === true && spec.required !== true && spec.default !== undefined) {
       const words = [...(spec.values ?? []), ...Object.values(spec.valueGrounding ?? {}).flatMap((list) => [...list])].map((word) => normalizeForMatch(word)).filter((word) => word.length > 1);
       if (!words.some((word) => text.includes(word))) kind = 'enum';

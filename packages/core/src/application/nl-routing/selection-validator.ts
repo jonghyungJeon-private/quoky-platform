@@ -20,8 +20,7 @@ import {
   NL_ACTION_WORDS,
   NL_CONTENT_WORDS,
   containsNlTimeExpression,
-  nlNamesPeriod,
-  nlExpressedRangeSymbols,
+  nlOwnerPeriod,
   NL_ENTRY_NOUN_LOANWORDS,
   NL_ENTRY_NOUN_VERBS,
   NL_ENTRY_NOUNS,
@@ -643,7 +642,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     const given = args[rangeSpec.name];
     // Owner decision of 2026-10-19 (A5 rule 6): a period that needs the owner's time words is ungrounded without one (a
     // model-made period), unless it is the previous selection's own period carried by a follow-up.
-    if (typeof given === 'string' && rangeSpec.timeWordsRequired === true && ctx.previousArgs?.[rangeSpec.name] !== given && !nlNamesPeriod(ctx.groundingText)) {
+    if (typeof given === 'string' && rangeSpec.timeWordsRequired === true && ctx.previousArgs?.[rangeSpec.name] !== given && !nlOwnerPeriod(ctx.groundingText).named) {
       return { ok: false, reason: 'ungrounded', entryId, arg: rangeSpec.name };
     }
     if (typeof given === 'string') {
@@ -756,17 +755,22 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     const given = args[rangeSpec.name];
     // A symbol the entry cannot take ("upcoming" reminders are simply the scheduled ones) names no period of it.
     const periodText = rangeSpec.allowUpcoming === true ? ctx.groundingText : ctx.groundingText.replace(/\bupcoming\b|다가오는/giu, ' ');
-    const ownerPeriod = nlNamesPeriod(periodText);
-    // Codex P2: a range is inherited from the previous selection only when this message names no period of its own.
-    const carried = !ownerPeriod && typeof given === 'string' && ctx.previousArgs?.[rangeSpec.name] === given;
-    if (given === undefined && ownerPeriod) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
-    const expressed = nlExpressedRangeSymbols(ctx.groundingText);
-    if (range !== undefined && !carried && expressed.length === 1) {
-      const owner = resolveNlRange(expressed[0] as string, ctx.now, ctx.timeZone);
-      // Codex P2: a weekday the owner named narrows the period ("다음 주 수요일" = next-wed inside next week; a weekday span
-      // too); the weekday consistency above has validated it, so a range inside the owner's period matches.
-      const narrowed = mentions.length > 0 && owner !== undefined && Date.parse(range.from) >= Date.parse(owner.from) && Date.parse(range.to) <= Date.parse(owner.to);
-      if (owner !== undefined && !narrowed && (owner.from !== range.from || owner.to !== range.to)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+    // Codex P2: ONE resolver of the owner's period (nlOwnerPeriod) for every period guard.
+    const ownerPeriod = nlOwnerPeriod(periodText, mentions.length > 0);
+    // A range is inherited from the previous selection only when this message names no period of its own.
+    const carried = !ownerPeriod.named && typeof given === 'string' && ctx.previousArgs?.[rangeSpec.name] === given;
+    if (given === undefined && ownerPeriod.named) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+    if (range !== undefined && !carried && ownerPeriod.named) {
+      // A period named but not placeable ("25일", "3일 뒤") is never accepted as some range: ask.
+      if (ownerPeriod.symbols === undefined) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+      if (ownerPeriod.symbols.length === 1) {
+        const owner = resolveNlRange(ownerPeriod.symbols[0] as string, ctx.now, ctx.timeZone);
+        if (owner === undefined) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+        // A weekday the owner named narrows the period ("다음 주 수요일" = next-wed inside next week; a weekday span too);
+        // the weekday consistency above has validated it, so a range inside the owner's period matches.
+        const narrowed = mentions.length > 0 && Date.parse(range.from) >= Date.parse(owner.from) && Date.parse(range.to) <= Date.parse(owner.to);
+        if (!narrowed && (owner.from !== range.from || owner.to !== range.to)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+      }
     }
   }
   // A6: the entry's own check after the per-arg checks.

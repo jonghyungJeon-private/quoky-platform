@@ -1133,6 +1133,42 @@ export function nlExpressedRangeSymbols(text: string): string[] {
   return symbols;
 }
 
+/** The owner's expressed period: whether the words name one, and its symbols (`undefined` = named but unresolved). */
+export interface NlOwnerPeriod {
+  readonly named: boolean;
+  readonly symbols?: readonly string[];
+}
+
+/** Days in a month (any year with a leap February: a month span asks no year). */
+const MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+/**
+ * Codex P2 (2026-10-19): THE owner's expressed period, one function for every period guard (grounding, the repair drop
+ * guard, the consistency check), so the guards cannot disagree. `named` when any period word or date is present
+ * ({@link nlNamesPeriod} or a resolved symbol: "in the next 7 days" names next-7-days). `symbols` are the resolved ones
+ * ({@link nlExpressedRangeSymbols}, plus a bare month "12월" as its whole month); `undefined` when the words name a period
+ * that cannot be placed exactly: a day-only date ("25일": the reminder grammar does not resolve it either), a relative
+ * span ("3일 뒤"), any period word with no resolved symbol. A weekday is left to the weekday consistency rule (`weekday`).
+ */
+export function nlOwnerPeriod(text: string, weekday = false): NlOwnerPeriod {
+  const symbols = [...nlExpressedRangeSymbols(text)];
+  const normalized = normalizeForMatch(text);
+  for (const m of normalized.matchAll(/(?<![\d월])(\d{1,2})\s?월(?!\s?\d{1,2}\s?일)/gu)) {
+    const month = Number(m[1]);
+    if (month < 1 || month > 12) continue;
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    const symbol = `${pad(month)}-01..${pad(month)}-${pad(MONTH_DAYS[month - 1] as number)}`;
+    if (!symbols.includes(symbol)) symbols.push(symbol);
+  }
+  const named = symbols.length > 0 || nlNamesPeriod(text);
+  if (!named) return { named: false };
+  // A day-only date ("25일") with no month is never placed by a guess: unresolved.
+  const withoutDates = normalized.replace(/(\d{1,2})\s?월\s?(\d{1,2})\s?일/gu, ' ');
+  const dayOnly = /(?<!\d)\d{1,2}\s?일(?!\s?(?:뒤|후|전|동안|이내|마다|씩))/u.test(withoutDates);
+  if (dayOnly || (symbols.length === 0 && !weekday)) return { named: true };
+  return { named: true, symbols };
+}
+
 /**
  * Codex P2 (2026-10-19): every arg name the catalog defines (read and action entries). A diagnostic names an arg only when
  * it is one of these; any other key the model generated is reported without its name, so nothing it wrote reaches a log.

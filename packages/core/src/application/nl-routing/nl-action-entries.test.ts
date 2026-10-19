@@ -8,6 +8,7 @@ import {
   hasNlDeterminerReference,
   isNlBulkRequest,
   nlNamesPeriod,
+  nlOwnerPeriod,
   nlExpressedRangeSymbols,
   isNlDeicticOnlyPayload,
   isNlSpanInsideStructure,
@@ -313,7 +314,6 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
       ['Dec 25 reminders', '12-25'],
       ['reminders for 12/25', '12-25'],
       ['12월 25일 알림 보여줘', '12-25'],
-      ['25일 알림 보여줘', '10-25'],
       ['reminders next week', 'next-week'],
     ] as const) {
       expect(nlNamesPeriod(text), text).toBe(true);
@@ -340,6 +340,18 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
     expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-wed' } }, ctx('다음 주 수요일 알림 보여줘'))).toMatchObject({ ok: true });
     expect(validateSelection({ entryId: 'reminder.list', args: { range: '10-19..10-21' } }, ctx('다음 주 월요일부터 수요일까지 알림 보여줘'))).toMatchObject({ ok: true });
     expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-thu' } }, ctx('다음 주 수요일 알림 보여줘'))).toMatchObject({ ok: false });
+    // Codex P2: ONE owner-period resolver. "in the next 7 days" names next-7-days (a mismatch or none asks); a day-only
+    // "25일" is named but unresolved, so every range asks.
+    expect(nlOwnerPeriod('reminders in the next 7 days')).toEqual({ named: true, symbols: ['next-7-days'] });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-7-days' } }, ctx('reminders in the next 7 days'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('reminders in the next 7 days'))).toMatchObject({ ok: false, reason: 'range' });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'this-week' } }, ctx('reminders in the next 7 days'))).toMatchObject({ ok: false, reason: 'range' });
+    expect(nlOwnerPeriod('25일 알림 보여줘')).toEqual({ named: true });
+    for (const range of ['today', 'tomorrow', '12-26', '10-25']) {
+      expect(validateSelection({ entryId: 'reminder.list', args: { range } }, ctx('25일 알림 보여줘')), range).toMatchObject({ ok: false, reason: 'range' });
+    }
+    expect(nlOwnerPeriod('12월 알림')).toEqual({ named: true, symbols: ['12-01..12-31'] });
+    expect(nlOwnerPeriod('알림 뭐 있어?')).toEqual({ named: false });
     // No period words and no range is fine.
     expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('알림 뭐 있어?'))).toMatchObject({ ok: true });
     // Codex P2: futureOnly holds on the FINAL range: Mon..Tue of this week is past on Wed 2026-10-14 noon.
