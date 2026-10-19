@@ -328,6 +328,14 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
     expect(validateSelection({ entryId: 'reminder.list', args: { range: 'this-week' } }, ctx('이번 주말 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range' });
     expect(nlExpressedRangeSymbols('이번 주말 알림')).toEqual(['this-weekend']);
     expect(nlExpressedRangeSymbols('다다음 주 알림')).toEqual(['week-after-next']);
+    // Codex P2: a previous range is inherited only when this message names no period; an explicit year is kept.
+    const after = { previousArgs: { range: 'today' } };
+    expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('내일 알림 보여줘', after))).toMatchObject({ ok: false, reason: 'range' });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'today' } }, ctx('내일 알림 보여줘', after))).toMatchObject({ ok: false, reason: 'range' });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'today' } }, ctx('그 중에 다시 보여줘', after))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: '2027-10-22' } }, ctx('2027년 10월 22일 알림 보여줘'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: '10-22' } }, ctx('2027년 10월 22일 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range' });
+    expect(nlExpressedRangeSymbols('Oct 22, 2027 reminders')).toEqual(['2027-10-22']);
     // No period words and no range is fine.
     expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('알림 뭐 있어?'))).toMatchObject({ ok: true });
     // Codex P2: futureOnly holds on the FINAL range: Mon..Tue of this week is past on Wed 2026-10-14 noon.

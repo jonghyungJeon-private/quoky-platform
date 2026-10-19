@@ -1127,7 +1127,7 @@ export function nlExpressedRangeSymbols(text: string): string[] {
     if (!symbols.includes(symbol)) symbols.push(symbol);
   }
   for (const date of reminderMonthDates(text)) {
-    const symbol = `${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
+    const symbol = `${date.year !== undefined ? `${date.year}-` : ''}${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
     if (!symbols.includes(symbol)) symbols.push(symbol);
   }
   return symbols;

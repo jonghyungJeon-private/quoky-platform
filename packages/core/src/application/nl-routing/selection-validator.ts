@@ -754,10 +754,12 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // or date, resolved by the same clock) asks. A follow-up's carried range and a multi-period phrase keep the rules above.
   if (rangeSpec?.timeWordsRequired === true) {
     const given = args[rangeSpec.name];
-    const carried = typeof given === 'string' && ctx.previousArgs?.[rangeSpec.name] === given;
     // A symbol the entry cannot take ("upcoming" reminders are simply the scheduled ones) names no period of it.
     const periodText = rangeSpec.allowUpcoming === true ? ctx.groundingText : ctx.groundingText.replace(/\bupcoming\b|다가오는/giu, ' ');
-    if (given === undefined && ctx.previousArgs?.[rangeSpec.name] === undefined && nlNamesPeriod(periodText)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+    const ownerPeriod = nlNamesPeriod(periodText);
+    // Codex P2: a range is inherited from the previous selection only when this message names no period of its own.
+    const carried = !ownerPeriod && typeof given === 'string' && ctx.previousArgs?.[rangeSpec.name] === given;
+    if (given === undefined && ownerPeriod) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
     const expressed = nlExpressedRangeSymbols(ctx.groundingText);
     if (range !== undefined && !carried && expressed.length === 1) {
       const owner = resolveNlRange(expressed[0] as string, ctx.now, ctx.timeZone);
