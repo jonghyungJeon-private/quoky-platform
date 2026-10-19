@@ -27586,10 +27586,13 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
 ## Owner decisions of 2026-10-19 (A6 live test 4, `docs/plans/a6-live-test-4-record.md`)
 
 - **(a) Turn 69 executes.** "회의 끝나고 검증 회의록 정리 할 일에 넣어줘" adds the to-do now, titled "검증 회의록 정리"
-  (amended by the owner the same day: the timing qualifier is NOT part of the title). A temporal clause right before the
-  task's own words (the grounded title span) only says when the owner will do the task, so the deferred-timing veto skips
-  a deferral word (끝나고, -고 나서, 나중에, "… 후/뒤") whose next word begins the title span; a temporal clause before
-  anything else ("회의 끝나고 할 일에 회의록 정리 넣어줘", "회의 끝나고 2번 완료해줘") still defers the request and stays chat.
+  (amended by the owner the same day: the timing qualifier is NOT part of the title). Narrowed in review (CA P2): ONLY an
+  event clause with its own predicate (-고, -고 나서, -ㄴ 뒤에, -ㄴ 후에, -은 다음에) immediately before a `todo.add` title
+  says when the owner will do the task, so the deferred-timing veto skips it. The bare adverbs 나중에 / 이따가 / 좀 있다가
+  still defer ("나중에 우유 사기 할 일 추가해줘" is chat); complete and cancel have no task to time ("회의 끝나고 회의 준비
+  완료해줘", "회의 끝나고 2번 완료해줘" stay chat); a clause before anything else ("회의 끝나고 할 일에 회의록 정리 넣어줘")
+  defers; and a day or time word right before a non-reminder write's Korean request verb ("우유 사기 할 일에 내일
+  추가해줘") defers the write (a present-day word such as 오늘 does not; a reminder's time words are its own time).
   Gold `a6-paraphrase-todo.add-906` (execute, title "검증 회의록 정리").
 - **(b) A garbled list noun asks** (extends the garbled-action addendum and owner decision E to the noun that decides the
   entry). For a to-do or reminder write, when no catalog list noun (`todo.list` / `reminder.list` aliases) is in the frame

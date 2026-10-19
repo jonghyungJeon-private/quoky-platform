@@ -425,7 +425,9 @@ export function requestShapeOf(
   }
   const words = entry.actionGrounding ?? [];
   const when = typeof args.when === 'string' ? args.when : undefined;
-  let veto = nlRequestVeto(vetoFrame, words, NL_ACTION_WORDS, { content, quoted, trailing, ...(when !== undefined ? { when } : {}) });
+  // Owner decision (a) of 2026-10-19, amended (CA P2): only a to-do being added has a task an event clause may time.
+  const taskTitle = entry.id === 'todo.add' && typeof args.title === 'string' ? args.title : undefined;
+  let veto = nlRequestVeto(vetoFrame, words, NL_ACTION_WORDS, { content, quoted, trailing, ...(when !== undefined ? { when } : {}), ...(taskTitle !== undefined ? { taskTitle } : {}), ...(entry.args.some((spec) => spec.name === 'when') ? { takesWhen: true as const } : {}) });
   // CA P1 (2026-10-19): a colon label hands Quoky content only as the owner's own command. A whole-message quote is quoted
   // speech, a label that does not open the message (only a time may precede it) is a line of pasted material ("회의록 중
   // 할 일: …"), and a second `key:` inside the content is a pasted record ("…, 담당: 김대리"): all reported, none acts.

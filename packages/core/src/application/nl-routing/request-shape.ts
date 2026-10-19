@@ -1,5 +1,6 @@
 import { normalizeForMatch } from './selection-input';
 import { isPastSyllable } from './statement-guard';
+import { isNlTimeWord } from './symbolic-time';
 
 /**
  * ADR-0120 A6-D3a amendment 1 (owner-approved direction 2026-10-16, Proposed): the structural vetoes of a LOCAL_WRITE.
@@ -107,8 +108,15 @@ const QUESTION_EN = /(?:^|[,.;!?]\s*)(?:how|what|why|when|where|who|which|whose)
 // wishes, hedges and deferred timing
 const WISH_KO = /싶|바래|바라|바랍|희망|아마(?=$|\s)|듯(?=$|\s|해|하|함|요|싶|[.!~])|(?:^|\s)각(?=$|\s|[.!~ㅋㅎ])/u;
 const WISH_EN = /\bshould i\b|\bmaybe\b|\bperhaps\b|\bprobably\b|\bmight\b|thinking (?:of|about)|would be nice|\bi wish\b|\bi hope\b|\bhopefully\b/u;
-/** -고 나서, the aspectual 끝나고 / 마치고, 나중에, 이따(가) without a time of its own; English after / later / once. */
-const DEFERRED_KO = /고\s*나서|(?:끝나|마치|끝내)고(?=$|\s)|나중에|이따가?(?=$|\s)(?!\s*\d)/u;
+/**
+ * Deferred timing. An event clause with its own predicate (-고 나서, the aspectual 끝나고 / 마치고 / 끝내고, and the -ㄴ 뒤에 /
+ * -ㄴ 후에 / -은 다음에 forms read below) may instead time a `todo.add` task (owner decision (a)); the bare adverbs 나중에,
+ * 이따(가) without a time of its own and 좀 있다가 always defer the request. English after / later / once.
+ */
+const DEFERRED_CLAUSE_KO = /고\s*나서|(?:끝나|마치|끝내)고(?=$|\s)/u;
+const DEFERRED_ADVERB_KO = /나중에|이따가?(?=$|\s)(?!\s*\d)|좀\s*있다가(?=$|\s)/u;
+/** A word that names the present, not a later time ("오늘 추가해줘" is now). */
+const PRESENT_TIME_WORD = /^(?:오늘|today)$/u;
 const DEFERRED_EN = /\b(?:after|later|once)\b/u;
 
 // conditionals and hypotheticals
@@ -335,6 +343,13 @@ export interface NlRequestSpans {
    * its retraction, negation and joke still count (Codex P1: "할 일 추가해줘 우유 사기, 아니 취소").
    */
   readonly trailing?: readonly string[];
+  /**
+   * Owner decision (a) of 2026-10-19, amended (CA P2): a `todo.add` title. An event clause with its own predicate right
+   * before it ("회의 끝나고 검증 회의록 정리 할 일에 넣어줘") says when the owner will do the task, not when to write it.
+   */
+  readonly taskTitle?: string;
+  /** The entry takes a `when` (a reminder): a time word before its verb is the reminder's own time, never a deferral. */
+  readonly takesWhen?: true;
 }
 
 /**
@@ -379,11 +394,12 @@ function hitOutside(
 }
 
 /**
- * Whether the words right after position `end` (past whitespace) begin a content span: the clause that ends at `end`
- * modifies the task's own words (its time), not the request predicate that follows them.
+ * Whether the words right after position `end` (past whitespace and a 나서) begin a `todo.add` title: the clause that
+ * ends at `end` times the task itself, not the request predicate that follows it.
  */
 function modifiesTask(text: string, end: number, regions: ReadonlyArray<readonly [number, number]>): boolean {
-  const next = end + (/^\s*/u.exec(text.slice(end))?.[0].length ?? 0);
+  // "끝나고 나서": the clause runs through its 나서.
+  const next = end + (/^\s*(?:나서\s*)?/u.exec(text.slice(end))?.[0].length ?? 0);
   return next > end && regions.some(([from]) => from === next);
 }
 
@@ -557,17 +573,34 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
   const mainClause = clausesOf(untimed).at(-1) ?? '';
   const mainStart = untimed.lastIndexOf(mainClause);
   const mainRegions = untimedRegions.map(([from, to]) => [from - mainStart, to - mainStart] as const);
-  // Owner decision (a) of 2026-10-19, amended: a temporal clause right before the task's own words ("회의 끝나고 검증 회의록
-  // 정리 할 일에 넣어줘", title "검증 회의록 정리") only says when the owner will do the task; the request itself is now.
-  // A clause before anything else ("회의 끝나고 할 일에 회의록 정리 넣어줘") still defers the request.
-  const outsideMain = (pattern: RegExp): boolean => hitOutside(pattern, mainClause, mainRegions, undefined, (end) => modifiesTask(mainClause, end, mainRegions));
-  if (outsideMain(DEFERRED_KO) || hitOutside(DEFERRED_EN, untimed, untimedRegions)) return 'deferred';
+  // Owner decision (a) of 2026-10-19, amended (CA P2): an event clause with its own predicate right before a `todo.add`
+  // title ("회의 끝나고 검증 회의록 정리 할 일에 넣어줘", title "검증 회의록 정리") only says when the owner will do the task;
+  // the request itself is now. Nothing else is exempt: a bare adverb (나중에, 이따가), a clause before anything else ("회의
+  // 끝나고 할 일에 회의록 정리 넣어줘") and any clause before a complete / cancel target still defer the request.
+  const titleRegions = spans.taskTitle === undefined ? [] : spanRegions(mainClause, [spans.taskTitle]);
+  const timesTask = (end: number): boolean => modifiesTask(mainClause, end, titleRegions);
+  if (hitOutside(DEFERRED_CLAUSE_KO, mainClause, mainRegions, undefined, timesTask) || hitOutside(DEFERRED_ADVERB_KO, mainClause, mainRegions)) return 'deferred';
+  if (hitOutside(DEFERRED_EN, untimed, untimedRegions)) return 'deferred';
   for (const match of mainClause.matchAll(/(\S+)\s+(?:뒤|후|다음)(?:에|에는)?(?=$|\s)/gu)) {
     const previous = Array.from(match[1] ?? '').at(-1);
     const start = match.index ?? 0;
     const end = start + match[0].length;
     const enclosed = mainRegions.some(([from, to]) => start >= from && end <= to);
-    if (!enclosed && !modifiesTask(mainClause, end, mainRegions) && (finalConsonant(previous) === 4 || previous === '는')) return 'deferred';
+    if (!enclosed && !timesTask(end) && (finalConsonant(previous) === 4 || previous === '는')) return 'deferred';
+  }
+  // CA P2: a day or time word right before the write's request verb ("우유 사기 할 일에 내일 추가해줘") defers the write. A
+  // reminder's own time is its `when`, so this reads only writes that take none.
+  const verbWords = wordsOf(mainClause);
+  // Only a Korean request verb ending the clause ("… 내일 추가해줘"); a noun ending ("… 9시에 리마인더") or English word order
+  // ("undo the last one") has no verb slot to read.
+  if (spans.when === undefined && spans.takesWhen !== true && /[가-힣]/u.test(verbWords.at(-1) ?? '') && isCommandWord(verbWords.at(-1) ?? '', actionWords)) {
+    let at = verbWords.length - 2;
+    // A spaced light verb ("추가 해줘"): the action noun is part of the verb.
+    if (at >= 0 && holdsActionWord(verbWords[at] ?? '', actionWords) && !holdsActionWord(verbWords.at(-1) ?? '', actionWords)) at -= 1;
+    const beforeVerb = at >= 0 ? (verbWords[at] ?? '') : '';
+    const beforeStart = at >= 0 ? mainClause.lastIndexOf(beforeVerb) : -1;
+    const inContent = mainRegions.some(([from, to]) => beforeStart >= from && beforeStart + beforeVerb.length <= to);
+    if (beforeVerb.length > 0 && !inContent && isNlTimeWord(beforeVerb) && !PRESENT_TIME_WORD.test(beforeVerb.replace(/(?:에|은|는|도)$/u, ''))) return 'deferred';
   }
   if (lexicalHit(PLANNED_KO)) return 'statement';
 

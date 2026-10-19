@@ -150,6 +150,32 @@ describe('A6-D3a amendment 1, review round (CA P1/P2, Codex P2)', () => {
     expect(v('todo.add', { title: '회의록 정리' }, '회의 끝난 후 할 일에 회의록 정리 넣어줘')).toMatchObject({ ok: false, reason: 'not-request', arg: 'deferred' });
   });
 
+  it('CA P2 (2026-10-19): only an event clause with its own predicate right before a todo.add title times the task', () => {
+    const deferred = { ok: false, reason: 'not-request', arg: 'deferred' };
+    // Event clauses (-고, -고 나서, -ㄴ 뒤에, -ㄴ 후에, -은 다음에) right before a to-do title: the task's own time.
+    for (const text of [
+      '회의 끝나고 검증 회의록 정리 할 일에 넣어줘',
+      '회의 끝나고 나서 검증 회의록 정리 할 일에 넣어줘',
+      '점심 먹은 뒤에 검증 회의록 정리 할 일에 넣어줘',
+      '점심 먹은 후에 검증 회의록 정리 할 일에 넣어줘',
+      '점심 먹은 다음에 검증 회의록 정리 할 일에 넣어줘',
+    ]) expect(v('todo.add', { title: '검증 회의록 정리' }, text).ok, text).toBe(true);
+    // Bare adverbs still defer, even right before the title.
+    for (const text of ['나중에 우유 사기 할 일 추가해줘', '이따가 우유 사기 할 일에 넣어줘', '좀 있다가 우유 사기 할 일에 넣어줘']) {
+      expect(v('todo.add', { title: '우유 사기' }, text), text).toMatchObject(deferred);
+    }
+    // A day or time word right before the request verb defers the write; a present-day word does not.
+    expect(v('todo.add', { title: '우유 사기' }, '우유 사기 할 일에 내일 추가해줘')).toMatchObject(deferred);
+    expect(v('todo.add', { title: '우유 사기' }, '우유 사기 할 일에 저녁에 추가 해줘')).toMatchObject(deferred);
+    expect(v('todo.add', { title: '우유 사기' }, '우유 사기 할 일에 추가해줘').ok).toBe(true);
+    expect(v('todo.complete', { ref: '#2' }, '2번 내일 완료해줘')).toMatchObject(deferred);
+    // Complete and cancel have no task to time: an event clause before their target defers them, by title or by number.
+    expect(v('todo.complete', { match: '회의 준비' }, '회의 끝나고 회의 준비 완료해줘')).toMatchObject(deferred);
+    expect(v('todo.complete', { ref: '#2' }, '회의 끝나고 2번 완료해줘')).toMatchObject(deferred);
+    expect(v('todo.cancel', { match: '회의 준비' }, '점심 먹은 뒤에 회의 준비 취소해줘')).toMatchObject(deferred);
+    expect(v('todo.cancel', { match: '회의 준비' }, '회의 끝나고 나서 회의 준비 취소해줘')).toMatchObject(deferred);
+  });
+
   it('Codex P2 (round 2): a quoted title holding an action noun is content; a quoted request is still reported', () => {
     expect(v('todo.add', { title: '보고서 추가 검토' }, "할 일에 '보고서 추가 검토' 추가해줘").ok).toBe(true);
     expect(v('todo.add', { title: '작업 완료 보고' }, '할 일에 "작업 완료 보고" 넣어줘').ok).toBe(true);
