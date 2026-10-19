@@ -258,10 +258,16 @@ function colonLabelIsPasted(prose: string, content: readonly string[], clock: { 
   const after = prose.slice(colon.index + 1);
   // Only a label whose content follows it: a colon inside the content itself is the content's.
   if (!content.some((span) => prose.indexOf(span) > colon.index)) return false;
-  if (KEY_INSIDE_SPAN.test(after)) return true;
   const label = prose.slice(0, colon.index).trim();
   const tokens = label.split(/\s+/u).filter((token) => token.length > 0);
-  if (nlRequestsSomething(label, NL_ACTION_WORDS) || tokens.some((token) => nlIsRequestForm(token))) return false;
+  // Codex P2: an explicit command or request label first ("할 일 추가해줘: 회의: 안건 정리" keeps its titled colon); the
+  // second-key rule applies to bare labels only.
+  // Explicit: a Korean request form ("추가해줘") or an English request ("add a todo for me", "remind me"); a nominal action
+  // word ("붙여넣기", "todo 추가") is a label, not an explicit request, and still meets the second-key rule.
+  const explicit = tokens.some((token) => nlIsRequestForm(token)) || (!/[가-힣]/u.test(label) && nlRequestsSomething(label, NL_ACTION_WORDS));
+  if (explicit) return false;
+  if (KEY_INSIDE_SPAN.test(after)) return true;
+  if (nlRequestsSomething(label, NL_ACTION_WORDS)) return false;
   const first = timePrefixLength(tokens, clock);
   const spaceless = normalizeForMatch(tokens.slice(first).join(' ')).replace(/[\s-]+/gu, '');
   return !LIST_LABELS.some((noun) => spaceless === noun || (spaceless.startsWith(noun) && LABEL_ACTION_NOUNS.has(spaceless.slice(noun.length))));

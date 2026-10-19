@@ -601,6 +601,21 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
 
 /** A reporting clause that ends the content in English ("… he told me", "… my boss said", "… she asked"). */
 const EN_REPORT_TAIL = /\b(?:he|she|they|someone|somebody|everyone|my\s+\w+|the\s+\w+|\w+)\s+(?:told|tells|said|says|asked|asks|wrote|writes|mentioned)(?:\s+(?:me|us|him|her|them))?\s*$/u;
+/** The relative and wh-words that make a reporting clause part of the content (the R2 relative-clause rule of #263). */
+const EN_RELATIVE_LEAD = /^(?:what|that|which|who|whom|whose|where|when|how|whatever)$/u;
+
+/**
+ * Codex P2 (2026-10-19): an English reporting clause ends the content ("… he told me") unless a relative or wh-word leads it
+ * ("Read what she wrote", "the doc that my boss mentioned"): then it is a noun phrase of the content, as the R2 rule treats
+ * `email #1 that says "…"`. The lead is looked for among the words right before the reporting verb.
+ */
+function englishReportingTail(body: string): boolean {
+  const match = EN_REPORT_TAIL.exec(body);
+  if (match === null) return false;
+  const before = body.slice(0, (match.index ?? 0) + match[0].length).trim().split(/\s+/u).slice(0, -1).slice(-4);
+  return !before.some((word) => EN_RELATIVE_LEAD.test(word.replace(/[^a-z]/gu, '')));
+}
+
 /** A Korean speech verb that ends the content as its own finite clause ("… 그가 말했어", "… 팀장이 그랬어"). */
 const KO_SPEECH_TAIL = /(?:말했|말하더|얘기했|이야기했|그랬|그러더|전했|시켰)(?:어|어요|다|대|음|지|는데|더라)?$/u;
 
@@ -619,7 +634,7 @@ export function nlLabelTailVeto(span: string): NlRequestVeto | undefined {
   const body = text.replace(/[\s.,!~…;:"'“”‘’)\]]+$/u, '');
   const clauses = clausesOf(body);
   const last = clauses.at(-1) ?? body;
-  if (EN_REPORT_TAIL.test(body) || hearsayEnding([last]) || KO_SPEECH_TAIL.test(wordsOf(last).at(-1) ?? '')) return 'reported';
+  if (englishReportingTail(body) || hearsayEnding([last]) || KO_SPEECH_TAIL.test(wordsOf(last).at(-1) ?? '')) return 'reported';
   const lastStart = body.lastIndexOf(' ') + 1;
   const endsInLast = (pattern: RegExp): boolean => [...body.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))].some((match) => (match.index ?? 0) + match[0].length > lastStart);
   if (endsInLast(QUOTATIVE_KO) || endsInLast(CONTRACTED_QUOTATIVE_KO) || endsInLast(CONTRACTED_QUOTATIVE_FINAL_KO) || endsInLast(QUOTED_REQUEST_KO)) return 'reported';

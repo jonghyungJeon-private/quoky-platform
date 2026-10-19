@@ -822,5 +822,12 @@ describe('CA review of 2026-10-19: colon labels act only as the owner\'s own com
     expect(check('todo.add', { title: '하지 말아야 할 것 정리' }, '할 일: 하지 말아야 할 것 정리')).toMatchObject({ ok: true });
     expect(check('reminder.create', { when: '10월 23일 오후 6시', body: '검증 팀 회식 예약' }, '알림: 10월 23일 오후 6시 검증 팀 회식 예약')).toMatchObject({ ok: true });
     expect(check('todo.add', { title: '검증 vendor invoice recheck' }, 'To-do: 검증 vendor invoice recheck')).toMatchObject({ ok: true });
+    // Codex P2: a reporting clause led by a relative or wh-word is content (the R2 relative-clause rule).
+    expect(check('todo.add', { title: 'Read what she wrote' }, 'To-do: Read what she wrote')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: 'reply to the mail that my boss mentioned' }, 'To-do: reply to the mail that my boss mentioned')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: 'buy milk he told me' }, 'Todo: buy milk he told me')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    // Codex P2: an explicit request label keeps a titled colon in its content; a bare label with a second key is pasted.
+    expect(check('todo.add', { title: '회의: 안건 정리' }, '할 일 추가해줘: 회의: 안건 정리')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '회의: 안건 정리' }, '할 일: 회의: 안건 정리')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
   });
 });
