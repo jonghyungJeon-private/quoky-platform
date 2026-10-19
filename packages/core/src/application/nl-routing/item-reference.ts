@@ -175,6 +175,8 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
       // CA P3 (2026-10-19): after a FILTERED reminder listing (a period) that is the owner's latest view, a number it did
       // not show is not resolved by display number: Core asks with the numbers it did show.
       if (listed === undefined && slot !== undefined && slot.filtered === true && state.listings.mostRecent === slot) {
+        // An empty filtered view showed nothing: "목록에 0건만 있어요. 13번은 없어요."
+        if (slot.items.length === 0) return unresolved(input, 'out-of-range', { count: 0, index: ref.index, found: 'reminder', listingAt: slot.at });
         return unresolved(input, 'ambiguous', { candidates: slot.items.slice(0, 10), found: 'reminder', listingAt: slot.at });
       }
       return { kind: 'resolved', target: { source: 'reminder', ...(listed !== undefined ? { id: listed.id } : {}), label: ref.index } };

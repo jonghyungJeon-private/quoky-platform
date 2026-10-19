@@ -745,6 +745,9 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       return { ok: false, reason: 'weekday', entryId, arg: rangeSpec.name };
     }
   }
+  // Codex P2 (2026-10-19): `futureOnly` again on the FINAL range (a weekday bound may have re-spelled it: "이번 주 월요일부터
+  // 화요일까지" on a Wednesday is entirely past).
+  if (rangeSpec?.futureOnly === true && range !== undefined && Date.parse(range.to) <= Date.parse(ctx.now)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
   // A6: the entry's own check after the per-arg checks.
   if (entry.check !== undefined) {
     const failure = entry.check(args, groundingText);

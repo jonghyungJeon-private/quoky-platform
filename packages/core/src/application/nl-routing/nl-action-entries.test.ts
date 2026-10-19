@@ -319,6 +319,10 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
       expect(validateSelection({ entryId: 'reminder.list', args: { range } }, ctx(text)), text).toMatchObject({ ok: true });
     }
     expect(nlNamesPeriod('알림 뭐 있어?')).toBe(false);
+    // Codex P2: futureOnly holds on the FINAL range: Mon..Tue of this week is past on Wed 2026-10-14 noon.
+    for (const range of ['this-week', '10-12..10-13']) {
+      expect(validateSelection({ entryId: 'reminder.list', args: { range } }, ctx('이번 주 월요일부터 화요일까지 알림 보여줘')), range).toMatchObject({ ok: false, reason: 'range' });
+    }
     expect(validateSelection({ entryId: 'reminder.list', args: { status: 'done', range: 'tomorrow' } }, ctx('내일 지난 알림 보여줘'))).toMatchObject({ ok: false, reason: 'invalid-arg', arg: 'range' });
     expect(validateSelection({ entryId: 'reminder.list', args: { status: 'all', range: 'tomorrow' } }, ctx('내일 알림 전부 보여줘'))).toMatchObject({ ok: true });
   });

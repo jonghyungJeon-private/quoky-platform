@@ -452,6 +452,9 @@ describe('owner decision of 2026-10-19: reminder.list with a period lists only t
   it('an empty period names it', async () => {
     const { conversation } = service();
     await conversation.handleAction(cmd('reminder.create', { body: '모레 서류', when: '모레 9시' }), base());
-    expect(text(await conversation.listReplyDetailed(base(), undefined, range('tomorrow')))).toBe('내일 예정된 알림이 없어요.');
+    const empty = await conversation.listReplyDetailed(base(), undefined, range('tomorrow'));
+    expect(text(empty)).toBe('내일 예정된 알림이 없어요.');
+    // Codex P2: the empty filtered view is still reported, so its marker keeps an unshown number from resolving.
+    expect(empty.listing).toEqual({ source: 'reminder', items: [], filtered: true });
   });
 });

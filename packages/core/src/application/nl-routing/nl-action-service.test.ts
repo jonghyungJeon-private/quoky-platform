@@ -1297,6 +1297,11 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
     expect(actionLogs(unshown.w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.cancel', result: 'asked' });
     const shown = await run('15번 알림 취소해줘', out('reminder.cancel', { ref: '#15' }), (setup) => setup.setMetadata(LAST_LISTING_METADATA_KEY, filtered()));
     expect(shown.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.cancel', target: { id: 'r-15', label: 15 } } });
+    // Codex P2: an EMPTY filtered view keeps its marker; a number after it asks ("목록에 0건만 있어요"), never resolves.
+    const empty = await run('13번 알림 취소해줘', out('reminder.cancel', { ref: '#13' }), (setup) =>
+      setup.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, 'owner', 'reminder', [], at(0), 'listing', 'm-list', true)),
+    );
+    expect(empty.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('목록에 0건만 있어요') });
     // An unfiltered listing keeps the display-number rule.
     const plain = await run('13번 알림 취소해줘', out('reminder.cancel', { ref: '#13' }), (setup) => setup.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, 'owner', 'reminder', [{ label: 15, id: 'r-15' }], at(0), 'listing', 'm-list')));
     expect(plain.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.cancel', target: { label: 13 } } });

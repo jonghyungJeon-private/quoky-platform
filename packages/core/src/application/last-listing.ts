@@ -132,7 +132,8 @@ function entryOf(raw: unknown, source: ListingSource | undefined, allowEmptyIds 
   if (source !== undefined && actual !== source) return undefined;
   if (typeof entry.at !== 'string' || !Number.isFinite(Date.parse(entry.at))) return undefined;
   const ids = boundedIds(entry.ids, MAX_IDS, MAX_ID_CHARS);
-  if (ids === undefined || (ids.length === 0 && !allowEmptyIds)) return undefined;
+  // Codex P2 (2026-10-19): an EMPTY filtered view (a reminder period with nothing in it) is kept as a marker.
+  if (ids === undefined || (ids.length === 0 && !allowEmptyIds && entry.filtered !== true)) return undefined;
   // The GML-2 fields are optional; a malformed one is dropped, never trusted.
   const requestId = typeof entry.requestId === 'string' && entry.requestId.length > 0 && entry.requestId.length <= MAX_REPLY_ID_CHARS ? entry.requestId : undefined;
   const replyIds = entry.replyIds === undefined ? undefined : boundedIds(entry.replyIds, MAX_REPLY_IDS, MAX_REPLY_ID_CHARS);
@@ -499,11 +500,15 @@ export function withLabelledListing(
     // it. The pre-merge listing moves into `replied` with its reply ids, so a platform reply to the ORIGINAL message
     // resolves against exactly the labels it showed (Codex review P1), and the merged listing starts without reply ids.
     if (previous?.replyIds !== undefined) replied.push(previous);
+    const request = requestId !== undefined && requestId.length > 0 && requestId.length <= MAX_REPLY_ID_CHARS ? requestId : undefined;
     if (merged.length === 0) {
-      if (mode === 'listing') delete slots[source];
+      // Codex P2 (2026-10-19): an empty FILTERED view stays as an empty marker, so a number the owner then names asks
+      // instead of resolving by display number; any other empty listing clears the slot, as before.
+      if (mode === 'listing' && filtered === true) {
+        slots[source] = { source, ids: [], labels: [], at: now, filtered: true, ...(request !== undefined ? { requestId: request } : {}) };
+      } else if (mode === 'listing') delete slots[source];
       return { slots, ...settle(replied, own.expired, now) };
     }
-    const request = requestId !== undefined && requestId.length > 0 && requestId.length <= MAX_REPLY_ID_CHARS ? requestId : undefined;
     slots[source] = {
       source,
       ids: merged.map((item) => item.id),

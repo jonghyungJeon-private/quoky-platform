@@ -586,6 +586,7 @@ export class ReminderConversationService {
       const period = range === undefined ? undefined : nlRangeLabel(range, input.language ?? 'ko');
       const rendered = this.deps.composer.listRendered(active, input.now, period);
       const listing = this.deps.actionReceipts === true ? listingOf(active.slice(0, rendered.shown), range !== undefined).listing : undefined;
+      // An empty filtered view is still reported (its empty, filtered receipt keeps unshown numbers from resolving).
       return { reply: this.reply(turn, rendered.body), ...(listing !== undefined ? { listing } : {}) };
     } catch (error) {
       this.deps.logger.error('reminder.conversation.failed', {
