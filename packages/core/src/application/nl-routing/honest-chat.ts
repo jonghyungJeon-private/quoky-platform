@@ -1,6 +1,6 @@
 import type { NlCatalogEntry } from './catalog';
 import { renderRestate } from './nl-action-policy';
-import { NL_ENTRY_NOUNS } from './action-entries';
+import { NL_ACTION_VERBAL_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ENTRY_NOUNS, containsNlTimeExpression } from './action-entries';
 
 /**
  * Honest chat after selection (ADR-0120 D9). When the selector finds no entry (or cannot run), the chat turn carries
@@ -67,8 +67,10 @@ const KO_YES_NO_OFFER = /(?:까요|까)\s*[?？]?\s*$/u;
 /** An English offer that waits for a yes ("Shall I …?", "Do you want me to …?", "Should I …?"). */
 const EN_YES_NO_OFFER = /^(?:shall i|should i|do you want me to|would you like me to|want me to|can i|may i)\b[^?]*\?\s*$/iu;
 /** An incapability after the action word ("직접 취소할 수 없어요", "추가는 못 해요"). */
-const KO_ACTION_INCAPABLE = /(?:수\s*(?:가\s*)?없|못\s*(?:해|하|합|했|드려|드립)|불가|지원하지\s*않|기능이\s*없)/u;
+const KO_ACTION_INCAPABLE = /(?:수\s*(?:가|는|도)?\s*없|못\s*(?:해|하|합|했|드려|드립)|불가|지원하지\s*않|기능이\s*없)/u;
 const EN_ACTION_INCAPABLE = /\b(?:can(?:no|['’])t|cannot|unable to|not able to)/iu;
+/** CA P2 (2026-10-19): a how-to or explanation offer is about using Quoky, not an action offer ("…추가하는 방법을 알려드릴까요?"). */
+const EXPLANATION = /방법|설명|어떻게|사용법|\bhow (?:to|do|can)\b|\bexplain/u;
 
 /**
  * Live test 4 (2026-10-17, turns 39 and 53): while an action family is offered, a chat reply cannot act on a yes, and a
@@ -90,27 +92,77 @@ export function guardDeadEndActionReplies(text: string, entries: readonly NlCata
     .filter((word) => word.length >= 2);
   const escape = (word: string): string => word.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').replace(/ /g, '\\s+');
   const latin = words.filter((word) => /^[a-z ]+$/u.test(word)).map(escape);
-  const hangul = words.filter((word) => !/^[a-z ]+$/u.test(word)).map(escape);
   const latinWord = latin.length === 0 ? undefined : `\\b(?:${latin.join('|')})\\b`;
-  const hangulWord = hangul.length === 0 ? undefined : `(?:${hangul.join('|')})`;
+  // Codex P2 (2026-10-19): a Korean action word counts only as the action itself, word-initial and in an action form, never
+  // as a substring of another word ("추가로 설명해 드릴까요?" offers an explanation, not an add). A verbal noun (추가, 완료,
+  // 취소 …) needs its light verb, 처리 or an object particle right after it (추가해, 추가할, 추가하기, 추가를, 완료 처리); any
+  // other action word (a verb stem: 넣어, 지워, 빼) must not carry a case particle (…로, …에, …의). A plain speech verb
+  // that is also a reminder verb (알려, 깨워, 상기시켜: no reminder noun of its own) is the reminder only beside a time
+  // ("내일 9시에 알려드릴까요?"), never in "더 자세히 알려드릴까요?".
+  const nouns = new Set(NL_ACTION_VERBAL_NOUNS.map((word) => word.toLowerCase()));
+  const hangulWords = words.filter((word) => !/^[a-z ]+$/u.test(word));
+  const speech = new Set(
+    actions
+      .filter((entry) => entry.id === 'reminder.create')
+      .flatMap((entry) => entry.actionGrounding ?? [])
+      .filter((word) => /[가-힣]/u.test(word) && !/알림|리마인|알람/u.test(word) && !nouns.has(word)),
+  );
+  const NOUN_ACTION_FORM = '(?=해|하|할|한|했|함|되|된|될|됐|돼|처리|를|을|\\s+(?:해|하|할|처리))';
+  const NO_CASE_PARTICLE = '(?!으로|로|에서|에게|에|의|과|와)';
+  const alternation = (list: readonly string[], tail: string): string | undefined => (list.length === 0 ? undefined : `(?:${list.map(escape).join('|')})${tail}`);
+  const hangulPattern = (withSpeech: boolean): string | undefined => {
+    const parts = [
+      alternation(hangulWords.filter((word) => nouns.has(word)), NOUN_ACTION_FORM),
+      alternation(hangulWords.filter((word) => !nouns.has(word) && (withSpeech || !speech.has(word))), NO_CASE_PARTICLE),
+    ].filter((part): part is string => part !== undefined);
+    return parts.length === 0 ? undefined : `(?<![가-힣])(?:${parts.join('|')})`;
+  };
+  // CA P2 (2026-10-19): a list noun used as the place or object of a write is the action too ("리마인더로 만들어 드릴까요?",
+  // "할 일에 넣어 드릴까요?"), and so is a list noun as the object of a denial ("저는 할 일을 대신 해 드릴 수는 없어요").
+  const listNouns = NL_ENTRY_NOUNS.flatMap((list) => list.words).map((word) => word.toLowerCase());
+  const listNoun = `(?<![가-힣a-z])(?:${listNouns.map(escape).join('|')})`;
+  const listWrite = new RegExp(`${listNoun}(?:으로|로|에다|에|을|를)?\\s*(?:${NL_ENTRY_NOUN_VERBS.map(escape).join('|')})`, 'u');
+  const listDenial = new RegExp(`${listNoun}(?:을|를|은|는|도)[^.!?\\n]{0,14}?${KO_ACTION_INCAPABLE.source}`, 'u');
   // The incapability governs the action word: Korean after it in the same stretch, English before it within two words.
-  const koIncapable = hangulWord === undefined ? undefined : new RegExp(`${hangulWord}[^.!?\\n]{0,14}?${KO_ACTION_INCAPABLE.source}`, 'u');
+  const koIncapable = (sentence: string, withSpeech: boolean): boolean => {
+    const word = hangulPattern(withSpeech);
+    return (word !== undefined && new RegExp(`${word}[^.!?\\n]{0,14}?${KO_ACTION_INCAPABLE.source}`, 'u').test(sentence)) || listDenial.test(sentence);
+  };
   const enIncapable = latinWord === undefined ? undefined : new RegExp(`${EN_ACTION_INCAPABLE.source}\\s+(?:\\S+\\s+){0,2}?${latinWord}`, 'iu');
-  const namesAction = (sentence: string): boolean => (latinWord !== undefined && new RegExp(latinWord, 'u').test(sentence)) || (hangulWord !== undefined && new RegExp(hangulWord, 'u').test(sentence));
+  const namesAction = (sentence: string, withSpeech: boolean): boolean => {
+    const word = hangulPattern(withSpeech);
+    return (latinWord !== undefined && new RegExp(latinWord, 'u').test(sentence)) || (word !== undefined && new RegExp(word, 'u').test(sentence)) || listWrite.test(sentence) || listDenial.test(sentence);
+  };
   // The reply is about Quoky's own items: it names a local list (the catalog's to-do / reminder nouns) or the sentence an
   // item number ("3번", "#3"). "더 자세히 알려드릴까요?" or "추가로 설명해 드릴까요?" offer nothing Quoky would write.
-  const listNouns = NL_ENTRY_NOUNS.flatMap((list) => list.words).map((word) => word.toLowerCase());
   const lowered = text.toLowerCase().replace(/to-do/gu, 'todo');
   const namesList = listNouns.some((noun) => lowered.includes(noun));
-  for (const raw of text.split(/(?<=[.!?。？])\s+|\n+/u)) {
+  const offending = (raw: string): boolean => {
     const sentence = raw.trim().toLowerCase();
-    if (sentence.length === 0 || !namesAction(sentence) || readNouns.some((noun) => sentence.includes(noun))) continue;
-    if (!namesList && !/\d+\s*번|#\s?\d+|\bnumber\s+\d+/u.test(sentence)) continue;
+    if (sentence.length === 0 || EXPLANATION.test(sentence)) return false;
+    const timed = containsNlTimeExpression(sentence);
+    if (!namesAction(sentence, timed) || readNouns.some((noun) => sentence.includes(noun))) return false;
+    if (!namesList && !/\d+\s*번|#\s?\d+|\bnumber\s+\d+/u.test(sentence)) return false;
     const offer = (KO_YES_NO_OFFER.test(sentence) && /[?？]\s*$/u.test(sentence)) || EN_YES_NO_OFFER.test(sentence);
-    const incapable = koIncapable?.test(sentence) === true || enIncapable?.test(sentence) === true;
-    if (offer || incapable) return { text: renderRestate(language), guarded: true };
+    return offer || koIncapable(sentence, timed) || enIncapable?.test(sentence) === true;
+  };
+  // CA P2 (2026-10-19): only the offending sentences go; every other sentence of the reply is kept as written, and the
+  // restate closes the reply once.
+  const parts = text.split(/((?<=[.!?。？])\s+|\n+)/u);
+  const kept: string[] = [];
+  let removed = false;
+  for (let index = 0; index < parts.length; index += 2) {
+    const sentence = parts[index] ?? '';
+    const separator = parts[index + 1] ?? '';
+    if (offending(sentence)) {
+      removed = true;
+      continue;
+    }
+    kept.push(sentence, separator);
   }
-  return { text, guarded: false };
+  if (!removed) return { text, guarded: false };
+  const rest = kept.join('').trim();
+  return { text: rest.length === 0 ? renderRestate(language) : `${rest}${/\n/u.test(text) ? '\n' : ' '}${renderRestate(language)}`, guarded: true };
 }
 
 function bounded(text: string, max: number): string {

@@ -39,10 +39,11 @@ import {
 } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
-import { nlFrameIsElliptical, nlHasExclusionOrNegation, nlHasUnnegatedMention, nlRelaysRequest, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
+import { nlFrameIsElliptical, nlHasExclusionOrNegation, nlHasUnnegatedMention, nlIsRequestForm, nlRelaysRequest, nlRequestEndsBefore, nlRequestsSomething, nlRequestVeto, type NlRequestVeto } from './request-shape';
 import { nlFrameHasActionInflection, nlGarbledActionWord, nlGarbledEntryNoun, type NlActionVocabulary, type NlGarbledEntryNoun } from './garbled-action';
 import {
   isNlRangeSymbol,
+  isNlTimeWord,
   isWeekdayOrTimeKeyword,
   nlCanonicalWeekdaySymbol,
   nlRangeKeepsWeekday,
@@ -224,6 +225,63 @@ function spanEnclosure(prose: string, span: string): 'quote' | 'colon' | 'after-
   return toEnd && nlRequestEndsBefore(before, NL_ACTION_WORDS) ? 'after-request' : undefined;
 }
 
+/** The list nouns of the to-do and reminder lists, spaceless and without hyphens ("할일", "todo", "알림", "리마인더"). */
+const LIST_LABELS: readonly string[] = NL_ENTRY_NOUNS.flatMap((list) => list.words).map((word) => normalizeForMatch(word).replace(/[\s-]+/gu, ''));
+const TODO_LIST_LABELS: ReadonlySet<string> = new Set(NL_ENTRY_NOUNS.filter((list) => list.owner === 'todo').flatMap((list) => list.words).map((word) => normalizeForMatch(word).replace(/[\s-]+/gu, '')));
+/** The action nouns a list label may carry ("알림 설정:", "todo 추가:"): the verbal nouns and the list-noun verbs. */
+const LABEL_ACTION_NOUNS: ReadonlySet<string> = new Set([...NL_ACTION_VERBAL_NOUNS, ...NL_ENTRY_NOUN_VERBS].map((word) => normalizeForMatch(word)));
+/** A second `key:` inside a colon-enclosed span (a pasted record: "…, 담당: 김대리"); a clock "9:30" has no space after. */
+const KEY_INSIDE_SPAN = /(?:^|[\s,;·|/])[^\s:：,;]+[:：](?=\s|$)/u;
+
+/** CA P1 (2026-10-19): the whole message stands inside one quote pair: quoted speech, never the owner's command. */
+function wholeMessageQuoted(prose: string): boolean {
+  const text = prose.trim().replace(/[.!?~]+$/u, '');
+  return text.length > 2 && QUOTE_PAIRS.some(([open, close]) => text.startsWith(open) && text.endsWith(close) && !text.slice(1, -1).includes(close));
+}
+
+/**
+ * CA P1 (2026-10-19): whether the message's colon label (the first colon followed by a space, with content spans after it)
+ * is pasted material rather than the owner's command label. A second `key:` after it always is. A label that is itself a
+ * request ("할 일에 추가해줘: …", "can you add a todo for me: …") keeps today's after-request reading. Otherwise the label must OPEN the message: after leading time words only, it is
+ * a list noun of the to-do or reminder list, optionally with one action noun ("할 일:", "알림 설정:", "To-do:", "10월 23일
+ * 오후 6시 알림:"); "회의록 중 할 일:" or "회의록 붙여넣기 할 일:" are lines of something pasted.
+ */
+function colonLabelIsPasted(prose: string, content: readonly string[]): boolean {
+  const colon = /[:：](?=\s|$)/u.exec(prose);
+  if (colon === null) return false;
+  const after = prose.slice(colon.index + 1);
+  // Only a label whose content follows it: a colon inside the content itself is the content's.
+  if (!content.some((span) => prose.indexOf(span) > colon.index)) return false;
+  if (KEY_INSIDE_SPAN.test(after)) return true;
+  const label = prose.slice(0, colon.index).trim();
+  const tokens = label.split(/\s+/u).filter((token) => token.length > 0);
+  if (nlRequestsSomething(label, NL_ACTION_WORDS) || tokens.some((token) => nlIsRequestForm(token))) return false;
+  let first = 0;
+  while (first < tokens.length && isNlTimeWord(tokens[first] as string)) first += 1;
+  const spaceless = normalizeForMatch(tokens.slice(first).join(' ')).replace(/[\s-]+/gu, '');
+  return !LIST_LABELS.some((noun) => spaceless === noun || (spaceless.startsWith(noun) && LABEL_ACTION_NOUNS.has(spaceless.slice(noun.length))));
+}
+
+/** The adnominal (modifier) last syllable of a verb or adjective: -은 / -는 / -던 and the -ㄴ forms ("남은", "밀린", "급한"). */
+const ADNOMINAL_LAST = /(?:은|는|던|한|된|린|진|난|운|온|친|낸|준|든|큰|쁜|픈|긴|센)$/u;
+/** A possessive determiner or the possessive 의 ("우리 팀", "내", "팀장님의"): an owner, not a task. */
+const POSSESSIVE_FIRST = /^(?:우리|저희|내|제|나의|저의|너의|네)$/u;
+
+/**
+ * CA P2 (2026-10-19): the shape of a bare "<title> 할 일" (the frame without the title is only a to-do list noun). `modifier`:
+ * the title ends in an adnominal word, so the phrase names a list ("남은 할 일"); `ask`: one bare noun or an owner's
+ * ("회사 할 일", "팀장님 할 일", "우리 팀 할 일"); `undefined`: not the bare form, or a multi-word task title.
+ */
+function bareTodoTitle(contentFrame: string, title: string): 'modifier' | 'ask' | undefined {
+  const rest = normalizeForMatch(contentFrame).replace(/[\s.!?~,]+/gu, '');
+  if (!TODO_LIST_LABELS.has(rest.replace(/-/gu, ''))) return undefined;
+  const words = normalizeForMatch(title).split(/\s+/u).filter((word) => word.length > 0);
+  const last = words.at(-1) ?? '';
+  if (/[가-힣]$/u.test(last) && ADNOMINAL_LAST.test(last)) return 'modifier';
+  if (words.length <= 1 || POSSESSIVE_FIRST.test(words[0] ?? '') || /의$/u.test(last)) return 'ask';
+  return undefined;
+}
+
 /** The words that name a read of one item (Core's mode and content vocabulary) beside every action word. */
 /**
  * The command words of a quoted read request (Codex P2, round 5): every action word, the Korean mode and content words (a
@@ -297,10 +355,22 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
   }
   const words = entry.actionGrounding ?? [];
   const when = typeof args.when === 'string' ? args.when : undefined;
-  const veto = nlRequestVeto(vetoFrame, words, NL_ACTION_WORDS, { content, quoted, trailing, ...(when !== undefined ? { when } : {}) });
+  let veto = nlRequestVeto(vetoFrame, words, NL_ACTION_WORDS, { content, quoted, trailing, ...(when !== undefined ? { when } : {}) });
+  // CA P1 (2026-10-19): a colon label hands Quoky content only as the owner's own command. A whole-message quote is quoted
+  // speech, a label that does not open the message (only a time may precede it) is a line of pasted material ("회의록 중
+  // 할 일: …"), and a second `key:` inside the content is a pasted record ("…, 담당: 김대리"): all reported, none acts.
+  if (veto === undefined && (wholeMessageQuoted(prose) || colonLabelIsPasted(prose, content))) veto = 'reported';
   // For a target entry an item-source noun is part of the reference; a payload entry has no reference.
   const payload = entry.args.some((spec) => spec.kind === 'span' && spec.required === true);
   let expressesAction = nlFrameExpressesAction(contentFrame, !payload);
+  // CA P2 (2026-10-19), owner decision A narrowed: a bare "<title> 할 일" names a list, not a task, when the title is one
+  // modifier ("남은 할 일", "제일 급한 할 일": an adnominal last word) and asks when it is a single noun or an owner's
+  // ("회사 할 일", "팀장님 할 일", "우리 팀 할 일"); a multi-word task title ("검증 노트북 점검 할 일") still executes.
+  if (entry.id === 'todo.add' && typeof args.title === 'string' && spanEnclosure(prose, args.title) !== 'quote') {
+    const bare = bareTodoTitle(contentFrame, args.title);
+    if (bare === 'modifier') veto ??= 'statement';
+    else if (bare === 'ask') expressesAction = false;
+  }
   if (entry.args.length === 0 && words.length > 0) {
     // A6-D3a amendment 1, undo confirmation rule: the undo needs one of its own words (a bare 돌려 is "give back": "돈 좀
     // 돌려줘") and no dative recipient ("친구한테 책 돌려줘"). Whether it executes directly or asks a confirmation is decided

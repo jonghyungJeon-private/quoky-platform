@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { NL_ACTION_ENTRIES, NL_ACTION_LOANWORDS, NL_ACTION_VERBAL_NOUNS, NL_ACTION_WORDS } from './action-entries';
+import { NL_ACTION_ENTRIES, NL_ACTION_LOANWORDS, NL_ACTION_VERBAL_NOUNS, NL_ACTION_WORDS, NL_ENTRY_NOUN_VERBS, NL_ENTRY_NOUNS } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { nlGarbledActionWord, nlJamoDistance, nlKeystrokeDistance } from './garbled-action';
+import { nlGarbledActionWord, nlGarbledEntryNoun, nlJamoDistance, nlKeystrokeDistance } from './garbled-action';
 import { prepareSelectionInput } from './selection-input';
 import { validateSelection, type NlValidationContext } from './selection-validator';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
@@ -173,7 +173,23 @@ describe('owner decision (b) of 2026-10-19: a garbled or unknown list noun asks'
   });
 
   it('an unknown word in the object slot of a list-noun verb asks what it means', () => {
-    expect(create('10월 21일 오전 9시에 뭉게뭉게 걸어줘, 검증 도면 회신', { when: '10월 21일 오전 9시', body: '검증 도면 회신' })).toMatchObject({ ok: false, reason: 'garbled-noun', unknownWord: '뭉게뭉게' });
+    expect(create('10월 21일 오전 9시에 삐용삐용 걸어줘, 검증 도면 회신', { when: '10월 21일 오전 9시', body: '검증 도면 회신' })).toMatchObject({ ok: false, reason: 'garbled-noun', unknownWord: '삐용삐용' });
+    expect(create('10월 21일 오전 9시에 삐용삐용을 걸어줘, 검증 도면 회신', { when: '10월 21일 오전 9시', body: '검증 도면 회신' })).toMatchObject({ ok: false, reason: 'garbled-noun', unknownWord: '삐용삐용을' });
+  });
+
+  it('Codex P2: the unknown-word path is narrow: adverbs, fillers, time words, case endings and a word not right before the verb never ask', () => {
+    for (const word of ['새롭게', '빨리', '다시', '꼭', '오늘', '내일', '천천히', '알림으로', '같이']) {
+      const text = `내일 9시에 ${word} 만들어줘, 우유 사기`;
+      const result = create(text, { when: '내일 9시', body: '우유 사기' });
+      expect(result.ok === false ? result.reason : 'ok', text).not.toBe('garbled-noun');
+      expect(nlGarbledEntryNoun(`${word} 만들어줘`, NL_ENTRY_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ACTION_WORDS), word).toBeUndefined();
+      expect(nlGarbledEntryNoun(`${word} 걸어줘`, NL_ENTRY_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ACTION_WORDS), word).toBeUndefined();
+    }
+    expect(create('내일 9시에 새롭게 만들어줘, 우유 사기', { when: '내일 9시', body: '우유 사기' })).toMatchObject({ ok: true });
+    // Not directly before the verb (a filler between): no unknown-noun question.
+    expect(nlGarbledEntryNoun('삐용삐용 좀 걸어줘', NL_ENTRY_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ACTION_WORDS)).toBeUndefined();
+    // The typo path is unchanged.
+    expect(nlGarbledEntryNoun('리마이너 걸어줘', NL_ENTRY_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ACTION_WORDS)).toMatchObject({ kind: 'typo', noun: '리마인더' });
   });
 
   it('a correct list noun, a filler, a time word or a request without a list noun never asks', () => {

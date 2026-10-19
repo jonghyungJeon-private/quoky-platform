@@ -1301,8 +1301,8 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
     const typo = await run('10월 21일 오전 9시에 리마이너 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
     expect(typo.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining("'리마인더' 말씀이세요?") });
     expect(actionLogs(typo.w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.create', result: 'asked', reason: 'garbled-noun' });
-    const unknown = await run('10월 21일 오전 9시에 뭉게뭉게 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
-    expect(unknown.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining("'뭉게뭉게'(이)가 무슨 뜻인가요?") });
+    const unknown = await run('10월 21일 오전 9시에 삐용삐용 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
+    expect(unknown.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining("'삐용삐용'(이)가 무슨 뜻인가요?") });
     const right = await run('10월 21일 오전 9시에 리마인더 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
     expect(right.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.create' } });
   });

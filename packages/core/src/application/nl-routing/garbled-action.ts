@@ -1,5 +1,6 @@
 import { normalizeForMatch } from './selection-input';
 import { nlIsRequestForm } from './request-shape';
+import { isNlTimeWord } from './symbolic-time';
 
 /**
  * ADR-0120 A6-D3a amendment 1, garbled action word addendum (owner decision 2026-10-16): "3번 완룐 처리해줘" asks, because
@@ -304,6 +305,31 @@ const NOUN_SLOT_FILLERS: ReadonlySet<string> = new Set(['좀', '좀만', '하나
 /** A destination or instrumental particle on the entry noun ("할 일에 넣어줘", "알림으로 만들어줘"). */
 const DESTINATION_PARTICLE = /(?:에다가|에다|으로|에|로)$/u;
 const MIN_UNKNOWN_SYLLABLES = 2;
+/** The object or topic particle an unknown noun may carry in the object slot ("뭐뭐를 걸어줘"). */
+const OBJECT_PARTICLE = /(?:을|를|은|는)$/u;
+/**
+ * Non-noun morphology on a token (Codex P2, 2026-10-19): an adverb in -게 / -히 / -이 ("새롭게", "천천히", "깨끗이"), a case
+ * ending -로 / -으로 / -에 / -에서 / -서, or a verb or adjective ending (-다, -고, -면, -며, -지, -요, -어/-아/-여, -던, a
+ * past or future marker, an adnominal -ㄴ / -ㄹ / -는). Such a token is no noun, so it is never asked about as one.
+ */
+const NON_NOUN_TAIL = /(?:게|히|이|로|에|서|다|고|면|며|지|요|어|아|여|던|었|았|였|겠|는|도|만|까지|부터)$/u;
+
+/**
+ * Codex P2 (2026-10-19): the unknown-noun path is narrow and structural, since there is no dictionary. A token is asked
+ * about only when it stands in the OBJECT slot of a list-noun verb (`verbs`: 걸, 만들, 설정, 맞춰): bare and directly before
+ * that verb ("삐용삐용 걸어줘"), or with an object or topic particle before it ("삐용삐용을 걸어줘"); it is a Hangul word of
+ * two syllables or more; it carries no adverbial, case or verbal morphology ({@link NON_NOUN_TAIL}: "새롭게", "빨리로");
+ * and it is no closed filler (좀, 빨리, 다시, 꼭 …) and no time word (오늘, 내일, 9시). The caller has already removed the
+ * content and time spans and checked that no correct list noun is present.
+ */
+function isUnknownNounCandidate(word: string, next: string, verbs: readonly string[]): boolean {
+  const particle = OBJECT_PARTICLE.exec(word);
+  const stem = particle === null ? word : word.slice(0, particle.index);
+  const beforeVerb = verbs.some((verb) => next.startsWith(verb));
+  if (!beforeVerb || !isHangulWord(stem) || Array.from(stem).length < MIN_UNKNOWN_SYLLABLES) return false;
+  if (NOUN_SLOT_FILLERS.has(stem) || NOUN_SLOT_FILLERS.has(word) || isNlTimeWord(word) || isNlTimeWord(stem)) return false;
+  return !NON_NOUN_TAIL.test(stem);
+}
 
 /**
  * Owner decision (b) of 2026-10-19 (live test 4, turn 25: "10월 21일 오전 9시에 리마이너 걸어줘, 검증 도면 회신" executed
@@ -319,8 +345,8 @@ const MIN_UNKNOWN_SYLLABLES = 2;
  *  - `typo`: a word in the slot (particles stripped) is one KEYSTROKE from a list noun ({@link nlKeystrokeDistance}; on
  *    Hangul the jamo distance of garbled-action plus the input method's syllable composition), or, for a loanword noun
  *    (`loanwords`), a vowel-only variant of it (owner decision E). Latin: one letter, five letters or more.
- *  - `unknown`: in the object slot of a list-noun verb, a Hangul word of two syllables or more that is no known word and
- *    near no list noun: the owner is asked what it means.
+ *  - `unknown`: a noun-shaped token directly in the object slot of a list-noun verb ({@link isUnknownNounCandidate}), no
+ *    known word and near no list noun: the owner is asked what it means.
  * Known words (`knownWords`: the catalog aliases and source names, every action word) are never garbled. Only a question;
  * nothing here selects or executes. Pure; the owner's text is never logged.
  */
@@ -384,8 +410,7 @@ export function nlGarbledEntryNoun(
       const candidate = near(stem);
       if (candidate !== undefined) return { kind: 'typo', ...candidate };
     }
-    const bare = stems.at(-1) ?? '';
-    if (objectSlot && unknown === undefined && Array.from(bare).length >= MIN_UNKNOWN_SYLLABLES && !NOUN_SLOT_FILLERS.has(bare)) unknown = word;
+    if (unknown === undefined && isUnknownNounCandidate(word, words[index + 1] ?? '', verbs)) unknown = word;
   }
   return unknown === undefined ? undefined : { kind: 'unknown', word: unknown };
 }

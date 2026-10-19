@@ -366,11 +366,17 @@ describe('honest chat (ADR-0120 D9)', () => {
 
   it('A6 live test 4 (turns 39, 53): while actions are offered, a yes/no offer of an action or a false "cannot" about one becomes the restate', () => {
     const withActions = [...configured, ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined)];
-    for (const reply of ['3번도 완료할까요?', '방금 추가한 할 일을 취소하고 싶으시군요. 여기서는 제가 직접 취소할 수 없어요.', 'Shall I add it to your to-do list?', "I can't remove items from your to-do list here."]) {
-      expect(guardFalseIncapabilityClaims(reply, withActions, 'ko'), reply).toEqual({ text: '무엇을/어느 항목을 다시 말씀해 주세요.', guarded: true });
+    const restate = '무엇을/어느 항목을 다시 말씀해 주세요.';
+    // CA P2 (2026-10-19): offers and denials in every form are handled alike ("리마인더로 만들어 드릴까요?", "…해 드릴 수는 없어요").
+    for (const reply of ['3번도 완료할까요?', '할 일은 제가 직접 취소할 수 없어요.', 'Shall I add it to your to-do list?', "I can't remove items from your to-do list here.", '리마인더로 만들어 드릴까요?', '저는 할 일을 대신 해 드릴 수는 없어요.', '할 일에 넣어 드릴까요?']) {
+      expect(guardFalseIncapabilityClaims(reply, withActions, 'ko'), reply).toEqual({ text: restate, guarded: true });
     }
-    // Offers of nothing Quoky writes, true statements about read-only sources, and families that are not offered stay.
-    for (const reply of ['더 자세히 알려드릴까요?', '추가로 설명해 드릴까요?', '캘린더 일정은 제가 취소할 수 없어요. 할 일은 말씀만 하세요.', '좋아요!']) {
+    // CA P2: only the offending sentence goes; true sentences stay as written.
+    expect(guardFalseIncapabilityClaims('할 일 3번은 이미 완료됐어요. 4번도 완료할까요?', withActions, 'ko')).toEqual({ text: `할 일 3번은 이미 완료됐어요. ${restate}`, guarded: true });
+    expect(guardFalseIncapabilityClaims('방금 추가한 할 일을 취소하고 싶으시군요. 여기서는 제가 직접 취소할 수 없어요.', withActions, 'ko')).toEqual({ text: `방금 추가한 할 일을 취소하고 싶으시군요. ${restate}`, guarded: true });
+    // Offers of nothing Quoky writes (Codex P2: 추가로 is no add), how-to and explanation offers (CA P2), true statements
+    // about read-only sources, and families that are not offered stay.
+    for (const reply of ['더 자세히 알려드릴까요?', '추가로 설명해 드릴까요?', '할 일 사용법을 추가로 설명해 드릴까요?', '할 일 목록을 추가로 보여드릴까요?', '할 일에 추가하는 방법을 알려드릴까요?', '할 일 3번은 이미 완료됐어요.', '캘린더 일정은 제가 취소할 수 없어요. 할 일은 말씀만 하세요.', '좋아요!']) {
       expect(guardDeadEndActionReplies(reply, withActions, 'ko'), reply).toEqual({ text: reply, guarded: false });
     }
     expect(guardFalseIncapabilityClaims('3번도 완료할까요?', configured, 'ko')).toEqual({ text: '3번도 완료할까요?', guarded: false });

@@ -728,3 +728,54 @@ describe('live test 4 (turn 39): a bare reference with the copula is a copular r
     for (const text of ['3번은 회의야', '그냥 메모야', '3번 완료야', '3번 완료해줘', '이번엔 3번', '3번이 문제야']) expect(nlFrameIsCopularReference(text, NL_ACTION_WORDS), text).toBe(false);
   });
 });
+
+describe('CA review of 2026-10-19: colon labels act only as the owner\'s own command; a bare list phrase is no task', () => {
+  const NOW_ = '2026-10-14T03:00:00.000Z';
+  const offered_ = new Map([...NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]), ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined)].map((entry) => [entry.id, entry] as const));
+  const check = (entryId: string, args: Record<string, string>, text: string) => {
+    const prepared = prepareSelectionInput(text);
+    if ('skip' in prepared) throw new Error('skipped');
+    return validateSelection({ entryId, args }, { offered: offered_, groundingText: prepared.groundingText, now: NOW_, timeZone: 'Asia/Seoul', actions: true });
+  };
+
+  it('P1: a whole-message quote, a label that does not open the message, and a second key inside the content are reported', () => {
+    expect(check('todo.add', { title: '우유 사기' }, '"할 일: 우유 사기"')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '보고서 제출' }, '회의록 중 할 일: 보고서 제출')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '보고서 제출, 담당: 김대리' }, '회의록 붙여넣기 할 일: 보고서 제출, 담당: 김대리')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '보고서 제출' }, '회의록 붙여넣기 할 일: 보고서 제출, 담당: 김대리')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '보고서 제출, 담당: 김대리' }, '할 일: 보고서 제출, 담당: 김대리')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('reminder.create', { when: '내일 9시', body: '보고서' }, '회의록 중 알림: 내일 9시 보고서')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+  });
+
+  it('P1: the English label forms the input guard already refuses stay refused', () => {
+    for (const text of ['I added a to-do: renew passport', 'My todo: buy milk', 'Did you add a to-do: renew passport', 'Q4: 예산 검토 할 일로', 'Todo: request: buy milk']) {
+      const prepared = prepareSelectionInput(text);
+      if ('skip' in prepared) continue;
+      expect(nlActionInputRefusal(text, prepared.groundingText, false), text).toBeDefined();
+    }
+  });
+
+  it('P1: the owner\'s own labels still act (opening the message, after a time, or after a request)', () => {
+    expect(check('todo.add', { title: 'return the library books' }, 'To-do: return the library books')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '세탁소에서 셔츠 찾아오기' }, '할 일: 세탁소에서 셔츠 찾아오기')).toMatchObject({ ok: true });
+    expect(check('reminder.create', { when: '10월 23일 오후 6시', body: '팀 회식 예약' }, '알림: 10월 23일 오후 6시 팀 회식 예약')).toMatchObject({ ok: true });
+    expect(check('reminder.create', { when: '10월 23일 오후 6시', body: '팀 회식 예약' }, '10월 23일 오후 6시 알림: 팀 회식 예약')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: 'buy milk' }, 'can you add a todo for me: buy milk')).toMatchObject({ ok: true });
+    expect(check('reminder.create', { when: '모레 저녁 7시', body: '은행에 전화' }, 'Remind me: 모레 저녁 7시 은행에 전화')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '보고서 쓰기' }, '할 일에 추가해줘: 보고서 쓰기')).toMatchObject({ ok: true });
+    // A colon inside the content is the content's own.
+    expect(check('todo.add', { title: '회의: 안건 정리' }, "할 일에 '회의: 안건 정리' 추가해줘")).toMatchObject({ ok: true });
+  });
+
+  it('P2: a modifier before 할 일 names a list (chat); one bare or owner noun asks; a multi-word task title executes', () => {
+    for (const [text, title] of [['남은 할 일', '남은'], ['밀린 할 일', '밀린'], ['제일 급한 할 일', '제일 급한']] as const) {
+      expect(check('todo.add', { title }, text), text).toMatchObject({ ok: false, reason: 'not-request', arg: 'statement' });
+    }
+    for (const [text, title] of [['회사 할 일', '회사'], ['팀장님 할 일', '팀장님'], ['우리 팀 할 일', '우리 팀']] as const) {
+      expect(check('todo.add', { title }, text), text).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    }
+    expect(check('todo.add', { title: '검증 노트북 점검' }, '검증 노트북 점검 할 일')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '회의 안건 정리' }, '회의 안건 정리 할 일')).toMatchObject({ ok: true });
+  });
+});

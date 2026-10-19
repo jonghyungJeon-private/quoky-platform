@@ -84,6 +84,6 @@ describe('A6 live test 4: gold candidates pending the owner (nl-action.live4-pen
     // A Hangul word in the message (the test marker 검증) makes the reply Korean (Core's `languageOf`).
     expect(await reply('a6-paraphrase-reminder.create-907')).toContain('언제 알려 드릴까요?');
     expect(await reply('a6-paraphrase-todo.add-910')).toContain("'할 일' 말씀이세요?");
-    expect(await reply('a6-paraphrase-reminder.create-908')).toContain("'뭉게뭉게'(이)가 무슨 뜻인가요?");
+    expect(await reply('a6-paraphrase-reminder.create-908')).toContain("'삐용삐용'(이)가 무슨 뜻인가요?");
   });
 });
