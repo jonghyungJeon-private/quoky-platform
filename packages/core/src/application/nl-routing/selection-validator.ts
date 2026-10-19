@@ -39,7 +39,7 @@ import {
 } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
-import { nlFrameIsElliptical, nlHasExclusionOrNegation, nlHasUnnegatedMention, nlIsRequestForm, nlRelaysRequest, nlRequestEndsBefore, nlRequestsSomething, nlRequestVeto, type NlRequestVeto } from './request-shape';
+import { nlFrameIsElliptical, nlHasExclusionOrNegation, nlHasUnnegatedMention, nlIsRequestForm, nlLabelTailVeto, nlRelaysRequest, nlRequestEndsBefore, nlRequestsSomething, nlRequestVeto, type NlRequestVeto } from './request-shape';
 import { nlFrameHasActionInflection, nlGarbledActionWord, nlGarbledEntryNoun, type NlActionVocabulary, type NlGarbledEntryNoun } from './garbled-action';
 import {
   isNlRangeSymbol,
@@ -415,6 +415,15 @@ export function requestShapeOf(
   // speech, a label that does not open the message (only a time may precede it) is a line of pasted material ("회의록 중
   // 할 일: …"), and a second `key:` inside the content is a pasted record ("…, 담당: 김대리"): all reported, none acts.
   if (veto === undefined && (wholeMessageQuoted(prose) || colonLabelIsPasted(prose, content, clock))) veto = 'reported';
+  // A6 v49 gate (2026-10-19): a colon label's content is exempt from the vetoes, but its TRAILING clause is read like the
+  // frame's last word: "Todo: renew passport?" is a question, "Todo: buy milk he told me" is reported.
+  if (veto === undefined) {
+    for (const span of content) {
+      if (spanEnclosure(prose, span) !== 'colon') continue;
+      veto = nlLabelTailVeto(span);
+      if (veto !== undefined) break;
+    }
+  }
   // For a target entry an item-source noun is part of the reference; a payload entry has no reference.
   const payload = entry.args.some((spec) => spec.kind === 'span' && spec.required === true);
   let expressesAction = nlFrameExpressesAction(contentFrame, !payload);

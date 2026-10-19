@@ -534,6 +534,10 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-187', // owner decision C counter-cases: a negated / questioned cancel by title
     'a6-negative-none-188',
     'a6-negative-none-190', // owner decision D counter-case: a label not led by the command word (input guard)
+    // A6 v49 gate (2026-10-19): the trailing clause of a label's content meets the vetoes (`nlLabelTailVeto`): a final
+    // question mark and a hearsay tail are refused for every lure (both were the gate's negative captures).
+    'a6-negative-none-189',
+    'a6-negative-none-193',
     'a6-seed-neg-001',
     'a6-seed-neg-002',
     'a6-seed-neg-003',
@@ -578,14 +582,10 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
     'a6-negative-none-168',
     'a6-negative-none-175',
     'a6-negative-none-184',
-    // Owner decision D: "Todo: renew passport?" - a lure whose colon-enclosed title swallows the question mark validates (as
-    // for the Korean colon forms); the selector's none keeps it chat.
-    'a6-negative-none-189',
-    // Agent-drafted recorded gaps (owner decision D review, pending the D12 batch): a status-report label and reported
-    // speech without a comma validate for some lure; the selector's none is the only guard. No code change for them.
+    // Agent-drafted recorded gaps (owner decision D review): a status-report label validates for some lure; the selector's
+    // none is the only guard. No code change for them (owner: recorded gap).
     'a6-negative-none-191',
     'a6-negative-none-192',
-    'a6-negative-none-193',
     'a6-seed-live-005',
   ];
 
@@ -804,5 +804,23 @@ describe('CA review of 2026-10-19: colon labels act only as the owner\'s own com
       expect(check('reminder.create', { when, body }, text), text).toMatchObject({ ok: true });
     }
     expect(check('reminder.create', { when: '내일 9시', body: '보고서' }, '회의록 중 알림: 내일 9시 보고서')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+  });
+
+  it('A6 v49 gate: the trailing clause of a label\'s content meets the vetoes (a6-negative-none-189 / -193); the rest stays content', () => {
+    // The gate captures: the selector's span swallowed the question mark and the hearsay tail.
+    expect(check('todo.add', { title: 'renew passport?' }, 'Todo: renew passport?')).toMatchObject({ ok: false, reason: 'not-request', arg: 'question' });
+    expect(check('todo.add', { title: 'renew passport' }, 'Todo: renew passport?')).toMatchObject({ ok: false, reason: 'not-request', arg: 'question' });
+    expect(check('todo.add', { title: 'buy milk he told me' }, 'Todo: buy milk he told me')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: 'call the bank my boss said' }, 'To-do: call the bank my boss said')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '우유 사기 하래' }, '할 일: 우유 사기 하래')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '우유 사기 하랬어' }, '할 일: 우유 사기 하랬어')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '우유 사기 그가 말했어' }, '할 일: 우유 사기 그가 말했어')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+    expect(check('todo.add', { title: '우유 사기, 아니 취소' }, '할 일: 우유 사기, 아니 취소')).toMatchObject({ ok: false, reason: 'not-request' });
+    // Still executing: the labels themselves, a negation inside the content, a polite question form.
+    expect(check('todo.add', { title: 'return the library books' }, 'To-do: return the library books')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: "don't forget the keys" }, "Todo: don't forget the keys")).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '하지 말아야 할 것 정리' }, '할 일: 하지 말아야 할 것 정리')).toMatchObject({ ok: true });
+    expect(check('reminder.create', { when: '10월 23일 오후 6시', body: '검증 팀 회식 예약' }, '알림: 10월 23일 오후 6시 검증 팀 회식 예약')).toMatchObject({ ok: true });
+    expect(check('todo.add', { title: '검증 vendor invoice recheck' }, 'To-do: 검증 vendor invoice recheck')).toMatchObject({ ok: true });
   });
 });

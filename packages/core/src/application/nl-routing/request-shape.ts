@@ -599,6 +599,34 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
   return undefined;
 }
 
+/** A reporting clause that ends the content in English ("… he told me", "… my boss said", "… she asked"). */
+const EN_REPORT_TAIL = /\b(?:he|she|they|someone|somebody|everyone|my\s+\w+|the\s+\w+|\w+)\s+(?:told|tells|said|says|asked|asks|wrote|writes|mentioned)(?:\s+(?:me|us|him|her|them))?\s*$/u;
+/** A Korean speech verb that ends the content as its own finite clause ("… 그가 말했어", "… 팀장이 그랬어"). */
+const KO_SPEECH_TAIL = /(?:말했|말하더|얘기했|이야기했|그랬|그러더|전했|시켰)(?:어|어요|다|대|음|지|는데|더라)?$/u;
+
+/**
+ * A6 v49 gate (2026-10-19, a6-negative-none-189 / -193): the request-shape vetoes on the TRAILING clause of a colon label's
+ * content ("Todo: renew passport?", "Todo: buy milk he told me", "할 일: 우유 사기 하래"). A label form exempts its content
+ * from the vetoes, so without this the message-final question mark or hearsay sits inside the span. Only the end of the
+ * span is read, like the last-word rules of the frame: a final question mark (not a polite request form) is a question; a
+ * reporting clause, a Korean quotative or hearsay ending, or a speech verb ending the span is reported; a bare retraction
+ * after the content is a retraction. The rest of the content stays exempt ("Todo: don't forget the keys" is content).
+ */
+export function nlLabelTailVeto(span: string): NlRequestVeto | undefined {
+  const text = normalizeForMatch(span).replace(/[’‘`´]/gu, "'").trim();
+  if (text.length === 0) return undefined;
+  if (/[?？]\s*$/u.test(text) && !POLITE_REQUEST.test(text)) return 'question';
+  const body = text.replace(/[\s.,!~…;:"'“”‘’)\]]+$/u, '');
+  const clauses = clausesOf(body);
+  const last = clauses.at(-1) ?? body;
+  if (EN_REPORT_TAIL.test(body) || hearsayEnding([last]) || KO_SPEECH_TAIL.test(wordsOf(last).at(-1) ?? '')) return 'reported';
+  const lastStart = body.lastIndexOf(' ') + 1;
+  const endsInLast = (pattern: RegExp): boolean => [...body.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))].some((match) => (match.index ?? 0) + match[0].length > lastStart);
+  if (endsInLast(QUOTATIVE_KO) || endsInLast(CONTRACTED_QUOTATIVE_KO) || endsInLast(CONTRACTED_QUOTATIVE_FINAL_KO) || endsInLast(QUOTED_REQUEST_KO)) return 'reported';
+  if (clauses.length > 1 && RETRACTION_FINAL.test(wordsOf(last).at(-1) ?? '') && clauses.slice(0, -1).some((clause) => wordsOf(clause).length > 0)) return 'retraction';
+  return undefined;
+}
+
 /**
  * Whether the text before a content span that ends the message closes a request, so the span is content (CA round 3): its
  * last word is a request word ("할 일 추가해줘 운동 끝나고 샤워하기") or the English "to" / "that" after a request ("remind
