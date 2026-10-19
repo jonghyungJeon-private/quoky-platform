@@ -45,10 +45,10 @@ describe('A6 live test 4: owner-approved gold of 2026-10-19', () => {
     expect(score.outcome).toBe('hit');
   });
 
-  it('(b) "… 리마이너 걸어줘, …" asks "\'리마인더\' 말씀이세요?" and writes nothing', async () => {
+  it('(b) "… 리마이너 걸어줘, …" asks with \'리마인더\' (a restate prompt) and writes nothing', async () => {
     const { decision, audit, score } = await decide(byId('a6-paraphrase-reminder.create-903'));
     expect(decision).toMatchObject({ kind: 'ask' });
-    expect(decision.kind === 'ask' ? decision.text : '').toContain("'리마인더' 말씀이세요?");
+    expect(decision.kind === 'ask' ? decision.text : '').toContain("'리마인더' 말씀이시면");
     expect(audit).toMatchObject({ result: 'asked', reason: 'garbled-noun' });
     expect(score.outcome).toBe('hit');
   });
@@ -80,10 +80,10 @@ describe('A6 live test 4: gold candidates pending the owner (nl-action.live4-pen
     };
     expect(await reply('a6-reference-todo.complete-901')).toBe('할 일 3번도 완료할까요? (응 / 아니)');
     expect(await reply('a6-undo-action.undo-901')).toBe("방금 한 '할 일 4번 추가'를 되돌릴까요? (응 / 아니)");
-    expect(await reply('a6-paraphrase-reminder.create-905')).toContain('언제 알려 드릴까요?');
+    expect(await reply('a6-paraphrase-reminder.create-905')).toContain('알림 시간을 함께 말씀해 주세요. 예: "내일 오전 9시에 검증 인쇄 맡기기 알려줘"');
     // A Hangul word in the message (the test marker 검증) makes the reply Korean (Core's `languageOf`).
-    expect(await reply('a6-paraphrase-reminder.create-907')).toContain('언제 알려 드릴까요?');
-    expect(await reply('a6-paraphrase-todo.add-910')).toContain("'할 일' 말씀이세요?");
-    expect(await reply('a6-paraphrase-reminder.create-908')).toContain("'삐용삐용'(이)가 무슨 뜻인가요?");
+    expect(await reply('a6-paraphrase-reminder.create-907')).toContain('알림 시간을 함께 말씀해 주세요.');
+    expect(await reply('a6-paraphrase-todo.add-910')).toContain("'할 일' 말씀이시면");
+    expect(await reply('a6-paraphrase-reminder.create-908')).toContain("'삐용삐용'이 무슨 뜻인지 모르겠어요.");
   });
 });

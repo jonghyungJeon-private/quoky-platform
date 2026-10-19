@@ -135,7 +135,7 @@
     "reason": "ambiguous",
     "acceptsAnyQuestion": true
    },
-   "note": "live test 4 turn 26: a reminder with no time asks for the time (\"언제 알려 드릴까요? …\"), not the generic restate [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+   "note": "live test 4 turn 26: a reminder with no time gets a restate prompt for the time (\"알림 시간을 함께 말씀해 주세요. 예: …\"), not the generic restate [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
   },
   {
    "id": "a6-paraphrase-reminder.create-906",
@@ -165,7 +165,7 @@
     "reason": "ambiguous",
     "acceptsAnyQuestion": true
    },
-   "note": "live test 4 turn 60 (English, same shape): a reminder with no time asks \"When should I remind you? …\" [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
+   "note": "live test 4 turn 60 (English, same shape): a reminder with no time gets the time restate prompt [agent-drafted 2026-10-19 from A6 live test 4 (docs/plans/a6-live-test-4-record.md); PENDING the owner's D12 batch]"
   },
   {
    "id": "a6-paraphrase-reminder.cancel-908",

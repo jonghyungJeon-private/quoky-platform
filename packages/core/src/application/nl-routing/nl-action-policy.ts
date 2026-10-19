@@ -249,49 +249,59 @@ export function renderGarbledAction(candidate: string, language: Lang): string {
     : `'${candidate}'(이)라고 하신 건가요? 아직 아무것도 바꾸지 않았어요. 맞으면 '${candidate}'로 다시 말씀해 주세요.`;
 }
 
+/** A Korean particle pair chosen by the word's last syllable (final consonant or not); both forms for anything else. */
+function particle(word: string, afterConsonant: string, afterVowel: string): string {
+  const code = (Array.from(word).at(-1) ?? '').charCodeAt(0) - 0xac00;
+  if (code < 0 || code > 11171) return `${afterConsonant}(${afterVowel})`;
+  return code % 28 === 0 ? afterVowel : afterConsonant;
+}
+
+/*
+ * The four asks below keep NO open question (A6-D2 pending questions are content-free, so a bare "응" or "3시" could not
+ * complete them). Each is a RESTATE prompt: it says what to send and never ends in a question a reply cannot bind to (live
+ * test 4, turns 39-40: a question Quoky cannot act on is the anti-pattern this branch removes).
+ */
+
 /**
- * Owner decision (b) of 2026-10-19: the noun that decides the list looks like a typo of a catalog list noun ("리마이너 걸어줘"
- * → "'리마인더' 말씀이세요?"). Nothing was changed; the owner restates with the noun.
+ * Owner decision (b) of 2026-10-19: the noun that decides the list looks like a typo of a catalog list noun ("리마이너 걸어줘").
+ * Nothing was changed; the owner restates with the noun.
  */
 export function renderGarbledNoun(candidate: string, language: Lang): string {
   return language === 'en'
-    ? `Did you mean "${candidate}"? Nothing was changed yet. If so, please say it again with that word.`
-    : `'${candidate}' 말씀이세요? 아직 아무것도 바꾸지 않았어요. 맞으면 '${candidate}'(으)로 다시 말씀해 주세요.`;
+    ? `If you meant "${candidate}", please say it again with that word. Nothing was changed yet.`
+    : `'${candidate}' 말씀이시면 '${candidate}'${particle(candidate, '을', '를')} 넣어 다시 말씀해 주세요. 아직 아무것도 바꾸지 않았어요.`;
 }
 
 /**
- * Owner decision (b) of 2026-10-19: a word in the list noun's slot that is close to no known noun: the owner is asked what it
- * means (the owner's own word, echoed back in a DM only). Nothing was changed.
+ * Owner decision (b) of 2026-10-19: a word in the list noun's slot that is close to no known noun (the owner's own word,
+ * echoed back in a DM only). Nothing was changed; the owner restates with the list.
  */
 export function renderUnknownNoun(word: string, language: Lang): string {
   return language === 'en'
-    ? `What do you mean by "${word}"? Nothing was changed yet. Please tell me again whether it is a to-do or a reminder.`
-    : `'${word}'(이)가 무슨 뜻인가요? 아직 아무것도 바꾸지 않았어요. 할 일인지 알림인지 다시 말씀해 주세요.`;
+    ? `I don't know what "${word}" means here. Please say it again with "to-do" or "reminder". Nothing was changed yet.`
+    : `'${word}'${particle(word, '이', '가')} 무슨 뜻인지 모르겠어요. '할 일'인지 '알림'인지 넣어 다시 말씀해 주세요. 아직 아무것도 바꾸지 않았어요.`;
 }
 
 /**
  * CA / Codex P2 (2026-10-19): a bare "<title> 할 일" whose title may not be a task ("회사 할 일", "정산 할 일"). The title is
- * the owner's own words (echoed in a DM only). No open question can keep it (A6-D2 pending questions are content-free), so
- * the question says how to confirm: the owner restates with the add word; a bare "응" does nothing.
+ * the owner's own words (echoed in a DM only, like a receipt). The prompt gives the exact sentence to send.
  */
 export function renderConfirmTitle(title: string, language: Lang): string {
-  if (language === 'en') return `Add "${title}" as a to-do? Nothing was added yet. If so, please say "add ${title} to my to-dos".`;
-  const last = Array.from(title).at(-1) ?? '';
-  const code = last.charCodeAt(0) - 0xac00;
-  const particle = code >= 0 && code <= 11171 ? (code % 28 === 0 ? '를' : '을') : '을(를)';
-  return `'${title}'${particle} 할 일로 추가할까요? 아직 아무것도 추가하지 않았어요. 맞으면 '할 일에 추가해줘'를 붙여 다시 말씀해 주세요.`;
+  if (language === 'en') return `To add "${title}" as a to-do, please say "add ${title} to my to-dos". Nothing was added yet.`;
+  return `'${title}'${particle(title, '을', '를')} 할 일로 추가하려면 "${title} 할 일에 추가해줘"라고 말씀해 주세요. 아직 아무것도 추가하지 않았어요.`;
 }
 
 /**
- * Live test 4 (2026-10-17, turns 26 / 58 / 60): a reminder request with no time. The question names what is missing (the
- * time) instead of the generic "무엇을/어느 항목을 다시 말씀해 주세요". No open question is kept: A6-D2 pending questions are
- * content-free (ids and closed values only), so the reminder text cannot wait for the answer; the owner says it again with
- * the time.
+ * Live test 4 (2026-10-17, turns 26 / 58 / 60): a reminder request with no time. The prompt names what is missing (the time)
+ * instead of the generic "무엇을/어느 항목을 다시 말씀해 주세요", with an example sentence built from the owner's own body
+ * (echoed in a DM only, like a receipt) or a generic one. A following "3시" alone cannot complete it, so it asks for the
+ * whole request again.
  */
-export function renderAskWhen(language: Lang): string {
+export function renderAskWhen(language: Lang, body?: string): string {
+  const own = body !== undefined && body.trim().length > 0 && Array.from(body).length <= 80 ? body.trim() : undefined;
   return language === 'en'
-    ? 'When should I remind you? Nothing was created yet. Please tell me again with the time (for example "tomorrow at 9am").'
-    : '언제 알려 드릴까요? 아직 아무것도 만들지 않았어요. 시간을 넣어 다시 말씀해 주세요 (예: 내일 오전 9시에).';
+    ? `Please include the time. For example: "remind me tomorrow at 9am to ${own ?? 'call the bank'}". Nothing was created yet.`
+    : `알림 시간을 함께 말씀해 주세요. 예: "내일 오전 9시에 ${own ?? '은행에 전화하기'} 알려줘". 아직 아무것도 만들지 않았어요.`;
 }
 
 /**

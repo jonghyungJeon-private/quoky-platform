@@ -39,7 +39,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -1352,7 +1352,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (validated.reason === 'missing-arg' && entryId === 'reminder.create' && validated.arg === 'when') {
         const asked: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'missing-arg' };
         if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
-        return this.actionAnswer(asked, renderAskWhen(language));
+        // The example echoes the body only when it is the owner's own words of this turn (grounded, no credential).
+        const body = output.args.body;
+        const own = typeof body === 'string' && isNlSpanGrounded(body, withoutStructures(prepared.groundingText)) && !containsCredentialMaterial(body) ? body : undefined;
+        return this.actionAnswer(asked, renderAskWhen(language, own));
       }
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: validated.reason };
       if (shadow) return this.shadowAction({ ...audit, result: 'shadow' });

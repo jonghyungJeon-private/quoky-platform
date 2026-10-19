@@ -1291,20 +1291,47 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
 
   it('turns 26 / 58 / 60: a reminder with no time asks for the time (Korean and English)', async () => {
     const ko = await run('검증 인쇄 맡기기 알림 하나 만들어줘', out('reminder.create', { body: '검증 인쇄 맡기기' }));
-    expect(ko.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('언제 알려 드릴까요?') });
+    // A restate prompt, never a question a following "3시" could not complete; the example echoes the owner's own body.
+    expect(ko.decision).toMatchObject({ kind: 'ask', text: '알림 시간을 함께 말씀해 주세요. 예: "내일 오전 9시에 검증 인쇄 맡기기 알려줘". 아직 아무것도 만들지 않았어요.' });
     const en = await run('Remind me to water the plants', out('reminder.create', { body: 'water the plants' }));
-    expect(en.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('When should I remind you?') });
+    expect(en.decision).toMatchObject({ kind: 'ask', text: 'Please include the time. For example: "remind me tomorrow at 9am to water the plants". Nothing was created yet.' });
+    // A body the owner never wrote is not echoed: the example is generic.
+    const invented = await run('검증 인쇄 알림 하나 만들어줘', out('reminder.create', { body: '은행 업무 처리' }));
+    expect(invented.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('은행에 전화하기') });
     expect(actionLogs(en.w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.create', result: 'refused', reason: 'missing-arg' });
   });
 
   it('owner decision (b): a garbled list noun asks with the noun; an unknown word in its slot asks what it means; the right noun executes', async () => {
     const typo = await run('10월 21일 오전 9시에 리마이너 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
-    expect(typo.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining("'리마인더' 말씀이세요?") });
+    expect(typo.decision).toMatchObject({ kind: 'ask', text: "'리마인더' 말씀이시면 '리마인더'를 넣어 다시 말씀해 주세요. 아직 아무것도 바꾸지 않았어요." });
     expect(actionLogs(typo.w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.create', result: 'asked', reason: 'garbled-noun' });
     const unknown = await run('10월 21일 오전 9시에 삐용삐용 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
-    expect(unknown.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining("'삐용삐용'(이)가 무슨 뜻인가요?") });
+    expect(unknown.decision).toMatchObject({ kind: 'ask', text: "'삐용삐용'이 무슨 뜻인지 모르겠어요. '할 일'인지 '알림'인지 넣어 다시 말씀해 주세요. 아직 아무것도 바꾸지 않았어요." });
     const right = await run('10월 21일 오전 9시에 리마인더 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
     expect(right.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.create' } });
+  });
+
+  it('CA / Codex P2: an uncertain bare title gets a restate prompt with the exact sentence to send, never a yes/no question', async () => {
+    const { w, decision } = await run('정산 할 일', out('todo.add', { title: '정산' }));
+    expect(decision).toMatchObject({ kind: 'ask', text: '\'정산\'을 할 일로 추가하려면 "정산 할 일에 추가해줘"라고 말씀해 주세요. 아직 아무것도 추가하지 않았어요.' });
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'todo.add', result: 'asked', reason: 'uncertain-title' });
+    expect(readPendingQuestion(w.session(), 'owner', at(2))).toBeUndefined();
+    // The suggested sentence itself executes.
+    const again = await run('정산 할 일에 추가해줘', out('todo.add', { title: '정산' }));
+    expect(again.decision).toMatchObject({ kind: 'execute', command: { entryId: 'todo.add', args: { title: '정산' } } });
+  });
+
+  it('the restate prompts of this branch keep no open question and end in no question mark', async () => {
+    const texts = [
+      (await run('정산 할 일', out('todo.add', { title: '정산' }))).decision,
+      (await run('검증 인쇄 맡기기 알림 하나 만들어줘', out('reminder.create', { body: '검증 인쇄 맡기기' }))).decision,
+      (await run('10월 21일 오전 9시에 리마이너 걸어줘, 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '도면 회신' }))).decision,
+      (await run('10월 21일 오전 9시에 삐용삐용 걸어줘, 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '도면 회신' }))).decision,
+    ];
+    for (const decision of texts) {
+      expect(decision.kind).toBe('ask');
+      expect(decision.kind === 'ask' ? decision.text : '').not.toMatch(/[?？]/u);
+    }
   });
 
   it('owner decision (a): "회의 끝나고 검증 회의록 정리 할 일에 넣어줘" adds the to-do now with the qualifier in the title', async () => {

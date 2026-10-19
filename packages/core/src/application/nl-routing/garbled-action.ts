@@ -297,7 +297,7 @@ export interface NlEntryNouns {
   readonly words: readonly string[];
 }
 
-/** What a garbled entry noun asks: a typo of a known noun ("'리마인더' 말씀이세요?"), or an unknown word in its slot. */
+/** What a garbled entry noun asks: a typo of a known noun ("'리마인더' 말씀이시면 …"), or an unknown word in its slot. */
 export type NlGarbledEntryNoun = { readonly kind: 'typo'; readonly noun: string; readonly owner: string } | { readonly kind: 'unknown'; readonly word: string };
 
 /** Closed fillers and quantifiers that may stand between the entry noun and its verb ("알림 하나 걸어줘", "알림 좀 만들어줘"). */
