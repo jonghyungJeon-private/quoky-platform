@@ -226,19 +226,23 @@ export interface FalseIncapabilityGuardResult {
  * left alone: saying "Notion is not connected" is true.
  */
 export function guardFalseIncapabilityClaims(
-  text: string,
+  raw: string,
   entries: readonly NlCatalogEntry[],
   language: 'ko' | 'en',
   helpLines: readonly string[] = [],
 ): FalseIncapabilityGuardResult {
-  if (typeof text !== 'string' || text.trim() === '') return { text, guarded: false };
+  if (typeof raw !== 'string' || raw.trim() === '') return { text: raw, guarded: false };
   // A6-D6: a reply quoting an offered action family's command phrase is stale (checked before the D5 exemption below).
-  const stale = guardStaleActionCommands(text, entries, language);
-  if (stale.guarded) return stale;
+  if (entries.some((entry) => entry.risk !== 'READ' && (entry.staleCommands ?? []).some((pattern) => pattern.test(raw)))) return { text: renderRestate(language), guarded: true };
+  // Live test 4: the dead-end action sentences go first, but that partial filter is not the whole guard (Codex P2): the
+  // rest of the reply still meets the source-incapability check below.
+  const deadEnd = guardDeadEndActionReplies(raw, entries, language);
+  const text = deadEnd.text;
+  const unchanged = { text, guarded: deadEnd.guarded };
   // A reply that hands the owner one of Quoky's own commands is already the right answer (D5): never replaced.
   // The help index ("도움말", "help") is a deflection, not an action command: naming it does not make a denial true.
   const commands = quotedCommandsOf([...helpLines, ...entries.map((entry) => entry.usage.ko)]).filter((command) => !HELP_INDEX.test(command));
-  if (commands.some((command) => text.includes(command))) return { text, guarded: false };
+  if (commands.some((command) => text.includes(command))) return unchanged;
   const hit = new Map<string, NlCatalogEntry>();
   for (const sentence of text.split(/(?<=[.!?。])\s+|\n+/u)) {
     if (!KO_INCAPABLE.test(sentence) && !EN_INCAPABLE.test(sentence)) continue;
@@ -247,7 +251,7 @@ export function guardFalseIncapabilityClaims(
       if ((entry.sourceNames ?? []).some((name) => lower.includes(name.toLowerCase()))) hit.set(entry.id, entry);
     }
   }
-  if (hit.size === 0) return { text, guarded: false };
+  if (hit.size === 0) return unchanged;
   const offers = [...hit.values()];
   if (language === 'en') {
     return {

@@ -395,6 +395,14 @@ describe('honest chat (ADR-0120 D9)', () => {
     expect(guardFalseIncapabilityClaims(denial, todosOnly, 'ko')).toEqual({ text: denial, guarded: false });
     expect(guardFalseIncapabilityClaims('리마인더로 만들어 드릴까요?', todosOnly, 'ko')).toEqual({ text: '리마인더로 만들어 드릴까요?', guarded: false });
     expect(guardFalseIncapabilityClaims(denial, withActions, 'ko')).toEqual({ text: restate, guarded: true });
+    // Codex P2: the dead-end filter is partial; the rest of the reply still meets the source-incapability check.
+    const withMail = [NL_WAVE1_ENTRIES['mail.list'], ...withActions];
+    const mixed = guardFalseIncapabilityClaims('할 일을 추가할까요? 메일은 읽을 수 없어요.', withMail, 'ko');
+    expect(mixed.guarded).toBe(true);
+    expect(mixed.text).toContain('Quoky가 연결되어 있어서 바로 조회할 수 있어요.');
+    expect(mixed.text).not.toContain('메일은 읽을 수 없어요');
+    // Only the action offer: the partial filter's own result is returned.
+    expect(guardFalseIncapabilityClaims('할 일 3번은 이미 완료됐어요. 4번도 완료할까요?', withMail, 'ko')).toEqual({ text: `할 일 3번은 이미 완료됐어요. ${restate}`, guarded: true });
     // Codex P2: a timed reminder offer counts with no list noun while reminders are offered; with reminders off it stays.
     expect(guardFalseIncapabilityClaims('내일 9시에 알려드릴까요?', withActions, 'ko')).toEqual({ text: restate, guarded: true });
     expect(guardFalseIncapabilityClaims('내일 9시에 알려드릴 수는 없어요.', withActions, 'ko')).toEqual({ text: restate, guarded: true });
