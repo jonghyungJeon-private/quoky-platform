@@ -27560,7 +27560,8 @@ the orchestrator.
 4. **`a6r2-reference-062` stays strict.** The ask must hold the source the owner just read (`other-source`); no change.
 5. **"방금 본 거" is `recent`.** Core already has the closed recency vocabulary (D9 / A6-D2: 방금 / 아까 / just now, the
    `recent` line of the ref description and the R5a referent's recency check), now one exported list
-   (`NL_RECENCY_WORDS`). For `item.summarize`, a recency word in the owner's words (not negated) grounds the selector's
+   (`NL_RECENCY_WORDS`). For `item.summarize`, a recency word in the owner's words (and no exclusion or negation marker
+   anywhere, see the follow-ups below) grounds the selector's
    `this` to `recent`, and its `last` too when no `last` word (마지막 / last) stands behind it: the same principle as the
    mode grounding, no phrase list. Local writes are unchanged (their tie rule never favours a write). 062 and 063 still ask
    as their golds say (other-source, ambiguous).
@@ -27574,7 +27575,10 @@ The gold digest changes with the label edits: `selector-pool.audit.v1.json` is r
 dry-run --write-audit true` (local Ollama, loopback; CA P3). Only the gold digest and the embedding space id (Ollama
 0.40.5 → 0.40.6, same model digest) change; the split hash and every metric are unchanged.
 
-Follow-ups after review: the recency grounding reads an exclusion over the whole referent phrase (Codex P2: "방금 요약한
-거 말고 그거 원문 보여줘", "아까 본 거 말고 이거", "not the one I just now read, this one" keep the selector's `this`;
-a mode word inside the phrase no longer ends the check). CA P3: "아까 온 메일 요약해줘" (아까 dating the mail, not the
+Follow-ups after review: the recency grounding is structural and fail-safe (Codex P2, two rounds; no scope parsing). It
+applies only when the owner's prose (structures removed) holds no exclusion or negation marker anywhere
+(`nlHasExclusionOrNegation`: 말고 / 아니고 / 빼고 / 대신 / 제외, the request-shape Korean negators, -지 마/말/않, English
+not / instead / except / rather than and the English negators). With a marker the selector's ref stays, which is the
+behaviour before this branch: "방금 요약한 그거 말고 이거 원문 보여줘", "아까 본 거 말고 이거" and "not the one I just now read,
+this one" keep `this`. Accepted cost: "방금 본 거 요약 말고 원문으로 보여줘" (a negated mode) also keeps `this`. CA P3: "아까 온 메일 요약해줘" (아까 dating the mail, not the
 reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-action.r2.v1.json`, not as gold.
