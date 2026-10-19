@@ -59,6 +59,7 @@ import {
   type NlWeekdayMention,
 } from './symbolic-time';
 import { canonicalNlKeyword } from './keyword-canonical';
+import { parseReminderWhen } from '../reminders/reminder-grammar';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 export { canonicalNlKeyword } from './keyword-canonical';
@@ -130,6 +131,11 @@ export type NlValidationFailureReason =
    * own word, rendered back only in the question and never logged), and no correct list noun is present. Nothing is written.
    */
   | 'garbled-noun'
+  /**
+   * CA / Codex P2 (2026-10-19): a bare "<title> 할 일" whose title may not be a task (one bare or owner noun, or a last word
+   * that looks adnominal without a noun phrase before it): Core asks whether to add it; nothing is written.
+   */
+  | 'uncertain-title'
   /**
    * A6-D3a amendment 1, elliptical continuation (D12 gate v44 run 3, "이번엔 3번"): a target entry's frame names no action
    * word and makes no request of its own (`nlFrameIsElliptical`). The action is only inferred, so nothing is written: the
@@ -246,7 +252,7 @@ function wholeMessageQuoted(prose: string): boolean {
  * a list noun of the to-do or reminder list, optionally with one action noun ("할 일:", "알림 설정:", "To-do:", "10월 23일
  * 오후 6시 알림:"); "회의록 중 할 일:" or "회의록 붙여넣기 할 일:" are lines of something pasted.
  */
-function colonLabelIsPasted(prose: string, content: readonly string[]): boolean {
+function colonLabelIsPasted(prose: string, content: readonly string[], clock: { readonly now: IsoTimestamp; readonly timeZone: string }): boolean {
   const colon = /[:：](?=\s|$)/u.exec(prose);
   if (colon === null) return false;
   const after = prose.slice(colon.index + 1);
@@ -256,30 +262,71 @@ function colonLabelIsPasted(prose: string, content: readonly string[]): boolean 
   const label = prose.slice(0, colon.index).trim();
   const tokens = label.split(/\s+/u).filter((token) => token.length > 0);
   if (nlRequestsSomething(label, NL_ACTION_WORDS) || tokens.some((token) => nlIsRequestForm(token))) return false;
-  let first = 0;
-  while (first < tokens.length && isNlTimeWord(tokens[first] as string)) first += 1;
+  const first = timePrefixLength(tokens, clock);
   const spaceless = normalizeForMatch(tokens.slice(first).join(' ')).replace(/[\s-]+/gu, '');
   return !LIST_LABELS.some((noun) => spaceless === noun || (spaceless.startsWith(noun) && LABEL_ACTION_NOUNS.has(spaceless.slice(noun.length))));
 }
 
-/** The adnominal (modifier) last syllable of a verb or adjective: -은 / -는 / -던 and the -ㄴ forms ("남은", "밀린", "급한"). */
-const ADNOMINAL_LAST = /(?:은|는|던|한|된|린|진|난|운|온|친|낸|준|든|큰|쁜|픈|긴|센)$/u;
+/** The reminder grammar's answers that still mean "this is a time" (a time it will not schedule from here, not a non-time). */
+const TIME_CLARIFY_REASONS: ReadonlySet<string> = new Set(['PAST_TIME', 'TOO_SOON', 'TOO_FAR', 'INVALID_DATE', 'INVALID_TIME', 'NONEXISTENT_TIME']);
+
+/**
+ * Codex P2 (2026-10-19): how many leading tokens form a time, read by the reminder grammar itself (`parseReminderWhen`, the
+ * same parser a reminder's `when` uses: "내일 오전 9시 반", "오후 3시 15분", "10월 22일 오후 3시"), the longest prefix first;
+ * a day word alone ("내일 알림: …"), which the grammar reads as a time without a clock, falls back to the time-word class.
+ */
+function timePrefixLength(tokens: readonly string[], clock: { readonly now: IsoTimestamp; readonly timeZone: string }): number {
+  for (let length = Math.min(tokens.length, 8); length > 0; length -= 1) {
+    const when = parseReminderWhen(tokens.slice(0, length).join(' '), clock);
+    if (when.kind !== 'clarify' || TIME_CLARIFY_REASONS.has(when.reason)) return length;
+  }
+  let first = 0;
+  while (first < tokens.length && isNlTimeWord(tokens[first] as string)) first += 1;
+  return first;
+}
+
+/**
+ * A word that LOOKS adnominal by its last syllable: a final ㄴ, or 는 / 던. A final-syllable test cannot tell a noun from a
+ * modifier (검진, 정산 vs 밀린, 급한), so it only decides between executing and asking, never alone between a task and chat.
+ */
+function looksAdnominal(word: string): boolean {
+  const last = Array.from(word).at(-1) ?? '';
+  const code = last.charCodeAt(0) - 0xac00;
+  return (code >= 0 && code <= 11171 && code % 28 === 4) || last === '는' || last === '던';
+}
+/** The adnominal endings that are clearly a verb's or adjective's: -은 / -는 / -던. */
+const STRONG_ADNOMINAL = /(?:은|는|던)$/u;
+/** One-word modifiers that name a list ("남은", "밀린", "급한"): a vowel-stem -ㄴ form of a verb or adjective. */
+const MODIFIER_SYLLABLE = /(?:한|된|린|난|운|온|친|낸|준|든|큰|쁜|픈|긴|센)$/u;
+/** Closed degree adverbs (제일, 가장 …): only a modifier follows them, never a noun head ("제일 급한"). */
+const DEGREE_ADVERB = /^(?:제일|젤|가장|더|덜|아주|매우|너무|진짜|정말|꽤|좀|많이|다)$/u;
+/** A word that cannot stand inside a noun phrase: a strong adnominal, an -ㄹ adnominal, a verb ending, a case particle. */
+const NOT_NOUN_PHRASE = /(?:은|는|던|을|를|할|될|다|고|서|게|히|면|며|지|요|어|아|여|이|가|에|의|로)$/u;
 /** A possessive determiner or the possessive 의 ("우리 팀", "내", "팀장님의"): an owner, not a task. */
 const POSSESSIVE_FIRST = /^(?:우리|저희|내|제|나의|저의|너의|네)$/u;
 
 /**
- * CA P2 (2026-10-19): the shape of a bare "<title> 할 일" (the frame without the title is only a to-do list noun). `modifier`:
- * the title ends in an adnominal word, so the phrase names a list ("남은 할 일"); `ask`: one bare noun or an owner's
- * ("회사 할 일", "팀장님 할 일", "우리 팀 할 일"); `undefined`: not the bare form, or a multi-word task title.
+ * CA P2 and Codex P2 (2026-10-19): the shape of a bare "<title> 할 일" (the frame without the title is only a to-do list
+ * noun). `modifier`: the title has no noun head, only a modifier and at most degree adverbs ("남은", "밀린", "제일 급한"),
+ * so the phrase names a list (chat). `confirm`: uncertain, so Core asks "'…'을(를) 할 일로 추가할까요?": one bare noun
+ * ("회사", "청소", "정산"), an owner's ("우리 팀", "팀장님의"), or a last word that looks adnominal without a noun phrase
+ * before it. `undefined`: execute: a multi-word task title ("검증 노트북 점검", "직원 정기 건강 검진": nouns before a ㄴ-final
+ * noun) or a one-word title in the -기 nominalizer, a task by form (CA P3 #6: "장보기", "빨래하기").
  */
-function bareTodoTitle(contentFrame: string, title: string): 'modifier' | 'ask' | undefined {
+function bareTodoTitle(contentFrame: string, title: string): 'modifier' | 'confirm' | undefined {
   const rest = normalizeForMatch(contentFrame).replace(/[\s.!?~,]+/gu, '');
   if (!TODO_LIST_LABELS.has(rest.replace(/-/gu, ''))) return undefined;
   const words = normalizeForMatch(title).split(/\s+/u).filter((word) => word.length > 0);
   const last = words.at(-1) ?? '';
-  if (/[가-힣]$/u.test(last) && ADNOMINAL_LAST.test(last)) return 'modifier';
-  if (words.length <= 1 || POSSESSIVE_FIRST.test(words[0] ?? '') || /의$/u.test(last)) return 'ask';
-  return undefined;
+  const before = words.slice(0, -1);
+  const hangulLast = /[가-힣]$/u.test(last);
+  if (hangulLast && looksAdnominal(last)) {
+    if (before.every((word) => DEGREE_ADVERB.test(word)) && (before.length > 0 || STRONG_ADNOMINAL.test(last) || MODIFIER_SYLLABLE.test(last))) return 'modifier';
+    if (before.length === 0 || STRONG_ADNOMINAL.test(last)) return 'confirm';
+    return before.every((word) => !NOT_NOUN_PHRASE.test(word) && !POSSESSIVE_FIRST.test(word)) ? undefined : 'confirm';
+  }
+  if (words.length <= 1) return hangulLast && /기$/u.test(last) && Array.from(last).length >= 2 ? undefined : 'confirm';
+  return POSSESSIVE_FIRST.test(words[0] ?? '') || /의$/u.test(last) ? 'confirm' : undefined;
 }
 
 /** The words that name a read of one item (Core's mode and content vocabulary) beside every action word. */
@@ -322,6 +369,8 @@ export interface NlRequestShape {
   readonly elliptical?: boolean;
   /** Owner decision (b) of 2026-10-19: the list noun deciding the entry is garbled or unknown (`nlGarbledEntryNoun`); asks. */
   readonly garbledNoun?: NlGarbledEntryNoun;
+  /** A bare "<title> 할 일" whose title may not be a task (`bareTodoTitle` `confirm`); Core asks, nothing is written. */
+  readonly uncertainTitle?: boolean;
 }
 
 /**
@@ -332,7 +381,13 @@ export interface NlRequestShape {
  * "아까 보냈던 거") from the prose before the vetoes run. An arg-less entry (`action.undo`) also needs its own action word
  * (an undo word) in the frame and no dative recipient ("친구한테 책 돌려줘").
  */
-export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingText: string, stripFrame?: (prose: string) => string): NlRequestShape {
+export function requestShapeOf(
+  entry: NlCatalogEntry,
+  args: NlArgs,
+  groundingText: string,
+  stripFrame?: (prose: string) => string,
+  clock: { readonly now: IsoTimestamp; readonly timeZone: string } = { now: '2026-01-01T00:00:00.000Z' as IsoTimestamp, timeZone: 'Asia/Seoul' },
+): NlRequestShape {
   const base = withoutStructures(groundingText).normalize('NFC').replace(/\s+/g, ' ');
   const prose = stripFrame === undefined ? base : stripFrame(base).normalize('NFC').replace(/\s+/g, ' ');
   let vetoFrame = prose;
@@ -359,17 +414,18 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
   // CA P1 (2026-10-19): a colon label hands Quoky content only as the owner's own command. A whole-message quote is quoted
   // speech, a label that does not open the message (only a time may precede it) is a line of pasted material ("회의록 중
   // 할 일: …"), and a second `key:` inside the content is a pasted record ("…, 담당: 김대리"): all reported, none acts.
-  if (veto === undefined && (wholeMessageQuoted(prose) || colonLabelIsPasted(prose, content))) veto = 'reported';
+  if (veto === undefined && (wholeMessageQuoted(prose) || colonLabelIsPasted(prose, content, clock))) veto = 'reported';
   // For a target entry an item-source noun is part of the reference; a payload entry has no reference.
   const payload = entry.args.some((spec) => spec.kind === 'span' && spec.required === true);
   let expressesAction = nlFrameExpressesAction(contentFrame, !payload);
   // CA P2 (2026-10-19), owner decision A narrowed: a bare "<title> 할 일" names a list, not a task, when the title is one
   // modifier ("남은 할 일", "제일 급한 할 일": an adnominal last word) and asks when it is a single noun or an owner's
   // ("회사 할 일", "팀장님 할 일", "우리 팀 할 일"); a multi-word task title ("검증 노트북 점검 할 일") still executes.
+  let uncertainTitle = false;
   if (entry.id === 'todo.add' && typeof args.title === 'string' && spanEnclosure(prose, args.title) !== 'quote') {
     const bare = bareTodoTitle(contentFrame, args.title);
     if (bare === 'modifier') veto ??= 'statement';
-    else if (bare === 'ask') expressesAction = false;
+    else if (bare === 'confirm') uncertainTitle = true;
   }
   if (entry.args.length === 0 && words.length > 0) {
     // A6-D3a amendment 1, undo confirmation rule: the undo needs one of its own words (a bare 돌려 is "give back": "돈 좀
@@ -403,6 +459,7 @@ export function requestShapeOf(entry: NlCatalogEntry, args: NlArgs, groundingTex
     ...(garbled !== undefined ? { garbled } : {}),
     ...(garbledNoun !== undefined ? { garbledNoun } : {}),
     ...(elliptical ? { elliptical } : {}),
+    ...(uncertainTitle ? { uncertainTitle } : {}),
   };
 }
 
@@ -522,7 +579,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // a frame with nothing but references ("2번도", "그걸로요", "13번 알림") or nothing but content ("내일 9시 우유")
   // expresses no action.
   if (entry.risk === 'LOCAL_WRITE') {
-    const shape = requestShapeOf(entry, args, ctx.groundingText, ctx.requestFrame);
+    const shape = requestShapeOf(entry, args, ctx.groundingText, ctx.requestFrame, { now: ctx.now, timeZone: ctx.timeZone });
     if (shape.unbalancedSpan !== undefined) return { ok: false, reason: 'invalid-arg', entryId, arg: shape.unbalancedSpan };
     if (shape.veto !== undefined) return { ok: false, reason: 'not-request', entryId, arg: shape.veto };
     if (!shape.expressesAction) return { ok: false, reason: 'ungrounded', entryId, arg: 'action' };
@@ -536,6 +593,8 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
         ? { ok: false, reason: 'garbled-noun', entryId, arg: 'entry', candidate: shape.garbledNoun.noun }
         : { ok: false, reason: 'garbled-noun', entryId, arg: 'entry', unknownWord: shape.garbledNoun.word };
     }
+    // CA / Codex P2 (2026-10-19): a bare "<title> 할 일" whose title may not be a task asks before anything is added.
+    if (shape.uncertainTitle === true) return { ok: false, reason: 'uncertain-title', entryId, arg: 'title' };
     // After the garble (a garbled action word is its own question): an elliptical frame names no action at all, so the
     // action is only inferred and nothing is written ("이번엔 3번" after "1번 완료"; D12 gate v44 run 3).
     if (shape.elliptical === true) return { ok: false, reason: 'elliptical', entryId, arg: 'action' };

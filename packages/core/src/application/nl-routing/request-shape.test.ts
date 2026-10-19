@@ -771,11 +771,38 @@ describe('CA review of 2026-10-19: colon labels act only as the owner\'s own com
     for (const [text, title] of [['남은 할 일', '남은'], ['밀린 할 일', '밀린'], ['제일 급한 할 일', '제일 급한']] as const) {
       expect(check('todo.add', { title }, text), text).toMatchObject({ ok: false, reason: 'not-request', arg: 'statement' });
     }
-    for (const [text, title] of [['회사 할 일', '회사'], ['팀장님 할 일', '팀장님'], ['우리 팀 할 일', '우리 팀']] as const) {
-      expect(check('todo.add', { title }, text), text).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'action' });
+    for (const [text, title] of [['회사 할 일', '회사'], ['팀장님 할 일', '팀장님'], ['우리 팀 할 일', '우리 팀'], ['청소 할 일', '청소']] as const) {
+      expect(check('todo.add', { title }, text), text).toMatchObject({ ok: false, reason: 'uncertain-title', arg: 'title' });
     }
     expect(check('todo.add', { title: '검증 노트북 점검' }, '검증 노트북 점검 할 일')).toMatchObject({ ok: true });
     expect(check('todo.add', { title: '세금 서류 챙기기' }, '세금 서류 챙기기 할 일')).toMatchObject({ ok: true });
     expect(check('todo.add', { title: '회의 안건 정리' }, '회의 안건 정리 할 일')).toMatchObject({ ok: true });
+  });
+
+  it('Codex P2: a ㄴ-final noun is no modifier: a noun phrase before it executes, an uncertain one asks; never refused as a list', () => {
+    for (const title of ['직원 정기 건강 검진', '분기 정산', '서버 점검', '도서관 책 반납']) {
+      expect(check('todo.add', { title }, `${title} 할 일`), title).toMatchObject({ ok: true });
+    }
+    for (const title of ['검진', '정산', '점검', '반납']) {
+      expect(check('todo.add', { title }, `${title} 할 일`), title).toMatchObject({ ok: false, reason: 'uncertain-title' });
+    }
+    // A strong adnominal after other words is uncertain: asked, never chat or a write.
+    expect(check('todo.add', { title: '어제 받은' }, '어제 받은 할 일')).toMatchObject({ ok: false, reason: 'uncertain-title' });
+  });
+
+  it('CA P3 #6: a one-word title in the -기 nominalizer is a task by form and executes', () => {
+    for (const title of ['장보기', '빨래하기']) expect(check('todo.add', { title }, `${title} 할 일`), title).toMatchObject({ ok: true });
+  });
+
+  it('Codex P2: the time before a colon label is read by the reminder grammar (반, 분, a date)', () => {
+    for (const [text, when, body] of [
+      ['내일 오전 9시 반 알림: 약 먹기', '내일 오전 9시 반', '약 먹기'],
+      ['내일 오전 9시 30분 알림: 약 먹기', '내일 오전 9시 30분', '약 먹기'],
+      ['오후 3시 15분 알림: 회의 준비', '오후 3시 15분', '회의 준비'],
+      ['10월 22일 오후 3시 알림: 서류 제출', '10월 22일 오후 3시', '서류 제출'],
+    ] as const) {
+      expect(check('reminder.create', { when, body }, text), text).toMatchObject({ ok: true });
+    }
+    expect(check('reminder.create', { when: '내일 9시', body: '보고서' }, '회의록 중 알림: 내일 9시 보고서')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
   });
 });

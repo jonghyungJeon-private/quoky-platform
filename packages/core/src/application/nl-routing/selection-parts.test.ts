@@ -380,6 +380,12 @@ describe('honest chat (ADR-0120 D9)', () => {
       expect(guardDeadEndActionReplies(reply, withActions, 'ko'), reply).toEqual({ text: reply, guarded: false });
     }
     expect(guardFalseIncapabilityClaims('3번도 완료할까요?', configured, 'ko')).toEqual({ text: '3번도 완료할까요?', guarded: false });
+    // Codex P2: list nouns and verbs come from the offered families; with reminders not offered the reminder denial is true.
+    const todosOnly = [...configured, ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined && !entry.id.startsWith('reminder.'))];
+    const denial = '리마인더를 대신 만들어 드릴 수는 없어요.';
+    expect(guardFalseIncapabilityClaims(denial, todosOnly, 'ko')).toEqual({ text: denial, guarded: false });
+    expect(guardFalseIncapabilityClaims('리마인더로 만들어 드릴까요?', todosOnly, 'ko')).toEqual({ text: '리마인더로 만들어 드릴까요?', guarded: false });
+    expect(guardFalseIncapabilityClaims(denial, withActions, 'ko')).toEqual({ text: restate, guarded: true });
   });
 
   it('A6 live test 4: the configured-sources fact tells the chat never to deny or offer an offered action as a yes/no question', () => {

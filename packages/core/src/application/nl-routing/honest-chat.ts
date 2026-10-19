@@ -120,9 +120,14 @@ export function guardDeadEndActionReplies(text: string, entries: readonly NlCata
   // CA P2 (2026-10-19): a list noun used as the place or object of a write is the action too ("리마인더로 만들어 드릴까요?",
   // "할 일에 넣어 드릴까요?"), and so is a list noun as the object of a denial ("저는 할 일을 대신 해 드릴 수는 없어요").
   const listNouns = NL_ENTRY_NOUNS.flatMap((list) => list.words).map((word) => word.toLowerCase());
-  const listNoun = `(?<![가-힣a-z])(?:${listNouns.map(escape).join('|')})`;
-  const listWrite = new RegExp(`${listNoun}(?:으로|로|에다|에|을|를)?\\s*(?:${NL_ENTRY_NOUN_VERBS.map(escape).join('|')})`, 'u');
-  const listDenial = new RegExp(`${listNoun}(?:을|를|은|는|도)[^.!?\\n]{0,14}?${KO_ACTION_INCAPABLE.source}`, 'u');
+  // Codex P2 (2026-10-19): the list nouns and their verbs come from the action families OFFERED this turn. With reminders not
+  // offered, "리마인더를 대신 만들어 드릴 수는 없어요." is true and stays.
+  const offeredLists = new Set(actions.map((entry) => (entry.id.startsWith('todo.') ? 'todo' : entry.id.startsWith('reminder.') ? 'reminder' : undefined)));
+  const offeredNouns = NL_ENTRY_NOUNS.filter((list) => offeredLists.has(list.owner)).flatMap((list) => list.words).map((word) => word.toLowerCase());
+  const offeredVerbs = NL_ENTRY_NOUN_VERBS.filter((verb) => actions.some((entry) => (entry.actionGrounding ?? []).some((word) => word.endsWith(verb) && offeredNouns.some((noun) => word.startsWith(noun)))));
+  const listNoun = offeredNouns.length === 0 ? undefined : `(?<![가-힣a-z])(?:${offeredNouns.map(escape).join('|')})`;
+  const listWrite = listNoun === undefined || offeredVerbs.length === 0 ? /(?!)/u : new RegExp(`${listNoun}(?:으로|로|에다|에|을|를)?\\s*(?:${offeredVerbs.map(escape).join('|')})`, 'u');
+  const listDenial = listNoun === undefined ? /(?!)/u : new RegExp(`${listNoun}(?:을|를|은|는|도)[^.!?\\n]{0,14}?${KO_ACTION_INCAPABLE.source}`, 'u');
   // The incapability governs the action word: Korean after it in the same stretch, English before it within two words.
   const koIncapable = (sentence: string, withSpeech: boolean): boolean => {
     const word = hangulPattern(withSpeech);

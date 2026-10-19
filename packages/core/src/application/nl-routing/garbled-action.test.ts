@@ -186,6 +186,8 @@ describe('owner decision (b) of 2026-10-19: a garbled or unknown list noun asks'
       expect(nlGarbledEntryNoun(`${word} 걸어줘`, NL_ENTRY_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ACTION_WORDS), word).toBeUndefined();
     }
     expect(create('내일 9시에 새롭게 만들어줘, 우유 사기', { when: '내일 9시', body: '우유 사기' })).toMatchObject({ ok: true });
+    // CA P3 #7: a filler glued on the token ("꼭좀", "빨리좀만") is a filler.
+    for (const word of ['꼭좀', '빨리좀', '다시좀만', '새롭게좀']) expect(nlGarbledEntryNoun(`${word} 걸어줘`, NL_ENTRY_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ACTION_WORDS), word).toBeUndefined();
     // Not directly before the verb (a filler between): no unknown-noun question.
     expect(nlGarbledEntryNoun('삐용삐용 좀 걸어줘', NL_ENTRY_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ACTION_WORDS)).toBeUndefined();
     // The typo path is unchanged.

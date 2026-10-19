@@ -322,7 +322,10 @@ const NON_NOUN_TAIL = /(?:게|히|이|로|에|서|다|고|면|며|지|요|어|�
  * and it is no closed filler (좀, 빨리, 다시, 꼭 …) and no time word (오늘, 내일, 9시). The caller has already removed the
  * content and time spans and checked that no correct list noun is present.
  */
-function isUnknownNounCandidate(word: string, next: string, verbs: readonly string[]): boolean {
+function isUnknownNounCandidate(raw: string, next: string, verbs: readonly string[]): boolean {
+  // CA P3 #7: a filler glued on the token ("꼭좀", "빨리좀만") is set aside first; the stem meets the same checks.
+  const word = raw.replace(/(?:좀만|좀)$/u, '');
+  if (word.length === 0) return false;
   const particle = OBJECT_PARTICLE.exec(word);
   const stem = particle === null ? word : word.slice(0, particle.index);
   const beforeVerb = verbs.some((verb) => next.startsWith(verb));

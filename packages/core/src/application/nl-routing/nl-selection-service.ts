@@ -65,6 +65,7 @@ import {
   renderDmOnlyAction,
   renderContinuationConfirm,
   renderAskWhen,
+  renderConfirmTitle,
   renderGarbledAction,
   renderGarbledNoun,
   renderRestate,
@@ -1341,6 +1342,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
         if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
         return this.actionAnswer(asked, validated.candidate !== undefined ? renderGarbledNoun(validated.candidate, language) : renderUnknownNoun(validated.unknownWord as string, language));
       }
+      // CA / Codex P2 (2026-10-19): a bare "<title> 할 일" whose title may not be a task asks whether to add it.
+      if (validated.reason === 'uncertain-title' && entryId === 'todo.add' && typeof output.args.title === 'string') {
+        const asked: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'uncertain-title' };
+        if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
+        return this.actionAnswer(asked, renderConfirmTitle(output.args.title, language));
+      }
       // Live test 4 (turns 26 / 58 / 60): a reminder with no time asks for the time, not the generic restate.
       if (validated.reason === 'missing-arg' && entryId === 'reminder.create' && validated.arg === 'when') {
         const asked: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'missing-arg' };
@@ -2494,7 +2501,7 @@ function correlationOf(turn: Pick<NlSelectionTurn, 'session' | 'turnId'>): { rea
  * statement, volition or example veto always ends the turn as chat, deictic or not (CA review (b)). `garbled-action` too: a
  * garbled action word asks its own question before any preview (garbled action word addendum, CA review).
  */
-export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-entry', 'not-offered', 'not-read', 'unknown-arg', 'invalid-arg', 'credential', 'bulk', 'not-request', 'garbled-action', 'garbled-noun']);
+export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-entry', 'not-offered', 'not-read', 'unknown-arg', 'invalid-arg', 'credential', 'bulk', 'not-request', 'garbled-action', 'garbled-noun', 'uncertain-title']);
 
 /** A6: the platform marked part of the message as quoted or as code: material, never one plain instruction. */
 function markedMaterial(turn: Pick<NlSelectionTurn, 'quotedRanges' | 'codeFormatted'>): boolean {

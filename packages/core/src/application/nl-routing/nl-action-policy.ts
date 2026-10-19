@@ -270,6 +270,19 @@ export function renderUnknownNoun(word: string, language: Lang): string {
 }
 
 /**
+ * CA / Codex P2 (2026-10-19): a bare "<title> 할 일" whose title may not be a task ("회사 할 일", "정산 할 일"). The title is
+ * the owner's own words (echoed in a DM only). No open question can keep it (A6-D2 pending questions are content-free), so
+ * the question says how to confirm: the owner restates with the add word; a bare "응" does nothing.
+ */
+export function renderConfirmTitle(title: string, language: Lang): string {
+  if (language === 'en') return `Add "${title}" as a to-do? Nothing was added yet. If so, please say "add ${title} to my to-dos".`;
+  const last = Array.from(title).at(-1) ?? '';
+  const code = last.charCodeAt(0) - 0xac00;
+  const particle = code >= 0 && code <= 11171 ? (code % 28 === 0 ? '를' : '을') : '을(를)';
+  return `'${title}'${particle} 할 일로 추가할까요? 아직 아무것도 추가하지 않았어요. 맞으면 '할 일에 추가해줘'를 붙여 다시 말씀해 주세요.`;
+}
+
+/**
  * Live test 4 (2026-10-17, turns 26 / 58 / 60): a reminder request with no time. The question names what is missing (the
  * time) instead of the generic "무엇을/어느 항목을 다시 말씀해 주세요". No open question is kept: A6-D2 pending questions are
  * content-free (ids and closed values only), so the reminder text cannot wait for the answer; the owner says it again with
