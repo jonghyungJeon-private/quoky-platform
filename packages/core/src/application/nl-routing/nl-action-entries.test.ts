@@ -359,7 +359,7 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
       ['다음 주 수요일 알림 보여줘', 'next-wed'],
       ['금요일 알림 보여줘', 'fri'],
     ] as const) {
-      expect(nlReminderPeriod(text, nlWeekdayMentions(text)), text).toEqual({ kind: 'supported', symbol });
+      expect(nlReminderPeriod(text, nlWeekdayMentions(text)), text).toMatchObject({ kind: 'supported', symbol });
       expect(validateSelection({ entryId: 'reminder.list', args: { range: symbol } }, ctx(text)), text).toMatchObject({ ok: true });
     }
     expect(nlReminderPeriod('알림 뭐 있어?')).toEqual({ kind: 'none' });
@@ -384,6 +384,21 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
       expect(validateSelection({ entryId: 'reminder.list', args: { range } }, ctx(text)), text).toMatchObject({ ok: false, reason: 'unsupported-period', arg: 'range' });
       expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx(text)), text).toMatchObject({ ok: false, reason: 'unsupported-period', arg: 'range' });
     }
+    // Codex P2: an English "next" / "this" is a direction, placed as the weekday validation places it (NOW = Wed 10-14):
+    // "next Wednesday" is 10-21 (never today), "this Friday" 10-16; they agree with "다음 주 수요일" / "이번 주 금요일".
+    const placedDay = (text: string, range: string): string | undefined => {
+      const result = validateSelection({ entryId: 'reminder.list', args: { range } }, ctx(text));
+      return result.ok ? result.value.range?.from : undefined;
+    };
+    expect(placedDay('next Wednesday reminders', 'next-wed')).toBeDefined();
+    expect(placedDay('next Wednesday reminders', 'next-wed')).toBe(placedDay('다음 주 수요일 알림 보여줘', 'next-wed'));
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'wed' } }, ctx('next Wednesday reminders'))).toMatchObject({ ok: false });
+    expect(placedDay('this Friday reminders', 'this-fri')).toBeDefined();
+    expect(placedDay('this Friday reminders', 'this-fri')).toBe(placedDay('이번 주 금요일 알림 보여줘', 'this-fri'));
+    expect(placedDay('this Friday reminders', 'fri')).toBe(placedDay('이번 주 금요일 알림 보여줘', 'this-fri'));
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-fri' } }, ctx('this Friday reminders'))).toMatchObject({ ok: false });
+    // "last Friday" is a past period: outside the set.
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'last-fri' } }, ctx('last Friday reminders'))).toMatchObject({ ok: false, reason: 'unsupported-period' });
     // A date already past (10월 1일 on the 14th) is a past period: it asks the same way.
     expect(validateSelection({ entryId: 'reminder.list', args: { range: '10-01' } }, ctx('10월 1일 알림 보여줘'))).toMatchObject({ ok: false, reason: 'unsupported-period' });
     // A supported period with another range (or none) asks too: the range must equal the owner's one period.

@@ -56,6 +56,7 @@ import {
   nlUntilBound,
   nlUntilSymbolWeekday,
   nlWeekdayMentions,
+  nlWeekdayMentionRanges,
   normalizeNlRangeSymbol,
   resolveNlRange,
   type NlResolvedRange,
@@ -646,7 +647,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // owner's words resolve to (nlReminderPeriod); any other period they name asks with the fixed restate, never filtered
   // and never dropped.
   let ownerPeriod: NlReminderPeriod | undefined;
-  let ownerRange: NlResolvedRange | undefined;
+  let ownerRanges: readonly NlResolvedRange[] = [];
   if (rangeSpec !== undefined) {
     // A weekday symbol that names the same day as the owner's own week word is spelled the owner's way ("금요일" = fri,
     // never this-fri when both are this Friday): a canonical form, never another day (calendar-accuracy note).
@@ -656,9 +657,11 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       const periodText = rangeSpec.allowUpcoming === true ? ctx.groundingText : ctx.groundingText.replace(/\bupcoming\b|다가오는/giu, ' ');
       ownerPeriod = nlReminderPeriod(periodText, mentions);
       if (ownerPeriod.kind === 'supported') {
-        ownerRange = resolveNlRange(ownerPeriod.symbol, ctx.now, ctx.timeZone);
-        // A date already past ("10월 1일" on the 19th) is a past period: outside the set.
-        if (ownerRange === undefined || Date.parse(ownerRange.to) <= Date.parse(ctx.now)) ownerPeriod = { kind: 'unsupported' };
+        // A weekday is placed by the weekday validation's own rules (an English "next Wednesday" is a direction); a past
+        // day or date ("10월 1일" on the 19th) is a past period: outside the set.
+        const placed = ownerPeriod.weekday !== undefined ? nlWeekdayMentionRanges(ownerPeriod.weekday, ctx.now, ctx.timeZone) : [resolveNlRange(ownerPeriod.symbol, ctx.now, ctx.timeZone)];
+        ownerRanges = placed.filter((owner): owner is NlResolvedRange => owner !== undefined && Date.parse(owner.to) > Date.parse(ctx.now));
+        if (ownerRanges.length === 0) ownerPeriod = { kind: 'unsupported' };
       }
       if (ownerPeriod.kind === 'unsupported') return { ok: false, reason: 'unsupported-period', entryId, arg: rangeSpec.name };
       // Owner decision of 2026-10-19 (A5 rule 6): a period that needs the owner's time words is ungrounded without one (a
@@ -773,7 +776,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   if (rangeSpec?.futureOnly === true && range !== undefined && Date.parse(range.to) <= Date.parse(ctx.now)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
   // Codex P2 (2026-10-19): a period that needs the owner's words must BE the owner's one supported period: the selected
   // range equals it, by the same clock ("다음 주 수요일" is next-wed, never the whole next week).
-  if (rangeSpec !== undefined && ownerRange !== undefined && (range === undefined || range.from !== ownerRange.from || range.to !== ownerRange.to)) {
+  if (rangeSpec !== undefined && ownerRanges.length > 0 && (range === undefined || !ownerRanges.some((owner) => owner.from === range?.from && owner.to === range?.to))) {
     return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
   }
   // A6: the entry's own check after the per-arg checks.

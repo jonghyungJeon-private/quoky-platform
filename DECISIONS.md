@@ -27585,9 +27585,12 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
 
 ## Owner decisions of 2026-10-19 (A6 live test 4, `docs/plans/a6-live-test-4-record.md`)
 
-- **(a) Turn 69 executes.** "회의 끝나고 검증 회의록 정리 할 일에 넣어줘" adds the to-do now; the qualifier stays in the title.
-  The deferred-timing veto reads the request frame without the title span, so it does not refuse it, and a deferral
-  outside the title ("회의 끝나고 할 일에 회의록 정리 넣어줘") stays chat. Gold `a6-paraphrase-todo.add-906` (execute).
+- **(a) Turn 69 executes.** "회의 끝나고 검증 회의록 정리 할 일에 넣어줘" adds the to-do now, titled "검증 회의록 정리"
+  (amended by the owner the same day: the timing qualifier is NOT part of the title). A temporal clause right before the
+  task's own words (the grounded title span) only says when the owner will do the task, so the deferred-timing veto skips
+  a deferral word (끝나고, -고 나서, 나중에, "… 후/뒤") whose next word begins the title span; a temporal clause before
+  anything else ("회의 끝나고 할 일에 회의록 정리 넣어줘", "회의 끝나고 2번 완료해줘") still defers the request and stays chat.
+  Gold `a6-paraphrase-todo.add-906` (execute, title "검증 회의록 정리").
 - **(b) A garbled list noun asks** (extends the garbled-action addendum and owner decision E to the noun that decides the
   entry). For a to-do or reminder write, when no catalog list noun (`todo.list` / `reminder.list` aliases) is in the frame
   and a word in the noun's slot (the object before a list-noun verb or a request form, a destination particle before a
@@ -27632,7 +27635,9 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   and the reminder grammar's day recognizer, a range symbol word or date, a weekday, a duration, a number with a calendar
   or clock unit), so "내일 오전 9시", "tomorrow morning", "오늘 저녁" and "다음 주 수요일 오후" ask instead of widening to the
   day; a time expression with no supported period ("show reminders next 7 days") asks instead of listing everything.
-  Only prose with no time expression at all has no range.
+  Only prose with no time expression at all has no range. A weekday is placed by the weekday validation's own rules
+  (`nlWeekdayMentionRanges`): a Korean week word fixes the week, an English "next" / "this" is a direction ("next
+  Wednesday" said on a Wednesday is a week later, never today); "last Friday" is past and asks.
   Anything else the owner names (a span with 부터/까지/until/~, a duration "앞으로 7일" / "next 7 days", a month "2월", a
   day-only date "25일", a past period or date, any other symbol, several periods) asks with the fixed, content-free
   restate "알림 목록은 오늘·내일·이번 주·다음 주·특정 날짜로 볼 수 있어요. 예: \"내일 알림 보여줘\"" (catalog

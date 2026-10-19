@@ -1141,7 +1141,14 @@ export function nlExpressedRangeSymbols(text: string): string[] {
  * 부터/까지/until/~, a duration such as 앞으로 7일 / next 7 days, a month, a day-only date "25일", a past or other symbol,
  * several periods): Core asks with the fixed restate and never filters or drops it.
  */
-export type NlReminderPeriod = { readonly kind: 'none' } | { readonly kind: 'supported'; readonly symbol: string } | { readonly kind: 'unsupported' };
+export type NlReminderPeriod =
+  | { readonly kind: 'none' }
+  /**
+   * `weekday`: the period is that one weekday mention, placed by the weekday validation's own rules (an English "next" /
+   * "this" is a direction, not a week: `nlWeekdayMentionRanges`); `symbol` is then its Korean-week spelling or bare stem.
+   */
+  | { readonly kind: 'supported'; readonly symbol: string; readonly weekday?: NlWeekdayMention }
+  | { readonly kind: 'unsupported' };
 
 const REMINDER_RELATIVE_PERIODS = ['today', 'tomorrow', 'this-week', 'next-week'] as const;
 const WEEKDAY_BY_INDEX = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
@@ -1179,7 +1186,7 @@ function supportedReminderPeriod(symbols: readonly string[], weekdays: readonly 
     // One weekday of this or next week: its week word is its only other period word ("다음 주 수요일" = next-wed).
     const day = weekdays[0] as NlWeekdayMention;
     const anchor = day.week === 'next' ? 'next-week' : day.week === 'this' ? 'this-week' : undefined;
-    if (weekdays.length !== 1 || day.bound || (day.week !== undefined && anchor === undefined)) return undefined;
+    if (weekdays.length !== 1 || day.bound || (day.week !== undefined && anchor === undefined) || day.direction === 'past') return undefined;
     if (symbols.some((symbol) => symbol !== anchor)) return undefined;
     return `${anchor === 'next-week' ? 'next-' : anchor === 'this-week' ? 'this-' : ''}${WEEKDAY_BY_INDEX[day.weekday]}`;
   }
@@ -1220,7 +1227,7 @@ export function nlReminderPeriod(text: string, weekdays?: readonly NlWeekdayMent
   if (PERIOD_SPAN.test(normalizeForMatch(prose))) return { kind: 'unsupported' };
   const symbol = supportedReminderPeriod(symbols, days);
   if (symbol === undefined || hasReminderTimeExpression(withoutSupportedPeriodForms(prose))) return { kind: 'unsupported' };
-  return { kind: 'supported', symbol };
+  return days.length === 1 ? { kind: 'supported', symbol, weekday: days[0] as NlWeekdayMention } : { kind: 'supported', symbol };
 }
 
 /**
