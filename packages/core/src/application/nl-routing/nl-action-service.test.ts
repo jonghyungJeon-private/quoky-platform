@@ -1321,6 +1321,44 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
     expect(again.decision).toMatchObject({ kind: 'execute', command: { entryId: 'todo.add', args: { title: '정산' } } });
   });
 
+  it('Codex P2 (security): no resend instruction echoes a credential; the credential refusal answers instead', async () => {
+    const secret = 'sk-abcdefghijklmnopqrstuvwxyz';
+    const cases = [
+      await run(`${secret} 할 일`, out('todo.add', { title: secret })),
+      await run(`${secret} 알림 하나 만들어줘`, out('reminder.create', { body: secret })),
+      await run(`10월 21일 오전 9시에 ${secret} 걸어줘, 도면 회신`, out('reminder.create', { when: '10월 21일 오전 9시', body: '도면 회신' })),
+    ];
+    // The whole message carries the token, so selection input skips it before the selector (credential); nothing is echoed.
+    for (const { decision } of cases) {
+      expect(decision).toMatchObject({ kind: 'skip', reason: 'credential' });
+      expect(JSON.stringify(decision)).not.toContain(secret);
+    }
+  });
+
+  it('Codex P2 (security): the service guard itself refuses an echo of a credential the selector put in a span', async () => {
+    // Defence in depth: the owner's text passes selection input, but the selector's span holds token material. The guard
+    // runs before any resend instruction renders the span, for each echo path.
+    // The input skip is bypassed here (the selection input sees a clean text), so the guard is what keeps the token out.
+    const token = 'sk-abcdefghijklmnopqrst';
+    const bypass = (w: World) => {
+      const service = w.service as unknown as { prepare: (turn: { text: string }, last: unknown) => Record<string, unknown> };
+      const original = service.prepare.bind(service);
+      service.prepare = (turn, last) => ({ ...original({ ...turn, text: '정산 할 일' }, last), text: turn.text, groundingText: turn.text });
+    };
+    const cases = [
+      await run(`${token} 할 일`, out('todo.add', { title: token }), bypass),
+      await run(`${token} 알림 하나 만들어줘`, out('reminder.create', { body: token }), bypass),
+    ];
+    for (const { w, decision } of cases) {
+      expect(decision).toMatchObject({ kind: 'ask', text: '비밀번호나 토큰처럼 보이는 내용은 저장하지 않아요. 아무것도 바꾸지 않았어요.' });
+      expect(JSON.stringify(decision)).not.toContain(token);
+      expect(actionLogs(w).at(-1)?.fields).toMatchObject({ result: 'refused', reason: 'credential' });
+    }
+    // The noun-slot echo: an unknown word is Hangul only, so a token is never one; it is neither asked about nor echoed.
+    const noun = await run(`10월 21일 오전 9시에 ${token} 걸어줘, 도면 회신`, out('reminder.create', { when: '10월 21일 오전 9시', body: '도면 회신' }), bypass);
+    expect(JSON.stringify(noun.decision)).not.toContain(token);
+  });
+
   it('the restate prompts of this branch keep no open question and end in no question mark', async () => {
     const texts = [
       (await run('정산 할 일', out('todo.add', { title: '정산' }))).decision,

@@ -1337,6 +1337,15 @@ export class NlSelectionService implements TurnDeliveryObserver {
         return this.actionAnswer(asked, renderGarbledAction(validated.candidate, language));
       }
       // Owner decision (b) of 2026-10-19: the noun that decides the list is garbled ("리마이너 걸어줘") or unknown; asked.
+      // Codex P2 (2026-10-19, security): a resend instruction that would echo the owner's words (an unknown word, a title, a
+      // body) never echoes a password or token: the credential refusal answers instead; nothing is echoed or written.
+      const echoed = [validated.unknownWord, ...(validated.reason === 'uncertain-title' ? [output.args.title] : []), ...(validated.reason === 'missing-arg' ? [output.args.body] : [])];
+      const echoes = validated.reason === 'garbled-noun' || validated.reason === 'uncertain-title' || (validated.reason === 'missing-arg' && entryId === 'reminder.create');
+      if (echoes && echoed.some((text) => typeof text === 'string' && containsCredentialMaterial(text))) {
+        const refused: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'credential' };
+        if (shadow) return this.shadowAction({ ...refused, result: 'shadow' });
+        return this.actionAnswer(refused, validationReply('credential', language));
+      }
       if (validated.reason === 'garbled-noun' && (validated.candidate !== undefined || validated.unknownWord !== undefined)) {
         const asked: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'garbled-noun' };
         if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
@@ -1352,9 +1361,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (validated.reason === 'missing-arg' && entryId === 'reminder.create' && validated.arg === 'when') {
         const asked: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'missing-arg' };
         if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
-        // The example echoes the body only when it is the owner's own words of this turn (grounded, no credential).
+        // The example echoes the body only when it is the owner's own words of this turn (grounded; credentials refused above).
         const body = output.args.body;
-        const own = typeof body === 'string' && isNlSpanGrounded(body, withoutStructures(prepared.groundingText)) && !containsCredentialMaterial(body) ? body : undefined;
+        const own = typeof body === 'string' && isNlSpanGrounded(body, withoutStructures(prepared.groundingText)) ? body : undefined;
         return this.actionAnswer(asked, renderAskWhen(language, own));
       }
       const audit: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: validated.reason };

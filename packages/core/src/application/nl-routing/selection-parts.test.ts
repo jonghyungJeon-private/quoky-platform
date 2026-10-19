@@ -386,6 +386,12 @@ describe('honest chat (ADR-0120 D9)', () => {
     expect(guardFalseIncapabilityClaims(denial, todosOnly, 'ko')).toEqual({ text: denial, guarded: false });
     expect(guardFalseIncapabilityClaims('리마인더로 만들어 드릴까요?', todosOnly, 'ko')).toEqual({ text: '리마인더로 만들어 드릴까요?', guarded: false });
     expect(guardFalseIncapabilityClaims(denial, withActions, 'ko')).toEqual({ text: restate, guarded: true });
+    // Codex P2: a timed reminder offer counts with no list noun while reminders are offered; with reminders off it stays.
+    expect(guardFalseIncapabilityClaims('내일 9시에 알려드릴까요?', withActions, 'ko')).toEqual({ text: restate, guarded: true });
+    expect(guardFalseIncapabilityClaims('내일 9시에 알려드릴 수는 없어요.', withActions, 'ko')).toEqual({ text: restate, guarded: true });
+    expect(guardFalseIncapabilityClaims('내일 9시에 알려드릴까요?', todosOnly, 'ko')).toEqual({ text: '내일 9시에 알려드릴까요?', guarded: false });
+    expect(guardFalseIncapabilityClaims('내일 9시에 알려드릴 수는 없어요.', todosOnly, 'ko')).toEqual({ text: '내일 9시에 알려드릴 수는 없어요.', guarded: false });
+    expect(guardFalseIncapabilityClaims('더 자세히 알려드릴까요?', withActions, 'ko')).toEqual({ text: '더 자세히 알려드릴까요?', guarded: false });
   });
 
   it('A6 live test 4: the configured-sources fact tells the chat never to deny or offer an offered action as a yes/no question', () => {

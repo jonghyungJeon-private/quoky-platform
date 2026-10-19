@@ -140,6 +140,14 @@ export function guardDeadEndActionReplies(text: string, entries: readonly NlCata
   };
   // The reply is about Quoky's own items: it names a local list (the catalog's to-do / reminder nouns) or the sentence an
   // item number ("3번", "#3"). "더 자세히 알려드릴까요?" or "추가로 설명해 드릴까요?" offer nothing Quoky would write.
+  const reminderWords = actions.filter((entry) => entry.id === 'reminder.create').flatMap((entry) => entry.actionGrounding ?? []).map((word) => word.toLowerCase());
+  const timedReminder =
+    reminderWords.length === 0
+      ? undefined
+      : new RegExp(
+          `(?<![가-힣])(?:${reminderWords.filter((word) => !/^[a-z ]+$/u.test(word)).map(escape).join('|') || '(?!)'})${'(?!으로|로|에서|에게|에|의|과|와)'}|\\b(?:${reminderWords.filter((word) => /^[a-z ]+$/u.test(word)).map(escape).join('|') || '(?!)'})\\b`,
+          'u',
+        );
   const lowered = text.toLowerCase().replace(/to-do/gu, 'todo');
   const namesList = listNouns.some((noun) => lowered.includes(noun));
   const offending = (raw: string): boolean => {
@@ -147,7 +155,9 @@ export function guardDeadEndActionReplies(text: string, entries: readonly NlCata
     if (sentence.length === 0 || EXPLANATION.test(sentence)) return false;
     const timed = containsNlTimeExpression(sentence);
     if (!namesAction(sentence, timed) || readNouns.some((noun) => sentence.includes(noun))) return false;
-    if (!namesList && !/\d+\s*번|#\s?\d+|\bnumber\s+\d+/u.test(sentence)) return false;
+    // Codex P2 (2026-10-19): with reminders offered, a reminder verb beside a time is about Quoky's own reminders even with no
+    // list noun ("내일 9시에 알려드릴까요?"); with reminders off nothing here counts, so a true denial stays.
+    if (!namesList && !/\d+\s*번|#\s?\d+|\bnumber\s+\d+/u.test(sentence) && !(timed && timedReminder?.test(sentence) === true)) return false;
     const offer = (KO_YES_NO_OFFER.test(sentence) && /[?？]\s*$/u.test(sentence)) || EN_YES_NO_OFFER.test(sentence);
     return offer || koIncapable(sentence, timed) || enIncapable?.test(sentence) === true;
   };
