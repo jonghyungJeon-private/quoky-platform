@@ -1308,6 +1308,17 @@ const EN_COMPONENTS: ReadonlyArray<{ re: RegExp; apply: (spec: TimeSpec, m: RegE
 
 type EnComponent = (typeof EN_COMPONENTS)[number];
 
+/** The month-day dates `text` names (English month names, "12월 25일", "12/25"), with this grammar's own month vocabulary. */
+export function reminderMonthDates(text: string): Array<{ readonly month: number; readonly day: number }> {
+  const normalized = text.normalize('NFC');
+  const dates: Array<{ month: number; day: number }> = [];
+  for (const m of normalized.matchAll(new RegExp(`\\b${EN_MONTH}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, 'gi'))) dates.push({ month: enMonth(m[1] ?? ''), day: Number(m[2]) });
+  for (const m of normalized.matchAll(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${EN_MONTH}\\b`, 'gi'))) dates.push({ month: enMonth(m[2] ?? ''), day: Number(m[1]) });
+  for (const m of normalized.matchAll(/(?<!\d)(\d{1,2})\s?월\s?(\d{1,2})\s?일/gu)) dates.push({ month: Number(m[1]), day: Number(m[2]) });
+  for (const m of normalized.matchAll(/(?<![\d/])(\d{1,2})\/(\d{1,2})(?![\d/])/gu)) dates.push({ month: Number(m[1]), day: Number(m[2]) });
+  return dates.filter((date) => date.month >= 1 && date.month <= 12 && date.day >= 1 && date.day <= 31);
+}
+
 /**
  * Codex P2 (2026-10-19, reminder.list `range`): whether `text` names a day, date or period this grammar knows: the Korean
  * day words (오늘, 내일, 요일, "12월 25일", "25일", 이번/다음 주, 주말 …), the English components (today, tomorrow, a weekday,

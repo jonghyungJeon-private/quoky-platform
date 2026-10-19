@@ -21,6 +21,7 @@ import {
   NL_CONTENT_WORDS,
   containsNlTimeExpression,
   nlNamesPeriod,
+  nlExpressedRangeSymbols,
   NL_ENTRY_NOUN_LOANWORDS,
   NL_ENTRY_NOUN_VERBS,
   NL_ENTRY_NOUNS,
@@ -748,6 +749,21 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // Codex P2 (2026-10-19): `futureOnly` again on the FINAL range (a weekday bound may have re-spelled it: "이번 주 월요일부터
   // 화요일까지" on a Wednesday is entirely past).
   if (rangeSpec?.futureOnly === true && range !== undefined && Date.parse(range.to) <= Date.parse(ctx.now)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+  // Codex P2 (2026-10-19): a period that needs the owner's words must BE the owner's period, not merely sit beside a time
+  // word. No range while the owner named a period asks; a range other than the one period the owner named (its symbol word
+  // or date, resolved by the same clock) asks. A follow-up's carried range and a multi-period phrase keep the rules above.
+  if (rangeSpec?.timeWordsRequired === true) {
+    const given = args[rangeSpec.name];
+    const carried = typeof given === 'string' && ctx.previousArgs?.[rangeSpec.name] === given;
+    // A symbol the entry cannot take ("upcoming" reminders are simply the scheduled ones) names no period of it.
+    const periodText = rangeSpec.allowUpcoming === true ? ctx.groundingText : ctx.groundingText.replace(/\bupcoming\b|다가오는/giu, ' ');
+    if (given === undefined && ctx.previousArgs?.[rangeSpec.name] === undefined && nlNamesPeriod(periodText)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+    const expressed = nlExpressedRangeSymbols(ctx.groundingText);
+    if (range !== undefined && !carried && expressed.length === 1) {
+      const owner = resolveNlRange(expressed[0] as string, ctx.now, ctx.timeZone);
+      if (owner !== undefined && (owner.from !== range.from || owner.to !== range.to)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+    }
+  }
   // A6: the entry's own check after the per-arg checks.
   if (entry.check !== undefined) {
     const failure = entry.check(args, groundingText);

@@ -271,6 +271,11 @@ const EN_SYMBOL_LABEL: Readonly<Record<string, string>> = {
   upcoming: 'upcoming',
 };
 
+/** Codex P2 (2026-10-19): the named range symbols with their Korean and English owner words (the label maps above). */
+export function nlRangeSymbolWords(): ReadonlyArray<readonly [symbol: string, ko: string, en: string]> {
+  return Object.keys(KO_SYMBOL_LABEL).map((symbol) => [symbol, KO_SYMBOL_LABEL[symbol] as string, EN_SYMBOL_LABEL[symbol] ?? symbol] as const);
+}
+
 /** The owner-facing name of a resolved period ("오늘", "10월 20일", "10월 1일~10월 7일"). */
 export function nlRangeLabel(range: NlResolvedRange, language: 'ko' | 'en'): string {
   const named = (language === 'en' ? EN_SYMBOL_LABEL : KO_SYMBOL_LABEL)[range.symbol];

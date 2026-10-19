@@ -4,8 +4,8 @@ import { normalizeForMatch } from './selection-input';
 import { nlIsRequestForm } from './request-shape';
 import { NL_EN_REQUEST_LEADS } from './garbled-action';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
-import { isNlTimeWord } from './symbolic-time';
-import { ANCHORED_TODO_PREFIX_HEADS, reminderTextNamesDay } from '../reminders/reminder-grammar';
+import { isNlTimeWord, nlRangeSymbolWords } from './symbolic-time';
+import { ANCHORED_TODO_PREFIX_HEADS, reminderMonthDates, reminderTextNamesDay } from '../reminders/reminder-grammar';
 import { SLACK_POST_COLON_HEAD } from '../work-chat/work-chat-command';
 import { EXECUTION_PHRASES } from '../execution-command-guard';
 
@@ -1101,6 +1101,36 @@ export const NL_ACTION_ENTRIES: Readonly<Partial<Record<NlActionEntryId, NlCatal
  */
 export function nlNamesPeriod(text: string): boolean {
   return containsNlTimeExpression(text) || containsNlTimeExpression(text.replace(/(이번|다음|다다음|지난|저번)\s+(주|달)/gu, '$1$2')) || reminderTextNamesDay(text);
+}
+
+/**
+ * Codex P2 (2026-10-19, reminder.list `range`): the range symbols the owner's own words name, longest phrase first so a
+ * shorter one inside it does not count ("이번 주말" is not also "이번 주"): the symbol words of `symbolic-time` (Korean with
+ * or without the space, English) and the dates the reminder grammar reads (`reminderMonthDates`: "12월 25일", "12/25",
+ * "Dec 25") as `MM-DD`. Weekdays are left to the weekday consistency rule. Pure.
+ */
+export function nlExpressedRangeSymbols(text: string): string[] {
+  let rest = ` ${normalizeForMatch(text)} `;
+  const symbols: string[] = [];
+  const phrases = nlRangeSymbolWords()
+    .flatMap(([symbol, ko, en]) => [
+      [symbol, normalizeForMatch(ko)],
+      [symbol, normalizeForMatch(ko).replace(/\s+/gu, '')],
+      [symbol, normalizeForMatch(en)],
+    ] as const)
+    .sort((a, b) => b[1].length - a[1].length);
+  for (const [symbol, phrase] of phrases) {
+    const latin = /^[a-z0-9 -]+$/u.test(phrase);
+    const pattern = new RegExp(latin ? `(?<![a-z0-9])${phrase.replace(/ /g, '\\s+')}(?![a-z0-9])` : `(?<![가-힣])${phrase.replace(/ /g, '\\s*')}`, 'u');
+    if (!pattern.test(rest)) continue;
+    rest = rest.replace(pattern, ' ');
+    if (!symbols.includes(symbol)) symbols.push(symbol);
+  }
+  for (const date of reminderMonthDates(text)) {
+    const symbol = `${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
+    if (!symbols.includes(symbol)) symbols.push(symbol);
+  }
+  return symbols;
 }
 
 /**
