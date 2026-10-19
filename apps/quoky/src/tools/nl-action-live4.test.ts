@@ -201,3 +201,36 @@ describe('A6 live test 4: gold candidates pending the owner (nl-action.live4-pen
     expect(await reply('a6-paraphrase-reminder.create-908')).toContain("'삐용삐용'이 무슨 뜻인지 모르겠어요.");
   });
 });
+
+describe('gate 2026-10-19 (action run 2, a6-reference-todo.cancel-011): 취소 with an object is never a direct undo', () => {
+  const afterComplete = (text: string, listings: boolean): NlActionCase =>
+    ({
+      id: 'a6-reference-todo.cancel-999',
+      family: 'reference',
+      text,
+      fixture: {
+        ...(listings ? { listings: [{ source: 'reminder', labels: [11, 12], ageMinutes: 1 }] } : {}),
+        lastAction: { entryId: 'todo.complete', source: 'todo', itemId: 'todo-3', label: 3, ageMinutes: 2 },
+      },
+      expect: { entryId: 'todo.cancel', args: { ref: 'this' }, outcome: 'ask' },
+    }) as NlActionCase;
+  const undoOutput = JSON.stringify({ entryId: 'action.undo', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+  const withSelector = async (golden: NlActionCase, raw: string) => (await decideActionCase(golden, scripted(raw), NOW)).decision;
+
+  it('the gate fixture and "이거 취소해줘": a selected undo asks, never executes', async () => {
+    for (const [text, listings] of [['그거 취소해 줘요', true], ['이거 취소해줘', true], ['그거 취소해 줘요', false], ['이거 취소해줘', false]] as const) {
+      const decision = await withSelector(afterComplete(text, listings), undoOutput);
+      expect(decision.kind, `${text} ${listings}`).toBe('ask');
+    }
+  });
+
+  it('"3번 취소해줘" after completing #3: a cancel of #3 or a question, never an undo', async () => {
+    expect((await withSelector(afterComplete('3번 취소해줘', false), undoOutput)).kind).toBe('ask');
+    const cancel = await withSelector(afterComplete('3번 취소해줘', false), JSON.stringify({ entryId: 'todo.cancel', args: { ref: '#3' }, ambiguity: 'CLEAR', alternatives: [] }));
+    expect(cancel.kind === 'ask' || (cancel.kind === 'execute' && cancel.command.entryId === 'todo.cancel')).toBe(true);
+  });
+
+  it('a plain "취소해줘" right after an action is still the direct undo', async () => {
+    expect(await withSelector(afterComplete('취소해줘', false), undoOutput)).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo' } });
+  });
+});

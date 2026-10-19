@@ -27631,6 +27631,13 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   period the owner never wrote. Every other unknown arg ({onlyUnread}, {onlyRemaining}, {completed}) asks, and a repaired
   read that loses a period the owner named asks; each drop is logged (`nl_selection.detail_dropped`, arg name and kind).
   This replaces the earlier boolean and day-symbol heuristics after four review rounds of filter-loss cases.
+- **(f) 취소 with an object is never a direct undo (gate of 2026-10-19, action run 2).** `a6-reference-todo.cancel-011` "그거
+  취소해 줘요" (lastAction todo.complete #3, a newer reminder listing) was selected as `action.undo` and EXECUTED, because the
+  closed direct-undo grammar (`nlUndoIsDirect`, unchanged since 2026-10-16, so pre-existing on main) let a deictic precede
+  the 취소 head. 취소 is also the cancel of an item, so a 취소 head is direct only when nothing before or after it is an
+  object (a deictic 그거/이거/저거, a number "3번", a list noun 할 일/알림): "취소해줘", "취소", "방금 거 취소", "방금 추가한
+  거 취소해줘" stay direct; "그거 취소해 줘요", "이거 취소해줘", "3번 취소해줘" go to the undo confirmation. The other undo
+  heads (되돌려줘, 원상복구, undo …) are unchanged.
 - **(e) The reminder.list period is a CLOSED set (bounded in review, 2026-10-19).** After three Codex P2 rounds on period
   semantics (multi-period spans, "앞으로 7일" read as a day, whole months without the year) the feature is bounded instead
   of extended. `reminder.list` filters only by: today, tomorrow, this-week, next-week, one calendar date with month and

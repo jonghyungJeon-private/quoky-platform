@@ -356,6 +356,8 @@ describe('A6-D3a amendment 1, final round (Codex P2) and the undo confirmation r
       '되돌려줘요요', '되돌려죠', 'undo', 'undo that', 'undo the last one', 'please revert that', '아까 거 undo 해줘', '원상복구 하세요', '취소하세요', '원복해주십시오',
       '되돌려 주세요', '되돌려 줄 수 있어?', '되돌려 주실래요', '원래대로 돌려 놔', '되돌리기 합시다', '원래대로 돌려 두세요', '되돌려 보세요', '되돌려 줘봐', '원상복구 해 줄 수 있어?',
       '잘못 눌렀어 되돌려줘', '아니 방금 거 되돌려줘', '5번 되돌려줘', '방금 추가한 거 취소해줘', '방금 처리한 거 되돌려줘',
+      // A bare 취소, or one pointing at the last action by recency, stays the direct undo (gate 2026-10-19).
+      '취소해줘', '취소', '방금 거 취소',
     ]) {
       expect(undo(text).ok, text).toBe(true);
       expect(direct(text), text).toBe(true);
@@ -371,6 +373,8 @@ describe('A6-D3a amendment 1, final round (Codex P2) and the undo confirmation r
       '되돌려 주신 거 보여줘', '되돌려 주는 거', '되돌려 주실 분', '원래대로 돌려 주신 거',
       // the choice for "되돌려줘 주의 깊게": confirm (it carries words beyond the command); likewise "…이번에는 제대로 해줘"
       '되돌려줘 주의 깊게', '되돌려줘 이번에는 제대로 해줘', '되돌려줘. 주말 일정은 그대로 둬',
+      // Gate 2026-10-19 (a6-reference-todo.cancel-011): 취소 with an object may cancel an item, never a direct undo.
+      '그거 취소해 줘요', '이거 취소해줘', '3번 취소해줘', '할 일 취소해줘', '알림 취소', '취소해줘 그거',
     ]) {
       expect(direct(text), text).toBe(false);
     }
