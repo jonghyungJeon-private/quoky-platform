@@ -7,7 +7,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 ## Unreleased — A6 live test 4 gaps (2026-10-19)
 
-- **Changed (A6 prompt `nl-select.v53`, R2 `nl-select.v54`; read stays `nl-select.v39`; v49-v52 were gated and superseded: v53 keeps the v44 help.topic block byte for byte and adds the label and bare-form lines after the span lines).** The rule-8 colon-form line said
+- **Changed (A6 prompt `nl-select.v55`, R2 `nl-select.v56`, read `nl-select.v57`; v49-v54 were gated and superseded: the v44 help.topic block byte for byte, the label and bare-form lines after the span lines, and reminder.list `range` per the owner decision of 2026-10-19).** The rule-8 colon-form line said
   a "<label>: <value>" form is none even when it names a Quoky feature, so "To-do: …" and "알림: …" went to `none`; a label
   naming a to-do or a reminder is now that action entry with the text after the label as its span. One line makes a bare
   "<content> 할 일" `todo.add` (owner decision A). Three generic examples (RAG-0 lint clean).

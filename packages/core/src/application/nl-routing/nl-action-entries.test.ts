@@ -275,8 +275,8 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
   const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } });
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
-    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v39', sha256: 'fe13de80a8b71bc67b138e834036575819a76013fa86164bb7455ca0df3a4555' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v53', sha256: '7586bfb45559b35591fbd5d98df6bb3f0c9f66bed49e33379911b2dc39a1e12f' });
+    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v57', sha256: 'aede1de9668e8bc3957fb5414702a182915900557888ce3f21ad111b3d495ce0' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v55', sha256: 'a9cd2ef8432f39221bff6ba1c420067e5a08dda23e1c17dcccda153bf007108b' });
   });
 });
 
@@ -297,6 +297,14 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
     expect(prompt).not.toContain('분리수거 내놓기');
   });
 
+  it('v55 (owner decision 2026-10-19): reminder.list takes a range only from the owner\'s period words, never a past one', () => {
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-week' } }, ctx('다음 주에 울릴 리마인더 쭉 보여줘'))).toMatchObject({ ok: true, value: { args: { range: 'next-week' } } });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'tomorrow' } }, ctx('내일 알림 뭐 있어?'))).toMatchObject({ ok: true, value: { args: { range: 'tomorrow' } } });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'tomorrow' } }, ctx('알림 뭐 있어?'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'range' });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'last-week' } }, ctx('지난주 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range', arg: 'range' });
+    expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('알림 목록'))).toMatchObject({ ok: true, value: { args: {} } });
+  });
+
   it('its two new examples are what Core validates from their own text', () => {
     const examples: Array<[string, string, Record<string, string>]> = [
       ['거실 전구 교체 할 일', 'todo.add', { title: '거실 전구 교체' }],
@@ -310,15 +318,15 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
   });
 });
 
-describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v53 with actions', () => {
-  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v39.prompts.json', import.meta.url), 'utf8')) as {
+describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55 with actions', () => {
+  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v57.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
   };
 
-  it('pins nl-select.v39 for every golden input (no `actions`)', () => {
-    expect(golden.version).toBe('nl-select.v39');
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v39');
+  it('pins nl-select.v57 for every golden input (no `actions`)', () => {
+    expect(golden.version).toBe('nl-select.v57');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v57');
     for (const golden_ of golden.cases) {
       const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
       const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
@@ -326,8 +334,8 @@ describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v53
     }
   });
 
-  it('the A6 prompt (v53) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v53');
+  it('the A6 prompt (v55) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v55');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
@@ -619,8 +627,8 @@ describe('A6 prompt v36 (CA review): the rule-8 lines and examples teach the rul
     expect(actionPrompt).toContain('   A command-shaped message is never help.topic: an imperative that asks Quoky to do or change something, or a');
     expect(actionPrompt).toContain('   A question form is needed but not enough: help.topic is only a question whose subject is Quoky itself (you, or one of');
     expect(actionPrompt).toContain('   is none, even when it shares a word with a Quoky feature.');
-    expect(actionPrompt).toContain('   Only the args listed for the chosen entry exist: reminder.list has no range or count arg, so a day or 몇 개 word with it');
-    expect(actionPrompt).toContain('Message: 다음 주에 울릴 리마인더 쭉 보여줘\nOutput: {"entryId":"reminder.list","args":{},"ambiguity":"CLEAR","alternatives":[]}');
+    expect(actionPrompt).toContain('   Only the args listed for the chosen entry exist: reminder.list has no count arg, so a 몇 개 word with it adds nothing;');
+    expect(actionPrompt).toContain('Message: 다음 주에 울릴 리마인더 쭉 보여줘\nOutput: {"entryId":"reminder.list","args":{"range":"next-week"},"ambiguity":"CLEAR","alternatives":[]}');
     expect(actionPrompt).toContain('Message: 브랜치 hotfix-0420 새로 따 줘\nOutput: {"entryId":"none"');
     expect(actionPrompt).toContain('Message: 대화 모델은 소네트로 고정해\nOutput: {"entryId":"none"');
     expect(actionPrompt).toContain('Message: 이거 요약 좀\nOutput: {"entryId":"item.summarize","args":{"source":"mail","ref":"this","mode":"summary"}');

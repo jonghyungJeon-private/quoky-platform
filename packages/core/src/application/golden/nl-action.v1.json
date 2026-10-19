@@ -11654,10 +11654,12 @@
    "text": "내일 알림 뭐 있어?",
    "expect": {
     "entryId": "reminder.list",
-    "args": {},
+    "args": {
+     "range": "tomorrow"
+    },
     "outcome": "execute"
    },
-   "note": "was neg-097"
+   "note": "was neg-097 [owner decision 2026-10-19: reminder.list has a range arg; \"내일 알림 뭐 있어?\" lists tomorrow's reminders, args {range: tomorrow} (was {})]"
   },
   {
    "id": "a6-negative-reminder.list-003",

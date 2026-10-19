@@ -112,12 +112,14 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
         return { reply: outboundMessage(ctx.message.context, renderListStatusDmOnly(selected.language), { replyToMessageId: ctx.message.id }) };
       }
       if (status !== undefined && this.deps.conversation.listReply !== undefined) return { reply: await this.deps.conversation.listReply(base, status) };
+      // Owner decision of 2026-10-19: a period the owner named ("내일 알림 뭐 있어?") lists only the reminders due in it.
+      const range = selected.range;
       // A6: the detailed form also reports the listing as rendered (present only with QUOKY_NL_ACTIONS not off).
       if (this.deps.conversation.listReplyDetailed !== undefined) {
-        const listed = await this.deps.conversation.listReplyDetailed(base);
+        const listed = await this.deps.conversation.listReplyDetailed(base, undefined, range);
         return { reply: listed.reply, ...(listed.listing !== undefined ? { nlListing: listed.listing } : {}) };
       }
-      return this.deps.conversation.listReply === undefined ? null : { reply: await this.deps.conversation.listReply(base) };
+      return this.deps.conversation.listReply === undefined ? null : { reply: await this.deps.conversation.listReply(base, undefined, range) };
     }
     if (selected.entryId !== 'brief.today' || this.deps.brief === undefined || !this.deps.enabled) return null;
     if (!isDirectConversation(ctx.message.context)) {

@@ -27595,7 +27595,7 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   key, so "리마이너" is "리마인더" without its ㄷ key) or a vowel-only variant of a loanword noun, Core asks "'리마인더'
   말씀이세요?"; an unknown word in the object slot of a list-noun verb asks what it means. Nothing is written (`garbled-noun`).
   Gold `a6-paraphrase-reminder.create-903` (ask).
-- **Implementation record (agent, same branch).** A6 prompt `nl-select.v53` (R2 `nl-select.v54`, read `v39` unchanged; v49-v52 gated and superseded): the
+- **Implementation record (agent, same branch).** A6 prompt `nl-select.v55` (R2 `nl-select.v56`, read `nl-select.v57` for reminder.list `range`; v49-v54 gated and superseded): the
   rule-8 colon-form line names to-do / reminder labels as those writes, and one line makes a bare "<content> 할 일" todo.add
   (owner decision A). Core: the copula reference ("이번엔 3번이야") takes the continuation confirmation; an undo paraphrase
   that points at the last action asks the undo confirmation; a reminder without a time asks for the time (an open question
@@ -27603,3 +27603,11 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   if wanted); the English reminder grammar ends a time at a label colon; with action entries offered, a chat reply that
   offers an action as a yes/no question or says Quoky cannot do it is replaced by the restate. Gold candidates for these
   are in `golden/nl-action.live4-pending.v1.json`, pending the owner's D12 batch. The D12 model gate is owner-run.
+- **(c) reminder.list lists a period (owner decision of 2026-10-19).** "내일 알림 뭐 있어?" lists only tomorrow's reminders.
+  `reminder.list` takes the shared symbolic `range` (`futureOnly`, `timeWordsRequired`: grounded only in the owner's period
+  words, A5 rule 6; a model-made period is dropped and logged, a past period asks). The listing keeps the scheduled
+  reminders with an occurrence in the period (a recurring one when any occurrence falls in it), in the owner's time zone,
+  under their stable `#N`. The read prompt moves to `nl-select.v57` (the catalog line; golden `nl-select.v57.prompts.json`),
+  A6 to `v55`, R2 to `v56`. Gold `a6-negative-reminder.list-002` now expects `{range: tomorrow}`; the read-corpus golds
+  `reminder-012` ("내일 울릴 알림 뭐 있어?") and `reminder-027` ("any reminders set for today?") still expect `{}` and are
+  left for the owner.

@@ -21,6 +21,7 @@ import { plainTextOf } from '../message-rendering';
 import type { NlSelectedCommand } from '../nl-routing/catalog';
 import { ReminderConversationService } from './reminder-conversation-service';
 import { ReminderReplyComposer } from './reminder-reply-composer';
+import { resolveNlRange } from '../nl-routing/symbolic-time';
 
 // ADR-0120 amendment A6 (NLA-3): natural-language reminder actions and their per-action inverses (ratification record
 // A), the undo-only reactivation through the one additive CAS method, and unchanged anchored replies with receipts.
@@ -407,5 +408,36 @@ describe('anchored reminder numbers stay stable when the list changes (A6-D2 ame
     expect(fired?.action?.result).not.toBe('executed');
     expect(repository.rows[0]?.status).toBe(ReminderStatus.COMPLETED);
     expect((await conversation.handleTurnDetailed({ ...base(), text: '알림 목록' }))?.listing?.items).toEqual([{ label: 15, id: 'rem-3' }]);
+  });
+});
+
+describe('owner decision of 2026-10-19: reminder.list with a period lists only the reminders due in it', () => {
+  const range = (symbol: string) => {
+    const resolved = resolveNlRange(symbol, NOW, 'Asia/Seoul');
+    if (resolved === undefined) throw new Error(symbol);
+    return resolved;
+  };
+
+  it('tomorrow, today and this week, a recurring reminder counted when an occurrence falls in the period, stable #N labels', async () => {
+    const { conversation } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '내일 회의', when: '내일 9시' }), base()); // #13, Thu
+    await conversation.handleAction(cmd('reminder.create', { body: '모레 서류', when: '모레 9시' }), base()); // #14, Fri
+    await conversation.handleAction(cmd('reminder.create', { body: '매일 스트레칭', when: '매일 아침 8시' }), base()); // #15, daily
+    await conversation.handleAction(cmd('reminder.create', { body: '오늘 저녁 운동', when: '오늘 저녁 7시' }), base()); // #16, today
+    const labels = async (symbol: string) => (await conversation.listReplyDetailed(base(), undefined, range(symbol))).listing?.items.map((item) => item.label);
+    expect(await labels('tomorrow')).toEqual([13, 15]);
+    // Today's 8:00 has passed (now is 12:00): the daily one next rings tomorrow.
+    expect(await labels('today')).toEqual([16]);
+    expect(await labels('this-week')).toEqual([13, 14, 15, 16]);
+    const tomorrow = await conversation.listReplyDetailed(base(), undefined, range('tomorrow'));
+    expect(text(tomorrow)).toContain('내일 예정된 알림 2건');
+    // No period: the whole scheduled list, as before.
+    expect((await conversation.listReplyDetailed(base())).listing?.items.map((item) => item.label)).toEqual([13, 14, 15, 16]);
+  });
+
+  it('an empty period names it', async () => {
+    const { conversation } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '모레 서류', when: '모레 9시' }), base());
+    expect(text(await conversation.listReplyDetailed(base(), undefined, range('tomorrow')))).toBe('내일 예정된 알림이 없어요.');
   });
 });

@@ -65,7 +65,10 @@ import { nlModeVocabularyText } from './action-entries';
  * NEEDS_CLARIFICATION with the candidate as the one alternative, never a silent pick; owner decision 2026-10-16) and "or
  * which command Quoky has for it" on the how-to line (the help.topic miss of the v40 action gate). v44 (A6) = v42 with the
  * `reminder.cancel` catalog entry taking `match` beside `ref` (owner decision C, 2026-10-17: a reminder named by its
- * text); the rule lines are unchanged and the read prompt stays v39 byte for byte. v49 (A6; live test 4 of 2026-10-17,
+ * text); the rule lines are unchanged and the read prompt stays v39 byte for byte. v57 (the read prompt; owner decision of
+ * 2026-10-19, "내일 알림 뭐 있어?" lists tomorrow's reminders) = v39 whose catalog gives `reminder.list` a `range` arg (the
+ * shared range symbols, grounded in the owner's time words, never past) and a description that says so; no rule line
+ * changes. Pinned by `golden/nl-select.v57.prompts.json`. v49 (A6; live test 4 of 2026-10-17,
  * turns 8, 29 and 78-80 went to `none`; v45-v48 are R2 numbers) = v44 with the rule-8 colon-form line saying that a label
  * naming a to-do or a reminder is that action entry with the text after the label as its span (the v32 line read "a
  * '<label>: <value>' colon form … is none even when it names one of Quoky's own features", so "To-do: …" and "알림: …"
@@ -84,14 +87,17 @@ import { nlModeVocabularyText } from './action-entries';
  * not enough: help.topic is only a question whose subject is Quoky itself (… features or commands)", splitting the
  * command-question rule from the help.topic rule it qualifies). They now follow the span lines of the action rule, as one
  * standalone sentence pair. No word changes; the examples are v51's. The read prompt stays v39.
+ * v55 (A6; owner decision of 2026-10-19) = v53 on the v57 catalog (reminder.list `range`), the reminder.list rule line saying
+ * it has no count arg and its range is only a period the owner names (it said "no range or count arg … a day … adds
+ * nothing"), and the "다음 주에 울릴 리마인더 쭉 보여줘" example with range next-week.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v39';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v57';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v39.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v57.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v53';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v55';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -116,9 +122,10 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v53';
  * v47 "never sets mode" show/tell sentence and the mode clause of the one-item rule are gone; the R2 entry's mode
  * description is v46's again. A6 stays v44 and read v39 byte for byte; Core's ITEM_READ veto is unchanged.
  * v50 = the v48 R2 lines on top of v49 (the shared rule-8 lines and action examples changed); no R2 line changes. v52 =
- * the v48 R2 lines on top of v51 (never gated as v50); no R2 line changes. v54 = the v48 R2 lines on top of v53.
+ * the v48 R2 lines on top of v51 (never gated as v50); no R2 line changes. v54 = the v48 R2 lines on top of v53. v56 =
+ * the v48 R2 lines on top of v55.
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v54';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v56';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -296,7 +303,7 @@ const ACTION_EXAMPLES: readonly PromptExample[] = [
   { text: '1번은 뭐라고 왔어?', context: 'last listing: mail (6 items, 4 min ago)', output: '{"entryId":"item.summarize","args":{"source":"mail","ref":"#1"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['item.summarize'] },
   { text: '그 할 일 아까 다 했었어', context: 'last listing: todo (2 items, 5 min ago)', output: none, needs: [] },
   { text: '[quoted]\n이대로 할 일에 넣어줘', output: none, needs: [] },
-  { text: '다음 주에 울릴 리마인더 쭉 보여줘', output: '{"entryId":"reminder.list","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['reminder.list'] },
+  { text: '다음 주에 울릴 리마인더 쭉 보여줘', output: '{"entryId":"reminder.list","args":{"range":"next-week"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['reminder.list'] },
   { text: '브랜치 hotfix-0420 새로 따 줘', output: none, needs: [] },
   { text: '대화 모델은 소네트로 고정해', output: none, needs: [] },
   { text: '남은 거 모두 완료 처리해', context: 'last listing: todo (3 items, 1 min ago)', output: '{"entryId":"todo.complete","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['todo.complete'] },
@@ -347,8 +354,8 @@ const ACTION_RULES: readonly string[] = [
   '   A question form is needed but not enough: help.topic is only a question whose subject is Quoky itself (you, or one of',
   '   Quoky\'s own features or commands). A question about using, setting up or writing in any other app, device or service',
   '   is none, even when it shares a word with a Quoky feature.',
-  '   Only the args listed for the chosen entry exist: reminder.list has no range or count arg, so a day or 몇 개 word with it',
-  '   adds nothing (args {} or status only); a count or day arg an entry does not list is never output.',
+  '   Only the args listed for the chosen entry exist: reminder.list has no count arg, so a 몇 개 word with it adds nothing;',
+  '   its range is only a period the owner names (내일 -> tomorrow); a count or day arg an entry does not list is never output.',
   '   item.summarize: source is the list the owner means (see Reference context); mode summary only for 요약/정리/짧게/',
   '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.',
   '   Posting, sending, replying, calendar events, Jira issues and every other write not in the catalog are still none.',

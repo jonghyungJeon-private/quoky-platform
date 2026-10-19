@@ -124,6 +124,16 @@ export interface NlArgSpec {
    * window): an out-of-set value is never replaced by the default, the owner is asked.
    */
   readonly presentation?: true;
+  /**
+   * `range` only (owner decision of 2026-10-19, reminder.list): the period must lie in the future (a reminder's next
+   * occurrence is never past): a period that ended before now is refused (`range`) and asked.
+   */
+  readonly futureOnly?: true;
+  /**
+   * `range` only (A5 rule 6, owner decision of 2026-10-19): the period is grounded only in the owner's own time words; with
+   * none in the message it is `ungrounded` (a model-made period), never applied.
+   */
+  readonly timeWordsRequired?: true;
   /** The value the entry uses when the argument is absent; canonical args omit an argument equal to it. */
   readonly default?: string | boolean;
   /** `span` only: the maximum length in code points (A6-D1: a title or body 1..200). */

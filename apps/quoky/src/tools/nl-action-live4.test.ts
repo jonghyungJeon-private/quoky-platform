@@ -69,12 +69,16 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
     const help = JSON.stringify({ entryId: 'help.topic', args: { topic: 'undo' }, ambiguity: 'CLEAR', alternatives: [] });
     const how = await decideActionCase({ text: 'undo 하는 방법 알려줘' }, scripted(help), NOW);
     expect(how.decision).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic' } });
-    // CA P2: a day the owner WROTE is a filter the entry cannot apply: asked (A5 rule 6). A day symbol the owner never wrote
-    // (a model invention) is dropped like a flag.
+    // Owner decision of 2026-10-19: reminder.list has a range. A day the owner WROTE is that range; a day the owner never
+    // wrote (a model invention) is dropped; a past period asks.
     const period = await decideActionCase({ text: '내일 알림 뭐 있어?' }, scripted(answer({ range: 'tomorrow' }, 'CLEAR', [])), NOW);
-    expect(period.decision.kind).toBe('ask');
+    expect(period.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: { range: 'tomorrow' }, range: { symbol: 'tomorrow' } } });
+    const week = await decideActionCase({ text: '이번 주 알림 보여줘' }, scripted(answer({ range: 'this-week' }, 'CLEAR', [])), NOW);
+    expect(week.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: { range: 'this-week' } } });
     const invented = await decideActionCase({ text: '알림 뭐 있어?' }, scripted(answer({ range: 'tomorrow' }, 'CLEAR', [])), NOW);
     expect(invented.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
+    const past = await decideActionCase({ text: '지난주 알림 보여줘' }, scripted(answer({ range: 'last-week' }, 'CLEAR', [])), NOW);
+    expect(past.decision.kind).toBe('ask');
     // Codex P2: a model-made arg name is not copied into the ask shape.
     expect(askShape(parseSelectionOutput(answer({ skabcdefghijklmnopqrst: true }, 'CLEAR', [{ entryId: 'x.secret', args: {} }]))!)).toBe('ask:CLEAR:args=other:alts=other');
   });

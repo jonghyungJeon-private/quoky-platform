@@ -39,7 +39,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES, nlNamesPeriod, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -290,7 +290,7 @@ export interface NlSelectionServiceDeps {
   readonly elapsed?: () => number;
   /**
    * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
-   * record is written and every prompt and reply is byte-identical to `nl-select.v39`. Any other level requires mode
+   * record is written and every prompt and reply is byte-identical to `nl-select.v57` (the read prompt). Any other level requires mode
    * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
    */
   readonly actions?: {
@@ -749,7 +749,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /**
    * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
    * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
-   * prompt is `nl-select.v39` byte for byte.
+   * prompt is `nl-select.v57` (the read prompt) byte for byte.
    */
   actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
@@ -2277,7 +2277,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
 /** A detail `validateWithoutDetail` dropped: the arg name and its kind only (content-free, logged for the shadow review). */
 interface NlDroppedDetail {
   readonly arg: string;
-  readonly kind: 'unlisted' | 'enum';
+  readonly kind: 'unlisted' | 'enum' | 'range';
 }
 
 /**
@@ -2310,8 +2310,10 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
     // a model-made timestamp or a keyword ("a model-made date is refused").
     // CA P2: a day symbol only when the owner wrote no time word (a pure model invention); a day the owner wrote is a filter
     // the entry cannot apply, so Core asks (A5 rule 6, the time-keyword precedent).
-    const invented = typeof value === 'string' && isNlRangeSymbol(value) && !containsNlTimeExpression(ctx.groundingText);
+    const invented = typeof value === 'string' && isNlRangeSymbol(value) && !nlNamesPeriod(ctx.groundingText);
     if (result.reason === 'unknown-arg' && spec === undefined && (typeof value === 'boolean' || invented)) kind = 'unlisted';
+    // Owner decision of 2026-10-19: a period that needs the owner's time words, given with none, is a model invention: dropped.
+    else if (result.reason === 'ungrounded' && spec?.kind === 'range' && spec.timeWordsRequired === true && !nlNamesPeriod(ctx.groundingText)) kind = 'range';
     else if (result.reason === 'invalid-arg' && spec !== undefined && spec.kind === 'enum' && spec.presentation === true && spec.required !== true && spec.default !== undefined) {
       const words = [...(spec.values ?? []), ...Object.values(spec.valueGrounding ?? {}).flatMap((list) => [...list])].map((word) => normalizeForMatch(word)).filter((word) => word.length > 1);
       if (!words.some((word) => text.includes(word))) kind = 'enum';

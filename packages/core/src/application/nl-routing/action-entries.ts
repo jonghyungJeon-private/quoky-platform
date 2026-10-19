@@ -1094,6 +1094,15 @@ export const NL_ACTION_ENTRIES: Readonly<Partial<Record<NlActionEntryId, NlCatal
 });
 
 /**
+ * Owner decision of 2026-10-19 (reminder.list `range`, A5 rule 6): whether the owner's words name a period at all. The title
+ * time check ({@link containsNlTimeExpression}) treats a spaced "이번 주" as two weak words; a period word written with a
+ * space ("이번 주", "다음 달") is one period here, as in its unspaced form.
+ */
+export function nlNamesPeriod(text: string): boolean {
+  return containsNlTimeExpression(text) || containsNlTimeExpression(text.replace(/(이번|다음|다다음|지난|저번)\s+(주|달)/gu, '$1$2'));
+}
+
+/**
  * Codex P2 (2026-10-19): every arg name the catalog defines (read and action entries). A diagnostic names an arg only when
  * it is one of these; any other key the model generated is reported without its name, so nothing it wrote reaches a log.
  */

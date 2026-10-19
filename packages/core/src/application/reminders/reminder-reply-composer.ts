@@ -414,11 +414,13 @@ export class ReminderReplyComposer {
    * {@link list} plus how many reminders it actually shows (the character budget can stop it early): ADR-0120 amendment
    * A6 records exactly the rows the owner saw, never one the budget cut.
    */
-  listRendered(reminders: readonly Reminder[], now: IsoTimestamp): { readonly body: MessageBody; readonly shown: number } {
+  listRendered(reminders: readonly Reminder[], now: IsoTimestamp, period?: string): { readonly body: MessageBody; readonly shown: number } {
     if (reminders.length === 0) {
+      // Owner decision of 2026-10-19: a period-filtered list names the period ("내일 예정된 알림이 없어요.").
+      if (period !== undefined) return { body: `${period} 예정된 알림이 없어요.`, shown: 0 };
       return { body: '예정된 알림이 없어요. 예: "내일 오전 9시에 회의 준비 알려줘"', shown: 0 };
     }
-    const header = `예정된 알림 ${reminders.length}건`;
+    const header = period === undefined ? `예정된 알림 ${reminders.length}건` : `${period} 예정된 알림 ${reminders.length}건`;
     const lines: MessagePart[] = [];
     let used = Array.from(header).length;
     for (const reminder of reminders) {

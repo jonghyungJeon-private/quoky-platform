@@ -3,7 +3,7 @@ import { Capability, type AiProvider, type AiRequest, type NlSelectionDecision }
 import { NL_ACTION_R2_EVAL_ENTRIES, NL_ACTION_R2_EVAL_GATE, buildActionPlan, computeActionPlanDigest, loadR2ActionCorpus, r2DiagnosticArgs, recordArgs, scoreActionDecision, summarizeActionR2, type NlActionCase, type NlActionRecord } from './nl-action-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, formatGateRuns, runCli, type CliDeps } from './nl-intent-eval-cli';
 
-// `eval:nl --mode r2` offline: the plan and its Strict digest (prompt v54, corpus, runs, calls, gate), the digest rule
+// `eval:nl --mode r2` offline: the plan and its Strict digest (prompt v56, corpus, runs, calls, gate), the digest rule
 // (nothing constructed before it matches), the R2 gate (jira and slack slices, wrong targets, negatives) and the
 // content-free report. Fake providers only; no process is spawned and QUOKY_NL_ITEM_R2 is never read.
 
@@ -66,11 +66,11 @@ describe('eval:nl --mode r2 plan', () => {
     else process.env.QUOKY_NL_ITEM_R2 = saved;
   });
 
-  it('prints the plan: the R2 prompt v54, the corpus digest, runs, the call count, the gate; nothing is constructed', async () => {
+  it('prints the plan: the R2 prompt v56, the corpus digest, runs, the call count, the gate; nothing is constructed', async () => {
     const d = deps();
     expect(await runCli(['--mode', 'r2', '--runs', '3'], d)).toBe(EXIT_OK);
     const plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', runs: 3, concurrency: 4, gitHead: 'rev-1' });
-    expect(plan.promptVersion).toBe('nl-select.v54');
+    expect(plan.promptVersion).toBe('nl-select.v56');
     expect(plan).toMatchObject({ corpusSha256: sha256, runs: 3, itemR2: 'all', calls: corpus.cases.length * 3, gate: NL_ACTION_R2_EVAL_GATE });
     expect(digestOf(d.out)).toBe(computeActionPlanDigest(plan));
     expect(d.out.join('\n')).toContain(`at most ${corpus.cases.length * 3}`);
@@ -122,7 +122,7 @@ describe('eval:nl --mode r2 run (Strict)', () => {
     const d = deps();
     const code = await runCli(['--mode', 'r2', '--runs', '1', '--approved-plan-digest', digestOf(planned.out)], d);
     expect(d.created).toEqual(['haiku']);
-    expect(d.out.join('\n')).toContain('R2 gate (nl-select.v54): PASSED in all 1 run(s)');
+    expect(d.out.join('\n')).toContain('R2 gate (nl-select.v56): PASSED in all 1 run(s)');
     expect(code).toBe(EXIT_OK);
     expect(d.written).toHaveLength(1);
     const report = d.written[0]?.contents ?? '';

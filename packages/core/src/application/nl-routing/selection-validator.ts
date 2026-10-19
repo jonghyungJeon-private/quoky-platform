@@ -19,6 +19,8 @@ import {
   NL_ACTION_VERBAL_NOUNS,
   NL_ACTION_WORDS,
   NL_CONTENT_WORDS,
+  containsNlTimeExpression,
+  nlNamesPeriod,
   NL_ENTRY_NOUN_LOANWORDS,
   NL_ENTRY_NOUN_VERBS,
   NL_ENTRY_NOUNS,
@@ -638,6 +640,11 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     // A weekday symbol that names the same day as the owner's own week word is spelled the owner's way ("금요일" = fri,
     // never this-fri when both are this Friday): a canonical form, never another day (calendar-accuracy note).
     const given = args[rangeSpec.name];
+    // Owner decision of 2026-10-19 (A5 rule 6): a period that needs the owner's time words is ungrounded without one (a
+    // model-made period), unless it is the previous selection's own period carried by a follow-up.
+    if (typeof given === 'string' && rangeSpec.timeWordsRequired === true && ctx.previousArgs?.[rangeSpec.name] !== given && !nlNamesPeriod(ctx.groundingText)) {
+      return { ok: false, reason: 'ungrounded', entryId, arg: rangeSpec.name };
+    }
     if (typeof given === 'string') {
       const previousRange = ctx.previousArgs?.[rangeSpec.name];
       args[rangeSpec.name] = nlCanonicalWeekdaySymbol(given, nlSingleWeekday(mentions), typeof previousRange === 'string' ? previousRange : undefined, ctx.now, ctx.timeZone);
@@ -648,6 +655,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       range = resolveNlRange(symbol, ctx.now, ctx.timeZone);
       if (range === undefined) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
       if (rangeSpec.pastOnly === true && Date.parse(range.from) > Date.parse(ctx.now)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
+      if (rangeSpec.futureOnly === true && Date.parse(range.to) <= Date.parse(ctx.now)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
     }
   }
   // (5) grounding and (6) the credential guard, on every string arg. A6: the previous selection never grounds an action,
