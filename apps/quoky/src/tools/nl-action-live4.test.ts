@@ -83,6 +83,14 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
     expect(askShape(parseSelectionOutput(answer({ skabcdefghijklmnopqrst: true }, 'CLEAR', [{ entryId: 'x.secret', args: {} }]))!)).toBe('ask:CLEAR:args=other:alts=other');
   });
 
+  it('Codex P2: an unlisted flag is dropped only when the owner states none of the entry\'s filters', async () => {
+    const decide = async (input: string, entryId: string, args: Record<string, unknown>) =>
+      (await decideActionCase({ text: input }, scripted(JSON.stringify({ entryId, args, ambiguity: 'CLEAR', alternatives: [] })), NOW)).decision;
+    expect((await decide('완료된 할 일 보여줘', 'todo.list', { completed: true })).kind).toBe('ask');
+    expect(await decide('알림 몇 개 걸려 있어?', 'reminder.list', { count: true })).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
+    expect(await decide('any reminders to call mom later?', 'reminder.list', { count: true })).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
+  });
+
   it('Codex P2 / CA P1: an out-of-set FILTER value is never replaced by its default; an owner-named value keeps the ask', async () => {
     const ask = async (input: string, entryId: string, args: Record<string, unknown>) =>
       (await decideActionCase({ text: input }, scripted(JSON.stringify({ entryId, args, ambiguity: 'CLEAR', alternatives: [] })), NOW)).decision.kind;

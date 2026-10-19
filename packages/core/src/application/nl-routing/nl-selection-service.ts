@@ -2311,7 +2311,18 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
     // CA P2: a day symbol only when the owner wrote no time word (a pure model invention); a day the owner wrote is a filter
     // the entry cannot apply, so Core asks (A5 rule 6, the time-keyword precedent).
     const invented = typeof value === 'string' && isNlRangeSymbol(value) && !nlNamesPeriod(ctx.groundingText);
-    if (result.reason === 'unknown-arg' && spec === undefined && (typeof value === 'boolean' || invented)) kind = 'unlisted';
+    // Codex P2 (2026-10-19): an unlisted flag may stand for a filter the owner stated ("완료된 할 일" as {completed: true}):
+    // it is dropped only when the owner's words ground none of the entry's filtering values (its non-presentation enum
+    // value names and grounding words); otherwise the owner named a filter the selector expressed wrongly, and Core asks.
+    const statesFilter = entry.args.some(
+      (filter) =>
+        filter.kind === 'enum' &&
+        filter.presentation !== true &&
+        [...(filter.values ?? []), ...Object.values(filter.valueGrounding ?? {}).flatMap((list) => [...list])]
+          .map((word) => normalizeForMatch(word))
+          .some((word) => word.length > 1 && (/^[a-z0-9 -]+$/u.test(word) ? new RegExp(`(?<![a-z0-9])${word}(?![a-z0-9])`, 'u').test(text) : text.includes(word))),
+    );
+    if (result.reason === 'unknown-arg' && spec === undefined && ((typeof value === 'boolean' && !statesFilter) || invented)) kind = 'unlisted';
     // Owner decision of 2026-10-19: a period that needs the owner's time words, given with none, is a model invention: dropped.
     else if (result.reason === 'ungrounded' && spec?.kind === 'range' && spec.timeWordsRequired === true && !nlNamesPeriod(ctx.groundingText)) kind = 'range';
     else if (result.reason === 'invalid-arg' && spec !== undefined && spec.kind === 'enum' && spec.presentation === true && spec.required !== true && spec.default !== undefined) {
