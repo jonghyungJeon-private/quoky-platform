@@ -315,23 +315,26 @@ const OBJECT_PARTICLE = /(?:을|를|은|는)$/u;
 const NON_NOUN_TAIL = /(?:게|히|이|로|에|서|다|고|면|며|지|요|어|아|여|던|었|았|였|겠|는|도|만|까지|부터)$/u;
 
 /**
- * Codex P2 (2026-10-19): the unknown-noun path is narrow and structural, since there is no dictionary. A token is asked
- * about only when it stands in the OBJECT slot of a list-noun verb (`verbs`: 걸, 만들, 설정, 맞춰): bare and directly before
- * that verb ("삐용삐용 걸어줘"), or with an object or topic particle before it ("삐용삐용을 걸어줘"); it is a Hangul word of
- * two syllables or more; it carries no adverbial, case or verbal morphology ({@link NON_NOUN_TAIL}: "새롭게", "빨리로");
- * and it is no closed filler (좀, 빨리, 다시, 꼭 …) and no time word (오늘, 내일, 9시). The caller has already removed the
- * content and time spans and checked that no correct list noun is present.
+ * Codex P2 (2026-10-19, two rounds): the unknown-noun path is narrow and structural, since there is no dictionary. A token
+ * is asked about only when it carries an explicit OBJECT or TOPIC particle (을/를, 은/는) and stands directly before a
+ * list-noun verb (`verbs`: 걸, 만들, 설정, 맞춰): "삐용삐용을 걸어줘". Adverbs never take these particles, so "그냥 걸어줘",
+ * "얼른", "당장", "살짝" never ask; a bare unknown word with no entry noun ("타이머 걸어줘") is left to the selector and Core's
+ * usual validation (recorded residual). The stem is a Hangul word of two syllables or more with no adverbial, case or
+ * verbal morphology ({@link NON_NOUN_TAIL}), no closed filler and no time word. Returns the stem to name, or `undefined`.
+ * The typo-of-a-known-noun path (typed-key distance: "리마이너 걸어줘") is separate and unchanged.
  */
-function isUnknownNounCandidate(raw: string, next: string, verbs: readonly string[]): boolean {
+function isUnknownNounCandidate(raw: string, next: string, verbs: readonly string[]): string | undefined {
   // CA P3 #7: a filler glued on the token ("꼭좀", "빨리좀만") is set aside first; the stem meets the same checks.
   const word = raw.replace(/(?:좀만|좀)$/u, '');
-  if (word.length === 0) return false;
+  if (word.length === 0) return undefined;
   const particle = OBJECT_PARTICLE.exec(word);
-  const stem = particle === null ? word : word.slice(0, particle.index);
+  // A bare token never asks (an adverb such as 그냥 would): only an explicit object or topic particle marks a noun.
+  if (particle === null) return undefined;
+  const stem = word.slice(0, particle.index);
   const beforeVerb = verbs.some((verb) => next.startsWith(verb));
-  if (!beforeVerb || !isHangulWord(stem) || Array.from(stem).length < MIN_UNKNOWN_SYLLABLES) return false;
-  if (NOUN_SLOT_FILLERS.has(stem) || NOUN_SLOT_FILLERS.has(word) || isNlTimeWord(word) || isNlTimeWord(stem)) return false;
-  return !NON_NOUN_TAIL.test(stem);
+  if (!beforeVerb || !isHangulWord(stem) || Array.from(stem).length < MIN_UNKNOWN_SYLLABLES) return undefined;
+  if (NOUN_SLOT_FILLERS.has(stem) || NOUN_SLOT_FILLERS.has(word) || isNlTimeWord(word) || isNlTimeWord(stem)) return undefined;
+  return NON_NOUN_TAIL.test(stem) ? undefined : stem;
 }
 
 /**
@@ -413,7 +416,7 @@ export function nlGarbledEntryNoun(
       const candidate = near(stem);
       if (candidate !== undefined) return { kind: 'typo', ...candidate };
     }
-    if (unknown === undefined && isUnknownNounCandidate(word, words[index + 1] ?? '', verbs)) unknown = word;
+    if (unknown === undefined) unknown = isUnknownNounCandidate(word, words[index + 1] ?? '', verbs);
   }
   return unknown === undefined ? undefined : { kind: 'unknown', word: unknown };
 }

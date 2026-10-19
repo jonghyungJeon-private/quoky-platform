@@ -213,7 +213,7 @@
   {
    "id": "a6-paraphrase-reminder.create-908",
    "family": "paraphrase",
-   "text": "모레 오후 3시에 삐용삐용 걸어줘, 견적서 회신",
+   "text": "모레 오후 3시에 삐용삐용을 걸어줘, 견적서 회신",
    "expect": {
     "entryId": "reminder.create",
     "args": {

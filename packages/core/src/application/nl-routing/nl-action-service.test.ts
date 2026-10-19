@@ -1339,7 +1339,7 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
     const typo = await run('10월 21일 오전 9시에 리마이너 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
     expect(typo.decision).toMatchObject({ kind: 'ask', text: "'리마인더' 말씀이시면 '리마인더'를 넣어 다시 말씀해 주세요. 아직 아무것도 바꾸지 않았어요." });
     expect(actionLogs(typo.w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.create', result: 'asked', reason: 'garbled-noun' });
-    const unknown = await run('10월 21일 오전 9시에 삐용삐용 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
+    const unknown = await run('10월 21일 오전 9시에 삐용삐용을 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
     expect(unknown.decision).toMatchObject({ kind: 'ask', text: "'삐용삐용'이 무슨 뜻인지 모르겠어요. '할 일'인지 '알림'인지 넣어 다시 말씀해 주세요. 아직 아무것도 바꾸지 않았어요." });
     const right = await run('10월 21일 오전 9시에 리마인더 걸어줘, 검증 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '검증 도면 회신' }));
     expect(right.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.create' } });
@@ -1405,7 +1405,7 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
       (await run('정산 할 일', out('todo.add', { title: '정산' }))).decision,
       (await run('검증 인쇄 맡기기 알림 하나 만들어줘', out('reminder.create', { body: '검증 인쇄 맡기기' }))).decision,
       (await run('10월 21일 오전 9시에 리마이너 걸어줘, 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '도면 회신' }))).decision,
-      (await run('10월 21일 오전 9시에 삐용삐용 걸어줘, 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '도면 회신' }))).decision,
+      (await run('10월 21일 오전 9시에 삐용삐용을 걸어줘, 도면 회신', out('reminder.create', { when: '10월 21일 오전 9시', body: '도면 회신' }))).decision,
     ];
     for (const decision of texts) {
       expect(decision.kind).toBe('ask');

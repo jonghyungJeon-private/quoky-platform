@@ -27594,7 +27594,10 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   request, or the verb-final last word) is one input-method keystroke from a list noun (initial and final consonant as one
   key, so "리마이너" is "리마인더" without its ㄷ key) or a vowel-only variant of a loanword noun, Core asks "'리마인더'
   말씀이세요?"; an unknown word in the object slot of a list-noun verb asks what it means. Nothing is written (`garbled-noun`).
-  Gold `a6-paraphrase-reminder.create-903` (ask).
+  Gold `a6-paraphrase-reminder.create-903` (ask). Narrowed in review (Codex P2): the unknown-word question needs an explicit
+  object or topic particle on the token ("블라블라를 걸어줘"); a bare token never asks, so adverbs ("그냥", "얼른", "당장") pass.
+  **Accepted residual:** an unknown bare word with no entry noun ("타이머 걸어줘") is left to the selector and Core's usual
+  validation; the typo-of-a-known-noun path ("리마이너 걸어줘") is unchanged.
 - **Implementation record (agent, same branch).** A6 prompt `nl-select.v55` (R2 `nl-select.v56`, read `nl-select.v57` for reminder.list `range`; v49-v54 gated and superseded): the
   rule-8 colon-form line names to-do / reminder labels as those writes, and one line makes a bare "<content> 할 일" todo.add
   (owner decision A). Core: the copula reference ("이번엔 3번이야") takes the continuation confirmation; an undo paraphrase

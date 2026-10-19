@@ -173,8 +173,15 @@ describe('owner decision (b) of 2026-10-19: a garbled or unknown list noun asks'
   });
 
   it('an unknown word in the object slot of a list-noun verb asks what it means', () => {
-    expect(create('10월 21일 오전 9시에 삐용삐용 걸어줘, 검증 도면 회신', { when: '10월 21일 오전 9시', body: '검증 도면 회신' })).toMatchObject({ ok: false, reason: 'garbled-noun', unknownWord: '삐용삐용' });
-    expect(create('10월 21일 오전 9시에 삐용삐용을 걸어줘, 검증 도면 회신', { when: '10월 21일 오전 9시', body: '검증 도면 회신' })).toMatchObject({ ok: false, reason: 'garbled-noun', unknownWord: '삐용삐용을' });
+    // Codex P2: only a token with an explicit object or topic particle asks; a bare token never does.
+    expect(create('10월 21일 오전 9시에 삐용삐용을 걸어줘, 검증 도면 회신', { when: '10월 21일 오전 9시', body: '검증 도면 회신' })).toMatchObject({ ok: false, reason: 'garbled-noun', unknownWord: '삐용삐용' });
+    expect(create('내일 9시에 블라블라를 걸어줘, 우유 사기', { when: '내일 9시', body: '우유 사기' })).toMatchObject({ ok: false, reason: 'garbled-noun', unknownWord: '블라블라' });
+    expect(create('10월 21일 오전 9시에 삐용삐용 걸어줘, 검증 도면 회신', { when: '10월 21일 오전 9시', body: '검증 도면 회신' })).toMatchObject({ ok: true });
+    for (const adverb of ['그냥', '얼른', '당장', '살짝', '빨리', '다시']) {
+      expect(create(`내일 9시 ${adverb} 걸어줘 우유 사기`, { when: '내일 9시', body: '우유 사기' }), adverb).toMatchObject({ ok: true });
+    }
+    // The typo path is unchanged.
+    expect(create('내일 9시에 리마이너 걸어줘, 우유 사기', { when: '내일 9시', body: '우유 사기' })).toMatchObject({ ok: false, reason: 'garbled-noun', candidate: '리마인더' });
   });
 
   it('Codex P2: the unknown-word path is narrow: adverbs, fillers, time words, case endings and a word not right before the verb never ask', () => {
