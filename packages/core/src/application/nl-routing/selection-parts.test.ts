@@ -373,7 +373,16 @@ describe('honest chat (ADR-0120 D9)', () => {
     }
     // CA P2: only the offending sentence goes; true sentences stay as written.
     expect(guardFalseIncapabilityClaims('할 일 3번은 이미 완료됐어요. 4번도 완료할까요?', withActions, 'ko')).toEqual({ text: `할 일 3번은 이미 완료됐어요. ${restate}`, guarded: true });
-    expect(guardFalseIncapabilityClaims('방금 추가한 할 일을 취소하고 싶으시군요. 여기서는 제가 직접 취소할 수 없어요.', withActions, 'ko')).toEqual({ text: `방금 추가한 할 일을 취소하고 싶으시군요. ${restate}`, guarded: true });
+    // Codex P2: list grounding is per sentence; an explicit anaphor carries the previous sentence's list over.
+    expect(guardFalseIncapabilityClaims('방금 추가한 할 일을 취소하고 싶으시군요. 그건 제가 직접 취소할 수 없어요.', withActions, 'ko')).toEqual({ text: `방금 추가한 할 일을 취소하고 싶으시군요. ${restate}`, guarded: true });
+    const explanation = 'Your todo list is ready. Shall I add more detail to this explanation?';
+    expect(guardFalseIncapabilityClaims(explanation, withActions, 'en')).toEqual({ text: explanation, guarded: false });
+    const unrelated = 'Your todo list is ready. Shall I add a summary of the weather?';
+    expect(guardFalseIncapabilityClaims(unrelated, withActions, 'en')).toEqual({ text: unrelated, guarded: false });
+    expect(guardFalseIncapabilityClaims('I see the item on your to-do list. Shall I add it?', withActions, 'en')).toEqual({ text: 'I see the item on your to-do list. Please tell me again what to do and which item.', guarded: true });
+    // Recorded residual (best-effort guard): a denial with neither a list noun nor an anaphor in its own sentence is kept.
+    const residual = '방금 추가한 할 일을 취소하고 싶으시군요. 여기서는 제가 직접 취소할 수 없어요.';
+    expect(guardFalseIncapabilityClaims(residual, withActions, 'ko')).toEqual({ text: residual, guarded: false });
     // Offers of nothing Quoky writes (Codex P2: 추가로 is no add), how-to and explanation offers (CA P2), true statements
     // about read-only sources, and families that are not offered stay.
     for (const reply of ['더 자세히 알려드릴까요?', '추가로 설명해 드릴까요?', '할 일 사용법을 추가로 설명해 드릴까요?', '할 일 목록을 추가로 보여드릴까요?', '할 일에 추가하는 방법을 알려드릴까요?', '할 일 3번은 이미 완료됐어요.', '캘린더 일정은 제가 취소할 수 없어요. 할 일은 말씀만 하세요.', '좋아요!']) {

@@ -148,16 +148,22 @@ export function guardDeadEndActionReplies(text: string, entries: readonly NlCata
           `(?<![가-힣])(?:${reminderWords.filter((word) => !/^[a-z ]+$/u.test(word)).map(escape).join('|') || '(?!)'})${'(?!으로|로|에서|에게|에|의|과|와)'}|\\b(?:${reminderWords.filter((word) => /^[a-z ]+$/u.test(word)).map(escape).join('|') || '(?!)'})\\b`,
           'u',
         );
-  const lowered = text.toLowerCase().replace(/to-do/gu, 'todo');
-  const namesList = listNouns.some((noun) => lowered.includes(noun));
-  const offending = (raw: string): boolean => {
+  // Codex P2 (2026-10-19): list grounding is per sentence: only the guarded sentence counts, or the sentence before it when
+  // the guarded one points back to it with an explicit anaphor (그거, 그건, 그 항목, it, that one).
+  const namesList = (raw: string): boolean => {
+    const lowered = raw.toLowerCase().replace(/to-do/gu, 'todo');
+    return listNouns.some((noun) => lowered.includes(noun));
+  };
+  const ANAPHOR = /(?<![가-힣])(?:그거|그것|그건|그걸|그 항목|그 할 일|그 알림)(?![가-힣])|\b(?:it|that one)\b/u;
+  const offending = (raw: string, previous: string): boolean => {
     const sentence = raw.trim().toLowerCase();
     if (sentence.length === 0 || EXPLANATION.test(sentence)) return false;
     const timed = containsNlTimeExpression(sentence);
     if (!namesAction(sentence, timed) || readNouns.some((noun) => sentence.includes(noun))) return false;
     // Codex P2 (2026-10-19): with reminders offered, a reminder verb beside a time is about Quoky's own reminders even with no
     // list noun ("내일 9시에 알려드릴까요?"); with reminders off nothing here counts, so a true denial stays.
-    if (!namesList && !/\d+\s*번|#\s?\d+|\bnumber\s+\d+/u.test(sentence) && !(timed && timedReminder?.test(sentence) === true)) return false;
+    const grounded = namesList(sentence) || (ANAPHOR.test(sentence) && namesList(previous));
+    if (!grounded && !/\d+\s*번|#\s?\d+|\bnumber\s+\d+/u.test(sentence) && !(timed && timedReminder?.test(sentence) === true)) return false;
     const offer = (KO_YES_NO_OFFER.test(sentence) && /[?？]\s*$/u.test(sentence)) || EN_YES_NO_OFFER.test(sentence);
     return offer || koIncapable(sentence, timed) || enIncapable?.test(sentence) === true;
   };
@@ -169,7 +175,7 @@ export function guardDeadEndActionReplies(text: string, entries: readonly NlCata
   for (let index = 0; index < parts.length; index += 2) {
     const sentence = parts[index] ?? '';
     const separator = parts[index + 1] ?? '';
-    if (offending(sentence)) {
+    if (offending(sentence, parts[index - 2] ?? '')) {
       removed = true;
       continue;
     }
