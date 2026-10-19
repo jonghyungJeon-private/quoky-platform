@@ -27644,7 +27644,9 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   day; a time expression with no supported period ("show reminders next 7 days") asks instead of listing everything.
   Only prose with no time expression at all has no range. A weekday is placed by the weekday validation's own rules
   (`nlWeekdayMentionRanges`): a Korean week word fixes the week, an English "next" / "this" is a direction ("next
-  Wednesday" said on a Wednesday is a week later, never today); "last Friday" is past and asks.
+  Wednesday" said on a Wednesday is a week later, never today); "last Friday" is past and asks. A month alone ("show
+  reminders in November", "Dec reminders", "11월 알림") is a named period outside the set and asks, whether the selector
+  wrote no range or a month range ("may" / "march" count only after a period preposition: "in May").
   Anything else the owner names (a span with 부터/까지/until/~, a duration "앞으로 7일" / "next 7 days", a month "2월", a
   day-only date "25일", a past period or date, any other symbol, several periods) asks with the fixed, content-free
   restate "알림 목록은 오늘·내일·이번 주·다음 주·특정 날짜로 볼 수 있어요. 예: \"내일 알림 보여줘\"" (catalog

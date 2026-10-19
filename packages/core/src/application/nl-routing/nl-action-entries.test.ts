@@ -363,6 +363,8 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
       expect(validateSelection({ entryId: 'reminder.list', args: { range: symbol } }, ctx(text)), text).toMatchObject({ ok: true });
     }
     expect(nlReminderPeriod('알림 뭐 있어?')).toEqual({ kind: 'none' });
+    // The modal "may" is no month.
+    expect(nlReminderPeriod('may I see my reminders')).toEqual({ kind: 'none' });
     // Spans, durations, months, day-only dates, past and other periods are outside the set: whatever range the selector
     // wrote (or none), Core asks with the fixed restate, never filters with it and never drops it.
     for (const [text, range] of [
@@ -371,6 +373,11 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
       ['앞으로 7일 알림 보여줘', 'next-7-days'],
       ['reminders in the next 7 days', 'next-7-days'],
       ['show reminders next 7 days', 'next-7-days'],
+      // Codex P2: a month alone, English or Korean, is named but outside the set.
+      ['show reminders in November', '11-01..11-30'],
+      ['Dec reminders', '12-01..12-31'],
+      ['reminders in May', '05-01..05-31'],
+      ['11월 알림 보여줘', '11-01..11-30'],
       ['내일 오전 9시 알림 보여줘', 'tomorrow'],
       ['tomorrow morning reminders', 'tomorrow'],
       ['오늘 저녁 알림 보여줘', 'today'],

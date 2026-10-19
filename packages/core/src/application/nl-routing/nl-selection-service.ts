@@ -40,7 +40,7 @@ import {
   type NlText,
   NL_IGNORABLE_EXTRA_ARGS,
 } from './catalog';
-import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES, nlReminderPeriod, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES, nlNamesPeriod, nlReminderPeriod, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -2313,7 +2313,10 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
       if (dropped.length === 0) return undefined;
       // Codex P2 (2026-10-19): the owner stated a period ("내일 알림 보여줘") but the repaired read carries none (the selector
       // wrote it as an unusable detail, e.g. {tomorrow: true}): the owner named a filter Core cannot apply as written: ask.
-      if (result.value.range === undefined && (nlReminderPeriod(ctx.groundingText).kind !== 'none')) return undefined;
+      // The closed-set resolver (which also counts a bare month name) reads only an entry whose period needs the owner's
+      // words; any other entry keeps the period-word check (a sender called "Jan" is no period).
+      const ownerWords = result.value.entry.args.some((spec) => spec.kind === 'range' && spec.timeWordsRequired === true);
+      if (result.value.range === undefined && (ownerWords ? nlReminderPeriod(ctx.groundingText).kind !== 'none' : nlNamesPeriod(ctx.groundingText))) return undefined;
       return { result, dropped };
     }
     const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);

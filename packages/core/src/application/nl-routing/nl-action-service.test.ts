@@ -1343,6 +1343,9 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
       ['reminders in the next 7 days', { range: 'next-7-days' }],
       // Codex P2: no supported period, a duration only: the empty range is never "every reminder".
       ['show reminders next 7 days', {}],
+      // Codex P2: a month alone asks; neither an unfiltered list nor a silently dropped month range.
+      ['show reminders in November', {}],
+      ['show reminders in November', { range: '11-01..11-30' }],
       ['tomorrow morning reminders', { range: 'tomorrow' }],
     ] as const) {
       const en = await run(text, out('reminder.list', args));

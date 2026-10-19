@@ -1161,6 +1161,12 @@ const PERIOD_SPAN = /부터|까지|이후|이전|이내|(?<![a-z])(?:until|till|
 const PERIOD_DURATION = /(?:앞으로|향후|최근|지난)\s*\d+\s*(?:일|주|개월|달)|\d+\s*(?:일|주|개월)\s*(?:동안|간|뒤|후|이내)|(?<![a-z])(?:next|past|last|coming|in)\s+\d+\s+(?:days?|weeks?|months?)(?![a-z])/u;
 /** A number with a calendar or clock unit ("25일", "2월", "2주", "7 days", "3시간"): never placed by a guess. */
 const NUMBER_TIME_UNIT = /\d+\s*(?:일|주|개월|달|월|년|시간|시|분|(?<![a-z])(?:days?|weeks?|months?|years?|hours?|hrs?|minutes?|mins?)(?![a-z]))/u;
+/**
+ * Codex P2 (2026-10-19): an English month name on its own ("in November", "Dec reminders"): a month the closed set has no
+ * symbol for. "may" and "march" are also a modal and a verb, so they count only after a period preposition or determiner
+ * ("in May", "this March"). The Korean "11월" is a number with a unit (`NUMBER_TIME_UNIT`).
+ */
+const EN_MONTH_NAME = /(?<![a-z])(?:january|february|april|june|july|august|september|october|november|december|jan|feb|apr|jun|jul|aug|sept?|oct|nov|dec)(?![a-z])|(?<![a-z])(?:in|for|during|of|this|next|last|until|by|since)\s+(?:may|march|mar)(?![a-z])/u;
 /** A weekday form with its optional this / next week word ("다음 주 수요일", "이번주 금", "next Wednesday"). */
 const WEEKDAY_FORM = /(?:(?:이번|다음|담|차|금)\s*주\s*)?[월화수목금토일](?:요일|욜)날?|(?:이번|다음|담|차|금)\s*주\s*[월화수목금토일](?![가-힣])|(?<![a-z])(?:(?:this|next)\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues?|wed|thur?s?|fri|sat|sun)(?![a-z])/gu;
 
@@ -1175,6 +1181,7 @@ function hasReminderTimeExpression(text: string): boolean {
     nlNamesPeriod(text) ||
     PERIOD_DURATION.test(normalized) ||
     NUMBER_TIME_UNIT.test(normalized) ||
+    EN_MONTH_NAME.test(normalized) ||
     nlExpressedRangeSymbols(text).length > 0 ||
     nlWeekdayMentions(text).length > 0
   );
