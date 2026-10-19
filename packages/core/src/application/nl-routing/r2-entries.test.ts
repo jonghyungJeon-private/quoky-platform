@@ -438,6 +438,14 @@ describe('A6 R2 (v48 gate): item.summarize mode and source come from the owner w
     expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, '그거 요약해줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
     expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, '방금 거 말고 그거 요약해줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
     expect(argsOf(validate('item.summarize', { source: 'jira', ref: '#2', mode: 'summary' }, '방금 본 목록 2번 요약해줘'))).toEqual({ source: 'jira', ref: '#2', mode: 'summary' });
+    // Codex P2: the exclusion is read over the whole referent phrase; a mode word inside it never ends the check.
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'full' }, '방금 요약한 거 말고 그거 원문 보여줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, '아까 본 거 말고 이거 요약해줘'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, 'summarize not the one I just read, this one'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }, 'summarize not the one I just now read, this one'))).toEqual({ source: 'jira', ref: 'this', mode: 'summary' });
+    // A negated mode inside the request is the mode's, not the referent's: the recency referent stays.
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'full' }, '방금 본 거 요약 말고 원문으로 보여줘'))).toEqual({ source: 'jira', ref: 'recent', mode: 'full' });
+    expect(argsOf(validate('item.summarize', { source: 'jira', ref: 'this', mode: 'full' }, 'not a summary, show the full text of that one I just now read'))).toEqual({ source: 'jira', ref: 'recent', mode: 'full' });
     // The A6 mail / Drive path grounds it the same way.
     const r1 = new Map<string, NlCatalogEntry>([['item.summarize', nlActionEntry('item.summarize')]]) as NlValidationContext['offered'];
     const prepared = prepareSelectionInput('방금 열어본 거 원문 보여줘');

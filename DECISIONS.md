@@ -27570,5 +27570,11 @@ an invalid recorded ref kept as recorded): overall 99.3 / 98.6 / 98.6, Jira 98.7
 0 wrong targets, 0 negative captures; the remaining misses are 056 (selector source slack, runs 1 and 3), 062 (slack,
 run 2), 046 (invalid ref, run 2) and 065 (guessed mail, run 3).
 
-The gold digest changes with the label edits (texts and ids unchanged, so the embedding audit is unchanged):
-`selector-pool.audit.v1.json` carries the new gold digest.
+The gold digest changes with the label edits: `selector-pool.audit.v1.json` is regenerated with `pnpm eval:rag -- --mode
+dry-run --write-audit true` (local Ollama, loopback; CA P3). Only the gold digest and the embedding space id (Ollama
+0.40.5 → 0.40.6, same model digest) change; the split hash and every metric are unchanged.
+
+Follow-ups after review: the recency grounding reads an exclusion over the whole referent phrase (Codex P2: "방금 요약한
+거 말고 그거 원문 보여줘", "아까 본 거 말고 이거", "not the one I just now read, this one" keep the selector's `this`;
+a mode word inside the phrase no longer ends the check). CA P3: "아까 온 메일 요약해줘" (아까 dating the mail, not the
+reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-action.r2.v1.json`, not as gold.

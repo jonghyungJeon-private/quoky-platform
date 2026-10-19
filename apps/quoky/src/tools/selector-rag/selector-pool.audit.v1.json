@@ -15,7 +15,7 @@
   "models": [
     {
       "model": "nomic-embed-text-v2-moe",
-      "spaceId": "nomic-embed-text-v2-moe@ff9c2f10ef5e@ollama0.40.5",
+      "spaceId": "nomic-embed-text-v2-moe@ff9c2f10ef5e@ollama0.40.6",
       "tau": 0.7941,
       "tauLow": 0.7441,
       "minPositive": 0.8141,

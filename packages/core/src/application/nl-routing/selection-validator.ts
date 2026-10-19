@@ -24,6 +24,8 @@ import {
   NL_RECENCY_WORDS,
   nlFrameExpressesAction,
   nlHasLastWord,
+  hasNlDeictic,
+  nlHasRecencyWord,
   withoutSpan,
   withoutStructures,
   isNlRefGrounded,
@@ -36,7 +38,7 @@ import {
 } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, normalizeForMatch } from './selection-input';
 import type { NlSelectionCandidate } from './selection-output';
-import { nlFrameIsElliptical, nlHasUnnegatedMention, nlRelaysRequest, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
+import { nlFrameIsElliptical, nlHasUnnegatedMention, nlIsRequestForm, nlRelaysRequest, nlRequestEndsBefore, nlRequestVeto, type NlRequestVeto } from './request-shape';
 import { nlFrameHasActionInflection, nlGarbledActionWord, type NlActionVocabulary } from './garbled-action';
 import {
   isNlRangeSymbol,
@@ -361,10 +363,57 @@ function groundItemSummarizeArgs(entry: NlCatalogEntry, args: Record<string, NlA
   const named = [...nlNamedItemSources(prose, { r2Sources })].filter((source) => offered.includes(source));
   if (named.length === 1) args.source = named[0] as string;
   if (args.ref === 'this' || (args.ref === 'last' && !nlHasLastWord(prose))) {
-    // A negated recency word ("방금 거 말고 그거") grounds nothing; its stretch ends at the next mode or content word.
+    // A negated or excluded recency referent grounds nothing: "방금 거 말고 그거", "방금 요약한 거 말고 그거 원문 보여줘"
+    // (Codex P2: the exclusion is read over the whole referent phrase, so a mode word inside it never ends the check).
     const stops = [...NL_RECENCY_WORDS, ...modeWords, ...NL_CONTENT_WORDS];
-    if (NL_RECENCY_WORDS.some((word) => groundingWordIn(text, normalizeForMatch(word)) && nlHasUnnegatedMention(prose, word, stops))) args.ref = 'recent';
+    const contentWords = [...modeWords, ...NL_CONTENT_WORDS];
+    if (NL_RECENCY_WORDS.some((word) => groundingWordIn(text, normalizeForMatch(word)) && nlHasUnnegatedMention(prose, word, stops) && !recencyReferentExcluded(prose, word, contentWords))) args.ref = 'recent';
   }
+}
+
+/** The closed exclusion words of a referent phrase: after it in Korean ("… 거 말고"), before it in English ("not the one …"). */
+const REFERENT_EXCLUSION_KO = /^(?:말고|말구|아니고|아니라|아닌|빼고|제외)/u;
+const REFERENT_EXCLUSION_EN = /^(?:not|except|excluding|besides)$/u;
+/** A Korean referent head: a bound noun (거 / 것 / 건 / 걸) closing the phrase, particles glued on ("본거", "요약한 거"). */
+const REFERENT_HEAD_KO = /(?:거|것|건|걸|게)(?:은|는|이|가|을|를|도|만|랑)?$/u;
+
+/**
+ * Whether the owner excluded the referent a recency word starts ("방금 요약한 거 말고 그거", "아까 본 거 말고 이거", "not the
+ * one I just now read, this one"). Read over the complete referent phrase, within its clause: Korean, from the recency word
+ * to the next deictic or the first request-form word, an exclusion word right after the referent's head (a bound noun, or
+ * any word that is not a mode or content word: "요약 말고" negates the mode, not the item); English, an exclusion word
+ * before the recency word with no mode or content word between them ("not a summary but what I just now read" keeps it).
+ */
+function recencyReferentExcluded(prose: string, word: string, contentWords: readonly string[]): boolean {
+  const target = normalizeForMatch(word);
+  const content = contentWords.map((item) => normalizeForMatch(item)).filter((item) => item.length > 0);
+  const isContent = (token: string): boolean => content.some((item) => groundingWordIn(token, item));
+  for (const clause of normalizeForMatch(prose).split(/[,.!?;。\n]/u)) {
+    const tokens = clause.split(/\s+/u).filter((token) => token.length > 0);
+    const latin = /^[a-z]/u.test(target);
+    const parts = target.split(' ');
+    const start = tokens.findIndex((_, index) => (latin ? parts.every((part, offset) => tokens[index + offset] === part) : (tokens[index] ?? '').includes(target)));
+    if (start < 0) continue;
+    if (latin) {
+      for (let index = start - 1; index >= 0; index -= 1) {
+        const token = tokens[index] as string;
+        if (isContent(token)) break;
+        if (REFERENT_EXCLUSION_EN.test(token)) return true;
+      }
+      continue;
+    }
+    for (let index = start + 1; index < tokens.length; index += 1) {
+      const token = tokens[index] as string;
+      // Another referent starts ("… 말고 그거"): the recency phrase has ended.
+      if (hasNlDeictic(token) && !nlHasRecencyWord(token)) break;
+      if (REFERENT_EXCLUSION_KO.test(token)) {
+        const head = tokens[index - 1] as string;
+        if (index - 1 === start || REFERENT_HEAD_KO.test(head) || !isContent(head)) return true;
+      }
+      if (nlIsRequestForm(token)) break;
+    }
+  }
+  return false;
 }
 
 type NlCheckedArgs =
