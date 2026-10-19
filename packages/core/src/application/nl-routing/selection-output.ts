@@ -138,13 +138,17 @@ function parseArgs(value: unknown): Record<string, NlArgValue> | null {
 
 function parseAlternatives(value: unknown): NlSelectionCandidate[] | null {
   if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > NL_SELECTION_MAX_ALTERNATIVES) return null;
+  // v51 gate (2026-10-19, a6-negative-none-148 / -155: malformed:bad-alternatives): a hedged answer may list "none" as an
+  // alternative. "none" is no candidate, so it is dropped rather than failing the whole call; it can only ever remove an
+  // option, never add one. Every other rule holds (at most 2 real alternatives, closed keys, valid ids).
+  if (!Array.isArray(value) || value.length > NL_SELECTION_MAX_ALTERNATIVES + 1) return null;
   const alternatives: NlSelectionCandidate[] = [];
   for (const item of value) {
     if (!isPlainObject(item) || !Object.keys(item).every((key) => ALTERNATIVE_KEYS.has(key))) return null;
     const entryId = parseEntryId(item.entryId);
-    // `none` is not an alternative.
-    if (entryId === undefined || entryId === null) return null;
+    if (entryId === undefined) return null;
+    if (entryId === null) continue;
+    if (alternatives.length >= NL_SELECTION_MAX_ALTERNATIVES) return null;
     const args = parseArgs(item.args);
     if (args === null) return null;
     alternatives.push({ entryId, args });

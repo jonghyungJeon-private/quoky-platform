@@ -1014,6 +1014,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
     }
     // A refusal reached through the repair path is not kept in the cache either.
     if (weekdayRefused && cacheKey !== undefined) this.cache.delete(cacheKey);
+    // v51 gate (2026-10-19, reminder.list-006 / -002): with action entries offered, an action candidate is never an option,
+    // so a selector that hedged between a read and an action ("알림 몇 개 걸려 있어?": reminder.list or reminder.create)
+    // left ONE numbered option, the read it named and Core validated unchanged: "어떤 걸 찾으세요? 1. 예정된 알림 목록". A
+    // one-option question asks nothing; the read runs (no write is possible from it). A repaired or two-option case asks.
+    if (actionsOn && main.ok && !weekdayRefused && options.length === 1 && options[0]?.entry.id === main.value.entry.id && sortedArgs(options[0].args) === sortedArgs(main.value.args)) {
+      return this.complete(main.value, turn, last, language, prepared.groundingText);
+    }
     if (options.length === 0) {
       // An entry that is not offered (an unconfigured source) or not in the catalog is honest chat's to explain.
       if (!main.ok && (main.reason === 'unknown-entry' || main.reason === 'not-offered' || main.reason === 'not-read')) {
@@ -2235,6 +2242,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
  * ADR-0120 D6/D8 plus the S1 hardening: a selection request may go only where this turn's chat would go — the same
  * provider family (or id) AND the same declared execution locality. Compared as opaque data, never as a name.
  */
+/** Args as a canonical string (key order ignored), to tell an unchanged selection from a repaired one. */
+function sortedArgs(args: NlArgs): string {
+  return JSON.stringify(Object.entries(args).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
 function sameEgress(
   selector: Pick<AiProvider, 'id' | 'family' | 'executionLocality'>,
   chatProviderId: string,

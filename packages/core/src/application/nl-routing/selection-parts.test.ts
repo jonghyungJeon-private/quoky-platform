@@ -17,7 +17,7 @@ describe('v49 gate diagnosis: the parser names why it rejected an output (closed
     expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{"title":["a"]},"ambiguity":"CLEAR","alternatives":[]}')).toBe('bad-arg-type:title');
     expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{"the title":"a"},"ambiguity":"CLEAR","alternatives":[]}')).toBe('bad-arg-name');
     expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{},"ambiguity":"LOW","alternatives":[]}')).toBe('bad-enum:ambiguity');
-    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{},"ambiguity":"CLEAR","alternatives":[{"entryId":"none","args":{}}]}')).toBe('bad-alternatives');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{},"ambiguity":"CLEAR","alternatives":[{"entryId":"a.b","ambiguity":"CLEAR"}]}')).toBe('bad-alternatives');
     // A value never appears in the reason.
     expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{"title":"비밀 내용"},"ambiguity":"CLEAR","alternatives":[],"note":"비밀 내용"}')).toBe('unknown-key:note');
   });
@@ -164,7 +164,8 @@ describe('strict output parser (ADR-0120 D3)', () => {
       '{"entryId":"jira.issues","args":{"x":{"y":1}},"ambiguity":"CLEAR"}',
       '{"entryId":"jira.issues","args":{},"ambiguity":"MAYBE"}',
       '{"entryId":"Jira Issues","args":{},"ambiguity":"CLEAR"}',
-      '{"entryId":"jira.issues","args":{},"ambiguity":"CLEAR","alternatives":[{"entryId":"none","args":{}}]}',
+      '{"entryId":"jira.issues","args":{},"ambiguity":"CLEAR","alternatives":[{"entryId":"a.b"},{"entryId":"none"},{"entryId":"c.d"},{"entryId":"e.f"}]}',
+      '{"entryId":"jira.issues","args":{},"ambiguity":"CLEAR","alternatives":[{"entryId":"a.b","ambiguity":"CLEAR"}]}',
       `{"entryId":"jira.issues","args":{"keyword":"${'가'.repeat(250)}"},"ambiguity":"CLEAR"}`,
       `{"entryId":"slack.search","args":{"keyword":"${'a'.repeat(190)}","a":"${'b'.repeat(190)}","b":"${'b'.repeat(190)}","c":"${'b'.repeat(190)}","d":"${'b'.repeat(190)}","e":"${'b'.repeat(190)}","f":"${'b'.repeat(190)}","g":"${'b'.repeat(190)}","h":"${'b'.repeat(190)}","i":"${'b'.repeat(190)}","j":"${'b'.repeat(190)}"},"ambiguity":"CLEAR"}`,
       '[]',
@@ -173,6 +174,15 @@ describe('strict output parser (ADR-0120 D3)', () => {
       expect(parseSelectionOutput(raw)).toBeNull();
     }
     expect(NL_SELECTION_OUTPUT_MAX_BYTES).toBe(2048);
+  });
+
+  it('v51 gate: a "none" alternative is no candidate and is dropped, never failing the call (it only removes an option)', () => {
+    expect(parseSelectionOutput('{"entryId":"todo.complete","args":{"ref":"#2"},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[{"entryId":"none","args":{}}]}')).toMatchObject({
+      entryId: 'todo.complete',
+      ambiguity: 'NEEDS_CLARIFICATION',
+      alternatives: [],
+    });
+    expect(parseSelectionOutput('{"entryId":"jira.issues","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[{"entryId":"none"},{"entryId":"calendar.events","args":{}}]}')?.alternatives).toEqual([{ entryId: 'calendar.events', args: {} }]);
   });
 });
 

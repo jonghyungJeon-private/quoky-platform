@@ -276,19 +276,21 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
     expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v39', sha256: 'fe13de80a8b71bc67b138e834036575819a76013fa86164bb7455ca0df3a4555' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v51', sha256: '539fc4c8546647030a259d84c92095c6ed65cc825e5a4589bc5b249679cd7579' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v53', sha256: '7586bfb45559b35591fbd5d98df6bb3f0c9f66bed49e33379911b2dc39a1e12f' });
   });
 });
 
-describe('A6 prompt v51 (live test 4, v49 gate): v44 colon-form sentence kept, a scoped label exception and the to-do bare form', () => {
+describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block byte for byte, the label and bare-form lines after the span lines', () => {
   const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: 'x', actions: { referenceContext: 'none' } });
 
-  it('keeps the v44 colon-form sentence byte for byte and adds only the scoped exception and the to-do bare form', () => {
+  it('keeps v44\'s colon-form sentence and the help.topic question rule adjacent, and adds the two rules with the span lines', () => {
     expect(prompt).toContain(
-      '   "<label>: <value>" colon form that hands Quoky a value to register, delete or set, is none even when it names one of\n   Quoky\'s own features.\n',
+      '   "<label>: <value>" colon form that hands Quoky a value to register, delete or set, is none even when it names one of\n   Quoky\'s own features.\n   A question form is needed but not enough:',
     );
-    expect(prompt).toContain('A colon label that names a to-do or a reminder ("할 일: …", "To-do: …", "알림: …") is no such value: it is todo.add or');
-    expect(prompt).toContain('Content followed only by the to-do noun, with no verb ("<content> 할 일"), is todo.add now; the noun is not in the title.');
+    expect(prompt).toContain(
+      'Core checks the item or the content and asks.\n   A colon label that names a to-do or a reminder ("할 일: …", "To-do: …", "알림: …") is todo.add or reminder.create, with\n',
+    );
+    expect(prompt).toContain('("<content> 할 일"), is\n   todo.add now; the noun is not in the title.');
     // The v49 wording that re-scoped "none" over every command, and the reminder noun in the bare form, are gone.
     expect(prompt).not.toContain('any other such command is none');
     expect(prompt).not.toContain('to-do or reminder noun, with no verb');
@@ -308,7 +310,7 @@ describe('A6 prompt v51 (live test 4, v49 gate): v44 colon-form sentence kept, a
   });
 });
 
-describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v51 with actions', () => {
+describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v53 with actions', () => {
   const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v39.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
@@ -324,8 +326,8 @@ describe('the selection prompt (A6-D7): v39 byte for byte with the flag off, v51
     }
   });
 
-  it('the A6 prompt (v51) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v51');
+  it('the A6 prompt (v53) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v53');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');

@@ -379,6 +379,17 @@ export interface NlUnavailableCause {
   readonly latencyMs?: number;
 }
 
+/**
+ * The content-free shape of a selector answer that ended as a read-path question: `ask:<ambiguity>:args=<names>:alts=<ids>`
+ * (closed values only: the ambiguity enum, arg names and entry ids; an id or name that is not an identifier is dropped).
+ */
+export function askShape(output: NonNullable<ReturnType<typeof parseSelectionOutput>>): string {
+  const id = (value: string): boolean => /^[a-z][a-z0-9.-]{0,63}$/u.test(value);
+  const names = Object.keys(output.args).filter((name) => /^[A-Za-z][A-Za-z0-9]{0,31}$/u.test(name)).sort();
+  const alts = output.alternatives.map((alternative) => alternative.entryId).filter(id);
+  return `ask:${output.ambiguity}:args=${names.join('+')}:alts=${alts.join('+')}`;
+}
+
 /** The content-free reason recorded for an unavailable selection: `timeout`, `failed:provider-…`, `malformed:unknown-key:…`. */
 export function unavailableReason(unavailable: NlUnavailableCause): string {
   return unavailable.detail === undefined ? unavailable.cause : `${unavailable.cause}:${unavailable.detail}`;
@@ -781,6 +792,12 @@ export async function runActionEvaluation(input: {
           // so its latency comes from the service's own measure).
           if (unavailable !== undefined && (record.outcome === 'error' || record.outcome === 'timeout')) {
             record = { ...record, reason: unavailableReason(unavailable), latencyMs: latencyMs > 0 ? latencyMs : (unavailable.latencyMs ?? 0) };
+          }
+          // v51 gate diagnosis: a question with no Core reason (the read path's numbered or usage question) records the
+          // selector's closed shape: ambiguity, the arg NAMES and the alternative entry ids (never a value).
+          if (record.outcome === 'question' && record.reason === undefined) {
+            const output = parseSelectionOutput(raw);
+            if (output !== null) record = { ...record, reason: askShape(output) };
           }
         } catch (error) {
           record = { run, id: golden.id, family: golden.family, expected: golden.expect === 'none' ? 'none' : golden.expect.entryId, outcome: 'error', latencyMs: rec.last().latencyMs, reason: error instanceof Error ? error.name : 'unknown' };

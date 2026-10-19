@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { Capability, type AiProvider } from '@quoky/core';
-import { NL_ACTION_CORPUS_PATH, NL_ACTION_SEED_PATH, buildActionPlan, decideActionCase, loadActionCorpus, runActionEvaluation, scoreActionDecision, unavailableReason, validateActionCorpus, type NlActionCase } from './nl-action-eval';
+import { Capability, parseSelectionOutput, type AiProvider } from '@quoky/core';
+import { NL_ACTION_CORPUS_PATH, NL_ACTION_SEED_PATH, askShape, buildActionPlan, decideActionCase, loadActionCorpus, runActionEvaluation, scoreActionDecision, unavailableReason, validateActionCorpus, type NlActionCase } from './nl-action-eval';
 
 // A6 live test 4 (2026-10-17; docs/plans/a6-live-test-4-record.md), offline: the owner-approved gold of 2026-10-19 ((a)
 // todo.add-906, (b) reminder.create-903, in nl-action.v1.json) and the gold CANDIDATES pending the owner's D12 batch
@@ -50,6 +50,27 @@ describe('v49 gate diagnosis: an unavailable selection records a closed cause', 
     const records = await runActionEvaluation({ corpus, plan, provider: scripted('Sure, here it is: todo.add'), now: () => NOW });
     expect(records[0]).toMatchObject({ outcome: 'error', reason: 'malformed:not-json' });
     expect(JSON.stringify(records[0])).not.toContain('Sure');
+  });
+});
+
+describe('v51 gate: a read hedged against an action runs instead of a one-option question', () => {
+  const answer = (args: Record<string, unknown>, ambiguity: string, alternatives: unknown[]) => JSON.stringify({ entryId: 'reminder.list', args, ambiguity, alternatives });
+  const text = '알림 몇 개 걸려 있어?';
+
+  it('reminder.list hedged with reminder.create (or flagged with no other read) executes the read, never "1. 예정된 알림 목록"', async () => {
+    for (const raw of [answer({}, 'NEEDS_CLARIFICATION', [{ entryId: 'reminder.create', args: {} }]), answer({}, 'NEEDS_CLARIFICATION', [])]) {
+      const { decision } = await decideActionCase({ text }, scripted(raw), NOW);
+      expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
+    }
+  });
+
+  it('a repaired or a two-read case still asks; the ask records its closed shape', async () => {
+    // An arg the read does not ground is repaired away: the one option differs from what was named, so Core asks.
+    const repaired = await decideActionCase({ text }, scripted(answer({ status: 'scheduled' }, 'CLEAR', [])), NOW);
+    expect(repaired.decision.kind).toBe('ask');
+    const two = await decideActionCase({ text: '몇 건이야?' }, scripted(JSON.stringify({ entryId: 'jira.issues', args: { count: true }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'calendar.events', args: { count: true } }] })), NOW);
+    expect(two.decision.kind).toBe('ask');
+    expect(askShape(parseSelectionOutput(answer({ status: 'scheduled' }, 'NEEDS_CLARIFICATION', [{ entryId: 'reminder.create', args: {} }]))!)).toBe('ask:NEEDS_CLARIFICATION:args=status:alts=reminder.create');
   });
 });
 

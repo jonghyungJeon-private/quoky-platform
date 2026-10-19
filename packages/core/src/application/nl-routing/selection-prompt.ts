@@ -78,6 +78,12 @@ import { nlModeVocabularyText } from './action-entries';
  * colon label, one line for a bare "<content> 할 일" limited to the to-do noun (v49 also named the reminder noun, pulling
  * reminder questions toward reminder.create), and two examples; the reminder label example is dropped (its normalised body
  * "분리수거 내놓기" sat next to the ungrounded "운동 가라고" body of seed-para-001). The read prompt stays v39.
+ * v53 (A6; the v51 gate of 2026-10-19 still lost help.topic on "문서 요약 명령어가 뭐야" in 2 of 3 runs) = v51 with its two
+ * new lines moved OUT of the help.topic block, which is now v44's run of lines byte for byte (v51 had put the label and
+ * bare-form lines between "… is none even when it names one of Quoky's own features." and "A question form is needed but
+ * not enough: help.topic is only a question whose subject is Quoky itself (… features or commands)", splitting the
+ * command-question rule from the help.topic rule it qualifies). They now follow the span lines of the action rule, as one
+ * standalone sentence pair. No word changes; the examples are v51's. The read prompt stays v39.
  */
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v39';
 /**
@@ -85,7 +91,7 @@ export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v39';
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
  * for byte (pinned by `golden/nl-select.v39.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v51';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v53';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -110,9 +116,9 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v51';
  * v47 "never sets mode" show/tell sentence and the mode clause of the one-item rule are gone; the R2 entry's mode
  * description is v46's again. A6 stays v44 and read v39 byte for byte; Core's ITEM_READ veto is unchanged.
  * v50 = the v48 R2 lines on top of v49 (the shared rule-8 lines and action examples changed); no R2 line changes. v52 =
- * the v48 R2 lines on top of v51 (never gated as v50); no R2 line changes.
+ * the v48 R2 lines on top of v51 (never gated as v50); no R2 line changes. v54 = the v48 R2 lines on top of v53.
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v52';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v54';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -322,6 +328,9 @@ const ACTION_RULES: readonly string[] = [
   '   invent an item, an id, a title or a number.',
   '   Pick the action the owner asks for even when Reference context shows another list or nothing, and when the content to',
   '   add or remind is only 그거/이거/방금 거, copy those words as the span: Core checks the item or the content and asks.',
+  '   A colon label that names a to-do or a reminder ("할 일: …", "To-do: …", "알림: …") is todo.add or reminder.create, with',
+  '   the text after the colon as its span. Content followed only by the to-do noun, with no verb ("<content> 할 일"), is',
+  '   todo.add now; the noun is not in the title.',
   '   When the word that names the action is itself garbled or misspelled, so that the action the owner means is uncertain,',
   '   return NEEDS_CLARIFICATION with the most likely entry and its args, and that same entry and args as the one alternative:',
   '   never silently pick the action a garbled word might stand for.',
@@ -335,9 +344,6 @@ const ACTION_RULES: readonly string[] = [
   '   A command-shaped message is never help.topic: an imperative that asks Quoky to do or change something, or a',
   '   "<label>: <value>" colon form that hands Quoky a value to register, delete or set, is none even when it names one of',
   '   Quoky\'s own features.',
-  '   A colon label that names a to-do or a reminder ("할 일: …", "To-do: …", "알림: …") is no such value: it is todo.add or',
-  '   reminder.create, with the text after the colon as its span.',
-  '   Content followed only by the to-do noun, with no verb ("<content> 할 일"), is todo.add now; the noun is not in the title.',
   '   A question form is needed but not enough: help.topic is only a question whose subject is Quoky itself (you, or one of',
   '   Quoky\'s own features or commands). A question about using, setting up or writing in any other app, device or service',
   '   is none, even when it shares a word with a Quoky feature.',
