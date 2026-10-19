@@ -14730,11 +14730,11 @@
    "expect": {
     "entryId": "todo.add",
     "args": {
-     "title": "회의 끝나고 검증 회의록 정리"
+     "title": "검증 회의록 정리"
     },
     "outcome": "execute"
    },
-   "note": "owner decision (a) of 2026-10-19 (live test 4, turn 69, label disputed): \"회의 끝나고 …\" is the to-do's own wording, so the to-do is added NOW with the qualifier kept in the title; the deferred-timing veto reads the frame without the title span and must not refuse it [owner-approved 2026-10-19]"
+   "note": "owner decision (a) of 2026-10-19 (live test 4, turn 69, label disputed), title amended by the owner the same day: the to-do is added NOW and titled \"검증 회의록 정리\"; the leading \"회의 끝나고\" only says when the owner will do the task (it sits right before the title, inside the task's own words), so it is neither part of the title nor a deferral of the request [owner-approved 2026-10-19]"
   },
   {
    "id": "a6-paraphrase-reminder.create-903",

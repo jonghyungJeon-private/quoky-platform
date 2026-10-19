@@ -358,17 +358,33 @@ function spanRegions(text: string, content: readonly string[]): Array<readonly [
   return regions;
 }
 
-function hitOutside(pattern: RegExp, text: string, regions: ReadonlyArray<readonly [number, number]>, inside?: (hit: string, start: number) => boolean): boolean {
+function hitOutside(
+  pattern: RegExp,
+  text: string,
+  regions: ReadonlyArray<readonly [number, number]>,
+  inside?: (hit: string, start: number) => boolean,
+  exempt?: (end: number) => boolean,
+): boolean {
   const global = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
   for (const match of text.matchAll(global)) {
     const start = match.index ?? 0;
     const end = start + match[0].length;
+    if (exempt?.(end) === true) continue;
     const enclosed = regions.some(([from, to]) => start >= from && end <= to);
     // A one-word span that IS the veto word ("방법", "maybe", "나중에") is no content of its own.
     const whole = regions.some(([from, to]) => start === from && end === to && !/\s/u.test(text.slice(from, to)));
     if (!enclosed || whole || inside?.(match[0], start) === true) return true;
   }
   return false;
+}
+
+/**
+ * Whether the words right after position `end` (past whitespace) begin a content span: the clause that ends at `end`
+ * modifies the task's own words (its time), not the request predicate that follows them.
+ */
+function modifiesTask(text: string, end: number, regions: ReadonlyArray<readonly [number, number]>): boolean {
+  const next = end + (/^\s*/u.exec(text.slice(end))?.[0].length ?? 0);
+  return next > end && regions.some(([from]) => from === next);
 }
 
 /** The word of `text` around position `at`. */
@@ -541,12 +557,17 @@ export function nlRequestVeto(frame: string, entryWords: readonly string[], acti
   const mainClause = clausesOf(untimed).at(-1) ?? '';
   const mainStart = untimed.lastIndexOf(mainClause);
   const mainRegions = untimedRegions.map(([from, to]) => [from - mainStart, to - mainStart] as const);
-  if (hitOutside(DEFERRED_KO, mainClause, mainRegions) || hitOutside(DEFERRED_EN, untimed, untimedRegions)) return 'deferred';
+  // Owner decision (a) of 2026-10-19, amended: a temporal clause right before the task's own words ("회의 끝나고 검증 회의록
+  // 정리 할 일에 넣어줘", title "검증 회의록 정리") only says when the owner will do the task; the request itself is now.
+  // A clause before anything else ("회의 끝나고 할 일에 회의록 정리 넣어줘") still defers the request.
+  const outsideMain = (pattern: RegExp): boolean => hitOutside(pattern, mainClause, mainRegions, undefined, (end) => modifiesTask(mainClause, end, mainRegions));
+  if (outsideMain(DEFERRED_KO) || hitOutside(DEFERRED_EN, untimed, untimedRegions)) return 'deferred';
   for (const match of mainClause.matchAll(/(\S+)\s+(?:뒤|후|다음)(?:에|에는)?(?=$|\s)/gu)) {
     const previous = Array.from(match[1] ?? '').at(-1);
     const start = match.index ?? 0;
-    const enclosed = mainRegions.some(([from, to]) => start >= from && start + match[0].length <= to);
-    if (!enclosed && (finalConsonant(previous) === 4 || previous === '는')) return 'deferred';
+    const end = start + match[0].length;
+    const enclosed = mainRegions.some(([from, to]) => start >= from && end <= to);
+    if (!enclosed && !modifiesTask(mainClause, end, mainRegions) && (finalConsonant(previous) === 4 || previous === '는')) return 'deferred';
   }
   if (lexicalHit(PLANNED_KO)) return 'statement';
 

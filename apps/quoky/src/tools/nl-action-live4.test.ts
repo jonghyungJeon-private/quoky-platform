@@ -153,9 +153,9 @@ describe('A6 live test 4: owner-approved gold of 2026-10-19', () => {
     return golden;
   };
 
-  it('(a) "회의 끝나고 … 할 일에 넣어줘" adds the to-do now, the qualifier kept in the title (the deferred veto reads the frame only)', async () => {
+  it('(a) "회의 끝나고 … 할 일에 넣어줘" adds the to-do now, titled without the timing qualifier', async () => {
     const { decision, score } = await decide(byId('a6-paraphrase-todo.add-906'));
-    expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'todo.add', args: { title: '회의 끝나고 검증 회의록 정리' } } });
+    expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'todo.add', args: { title: '검증 회의록 정리' } } });
     expect(score.outcome).toBe('hit');
   });
 

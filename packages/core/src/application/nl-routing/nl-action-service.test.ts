@@ -1444,9 +1444,9 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
     }
   });
 
-  it('owner decision (a): "회의 끝나고 검증 회의록 정리 할 일에 넣어줘" adds the to-do now with the qualifier in the title', async () => {
-    const { decision } = await run('회의 끝나고 검증 회의록 정리 할 일에 넣어줘', out('todo.add', { title: '회의 끝나고 검증 회의록 정리' }));
-    expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'todo.add', args: { title: '회의 끝나고 검증 회의록 정리' } } });
+  it('owner decision (a): "회의 끝나고 검증 회의록 정리 할 일에 넣어줘" adds the to-do now, titled without the timing qualifier', async () => {
+    const { decision } = await run('회의 끝나고 검증 회의록 정리 할 일에 넣어줘', out('todo.add', { title: '검증 회의록 정리' }));
+    expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'todo.add', args: { title: '검증 회의록 정리' } } });
     // The deferred-timing veto still reads the request frame: a deferral outside the title is chat.
     const deferred = await run('회의 끝나고 할 일에 회의록 정리 넣어줘', out('todo.add', { title: '회의록 정리' }));
     expect(deferred.decision).toEqual({ kind: 'none' });

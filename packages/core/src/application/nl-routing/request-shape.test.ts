@@ -142,6 +142,12 @@ describe('A6-D3a amendment 1, review round (CA P1/P2, Codex P2)', () => {
     // A reminder's own time words are its time, not a deferral; a reason clause with 나중에 is no deferral either.
     expect(v('reminder.create', { body: '서류 제출', when: '이따 3시' }, '이따 3시에 서류 제출 알려줘').ok).toBe(true);
     expect(v('todo.add', { title: '치과 예약 전화하기' }, '나중에 까먹지 않게 할 일에 치과 예약 전화하기 적어둬').ok).toBe(true);
+    // Owner decision (a) of 2026-10-19, amended: a temporal clause right before the task's own words says when the task is
+    // done (the title excludes it); a temporal clause before anything else still defers the request.
+    expect(v('todo.add', { title: '검증 회의록 정리' }, '회의 끝나고 검증 회의록 정리 할 일에 넣어줘').ok).toBe(true);
+    expect(v('todo.add', { title: '검증 회의록 정리' }, '회의 끝난 후 검증 회의록 정리 할 일에 넣어줘').ok).toBe(true);
+    expect(v('todo.add', { title: '회의록 정리' }, '회의 끝나고 할 일에 회의록 정리 넣어줘')).toMatchObject({ ok: false, reason: 'not-request', arg: 'deferred' });
+    expect(v('todo.add', { title: '회의록 정리' }, '회의 끝난 후 할 일에 회의록 정리 넣어줘')).toMatchObject({ ok: false, reason: 'not-request', arg: 'deferred' });
   });
 
   it('Codex P2 (round 2): a quoted title holding an action noun is content; a quoted request is still reported', () => {
