@@ -1143,7 +1143,12 @@ function enUnitMs(unit: string): number {
   return 7 * MS_PER_DAY;
 }
 
-const EN_END = '(?=$|[\\s.,!?;])';
+/**
+ * Where an English time component ends: the end, a space or sentence punctuation, or a label colon followed by a space or
+ * the end (live test 4, turn 66: "Remind me on Oct 22 at 9:30am: …"). The colon of a clock ("9:30") is followed by a digit,
+ * so it never ends a component.
+ */
+const EN_END = '(?=$|[\\s.,!?;]|[:：](?=\\s|$))';
 const EN_VERB = /\bremind\s+me\b/gi;
 const EN_PAST = /\b(?:yesterday|last\s+(?:week|night|month|year|(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday))|\d+\s+(?:minutes?|hours?|days?|weeks?)\s+ago)\b/i;
 /**
