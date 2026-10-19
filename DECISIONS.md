@@ -27595,7 +27595,7 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   key, so "리마이너" is "리마인더" without its ㄷ key) or a vowel-only variant of a loanword noun, Core asks "'리마인더'
   말씀이세요?"; an unknown word in the object slot of a list-noun verb asks what it means. Nothing is written (`garbled-noun`).
   Gold `a6-paraphrase-reminder.create-903` (ask).
-- **Implementation record (agent, same branch).** A6 prompt `nl-select.v49` (R2 `nl-select.v50`, read `v39` unchanged): the
+- **Implementation record (agent, same branch).** A6 prompt `nl-select.v51` (R2 `nl-select.v52`, read `v39` unchanged; v49 / v50 gated once and superseded): the
   rule-8 colon-form line names to-do / reminder labels as those writes, and one line makes a bare "<content> 할 일" todo.add
   (owner decision A). Core: the copula reference ("이번엔 3번이야") takes the continuation confirmation; an undo paraphrase
   that points at the last action asks the undo confirmation; a reminder without a time asks for the time (an open question

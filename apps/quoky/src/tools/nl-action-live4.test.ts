@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Capability, type AiProvider } from '@quoky/core';
-import { NL_ACTION_CORPUS_PATH, NL_ACTION_SEED_PATH, decideActionCase, loadActionCorpus, scoreActionDecision, validateActionCorpus, type NlActionCase } from './nl-action-eval';
+import { NL_ACTION_CORPUS_PATH, NL_ACTION_SEED_PATH, buildActionPlan, decideActionCase, loadActionCorpus, runActionEvaluation, scoreActionDecision, unavailableReason, validateActionCorpus, type NlActionCase } from './nl-action-eval';
 
 // A6 live test 4 (2026-10-17; docs/plans/a6-live-test-4-record.md), offline: the owner-approved gold of 2026-10-19 ((a)
 // todo.add-906, (b) reminder.create-903, in nl-action.v1.json) and the gold CANDIDATES pending the owner's D12 batch
@@ -30,6 +30,28 @@ async function decide(golden: NlActionCase) {
   const { decision, audit } = await decideActionCase(golden, scripted(raw), NOW);
   return { decision, audit, score: scoreActionDecision(golden, raw, decision, audit) };
 }
+
+describe('v49 gate diagnosis: an unavailable selection records a closed cause', () => {
+  const golden: NlActionCase = { id: 'a6-paraphrase-todo.add-999', family: 'paraphrase', text: '우유 사기 할 일에 추가해줘', expect: { entryId: 'todo.add', args: { title: '우유 사기' }, outcome: 'execute' } };
+
+  it('a malformed output names the parser reason; a failed call names the provider failure; nothing of the output is recorded', async () => {
+    const malformed = await decideActionCase(golden, scripted('{"entryId":"todo.add","args":{"title":"우유 사기"},"ambiguity":"CLEAR","alternatives":[],"span":"우유 사기"}'), NOW);
+    expect(malformed.decision.kind).toBe('unavailable');
+    expect(malformed.unavailable).toMatchObject({ cause: 'malformed', detail: 'unknown-key:span' });
+    expect(unavailableReason(malformed.unavailable!)).toBe('malformed:unknown-key:span');
+    const failing: AiProvider = { ...scripted(''), execute: async () => Promise.reject(new Error('boom')) };
+    const failed = await decideActionCase(golden, failing, NOW);
+    expect(failed.unavailable).toMatchObject({ cause: 'failed', detail: 'Error' });
+  });
+
+  it('the evaluation record carries the reason for an error outcome', async () => {
+    const corpus = { version: 1 as const, cases: [golden] };
+    const plan = buildActionPlan('nl-action-eval', [golden.id], 'sha', { model: 'haiku', runs: 1, concurrency: 1 });
+    const records = await runActionEvaluation({ corpus, plan, provider: scripted('Sure, here it is: todo.add'), now: () => NOW });
+    expect(records[0]).toMatchObject({ outcome: 'error', reason: 'malformed:not-json' });
+    expect(JSON.stringify(records[0])).not.toContain('Sure');
+  });
+});
 
 describe('A6 live test 4: owner-approved gold of 2026-10-19', () => {
   const { corpus } = loadActionCorpus();

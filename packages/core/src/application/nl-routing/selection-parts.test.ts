@@ -3,7 +3,25 @@ import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
 import { guardDeadEndActionReplies, guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
 import { NL_ACTION_ENTRIES } from './action-entries';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, isGroundedIn, prepareSelectionInput } from './selection-input';
-import { NL_SELECTION_OUTPUT_MAX_BYTES, parseSelectionOutput } from './selection-output';
+import { NL_SELECTION_OUTPUT_MAX_BYTES, nlSelectionParseFailure, parseSelectionOutput } from './selection-output';
+
+describe('v49 gate diagnosis: the parser names why it rejected an output (closed, content-free)', () => {
+  it('returns undefined for a valid output and one closed reason otherwise', () => {
+    expect(nlSelectionParseFailure('{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]}')).toBeUndefined();
+    expect(nlSelectionParseFailure('')).toBe('empty');
+    expect(nlSelectionParseFailure('I think this is todo.add')).toBe('not-json');
+    expect(nlSelectionParseFailure('Sure: {"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]}')).toBe('prose-around-json');
+    expect(nlSelectionParseFailure('{"entryId": "none",}')).toBe('json-invalid');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{},"ambiguity":"CLEAR","alternatives":[],"span":"x"}')).toBe('unknown-key:span');
+    expect(nlSelectionParseFailure('{"entryId":"Todo Add","args":{},"ambiguity":"CLEAR","alternatives":[]}')).toBe('bad-entry');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{"title":["a"]},"ambiguity":"CLEAR","alternatives":[]}')).toBe('bad-arg-type:title');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{"the title":"a"},"ambiguity":"CLEAR","alternatives":[]}')).toBe('bad-arg-name');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{},"ambiguity":"LOW","alternatives":[]}')).toBe('bad-enum:ambiguity');
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{},"ambiguity":"CLEAR","alternatives":[{"entryId":"none","args":{}}]}')).toBe('bad-alternatives');
+    // A value never appears in the reason.
+    expect(nlSelectionParseFailure('{"entryId":"todo.add","args":{"title":"비밀 내용"},"ambiguity":"CLEAR","alternatives":[],"note":"비밀 내용"}')).toBe('unknown-key:note');
+  });
+});
 import { buildSelectionPrompt, NL_SELECTION_PROMPT_VERSION } from './selection-prompt';
 import { canonicalArgs, validateSelection, type NlValidationContext } from './selection-validator';
 import { isNlRangeSymbol, nlRangeLabel, resolveNlRange } from './symbolic-time';

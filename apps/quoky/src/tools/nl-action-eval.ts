@@ -371,12 +371,25 @@ export function fixtureWorld(fixture: NlActionFixture | undefined, now: IsoTimes
 }
 
 /** Core's decision for one selector output on one case (the real service, local level, a fresh world). */
+/** v49 gate diagnosis: the closed cause of an unavailable selection (timeout, failed, malformed, no-provider) and its detail. */
+export interface NlUnavailableCause {
+  readonly cause: string;
+  /** `provider-<kind>` for a failed call, the parser's closed reason for a malformed output (`unknown-key:<k>`, `json-invalid` …). */
+  readonly detail?: string;
+  readonly latencyMs?: number;
+}
+
+/** The content-free reason recorded for an unavailable selection: `timeout`, `failed:provider-…`, `malformed:unknown-key:…`. */
+export function unavailableReason(unavailable: NlUnavailableCause): string {
+  return unavailable.detail === undefined ? unavailable.cause : `${unavailable.cause}:${unavailable.detail}`;
+}
+
 export async function decideActionCase(
   golden: Pick<NlActionCase, 'text' | 'fixture'>,
   provider: AiProvider,
   now: IsoTimestamp,
   options: { readonly timeoutMs?: number; readonly itemR2?: 'off' | 'shadow' | 'jira' | 'all' } = {},
-): Promise<{ readonly decision: NlSelectionDecision; readonly audit?: Record<string, unknown> }> {
+): Promise<{ readonly decision: NlSelectionDecision; readonly audit?: Record<string, unknown>; readonly unavailable?: NlUnavailableCause }> {
   const world = fixtureWorld(golden.fixture, now);
   let session = world.session;
   let actor = world.actor;
@@ -427,7 +440,17 @@ export async function decideActionCase(
     ...(world.replyToMessageId !== undefined ? { replyToMessageId: world.replyToMessageId } : {}),
   });
   const audit = logs.filter((log) => log.event === 'nl_action.decided').at(-1)?.fields;
-  return { decision, ...(audit !== undefined ? { audit } : {}) };
+  // v49 gate diagnosis: why the selection was unavailable (closed cause and detail only, never the raw output).
+  const selection = logs.filter((log) => log.event === 'nl_selection.decided').at(-1)?.fields;
+  const unavailable: NlUnavailableCause | undefined =
+    decision.kind === 'unavailable' && selection !== undefined && typeof selection.cause === 'string'
+      ? {
+          cause: selection.cause,
+          ...(typeof selection.detail === 'string' ? { detail: selection.detail } : {}),
+          ...(typeof selection.latencyMs === 'number' ? { latencyMs: selection.latencyMs } : {}),
+        }
+      : undefined;
+  return { decision, ...(audit !== undefined ? { audit } : {}), ...(unavailable !== undefined ? { unavailable } : {}) };
 }
 
 export type NlActionOutcome = 'hit' | 'miss' | 'question' | 'wrong-target' | 'negative-capture' | 'none' | 'read' | 'timeout' | 'error' | 'skipped';
@@ -750,10 +773,15 @@ export async function runActionEvaluation(input: {
         const rec = recording(input.provider, input.elapsed ?? Date.now);
         let record: NlActionRecord;
         try {
-          const { decision, audit } = await decideActionCase(golden, rec.provider, input.now(), { timeoutMs: input.plan.callTimeoutMs, ...(input.plan.itemR2 !== undefined ? { itemR2: input.plan.itemR2 } : {}) });
+          const { decision, audit, unavailable } = await decideActionCase(golden, rec.provider, input.now(), { timeoutMs: input.plan.callTimeoutMs, ...(input.plan.itemR2 !== undefined ? { itemR2: input.plan.itemR2 } : {}) });
           const { raw, latencyMs } = rec.last();
           const scored = scoreActionDecision(golden, raw, decision, audit, { entries: input.plan.itemR2 !== undefined ? NL_ACTION_R2_EVAL_ENTRIES : NL_ACTION_EVAL_ENTRIES });
           record = { run, latencyMs, ...scored, ...(input.plan.itemR2 !== undefined ? r2DiagnosticArgs(golden, raw, scored.outcome) : {}) };
+          // v49 gate diagnosis: an unavailable selection records its closed cause (a timeout returns before the provider does,
+          // so its latency comes from the service's own measure).
+          if (unavailable !== undefined && (record.outcome === 'error' || record.outcome === 'timeout')) {
+            record = { ...record, reason: unavailableReason(unavailable), latencyMs: latencyMs > 0 ? latencyMs : (unavailable.latencyMs ?? 0) };
+          }
         } catch (error) {
           record = { run, id: golden.id, family: golden.family, expected: golden.expect === 'none' ? 'none' : golden.expect.entryId, outcome: 'error', latencyMs: rec.last().latencyMs, reason: error instanceof Error ? error.name : 'unknown' };
         }

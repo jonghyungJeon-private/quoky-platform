@@ -78,7 +78,7 @@ import {
   type NlActionLevel,
 } from './nl-action-policy';
 import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput } from './selection-input';
-import { parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
+import { nlSelectionParseFailure, parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { nlSelectionMeaning } from './selection-meaning';
 import { NL_ACTION_PROMPT_VERSION, NL_ACTION_R2_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
@@ -371,7 +371,14 @@ type SelectOutcome =
     }
   /** D6/D8: the selector is not the provider this turn's chat would reach; nothing was sent. */
   | { readonly kind: 'egress-refused'; readonly reason: 'chat-provider-differs' | 'chat-locality-differs' | 'chat-provider-unknown' }
-  | { readonly kind: 'unavailable'; readonly cause: 'no-provider' | 'timeout' | 'failed' | 'malformed'; readonly latencyMs: number; readonly call?: SelectionCallMeta };
+  | {
+      readonly kind: 'unavailable';
+      readonly cause: 'no-provider' | 'timeout' | 'failed' | 'malformed';
+      readonly latencyMs: number;
+      readonly call?: SelectionCallMeta;
+      /** Content-free detail (v49 gate diagnosis): the provider failure kind, or the parser's closed rejection reason. */
+      readonly detail?: string;
+    };
 
 class SelectionTimeout extends Error {
   constructor() {
@@ -937,7 +944,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       return { kind: 'skip', reason: selected.reason };
     }
     if (selected.kind === 'unavailable') {
-      this.log('info', 'nl_selection.decided', { outcome: 'unavailable', cause: selected.cause, route: turn.route, latencyMs: selected.latencyMs, ...(selected.call ?? {}) });
+      this.log('info', 'nl_selection.decided', { outcome: 'unavailable', cause: selected.cause, route: turn.route, latencyMs: selected.latencyMs, ...(selected.detail !== undefined ? { detail: selected.detail } : {}), ...(selected.call ?? {}) });
       this.logAgreement(turn, { outcome: 'fallback', reason: selected.cause, latencyMs: selected.latencyMs, ...(selected.call !== undefined ? { call: selected.call } : {}) });
       return { kind: 'unavailable' };
     }
@@ -2092,12 +2099,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // A provider-reported timeout is not a completed call either (it must not reset the idle clock).
       const timedOut = error instanceof SelectionTimeout || (error instanceof AiProviderError && error.kind === AiFailureKind.TIMEOUT);
       if (!timedOut) this.lastCompletedAtMs = clock();
-      return { kind: 'unavailable', cause: timedOut ? 'timeout' : 'failed', latencyMs: Math.max(0, clock() - started), call };
+      const detail = error instanceof AiProviderError ? `provider-${String(error.kind).toLowerCase()}` : error instanceof Error ? error.name : 'unknown';
+      return { kind: 'unavailable', cause: timedOut ? 'timeout' : 'failed', latencyMs: Math.max(0, clock() - started), call, detail };
     }
     this.lastCompletedAtMs = clock();
     const latencyMs = Math.max(0, clock() - started);
     const output = parseSelectionOutput(rawText);
-    if (output === null) return { kind: 'unavailable', cause: 'malformed', latencyMs, call };
+    if (output === null) return { kind: 'unavailable', cause: 'malformed', latencyMs, call, detail: nlSelectionParseFailure(rawText) ?? 'unknown' };
     const cacheable = !bypass && (!actionsOn || isCacheableOutput(output));
     if (cacheable) {
       this.cache.set(cacheKey, { at: clock(), output });

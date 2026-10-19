@@ -105,13 +105,13 @@ describe('nlItemSummarizeEntry', () => {
   });
 });
 
-describe('selection prompt v50', () => {
+describe('selection prompt v52', () => {
   const READS = [NL_WAVE1_ENTRIES['jira.issues'], NL_WAVE1_ENTRIES['mail.list']];
   const build = (item: NlCatalogEntry) =>
     buildSelectionPrompt({ entries: [...READS, item], text: '그 이슈 요약해줘', actions: { referenceContext: 'none' } });
 
   it('names the version and detects R2 entries', () => {
-    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v50');
+    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v52');
     expect(offersR2ItemSources([nlActionEntry('item.summarize')])).toBe(false);
     expect(offersR2ItemSources([nlItemSummarizeEntry(['jira'])])).toBe(true);
     expect(offersR2ItemSources([nlItemSummarizeEntry(['slack'])])).toBe(true);

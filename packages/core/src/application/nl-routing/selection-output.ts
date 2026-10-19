@@ -69,6 +69,45 @@ export function parseSelectionOutput(raw: string): NlSelectionOutput | null {
   };
 }
 
+/**
+ * A6 v49 gate diagnosis (2026-10-19): WHY `parseSelectionOutput` rejected a raw output, as a closed, content-free reason
+ * (`undefined` when it parses). A key or arg name is reported only when it is a short identifier (the model's own key, never
+ * a value); anything else is the bare reason. Logged and recorded by the evaluation only; it decides nothing.
+ */
+export function nlSelectionParseFailure(raw: string): string | undefined {
+  if (typeof raw !== 'string' || raw.trim().length === 0) return 'empty';
+  if (parseSelectionOutput(raw) !== null) return undefined;
+  if (new TextEncoder().encode(raw).length > NL_SELECTION_OUTPUT_MAX_BYTES) return 'too-large';
+  let body = raw.trim();
+  const fenced = /^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i.exec(body);
+  if (fenced) body = (fenced[1] ?? '').trim();
+  if (!body.startsWith('{') || !body.endsWith('}')) return body.includes('{') ? 'prose-around-json' : 'not-json';
+  let value: unknown;
+  try {
+    value = JSON.parse(body);
+  } catch {
+    return 'json-invalid';
+  }
+  const name = (key: string): string => (/^[A-Za-z][A-Za-z0-9_-]{0,31}$/.test(key) ? `:${key}` : '');
+  if (!isPlainObject(value)) return 'not-object';
+  const unknownKey = Object.keys(value).find((key) => !TOP_KEYS.has(key));
+  if (unknownKey !== undefined) return `unknown-key${name(unknownKey)}`;
+  if (parseEntryId(value.entryId) === undefined) return 'bad-entry';
+  if (value.args !== undefined) {
+    if (!isPlainObject(value.args)) return 'bad-args';
+    const entries = Object.entries(value.args);
+    if (entries.length > MAX_ARGS) return 'too-many-args';
+    for (const [arg, item] of entries) {
+      if (arg.length === 0 || arg.length > MAX_ARG_NAME_CHARS || !/^[a-zA-Z][a-zA-Z0-9]*$/.test(arg)) return `bad-arg-name${name(arg)}`;
+      if (item !== null && typeof item !== 'string' && typeof item !== 'boolean' && !(typeof item === 'number' && Number.isFinite(item))) return `bad-arg-type${name(arg)}`;
+      if (typeof item === 'string' && item.length > MAX_ARG_VALUE_CHARS) return `arg-too-long${name(arg)}`;
+    }
+  }
+  if (value.ambiguity !== 'CLEAR' && value.ambiguity !== 'NEEDS_CLARIFICATION') return 'bad-enum:ambiguity';
+  if (parseAlternatives(value.alternatives) === null) return 'bad-alternatives';
+  return 'bad-confidence';
+}
+
 function parseEntryId(value: unknown): string | null | undefined {
   if (value === 'none' || value === null) return null;
   if (typeof value !== 'string' || value.length === 0 || value.length > MAX_ID_CHARS) return undefined;

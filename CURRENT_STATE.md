@@ -116,13 +116,13 @@ Details and the review record for each item are in the matching notes in `DECISI
 ### A6 live test 4 gaps — on branch `claude/v5-live4-gaps` (2026-10-19)
 
 - **Fixed (no-state misses of `docs/plans/a6-live-test-4-record.md`):** colon labels and a bare "<content> 할 일" (A6 prompt
-  `nl-select.v49`, R2 `nl-select.v50`; read stays v39); "이번엔 3번이야" takes the continuation confirmation; an undo
+  `nl-select.v51`, R2 `nl-select.v52`; read stays v39; v49 gated 0/3 and superseded); "이번엔 3번이야" takes the continuation confirmation; an undo
   paraphrase pointing at the last action asks the undo confirmation; a reminder with no time asks for the time; "Remind me
   on Oct 22 at 9:30am: …" parses; a chat reply never offers an offered action as a yes/no question or denies it.
 - **Owner decisions of 2026-10-19:** (a) "회의 끝나고 … 할 일에 넣어줘" executes (gold todo.add-906); (b) a garbled list noun
   asks (`garbled-noun`, gold reminder.create-903). Gold candidates for the other fixes: `golden/nl-action.live4-pending.v1.json`
   (13 cases, pending the owner's D12 batch).
-- **Pending:** the D12 model gate for v49/v50 (owner-run); the selector-rag audit regeneration (`pnpm eval:rag -- --mode
+- **Pending:** the D12 model gate for v51/v52 (owner-run); the selector-rag audit regeneration done (`pnpm eval:rag -- --mode
   dry-run --write-audit true`, local Ollama) for the new gold digest.
 
 ### A6 R2 `item.summarize` over Jira and Slack — on branch `claude/v5-a6-r2-impl` (2026-10-16)
