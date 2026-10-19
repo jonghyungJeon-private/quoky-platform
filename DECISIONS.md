@@ -27582,3 +27582,24 @@ not / instead / except / rather than and the English negators). With a marker th
 behaviour before this branch: "방금 요약한 그거 말고 이거 원문 보여줘", "아까 본 거 말고 이거" and "not the one I just now read,
 this one" keep `this`. Accepted cost: "방금 본 거 요약 말고 원문으로 보여줘" (a negated mode) also keeps `this`. CA P3: "아까 온 메일 요약해줘" (아까 dating the mail, not the
 reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-action.r2.v1.json`, not as gold.
+
+## Owner decisions of 2026-10-19 (A6 live test 4, `docs/plans/a6-live-test-4-record.md`)
+
+- **(a) Turn 69 executes.** "회의 끝나고 검증 회의록 정리 할 일에 넣어줘" adds the to-do now; the qualifier stays in the title.
+  The deferred-timing veto reads the request frame without the title span, so it does not refuse it, and a deferral
+  outside the title ("회의 끝나고 할 일에 회의록 정리 넣어줘") stays chat. Gold `a6-paraphrase-todo.add-906` (execute).
+- **(b) A garbled list noun asks** (extends the garbled-action addendum and owner decision E to the noun that decides the
+  entry). For a to-do or reminder write, when no catalog list noun (`todo.list` / `reminder.list` aliases) is in the frame
+  and a word in the noun's slot (the object before a list-noun verb or a request form, a destination particle before a
+  request, or the verb-final last word) is one input-method keystroke from a list noun (initial and final consonant as one
+  key, so "리마이너" is "리마인더" without its ㄷ key) or a vowel-only variant of a loanword noun, Core asks "'리마인더'
+  말씀이세요?"; an unknown word in the object slot of a list-noun verb asks what it means. Nothing is written (`garbled-noun`).
+  Gold `a6-paraphrase-reminder.create-903` (ask).
+- **Implementation record (agent, same branch).** A6 prompt `nl-select.v49` (R2 `nl-select.v50`, read `v39` unchanged): the
+  rule-8 colon-form line names to-do / reminder labels as those writes, and one line makes a bare "<content> 할 일" todo.add
+  (owner decision A). Core: the copula reference ("이번엔 3번이야") takes the continuation confirmation; an undo paraphrase
+  that points at the last action asks the undo confirmation; a reminder without a time asks for the time (an open question
+  would have to keep the reminder text, which the content-free A6-D2 pending questions do not hold: owner decision needed
+  if wanted); the English reminder grammar ends a time at a label colon; with action entries offered, a chat reply that
+  offers an action as a yes/no question or says Quoky cannot do it is replaced by the restate. Gold candidates for these
+  are in `golden/nl-action.live4-pending.v1.json`, pending the owner's D12 batch. The D12 model gate is owner-run.
