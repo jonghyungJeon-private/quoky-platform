@@ -57,11 +57,20 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
   const answer = (args: Record<string, unknown>, ambiguity: string, alternatives: unknown[]) => JSON.stringify({ entryId: 'reminder.list', args, ambiguity, alternatives });
   const text = '알림 몇 개 걸려 있어?';
 
-  it('reminder.list hedged with reminder.create (or flagged with no other read) executes the read, never "1. 예정된 알림 목록"', async () => {
-    for (const raw of [answer({}, 'NEEDS_CLARIFICATION', [{ entryId: 'reminder.create', args: {} }]), answer({}, 'NEEDS_CLARIFICATION', [])]) {
-      const { decision } = await decideActionCase({ text }, scripted(raw), NOW);
-      expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
-    }
+  it('reminder.list hedged with reminder.create (reminder.list-006 shape) executes the read, never "1. 예정된 알림 목록"', async () => {
+    const { decision } = await decideActionCase({ text }, scripted(answer({}, 'NEEDS_CLARIFICATION', [{ entryId: 'reminder.create', args: {} }])), NOW);
+    expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
+  });
+
+  it('Codex P2: only an ambiguity made solely by dropped action candidates runs; a lone flag or two reads of one entry ask', async () => {
+    const lone = await decideActionCase({ text }, scripted(answer({}, 'NEEDS_CLARIFICATION', [])), NOW);
+    expect(lone.decision.kind).toBe('ask');
+    const twoReads = JSON.stringify({ entryId: 'todo.list', args: { status: 'completed' }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'todo.list', args: { status: 'canceled' } }] });
+    const both = await decideActionCase({ text: '완료된 할 일 아니면 취소된 할 일 보여줘' }, scripted(twoReads), NOW);
+    expect(both.decision.kind).not.toBe('execute');
+    const withAction = JSON.stringify({ entryId: 'todo.list', args: { status: 'completed' }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'todo.list', args: { status: 'canceled' } }, { entryId: 'todo.add', args: { title: '완료된 할 일' } }] });
+    const mixed = await decideActionCase({ text: '완료된 할 일 아니면 취소된 할 일 보여줘' }, scripted(withAction), NOW);
+    expect(mixed.decision.kind).not.toBe('execute');
   });
 
   it('a repaired or a two-read case still asks; the ask records its closed shape', async () => {

@@ -1004,12 +1004,18 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // candidate is never a numbered option (only READ entries are stored as options).
     const options: NlValidatedSelection[] = [];
     let weekdayRefused = isWeekdayRefusal(main, output.args, ctx);
+    let droppedAction = false;
+    const readCandidates = new Set<string>();
     for (const [index, candidate] of [{ entryId: output.entryId, args: output.args }, ...output.alternatives].entries()) {
-      if (actionsOn && isNlActionEntryId(candidate.entryId)) continue;
+      if (actionsOn && isNlActionEntryId(candidate.entryId)) {
+        droppedAction = true;
+        continue;
+      }
       const repaired = validateWithRepair(candidate, ctx);
       // A repair that drops another arg and then loses the owner's weekday ("지난주 수" with a future mail range) is asked
       // with the weekday hint as well.
       if (index === 0 && isWeekdayRefusal(repaired, candidate.args, ctx)) weekdayRefused = true;
+      if (repaired.ok && repaired.value.entry.risk === 'READ') readCandidates.add(`${repaired.value.entry.id}|${sortedArgs(repaired.value.args)}`);
       if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) options.push(repaired.value);
     }
     // A refusal reached through the repair path is not kept in the cache either.
@@ -1017,8 +1023,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // v51 gate (2026-10-19, reminder.list-006 / -002): with action entries offered, an action candidate is never an option,
     // so a selector that hedged between a read and an action ("알림 몇 개 걸려 있어?": reminder.list or reminder.create)
     // left ONE numbered option, the read it named and Core validated unchanged: "어떤 걸 찾으세요? 1. 예정된 알림 목록". A
-    // one-option question asks nothing; the read runs (no write is possible from it). A repaired or two-option case asks.
-    if (actionsOn && main.ok && !weekdayRefused && options.length === 1 && options[0]?.entry.id === main.value.entry.id && sortedArgs(options[0].args) === sortedArgs(main.value.args)) {
+    // one-option question asks nothing; the read runs (no write is possible from it). Only when the ambiguity came SOLELY
+    // from discarded action candidates (Codex P2): at least one action was dropped and exactly one distinct validated read
+    // (entry + args) remains, the one named, unchanged. Two reads of one entry ("완료된 할 일 아니면 취소된 할 일") ask.
+    const onlyRead = `${main.ok ? main.value.entry.id : ''}|${main.ok ? sortedArgs(main.value.args) : ''}`;
+    if (actionsOn && main.ok && droppedAction && !weekdayRefused && readCandidates.size === 1 && readCandidates.has(onlyRead)) {
       return this.complete(main.value, turn, last, language, prepared.groundingText);
     }
     if (options.length === 0) {

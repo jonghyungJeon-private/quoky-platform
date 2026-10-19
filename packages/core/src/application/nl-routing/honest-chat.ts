@@ -62,8 +62,11 @@ export function guardStaleActionCommands(text: string, entries: readonly NlCatal
   return guardDeadEndActionReplies(text, entries, language);
 }
 
-/** A Korean offer that waits for a yes: -(으)ㄹ까요 / 드릴까요 / 할까 / 줄까, ending its sentence. */
-const KO_YES_NO_OFFER = /(?:까요|까)\s*[?？]?\s*$/u;
+/**
+ * A Korean offer that waits for a yes: -(으)ㄹ까요 / 드릴까요 / 할까 / 줄까, ending its sentence. The ending decides, not the
+ * punctuation (Codex P2, 2026-10-19: "…드릴까요", "…할까요.", "…할까요?!").
+ */
+const KO_YES_NO_OFFER = /(?:까요|까)\s*[?？.!~…。]*\s*$/u;
 /** An English offer that waits for a yes ("Shall I …?", "Do you want me to …?", "Should I …?"). */
 const EN_YES_NO_OFFER = /^(?:shall i|should i|do you want me to|would you like me to|want me to|can i|may i)\b[^?]*\?\s*$/iu;
 /** An incapability after the action word ("직접 취소할 수 없어요", "추가는 못 해요"). */
@@ -164,7 +167,7 @@ export function guardDeadEndActionReplies(text: string, entries: readonly NlCata
     // list noun ("내일 9시에 알려드릴까요?"); with reminders off nothing here counts, so a true denial stays.
     const grounded = namesList(sentence) || (ANAPHOR.test(sentence) && namesList(previous));
     if (!grounded && !/\d+\s*번|#\s?\d+|\bnumber\s+\d+/u.test(sentence) && !(timed && timedReminder?.test(sentence) === true)) return false;
-    const offer = (KO_YES_NO_OFFER.test(sentence) && /[?？]\s*$/u.test(sentence)) || EN_YES_NO_OFFER.test(sentence);
+    const offer = KO_YES_NO_OFFER.test(sentence) || EN_YES_NO_OFFER.test(sentence);
     return offer || koIncapable(sentence, timed) || enIncapable?.test(sentence) === true;
   };
   // CA P2 (2026-10-19): only the offending sentences go; every other sentence of the reply is kept as written, and the

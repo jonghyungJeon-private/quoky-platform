@@ -423,6 +423,13 @@ describe('honest chat (ADR-0120 D9)', () => {
     expect(guardFalseIncapabilityClaims(denial, todosOnly, 'ko')).toEqual({ text: denial, guarded: false });
     expect(guardFalseIncapabilityClaims('리마인더로 만들어 드릴까요?', todosOnly, 'ko')).toEqual({ text: '리마인더로 만들어 드릴까요?', guarded: false });
     expect(guardFalseIncapabilityClaims(denial, withActions, 'ko')).toEqual({ text: restate, guarded: true });
+    // Codex P2: the offer ending decides, whatever the punctuation; how-to offers stay.
+    for (const reply of ['할 일을 추가해 드릴까요', '할 일을 추가해 드릴까요.', '할 일 3번을 완료할까요!']) {
+      expect(guardFalseIncapabilityClaims(reply, withActions, 'ko'), reply).toEqual({ text: restate, guarded: true });
+    }
+    for (const reply of ['할 일에 추가하는 방법을 알려드릴까요', '할 일에 추가하는 방법을 알려드릴까요.']) {
+      expect(guardFalseIncapabilityClaims(reply, withActions, 'ko'), reply).toEqual({ text: reply, guarded: false });
+    }
     // Codex P2: the dead-end filter is partial; the rest of the reply still meets the source-incapability check.
     const withMail = [NL_WAVE1_ENTRIES['mail.list'], ...withActions];
     const mixed = guardFalseIncapabilityClaims('할 일을 추가할까요? 메일은 읽을 수 없어요.', withMail, 'ko');
