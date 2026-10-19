@@ -449,6 +449,18 @@ describe('owner decision of 2026-10-19: reminder.list with a period lists only t
     // The domain has no monthly schedule (ONCE, DAILY, WEEKLY only), so there is no monthly case to seek.
   });
 
+  it('Codex P2: a recurring reminder shows the occurrence in the period, not its next fire time; the store is unchanged', async () => {
+    const { conversation, repository } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '저녁 약', when: '매일 저녁 7시' }), base()); // next: today 19:00
+    const stored = repository.rows[0]?.nextFireAt;
+    const tomorrow = text(await conversation.listReplyDetailed(base(), undefined, range('tomorrow')));
+    expect(tomorrow).toContain('내일 예정된 알림 1건');
+    expect(tomorrow).toContain('15일');
+    expect(tomorrow).not.toContain('14일');
+    expect(tomorrow).toContain('[매일]');
+    expect(repository.rows[0]?.nextFireAt).toBe(stored);
+  });
+
   it('an empty period names it', async () => {
     const { conversation } = service();
     await conversation.handleAction(cmd('reminder.create', { body: '모레 서류', when: '모레 9시' }), base());

@@ -582,7 +582,7 @@ export class ReminderConversationService {
       // Owner decision of 2026-10-19: with a period, only the scheduled reminders with an occurrence in it (a recurring
       // reminder counts when one of its occurrences falls in it), in the owner's time zone. Display numbers stay the stable
       // `#N`, so "2번 취소" after a filtered list still means the reminder shown as #2.
-      const active = range === undefined ? all : all.filter((reminder) => occursIn(reminder, range));
+      const active = range === undefined ? all : remindersIn(all, range);
       const period = range === undefined ? undefined : nlRangeLabel(range, input.language ?? 'ko');
       const rendered = this.deps.composer.listRendered(active, input.now, period);
       const listing = this.deps.actionReceipts === true ? listingOf(active.slice(0, rendered.shown), range !== undefined).listing : undefined;
@@ -637,22 +637,36 @@ function refusedReceipt(command: NlSelectedCommand, reason: string): NlActionRec
 }
 
 /**
- * Whether a scheduled reminder has an occurrence in `[range.from, range.to)`. Its next occurrence first; for a recurring
- * clock schedule (DAILY, WEEKLY: the domain has no monthly rule) Core seeks straight to the first occurrence at or after
- * `range.from` with the schedule's own rule (`nextOccurrenceAfter` from just before `from`, a bounded local-day search),
- * never by stepping from the next occurrence, so a period months ahead is found (Codex P2). A one-shot or an
- * event-relative reminder has this one occurrence.
+ * The first occurrence of a scheduled reminder in `[range.from, range.to)`, or `undefined`. Its next occurrence first; for
+ * a recurring clock schedule (DAILY, WEEKLY: the domain has no monthly rule) Core seeks straight to the first occurrence
+ * at or after `range.from` with the schedule's own rule (`nextOccurrenceAfter` from just before `from`, a bounded
+ * local-day search), never by stepping from the next occurrence, so a period months ahead is found (Codex P2). A one-shot
+ * or an event-relative reminder has this one occurrence.
  */
-function occursIn(reminder: Reminder, range: NlResolvedRange): boolean {
+function occurrenceIn(reminder: Reminder, range: NlResolvedRange): IsoTimestamp | undefined {
   const from = Date.parse(range.from);
   const to = Date.parse(range.to);
   const next = reminder.nextFireAt ?? reminder.occurrenceAt;
   const nextMs = next === undefined ? Number.NaN : Date.parse(next);
-  if (!Number.isFinite(nextMs) || nextMs >= to) return false;
-  if (nextMs >= from) return true;
-  if (reminder.schedule.type === 'ONCE' || reminder.event !== undefined) return false;
+  if (next === undefined || !Number.isFinite(nextMs) || nextMs >= to) return undefined;
+  if (nextMs >= from) return next;
+  if (reminder.schedule.type === 'ONCE' || reminder.event !== undefined) return undefined;
   const first = nextOccurrenceAfter(reminder.schedule, reminder.timeZone, new Date(from - 1).toISOString());
-  return first !== null && Date.parse(first) < to;
+  return first !== null && Date.parse(first) < to ? first : undefined;
+}
+
+/**
+ * Codex P2 (2026-10-19): the reminders due in `range`, each as SHOWN: a display copy whose next fire time is the matching
+ * occurrence (a daily reminder listed for tomorrow shows tomorrow's time, not today's). The stored reminder is unchanged;
+ * the schedule label ([매일], [매주]) is the schedule's own.
+ */
+function remindersIn(reminders: readonly Reminder[], range: NlResolvedRange): Reminder[] {
+  return reminders.flatMap((reminder) => {
+    const at = occurrenceIn(reminder, range);
+    if (at === undefined) return [];
+    const shown = reminder.nextFireAt !== undefined ? { ...reminder, nextFireAt: at } : { ...reminder, occurrenceAt: at };
+    return [shown];
+  });
 }
 
 /** A6-D2: the reminder listing exactly as shown (display numbers in list order; an empty list clears the slot). */
