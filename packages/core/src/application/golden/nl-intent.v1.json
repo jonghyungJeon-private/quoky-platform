@@ -3585,9 +3585,11 @@
       "text": "내일 울릴 알림 뭐 있어?",
       "expect": {
         "entryId": "reminder.list",
-        "args": {}
+        "args": {
+          "range": "tomorrow"
+        }
       },
-      "note": "no range arg on reminder.list"
+      "note": "owner decision 2026-10-19: reminder.list has a range arg; the owner's day word is its range (was {}, \"no range arg on reminder.list\")"
     },
     {
       "id": "reminder-013",
@@ -3709,8 +3711,11 @@
       "text": "any reminders set for today?",
       "expect": {
         "entryId": "reminder.list",
-        "args": {}
-      }
+        "args": {
+          "range": "today"
+        }
+      },
+      "note": "owner decision 2026-10-19: reminder.list has a range arg; the owner's day word is its range (was {})"
     },
     {
       "id": "reminder-028",

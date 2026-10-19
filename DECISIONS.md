@@ -27608,6 +27608,6 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   words, A5 rule 6; a model-made period is dropped and logged, a past period asks). The listing keeps the scheduled
   reminders with an occurrence in the period (a recurring one when any occurrence falls in it), in the owner's time zone,
   under their stable `#N`. The read prompt moves to `nl-select.v57` (the catalog line; golden `nl-select.v57.prompts.json`),
-  A6 to `v55`, R2 to `v56`. Gold `a6-negative-reminder.list-002` now expects `{range: tomorrow}`; the read-corpus golds
-  `reminder-012` ("내일 울릴 알림 뭐 있어?") and `reminder-027` ("any reminders set for today?") still expect `{}` and are
-  left for the owner.
+  A6 to `v55`, R2 to `v56`. Gold `a6-negative-reminder.list-002` now expects `{range: tomorrow}`, and, following the same
+  owner decision, the read-corpus golds `reminder-012` ("내일 울릴 알림 뭐 있어?") now expects `{range: tomorrow}` and
+  `reminder-027` ("any reminders set for today?") `{range: today}` (both were `{}`).
