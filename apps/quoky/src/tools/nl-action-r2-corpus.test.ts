@@ -29,7 +29,7 @@ async function replayGold(golden: NlActionCase & { expect: NlActionExpect }): Pr
   const { decision, audit } = await decideActionCase(golden, scripted(raw), NOW, { itemR2: 'all' });
   if (gold.outcome === 'execute') {
     if (decision.kind !== 'execute') return `${golden.id}: expected execute, got ${decision.kind}${typeof audit?.reason === 'string' ? ` (${audit.reason})` : ''}`;
-    const record = scoreActionDecision(golden, raw, decision, audit);
+    const record = scoreActionDecision(golden, raw, decision, audit, { entries: NL_ACTION_R2_EVAL_ENTRIES });
     const target = decision.command.target;
     if (record.outcome !== 'hit') return `${golden.id}: scored ${record.outcome} (target ${target?.source}:${target?.id})`;
     return undefined;
@@ -37,6 +37,9 @@ async function replayGold(golden: NlActionCase & { expect: NlActionExpect }): Pr
   if (decision.kind === 'execute') return `${golden.id}: expected ${gold.outcome} ${gold.reason}, but Core executes ${decision.command.entryId} on ${decision.command.target?.id}`;
   const reason = typeof audit?.reason === 'string' ? audit.reason : undefined;
   if (reason !== gold.reason) return `${golden.id}: expected reason ${gold.reason}, got ${decision.kind} ${reason}`;
+  // The gold question is scored on Core's final args (owner decision 2026-10-19): its own replay is a hit.
+  const record = scoreActionDecision(golden, raw, decision, audit, { entries: NL_ACTION_R2_EVAL_ENTRIES });
+  if (record.outcome !== 'hit') return `${golden.id}: the gold ${gold.outcome} scored ${record.outcome}`;
   return undefined;
 }
 

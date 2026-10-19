@@ -21,7 +21,9 @@ import {
   NL_CONTENT_WORDS,
   NL_MODE_FULL_WORDS,
   NL_MODE_SUMMARY_WORDS,
+  NL_RECENCY_WORDS,
   nlFrameExpressesAction,
+  nlHasLastWord,
   withoutSpan,
   withoutStructures,
   isNlRefGrounded,
@@ -328,15 +330,19 @@ function canonicalActionWord(owner: string, latin: boolean): string | undefined 
 }
 
 /**
- * A6 R2 (v48 gate): `item.summarize`'s `mode` and `source` come from the owner's own words, like every other
- * grounded arg, never from the selector's guess. Only once the selector has chosen `item.summarize`; it never selects it.
+ * A6 R2 (v48 gate): `item.summarize`'s `mode`, `source` and recency `ref` come from the owner's own words, like every
+ * other grounded arg, never from the selector's guess. Only once the selector has chosen `item.summarize`; it never
+ * selects it.
  *  - `mode`: the classes of the entry's own `valueGrounding` (Core's NL_MODE_SUMMARY_WORDS / NL_MODE_FULL_WORDS) present
  *    in the message. Exactly one class: that mode. None: unset (Core's content-mode question or stored preference). Both:
  *    the selector's value stays and is checked as before.
  *  - `source`: exactly one offered source named by the owner's source noun (`nlNamedItemSources`, the vocabulary of
  *    the other-source cross-check): that source. No noun (or two): the selector's source, read against the recency and the
  *    Reference context as before.
- * Only while `item.summarize` offers an R2 source (Jira or Slack); with R2 off the A6 entry validates exactly as before.
+ *  - `ref` (owner decision 2026-10-19): a recency word the owner wrote (NL_RECENCY_WORDS: 방금 / 아까 / just now, not
+ *    negated) makes a selector `this` the `recent` ref, and a `last` too when no `last` word (마지막 / last) stands
+ *    behind it. "방금 본 거" names the item the owner just read (D9): `recent`, under its own recency rules.
+ * On every path (owner decision 2026-10-19: the A6 mail / Drive path is grounded too; the R2-only scope is gone).
  * Closed vocabularies only; no phrase list.
  */
 function groundItemSummarizeArgs(entry: NlCatalogEntry, args: Record<string, NlArgValue>, groundingText: string, r2Sources: ReturnType<typeof nlR2SourcesOffered>): void {
@@ -354,16 +360,33 @@ function groundItemSummarizeArgs(entry: NlCatalogEntry, args: Record<string, NlA
   const offered = (entry.args.find((spec) => spec.name === 'source')?.values ?? []).map(String);
   const named = [...nlNamedItemSources(prose, { r2Sources })].filter((source) => offered.includes(source));
   if (named.length === 1) args.source = named[0] as string;
+  if (args.ref === 'this' || (args.ref === 'last' && !nlHasLastWord(prose))) {
+    // A negated recency word ("방금 거 말고 그거") grounds nothing; its stretch ends at the next mode or content word.
+    const stops = [...NL_RECENCY_WORDS, ...modeWords, ...NL_CONTENT_WORDS];
+    if (NL_RECENCY_WORDS.some((word) => groundingWordIn(text, normalizeForMatch(word)) && nlHasUnnegatedMention(prose, word, stops))) args.ref = 'recent';
+  }
 }
 
-export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValidationContext): NlValidationResult {
+type NlCheckedArgs =
+  | { readonly ok: false; readonly result: NlValidationResult }
+  | {
+      readonly ok: true;
+      readonly entryId: NlCatalogEntryId;
+      readonly entry: NlCatalogEntry;
+      readonly args: Record<string, NlArgValue>;
+      readonly r2Sources: ReturnType<typeof nlR2SourcesOffered>;
+      readonly keys: boolean;
+    };
+
+/** The first stage of {@link validateSelection}: the args as Core checked and grounded them, before any refusing rule. */
+function checkedSelectionArgs(candidate: NlSelectionCandidate, ctx: NlValidationContext): NlCheckedArgs {
   // (1) closed ids
-  if (!isNlCatalogEntryId(candidate.entryId)) return { ok: false, reason: 'unknown-entry' };
+  if (!isNlCatalogEntryId(candidate.entryId)) return { ok: false, result: { ok: false, reason: 'unknown-entry' } };
   const entryId = candidate.entryId;
   // (2) offered (registered + configured) and READ only (wave 1), or an offered A6 entry while actions are allowed
   const entry = ctx.offered.get(entryId);
-  if (entry === undefined) return { ok: false, reason: 'not-offered', entryId };
-  if (entry.risk !== 'READ' && ctx.actions !== true) return { ok: false, reason: 'not-read', entryId };
+  if (entry === undefined) return { ok: false, result: { ok: false, reason: 'not-offered', entryId } };
+  if (entry.risk !== 'READ' && ctx.actions !== true) return { ok: false, result: { ok: false, reason: 'not-read', entryId } };
   const specs = new Map(entry.args.map((spec) => [spec.name, spec] as const));
   const args: Record<string, NlArgValue> = {};
   // A6 R2 (CA P1): the Jira / Slack nouns and the Jira key ref exist only while the offered item.summarize lists them.
@@ -371,14 +394,34 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   const keys = r2Sources.includes('jira');
   for (const [name, value] of Object.entries(candidate.args)) {
     const spec = specs.get(name);
-    if (spec === undefined) return { ok: false, reason: 'unknown-arg', entryId, arg: name };
+    if (spec === undefined) return { ok: false, result: { ok: false, reason: 'unknown-arg', entryId, arg: name } };
     const checked = checkArg(spec, value, keys);
-    if (checked === undefined) return { ok: false, reason: 'invalid-arg', entryId, arg: name };
+    if (checked === undefined) return { ok: false, result: { ok: false, reason: 'invalid-arg', entryId, arg: name } };
     args[name] = checked;
   }
   entry.normalize?.(args, ctx.groundingText, entry.risk === 'READ' ? ctx.previousArgs : undefined);
-  // Only while R2 is offered: with R2 off the A6 entry (mail, Drive) keeps its v44 validation exactly.
-  if (entryId === 'item.summarize' && r2Sources.length > 0) groundItemSummarizeArgs(entry, args, ctx.groundingText, r2Sources);
+  // Every path (owner decision 2026-10-19): with R2 off the A6 entry (mail, Drive) is grounded the same way.
+  if (entryId === 'item.summarize') groundItemSummarizeArgs(entry, args, ctx.groundingText, r2Sources);
+  return { ok: true, entryId, entry, args, r2Sources, keys };
+}
+
+/**
+ * Core's own args for a selector candidate (the A6 / R2 eval scorer, owner decision 2026-10-19): the validated args when
+ * the selection validates; otherwise the args as Core checked and grounded them before the refusing rule (a question for
+ * a missing source holds the grounded ref and mode). `undefined` when the candidate names no offered entry or carries an
+ * unknown or invalid arg.
+ */
+export function nlCoreSelectionArgs(candidate: NlSelectionCandidate, ctx: NlValidationContext): NlArgs | undefined {
+  const validated = validateSelection(candidate, ctx);
+  if (validated.ok) return validated.value.args;
+  const checked = checkedSelectionArgs(candidate, ctx);
+  return checked.ok ? Object.freeze(canonicalArgs(checked.entry, checked.args)) : undefined;
+}
+
+export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValidationContext): NlValidationResult {
+  const checked = checkedSelectionArgs(candidate, ctx);
+  if (!checked.ok) return checked.result;
+  const { entryId, entry, args, r2Sources, keys } = checked;
   // A6-D3a amendment 1 (owner-approved direction 2026-10-16): a LOCAL_WRITE the selector chose runs unless the owner's own
   // sentence is not a request. No request verb or closed request form is needed; the structural vetoes decide (chat), and
   // a frame with nothing but references ("2번도", "그걸로요", "13번 알림") or nothing but content ("내일 9시 우유")

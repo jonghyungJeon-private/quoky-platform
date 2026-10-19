@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Capability, type AiProvider, type AiRequest, type NlSelectionDecision } from '@quoky/core';
-import { NL_ACTION_R2_EVAL_GATE, buildActionPlan, computeActionPlanDigest, loadR2ActionCorpus, r2DiagnosticArgs, recordArgs, scoreActionDecision, summarizeActionR2, type NlActionCase, type NlActionRecord } from './nl-action-eval';
+import { NL_ACTION_R2_EVAL_ENTRIES, NL_ACTION_R2_EVAL_GATE, buildActionPlan, computeActionPlanDigest, loadR2ActionCorpus, r2DiagnosticArgs, recordArgs, scoreActionDecision, summarizeActionR2, type NlActionCase, type NlActionRecord } from './nl-action-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, formatGateRuns, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // `eval:nl --mode r2` offline: the plan and its Strict digest (prompt v48, corpus, runs, calls, gate), the digest rule
@@ -202,8 +202,28 @@ describe('the R2 gate (proposal §6.4)', () => {
     const golden = corpus.cases.find((candidate) => candidate.expect !== 'none' && candidate.expect.outcome === 'ask' && candidate.expect.acceptsAnyQuestion !== true && Object.keys(candidate.expect.args).length > 0);
     if (golden === undefined || golden.expect === 'none') throw new Error('no ask gold with args');
     const raw = answer(golden.expect.entryId, golden.expect.args);
-    expect(scoreActionDecision(golden, raw, { kind: 'none' } as NlSelectionDecision).outcome).toBe('miss');
-    expect(scoreActionDecision(golden, answer(golden.expect.entryId, golden.expect.args, 'NEEDS_CLARIFICATION'), { kind: 'none' } as NlSelectionDecision).outcome).toBe('hit');
+    const r2 = { entries: NL_ACTION_R2_EVAL_ENTRIES };
+    expect(scoreActionDecision(golden, raw, { kind: 'none' } as NlSelectionDecision, undefined, r2).outcome).toBe('miss');
+    expect(scoreActionDecision(golden, answer(golden.expect.entryId, golden.expect.args, 'NEEDS_CLARIFICATION'), { kind: 'none' } as NlSelectionDecision, undefined, r2).outcome).toBe('hit');
+  });
+
+  it('a gold ask is scored on Core final args, not the selector raw args (owner decision 2026-10-19)', () => {
+    const r2 = { entries: NL_ACTION_R2_EVAL_ENTRIES };
+    const ask = { kind: 'ask', text: '?' } as NlSelectionDecision;
+    const find = (id: string) => {
+      const golden = corpus.cases.find((candidate) => candidate.id === id);
+      if (golden === undefined) throw new Error(id);
+      return golden;
+    };
+    // 019 "2번 메일 요약해줘" over a Slack list: the selector's slack is grounded to mail, then Core asks other-source.
+    expect(scoreActionDecision(find('a6r2-reference-019'), answer('item.summarize', { source: 'slack', ref: '#2', mode: 'summary' }), ask, { reason: 'other-source' }, r2).outcome).toBe('hit');
+    // 063 "방금 본 거 요약해줘": the selector's `this` is grounded to `recent` before Core asks.
+    expect(scoreActionDecision(find('a6r2-reference-063'), answer('item.summarize', { source: 'jira', ref: 'this', mode: 'summary' }), ask, { reason: 'ambiguous' }, r2).outcome).toBe('hit');
+    // 065 "그거 원문 보여줘" (relabelled): no source is knowable, so Core asks for it; a guessed source is a miss.
+    expect(scoreActionDecision(find('a6r2-reference-065'), answer('item.summarize', { ref: 'this', mode: 'full' }), ask, { reason: 'missing-arg' }, r2).outcome).toBe('hit');
+    expect(scoreActionDecision(find('a6r2-reference-065'), answer('item.summarize', { source: 'mail', ref: 'this', mode: 'full' }), ask, { reason: 'ambiguous' }, r2).outcome).toBe('miss');
+    // 062 stays strict: the ask must hold the source the owner just read (jira); a slack guess Core asks about is a miss.
+    expect(scoreActionDecision(find('a6r2-reference-062'), answer('item.summarize', { source: 'slack', ref: 'this', mode: 'summary' }), ask, { reason: 'ambiguous' }, r2).outcome).toBe('miss');
   });
 });
 

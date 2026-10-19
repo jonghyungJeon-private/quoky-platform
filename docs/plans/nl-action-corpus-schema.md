@@ -117,7 +117,14 @@ closed values, spans are verbatim.
   (nothing to refer to), `conflict`. Payload and time: `deictic-payload`, `time-in-title`, `time-outside-when`,
   `when-unparsed`, `credential`. Content mode: `content-mode` (the open key asked once). Undo: `no-action`,
   `undo-of-undo`, `already-final`, `changed`, `fired`, `past-time` (asks for a new time), `event-gone`, `limit`,
-  `echo-mismatch`. Other: `bulk`, `not-dm`, `capped`, `stopped` (kill switch).
+  `echo-mismatch`. Other: `bulk`, `not-dm`, `capped`, `stopped` (kill switch). Validation: `missing-arg` (a required
+  argument the owner's words cannot give, e.g. "그거 원문 보여줘" with no knowable source; owner decision 2026-10-19).
+- **Ask / refuse args are Core's final args** (owner decision 2026-10-19). `args` of an ask or refusal are the args Core
+  holds after its own validation and grounding (the `item.summarize` mode, source noun and recency `ref`), exactly as an
+  execute gold's are, never what a selector might have guessed. A gold that is the validator's own refusal (its `reason`
+  is the reason `validateSelection` gives for its args, e.g. `missing-arg`) carries Core's grounded args for that
+  selection. The scorer compares a gold ask with Core's final args for the selector's output, so the A6 and R2 gates
+  score executions and questions by one rule.
 - **`execute` with `entryId: "action.undo"`.** `target` is the item the inverse acts on (the `lastAction` item).
 - **Negatives.** `expect: "none"` means nothing acts and nothing previews. A question on a negative is not wrong, but it
   is not gold either: write `"none"`.

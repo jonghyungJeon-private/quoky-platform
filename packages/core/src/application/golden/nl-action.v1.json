@@ -8441,12 +8441,13 @@
     "entryId": "item.summarize",
     "args": {
      "source": "mail",
-     "ref": "#2"
+     "ref": "#2",
+     "mode": "summary"
     },
     "outcome": "ask",
     "reason": "other-source"
    },
-   "note": "was ref-053"
+   "note": "was ref-053 [owner decision 2026-10-19: the grounded mode added (item.summarize mode / source grounding on both paths)]"
   },
   {
    "id": "a6-reference-item.summarize-006",
@@ -8468,13 +8469,14 @@
     "entryId": "item.summarize",
     "args": {
      "source": "drive",
-     "ref": "#1"
+     "ref": "#1",
+     "mode": "summary"
     },
     "outcome": "ask",
     "reason": "other-source",
     "acceptsAnyQuestion": true
    },
-   "note": "was ref-054; text made unique (was: 1번 문서 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
+   "note": "was ref-054; text made unique (was: 1번 문서 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)] [owner decision 2026-10-19: the grounded mode added (item.summarize mode / source grounding on both paths)]"
   },
   {
    "id": "a6-reference-todo.complete-022",
@@ -8551,12 +8553,13 @@
     "entryId": "item.summarize",
     "args": {
      "source": "mail",
-     "ref": "#1"
+     "ref": "#1",
+     "mode": "summary"
     },
     "outcome": "ask",
     "reason": "other-source"
    },
-   "note": "was ref-057"
+   "note": "was ref-057 [owner decision 2026-10-19: the grounded mode added (item.summarize mode / source grounding on both paths)]"
   },
   {
    "id": "a6-reference-item.summarize-008",
@@ -8578,13 +8581,14 @@
     "entryId": "item.summarize",
     "args": {
      "source": "mail",
-     "ref": "#2"
+     "ref": "#2",
+     "mode": "summary"
     },
     "outcome": "ask",
     "reason": "other-source",
     "acceptsAnyQuestion": true
    },
-   "note": "was ref-058; text made unique (was: 2번 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
+   "note": "was ref-058; text made unique (was: 2번 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)] [owner decision 2026-10-19: the grounded mode added (item.summarize mode / source grounding on both paths)]"
   },
   {
    "id": "a6-reference-item.summarize-009",
@@ -8614,12 +8618,13 @@
     "entryId": "item.summarize",
     "args": {
      "source": "mail",
-     "ref": "this"
+     "ref": "this",
+     "mode": "summary"
     },
     "outcome": "ask",
     "reason": "conflict"
    },
-   "note": "was ref-059; text made unique (was: 그거 요약해줘)"
+   "note": "was ref-059; text made unique (was: 그거 요약해줘) [owner decision 2026-10-19: the grounded mode added (item.summarize mode / source grounding on both paths)]"
   },
   {
    "id": "a6-reference-item.summarize-010",
@@ -8642,12 +8647,13 @@
     "entryId": "item.summarize",
     "args": {
      "source": "mail",
-     "ref": "#7"
+     "ref": "#7",
+     "mode": "summary"
     },
     "outcome": "ask",
     "reason": "out-of-range"
    },
-   "note": "was ref-060; text made unique (was: 7번 요약해줘)"
+   "note": "was ref-060; text made unique (was: 7번 요약해줘) [owner decision 2026-10-19: the grounded mode added (item.summarize mode / source grounding on both paths)]"
   },
   {
    "id": "a6-reference-todo.complete-024",
@@ -8696,12 +8702,13 @@
     "entryId": "item.summarize",
     "args": {
      "source": "drive",
-     "ref": "#5"
+     "ref": "#5",
+     "mode": "summary"
     },
     "outcome": "ask",
     "reason": "out-of-range"
    },
-   "note": "was ref-062"
+   "note": "was ref-062 [owner decision 2026-10-19: the grounded mode added (item.summarize mode / source grounding on both paths)]"
   },
   {
    "id": "a6-reference-todo.complete-025",
@@ -8778,12 +8785,13 @@
     "entryId": "item.summarize",
     "args": {
      "source": "mail",
-     "ref": "#50"
+     "ref": "#50",
+     "mode": "summary"
     },
     "outcome": "ask",
     "reason": "out-of-range"
    },
-   "note": "was ref-066; text adjusted for the validator (was: 51번 요약해줘)"
+   "note": "was ref-066; text adjusted for the validator (was: 51번 요약해줘) [owner decision 2026-10-19: the grounded mode added (item.summarize mode / source grounding on both paths)]"
   },
   {
    "id": "a6-reference-item.summarize-013",
@@ -8806,12 +8814,13 @@
     "entryId": "item.summarize",
     "args": {
      "source": "mail",
-     "ref": "#1"
+     "ref": "#1",
+     "mode": "summary"
     },
     "outcome": "ask",
     "reason": "expired"
    },
-   "note": "was ref-067"
+   "note": "was ref-067 [owner decision 2026-10-19: the grounded mode added (item.summarize mode / source grounding on both paths)]"
   },
   {
    "id": "a6-reference-todo.complete-027",
@@ -8883,13 +8892,14 @@
     "entryId": "item.summarize",
     "args": {
      "source": "drive",
-     "ref": "#1"
+     "ref": "#1",
+     "mode": "summary"
     },
     "outcome": "ask",
     "reason": "expired",
     "acceptsAnyQuestion": true
    },
-   "note": "was ref-070; text made unique (was: 첫 번째 거 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
+   "note": "was ref-070; text made unique (was: 첫 번째 거 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)] [owner decision 2026-10-19: the grounded mode added (item.summarize mode / source grounding on both paths)]"
   },
   {
    "id": "a6-reference-todo.complete-028",
@@ -9048,13 +9058,14 @@
     "entryId": "item.summarize",
     "args": {
      "source": "mail",
-     "ref": "this"
+     "ref": "this",
+     "mode": "summary"
     },
     "outcome": "ask",
     "reason": "ambiguous",
     "acceptsAnyQuestion": true
    },
-   "note": "was ref-076; text made unique (was: 그거 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)]"
+   "note": "was ref-076; text made unique (was: 그거 요약해줘) [owner D12 batch 2026-10-15 (A6 R1 gold fixes, \"권장안대로 수정\"): a clarification is the correct outcome (acceptsAnyQuestion)] [owner decision 2026-10-19: the grounded mode added (item.summarize mode / source grounding on both paths)]"
   },
   {
    "id": "a6-reference-todo.complete-034",

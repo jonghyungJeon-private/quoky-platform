@@ -69,8 +69,16 @@ export function formatNlRef(ref: NlRef): string {
 
 // ── word classes (value validators) ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * D9 / A6-D2: the closed recency words ("방금 본 거", "아까 그거", "just now"). They are what `recent` means in the ref
+ * description, the R5a referent's recency check and Core's `recent` grounding of `item.summarize` (owner decision
+ * 2026-10-19); one list, never a phrase list.
+ */
+const RECENCY_KO = ['방금', '아까'] as const;
+const RECENCY_EN = ['just now'] as const;
+export const NL_RECENCY_WORDS: readonly string[] = [...RECENCY_KO, ...RECENCY_EN];
 /** A6-D2: the closed deictics that ground `recent` / `this`. Korean words match inside a token (particles glued on). */
-const DEICTIC_KO = ['그거', '이거', '저거', '그것', '이것', '저것', '그건', '이건', '저건', '그걸', '이걸', '저걸', '방금', '아까'];
+const DEICTIC_KO = ['그거', '이거', '저거', '그것', '이것', '저것', '그건', '이건', '저건', '그걸', '이걸', '저걸', ...RECENCY_KO];
 const DEICTIC_EN = ['it', 'that', 'this', 'that one', 'this one'];
 /** Particles glued on a deictic, filler, time or item-source noun ("이 문서를", "그 메일에서는"). */
 const PARTICLE_WORDS = '(?:으로|에서|까지|부터|에는|이랑|하고|은|는|이|가|을|를|에|의|도|만|로|랑|요)';
@@ -284,6 +292,17 @@ export function hasNlDeictic(groundingText: string): boolean {
 function hasLastWord(groundingText: string): boolean {
   const text = normalizeForMatch(groundingText);
   return LAST_KO.some((word) => text.includes(word)) || LAST_EN.some((word) => latinWordIn(text, word));
+}
+
+/** Whether the owner's words carry a `last` word (마지막 / last): what grounds the `last` ref. */
+export function nlHasLastWord(groundingText: string): boolean {
+  return hasLastWord(groundingText);
+}
+
+/** Whether the owner's words carry a recency word ({@link NL_RECENCY_WORDS}; Korean inside a token, as every deictic). */
+export function nlHasRecencyWord(groundingText: string): boolean {
+  const text = normalizeForMatch(groundingText);
+  return RECENCY_KO.some((word) => text.includes(word)) || RECENCY_EN.some((word) => latinWordIn(text, word));
 }
 
 /** The ordinal words of the owner's text, as positions (첫 번째 → 1, second → 2). */

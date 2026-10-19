@@ -4490,15 +4490,14 @@
    "expect": {
     "entryId": "item.summarize",
     "args": {
-     "source": "jira",
      "ref": "this",
      "mode": "full"
     },
     "outcome": "ask",
-    "reason": "none"
+    "reason": "missing-arg"
    },
    "batch": "R2-batch-1",
-   "note": "the last read is older than 10 minutes"
+   "note": "the last read is older than 10 minutes, so the source is unknowable: Core asks for it (missing-arg) [owner decision 2026-10-19: relabelled from ask none with source jira]"
   },
   {
    "id": "a6r2-reference-066",
