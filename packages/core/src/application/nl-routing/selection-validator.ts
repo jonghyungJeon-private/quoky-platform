@@ -20,7 +20,8 @@ import {
   NL_ACTION_WORDS,
   NL_CONTENT_WORDS,
   containsNlTimeExpression,
-  nlOwnerPeriod,
+  nlReminderPeriod,
+  type NlReminderPeriod,
   NL_ENTRY_NOUN_LOANWORDS,
   NL_ENTRY_NOUN_VERBS,
   NL_ENTRY_NOUNS,
@@ -99,6 +100,11 @@ export type NlValidationFailureReason =
   | 'invalid-arg'
   | 'missing-arg'
   | 'range'
+  /**
+   * Owner decision of 2026-10-19, bounded: the owner named a period outside the entry's CLOSED set (reminder.list: a span,
+   * a duration, a month, a day-only or past date, several periods). Core asks with the fixed restate of the set.
+   */
+  | 'unsupported-period'
   | 'ungrounded'
   /** A keyword that is only a time expression ("목요일", "내일 오후"): a period belongs in `range` / `partOfDay`. */
   | 'time-keyword'
@@ -636,14 +642,31 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   const rangeSpec = entry.args.find((spec) => spec.kind === 'range');
   // The weekdays the owner's words name, outside a value that may legitimately be one (a sender called "월요일").
   const mentions: readonly NlWeekdayMention[] = rangeSpec !== undefined ? nlWeekdayMentions(withoutNameValues(entry, args, ctx.groundingText), entry.aliases) : [];
+  // Owner decision of 2026-10-19, bounded (Codex P2): a period that needs the owner's words is one of the CLOSED set the
+  // owner's words resolve to (nlReminderPeriod); any other period they name asks with the fixed restate, never filtered
+  // and never dropped.
+  let ownerPeriod: NlReminderPeriod | undefined;
+  let ownerRange: NlResolvedRange | undefined;
   if (rangeSpec !== undefined) {
     // A weekday symbol that names the same day as the owner's own week word is spelled the owner's way ("금요일" = fri,
     // never this-fri when both are this Friday): a canonical form, never another day (calendar-accuracy note).
     const given = args[rangeSpec.name];
-    // Owner decision of 2026-10-19 (A5 rule 6): a period that needs the owner's time words is ungrounded without one (a
-    // model-made period), unless it is the previous selection's own period carried by a follow-up.
-    if (typeof given === 'string' && rangeSpec.timeWordsRequired === true && ctx.previousArgs?.[rangeSpec.name] !== given && !nlOwnerPeriod(ctx.groundingText).named) {
-      return { ok: false, reason: 'ungrounded', entryId, arg: rangeSpec.name };
+    if (rangeSpec.timeWordsRequired === true) {
+      // A symbol the entry cannot take ("upcoming" reminders are simply the scheduled ones) names no period of it.
+      const periodText = rangeSpec.allowUpcoming === true ? ctx.groundingText : ctx.groundingText.replace(/\bupcoming\b|다가오는/giu, ' ');
+      ownerPeriod = nlReminderPeriod(periodText, mentions);
+      if (ownerPeriod.kind === 'supported') {
+        ownerRange = resolveNlRange(ownerPeriod.symbol, ctx.now, ctx.timeZone);
+        // A date already past ("10월 1일" on the 19th) is a past period: outside the set.
+        if (ownerRange === undefined || Date.parse(ownerRange.to) <= Date.parse(ctx.now)) ownerPeriod = { kind: 'unsupported' };
+      }
+      if (ownerPeriod.kind === 'unsupported') return { ok: false, reason: 'unsupported-period', entryId, arg: rangeSpec.name };
+      // Owner decision of 2026-10-19 (A5 rule 6): a period that needs the owner's time words is ungrounded without one (a
+      // model-made period), unless it is the previous selection's own period carried by a follow-up.
+      if (typeof given === 'string' && ownerPeriod.kind === 'none' && ctx.previousArgs?.[rangeSpec.name] !== given) {
+        return { ok: false, reason: 'ungrounded', entryId, arg: rangeSpec.name };
+      }
+      if (given === undefined && ownerPeriod.kind === 'supported') return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
     }
     if (typeof given === 'string') {
       const previousRange = ctx.previousArgs?.[rangeSpec.name];
@@ -748,30 +771,10 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // Codex P2 (2026-10-19): `futureOnly` again on the FINAL range (a weekday bound may have re-spelled it: "이번 주 월요일부터
   // 화요일까지" on a Wednesday is entirely past).
   if (rangeSpec?.futureOnly === true && range !== undefined && Date.parse(range.to) <= Date.parse(ctx.now)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
-  // Codex P2 (2026-10-19): a period that needs the owner's words must BE the owner's period, not merely sit beside a time
-  // word. No range while the owner named a period asks; a range other than the one period the owner named (its symbol word
-  // or date, resolved by the same clock) asks. A follow-up's carried range and a multi-period phrase keep the rules above.
-  if (rangeSpec?.timeWordsRequired === true) {
-    const given = args[rangeSpec.name];
-    // A symbol the entry cannot take ("upcoming" reminders are simply the scheduled ones) names no period of it.
-    const periodText = rangeSpec.allowUpcoming === true ? ctx.groundingText : ctx.groundingText.replace(/\bupcoming\b|다가오는/giu, ' ');
-    // Codex P2: ONE resolver of the owner's period (nlOwnerPeriod) for every period guard.
-    const ownerPeriod = nlOwnerPeriod(periodText, mentions.length > 0);
-    // A range is inherited from the previous selection only when this message names no period of its own.
-    const carried = !ownerPeriod.named && typeof given === 'string' && ctx.previousArgs?.[rangeSpec.name] === given;
-    if (given === undefined && ownerPeriod.named) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
-    if (range !== undefined && !carried && ownerPeriod.named) {
-      // A period named but not placeable ("25일", "3일 뒤") is never accepted as some range: ask.
-      if (ownerPeriod.symbols === undefined) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
-      if (ownerPeriod.symbols.length === 1) {
-        const owner = resolveNlRange(ownerPeriod.symbols[0] as string, ctx.now, ctx.timeZone);
-        if (owner === undefined) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
-        // A weekday the owner named narrows the period ("다음 주 수요일" = next-wed inside next week; a weekday span too);
-        // the weekday consistency above has validated it, so a range inside the owner's period matches.
-        const narrowed = mentions.length > 0 && Date.parse(range.from) >= Date.parse(owner.from) && Date.parse(range.to) <= Date.parse(owner.to);
-        if (!narrowed && (owner.from !== range.from || owner.to !== range.to)) return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
-      }
-    }
+  // Codex P2 (2026-10-19): a period that needs the owner's words must BE the owner's one supported period: the selected
+  // range equals it, by the same clock ("다음 주 수요일" is next-wed, never the whole next week).
+  if (rangeSpec !== undefined && ownerRange !== undefined && (range === undefined || range.from !== ownerRange.from || range.to !== ownerRange.to)) {
+    return { ok: false, reason: 'range', entryId, arg: rangeSpec.name };
   }
   // A6: the entry's own check after the per-arg checks.
   if (entry.check !== undefined) {

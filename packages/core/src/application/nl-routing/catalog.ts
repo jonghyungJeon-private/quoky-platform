@@ -134,6 +134,11 @@ export interface NlArgSpec {
    * none in the message it is `ungrounded` (a model-made period), never applied.
    */
   readonly timeWordsRequired?: true;
+  /**
+   * `range` with `timeWordsRequired` only (owner decision of 2026-10-19, bounded): the fixed restate Core sends when the
+   * owner names a period outside the entry's closed set (`unsupported-period`). Content-free: it never echoes the owner.
+   */
+  readonly periodHelp?: { readonly ko: string; readonly en: string };
   /** The value the entry uses when the argument is absent; canonical args omit an argument equal to it. */
   readonly default?: string | boolean;
   /** `span` only: the maximum length in code points (A6-D1: a title or body 1..200). */

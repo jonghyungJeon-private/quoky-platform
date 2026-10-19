@@ -27621,3 +27621,16 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   period the owner never wrote. Every other unknown arg ({onlyUnread}, {onlyRemaining}, {completed}) asks, and a repaired
   read that loses a period the owner named asks; each drop is logged (`nl_selection.detail_dropped`, arg name and kind).
   This replaces the earlier boolean and day-symbol heuristics after four review rounds of filter-loss cases.
+- **(e) The reminder.list period is a CLOSED set (bounded in review, 2026-10-19).** After three Codex P2 rounds on period
+  semantics (multi-period spans, "앞으로 7일" read as a day, whole months without the year) the feature is bounded instead
+  of extended. `reminder.list` filters only by: today, tomorrow, this-week, next-week, one calendar date with month and
+  day (an explicit year kept: "10월 22일", "Oct 22", "2027년 10월 22일"), and one weekday of this or next week ("다음 주
+  수요일" = next-wed, "금요일" = fri). Core resolves the owner's words to exactly ONE supported period
+  (`nlReminderPeriod`) and requires the selected range to equal it (same clock); a missing or different range asks.
+  Anything else the owner names (a span with 부터/까지/until/~, a duration "앞으로 7일" / "next 7 days", a month "2월", a
+  day-only date "25일", a past period or date, any other symbol, several periods) asks with the fixed, content-free
+  restate "알림 목록은 오늘·내일·이번 주·다음 주·특정 날짜로 볼 수 있어요. 예: \"내일 알림 보여줘\"" (catalog
+  `periodHelp`, reason `unsupported-period`): never filtered with an unsupported range and never dropped. The
+  multi-period, duration and month paths are gone from the reminder range (other entries keep main's range symbols). The
+  catalog arg description and the A6 reminder.list rule line name the set: read `nl-select.v59` (golden
+  `nl-select.v59.prompts.json`), A6 `nl-select.v57`, R2 `nl-select.v58`.

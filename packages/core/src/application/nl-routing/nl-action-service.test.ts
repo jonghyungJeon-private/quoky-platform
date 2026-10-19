@@ -237,8 +237,8 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     const base = { actorId: 'owner', text: '메일함', previous: undefined, entryIds: ['mail.list'] };
     const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', 'nl-select.v24', 'nl-select.v25', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
     expect(new Set(keys).size).toBe(9);
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v57');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v55');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v59');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v57');
     // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
@@ -1321,6 +1321,25 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
     const { w, decision } = await run('알림 몇 개 걸려 있어?', out('reminder.list', { count: true }));
     expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
     expect(w.logs.find((log) => log.event === 'nl_selection.detail_dropped')?.fields).toEqual({ entryId: 'reminder.list', dropped: 'count:unlisted' });
+  });
+
+  it('owner decision 2026-10-19, bounded: a reminder period outside the closed set asks with the fixed restate; a supported one lists', async () => {
+    const restate = '알림 목록은 오늘·내일·이번 주·다음 주·특정 날짜로 볼 수 있어요. 예: "내일 알림 보여줘"';
+    for (const [text, args] of [
+      ['내일부터 금요일까지 알림 보여줘', { range: 'tomorrow' }],
+      ['앞으로 7일 알림 보여줘', { range: 'next-7-days' }],
+      ['2월 알림 보여줘', {}],
+      ['25일 알림 보여줘', { range: '10-25' }],
+      ['지난주 알림 보여줘', { range: 'last-week' }],
+    ] as const) {
+      const { w, decision } = await run(text, out('reminder.list', args));
+      expect(decision, text).toEqual({ kind: 'ask', text: restate, entryId: 'reminder.list' });
+      expect(w.logs.some((log) => log.event === 'nl_selection.detail_dropped'), text).toBe(false);
+    }
+    const en = await run('reminders in the next 7 days', out('reminder.list', { range: 'next-7-days' }));
+    expect(en.decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('today, tomorrow, this week, next week or one date') });
+    const ok = await run('내일 알림 보여줘', out('reminder.list', { range: 'tomorrow' }));
+    expect(ok.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
   });
 
   it('turns 26 / 58 / 60: a reminder with no time asks for the time (Korean and English)', async () => {

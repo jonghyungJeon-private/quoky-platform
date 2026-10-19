@@ -4,7 +4,7 @@ import { normalizeForMatch } from './selection-input';
 import { nlIsRequestForm } from './request-shape';
 import { NL_EN_REQUEST_LEADS } from './garbled-action';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
-import { isNlTimeWord, nlRangeSymbolWords } from './symbolic-time';
+import { isNlTimeWord, nlRangeSymbolWords, type NlWeekdayMention } from './symbolic-time';
 import { ANCHORED_TODO_PREFIX_HEADS, reminderMonthDates, reminderTextNamesDay } from '../reminders/reminder-grammar';
 import { SLACK_POST_COLON_HEAD } from '../work-chat/work-chat-command';
 import { EXECUTION_PHRASES } from '../execution-command-guard';
@@ -1133,40 +1133,47 @@ export function nlExpressedRangeSymbols(text: string): string[] {
   return symbols;
 }
 
-/** The owner's expressed period: whether the words name one, and its symbols (`undefined` = named but unresolved). */
-export interface NlOwnerPeriod {
-  readonly named: boolean;
-  readonly symbols?: readonly string[];
-}
-
-/** Days in a month (any year with a leap February: a month span asks no year). */
-const MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
-
 /**
- * Codex P2 (2026-10-19): THE owner's expressed period, one function for every period guard (grounding, the repair drop
- * guard, the consistency check), so the guards cannot disagree. `named` when any period word or date is present
- * ({@link nlNamesPeriod} or a resolved symbol: "in the next 7 days" names next-7-days). `symbols` are the resolved ones
- * ({@link nlExpressedRangeSymbols}, plus a bare month "12월" as its whole month); `undefined` when the words name a period
- * that cannot be placed exactly: a day-only date ("25일": the reminder grammar does not resolve it either), a relative
- * span ("3일 뒤"), any period word with no resolved symbol. A weekday is left to the weekday consistency rule (`weekday`).
+ * Owner decision of 2026-10-19, bounded in review (Codex P2, three rounds): the CLOSED set of periods `reminder.list`
+ * filters by. The owner's words resolve to exactly one of: today, tomorrow, this-week, next-week, one calendar date with
+ * month and day (an explicit year kept: `MM-DD` / `YYYY-MM-DD`), or one weekday of this or next week ("다음 주 수요일" =
+ * next-wed, "수요일" = wed). `none`: the words name no period. `unsupported`: anything else the words name (a span with
+ * 부터/까지/until/~, a duration such as 앞으로 7일 / next 7 days, a month, a day-only date "25일", a past or other symbol,
+ * several periods): Core asks with the fixed restate and never filters or drops it.
  */
-export function nlOwnerPeriod(text: string, weekday = false): NlOwnerPeriod {
-  const symbols = [...nlExpressedRangeSymbols(text)];
+export type NlReminderPeriod = { readonly kind: 'none' } | { readonly kind: 'supported'; readonly symbol: string } | { readonly kind: 'unsupported' };
+
+const REMINDER_RELATIVE_PERIODS: ReadonlySet<string> = new Set(['today', 'tomorrow', 'this-week', 'next-week']);
+const WEEKDAY_BY_INDEX = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+/**
+ * A span or an open bound (부터 … 까지, 이후, 이전, until, through, from, since, after, before, a "~" between dates): a
+ * period with an edge the closed set has no symbol for.
+ */
+const PERIOD_SPAN = /부터|까지|이후|이전|이내|(?<![a-z])(?:until|till|through|thru|from|since|after|before|within|between)(?![a-z])|[~〜–]\s*\d/u;
+/** A duration counted from now (앞으로 7일, 향후 2주, 3일 동안, next 7 days, in 3 days). */
+const PERIOD_DURATION = /(?:앞으로|향후|최근|지난)\s*\d+\s*(?:일|주|개월|달)|\d+\s*(?:일|주|개월)\s*(?:동안|간|뒤|후|이내)|(?<![a-z])(?:next|past|last|coming|in)\s+\d+\s+(?:days?|weeks?|months?)(?![a-z])/u;
+
+export function nlReminderPeriod(text: string, weekdays: readonly NlWeekdayMention[] = []): NlReminderPeriod {
   const normalized = normalizeForMatch(text);
-  for (const m of normalized.matchAll(/(?<![\d월])(\d{1,2})\s?월(?!\s?\d{1,2}\s?일)/gu)) {
-    const month = Number(m[1]);
-    if (month < 1 || month > 12) continue;
-    const pad = (n: number): string => String(n).padStart(2, '0');
-    const symbol = `${pad(month)}-01..${pad(month)}-${pad(MONTH_DAYS[month - 1] as number)}`;
-    if (!symbols.includes(symbol)) symbols.push(symbol);
-  }
-  const named = symbols.length > 0 || nlNamesPeriod(text);
-  if (!named) return { named: false };
-  // A day-only date ("25일") with no month is never placed by a guess: unresolved.
+  const symbols = nlExpressedRangeSymbols(text);
+  const named = symbols.length > 0 || weekdays.length > 0 || nlNamesPeriod(text);
+  if (!named) return { kind: 'none' };
+  if (PERIOD_SPAN.test(normalized) || PERIOD_DURATION.test(normalized)) return { kind: 'unsupported' };
+  // A day-only date ("25일") or a month without a day ("2월") is never placed by a guess.
   const withoutDates = normalized.replace(/(\d{1,2})\s?월\s?(\d{1,2})\s?일/gu, ' ');
-  const dayOnly = /(?<!\d)\d{1,2}\s?일(?!\s?(?:뒤|후|전|동안|이내|마다|씩))/u.test(withoutDates);
-  if (dayOnly || (symbols.length === 0 && !weekday)) return { named: true };
-  return { named: true, symbols };
+  if (/(?<!\d)\d{1,2}\s?일/u.test(withoutDates) || /(?<!\d)\d{1,2}\s?월/u.test(withoutDates)) return { kind: 'unsupported' };
+  if (weekdays.length > 0) {
+    // One weekday of this or next week: its week word is its only other period word ("다음 주 수요일" = next-wed).
+    const day = weekdays[0] as NlWeekdayMention;
+    const anchor = day.week === 'next' ? 'next-week' : day.week === 'this' ? 'this-week' : undefined;
+    if (weekdays.length !== 1 || day.bound || (day.week !== undefined && anchor === undefined)) return { kind: 'unsupported' };
+    if (symbols.some((symbol) => symbol !== anchor)) return { kind: 'unsupported' };
+    const prefix = anchor === 'next-week' ? 'next-' : anchor === 'this-week' ? 'this-' : '';
+    return { kind: 'supported', symbol: `${prefix}${WEEKDAY_BY_INDEX[day.weekday]}` };
+  }
+  if (symbols.length !== 1) return { kind: 'unsupported' };
+  const symbol = symbols[0] as string;
+  return REMINDER_RELATIVE_PERIODS.has(symbol) || /^(?:\d{4}-)?\d{2}-\d{2}$/u.test(symbol) ? { kind: 'supported', symbol } : { kind: 'unsupported' };
 }
 
 /**

@@ -116,7 +116,7 @@ Details and the review record for each item are in the matching notes in `DECISI
 ### A6 live test 4 gaps — on branch `claude/v5-live4-gaps` (2026-10-19)
 
 - **Fixed (no-state misses of `docs/plans/a6-live-test-4-record.md`):** colon labels and a bare "<content> 할 일" (A6 prompt
-  `nl-select.v55`, R2 `nl-select.v56`, read `nl-select.v57` (reminder.list `range`, owner decision 2026-10-19); v49-v53 gated and superseded); "이번엔 3번이야" takes the continuation confirmation; an undo
+  `nl-select.v57`, R2 `nl-select.v58`, read `nl-select.v59` (reminder.list `range` as a closed set of periods, owner decision 2026-10-19 (c)/(e)); v49-v56 gated or superseded); "이번엔 3번이야" takes the continuation confirmation; an undo
   paraphrase pointing at the last action asks the undo confirmation; a reminder with no time asks for the time; "Remind me
   on Oct 22 at 9:30am: …" parses; a chat reply never offers an offered action as a yes/no question or denies it.
 - **Owner decisions of 2026-10-19:** (a) "회의 끝나고 … 할 일에 넣어줘" executes (gold todo.add-906); (b) a garbled list noun

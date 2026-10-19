@@ -8,7 +8,7 @@ import {
   hasNlDeterminerReference,
   isNlBulkRequest,
   nlNamesPeriod,
-  nlOwnerPeriod,
+  nlReminderPeriod,
   nlExpressedRangeSymbols,
   isNlDeicticOnlyPayload,
   isNlSpanInsideStructure,
@@ -31,6 +31,7 @@ import {
 } from './catalog';
 import { nlLocalListTarget } from './action-entries';
 import { prepareSelectionInput } from './selection-input';
+import { nlWeekdayMentions } from './symbolic-time';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
 import { validateSelection, type NlValidationContext } from './selection-validator';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
@@ -278,8 +279,8 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
   const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } });
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
-    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v57', sha256: 'aede1de9668e8bc3957fb5414702a182915900557888ce3f21ad111b3d495ce0' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v55', sha256: 'a9cd2ef8432f39221bff6ba1c420067e5a08dda23e1c17dcccda153bf007108b' });
+    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v59', sha256: 'e7e2c8dafd8cbad25bf48493eb76c5d0037f18a30eb52cbf14c15da882e554cd' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v57', sha256: 'ffeda061b409f33430d10d75c74ab2d26e33699af6790dcb3708b08ed3673dfe' });
   });
 });
 
@@ -304,7 +305,7 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
     expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-week' } }, ctx('다음 주에 울릴 리마인더 쭉 보여줘'))).toMatchObject({ ok: true, value: { args: { range: 'next-week' } } });
     expect(validateSelection({ entryId: 'reminder.list', args: { range: 'tomorrow' } }, ctx('내일 알림 뭐 있어?'))).toMatchObject({ ok: true, value: { args: { range: 'tomorrow' } } });
     expect(validateSelection({ entryId: 'reminder.list', args: { range: 'tomorrow' } }, ctx('알림 뭐 있어?'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'range' });
-    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'last-week' } }, ctx('지난주 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range', arg: 'range' });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'last-week' } }, ctx('지난주 알림 보여줘'))).toMatchObject({ ok: false, reason: 'unsupported-period', arg: 'range' });
     expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('알림 목록'))).toMatchObject({ ok: true, value: { args: {} } });
   });
 
@@ -325,7 +326,7 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
     expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('내일 알림 뭐 있어?'))).toMatchObject({ ok: false, reason: 'range' });
     expect(validateSelection({ entryId: 'reminder.list', args: { range: '12-26' } }, ctx('12월 25일 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range' });
     expect(validateSelection({ entryId: 'reminder.list', args: { range: '12-25' } }, ctx('Dec 25 reminders'))).toMatchObject({ ok: true });
-    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'this-week' } }, ctx('이번 주말 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range' });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'this-week' } }, ctx('이번 주말 알림 보여줘'))).toMatchObject({ ok: false, reason: 'unsupported-period' });
     expect(nlExpressedRangeSymbols('이번 주말 알림')).toEqual(['this-weekend']);
     expect(nlExpressedRangeSymbols('다다음 주 알림')).toEqual(['week-after-next']);
     // Codex P2: a previous range is inherited only when this message names no period; an explicit year is kept.
@@ -336,28 +337,54 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
     expect(validateSelection({ entryId: 'reminder.list', args: { range: '2027-10-22' } }, ctx('2027년 10월 22일 알림 보여줘'))).toMatchObject({ ok: true });
     expect(validateSelection({ entryId: 'reminder.list', args: { range: '10-22' } }, ctx('2027년 10월 22일 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range' });
     expect(nlExpressedRangeSymbols('Oct 22, 2027 reminders')).toEqual(['2027-10-22']);
-    // Codex P2: a weekday the owner named narrows the period: next-wed inside "다음 주", a weekday span too.
+    // Owner decision of 2026-10-19, bounded: a weekday of this or next week is one supported period, and the range must
+    // equal it ("다음 주 수요일" is next-wed, never the whole next week or another day).
     expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-wed' } }, ctx('다음 주 수요일 알림 보여줘'))).toMatchObject({ ok: true });
-    expect(validateSelection({ entryId: 'reminder.list', args: { range: '10-19..10-21' } }, ctx('다음 주 월요일부터 수요일까지 알림 보여줘'))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-week' } }, ctx('다음 주 수요일 알림 보여줘'))).toMatchObject({ ok: false });
     expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-thu' } }, ctx('다음 주 수요일 알림 보여줘'))).toMatchObject({ ok: false });
-    // Codex P2: ONE owner-period resolver. "in the next 7 days" names next-7-days (a mismatch or none asks); a day-only
-    // "25일" is named but unresolved, so every range asks.
-    expect(nlOwnerPeriod('reminders in the next 7 days')).toEqual({ named: true, symbols: ['next-7-days'] });
-    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-7-days' } }, ctx('reminders in the next 7 days'))).toMatchObject({ ok: true });
-    expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('reminders in the next 7 days'))).toMatchObject({ ok: false, reason: 'range' });
-    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'this-week' } }, ctx('reminders in the next 7 days'))).toMatchObject({ ok: false, reason: 'range' });
-    expect(nlOwnerPeriod('25일 알림 보여줘')).toEqual({ named: true });
-    for (const range of ['today', 'tomorrow', '12-26', '10-25']) {
-      expect(validateSelection({ entryId: 'reminder.list', args: { range } }, ctx('25일 알림 보여줘')), range).toMatchObject({ ok: false, reason: 'range' });
-    }
-    expect(nlOwnerPeriod('12월 알림')).toEqual({ named: true, symbols: ['12-01..12-31'] });
-    expect(nlOwnerPeriod('알림 뭐 있어?')).toEqual({ named: false });
     // No period words and no range is fine.
     expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('알림 뭐 있어?'))).toMatchObject({ ok: true });
-    // Codex P2: futureOnly holds on the FINAL range: Mon..Tue of this week is past on Wed 2026-10-14 noon.
-    for (const range of ['this-week', '10-12..10-13']) {
-      expect(validateSelection({ entryId: 'reminder.list', args: { range } }, ctx('이번 주 월요일부터 화요일까지 알림 보여줘')), range).toMatchObject({ ok: false, reason: 'range' });
+  });
+
+  it('owner decision 2026-10-19, bounded: reminder.list filters only by the CLOSED set; every other period asks with the fixed restate', () => {
+    // Each supported form resolves to exactly one period and passes when the range equals it (NOW = Wed 2026-10-14).
+    for (const [text, symbol] of [
+      ['오늘 알림 보여줘', 'today'],
+      ['내일 알림 보여줘', 'tomorrow'],
+      ['이번 주 알림 보여줘', 'this-week'],
+      ['다음 주 알림 보여줘', 'next-week'],
+      ['10월 22일 알림 보여줘', '10-22'],
+      ['Oct 22 reminders', '10-22'],
+      ['2027년 10월 22일 알림 보여줘', '2027-10-22'],
+      ['다음 주 수요일 알림 보여줘', 'next-wed'],
+      ['금요일 알림 보여줘', 'fri'],
+    ] as const) {
+      expect(nlReminderPeriod(text, nlWeekdayMentions(text)), text).toEqual({ kind: 'supported', symbol });
+      expect(validateSelection({ entryId: 'reminder.list', args: { range: symbol } }, ctx(text)), text).toMatchObject({ ok: true });
     }
+    expect(nlReminderPeriod('알림 뭐 있어?')).toEqual({ kind: 'none' });
+    // Spans, durations, months, day-only dates, past and other periods are outside the set: whatever range the selector
+    // wrote (or none), Core asks with the fixed restate, never filters with it and never drops it.
+    for (const [text, range] of [
+      ['다음 주 월요일부터 수요일까지 알림 보여줘', '10-19..10-21'],
+      ['내일부터 금요일까지 알림 보여줘', 'tomorrow'],
+      ['앞으로 7일 알림 보여줘', 'next-7-days'],
+      ['reminders in the next 7 days', 'next-7-days'],
+      ['2월 알림 보여줘', '02-01..02-28'],
+      ['25일 알림 보여줘', '10-25'],
+      ['last week reminders', 'last-week'],
+      ['이번 달 알림 보여줘', 'this-month'],
+    ] as const) {
+      expect(nlReminderPeriod(text, nlWeekdayMentions(text)), text).toEqual({ kind: 'unsupported' });
+      expect(validateSelection({ entryId: 'reminder.list', args: { range } }, ctx(text)), text).toMatchObject({ ok: false, reason: 'unsupported-period', arg: 'range' });
+      expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx(text)), text).toMatchObject({ ok: false, reason: 'unsupported-period', arg: 'range' });
+    }
+    // A date already past (10월 1일 on the 14th) is a past period: it asks the same way.
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: '10-01' } }, ctx('10월 1일 알림 보여줘'))).toMatchObject({ ok: false, reason: 'unsupported-period' });
+    // A supported period with another range (or none) asks too: the range must equal the owner's one period.
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: 'next-week' } }, ctx('이번 주 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range' });
+    expect(validateSelection({ entryId: 'reminder.list', args: { range: '10-23' } }, ctx('10월 22일 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range' });
+    expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('오늘 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range' });
     expect(validateSelection({ entryId: 'reminder.list', args: { status: 'done', range: 'tomorrow' } }, ctx('내일 지난 알림 보여줘'))).toMatchObject({ ok: false, reason: 'invalid-arg', arg: 'range' });
     expect(validateSelection({ entryId: 'reminder.list', args: { status: 'all', range: 'tomorrow' } }, ctx('내일 알림 전부 보여줘'))).toMatchObject({ ok: true });
   });
@@ -376,14 +403,14 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
 });
 
 describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55 with actions', () => {
-  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v57.prompts.json', import.meta.url), 'utf8')) as {
+  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v59.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
   };
 
-  it('pins nl-select.v57 for every golden input (no `actions`)', () => {
-    expect(golden.version).toBe('nl-select.v57');
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v57');
+  it('pins nl-select.v59 for every golden input (no `actions`)', () => {
+    expect(golden.version).toBe('nl-select.v59');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v59');
     for (const golden_ of golden.cases) {
       const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
       const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
@@ -392,7 +419,7 @@ describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55
   });
 
   it('the A6 prompt (v55) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v55');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v57');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');

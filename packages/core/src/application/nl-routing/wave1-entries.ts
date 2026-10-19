@@ -41,7 +41,11 @@ const REMINDER_RANGE = {
   kind: 'range',
   futureOnly: true,
   timeWordsRequired: true,
-  description: 'Only when the owner names when the reminders ring: today (오늘), tomorrow (내일), this-week, a weekday, a date. Omit when the owner names no period; never a past period.',
+  description: 'Only one of these periods the owner names: today (오늘), tomorrow (내일), this-week (이번 주), next-week (다음 주), one date with month and day (10월 22일, Oct 22; a stated year kept: 2027-10-22), or one weekday of this or next week (다음 주 수요일 -> next-wed). Omit otherwise.',
+  periodHelp: {
+    ko: '알림 목록은 오늘·내일·이번 주·다음 주·특정 날짜로 볼 수 있어요. 예: "내일 알림 보여줘"',
+    en: 'Reminders can be listed for today, tomorrow, this week, next week or one date. For example: "show tomorrow\'s reminders"',
+  },
 } as const;
 
 const REMINDER_STATUS = {

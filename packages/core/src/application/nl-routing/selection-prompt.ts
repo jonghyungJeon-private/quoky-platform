@@ -90,14 +90,18 @@ import { nlModeVocabularyText } from './action-entries';
  * v55 (A6; owner decision of 2026-10-19) = v53 on the v57 catalog (reminder.list `range`), the reminder.list rule line saying
  * it has no count arg and its range is only a period the owner names (it said "no range or count arg … a day … adds
  * nothing"), and the "다음 주에 울릴 리마인더 쭉 보여줘" example with range next-week.
+ * v59 (read) / v57 (A6) (owner decision of 2026-10-19, bounded after three Codex P2 rounds on period semantics) = v57 /
+ * v55 whose `reminder.list` range description names the CLOSED set of periods (today, tomorrow, this-week, next-week, one
+ * date with month and day and an optional year, one weekday of this or next week) and, for A6, whose reminder.list rule
+ * line names the same set. Pinned by `golden/nl-select.v59.prompts.json`.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v57';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v59';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v57.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v59.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v55';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v57';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -123,9 +127,9 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v55';
  * description is v46's again. A6 stays v44 and read v39 byte for byte; Core's ITEM_READ veto is unchanged.
  * v50 = the v48 R2 lines on top of v49 (the shared rule-8 lines and action examples changed); no R2 line changes. v52 =
  * the v48 R2 lines on top of v51 (never gated as v50); no R2 line changes. v54 = the v48 R2 lines on top of v53. v56 =
- * the v48 R2 lines on top of v55.
+ * the v48 R2 lines on top of v55. v58 = the v48 R2 lines on top of v57.
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v56';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v58';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -355,7 +359,8 @@ const ACTION_RULES: readonly string[] = [
   '   Quoky\'s own features or commands). A question about using, setting up or writing in any other app, device or service',
   '   is none, even when it shares a word with a Quoky feature.',
   '   Only the args listed for the chosen entry exist: reminder.list has no count arg, so a 몇 개 word with it adds nothing;',
-  '   its range is only a period the owner names (내일 -> tomorrow); a count or day arg an entry does not list is never output.',
+  '   its range is only one of today, tomorrow, this-week, next-week, one date, or one weekday of this or next week that',
+  '   the owner names (내일 -> tomorrow); a count or day arg an entry does not list is never output.',
   '   item.summarize: source is the list the owner means (see Reference context); mode summary only for 요약/정리/짧게/',
   '   summarize, full only for 원문/전체/전문/그대로 보여/full text; omit mode when the owner only asks what it said.',
   '   Posting, sending, replying, calendar events, Jira issues and every other write not in the catalog are still none.',

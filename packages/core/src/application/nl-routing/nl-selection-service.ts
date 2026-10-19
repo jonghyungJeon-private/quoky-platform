@@ -40,7 +40,7 @@ import {
   type NlText,
   NL_IGNORABLE_EXTRA_ARGS,
 } from './catalog';
-import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES, nlOwnerPeriod, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES, nlReminderPeriod, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -291,7 +291,7 @@ export interface NlSelectionServiceDeps {
   readonly elapsed?: () => number;
   /**
    * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
-   * record is written and every prompt and reply is byte-identical to `nl-select.v57` (the read prompt). Any other level requires mode
+   * record is written and every prompt and reply is byte-identical to `nl-select.v59` (the read prompt). Any other level requires mode
    * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
    */
   readonly actions?: {
@@ -750,7 +750,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /**
    * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
    * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
-   * prompt is `nl-select.v57` (the read prompt) byte for byte.
+   * prompt is `nl-select.v59` (the read prompt) byte for byte.
    */
   actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
@@ -1000,6 +1000,16 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const ctx = this.validationContext(turn, prepared.groundingText, last?.args);
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
     this.forgetRefusedPeriod(cacheKey, main);
+    // Owner decision of 2026-10-19, bounded: a period outside the entry's closed set (a span, a duration, a month, a
+    // day-only or past date) is never filtered with and never dropped: the fixed restate of the set asks (content-free).
+    if (!main.ok && main.reason === 'unsupported-period' && main.entryId !== undefined) {
+      const entry = ctx.offered.get(main.entryId);
+      const help = entry?.args.find((spec) => spec.name === main.arg)?.periodHelp;
+      if (entry !== undefined) {
+        this.log('info', 'nl_selection.validation_failed', { entryId: entry.id, reason: main.reason, ...(main.arg !== undefined ? { arg: main.arg } : {}) });
+        return { kind: 'ask', text: help?.[language] ?? renderUsageQuestion(entry, language), entryId: entry.id };
+      }
+    }
     if (main.ok && output.ambiguity === 'CLEAR') return this.complete(main.value, turn, last, language, prepared.groundingText);
     // v53 gate (2026-10-19, reminder.list-006 {count}, none-030 help.topic {topic}): a CLEAR read with no alternative whose
     // only defect is a detail Core cannot use (an unlisted flag or day symbol, or an out-of-set presentation value the owner
@@ -2303,7 +2313,7 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
       if (dropped.length === 0) return undefined;
       // Codex P2 (2026-10-19): the owner stated a period ("내일 알림 보여줘") but the repaired read carries none (the selector
       // wrote it as an unusable detail, e.g. {tomorrow: true}): the owner named a filter Core cannot apply as written: ask.
-      if (result.value.range === undefined && nlOwnerPeriod(ctx.groundingText).named) return undefined;
+      if (result.value.range === undefined && (nlReminderPeriod(ctx.groundingText).kind !== 'none')) return undefined;
       return { result, dropped };
     }
     const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);
@@ -2317,7 +2327,7 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
     // and asks.
     if (result.reason === 'unknown-arg' && spec === undefined && NL_IGNORABLE_EXTRA_ARGS.includes(name)) kind = 'unlisted';
     // Owner decision of 2026-10-19: a period that needs the owner's time words, given with none, is a model invention: dropped.
-    else if (result.reason === 'ungrounded' && spec?.kind === 'range' && spec.timeWordsRequired === true && !nlOwnerPeriod(ctx.groundingText).named) kind = 'range';
+    else if (result.reason === 'ungrounded' && spec?.kind === 'range' && spec.timeWordsRequired === true && !(nlReminderPeriod(ctx.groundingText).kind !== 'none')) kind = 'range';
     else if (result.reason === 'invalid-arg' && spec !== undefined && spec.kind === 'enum' && spec.presentation === true && spec.required !== true && spec.default !== undefined) {
       const words = [...(spec.values ?? []), ...Object.values(spec.valueGrounding ?? {}).flatMap((list) => [...list])].map((word) => normalizeForMatch(word)).filter((word) => word.length > 1);
       if (!words.some((word) => text.includes(word))) kind = 'enum';
@@ -2393,7 +2403,7 @@ function validateWithRepair(candidate: NlSelectionCandidate, ctx: NlValidationCo
     if (result.ok) return result;
     // A time word in a keyword, or a period that lost the owner's weekday, is never repaired by dropping it: the period it
     // names would be lost silently (A5 rule 6, A5 implementation note 2).
-    if (result.reason === 'time-keyword' || result.reason === 'weekday') return result;
+    if (result.reason === 'time-keyword' || result.reason === 'weekday' || result.reason === 'unsupported-period') return result;
     const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);
     const spec = entry?.args.find((arg) => arg.name === result.arg);
     if (spec === undefined || spec.required === true || !(spec.name in current.args)) return result;
