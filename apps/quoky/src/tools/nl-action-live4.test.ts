@@ -89,6 +89,11 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
     expect((await decide('완료된 할 일 보여줘', 'todo.list', { completed: true })).kind).toBe('ask');
     expect(await decide('알림 몇 개 걸려 있어?', 'reminder.list', { count: true })).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
     expect(await decide('any reminders to call mom later?', 'reminder.list', { count: true })).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
+    // Codex P2: a period the owner stated but the selector wrote as a detail ({tomorrow: true}) is never dropped: ask.
+    expect((await decide('내일 알림 보여줘', 'reminder.list', { tomorrow: true })).kind).toBe('ask');
+    expect((await decide('내일 알림 몇 개야?', 'reminder.list', { count: true })).kind).toBe('ask');
+    // With the period as the range, the same message runs.
+    expect(await decide('내일 알림 보여줘', 'reminder.list', { range: 'tomorrow' })).toMatchObject({ kind: 'execute', command: { args: { range: 'tomorrow' } } });
   });
 
   it('Codex P2 / CA P1: an out-of-set FILTER value is never replaced by its default; an owner-named value keeps the ask', async () => {

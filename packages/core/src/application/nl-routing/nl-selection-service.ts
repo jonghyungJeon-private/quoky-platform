@@ -2299,7 +2299,13 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
   const text = normalizeForMatch(ctx.groundingText);
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const result = validateSelection(current, ctx);
-    if (result.ok) return dropped.length > 0 ? { result, dropped } : undefined;
+    if (result.ok) {
+      if (dropped.length === 0) return undefined;
+      // Codex P2 (2026-10-19): the owner stated a period ("내일 알림 보여줘") but the repaired read carries none (the selector
+      // wrote it as an unusable detail, e.g. {tomorrow: true}): the owner named a filter Core cannot apply as written: ask.
+      if (result.value.range === undefined && nlNamesPeriod(ctx.groundingText)) return undefined;
+      return { result, dropped };
+    }
     const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);
     const name = result.arg;
     if (entry === undefined || name === undefined || !(name in current.args)) return undefined;
