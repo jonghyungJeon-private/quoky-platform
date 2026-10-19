@@ -103,7 +103,7 @@ import {
   type StoredSelection,
 } from './selection-state';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
-import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
+import { isNlRangeSymbol, nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
 
 /**
  * Natural-language capability selection (ADR-0120): the one owner of the catalog call, its validation, the clarification
@@ -1001,18 +1001,24 @@ export class NlSelectionService implements TurnDeliveryObserver {
     this.forgetRefusedPeriod(cacheKey, main);
     if (main.ok && output.ambiguity === 'CLEAR') return this.complete(main.value, turn, last, language, prepared.groundingText);
     // v53 gate (2026-10-19, reminder.list-006 {count}, none-030 help.topic {topic}): a CLEAR read with no alternative whose
-    // only defect is a detail Core cannot use (a flag the entry does not list, or an optional value outside its closed set)
-    // runs as the read the selector named without that detail, instead of asking about one option. Never with a dropped
-    // span, keyword, period or time word: those narrow the content and still ask (A5 rule 6).
+    // only defect is a detail Core cannot use (an unlisted flag or day symbol, or an out-of-set presentation value the owner
+    // did not name; `validateWithoutDetail`) runs as the read the selector named without that detail, instead of asking
+    // about one option. A filter value, a raw timestamp, a span or a keyword is never dropped: those still ask (A5 rule 6).
     if (!main.ok && output.ambiguity === 'CLEAR' && output.alternatives.length === 0 && !isNlActionEntryId(output.entryId)) {
       const lenient = validateWithoutDetail({ entryId: output.entryId, args: output.args }, ctx);
-      if (lenient !== undefined && lenient.ok && lenient.value.entry.risk === 'READ') return this.complete(lenient.value, turn, last, language, prepared.groundingText);
+      if (lenient !== undefined && lenient.result.ok && lenient.result.value.entry.risk === 'READ') {
+        // CA P3: every dropped detail is logged (arg name and kind only), so a silently widened read is visible in review.
+        this.log('info', 'nl_selection.detail_dropped', { entryId: lenient.result.value.entry.id, dropped: lenient.dropped.map((detail) => `${detail.arg}:${detail.kind}`).join(',') });
+        return this.complete(lenient.result.value, turn, last, language, prepared.groundingText);
+      }
     }
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action
     // candidate is never a numbered option (only READ entries are stored as options).
     const options: NlValidatedSelection[] = [];
     let weekdayRefused = isWeekdayRefusal(main, output.args, ctx);
     let droppedAction = false;
+    // Codex P2: a read alternative that failed validation (an unconfigured source) or was repaired keeps the choice open.
+    let openRead = false;
     const readCandidates = new Set<string>();
     for (const [index, candidate] of [{ entryId: output.entryId, args: output.args }, ...output.alternatives].entries()) {
       if (actionsOn && isNlActionEntryId(candidate.entryId)) {
@@ -1024,6 +1030,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // with the weekday hint as well.
       if (index === 0 && isWeekdayRefusal(repaired, candidate.args, ctx)) weekdayRefused = true;
       if (repaired.ok && repaired.value.entry.risk === 'READ') readCandidates.add(`${repaired.value.entry.id}|${sortedArgs(repaired.value.args)}`);
+      if (index > 0 && (!repaired.ok || sortedArgs(repaired.value.args) !== sortedArgs(candidate.args))) openRead = true;
       if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) options.push(repaired.value);
     }
     // A refusal reached through the repair path is not kept in the cache either.
@@ -1035,7 +1042,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // from discarded action candidates (Codex P2): at least one action was dropped and exactly one distinct validated read
     // (entry + args) remains, the one named, unchanged. Two reads of one entry ("완료된 할 일 아니면 취소된 할 일") ask.
     const onlyRead = `${main.ok ? main.value.entry.id : ''}|${main.ok ? sortedArgs(main.value.args) : ''}`;
-    if (actionsOn && main.ok && droppedAction && !weekdayRefused && readCandidates.size === 1 && readCandidates.has(onlyRead)) {
+    if (actionsOn && main.ok && droppedAction && !openRead && !weekdayRefused && readCandidates.size === 1 && readCandidates.has(onlyRead)) {
       return this.complete(main.value, turn, last, language, prepared.groundingText);
     }
     if (options.length === 0) {
@@ -2259,30 +2266,48 @@ export class NlSelectionService implements TurnDeliveryObserver {
  * ADR-0120 D6/D8 plus the S1 hardening: a selection request may go only where this turn's chat would go — the same
  * provider family (or id) AND the same declared execution locality. Compared as opaque data, never as a name.
  */
+/** A detail `validateWithoutDetail` dropped: the arg name and its kind only (content-free, logged for the shadow review). */
+interface NlDroppedDetail {
+  readonly arg: string;
+  readonly kind: 'unlisted' | 'enum';
+}
+
 /**
- * v53 gate: validate a CLEAR read after dropping only DETAIL args: an arg the entry does not list whose value is a flag
- * (`count: true` on reminder.list), or an optional enum value with a default that is not one of its closed values (`topic` of
- * help.topic). A valid value the owner did not ground is a guess and still asks; a dropped string the entry does not list (a
- * range, a keyword), a span, a time keyword or a weekday refusal is never dropped here: `undefined` (the caller asks).
+ * v53 gate, Codex P2 and CA P1 (2026-10-19): validate a CLEAR read after dropping only DETAIL args:
+ *  - an arg NAME the entry does not list, with a flag or a closed range-symbol value (`count`, `range` on reminder.list:
+ *    the prompt already says such an arg "adds nothing"); a raw value (a model-made timestamp, a keyword) still asks;
+ *  - an out-of-set value of an optional enum the catalog marks `presentation` (help.topic's `topic`: the default only widens
+ *    the help shown) AND only when the owner's words name none of that arg's values (its value names or grounding words);
+ *    a filter enum (a list status, a role, a window) is never replaced by its default, and "끝난 할 일" with status "done"
+ *    (the to-do value is `completed`) still asks.
+ * Both rules are used: the catalog marker says which args may widen at all, the grounding check that the owner did not ask
+ * for a particular value of it. A valid value the owner did not ground (a guess), a span, a time keyword or a weekday refusal
+ * is never dropped. `undefined`: nothing to drop or a non-detail failure (the caller asks as before).
  */
-function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidationContext): NlValidationResult | undefined {
+function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidationContext): { readonly result: NlValidationResult; readonly dropped: readonly NlDroppedDetail[] } | undefined {
   let current = candidate;
-  let dropped = false;
+  const dropped: NlDroppedDetail[] = [];
+  const text = normalizeForMatch(ctx.groundingText);
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const result = validateSelection(current, ctx);
-    if (result.ok) return dropped ? result : undefined;
+    if (result.ok) return dropped.length > 0 ? { result, dropped } : undefined;
     const entry = result.entryId === undefined ? undefined : ctx.offered.get(result.entryId);
     const name = result.arg;
     if (entry === undefined || name === undefined || !(name in current.args)) return undefined;
-    const value = current.args[name];
     const spec = entry.args.find((arg) => arg.name === name);
-    const detail =
-      (result.reason === 'unknown-arg' && spec === undefined && typeof value === 'boolean') ||
-      (result.reason === 'invalid-arg' && spec !== undefined && spec.kind === 'enum' && spec.required !== true && spec.default !== undefined);
-    if (!detail) return undefined;
+    let kind: NlDroppedDetail['kind'] | undefined;
+    const value = current.args[name];
+    // An unlisted flag, or an unlisted closed range symbol (a day word the entry cannot filter by); never a raw value such as
+    // a model-made timestamp or a keyword ("a model-made date is refused").
+    if (result.reason === 'unknown-arg' && spec === undefined && (typeof value === 'boolean' || (typeof value === 'string' && isNlRangeSymbol(value)))) kind = 'unlisted';
+    else if (result.reason === 'invalid-arg' && spec !== undefined && spec.kind === 'enum' && spec.presentation === true && spec.required !== true && spec.default !== undefined) {
+      const words = [...(spec.values ?? []), ...Object.values(spec.valueGrounding ?? {}).flatMap((list) => [...list])].map((word) => normalizeForMatch(word)).filter((word) => word.length > 1);
+      if (!words.some((word) => text.includes(word))) kind = 'enum';
+    }
+    if (kind === undefined) return undefined;
     const { [name]: _dropped, ...rest } = current.args;
     current = { entryId: current.entryId, args: rest };
-    dropped = true;
+    dropped.push({ arg: name, kind });
   }
   return undefined;
 }

@@ -1289,6 +1289,12 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
     expect(given.decision.kind).not.toBe('execute');
   });
 
+  it('CA P3: a dropped read detail is logged with its arg name and kind only', async () => {
+    const { w, decision } = await run('알림 몇 개 걸려 있어?', out('reminder.list', { count: true }));
+    expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });
+    expect(w.logs.find((log) => log.event === 'nl_selection.detail_dropped')?.fields).toEqual({ entryId: 'reminder.list', dropped: 'count:unlisted' });
+  });
+
   it('turns 26 / 58 / 60: a reminder with no time asks for the time (Korean and English)', async () => {
     const ko = await run('검증 인쇄 맡기기 알림 하나 만들어줘', out('reminder.create', { body: '검증 인쇄 맡기기' }));
     // A restate prompt, never a question a following "3시" could not complete; the example echoes the owner's own body.

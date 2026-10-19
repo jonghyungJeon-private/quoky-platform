@@ -118,6 +118,12 @@ export interface NlArgSpec {
    * `lastSelection`, so a follow-up ("안 읽은 것만") refines the listing, not the pick.
    */
   readonly transient?: boolean;
+  /**
+   * `enum` only (v53 gate, Codex P2): the value is a presentation detail, not a filter, so an out-of-set value may be dropped
+   * for the default and the read only widens (help.topic's `topic`: the general help). Absent: a FILTER (a list status, a
+   * window): an out-of-set value is never replaced by the default, the owner is asked.
+   */
+  readonly presentation?: true;
   /** The value the entry uses when the argument is absent; canonical args omit an argument equal to it. */
   readonly default?: string | boolean;
   /** `span` only: the maximum length in code points (A6-D1: a title or body 1..200). */

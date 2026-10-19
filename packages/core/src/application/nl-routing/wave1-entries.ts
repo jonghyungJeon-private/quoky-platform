@@ -526,6 +526,8 @@ const helpTopic: NlCatalogEntry = {
       kind: 'enum',
       values: NL_HELP_TOPICS,
       default: 'all',
+      // v53 gate (Codex P2): the topic narrows nothing the owner sees except which help is shown; 'all' only widens it.
+      presentation: true,
       description: 'The Quoky feature asked about: todo, todo.complete, reminder, calendar, mail, drive, work-lookup (Jira/GitHub/Slack/Confluence lookups), memory, feedback, branch, commit, project, model, connector-write; all for "which things are you able to help with".',
     },
   ],

@@ -68,9 +68,30 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
     const help = JSON.stringify({ entryId: 'help.topic', args: { topic: 'undo' }, ambiguity: 'CLEAR', alternatives: [] });
     const how = await decideActionCase({ text: 'undo 하는 방법 알려줘' }, scripted(help), NOW);
     expect(how.decision).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic' } });
-    // A dropped period would widen the content silently: it still asks (A5 rule 6).
+    // An arg the entry does not list adds nothing (the prompt's own rule; gold reminder.list-002 is args {}): dropped.
     const period = await decideActionCase({ text: '내일 알림 뭐 있어?' }, scripted(answer({ range: 'tomorrow' }, 'CLEAR', [])), NOW);
-    expect(period.decision.kind).toBe('ask');
+    expect(period.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
+  });
+
+  it('Codex P2 / CA P1: an out-of-set FILTER value is never replaced by its default; an owner-named value keeps the ask', async () => {
+    const ask = async (input: string, entryId: string, args: Record<string, unknown>) =>
+      (await decideActionCase({ text: input }, scripted(JSON.stringify({ entryId, args, ambiguity: 'CLEAR', alternatives: [] })), NOW)).decision.kind;
+    expect(await ask('만료된 알림 보여줘', 'reminder.list', { status: 'expired' })).toBe('ask');
+    expect(await ask('끝난 할 일 보여줘', 'todo.list', { status: 'done' })).toBe('ask');
+    expect(await ask('할 일 보여줘', 'todo.list', { status: 'pending' })).toBe('ask');
+    expect(await ask('내 지라 완료된 것까지 다', 'jira.issues', { status: 'resolved' })).toBe('ask');
+    expect(await ask('지라 둘 다 보여줘', 'jira.issues', { role: 'watcher' })).toBe('ask');
+    // A presentation value (help.topic) whose words the owner did use is not dropped either.
+    expect(await ask('todo 하는 방법 알려줘', 'help.topic', { topic: 'todos' })).toBe('ask');
+  });
+
+  it('Codex P2: a read alternative that failed or was repaired keeps the choice open; no shortcut', async () => {
+    const raw = JSON.stringify({ entryId: 'reminder.list', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'notion.pages', args: {} }, { entryId: 'reminder.create', args: {} }] });
+    const failed = await decideActionCase({ text }, scripted(raw), NOW);
+    expect(failed.decision.kind).not.toBe('execute');
+    const repairedAlt = JSON.stringify({ entryId: 'reminder.list', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'reminder.list', args: { status: 'canceled' } }, { entryId: 'reminder.create', args: {} }] });
+    const repaired = await decideActionCase({ text }, scripted(repairedAlt), NOW);
+    expect(repaired.decision.kind).not.toBe('execute');
   });
 
   it('Codex P2: only an ambiguity made solely by dropped action candidates runs; a lone flag or two reads of one entry ask', async () => {
@@ -86,10 +107,10 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
 
   it('a repaired or a two-read case still asks; the ask records its closed shape', async () => {
     // A valid value the owner did not say (a guess) is repaired away: the one option differs from what was named, so Core
-    // asks. An out-of-set value ('scheduled') is a detail and runs (v53 gate).
+    // asks. An out-of-set FILTER value ('scheduled' for a list status) is never replaced by the default either (Codex P2).
     const repaired = await decideActionCase({ text }, scripted(answer({ status: 'canceled' }, 'CLEAR', [])), NOW);
     const outOfSet = await decideActionCase({ text }, scripted(answer({ status: 'scheduled' }, 'CLEAR', [])), NOW);
-    expect(outOfSet.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
+    expect(outOfSet.decision.kind).toBe('ask');
     expect(repaired.decision.kind).toBe('ask');
     const two = await decideActionCase({ text: '몇 건이야?' }, scripted(JSON.stringify({ entryId: 'jira.issues', args: { count: true }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'calendar.events', args: { count: true } }] })), NOW);
     expect(two.decision.kind).toBe('ask');
