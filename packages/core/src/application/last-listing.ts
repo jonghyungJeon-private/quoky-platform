@@ -92,6 +92,8 @@ interface Entry {
   readonly replyIds?: readonly string[];
   /** A6-D2: shown labels parallel to `ids` (absent = 1..n). */
   readonly labels?: readonly number[];
+  /** CA P3 (2026-10-19): the listing showed a filtered subset (a reminder period), so an unshown number is not "on it". */
+  readonly filtered?: true;
 }
 
 /** A listing that can no longer be picked from: only which replies it had (GML-2). */
@@ -147,6 +149,7 @@ function entryOf(raw: unknown, source: ListingSource | undefined, allowEmptyIds 
     ...(requestId !== undefined ? { requestId } : {}),
     ...(replyIds !== undefined && replyIds.length > 0 ? { replyIds } : {}),
     ...(labels !== undefined ? { labels } : {}),
+    ...(entry.filtered === true ? { filtered: true as const } : {}),
   };
 }
 
@@ -235,6 +238,7 @@ function serializeEntry(entry: Entry): Record<string, unknown> {
     ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}),
     ...(entry.replyIds !== undefined ? { replyIds: [...entry.replyIds] } : {}),
     ...(entry.labels !== undefined ? { labels: [...entry.labels] } : {}),
+    ...(entry.filtered === true ? { filtered: true } : {}),
   };
 }
 
@@ -468,6 +472,7 @@ export function withLabelledListing(
   now: IsoTimestamp,
   mode: LabelledListingMode,
   requestId?: string,
+  filtered?: boolean,
 ): unknown {
   const valid = items.filter(
     (item, index) =>
@@ -505,6 +510,8 @@ export function withLabelledListing(
       labels: merged.map((item) => item.label),
       at: now,
       ...(request !== undefined ? { requestId: request } : {}),
+      // A listing sets the marker; a merge keeps the listing's own.
+      ...((mode === 'listing' ? filtered === true : previous?.filtered === true) ? { filtered: true as const } : {}),
     };
     return { slots, ...settle(replied, own.expired, now) };
   });
@@ -520,6 +527,8 @@ export interface ListingSlot {
    * source and `requestId` as `quoky.lastAction` is that action's own echo, never a newer listing. Opaque; never shown.
    */
   readonly requestId?: string;
+  /** CA P3 (2026-10-19): the listing showed a filtered subset (a reminder period); an unshown number asks. */
+  readonly filtered?: true;
 }
 
 /** A6-D2: every fresh slot of this Actor and the most recently written one (the latest `at`). */
@@ -536,7 +545,13 @@ export function readListingRecord(value: unknown, actorId: Id, now: IsoTimestamp
     const entry = freshEntry(value, actorId, source, now);
     if (entry === undefined) continue;
     const listing: PersistedListing = { at: entry.at, ids: entry.ids, ...(entry.labels !== undefined ? { labels: entry.labels } : {}) };
-    const slot: ListingSlot = { source, at: entry.at, items: listingItems(listing), ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}) };
+    const slot: ListingSlot = {
+      source,
+      at: entry.at,
+      items: listingItems(listing),
+      ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}),
+      ...(entry.filtered === true ? { filtered: true as const } : {}),
+    };
     slots[source] = slot;
     if (mostRecent === undefined || Date.parse(slot.at) > Date.parse(mostRecent.at)) mostRecent = slot;
   }

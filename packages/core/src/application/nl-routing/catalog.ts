@@ -298,6 +298,8 @@ export interface NlActionReceipt {
 export interface NlListingReceipt {
   readonly source: 'todo' | 'reminder' | 'jira' | 'slack';
   readonly items: readonly { readonly label: number; readonly id: string }[];
+  /** CA P3 (2026-10-19): a filtered subset (a reminder period); a number it did not show asks instead of resolving. */
+  readonly filtered?: true;
 }
 
 /** A6 undo: what the inverse undoes (the `lastAction` record's entry and the item version it left behind). */

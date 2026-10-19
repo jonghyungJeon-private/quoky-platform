@@ -1918,7 +1918,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     let listed: ListingSource | undefined;
     if (listing !== undefined) {
       // An empty listing removes the slot: an older list of that source is never picked from after it.
-      await write(LAST_LISTING_METADATA_KEY, (current) => withLabelledListing(current, actor.id, listing.source, listing.items, now, 'listing', message.id));
+      await write(LAST_LISTING_METADATA_KEY, (current) => withLabelledListing(current, actor.id, listing.source, listing.items, now, 'listing', message.id, listing.filtered === true));
       if (listing.items.length > 0) listed = listing.source;
     }
     if (action !== undefined && (action.source === 'todo' || action.source === 'reminder')) {

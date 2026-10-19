@@ -585,7 +585,7 @@ export class ReminderConversationService {
       const active = range === undefined ? all : all.filter((reminder) => occursIn(reminder, range));
       const period = range === undefined ? undefined : nlRangeLabel(range, input.language ?? 'ko');
       const rendered = this.deps.composer.listRendered(active, input.now, period);
-      const listing = this.deps.actionReceipts === true ? listingOf(active.slice(0, rendered.shown)).listing : undefined;
+      const listing = this.deps.actionReceipts === true ? listingOf(active.slice(0, rendered.shown), range !== undefined).listing : undefined;
       return { reply: this.reply(turn, rendered.body), ...(listing !== undefined ? { listing } : {}) };
     } catch (error) {
       this.deps.logger.error('reminder.conversation.failed', {
@@ -635,26 +635,26 @@ function refusedReceipt(command: NlSelectedCommand, reason: string): NlActionRec
   return { entryId, result: 'refused', source: 'reminder', reason };
 }
 
-/** The most occurrences checked per recurring reminder (a range is at most 31 days; a daily reminder has ~32). */
-const RANGE_OCCURRENCE_MAX = 64;
-
-/** Whether a scheduled reminder has an occurrence in `[range.from, range.to)` (its next one, then its repeats). */
+/**
+ * Whether a scheduled reminder has an occurrence in `[range.from, range.to)`. Its next occurrence first; for a recurring
+ * clock schedule (DAILY, WEEKLY: the domain has no monthly rule) Core seeks straight to the first occurrence at or after
+ * `range.from` with the schedule's own rule (`nextOccurrenceAfter` from just before `from`, a bounded local-day search),
+ * never by stepping from the next occurrence, so a period months ahead is found (Codex P2). A one-shot or an
+ * event-relative reminder has this one occurrence.
+ */
 function occursIn(reminder: Reminder, range: NlResolvedRange): boolean {
   const from = Date.parse(range.from);
   const to = Date.parse(range.to);
-  let at = reminder.nextFireAt ?? reminder.occurrenceAt;
-  for (let step = 0; at !== undefined && step < RANGE_OCCURRENCE_MAX; step += 1) {
-    const ms = Date.parse(at);
-    if (!Number.isFinite(ms) || ms >= to) return false;
-    if (ms >= from) return true;
-    // Only a recurring clock schedule repeats; a one-shot or an event-relative reminder has this one occurrence.
-    if (reminder.schedule.type === 'ONCE' || reminder.event !== undefined) return false;
-    at = nextOccurrenceAfter(reminder.schedule, reminder.timeZone, at) ?? undefined;
-  }
-  return false;
+  const next = reminder.nextFireAt ?? reminder.occurrenceAt;
+  const nextMs = next === undefined ? Number.NaN : Date.parse(next);
+  if (!Number.isFinite(nextMs) || nextMs >= to) return false;
+  if (nextMs >= from) return true;
+  if (reminder.schedule.type === 'ONCE' || reminder.event !== undefined) return false;
+  const first = nextOccurrenceAfter(reminder.schedule, reminder.timeZone, new Date(from - 1).toISOString());
+  return first !== null && Date.parse(first) < to;
 }
 
 /** A6-D2: the reminder listing exactly as shown (display numbers in list order; an empty list clears the slot). */
-function listingOf(shown: readonly Reminder[]): { readonly listing: NlListingReceipt } {
-  return { listing: { source: 'reminder', items: shown.slice(0, 50).map((reminder) => ({ label: reminder.displayNo, id: reminder.id })) } };
+function listingOf(shown: readonly Reminder[], filtered = false): { readonly listing: NlListingReceipt } {
+  return { listing: { source: 'reminder', items: shown.slice(0, 50).map((reminder) => ({ label: reminder.displayNo, id: reminder.id })), ...(filtered ? { filtered: true as const } : {}) } };
 }

@@ -5,7 +5,7 @@ import { nlIsRequestForm } from './request-shape';
 import { NL_EN_REQUEST_LEADS } from './garbled-action';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { isNlTimeWord } from './symbolic-time';
-import { ANCHORED_TODO_PREFIX_HEADS } from '../reminders/reminder-grammar';
+import { ANCHORED_TODO_PREFIX_HEADS, reminderTextNamesDay } from '../reminders/reminder-grammar';
 import { SLACK_POST_COLON_HEAD } from '../work-chat/work-chat-command';
 import { EXECUTION_PHRASES } from '../execution-command-guard';
 
@@ -1096,10 +1096,11 @@ export const NL_ACTION_ENTRIES: Readonly<Partial<Record<NlActionEntryId, NlCatal
 /**
  * Owner decision of 2026-10-19 (reminder.list `range`, A5 rule 6): whether the owner's words name a period at all. The title
  * time check ({@link containsNlTimeExpression}) treats a spaced "이번 주" as two weak words; a period word written with a
- * space ("이번 주", "다음 달") is one period here, as in its unspaced form.
+ * space ("이번 주", "다음 달") is one period here, as in its unspaced form; and the reminder grammar's own day recognizer
+ * (`reminderTextNamesDay`: "December 25", "Dec 25", "next week", weekdays, Korean dates) counts too (Codex P2).
  */
 export function nlNamesPeriod(text: string): boolean {
-  return containsNlTimeExpression(text) || containsNlTimeExpression(text.replace(/(이번|다음|다다음|지난|저번)\s+(주|달)/gu, '$1$2'));
+  return containsNlTimeExpression(text) || containsNlTimeExpression(text.replace(/(이번|다음|다다음|지난|저번)\s+(주|달)/gu, '$1$2')) || reminderTextNamesDay(text);
 }
 
 /**

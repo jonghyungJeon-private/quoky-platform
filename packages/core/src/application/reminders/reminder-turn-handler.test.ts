@@ -205,3 +205,23 @@ describe('ADR-0122 P2: the reminder status view follows `reminder` in a channel 
     expect(calls).toEqual(['canceled']);
   });
 });
+
+describe('Codex / CA P2 (2026-10-19): a period and a status apply together on reminder.list', () => {
+  it('"all" with a period lists the scheduled ones in it; canceled or done with a period asks and reads nothing', async () => {
+    const calls: Array<{ status?: string; range?: string }> = [];
+    const conversation = {
+      handleTurn: async () => null,
+      listReply: async (_input: unknown, status?: string, range?: { symbol: string }) => {
+        calls.push({ ...(status !== undefined ? { status } : {}), ...(range !== undefined ? { range: range.symbol } : {}) });
+        return { context: CONTEXT, text: 'ok' };
+      },
+    };
+    const handler = new ReminderTurnHandler({ conversation, composer: new ReminderReplyComposer(), enabled: true, logger: new RecordingLogger() });
+    const range = { symbol: 'tomorrow' } as never;
+    await handler.handleSelected({ entryId: 'reminder.list', args: { status: 'all', range: 'tomorrow' }, range, language: 'ko' }, context('내일 알림 전부 보여줘'));
+    expect(calls).toEqual([{ range: 'tomorrow' }]);
+    const refused = await handler.handleSelected({ entryId: 'reminder.list', args: { status: 'done', range: 'tomorrow' }, range, language: 'ko' }, context('내일 지난 알림'));
+    expect(refused?.reply.text).toBe('무엇을/어느 항목을 다시 말씀해 주세요.');
+    expect(calls).toHaveLength(1);
+  });
+});

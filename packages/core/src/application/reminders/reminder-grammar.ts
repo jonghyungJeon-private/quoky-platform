@@ -1308,6 +1308,20 @@ const EN_COMPONENTS: ReadonlyArray<{ re: RegExp; apply: (spec: TimeSpec, m: RegE
 
 type EnComponent = (typeof EN_COMPONENTS)[number];
 
+/**
+ * Codex P2 (2026-10-19, reminder.list `range`): whether `text` names a day, date or period this grammar knows: the Korean
+ * day words (오늘, 내일, 요일, "12월 25일", "25일", 이번/다음 주, 주말 …), the English components (today, tomorrow, a weekday,
+ * "on December 25", a clock), the English month-name date without `on` ("Dec 25") and the English week / month words
+ * (`next week`). Reuses the grammar's own patterns and month vocabulary; no word list of its own. Pure.
+ */
+export function reminderTextNamesDay(text: string): boolean {
+  const normalized = text.normalize('NFC').replace(/\s+/g, ' ');
+  if (hasKoDayWord(normalized)) return true;
+  if (EN_UNSUPPORTED_DAY.test(normalized) || EN_STRAY_WEEKDAY.test(normalized)) return true;
+  if (new RegExp(`\\b${EN_MONTH}\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?\\b|\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?${EN_MONTH}\\b`, 'i').test(normalized)) return true;
+  return EN_COMPONENTS.some((component) => new RegExp(component.re.source, component.re.flags.replace('g', '')).test(normalized));
+}
+
 interface EnComponentMatch {
   component: EnComponent;
   m: RegExpExecArray;

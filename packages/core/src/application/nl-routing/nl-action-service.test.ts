@@ -1289,6 +1289,19 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
     expect(given.decision.kind).not.toBe('execute');
   });
 
+  it('CA P3: after a filtered reminder listing, a number it did not show asks instead of resolving by display number', async () => {
+    const filtered = () => withLabelledListing(undefined, 'owner', 'reminder', [{ label: 15, id: 'r-15' }], at(0), 'listing', 'm-list', true);
+    const unshown = await run('13번 알림 취소해줘', out('reminder.cancel', { ref: '#13' }), (setup) => setup.setMetadata(LAST_LISTING_METADATA_KEY, filtered()));
+    expect(unshown.decision.kind).toBe('ask');
+    expect(unshown.decision.kind === 'ask' ? unshown.decision.text : '').toContain('15');
+    expect(actionLogs(unshown.w).at(-1)?.fields).toMatchObject({ entryId: 'reminder.cancel', result: 'asked' });
+    const shown = await run('15번 알림 취소해줘', out('reminder.cancel', { ref: '#15' }), (setup) => setup.setMetadata(LAST_LISTING_METADATA_KEY, filtered()));
+    expect(shown.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.cancel', target: { id: 'r-15', label: 15 } } });
+    // An unfiltered listing keeps the display-number rule.
+    const plain = await run('13번 알림 취소해줘', out('reminder.cancel', { ref: '#13' }), (setup) => setup.setMetadata(LAST_LISTING_METADATA_KEY, withLabelledListing(undefined, 'owner', 'reminder', [{ label: 15, id: 'r-15' }], at(0), 'listing', 'm-list')));
+    expect(plain.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.cancel', target: { label: 13 } } });
+  });
+
   it('CA P3: a dropped read detail is logged with its arg name and kind only', async () => {
     const { w, decision } = await run('알림 몇 개 걸려 있어?', out('reminder.list', { count: true }));
     expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list' } });

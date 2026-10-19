@@ -7,6 +7,7 @@ import {
   nlNamedItemSources,
   hasNlDeterminerReference,
   isNlBulkRequest,
+  nlNamesPeriod,
   isNlDeicticOnlyPayload,
   isNlSpanInsideStructure,
   nlActionInputRefusal,
@@ -303,6 +304,23 @@ describe('A6 prompt v53 (live test 4, v49 / v51 gates): the v44 help.topic block
     expect(validateSelection({ entryId: 'reminder.list', args: { range: 'tomorrow' } }, ctx('알림 뭐 있어?'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'range' });
     expect(validateSelection({ entryId: 'reminder.list', args: { range: 'last-week' } }, ctx('지난주 알림 보여줘'))).toMatchObject({ ok: false, reason: 'range', arg: 'range' });
     expect(validateSelection({ entryId: 'reminder.list', args: {} }, ctx('알림 목록'))).toMatchObject({ ok: true, value: { args: {} } });
+  });
+
+  it('Codex P2: dates in every form the reminder grammar knows ground the period; a status the period cannot apply to asks', () => {
+    for (const [text, range] of [
+      ['reminders on December 25', '12-25'],
+      ['Dec 25 reminders', '12-25'],
+      ['reminders for 12/25', '12-25'],
+      ['12월 25일 알림 보여줘', '12-25'],
+      ['25일 알림 보여줘', '10-25'],
+      ['reminders next week', 'next-week'],
+    ] as const) {
+      expect(nlNamesPeriod(text), text).toBe(true);
+      expect(validateSelection({ entryId: 'reminder.list', args: { range } }, ctx(text)), text).toMatchObject({ ok: true });
+    }
+    expect(nlNamesPeriod('알림 뭐 있어?')).toBe(false);
+    expect(validateSelection({ entryId: 'reminder.list', args: { status: 'done', range: 'tomorrow' } }, ctx('내일 지난 알림 보여줘'))).toMatchObject({ ok: false, reason: 'invalid-arg', arg: 'range' });
+    expect(validateSelection({ entryId: 'reminder.list', args: { status: 'all', range: 'tomorrow' } }, ctx('내일 알림 전부 보여줘'))).toMatchObject({ ok: true });
   });
 
   it('its two new examples are what Core validates from their own text', () => {

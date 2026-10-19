@@ -435,6 +435,20 @@ describe('owner decision of 2026-10-19: reminder.list with a period lists only t
     expect((await conversation.listReplyDetailed(base())).listing?.items.map((item) => item.label)).toEqual([13, 14, 15, 16]);
   });
 
+  it('Codex P2: a period months ahead finds daily and weekly reminders by seeking, not stepping; a filtered listing is marked', async () => {
+    const { conversation } = service();
+    await conversation.handleAction(cmd('reminder.create', { body: '매일 스트레칭', when: '매일 아침 8시' }), base()); // #13
+    await conversation.handleAction(cmd('reminder.create', { body: '월요일 주간회의', when: '매주 월요일 오전 10시' }), base()); // #14
+    await conversation.handleAction(cmd('reminder.create', { body: '모레 서류', when: '모레 9시' }), base()); // #15, Oct 16
+    // Christmas 2026 is a Friday; the first week of January 2027 holds a Monday (Jan 4).
+    const christmas = await conversation.listReplyDetailed(base(), undefined, range('12-25'));
+    expect(christmas.listing?.items.map((item) => item.label)).toEqual([13]);
+    expect(christmas.listing?.filtered).toBe(true);
+    expect((await conversation.listReplyDetailed(base(), undefined, range('01-04..01-08'))).listing?.items.map((item) => item.label)).toEqual([13, 14]);
+    expect((await conversation.listReplyDetailed(base())).listing?.filtered).toBeUndefined();
+    // The domain has no monthly schedule (ONCE, DAILY, WEEKLY only), so there is no monthly case to seek.
+  });
+
   it('an empty period names it', async () => {
     const { conversation } = service();
     await conversation.handleAction(cmd('reminder.create', { body: '모레 서류', when: '모레 9시' }), base());

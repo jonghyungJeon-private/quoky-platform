@@ -488,6 +488,11 @@ const reminderList: NlCatalogEntry = {
   // Owner decision of 2026-10-19 ("내일 알림 뭐 있어?" lists tomorrow's): the shared range symbols, grounded in the owner's
   // own time words only (A5 rule 6), today or later.
   args: [REMINDER_STATUS, REMINDER_RANGE],
+  // Codex / CA P2: a period applies to scheduled reminders (it is never past); canceled or done ones with a period cannot
+  // be answered, so the period is refused and Core asks rather than listing them without it.
+  check(args: NlArgs) {
+    return args.range !== undefined && (args.status === 'canceled' || args.status === 'done') ? { reason: 'invalid-arg', arg: 'range' } : undefined;
+  },
   usage: { ko: '"알림 목록"', en: '"알림 목록"' },
 };
 

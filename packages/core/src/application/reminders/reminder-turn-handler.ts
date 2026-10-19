@@ -13,7 +13,7 @@ import { parseReminderMessage } from './reminder-grammar';
 import { isNlActionEntryId, type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
 import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
-import { renderListStatusDmOnly } from '../nl-routing/nl-action-policy';
+import { renderListStatusDmOnly, renderRestate } from '../nl-routing/nl-action-policy';
 import type { OnDemandBrief } from './on-demand-brief';
 import type { ReminderConversationService } from './reminder-conversation-service';
 import type { ReminderReplyComposer } from './reminder-reply-composer';
@@ -104,7 +104,12 @@ export class ReminderTurnHandler implements ConversationTurnHandler {
     const base = { context: ctx.message.context, actorId: ctx.actor.id, messageId: ctx.message.id, now: ctx.now };
     if (isNlActionEntryId(selected.entryId)) return this.handleAction(selected, ctx, base);
     if (selected.entryId === 'reminder.list') {
-      const status = selected.args.status === 'canceled' || selected.args.status === 'done' || selected.args.status === 'all' ? selected.args.status : undefined;
+      const requested = selected.args.status === 'canceled' || selected.args.status === 'done' || selected.args.status === 'all' ? selected.args.status : undefined;
+      // Codex / CA P2 (2026-10-19): a period and a status apply together. Only a scheduled reminder rings in a period (a
+      // range is never past), so "all" with a period is the scheduled ones in it; canceled or done with a period is refused
+      // by the entry check before this point (asked), never answered without the period.
+      const status = selected.range !== undefined && requested === 'all' ? undefined : requested;
+      if (selected.range !== undefined && status !== undefined) return { reply: outboundMessage(ctx.message.context, renderRestate(selected.language), { replyToMessageId: ctx.message.id }) };
       // The status view (owner-approved 2026-10-15) is read-only and never an A6 listing.
       // A status view is DM-only in a channel unless the gate is enforced and the channel holds `reminder` (ADR-0122 P2,
       // Codex P2 of #221); with the gate off it stays DM-only. Nothing is read when refused.

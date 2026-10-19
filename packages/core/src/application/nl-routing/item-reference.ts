@@ -170,7 +170,13 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
           : unresolved(input, 'none');
       }
       // The display number is stable: the listing (when fresh) supplies the id, the repository resolves it otherwise.
-      const listed = state.listings.slots.reminder?.items.find((item) => item.label === ref.index);
+      const slot = state.listings.slots.reminder;
+      const listed = slot?.items.find((item) => item.label === ref.index);
+      // CA P3 (2026-10-19): after a FILTERED reminder listing (a period) that is the owner's latest view, a number it did
+      // not show is not resolved by display number: Core asks with the numbers it did show.
+      if (listed === undefined && slot !== undefined && slot.filtered === true && state.listings.mostRecent === slot) {
+        return unresolved(input, 'ambiguous', { candidates: slot.items.slice(0, 10), found: 'reminder', listingAt: slot.at });
+      }
       return { kind: 'resolved', target: { source: 'reminder', ...(listed !== undefined ? { id: listed.id } : {}), label: ref.index } };
     }
   }
