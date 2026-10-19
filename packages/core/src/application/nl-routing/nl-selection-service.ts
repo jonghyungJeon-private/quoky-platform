@@ -39,7 +39,7 @@ import {
   type NlSelectedCommand,
   type NlText,
 } from './catalog';
-import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
+import { ITEM_CONTENT_MODE, NL_ACTION_CANONICAL_WORDS, NL_ACTION_ENTRIES, NL_CATALOG_ARG_NAMES, NL_ACTION_WORDS, nlR2SourcesOffered, containsNlTimeExpression, hasNlDeictic, isNlActionEntry, isNlBulkRequest, isNlSpanGrounded, nlActionInputRefusal, nlNamedItemSources, nlOriginRequestFrame, nlNumeralsIn, nlOrdinalsIn, withoutSpan, withoutStructures, nlActionSourceOf, normalizeNlSpan, parseNlRef } from './action-entries';
 import { NlActionSwitch, parseActionSwitchPhrase, renderActionSwitchReply, type NlActionSwitchState } from './action-switch';
 import {
   hasReferenceRecord,
@@ -1008,7 +1008,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
       const lenient = validateWithoutDetail({ entryId: output.entryId, args: output.args }, ctx);
       if (lenient !== undefined && lenient.result.ok && lenient.result.value.entry.risk === 'READ') {
         // CA P3: every dropped detail is logged (arg name and kind only), so a silently widened read is visible in review.
-        this.log('info', 'nl_selection.detail_dropped', { entryId: lenient.result.value.entry.id, dropped: lenient.dropped.map((detail) => `${detail.arg}:${detail.kind}`).join(',') });
+        // Arg names from the catalog only (Codex P2): a model-made name is logged as `other`.
+        this.log('info', 'nl_selection.detail_dropped', { entryId: lenient.result.value.entry.id, dropped: lenient.dropped.map((detail) => `${NL_CATALOG_ARG_NAMES.has(detail.arg) ? detail.arg : 'other'}:${detail.kind}`).join(',') });
         return this.complete(lenient.result.value, turn, last, language, prepared.groundingText);
       }
     }
@@ -1391,6 +1392,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
       }
       // CA / Codex P2 (2026-10-19): a bare "<title> 할 일" whose title may not be a task asks whether to add it.
       if (validated.reason === 'uncertain-title' && entryId === 'todo.add' && typeof output.args.title === 'string') {
+        // Codex P2: the title is echoed only when it is the owner's own words of this turn; an ungrounded title is refused.
+        if (!isNlSpanGrounded(output.args.title, withoutStructures(prepared.groundingText))) {
+          const refused: NlActionAudit = { ...base, resolution: 'none', result: 'refused', reason: 'ungrounded' };
+          if (shadow) return this.shadowAction({ ...refused, result: 'shadow' });
+          return this.actionAnswer(refused, renderRestate(language));
+        }
         const asked: NlActionAudit = { ...base, resolution: 'ambiguous', result: 'asked', reason: 'uncertain-title' };
         if (shadow) return this.shadowAction({ ...asked, result: 'shadow' });
         return this.actionAnswer(asked, renderConfirmTitle(output.args.title, language));
@@ -2130,13 +2137,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // A provider-reported timeout is not a completed call either (it must not reset the idle clock).
       const timedOut = error instanceof SelectionTimeout || (error instanceof AiProviderError && error.kind === AiFailureKind.TIMEOUT);
       if (!timedOut) this.lastCompletedAtMs = clock();
-      const detail = error instanceof AiProviderError ? `provider-${String(error.kind).toLowerCase()}` : error instanceof Error ? error.name : 'unknown';
+      // Closed values only (Codex P2): the provider failure kind enum, never an error's own name or message.
+      const detail = error instanceof AiProviderError ? `provider-${String(error.kind).toLowerCase().replace(/[^a-z_-]/gu, '')}` : 'error';
       return { kind: 'unavailable', cause: timedOut ? 'timeout' : 'failed', latencyMs: Math.max(0, clock() - started), call, detail };
     }
     this.lastCompletedAtMs = clock();
     const latencyMs = Math.max(0, clock() - started);
     const output = parseSelectionOutput(rawText);
-    if (output === null) return { kind: 'unavailable', cause: 'malformed', latencyMs, call, detail: nlSelectionParseFailure(rawText) ?? 'unknown' };
+    if (output === null) return { kind: 'unavailable', cause: 'malformed', latencyMs, call, detail: nlSelectionParseFailure(rawText, NL_CATALOG_ARG_NAMES) ?? 'unknown' };
     const cacheable = !bypass && (!actionsOn || isCacheableOutput(output));
     if (cacheable) {
       this.cache.set(cacheKey, { at: clock(), output });
@@ -2274,8 +2282,9 @@ interface NlDroppedDetail {
 
 /**
  * v53 gate, Codex P2 and CA P1 (2026-10-19): validate a CLEAR read after dropping only DETAIL args:
- *  - an arg NAME the entry does not list, with a flag or a closed range-symbol value (`count`, `range` on reminder.list:
- *    the prompt already says such an arg "adds nothing"); a raw value (a model-made timestamp, a keyword) still asks;
+ *  - an arg NAME the entry does not list, with a flag value (`count` on reminder.list: the prompt already says such an arg
+ *    "adds nothing"), or a closed range symbol when the owner wrote no time word at all (a model invention; CA P2: a day
+ *    the owner wrote is a filter the entry cannot apply and asks); a raw value (a timestamp, a keyword) still asks;
  *  - an out-of-set value of an optional enum the catalog marks `presentation` (help.topic's `topic`: the default only widens
  *    the help shown) AND only when the owner's words name none of that arg's values (its value names or grounding words);
  *    a filter enum (a list status, a role, a window) is never replaced by its default, and "끝난 할 일" with status "done"
@@ -2299,7 +2308,10 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
     const value = current.args[name];
     // An unlisted flag, or an unlisted closed range symbol (a day word the entry cannot filter by); never a raw value such as
     // a model-made timestamp or a keyword ("a model-made date is refused").
-    if (result.reason === 'unknown-arg' && spec === undefined && (typeof value === 'boolean' || (typeof value === 'string' && isNlRangeSymbol(value)))) kind = 'unlisted';
+    // CA P2: a day symbol only when the owner wrote no time word (a pure model invention); a day the owner wrote is a filter
+    // the entry cannot apply, so Core asks (A5 rule 6, the time-keyword precedent).
+    const invented = typeof value === 'string' && isNlRangeSymbol(value) && !containsNlTimeExpression(ctx.groundingText);
+    if (result.reason === 'unknown-arg' && spec === undefined && (typeof value === 'boolean' || invented)) kind = 'unlisted';
     else if (result.reason === 'invalid-arg' && spec !== undefined && spec.kind === 'enum' && spec.presentation === true && spec.required !== true && spec.default !== undefined) {
       const words = [...(spec.values ?? []), ...Object.values(spec.valueGrounding ?? {}).flatMap((list) => [...list])].map((word) => normalizeForMatch(word)).filter((word) => word.length > 1);
       if (!words.some((word) => text.includes(word))) kind = 'enum';

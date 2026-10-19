@@ -37,11 +37,12 @@ describe('v49 gate diagnosis: an unavailable selection records a closed cause', 
   it('a malformed output names the parser reason; a failed call names the provider failure; nothing of the output is recorded', async () => {
     const malformed = await decideActionCase(golden, scripted('{"entryId":"todo.add","args":{"title":"우유 사기"},"ambiguity":"CLEAR","alternatives":[],"span":"우유 사기"}'), NOW);
     expect(malformed.decision.kind).toBe('unavailable');
-    expect(malformed.unavailable).toMatchObject({ cause: 'malformed', detail: 'unknown-key:span' });
-    expect(unavailableReason(malformed.unavailable!)).toBe('malformed:unknown-key:span');
+    // "span" is no catalog arg name, so it is never copied out (Codex P2).
+    expect(malformed.unavailable).toMatchObject({ cause: 'malformed', detail: 'unknown-key' });
+    expect(unavailableReason(malformed.unavailable!)).toBe('malformed:unknown-key');
     const failing: AiProvider = { ...scripted(''), execute: async () => Promise.reject(new Error('boom')) };
     const failed = await decideActionCase(golden, failing, NOW);
-    expect(failed.unavailable).toMatchObject({ cause: 'failed', detail: 'Error' });
+    expect(failed.unavailable).toMatchObject({ cause: 'failed', detail: 'error' });
   });
 
   it('the evaluation record carries the reason for an error outcome', async () => {
@@ -68,9 +69,14 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
     const help = JSON.stringify({ entryId: 'help.topic', args: { topic: 'undo' }, ambiguity: 'CLEAR', alternatives: [] });
     const how = await decideActionCase({ text: 'undo 하는 방법 알려줘' }, scripted(help), NOW);
     expect(how.decision).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic' } });
-    // An arg the entry does not list adds nothing (the prompt's own rule; gold reminder.list-002 is args {}): dropped.
+    // CA P2: a day the owner WROTE is a filter the entry cannot apply: asked (A5 rule 6). A day symbol the owner never wrote
+    // (a model invention) is dropped like a flag.
     const period = await decideActionCase({ text: '내일 알림 뭐 있어?' }, scripted(answer({ range: 'tomorrow' }, 'CLEAR', [])), NOW);
-    expect(period.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
+    expect(period.decision.kind).toBe('ask');
+    const invented = await decideActionCase({ text: '알림 뭐 있어?' }, scripted(answer({ range: 'tomorrow' }, 'CLEAR', [])), NOW);
+    expect(invented.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
+    // Codex P2: a model-made arg name is not copied into the ask shape.
+    expect(askShape(parseSelectionOutput(answer({ skabcdefghijklmnopqrst: true }, 'CLEAR', [{ entryId: 'x.secret', args: {} }]))!)).toBe('ask:CLEAR:args=other:alts=other');
   });
 
   it('Codex P2 / CA P1: an out-of-set FILTER value is never replaced by its default; an owner-named value keeps the ask', async () => {

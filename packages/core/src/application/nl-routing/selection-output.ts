@@ -71,10 +71,10 @@ export function parseSelectionOutput(raw: string): NlSelectionOutput | null {
 
 /**
  * A6 v49 gate diagnosis (2026-10-19): WHY `parseSelectionOutput` rejected a raw output, as a closed, content-free reason
- * (`undefined` when it parses). A key or arg name is reported only when it is a short identifier (the model's own key, never
- * a value); anything else is the bare reason. Logged and recorded by the evaluation only; it decides nothing.
+ * (`undefined` when it parses). A key or arg name is reported only when the catalog defines it (`knownArgNames`, never a
+ * model-made key or a value); anything else is the bare reason. Logged and recorded by the evaluation only; decides nothing.
  */
-export function nlSelectionParseFailure(raw: string): string | undefined {
+export function nlSelectionParseFailure(raw: string, knownArgNames: ReadonlySet<string> = new Set()): string | undefined {
   if (typeof raw !== 'string' || raw.trim().length === 0) return 'empty';
   if (parseSelectionOutput(raw) !== null) return undefined;
   if (new TextEncoder().encode(raw).length > NL_SELECTION_OUTPUT_MAX_BYTES) return 'too-large';
@@ -88,7 +88,8 @@ export function nlSelectionParseFailure(raw: string): string | undefined {
   } catch {
     return 'json-invalid';
   }
-  const name = (key: string): string => (/^[A-Za-z][A-Za-z0-9_-]{0,31}$/.test(key) ? `:${key}` : '');
+  // Codex P2: a key or arg name is reported only when the catalog defines it; a model-made key is never copied out.
+  const name = (key: string): string => (knownArgNames.has(key) ? `:${key}` : '');
   if (!isPlainObject(value)) return 'not-object';
   const unknownKey = Object.keys(value).find((key) => !TOP_KEYS.has(key));
   if (unknownKey !== undefined) return `unknown-key${name(unknownKey)}`;

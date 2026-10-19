@@ -1093,6 +1093,14 @@ export const NL_ACTION_ENTRIES: Readonly<Partial<Record<NlActionEntryId, NlCatal
   'item.summarize': itemSummarize,
 });
 
+/**
+ * Codex P2 (2026-10-19): every arg name the catalog defines (read and action entries). A diagnostic names an arg only when
+ * it is one of these; any other key the model generated is reported without its name, so nothing it wrote reaches a log.
+ */
+export const NL_CATALOG_ARG_NAMES: ReadonlySet<string> = new Set(
+  [...Object.values(NL_WAVE1_ENTRIES), ...Object.values(NL_ACTION_ENTRIES)].flatMap((entry) => (entry === undefined ? [] : entry.args.map((spec) => spec.name))),
+);
+
 /** The A6 entry of `id` (throws for an id with no entry yet: `slack.post`, `calendar.create`). */
 export function nlActionEntry(id: 'todo.add' | 'todo.complete' | 'todo.cancel' | 'reminder.create' | 'reminder.cancel' | 'action.undo' | 'item.summarize'): NlCatalogEntry {
   const entry = NL_ACTION_ENTRIES[id];

@@ -1365,6 +1365,13 @@ describe('A6 live test 4 (2026-10-17): copula reference, undo paraphrase, remind
     expect(JSON.stringify(noun.decision)).not.toContain(token);
   });
 
+  it('Codex P2: an uncertain title the owner never wrote is not echoed; it is refused as ungrounded', async () => {
+    const { w, decision } = await run('할 일', out('todo.add', { title: '청소' }));
+    expect(decision).toMatchObject({ kind: 'ask', text: '무엇을/어느 항목을 다시 말씀해 주세요.' });
+    expect(JSON.stringify(decision)).not.toContain('청소');
+    expect(actionLogs(w).at(-1)?.fields).toMatchObject({ entryId: 'todo.add', result: 'refused', reason: 'ungrounded' });
+  });
+
   it('the restate prompts of this branch keep no open question and end in no question mark', async () => {
     const texts = [
       (await run('정산 할 일', out('todo.add', { title: '정산' }))).decision,

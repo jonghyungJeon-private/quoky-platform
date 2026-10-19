@@ -49,6 +49,7 @@ import {
   parseReminderMessage,
   isNlActionEntryId,
   isNlCatalogEntryId,
+  NL_CATALOG_ARG_NAMES,
   mergeItemSummarizeEntries,
   nlItemSummarizeEntry,
   isNlWave1EntryId,
@@ -381,12 +382,12 @@ export interface NlUnavailableCause {
 
 /**
  * The content-free shape of a selector answer that ended as a read-path question: `ask:<ambiguity>:args=<names>:alts=<ids>`
- * (closed values only: the ambiguity enum, arg names and entry ids; an id or name that is not an identifier is dropped).
+ * (closed values only: the ambiguity enum, catalog arg names and catalog entry ids; anything else is `other`).
  */
 export function askShape(output: NonNullable<ReturnType<typeof parseSelectionOutput>>): string {
-  const id = (value: string): boolean => /^[a-z][a-z0-9.-]{0,63}$/u.test(value);
-  const names = Object.keys(output.args).filter((name) => /^[A-Za-z][A-Za-z0-9]{0,31}$/u.test(name)).sort();
-  const alts = output.alternatives.map((alternative) => alternative.entryId).filter(id);
+  // Codex P2: catalog arg names and entry ids only; a model-made name or id is counted as `other`, never copied.
+  const names = Object.keys(output.args).map((name) => (NL_CATALOG_ARG_NAMES.has(name) ? name : 'other')).sort();
+  const alts = output.alternatives.map((alternative) => (isNlCatalogEntryId(alternative.entryId) ? alternative.entryId : 'other'));
   return `ask:${output.ambiguity}:args=${names.join('+')}:alts=${alts.join('+')}`;
 }
 
