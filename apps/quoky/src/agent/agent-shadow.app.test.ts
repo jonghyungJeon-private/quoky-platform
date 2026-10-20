@@ -331,6 +331,32 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
     }
   });
 
+  it('Codex P2: the control fact and the denial guard apply to every owner DM chat while the switch is recognized, with no selection or catalog', async () => {
+    const deps = (runtime as unknown as { deps: Record<string, unknown> }).deps;
+    const saved = { nl: deps.nlSelection, agent: deps.agentRuns };
+    const denial = '에이전트를 재개하는 명령어는 없어요.';
+    const fact = JSON.stringify(core.renderControlCommandsFact()).slice(1, -1);
+    const chatPrompt = () => requests.find((request) => request.capability === 'GENERAL_CHAT' || request.capability === 'POLICY_SENSITIVE_CHAT')?.prompt ?? '';
+    chatReply = denial;
+    try {
+      // No selection service at all (so no read catalog fact): the agent in shadow still recognizes the switch.
+      delete deps.nlSelection;
+      const result = await send('오늘 기분 어때');
+      expect(result.reply.text).toBe('에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.');
+      expect(chatPrompt()).toContain(fact);
+      // With nothing recognizing the switch, the prompt and the reply are unchanged.
+      deps.agentRuns = new core.AgentRunService({ mode: 'off', router: { select: async () => { throw new Error('never'); } }, actors: { get: async () => null, save: async (actor) => actor }, logger: { info() {}, warn() {}, error() {} }, timeZone: 'Asia/Seoul' });
+      requests.length = 0;
+      const off = await send('오늘 기분 어때');
+      expect(off.reply.text).toBe(denial);
+      expect(chatPrompt()).not.toContain('control commands');
+    } finally {
+      deps.nlSelection = saved.nl;
+      deps.agentRuns = saved.agent;
+      chatReply = CHAT_REPLY;
+    }
+  });
+
   /** Reminder rows are reset before every run, so a reminder phrase gets the same display number in each run. */
   const resetReminders = (): void => {
     (storage as unknown as { db: { prepare(sql: string): { run(): unknown } } }).db.prepare('DELETE FROM reminders').run();

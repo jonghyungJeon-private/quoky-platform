@@ -93,7 +93,7 @@ import {
   type IntentClassifyContext,
 } from './intent-classifier';
 import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlItemSource, type NlListingReceipt, type NlSelectedCommand } from './nl-routing/catalog';
-import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './nl-routing/honest-chat';
+import { guardFalseControlDenials, guardFalseIncapabilityClaims, renderConfiguredSourcesFact, renderControlCommandsFact } from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
 import { readLastSelection } from './nl-routing/selection-state';
 import { renderAgentSwitchReply, type AgentRunService } from './agent/agent-run-service';
@@ -1148,8 +1148,6 @@ export interface ConversationRuntimeDeps {
 /** ADR-0120 D9: what the chat turn after a `none` (or unavailable) selection carries — the configured entries. */
 interface NlChatFacts {
   readonly entries: readonly NlCatalogEntry[];
-  /** Live DM test 2026-10-20: the switch phrases are recognized on this owner DM turn (the fact names them, the guard keeps them). */
-  readonly controls?: true;
 }
 
 /**
@@ -4013,8 +4011,7 @@ export class ConversationRuntime {
     if (this.deps.agentRuns !== undefined && this.deps.agentRuns.mode === 'shadow') this.queueAgentShadow(message, session, actor, entries, decision, chat, route, nlPending);
     // A6-D6: the honest-chat fact names the action families only while they act (shadow keeps today's fact).
     const factEntries = this.deps.nlSelection?.actionsActing?.(actor) === true ? entries : entries.filter((entry) => entry.risk === 'READ');
-    const controls = isDirectConversation(message.context) && this.switchPhraseRecognized();
-    const honest = nl.mode === 'active' && factEntries.length > 0 ? { entries: factEntries, ...(controls ? { controls: true as const } : {}) } : undefined;
+    const honest = nl.mode === 'active' && factEntries.length > 0 ? { entries: factEntries } : undefined;
     switch (decision.kind) {
       case 'skip':
         // Phase C: the grammar is the fallback when selection did not run (shadow included: the grammar answers).
@@ -8808,6 +8805,8 @@ export class ConversationRuntime {
     readout: ProjectReadout | ExternalWorkReadout | UntrustedDocumentReadout | undefined,
     nlFacts?: NlChatFacts,
   ): Promise<TurnResult> {
+    // Live DM test 2026-10-20: the switch phrases are recognized on this owner DM turn (the fact names them; the guard keeps them).
+    const controls = isDirectConversation(message.context) && this.switchPhraseRecognized();
     let task = await this.deps.tasks.createTask(intent, message.context, {
       requestText: message.text,
       actorId: actor.id,
@@ -8885,7 +8884,14 @@ export class ConversationRuntime {
 
       // ADR-0120 D9: after a `none` selection the chat prompt carries one more authoritative Core fact (the configured
       // sources and their commands); without it the call is exactly as before.
-      const sourcesFact = nlFacts === undefined ? undefined : renderConfiguredSourcesFact(nlFacts.entries, this.contributedHelpLines, nlFacts.controls === true ? { controls: true } : {});
+      // Live DM test 2026-10-20 (Codex P2): while the switch phrases are recognized, every owner DM chat prompt names them,
+      // with or without a selection or a read catalog this turn.
+      const sourcesFact =
+        nlFacts !== undefined
+          ? renderConfiguredSourcesFact(nlFacts.entries, this.contributedHelpLines, controls ? { controls: true } : {})
+          : controls && (capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT)
+          ? renderControlCommandsFact()
+          : undefined;
       const nlComposition = sourcesFact === undefined ? undefined : { additionalCurrentFacts: [sourcesFact] };
       const promptSpec =
         nlComposition === undefined
@@ -8930,7 +8936,7 @@ export class ConversationRuntime {
           providerId = routed.acceptedProviderId;
           // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
           const withheld = this.withheldAttachmentReply(bundle, message, routed.output.text, routed.output.artifacts, task.id);
-          const guard = withheld ? null : this.guardChatReply(capability, routed.output.text, task.description, task.id, nlFacts);
+          const guard = withheld ? null : this.guardChatReply(capability, routed.output.text, task.description, task.id, nlFacts, controls);
           const replyText = withheld?.text ?? guard?.text ?? routed.output.text;
           const artifacts: Artifact[] = withheld ? [] : routed.output.artifacts.map((artifact) => ({ ...artifact }));
           const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, artifacts);
@@ -9026,7 +9032,7 @@ export class ConversationRuntime {
       const withheld = documentSummary
         ? this.withheldDocumentSummaryReply(message, executed.text, executed.artifacts ?? [], task.id)
         : this.withheldAttachmentReply(bundle, message, executed.text, executed.artifacts ?? [], task.id);
-      const chatGuard = withheld || documentSummary ? null : this.guardChatReply(capability, executed.text, task.description, task.id, nlFacts);
+      const chatGuard = withheld || documentSummary ? null : this.guardChatReply(capability, executed.text, task.description, task.id, nlFacts, controls);
       const guard = documentSummary ? (withheld ? null : (summaryCheck?.guard ?? null)) : chatGuard;
       // Review P3-1: a document summary keeps no provider artifacts (they could carry mail-derived text into storage).
       const result = withheld
@@ -9109,6 +9115,7 @@ export class ConversationRuntime {
     currentUserMessage: string,
     taskId?: Id,
     nlFacts?: NlChatFacts,
+    controls = false,
   ): { readonly text: string; readonly guarded: boolean } {
     if (
       capability !== Capability.GENERAL_CHAT &&
@@ -9120,8 +9127,15 @@ export class ConversationRuntime {
     const guarded = guardInternalActionClaims(text, currentUserMessage, generalChatReplyPolicy(currentUserMessage));
     if (!guarded.guarded) {
       // ADR-0120 D9: after a `none` selection, a false "cannot access <configured source>" is replaced by its command.
-      if (nlFacts === undefined) return { text, guarded: false };
-      const incapable = guardFalseIncapabilityClaims(text, nlFacts.entries, languageOf(currentUserMessage), this.contributedHelpLines, nlFacts.controls === true ? { controls: true } : {});
+      // Live DM test 2026-10-20 (Codex P2): a denied control command is replaced whenever the switch is recognized.
+      if (nlFacts === undefined) {
+        if (!controls) return { text, guarded: false };
+        const control = guardFalseControlDenials(text, languageOf(currentUserMessage));
+        if (!control.guarded) return { text, guarded: false };
+        this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
+        return { text: control.text, guarded: true };
+      }
+      const incapable = guardFalseIncapabilityClaims(text, nlFacts.entries, languageOf(currentUserMessage), this.contributedHelpLines, controls ? { controls: true } : {});
       if (!incapable.guarded) return { text, guarded: false };
       this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
       return { text: incapable.text, guarded: true };

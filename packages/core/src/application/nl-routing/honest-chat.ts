@@ -78,16 +78,16 @@ export function renderControlCommandsFact(): string {
   );
 }
 
-/** A sentence that names the agent. */
-const AGENT_NOUN = /에이전트|\bagents?\b/iu;
+/** A sentence that names the agent (or Quoky, whose actions the switch stops). */
+const AGENT_NOUN = /에이전트|퀴키|\bagents?\b|\bquoky\b/iu;
 /** The switch's own actions, by direction (the closed vocabulary of stopping and resuming the agent), as pattern sources. */
 const CONTROL_ACTION_KO: Readonly<Record<NlActionSwitchState, string>> = {
   stopped: '(?:중지|멈추|멈춰|멈출|멈춤|정지|중단|끄|꺼|끌)',
   running: '(?:재개|다시\\s*(?:켜|켤|시작)|켜|켤|재시작)',
 };
 const CONTROL_ACTION_EN: Readonly<Record<NlActionSwitchState, string>> = {
-  stopped: '(?:stop|stopping|pause|pausing|disable|disabling|turn(?:ing)? (?:it |the agent )?off)',
-  running: '(?:resume|resuming|restart|restarting|re-enable|enable|enabling|turn(?:ing)? (?:it |the agent )?(?:back )?on)',
+  stopped: '(?:stop|stopping|pause|pausing|disable|disabling|turn(?:ing)? off)',
+  running: '(?:resume|resuming|restart|restarting|re-enable|enable|enabling|turn(?:ing)? (?:back )?on)',
 };
 /**
  * The Korean negated predicate that can govern a control action: the command or way to do it does not exist, or it cannot
@@ -109,13 +109,24 @@ const ANAPHORIC_DENIAL = /(?:그런|그|해당)\s*(?:명령|커맨드|기능)[^.
  */
 const CLAUSE_SPLIT = /[,;，、]|\s(?:but|however|though|although|while|and|yet|so)\s|(?:지만|는데|은데|더라도|아도|어도|여도|해도|으나|으며|며|고|면|서)\s/iu;
 
-/** The directions whose stop / resume action a denial in this clause governs. */
+/** The switch's own object: the agent, Quoky or the switch ("에이전트를", "에이전트는", "the agent", "Quoky"). */
+const KO_CONTROL_OBJECT = '(?:에이전트|퀴키|quoky|스위치)\\s*(?:를|을|는|은|가|이|도)?\\s*(?:다시\\s*)?';
+const EN_CONTROL_OBJECT = "(?:the |your |quoky['’]s |this )?(?:multi-step )?(?:agents?|quoky|switch)\\b";
+
+/**
+ * The directions whose stop / resume action a denial in this clause governs, with the agent (or Quoky, or the switch) as
+ * the action's own object or topic (Codex P2, second round): "에이전트를 재개할 수 없어요", "에이전트 재개 명령은 없어요",
+ * "can't resume the agent", "no command to resume (the agent)", "resuming the agent is not possible". A negated stop of
+ * anything else ("cannot stop running containers", "컨테이너를 중지할 수 없어요") is not about the switch.
+ */
 function deniedInClause(clause: string): NlActionSwitchState[] {
   return (Object.keys(CONTROL_ACTION_KO) as NlActionSwitchState[]).filter(
     (state) =>
-      new RegExp(`${CONTROL_ACTION_KO[state]}[^.!?\\n]{0,14}?${KO_DENIAL}`, 'u').test(clause) ||
-      new RegExp(`\\b${EN_DENIAL_BEFORE}\\s+(?:\\S+\\s+){0,2}?${CONTROL_ACTION_EN[state]}\\b`, 'iu').test(clause) ||
-      new RegExp(`\\b${CONTROL_ACTION_EN[state]}\\b[^.!?\\n]{0,30}?\\b${EN_DENIAL_AFTER}\\b`, 'iu').test(clause),
+      new RegExp(`${KO_CONTROL_OBJECT}${CONTROL_ACTION_KO[state]}[^.!?\\n]{0,14}?${KO_DENIAL}`, 'iu').test(clause) ||
+      new RegExp(`\\b${EN_DENIAL_BEFORE}\\s+(?:\\S+\\s+){0,2}?${CONTROL_ACTION_EN[state]}\\s+${EN_CONTROL_OBJECT}`, 'iu').test(clause) ||
+      // The bare "no command to resume" counts only with the agent named in the same clause.
+      (AGENT_NOUN.test(clause) && new RegExp(`\\bno (?:such )?(?:command|way|option|feature)s? (?:to|for) ${CONTROL_ACTION_EN[state]}\\s*(?:$|[.,;:!?])`, 'iu').test(clause)) ||
+      new RegExp(`\\b${CONTROL_ACTION_EN[state]}\\s+${EN_CONTROL_OBJECT}[^.!?\\n]{0,20}?\\b${EN_DENIAL_AFTER}\\b`, 'iu').test(clause),
   );
 }
 
@@ -127,8 +138,8 @@ function controlStatesNamed(sentence: string): NlActionSwitchState[] {
 }
 
 /**
- * The control-denial guard (live DM test 2026-10-20): while the switch phrases are recognized, a reply sentence that names
- * the agent and in which a negated predicate GOVERNS stopping or resuming it ("에이전트를 재개하는 명령어는 없어요", "There is
+ * The control-denial guard (live DM test 2026-10-20): while the switch phrases are recognized, a reply sentence in which a
+ * negated predicate GOVERNS stopping or resuming the agent itself (its object or topic) ("에이전트를 재개하는 명령어는 없어요", "There is
  * no command to resume the agent", "resuming the agent is not possible"), or denies "such a command" right after a
  * sentence about stopping or resuming the agent, is false. The denial must sit in the action's own clause (Codex P2): an
  * unrelated limitation in another clause ("…, but it cannot recover deleted events") is not a denial of the command, and

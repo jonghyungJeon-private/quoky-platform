@@ -28004,13 +28004,25 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
     `에이전트 중지`, including a request form ("에이전트 중지해줘") or a typo ("에이전트 중자"), gets the hint and does not stop.
     (The implementation first proposed stopping on a clear near miss of 중지 as the safe direction; the owner declined it.)
   - `도움말` / `새 대화` are not in the near-miss set: they are short phrases one key from ordinary words ("새 대회").
-- **Honest chat.** While the phrase is recognized on an owner DM turn, the ADR-0120 D9 fact names both control commands,
-  and a reply sentence that names the agent and in which a negated predicate governs stopping or resuming it (in the
-  action's own clause: "재개하는 명령은 없어요", "there is no command to resume", "resuming … is not possible"), or that
-  denies "such a command" right after a sentence about it, is replaced by the exact-phrase hint; the rest of the reply is
-  kept. An unrelated limitation in another clause ("You can resume the agent, but it cannot recover deleted events",
-  Codex P2) is kept. With the phrase not recognized, both are unchanged.
+- **Honest chat.** While the phrase is recognized (A6 actions not off, the channel grants enforced, or the agent not
+  `off`), every owner DM chat turn gets it, whether or not selection ran or a read catalog exists (Codex P2): the chat
+  prompt carries a fact naming both control commands (beside the ADR-0120 D9 sources fact when there is one, alone
+  otherwise), and the reply guard replaces a sentence that denies a control command with the exact-phrase hint. A
+  sentence counts only when, in one clause, a negated predicate governs stopping or resuming with the agent, Quoky or the
+  switch as its object or topic ("에이전트를 재개할 수 없어요", "에이전트 재개 명령은 없어요", "can't resume the agent",
+  "resuming the agent is not possible", "no command to resume" with the agent named in that clause), or when it denies
+  "such a command" right after a sentence about stopping or resuming the agent. The rest of the reply is kept. An
+  unrelated limitation is kept: in another clause ("You can resume the agent, but it cannot recover deleted events"),
+  or with another object ("The agent … cannot stop running containers", "컨테이너를 중지할 수 없어요"). With the phrase not
+  recognized, the prompt and the reply are unchanged.
+  - **Residuals (fail-safe: the sentence is kept, the false denial stays).** This was the last heuristic round for this
+    guard. Not caught: a denial with the agent outside the action's clause or separated from the verb by other words
+    ("에이전트는, 제가 알기로 다시 켤 수 없어요"); a pronoun object ("I can't resume it", "그걸 재개할 수 없어요"); a denial
+    split across sentences other than "such a command" ("Resume the agent? That isn't possible."); a paraphrased
+    nonexistence ("재개 기능은 준비되어 있지 않아요" without the agent named); and denials in languages other than Korean
+    and English. The control fact in the prompt is the primary defence for these.
 - **Tests (targeted, offline; no model call).** `nl-routing/action-switch-near-miss.test.ts` (6),
-  `nl-routing/honest-chat-controls.test.ts` (4), `agent/agent-run-service.test.ts` (+2), and
-  `apps/quoky/src/agent/agent-shadow.app.test.ts` (+3: the live near misses, honest chat, `c-shadow` grammar reads with
+  `nl-routing/honest-chat-controls.test.ts` (5), `agent/agent-run-service.test.ts` (+2), and
+  `apps/quoky/src/agent/agent-shadow.app.test.ts` (+4: the live near misses, honest chat after selection and with no
+  selection service (agent shadow recognizing the switch; unchanged with nothing recognizing it), `c-shadow` grammar reads with
   write / control turns not planned and the kill switch holding; `off` stays byte-identical over the corpus).
