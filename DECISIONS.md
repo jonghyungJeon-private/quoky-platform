@@ -27689,3 +27689,20 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   X에서 / in X / on X, plus an action done there) is none even when Quoky can read that app. Rule 8's other-software
   bullet names the same structure. One generic contrast pair (a Figma-side how-to -> none; how to ask Quoky for Jira
   issues -> help.topic), RAG-0 clean (the first draft "깃허브에서 …" contained the bare gold "깃허브" and was rewritten).
+- **v62 / A6 v60 / R2 v61 and the read-regression scorer (the v61 gates on #267: neg-051 captured as help.topic in 2 of
+  3 read-regression runs; neg-010 and neg-012 as help.topic in 1 of 6 runs each).** (1) Scorer vs live: the live path
+  (`NlSelectionService.fromOutput`) ends a READ selection as `none` on a clear past-tense statement (`nlIsPastStatement`)
+  or a message that is not a request (`nlReadNotRequest`: a quoted request only talked about, a reason-clause feeling),
+  before validation, and so do the shadow path and the intent scorer (`scoreOutput`); `scoreReadRegression` skipped both
+  and counted neg-051 a wrong capture although the live turn is chat. Under the owner decision of 2026-10-19 (gates
+  score Core's FINAL result) it now applies the same two guards to a READ selection (an action selection keeps its own
+  path); no guard changed, and no positive read gold is blocked by them with its gold args (pinned). Not mirrored by the
+  read or intent scorer (they can only turn a `clarify` into a hit or a capture, never a capture into `none`): the
+  detail-drop of a CLEAR read (`validateWithoutDetail`), the one-option read collapse with actions offered, the
+  ungrounded-interpretation question and the unsupported-period restate. (2) help.topic grounding in Core was measured
+  and rejected: the closed help-topic index (ADR-0104) grounds only 33 of the 57 help.topic golds (24 would be blocked),
+  the catalog topic vocabulary grounds both negatives (슬랙 -> work-lookup, 알림 -> reminder), and telling "<app>에서
+  검색" (Slack's own search) from Quoky's slack.search, or a device noun from a Quoky source, needs a noun list, not
+  grammar. Rule 3's other-app sentence instead names a device as well, a "<device> <setting> 어떻게 …" form, and that a
+  Quoky feature with the same name (a search, a notification, a schedule) does not make it a Quoky question. No example
+  changes (RAG-0 baseline unchanged); the rest is variance.

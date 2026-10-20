@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSelectionPrompt, Capability, isNlActionEntryId, parseNlRef, prepareSelectionInput, resolveItemReference, validateSelection, type AiProvider, type AiRequest, type NlActionEntryId } from '@quoky/core';
+import { buildSelectionPrompt, Capability, isNlActionEntryId, nlIsPastStatement, nlReadNotRequest, parseNlRef, prepareSelectionInput, resolveItemReference, validateSelection, type AiProvider, type AiRequest, type NlActionEntryId } from '@quoky/core';
 import {
   NL_ACTION_EVAL_ENTRIES,
   buildActionPlan,
@@ -326,6 +326,31 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
     const records = await runReadRegression({ cases: [golden], plan, provider: provider(() => { calls += 1; return answer('reminder.create', { body: '브리핑', when: '매일 아침 8시' }); }), now: () => NOW });
     expect(calls).toBe(0);
     expect(records.map((record) => record.outcome)).toEqual(['skipped']);
+  });
+
+  it('owner decision of 2026-10-19: scores the FINAL Core outcome: a read on a quoted request only talked about is none, as the live path decides (neg-051)', async () => {
+    const golden = cases.find((candidate) => candidate.id === 'neg-051')!;
+    expect(golden.expect).toBe('none');
+    for (const args of [{}, { topic: 'all' }, { topic: 'work-lookup' }]) {
+      const raw = answer('help.topic', args);
+      expect(scoreReadRegression(golden, raw, NOW), JSON.stringify(args)).toEqual({ outcome: 'none', relabeled: false, got: 'none' });
+      // The live service with the A6 entries offered (the read-regression catalog) ends the same turn as none.
+      const { decision } = await decideActionCase({ text: golden.text }, provider(() => raw), NOW);
+      expect(decision.kind, JSON.stringify(args)).toBe('none');
+    }
+    // An action selection keeps its own path (Core's action rules, not the read guard).
+    expect(scoreReadRegression({ id: 'r', text: '"보고서 할 일 추가해줘" 라고 말하면 돼?', expect: 'none' }, answer('todo.add', { title: '보고서' }), NOW).outcome).not.toBe('none');
+  });
+
+  it('the read guards the scorer now applies block no positive read gold with its gold args (0 of the corpus)', () => {
+    const blocked = cases.filter((golden) => {
+      const gold = golden.a6Relabel ?? golden.expect;
+      if (gold === 'none' || isNlActionEntryId(gold.entryId) || golden.a6Skip !== undefined) return false;
+      const prepared = prepareSelectionInput(golden.text);
+      if ('skip' in prepared) return false;
+      return nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, gold.args) !== undefined;
+    });
+    expect(blocked.map((golden) => golden.id)).toEqual([]);
   });
 
   it('a read case captured by an action or ITEM_READ entry is `action-capture` and fails the run; a relabeled case is scored apart', () => {

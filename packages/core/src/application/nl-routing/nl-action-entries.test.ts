@@ -279,8 +279,8 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
   const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } });
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
-    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v61', sha256: 'da4f4f7f35abcaae8620eb78fcd0cb05e80b789588062e570e2255e322897a03' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v59', sha256: '596e20a6c3c4f4037a76bf1440c33ce8a12806c21c492b05264d1072eea3f79c' });
+    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v62', sha256: '5a45621e2a856b8b44084dbcc3aadd33be2b17238c8b824244189e88c278da70' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v60', sha256: '80ce8ffdc31c6dbffcb3e50a818f7d6ed5b788841051a7068ec9ec2cc83a1b65' });
   });
 });
 
@@ -299,6 +299,15 @@ describe('A6 prompt v53 / v58: the help.topic block as one decision, the label a
     expect(prompt).not.toContain('A command-shaped message is never help.topic: an imperative that asks Quoky to do or change something');
     expect(prompt).toContain('Message: 피드백 남기는 방법 좀 가르쳐 줘\nOutput: {"entryId":"help.topic","args":{"topic":"feedback"}');
     expect(prompt).toContain('Message: 기억해 둔 거 보려면 무슨 명령어 쓰면 돼?\nOutput: {"entryId":"help.topic","args":{"topic":"memory"}');
+  });
+
+  it('v62 / v60: the other-app rule names a device too, and a same-named Quoky feature does not make it a Quoky question (read and A6)', () => {
+    const read = buildSelectionPrompt({ entries: READS, text: 'x' });
+    for (const p of [read, prompt]) {
+      expect(p).toContain('   something inside another app, device or service ("<app>에서 …하는 법/방법", "<device> <setting> 어떻게 …", "how to\n');
+      expect(p).toContain('   … in/on <app>") is none, even when Quoky can read that app or has a feature with the same name (a search, a\n');
+      expect(p).toContain("   notification, a schedule): the owner asks about that app's or device's own feature, not about Quoky's.\n");
+    }
   });
 
   it('v61 / v59: a how-to about acting inside another app is none; asking how to get it from Quoky is help.topic (read and A6)', () => {
@@ -460,14 +469,14 @@ describe('A6 prompt v53 / v58: the help.topic block as one decision, the label a
 });
 
 describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55 with actions', () => {
-  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v61.prompts.json', import.meta.url), 'utf8')) as {
+  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v62.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
   };
 
-  it('pins nl-select.v61 for every golden input (no `actions`)', () => {
-    expect(golden.version).toBe('nl-select.v61');
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v61');
+  it('pins nl-select.v62 for every golden input (no `actions`)', () => {
+    expect(golden.version).toBe('nl-select.v62');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v62');
     for (const golden_ of golden.cases) {
       const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
       const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
@@ -476,7 +485,7 @@ describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55
   });
 
   it('the A6 prompt (v55) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v59');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v60');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');

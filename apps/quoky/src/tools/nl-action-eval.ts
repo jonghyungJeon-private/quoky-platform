@@ -57,6 +57,8 @@ import {
   pendingQuestionRecord,
   prepareSelectionInput,
   nlCoreSelectionArgs,
+  nlIsPastStatement,
+  nlReadNotRequest,
   readListingRecord,
   renderReferenceContext,
   validateSelection,
@@ -847,7 +849,13 @@ export function readRegressionReferenceState(context: NlReadRegressionContext | 
 
 export type NlReadRegressionOutcome = 'hit' | 'miss' | 'clarify' | 'none' | 'wrong-capture' | 'action-capture' | 'timeout' | 'error' | 'skipped';
 
-/** Score one read case with the A6 entries offered: any validated action or ITEM_READ capture is `action-capture`. */
+/**
+ * Score one read case with the A6 entries offered: any validated action or ITEM_READ capture is `action-capture`.
+ * Owner decision of 2026-10-19: the outcome scored is Core's FINAL one. Like the live path (`NlSelectionService.fromOutput`)
+ * and the intent scorer, a READ selection on a clear past-tense statement (A7) or on a message that is not a request (a
+ * reason-clause statement of feeling, a quoted request only talked about: `nlReadNotRequest`) ends as `none` (chat) before
+ * any validation; an action selection keeps its own path.
+ */
 export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, now: string): { readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string } {
   const relabeled = golden.a6Relabel !== undefined;
   const expect = golden.a6Relabel ?? golden.expect;
@@ -856,6 +864,9 @@ export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, n
   const output = parseSelectionOutput(raw);
   if (output === null) return { outcome: 'error', relabeled };
   if (output.entryId === null) return { outcome: expect === 'none' ? 'none' : 'miss', relabeled, got: 'none' };
+  if (!isNlActionEntryId(output.entryId) && (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined)) {
+    return { outcome: expect === 'none' ? 'none' : 'miss', relabeled, got: 'none' };
+  }
   const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
   const validated = validateSelection(
     { entryId: output.entryId, args: output.args },
