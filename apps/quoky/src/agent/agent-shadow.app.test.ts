@@ -50,6 +50,8 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
   const agentLogs: Array<{ event: string; fields?: LogFields }> = [];
   let seq = 0;
   let selectorAnswer = NONE;
+  let planAnswer = PLAN;
+  let chatReply = CHAT_REPLY;
 
   beforeAll(async () => {
     for (const method of ['log', 'warn', 'error', 'info'] as const) vi.spyOn(console, method).mockImplementation(() => undefined);
@@ -98,9 +100,9 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
         async execute(request: AiRequest) {
           requests.push(request);
           if (request.capability === 'INTENT_SELECTION') {
-            return { text: request.prompt.startsWith('You are the request planner') ? PLAN : selectorAnswer, artifacts: [] };
+            return { text: request.prompt.startsWith('You are the request planner') ? planAnswer : selectorAnswer, artifacts: [] };
           }
-          return { text: CHAT_REPLY, artifacts: [] };
+          return { text: chatReply, artifacts: [] };
         },
       });
     };
@@ -166,6 +168,7 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
     await new Promise((resolve) => setImmediate(resolve));
     await target.lastAgentAfterReplyRun;
     await agent.lastShadowRun;
+    await (target as { lastAfterReplyRun?: Promise<void> }).lastAfterReplyRun;
     return result;
   }
 
@@ -286,6 +289,48 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
     expect(agent.switchState(owner)).toBe('running');
   });
 
+  it('a near miss of the switch phrase gets the exact phrase (live DM 2026-10-20); only a clear near miss of 중지 stops', async () => {
+    const owner = async (): Promise<Actor> => (await storage.actors.findByExternalIdentity('discord', OWNER)) as Actor;
+    const resumeHint = '에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.';
+    // The live turns: a typo and a truncation of 재개 are answered with the exact phrase, never by chat; nothing changes.
+    for (const text of ['에이ㄴ트 재개', '에이전트 재', '에이전트 재개해줘']) {
+      const result = await send(text);
+      expect(result.reply.text, text).toBe(resumeHint);
+    }
+    expect(agent.switchState(await owner())).toBe('running');
+    expect(requests).toEqual([]);
+    // A truncated 중지 only hints (the message may be unfinished).
+    expect((await send('에이전트 중')).reply.text).toBe('에이전트를 멈추려면 "에이전트 중지"라고 보내 주세요.');
+    expect(agent.switchState(await owner())).toBe('running');
+    // A clear near miss of 중지 stops (the safe direction), naming the exact phrase before the usual reply.
+    expect((await send('에이전트 중지해줘')).reply.text).toBe('"에이전트 중지"로 알아들었어요.\n다단계 에이전트를 멈췄어요. 정확한 명령은 그대로 동작해요. 다시 켜려면 "에이전트 재개"라고 보내 주세요.');
+    expect(agent.switchState(await owner())).toBe('stopped');
+    // A near miss of 재개 never resumes; only the exact phrase does (unchanged).
+    expect((await send('에이전트 재게')).reply.text).toBe(resumeHint);
+    expect(agent.switchState(await owner())).toBe('stopped');
+    expect((await send('에이전트 재개')).reply.text).toBe('다단계 에이전트를 다시 켰어요.');
+    expect((await send('에이전트 중지')).reply.text).toBe('다단계 에이전트를 멈췄어요. 정확한 명령은 그대로 동작해요. 다시 켜려면 "에이전트 재개"라고 보내 주세요.');
+    expect((await send('에이전트 재개')).reply.text).toBe('다단계 에이전트를 다시 켰어요.');
+    expect(agent.switchState(await owner())).toBe('running');
+    // A normal sentence that mentions 에이전트 is chat as before.
+    for (const text of ['에이전트 좋지', '에이전트가 뭐야']) expect((await send(text)).reply.text, text).toContain(CHAT_REPLY);
+    // The log line is content-free.
+    expect(JSON.stringify(agentLogs)).not.toContain('에이ㄴ트');
+  });
+
+  it('honest chat names the control commands and replaces a reply that denies one (live DM 2026-10-20)', async () => {
+    chatReply = '죄송해요. 에이전트를 재개하는 별도의 명령어는 없어요. 다른 도움이 필요하면 말씀해 주세요.';
+    try {
+      const result = await send('에이전트 다시 켜는 명령 있어?');
+      expect(result.reply.text).toBe('죄송해요. 다른 도움이 필요하면 말씀해 주세요. 에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.');
+      const chat = requests.find((request) => request.capability === 'GENERAL_CHAT' || request.capability === 'POLICY_SENSITIVE_CHAT');
+      // The fact rides in the prompt's JSON current facts (quotes escaped there).
+      expect(chat?.prompt).toContain(JSON.stringify(core.renderControlCommandsFact()).slice(1, -1));
+    } finally {
+      chatReply = CHAT_REPLY;
+    }
+  });
+
   /** Reminder rows are reset before every run, so a reminder phrase gets the same display number in each run. */
   const resetReminders = (): void => {
     (storage as unknown as { db: { prepare(sql: string): { run(): unknown } } }).db.prepare('DELETE FROM reminders').run();
@@ -368,4 +413,45 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
     expect([...touched]).toEqual(['mode']);
     expect(plannerCalls()).toHaveLength(0);
   }, 240_000);
+
+  // Last: its write turn adds a to-do, which the off-identity corpus above must not see.
+  it('c-shadow: a read the grammar answered is planned too (liveSource grammar); a write or control turn is not; the kill switch holds', async () => {
+    const nl = (runtime as unknown as { deps: { nlSelection: { deps: Record<string, unknown> } } }).deps.nlSelection;
+    const savedDeps = nl.deps;
+    nl.deps = { ...savedDeps, phase: 'c-shadow' };
+    planAnswer = JSON.stringify({ entryId: 'calendar.events', args: { range: 'today' }, ambiguity: 'CLEAR', alternatives: [] });
+    try {
+      await send('오늘 일정 보여줘');
+      // The grammar's own read (the stub reader records it); the shadow read nothing.
+      expect(reads).toEqual(['calendar:listEvents']);
+      expect(plannerCalls()).toHaveLength(1);
+      expect(requests.some((request) => request.capability === 'SUMMARIZATION')).toBe(false);
+      expect(shadowLines()).toEqual([
+        expect.objectContaining({ outcome: 'planned', steps: 1, entries: 'calendar.events', liveKind: 'execute', liveSource: 'grammar', agreeEntry: true }),
+      ]);
+      expect(JSON.stringify(agentLogs)).not.toContain('일정');
+      // Write, control and switch turns are never planned.
+      for (const text of ['할 일 추가: 우유 사기', '도움말', '에이전트 중지', '에이전트 재개']) {
+        requests.length = 0;
+        agentLogs.length = 0;
+        await send(text);
+        expect(plannerCalls(), text).toHaveLength(0);
+        expect(shadowLines(), text).toEqual([]);
+      }
+      // The kill switch: stopped, a grammar read is not planned; resumed, it is again.
+      await send('에이전트 중지');
+      requests.length = 0;
+      agentLogs.length = 0;
+      await send('오늘 일정 보여줘');
+      expect(plannerCalls()).toHaveLength(0);
+      expect(shadowLines()).toEqual([expect.objectContaining({ outcome: 'stopped', reason: 'kill-switch' })]);
+      await send('에이전트 재개');
+      requests.length = 0;
+      await send('오늘 일정 보여줘');
+      expect(plannerCalls()).toHaveLength(1);
+    } finally {
+      nl.deps = savedDeps;
+      planAnswer = PLAN;
+    }
+  });
 });

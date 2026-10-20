@@ -18,7 +18,8 @@ import { AGENT_PLAN_SUMMARY_SCHEMAS, validateAgentPlan, type AgentPlanValidation
  * {@link AGENT_PROFILE_ID}. This phase has two modes only:
  *
  * - `off` (the default): nothing runs. The runtime reads `mode` and nothing else, so every turn is byte-identical.
- * - `shadow`: after the reply of an owner DM turn that reached selection, ONE background planner call (M1,
+ * - `shadow`: after the reply of an owner DM turn that reached selection, or (`c-shadow`) whose read a Class B grammar
+ *   answered (`liveSource: grammar`), ONE background planner call (M1,
  *   `INTENT_SELECTION`, prompt `agent-plan.v2`) plans the same message; the plan is parsed and validated and one
  *   content-free `agent_run.shadow` line is logged. **Zero connector reads and zero M2 calls**: this service has no
  *   connector, reader, writer, command runner, tool provider, memory or fetch dependency at all (its deps type below; an
@@ -59,13 +60,19 @@ export class AgentModeError extends Error {
   }
 }
 
-/** What the live selection decided this turn (closed values only), for the one-step agreement. */
-/** Which route the live selection ran on (closed; the ADR-0120 selection routes). */
-export type AgentShadowLiveSource = 'chat' | 'personal-data' | 'class-b' | 'work-surface';
+/**
+ * Which route answered the turn live (closed): the ADR-0120 selection routes, or `grammar` when a frozen Class B grammar
+ * answered a read under `c-shadow` and selection never ran (live DM test 2026-10-20).
+ */
+export type AgentShadowLiveSource = 'chat' | 'personal-data' | 'class-b' | 'work-surface' | 'grammar';
 
+/** What the live turn decided (closed values only), for the one-step agreement. */
 export interface AgentShadowLive {
   readonly kind: 'execute' | 'ask' | 'none';
-  /** The selection route of the fresh read / none / question decision (logged as `liveSource`). */
+  /**
+   * The route of the fresh read / none / question decision (logged as `liveSource`). With `grammar` the decision is the
+   * grammar's own catalog equivalent (`execute`), and `entryId` is absent when the grammar maps to no catalog entry.
+   */
   readonly source?: AgentShadowLiveSource;
   readonly entryId?: NlCatalogEntryId;
   readonly args?: NlArgs;
@@ -313,6 +320,8 @@ export class AgentRunService {
 
   /** One-step plans only: whether the plan agrees with the live selection (entry, and meaning as S1 W3 defines it). */
   private agreement(plan: AgentPlan, validation: AgentPlanValidation, turn: AgentShadowTurn): LogFields {
+    // A grammar answer with no catalog equivalent has nothing to agree with: no agreement fields.
+    if (turn.live.source === 'grammar' && turn.live.entryId === undefined) return {};
     if (plan.kind === 'none') {
       const agree = turn.live.kind === 'none';
       return { agree, agreeEntry: agree };
@@ -384,7 +393,7 @@ function planFields(plan: AgentPlan, validation: AgentPlanValidation): LogFields
   return { outcome: validation.plan.kind === 'clarify' ? 'clarify' : 'planned', ...fields, argKinds };
 }
 
-const LIVE_SOURCES: ReadonlySet<string> = new Set(['chat', 'personal-data', 'class-b', 'work-surface']);
+const LIVE_SOURCES: ReadonlySet<string> = new Set(['chat', 'personal-data', 'class-b', 'work-surface', 'grammar']);
 
 /** The live decision's closed kind and route (never an argument). */
 function liveFields(live: AgentShadowLive): LogFields {

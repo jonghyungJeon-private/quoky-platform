@@ -1,5 +1,6 @@
 import type { NlCatalogEntry } from './catalog';
 import { renderRestate } from './nl-action-policy';
+import { ACTION_SWITCH_PHRASES, renderActionSwitchHint, type NlActionSwitchState } from './action-switch';
 import { NL_ACTION_VERBAL_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ENTRY_NOUNS, containsNlTimeExpression } from './action-entries';
 
 /**
@@ -18,9 +19,14 @@ const COMMANDS_MAX_CHARS = 1600;
  * Quoky's own command lines (the help lines) so a write or action request is answered with the exact command to send —
  * suggestion-only (ADR-0120 D5): the reply prefills nothing and creates no approval.
  */
-export function renderConfiguredSourcesFact(entries: readonly NlCatalogEntry[], helpLines: readonly string[] = []): string | undefined {
+export function renderConfiguredSourcesFact(
+  entries: readonly NlCatalogEntry[],
+  helpLines: readonly string[] = [],
+  options: HonestChatOptions = {},
+): string | undefined {
   const sources = entries.filter((entry) => entry.sourceNames !== undefined);
-  if (sources.length === 0 && helpLines.length === 0) return undefined;
+  const controls = options.controls === true ? renderControlCommandsFact() : undefined;
+  if (sources.length === 0 && helpLines.length === 0) return controls;
   const listed = bounded(sources.map((entry) => `${entry.label.en} (command: ${entry.usage.ko})`).join('; '), SOURCES_MAX_CHARS);
   const parts: string[] = [];
   if (sources.length > 0) {
@@ -47,7 +53,68 @@ export function renderConfiguredSourcesFact(entries: readonly NlCatalogEntry[], 
             'change, send or remember something, reply with the exact command to send.',
     );
   }
+  if (controls !== undefined) parts.push(controls);
   return parts.join(' ');
+}
+
+/** What the honest-chat fact and guard know beyond the catalog entries. */
+export interface HonestChatOptions {
+  /**
+   * The kill-switch phrases (`에이전트 중지` / `에이전트 재개`, A6-D3 and ADR-0121 D7) are recognized on this turn's route
+   * (natural-language actions, the agent or the channel grants are on). Absent: the fact and the guard are unchanged.
+   */
+  readonly controls?: boolean;
+}
+
+/**
+ * Live DM test 2026-10-20: the chat model, asked about "에이전트 재", said there is no command to resume the agent. While
+ * the switch phrases are recognized, the fact names them as Quoky's own control commands.
+ */
+export function renderControlCommandsFact(): string {
+  return (
+    `Quoky's control commands (the User sends one exactly, as the whole message, in this DM): "${ACTION_SWITCH_PHRASES.stopped}" ` +
+    `stops Quoky's natural-language actions and the multi-step agent, and "${ACTION_SWITCH_PHRASES.running}" turns them back on. ` +
+    'These commands exist: never say there is no command to stop or resume the agent; when the User asks, give the exact phrase.'
+  );
+}
+
+/** A sentence that names the agent. */
+const AGENT_NOUN = /에이전트|\bagents?\b/iu;
+/** The switch's own actions, by direction (the closed vocabulary of stopping and resuming the agent). */
+const CONTROL_ACTION: Readonly<Record<NlActionSwitchState, RegExp>> = {
+  stopped: /중지|멈추|멈춰|멈출|멈춤|정지|중단|끄|꺼|끌|\b(?:stop|stopping|pause|disable|turn(?:ing)? off)\b/iu,
+  running: /재개|다시\s*(?:켜|켤|시작)|켜|켤|재시작|\b(?:resume|resuming|restart|re-enable|enable|turn(?:ing)? (?:it )?(?:back )?on)\b/iu,
+};
+/** A denial that the command or the ability exists (not a statement about the switch's current state). */
+const KO_CONTROL_DENIAL = /(?:명령|커맨드|기능|방법|문구|키워드)[^.!?\n]{0,14}?(?:없|않|존재하지)|수\s*(?:가|는|도)?\s*없|못\s*(?:해|하|합|드려|드립)|불가|지원하지\s*않|제공하지\s*않/u;
+const EN_CONTROL_DENIAL =
+  /\b(?:there(?:['’]s| is) no|there are no|no (?:such )?(?:command|way|option|feature)|cannot|can['’]t|unable to|not able to|(?:doesn['’]t|does not|isn['’]t|is not) (?:exist|available|supported|possible))/iu;
+
+/**
+ * The control-denial guard (live DM test 2026-10-20): while the switch phrases are recognized, a reply sentence that names
+ * the agent, names stopping or resuming it, and denies that the command or ability exists ("에이전트를 재개하는 명령어는
+ * 없어요", "There is no command to resume the agent") is false. Only those sentences go; the exact-phrase hint for the
+ * direction(s) they named closes the reply once. Every other sentence is kept as written.
+ */
+export function guardFalseControlDenials(text: string, language: 'ko' | 'en'): FalseIncapabilityGuardResult {
+  if (typeof text !== 'string' || text.length === 0 || !AGENT_NOUN.test(text)) return { text, guarded: false };
+  const parts = text.split(/((?<=[.!?。？])\s+|\n+)/u);
+  const kept: string[] = [];
+  const denied = new Set<NlActionSwitchState>();
+  for (let index = 0; index < parts.length; index += 2) {
+    const sentence = parts[index] ?? '';
+    const separator = parts[index + 1] ?? '';
+    const states = (Object.keys(CONTROL_ACTION) as NlActionSwitchState[]).filter((state) => CONTROL_ACTION[state].test(sentence));
+    if (AGENT_NOUN.test(sentence) && states.length > 0 && (KO_CONTROL_DENIAL.test(sentence) || EN_CONTROL_DENIAL.test(sentence))) {
+      for (const state of states) denied.add(state);
+      continue;
+    }
+    kept.push(sentence, separator);
+  }
+  if (denied.size === 0) return { text, guarded: false };
+  const hint = renderActionSwitchHint([...denied], language);
+  const rest = kept.join('').trim();
+  return { text: rest.length === 0 ? hint : `${rest}${/\n/u.test(text) ? '\n' : ' '}${hint}`, guarded: true };
 }
 
 /**
@@ -233,8 +300,18 @@ export function guardFalseIncapabilityClaims(
   entries: readonly NlCatalogEntry[],
   language: 'ko' | 'en',
   helpLines: readonly string[] = [],
+  options: HonestChatOptions = {},
 ): FalseIncapabilityGuardResult {
   if (typeof raw !== 'string' || raw.trim() === '') return { text: raw, guarded: false };
+  // Live DM test 2026-10-20: a denied control command (재개 / 중지) is replaced by its exact phrase first; the rest of the
+  // reply still meets every check below.
+  if (options.controls === true) {
+    const control = guardFalseControlDenials(raw, language);
+    if (control.guarded) {
+      const rest = guardFalseIncapabilityClaims(control.text, entries, language, helpLines);
+      return { text: rest.text, guarded: true };
+    }
+  }
   // A6-D6: a reply quoting an offered action family's command phrase is stale (checked before the D5 exemption below).
   if (entries.some((entry) => entry.risk !== 'READ' && (entry.staleCommands ?? []).some((pattern) => pattern.test(raw)))) return { text: renderRestate(language), guarded: true };
   // Live test 4: the dead-end action sentences go first, but that partial filter is not the whole guard (Codex P2): the
