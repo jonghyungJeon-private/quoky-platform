@@ -133,7 +133,7 @@ describe('AgentRunService — shadow', () => {
     expect(h.calls[0]?.prompt).toContain('You are the request planner of Quoky');
     expect(h.calls[0]?.signal).toBeDefined();
     expect(shadowLines(h)).toEqual([
-      expect.objectContaining({ outcome: 'planned', mode: 'shadow', promptVersion: 'agent-plan.v1', steps: 2, form: 'steps', entries: 'calendar.events,jira.issues', argKinds: 'range;none', validator: 'ok' }),
+      expect.objectContaining({ outcome: 'planned', mode: 'shadow', promptVersion: 'agent-plan.v2', steps: 2, form: 'steps', entries: 'calendar.events,jira.issues', argKinds: 'range;none', validator: 'ok' }),
     ]);
     // A multi-step plan has no one-step agreement.
     expect(shadowLines(h)[0]).not.toHaveProperty('agree');
@@ -150,6 +150,19 @@ describe('AgentRunService — shadow', () => {
       [true, true],
       [false, true],
       [false, false],
+    ]);
+  });
+
+  it('a veto-* refusal (not a request) agrees with a live none, and disagrees with a live read (CA P2)', async () => {
+    const one = JSON.stringify({ entryId: 'calendar.events', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    const h = harness({ script: [one, one] });
+    const past = '아침에 일정 정리 끝났다';
+    await h.service.runShadow(turn(h, { text: past }, { kind: 'none' }), async () => CHAT);
+    h.clock += 1;
+    await h.service.runShadow(turn(h, { text: past }, { kind: 'execute', entryId: 'calendar.events', args: {} }), async () => CHAT);
+    expect(shadowLines(h).map((line) => [line.validator, line.agree, line.agreeEntry])).toEqual([
+      ['veto-past-statement', true, true],
+      ['veto-past-statement', false, false],
     ]);
   });
 

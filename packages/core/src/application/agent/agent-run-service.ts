@@ -19,7 +19,7 @@ import { AGENT_PLAN_SUMMARY_SCHEMAS, validateAgentPlan, type AgentPlanValidation
  *
  * - `off` (the default): nothing runs. The runtime reads `mode` and nothing else, so every turn is byte-identical.
  * - `shadow`: after the reply of an owner DM turn that reached selection, ONE background planner call (M1,
- *   `INTENT_SELECTION`, prompt `agent-plan.v1`) plans the same message; the plan is parsed and validated and one
+ *   `INTENT_SELECTION`, prompt `agent-plan.v2`) plans the same message; the plan is parsed and validated and one
  *   content-free `agent_run.shadow` line is logged. **Zero connector reads and zero M2 calls**: this service has no
  *   connector, reader, writer, command runner, tool provider, memory or fetch dependency at all (its deps type below; an
  *   import-scan test pins it). It writes nothing but the owner's kill switch.
@@ -318,6 +318,12 @@ export class AgentRunService {
       return { agree, agreeEntry: agree };
     }
     if (plan.steps.length !== 1) return {};
+    // A `veto-*` refusal (ADR-0120 A7, not a request) is answered as chat, exactly as the live path's vetoed `none`
+    // (CA P2 on S2 P2): it agrees with a live none.
+    if (!validation.ok && validation.reason.startsWith('veto-')) {
+      const agree = turn.live.kind === 'none';
+      return { agree, agreeEntry: agree };
+    }
     if (!validation.ok) return { agree: false, agreeEntry: false };
     if (validation.plan.kind === 'clarify') {
       const agree = turn.live.kind === 'ask';

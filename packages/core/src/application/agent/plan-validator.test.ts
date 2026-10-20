@@ -282,3 +282,77 @@ describe('plan validator: dates only symbolic, summaries closed', () => {
     expect(validateAgentPlan(plan([read('calendar.events'), summary([1], 'meeting-digest.v1')]), ctx('오늘 회의 정리')).ok).toBe(true);
   });
 });
+
+describe('plan validator: the selection path vetoes are validator rules (CA review of S2 P2)', () => {
+  it('a past statement is refused as veto-past-statement, before any other rule', () => {
+    expect(validateAgentPlan(plan([read('calendar.events'), read('todo.list')]), ctx('아침에 일정이랑 할 일 정리 끝났다'))).toMatchObject({ ok: false, reason: 'veto-past-statement' });
+    expect(validateAgentPlan(plan([read('shell.exec')]), ctx('아침에 지라 이슈 정리 끝났다'))).toMatchObject({ ok: false, reason: 'veto-past-statement' });
+  });
+
+  it('a read step whose sentence only quotes a request is refused with its step', () => {
+    expect(validateAgentPlan(plan([read('jira.issues')]), ctx('"지라 이슈 보여줘"라는 말은 영어로 뭐라고 해?'))).toMatchObject({ ok: false, reason: 'veto-quoted-request', step: 1 });
+  });
+
+  it('a quote consumed as one step\'s search keyword is the owner\'s search term for the whole plan (Codex P2)', () => {
+    const text = '슬랙에서 "일정 보여줘"라고 검색하고 지라 이슈 보여줘';
+    expect(validateAgentPlan(plan([read('slack.search', { keyword: '일정 보여줘' }), read('jira.issues')]), ctx(text)).ok).toBe(true);
+    // Consumed by no step: the veto stays.
+    expect(validateAgentPlan(plan([read('jira.issues'), read('github.items')]), ctx('"일정 보여줘"라고 말하면 되나? 지라 이슈랑 깃허브 PR'))).toMatchObject({ ok: false, reason: 'veto-quoted-request', step: 1 });
+  });
+
+  it('a request is not vetoed; none stays none', () => {
+    expect(validateAgentPlan(plan([read('jira.issues'), read('mail.list')]), ctx('지라 이슈랑 메일 보여줘')).ok).toBe(true);
+    expect(validateAgentPlan({ kind: 'none', form: 'selection' }, ctx('아침에 일정 정리 끝났다'))).toEqual({ ok: true, plan: { kind: 'none' } });
+  });
+});
+
+describe('plan validator: widened date expressions (CA review of S2 P2)', () => {
+  it.each([
+    ['10-25', 'what do I have on October 25?'],
+    ['10-25', 'calendar for Oct 25th'],
+    ['10-25', 'my calendar on 25 Oct'],
+    ['10-25', 'the 25th of October'],
+    ['10-25', 'oct. 25 일정'],
+    ['10-01..10-07', '10월 1일부터 7일까지 일정 보여줘'],
+    ['10-01..10-07', '10/1~7 일정'],
+    ['10-01..10-07', '10월 1-7일 일정'],
+    ['10-01..10-07', 'calendar for Oct 1 to 7'],
+    ['10-01..10-07', '10월 1일부터 10월 7일까지'],
+    ['10-01..10-07', 'October 1st through 7th'],
+    ['10-01..10-07', 'Oct 1 until 7'],
+    ['10-01..10-07', '10월 1일부터 7까지'],
+    ['10-01..10-07', '10월 1일~7일 일정'],
+  ])('%s is grounded by "%s"', (value, text) => {
+    expect(absoluteDatesGrounded(value, text)).toBe(true);
+  });
+
+  it.each([
+    ['10-25', 'October'],
+    ['10-25', 'Oct 2'],
+    ['10-25', 'November 25'],
+    ['10-25', 'octopus 25'],
+    ['10-01..10-07', '10월 1일 일정이랑 7개 이슈'],
+    ['10-01..10-07', '10월 1일 3-7시 일정'],
+    ['10-01..10-07', '1일부터 7일까지'],
+    ['10-01..11-07', '10월 1일부터 7일까지'],
+    ['10-01..10-08', '10/1~7'],
+    ['2027-10-25', 'October 25'],
+    // Codex P2: an inherited end number that means something else.
+    ['10-01..10-07', 'from Oct 1 to 7 November'],
+    ['10-01..10-07', '10월 1일부터 7개 일정'],
+    ['10-01..10-07', 'Oct 1 to 7th of November'],
+    ['10-01..10-07', '10월 1일부터 7월까지'],
+    ['10-01..10-07', 'Oct 1 to 7pm'],
+    ['10-01..10-07', 'Oct 1 - 7 items'],
+    ['10-01..10-07', '10월 1일 ~ 7시'],
+    ['10-01..10-07', '10월 1일부터 7건'],
+    ['10-01..10-07', '10월 1일부터 7 일정'],
+  ])('%s is not grounded by "%s" (the owner\'s own digits and month stay required)', (value, text) => {
+    expect(absoluteDatesGrounded(value, text)).toBe(false);
+  });
+
+  it('the two one-step golds the P1 rule refused now validate', () => {
+    expect(validateAgentPlan(plan([read('calendar.events', { range: '10-01..10-07' })]), ctx('10월 1일부터 7일까지 일정 보여줘')).ok).toBe(true);
+    expect(validateAgentPlan(plan([read('calendar.events', { range: '10-25' })]), ctx('what do I have on October 25?')).ok).toBe(true);
+  });
+});

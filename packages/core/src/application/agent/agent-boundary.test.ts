@@ -20,7 +20,7 @@ const SOURCES = readdirSync(DIR)
   .map((name) => ({ name, text: readFileSync(new URL(name, DIR), 'utf8') }));
 
 /** The named pure `nl-routing` files the agent may import (never the selection service or the barrel). */
-const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 'selection-prompt', 'selection-validator', 'selection-meaning', 'selection-egress', 'symbolic-time', 'action-switch'];
+const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 'selection-prompt', 'selection-validator', 'selection-meaning', 'selection-egress', 'symbolic-time', 'action-switch', 'read-statement', 'statement-guard'];
 
 function allowedSpecifier(specifier: string): boolean {
   if (/^\.\.\/\.\.\/domain(?:\/[a-z-]+)?$/.test(specifier)) return true;
