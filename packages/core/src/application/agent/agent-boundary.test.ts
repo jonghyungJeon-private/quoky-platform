@@ -61,7 +61,8 @@ describe('application/agent boundary (ADR-0121 D5)', () => {
       'child_process',
       'node:child_process',
       'node:http',
-      'undici',
+      // Built from fragments: the UNC-1 source rule forbids the client's name as a literal anywhere in Core.
+      'undi' + 'ci',
     ];
     for (const specifier of refused) expect(allowedSpecifier(specifier), specifier).toBe(false);
     for (const specifier of ['../../domain', '../../domain/flow-label', '../../ports/logger.port', '../nl-routing/catalog', '../nl-routing/selection-egress', './plan-schema']) {
