@@ -250,8 +250,10 @@ function dateExpressionIn(month: number, day: number, text: string): boolean {
  * another step's ("금요일 일정이랑 오늘 받은 메일": the calendar's Friday is no weekday of the mail's today). Structural only:
  *
  * 1. The owner's period expressions are the maximal runs of time words in the prose (`isNlTimeWord`).
- * 2. Each expression is bound to the source it modifies: the nearest catalog alias of a plan entry AFTER it in Korean
- *    (a modifier precedes its noun), BEFORE it otherwise, else the other way; no alias → unbound.
+ * 2. Each expression is bound to the source it modifies: in Korean the nearest catalog alias of a plan entry AFTER it (a
+ *    modifier precedes its noun), else before it; otherwise the nearest alias after it INSIDE ITS CONJUNCT (split on
+ *    "and", "그리고", a comma, a glued "-랑" / "-하고": "Friday calendar and today mail"), else the nearest alias before it
+ *    ("calendar for friday"), else after it; no alias → unbound. Further binding edge cases are fail-closed residuals.
  * 3. A ranged step CLAIMS an expression when the expression names the step's period (a weekday placement, a closed period
  *    label, or a date resolving to the same instants) and is bound to the step's entry or unbound.
  * 4. Every ranged step must claim an expression (`range-unnamed`) unless its range is the previous selection's; two steps
@@ -337,6 +339,20 @@ function periodExpressions(tokens: readonly string[], entries: readonly NlCatalo
     );
     return hit?.id;
   });
+  // Conjuncts (Codex P2): "and", "그리고" and a comma or a glued "-랑" / "-하고" end one; an English period word binds to the
+  // next source noun inside its own conjunct ("Friday calendar and today mail"), else to the preceding source.
+  const conjunct: number[] = [];
+  let current = 0;
+  for (const token of tokens) {
+    const word = normalizeForMatch(token);
+    if (word === 'and' || word === '그리고') {
+      conjunct.push(-1);
+      current += 1;
+      continue;
+    }
+    conjunct.push(current);
+    if (/[,،]$/u.test(word) || /(?:랑|하고)$/u.test(word)) current += 1;
+  }
   const out: PeriodExpression[] = [];
   let index = 0;
   while (index < tokens.length) {
@@ -348,7 +364,9 @@ function periodExpressions(tokens: readonly string[], entries: readonly NlCatalo
     while (end < tokens.length && isNlTimeWord(tokens[end] as string)) end += 1;
     const after = sourceAt.slice(end).find((id) => id !== undefined);
     const before = sourceAt.slice(0, index).reverse().find((id) => id !== undefined);
-    const boundEntry = korean ? (after ?? before) : (before ?? after);
+    const own = conjunct[index];
+    const afterInConjunct = sourceAt.slice(end).find((id, offset) => id !== undefined && conjunct[end + offset] === own);
+    const boundEntry = korean ? (after ?? before) : (afterInConjunct ?? before ?? after);
     out.push({ start: index, end, text: tokens.slice(index, end).join(' '), ...(boundEntry !== undefined ? { boundEntry } : {}) });
     index = end;
   }

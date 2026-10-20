@@ -236,6 +236,19 @@ describe('plan validator: dates only symbolic, summaries closed', () => {
     expect(validateAgentPlan(english, ctx('show my calendar for friday and mail from today')).ok).toBe(true);
   });
 
+  it('English binding: a prenominal period binds to the next source inside its conjunct, a postnominal one to the preceding source', () => {
+    const steps = plan([read('calendar.events', { range: 'fri' }), read('mail.list', { range: 'today' })]);
+    // Prenominal (Codex P2): "today" belongs to "mail", not to the calendar before the "and".
+    expect(validateAgentPlan(steps, ctx('show Friday calendar and today mail')).ok).toBe(true);
+    expect(validateAgentPlan(steps, ctx('show Friday calendar, today mail')).ok).toBe(true);
+    // Postnominal: no source follows inside the conjunct, so the preceding one.
+    expect(validateAgentPlan(steps, ctx('show my calendar for friday and my mail from today')).ok).toBe(true);
+    // Swapped values under either construction are refused.
+    const swapped = plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'fri' })]);
+    expect(validateAgentPlan(swapped, ctx('show Friday calendar and today mail'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
+    expect(validateAgentPlan(swapped, ctx('show my calendar for friday and my mail from today'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
+  });
+
   it('swapped ranges are refused: each period is bound to the source it modifies', () => {
     const swapped = plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'fri' })]);
     expect(validateAgentPlan(swapped, ctx('금요일 일정이랑 오늘 받은 메일 보여줘'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
