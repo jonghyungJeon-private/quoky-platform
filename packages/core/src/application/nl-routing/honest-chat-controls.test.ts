@@ -33,6 +33,29 @@ describe('honest chat — the control commands (에이전트 중지 / 에이전�
     }
   });
 
+  it('Codex P2: the denial must govern the stop / resume action in its own clause; an unrelated limitation is kept (KO, EN)', () => {
+    for (const reply of [
+      'You can resume the agent, but it cannot recover deleted events.',
+      'You can resume the agent but it cannot recover deleted events.',
+      'You can resume the agent anytime; deleted events cannot be restored.',
+      'Stopping the agent is easy, and old reminders cannot be recovered.',
+      '에이전트는 다시 켤 수 있지만 삭제된 일정은 복구할 수 없어요.',
+      '에이전트를 재개해도 삭제된 일정은 복구할 수 없어요.',
+      '에이전트를 재개하면 지운 메일은 되돌릴 수 없어요.',
+      '에이전트를 중지하고 나서도 정확한 명령은 그대로 쓸 수 있고, 외부 메일은 보낼 수 없어요.',
+    ]) {
+      const language = /[가-힣]/u.test(reply) ? 'ko' : 'en';
+      expect(guardFalseControlDenials(reply, language), reply).toEqual({ text: reply, guarded: false });
+      expect(guardFalseIncapabilityClaims(reply, ENTRIES, language, [], { controls: true }), reply).toEqual({ text: reply, guarded: false });
+    }
+    // A clause that does deny the command is still replaced, also beside an unrelated clause or as "such a command".
+    expect(guardFalseControlDenials('You can ask me anything, but there is no command to resume the agent.', 'en').text).toBe('To turn the agent back on, send "에이전트 재개".');
+    expect(guardFalseControlDenials('Resuming the agent is not possible.', 'en').text).toBe('To turn the agent back on, send "에이전트 재개".');
+    expect(guardFalseControlDenials('일정은 볼 수 있지만, 에이전트를 재개하는 명령은 없어요.', 'ko').text).toBe(RESUME_HINT);
+    expect(guardFalseControlDenials('에이전트 재개 말씀이신가요? 그런 명령은 없어요.', 'ko').text).toBe(`에이전트 재개 말씀이신가요? ${RESUME_HINT}`);
+    expect(guardFalseControlDenials('Do you mean resuming the agent? There is no such command.', 'en').text).toBe('Do you mean resuming the agent? To turn the agent back on, send "에이전트 재개".');
+  });
+
   it('true or unrelated sentences stay, and nothing changes while the switch is not recognized', () => {
     for (const reply of [
       '에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.',

@@ -28005,9 +28005,12 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
     (The implementation first proposed stopping on a clear near miss of 중지 as the safe direction; the owner declined it.)
   - `도움말` / `새 대화` are not in the near-miss set: they are short phrases one key from ordinary words ("새 대회").
 - **Honest chat.** While the phrase is recognized on an owner DM turn, the ADR-0120 D9 fact names both control commands,
-  and a reply sentence that names the agent, names stopping or resuming it, and denies that the command or ability exists
-  is replaced by the exact-phrase hint (the rest of the reply is kept). With the phrase not recognized, both are unchanged.
+  and a reply sentence that names the agent and in which a negated predicate governs stopping or resuming it (in the
+  action's own clause: "재개하는 명령은 없어요", "there is no command to resume", "resuming … is not possible"), or that
+  denies "such a command" right after a sentence about it, is replaced by the exact-phrase hint; the rest of the reply is
+  kept. An unrelated limitation in another clause ("You can resume the agent, but it cannot recover deleted events",
+  Codex P2) is kept. With the phrase not recognized, both are unchanged.
 - **Tests (targeted, offline; no model call).** `nl-routing/action-switch-near-miss.test.ts` (6),
-  `nl-routing/honest-chat-controls.test.ts` (3), `agent/agent-run-service.test.ts` (+2), and
+  `nl-routing/honest-chat-controls.test.ts` (4), `agent/agent-run-service.test.ts` (+2), and
   `apps/quoky/src/agent/agent-shadow.app.test.ts` (+3: the live near misses, honest chat, `c-shadow` grammar reads with
   write / control turns not planned and the kill switch holding; `off` stays byte-identical over the corpus).

@@ -80,21 +80,60 @@ export function renderControlCommandsFact(): string {
 
 /** A sentence that names the agent. */
 const AGENT_NOUN = /에이전트|\bagents?\b/iu;
-/** The switch's own actions, by direction (the closed vocabulary of stopping and resuming the agent). */
-const CONTROL_ACTION: Readonly<Record<NlActionSwitchState, RegExp>> = {
-  stopped: /중지|멈추|멈춰|멈출|멈춤|정지|중단|끄|꺼|끌|\b(?:stop|stopping|pause|disable|turn(?:ing)? off)\b/iu,
-  running: /재개|다시\s*(?:켜|켤|시작)|켜|켤|재시작|\b(?:resume|resuming|restart|re-enable|enable|turn(?:ing)? (?:it )?(?:back )?on)\b/iu,
+/** The switch's own actions, by direction (the closed vocabulary of stopping and resuming the agent), as pattern sources. */
+const CONTROL_ACTION_KO: Readonly<Record<NlActionSwitchState, string>> = {
+  stopped: '(?:중지|멈추|멈춰|멈출|멈춤|정지|중단|끄|꺼|끌)',
+  running: '(?:재개|다시\\s*(?:켜|켤|시작)|켜|켤|재시작)',
 };
-/** A denial that the command or the ability exists (not a statement about the switch's current state). */
-const KO_CONTROL_DENIAL = /(?:명령|커맨드|기능|방법|문구|키워드)[^.!?\n]{0,14}?(?:없|않|존재하지)|수\s*(?:가|는|도)?\s*없|못\s*(?:해|하|합|드려|드립)|불가|지원하지\s*않|제공하지\s*않/u;
-const EN_CONTROL_DENIAL =
-  /\b(?:there(?:['’]s| is) no|there are no|no (?:such )?(?:command|way|option|feature)|cannot|can['’]t|unable to|not able to|(?:doesn['’]t|does not|isn['’]t|is not) (?:exist|available|supported|possible))/iu;
+const CONTROL_ACTION_EN: Readonly<Record<NlActionSwitchState, string>> = {
+  stopped: '(?:stop|stopping|pause|pausing|disable|disabling|turn(?:ing)? (?:it |the agent )?off)',
+  running: '(?:resume|resuming|restart|restarting|re-enable|enable|enabling|turn(?:ing)? (?:it |the agent )?(?:back )?on)',
+};
+/**
+ * The Korean negated predicate that can govern a control action: the command or way to do it does not exist, or it cannot
+ * be done (수 없, 못 해, 불가, 지원하지 않 …).
+ */
+const KO_DENIAL = '(?:(?:명령|커맨드|기능|방법|문구|키워드)[^.!?\\n]{0,10}?(?:없|않|존재하지)|수\\s*(?:가|는|도)?\\s*없|못\\s*(?:해|하|합|드려|드립)|불가|지원하지\\s*않|제공하지\\s*않)';
+/** An English negation that governs the action right after it ("cannot resume", "there is no command to resume"). */
+const EN_DENIAL_BEFORE =
+  "(?:cannot|can['’]t|unable to|not able to|no way to|(?:there(?:['’]s| is| are) )?no (?:such )?(?:command|way|option|feature)s? (?:to|for))";
+/** An English negation the action governs as its subject ("resuming the agent is not possible"). */
+const EN_DENIAL_AFTER = "(?:is not|isn['’]t|are not|aren['’]t|does not|doesn['’]t|do not|don['’]t)\\s+(?:possible|available|supported|exist)";
+/** The anaphoric denial of the command itself ("그런 명령은 없어요", "There is no such command"). */
+const ANAPHORIC_DENIAL = /(?:그런|그|해당)\s*(?:명령|커맨드|기능)[^.!?\n]{0,8}?(?:없|않|존재하지)|\bno such (?:command|feature)\b|\b(?:that|this|such a) command (?:does not|doesn['’]t) exist\b/iu;
+/**
+ * Clause boundaries inside a sentence: punctuation, the English coordinators and concessives, and the Korean connective
+ * endings (-지만, -는데, -아도/-어도, -고, -며, -면, -서, -으나). A denial governs only an action of its own clause, so "You can resume
+ * the agent, but it cannot recover deleted events" and "에이전트는 재개할 수 있지만 삭제된 일정은 복구할 수 없어요" keep their
+ * unrelated limitation.
+ */
+const CLAUSE_SPLIT = /[,;，、]|\s(?:but|however|though|although|while|and|yet|so)\s|(?:지만|는데|은데|더라도|아도|어도|여도|해도|으나|으며|며|고|면|서)\s/iu;
+
+/** The directions whose stop / resume action a denial in this clause governs. */
+function deniedInClause(clause: string): NlActionSwitchState[] {
+  return (Object.keys(CONTROL_ACTION_KO) as NlActionSwitchState[]).filter(
+    (state) =>
+      new RegExp(`${CONTROL_ACTION_KO[state]}[^.!?\\n]{0,14}?${KO_DENIAL}`, 'u').test(clause) ||
+      new RegExp(`\\b${EN_DENIAL_BEFORE}\\s+(?:\\S+\\s+){0,2}?${CONTROL_ACTION_EN[state]}\\b`, 'iu').test(clause) ||
+      new RegExp(`\\b${CONTROL_ACTION_EN[state]}\\b[^.!?\\n]{0,30}?\\b${EN_DENIAL_AFTER}\\b`, 'iu').test(clause),
+  );
+}
+
+/** The directions a sentence names (for an anaphoric denial in it or the next sentence). */
+function controlStatesNamed(sentence: string): NlActionSwitchState[] {
+  return (Object.keys(CONTROL_ACTION_KO) as NlActionSwitchState[]).filter(
+    (state) => new RegExp(CONTROL_ACTION_KO[state], 'u').test(sentence) || new RegExp(`\\b${CONTROL_ACTION_EN[state]}\\b`, 'iu').test(sentence),
+  );
+}
 
 /**
  * The control-denial guard (live DM test 2026-10-20): while the switch phrases are recognized, a reply sentence that names
- * the agent, names stopping or resuming it, and denies that the command or ability exists ("에이전트를 재개하는 명령어는
- * 없어요", "There is no command to resume the agent") is false. Only those sentences go; the exact-phrase hint for the
- * direction(s) they named closes the reply once. Every other sentence is kept as written.
+ * the agent and in which a negated predicate GOVERNS stopping or resuming it ("에이전트를 재개하는 명령어는 없어요", "There is
+ * no command to resume the agent", "resuming the agent is not possible"), or denies "such a command" right after a
+ * sentence about stopping or resuming the agent, is false. The denial must sit in the action's own clause (Codex P2): an
+ * unrelated limitation in another clause ("…, but it cannot recover deleted events") is not a denial of the command, and
+ * that sentence is kept. Only the denying sentences go; the exact-phrase hint for the direction(s) they named closes the
+ * reply once. Every other sentence is kept as written.
  */
 export function guardFalseControlDenials(text: string, language: 'ko' | 'en'): FalseIncapabilityGuardResult {
   if (typeof text !== 'string' || text.length === 0 || !AGENT_NOUN.test(text)) return { text, guarded: false };
@@ -104,8 +143,14 @@ export function guardFalseControlDenials(text: string, language: 'ko' | 'en'): F
   for (let index = 0; index < parts.length; index += 2) {
     const sentence = parts[index] ?? '';
     const separator = parts[index + 1] ?? '';
-    const states = (Object.keys(CONTROL_ACTION) as NlActionSwitchState[]).filter((state) => CONTROL_ACTION[state].test(sentence));
-    if (AGENT_NOUN.test(sentence) && states.length > 0 && (KO_CONTROL_DENIAL.test(sentence) || EN_CONTROL_DENIAL.test(sentence))) {
+    const previous = parts[index - 2] ?? '';
+    let states: NlActionSwitchState[] = [];
+    if (AGENT_NOUN.test(sentence)) states = [...new Set(sentence.split(CLAUSE_SPLIT).flatMap((clause) => deniedInClause(clause ?? '')))];
+    if (states.length === 0 && ANAPHORIC_DENIAL.test(sentence)) {
+      const about = AGENT_NOUN.test(sentence) ? controlStatesNamed(sentence) : AGENT_NOUN.test(previous) ? controlStatesNamed(previous) : [];
+      states = about;
+    }
+    if (states.length > 0) {
       for (const state of states) denied.add(state);
       continue;
     }
