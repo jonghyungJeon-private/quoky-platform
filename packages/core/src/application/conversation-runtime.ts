@@ -93,7 +93,7 @@ import {
   type IntentClassifyContext,
 } from './intent-classifier';
 import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlItemSource, type NlListingReceipt, type NlSelectedCommand } from './nl-routing/catalog';
-import { guardFalseControlDenials, guardFalseIncapabilityClaims, renderConfiguredSourcesFact, renderControlCommandsFact } from './nl-routing/honest-chat';
+import { guardFalseControlDenials, guardFalseIncapabilityClaims, renderConfiguredSourcesFact, renderControlCommandsFact, type NlControlScope } from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
 import { readLastSelection } from './nl-routing/selection-state';
 import { renderAgentSwitchReply, type AgentRunService } from './agent/agent-run-service';
@@ -2474,7 +2474,7 @@ export class ConversationRuntime {
     // Live DM test 2026-10-20: a near miss of the switch phrase ("에이ㄴ트 재개", "에이전트 재") while the exact phrase is
     // recognized (owner DM, every state, like the phrase) gets the exact phrase instead of chat. It never switches (owner
     // decision 2026-10-20: exact phrase only, both directions). Nothing is recorded, as for the phrase itself.
-    if (isDirectConversation(message.context) && !expiryNotice && this.switchPhraseRecognized()) {
+    if (isDirectConversation(message.context) && !expiryNotice && this.switchScope() !== undefined) {
       const nearMiss = this.handleSwitchNearMiss(message);
       if (nearMiss !== undefined) return this.responded(session, outboundMessage(message.context, nearMiss));
     }
@@ -8806,7 +8806,7 @@ export class ConversationRuntime {
     nlFacts?: NlChatFacts,
   ): Promise<TurnResult> {
     // Live DM test 2026-10-20: the switch phrases are recognized on this owner DM turn (the fact names them; the guard keeps them).
-    const controls = isDirectConversation(message.context) && this.switchPhraseRecognized();
+    const controls = isDirectConversation(message.context) ? this.switchScope() : undefined;
     let task = await this.deps.tasks.createTask(intent, message.context, {
       requestText: message.text,
       actorId: actor.id,
@@ -8888,9 +8888,9 @@ export class ConversationRuntime {
       // with or without a selection or a read catalog this turn.
       const sourcesFact =
         nlFacts !== undefined
-          ? renderConfiguredSourcesFact(nlFacts.entries, this.contributedHelpLines, controls ? { controls: true } : {})
-          : controls && (capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT)
-          ? renderControlCommandsFact()
+          ? renderConfiguredSourcesFact(nlFacts.entries, this.contributedHelpLines, controls !== undefined ? { controls } : {})
+          : controls !== undefined && (capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT)
+          ? renderControlCommandsFact(controls)
           : undefined;
       const nlComposition = sourcesFact === undefined ? undefined : { additionalCurrentFacts: [sourcesFact] };
       const promptSpec =
@@ -9115,7 +9115,7 @@ export class ConversationRuntime {
     currentUserMessage: string,
     taskId?: Id,
     nlFacts?: NlChatFacts,
-    controls = false,
+    controls?: NlControlScope,
   ): { readonly text: string; readonly guarded: boolean } {
     if (
       capability !== Capability.GENERAL_CHAT &&
@@ -9129,13 +9129,13 @@ export class ConversationRuntime {
       // ADR-0120 D9: after a `none` selection, a false "cannot access <configured source>" is replaced by its command.
       // Live DM test 2026-10-20 (Codex P2): a denied control command is replaced whenever the switch is recognized.
       if (nlFacts === undefined) {
-        if (!controls) return { text, guarded: false };
+        if (controls === undefined) return { text, guarded: false };
         const control = guardFalseControlDenials(text, languageOf(currentUserMessage));
         if (!control.guarded) return { text, guarded: false };
         this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
         return { text: control.text, guarded: true };
       }
-      const incapable = guardFalseIncapabilityClaims(text, nlFacts.entries, languageOf(currentUserMessage), this.contributedHelpLines, controls ? { controls: true } : {});
+      const incapable = guardFalseIncapabilityClaims(text, nlFacts.entries, languageOf(currentUserMessage), this.contributedHelpLines, controls !== undefined ? { controls } : {});
       if (!incapable.guarded) return { text, guarded: false };
       this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
       return { text: incapable.text, guarded: true };
@@ -9680,15 +9680,17 @@ export class ConversationRuntime {
   }
 
   /**
-   * Whether the exact switch phrase is recognized on this runtime (the caller checks the owner DM): A6 actions acting in
-   * `active` selection, the agent not `off`, or the channel grants enforced. With all three off the phrase is ordinary
-   * text, so no near miss is answered and no honest-chat control fact is given. Reads `agentRuns.mode` only.
+   * What the exact switch phrase controls on this runtime (the caller checks the owner DM), or `undefined` when it is not
+   * recognized: A6 actions acting in `active` selection, the agent not `off`, the channel grants enforced. With all three
+   * off the phrase is ordinary text, so no near miss is answered and no honest-chat control fact is given. Reads
+   * `agentRuns.mode` only.
    */
-  private switchPhraseRecognized(): boolean {
+  private switchScope(): NlControlScope | undefined {
     const nl = this.deps.nlSelection;
-    if (nl?.handleSwitchPhrase !== undefined && nl.mode === 'active' && nl.actionLevel !== undefined && nl.actionLevel() !== 'off') return true;
-    if (this.deps.agentRuns !== undefined && this.deps.agentRuns.mode !== 'off') return true;
-    return this.surfaceGate()?.enforced === true && this.deps.surfaceGrants?.service !== undefined;
+    const actions = nl?.handleSwitchPhrase !== undefined && nl.mode === 'active' && nl.actionLevel !== undefined && nl.actionLevel() !== 'off';
+    const agent = this.deps.agentRuns !== undefined && this.deps.agentRuns.mode !== 'off';
+    const grants = this.surfaceGate()?.enforced === true && this.deps.surfaceGrants?.service !== undefined;
+    return actions || agent || grants ? { actions, agent, grants } : undefined;
   }
 
   /**

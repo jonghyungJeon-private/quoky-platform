@@ -125,6 +125,8 @@ export class AgentRunService {
   private readonly background = new AbortController();
   private inFlight = false;
   private readonly starts = new Map<Id, number[]>();
+  /** CA P3 6: drop times per live origin (grammar vs selection), for the content-free `originDropsLastHour` count. */
+  private readonly drops: Record<'grammar' | 'selection', number[]> = { grammar: [], selection: [] };
   private readonly killSwitch: NlActionSwitch;
 
   constructor(private readonly deps: AgentRunServiceDeps) {
@@ -169,7 +171,19 @@ export class AgentRunService {
     const perDay = this.deps.caps?.perDay ?? AGENT_SHADOW_MAX_PER_DAY;
     const lastHour = starts.filter((at) => nowMs - at < HOUR_MS).length;
     if (this.inFlight || lastHour >= perHour || starts.length >= perDay) {
-      this.logShadow({ outcome: 'dropped', reason: this.inFlight ? 'in-flight' : lastHour >= perHour ? 'hourly-cap' : 'daily-cap' });
+      // CA P3 6: which origin was dropped and how often in the rolling hour, so grammar turns crowding out selection-turn
+      // shadows under the cap is visible (closed values and a count only).
+      const origin = turn.live.source === 'grammar' ? 'grammar' : 'selection';
+      const recent = this.drops[origin].filter((at) => nowMs - at < HOUR_MS);
+      recent.push(nowMs);
+      this.drops[origin] = recent;
+      this.logShadow({
+        outcome: 'dropped',
+        reason: this.inFlight ? 'in-flight' : lastHour >= perHour ? 'hourly-cap' : 'daily-cap',
+        ...liveFields(turn.live),
+        origin,
+        originDropsLastHour: recent.length,
+      });
       return Promise.resolve();
     }
     this.inFlight = true;

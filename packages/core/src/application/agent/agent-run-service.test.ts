@@ -231,7 +231,14 @@ describe('AgentRunService — grammar-answered reads (liveSource grammar, live D
     for (let i = 0; i < 20; i += 1) await h.service.runShadow(turn(h), async () => CHAT);
     for (let i = 0; i < 11; i += 1) await h.service.runShadow(turn(h, {}, grammar('calendar.events')), async () => CHAT);
     expect(h.calls).toHaveLength(30);
-    expect(shadowLines(h).at(-1)).toMatchObject({ outcome: 'dropped', reason: 'hourly-cap' });
+    expect(shadowLines(h).at(-1)).toMatchObject({ outcome: 'dropped', reason: 'hourly-cap', liveSource: 'grammar', origin: 'grammar', originDropsLastHour: 1 });
+    // CA P3 6: drops are counted per origin (grammar vs selection) over the rolling hour, content-free.
+    await h.service.runShadow(turn(h, {}, { kind: 'none', source: 'chat' }), async () => CHAT);
+    await h.service.runShadow(turn(h, {}, grammar('calendar.events')), async () => CHAT);
+    expect(shadowLines(h).slice(-2)).toEqual([
+      expect.objectContaining({ outcome: 'dropped', liveSource: 'chat', origin: 'selection', originDropsLastHour: 1 }),
+      expect.objectContaining({ outcome: 'dropped', liveSource: 'grammar', origin: 'grammar', originDropsLastHour: 2 }),
+    ]);
     h.clock += 3_600_000;
     await h.service.handleSwitchPhrase(h.actors.get('owner') as Actor, '에이전트 중지', T0);
     const owner = h.actors.get('owner') as Actor;

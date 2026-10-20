@@ -301,15 +301,17 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
     expect(agent.switchState(await owner())).toBe('running');
     expect(requests).toEqual([]);
     // A near miss of 중지 (truncation, request form or typo) only hints: the switch acts only on the exact phrase.
-    for (const text of ['에이전트 중', '에이전트 중지해줘', '에이전트 중자']) {
+    for (const text of ['에이전트 중', '에이전트 중지해줘', '에이전트 중자', '에이전트 주지', '에이전트 정지']) {
       expect((await send(text)).reply.text, text).toBe(stopHint);
       expect(agent.switchState(await owner()), text).toBe('running');
     }
     // The exact phrases switch exactly as before; a near miss of 재개 never resumes.
     expect((await send('에이전트 중지')).reply.text).toBe('다단계 에이전트를 멈췄어요. 정확한 명령은 그대로 동작해요. 다시 켜려면 "에이전트 재개"라고 보내 주세요.');
     expect(agent.switchState(await owner())).toBe('stopped');
-    expect((await send('에이전트 재게')).reply.text).toBe(resumeHint);
-    expect(agent.switchState(await owner())).toBe('stopped');
+    for (const text of ['에이전트 재게', '에이전트 재고']) {
+      expect((await send(text)).reply.text, text).toBe(resumeHint);
+      expect(agent.switchState(await owner()), text).toBe('stopped');
+    }
     expect((await send('에이전트 재개')).reply.text).toBe('다단계 에이전트를 다시 켰어요.');
     expect(agent.switchState(await owner())).toBe('running');
     // A normal sentence that mentions 에이전트 is chat as before.
@@ -325,7 +327,8 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
       expect(result.reply.text).toBe('죄송해요. 다른 도움이 필요하면 말씀해 주세요. 에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.');
       const chat = requests.find((request) => request.capability === 'GENERAL_CHAT' || request.capability === 'POLICY_SENSITIVE_CHAT');
       // The fact rides in the prompt's JSON current facts (quotes escaped there).
-      expect(chat?.prompt).toContain(JSON.stringify(core.renderControlCommandsFact()).slice(1, -1));
+      // NL actions are off in this module, the agent is in shadow: the fact names the agent only.
+      expect(chat?.prompt).toContain(JSON.stringify(core.renderControlCommandsFact({ actions: false, agent: true, grants: false })).slice(1, -1));
     } finally {
       chatReply = CHAT_REPLY;
     }
@@ -335,7 +338,7 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
     const deps = (runtime as unknown as { deps: Record<string, unknown> }).deps;
     const saved = { nl: deps.nlSelection, agent: deps.agentRuns };
     const denial = '에이전트를 재개하는 명령어는 없어요.';
-    const fact = JSON.stringify(core.renderControlCommandsFact()).slice(1, -1);
+    const fact = JSON.stringify(core.renderControlCommandsFact({ actions: false, agent: true, grants: false })).slice(1, -1);
     const chatPrompt = () => requests.find((request) => request.capability === 'GENERAL_CHAT' || request.capability === 'POLICY_SENSITIVE_CHAT')?.prompt ?? '';
     chatReply = denial;
     try {

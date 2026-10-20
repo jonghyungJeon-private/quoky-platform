@@ -42,6 +42,10 @@ describe('the switch near miss (keystroke distance over the closed phrase set)',
       ['에이전트 중지 해', { kind: 'request', state: 'stopped' }],
       ['에이전트 중', { kind: 'prefix', state: 'stopped' }],
       ['에이전트 주', { kind: 'prefix', state: 'stopped' }],
+      // CA P3 3: these get the hint only (the switch acts on the exact phrase alone; no state change).
+      ['에이전트 재고', { kind: 'typo', state: 'running' }],
+      ['에이전트 주지', { kind: 'typo', state: 'stopped' }],
+      ['에이전트 정지', { kind: 'typo', state: 'stopped' }],
       ['에이전트 중ㅈ', { kind: 'prefix', state: 'stopped' }],
     ];
     for (const [text, expected] of cases) expect(nearMissActionSwitchPhrase(text), text).toEqual(expected);

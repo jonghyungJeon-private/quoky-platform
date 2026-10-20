@@ -7,16 +7,32 @@ import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 const ENTRIES = [NL_WAVE1_ENTRIES['calendar.events']];
 const RESUME_HINT = '에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.';
+const ALL = { actions: true, agent: true, grants: false } as const;
 
 describe('honest chat — the control commands (에이전트 중지 / 에이전트 재개)', () => {
   it('the fact names both exact phrases only when the switch is recognized', () => {
-    const withControls = renderConfiguredSourcesFact(ENTRIES, [], { controls: true }) ?? '';
-    expect(withControls).toContain(renderControlCommandsFact());
+    const withControls = renderConfiguredSourcesFact(ENTRIES, [], { controls: ALL }) ?? '';
+    expect(withControls).toContain(renderControlCommandsFact(ALL) ?? 'missing');
     expect(withControls).toContain('"에이전트 중지"');
     expect(withControls).toContain('"에이전트 재개"');
     expect(renderConfiguredSourcesFact(ENTRIES, [])).not.toContain('control commands');
-    expect(renderConfiguredSourcesFact([], [], { controls: true })).toBe(renderControlCommandsFact());
+    expect(renderConfiguredSourcesFact([], [], { controls: ALL })).toBe(renderControlCommandsFact(ALL));
     expect(renderConfiguredSourcesFact([], [])).toBeUndefined();
+  });
+
+  it('CA P3 7: the fact is worded by what the switch controls; the multi-step agent is named only while it is on', () => {
+    const actionsOnly = renderControlCommandsFact({ actions: true, agent: false, grants: false }) ?? '';
+    expect(actionsOnly).toContain("stops Quoky's natural-language actions, and");
+    expect(actionsOnly).toContain('turns it back on');
+    expect(actionsOnly).not.toContain('multi-step agent');
+    const agentOnly = renderControlCommandsFact({ actions: false, agent: true, grants: false }) ?? '';
+    expect(agentOnly).toContain('stops the multi-step agent, and');
+    expect(agentOnly).not.toContain('natural-language actions');
+    const grantsAndActions = renderControlCommandsFact({ actions: true, agent: false, grants: true }) ?? '';
+    expect(grantsAndActions).toContain("stops Quoky's natural-language actions and every channel permission (paused, not deleted)");
+    expect(grantsAndActions).toContain('turns them back on');
+    expect(grantsAndActions).not.toContain('multi-step agent');
+    expect(renderControlCommandsFact({ actions: false, agent: false, grants: false })).toBeUndefined();
   });
 
   it('a sentence denying the resume or stop command is replaced by the exact-phrase hint; the rest is kept', () => {
@@ -29,7 +45,7 @@ describe('honest chat — the control commands (에이전트 중지 / 에이전�
     for (const [reply, expected] of cases) {
       const language = /[가-힣]/u.test(reply) ? 'ko' : 'en';
       expect(guardFalseControlDenials(reply, language), reply).toEqual({ text: expected, guarded: true });
-      expect(guardFalseIncapabilityClaims(reply, ENTRIES, language, [], { controls: true }), reply).toEqual({ text: expected, guarded: true });
+      expect(guardFalseIncapabilityClaims(reply, ENTRIES, language, [], { controls: ALL }), reply).toEqual({ text: expected, guarded: true });
     }
   });
 
@@ -46,14 +62,21 @@ describe('honest chat — the control commands (에이전트 중지 / 에이전�
     ]) {
       const language = /[가-힣]/u.test(reply) ? 'ko' : 'en';
       expect(guardFalseControlDenials(reply, language), reply).toEqual({ text: reply, guarded: false });
-      expect(guardFalseIncapabilityClaims(reply, ENTRIES, language, [], { controls: true }), reply).toEqual({ text: reply, guarded: false });
+      expect(guardFalseIncapabilityClaims(reply, ENTRIES, language, [], { controls: ALL }), reply).toEqual({ text: reply, guarded: false });
     }
     // A clause that does deny the command is still replaced, also beside an unrelated clause or as "such a command".
     expect(guardFalseControlDenials('You can ask me anything, but there is no command to resume the agent.', 'en').text).toBe('To turn the agent back on, send "에이전트 재개".');
     expect(guardFalseControlDenials('Resuming the agent is not possible.', 'en').text).toBe('To turn the agent back on, send "에이전트 재개".');
     expect(guardFalseControlDenials('일정은 볼 수 있지만, 에이전트를 재개하는 명령은 없어요.', 'ko').text).toBe(RESUME_HINT);
-    expect(guardFalseControlDenials('에이전트 재개 말씀이신가요? 그런 명령은 없어요.', 'ko').text).toBe(`에이전트 재개 말씀이신가요? ${RESUME_HINT}`);
-    expect(guardFalseControlDenials('Do you mean resuming the agent? There is no such command.', 'en').text).toBe('Do you mean resuming the agent? To turn the agent back on, send "에이전트 재개".');
+    // Codex P2 (third round): a bare anaphoric denial in a later sentence is kept (no fallback; a recorded residual).
+    for (const reply of [
+      'The agent cannot stop running containers. There is no such command.',
+      '에이전트 재개 말씀이신가요? 그런 명령은 없어요.',
+      'Do you mean resuming the agent? There is no such command.',
+    ]) {
+      const language = /[가-힣]/u.test(reply) ? 'ko' : 'en';
+      expect(guardFalseControlDenials(reply, language), reply).toEqual({ text: reply, guarded: false });
+    }
   });
 
   it('Codex P2 (round 2): the negated stop / resume must take the agent, Quoky or the switch as its object or topic', () => {

@@ -25,7 +25,7 @@ export function renderConfiguredSourcesFact(
   options: HonestChatOptions = {},
 ): string | undefined {
   const sources = entries.filter((entry) => entry.sourceNames !== undefined);
-  const controls = options.controls === true ? renderControlCommandsFact() : undefined;
+  const controls = options.controls !== undefined ? renderControlCommandsFact(options.controls) : undefined;
   if (sources.length === 0 && helpLines.length === 0) return controls;
   const listed = bounded(sources.map((entry) => `${entry.label.en} (command: ${entry.usage.ko})`).join('; '), SOURCES_MAX_CHARS);
   const parts: string[] = [];
@@ -57,24 +57,42 @@ export function renderConfiguredSourcesFact(
   return parts.join(' ');
 }
 
+/**
+ * What the one switch controls in the active configuration (CA P3 7): A6 natural-language actions (`QUOKY_NL_ACTIONS` not
+ * off), the multi-step agent (`QUOKY_AGENT_MODE` not off) and the channel permissions (`QUOKY_CHANNEL_GRANTS=enforce`).
+ */
+export interface NlControlScope {
+  readonly actions: boolean;
+  readonly agent: boolean;
+  readonly grants: boolean;
+}
+
 /** What the honest-chat fact and guard know beyond the catalog entries. */
 export interface HonestChatOptions {
   /**
-   * The kill-switch phrases (`에이전트 중지` / `에이전트 재개`, A6-D3 and ADR-0121 D7) are recognized on this turn's route
-   * (natural-language actions, the agent or the channel grants are on). Absent: the fact and the guard are unchanged.
+   * The kill-switch phrases (`에이전트 중지` / `에이전트 재개`, A6-D3 and ADR-0121 D7) are recognized on this turn's route,
+   * and what they control. Absent: the fact and the guard are unchanged.
    */
-  readonly controls?: boolean;
+  readonly controls?: NlControlScope;
 }
 
 /**
  * Live DM test 2026-10-20: the chat model, asked about "에이전트 재", said there is no command to resume the agent. While
- * the switch phrases are recognized, the fact names them as Quoky's own control commands.
+ * the switch phrases are recognized, the fact names them as Quoky's own control commands, worded by what they control in
+ * the active configuration (the multi-step agent is named only while it is on). `undefined` when nothing is on.
  */
-export function renderControlCommandsFact(): string {
+export function renderControlCommandsFact(scope: NlControlScope): string | undefined {
+  const targets = [
+    ...(scope.actions ? ["Quoky's natural-language actions"] : []),
+    ...(scope.agent ? ['the multi-step agent'] : []),
+    ...(scope.grants ? ['every channel permission (paused, not deleted)'] : []),
+  ];
+  if (targets.length === 0) return undefined;
+  const listed = targets.length === 1 ? targets[0] : `${targets.slice(0, -1).join(', ')} and ${targets.at(-1)}`;
   return (
     `Quoky's control commands (the User sends one exactly, as the whole message, in this DM): "${ACTION_SWITCH_PHRASES.stopped}" ` +
-    `stops Quoky's natural-language actions and the multi-step agent, and "${ACTION_SWITCH_PHRASES.running}" turns them back on. ` +
-    'These commands exist: never say there is no command to stop or resume the agent; when the User asks, give the exact phrase.'
+    `stops ${listed}, and "${ACTION_SWITCH_PHRASES.running}" turns ${targets.length === 1 ? 'it' : 'them'} back on. ` +
+    'These commands exist: never say there is no command to stop or resume them; when the User asks, give the exact phrase.'
   );
 }
 
@@ -99,8 +117,6 @@ const EN_DENIAL_BEFORE =
   "(?:cannot|can['’]t|unable to|not able to|no way to|(?:there(?:['’]s| is| are) )?no (?:such )?(?:command|way|option|feature)s? (?:to|for))";
 /** An English negation the action governs as its subject ("resuming the agent is not possible"). */
 const EN_DENIAL_AFTER = "(?:is not|isn['’]t|are not|aren['’]t|does not|doesn['’]t|do not|don['’]t)\\s+(?:possible|available|supported|exist)";
-/** The anaphoric denial of the command itself ("그런 명령은 없어요", "There is no such command"). */
-const ANAPHORIC_DENIAL = /(?:그런|그|해당)\s*(?:명령|커맨드|기능)[^.!?\n]{0,8}?(?:없|않|존재하지)|\bno such (?:command|feature)\b|\b(?:that|this|such a) command (?:does not|doesn['’]t) exist\b/iu;
 /**
  * Clause boundaries inside a sentence: punctuation, the English coordinators and concessives, and the Korean connective
  * endings (-지만, -는데, -아도/-어도, -고, -며, -면, -서, -으나). A denial governs only an action of its own clause, so "You can resume
@@ -130,20 +146,13 @@ function deniedInClause(clause: string): NlActionSwitchState[] {
   );
 }
 
-/** The directions a sentence names (for an anaphoric denial in it or the next sentence). */
-function controlStatesNamed(sentence: string): NlActionSwitchState[] {
-  return (Object.keys(CONTROL_ACTION_KO) as NlActionSwitchState[]).filter(
-    (state) => new RegExp(CONTROL_ACTION_KO[state], 'u').test(sentence) || new RegExp(`\\b${CONTROL_ACTION_EN[state]}\\b`, 'iu').test(sentence),
-  );
-}
-
 /**
  * The control-denial guard (live DM test 2026-10-20): while the switch phrases are recognized, a reply sentence in which a
  * negated predicate GOVERNS stopping or resuming the agent itself (its object or topic) ("에이전트를 재개하는 명령어는 없어요", "There is
- * no command to resume the agent", "resuming the agent is not possible"), or denies "such a command" right after a
- * sentence about stopping or resuming the agent, is false. The denial must sit in the action's own clause (Codex P2): an
- * unrelated limitation in another clause ("…, but it cannot recover deleted events") is not a denial of the command, and
- * that sentence is kept. Only the denying sentences go; the exact-phrase hint for the direction(s) they named closes the
+ * no command to resume the agent", "resuming the agent is not possible"), is false. The denial must sit in the action's
+ * own clause (Codex P2): an unrelated limitation in another clause ("…, but it cannot recover deleted events") is not a
+ * denial of the command, and that sentence is kept. A bare anaphoric denial in a later sentence ("그런 명령은 없어요",
+ * "There is no such command") is kept too (Codex P2, third round; a recorded fail-safe residual). Only the denying sentences go; the exact-phrase hint for the direction(s) they named closes the
  * reply once. Every other sentence is kept as written.
  */
 export function guardFalseControlDenials(text: string, language: 'ko' | 'en'): FalseIncapabilityGuardResult {
@@ -154,13 +163,7 @@ export function guardFalseControlDenials(text: string, language: 'ko' | 'en'): F
   for (let index = 0; index < parts.length; index += 2) {
     const sentence = parts[index] ?? '';
     const separator = parts[index + 1] ?? '';
-    const previous = parts[index - 2] ?? '';
-    let states: NlActionSwitchState[] = [];
-    if (AGENT_NOUN.test(sentence)) states = [...new Set(sentence.split(CLAUSE_SPLIT).flatMap((clause) => deniedInClause(clause ?? '')))];
-    if (states.length === 0 && ANAPHORIC_DENIAL.test(sentence)) {
-      const about = AGENT_NOUN.test(sentence) ? controlStatesNamed(sentence) : AGENT_NOUN.test(previous) ? controlStatesNamed(previous) : [];
-      states = about;
-    }
+    const states = AGENT_NOUN.test(sentence) ? [...new Set(sentence.split(CLAUSE_SPLIT).flatMap((clause) => deniedInClause(clause ?? '')))] : [];
     if (states.length > 0) {
       for (const state of states) denied.add(state);
       continue;
@@ -361,7 +364,7 @@ export function guardFalseIncapabilityClaims(
   if (typeof raw !== 'string' || raw.trim() === '') return { text: raw, guarded: false };
   // Live DM test 2026-10-20: a denied control command (재개 / 중지) is replaced by its exact phrase first; the rest of the
   // reply still meets every check below.
-  if (options.controls === true) {
+  if (options.controls !== undefined) {
     const control = guardFalseControlDenials(raw, language);
     if (control.guarded) {
       const rest = guardFalseIncapabilityClaims(control.text, entries, language, helpLines);
