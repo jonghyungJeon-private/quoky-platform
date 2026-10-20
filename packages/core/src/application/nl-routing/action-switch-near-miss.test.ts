@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACTION_SWITCH_PHRASES,
-  actionSwitchNearMissStops,
   nearMissActionSwitchPhrase,
   parseActionSwitchPhrase,
   renderActionSwitchHint,
@@ -10,7 +9,8 @@ import { nlIsKeystrokePrefix, nlKeystrokeDistance } from './garbled-action';
 
 // Live DM test 2026-10-20 (14:52–14:54): "에이ㄴ트 재개" and "에이전트 재" went to chat, which denied the command; only the
 // exact "에이전트 재개" switched. A near miss of the closed switch phrases is now detected by the garbled-noun keystroke
-// distance (no typo list); execution stays exact except a near miss toward the safe direction (stop).
+// distance (no typo list) and answered with the exact phrase; execution stays exact for stop and resume alike (owner
+// decision 2026-10-20).
 
 describe('the switch near miss (keystroke distance over the closed phrase set)', () => {
   it('reads loose compatibility jamo as keys: "에이ㄴ트" is two keys from "에이전트"', () => {
@@ -81,16 +81,6 @@ describe('the switch near miss (keystroke distance over the closed phrase set)',
     ]) {
       expect(nearMissActionSwitchPhrase(text), text).toBeUndefined();
     }
-  });
-
-  it('only a typo or request near miss of 중지 acts (stop is the safe direction); resume, prefix and ambiguous only hint', () => {
-    expect(actionSwitchNearMissStops({ kind: 'typo', state: 'stopped' })).toBe(true);
-    expect(actionSwitchNearMissStops({ kind: 'request', state: 'stopped' })).toBe(true);
-    expect(actionSwitchNearMissStops({ kind: 'prefix', state: 'stopped' })).toBe(false);
-    expect(actionSwitchNearMissStops({ kind: 'typo', state: 'running' })).toBe(false);
-    expect(actionSwitchNearMissStops({ kind: 'request', state: 'running' })).toBe(false);
-    expect(actionSwitchNearMissStops({ kind: 'prefix', state: 'running' })).toBe(false);
-    expect(actionSwitchNearMissStops({ kind: 'ambiguous' })).toBe(false);
   });
 
   it('the hint names the exact phrase and is not a question', () => {

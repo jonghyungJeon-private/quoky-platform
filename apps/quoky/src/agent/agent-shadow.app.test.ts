@@ -289,9 +289,10 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
     expect(agent.switchState(owner)).toBe('running');
   });
 
-  it('a near miss of the switch phrase gets the exact phrase (live DM 2026-10-20); only a clear near miss of 중지 stops', async () => {
+  it('a near miss of the switch phrase gets the exact phrase and never switches (live DM 2026-10-20; owner decision: exact only)', async () => {
     const owner = async (): Promise<Actor> => (await storage.actors.findByExternalIdentity('discord', OWNER)) as Actor;
     const resumeHint = '에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.';
+    const stopHint = '에이전트를 멈추려면 "에이전트 중지"라고 보내 주세요.';
     // The live turns: a typo and a truncation of 재개 are answered with the exact phrase, never by chat; nothing changes.
     for (const text of ['에이ㄴ트 재개', '에이전트 재', '에이전트 재개해줘']) {
       const result = await send(text);
@@ -299,17 +300,16 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
     }
     expect(agent.switchState(await owner())).toBe('running');
     expect(requests).toEqual([]);
-    // A truncated 중지 only hints (the message may be unfinished).
-    expect((await send('에이전트 중')).reply.text).toBe('에이전트를 멈추려면 "에이전트 중지"라고 보내 주세요.');
-    expect(agent.switchState(await owner())).toBe('running');
-    // A clear near miss of 중지 stops (the safe direction), naming the exact phrase before the usual reply.
-    expect((await send('에이전트 중지해줘')).reply.text).toBe('"에이전트 중지"로 알아들었어요.\n다단계 에이전트를 멈췄어요. 정확한 명령은 그대로 동작해요. 다시 켜려면 "에이전트 재개"라고 보내 주세요.');
+    // A near miss of 중지 (truncation, request form or typo) only hints: the switch acts only on the exact phrase.
+    for (const text of ['에이전트 중', '에이전트 중지해줘', '에이전트 중자']) {
+      expect((await send(text)).reply.text, text).toBe(stopHint);
+      expect(agent.switchState(await owner()), text).toBe('running');
+    }
+    // The exact phrases switch exactly as before; a near miss of 재개 never resumes.
+    expect((await send('에이전트 중지')).reply.text).toBe('다단계 에이전트를 멈췄어요. 정확한 명령은 그대로 동작해요. 다시 켜려면 "에이전트 재개"라고 보내 주세요.');
     expect(agent.switchState(await owner())).toBe('stopped');
-    // A near miss of 재개 never resumes; only the exact phrase does (unchanged).
     expect((await send('에이전트 재게')).reply.text).toBe(resumeHint);
     expect(agent.switchState(await owner())).toBe('stopped');
-    expect((await send('에이전트 재개')).reply.text).toBe('다단계 에이전트를 다시 켰어요.');
-    expect((await send('에이전트 중지')).reply.text).toBe('다단계 에이전트를 멈췄어요. 정확한 명령은 그대로 동작해요. 다시 켜려면 "에이전트 재개"라고 보내 주세요.');
     expect((await send('에이전트 재개')).reply.text).toBe('다단계 에이전트를 다시 켰어요.');
     expect(agent.switchState(await owner())).toBe('running');
     // A normal sentence that mentions 에이전트 is chat as before.

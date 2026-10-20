@@ -113,16 +113,9 @@ export function nearMissActionSwitchPhrase(text: string): NlActionSwitchNearMiss
 }
 
 /**
- * Owner decision recommended with the live DM fix (2026-10-20): only a near miss toward the SAFE direction may act. A
- * `typo` or `request` near miss of `에이전트 중지` stops (stopping only withdraws natural-language actions and the agent, is
- * idempotent and is undone by the exact `에이전트 재개`); a near miss of `에이전트 재개` never resumes (resuming enables
- * actions, so it stays exact), and a `prefix` (the message may have been sent unfinished) or `ambiguous` one only hints.
+ * The fixed hint naming the exact phrase(s) of a near miss. Not a question: nothing is pending. A near miss never switches
+ * (owner decision 2026-10-20): the switch acts only on the exact phrase, stop and resume alike.
  */
-export function actionSwitchNearMissStops(near: NlActionSwitchNearMiss): boolean {
-  return near.kind !== 'ambiguous' && near.kind !== 'prefix' && near.state === 'stopped';
-}
-
-/** The fixed hint naming the exact phrase(s) of a near miss that does not act. Not a question: nothing is pending. */
 export function renderActionSwitchHint(states: readonly NlActionSwitchState[], language: 'ko' | 'en' = 'ko'): string {
   const stop = states.includes('stopped');
   const resume = states.includes('running');
@@ -132,11 +125,6 @@ export function renderActionSwitchHint(states: readonly NlActionSwitchState[], l
   }
   if (stop && resume) return '에이전트를 멈추려면 "에이전트 중지", 다시 켜려면 "에이전트 재개"라고 보내 주세요.';
   return stop ? '에이전트를 멈추려면 "에이전트 중지"라고 보내 주세요.' : '에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.';
-}
-
-/** The line before the switch reply when a near miss of `에이전트 중지` stopped (it names the exact phrase). */
-export function renderActionSwitchNearMissStopped(): string {
-  return '"에이전트 중지"로 알아들었어요.';
 }
 
 export interface NlActionSwitchDeps {

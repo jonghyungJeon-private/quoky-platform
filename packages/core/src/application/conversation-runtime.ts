@@ -101,15 +101,7 @@ import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from
 import type { LastTurnReplyKind } from './nl-routing/last-turn';
 import type { MessageBody } from '../domain';
 import { LAST_SELECTION_METADATA_KEY, isActionPendingQuestion, type PendingQuestion } from './nl-routing/selection-state';
-import {
-  ACTION_SWITCH_PHRASES,
-  actionSwitchNearMissStops,
-  nearMissActionSwitchPhrase,
-  parseActionSwitchPhrase,
-  renderActionSwitchHint,
-  renderActionSwitchNearMissStopped,
-  renderActionSwitchReply,
-} from './nl-routing/action-switch';
+import { nearMissActionSwitchPhrase, parseActionSwitchPhrase, renderActionSwitchHint, renderActionSwitchReply } from './nl-routing/action-switch';
 import { allowedSurfaceGroups, decideSurface, isSurfaceDirect, type SurfaceDecision, type SurfaceGate, type SurfaceGateAudit } from './surface-grants/surface-gate';
 import { surfacePermittedWorkSources, type SurfacePermit } from './surface-grants/surface-permit';
 import { SURFACE_GRANT_PENDING_METADATA_KEY, type SurfaceGrantService } from './surface-grants/surface-grant-service';
@@ -2482,10 +2474,10 @@ export class ConversationRuntime {
       if (switched !== undefined) return this.responded(session, outboundMessage(message.context, this.withAgentSurfaceSuffix(message.text, switched)));
     }
     // Live DM test 2026-10-20: a near miss of the switch phrase ("에이ㄴ트 재개", "에이전트 재") while the exact phrase is
-    // recognized (owner DM, every state, like the phrase) gets the exact phrase instead of chat; only a clear near miss of
-    // `에이전트 중지` (the safe direction) stops. Nothing is recorded, as for the phrase itself.
+    // recognized (owner DM, every state, like the phrase) gets the exact phrase instead of chat. It never switches (owner
+    // decision 2026-10-20: exact phrase only, both directions). Nothing is recorded, as for the phrase itself.
     if (isDirectConversation(message.context) && !expiryNotice && this.switchPhraseRecognized()) {
-      const nearMiss = await this.handleSwitchNearMiss(message, actor);
+      const nearMiss = this.handleSwitchNearMiss(message);
       if (nearMiss !== undefined) return this.responded(session, outboundMessage(message.context, nearMiss));
     }
     // ADR-0122 D4 / D4.6: while QUOKY_CHANNEL_GRANTS=enforce, the kill-switch phrase (owner DM, also with A6 actions off)
@@ -9686,36 +9678,16 @@ export class ConversationRuntime {
   }
 
   /**
-   * The reply to a near miss of the switch phrase, or `undefined` when the message is none. A `typo` or `request` near miss
-   * of `에이전트 중지` stops through the same handlers and replies as the exact phrase (their order: A6, the agent, the
-   * channel grants), after a line naming the exact phrase; every other near miss gets the fixed hint and changes nothing.
+   * The reply to a near miss of the switch phrase, or `undefined` when the message is none: the fixed hint naming the exact
+   * phrase. Nothing changes (owner decision 2026-10-20: the switch acts only on the exact phrase, stop and resume alike).
    */
-  private async handleSwitchNearMiss(message: InboundMessage, actor: Actor): Promise<string | undefined> {
+  private handleSwitchNearMiss(message: InboundMessage): string | undefined {
     const near = nearMissActionSwitchPhrase(message.text);
     if (near === undefined) return undefined;
-    const stops = actionSwitchNearMissStops(near);
     try {
-      this.deps.logger.info('nl_action.switch_near_miss', { kind: near.kind, ...(near.kind !== 'ambiguous' ? { state: near.state } : {}), stops });
+      this.deps.logger.info('nl_action.switch_near_miss', { kind: near.kind, ...(near.kind !== 'ambiguous' ? { state: near.state } : {}) });
     } catch {
       // best-effort
-    }
-    if (stops) {
-      const phrase = ACTION_SWITCH_PHRASES.stopped;
-      const now = this.clock();
-      let reply: string | undefined;
-      const nl = this.deps.nlSelection;
-      if (nl?.handleSwitchPhrase !== undefined) {
-        const switched = await nl.handleSwitchPhrase(actor, phrase, now);
-        if (switched !== undefined) reply = this.withAgentSwitchSuffix(phrase, switched, this.withSurfaceSwitchSuffix(phrase, switched));
-      }
-      const agent = this.deps.agentRuns;
-      if (reply === undefined && agent !== undefined && agent.mode !== 'off') {
-        const switched = await agent.handleSwitchPhrase(actor, phrase, now);
-        if (switched !== undefined) reply = this.withAgentSurfaceSuffix(phrase, switched);
-      }
-      const surfaceService = this.surfaceGate()?.enforced === true ? this.deps.surfaceGrants?.service : undefined;
-      if (reply === undefined && surfaceService !== undefined) reply = await surfaceService.handleSwitchPhrase(actor, { ...message, text: phrase }, now);
-      if (reply !== undefined) return `${renderActionSwitchNearMissStopped()}\n${reply}`;
     }
     return renderActionSwitchHint(near.kind === 'ambiguous' ? ['stopped', 'running'] : [near.state]);
   }

@@ -27990,7 +27990,7 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
   start one S1 `c-shadow` selection call and one planner call; the planner call stays inside the 30 / h cap. Phase A
   and Phase C `c` grammar answers are not covered (no probe is taken in Phase A; under `c` the grammar answers only after
   a skipped or unavailable selection, which stays unshadowed).
-- **Switch near miss (amends the A6-D3 / D7 phrase handling; owner review requested).** While the exact phrase is
+- **Switch near miss (amends the A6-D3 / D7 phrase handling).** While the exact phrase is
   recognized (A6 actions acting, the agent not `off`, or the channel grants enforced; owner DM, every state, nothing
   recorded), a whole short Hangul message that is a near miss of `에이전트 중지` / `에이전트 재개` is answered
   deterministically instead of by chat. Detection is structural over the closed phrase set (no typo list): the
@@ -27998,19 +27998,16 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
   "에이ㄴ트" now count as keys), the exact phrase plus the closed glued request tail ("에이전트 재개해줘"), or a strict keystroke
   prefix of exactly one phrase ("에이전트 재"). A question mark, a second line, Latin text or anything longer than 20
   characters is never a near miss, and two keys off in the verb ("에이전트 좋지") is a sentence.
-  - A near miss of `에이전트 재개` only gets the fixed hint `에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.` (not a
-    question: nothing is pending). **Resume stays exact**: resuming enables actions.
-  - A typo or request near miss of `에이전트 중지` **stops** through the same handlers as the exact phrase, after the
-    line `"에이전트 중지"로 알아들었어요.`. Stopping is the safe direction: it only withdraws natural-language actions and
-    the agent, is idempotent, and the exact `에이전트 재개` undoes it, so a false positive costs one exact message while a
-    false negative leaves actions running after the owner asked to stop. A truncated 중지 ("에이전트 중") only hints, since
-    the message may have been sent unfinished. This deviates from "exact phrase only" for execution, in the safe
-    direction only; if the owner prefers hints for both directions, `actionSwitchNearMissStops` returns `false`.
+  - Every near miss gets only the fixed hint, `에이전트를 멈추려면 "에이전트 중지"라고 보내 주세요.` or
+    `에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.` (not a question: nothing is pending), and never switches.
+  - **Owner decision (2026-10-20): the switch executes only on the exact phrase, stop and resume alike.** A near miss of
+    `에이전트 중지`, including a request form ("에이전트 중지해줘") or a typo ("에이전트 중자"), gets the hint and does not stop.
+    (The implementation first proposed stopping on a clear near miss of 중지 as the safe direction; the owner declined it.)
   - `도움말` / `새 대화` are not in the near-miss set: they are short phrases one key from ordinary words ("새 대회").
 - **Honest chat.** While the phrase is recognized on an owner DM turn, the ADR-0120 D9 fact names both control commands,
   and a reply sentence that names the agent, names stopping or resuming it, and denies that the command or ability exists
   is replaced by the exact-phrase hint (the rest of the reply is kept). With the phrase not recognized, both are unchanged.
-- **Tests (targeted, offline; no model call).** `nl-routing/action-switch-near-miss.test.ts` (7),
+- **Tests (targeted, offline; no model call).** `nl-routing/action-switch-near-miss.test.ts` (6),
   `nl-routing/honest-chat-controls.test.ts` (3), `agent/agent-run-service.test.ts` (+2), and
   `apps/quoky/src/agent/agent-shadow.app.test.ts` (+3: the live near misses, honest chat, `c-shadow` grammar reads with
   write / control turns not planned and the kill switch holding; `off` stays byte-identical over the corpus).
