@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, buildAgentPlanPrompt, isNlWave1EntryId, prepareSelectionInput, type AiProvider } from '@quoky/core';
+import { NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, buildAgentPlanPrompt, isNlWave1EntryId, parseAgentPlanOutput, prepareSelectionInput, type AiProvider } from '@quoky/core';
 import {
   AGENT_PLAN_NEGATIVE_FAMILIES,
   AGENT_PLAN_POSITIVE_FAMILIES,
   agentPlanEvalCases,
   buildAgentPlanEvalPlan,
   cappedProvider,
+  closedEntries,
+  closedErrorName,
   computeAgentPlanEvalDigest,
   loadAgentPlanCorpus,
   runAgentPlanEvaluation,
@@ -243,6 +245,65 @@ describe('step-graph scorer (Q10)', () => {
     expect(summarizeAgentPlanRun([...records, record('p99', 'timeout', 'plan', 6001)], 6000).gatePassed).toBe(false);
     expect(summarizeAgentPlanRun([...records, record('n2', 'wrong', 'none', 800)], 6000).gatePassed).toBe(false);
     expect(summarizeAgentPlanRun([...records, record('p99', 'capped', 'plan', 0)], 6000).gatePassed).toBe(false);
+  });
+});
+
+describe('hostile planner output never reaches the report (Codex P2)', () => {
+  const owner = byId(ownerExample().id);
+  const negative = byId((NEW.find((golden) => golden.family === 'cross-source-join') as AgentPlanCase).id);
+  const SECRET_SCHEMA = 'private-project-name.v1';
+  const SECRET_ENTRY = 'secret-proj.lookup';
+  const hostile = [
+    steps([{ entryId: 'jira.issues', args: {} }, { summarize: [1], schema: SECRET_SCHEMA }]),
+    steps([{ entryId: 'jira.issues', args: {} }, { entryId: SECRET_ENTRY, args: { keyword: 'zebra-canary' } }]),
+    steps([{ entryId: 'calendar.events', args: { timedOnly: true } }, { summarize: [1], schema: 'meeting-digest.v9' }, { entryId: SECRET_ENTRY, args: {} }]),
+    JSON.stringify({ entryId: SECRET_ENTRY, args: { keyword: 'zebra-canary' }, ambiguity: 'CLEAR', alternatives: [] }),
+  ];
+
+  it('a model-made summary schema or entry id is summarize:unknown / unknown in every score field', () => {
+    for (const raw of hostile) {
+      for (const golden of [owner, negative]) {
+        const scored = scoreAgentPlanOutput(golden, raw, FIXTURE);
+        const text = JSON.stringify(scored);
+        expect(text, raw).not.toContain('private-project-name');
+        expect(text, raw).not.toContain('secret-proj');
+        expect(text, raw).not.toContain('zebra-canary');
+        expect(text, raw).not.toContain('meeting-digest.v9');
+        for (const entry of scored.gotEntries ?? []) {
+          expect(['none', 'unknown', 'summarize:unknown', 'summarize:digest.v1', 'summarize:meeting-digest.v1', ...NL_CATALOG_ENTRY_IDS], entry).toContain(entry);
+        }
+      }
+    }
+    const parsed = parseAgentPlanOutput(hostile[0] as string);
+    expect(parsed === null ? [] : closedEntries(parsed)).toEqual(['jira.issues', 'summarize:unknown']);
+  });
+
+  it('a provider-made error name is reported as other; closed names pass', () => {
+    const named = (name: string): Error => Object.assign(new Error('private detail'), { name });
+    expect(closedErrorName(named('PrivateProjectName'))).toBe('other');
+    expect(closedErrorName('a string')).toBe('other');
+    expect(closedErrorName(named('TypeError'))).toBe('TypeError');
+  });
+
+  it('a full run with hostile answers and hostile errors writes only closed values', async () => {
+    const cases = CASES.filter((golden) => golden.family !== 'one-step');
+    const plan = buildAgentPlanEvalPlan(cases, HASHES, FIXTURE, { ...OPTIONS, runs: 1, includePending: true });
+    let call = 0;
+    const provider = {
+      id: 'scripted',
+      capabilities: [],
+      isAvailable: async () => true,
+      execute: async () => {
+        call += 1;
+        if (call % 5 === 0) throw Object.assign(new Error('zebra-canary'), { name: 'PrivateProjectName' });
+        return { text: hostile[call % hostile.length] as string };
+      },
+    } as unknown as AiProvider;
+    const records = await runAgentPlanEvaluation({ cases, plan, provider });
+    const report = JSON.stringify({ records, summary: summarizeAgentPlanRun(records, plan.callTimeoutMs) });
+    for (const secret of ['private-project-name', 'secret-proj', 'zebra-canary', 'meeting-digest.v9', 'PrivateProjectName']) expect(report).not.toContain(secret);
+    expect(records.some((record) => record.error === 'other')).toBe(true);
+    expect(records.some((record) => record.gotEntries?.includes('summarize:unknown'))).toBe(true);
   });
 });
 

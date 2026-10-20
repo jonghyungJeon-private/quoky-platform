@@ -28,6 +28,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   AGENT_PLAN_PROMPT_VERSION,
+  AGENT_PLAN_SUMMARY_SCHEMAS,
   Capability,
   NL_CATALOG_ENTRY_IDS,
   NL_SELECTION_TIMEOUT_MS,
@@ -300,11 +301,27 @@ export interface AgentPlanScore {
   readonly diffStep?: number;
 }
 
-const SUMMARY_SCHEMA = /^[a-z][a-z0-9-]*\.v[1-9][0-9]?$/;
-
-function closedEntries(plan: AgentPlan): string[] {
+/**
+ * The answer's steps as closed values only (Codex P2): a catalog READ entry id or `unknown`, and `summarize:<schema>` only
+ * for a schema of the closed set (`AGENT_PLAN_SUMMARY_SCHEMAS`, as the shadow logger does), else `summarize:unknown`. A
+ * model-written id or schema never reaches the report.
+ */
+export function closedEntries(plan: AgentPlan): string[] {
   if (plan.kind === 'none') return ['none'];
-  return plan.steps.map((step) => (step.kind === 'summarize' ? (SUMMARY_SCHEMA.test(step.schema) ? `summarize:${step.schema}` : 'summarize:unknown') : isNlWave1EntryId(step.entryId) ? step.entryId : 'unknown'));
+  return plan.steps.map((step) =>
+    step.kind === 'summarize'
+      ? `summarize:${(AGENT_PLAN_SUMMARY_SCHEMAS as readonly string[]).includes(step.schema) ? step.schema : 'unknown'}`
+      : isNlWave1EntryId(step.entryId)
+        ? step.entryId
+        : 'unknown',
+  );
+}
+
+/** Error class names the report may carry; any other (a provider-made name) is `other`. */
+const CLOSED_ERROR_NAMES = new Set(['Error', 'TypeError', 'RangeError', 'SyntaxError', 'AbortError', 'TimeoutError', 'AiProviderError', 'ProviderProbeIndeterminateError']);
+
+export function closedErrorName(error: unknown): string {
+  return error instanceof Error && CLOSED_ERROR_NAMES.has(error.name) ? error.name : 'other';
 }
 
 /** Score one raw planner answer for one case. Pure. */
@@ -578,7 +595,7 @@ export async function runAgentPlanEvaluation(input: {
             const latencyMs = clock() - started;
             if (error instanceof AgentPlanCallCapReached) record = { ...base, outcome: 'capped', latencyMs: 0 };
             else if (error instanceof EvalCallTimeout || (error as { kind?: unknown } | null)?.kind === 'TIMEOUT') record = { ...base, outcome: 'timeout', latencyMs };
-            else record = { ...base, outcome: 'error', latencyMs, error: error instanceof Error ? error.name : 'unknown' };
+            else record = { ...base, outcome: 'error', latencyMs, error: closedErrorName(error) };
           }
         }
         records.push(record);

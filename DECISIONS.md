@@ -27910,6 +27910,11 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
      a period word with glued punctuation, two calendar reads with different ranges) fail closed and are not in the gold.
   6. The mail and Drive grammar tests that scan every golden file now skip `agent-plan.v1.json`, as they skip the other
      NL selection corpora.
+  7. **Content-free report (Codex P2 on 988664ed).** Every report field is a closed value: the answer's steps are catalog
+     READ ids or `unknown`, and `summarize:<schema>` only for `digest.v1` / `meeting-digest.v1` (else `summarize:unknown`,
+     as the shadow logger does); reasons are the validator's closed refusals, the A7 veto names or the D3 skip names; diff
+     kinds are closed; an error is a closed class name or `other`. Ids, families and gold entries come from the corpus.
+     Hostile-output tests cover a model-made schema, entry id, keyword and error name.
 - **Tests (targeted, offline; no model call).** `tools/agent-plan-eval.test.ts` (36): the self-check and its failure
   cases, counts and coverage, Q11 by id, a perfect scripted planner (100% but the two residuals, 0 wrong, gate passed),
   the scorer (exact, every diff kind, refs, clarify, refused, malformed, none, wrong on negatives, the veto, the
