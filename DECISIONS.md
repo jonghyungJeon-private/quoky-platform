@@ -27661,3 +27661,31 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   multi-period, duration and month paths are gone from the reminder range (other entries keep main's range symbols). The
   catalog arg description and the A6 reminder.list rule line name the set: read `nl-select.v59` (golden
   `nl-select.v59.prompts.json`), A6 `nl-select.v57`, R2 `nl-select.v58`.
+
+### Venting negatives and the help.topic block (gates of 2026-10-19, neg-037 / help.topic variance)
+
+- **Evidence.** The haiku gates on `007ca699` captured `neg-037` ("…몰라서 답답해", gold none) as `jira.issues` in 3/3
+  read-regression runs (A6 prompt) and once in the intent gate; `a6-negative-none-030` / `-031` (gold help.topic) came
+  back none in 1-2 of 3 action-gate runs although the help.topic block was v44's byte for byte.
+- **Read `nl-select.v60`, A6 `nl-select.v58`, R2 `nl-select.v59`** (golden `nl-select.v60.prompts.json`). Rule 2 gains one
+  generic sentence: a message whose main predicate states the owner's feeling or state and that asks for nothing is none
+  even when it names a source; a question word inside the reason clause of the feeling does not make it a question; a
+  feeling followed by its own question or request is still the lookup. Two generic none examples (Korean and English,
+  other sources than the gold cases) and one contrast lookup. Rule 3 gains one sentence: an ask to be told how to use a
+  Quoky feature, or which command it has (알려줘, 설명해줘), is a question, not a command. Rule 8's help.topic lines become
+  one decision by what the owner wants (learn a Quoky feature or command -> help.topic in every form; the same about other
+  software -> none; what a quoted phrase would do if said -> none; an imperative whose own verb is the action, or a
+  "<label>: <value>" colon form -> none or that action entry). Root cause: v44's "a how-to … about what a phrase or
+  command would do is none" and "an imperative … is never help.topic" contradicted "also when it asks you to explain or
+  tell the method" (알려줘 is an imperative; "which command" is a question about a command). Two generic A6 help.topic
+  examples. RAG-0 clean (no new finding); the selector-pool audit was regenerated with no change; no gold label changed.
+- **Core alternative rejected.** A READ selection that requires a request or question form in the owner's prose would
+  refuse 127 of the 675 positive read golds (bare nouns, follow-up fragments, "<source> 검색: <topic>" labels, English
+  noun phrases), and would not even catch `neg-037`: "뭐" is a wh-word and bare "-해" is a request form under the
+  request-shape grammar (the known residual of `read-statement.ts`). The fix therefore stays in the prompt.
+- **v61 / A6 v59 / R2 v60 (the v60 gates: A6 3/3, R2 3/3, neg-037 fixed; neg-010 "<app>에서 …하는 방법 알려줘" and neg-014
+  went to help.topic).** Rule 3 gains one sentence: help.topic must be about asking Quoky (a Quoky command or feature,
+  여기서, 너한테, how to ask you); a how-to about doing something inside another app or service (the app as the place,
+  X에서 / in X / on X, plus an action done there) is none even when Quoky can read that app. Rule 8's other-software
+  bullet names the same structure. One generic contrast pair (a Figma-side how-to -> none; how to ask Quoky for Jira
+  issues -> help.topic), RAG-0 clean (the first draft "깃허브에서 …" contained the bare gold "깃허브" and was rewritten).
