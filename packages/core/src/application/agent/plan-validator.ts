@@ -1,7 +1,8 @@
 import type { IsoTimestamp } from '../../domain';
 import { OWNER_TEXT_FLOW_LABEL, type FlowLabel } from '../../domain/flow-label';
 import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlWave1EntryId } from '../nl-routing/catalog';
-import type { NlResolvedRange } from '../nl-routing/symbolic-time';
+import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentionRanges, nlWeekdayMentions, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from '../nl-routing/symbolic-time';
+import { normalizeForMatch } from '../nl-routing/selection-input';
 import { validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
 import { AGENT_READ_SOURCES } from './flow-policy';
 import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan-schema';
@@ -50,6 +51,8 @@ export type AgentPlanRefusal =
   | 'not-offered'
   | 'not-read'
   | 'date-ungrounded'
+  | 'range-unnamed'
+  | 'range-ambiguous'
   | 'step-invalid'
   | 'ref-forward'
   | 'ref-not-read'
@@ -124,6 +127,7 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
       if ((AGENT_SINGLE_STEP_ONLY as readonly string[]).includes(step.entryId)) return refuse('single-step-only', index + 1);
     }
   }
+  const temporal = steps.length > 1 ? stepTemporalTexts(steps, ctx) : undefined;
   const validated: ValidatedAgentStep[] = [];
   let refValues = 0;
   for (const [index, step] of steps.entries()) {
@@ -134,7 +138,7 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
       validated.push(checked.step);
       continue;
     }
-    const checked = checkRead(step, number, steps, ctx);
+    const checked = checkRead(step, number, steps, ctx, temporal);
     if (!checked.ok) return checked;
     if (checked.step.kind === 'read' && checked.step.ref !== undefined) {
       refValues += checked.step.ref.take;
@@ -151,7 +155,13 @@ function refuse(reason: AgentPlanRefusal, step?: number, stepReason?: NlValidati
   return { ok: false, reason, ...(step !== undefined ? { step } : {}), ...(stepReason !== undefined ? { stepReason } : {}) };
 }
 
-function checkRead(step: Extract<AgentPlanStep, { kind: 'read' }>, number: number, steps: readonly AgentPlanStep[], ctx: AgentPlanValidationContext): StepCheck {
+function checkRead(
+  step: Extract<AgentPlanStep, { kind: 'read' }>,
+  number: number,
+  steps: readonly AgentPlanStep[],
+  ctx: AgentPlanValidationContext,
+  temporal: StepTemporal | undefined,
+): StepCheck {
   if (isNlActionEntryId(step.entryId)) return refuse('not-read', number);
   if (!isNlWave1EntryId(step.entryId)) return refuse('unknown-entry', number);
   const entry = ctx.offered.get(step.entryId);
@@ -162,11 +172,13 @@ function checkRead(step: Extract<AgentPlanStep, { kind: 'read' }>, number: numbe
     return spec.kind === 'range' && typeof value === 'string' && value !== ctx.previousArgs?.[spec.name] && !absoluteDatesGrounded(value, ctx.groundingText);
   });
   if (ungroundedDate) return refuse('date-ungrounded', number);
+  if (temporal?.refusal !== undefined && temporal.refusal.step === number) return refuse(temporal.refusal.reason, number);
   const result = validateSelection(
     { entryId: step.entryId, args: step.args },
     {
       offered: ctx.offered,
-      groundingText: ctx.groundingText,
+      // Multi-step plans: the owner's prose minus the period expressions other steps' ranges claim (step-scoped).
+      groundingText: temporal?.texts.get(number) ?? ctx.groundingText,
       ...(ctx.previousArgs !== undefined ? { previousArgs: ctx.previousArgs } : {}),
       now: ctx.now,
       timeZone: ctx.timeZone,
@@ -231,4 +243,135 @@ function dateExpressionIn(month: number, day: number, text: string): boolean {
   const m = `(?<![0-9])0?${month}`;
   const d = `0?${day}(?![0-9])`;
   return new RegExp(`${m}\\s*월\\s*${d}\\s*일|${m}\\s*/\\s*${d}|${m}-${d}`, 'u').test(text);
+}
+
+/**
+ * Step-scoped temporal grounding (Codex P2 on S2 P1). In a plan of several steps, one step's period must not constrain
+ * another step's ("금요일 일정이랑 오늘 받은 메일": the calendar's Friday is no weekday of the mail's today). Structural only:
+ *
+ * 1. The owner's period expressions are the maximal runs of time words in the prose (`isNlTimeWord`).
+ * 2. Each expression is bound to the source it modifies: the nearest catalog alias of a plan entry AFTER it in Korean
+ *    (a modifier precedes its noun), BEFORE it otherwise, else the other way; no alias → unbound.
+ * 3. A ranged step CLAIMS an expression when the expression names the step's period (a weekday placement, a closed period
+ *    label, or a date resolving to the same instants) and is bound to the step's entry or unbound.
+ * 4. Every ranged step must claim an expression (`range-unnamed`) unless its range is the previous selection's; two steps
+ *    of the same entry with different ranges are ambiguous (`range-ambiguous`).
+ * 5. A step is validated against the prose minus the expressions claimed by OTHER steps only. An unclaimed expression
+ *    stays in every step's text, so it still constrains (fail closed). The literal-grounding rules of ADR-0120 D4 still
+ *    run on that text. Single-step plans never come here.
+ */
+interface StepTemporal {
+  readonly texts: ReadonlyMap<number, string>;
+  readonly refusal?: { readonly reason: 'range-unnamed' | 'range-ambiguous'; readonly step: number };
+}
+
+interface PeriodExpression {
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+  readonly boundEntry?: string;
+}
+
+interface RangedStep {
+  readonly number: number;
+  readonly entry: NlCatalogEntry;
+  readonly value: string;
+  readonly carried: boolean;
+  readonly range?: NlResolvedRange;
+}
+
+function stepTemporalTexts(steps: readonly AgentPlanStep[], ctx: AgentPlanValidationContext): StepTemporal | undefined {
+  const ranged: RangedStep[] = [];
+  const entries: Array<{ readonly number: number; readonly entry: NlCatalogEntry }> = [];
+  for (const [index, step] of steps.entries()) {
+    if (step.kind !== 'read' || !isNlWave1EntryId(step.entryId)) continue;
+    const entry = ctx.offered.get(step.entryId);
+    if (entry === undefined) continue;
+    entries.push({ number: index + 1, entry });
+    const spec = entry.args.find((candidate) => candidate.kind === 'range');
+    const value = spec !== undefined ? step.args[spec.name] : undefined;
+    if (spec === undefined || typeof value !== 'string') continue;
+    const range = resolveNlRange(normalizeNlRangeSymbol(value), ctx.now, ctx.timeZone);
+    ranged.push({ number: index + 1, entry, value, carried: value === ctx.previousArgs?.[spec.name], ...(range !== undefined ? { range } : {}) });
+  }
+  if (ranged.length === 0) return undefined;
+  for (const [i, a] of ranged.entries()) {
+    for (const b of ranged.slice(i + 1)) {
+      if (a.entry.id === b.entry.id && a.value !== b.value) return { texts: new Map(), refusal: { reason: 'range-ambiguous', step: b.number } };
+    }
+  }
+  const tokens = ctx.groundingText.split(/\s+/u).filter((token) => token.length > 0);
+  const expressions = periodExpressions(tokens, entries.map((item) => item.entry), /[가-힣]/u.test(ctx.groundingText));
+  const claims = new Map<number, Set<number>>();
+  for (const step of ranged) {
+    const claimed = new Set<number>();
+    expressions.forEach((expression, index) => {
+      if (expression.boundEntry !== undefined && expression.boundEntry !== step.entry.id) return;
+      if (step.range !== undefined && expressionNames(expression.text, step.range, ctx)) claimed.add(index);
+    });
+    if (claimed.size === 0 && !step.carried) return { texts: new Map(), refusal: { reason: 'range-unnamed', step: step.number } };
+    claims.set(step.number, claimed);
+  }
+  const texts = new Map<number, string>();
+  for (const { number } of entries) {
+    const own = claims.get(number) ?? new Set<number>();
+    const removed: PeriodExpression[] = [];
+    for (const [other, claimed] of claims) {
+      if (other === number) continue;
+      for (const index of claimed) if (!own.has(index)) removed.push(expressions[index] as PeriodExpression);
+    }
+    texts.set(number, tokens.filter((_token, position) => !removed.some((expression) => position >= expression.start && position < expression.end)).join(' '));
+  }
+  return { texts };
+}
+
+/** The maximal runs of time words, each bound to the plan entry whose alias it modifies (see `stepTemporalTexts`). */
+function periodExpressions(tokens: readonly string[], entries: readonly NlCatalogEntry[], korean: boolean): PeriodExpression[] {
+  const sourceAt = tokens.map((token) => {
+    const word = normalizeForMatch(token);
+    const hit = entries.find((entry) =>
+      [...entry.aliases, ...(entry.sourceNames ?? [])].some((alias) => {
+        const name = normalizeForMatch(alias);
+        return name.length > 0 && !name.includes(' ') && word.startsWith(name);
+      }),
+    );
+    return hit?.id;
+  });
+  const out: PeriodExpression[] = [];
+  let index = 0;
+  while (index < tokens.length) {
+    if (!isNlTimeWord(tokens[index] as string)) {
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < tokens.length && isNlTimeWord(tokens[end] as string)) end += 1;
+    const after = sourceAt.slice(end).find((id) => id !== undefined);
+    const before = sourceAt.slice(0, index).reverse().find((id) => id !== undefined);
+    const boundEntry = korean ? (after ?? before) : (before ?? after);
+    out.push({ start: index, end, text: tokens.slice(index, end).join(' '), ...(boundEntry !== undefined ? { boundEntry } : {}) });
+    index = end;
+  }
+  return out;
+}
+
+/** Whether a period expression names `range`: a weekday placement, a closed period label or a date, by the same clock. */
+function expressionNames(text: string, range: NlResolvedRange, ctx: AgentPlanValidationContext): boolean {
+  const same = (candidate: NlResolvedRange | undefined): boolean => candidate !== undefined && candidate.from === range.from && candidate.to === range.to;
+  for (const mention of nlWeekdayMentions(text)) {
+    if (nlWeekdayMentionRanges(mention, ctx.now, ctx.timeZone).some(same)) return true;
+  }
+  const compact = normalizeForMatch(text).replace(/\s+/gu, '');
+  for (const [symbol, ko, en] of nlRangeSymbolWords()) {
+    const named = [ko, en].some((label) => {
+      const word = normalizeForMatch(label).replace(/\s+/gu, '');
+      return word.length > 0 && compact.includes(word);
+    });
+    if (named && same(resolveNlRange(symbol, ctx.now, ctx.timeZone))) return true;
+  }
+  for (const match of text.matchAll(/(?<![0-9])(\d{1,2})\s*(?:월\s*|[/-])(\d{1,2})(?![0-9])/gu)) {
+    const symbol = `${String(Number(match[1])).padStart(2, '0')}-${String(Number(match[2])).padStart(2, '0')}`;
+    if (same(resolveNlRange(symbol, ctx.now, ctx.timeZone))) return true;
+  }
+  return false;
 }

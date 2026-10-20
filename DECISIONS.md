@@ -27802,6 +27802,15 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
      ("10시 20분" is no `10-20`; CA review). Otherwise it is refused as `date-ungrounded`. A reference field that names a
      date is refused as `ref-date`. A bare day ("20일") does not ground a date in P1 (stricter than the live selector; the
      P2 corpus will measure it).
+  3a. **Step-scoped temporal grounding (Codex P2 on 490b8070).** In a plan of several steps, each step's ADR-0120 D4
+     period and weekday checks run against the owner's prose minus the period expressions that OTHER steps' ranges
+     claim, so the calendar's "금요일" never refuses the mail's "오늘" ("금요일 일정이랑 오늘 받은 메일 보여줘": `fri` + `today`
+     passes). The period expressions are the runs of time words. Each is bound to the plan source it modifies: the
+     next alias in Korean, the previous one otherwise. A ranged step claims an expression that names its period by the
+     same clock: a weekday placement, a closed period label, or a date. Every ranged step must claim one, unless the
+     previous selection carries its range (`range-unnamed`). Swapped or invented periods are therefore refused, and
+     two steps of the same entry with different ranges are `range-ambiguous`. An unclaimed expression stays in every
+     step's text (fail closed). Single-step plans are unchanged.
   4. `agent-plan.v1` does not teach references. In P1 the planner never sees an id, so nothing could ground one. The
      schema and the validator carry them for P3.
   5. The summary schemas are the closed set `digest.v1` and `meeting-digest.v1`; P3 binds their shapes.
@@ -27810,9 +27819,10 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   7. The `AgentProfile` registration of `quoky.read-agent` (ADR-0079) waits for P3, when the runtime first executes.
      P1 only fixes the id.
 - **Tests (targeted, offline; no model call).**
-  - `agent/plan-validator.test.ts` (39): every rule, the 11th value per reference and per run, the cross-source references
-    (mail, calendar, Drive and Slack ids into Jira; Jira ids into Confluence), a date taken from content, and the date
-    expression rule ("10시 20분" never grounds `10-20`).
+  - `agent/plan-validator.test.ts` (43): every rule, the 11th value per reference and per run, the cross-source references
+    (mail, calendar, Drive and Slack ids into Jira; Jira ids into Confluence), a date taken from content, the date
+    expression rule ("10시 20분" never grounds `10-20`), and step-scoped temporal grounding (the Codex example passes;
+    swapped, unnamed and ambiguous ranges are refused).
   - `agent/agent-run-service.test.ts` (15): the release gate; `off` doing nothing; one `INTENT_SELECTION` call and no
     SUMMARIZATION; the agreement; refused and malformed plans logged without model content; the egress and credential
     rules; DM only; the in-flight drop, the hourly and daily caps, the bound, `stopBackground()`; the kill switch stopping

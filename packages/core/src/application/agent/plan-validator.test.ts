@@ -225,6 +225,38 @@ describe('plan validator: dates only symbolic, summaries closed', () => {
     expect(validateAgentPlan(plan([read('calendar.events', { range: '10-20' }), read('jira.issues')]), ctx('10시 20분 일정이랑 지라 이슈'))).toMatchObject({ ok: false, reason: 'date-ungrounded', step: 1 });
   });
 
+  it('step-scoped temporal grounding: one step\'s weekday never constrains another step (Codex P2)', () => {
+    const text = '금요일 일정이랑 오늘 받은 메일 보여줘';
+    const codex = plan([read('calendar.events', { range: 'fri' }), read('mail.list', { range: 'today' })]);
+    expect(validateAgentPlan(codex, ctx(text))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    // Each half validates on its own too (single-step plans are unchanged and see the whole prose).
+    expect(validateAgentPlan(plan([read('calendar.events', { range: 'fri' })]), ctx('금요일 일정 보여줘')).ok).toBe(true);
+    // English modifiers follow their noun.
+    const english = plan([read('calendar.events', { range: 'fri' }), read('mail.list', { range: 'today' })]);
+    expect(validateAgentPlan(english, ctx('show my calendar for friday and mail from today')).ok).toBe(true);
+  });
+
+  it('swapped ranges are refused: each period is bound to the source it modifies', () => {
+    const swapped = plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'fri' })]);
+    expect(validateAgentPlan(swapped, ctx('금요일 일정이랑 오늘 받은 메일 보여줘'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
+    // Both swapped periods would be valid values on their own: still refused.
+    const both = plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'yesterday' })]);
+    expect(validateAgentPlan(both, ctx('어제 일정이랑 오늘 받은 메일 보여줘'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
+    expect(validateAgentPlan(plan([read('calendar.events', { range: 'yesterday' }), read('mail.list', { range: 'today' })]), ctx('어제 일정이랑 오늘 받은 메일 보여줘')).ok).toBe(true);
+  });
+
+  it('a range named by nobody is refused; the previous selection may carry one', () => {
+    const unnamed = plan([read('calendar.events', { range: 'tomorrow' }), read('mail.list', { range: 'today' })]);
+    expect(validateAgentPlan(unnamed, ctx('일정이랑 오늘 받은 메일 보여줘'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
+    expect(validateAgentPlan(plan([read('calendar.events', { range: 'tomorrow' }), read('jira.issues')]), ctx('일정이랑 지라 이슈'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
+    expect(validateAgentPlan(unnamed, ctx('그 일정이랑 오늘 받은 메일 보여줘', { previousArgs: { range: 'tomorrow' } })).ok).toBe(true);
+  });
+
+  it('two steps of the same entry with different ranges are ambiguous', () => {
+    const twice = plan([read('calendar.events', { range: 'today' }), read('calendar.events', { range: 'tomorrow' })]);
+    expect(validateAgentPlan(twice, ctx('오늘 일정이랑 내일 일정'))).toMatchObject({ ok: false, reason: 'range-ambiguous', step: 2 });
+  });
+
   it('the previous selection may carry a date the owner named earlier (structure only)', () => {
     expect(validateAgentPlan(plan([read('calendar.events', { range: '10-23' })]), ctx('그 날 일정 다시', { previousArgs: { range: '10-23' } })).ok).toBe(true);
   });
