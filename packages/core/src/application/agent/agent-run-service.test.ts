@@ -153,6 +153,19 @@ describe('AgentRunService — shadow', () => {
     ]);
   });
 
+  it('a veto-* refusal (not a request) agrees with a live none, and disagrees with a live read (CA P2)', async () => {
+    const one = JSON.stringify({ entryId: 'calendar.events', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    const h = harness({ script: [one, one] });
+    const past = '아침에 일정 정리 끝났다';
+    await h.service.runShadow(turn(h, { text: past }, { kind: 'none' }), async () => CHAT);
+    h.clock += 1;
+    await h.service.runShadow(turn(h, { text: past }, { kind: 'execute', entryId: 'calendar.events', args: {} }), async () => CHAT);
+    expect(shadowLines(h).map((line) => [line.validator, line.agree, line.agreeEntry])).toEqual([
+      ['veto-past-statement', true, true],
+      ['veto-past-statement', false, false],
+    ]);
+  });
+
   it('a refused plan logs the validator reason and the failing step, never the model\'s own ids or values', async () => {
     const crossSource = JSON.stringify({
       steps: [{ entryId: 'mail.list', args: {} }, { entryId: 'jira.issues', args: {}, ref: { step: 1, field: 'messageIds', take: 3 } }],

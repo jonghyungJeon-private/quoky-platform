@@ -123,9 +123,20 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
   if (plan.kind === 'none') return { ok: true, plan: { kind: 'none' } };
   const steps = plan.steps;
   if (nlIsPastStatement(ctx.groundingText)) return refuse('veto-past-statement');
+  // A quoted span consumed as ANY step's search keyword is the owner's search term for the whole plan (Codex P2): each
+  // step's quoted-request check sees its own args plus every step's keyword-kind values. An unconsumed quote still vetoes.
+  const planKeywords: Record<string, string> = {};
+  for (const step of steps) {
+    if (step.kind !== 'read') continue;
+    const entry = ctx.offered.get(step.entryId);
+    for (const spec of entry?.args ?? []) {
+      const value = step.args[spec.name];
+      if (spec.kind === 'keyword' && typeof value === 'string') planKeywords[`plan${Object.keys(planKeywords).length}`] = value;
+    }
+  }
   for (const [index, step] of steps.entries()) {
     if (step.kind !== 'read') continue;
-    const veto = nlReadNotRequest(ctx.groundingText, step.args);
+    const veto = nlReadNotRequest(ctx.groundingText, { ...step.args, ...planKeywords });
     if (veto !== undefined) return refuse(veto === 'quoted-request' ? 'veto-quoted-request' : 'veto-reason-statement', index + 1);
   }
   if (steps.length === 0 || steps.length > AGENT_PLAN_MAX_STEPS) return refuse('too-many-steps');
@@ -288,9 +299,19 @@ function dateExpressionIn(month: number, day: number, text: string): boolean {
 
 /** A span's end day inheriting the start's month: the start's date expression, a span connector, the end day. */
 function spanEndInherits(month: number, startDay: number, endDay: number, text: string): boolean {
-  const connector = '\\s*(?:부터|에서)?\\s*(?:~|-|–|—|\\bto\\b|\\bthrough\\b|\\bthru\\b|\\buntil\\b|\\btill\\b)?\\s*';
-  const source = `(?:${dateExpressionSource(month, startDay, 'span-start')})(?=\\s*(?:부터|에서|~|-|–|—|to\\b|through\\b|thru\\b|until\\b|till\\b))${connector}0?${endDay}(?![0-9])${ORDINAL}(?!\\s*(?:시|월|/|:))`;
-  return new RegExp(source, 'iu').test(text);
+  const start = `(?:${dateExpressionSource(month, startDay, 'span-start')})`;
+  const end = `0?${endDay}(?![0-9])`;
+  // Another month right after the end day ("to 7 November", "7th of Nov", "7월") makes it that month's day, not this one.
+  const otherMonth = `\\s*(?:of\\s+)?(?:${MONTH_NAMES.join('|')})\\.?(?![a-z])|\\s*월`;
+  const symbol = '\\s*(?:~|-|–|—)\\s*';
+  const word = '\\s+(?:to|through|thru|until|till)\\s+';
+  // (1) The end day carries a glued day marker (7일, never "7 일정"; 7th) after any span connector, 부터 included.
+  const marked = `${start}(?:\\s*(?:부터|에서)\\s*(?:~|-|–|—)?\\s*|${symbol}|${word})${end}(?:일(?!정)|st|nd|rd|th)(?!${otherMonth})`;
+  // (2) A bare end day directly after a span marker (~, -, to, until, …; or 부터 … 까지), with no unit or month attached:
+  // a time (시, 분, pm, am), a count (개, 건, 명, 번, items) or a date separator never makes it a day.
+  const unit = '\\s*(?:[시분개건명번월:./]|pm\\b|am\\b|items?\\b)';
+  const bare = `${start}(?:(?:${symbol}|${word})${end}(?!${unit}|${otherMonth}|[a-z])|\\s*부터\\s*${end}(?=\\s*까지))`;
+  return new RegExp(`${marked}|${bare}`, 'iu').test(text);
 }
 
 /**

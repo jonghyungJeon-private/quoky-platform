@@ -293,6 +293,13 @@ describe('plan validator: the selection path vetoes are validator rules (CA revi
     expect(validateAgentPlan(plan([read('jira.issues')]), ctx('"지라 이슈 보여줘"라는 말은 영어로 뭐라고 해?'))).toMatchObject({ ok: false, reason: 'veto-quoted-request', step: 1 });
   });
 
+  it('a quote consumed as one step\'s search keyword is the owner\'s search term for the whole plan (Codex P2)', () => {
+    const text = '슬랙에서 "일정 보여줘"라고 검색하고 지라 이슈 보여줘';
+    expect(validateAgentPlan(plan([read('slack.search', { keyword: '일정 보여줘' }), read('jira.issues')]), ctx(text)).ok).toBe(true);
+    // Consumed by no step: the veto stays.
+    expect(validateAgentPlan(plan([read('jira.issues'), read('github.items')]), ctx('"일정 보여줘"라고 말하면 되나? 지라 이슈랑 깃허브 PR'))).toMatchObject({ ok: false, reason: 'veto-quoted-request', step: 1 });
+  });
+
   it('a request is not vetoed; none stays none', () => {
     expect(validateAgentPlan(plan([read('jira.issues'), read('mail.list')]), ctx('지라 이슈랑 메일 보여줘')).ok).toBe(true);
     expect(validateAgentPlan({ kind: 'none', form: 'selection' }, ctx('아침에 일정 정리 끝났다'))).toEqual({ ok: true, plan: { kind: 'none' } });
@@ -311,6 +318,10 @@ describe('plan validator: widened date expressions (CA review of S2 P2)', () => 
     ['10-01..10-07', '10월 1-7일 일정'],
     ['10-01..10-07', 'calendar for Oct 1 to 7'],
     ['10-01..10-07', '10월 1일부터 10월 7일까지'],
+    ['10-01..10-07', 'October 1st through 7th'],
+    ['10-01..10-07', 'Oct 1 until 7'],
+    ['10-01..10-07', '10월 1일부터 7까지'],
+    ['10-01..10-07', '10월 1일~7일 일정'],
   ])('%s is grounded by "%s"', (value, text) => {
     expect(absoluteDatesGrounded(value, text)).toBe(true);
   });
@@ -326,6 +337,16 @@ describe('plan validator: widened date expressions (CA review of S2 P2)', () => 
     ['10-01..11-07', '10월 1일부터 7일까지'],
     ['10-01..10-08', '10/1~7'],
     ['2027-10-25', 'October 25'],
+    // Codex P2: an inherited end number that means something else.
+    ['10-01..10-07', 'from Oct 1 to 7 November'],
+    ['10-01..10-07', '10월 1일부터 7개 일정'],
+    ['10-01..10-07', 'Oct 1 to 7th of November'],
+    ['10-01..10-07', '10월 1일부터 7월까지'],
+    ['10-01..10-07', 'Oct 1 to 7pm'],
+    ['10-01..10-07', 'Oct 1 - 7 items'],
+    ['10-01..10-07', '10월 1일 ~ 7시'],
+    ['10-01..10-07', '10월 1일부터 7건'],
+    ['10-01..10-07', '10월 1일부터 7 일정'],
   ])('%s is not grounded by "%s" (the owner\'s own digits and month stay required)', (value, text) => {
     expect(absoluteDatesGrounded(value, text)).toBe(false);
   });

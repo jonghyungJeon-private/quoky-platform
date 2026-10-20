@@ -27951,3 +27951,23 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
     two reads, add the fixed note "회의와 관련 있는지는 확인하지 않았어요" (an English equivalent for English turns). (ii) When
     a reference's `take` defaulted to 10 because the owner asked for all ("전부", "every") and the source listed more, add
     a fixed truncation note. Both are deterministic texts, never model output.
+- **Codex round on 9cd0711a, and CA P2 on the shadow agreement (2026-10-20). This is the LAST heuristic round for the
+  date and quote rules; any further edge case is a recorded fail-closed residual, not a new rule.**
+  1. **Quoted keyword across steps.** A quoted span consumed as ANY read step's keyword-kind arg is the owner's search term
+     for the whole plan: each step's quoted-request check sees its own args plus every step's keyword values
+     (`슬랙에서 "일정 보여줘"라고 검색하고 지라 이슈 보여줘` validates). A quote no step consumes still vetoes.
+  2. **Inherited span end, tightened.** The end day inherits the start's month only when it carries a glued day marker
+     (`7일`, `7th`) after a span connector (부터 included), or is a bare number directly after a span marker (`~`, `-`, `to`,
+     `through`, `until`, …; or `부터 … 까지`) with nothing attached. Refused: another month after it (`to 7 November`,
+     `7th of November`, `7월까지`), a time (`7시`, `7pm`), a count (`7개`, `7건`, `7 items`), and a spaced `7 일정`.
+  3. **Shadow agreement.** A one-step plan refused with a `veto-*` reason is answered as chat, like the live path's vetoed
+     `none`, so `agreement()` now counts it as agreeing with a live none (`agree`/`agreeEntry` true) and disagreeing with a
+     live read. **Shadow has run live since 2026-10-20 14:50: the agreement stats before this fix deploys count those
+     veto cases as disagreements**; the 7-day summary must exclude or re-label them (the line's `validator` is `veto-*`).
+  - **Fail-closed residuals (recorded, not fixed).**
+    - A span across a month boundary written without the second month (`10월 28일부터 3일까지`).
+    - Number words (`seventh`, `칠 일`, `October first`).
+    - A spaced Korean end marker after 부터 (`10월 1일부터 7 일까지`).
+    - A quoted request inside a step whose own args do not hold the quote and no other step's keyword holds it, even
+      when the owner meant it as a search term for an entry that has no keyword arg.
+    Each is refused as `date-ungrounded` or `veto-quoted-request`; nothing runs.

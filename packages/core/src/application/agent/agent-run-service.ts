@@ -318,6 +318,12 @@ export class AgentRunService {
       return { agree, agreeEntry: agree };
     }
     if (plan.steps.length !== 1) return {};
+    // A `veto-*` refusal (ADR-0120 A7, not a request) is answered as chat, exactly as the live path's vetoed `none`
+    // (CA P2 on S2 P2): it agrees with a live none.
+    if (!validation.ok && validation.reason.startsWith('veto-')) {
+      const agree = turn.live.kind === 'none';
+      return { agree, agreeEntry: agree };
+    }
     if (!validation.ok) return { agree: false, agreeEntry: false };
     if (validation.plan.kind === 'clarify') {
       const agree = turn.live.kind === 'ask';
