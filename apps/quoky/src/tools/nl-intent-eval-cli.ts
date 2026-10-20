@@ -94,6 +94,9 @@ A6 R2 (Jira / Slack item.summarize; the R2 prompt, R2 offered as with QUOKY_NL_I
 Without --approved-plan-digest it is offline (schema check, plan, digest, call count). With it, a Strict run.
 R2 gate: >= ${NL_ACTION_R2_EVAL_GATE.overall * 100}% exact {entry, args, target} overall and >= ${NL_ACTION_R2_EVAL_GATE.perSource * 100}% for each of the jira and slack slices, ${NL_ACTION_R2_EVAL_GATE.wrongTarget} wrong targets,
          ${NL_ACTION_R2_EVAL_GATE.negativeCaptures} negative captures, questions on positive references <= ${NL_ACTION_R2_EVAL_GATE.questionRateOnReferences * 100}%, calls over the bound <= ${NL_ACTION_R2_EVAL_GATE.overBoundRate * 100}%.
+
+ADR-0121 S2 plan exactness (the agent planner prompt over agent-plan.v1.json plus every case above as one-step gold) has
+its own CLI: pnpm eval:agent-plan -- --mode plan|run [...] (see agent-plan-eval-cli.ts).
 `;
 
 const OPTIONS = new Set([

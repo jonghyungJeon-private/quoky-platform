@@ -10,23 +10,32 @@ import { AGENT_PLAN_PROMPT_VERSION, agentPlanExamples, buildAgentPlanPrompt } fr
 import { parseAgentPlanOutput } from './plan-schema';
 import { validateAgentPlan } from './plan-validator';
 
-// ADR-0121 D1 (stage S2 P1): the planner prompt `agent-plan.v1` — its edits of the gated read prompt, its examples
+// ADR-0121 D1 (stage S2 P1, P2): the planner prompt `agent-plan.v2` — its edits of the gated read prompt, its examples
 // (valid plans, never a near-copy of a gold case: the RAG-0 contamination lint of ADR-0123 D5), and a byte pin.
 
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
 const ACTIONS: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined);
 
-/** The D12 gold corpora the RAG-0 lint reads (the same list as `example-contamination.test.ts`). */
-const GOLD_FILES = ['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-action.exec-time.v1.json', 'nl-action.deictic.v1.json', 'nl-action.r2.v1.json', 'nl-action.live4-pending.v1.json'] as const;
+/**
+ * The gold corpora the RAG-0 lint reads: the D12 list of `example-contamination.test.ts` plus the S2 P2 plan corpus
+ * `agent-plan.v1.json` (its gold is a list of steps; each read step is linted like a one-step gold).
+ */
+const GOLD_FILES = ['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-action.exec-time.v1.json', 'nl-action.deictic.v1.json', 'nl-action.r2.v1.json', 'nl-action.live4-pending.v1.json', 'agent-plan.v1.json'] as const;
 
-function gold(): Array<{ id: string; text: string; expect?: { entryId?: unknown; args?: unknown } }> {
+type GoldExpect = { entryId?: unknown; args?: unknown };
+
+function gold(): Array<{ id: string; text: string; expects: GoldExpect[] }> {
   return GOLD_FILES.flatMap((file) => {
     const corpus = JSON.parse(readFileSync(new URL(`../golden/${file}`, import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string; expect: unknown }> };
-    return corpus.cases.map((c) => ({ id: c.id, text: c.text, ...(typeof c.expect === 'object' && c.expect !== null ? { expect: c.expect as { entryId?: unknown; args?: unknown } } : {}) }));
+    return corpus.cases.map((c) => {
+      const expect = typeof c.expect === 'object' && c.expect !== null ? (c.expect as GoldExpect & { steps?: unknown }) : undefined;
+      const expects = expect === undefined ? [] : Array.isArray(expect.steps) ? (expect.steps as GoldExpect[]).filter((step) => typeof step.entryId === 'string') : [expect];
+      return { id: c.id, text: c.text, expects };
+    });
   });
 }
 
-describe('agent-plan.v1 prompt', () => {
+describe('agent-plan.v2 prompt', () => {
   const prompt = buildAgentPlanPrompt({ entries: [...READS, ...ACTIONS], text: '이번 주 회의 일정 보여줘' });
 
   it('is the read prompt over the READ entries with the four fixed edits (no action entry is ever shown)', () => {
@@ -34,6 +43,7 @@ describe('agent-plan.v1 prompt', () => {
     expect(prompt.startsWith('You are the request planner of Quoky')).toBe(true);
     expect(prompt).toContain('"steps": [{"entryId": "<entry id>"');
     expect(prompt).toContain('8. Plans (the steps form) only when the owner asks for two or more reads');
+    expect(prompt).toContain('9. References: for the details of the issues an earlier jira.release step lists');
     for (const action of ACTIONS) expect(prompt).not.toContain(`- ${action.id}:`);
     // Every catalog line and every read example of the gated read prompt is kept, byte for byte.
     const catalog = read.slice(read.indexOf('Catalog:'), read.indexOf('\nExamples:'));
@@ -62,6 +72,8 @@ describe('agent-plan.v1 prompt', () => {
   it('RAG-0 contamination lint: no plan example or plan-rule quote is an exact, near or contained copy of a gold case', () => {
     const cases = gold();
     expect(cases.length).toBeGreaterThan(800);
+    // The S2 P2 plan corpus is linted too (its multi-step cases).
+    expect(cases.filter((c) => c.id.startsWith('ap-')).length).toBeGreaterThanOrEqual(270);
     const rendered = extractPromptExamples(prompt).filter((example) => example.output.startsWith('{"steps"'));
     expect(rendered.map((example) => example.text).sort()).toEqual(agentPlanExamples().map((example) => example.text).sort());
     const planRules = prompt.slice(prompt.indexOf('8. Plans'), prompt.indexOf('Range symbols: '));
@@ -76,17 +88,17 @@ describe('agent-plan.v1 prompt', () => {
     for (const example of rendered) {
       const output = JSON.parse(example.output) as { steps: Array<{ entryId?: string; args?: unknown }> };
       for (const step of output.steps) {
-        for (const c of cases) if (c.expect !== undefined && sharedSpanArg(step, c.expect) !== undefined) findings.push(`output:${c.id}:${example.text}`);
+        for (const c of cases) if (c.expects.some((expect) => sharedSpanArg(step, expect) !== undefined)) findings.push(`output:${c.id}:${example.text}`);
       }
     }
     expect(findings).toEqual([]);
   });
 
   it('is pinned byte for byte (a change needs a new version and its gate run)', () => {
-    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v1');
+    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v2');
     const full = buildAgentPlanPrompt({ entries: READS, text: 'x' });
     expect(createHash('sha256').update(full).digest('hex')).toBe(PINNED_SHA256);
   });
 });
 
-const PINNED_SHA256 = '30bd272b56c2a4e8900a55fac640232654452356da90317eb56ebbbc907a9bd6';
+const PINNED_SHA256 = '09406c35e7eb2fcf3d93004b8ff6c4cf2e463aafff3f62269c5707356e0918d0';

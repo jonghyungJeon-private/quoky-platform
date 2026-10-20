@@ -17,6 +17,7 @@
     "provider:semantic": "node apps/quoky/dist/tools/provider-semantic-validation-cli.js",
     "provider:semantic:shadow": "node apps/quoky/dist/tools/provider-semantic-shadow-cli.js",
     "eval:answers": "node apps/quoky/dist/tools/answer-quality-eval-cli.js",
+    "eval:agent-plan": "node apps/quoky/dist/tools/agent-plan-eval-cli.js",
     "eval:nl": "node apps/quoky/dist/tools/nl-intent-eval-cli.js",
     "eval:r2-redteam": "node apps/quoky/dist/tools/nl-r2-redteam-cli.js",
     "eval:rag": "node apps/quoky/dist/tools/selector-rag-cli.js",

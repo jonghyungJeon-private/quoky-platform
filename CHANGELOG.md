@@ -5,6 +5,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 S2 P2: the plan corpus and `eval:agent-plan` (2026-10-20)
+
+- **Added.** `golden/agent-plan.v1.json`: 173 multi-step positives and 144 negatives (KO/EN, 19 families), pending the
+  owner's batch approval, plus the 874 `nl-intent.v1.json` cases as one-step gold by id. Schema doc and owner review sheet
+  in `docs/plans/`.
+- **Added.** `pnpm eval:agent-plan` (`tools/agent-plan-eval.ts`, `agent-plan-eval-cli.ts`): the corpus self-check, the
+  step-graph scorer (same entries in order, same canonical args, refs and summaries; any executable plan on a negative is
+  wrong), a Strict digest (both corpora, the prompt, the revision, model, runs, concurrency, timeout, `--include-pending`),
+  exit 3 before any provider without the approved digest, a hard call cap, and a content-free report.
+- **Changed.** The planner prompt is `agent-plan.v2`: summary schema and coverage wording, help/brief with another read
+  is none, rule 9 (the Jira release → issues reference; none for content-derived values, more than 4 reads, per-day
+  reads, more than 10 issue details, one item's summary) and a reference example. The RAG-0 lint covers the new gold.
+
 ## Unreleased — ADR-0121 S2 P1: the bounded read agent's foundation (2026-10-20)
 
 - **Added (Core, `application/agent/`).**

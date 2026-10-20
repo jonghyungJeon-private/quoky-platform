@@ -27858,3 +27858,64 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
 - **Not done here (Strict / owner).** The `.env.local` change to `shadow`, the restart, the live kill-switch check, the
   7-day shadow clock, deploy. Reviews before merge: the Chief Architect (Core boundary, deps 38, runtime dispatch),
   Codex, `/security-review`.
+
+### ADR-0121 S2 implementation note — P2: the plan corpus and `eval:agent-plan` (2026-10-20, branch `claude/v5-s2-p2`)
+
+Data and eval only; no runtime path changes except the planner prompt text the `shadow` job sends (P1 shadow is not
+live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
+
+- **What was built.**
+  - `golden/agent-plan.v1.json`: 317 agent-drafted cases, all `pending-owner-approval` in six batches (AP-1..AP-6, ≤ 60
+    each): 173 multi-step positives (owner example 8, compound 68, read+summary 33, same-source refs 15, period per step
+    20, English prenominal/postnominal periods 15, three or four reads 8, same entry twice 6) and 144 negatives (write +
+    read 20, content-borne 15, pasted 12, quoted request 12, cross-source join 15, unbounded 12, capability chit-chat 14,
+    venting 12, help-style 12, A6 inside a plan 12, past or negated 8). The one-step gold (Q11) is every
+    `nl-intent.v1.json` case, referenced by id in order (874), never copied. A fixed fixture (2026-10-20 12:00 Seoul,
+    the owner's DM, every READ entry offered) makes the gold deterministic. Schema: `docs/plans/agent-plan-corpus-schema.md`;
+    owner review sheet: `docs/plans/agent-plan-review.md`.
+  - `apps/quoky/src/tools/agent-plan-eval.ts`: the loader, the corpus self-check (every positive validates under the P1
+    validator to a `run` plan of ≥ 2 steps equal to its own canonical graph; every negative is `none`, and its trap is
+    refused, with the stated reason when given), the step-graph scorer (Q10), the plan, the digest, the capped runner and
+    the summary (overall, per family, per entry, wrong on negatives, the share over the bound).
+  - `apps/quoky/src/tools/agent-plan-eval-cli.ts`, `pnpm eval:agent-plan -- --mode plan|run`: `plan` is offline and prints
+    the plan, the digest (both corpus sha256s, the prompt version and sha256, git HEAD, model, runs, concurrency,
+    timeout, `includePending`, the fixture, the case ids) and the call bound. `run` exits 3 before any provider is built
+    unless `--approved-plan-digest` is given and matches, and caps the provider at the bound. Only approved cases are
+    scored unless `--include-pending` (part of the digest). The report `data/eval/agent-plan-<ts>.json` is content-free.
+- **Decisions the plan did not spell out (agent's choices, for review).**
+  1. A separate CLI (`eval:agent-plan`, `--mode plan|run`, as `eval:r2-redteam`) instead of a mode of `eval:nl`, whose
+     `plan`/`run` modes already mean the D12 selection eval; `eval:nl`'s help points to it. `run` without a digest exits
+     3 (BLOCKED), not 2.
+  2. **Scoring path.** Every answer, one-step included, is judged by `validateAgentPlan` (the shadow job's validator),
+     after the selection path's message-level vetoes (ADR-0120 A7: a past statement; a reason statement or an unconsumed
+     quoted request on any read step), which turn the plan into `none`. P3 must keep those vetoes on the agent path, or
+     the scorer must drop them. An exact plan compares Core's validated canonical args with the canonical gold; a summary's
+     covered steps compare as a set.
+  3. **Prompt `agent-plan.v2`** (the bytes changed, so the version moved; v1 never ran against a model). v1 taught no
+     reference and gave no rule for the negatives the corpus needs, so the corpus could not be reached. Edits: rule 8
+     names the summary schema by coverage (`meeting-digest.v1` only when every covered step is a calendar read) and that
+     a summary asked at the end covers every earlier read, and that `help.topic` / `brief.today` asked together with
+     another read is none; new rule 9 teaches the one reference (`jira.release` → `jira.issues`, `issueKeys`, `take` = the
+     owner's number else 10) and makes none: a value found inside another source, more than 4 reads, one read per day,
+     week or month of a longer period, details of more than 10 issues, and a summary of one listed item; one generic
+     reference example. The RAG-0 lint (`plan-prompt.test.ts`) now also reads `agent-plan.v1.json` (each gold read step
+     linted like a one-step gold); all five examples and the rule quotes are clean. The sha256 pin moved.
+  4. **Gold conventions** (owner review sheet decisions (a)–(f)): "관련 / related" is a generic word, never a join (the
+     owner's example is calendar → meeting digest → the owner's Jira issues); a read plus "정리해줘" stays one step; a
+     request S2 cannot express is `none`, never a partial plan.
+  5. **Measured residuals.** `calendar-019` ("10월 1일부터 7일까지") and `calendar-038` ("October 25") are refused by the P1
+     date-grounding rule (`date-ungrounded`): two fixed misses per run (2 of the 675 one-step positives).
+     `v5int4-020` (gold `brief.today`), `jira-018` and `github-017` may split into two steps under the plan prompt; the
+     first Strict run measures them. P1 binding residuals (an English period whose calendar is named by a non-alias word,
+     a period word with glued punctuation, two calendar reads with different ranges) fail closed and are not in the gold.
+  6. The mail and Drive grammar tests that scan every golden file now skip `agent-plan.v1.json`, as they skip the other
+     NL selection corpora.
+- **Tests (targeted, offline; no model call).** `tools/agent-plan-eval.test.ts` (36): the self-check and its failure
+  cases, counts and coverage, Q11 by id, a perfect scripted planner (100% but the two residuals, 0 wrong, gate passed),
+  the scorer (exact, every diff kind, refs, clarify, refused, malformed, none, wrong on negatives, the veto, the
+  selection form), the summary and gate, digest stability and its bindings, the exit-3 gate (missing, wrong, other plan),
+  the hard cap, and a content-free report under a hostile planner. `agent/plan-prompt.test.ts` (5): v2 edits, the
+  examples valid, RAG-0 with the new gold, the pin. Targeted run: 15 files, 463 tests passed; `pnpm build` passed.
+- **Not done here (Strict / owner).** The owner's approval of batches AP-1..AP-6 (and decisions (a)–(h) of the review
+  sheet); Strict runs need the owner's yes on the printed digest. Reviews: Codex, CA on the scorer rules, a light
+  `/security-review`.

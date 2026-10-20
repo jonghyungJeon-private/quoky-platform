@@ -5,6 +5,21 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 S2 P2 — the plan corpus and `eval:agent-plan` (2026-10-20, branch `claude/v5-s2-p2`)
+
+Data and eval only, built offline (no model call):
+- **Corpus** `golden/agent-plan.v1.json`: 173 multi-step positives and 144 negatives, KO/EN, all pending the owner's
+  approval in batches AP-1..AP-6 (`docs/plans/agent-plan-review.md`), plus every `nl-intent.v1.json` case as one-step
+  gold by id (874). Schema: `docs/plans/agent-plan-corpus-schema.md`.
+- **CLI** `pnpm eval:agent-plan -- --mode plan|run`: offline plan + digest + call bound; `run` exits 3 without the
+  approved digest and caps calls; approved cases only unless `--include-pending`. Gate per run: ≥ 95% exact step
+  graphs, 0 wrong on negatives, ≤ 1% over the bound.
+- **Planner prompt** is now `agent-plan.v2` (rule 9: the one Jira release → issues reference, and the requests that are
+  none). Shadow is still not live.
+
+Next: the owner approves the batches and decisions (a)–(h); then Strict runs on the owner's digest yes. DECISIONS:
+"ADR-0121 S2 implementation note — P2".
+
 ### ADR-0121 S2 P1 — the bounded read agent's foundation (2026-10-20, branch `claude/v5-s2-p1`)
 
 The owner approved the S2 plan with its 13 recommended defaults on 2026-10-20. P1 is built and is not live:
