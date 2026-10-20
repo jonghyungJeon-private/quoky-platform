@@ -226,18 +226,22 @@ const jiraIssues: NlCatalogEntry = {
 /**
  * Structural canonicalization of `jira.release` args (no phrase list; it reads only the arg values and the shape of the
  * owner's text): a `release` of digits that occur inside a pasted link, and nowhere in the owner's prose or in the previous
- * selection's release, is dropped: Core reads the link itself, so the owner's own words name no release. A "<KEY> <version>"
- * release is NOT split here: only the lookup can verify the key against the visible projects (`splitKeyFromRelease`).
+ * selection's release, is dropped: Core reads the link itself, so the owner's own words name no release. The same holds
+ * for a `project` copied only from the link (its key, e.g. `/projects/OP26/…`, case aside): the link names the project. A
+ * "<KEY> <version>" release is NOT split here: only the lookup can verify the key against the visible projects
+ * (`splitKeyFromRelease`).
  */
 export function normalizeJiraReleaseArgs(args: Record<string, NlArgValue>, groundingText?: string, previousArgs?: NlArgs): void {
-  const release = args.release;
-  if (typeof release !== 'string' || groundingText === undefined || !/^\d+$/u.test(release.trim())) return;
-  const digits = release.trim();
+  if (groundingText === undefined) return;
   const text = groundingText.normalize('NFC');
-  if (!hasJiraReleaseLink(text) || previousArgs?.release === digits) return;
-  const links = text.match(/https?:\/\/[^\s<>"'`]+/giu) ?? [];
-  const prose = text.replace(/https?:\/\/[^\s<>"'`]+/giu, ' ');
-  if (links.some((link) => link.includes(digits)) && !prose.includes(digits)) delete args.release;
+  if (!hasJiraReleaseLink(text)) return;
+  const links = (text.match(/https?:\/\/[^\s<>"'`]+/giu) ?? []).map((link) => link.toLowerCase());
+  const prose = text.replace(/https?:\/\/[^\s<>"'`]+/giu, ' ').toLowerCase();
+  const onlyInLink = (value: string): boolean => value.length > 0 && links.some((link) => link.includes(value)) && !prose.includes(value);
+  const release = args.release;
+  if (typeof release === 'string' && /^\d+$/u.test(release.trim()) && previousArgs?.release !== release.trim() && onlyInLink(release.trim())) delete args.release;
+  const project = args.project;
+  if (typeof project === 'string' && previousArgs?.project !== project && onlyInLink(project.trim().toLowerCase())) delete args.project;
 }
 
 const jiraRelease: NlCatalogEntry = {
@@ -247,13 +251,13 @@ const jiraRelease: NlCatalogEntry = {
   label: { ko: 'Jira 릴리스 조회', en: 'Jira release' },
   aliases: ['릴리스', '릴리즈', '배포', 'release', '버전'],
   description: {
-    en: "The issues in one Jira release (fix version) of a project, the owner's own unless they ask for every assignee, grouped by status like Jira's release report; or a project's release list when no release is named. Also a pasted Jira release link.",
+    en: "The issues in one Jira release (fix version) of a project, the owner's own unless they ask for every assignee, grouped by status; or a project's release list when no release is named. Also a pasted release link. No release, project or link named: the owner's own issues about a release word are jira.issues (keyword).",
     ko: 'Jira 릴리스(배포 버전)에 포함된 이슈, 기본은 내 담당(전체 담당은 말할 때만), 상태별. 릴리스 이름 없이 프로젝트만 말하면 그 프로젝트의 릴리스 목록. Jira 릴리스 링크도.',
   },
   args: [
     { name: 'release', kind: 'keyword', description: 'The release (fix version) name copied verbatim from the owner\'s words (e.g. 3.2.0), without words like 배포/배포건/릴리스/버전. A bare number with no date word (월, 일, 까지) is a release name, not a date. Omit for a pasted link: Quoky reads the link itself.' },
-    { name: 'project', kind: 'keyword', description: 'The Jira project name or key copied verbatim and whole (every word of a multi-word name, e.g. 모바일 앱 운영, never just 모바일), without 프로젝트. Project and release are separate args: a name or key before a version token is `project`, the token is `release`. A follow-up that gives only a release keeps the previous project. Omit when none is named.' },
-    { name: 'scope', kind: 'enum', values: ['mine', 'all'], default: 'mine', valueGrounding: { all: JIRA_SCOPE_ALL_WORDS }, description: 'all ONLY when the owner explicitly asks for every assignee (전체, 모든 담당, 담당 상관없이, all assignees); default mine = the owner\'s own issues. Every assignee with no release, project or link named: NEEDS_CLARIFICATION.' },
+    { name: 'project', kind: 'keyword', description: 'The Jira project name or key, whole (every word of a multi-word name, e.g. 모바일 앱 운영, never just 모바일), without 프로젝트. A name or key just before a version token is `project`, the token `release` (XY 2.0: XY, 2.0). A follow-up with only a release keeps the previous project. Omit if none is named or for a pasted link.' },
+    { name: 'scope', kind: 'enum', values: ['mine', 'all'], default: 'mine', valueGrounding: { all: JIRA_SCOPE_ALL_WORDS }, description: 'all ONLY when the owner explicitly asks for every assignee (전체, 모든 담당, 담당 상관없이, all assignees); words for every item (다, 전부, all of them) are not every assignee. Default mine = the owner\'s own issues. Every assignee with no release, project or link named: NEEDS_CLARIFICATION.' },
     COUNT,
   ],
   usage: { ko: '"ABC 프로젝트 1.2.0 릴리스 보여줘"', en: '"ABC 프로젝트 1.2.0 릴리스 보여줘"' },

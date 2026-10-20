@@ -113,10 +113,13 @@ export async function lookupJiraRelease(input: {
     // 1. The project.
     let project: ReleaseProjectRef | undefined;
     let preResolved: ConnectorItem | undefined;
+    // The complete project listing (never a truncated one): what a release word folded back into the project is checked on.
+    let completeProjects: readonly ConnectorItem[] | undefined;
     if (onSite !== undefined) {
       project = { key: onSite.projectKey };
     } else if (command.project !== undefined) {
       const listed = await connector.query({ query: ConnectorQueryName.CONTAINERS });
+      if (listed.truncated !== true) completeProjects = itemsOf(listed);
       const candidates = matchProjects(itemsOf(listed), command.project);
       if (candidates.length === 0) return body(renderProjectNotFound(command.project, ignoredLink));
       // A truncated listing may hold unseen projects that match too: only an exact project key is proven unique there.
@@ -131,6 +134,17 @@ export async function lookupJiraRelease(input: {
           partialListing || command.release === undefined || candidates.length > DISAMBIGUATE_MAX
             ? undefined
             : await narrowByRelease(connector, candidates, command.release);
+        // No candidate holds the release (proven on complete listings), and the project words with the release words name
+        // exactly one of the candidates: the owner named that project alone ("차란차 운영" + "2026"), so its release list.
+        const joined =
+          narrowed !== undefined && !narrowed.unproven && narrowed.found.length === 0 && command.release !== undefined
+            ? projectWithReleaseWords(completeProjects, command.project, command.release)
+            : undefined;
+        if (joined !== undefined && candidates.some((item) => item.id === joined.id)) {
+          if (input.inChannel === true) return body(renderReleaseDmOnly('list'));
+          const known = await releasesOf(connector, joined.id);
+          return body(renderReleaseList(refOf(joined), known.items, known.truncated === true, ignoredLink));
+        }
         if (narrowed === undefined || narrowed.unproven || narrowed.found.length !== 1) {
           return body(input.inChannel === true ? renderReleaseDmOnly('list') : renderProjectAmbiguous(command.project, candidates.map(refOf)));
         }
@@ -159,7 +173,14 @@ export async function lookupJiraRelease(input: {
             if (match === undefined && !truncated && !original.ambiguous) match = resolveRelease(known.items, command.release, false).item;
             if (match === undefined) return body(renderReleaseNotFound(keyedRelease, project, input.inChannel === true ? [] : nearbyReleases(known.items, keyedRelease)));
           } else {
-            match = resolveRelease(known.items, command.release, truncated).item;
+            const resolved = resolveRelease(known.items, command.release, truncated);
+            match = resolved.item;
+            // The selector split the project's own trailing word off as a release ("차란차 운영" + "2026" for the project
+            // "차란차 운영 2026"): no such release on a complete listing, and the two values together name exactly this
+            // project, so the owner named the project alone: its release list (DM-only, like any list).
+            if (match === undefined && !truncated && !resolved.ambiguous && projectWithReleaseWords(completeProjects, command.project, command.release)?.id === project.key) {
+              return body(input.inChannel === true ? renderReleaseDmOnly('list') : renderReleaseList(project, known.items, false, ignoredLink));
+            }
           }
           if (match === undefined) return body(renderReleaseNotFound(command.release, project, input.inChannel === true ? [] : nearbyReleases(known.items, command.release)));
         }
@@ -275,6 +296,17 @@ export function stripRedundantProjectKey(projects: readonly ConnectorItem[], pro
   const [first, ...rest] = releaseText.trim().split(/\s+/);
   if (first === undefined || rest.length === 0 || project.trim() !== first || !projects.some((item) => item.id === first)) return undefined;
   return rest.join(' ');
+}
+
+/**
+ * The one project the owner's project words followed by their release words name, by the same rules as the project words
+ * alone ({@link matchProjects}) on a complete listing: "차란차 운영" + "2026" names "차란차 운영 2026". Several or none, or
+ * no complete listing: undefined (nothing is guessed).
+ */
+export function projectWithReleaseWords(projects: readonly ConnectorItem[] | undefined, projectText: string | undefined, releaseText: string): ConnectorItem | undefined {
+  if (projects === undefined || projectText === undefined || releaseText.trim().length === 0) return undefined;
+  const matches = matchProjects(projects, `${projectText.trim()} ${releaseText.trim()}`);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 /** The project to name in a not-found answer: a link's key or a key-shaped owner value (never a guessed name). */

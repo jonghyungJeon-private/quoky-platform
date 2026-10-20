@@ -28184,3 +28184,53 @@ written).
   "N개 중 M개".
 - **Prompt.** `agent-plan.v3` replaces rule 9's "details of more than 10 → `none`" with `take` 10 plus the truncation
   line. That change is already in branch `claude/v5-s2-review-a`.
+
+     (background: `eval-archive/openclaw-compare-20261021.md`, reference only, per ratification decision 2).
+- **Conflict recorded (AGENTS.md / CLAUDE.md).** Part I conflicts with settled text: ARCHITECTURE.md §8 item 3 (content
+  never a free-text argument; projected ids never feed another connector) and §12 (content or derived model output
+  never a free-text argument). It therefore needs explicit ratification of a constitution amendment, as ADR-0121 did.
+  Part II conflicts with no constitutional text.
+- **Unchanged until ratification:**
+  - the D11 cross-source refusal test;
+  - `AGENT_SINGLE_STEP_ONLY`;
+  - prompt `agent-plan.v2`;
+  - the P2 gold (batch AP-6 stays `pending-owner-approval`);
+  - the ratification record's item 7 (no S3, no weakened approval, no new external target).
+- **Authorizes:** nothing. No code and no Strict action.
+
+### jira.release selection accuracy (gates of 2026-10-20: jira.release 22-26 of 28; read nl-select.v63, A6 v61, R2 v62)
+
+- **Evidence.** The intent and read-regression logs of `gates-help-86938199` and `gates-neg037-*` (2026-10-20) and their
+  result files, per case, gold vs the selector's raw output (no model call here):
+  - `a8-05` / `a8-06` (a pasted release link): `{project:"OP26", release:"16555"}`; the existing link-digit rule dropped
+    the release, the key copied from the link stayed. **(c)**: `normalizeJiraReleaseArgs` now also drops a `project`
+    that occurs only inside a pasted release link (case aside), not in the owner's prose and not the previous project;
+    the link names the project and the lookup reads it. A NEEDS_CLARIFICATION `{release:"16555"}` vs `{}` once: variance.
+  - `a8-08` ("OP26 20261015 버전에 …"): `{release:"OP26 20261015"}` in 2 of 9 runs. **(b)**. The validator split stays
+    refused (A8 key-split note: only the lookup can verify a key; it splits at runtime). The project arg description had
+    been cut by the 320-character bound before "Omit when none is named"; it now fits, names a key just before a version
+    token as the project, says to omit it for a pasted link, and one generic example shows a bare key before a version.
+  - `a8-16` ("몇 개야?" after a release): `count` dropped in 6 of 9 runs. **(b)**: rule 6 already says it; one generic
+    `jira.release` count follow-up example (Core has no count vocabulary to add it deterministically, and none is added).
+  - `jira-025` ("Jira에서 배포 들어간 내 이슈만 5개 …", gold `jira.issues {keyword:"배포", limit:5}`): `jira.release`
+    NEEDS_CLARIFICATION or `jira.issues` without the keyword. **(b)+(d)**: the entry description now says that with no
+    release, project or link named, the owner's own issues about a release word are a `jira.issues` keyword.
+  - `a8-19` ("show me all issues in release 20261015 of OP26"): asked in every A6 read-regression run (the run files
+    keep no raw output). Most likely an ungrounded `scope: all` ("all issues" is not every assignee since the A8 review
+    round 2). **(b)**: the scope arg says words for every item are not every assignee. Not done: dropping an ungrounded
+    `all` in the validator (the A8 tests pin it as asked).
+  - `a8-12` ("차란차 운영 2026 릴리스 뭐뭐 있어?", gold `{project:"차란차 운영 2026"}`): `{project:"차란차 운영",
+    release:"2026"}` in 9 of 9 runs. **(a), for the owner**: the sentence has the same shape as `a8-22` / `a8-01`
+    ("<project> <number> 릴리스/배포건 … 있어?", gold with the number as the release); only the project list tells them
+    apart, and neither the selector nor the validator has it. Runtime **(c)** only (not scored by the gates, which score
+    `validateSelection`): when the release is not on the project's complete release list (and not ambiguous), and the
+    project words followed by the release words name exactly one project on the complete `containers` listing by the
+    lookup's own `matchProjects` rules, that project's release list is shown (DM-only in a channel); with several
+    candidate projects this applies only after no candidate held the release. No new query kind; nothing guessed.
+  - `a8n-01` / `a8n-07`: NEEDS_CLARIFICATION (or a refused `jira.issues`) is the gold's "asked" outcome: negatives are not
+    in the hit rate and a clarification is not a wrong capture, so they cost the gate nothing. No change.
+  - `a8-02`, `a8-07`, `a8-15`, `a8-26` (once or twice in 9 read-regression runs): variance (d).
+- **Risk.** Other positives: the link rule only removes a value absent from the owner's prose (no link gold has a project
+  arg); the lookup fold-back needs a missing release and an exact one-project name from both values. Negatives: the
+  description and example changes add no new route; `a8n-03` / `a8n-05` stay rule-2 none. RAG-0 clean (the first count
+  example "총 개수만 알려줘" was a near copy of github-034 and was rewritten).

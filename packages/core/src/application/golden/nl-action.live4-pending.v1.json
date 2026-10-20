@@ -1,7 +1,7 @@
 {
  "version": 1,
  "description": "A6 live test 4 (2026-10-17) gold CANDIDATES, PENDING the owner's D12 batch: not scored by eval:nl until approved and moved into nl-action.v1.json (the RAG-0 lint reads it already). Same schema as nl-action.v1.json (docs/plans/nl-action-corpus-schema.md). The owner-approved items of 2026-10-19, (a) todo.add-906 and (b) reminder.create-903, are already in nl-action.v1.json. The live EN time case (turn 66, \"Remind me on Oct 22 at 9:30am: …\") is a reminder-grammar case, pinned in reminder-grammar.test.ts, not a selector gold.",
- "promptVersion": "nl-select.v60",
+ "promptVersion": "nl-select.v61",
  "cases": [
   {
    "id": "a6-paraphrase-todo.add-907",
