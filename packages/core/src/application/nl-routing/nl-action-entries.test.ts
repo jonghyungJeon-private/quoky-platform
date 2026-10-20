@@ -279,8 +279,8 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
   const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } });
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
-    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v60', sha256: 'b07c6010024bd886b339e17f8b8cc2e079f37aaac9f8b3ce76ce02fdc7448ae8' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v58', sha256: '69a70733fb417483d7878733b4d299841417935fb1602af6781d24ad74bfa67e' });
+    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v61', sha256: 'da4f4f7f35abcaae8620eb78fcd0cb05e80b789588062e570e2255e322897a03' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v59', sha256: '596e20a6c3c4f4037a76bf1440c33ce8a12806c21c492b05264d1072eea3f79c' });
   });
 });
 
@@ -299,6 +299,15 @@ describe('A6 prompt v53 / v58: the help.topic block as one decision, the label a
     expect(prompt).not.toContain('A command-shaped message is never help.topic: an imperative that asks Quoky to do or change something');
     expect(prompt).toContain('Message: 피드백 남기는 방법 좀 가르쳐 줘\nOutput: {"entryId":"help.topic","args":{"topic":"feedback"}');
     expect(prompt).toContain('Message: 기억해 둔 거 보려면 무슨 명령어 쓰면 돼?\nOutput: {"entryId":"help.topic","args":{"topic":"memory"}');
+  });
+
+  it('v61 / v59: a how-to about acting inside another app is none; asking how to get it from Quoky is help.topic (read and A6)', () => {
+    const read = buildSelectionPrompt({ entries: READS, text: 'x' });
+    for (const p of [read, prompt]) {
+      expect(p).toContain('   It must be about asking Quoky (a Quoky command or feature, 여기서, 너한테, how to ask you): a how-to about doing\n');
+      expect(p).toContain('Message: 피그마에서 프레임 복제하는 방법 알려줘\nOutput: {"entryId":"none"');
+      expect(p).toContain('Message: 여기서 지라 이슈 찾으려면 너한테 뭐라고 하면 돼?\nOutput: {"entryId":"help.topic","args":{"topic":"work-lookup"}');
+    }
   });
 
   it('v60 / v58: a feeling or state that asks for nothing is none (rule 2), shown in the read and the A6 prompt', () => {
@@ -451,14 +460,14 @@ describe('A6 prompt v53 / v58: the help.topic block as one decision, the label a
 });
 
 describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55 with actions', () => {
-  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v60.prompts.json', import.meta.url), 'utf8')) as {
+  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v61.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
   };
 
-  it('pins nl-select.v60 for every golden input (no `actions`)', () => {
-    expect(golden.version).toBe('nl-select.v60');
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v60');
+  it('pins nl-select.v61 for every golden input (no `actions`)', () => {
+    expect(golden.version).toBe('nl-select.v61');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v61');
     for (const golden_ of golden.cases) {
       const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
       const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
@@ -467,7 +476,7 @@ describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55
   });
 
   it('the A6 prompt (v55) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v58');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v59');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
@@ -755,7 +764,8 @@ describe('A6 prompt v36 (CA review): the rule-8 lines and examples teach the rul
 
   it('keeps the rule-8 help.topic rules (one decision block since v58) and the v35 examples', () => {
     expect(actionPrompt).toContain('   help.topic stays rule 3 (only Quoky itself: you, or one of Quoky\'s own features or commands). Decide it by what the');
-    expect(actionPrompt).toContain('   - to learn the same about any other app, software, device or service: none, even when it shares a word with a\n     Quoky feature.');
+    expect(actionPrompt).toContain('   - to learn how to do something inside any other app, software, device or service (the app as the place, X에서 /\n');
+    expect(actionPrompt).toContain('     that app or it shares a word with a Quoky feature.');
     expect(actionPrompt).toContain('     none, or an action entry above when one fits, even when it names one of Quoky\'s own features.');
     expect(actionPrompt).toContain('   Only the args listed for the chosen entry exist: reminder.list has no count arg, so a 몇 개 word with it adds nothing;');
     expect(actionPrompt).toContain('Message: 다음 주에 울릴 리마인더 쭉 보여줘\nOutput: {"entryId":"reminder.list","args":{"range":"next-week"},"ambiguity":"CLEAR","alternatives":[]}');

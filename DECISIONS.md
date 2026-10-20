@@ -27683,3 +27683,9 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   refuse 127 of the 675 positive read golds (bare nouns, follow-up fragments, "<source> 검색: <topic>" labels, English
   noun phrases), and would not even catch `neg-037`: "뭐" is a wh-word and bare "-해" is a request form under the
   request-shape grammar (the known residual of `read-statement.ts`). The fix therefore stays in the prompt.
+- **v61 / A6 v59 / R2 v60 (the v60 gates: A6 3/3, R2 3/3, neg-037 fixed; neg-010 "<app>에서 …하는 방법 알려줘" and neg-014
+  went to help.topic).** Rule 3 gains one sentence: help.topic must be about asking Quoky (a Quoky command or feature,
+  여기서, 너한테, how to ask you); a how-to about doing something inside another app or service (the app as the place,
+  X에서 / in X / on X, plus an action done there) is none even when Quoky can read that app. Rule 8's other-software
+  bullet names the same structure. One generic contrast pair (a Figma-side how-to -> none; how to ask Quoky for Jira
+  issues -> help.topic), RAG-0 clean (the first draft "깃허브에서 …" contained the bare gold "깃허브" and was rewritten).

@@ -111,7 +111,7 @@ describe('selection prompt v56', () => {
     buildSelectionPrompt({ entries: [...READS, item], text: '그 이슈 요약해줘', actions: { referenceContext: 'none' } });
 
   it('names the version and detects R2 entries', () => {
-    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v59');
+    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v60');
     expect(offersR2ItemSources([nlActionEntry('item.summarize')])).toBe(false);
     expect(offersR2ItemSources([nlItemSummarizeEntry(['jira'])])).toBe(true);
     expect(offersR2ItemSources([nlItemSummarizeEntry(['slack'])])).toBe(true);
