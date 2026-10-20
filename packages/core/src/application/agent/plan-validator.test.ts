@@ -212,6 +212,17 @@ describe('plan validator: dates only symbolic, summaries closed', () => {
     expect(absoluteDatesGrounded('2027-10-23', '10월 23일')).toBe(false);
     expect(absoluteDatesGrounded('10-20..10-24', '10/20부터 10/24까지')).toBe(true);
     expect(absoluteDatesGrounded('this-week', '')).toBe(true);
+    // Two numbers elsewhere in the owner's words are no date expression (CA review).
+    expect(absoluteDatesGrounded('10-20', '10시 20분 회의 일정')).toBe(false);
+    expect(absoluteDatesGrounded('10-20', '10명이 20개 처리')).toBe(false);
+    expect(absoluteDatesGrounded('10-20', '10월 20일 일정')).toBe(true);
+    expect(absoluteDatesGrounded('10-20', '10 월 20 일')).toBe(true);
+    expect(absoluteDatesGrounded('10-20', '10/20 일정')).toBe(true);
+    expect(absoluteDatesGrounded('10-20', '10-20 일정')).toBe(true);
+    expect(absoluteDatesGrounded('2026-10-20', '2026-10-20 일정')).toBe(true);
+    expect(absoluteDatesGrounded('10-02', '10월 2일')).toBe(true);
+    expect(absoluteDatesGrounded('10-02', '10월 12일')).toBe(false);
+    expect(validateAgentPlan(plan([read('calendar.events', { range: '10-20' }), read('jira.issues')]), ctx('10시 20분 일정이랑 지라 이슈'))).toMatchObject({ ok: false, reason: 'date-ungrounded', step: 1 });
   });
 
   it('the previous selection may carry a date the owner named earlier (structure only)', () => {

@@ -4,8 +4,11 @@ import type { ConversationRuntimeDeps } from '../conversation-runtime';
 import type { AgentRunServiceDeps } from './agent-run-service';
 
 // ADR-0121 D5 / D12 (stage S2 P1): the agent's boundary, pinned.
-// - Import scan: no file of `application/agent/` imports or names a CommandRunner, a ToolProvider (MCP), a workspace or
-//   git writer, a connector writer, a reader, memory or learning writers, a platform/notification sink, or any fetch.
+// - Import ALLOWLIST (CA review): every module specifier of `application/agent/` is a domain module, one of the two ports
+//   the agent may name (`ai-provider`, `logger`), the credential guard, a named pure `nl-routing` file, or a sibling `./`
+//   file. No barrel (`../../ports`, `..`, `../nl-routing`), no other application service, no node or network module.
+//   Dynamic `import(`, `require(` and any `fetch(` (also `globalThis.fetch(`) are refused, and so are the forbidden
+//   collaborator names (writers, readers, runners, sinks, memory and learning stores, turn handlers, storage).
 // - The deps type of `AgentRunService` holds exactly the router, the actor repository (kill switch), the logger and
 //   configuration values.
 // - The ConversationRuntimeDeps baseline is 38 with `agentRuns` (ADR-0032 M3 ratchet; ADR-0121 D12 assumed 37, and
@@ -16,48 +19,71 @@ const SOURCES = readdirSync(DIR)
   .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
   .map((name) => ({ name, text: readFileSync(new URL(name, DIR), 'utf8') }));
 
-/** Module specifiers and identifiers the agent must never reach. */
-const FORBIDDEN_IMPORTS = [
-  /command-runner/,
-  /tool-provider/,
-  /workspace-writer|workspace-provider|workspace-write/,
-  /git-provider|git-manager/,
-  /connector-write|connector-provider|connector-manager/,
-  /calendar-reader|mail-reader|drive-reader/,
-  /memory-manager|durable-memory|learning-repository|learning/,
-  /notification-sink|platform-adapter/,
-  /storage-provider|vector-provider|queue-provider/,
-  /repository-hosting/,
-  /node:(?:http|https|net|tls|child_process|dgram|fs)/,
-  /^(?:undici|axios|node-fetch)$/,
-];
-// A global call (not a method such as `RegExp.prototype.exec`; child_process is refused by the import scan above).
-const FORBIDDEN_IDENTIFIERS = /(?<![.\w])(?:CommandRunner|ToolProvider|WorkspaceWriter|ConnectorWriter|ChannelMessageWriter|IssueCommentWriter|IssueTransitionWriter|MemoryManager|MemoryWriter|LearningRepository|NotificationSink|PlatformAdapter|CalendarReader|MailReader|DriveReader|ConnectorProvider|fetch|XMLHttpRequest|WebSocket|spawn|exec)\s*\(|\b(?:CommandRunner|ToolProvider|ConnectorProvider|MemoryManager|LearningRepository|NotificationSink|CalendarReader|MailReader|DriveReader)\b/;
+/** The named pure `nl-routing` files the agent may import (never the selection service or the barrel). */
+const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 'selection-prompt', 'selection-validator', 'selection-meaning', 'selection-egress', 'symbolic-time', 'action-switch'];
+
+function allowedSpecifier(specifier: string): boolean {
+  if (/^\.\.\/\.\.\/domain(?:\/[a-z-]+)?$/.test(specifier)) return true;
+  if (specifier === '../../ports/ai-provider.port' || specifier === '../../ports/logger.port') return true;
+  if (specifier === '../credential-guard') return true;
+  if (ALLOWED_NL_ROUTING.some((name) => specifier === `../nl-routing/${name}`)) return true;
+  return /^\.\/[a-z-]+$/.test(specifier);
+}
+
+/** Every static specifier: `import … from`, `export … from` and a side-effect `import '…'`. */
+function specifiersOf(text: string): string[] {
+  return [...text.matchAll(/\bfrom\s+['"]([^'"]+)['"]|\bimport\s+['"]([^'"]+)['"]/g)].map((match) => (match[1] ?? match[2]) as string);
+}
+
+/** Dynamic loading, network and process calls in code. */
+const FORBIDDEN_CALLS = /\bimport\s*\(|\brequire\s*\(|\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b|(?<![.\w])(?:spawn|exec|execFile|fork)\s*\(/;
+const FORBIDDEN_NAMES =
+  /\b(?:CommandRunner|ToolProvider|WorkspaceWriter|ConnectorWriter|ChannelMessageWriter|IssueCommentWriter|IssueTransitionWriter|IssueCreateWriter|MemoryManager|MemoryWriter|LearningRepository|ReminderRepository|NotificationSink|PlatformAdapter|CalendarReader|MailReader|DriveReader|ConnectorProvider|ConversationTurnHandler|StorageProvider)\b/;
+
+const codeOf = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
 describe('application/agent boundary (ADR-0121 D5)', () => {
-  it('scans every source file (sanity: the scan is not vacuous)', () => {
+  it('scans every source file, and every check catches what it must (calibration)', () => {
     expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-run-service.ts', 'flow-policy.ts', 'index.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts']);
-    // Calibration: the patterns catch what they must.
-    for (const code of ['await fetch(url)', 'deps: { runner: CommandRunner }', 'new MemoryManager(x)', 'spawn("claude")']) expect(code).toMatch(FORBIDDEN_IDENTIFIERS);
-    for (const specifier of ['../../ports/command-runner.port', '../../ports/tool-provider.port', '../memory-manager', 'node:child_process', 'undici']) {
-      expect(FORBIDDEN_IMPORTS.some((pattern) => pattern.test(specifier)), specifier).toBe(true);
+    const refused = [
+      '../memory-writer',
+      '../reminders/reminder-repository',
+      '../../ports',
+      '..',
+      '../nl-routing',
+      '../nl-routing/nl-selection-service',
+      '../../ports/conversation-turn-handler.port',
+      '../../ports/command-runner.port',
+      '../../ports/tool-provider.port',
+      '../memory-manager',
+      'http',
+      'https',
+      'child_process',
+      'node:child_process',
+      'node:http',
+      'undici',
+    ];
+    for (const specifier of refused) expect(allowedSpecifier(specifier), specifier).toBe(false);
+    for (const specifier of ['../../domain', '../../domain/flow-label', '../../ports/logger.port', '../nl-routing/catalog', '../nl-routing/selection-egress', './plan-schema']) {
+      expect(allowedSpecifier(specifier), specifier).toBe(true);
     }
-    expect('FENCED.exec(text)').not.toMatch(FORBIDDEN_IDENTIFIERS);
+    expect(specifiersOf("import 'node:http';\nexport * from './x';\nimport type { A } from \"../y\";")).toEqual(['node:http', './x', '../y']);
+    for (const code of ['await fetch(url)', 'globalThis.fetch(url)', "await import('node:http')", "require('child_process')", 'spawn("claude")']) expect(code).toMatch(FORBIDDEN_CALLS);
+    for (const code of ['deps: { writer: MemoryWriter }', 'runner: CommandRunner', 'repo: ReminderRepository']) expect(code).toMatch(FORBIDDEN_NAMES);
+    expect('FENCED.exec(text)').not.toMatch(FORBIDDEN_CALLS);
   });
 
-  it('imports no command runner, tool provider, writer, reader, memory/learning writer, sink, storage or network module', () => {
+  it('imports only from the allowlist', () => {
     for (const source of SOURCES) {
-      const specifiers = [...source.text.matchAll(/(?:import|export)[^'"]*from\s+'([^']+)'/g)].map((match) => match[1] as string);
-      for (const specifier of specifiers) {
-        for (const pattern of FORBIDDEN_IMPORTS) expect(specifier, `${source.name}: ${specifier}`).not.toMatch(pattern);
-      }
+      for (const specifier of specifiersOf(source.text)) expect(allowedSpecifier(specifier), `${source.name}: ${specifier}`).toBe(true);
     }
   });
 
-  it('names no forbidden collaborator and calls no fetch, spawn or exec', () => {
+  it('has no dynamic import, require or fetch, and names no forbidden collaborator', () => {
     for (const source of SOURCES) {
-      const code = source.text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-      expect(code, source.name).not.toMatch(FORBIDDEN_IDENTIFIERS);
+      const code = codeOf(source.text);
+      expect(code, source.name).not.toMatch(FORBIDDEN_CALLS);
+      expect(code, source.name).not.toMatch(FORBIDDEN_NAMES);
     }
   });
 

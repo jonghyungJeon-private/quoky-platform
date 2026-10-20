@@ -213,19 +213,22 @@ const DATE_FIELD = /date|day|time|when|due|start|end|range|period|deadline|week|
 const ABSOLUTE_DATE = /(?:(\d{4})-)?(\d{1,2})-(\d{1,2})/g;
 
 /**
- * Dates only symbolic (ADR-0121 D2): every absolute date in a range value must be named by the owner's own words — its
- * month and day numbers (and a written year) appear in the grounding text. A purely symbolic value (`this-week`, `fri`)
- * has no absolute date and passes. Pure.
+ * Dates only symbolic (ADR-0121 D2): every absolute date in a range value must be named by a DATE EXPRESSION in the
+ * owner's own words — `M월 D일`, `M/D` or `M-D` (leading zeros optional; `YYYY-M-D` and `YYYY/M/D` included) — and a
+ * written year must appear too. Two numbers elsewhere in the text never ground a date ("10시 20분" is no 10-20; CA
+ * review). A purely symbolic value (`this-week`, `fri`) has no absolute date and passes. Pure.
  */
 export function absoluteDatesGrounded(value: string, groundingText: string): boolean {
   for (const match of value.matchAll(ABSOLUTE_DATE)) {
     const [, year, month, day] = match;
-    const numbers = [month, day, ...(year !== undefined ? [year] : [])];
-    if (!numbers.every((n) => n !== undefined && numberIn(Number(n), groundingText))) return false;
+    if (month === undefined || day === undefined || !dateExpressionIn(Number(month), Number(day), groundingText)) return false;
+    if (year !== undefined && !new RegExp(`(?<![0-9])${Number(year)}(?![0-9])`, 'u').test(groundingText)) return false;
   }
   return true;
 }
 
-function numberIn(value: number, text: string): boolean {
-  return new RegExp(`(?<![0-9])0?${value}(?![0-9])`, 'u').test(text);
+function dateExpressionIn(month: number, day: number, text: string): boolean {
+  const m = `(?<![0-9])0?${month}`;
+  const d = `0?${day}(?![0-9])`;
+  return new RegExp(`${m}\\s*월\\s*${d}\\s*일|${m}\\s*/\\s*${d}|${m}-${d}`, 'u').test(text);
 }

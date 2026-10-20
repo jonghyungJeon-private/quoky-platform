@@ -3555,6 +3555,8 @@ export class ConversationRuntime {
    * The kill switch is checked here on the turn's actor snapshot and again when the job starts. The inputs are this turn's
    * snapshot: the owner's text, the offered entries, the previous selection as structure only and the live decision's
    * closed values (for the one-step agreement); the chat provider this turn resolved bounds the planner's egress.
+   * Only FRESH read selections are shadowed (CA review): a turn that answered an open question (`nlPending`) and an A6
+   * action decision (an action entry executed or asked about) are skipped, so the agreement compares like with like.
    */
   private queueAgentShadow(
     message: InboundMessage,
@@ -3563,14 +3565,22 @@ export class ConversationRuntime {
     entries: readonly NlCatalogEntry[],
     decision: NlSelectionDecision,
     chat: { readonly id: string; readonly locality: AiExecutionLocality } | undefined,
+    route: NlSelectionRoute,
+    nlPending: PendingQuestion | null | undefined,
   ): void {
     const agent = this.deps.agentRuns;
     if (agent === undefined || (decision.kind !== 'execute' && decision.kind !== 'ask' && decision.kind !== 'none')) return;
+    if (nlPending !== undefined && nlPending !== null) return;
+    if (decision.kind === 'execute' && (decision.action !== undefined || isNlActionEntryId(decision.command.entryId))) return;
+    if (decision.kind === 'ask' && decision.entryId !== undefined && isNlActionEntryId(decision.entryId)) return;
     const direct = isDirectConversation(message.context);
     if (!agent.shadowAdmits(actor, direct)) return;
     const now = this.clock();
     const last = readLastSelection(session, actor.id, now);
-    const live = decision.kind === 'execute' ? { kind: 'execute' as const, entryId: decision.command.entryId, args: decision.command.args } : { kind: decision.kind };
+    const live =
+      decision.kind === 'execute'
+        ? { kind: 'execute' as const, source: route, entryId: decision.command.entryId, args: decision.command.args }
+        : { kind: decision.kind, source: route };
     this.agentAfterReply.set(message, () =>
       agent.runShadow(
         {
@@ -3949,7 +3959,7 @@ export class ConversationRuntime {
       route,
     });
     // ADR-0121 S2 shadow: a DM turn that reached selection queues one background planner job for after the reply.
-    if (this.deps.agentRuns !== undefined && this.deps.agentRuns.mode === 'shadow') this.queueAgentShadow(message, session, actor, entries, decision, chat);
+    if (this.deps.agentRuns !== undefined && this.deps.agentRuns.mode === 'shadow') this.queueAgentShadow(message, session, actor, entries, decision, chat, route, nlPending);
     // A6-D6: the honest-chat fact names the action families only while they act (shadow keeps today's fact).
     const factEntries = this.deps.nlSelection?.actionsActing?.(actor) === true ? entries : entries.filter((entry) => entry.risk === 'READ');
     const honest = nl.mode === 'active' && factEntries.length > 0 ? { entries: factEntries } : undefined;

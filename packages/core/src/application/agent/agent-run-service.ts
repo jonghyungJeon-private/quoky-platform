@@ -5,7 +5,7 @@ import type { LogFields, Logger } from '../../ports/logger.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import { NlActionSwitch, parseActionSwitchPhrase, readActionSwitch, type NlActionSwitchState } from '../nl-routing/action-switch';
 import { isNlCatalogEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlCatalogEntryId, type NlWave1EntryId } from '../nl-routing/catalog';
-import { nlSameEgress } from '../nl-routing/nl-selection-service';
+import { nlSameEgress } from '../nl-routing/selection-egress';
 import { nlSelectionMeaning } from '../nl-routing/selection-meaning';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { checkPlannerInputs, plannerPromptCanaryHit, untrustedCanariesOf } from './flow-policy';
@@ -60,8 +60,13 @@ export class AgentModeError extends Error {
 }
 
 /** What the live selection decided this turn (closed values only), for the one-step agreement. */
+/** Which route the live selection ran on (closed; the ADR-0120 selection routes). */
+export type AgentShadowLiveSource = 'chat' | 'personal-data' | 'class-b' | 'work-surface';
+
 export interface AgentShadowLive {
   readonly kind: 'execute' | 'ask' | 'none';
+  /** The selection route of the fresh read / none / question decision (logged as `liveSource`). */
+  readonly source?: AgentShadowLiveSource;
   readonly entryId?: NlCatalogEntryId;
   readonly args?: NlArgs;
 }
@@ -303,7 +308,7 @@ export class AgentRunService {
       timeZone: this.deps.timeZone,
       direct: turn.direct,
     });
-    this.logShadow({ ...planFields(plan, validation), ...this.agreement(plan, validation, turn), latencyMs: latency() });
+    this.logShadow({ ...planFields(plan, validation), ...this.agreement(plan, validation, turn), ...liveFields(turn.live), latencyMs: latency() });
   }
 
   /** One-step plans only: whether the plan agrees with the live selection (entry, and meaning as S1 W3 defines it). */
@@ -371,6 +376,13 @@ function planFields(plan: AgentPlan, validation: AgentPlanValidation): LogFields
     })
     .join(';');
   return { outcome: validation.plan.kind === 'clarify' ? 'clarify' : 'planned', ...fields, argKinds };
+}
+
+const LIVE_SOURCES: ReadonlySet<string> = new Set(['chat', 'personal-data', 'class-b', 'work-surface']);
+
+/** The live decision's closed kind and route (never an argument). */
+function liveFields(live: AgentShadowLive): LogFields {
+  return { liveKind: live.kind, liveSource: live.source !== undefined && LIVE_SOURCES.has(live.source) ? live.source : 'unknown' };
 }
 
 /** Catalog ids are closed; anything else the model wrote is reported as `unknown`, never echoed. */

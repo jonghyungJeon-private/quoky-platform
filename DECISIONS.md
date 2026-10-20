@@ -27732,11 +27732,15 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   - with the agent `off` and A6 actions off, the text routes exactly as before.
 
   The switch is checked twice: before a shadow job is scheduled (the turn's actor snapshot) and again when the job starts
-  (the live actor, re-read). A stop between the reply and the job start therefore wins. The ops UI shows the agent mode
+  (the live actor, re-read). A stop between the reply and the job start therefore wins. The start check **fails closed**
+  (Codex P2): when the live switch cannot be read (the lookup throws, or the actor is missing), the job is skipped and
+  logged `agent_run.shadow outcome=skipped reason=switch-unknown`; the turn's snapshot is never trusted there. The ops UI shows the agent mode
   and the switch state in a read-only "에이전트" panel, with no action and no link.
 - **The shadow mechanism (Q1).** In `shadow` the runtime queues one background planner job after the reply of an owner DM
-  turn that reached selection, that is, a turn whose live selection decided `execute`, `ask` or `none`. Turns that were
-  skipped or unavailable are not queued, and neither are channel turns. The job starts on the next macrotask after
+  turn that reached selection with a FRESH read decision: the live selection decided `execute` of a READ entry, `ask`
+  about reads, or `none`. Not queued (CA review, so the agreement compares like with like): skipped or unavailable
+  selections, channel turns, A6 action decisions (an action entry executed or asked about, or a decision carrying an A6
+  audit), and any turn that began with an open selection question (`nlPending`; a superset of the answer turns). The job starts on the next macrotask after
   `handle` resolved, in its own slot beside the S1 `c-shadow` slot. Its bounds:
   - at most 1 job in flight (others are logged `dropped` with reason `in-flight`);
   - at most 30 per rolling hour and 150 per rolling day per actor (D7 per-actor caps; a shadow plan counts as a run);
@@ -27746,12 +27750,14 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
 
   The job applies the D3 preparation (quoted, fenced and attached material removed), the pre-egress credential guard, the
   ADR-0120 D6/D8 rule (the planner goes only to the provider family and locality this turn's chat would reach, through the
-  exported `nlSameEgress`; no copy of the rule) and the D4 canary check (below). It then makes one `INTENT_SELECTION` call
+  `nlSameEgress`, moved into the small pure `nl-routing/selection-egress.ts` that `NlSelectionService` and the agent both
+  import; no copy of the rule) and the D4 canary check (below). It then makes one `INTENT_SELECTION` call
   with prompt `agent-plan.v1`, parses the v2 output, validates it, and logs one content-free `agent_run.shadow` line.
   That line holds `outcome`, `mode`, `promptVersion`, `steps`, `form`, `entries` (closed ids or `summarize:<schema>`; any
   model-made id is logged as `unknown`), `argKinds` (catalog arg kinds plus `ref`), `ambiguity`, `validator` (`ok` or the
-  closed reason), `failedStep` and `stepReason`, `agree` and `agreeEntry` for one-step plans (S1 W3 meaning), and
-  `latencyMs`. **Zero connector reads and zero M2 calls**: `AgentRunServiceDeps` holds the router, the actor repository
+  closed reason), `failedStep` and `stepReason`, `agree` and `agreeEntry` for one-step plans (S1 W3 meaning), `liveKind`
+  (`execute` / `ask` / `none`), `liveSource` (the closed selection route: `chat`, `personal-data`, `class-b`,
+  `work-surface`) and `latencyMs`. **Zero connector reads and zero M2 calls**: `AgentRunServiceDeps` holds the router, the actor repository
   (the switch), the logger and configuration values, and nothing else. Traffic delta: at most one extra `claude -p` spawn
   per DM selection turn, at most 30 an hour (plan §5).
 - **The code-level release gate.** `QUOKY_AGENT_MODE=active` is refused at startup with `AGENT_MODE_ACTIVE_NOT_RELEASED`.
@@ -27779,39 +27785,53 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
     the D12 gold corpora (the first draft contained the bare gold words "캘린더", "깃허브" and "드라이브" and was
     rewritten).
   - `agent-run-service.ts`: the modes `off` and `shadow`, the bounded shadow job and the switch phrase.
+- **Interpretation accepted by the Chief Architect (CA review of S2 P1, 2026-10-20).** D2's source binding ("a Jira key
+  from a Jira readout may feed only a Jira read on the same site") is read as the same *source and destination origin*,
+  not the same catalog entry id: `jira.release` → `jira.issues` passes, because both read the configured Jira site and
+  project `issueKeys`. Each source has one closed id field; the to-do, reminder, brief and help entries have none, so a
+  reference from or to them is refused. Any cross-source or cross-origin reference is refused.
 - **Decisions the plan did not spell out (agent's choices, for review).**
   1. The v2 output keeps the selection form as a valid one-step plan, so the gated read examples stay correct outputs.
      The steps form is new.
-  2. "Same source entry and same origin" (D2) is read as the same *source and origin*: `jira.release` → `jira.issues`
-     passes, because both are on the configured Jira site and project `issueKeys`. Each source has one closed id field.
-     The to-do, reminder, brief and help entries have none, so a reference from or to them is refused.
-  3. "Dates only from symbolic time" is checked as: every absolute date in a `range` value must have its month and day
-     numbers (and any written year) in the owner's own words or in the previous selection. Otherwise it is refused as
-     `date-ungrounded`. A reference field that names a date is refused as `ref-date`.
+  2. **The validator ignores the selection form's `alternatives`** (`plan-schema.ts` carries them through unvalidated,
+     because shadow only logs). P3 must validate every alternative with the same rules before any is shown to the
+     owner as a numbered option.
+  3. "Dates only from symbolic time" is checked as: every absolute date in a `range` value must be named by a date
+     expression in the owner's own words (`M월 D일`, `M/D` or `M-D`, leading zeros optional, ISO forms included; a
+     written year must appear too) or carried by the previous selection. Two numbers elsewhere never ground a date
+     ("10시 20분" is no `10-20`; CA review). Otherwise it is refused as `date-ungrounded`. A reference field that names a
+     date is refused as `ref-date`. A bare day ("20일") does not ground a date in P1 (stricter than the live selector; the
+     P2 corpus will measure it).
   4. `agent-plan.v1` does not teach references. In P1 the planner never sees an id, so nothing could ground one. The
      schema and the validator carry them for P3.
   5. The summary schemas are the closed set `digest.v1` and `meeting-digest.v1`; P3 binds their shapes.
-  6. The shadow job runs only when the live selection decided (`execute`, `ask` or `none`). One-step agreement is: `none`
-     against `none`, `clarify` against `ask`, and entry plus meaning against `execute`.
+  6. One-step agreement is: `none` against `none`, `clarify` against `ask`, and entry plus meaning against `execute`
+     (only fresh read decisions are shadowed; see the shadow mechanism above).
   7. The `AgentProfile` registration of `quoky.read-agent` (ADR-0079) waits for P3, when the runtime first executes.
      P1 only fixes the id.
 - **Tests (targeted, offline; no model call).**
   - `agent/plan-validator.test.ts` (39): every rule, the 11th value per reference and per run, the cross-source references
-    (mail, calendar, Drive and Slack ids into Jira; Jira ids into Confluence), and a date taken from content.
-  - `agent/agent-run-service.test.ts` (13): the release gate; `off` doing nothing; one `INTENT_SELECTION` call and no
+    (mail, calendar, Drive and Slack ids into Jira; Jira ids into Confluence), a date taken from content, and the date
+    expression rule ("10시 20분" never grounds `10-20`).
+  - `agent/agent-run-service.test.ts` (15): the release gate; `off` doing nothing; one `INTENT_SELECTION` call and no
     SUMMARIZATION; the agreement; refused and malformed plans logged without model content; the egress and credential
     rules; DM only; the in-flight drop, the hourly and daily caps, the bound, `stopBackground()`; the kill switch stopping
-    and resuming without a restart; a no-content scan of every log line.
+    and resuming without a restart; the fail-closed start check (a lookup that throws, a missing actor) and a stop
+    recorded after queueing; a no-content scan of every log line.
   - `agent/plan-prompt.test.ts` (5): the edits, the examples valid under the validator, the RAG-0 lint, the sha256 pin.
   - `agent/flow-policy.test.ts` (6): the label join, the M1 rule, the canaries.
-  - `agent/agent-boundary.test.ts` (5): the import scan (no CommandRunner, ToolProvider, writer, reader, memory or
-    learning writer, sink, storage or network module, and no fetch, spawn or exec) and deps 38.
+  - `agent/agent-boundary.test.ts` (5): an import ALLOWLIST (domain, the `ai-provider` and `logger` ports, the credential
+    guard, named pure `nl-routing` files incl. `selection-egress`, siblings; no barrel), no dynamic `import(`, `require(`
+    or `fetch(` (also `globalThis.fetch(`), no forbidden collaborator name, each check calibrated; and deps 38.
   - `apps/quoky/src/agent/agent-config.test.ts` (11): the exact values, `active` refused, `shadow` needing NL `active`.
-  - `apps/quoky/src/agent/agent-shadow.app.test.ts` (6): the production `AppModule` with recording, throwing connectors
-    and readers. Shadow makes 0 reads and 0 M2 calls; it never runs in a channel; the kill switch works live; `off` is
-    byte-identical over the whole `nl-intent.v1.json` corpus (874 golden selector answers: the same replies, provider
-    requests and reads as a runtime without the dep, with only `mode` ever read; the few reminder phrases whose own reply
-    changes between two runs without the agent are listed and skipped).
+  - `apps/quoky/src/agent/agent-shadow.app.test.ts` (8): the production `AppModule` with recording, throwing connectors
+    and readers. Shadow makes 0 reads and 0 M2 calls; it never runs in a channel; only fresh read selections are queued
+    (A6 action decisions and open-question turns are not; `liveSource` logged); the kill switch works live; the switch
+    reply composition (A6 on + agent shadow: the A6 reply and the agent line; A6 off + grants enforced: the agent reply
+    and the D4.6 suffix; A6 on + agent off: byte-identical to no agent dep); `off` is byte-identical over the whole
+    `nl-intent.v1.json` corpus (874 golden selector answers, each run without the dep, with `off`, and without again,
+    reminder rows reset before each run so the reminder phrases are compared too: the same replies, provider requests
+    and reads, with only `mode` ever read).
   - The ops UI agent panel, in `build-snapshot.test.ts` (3).
 - **Not done here (Strict / owner).** The `.env.local` change to `shadow`, the restart, the live kill-switch check, the
   7-day shadow clock, deploy. Reviews before merge: the Chief Architect (Core boundary, deps 38, runtime dispatch),
