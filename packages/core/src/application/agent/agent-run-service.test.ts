@@ -266,6 +266,35 @@ describe('AgentRunService — the kill switch (D7, the A6 switch reused)', () =>
     expect(h.service.switchSuffix('에이전트 중지')).toBe('다단계 에이전트도 함께 멈췄어요.');
     expect(await h.service.handleSwitchPhrase(owner(), '에이전트 상태', T0)).toBeUndefined();
   });
+
+  it('fails closed when the live switch cannot be read: a lookup that throws or a missing actor skips the job (switch-unknown)', async () => {
+    const throwing = harness({ script: [TWO_READS] });
+    (throwing.service as unknown as { deps: { actors: { get: () => Promise<never> } } }).deps.actors.get = async () => {
+      throw new Error('db down');
+    };
+    await throwing.service.runShadow(turn(throwing), async () => CHAT);
+    expect(throwing.calls).toEqual([]);
+    expect(shadowLines(throwing)).toEqual([expect.objectContaining({ outcome: 'skipped', reason: 'switch-unknown', at: 'start' })]);
+    expect(JSON.stringify(throwing.logs)).not.toContain('db down');
+    const missing = harness({ script: [TWO_READS] });
+    const snapshot = missing.actors.get('owner') as Actor;
+    missing.actors.delete('owner');
+    await missing.service.runShadow(turn(missing, { actor: snapshot }), async () => CHAT);
+    expect(missing.calls).toEqual([]);
+    expect(shadowLines(missing)).toEqual([expect.objectContaining({ outcome: 'skipped', reason: 'switch-unknown' })]);
+  });
+
+  it('a stop recorded after the job was queued (before it starts) wins: no planner call', async () => {
+    const h = harness({ script: [TWO_READS] });
+    const owner = h.actors.get('owner') as Actor;
+    expect(h.service.shadowAdmits(owner, true)).toBe(true);
+    // Queued with the running snapshot; the owner stops the agent before the job starts.
+    const queued = (): Promise<void> => h.service.runShadow(turn(h, { actor: owner }), async () => CHAT);
+    await h.service.handleSwitchPhrase(owner, '에이전트 중지', T0);
+    await queued();
+    expect(h.calls).toEqual([]);
+    expect(shadowLines(h)).toEqual([expect.objectContaining({ outcome: 'stopped', reason: 'kill-switch', at: 'start' })]);
+  });
 });
 
 describe('AgentRunService — no content in any log line', () => {

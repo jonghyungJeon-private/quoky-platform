@@ -222,8 +222,19 @@ export class AgentRunService {
     const clock = this.deps.elapsed ?? Date.now;
     const latency = (): number => Math.max(0, clock() - startedMs);
     // The kill switch again, on the live actor: a stop between the reply and the job start wins.
-    const live = await this.deps.actors.get(turn.actor.id).catch(() => null);
-    if (this.switchState(live ?? turn.actor) === 'stopped') {
+    // Fail closed (Codex P2): a live switch state that cannot be read (the lookup threw, or no actor) skips the job; the
+    // turn's snapshot is never trusted here.
+    let live: Actor | null;
+    try {
+      live = await this.deps.actors.get(turn.actor.id);
+    } catch {
+      live = null;
+    }
+    if (live === null) {
+      this.logShadow({ outcome: 'skipped', reason: 'switch-unknown', at: 'start' });
+      return;
+    }
+    if (this.switchState(live) === 'stopped') {
       this.logShadow({ outcome: 'stopped', reason: 'kill-switch', at: 'start' });
       return;
     }
