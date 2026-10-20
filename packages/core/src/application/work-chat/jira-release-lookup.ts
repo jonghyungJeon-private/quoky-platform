@@ -299,13 +299,17 @@ export function stripRedundantProjectKey(projects: readonly ConnectorItem[], pro
 }
 
 /**
- * The one project the owner's project words followed by their release words name, by the same rules as the project words
- * alone ({@link matchProjects}) on a complete listing: "차란차 운영" + "2026" names "차란차 운영 2026". Several or none, or
- * no complete listing: undefined (nothing is guessed).
+ * The one project whose full name (letters and digits only) is exactly the owner's project words followed by their
+ * release words, and longer than the project words alone, on a complete listing: "차란차 운영" + "2026" names
+ * "차란차 운영 2026". Containment either way never counts ("Mobile App" + "9.9.9" does not name "Mobile App"). Several or
+ * none, or no complete listing: undefined (nothing is guessed).
  */
 export function projectWithReleaseWords(projects: readonly ConnectorItem[] | undefined, projectText: string | undefined, releaseText: string): ConnectorItem | undefined {
   if (projects === undefined || projectText === undefined || releaseText.trim().length === 0) return undefined;
-  const matches = matchProjects(projects, `${projectText.trim()} ${releaseText.trim()}`);
+  const alone = compact(projectText);
+  const joined = compact(`${projectText} ${releaseText}`);
+  if (joined.length <= alone.length) return undefined;
+  const matches = projects.filter((item) => compact(item.title) === joined);
   return matches.length === 1 ? matches[0] : undefined;
 }
 

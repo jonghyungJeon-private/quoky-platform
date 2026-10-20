@@ -30,7 +30,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   examples (a bare key before a version, a count follow-up on a release). RAG-0 clean.
 - **Changed (Core).** `normalizeJiraReleaseArgs` drops a `project` copied only from a pasted release link (a8-05, a8-06).
   The release lookup shows a project's release list when the named release does not exist and the project words with
-  the release words name exactly one visible project ("차란차 운영" + "2026"); no new query kind, no guess.
+  the release words spell exactly the full name of one visible project ("차란차 운영" + "2026"); no containment, no guess.
 - **Owner review.** Gold `a8-12` reads the same as `a8-22` without the project list (see DECISIONS).
 
 ## Unreleased — ADR-0121 S2 P1: the bounded read agent's foundation (2026-10-20)

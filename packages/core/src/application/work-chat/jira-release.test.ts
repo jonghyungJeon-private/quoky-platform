@@ -602,6 +602,18 @@ describe('lookupJiraRelease: the project words with the release words name one p
     expect(other.text).toContain('"2027" 릴리스를 찾지 못했어요');
   });
 
+  it('only the exact full name counts: "Mobile App" + a missing "9.9.9" is a missing release, never its own release list', async () => {
+    const mobile: ConnectorItem[] = [{ id: 'MOB', title: 'Mobile App' }, { id: 'WEB', title: '웹 개발' }];
+    const dm = await lookup({ project: 'Mobile App', release: '9.9.9' }, mobile, { releases: [{ id: '1', title: '1.0.0' }] });
+    expect(dm.text).toContain('"9.9.9" 릴리스를 찾지 못했어요');
+    expect(dm.text).not.toContain('Mobile App (MOB) 릴리스**');
+    const channel = await lookup({ project: 'Mobile App', release: '9.9.9', scope: 'mine' }, mobile, { releases: [{ id: '1', title: '1.0.0' }], inChannel: true });
+    expect(channel.text).not.toContain('DM에서만');
+    expect(channel.text).toContain('"9.9.9" 릴리스를 찾지 못했어요');
+    // A plain substring of a longer name does not count either ("차란차" + "운영" is not "차란차 운영 2026").
+    expect((await lookup({ project: '차란차', release: '운영' }, only26)).text).not.toContain('릴리스** (');
+  });
+
   it('in a channel the folded-back list is refused like any list', async () => {
     const { text, queries } = await lookup({ project: '차란차 운영', release: '2026', scope: 'mine' }, only26, { inChannel: true });
     expect(text).toContain('DM에서만');

@@ -28224,8 +28224,10 @@ written).
     ("<project> <number> 릴리스/배포건 … 있어?", gold with the number as the release); only the project list tells them
     apart, and neither the selector nor the validator has it. Runtime **(c)** only (not scored by the gates, which score
     `validateSelection`): when the release is not on the project's complete release list (and not ambiguous), and the
-    project words followed by the release words name exactly one project on the complete `containers` listing by the
-    lookup's own `matchProjects` rules, that project's release list is shown (DM-only in a channel); with several
+    project words followed by the release words equal (letters and digits only) the full name of exactly one project on
+    the complete `containers` listing, a name longer than the project words alone (containment either way never counts:
+    "Mobile App" + a missing "9.9.9" is a missing release; Codex P2), that project's release list is shown (DM-only in a
+    channel); with several
     candidate projects this applies only after no candidate held the release. No new query kind; nothing guessed.
   - `a8n-01` / `a8n-07`: NEEDS_CLARIFICATION (or a refused `jira.issues`) is the gold's "asked" outcome: negatives are not
     in the hit rate and a clarification is not a wrong capture, so they cost the gate nothing. No change.
