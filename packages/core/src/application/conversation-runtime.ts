@@ -93,7 +93,7 @@ import {
   type IntentClassifyContext,
 } from './intent-classifier';
 import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlItemSource, type NlListingReceipt, type NlSelectedCommand } from './nl-routing/catalog';
-import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './nl-routing/honest-chat';
+import { guardFalseControlDenials, guardFalseIncapabilityClaims, renderConfiguredSourcesFact, renderControlCommandsFact, type NlControlScope } from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
 import { readLastSelection } from './nl-routing/selection-state';
 import { renderAgentSwitchReply, type AgentRunService } from './agent/agent-run-service';
@@ -101,7 +101,7 @@ import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from
 import type { LastTurnReplyKind } from './nl-routing/last-turn';
 import type { MessageBody } from '../domain';
 import { LAST_SELECTION_METADATA_KEY, isActionPendingQuestion, type PendingQuestion } from './nl-routing/selection-state';
-import { parseActionSwitchPhrase, renderActionSwitchReply } from './nl-routing/action-switch';
+import { nearMissActionSwitchPhrase, parseActionSwitchPhrase, renderActionSwitchHint, renderActionSwitchReply } from './nl-routing/action-switch';
 import { allowedSurfaceGroups, decideSurface, isSurfaceDirect, type SurfaceDecision, type SurfaceGate, type SurfaceGateAudit } from './surface-grants/surface-gate';
 import { surfacePermittedWorkSources, type SurfacePermit } from './surface-grants/surface-permit';
 import { SURFACE_GRANT_PENDING_METADATA_KEY, type SurfaceGrantService } from './surface-grants/surface-grant-service';
@@ -1136,7 +1136,8 @@ export interface ConversationRuntimeDeps {
   /**
    * ADR-0121 stage S2 (amends ADR-0032: baseline 37 → 38): the bounded read agent. OPTIONAL: absent, or mode `off`
    * (`QUOKY_AGENT_MODE`, the default), keeps every turn byte-identical (the runtime reads `mode` and nothing else). In
-   * `shadow`, an owner DM turn that reached selection queues one background planner job after its reply (no read, no M2,
+   * `shadow`, an owner DM turn that reached selection (or, under `c-shadow`, whose read a Class B grammar answered) queues
+   * one background planner job after its reply (no read, no M2,
    * one content-free log line), and the kill-switch phrase is recognized while the mode is not `off`. `active` is refused
    * at construction until the D11 gates pass.
    */
@@ -2470,6 +2471,13 @@ export class ConversationRuntime {
       const switched = await this.deps.agentRuns.handleSwitchPhrase(actor, message.text, this.clock());
       if (switched !== undefined) return this.responded(session, outboundMessage(message.context, this.withAgentSurfaceSuffix(message.text, switched)));
     }
+    // Live DM test 2026-10-20: a near miss of the switch phrase ("에이ㄴ트 재개", "에이전트 재") while the exact phrase is
+    // recognized (owner DM, every state, like the phrase) gets the exact phrase instead of chat. It never switches (owner
+    // decision 2026-10-20: exact phrase only, both directions). Nothing is recorded, as for the phrase itself.
+    if (isDirectConversation(message.context) && !expiryNotice && this.switchScope() !== undefined) {
+      const nearMiss = this.handleSwitchNearMiss(message);
+      if (nearMiss !== undefined) return this.responded(session, outboundMessage(message.context, nearMiss));
+    }
     // ADR-0122 D4 / D4.6: while QUOKY_CHANNEL_GRANTS=enforce, the kill-switch phrase (owner DM, also with A6 actions off)
     // and the owner's anchored channel-permission phrases, in every state, before the control handlers. Nothing is
     // recorded (like the kill switch). With `off` (or absent) the text routes exactly as before.
@@ -3254,7 +3262,11 @@ export class ConversationRuntime {
       if (handled) {
         // ADR-0122: a denied turn is not a grammar answer: no background selection on its text, no S1 agreement line.
         const probe = responder === undefined || this.surfaceDenials.has(handled) ? null : this.nlClassBProbe(responder, ctx);
-        if (probe !== null) this.queueGrammarHitShadow(message, session, actor, probe);
+        if (probe !== null) {
+          this.queueGrammarHitShadow(message, session, actor, probe);
+          // ADR-0121 S2 shadow coverage: the read a Class B grammar answered is planned too (liveSource `grammar`).
+          if (this.deps.agentRuns !== undefined && this.deps.agentRuns.mode === 'shadow') this.queueAgentGrammarShadow(message, session, actor, probe, nlPending);
+        }
         return this.respondTurnHandler(message, session, actor, userMemory.id, handled);
       }
     } else {
@@ -3595,6 +3607,43 @@ export class ConversationRuntime {
           live,
         },
         async () => chat,
+      ),
+    );
+  }
+
+  /**
+   * ADR-0121 S2 `shadow`, grammar coverage (live DM test 2026-10-20: "오늘 일정 보여줘" was answered by the calendar grammar
+   * under `c-shadow`, never reached selection, and so was never planned): queue the planner job for an owner DM turn a
+   * frozen Class B grammar answered. A Class B probe is a READ by construction (a write request, an approval, a control
+   * phrase or a denied claim has no probe), and a turn that answers an open selection question (`nlPending`) is skipped,
+   * as on the selection path. The same job, caps, kill-switch checks and bounds as {@link queueAgentShadow}; the live
+   * decision is the grammar's own catalog equivalent (`liveSource: grammar`), so the one-step agreement compares the plan
+   * with it where the grammar maps to a catalog entry. The chat provider is resolved inside the bounded job.
+   */
+  private queueAgentGrammarShadow(message: InboundMessage, session: Session, actor: Actor, grammar: NlClassBProbe, nlPending: PendingQuestion | null | undefined): void {
+    const agent = this.deps.agentRuns;
+    if (agent === undefined || (nlPending !== undefined && nlPending !== null)) return;
+    const direct = isDirectConversation(message.context);
+    if (!agent.shadowAdmits(actor, direct)) return;
+    const now = this.clock();
+    const entries = [...this.nlCatalog(actor).values()].map((owned) => owned.entry);
+    const last = readLastSelection(session, actor.id, now);
+    const selection = grammar.selection;
+    const live = { kind: 'execute' as const, source: 'grammar' as const, ...(selection !== undefined ? { entryId: selection.entryId, args: selection.args } : {}) };
+    this.agentAfterReply.set(message, () =>
+      agent.runShadow(
+        {
+          text: message.text,
+          attachmentCount: message.attachments?.length ?? 0,
+          ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
+          actor,
+          now,
+          entries,
+          ...(last !== undefined ? { previous: { entryId: last.entryId, args: last.args } } : {}),
+          direct,
+          live,
+        },
+        () => this.nlChatProvider({ capability: Capability.GENERAL_CHAT } as Intent, session, actor),
       ),
     );
   }
@@ -8756,6 +8805,8 @@ export class ConversationRuntime {
     readout: ProjectReadout | ExternalWorkReadout | UntrustedDocumentReadout | undefined,
     nlFacts?: NlChatFacts,
   ): Promise<TurnResult> {
+    // Live DM test 2026-10-20: the switch phrases are recognized on this owner DM turn (the fact names them; the guard keeps them).
+    const controls = isDirectConversation(message.context) ? this.switchScope() : undefined;
     let task = await this.deps.tasks.createTask(intent, message.context, {
       requestText: message.text,
       actorId: actor.id,
@@ -8833,7 +8884,14 @@ export class ConversationRuntime {
 
       // ADR-0120 D9: after a `none` selection the chat prompt carries one more authoritative Core fact (the configured
       // sources and their commands); without it the call is exactly as before.
-      const sourcesFact = nlFacts === undefined ? undefined : renderConfiguredSourcesFact(nlFacts.entries, this.contributedHelpLines);
+      // Live DM test 2026-10-20 (Codex P2): while the switch phrases are recognized, every owner DM chat prompt names them,
+      // with or without a selection or a read catalog this turn.
+      const sourcesFact =
+        nlFacts !== undefined
+          ? renderConfiguredSourcesFact(nlFacts.entries, this.contributedHelpLines, controls !== undefined ? { controls } : {})
+          : controls !== undefined && (capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT)
+          ? renderControlCommandsFact(controls)
+          : undefined;
       const nlComposition = sourcesFact === undefined ? undefined : { additionalCurrentFacts: [sourcesFact] };
       const promptSpec =
         nlComposition === undefined
@@ -8878,7 +8936,7 @@ export class ConversationRuntime {
           providerId = routed.acceptedProviderId;
           // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
           const withheld = this.withheldAttachmentReply(bundle, message, routed.output.text, routed.output.artifacts, task.id);
-          const guard = withheld ? null : this.guardChatReply(capability, routed.output.text, task.description, task.id, nlFacts);
+          const guard = withheld ? null : this.guardChatReply(capability, routed.output.text, task.description, task.id, nlFacts, controls);
           const replyText = withheld?.text ?? guard?.text ?? routed.output.text;
           const artifacts: Artifact[] = withheld ? [] : routed.output.artifacts.map((artifact) => ({ ...artifact }));
           const artifactIds = await this.deps.artifacts.persistAll(task.id, run.id, artifacts);
@@ -8974,7 +9032,7 @@ export class ConversationRuntime {
       const withheld = documentSummary
         ? this.withheldDocumentSummaryReply(message, executed.text, executed.artifacts ?? [], task.id)
         : this.withheldAttachmentReply(bundle, message, executed.text, executed.artifacts ?? [], task.id);
-      const chatGuard = withheld || documentSummary ? null : this.guardChatReply(capability, executed.text, task.description, task.id, nlFacts);
+      const chatGuard = withheld || documentSummary ? null : this.guardChatReply(capability, executed.text, task.description, task.id, nlFacts, controls);
       const guard = documentSummary ? (withheld ? null : (summaryCheck?.guard ?? null)) : chatGuard;
       // Review P3-1: a document summary keeps no provider artifacts (they could carry mail-derived text into storage).
       const result = withheld
@@ -9057,6 +9115,7 @@ export class ConversationRuntime {
     currentUserMessage: string,
     taskId?: Id,
     nlFacts?: NlChatFacts,
+    controls?: NlControlScope,
   ): { readonly text: string; readonly guarded: boolean } {
     if (
       capability !== Capability.GENERAL_CHAT &&
@@ -9068,8 +9127,15 @@ export class ConversationRuntime {
     const guarded = guardInternalActionClaims(text, currentUserMessage, generalChatReplyPolicy(currentUserMessage));
     if (!guarded.guarded) {
       // ADR-0120 D9: after a `none` selection, a false "cannot access <configured source>" is replaced by its command.
-      if (nlFacts === undefined) return { text, guarded: false };
-      const incapable = guardFalseIncapabilityClaims(text, nlFacts.entries, languageOf(currentUserMessage), this.contributedHelpLines);
+      // Live DM test 2026-10-20 (Codex P2): a denied control command is replaced whenever the switch is recognized.
+      if (nlFacts === undefined) {
+        if (controls === undefined) return { text, guarded: false };
+        const control = guardFalseControlDenials(text, languageOf(currentUserMessage));
+        if (!control.guarded) return { text, guarded: false };
+        this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
+        return { text: control.text, guarded: true };
+      }
+      const incapable = guardFalseIncapabilityClaims(text, nlFacts.entries, languageOf(currentUserMessage), this.contributedHelpLines, controls !== undefined ? { controls } : {});
       if (!incapable.guarded) return { text, guarded: false };
       this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
       return { text: incapable.text, guarded: true };
@@ -9611,6 +9677,35 @@ export class ConversationRuntime {
     const prepared = prepareSelectionInput(message.text, 0, message.quotedRanges ?? []);
     const grounding = 'skip' in prepared ? '' : prepared.groundingText;
     return surfaceGroupsOfSelection(command, { releaseLink: parseJiraReleaseLinks(grounding).length > 0 });
+  }
+
+  /**
+   * What the exact switch phrase controls on this runtime (the caller checks the owner DM), or `undefined` when it is not
+   * recognized: A6 actions acting in `active` selection, the agent not `off`, the channel grants enforced. With all three
+   * off the phrase is ordinary text, so no near miss is answered and no honest-chat control fact is given. Reads
+   * `agentRuns.mode` only.
+   */
+  private switchScope(): NlControlScope | undefined {
+    const nl = this.deps.nlSelection;
+    const actions = nl?.handleSwitchPhrase !== undefined && nl.mode === 'active' && nl.actionLevel !== undefined && nl.actionLevel() !== 'off';
+    const agent = this.deps.agentRuns !== undefined && this.deps.agentRuns.mode !== 'off';
+    const grants = this.surfaceGate()?.enforced === true && this.deps.surfaceGrants?.service !== undefined;
+    return actions || agent || grants ? { actions, agent, grants } : undefined;
+  }
+
+  /**
+   * The reply to a near miss of the switch phrase, or `undefined` when the message is none: the fixed hint naming the exact
+   * phrase. Nothing changes (owner decision 2026-10-20: the switch acts only on the exact phrase, stop and resume alike).
+   */
+  private handleSwitchNearMiss(message: InboundMessage): string | undefined {
+    const near = nearMissActionSwitchPhrase(message.text);
+    if (near === undefined) return undefined;
+    try {
+      this.deps.logger.info('nl_action.switch_near_miss', { kind: near.kind, ...(near.kind !== 'ambiguous' ? { state: near.state } : {}) });
+    } catch {
+      // best-effort
+    }
+    return renderActionSwitchHint(near.kind === 'ambiguous' ? ['stopped', 'running'] : [near.state]);
   }
 
   /** D4.6: while the channel grants are enforced, the A6 switch reply also says the channel grants followed. */

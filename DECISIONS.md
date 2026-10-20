@@ -27971,3 +27971,70 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
     - A quoted request inside a step whose own args do not hold the quote and no other step's keyword holds it, even
       when the owner meant it as a search term for an entry that has no keyword arg.
     Each is refused as `date-ungrounded` or `veto-quoted-request`; nothing runs.
+
+### ADR-0121 S2 implementation note — P1 follow-up: grammar-read shadow coverage and the switch near miss (2026-10-20, branch `claude/v5-control-typo-shadow`)
+
+- **Trigger.** The owner's live DM test of 2026-10-20 14:52–14:54 (service at `ea40a372`, `QUOKY_AGENT_MODE=shadow`,
+  `QUOKY_NL_ACTIONS=shadow`, `QUOKY_NL_PHASE=c-shadow`): "에이ㄴ트 재개" and "에이전트 재" went to chat, and the chat reply
+  said there is no command to resume the agent (false); only the exact "에이전트 재개" switched. "오늘 일정 보여줘" was
+  answered by the calendar grammar, never reached selection, and so was never planned: the most common reads were
+  missing from the 7-day shadow data that owner decision Q13 needs.
+- **Shadow coverage (amends the P1 shadow mechanism, Q1).** Under `c-shadow`, a turn whose read a frozen Class B grammar
+  answered in the owner DM now also queues the planner job, with `liveSource: grammar` (closed) and the live decision set
+  to the grammar's own catalog equivalent (`execute`), so the one-step agreement compares the plan with it; a grammar
+  with no catalog equivalent logs no agreement fields. Unchanged: the same job, the shared caps (≤ 1 in flight, 30 per
+  rolling hour, 150 per rolling day per actor, grammar and selection turns together), the kill-switch checks before
+  scheduling and at the start, the bound and abort, zero connector reads, zero M2 calls, and content-free logs. Never
+  queued: write, approval, control and switch turns, a denied claim, and a turn that answers an open selection question
+  (only a Class B probe hit qualifies, and a probe is a read by construction). Traffic: a grammar-read turn can now
+  start one S1 `c-shadow` selection call and one planner call; the planner call stays inside the 30 / h cap. A dropped
+  job logs its `liveSource`, its origin (`grammar` or `selection`) and `originDropsLastHour`, the rolling-hour drop count
+  of that origin (CA P3 6), so grammar turns crowding out selection-turn shadows under the cap is visible; counts and
+  closed values only. Phase A
+  and Phase C `c` grammar answers are not covered (no probe is taken in Phase A; under `c` the grammar answers only after
+  a skipped or unavailable selection, which stays unshadowed).
+- **Switch near miss (amends the A6-D3 / D7 phrase handling).** While the exact phrase is
+  recognized (A6 actions acting, the agent not `off`, or the channel grants enforced; owner DM, every state, nothing
+  recorded), a whole short Hangul message that is a near miss of `에이전트 중지` / `에이전트 재개` is answered
+  deterministically instead of by chat. Detection is structural over the closed phrase set (no typo list): the
+  garbled-noun keystroke distance (≤ 2 keys over the phrase, ≤ 1 in the verb; loose compatibility jamo such as the ㄴ of
+  "에이ㄴ트" now count as keys), the exact phrase plus the closed glued request tail ("에이전트 재개해줘"), or a strict keystroke
+  prefix of exactly one phrase ("에이전트 재"). A question mark, a second line, Latin text or anything longer than 20
+  characters is never a near miss, and two keys off in the verb ("에이전트 좋지") is a sentence.
+  - Every near miss gets only the fixed hint, `에이전트를 멈추려면 "에이전트 중지"라고 보내 주세요.` or
+    `에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.` (not a question: nothing is pending), and never switches.
+  - **Owner decision (2026-10-20): the switch executes only on the exact phrase, stop and resume alike.** A near miss of
+    `에이전트 중지`, including a request form ("에이전트 중지해줘") or a typo ("에이전트 중자"), gets the hint and does not stop.
+    (The implementation first proposed stopping on a clear near miss of 중지 as the safe direction; the owner declined it.)
+  - A message with a line break is never a near miss; the break is checked before whitespace is normalized (Codex P3:
+    "에이전트\n재개해줘" goes to chat as before).
+  - "에이전트 재고", "에이전트 주지" and "에이전트 정지" are one-key near misses (재개, 중지, 중지): hint only, no state change
+    (CA P3 3, pinned in the tests).
+  - `도움말` / `새 대화` are not in the near-miss set: they are short phrases one key from ordinary words ("새 대회").
+- **Honest chat.** While the phrase is recognized (A6 actions not off, the channel grants enforced, or the agent not
+  `off`), every owner DM chat turn gets it, whether or not selection ran or a read catalog exists (Codex P2): the chat
+  prompt carries a fact naming both control commands (beside the ADR-0120 D9 sources fact when there is one, alone
+  otherwise), worded by what the switch controls in the active configuration (CA P3 7: natural-language actions, the
+  multi-step agent and the channel permissions, each named only while it is on). That fact is the primary fix. The reply
+  guard is only a narrow backstop (Codex P2, fourth round): it replaces a sentence only when, in one clause, it claims the
+  stop / resume command or way does not exist for the agent, Quoky or the switch as the action's own object or topic
+  ("에이전트를 재개하는 명령은 없어요", "에이전트는 재개할 수 있는 방법이 없어요", "there is no command to resume the agent", "The
+  agent has no command to resume"), or ends that clause with a bare incapability on that object ("에이전트를 재개할 수
+  없어요", "I can't resume the agent."). The rest of the reply is kept. Everything else is kept: another clause ("You can
+  resume the agent, but it cannot recover deleted events"), another object ("cannot stop running containers"), a
+  complement after the object ("You cannot stop the agent from responding to exact commands"), any other capability
+  statement ("Resuming the agent is not possible"), and a bare later "There is no such command" (no anaphoric fallback,
+  Codex P2 third round). With the phrase not recognized, the prompt and the reply are unchanged.
+  - **Residuals (fail-safe: the sentence is kept, the false denial stays).** This was the last heuristic round for this
+    guard. Not caught: a denial with the agent outside the action's clause or separated from the verb by other words
+    ("에이전트는, 제가 알기로 다시 켤 수 없어요"); a pronoun object ("I can't resume it", "그걸 재개할 수 없어요"); any denial
+    split across sentences, including a bare "그런 명령은 없어요" / "There is no such command" after a sentence about the
+    agent ("Resume the agent? That isn't possible."); a capability statement that is not the nonexistence claim
+    ("Resuming the agent is not possible", "재개는 지원되지 않는 기능이에요"); an objectless "재개할 수 있는 방법이 없어요"; a paraphrased
+    nonexistence ("재개 기능은 준비되어 있지 않아요" without the agent named); and denials in languages other than Korean
+    and English. The control fact in the prompt is the primary defence for these.
+- **Tests (targeted, offline; no model call).** `nl-routing/action-switch-near-miss.test.ts` (6),
+  `nl-routing/honest-chat-controls.test.ts` (5), `agent/agent-run-service.test.ts` (+2), and
+  `apps/quoky/src/agent/agent-shadow.app.test.ts` (+4: the live near misses, honest chat after selection and with no
+  selection service (agent shadow recognizing the switch; unchanged with nothing recognizing it), `c-shadow` grammar reads with
+  write / control turns not planned and the kill switch holding; `off` stays byte-identical over the corpus).

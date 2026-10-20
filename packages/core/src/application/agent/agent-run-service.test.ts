@@ -206,6 +206,49 @@ describe('AgentRunService — shadow', () => {
   });
 });
 
+describe('AgentRunService — grammar-answered reads (liveSource grammar, live DM test 2026-10-20)', () => {
+  const ONE = JSON.stringify({ entryId: 'calendar.events', args: { range: 'today' }, ambiguity: 'CLEAR', alternatives: [] });
+  const grammar = (entryId?: 'calendar.events', args: Record<string, string> = { range: 'today' }): AgentShadowLive =>
+    ({ kind: 'execute', source: 'grammar', ...(entryId !== undefined ? { entryId, args } : {}) }) as AgentShadowLive;
+
+  it('logs liveSource grammar and the agreement with the grammar\'s catalog equivalent; none when it has no equivalent', async () => {
+    const h = harness({ script: [ONE, ONE, ONE] });
+    await h.service.runShadow(turn(h, { text: '오늘 일정 보여줘' }, grammar('calendar.events')), async () => CHAT);
+    await h.service.runShadow(turn(h, { text: '오늘 일정 보여줘' }, grammar('calendar.events', { range: 'tomorrow' })), async () => CHAT);
+    await h.service.runShadow(turn(h, { text: '오늘 일정 보여줘' }, grammar()), async () => CHAT);
+    const lines = shadowLines(h);
+    expect(lines.map((line) => [line.liveSource, line.liveKind, line.agree, line.agreeEntry])).toEqual([
+      ['grammar', 'execute', true, true],
+      ['grammar', 'execute', false, true],
+      ['grammar', 'execute', undefined, undefined],
+    ]);
+    expect(JSON.stringify(h.logs)).not.toContain('일정');
+    expect(h.selects.every((capability) => capability === Capability.INTENT_SELECTION)).toBe(true);
+  });
+
+  it('the same caps and kill switch hold for grammar turns (one shared budget with selection turns)', async () => {
+    const h = harness({ script: Array.from({ length: 40 }, () => ONE) });
+    for (let i = 0; i < 20; i += 1) await h.service.runShadow(turn(h), async () => CHAT);
+    for (let i = 0; i < 11; i += 1) await h.service.runShadow(turn(h, {}, grammar('calendar.events')), async () => CHAT);
+    expect(h.calls).toHaveLength(30);
+    expect(shadowLines(h).at(-1)).toMatchObject({ outcome: 'dropped', reason: 'hourly-cap', liveSource: 'grammar', origin: 'grammar', originDropsLastHour: 1 });
+    // CA P3 6: drops are counted per origin (grammar vs selection) over the rolling hour, content-free.
+    await h.service.runShadow(turn(h, {}, { kind: 'none', source: 'chat' }), async () => CHAT);
+    await h.service.runShadow(turn(h, {}, grammar('calendar.events')), async () => CHAT);
+    expect(shadowLines(h).slice(-2)).toEqual([
+      expect.objectContaining({ outcome: 'dropped', liveSource: 'chat', origin: 'selection', originDropsLastHour: 1 }),
+      expect.objectContaining({ outcome: 'dropped', liveSource: 'grammar', origin: 'grammar', originDropsLastHour: 2 }),
+    ]);
+    h.clock += 3_600_000;
+    await h.service.handleSwitchPhrase(h.actors.get('owner') as Actor, '에이전트 중지', T0);
+    const owner = h.actors.get('owner') as Actor;
+    expect(h.service.shadowAdmits(owner, true)).toBe(false);
+    await h.service.runShadow(turn(h, { actor: owner }, grammar('calendar.events')), async () => CHAT);
+    expect(h.calls).toHaveLength(30);
+    expect(shadowLines(h).at(-1)).toMatchObject({ outcome: 'stopped', reason: 'kill-switch' });
+  });
+});
+
 describe('AgentRunService — bounds', () => {
   it('at most one job in flight: an overlapping job is dropped (reason in-flight)', async () => {
     const h = harness({ hang: true });

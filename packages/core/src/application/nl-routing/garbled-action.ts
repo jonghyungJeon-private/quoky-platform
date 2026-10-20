@@ -47,7 +47,7 @@ const ENDING_FINALS: ReadonlySet<number> = new Set([0, 4, 8, 16, 17, 20]);
 /** Medial (vowel) pairs of the 어/아 infinitive contraction on a stem's last syllable: ㅣ/ㅕ, ㅜ/ㅝ, ㅗ/ㅘ, ㅡ/ㅓ, ㅡ/ㅏ, ㅚ/ㅙ. */
 const CONTRACTION_PAIRS: ReadonlyArray<readonly [number, number]> = [[20, 6], [13, 14], [8, 9], [18, 4], [18, 0], [11, 10]];
 /** A request tail glued on a word: the light verb (처리)(해/하) and the closed request endings, or the ending alone. */
-const GLUED_REQUEST_TAIL = /(?:처리)?(?:해|하)?(?:줘요|줘|주세요|주십시오|줄래요|줄래|세요|십시오)$|(?:처리)?(?:해요|해라|해|하자)$/u;
+export const NL_GLUED_REQUEST_TAIL = /(?:처리)?(?:해|하)?(?:줘요|줘|주세요|주십시오|줄래요|줄래|세요|십시오)$|(?:처리)?(?:해요|해라|해|하자)$/u;
 /** English request leads before the imperative slot (also the colon-label head of owner decision D, `action-entries.ts`). */
 export const NL_EN_REQUEST_LEADS: ReadonlySet<string> = new Set(['please', 'pls', 'plz', 'kindly']);
 const EN_LEADS = NL_EN_REQUEST_LEADS;
@@ -239,7 +239,7 @@ export function nlGarbledActionWord(
       const lead = before.every((w) => EN_LEADS.has(w)) || (before.length >= 2 && EN_MODAL_LEAD.test(before[0] ?? '') && before[1] === 'you' && before.slice(2).every((w) => EN_LEADS.has(w)));
       if (lead || before.at(-1) === 'as') stems = [word];
     } else {
-      const tail = nlIsRequestForm(word) ? GLUED_REQUEST_TAIL.exec(word) : null;
+      const tail = nlIsRequestForm(word) ? NL_GLUED_REQUEST_TAIL.exec(word) : null;
       let next = words[index + 1] ?? '';
       if (next === '좀') next = words[index + 2] ?? '';
       // A next word that holds an action word is itself the action ("필요 없어 취소해줘"): the word before it is not in the slot.
@@ -268,17 +268,33 @@ const FINAL_KEYS: ReadonlyArray<readonly number[]> = [
 ];
 
 /**
+ * The keys of a loose compatibility jamo (U+3131 ㄱ … U+3163 ㅣ), the letter the input method leaves when a syllable was not
+ * completed ("에이ㄴ트"): a consonant as its initial key (a double final such as ㄳ as its two keys), a vowel as its medial.
+ */
+const COMPAT_CONSONANT_KEYS: ReadonlyArray<readonly number[]> = [
+  [0], [1], [0, 9], [2], [2, 12], [2, 18], [3], [4], [5], [5, 0], [5, 6], [5, 7], [5, 9], [5, 16], [5, 17], [5, 18],
+  [6], [7], [8], [7, 9], [9], [10], [11], [12], [13], [14], [15], [16], [17], [18],
+];
+const COMPAT_FIRST = 0x3131;
+const COMPAT_VOWEL_FIRST = 0x314f;
+const COMPAT_LAST = 0x3163;
+
+/**
  * The KEYSTROKES of a word: a Hangul syllable as its consonant and vowel keys, with an initial and a final consonant as the
  * SAME key (the input method composes a syllable from keys and moves a final consonant to the next syllable when a vowel
- * follows); other characters as they are. A one-key slip is distance 1 here even when the composition moved a consonant
- * across a syllable boundary ("리마이너" is "리마인더" without its ㄷ key; on positional jamo the two are 2 apart).
+ * follows), a loose compatibility jamo as its key(s); other characters as they are. A one-key slip is distance 1 here even
+ * when the composition moved a consonant across a syllable boundary ("리마이너" is "리마인더" without its ㄷ key; on
+ * positional jamo the two are 2 apart), and "에이ㄴ트" is "에이전트" without its ㅈ and ㅓ keys (distance 2).
  */
 function keysOf(text: string): Unit[] {
   const units: Unit[] = [];
   for (const char of Array.from(text)) {
     const parts = partsOf(char);
     if (parts === undefined) {
-      if (!/\s/u.test(char)) units.push(char);
+      const code = char.codePointAt(0) ?? 0;
+      if (code >= COMPAT_FIRST && code < COMPAT_VOWEL_FIRST) units.push(...(COMPAT_CONSONANT_KEYS[code - COMPAT_FIRST] ?? []).map((key) => 100 + key));
+      else if (code >= COMPAT_VOWEL_FIRST && code <= COMPAT_LAST) units.push(200 + (code - COMPAT_VOWEL_FIRST));
+      else if (!/\s/u.test(char)) units.push(char);
       continue;
     }
     units.push(100 + parts[0], 200 + parts[1], ...(FINAL_KEYS[parts[2]] ?? []).map((key) => 100 + key));
@@ -289,6 +305,21 @@ function keysOf(text: string): Unit[] {
 /** The keystroke edit distance of two words (spaces ignored); see {@link keysOf}. */
 export function nlKeystrokeDistance(a: string, b: string): number {
   return distance(keysOf(a), keysOf(b));
+}
+
+/**
+ * Whether `prefix` is, key for key, a strict prefix of `word` (spaces ignored; see {@link keysOf}): the message stopped
+ * mid-word ("에이전트 재" of "에이전트 재개", or "에이전트 잭" where the input method had already put the ㄱ key on 재).
+ */
+export function nlIsKeystrokePrefix(prefix: string, word: string): boolean {
+  const a = keysOf(prefix);
+  const b = keysOf(word);
+  return a.length > 0 && a.length < b.length && a.every((unit, index) => unit === b[index]);
+}
+
+/** The number of keys of `text` (spaces ignored; see {@link keysOf}). */
+export function nlKeystrokeCount(text: string): number {
+  return keysOf(text).length;
 }
 
 /** The nouns that name one item list (the catalog's own list aliases), and the list they name. */
@@ -431,7 +462,7 @@ export function nlFrameHasActionInflection(frame: string, actionWords: readonly 
   const known = [...new Set(actionWords.map(normalizeForMatch))].filter((word) => !/\s/u.test(word));
   const nouns = new Set(verbalNouns.map(normalizeForMatch));
   return wordsOf(frame).some((word) => {
-    const tail = GLUED_REQUEST_TAIL.exec(word);
+    const tail = NL_GLUED_REQUEST_TAIL.exec(word);
     const stem = tail !== null ? word.slice(0, tail.index) : word;
     const once = stem.replace(PARTICLE_TAIL, '');
     const stems = [...new Set([stem, once, once.replace(PARTICLE_TAIL, '')])].filter((candidate) => candidate.length > 0);

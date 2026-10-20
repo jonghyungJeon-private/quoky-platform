@@ -1,6 +1,7 @@
 import type { Actor, Id, IsoTimestamp, Metadata } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
 import { ActorMetadataStore } from '../actor-metadata-store';
+import { NL_GLUED_REQUEST_TAIL, nlIsKeystrokePrefix, nlKeystrokeCount, nlKeystrokeDistance } from './garbled-action';
 
 /**
  * The persisted kill switch of natural-language actions (ADR-0120 amendment A6-D3, owner decision 8): stored in
@@ -45,6 +46,87 @@ export function parseActionSwitchPhrase(text: string): NlActionSwitchState | und
   if (/^에이전트 ?중지$/u.test(normalized)) return 'stopped';
   if (/^에이전트 ?재개$/u.test(normalized)) return 'running';
   return undefined;
+}
+
+/** The closed control phrases of the switch, exactly as the owner sends them (A6-D3). */
+export const ACTION_SWITCH_PHRASES: Readonly<Record<NlActionSwitchState, string>> = Object.freeze({ stopped: '에이전트 중지', running: '에이전트 재개' });
+const SWITCH_HEAD = '에이전트';
+/** A near miss is a short whole message; anything longer is a sentence (chat, with the honest-chat control fact). */
+const NEAR_MISS_MAX_CHARS = 20;
+/** The keystroke budget of a near miss over the whole phrase, and of its verb (중지 / 재개) alone. */
+const NEAR_MISS_PHRASE_KEYS = 2;
+const NEAR_MISS_VERB_KEYS = 1;
+
+/**
+ * What a near miss of the switch phrase is (live DM test 2026-10-20: "에이ㄴ트 재개" and "에이전트 재" got a chat reply that
+ * denied the command). Detected structurally on the closed phrase set, never on a typo list:
+ *  - `typo`: the whole message (one line, Hangul only, no question mark) is within {@link NEAR_MISS_PHRASE_KEYS} keystrokes of
+ *    a phrase ({@link nlKeystrokeDistance}, the garbled-noun measure, with loose jamo such as the ㄴ of "에이ㄴ트" as keys),
+ *    with at most {@link NEAR_MISS_VERB_KEYS} of them in the verb, so "에이전트 좋지" (two keys off in the verb) is a sentence;
+ *  - `request`: the exact phrase with a glued request tail or a polite 요 ("에이전트 재개해줘", "에이전트 중지요"; the closed tail
+ *    class of garbled-action);
+ *  - `prefix`: the message stopped mid-phrase, key for key a strict prefix of exactly ONE phrase beyond the shared head
+ *    ("에이전트 재", "에이전트 잭"); "에이전트" alone is a prefix of both and is not a near miss;
+ *  - `ambiguous`: within the budget of both phrases.
+ * The exact phrases are never a near miss. Pure; the text is never logged.
+ */
+export type NlActionSwitchNearMiss =
+  | { readonly kind: 'typo' | 'request' | 'prefix'; readonly state: NlActionSwitchState }
+  | { readonly kind: 'ambiguous' };
+
+function nearPhrase(candidate: string, phrase: string): boolean {
+  const verb = phrase.slice(SWITCH_HEAD.length).replace(/\s+/gu, '');
+  const chars = Array.from(candidate);
+  for (let split = 1; split < chars.length; split += 1) {
+    const verbDistance = nlKeystrokeDistance(chars.slice(split).join(''), verb);
+    if (verbDistance > NEAR_MISS_VERB_KEYS) continue;
+    const total = nlKeystrokeDistance(chars.slice(0, split).join(''), SWITCH_HEAD) + verbDistance;
+    if (total >= 1 && total <= NEAR_MISS_PHRASE_KEYS) return true;
+  }
+  return false;
+}
+
+/** The near miss this whole message is of the switch phrase, or `undefined` (an exact phrase, or anything else). */
+export function nearMissActionSwitchPhrase(text: string): NlActionSwitchNearMiss | undefined {
+  if (parseActionSwitchPhrase(text) !== undefined) return undefined;
+  // One line only (Codex P3): a line break is checked before the whitespace is normalized ("에이전트\n재개해줘" is no near miss).
+  if (/[\r\n\u2028\u2029]/u.test(text.trim())) return undefined;
+  const normalized = text.normalize('NFC').trim().replace(/\s+/g, ' ').replace(/[.!。！~]+$/u, '').trim();
+  if (normalized.length === 0 || normalized.length > NEAR_MISS_MAX_CHARS || !/^[\p{Script=Hangul} ]+$/u.test(normalized)) return undefined;
+  const compact = normalized.replace(/ /gu, '');
+  const states = Object.keys(ACTION_SWITCH_PHRASES) as NlActionSwitchState[];
+  const phraseOf = (state: NlActionSwitchState): string => ACTION_SWITCH_PHRASES[state].replace(/\s+/gu, '');
+  // The glued request tail and a polite 요 or 좀 before it come off ("에이전트 재개 좀 해줘", "에이전트 중지요").
+  const tail = NL_GLUED_REQUEST_TAIL.exec(compact);
+  const base = (tail === null ? compact : compact.slice(0, tail.index)).replace(/(?:좀|요)$/u, '');
+  const stripped = base === compact ? undefined : base;
+  const requested = states.find((state) => stripped === phraseOf(state));
+  if (requested !== undefined) return { kind: 'request', state: requested };
+  // An unfinished message (key for key the start of a phrase) is a prefix even when it is also one key short of it.
+  const prefixOf = states.filter((state) => nlIsKeystrokePrefix(compact, phraseOf(state)));
+  if (prefixOf.length > 0) {
+    const beyondHead = nlKeystrokeCount(compact) > nlKeystrokeCount(SWITCH_HEAD);
+    return prefixOf.length === 1 && prefixOf[0] !== undefined && beyondHead ? { kind: 'prefix', state: prefixOf[0] } : undefined;
+  }
+  const candidates = stripped === undefined || stripped.length === 0 ? [compact] : [compact, stripped];
+  const near = states.filter((state) => candidates.some((candidate) => nearPhrase(candidate, phraseOf(state))));
+  if (near.length > 1) return { kind: 'ambiguous' };
+  return near[0] !== undefined ? { kind: 'typo', state: near[0] } : undefined;
+}
+
+/**
+ * The fixed hint naming the exact phrase(s) of a near miss. Not a question: nothing is pending. A near miss never switches
+ * (owner decision 2026-10-20): the switch acts only on the exact phrase, stop and resume alike.
+ */
+export function renderActionSwitchHint(states: readonly NlActionSwitchState[], language: 'ko' | 'en' = 'ko'): string {
+  const stop = states.includes('stopped');
+  const resume = states.includes('running');
+  if (language === 'en') {
+    if (stop && resume) return 'To stop the agent, send "에이전트 중지"; to turn it back on, send "에이전트 재개".';
+    return stop ? 'To stop the agent, send "에이전트 중지".' : 'To turn the agent back on, send "에이전트 재개".';
+  }
+  if (stop && resume) return '에이전트를 멈추려면 "에이전트 중지", 다시 켜려면 "에이전트 재개"라고 보내 주세요.';
+  return stop ? '에이전트를 멈추려면 "에이전트 중지"라고 보내 주세요.' : '에이전트를 다시 켜려면 "에이전트 재개"라고 보내 주세요.';
 }
 
 export interface NlActionSwitchDeps {

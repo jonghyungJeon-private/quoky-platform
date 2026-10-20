@@ -1,5 +1,6 @@
 import type { NlCatalogEntry } from './catalog';
 import { renderRestate } from './nl-action-policy';
+import { ACTION_SWITCH_PHRASES, renderActionSwitchHint, type NlActionSwitchState } from './action-switch';
 import { NL_ACTION_VERBAL_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ENTRY_NOUNS, containsNlTimeExpression } from './action-entries';
 
 /**
@@ -18,9 +19,14 @@ const COMMANDS_MAX_CHARS = 1600;
  * Quoky's own command lines (the help lines) so a write or action request is answered with the exact command to send —
  * suggestion-only (ADR-0120 D5): the reply prefills nothing and creates no approval.
  */
-export function renderConfiguredSourcesFact(entries: readonly NlCatalogEntry[], helpLines: readonly string[] = []): string | undefined {
+export function renderConfiguredSourcesFact(
+  entries: readonly NlCatalogEntry[],
+  helpLines: readonly string[] = [],
+  options: HonestChatOptions = {},
+): string | undefined {
   const sources = entries.filter((entry) => entry.sourceNames !== undefined);
-  if (sources.length === 0 && helpLines.length === 0) return undefined;
+  const controls = options.controls !== undefined ? renderControlCommandsFact(options.controls) : undefined;
+  if (sources.length === 0 && helpLines.length === 0) return controls;
   const listed = bounded(sources.map((entry) => `${entry.label.en} (command: ${entry.usage.ko})`).join('; '), SOURCES_MAX_CHARS);
   const parts: string[] = [];
   if (sources.length > 0) {
@@ -47,7 +53,136 @@ export function renderConfiguredSourcesFact(entries: readonly NlCatalogEntry[], 
             'change, send or remember something, reply with the exact command to send.',
     );
   }
+  if (controls !== undefined) parts.push(controls);
   return parts.join(' ');
+}
+
+/**
+ * What the one switch controls in the active configuration (CA P3 7): A6 natural-language actions (`QUOKY_NL_ACTIONS` not
+ * off), the multi-step agent (`QUOKY_AGENT_MODE` not off) and the channel permissions (`QUOKY_CHANNEL_GRANTS=enforce`).
+ */
+export interface NlControlScope {
+  readonly actions: boolean;
+  readonly agent: boolean;
+  readonly grants: boolean;
+}
+
+/** What the honest-chat fact and guard know beyond the catalog entries. */
+export interface HonestChatOptions {
+  /**
+   * The kill-switch phrases (`에이전트 중지` / `에이전트 재개`, A6-D3 and ADR-0121 D7) are recognized on this turn's route,
+   * and what they control. Absent: the fact and the guard are unchanged.
+   */
+  readonly controls?: NlControlScope;
+}
+
+/**
+ * Live DM test 2026-10-20: the chat model, asked about "에이전트 재", said there is no command to resume the agent. While
+ * the switch phrases are recognized, the fact names them as Quoky's own control commands, worded by what they control in
+ * the active configuration (the multi-step agent is named only while it is on). `undefined` when nothing is on.
+ */
+export function renderControlCommandsFact(scope: NlControlScope): string | undefined {
+  const targets = [
+    ...(scope.actions ? ["Quoky's natural-language actions"] : []),
+    ...(scope.agent ? ['the multi-step agent'] : []),
+    ...(scope.grants ? ['every channel permission (paused, not deleted)'] : []),
+  ];
+  if (targets.length === 0) return undefined;
+  const listed = targets.length === 1 ? targets[0] : `${targets.slice(0, -1).join(', ')} and ${targets.at(-1)}`;
+  return (
+    `Quoky's control commands (the User sends one exactly, as the whole message, in this DM): "${ACTION_SWITCH_PHRASES.stopped}" ` +
+    `stops ${listed}, and "${ACTION_SWITCH_PHRASES.running}" turns ${targets.length === 1 ? 'it' : 'them'} back on. ` +
+    'These commands exist: never say there is no command to stop or resume them; when the User asks, give the exact phrase.'
+  );
+}
+
+/** A sentence that names the agent (or Quoky, whose actions the switch stops). */
+const AGENT_NOUN = /에이전트|퀴키|\bagents?\b|\bquoky\b/iu;
+/** The switch's own actions, by direction (the closed vocabulary of stopping and resuming the agent), as pattern sources. */
+const CONTROL_ACTION_KO: Readonly<Record<NlActionSwitchState, string>> = {
+  stopped: '(?:중지|멈추|멈춰|멈출|멈춤|정지|중단|끄|꺼|끌)',
+  running: '(?:재개|다시\\s*(?:켜|켤|시작)|켜|켤|재시작)',
+};
+const CONTROL_ACTION_EN: Readonly<Record<NlActionSwitchState, string>> = {
+  stopped: '(?:stop|stopping|pause|pausing|disable|disabling|turn(?:ing)? off)',
+  running: '(?:resume|resuming|restart|restarting|re-enable|enable|enabling|turn(?:ing)? (?:back )?on)',
+};
+/**
+ * The guard is a narrow backstop (Codex P2, fourth round; the control fact in the prompt is the primary fix). It replaces
+ * only the false claim seen live: that no command or way exists to stop or resume the agent, or a bare clause-final "I
+ * can't resume the agent". Any other capability statement ("You cannot stop the agent from responding to exact commands")
+ * is kept.
+ *  - Korean nonexistence: the action, then the command / way noun, then its nonexistence ("재개하는 명령은 없어요", "다시 켤
+ *    수 있는 기능은 제공하지 않아요").
+ *  - Korean clause-final incapability: the action with only its ending before "수 없" / "못 해" and the clause end
+ *    ("에이전트를 재개할 수 없어요").
+ */
+const KO_NONEXISTENCE = '[^.!?\\n]{0,10}?(?:명령|커맨드|방법|기능|문구)[^.!?\\n]{0,8}?(?:없|존재하지\\s*않|제공하지\\s*않|지원하지\\s*않)';
+const KO_CANNOT_FINAL = '[가-힣]{0,3}\\s*(?:수\\s*(?:가|는|도)?\\s*없|못\\s*(?:해|합|드려|드립))[가-힣]*\\s*[.!?。~]*\\s*$';
+/** English nonexistence ("there is no command to resume the agent"). */
+const EN_NONEXISTENCE = "(?:there(?:['’]s| is| are) )?no (?:such )?(?:command|way|option|feature)s? (?:to|for)";
+/** English clause-final incapability ("I can't resume the agent."), never with a complement after the object. */
+const EN_CANNOT = "(?:cannot|can['’]t|unable to|not able to)";
+const CLAUSE_END = '\\s*[.!?]*\\s*$';
+/**
+ * Clause boundaries inside a sentence: punctuation, the English coordinators and concessives, and the Korean connective
+ * endings (-지만, -는데, -아도/-어도, -고, -며, -면, -서, -으나). A denial governs only an action of its own clause, so "You can resume
+ * the agent, but it cannot recover deleted events" and "에이전트는 재개할 수 있지만 삭제된 일정은 복구할 수 없어요" keep their
+ * unrelated limitation.
+ */
+const CLAUSE_SPLIT = /[,;，、]|\s(?:but|however|though|although|while|and|yet|so)\s|(?:지만|는데|은데|더라도|아도|어도|여도|해도|으나|으며|며|고|면|서)\s/iu;
+
+/** The switch's own object: the agent, Quoky or the switch ("에이전트를", "에이전트는", "the agent", "Quoky"). */
+const KO_CONTROL_OBJECT = '(?:에이전트|퀴키|quoky|스위치)\\s*(?:를|을|는|은|가|이|도)?\\s*(?:다시\\s*)?';
+const EN_CONTROL_OBJECT = "(?:the |your |quoky['’]s |this )?(?:multi-step )?(?:agents?|quoky|switch)\\b";
+
+/**
+ * The directions whose stop / resume command this clause says does not exist, with the agent (or Quoky, or the switch) as
+ * the action's own object or topic: "에이전트를 재개하는 명령은 없어요", "에이전트를 재개할 수 없어요", "there is no command to
+ * resume the agent", "I can't resume the agent", "The agent has no command to resume". A complement after the object
+ * ("cannot stop the agent from responding …"), another object ("cannot stop running containers") or any other capability
+ * statement is not this claim.
+ */
+function deniedInClause(clause: string): NlActionSwitchState[] {
+  return (Object.keys(CONTROL_ACTION_KO) as NlActionSwitchState[]).filter(
+    (state) =>
+      new RegExp(`${KO_CONTROL_OBJECT}${CONTROL_ACTION_KO[state]}${KO_NONEXISTENCE}`, 'iu').test(clause) ||
+      new RegExp(`${KO_CONTROL_OBJECT}${CONTROL_ACTION_KO[state]}${KO_CANNOT_FINAL}`, 'iu').test(clause) ||
+      new RegExp(`\\b${EN_NONEXISTENCE} ${CONTROL_ACTION_EN[state]}\\s+${EN_CONTROL_OBJECT}${CLAUSE_END}`, 'iu').test(clause) ||
+      new RegExp(`\\b${EN_CANNOT}\\s+${CONTROL_ACTION_EN[state]}\\s+${EN_CONTROL_OBJECT}${CLAUSE_END}`, 'iu').test(clause) ||
+      // The bare "no command to resume" counts only with the agent named in the same clause.
+      (AGENT_NOUN.test(clause) && new RegExp(`\\b${EN_NONEXISTENCE} ${CONTROL_ACTION_EN[state]}${CLAUSE_END}`, 'iu').test(clause)),
+  );
+}
+
+/**
+ * The control-denial guard (live DM test 2026-10-20), a narrow backstop: while the switch phrases are recognized, a reply
+ * sentence that says no command or way exists to stop or resume the agent itself (its object or topic) ("에이전트를 재개하는 명령어는 없어요", "There is
+ * no command to resume the agent", "I can't resume the agent"), is false. The denial must sit in the action's
+ * own clause (Codex P2): an unrelated limitation in another clause ("…, but it cannot recover deleted events") is not a
+ * denial of the command, and that sentence is kept. A bare anaphoric denial in a later sentence ("그런 명령은 없어요",
+ * "There is no such command") is kept too (Codex P2, third round; a recorded fail-safe residual). Only the denying sentences go; the exact-phrase hint for the direction(s) they named closes the
+ * reply once. Every other sentence is kept as written.
+ */
+export function guardFalseControlDenials(text: string, language: 'ko' | 'en'): FalseIncapabilityGuardResult {
+  if (typeof text !== 'string' || text.length === 0 || !AGENT_NOUN.test(text)) return { text, guarded: false };
+  const parts = text.split(/((?<=[.!?。？])\s+|\n+)/u);
+  const kept: string[] = [];
+  const denied = new Set<NlActionSwitchState>();
+  for (let index = 0; index < parts.length; index += 2) {
+    const sentence = parts[index] ?? '';
+    const separator = parts[index + 1] ?? '';
+    const states = AGENT_NOUN.test(sentence) ? [...new Set(sentence.split(CLAUSE_SPLIT).flatMap((clause) => deniedInClause(clause ?? '')))] : [];
+    if (states.length > 0) {
+      for (const state of states) denied.add(state);
+      continue;
+    }
+    kept.push(sentence, separator);
+  }
+  if (denied.size === 0) return { text, guarded: false };
+  const hint = renderActionSwitchHint([...denied], language);
+  const rest = kept.join('').trim();
+  return { text: rest.length === 0 ? hint : `${rest}${/\n/u.test(text) ? '\n' : ' '}${hint}`, guarded: true };
 }
 
 /**
@@ -233,8 +368,18 @@ export function guardFalseIncapabilityClaims(
   entries: readonly NlCatalogEntry[],
   language: 'ko' | 'en',
   helpLines: readonly string[] = [],
+  options: HonestChatOptions = {},
 ): FalseIncapabilityGuardResult {
   if (typeof raw !== 'string' || raw.trim() === '') return { text: raw, guarded: false };
+  // Live DM test 2026-10-20: a denied control command (재개 / 중지) is replaced by its exact phrase first; the rest of the
+  // reply still meets every check below.
+  if (options.controls !== undefined) {
+    const control = guardFalseControlDenials(raw, language);
+    if (control.guarded) {
+      const rest = guardFalseIncapabilityClaims(control.text, entries, language, helpLines);
+      return { text: rest.text, guarded: true };
+    }
+  }
   // A6-D6: a reply quoting an offered action family's command phrase is stale (checked before the D5 exemption below).
   if (entries.some((entry) => entry.risk !== 'READ' && (entry.staleCommands ?? []).some((pattern) => pattern.test(raw)))) return { text: renderRestate(language), guarded: true };
   // Live test 4: the dead-end action sentences go first, but that partial filter is not the whole guard (Codex P2): the
