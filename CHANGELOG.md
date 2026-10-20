@@ -17,6 +17,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Changed.** The planner prompt is `agent-plan.v2`: summary schema and coverage wording, help/brief with another read
   is none, rule 9 (the Jira release → issues reference; none for content-derived values, more than 4 reads, per-day
   reads, more than 10 issue details, one item's summary) and a reference example. The RAG-0 lint covers the new gold.
+- **Changed (CA review).** The gate is per group (multi-step ≥ 95% and one-step ≥ 95%); `--include-pending` runs are
+  non-gating (exit 4). The plan validator refuses the A7 not-a-request cases (`veto-*`) and grounds dates from English
+  month names and same-month spans. The report keeps only closed values (summary schema and error-name allowlists).
 
 ## Unreleased — ADR-0121 S2 P1: the bounded read agent's foundation (2026-10-20)
 

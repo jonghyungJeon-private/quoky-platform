@@ -7,13 +7,16 @@ Review sheet: `docs/plans/agent-plan-review.md`.
 ## 1. Purpose
 
 The corpus measures **plan exactness**, one of the ADR-0121 D11 gates: the planner prompt (`agent-plan.vN`, M1,
-`INTENT_SELECTION`) over this corpus, 3 runs on Haiku, must reach
+`INTENT_SELECTION`) over this corpus, 3 runs on Haiku, must reach, in every run and **per group** (CA review):
 
-- at least 95% exact plans over all positives,
+- at least 95% exact plans over the multi-step positives (this corpus), AND
+- at least 95% exact plans over the one-step positives (the `nl-intent.v1.json` reference, the D12 read-gate level),
 - 0 wrong plans on negatives,
 - at most 1% of the calls over the selection bound (6 s by default),
+- no call refused by the hard call cap.
 
-in every run. No LLM judge is used: Core's own parse (`parseAgentPlanOutput`) and validator (`validateAgentPlan`) decide
+Both groups must be present, so the gate cannot pass before the owner approves batches. A run with `--include-pending`
+is non-gating: it prints the numbers, never a verdict, and exits 4. No LLM judge is used: Core's own parse (`parseAgentPlanOutput`) and validator (`validateAgentPlan`) decide
 what an answer means.
 
 ## 2. Top level
@@ -98,9 +101,12 @@ Negatives (`expect: "none"`; any executable plan is wrong):
 - Each case gets one planner call per run with the prompt built exactly as the shadow job builds it (D3 preparation,
   every READ entry offered, the previous selection as structure). A message the preparation empties makes no call
   (`skipped`).
-- The message-level vetoes of the selection path apply first (ADR-0120 A7: a past statement; a reason statement or an
-  unconsumed quoted request on any read step): the plan counts as `none`.
-- Then `validateAgentPlan` under the fixture:
+- `validateAgentPlan` under the fixture decides. It includes the selection path's message-level vetoes (ADR-0120 A7: a
+  past statement; a reason statement or an unconsumed quoted request on any read step) as `veto-*` refusals, so the eval
+  and the runtime share one rule.
+- **Q10 compares an ordered step sequence**: the same reads in another order is a miss. This is stricter than a graph
+  match and never hides an error.
+- Outcomes:
   - **positive:** `exact` when the validated plan is a `run` plan with the same step graph as the gold (the same entries
     in the same order, the same canonical args, the same refs, the same summaries); otherwise `miss` (with a closed diff
     kind: `step-count`, `step-kind`, `entry`, `args`, `ref`, `summary`), `miss-none`, `clarify`, `refused`,

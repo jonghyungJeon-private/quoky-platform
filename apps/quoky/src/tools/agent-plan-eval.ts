@@ -13,12 +13,15 @@
  *   malformed answer, a timeout, `none` or another executable plan is not exact;
  * - a negative is **wrong** when the answer validates to an executable (`run`) plan, whatever it is. `none`, a refusal,
  *   a clarification or a malformed answer is not wrong;
- * - before validation the message-level vetoes of the selection path apply (ADR-0120 A7: a past statement; a reason
- *   statement or an unconsumed quoted request on any read step): the runtime answers such a message as chat, so the plan
- *   counts as `none`.
+ * - the message-level vetoes of the selection path (ADR-0120 A7: a past statement; a reason statement or an unconsumed
+ *   quoted request on any read step) are validator rules (`veto-*` refusals), so the eval and the runtime share them.
+ * - Q10 compares an ORDERED step sequence: the same plan with its reads in another order is a miss (`step-kind` /
+ *   `entry`). Stricter than a graph-isomorphism match, it never hides an error.
  *
- * Gate, in every run: >= 95% exact over all positives, 0 wrong on negatives, <= 1% of the calls over the bound, and no
- * call refused by the hard call cap.
+ * Gate, in every run and per group (CA review of S2 P2): >= 95% exact over the multi-step positives AND >= 95% exact over
+ * the one-step positives (the D12 read-gate level), 0 wrong on negatives, <= 1% of the calls over the bound, and no call
+ * refused by the hard call cap. Both groups must be present. A run with `--include-pending` is non-gating: it reports
+ * the same numbers and never a gate verdict.
  *
  * Content-free report: ids, families, closed entry ids, closed validator reasons, closed diff kinds and latencies only;
  * never an owner text, a model answer or an argument value.
@@ -35,8 +38,6 @@ import {
   NL_WAVE1_ENTRIES,
   buildAgentPlanPrompt,
   isNlWave1EntryId,
-  nlIsPastStatement,
-  nlReadNotRequest,
   parseAgentPlanOutput,
   prepareSelectionInput,
   validateAgentPlan,
@@ -50,7 +51,7 @@ import {
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import { EvalCallTimeout, withTimeout } from './nl-intent-eval';
 
-export const AGENT_PLAN_EVAL_GATE = { exact: 0.95, wrongOnNegatives: 0, overBoundRate: 0.01 } as const;
+export const AGENT_PLAN_EVAL_GATE = { multiStepExact: 0.95, oneStepExact: 0.95, wrongOnNegatives: 0, overBoundRate: 0.01 } as const;
 /** The per-call bound: the runtime's selection bound (the shadow job runs inside it, ADR-0121 S2 P1). */
 export const AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS = NL_SELECTION_TIMEOUT_MS;
 
@@ -275,7 +276,7 @@ export type AgentPlanOutcome =
   | 'exact'
   /** positive: another executable plan. */
   | 'miss'
-  /** positive answered `none` (or vetoed to it). */
+  /** positive answered `none`. */
   | 'miss-none'
   /** negative: `none` (correct). */
   | 'none'
@@ -294,7 +295,7 @@ export interface AgentPlanScore {
   readonly outcome: AgentPlanOutcome;
   /** Closed entry ids of the answer (`summarize:<schema>`; a model-made id is `unknown`). */
   readonly gotEntries?: readonly string[];
-  /** Closed validator reason (refusals) or `veto:<reason>`. */
+  /** Closed validator reason (refusals, `veto-*` included) or `skip:<reason>`. */
   readonly reason?: string;
   readonly failedStep?: number;
   readonly diff?: GraphDiff;
@@ -334,13 +335,7 @@ export function scoreAgentPlanOutput(golden: AgentPlanEvalCase, raw: string, fix
   const gotEntries = closedEntries(plan);
   const asNone = (reason?: string): AgentPlanScore => ({ outcome: negative ? 'none' : 'miss-none', gotEntries, ...(reason !== undefined ? { reason } : {}) });
   if (plan.kind === 'none') return asNone();
-  // ADR-0120 A7: the selection path answers a past statement, a reason statement or an unconsumed quoted request as chat.
-  if (nlIsPastStatement(prepared.ctx.groundingText)) return asNone('veto:past-statement');
-  for (const step of plan.steps) {
-    if (step.kind !== 'read') continue;
-    const veto = nlReadNotRequest(prepared.ctx.groundingText, step.args);
-    if (veto !== undefined) return asNone(`veto:${veto}`);
-  }
+  // The ADR-0120 A7 message-level vetoes are validator rules (`veto-*` refusals), shared with the runtime.
   const validation = validateAgentPlan(plan, prepared.ctx);
   if (!validation.ok) {
     return { outcome: 'refused', gotEntries, reason: validation.reason, ...(validation.step !== undefined ? { failedStep: validation.step } : {}) };
@@ -413,10 +408,6 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
       }
       const diff = graphDiff(validatedGraph(validation.plan.steps), goldGraph(golden.expect));
       if (diff !== undefined) problems.push(`${at}: the gold is not canonical (${diff.kind}${diff.step !== undefined ? ` at step ${diff.step}` : ''})`);
-      if (nlIsPastStatement(prepared.ctx.groundingText)) problems.push(`${at}: the text is a past statement (vetoed to none)`);
-      for (const step of plan.steps) {
-        if (step.kind === 'read' && nlReadNotRequest(prepared.ctx.groundingText, step.args) !== undefined) problems.push(`${at}: a read step is vetoed as not a request`);
-      }
       continue;
     }
     if (golden.trapRefusal !== undefined && golden.trap === undefined) problems.push(`${at}: trapRefusal without a trap`);
@@ -466,7 +457,9 @@ export interface AgentPlanEvalPlan {
   /** The hard call cap: one planner call per case per run (a skipped input makes none). */
   readonly maxCallsPerRun: number;
   readonly maxCalls: number;
-  readonly gate: typeof AGENT_PLAN_EVAL_GATE;
+  /** `false` with `--include-pending`: the run reports numbers only, never a gate verdict (CA review of S2 P2). */
+  readonly gating: boolean;
+  readonly gate: typeof AGENT_PLAN_EVAL_GATE | 'non-gating';
 }
 
 export function agentPlanPromptSha256(): string {
@@ -503,7 +496,8 @@ export function buildAgentPlanEvalPlan(
     caseIds: selected.map((golden) => golden.id),
     maxCallsPerRun: selected.length,
     maxCalls: selected.length * options.runs,
-    gate: AGENT_PLAN_EVAL_GATE,
+    gating: !options.includePending,
+    gate: options.includePending ? 'non-gating' : AGENT_PLAN_EVAL_GATE,
   };
 }
 
@@ -632,10 +626,14 @@ export interface AgentPlanEvalSummary {
   readonly latency: { readonly p50: number; readonly p95: number; readonly max: number; readonly boundMs: number; readonly overBound: number };
   readonly overBoundRate: number;
   readonly capped: number;
+  /** The gated groups (CA review of S2 P2): multi-step positives (the new corpus) and one-step positives (Q11). */
+  readonly groups: { readonly multiStep: AgentPlanEvalSlot; readonly oneStep: AgentPlanEvalSlot };
+  /** `false` for an `--include-pending` run: no verdict, `gatePassed` is always false. */
+  readonly gating: boolean;
   readonly gatePassed: boolean;
 }
 
-export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], boundMs: number): AgentPlanEvalSummary {
+export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], boundMs: number, options: { readonly gating?: boolean } = {}): AgentPlanEvalSummary {
   const positives = records.filter((record) => record.expected === 'plan');
   const negatives = records.filter((record) => record.expected === 'none');
   const exact = positives.filter((record) => record.outcome === 'exact').length;
@@ -668,6 +666,14 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
   const overBoundRate = called.length === 0 ? 0 : overBound / called.length;
   const exactRate = positives.length === 0 ? 1 : exact / positives.length;
   const capped = records.filter((record) => record.outcome === 'capped').length;
+  const group = (oneStepGroup: boolean): AgentPlanEvalSlot => {
+    const members = positives.filter((record) => (record.family === AGENT_PLAN_ONE_STEP_FAMILY) === oneStepGroup);
+    const hits = members.filter((record) => record.outcome === 'exact').length;
+    return { total: members.length, exact: hits, rate: members.length === 0 ? 0 : hits / members.length };
+  };
+  const multiStep = group(false);
+  const oneStep = group(true);
+  const gating = options.gating ?? true;
   return {
     cases: records.length,
     positives: positives.length,
@@ -682,8 +688,14 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
     latency: { p50: pct(50), p95: pct(95), max: latencies.at(-1) ?? 0, boundMs, overBound },
     overBoundRate,
     capped,
+    groups: { multiStep, oneStep },
+    gating,
     gatePassed:
-      exactRate >= AGENT_PLAN_EVAL_GATE.exact &&
+      gating &&
+      multiStep.total > 0 &&
+      oneStep.total > 0 &&
+      multiStep.rate >= AGENT_PLAN_EVAL_GATE.multiStepExact &&
+      oneStep.rate >= AGENT_PLAN_EVAL_GATE.oneStepExact &&
       wrongOnNegatives <= AGENT_PLAN_EVAL_GATE.wrongOnNegatives &&
       overBoundRate <= AGENT_PLAN_EVAL_GATE.overBoundRate &&
       capped === 0,

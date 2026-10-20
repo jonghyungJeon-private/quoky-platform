@@ -13,7 +13,8 @@
  * scores every answer with Core's parse and validator (`agent-plan-eval.ts`), prints the report and writes a
  * content-free `data/eval/agent-plan-<ts>.json`. Exit 0 only when the gate passes in every run.
  *
- * Only owner-approved cases are scored unless `--include-pending` is given (the flag is part of the digest).
+ * Only owner-approved cases are scored unless `--include-pending` is given (the flag is part of the digest). Such a run
+ * is NON-GATING: it prints the numbers and never a gate verdict, and exits 4.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -44,6 +45,8 @@ export const EXIT_GATE_FAILED = 1;
 export const EXIT_USAGE = 2;
 /** Strict gate refused (digest missing or mismatched, provider unavailable); nothing was spawned. */
 export const EXIT_BLOCKED = 3;
+/** An `--include-pending` run completed: numbers only, never a gate verdict. */
+export const EXIT_NON_GATING = 4;
 
 const pct = (rate: number): string => `${(rate * 100).toFixed(1)}%`;
 
@@ -55,8 +58,9 @@ Strict:   pnpm eval:agent-plan -- --mode run [options] --approved-plan-digest <s
 Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>  --runs <1-5, default 1>  --concurrency <1-8, default 4>
          --timeout-ms <2000-8000, default ${AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS}: the per-call bound>
          --include-pending  also score the cases pending the owner's approval (changes the digest)
-Gate, every run: >= ${AGENT_PLAN_EVAL_GATE.exact * 100}% exact plans (same step graph), ${AGENT_PLAN_EVAL_GATE.wrongOnNegatives} wrong on negatives,
-                 <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% of calls over the bound, no call refused by the hard cap.
+Gate, every run: >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% exact over the multi-step positives AND >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% over the one-step positives
+                 (same ordered step sequence), ${AGENT_PLAN_EVAL_GATE.wrongOnNegatives} wrong on negatives, <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% of calls over the bound,
+                 no call refused by the hard cap. --include-pending runs are NON-GATING (exit 4, no verdict).
 `;
 
 const VALUE_OPTIONS = new Set(['--mode', '--model', '--runs', '--concurrency', '--timeout-ms', '--approved-plan-digest']);
@@ -131,6 +135,7 @@ export function defaultDeps(): AgentPlanCliDeps {
 /** The report lines of one run (content-free: counts, rates, families and closed entry ids). */
 export function formatAgentPlanSummary(summary: AgentPlanEvalSummary): string[] {
   const lines = [
+    `multi-step exact: ${summary.groups.multiStep.exact}/${summary.groups.multiStep.total} (${pct(summary.groups.multiStep.rate)})  one-step exact: ${summary.groups.oneStep.exact}/${summary.groups.oneStep.total} (${pct(summary.groups.oneStep.rate)})`,
     `exact plans: ${summary.exact}/${summary.positives} (${pct(summary.exactRate)})  wrong on negatives: ${summary.wrongOnNegatives}/${summary.negatives}` +
       `  calls: ${summary.calls}  over the ${summary.latency.boundMs / 1000} s bound: ${summary.latency.overBound} (${pct(summary.overBoundRate)})  capped: ${summary.capped}`,
     `outcomes: ${Object.entries(summary.outcomes).sort(([a], [b]) => (a < b ? -1 : 1)).map(([outcome, count]) => `${outcome} ${count}`).join(', ')}`,
@@ -143,7 +148,9 @@ export function formatAgentPlanSummary(summary: AgentPlanEvalSummary): string[] 
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([entry, slot]) => `  ${entry.padEnd(22)} ${slot.exact}/${slot.total} (${pct(slot.rate)})`),
     `latency: p50 ${summary.latency.p50} ms, p95 ${summary.latency.p95} ms, max ${summary.latency.max} ms`,
-    `gate (>= ${AGENT_PLAN_EVAL_GATE.exact * 100}% exact, 0 wrong on negatives, <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% over the bound, no capped call): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`,
+    summary.gating
+      ? `gate (multi-step >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% and one-step >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% exact, 0 wrong on negatives, <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% over the bound, no capped call): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`
+      : 'gate: NON-GATING (--include-pending)',
   ];
   return lines;
 }
@@ -226,7 +233,7 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
       if (done % 50 === 0) deps.stderr(`… ${done}/${total}`);
     },
   });
-  const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeAgentPlanRun(records.filter((record) => record.run === index + 1), plan.callTimeoutMs));
+  const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeAgentPlanRun(records.filter((record) => record.run === index + 1), plan.callTimeoutMs, { gating: plan.gating }));
   for (const [index, summary] of summaries.entries()) {
     deps.stdout(`run ${index + 1}/${plan.runs} (${plan.model}, ${plan.promptVersion}):`);
     for (const line of formatAgentPlanSummary(summary)) deps.stdout(line);
@@ -236,13 +243,15 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
     deps.stdout(`not exact / not none (${misses.length}):`);
     for (const record of misses) deps.stdout(describeMiss(record));
   }
-  deps.stdout(formatGateRuns(`agent-plan gate (${plan.promptVersion})`, summaries));
+  if (plan.gating) deps.stdout(formatGateRuns(`agent-plan gate (${plan.promptVersion})`, summaries));
+  else deps.stdout(`agent-plan gate (${plan.promptVersion}): NON-GATING (--include-pending scores cases the owner has not approved; no verdict)`);
   // Content-free: ids, families, closed entry ids and reasons, diff kinds, latencies (never a text, an answer or a value).
   const path = deps.writeReport(
     `agent-plan-${startedAt.replace(/[:.]/g, '-')}-${plan.model.replace(/[^A-Za-z0-9._-]/g, '_')}.json`,
     `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, records }, null, 2)}\n`,
   );
   deps.stdout(`results written to ${path}`);
+  if (!plan.gating) return EXIT_NON_GATING;
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
 }
 

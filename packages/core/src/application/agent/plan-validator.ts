@@ -2,8 +2,10 @@ import type { IsoTimestamp } from '../../domain';
 import { OWNER_TEXT_FLOW_LABEL, type FlowLabel } from '../../domain/flow-label';
 import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlWave1EntryId } from '../nl-routing/catalog';
 import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentionRanges, nlWeekdayMentions, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from '../nl-routing/symbolic-time';
+import { nlReadNotRequest } from '../nl-routing/read-statement';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
+import { nlIsPastStatement } from '../nl-routing/statement-guard';
 import { AGENT_READ_SOURCES } from './flow-policy';
 import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan-schema';
 
@@ -14,6 +16,9 @@ import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan
  *
  * Rules, in order:
  * 1. **DM only** (D5): an agent plan is valid only in the owner's direct conversation.
+ * 1a. **Not a request** (ADR-0120 A7, the selection path's message-level vetoes, shared so the eval and the runtime apply
+ *    one rule; CA review of S2 P2): a past statement (`veto-past-statement`), or a read step whose own sentence only
+ *    quotes or reports a request (`veto-quoted-request`) or gives a reason for a feeling (`veto-reason-statement`).
  * 2. **Step mix** (D7, Q6, A6-D4): 1–6 steps, at most 4 reads and 3 summaries, at least one read. A plan of more than one
  *    step never names `help.topic`, `brief.today` or any A6 action entry.
  * 3. **Per read step**: a closed READ entry (never ITEM_READ, LOCAL_WRITE, EXTERNAL_WRITE or an A6 id), offered this turn,
@@ -41,6 +46,9 @@ export const AGENT_SINGLE_STEP_ONLY: readonly NlWave1EntryId[] = ['help.topic', 
 
 export type AgentPlanRefusal =
   | 'not-dm'
+  | 'veto-past-statement'
+  | 'veto-quoted-request'
+  | 'veto-reason-statement'
   | 'too-many-steps'
   | 'too-many-reads'
   | 'too-many-summaries'
@@ -114,6 +122,12 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
   if (ctx.direct !== true) return refuse('not-dm');
   if (plan.kind === 'none') return { ok: true, plan: { kind: 'none' } };
   const steps = plan.steps;
+  if (nlIsPastStatement(ctx.groundingText)) return refuse('veto-past-statement');
+  for (const [index, step] of steps.entries()) {
+    if (step.kind !== 'read') continue;
+    const veto = nlReadNotRequest(ctx.groundingText, step.args);
+    if (veto !== undefined) return refuse(veto === 'quoted-request' ? 'veto-quoted-request' : 'veto-reason-statement', index + 1);
+  }
   if (steps.length === 0 || steps.length > AGENT_PLAN_MAX_STEPS) return refuse('too-many-steps');
   const reads = steps.filter((step) => step.kind === 'read');
   const summaries = steps.filter((step) => step.kind === 'summarize');
@@ -226,23 +240,57 @@ const ABSOLUTE_DATE = /(?:(\d{4})-)?(\d{1,2})-(\d{1,2})/g;
 
 /**
  * Dates only symbolic (ADR-0121 D2): every absolute date in a range value must be named by a DATE EXPRESSION in the
- * owner's own words — `M월 D일`, `M/D` or `M-D` (leading zeros optional; `YYYY-M-D` and `YYYY/M/D` included) — and a
- * written year must appear too. Two numbers elsewhere in the text never ground a date ("10시 20분" is no 10-20; CA
- * review). A purely symbolic value (`this-week`, `fri`) has no absolute date and passes. Pure.
+ * owner's own words, and a written year must appear too. Two numbers elsewhere in the text never ground a date ("10시
+ * 20분" is no 10-20; CA review). A purely symbolic value (`this-week`, `fri`) has no absolute date and passes. Pure.
+ *
+ * Date expressions (the owner's own digits are always required):
+ * - `M월 D일`, `M/D` or `M-D` (leading zeros optional; `YYYY-M-D` and `YYYY/M/D` included);
+ * - an English month name or its abbreviation with the day (CA review of S2 P2): `October 25`, `Oct 25th`, `25 Oct`,
+ *   `25th of October`;
+ * - the END of a span `MM-DD..MM-DD` within one month may inherit the start's month (CA review of S2 P2): the start's
+ *   date expression, a span connector, then the end day (`10월 1일부터 7일까지`, `10/1~7`, `10월 1-7일`, `Oct 1 to 7`).
  */
 export function absoluteDatesGrounded(value: string, groundingText: string): boolean {
+  const span = /^(?:\d{4}-)?(\d{1,2})-(\d{1,2})\.\.(?:\d{4}-)?(\d{1,2})-(\d{1,2})$/.exec(value);
+  const endInherited = span !== null && Number(span[1]) === Number(span[3]) && spanEndInherits(Number(span[1]), Number(span[2]), Number(span[4]), groundingText);
+  let position = 0;
   for (const match of value.matchAll(ABSOLUTE_DATE)) {
+    position += 1;
     const [, year, month, day] = match;
-    if (month === undefined || day === undefined || !dateExpressionIn(Number(month), Number(day), groundingText)) return false;
+    if (month === undefined || day === undefined) return false;
+    if (!dateExpressionIn(Number(month), Number(day), groundingText) && !(position <= 2 && endInherited)) return false;
     if (year !== undefined && !new RegExp(`(?<![0-9])${Number(year)}(?![0-9])`, 'u').test(groundingText)) return false;
   }
   return true;
 }
 
-function dateExpressionIn(month: number, day: number, text: string): boolean {
+/** English month names, January first (the full name or the usual abbreviation). */
+const MONTH_NAMES: readonly string[] = ['jan(?:uary)?', 'feb(?:ruary)?', 'mar(?:ch)?', 'apr(?:il)?', 'may', 'june?', 'july?', 'aug(?:ust)?', 'sep(?:t(?:ember)?)?', 'oct(?:ober)?', 'nov(?:ember)?', 'dec(?:ember)?'];
+const ORDINAL = '(?:st|nd|rd|th)?';
+
+/** The date expressions naming month `month`, day `day` (see `absoluteDatesGrounded`), as one regex source. */
+function dateExpressionSource(month: number, day: number, korean: 'with-day-suffix' | 'span-start' = 'with-day-suffix'): string {
   const m = `(?<![0-9])0?${month}`;
   const d = `0?${day}(?![0-9])`;
-  return new RegExp(`${m}\\s*월\\s*${d}\\s*일|${m}\\s*/\\s*${d}|${m}-${d}`, 'u').test(text);
+  const name = `(?<![a-z])(?:${MONTH_NAMES[month - 1] ?? '(?!)'})\\.?(?![a-z])`;
+  return [
+    korean === 'span-start' ? `${m}\\s*월\\s*${d}(?:\\s*일)?` : `${m}\\s*월\\s*${d}\\s*일`,
+    `${m}\\s*/\\s*${d}`,
+    `${m}-${d}`,
+    `${name}\\s*,?\\s*${d}${ORDINAL}(?![a-z])`,
+    `(?<![0-9])0?${day}${ORDINAL}\\s+(?:of\\s+)?${name}`,
+  ].join('|');
+}
+
+function dateExpressionIn(month: number, day: number, text: string): boolean {
+  return new RegExp(dateExpressionSource(month, day), 'iu').test(text);
+}
+
+/** A span's end day inheriting the start's month: the start's date expression, a span connector, the end day. */
+function spanEndInherits(month: number, startDay: number, endDay: number, text: string): boolean {
+  const connector = '\\s*(?:부터|에서)?\\s*(?:~|-|–|—|\\bto\\b|\\bthrough\\b|\\bthru\\b|\\buntil\\b|\\btill\\b)?\\s*';
+  const source = `(?:${dateExpressionSource(month, startDay, 'span-start')})(?=\\s*(?:부터|에서|~|-|–|—|to\\b|through\\b|thru\\b|until\\b|till\\b))${connector}0?${endDay}(?![0-9])${ORDINAL}(?!\\s*(?:시|월|/|:))`;
+  return new RegExp(source, 'iu').test(text);
 }
 
 /**

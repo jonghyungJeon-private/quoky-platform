@@ -27924,3 +27924,30 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
 - **Not done here (Strict / owner).** The owner's approval of batches AP-1..AP-6 (and decisions (a)–(h) of the review
   sheet); Strict runs need the owner's yes on the printed digest. Reviews: Codex, CA on the scorer rules, a light
   `/security-review`.
+- **CA review round (CHANGES REQUIRED on a9911bd1) and the owner's decision (a), 2026-10-20.** This round supersedes choice 2's
+  scorer-side vetoes and choice 5's two fixed misses:
+  1. **[P1] Gate per group.** The pooled rate let the multi-step group pass at 75.7%. Each run now gates the 173
+     multi-step positives at ≥ 95% AND the one-step positives at ≥ 95% (the D12 read-gate level), plus 0 wrong on
+     negatives, ≤ 1% over the bound and no capped call. Both groups must be present (an approved-only run before the
+     owner approves any batch cannot pass). The report prints both groups.
+  2. **[P2] Vetoes in the validator.** `nlIsPastStatement` / `nlReadNotRequest` moved from the scorer into
+     `validateAgentPlan` as closed refusals `veto-past-statement`, `veto-quoted-request`, `veto-reason-statement` (with
+     the step), so P3's runtime and the eval share one rule. The shadow job logs them as its validator reason. The agent
+     import allowlist gains the pure `nl-routing/read-statement` and `nl-routing/statement-guard`.
+  3. **[P2] Date rule widened** (`absoluteDatesGrounded`): an English month name or abbreviation with the day
+     (`October 25`, `Oct 25th`, `25 Oct`, `25th of October`), and a span `MM-DD..MM-DD` within one month whose end day
+     inherits the start's month after a span connector (`10월 1일부터 7일까지`, `10/1~7`, `10월 1-7일`, `Oct 1 to 7`); the span
+     form grounds both ends. The owner's own digits and month are still required (`1일부터 7일까지` alone, `October` alone,
+     another month or another end day are refused). `calendar-019` and `calendar-038` now validate; the perfect-planner
+     test is 100% in both groups with no exception.
+  4. **[P3] Q10 is an ordered step sequence.** An exact plan has the same steps in the same order; the same reads in
+     another order are a miss. This is stricter than a graph match and never hides an error.
+  5. **[P3] `--include-pending` is non-gating.** The plan carries `gating: false` and `gate: "non-gating"` (both in the
+     digest); such a run prints the numbers, the line `NON-GATING`, never `PASSED`, and exits 4.
+  6. **Owner decision (a).** "이번 주 회의 정리하고 관련 jira 이슈도 같이" runs the two reads separately (this week's
+     meetings, summarized; the owner's Jira issues); no relatedness matching, because a content value is never a query.
+     ap-p001..008 stay as drafted.
+  - **P3 TODO (reply assembler, fixed texts).** (i) When the owner's words ask for relatedness ("관련", "related") across
+    two reads, add the fixed note "회의와 관련 있는지는 확인하지 않았어요" (an English equivalent for English turns). (ii) When
+    a reference's `take` defaulted to 10 because the owner asked for all ("전부", "every") and the source listed more, add
+    a fixed truncation note. Both are deterministic texts, never model output.

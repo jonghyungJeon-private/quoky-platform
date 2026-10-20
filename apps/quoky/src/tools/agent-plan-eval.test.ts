@@ -20,7 +20,7 @@ import {
   type AgentPlanEvalOptions,
   type AgentPlanEvalRecord,
 } from './agent-plan-eval';
-import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, runCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
+import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_NON_GATING, EXIT_OK, EXIT_USAGE, runCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
 
 // ADR-0121 D11 / stage S2 P2: the plan corpus self-check, the step-graph scorer, the digest, the Strict exit-3 gate, the
 // hard call cap and the content-free report. No model is called: the providers here are scripted.
@@ -125,12 +125,14 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     expect(CASES.filter((golden) => golden.family === 'one-step')).toHaveLength(874);
   });
 
-  it('a perfect planner scores 100% except the two one-step dates the P1 validator does not ground (recorded residuals)', async () => {
+  it('a perfect planner scores 100% in both groups (the widened date rule grounds calendar-019 and calendar-038)', async () => {
     const plan = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, runs: 1, includePending: true });
     const records = await runAgentPlanEvaluation({ cases: CASES, plan, provider: goldProvider(CASES) });
     const summary = summarizeAgentPlanRun(records, plan.callTimeoutMs);
     const notExact = records.filter((record) => record.expected === 'plan' && record.outcome !== 'exact');
-    expect(notExact.map((record) => `${record.id}:${record.outcome}:${record.reason ?? ''}`)).toEqual(['calendar-019:refused:date-ungrounded', 'calendar-038:refused:date-ungrounded']);
+    expect(notExact.map((record) => `${record.id}:${record.outcome}:${record.reason ?? ''}`)).toEqual([]);
+    expect(summary.groups.multiStep).toEqual({ total: 173, exact: 173, rate: 1 });
+    expect(summary.groups.oneStep).toEqual({ total: 675, exact: 675, rate: 1 });
     expect(summary.wrongOnNegatives).toBe(0);
     // Every negative is none; only inputs the D3 preparation empties (two one-step cases) make no call at all.
     expect(records.filter((record) => record.expected === 'none' && record.outcome !== 'none').map((record) => `${record.id}:${record.outcome}`)).toEqual(
@@ -222,29 +224,59 @@ describe('step-graph scorer (Q10)', () => {
     expect(score(golden, steps([step])).outcome).toBe('exact');
   });
 
-  it('the selection path vetoes apply before validation: a past statement plans nothing', () => {
+  it('the selection path vetoes are validator rules: a past statement is refused as veto-past-statement', () => {
     const past = byId((NEW.find((golden) => golden.text === '아침에 일정이랑 할 일 정리 끝났다') as AgentPlanCase).id);
-    expect(score(past, steps([{ entryId: 'calendar.events', args: {} }, { entryId: 'todo.list', args: {} }, { summarize: [1, 2], schema: 'digest.v1' }]))).toMatchObject({ outcome: 'none', reason: 'veto:past-statement' });
+    expect(score(past, steps([{ entryId: 'calendar.events', args: {} }, { entryId: 'todo.list', args: {} }, { summarize: [1, 2], schema: 'digest.v1' }]))).toMatchObject({ outcome: 'refused', reason: 'veto-past-statement' });
   });
 
-  it('summarizes per family and per entry, counts wrong on negatives and the share over the bound', () => {
-    const record = (id: string, outcome: AgentPlanEvalRecord['outcome'], expected: 'plan' | 'none', latencyMs: number, goldEntries: string[] = []): AgentPlanEvalRecord => ({ run: 1, id, family: expected === 'plan' ? 'compound' : 'venting', expected, goldEntries, outcome, latencyMs });
+  const record = (id: string, outcome: AgentPlanEvalRecord['outcome'], expected: 'plan' | 'none', latencyMs: number, goldEntries: string[] = [], family = expected === 'plan' ? 'compound' : 'venting'): AgentPlanEvalRecord => ({ run: 1, id, family, expected, goldEntries, outcome, latencyMs });
+  const oneStep = (count: number, outcome: AgentPlanEvalRecord['outcome'] = 'exact', latencyMs = 1000): AgentPlanEvalRecord[] =>
+    Array.from({ length: count }, (_, i) => record(`o${i}-${outcome}`, outcome, 'plan', latencyMs, ['calendar.events'], 'one-step'));
+
+  it('summarizes per group, per family and per entry, counts wrong on negatives and the share over the bound', () => {
     const records = [
       ...Array.from({ length: 97 }, (_, i) => record(`p${i}`, 'exact', 'plan', 1000, ['jira.issues', 'summarize'])),
       record('p97', 'miss', 'plan', 1000, ['jira.issues']),
       record('p98', 'timeout', 'plan', 6001, ['mail.list']),
+      ...oneStep(100),
       record('n1', 'none', 'none', 900),
     ];
     const summary = summarizeAgentPlanRun(records, 6000);
-    expect(summary).toMatchObject({ positives: 99, exact: 97, negatives: 1, wrongOnNegatives: 0, calls: 100, capped: 0 });
+    expect(summary).toMatchObject({ positives: 199, exact: 197, negatives: 1, wrongOnNegatives: 0, calls: 200, capped: 0, gating: true });
+    expect(summary.groups).toEqual({ multiStep: { total: 99, exact: 97, rate: 97 / 99 }, oneStep: { total: 100, exact: 100, rate: 1 } });
     expect(summary.perEntry['jira.issues']).toEqual({ total: 98, exact: 97, rate: 97 / 98 });
     expect(summary.perEntry['mail.list']).toEqual({ total: 1, exact: 0, rate: 0 });
     expect(summary.perFamily['compound']).toMatchObject({ positives: 99, exact: 97 });
-    expect(summary.overBoundRate).toBe(0.01);
+    expect(summary.overBoundRate).toBe(0.005);
     expect(summary.gatePassed).toBe(true);
-    expect(summarizeAgentPlanRun([...records, record('p99', 'timeout', 'plan', 6001)], 6000).gatePassed).toBe(false);
+    expect(summarizeAgentPlanRun([...records, ...oneStep(2, 'timeout', 6001)], 6000).gatePassed).toBe(false);
     expect(summarizeAgentPlanRun([...records, record('n2', 'wrong', 'none', 800)], 6000).gatePassed).toBe(false);
     expect(summarizeAgentPlanRun([...records, record('p99', 'capped', 'plan', 0)], 6000).gatePassed).toBe(false);
+  });
+
+  it('gates each group on its own (CA P1): a 75% multi-step group fails even when the pooled rate is above 95%', () => {
+    const records = [
+      ...Array.from({ length: 30 }, (_, i) => record(`p${i}`, 'exact', 'plan', 1000)),
+      ...Array.from({ length: 10 }, (_, i) => record(`m${i}`, 'miss', 'plan', 1000)),
+      ...oneStep(800),
+    ];
+    const summary = summarizeAgentPlanRun(records, 6000);
+    expect(summary.exactRate).toBeGreaterThan(0.95);
+    expect(summary.groups.multiStep.rate).toBe(0.75);
+    expect(summary.gatePassed).toBe(false);
+    // And the other way round: a weak one-step group fails too.
+    const weakOneStep = summarizeAgentPlanRun([...Array.from({ length: 200 }, (_, i) => record(`p${i}`, 'exact', 'plan', 1000)), ...oneStep(18), ...oneStep(2, 'miss')], 6000);
+    expect(weakOneStep.groups.oneStep.rate).toBe(0.9);
+    expect(weakOneStep.gatePassed).toBe(false);
+    // Both groups must be present.
+    expect(summarizeAgentPlanRun(oneStep(100), 6000).gatePassed).toBe(false);
+    expect(summarizeAgentPlanRun(Array.from({ length: 100 }, (_, i) => record(`p${i}`, 'exact', 'plan', 1000)), 6000).gatePassed).toBe(false);
+  });
+
+  it('a non-gating summary (--include-pending) never passes', () => {
+    const records = [...Array.from({ length: 100 }, (_, i) => record(`p${i}`, 'exact', 'plan', 1000)), ...oneStep(100)];
+    expect(summarizeAgentPlanRun(records, 6000).gatePassed).toBe(true);
+    expect(summarizeAgentPlanRun(records, 6000, { gating: false })).toMatchObject({ gating: false, gatePassed: false });
   });
 });
 
@@ -455,7 +487,9 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
         },
       }) as unknown as AiProvider;
     const ran = deps(created, hostile);
-    expect(await runCli(['--mode', 'run', '--include-pending', '--approved-plan-digest', digest], ran)).toBe(EXIT_GATE_FAILED);
+    expect(await runCli(['--mode', 'run', '--include-pending', '--approved-plan-digest', digest], ran)).toBe(EXIT_NON_GATING);
+    expect(ran.out.join('\n')).not.toContain('PASSED');
+    expect(ran.out.join('\n')).toContain('NON-GATING');
     expect(created).toEqual(['haiku']);
     const skipped = CASES.filter((golden) => 'skip' in prepareSelectionInput(golden.text, golden.attachments)).length;
     expect(skipped).toBeLessThanOrEqual(2);
@@ -471,12 +505,19 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(Object.keys(report.records[0] as object).sort()).toEqual(expect.arrayContaining(['id', 'family', 'outcome', 'latencyMs', 'run']));
   });
 
-  it('a perfect planner passes the gate end to end (approved-only cases)', async () => {
+  it('a perfect planner passes the gate end to end once the batches are approved; approved-only without them cannot pass', async () => {
+    const approved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'approved' as const })) } };
     const created: string[] = [];
-    const planned = deps(created);
+    const planned = { ...deps(created), load: () => approved };
     await runCli(['--mode', 'plan'], planned);
-    const ran = deps(created);
+    const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
+    expect(ran.out.join('\n')).toContain('multi-step exact: 173/173 (100.0%)  one-step exact: 675/675 (100.0%)');
     expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v2): PASSED in all 1 run(s)');
+    // Today every new case is pending: an approved-only run has no multi-step group, so it cannot pass.
+    const today = deps(created);
+    await runCli(['--mode', 'plan'], today);
+    const ranToday = deps(created);
+    expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(today.out)], ranToday)).toBe(EXIT_GATE_FAILED);
   });
 });
