@@ -211,6 +211,14 @@ export interface OpsSnapshotSources {
    * panel at all, so the page is byte-identical to the one without the ledger.
    */
   readonly providerUsage?: () => Promise<readonly OpsProviderUsageMonth[]>;
+  /**
+   * ADR-0121 S2 (D7): the bounded read agent's mode (`QUOKY_AGENT_MODE`, a configuration fact) and the owner's kill switch
+   * (`Actor.metadata['quoky.actionSwitch']`), read-only. Absent → no panel, so the page is byte-identical without it.
+   */
+  readonly agent?: {
+    readonly mode: string;
+    switchState(actorId: Id): Promise<'running' | 'stopped'>;
+  };
 }
 
 type PanelBody = Pick<OpsPanelView, 'fields' | 'table' | 'notes' | 'links'>;
@@ -282,8 +290,10 @@ export class OpsSnapshotBuilder {
       panel('memory', '기억 보관함', async () => this.memory(await ownerPromise)),
       panel('telegram', 'Telegram', async () => this.telegram()),
     ]);
+    const agentPanel = this.sources.agent === undefined ? undefined : await panel('agent', '에이전트 (읽기 전용)', async () => this.agent(await ownerPromise));
     const usagePanel = await this.providerUsagePanel();
-    return guardViewModel({ generatedAt: this.time(now), panels: usagePanel === undefined ? panels : [...panels, usagePanel] });
+    const all = [...panels, ...(agentPanel !== undefined ? [agentPanel] : []), ...(usagePanel !== undefined ? [usagePanel] : [])];
+    return guardViewModel({ generatedAt: this.time(now), panels: all });
   }
 
   private time(iso: string | undefined): string {
@@ -599,6 +609,25 @@ export class OpsSnapshotBuilder {
    * number of admitted private chats and the drop counters per reason: never a message, a chat or user id, a bot id or
    * the token (the status cannot carry them). Off → one "not configured" field.
    */
+  /** ADR-0121 S2: the agent mode and the kill switch, read-only (the switch is changed only by the owner's DM phrase). */
+  private async agent(owner: OpsOwnerResolution): Promise<PanelBody> {
+    const source = this.sources.agent;
+    if (source === undefined) return { fields: [], notes: [] };
+    let state: string = OPS_UNKNOWN;
+    if (owner.status === 'RESOLVED') {
+      const switchState = await source.switchState(owner.actorId).catch(() => undefined);
+      state = switchState === undefined ? OPS_UNKNOWN : switchState === 'stopped' ? '중지됨' : '실행 중';
+    }
+    const mode = source.mode === 'off' || source.mode === 'shadow' ? source.mode : OPS_UNKNOWN;
+    return {
+      fields: [
+        { label: '에이전트 모드 (QUOKY_AGENT_MODE)', value: mode },
+        { label: '킬 스위치', value: state },
+      ],
+      notes: ['DM에서 "에이전트 중지" / "에이전트 재개"로만 바꿀 수 있어요. shadow는 계획만 기록하고 아무것도 읽거나 실행하지 않아요.'],
+    };
+  }
+
   private telegram(): PanelBody {
     const status = this.sources.telegram?.();
     if (status === undefined) {

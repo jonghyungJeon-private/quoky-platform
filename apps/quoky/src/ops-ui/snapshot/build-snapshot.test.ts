@@ -792,3 +792,33 @@ describe('PRV-3 provider usage panel (ADR-0115 D8, ADR-0113 D5)', () => {
     expect(without.replace(TELEGRAM_SECTION, '')).toBe(readFileSync(DASHBOARD_GOLDEN, 'utf8'));
   });
 });
+
+describe('ADR-0121 S2 agent panel (D7: the mode and the kill switch, read-only)', () => {
+  it('shows the mode and the owner switch state before the usage panel; no link, no action', async () => {
+    const months = [{ month: '2026-10', labels: [{ label: 'codex', runs: 1, unknownRuns: 0, inputTokens: { sum: 1, reportedRuns: 1 }, outputTokens: { sum: 1, reportedRuns: 1 }, totalTokens: { sum: 2, reportedRuns: 1 } }] }];
+    const view = await new OpsSnapshotBuilder(fixture({ agent: { mode: 'shadow', switchState: async () => 'stopped' }, providerUsage: async () => months })).build();
+    expect(view.panels.map((p) => p.id).slice(-2)).toEqual(['agent', 'provider-usage']);
+    const panel = panelOf(view, 'agent');
+    expect(panel.state).toBe('OK');
+    expect(panel.fields).toEqual([
+      { label: '에이전트 모드 (QUOKY_AGENT_MODE)', value: 'shadow' },
+      { label: '킬 스위치', value: '중지됨' },
+    ]);
+    expect(panel.links).toBeUndefined();
+    const running = panelOf(await new OpsSnapshotBuilder(fixture({ agent: { mode: 'off', switchState: async () => 'running' } })).build(), 'agent');
+    expect(running.fields.map((field) => field.value)).toEqual(['off', '실행 중']);
+  });
+
+  it('an unresolved owner or a failing read shows unknown; a mode outside the closed set is never echoed', async () => {
+    const ambiguous = await new OpsSnapshotBuilder(fixture({ owner: async () => ({ status: 'AMBIGUOUS' }), agent: { mode: 'shadow', switchState: async () => 'running' } })).build();
+    expect(panelOf(ambiguous, 'agent').fields[1]?.value).toBe(OPS_UNKNOWN);
+    const failing = await new OpsSnapshotBuilder(fixture({ agent: { mode: '<script>', switchState: async () => { throw new Error('SECRET BODY'); } } })).build();
+    expect(panelOf(failing, 'agent').fields.map((field) => field.value)).toEqual([OPS_UNKNOWN, OPS_UNKNOWN]);
+    expect(JSON.stringify(panelOf(failing, 'agent'))).not.toContain('SECRET BODY');
+  });
+
+  it('absent: no panel (the page stays byte-identical to the golden)', async () => {
+    const view = await new OpsSnapshotBuilder(fixture()).build();
+    expect(view.panels.some((p) => p.id === 'agent')).toBe(false);
+  });
+});

@@ -71,6 +71,7 @@ import type {
   TurnDeliveryObserver,
   ConnectorWriteFlow,
   NlSelectionService,
+  AgentRunService,
   AiProvider,
   CommandRunner,
   ConnectorProvider,
@@ -136,6 +137,7 @@ import { MAIL_DELIVERY_OBSERVERS, createMailProviders } from './features/mail.pr
 import { createMemoryProviders } from './features/memory.providers';
 import { NL_SELECTION, createNlSelectionProviders } from './features/nl-selection.providers';
 import { SURFACE_GRANTS, createSurfaceGrantsProviders, type SurfaceGrantsComposition } from './features/surface-grants.providers';
+import { AGENT_RUNS, createAgentProviders } from './features/agent.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { workChatProviders } from './features/work-chat.providers';
@@ -661,6 +663,7 @@ const application: Provider[] = [
       providerSelection: ProviderSelectionService,
       nlSelection: NlSelectionService | undefined,
       surfaceGrants: SurfaceGrantsComposition | undefined,
+      agentRuns: AgentRunService | undefined,
     ) => {
       // ADR-0032: production ApprovalFlow — stateless, derived from existing aggregates
       // (Session.activeTaskId → Task.planId → approvals.findByExecutionPlan → PENDING); anchors the
@@ -743,6 +746,8 @@ const application: Provider[] = [
         nlSelection,
         // ADR-0122 (deps baseline 36 → 37): the surface gate and the owner's grant phrases; mode `off` runs nothing.
         ...(surfaceGrants !== undefined ? { surfaceGrants: { gate: surfaceGrants.gate, service: surfaceGrants.service, freshActor: surfaceGrants.freshActor } } : {}),
+        // ADR-0121 S2 (deps baseline 37 → 38): the bounded read agent; mode `off` (the default) runs nothing.
+        ...(agentRuns !== undefined ? { agentRuns } : {}),
         logger: coreLogger,
       }, {
         gitRemoteEnabled: config.git.remoteEnabled,
@@ -782,6 +787,7 @@ const application: Provider[] = [
       ProviderSelectionService,
       { token: NL_SELECTION, optional: true },
       { token: SURFACE_GRANTS, optional: true },
+      { token: AGENT_RUNS, optional: true },
     ],
   },
   // Thin platform-entry facade (ADR-0032): delegates to ConversationRuntime, then delivers.
@@ -870,6 +876,8 @@ const features: Provider[] = [
     discordOwnerIds: config.discord.ownerIds,
     telegramOwnerIds: config.telegram?.ownerIds ?? [],
   })),
+  // ADR-0121 S2 (P1): the bounded read agent (QUOKY_AGENT_MODE, default off; `active` refused until the D11 gates).
+  ...createAgentProviders(() => ({ agent: config.agent, timeoutMs: config.nlSelection.timeoutMs, timeZone: config.reminders.timeZone })),
   turnHandlersProvider,
 ];
 

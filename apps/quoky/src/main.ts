@@ -14,6 +14,7 @@ import {
 } from '@quoky/core';
 import type {
   NlSelectionService,
+  AgentRunService,
   NotificationSink,
   PlatformAdapter,
   QueueProvider,
@@ -39,6 +40,7 @@ import {
 } from './bootstrap-preflight';
 import { loadConfig, resolveEnvFilePath } from './config';
 import { NL_SELECTION } from './features/nl-selection.providers';
+import { AGENT_RUNS } from './features/agent.providers';
 import { scheduleNlWarmup } from './nl-selection/nl-warmup';
 import { ReminderTickDriver } from './reminders/reminder-tick-driver';
 import { ProviderSelectionService } from './provider-selection/provider-selection-service';
@@ -244,6 +246,8 @@ async function bootstrap(): Promise<void> {
     cancelNlWarmup();
     // S1 W1: abort a c-shadow background selection in flight (its claude child process is terminated).
     app.get<NlSelectionService>(NL_SELECTION).stopBackground();
+    // ADR-0121 S2: abort an agent shadow planner job in flight (its claude child process is terminated).
+    app.get<AgentRunService>(AGENT_RUNS).stopBackground();
     // First: no reminder claim/complete may run while the platform and storage are closing. stop() waits for the
     // in-flight delivery + outcome write up to its hard bound; if that elapses, the reminder stays FIRING and the
     // next startup turns it into DELIVERY_UNCERTAIN (never resent).

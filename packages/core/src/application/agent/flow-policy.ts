@@ -1,0 +1,110 @@
+import type { InboundQuotedRange } from '../../domain';
+import { flowLabel, type FlowLabel } from '../../domain/flow-label';
+import type { NlWave1EntryId } from '../nl-routing/catalog';
+import { normalizeForMatch } from '../nl-routing/selection-input';
+
+/**
+ * ADR-0121 D4 (stage S2 P1): the information-flow policy of the bounded read agent, pure and deterministic.
+ *
+ * - **M1 (the planner) takes only `TRUSTED` and `STRUCTURE` values.** {@link checkPlannerInputs} refuses a prompt part with
+ *   any other trust, and {@link plannerPromptCanaryHit} is the canary check: no byte of the turn's quoted, fenced or
+ *   platform-quoted material (the `UNTRUSTED` part of the owner's message) may appear in the planner prompt unless the
+ *   owner's own words say the same. A hit refuses the call; nothing is repaired.
+ * - **References are source-bound.** {@link AGENT_READ_SOURCES} names each READ entry's source and destination origin;
+ *   a reference may feed only a read of the same source and origin (`plan-validator.ts`). One configured connector per
+ *   source today, so the origin is the source's configured site.
+ * - **Each source's content has a fixed label** ({@link readOutputLabel}) for the later stages (M2 provider choice, the
+ *   DM-only rule). Stage S2 P1 performs no read, so nothing is labelled at run time yet.
+ */
+
+/** The READ entries an agent plan may name, each with its source and the id field a projector may extract from it. */
+export const AGENT_READ_SOURCES: Readonly<Record<NlWave1EntryId, { readonly source: string; readonly origin: string; readonly refField?: string }>> = Object.freeze({
+  'jira.issues': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys' },
+  'jira.release': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys' },
+  'github.items': { source: 'github', origin: 'github:configured-host', refField: 'itemIds' },
+  'slack.search': { source: 'slack', origin: 'slack:configured-workspace', refField: 'messageIds' },
+  'confluence.search': { source: 'confluence', origin: 'confluence:configured-site', refField: 'pageIds' },
+  'calendar.events': { source: 'calendar', origin: 'calendar:owner', refField: 'eventIds' },
+  'mail.list': { source: 'mail', origin: 'mail:owner', refField: 'messageIds' },
+  'drive.files': { source: 'drive', origin: 'drive:owner', refField: 'fileIds' },
+  // Local stores and fixed answers: no projected id field (a reference to or from them is refused).
+  'todo.list': { source: 'todo', origin: 'host' },
+  'reminder.list': { source: 'reminder', origin: 'host' },
+  'brief.today': { source: 'brief', origin: 'host' },
+  'help.topic': { source: 'help', origin: 'host' },
+});
+
+/** The label of what a READ entry returns (ADR-0121 D4; ADR-0110 D4, ADR-0118 D7/D8, ADR-0100). */
+export function readOutputLabel(entryId: NlWave1EntryId): FlowLabel {
+  const source = AGENT_READ_SOURCES[entryId].source;
+  switch (source) {
+    case 'calendar':
+    case 'brief':
+      return flowLabel('UNTRUSTED', 'LOCAL_MODEL_ONLY', 'OWNER_DM_ONLY', [source]);
+    case 'mail':
+    case 'drive':
+      return flowLabel('UNTRUSTED', 'REMOTE_ON_SUMMARY_REQUEST', 'OWNER_DM_ONLY', [source]);
+    case 'todo':
+    case 'reminder':
+      return flowLabel('UNTRUSTED', 'REMOTE_OK', 'OWNER_DM_ONLY', [source]);
+    case 'help':
+      return flowLabel('TRUSTED', 'REMOTE_OK', 'WORK_CHANNEL_OK', [source]);
+    default:
+      return flowLabel('UNTRUSTED', 'REMOTE_OK', 'WORK_CHANNEL_OK', [source]);
+  }
+}
+
+/** One labelled part of a planner prompt. */
+export interface PlannerPromptPart {
+  readonly label: FlowLabel;
+}
+
+export type PlannerFlowRefusal = 'untrusted-input' | 'canary';
+
+/** D4: every part of a planner prompt must be `TRUSTED` or `STRUCTURE`. Returns the refusal, or `undefined`. Pure. */
+export function checkPlannerInputs(parts: readonly PlannerPromptPart[]): Extract<PlannerFlowRefusal, 'untrusted-input'> | undefined {
+  return parts.some((part) => part.label.trust !== 'TRUSTED' && part.label.trust !== 'STRUCTURE') ? 'untrusted-input' : undefined;
+}
+
+/** A canary shorter than this (normalized code points) is too common to prove a leak (single words, numbers). */
+export const PLANNER_CANARY_MIN_CHARS = 8;
+
+const FENCED = /```[\s\S]*?(?:```|$)/g;
+const QUOTED_LINE = /^[ \t]*>.*$/gm;
+const QUOTE_TO_END = /^[ \t]*>>>/m;
+
+/**
+ * The `UNTRUSTED` material of the owner's message as canaries: the platform-quoted ranges, fenced blocks, `>` lines and
+ * everything after `>>>`, one canary per line of at least {@link PLANNER_CANARY_MIN_CHARS} code points. Pure.
+ */
+export function untrustedCanariesOf(rawText: string, quotedRanges: readonly InboundQuotedRange[] = []): string[] {
+  const material: string[] = [];
+  for (const range of quotedRanges) {
+    if (Number.isInteger(range.start) && Number.isInteger(range.end) && range.start >= 0 && range.end > range.start) material.push(rawText.slice(range.start, range.end));
+  }
+  for (const match of rawText.matchAll(FENCED)) material.push(match[0].replace(/^```[^\n]*\n?/u, '').replace(/```$/u, ''));
+  for (const match of rawText.matchAll(QUOTED_LINE)) material.push(match[0].replace(/^[ \t]*>+/u, ''));
+  const toEnd = QUOTE_TO_END.exec(rawText);
+  if (toEnd) material.push(rawText.slice(toEnd.index + toEnd[0].length));
+  const canaries = new Set<string>();
+  for (const block of material) {
+    for (const line of block.split(/\r?\n/u)) {
+      const normalized = normalizeForMatch(line);
+      if (Array.from(normalized).length >= PLANNER_CANARY_MIN_CHARS) canaries.add(normalized);
+    }
+  }
+  return [...canaries];
+}
+
+/**
+ * The canary check (ADR-0121 D4, design §3): `true` when any canary appears in the planner prompt and is not also part of
+ * the owner's own non-quoted words (`groundingText`, which is `TRUSTED` by definition). Pure.
+ */
+export function plannerPromptCanaryHit(prompt: string, canaries: readonly string[], groundingText: string): boolean {
+  const haystack = normalizeForMatch(prompt);
+  const owner = normalizeForMatch(groundingText);
+  return canaries.some((canary) => {
+    const needle = normalizeForMatch(canary);
+    return needle.length > 0 && haystack.includes(needle) && !owner.includes(needle);
+  });
+}

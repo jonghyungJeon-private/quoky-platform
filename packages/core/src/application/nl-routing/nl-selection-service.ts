@@ -2348,6 +2348,18 @@ function sortedArgs(args: NlArgs): string {
   return JSON.stringify(Object.entries(args).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
+/**
+ * ADR-0120 D6/D8 (no new egress): a call may go only to the provider (id or family) and execution locality this turn's
+ * chat would reach. Exported for the ADR-0121 S2 planner, which applies the same rule (no copy of it).
+ */
+export function nlSameEgress(
+  selector: Pick<AiProvider, 'id' | 'family' | 'executionLocality'>,
+  chatProviderId: string,
+  chatProviderLocality: AiExecutionLocality | undefined,
+): 'same' | 'chat-provider-differs' | 'chat-locality-differs' {
+  return sameEgress(selector, chatProviderId, chatProviderLocality);
+}
+
 function sameEgress(
   selector: Pick<AiProvider, 'id' | 'family' | 'executionLocality'>,
   chatProviderId: string,
