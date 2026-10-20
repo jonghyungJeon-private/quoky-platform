@@ -28006,6 +28006,8 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
   - **Owner decision (2026-10-20): the switch executes only on the exact phrase, stop and resume alike.** A near miss of
     `에이전트 중지`, including a request form ("에이전트 중지해줘") or a typo ("에이전트 중자"), gets the hint and does not stop.
     (The implementation first proposed stopping on a clear near miss of 중지 as the safe direction; the owner declined it.)
+  - A message with a line break is never a near miss; the break is checked before whitespace is normalized (Codex P3:
+    "에이전트\n재개해줘" goes to chat as before).
   - "에이전트 재고", "에이전트 주지" and "에이전트 정지" are one-key near misses (재개, 중지, 중지): hint only, no state change
     (CA P3 3, pinned in the tests).
   - `도움말` / `새 대화` are not in the near-miss set: they are short phrases one key from ordinary words ("새 대회").
@@ -28013,20 +28015,22 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
   `off`), every owner DM chat turn gets it, whether or not selection ran or a read catalog exists (Codex P2): the chat
   prompt carries a fact naming both control commands (beside the ADR-0120 D9 sources fact when there is one, alone
   otherwise), worded by what the switch controls in the active configuration (CA P3 7: natural-language actions, the
-  multi-step agent and the channel permissions, each named only while it is on), and the reply guard replaces a sentence that denies a control command with the exact-phrase hint. A
-  sentence counts only when, in one clause, a negated predicate governs stopping or resuming with the agent, Quoky or the
-  switch as its object or topic ("에이전트를 재개할 수 없어요", "에이전트 재개 명령은 없어요", "can't resume the agent",
-  "resuming the agent is not possible", "no command to resume" with the agent named in that clause). There is no
-  anaphoric fallback (Codex P2, third round: "The agent cannot stop running containers. There is no such command." is
-  kept). The rest of the reply is kept. An
-  unrelated limitation is kept: in another clause ("You can resume the agent, but it cannot recover deleted events"),
-  or with another object ("The agent … cannot stop running containers", "컨테이너를 중지할 수 없어요"). With the phrase not
-  recognized, the prompt and the reply are unchanged.
+  multi-step agent and the channel permissions, each named only while it is on). That fact is the primary fix. The reply
+  guard is only a narrow backstop (Codex P2, fourth round): it replaces a sentence only when, in one clause, it claims the
+  stop / resume command or way does not exist for the agent, Quoky or the switch as the action's own object or topic
+  ("에이전트를 재개하는 명령은 없어요", "에이전트는 재개할 수 있는 방법이 없어요", "there is no command to resume the agent", "The
+  agent has no command to resume"), or ends that clause with a bare incapability on that object ("에이전트를 재개할 수
+  없어요", "I can't resume the agent."). The rest of the reply is kept. Everything else is kept: another clause ("You can
+  resume the agent, but it cannot recover deleted events"), another object ("cannot stop running containers"), a
+  complement after the object ("You cannot stop the agent from responding to exact commands"), any other capability
+  statement ("Resuming the agent is not possible"), and a bare later "There is no such command" (no anaphoric fallback,
+  Codex P2 third round). With the phrase not recognized, the prompt and the reply are unchanged.
   - **Residuals (fail-safe: the sentence is kept, the false denial stays).** This was the last heuristic round for this
     guard. Not caught: a denial with the agent outside the action's clause or separated from the verb by other words
     ("에이전트는, 제가 알기로 다시 켤 수 없어요"); a pronoun object ("I can't resume it", "그걸 재개할 수 없어요"); any denial
     split across sentences, including a bare "그런 명령은 없어요" / "There is no such command" after a sentence about the
-    agent ("Resume the agent? That isn't possible."); a paraphrased
+    agent ("Resume the agent? That isn't possible."); a capability statement that is not the nonexistence claim
+    ("Resuming the agent is not possible", "재개는 지원되지 않는 기능이에요"); an objectless "재개할 수 있는 방법이 없어요"; a paraphrased
     nonexistence ("재개 기능은 준비되어 있지 않아요" without the agent named); and denials in languages other than Korean
     and English. The control fact in the prompt is the primary defence for these.
 - **Tests (targeted, offline; no model call).** `nl-routing/action-switch-near-miss.test.ts` (6),

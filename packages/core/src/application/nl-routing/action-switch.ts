@@ -89,6 +89,8 @@ function nearPhrase(candidate: string, phrase: string): boolean {
 /** The near miss this whole message is of the switch phrase, or `undefined` (an exact phrase, or anything else). */
 export function nearMissActionSwitchPhrase(text: string): NlActionSwitchNearMiss | undefined {
   if (parseActionSwitchPhrase(text) !== undefined) return undefined;
+  // One line only (Codex P3): a line break is checked before the whitespace is normalized ("에이전트\n재개해줘" is no near miss).
+  if (/[\r\n\u2028\u2029]/u.test(text.trim())) return undefined;
   const normalized = text.normalize('NFC').trim().replace(/\s+/g, ' ').replace(/[.!。！~]+$/u, '').trim();
   if (normalized.length === 0 || normalized.length > NEAR_MISS_MAX_CHARS || !/^[\p{Script=Hangul} ]+$/u.test(normalized)) return undefined;
   const compact = normalized.replace(/ /gu, '');

@@ -108,15 +108,22 @@ const CONTROL_ACTION_EN: Readonly<Record<NlActionSwitchState, string>> = {
   running: '(?:resume|resuming|restart|restarting|re-enable|enable|enabling|turn(?:ing)? (?:back )?on)',
 };
 /**
- * The Korean negated predicate that can govern a control action: the command or way to do it does not exist, or it cannot
- * be done (수 없, 못 해, 불가, 지원하지 않 …).
+ * The guard is a narrow backstop (Codex P2, fourth round; the control fact in the prompt is the primary fix). It replaces
+ * only the false claim seen live: that no command or way exists to stop or resume the agent, or a bare clause-final "I
+ * can't resume the agent". Any other capability statement ("You cannot stop the agent from responding to exact commands")
+ * is kept.
+ *  - Korean nonexistence: the action, then the command / way noun, then its nonexistence ("재개하는 명령은 없어요", "다시 켤
+ *    수 있는 기능은 제공하지 않아요").
+ *  - Korean clause-final incapability: the action with only its ending before "수 없" / "못 해" and the clause end
+ *    ("에이전트를 재개할 수 없어요").
  */
-const KO_DENIAL = '(?:(?:명령|커맨드|기능|방법|문구|키워드)[^.!?\\n]{0,10}?(?:없|않|존재하지)|수\\s*(?:가|는|도)?\\s*없|못\\s*(?:해|하|합|드려|드립)|불가|지원하지\\s*않|제공하지\\s*않)';
-/** An English negation that governs the action right after it ("cannot resume", "there is no command to resume"). */
-const EN_DENIAL_BEFORE =
-  "(?:cannot|can['’]t|unable to|not able to|no way to|(?:there(?:['’]s| is| are) )?no (?:such )?(?:command|way|option|feature)s? (?:to|for))";
-/** An English negation the action governs as its subject ("resuming the agent is not possible"). */
-const EN_DENIAL_AFTER = "(?:is not|isn['’]t|are not|aren['’]t|does not|doesn['’]t|do not|don['’]t)\\s+(?:possible|available|supported|exist)";
+const KO_NONEXISTENCE = '[^.!?\\n]{0,10}?(?:명령|커맨드|방법|기능|문구)[^.!?\\n]{0,8}?(?:없|존재하지\\s*않|제공하지\\s*않|지원하지\\s*않)';
+const KO_CANNOT_FINAL = '[가-힣]{0,3}\\s*(?:수\\s*(?:가|는|도)?\\s*없|못\\s*(?:해|합|드려|드립))[가-힣]*\\s*[.!?。~]*\\s*$';
+/** English nonexistence ("there is no command to resume the agent"). */
+const EN_NONEXISTENCE = "(?:there(?:['’]s| is| are) )?no (?:such )?(?:command|way|option|feature)s? (?:to|for)";
+/** English clause-final incapability ("I can't resume the agent."), never with a complement after the object. */
+const EN_CANNOT = "(?:cannot|can['’]t|unable to|not able to)";
+const CLAUSE_END = '\\s*[.!?]*\\s*$';
 /**
  * Clause boundaries inside a sentence: punctuation, the English coordinators and concessives, and the Korean connective
  * endings (-지만, -는데, -아도/-어도, -고, -며, -면, -서, -으나). A denial governs only an action of its own clause, so "You can resume
@@ -130,26 +137,28 @@ const KO_CONTROL_OBJECT = '(?:에이전트|퀴키|quoky|스위치)\\s*(?:를|을
 const EN_CONTROL_OBJECT = "(?:the |your |quoky['’]s |this )?(?:multi-step )?(?:agents?|quoky|switch)\\b";
 
 /**
- * The directions whose stop / resume action a denial in this clause governs, with the agent (or Quoky, or the switch) as
- * the action's own object or topic (Codex P2, second round): "에이전트를 재개할 수 없어요", "에이전트 재개 명령은 없어요",
- * "can't resume the agent", "no command to resume (the agent)", "resuming the agent is not possible". A negated stop of
- * anything else ("cannot stop running containers", "컨테이너를 중지할 수 없어요") is not about the switch.
+ * The directions whose stop / resume command this clause says does not exist, with the agent (or Quoky, or the switch) as
+ * the action's own object or topic: "에이전트를 재개하는 명령은 없어요", "에이전트를 재개할 수 없어요", "there is no command to
+ * resume the agent", "I can't resume the agent", "The agent has no command to resume". A complement after the object
+ * ("cannot stop the agent from responding …"), another object ("cannot stop running containers") or any other capability
+ * statement is not this claim.
  */
 function deniedInClause(clause: string): NlActionSwitchState[] {
   return (Object.keys(CONTROL_ACTION_KO) as NlActionSwitchState[]).filter(
     (state) =>
-      new RegExp(`${KO_CONTROL_OBJECT}${CONTROL_ACTION_KO[state]}[^.!?\\n]{0,14}?${KO_DENIAL}`, 'iu').test(clause) ||
-      new RegExp(`\\b${EN_DENIAL_BEFORE}\\s+(?:\\S+\\s+){0,2}?${CONTROL_ACTION_EN[state]}\\s+${EN_CONTROL_OBJECT}`, 'iu').test(clause) ||
+      new RegExp(`${KO_CONTROL_OBJECT}${CONTROL_ACTION_KO[state]}${KO_NONEXISTENCE}`, 'iu').test(clause) ||
+      new RegExp(`${KO_CONTROL_OBJECT}${CONTROL_ACTION_KO[state]}${KO_CANNOT_FINAL}`, 'iu').test(clause) ||
+      new RegExp(`\\b${EN_NONEXISTENCE} ${CONTROL_ACTION_EN[state]}\\s+${EN_CONTROL_OBJECT}${CLAUSE_END}`, 'iu').test(clause) ||
+      new RegExp(`\\b${EN_CANNOT}\\s+${CONTROL_ACTION_EN[state]}\\s+${EN_CONTROL_OBJECT}${CLAUSE_END}`, 'iu').test(clause) ||
       // The bare "no command to resume" counts only with the agent named in the same clause.
-      (AGENT_NOUN.test(clause) && new RegExp(`\\bno (?:such )?(?:command|way|option|feature)s? (?:to|for) ${CONTROL_ACTION_EN[state]}\\s*(?:$|[.,;:!?])`, 'iu').test(clause)) ||
-      new RegExp(`\\b${CONTROL_ACTION_EN[state]}\\s+${EN_CONTROL_OBJECT}[^.!?\\n]{0,20}?\\b${EN_DENIAL_AFTER}\\b`, 'iu').test(clause),
+      (AGENT_NOUN.test(clause) && new RegExp(`\\b${EN_NONEXISTENCE} ${CONTROL_ACTION_EN[state]}${CLAUSE_END}`, 'iu').test(clause)),
   );
 }
 
 /**
- * The control-denial guard (live DM test 2026-10-20): while the switch phrases are recognized, a reply sentence in which a
- * negated predicate GOVERNS stopping or resuming the agent itself (its object or topic) ("에이전트를 재개하는 명령어는 없어요", "There is
- * no command to resume the agent", "resuming the agent is not possible"), is false. The denial must sit in the action's
+ * The control-denial guard (live DM test 2026-10-20), a narrow backstop: while the switch phrases are recognized, a reply
+ * sentence that says no command or way exists to stop or resume the agent itself (its object or topic) ("에이전트를 재개하는 명령어는 없어요", "There is
+ * no command to resume the agent", "I can't resume the agent"), is false. The denial must sit in the action's
  * own clause (Codex P2): an unrelated limitation in another clause ("…, but it cannot recover deleted events") is not a
  * denial of the command, and that sentence is kept. A bare anaphoric denial in a later sentence ("그런 명령은 없어요",
  * "There is no such command") is kept too (Codex P2, third round; a recorded fail-safe residual). Only the denying sentences go; the exact-phrase hint for the direction(s) they named closes the
