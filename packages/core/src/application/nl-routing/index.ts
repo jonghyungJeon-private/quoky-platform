@@ -5,6 +5,7 @@ export * from './selection-output';
 export * from './selection-validator';
 export * from './selection-prompt';
 export * from './selection-meaning';
+export * from './selection-egress';
 export * from './selection-state';
 export * from './honest-chat';
 export * from './wave1-entries';

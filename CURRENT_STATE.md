@@ -5,6 +5,24 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 S2 P1 — the bounded read agent's foundation (2026-10-20, branch `claude/v5-s2-p1`)
+
+The owner approved the S2 plan with its 13 recommended defaults on 2026-10-20. P1 is built and is not live:
+- **Core** (`packages/core/src/application/agent/`): `FlowLabel`, the v2 plan schema, the deterministic plan validator,
+  the flow policy (the M1 rule and the canary check), the planner prompt `agent-plan.v1` and `AgentRunService`
+  (`off` / `shadow`).
+- **Config.** `QUOKY_AGENT_MODE` defaults to `off`, which is byte-identical. `active` is refused at startup
+  (`AGENT_MODE_ACTIVE_NOT_RELEASED`).
+- **Shadow** plans in the background after an owner DM turn that reached selection: no read, no M2, one content-free
+  `agent_run.shadow` line, at most 1 in flight, 30 an hour and 150 a day.
+- **Kill switch.** `에이전트 중지` / `에이전트 재개` (the A6 switch, reused) stops and resumes shadow without a restart. The ops
+  UI shows the mode and the switch, read-only.
+- **Deps baseline** is now 38 (`agentRuns?`).
+
+Next: the reviews (CA, Codex, `/security-review`), merge, a deploy with `off`, then `shadow` on the owner's Strict yes,
+which starts the 7-day shadow clock. P2 (the plan corpus and `eval:agent-plan`) follows. DECISIONS: "ADR-0121 S2
+implementation note — P1".
+
 ### Personal v5 — status (2026-10-14)
 
 Personal v5 waves 1-3 and the INT-4 acceptance are merged, and this is the DOC-G closeout (plan `docs/plans/personal-v5-plan.md`).

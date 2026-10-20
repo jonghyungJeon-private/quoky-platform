@@ -185,6 +185,8 @@ export * from './nl-routing';
 // ADR-0122 surface permission grants (A9) and the one per-actor metadata writer (D3).
 export * from './surface-grants';
 export * from './actor-metadata-store';
+// ADR-0121 stage S2 (P1): the bounded read agent (off / shadow; the planner, the plan validator, the flow policy).
+export * from './agent';
 // ADR-0092 amendment (runtime switching): the owner's model-selection command grammar (provider-free).
 export * from './model-selection';
 // ADR-0106 memory management commands (MEM-1).

@@ -20,6 +20,7 @@ import {
 import type {
   ApprovalDecisionService,
   ConnectorProvider,
+  AgentRunService,
   ConversationContext,
   DurableMemoryQuery,
   Id,
@@ -53,6 +54,7 @@ import { OpsSnapshotBuilder, cachedViewSource } from './snapshot/build-snapshot'
 import { ProviderUsageLedger, previousMonthKey } from '../ops/provider-usage';
 import type { OpsOwnerResolution, OpsSnapshotSources, OpsTelegramStatus } from './snapshot/build-snapshot';
 import { OpsErrorRing, errorRecordingLogger } from './snapshot/error-ring';
+import { AGENT_RUNS } from '../features/agent.providers';
 
 /**
  * OPS-1/OPS-2 wiring (ADR-0113 D7/D8): the one entry point `main.ts` calls. It reads its own flags (`ops-ui-config.ts`), looks
@@ -245,6 +247,7 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
   const feedback = app.get<FeedbackRecorder>(FeedbackRecorder);
   const selection = optional<ProviderSelectionService>(app, ProviderSelectionService);
   const approvalDecisions = approvalHandling(app)?.decisions;
+  const agentRuns = optional<AgentRunService>(app, AGENT_RUNS);
   const cwd = input.cwd ?? process.cwd();
   const dbPath = config.storage.dbPath;
   const fileBacked = dbPath !== '' && dbPath !== ':memory:';
@@ -312,6 +315,10 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
       providerSelection: selection !== undefined,
     },
     telegram: () => telegramStatusOf(platform),
+    // ADR-0121 S2 (D7): the agent mode and the owner's kill switch, read-only.
+    ...(agentRuns === undefined
+      ? {}
+      : { agent: { mode: agentRuns.mode, switchState: async (actorId: Id) => agentRuns.switchState((await storage.actors.get(actorId)) ?? undefined) } }),
     // ADR-0115 D8 (PRV-3): current and previous calendar month, read from TaskRun.usage (read-only; no panel without usage).
     providerUsage: async () => {
       const ledger = new ProviderUsageLedger(storage.taskRuns, config.reminders.timeZone);

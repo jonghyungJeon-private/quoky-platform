@@ -135,6 +135,8 @@ describe('source rule: no Actor.metadata save outside the store (D3)', () => {
     // Composition only: they hand the live repository to the store-backed writers (no write of their own).
     'apps/quoky/src/features/nl-selection.providers.ts': 'binds the live repository into NlActionSwitch / NlSelectionService (both write through the store)',
     'apps/quoky/src/features/surface-grants.providers.ts': 'binds the live repository into the ActorMetadataStore',
+    // ADR-0121 S2: the agent's kill switch is the A6 NlActionSwitch, which writes through the store.
+    'apps/quoky/src/features/agent.providers.ts': 'binds the live repository into AgentRunService / NlActionSwitch (writes through the store)',
   };
 
   function sources(dir: string, out: string[] = []): string[] {

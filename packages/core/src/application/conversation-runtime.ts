@@ -95,6 +95,8 @@ import {
 import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlItemSource, type NlListingReceipt, type NlSelectedCommand } from './nl-routing/catalog';
 import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
+import { readLastSelection } from './nl-routing/selection-state';
+import { renderAgentSwitchReply, type AgentRunService } from './agent/agent-run-service';
 import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from './nl-routing/nl-action-policy';
 import type { LastTurnReplyKind } from './nl-routing/last-turn';
 import type { MessageBody } from '../domain';
@@ -1131,6 +1133,14 @@ export interface ConversationRuntimeDeps {
     /** The live actor (grants re-read at an execution step, D2.5); absent → the turn's snapshot. */
     readonly freshActor?: (actorId: Id) => Promise<Actor | null>;
   };
+  /**
+   * ADR-0121 stage S2 (amends ADR-0032: baseline 37 → 38): the bounded read agent. OPTIONAL: absent, or mode `off`
+   * (`QUOKY_AGENT_MODE`, the default), keeps every turn byte-identical (the runtime reads `mode` and nothing else). In
+   * `shadow`, an owner DM turn that reached selection queues one background planner job after its reply (no read, no M2,
+   * one content-free log line), and the kill-switch phrase is recognized while the mode is not `off`. `active` is refused
+   * at construction until the D11 gates pass.
+   */
+  readonly agentRuns?: Pick<AgentRunService, 'mode' | 'shadowAdmits' | 'runShadow' | 'handleSwitchPhrase' | 'switchSuffix'>;
   readonly logger: Logger;
 }
 
@@ -2452,7 +2462,13 @@ export class ConversationRuntime {
     // state). Recognized only while QUOKY_NL_ACTIONS is not `off` (with `off` the text is routed exactly as before).
     if (this.deps.nlSelection?.handleSwitchPhrase !== undefined && isDirectConversation(message.context) && !expiryNotice) {
       const switched = await this.deps.nlSelection.handleSwitchPhrase(actor, message.text, this.clock());
-      if (switched !== undefined) return this.responded(session, outboundMessage(message.context, this.withSurfaceSwitchSuffix(message.text, switched)));
+      if (switched !== undefined) return this.responded(session, outboundMessage(message.context, this.withAgentSwitchSuffix(message.text, switched, this.withSurfaceSwitchSuffix(message.text, switched))));
+    }
+    // ADR-0121 S2 (D7, reused switch): while QUOKY_AGENT_MODE is not `off`, the same phrase (owner DM, every state) also when
+    // A6 actions are off; it saves the same `quoky.actionSwitch` record. With `off` (or absent) the text routes as before.
+    if (this.deps.agentRuns !== undefined && this.deps.agentRuns.mode !== 'off' && isDirectConversation(message.context) && !expiryNotice) {
+      const switched = await this.deps.agentRuns.handleSwitchPhrase(actor, message.text, this.clock());
+      if (switched !== undefined) return this.responded(session, outboundMessage(message.context, this.withAgentSurfaceSuffix(message.text, switched)));
     }
     // ADR-0122 D4 / D4.6: while QUOKY_CHANNEL_GRANTS=enforce, the kill-switch phrase (owner DM, also with A6 actions off)
     // and the owner's anchored channel-permission phrases, in every state, before the control handlers. Nothing is
@@ -3528,8 +3544,84 @@ export class ConversationRuntime {
     });
   }
 
+  /** ADR-0121 S2: the agent's shadow job queued for after a turn's reply (by message object). */
+  private readonly agentAfterReply = new WeakMap<InboundMessage, () => Promise<void>>();
+
+  /** The last agent shadow job started after a reply (tests await it; production never does). */
+  lastAgentAfterReplyRun: Promise<void> = Promise.resolve();
+
+  /**
+   * ADR-0121 S2 `shadow`: queue the planner job for an owner DM turn whose selection decided (`execute`, `ask` or `none`).
+   * The kill switch is checked here on the turn's actor snapshot and again when the job starts. The inputs are this turn's
+   * snapshot: the owner's text, the offered entries, the previous selection as structure only and the live decision's
+   * closed values (for the one-step agreement); the chat provider this turn resolved bounds the planner's egress.
+   * Only FRESH read selections are shadowed (CA review): a turn that answered an open question (`nlPending`) and an A6
+   * action decision (an action entry executed or asked about) are skipped, so the agreement compares like with like.
+   */
+  private queueAgentShadow(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    entries: readonly NlCatalogEntry[],
+    decision: NlSelectionDecision,
+    chat: { readonly id: string; readonly locality: AiExecutionLocality } | undefined,
+    route: NlSelectionRoute,
+    nlPending: PendingQuestion | null | undefined,
+  ): void {
+    const agent = this.deps.agentRuns;
+    if (agent === undefined || (decision.kind !== 'execute' && decision.kind !== 'ask' && decision.kind !== 'none')) return;
+    if (nlPending !== undefined && nlPending !== null) return;
+    if (decision.kind === 'execute' && (decision.action !== undefined || isNlActionEntryId(decision.command.entryId))) return;
+    if (decision.kind === 'ask' && decision.entryId !== undefined && isNlActionEntryId(decision.entryId)) return;
+    const direct = isDirectConversation(message.context);
+    if (!agent.shadowAdmits(actor, direct)) return;
+    const now = this.clock();
+    const last = readLastSelection(session, actor.id, now);
+    const live =
+      decision.kind === 'execute'
+        ? { kind: 'execute' as const, source: route, entryId: decision.command.entryId, args: decision.command.args }
+        : { kind: decision.kind, source: route };
+    this.agentAfterReply.set(message, () =>
+      agent.runShadow(
+        {
+          text: message.text,
+          attachmentCount: message.attachments?.length ?? 0,
+          ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
+          actor,
+          now,
+          entries,
+          ...(last !== undefined ? { previous: { entryId: last.entryId, args: last.args } } : {}),
+          direct,
+          live,
+        },
+        async () => chat,
+      ),
+    );
+  }
+
+  /** ADR-0121 S2: start the queued agent job on the next macrotask, after `handle` has resolved; never throws. */
+  private startAgentAfterReply(message: InboundMessage): void {
+    const run = this.agentAfterReply.get(message);
+    if (run === undefined) return;
+    this.agentAfterReply.delete(message);
+    this.lastAgentAfterReplyRun = new Promise<void>((resolve) => {
+      setImmediate(() => {
+        run()
+          .catch((error: unknown) => {
+            try {
+              this.deps.logger.warn('agent shadow after-reply failed', { errorName: error instanceof Error ? error.name : typeof error });
+            } catch {
+              // best-effort
+            }
+          })
+          .finally(resolve);
+      });
+    });
+  }
+
   /** Start the queued after-reply work on the next macrotask, after `handle` has resolved; never throws. */
   private startAfterReply(message: InboundMessage): void {
+    this.startAgentAfterReply(message);
     const run = this.nlAfterReply.get(message);
     if (run === undefined) return;
     this.nlAfterReply.delete(message);
@@ -3866,6 +3958,8 @@ export class ConversationRuntime {
       entries,
       route,
     });
+    // ADR-0121 S2 shadow: a DM turn that reached selection queues one background planner job for after the reply.
+    if (this.deps.agentRuns !== undefined && this.deps.agentRuns.mode === 'shadow') this.queueAgentShadow(message, session, actor, entries, decision, chat, route, nlPending);
     // A6-D6: the honest-chat fact names the action families only while they act (shadow keeps today's fact).
     const factEntries = this.deps.nlSelection?.actionsActing?.(actor) === true ? entries : entries.filter((entry) => entry.risk === 'READ');
     const honest = nl.mode === 'active' && factEntries.length > 0 ? { entries: factEntries } : undefined;
@@ -9526,6 +9620,28 @@ export class ConversationRuntime {
     if (wanted === undefined) return reply;
     const language = languageOf(text);
     return reply === renderActionSwitchReply(wanted, language) ? `${reply}\n${renderSurfaceSwitchSuffix(wanted, language)}` : reply;
+  }
+
+  /**
+   * ADR-0121 S2: while the agent mode is not `off`, the A6 switch reply (saved) also says the agent followed: the same
+   * record stops and resumes both. `withSuffix` is the reply after the D4.6 channel-grants suffix.
+   */
+  private withAgentSwitchSuffix(text: string, saved: string, withSuffix: string): string {
+    const agent = this.deps.agentRuns;
+    if (agent === undefined || agent.mode === 'off') return withSuffix;
+    const wanted = parseActionSwitchPhrase(text);
+    if (wanted === undefined || saved !== renderActionSwitchReply(wanted, languageOf(text))) return withSuffix;
+    const suffix = agent.switchSuffix(text);
+    return suffix === undefined ? withSuffix : `${withSuffix}\n${suffix}`;
+  }
+
+  /** ADR-0121 S2 / D4.6: the agent's own switch reply (saved) also says the channel grants followed, while they are enforced. */
+  private withAgentSurfaceSuffix(text: string, reply: string): string {
+    if (this.surfaceGate()?.enforced !== true) return reply;
+    const wanted = parseActionSwitchPhrase(text);
+    if (wanted === undefined) return reply;
+    const language = languageOf(text);
+    return reply === renderAgentSwitchReply(wanted, language) ? `${reply}\n${renderSurfaceSwitchSuffix(wanted, language)}` : reply;
   }
 
   private responded(session: Session, reply: OutboundMessage, workFacts?: TurnWorkFacts): TurnResult {

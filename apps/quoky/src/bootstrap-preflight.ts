@@ -136,6 +136,11 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.CHANNEL_GRANTS_SEED_CHANNEL_NOT_ALLOWED]: 'Every QUOKY_CHANNEL_GRANTS_SEED channel must also be listed in QUOKY_DISCORD_CHANNEL_IDS.',
   [QuokyConfigErrorCode.CHANNEL_GRANTS_SEED_GUILD_MISMATCH]: 'Every QUOKY_CHANNEL_GRANTS_SEED guild id must equal DISCORD_GUILD_ID (which must be set).',
   [QuokyConfigErrorCode.CHANNEL_GRANTS_SEED_TOO_MANY_CHANNELS]: 'QUOKY_CHANNEL_GRANTS_SEED may name at most 16 channels.',
+  // ADR-0121 S2 bounded read agent. Names and shapes only, never a value.
+  [QuokyConfigErrorCode.AGENT_MODE_INVALID]: 'QUOKY_AGENT_MODE must be unset (off), "off", or "shadow" (exactly, lowercase).',
+  [QuokyConfigErrorCode.AGENT_MODE_ACTIVE_NOT_RELEASED]:
+    'QUOKY_AGENT_MODE=active is not released yet (ADR-0121 D11 gates); use "shadow" or "off".',
+  [QuokyConfigErrorCode.AGENT_MODE_REQUIRES_NL_ACTIVE]: 'QUOKY_AGENT_MODE=shadow needs QUOKY_NL_INTENT_MODE=active.',
   // ADR-0121 S0 egress guard and traffic ledger. Names and shapes only, never a value.
   [QuokyConfigErrorCode.EGRESS_GUARD_INVALID]:
     'QUOKY_EGRESS_GUARD must be unset (observe), "off", "observe", or "enforce" (exactly, lowercase).',

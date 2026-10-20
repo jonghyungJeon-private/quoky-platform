@@ -37,3 +37,5 @@ export * from './reminder';
 // Personal v3 (ADR-0107, LRN-1): the owner-curated learning store.
 export * from './learning';
 export * from './action-write-condition';
+// ADR-0121 D4 (S2 P1): the information-flow label of a bounded agent run.
+export * from './flow-label';

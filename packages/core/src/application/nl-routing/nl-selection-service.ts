@@ -81,6 +81,7 @@ import {
 import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput } from './selection-input';
 import { nlSelectionParseFailure, parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { nlSelectionMeaning } from './selection-meaning';
+import { nlSameEgress as sameEgress } from './selection-egress';
 import { NL_ACTION_PROMPT_VERSION, NL_ACTION_R2_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
 import { nlFrameIsCopularReference, nlIsRequestForm, nlRequestsSomething } from './request-shape';
@@ -2347,17 +2348,6 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
 function sortedArgs(args: NlArgs): string {
   return JSON.stringify(Object.entries(args).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
-
-function sameEgress(
-  selector: Pick<AiProvider, 'id' | 'family' | 'executionLocality'>,
-  chatProviderId: string,
-  chatProviderLocality: AiExecutionLocality | undefined,
-): 'same' | 'chat-provider-differs' | 'chat-locality-differs' {
-  if ((selector.family ?? selector.id) !== chatProviderId) return 'chat-provider-differs';
-  if (executionLocalityOf(selector) !== (chatProviderLocality ?? 'REMOTE')) return 'chat-locality-differs';
-  return 'same';
-}
-
 
 /** Whether the owner's own words name `value` of `key` (one of its grounding words, case- and spacing-insensitive). */
 function isAmbiguityValueGrounded(key: NlAmbiguityKey, value: string, groundingText: string): boolean {

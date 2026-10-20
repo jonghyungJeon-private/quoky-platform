@@ -5,6 +5,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 S2 P1: the bounded read agent's foundation (2026-10-20)
+
+- **Added (Core, `application/agent/`).**
+  - `FlowLabel` (domain) with its most-restrictive join.
+  - The v2 plan schema: the ADR-0120 selection form as a one-step plan, or 1–6 steps of reads, source-bound references
+    and closed summaries, at most 2 KB.
+  - The deterministic plan validator, covering:
+    - DM only, READ only, offered, and the step mix;
+    - `help.topic`, `brief.today` and A6 entries only in one-step plans;
+    - ADR-0120 D4 on each step, and symbolic dates only;
+    - references only to an earlier read, of the same source and origin, ≤ 10 per reference and ≤ 10 per run.
+  - The flow policy: M1 takes only `TRUSTED` / `STRUCTURE` input, plus a canary check on the planner prompt.
+  - The planner prompt `agent-plan.v1`: the read prompt `nl-select.v61` plus the steps form, a plan rule and four generic
+    examples. It is RAG-0 clean and pinned by sha256.
+  - `AgentRunService` (`off` / `shadow`).
+- **Added (`QUOKY_AGENT_MODE`, default `off`).**
+  - `off`: byte-identical. The runtime reads only the mode; tested over the 874-case nl-intent corpus through the
+    production `AppModule`.
+  - `shadow` needs `QUOKY_NL_INTENT_MODE=active`. After the reply of an owner DM turn whose selection decided, it makes one
+    background planner call:
+    - same provider family and locality, the credential guard, the canary check;
+    - ≤ 1 in flight, ≤ 30/h and ≤ 150/day, inside the selection bound;
+    - AbortSignal and shutdown abort;
+    - 0 connector reads and 0 M2 calls;
+    - one content-free `agent_run.shadow` line.
+  - `active` fails startup (`AGENT_MODE_ACTIVE_NOT_RELEASED`) until the D11 gates pass.
+- **Changed.** While the agent mode is not `off`, the owner's `에이전트 중지` / `에이전트 재개` also stop and resume the agent
+  (the same `quoky.actionSwitch` record as A6), and are recognized even with A6 actions off. The ops UI gains a read-only
+  agent panel (mode and switch). `ConversationRuntimeDeps` baseline 37 → 38 (`agentRuns?`).
+
 ## Unreleased — A6 live test 4 gaps (2026-10-19)
 
 - **Changed (read prompt `nl-select.v62`, A6 `nl-select.v60`, R2 `nl-select.v61`; v61/v59/v60 and v60/v58/v59 gated and superseded).** Rule 3's other-app sentence names a device as well, and a Quoky feature with the same name does not make a how-to a Quoky question (neg-010, neg-012). The read-regression scorer now scores Core's final outcome: a READ selection on a past-tense statement or a message that is not a request (`nlReadNotRequest`: a quoted request only talked about, a reason-clause feeling) is `none`, as the live path and the intent scorer already decide (neg-051). A how-to about doing something inside another app is none even when Quoky can read it (neg-010, neg-014). A message whose main predicate is the owner's feeling or state and that asks for nothing is none even when it names a source (neg-037); an ask to be told how to use a Quoky feature or which command it has is help.topic, and rule 8's help.topic lines are one consistent decision (learn a Quoky feature -> help.topic; other software or a quoted phrase -> none; an imperative action or colon label -> none or that action). Generic examples only (RAG-0 clean).
