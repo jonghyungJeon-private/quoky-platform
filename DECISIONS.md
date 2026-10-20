@@ -27706,3 +27706,113 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   grammar. Rule 3's other-app sentence instead names a device as well, a "<device> <setting> 어떻게 …" form, and that a
   Quoky feature with the same name (a search, a notification, a schedule) does not make it a Quoky question. No example
   changes (RAG-0 baseline unchanged); the rest is variance.
+
+
+### ADR-0121 S2 implementation note — P1: the foundation, `off` / `shadow` and the kill switch (2026-10-20, branch `claude/v5-s2-p1`)
+
+- **Authority.** The owner approved the S2 plan (`eval-archive/s2-plan-20261020.md`) with all 13 recommended defaults
+  (Q1–Q13) on 2026-10-20. The ratification record (decision 6) authorizes the S2 implementation, `shadow` for at least
+  7 days, and `active` only after the D11 gates. This note covers phase P1 only: no read, no M2, no `active`. Nothing on
+  the live service changes: `QUOKY_AGENT_MODE` defaults to `off`, and `shadow` needs the owner's Strict yes (an
+  `.env.local` edit plus a restart, then a live kill-switch check in the DM). That yes starts the 7-day shadow clock.
+- **Deps baseline 37 → 38 (`agentRuns?`).** ADR-0121 D12 assumed 36 → 37, but ADR-0122 took 37 first (`surfaceGrants`).
+  `ConversationRuntimeDeps.agentRuns?` therefore makes the ADR-0032 M3 baseline **38** (the offline Stage 2A
+  `runtimeProviderRouting` seam is still not counted). `agentRuns` is always composed (`features/agent.providers.ts`);
+  absent or `off`, the runtime reads `agentRuns.mode` and nothing else. Pinned by `agent-boundary.test.ts` and the
+  personal-v2 and v3 acceptance tests. No new port, no new DI token in Core, no migration.
+- **The kill switch reuses the A6 Actor switch (D7 allows this by note).** D7 asks for a persisted flag that the Class A
+  phrases `에이전트 중지` / `에이전트 재개` flip without a restart. The existing `Actor.metadata['quoky.actionSwitch']`
+  (A6-D3) is that flag, so one switch stops both the A6 actions and the agent. The phrase is now also recognized while
+  `QUOKY_AGENT_MODE` is not `off`, in the owner DM, in every state:
+  - with A6 actions on, the A6 handler answers as before and, while the agent mode is not `off`, adds one line
+    ("다단계 에이전트도 함께 멈췄어요." / "… 다시 켰어요.");
+  - with A6 actions off, `AgentRunService.handleSwitchPhrase` answers ("다단계 에이전트를 멈췄어요. …" / "다단계 에이전트를 다시
+    켰어요.") and saves the same record through the same metadata lock. While the channel grants are enforced, the D4.6
+    suffix follows, as it does for the A6 reply;
+  - with the agent `off` and A6 actions off, the text routes exactly as before.
+
+  The switch is checked twice: before a shadow job is scheduled (the turn's actor snapshot) and again when the job starts
+  (the live actor, re-read). A stop between the reply and the job start therefore wins. The ops UI shows the agent mode
+  and the switch state in a read-only "에이전트" panel, with no action and no link.
+- **The shadow mechanism (Q1).** In `shadow` the runtime queues one background planner job after the reply of an owner DM
+  turn that reached selection, that is, a turn whose live selection decided `execute`, `ask` or `none`. Turns that were
+  skipped or unavailable are not queued, and neither are channel turns. The job starts on the next macrotask after
+  `handle` resolved, in its own slot beside the S1 `c-shadow` slot. Its bounds:
+  - at most 1 job in flight (others are logged `dropped` with reason `in-flight`);
+  - at most 30 per rolling hour and 150 per rolling day per actor (D7 per-actor caps; a shadow plan counts as a run);
+  - the whole job, including the actor re-read and the provider resolution, inside the selection bound
+    (`QUOKY_NL_INTENT_TIMEOUT_MS`);
+  - an AbortSignal, aborted by the bound and by `stopBackground()` (called in the `main.ts` shutdown next to the S1 one).
+
+  The job applies the D3 preparation (quoted, fenced and attached material removed), the pre-egress credential guard, the
+  ADR-0120 D6/D8 rule (the planner goes only to the provider family and locality this turn's chat would reach, through the
+  exported `nlSameEgress`; no copy of the rule) and the D4 canary check (below). It then makes one `INTENT_SELECTION` call
+  with prompt `agent-plan.v1`, parses the v2 output, validates it, and logs one content-free `agent_run.shadow` line.
+  That line holds `outcome`, `mode`, `promptVersion`, `steps`, `form`, `entries` (closed ids or `summarize:<schema>`; any
+  model-made id is logged as `unknown`), `argKinds` (catalog arg kinds plus `ref`), `ambiguity`, `validator` (`ok` or the
+  closed reason), `failedStep` and `stepReason`, `agree` and `agreeEntry` for one-step plans (S1 W3 meaning), and
+  `latencyMs`. **Zero connector reads and zero M2 calls**: `AgentRunServiceDeps` holds the router, the actor repository
+  (the switch), the logger and configuration values, and nothing else. Traffic delta: at most one extra `claude -p` spawn
+  per DM selection turn, at most 30 an hour (plan §5).
+- **The code-level release gate.** `QUOKY_AGENT_MODE=active` is refused at startup with `AGENT_MODE_ACTIVE_NOT_RELEASED`.
+  `config.ts` refuses it first, and the `AgentRunService` constructor refuses it again. P5 removes the gate after the D11
+  gates pass. The other configuration errors are `AGENT_MODE_INVALID` (exact values only) and
+  `AGENT_MODE_REQUIRES_NL_ACTIVE` (`shadow` needs `QUOKY_NL_INTENT_MODE=active`; the plan's §2 row).
+- **What was built (Core, `packages/core/src/application/agent/`, profile id `quoky.read-agent`).**
+  - `domain/flow-label.ts`: `FlowLabel {trust, egress, scope, sources}`, the join to the most restrictive value, and the
+    fixed labels of the owner's text, the catalog, the previous selection and quoted material.
+  - `plan-schema.ts`: the v2 output, an extension of the ADR-0120 output. The selection form is a one-step plan (or
+    `none`). The steps form is `{"steps": [...], "ambiguity"}` with 1–6 steps. A read step is `{entryId, args?, ref?}`, and
+    a ref is `{step, field, take}`. A summary step is `{summarize: [steps], schema}`. Closed JSON, at most 2 KB.
+  - `plan-validator.ts`: the complete static rules, which are DM only; the step mix (≤ 4 reads, ≤ 3 summaries, at least one
+    read; `help.topic`, `brief.today` and every A6 entry only in a one-step plan); READ only and offered; ADR-0120 D4 per
+    step (`validateSelection`, unchanged); dates only symbolic; references only to an earlier read, source-bound, the
+    source's own id field, never a date field, ≤ 10 per reference and ≤ 10 per run; summaries with a closed schema over
+    earlier reads. Every argument carries its provenance (`literal` with the owner-text label, or `reference` with the
+    step, entry and origin).
+  - `flow-policy.ts`: the M1 rule (only `TRUSTED` / `STRUCTURE` parts) and the canary check (no line of the turn's quoted,
+    fenced or platform-quoted material in the planner prompt, unless the owner's own words say it too); the source and
+    origin table of the READ entries; the output label of each source.
+  - `plan-prompt.ts`: `agent-plan.v1`, the read prompt `nl-select.v61` over the offered READ entries with four fixed edits
+    (the intro, the steps form, rule 8 on plans, four generic plan examples). A one-step plan is therefore exactly
+    today's selection. The prompt is pinned by sha256, and the plan examples pass the RAG-0 contamination lint against
+    the D12 gold corpora (the first draft contained the bare gold words "캘린더", "깃허브" and "드라이브" and was
+    rewritten).
+  - `agent-run-service.ts`: the modes `off` and `shadow`, the bounded shadow job and the switch phrase.
+- **Decisions the plan did not spell out (agent's choices, for review).**
+  1. The v2 output keeps the selection form as a valid one-step plan, so the gated read examples stay correct outputs.
+     The steps form is new.
+  2. "Same source entry and same origin" (D2) is read as the same *source and origin*: `jira.release` → `jira.issues`
+     passes, because both are on the configured Jira site and project `issueKeys`. Each source has one closed id field.
+     The to-do, reminder, brief and help entries have none, so a reference from or to them is refused.
+  3. "Dates only from symbolic time" is checked as: every absolute date in a `range` value must have its month and day
+     numbers (and any written year) in the owner's own words or in the previous selection. Otherwise it is refused as
+     `date-ungrounded`. A reference field that names a date is refused as `ref-date`.
+  4. `agent-plan.v1` does not teach references. In P1 the planner never sees an id, so nothing could ground one. The
+     schema and the validator carry them for P3.
+  5. The summary schemas are the closed set `digest.v1` and `meeting-digest.v1`; P3 binds their shapes.
+  6. The shadow job runs only when the live selection decided (`execute`, `ask` or `none`). One-step agreement is: `none`
+     against `none`, `clarify` against `ask`, and entry plus meaning against `execute`.
+  7. The `AgentProfile` registration of `quoky.read-agent` (ADR-0079) waits for P3, when the runtime first executes.
+     P1 only fixes the id.
+- **Tests (targeted, offline; no model call).**
+  - `agent/plan-validator.test.ts` (39): every rule, the 11th value per reference and per run, the cross-source references
+    (mail, calendar, Drive and Slack ids into Jira; Jira ids into Confluence), and a date taken from content.
+  - `agent/agent-run-service.test.ts` (13): the release gate; `off` doing nothing; one `INTENT_SELECTION` call and no
+    SUMMARIZATION; the agreement; refused and malformed plans logged without model content; the egress and credential
+    rules; DM only; the in-flight drop, the hourly and daily caps, the bound, `stopBackground()`; the kill switch stopping
+    and resuming without a restart; a no-content scan of every log line.
+  - `agent/plan-prompt.test.ts` (5): the edits, the examples valid under the validator, the RAG-0 lint, the sha256 pin.
+  - `agent/flow-policy.test.ts` (6): the label join, the M1 rule, the canaries.
+  - `agent/agent-boundary.test.ts` (5): the import scan (no CommandRunner, ToolProvider, writer, reader, memory or
+    learning writer, sink, storage or network module, and no fetch, spawn or exec) and deps 38.
+  - `apps/quoky/src/agent/agent-config.test.ts` (11): the exact values, `active` refused, `shadow` needing NL `active`.
+  - `apps/quoky/src/agent/agent-shadow.app.test.ts` (6): the production `AppModule` with recording, throwing connectors
+    and readers. Shadow makes 0 reads and 0 M2 calls; it never runs in a channel; the kill switch works live; `off` is
+    byte-identical over the whole `nl-intent.v1.json` corpus (874 golden selector answers: the same replies, provider
+    requests and reads as a runtime without the dep, with only `mode` ever read; the few reminder phrases whose own reply
+    changes between two runs without the agent are listed and skipped).
+  - The ops UI agent panel, in `build-snapshot.test.ts` (3).
+- **Not done here (Strict / owner).** The `.env.local` change to `shadow`, the restart, the live kill-switch check, the
+  7-day shadow clock, deploy. Reviews before merge: the Chief Architect (Core boundary, deps 38, runtime dispatch),
+  Codex, `/security-review`.
