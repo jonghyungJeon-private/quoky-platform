@@ -101,4 +101,4 @@ describe('agent-plan.v2 prompt', () => {
   });
 });
 
-const PINNED_SHA256 = '09406c35e7eb2fcf3d93004b8ff6c4cf2e463aafff3f62269c5707356e0918d0';
+const PINNED_SHA256 = '64bfcd73c35e004c07c00c8855c0d28f6b351839d517d1eb19ceb3486d762a89';

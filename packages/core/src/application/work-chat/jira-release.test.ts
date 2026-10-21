@@ -549,6 +549,76 @@ describe('jira.release arg canonicalization (structural, v39)', () => {
     expect(argsOf(validate('jira.release', { release: '16555' }, '16555 확인'))).toEqual({ release: '16555' });
     expect(argsOf(validate('jira.release', { release: '20261015' }, '이 프로젝트에서도 보여줘 https://example.atlassian.net/projects/WEB', { release: '20261015' }))).toEqual({ release: '20261015' });
   });
+
+  it('drops a project copied only from a pasted link (the link names it); keeps one the owner wrote or the previous selection holds', () => {
+    const link = 'https://example.atlassian.net/projects/ZQX9/versions/16555/tab/release-report-all-issues';
+    expect(argsOf(validate('jira.release', { project: 'ZQX9', release: '16555' }, `이 릴리스 이슈 정리해줘 ${link}`))).toEqual({});
+    expect(argsOf(validate('jira.release', { project: 'zqx9' }, `확인 ${link}`))).toEqual({});
+    expect(argsOf(validate('jira.release', { project: 'ZQX9' }, `ZQX9 이거 확인 ${link}`))).toEqual({ project: 'ZQX9' });
+    expect(argsOf(validate('jira.release', { project: 'ZQX9', release: '20261015' }, `20261015 확인 ${link}`, { project: 'ZQX9' }))).toEqual({ project: 'ZQX9', release: '20261015' });
+    // No link: the rule never fires (an ungrounded project is still refused by grounding).
+    expect(argsOf(validate('jira.release', { project: 'ZQX9' }, 'ZQX9 릴리스 목록'))).toEqual({ project: 'ZQX9' });
+  });
+});
+
+describe('lookupJiraRelease: the project words with the release words name one project (no such release)', () => {
+  const only26: ConnectorItem[] = [{ id: 'OP26', title: '차란차 운영 2026' }, { id: 'WEB', title: '웹 개발' }];
+  const lookup = async (command: Partial<ReleaseLookupCommand>, projects: ConnectorItem[], options: { truncated?: boolean; inChannel?: boolean; releases?: ConnectorItem[] } = {}) => {
+    const queries: ConnectorQuery[] = [];
+    const provider: ConnectorProvider = {
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) => {
+        queries.push(query);
+        if (query.query === 'containers') return { source: 'jira', items: projects, ...(options.truncated ? { truncated: true } : {}) };
+        if (query.query === 'releases') return { source: 'jira', items: options.releases ?? RELEASES[String(query.params?.container)] ?? [] };
+        return { source: 'jira', items: ISSUES };
+      },
+    };
+    const result = await lookupJiraRelease({ connector: provider, command: { scope: 'all', links: [], ...command }, siteHost: SITE, identity: 'acc-1', ...(options.inChannel ? { inChannel: true } : {}) });
+    return { text: result.kind === 'body' ? plainTextOf(result.body) : result.reason, queries };
+  };
+
+  it('one matching project: "차란차 운영" + "2026" is the release list of 차란차 운영 2026 (no extra read)', async () => {
+    const { text, queries } = await lookup({ project: '차란차 운영', release: '2026' }, only26);
+    expect(queries.map((query) => query.query)).toEqual(['containers', 'releases']);
+    expect(text).toContain('**차란차 운영 2026 (OP26) 릴리스**');
+  });
+
+  it('several matching projects: the joined words pick the one they name, after no candidate held the release', async () => {
+    const { text, queries } = await lookup({ project: '차란차 운영', release: '2026' }, PROJECTS);
+    expect(queries.map((query) => query.query)).toEqual(['containers', 'releases', 'releases', 'releases']);
+    expect(queries.at(-1)?.params).toEqual({ container: 'OP26' });
+    expect(text).toContain('**차란차 운영 2026 (OP26) 릴리스**');
+  });
+
+  it('never folds back when the release exists, several releases hold it, the listing is truncated, or the words name no project', async () => {
+    const exists = await lookup({ project: '차란차 운영', release: '2026' }, only26, { releases: [{ id: '1', title: '2026' }] });
+    expect(exists.queries.at(-1)?.params).toMatchObject({ releaseId: '1' });
+    const several = await lookup({ project: '차란차 운영', release: '2026' }, only26, { releases: [{ id: '1', title: '2026 상반기' }, { id: '2', title: '2026 하반기' }] });
+    expect(several.text).toContain('릴리스를 찾지 못했어요');
+    const truncated = await lookup({ project: '차란차 운영', release: '2026' }, only26, { truncated: true });
+    expect(truncated.text).not.toContain('릴리스** (');
+    const other = await lookup({ project: 'OP26', release: '2027' }, only26);
+    expect(other.text).toContain('"2027" 릴리스를 찾지 못했어요');
+  });
+
+  it('only the exact full name counts: "Mobile App" + a missing "9.9.9" is a missing release, never its own release list', async () => {
+    const mobile: ConnectorItem[] = [{ id: 'MOB', title: 'Mobile App' }, { id: 'WEB', title: '웹 개발' }];
+    const dm = await lookup({ project: 'Mobile App', release: '9.9.9' }, mobile, { releases: [{ id: '1', title: '1.0.0' }] });
+    expect(dm.text).toContain('"9.9.9" 릴리스를 찾지 못했어요');
+    expect(dm.text).not.toContain('Mobile App (MOB) 릴리스**');
+    const channel = await lookup({ project: 'Mobile App', release: '9.9.9', scope: 'mine' }, mobile, { releases: [{ id: '1', title: '1.0.0' }], inChannel: true });
+    expect(channel.text).not.toContain('DM에서만');
+    expect(channel.text).toContain('"9.9.9" 릴리스를 찾지 못했어요');
+    // A plain substring of a longer name does not count either ("차란차" + "운영" is not "차란차 운영 2026").
+    expect((await lookup({ project: '차란차', release: '운영' }, only26)).text).not.toContain('릴리스** (');
+  });
+
+  it('in a channel the folded-back list is refused like any list', async () => {
+    const { text, queries } = await lookup({ project: '차란차 운영', release: '2026', scope: 'mine' }, only26, { inChannel: true });
+    expect(text).toContain('DM에서만');
+    expect(queries.some((query) => query.query === 'release-items')).toBe(false);
+  });
 });
 
 describe('lookupJiraRelease: a key repeated inside the release words', () => {

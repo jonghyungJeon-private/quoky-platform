@@ -21,6 +21,18 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   non-gating (exit 4). The plan validator refuses the A7 not-a-request cases (`veto-*`) and grounds dates from English
   month names and same-month spans. The report keeps only closed values (summary schema and error-name allowlists).
 
+## Unreleased — jira.release selection accuracy (read `nl-select.v63`, A6 `nl-select.v61`, R2 `nl-select.v62`) (2026-10-20)
+
+- **Changed (prompt; v62/v60/v61 superseded, not yet gated).** `jira.release` texts only: the entry description says a
+  release word with no release, project or link named is a `jira.issues` keyword for the owner's own issues; the project
+  arg fits the 320-character bound again (its "Omit …" tail was cut), names a key just before a version token as the
+  project and is omitted for a pasted link; the scope arg says words for every item are not every assignee; two generic
+  examples (a bare key before a version, a count follow-up on a release). RAG-0 clean.
+- **Changed (Core).** `normalizeJiraReleaseArgs` drops a `project` copied only from a pasted release link (a8-05, a8-06).
+  The release lookup shows a project's release list when the named release does not exist and the project words with
+  the release words spell exactly the full name of one visible project ("차란차 운영" + "2026"); no containment, no guess.
+- **Owner review.** Gold `a8-12` reads the same as `a8-22` without the project list (see DECISIONS).
+
 ## Unreleased — ADR-0121 S2 P1: the bounded read agent's foundation (2026-10-20)
 
 - **Added (Core, `application/agent/`).**

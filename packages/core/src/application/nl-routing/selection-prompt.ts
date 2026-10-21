@@ -118,14 +118,23 @@ import { nlModeVocabularyText } from './action-entries';
  * No example changes (RAG-0 unchanged). A Core grounding check was measured and rejected: the closed help-topic index
  * grounds only 33 of 57 help.topic golds, and the catalog topic vocabulary grounds both negatives (슬랙, 알림).
  * Pinned by `golden/nl-select.v62.prompts.json`.
+ * v63 (read) / v61 (A6) (the v62 / v60 gates: `jira.release` 22-26 of 28; a8-08 kept the key inside `release`, a8-16 lost
+ * `count` on a follow-up, jira-025 went to `jira.release` on a bare release word, a8-19 asked in the A6 runs (likely an
+ * ungrounded `scope: all` from "all issues"); the project arg description was cut at the 320-character bound) = v62 / v60
+ * with the `jira.release` texts only: the entry description says a release word with no release, project or link named
+ * is a `jira.issues` keyword for the owner's own issues; the project arg fits the bound and says a name or key just before
+ * a version token is the project and to omit it for a pasted link; the scope arg says words for every item are not every
+ * assignee; two generic examples (a bare key before a version; a count follow-up on a release). RAG-0 clean. Core also
+ * drops a project copied only from a pasted release link (`normalizeJiraReleaseArgs`), which is not a prompt change.
+ * Pinned by `golden/nl-select.v63.prompts.json`.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v62';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v63';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v62.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v63.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v60';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v61';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -153,9 +162,10 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v60';
  * the v48 R2 lines on top of v51 (never gated as v50); no R2 line changes. v54 = the v48 R2 lines on top of v53. v56 =
  * the v48 R2 lines on top of v55. v58 = the v48 R2 lines on top of v57. v59 = the v48 R2 lines on top of v58 (the A6
  * prompt; not the read v59). v60 = the v48 R2 lines on top of v59 (the A6 prompt; not the read v60). v61 = the v48 R2
- * lines on top of v60 (the A6 prompt; not the read v61).
+ * lines on top of v60 (the A6 prompt; not the read v61). v62 = the v48 R2 lines on top of v61 (the A6 prompt; not the
+ * read v62).
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v61';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v62';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -277,6 +287,10 @@ const EXAMPLES: readonly PromptExample[] = [
   { text: '결제팀 프로젝트 릴리스 뭐 있어?', output: '{"entryId":"jira.release","args":{"project":"결제팀"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
   { text: 'https://example.atlassian.net/projects/ABC/versions/10001 이거 확인 좀', output: '{"entryId":"jira.release","args":{},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
   { text: '지라 담당자 상관없이 다 보여줘', output: '{"entryId":"jira.release","args":{},"ambiguity":"NEEDS_CLARIFICATION","alternatives":[]}', needs: ['jira.release'] },
+  // v63: a bare project key right before a version token is the project (never part of the release name), and a count
+  // follow-up keeps the previous release args and adds count (rule 6, shown for this entry too).
+  { text: 'PAY 4.1.0에 포함된 티켓 정리해줘', output: '{"entryId":"jira.release","args":{"project":"PAY","release":"4.1.0"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
+  { text: '이슈가 모두 얼마나 되는데?', previous: '{"entryId":"jira.release","args":{"project":"ABC","release":"3.2.0"}}', output: '{"entryId":"jira.release","args":{"project":"ABC","release":"3.2.0","count":true},"ambiguity":"CLEAR","alternatives":[]}', needs: ['jira.release'] },
   { text: '슬랙에 장애 관련 이야기 나온 거 있어?', output: '{"entryId":"slack.search","args":{"keyword":"장애"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['slack.search'] },
   { text: '지라 티켓 하나 새로 만들어줘', output: none, needs: [] },
   { text: '슬랙에서 장애 대응 얘기 나온 거 있나', output: '{"entryId":"slack.search","args":{"keyword":"장애 대응"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['slack.search'] },
