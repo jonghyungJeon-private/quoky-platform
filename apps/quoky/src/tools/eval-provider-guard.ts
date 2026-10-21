@@ -88,9 +88,11 @@ export type CanaryResult = boolean | string;
  * The default canary: one tiny call through the SAME provider client (never counted in the run's outcomes). Resolves true
  * when the provider answers, else the content-free failure reason (limit, auth, outage, timeout).
  */
-export function providerCanary(provider: AiProvider, timeoutMs: number = CANARY_TIMEOUT_MS): () => Promise<CanaryResult> {
+export function providerCanary(provider: AiProvider, timeoutMs: number = CANARY_TIMEOUT_MS, evaluated: Capability = Capability.SUMMARIZATION): () => Promise<CanaryResult> {
   return async () => {
-    const capability = provider.capabilities.find((entry) => entry.capability === Capability.SUMMARIZATION)?.capability ?? provider.capabilities[0]?.capability ?? Capability.SUMMARIZATION;
+    // The canary must probe the capability the run evaluates: the provider routes its model per capability (e.g. the intent
+    // selection model), so another capability would be answered by a different model.
+    const capability = provider.capabilities.find((entry) => entry.capability === evaluated)?.capability ?? provider.capabilities[0]?.capability ?? evaluated;
     try {
       await provider.execute({ capability, prompt: CANARY_PROMPT, timeoutMs });
       return true;

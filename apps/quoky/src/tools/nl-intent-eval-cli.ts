@@ -27,7 +27,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ClaudeCliProvider, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
-import type { AiProvider } from '@quoky/core';
+import { Capability, type AiProvider } from '@quoky/core';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 import {
   EXIT_INVALID_PROVIDER,
@@ -100,7 +100,7 @@ export function guardRunProvider(
   return guardEvalProvider(provider, {
     concurrency: run.concurrency,
     maxCalls: run.maxCalls,
-    canary: run.canary !== undefined ? () => (run.canary as (provider: AiProvider) => Promise<CanaryResult>)(provider) : providerCanary(provider),
+    canary: run.canary !== undefined ? () => (run.canary as (provider: AiProvider) => Promise<CanaryResult>)(provider) : providerCanary(provider, undefined, Capability.INTENT_SELECTION),
     onTrip: (trip) => stderr(formatTrip(trip)),
   });
 }

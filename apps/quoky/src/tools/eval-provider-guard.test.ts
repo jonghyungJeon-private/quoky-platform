@@ -348,6 +348,21 @@ describe('guard robustness (CA review W5 / W6)', () => {
     expect(seen[0]?.prompt.length).toBeLessThan(80);
     expect(await providerCanary(scripted(outageFrom(1)))()).toBe('provider-execution_failed');
   });
+
+  it('providerCanary probes the capability the run evaluates', async () => {
+    const seen: AiRequest[] = [];
+    const both: AiProvider = {
+      ...scripted(() => undefined),
+      capabilities: [
+        { capability: Capability.SUMMARIZATION, priority: 1 },
+        { capability: Capability.INTENT_SELECTION, priority: 1 },
+      ],
+      execute: async (req) => (seen.push(req), { text: 'ok' }),
+    };
+    await providerCanary(both, undefined, Capability.INTENT_SELECTION)();
+    await providerCanary(both)();
+    expect(seen.map((req) => req.capability)).toEqual([Capability.INTENT_SELECTION, Capability.SUMMARIZATION]);
+  });
 });
 
 describe('C1: an outage never hides a hard failure already observed (FAILED, exit 1)', () => {

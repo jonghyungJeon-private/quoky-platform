@@ -26,6 +26,8 @@
 # active usage block is reported), GATES_RESET_MARGIN_SEC (60, slack after a block end), GATES_NO_RETRY,
 # QUOKY_EVAL_ARCHIVE (archive root).
 #
+# Exit status of `run` (foreground; start's tmux window shows it): 0 all modes PASSED/NON-GATING, 1 any FAILED, 2 any
+# blocked/usage/skipped mode or a build failure, 5 only INVALID remained. Precedence 1 > 2 > 5.
 # Exit statuses of the eval CLIs: 0 PASSED, 1 FAILED, 2 USAGE, 3 BLOCKED, 4 NON-GATING, 5 INVALID.
 set -u
 
@@ -175,7 +177,7 @@ run_one() {
 
 cmd_run() {
   local W=$1 N=$2; shift 2
-  local MODES="${*:-$DEFAULT_MODES}" m rc retried=0 stopped="" reason cfail nodev
+  local MODES="${*:-$DEFAULT_MODES}" m rc retried=0 stopped="" reason cfail nodev n_failed=0 n_invalid=0 n_other=0 final
   for m in $MODES; do
     case " $ALL_MODES " in *" $m "*) ;; *) echo "unknown mode: $m (one of: $ALL_MODES)" >&2; exit 2 ;; esac
   done
@@ -198,7 +200,7 @@ cmd_run() {
     log "build failed (see build.log)"
     { echo "BUILD_FAIL"; date; } > "$A/DONE"
     rm -f "$A/RUNNING"
-    exit 1
+    exit 2
   fi
   for m in $MODES; do
     wait_for_usage
@@ -230,6 +232,12 @@ cmd_run() {
     esac
     echo "$m exit=$rc status=$(status_word "$rc")" >> "$A/modes.txt"
     echo "$m exit=$rc" >> "$A/digests.txt"
+    case "$rc" in
+      0|4) ;;
+      1) n_failed=$((n_failed + 1)) ;;
+      "$EXIT_INVALID") n_invalid=$((n_invalid + 1)) ;;
+      *) n_other=$((n_other + 1)) ;;
+    esac
     if [ "$rc" -eq "$EXIT_INVALID" ]; then
       stopped="stopped after $m: INVALID (provider unavailable: ${reason:-unknown})$([ "$retried" -eq 1 ] && echo ' after the one automatic retry for this mode'); remaining modes not run"
       log "$stopped"
@@ -238,7 +246,14 @@ cmd_run() {
   done
   { cat "$A/modes.txt"; if [ -n "$stopped" ]; then echo "$stopped"; fi; date; } > "$A/DONE"
   rm -f "$A/RUNNING"
-  log "gates $N: done"
+  # Overall exit: 0 every mode PASSED (or NON-GATING); 1 any FAILED; else 2 any mode blocked / usage error / skipped (no plan
+  # digest) / not run; else 5 when only INVALID remained (a mode left unrun by the INVALID stop does not count). Build failure: 2.
+  if [ "$n_failed" -gt 0 ]; then final=1
+  elif [ "$n_other" -gt 0 ]; then final=2
+  elif [ "$n_invalid" -gt 0 ]; then final=$EXIT_INVALID
+  else final=0; fi
+  log "gates $N: done (exit $final: failed $n_failed, blocked/skipped $n_other, invalid $n_invalid)"
+  return "$final"
 }
 
 cmd_start() {

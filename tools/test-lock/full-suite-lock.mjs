@@ -113,11 +113,25 @@ export function isStale(lockDir, now = Date.now(), env = {}) {
       return true;
     }
   }
-  const bootTimeMs = env.bootTimeMs ?? Date.now() - uptime() * 1000;
+  let bootTimeMs = env.bootTimeMs;
+  if (bootTimeMs === undefined) {
+    try {
+      bootTimeMs = Date.now() - (env.uptime ?? uptime)() * 1000;
+    } catch {
+      // A restricted sandbox refuses the probe (`uv_uptime returned EPERM`). Without a boot time a recorded owner cannot be
+      // judged: conservatively treat the lock as held (callers wait, or exit 75 with QUOKY_TEST_NO_WAIT=1).
+      return false;
+    }
+  }
   const startedAt = typeof owner.startedAt === 'string' ? Date.parse(owner.startedAt) : Number.NaN;
   // Recorded before this boot: whatever PID it names now is someone else.
   if (Number.isFinite(startedAt) && startedAt < bootTimeMs) return true;
-  return !holderAlive(owner.pid, 'wrapper', owner, env) && !holderAlive(owner.childPid, 'child', owner, env);
+  try {
+    return !holderAlive(owner.pid, 'wrapper', owner, env) && !holderAlive(owner.childPid, 'child', owner, env);
+  } catch {
+    // A failing `ps` probe: conservatively treat the lock as held.
+    return false;
+  }
 }
 
 /**

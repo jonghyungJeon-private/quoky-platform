@@ -146,6 +146,20 @@ describe('full-suite lock', () => {
     expect(isStale(dir)).toBe(false);
   });
 
+  it('W2b: an unreadable boot time (uptime throws EPERM in a sandbox) or probe failure keeps the lock held', () => {
+    const dir = lockDir();
+    mkdirSync(dir, { recursive: true });
+    // A dead PID with an old start would otherwise be stale; with no boot time it must stay held.
+    writeFileSync(join(dir, 'owner'), JSON.stringify({ pid: 2_147_483_000, startedAt: new Date(Date.now() - 3_600_000).toISOString() }));
+    const eperm = () => {
+      throw new Error('uv_uptime returned EPERM (operation not permitted)');
+    };
+    expect(isStale(dir, Date.now(), { uptime: eperm })).toBe(false);
+    expect(isStale(dir, Date.now(), { bootTimeMs: Date.now() - 60_000, commandOf: eperm })).toBe(true);
+    writeFileSync(join(dir, 'owner'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+    expect(isStale(dir, Date.now(), { bootTimeMs: Date.now() - 3_600_000, commandOf: eperm })).toBe(false);
+  });
+
   it('W3: a stale takeover renames the lock aside and removes it; a lock replaced in between is put back', () => {
     const dir = lockDir();
     mkdirSync(dir, { recursive: true });
