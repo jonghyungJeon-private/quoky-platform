@@ -559,6 +559,19 @@ describe('jira.release arg canonicalization (structural, v39)', () => {
     // No link: the rule never fires (an ungrounded project is still refused by grounding).
     expect(argsOf(validate('jira.release', { project: 'ZQX9' }, 'ZQX9 릴리스 목록'))).toEqual({ project: 'ZQX9' });
   });
+
+  it('owner decision B (2026-10-22): a project that is only part of one ASCII letters-and-digits token is that whole token', () => {
+    expect(argsOf(validate('jira.release', { project: 'OP', release: '20261015' }, 'OP26 20261015 버전에 뭐 들어갔어?'))).toEqual({ project: 'OP26', release: '20261015' });
+    expect(argsOf(validate('jira.release', { project: 'op' }, 'op26 릴리스 목록'))).toEqual({ project: 'op26' });
+    // A whole token of its own, two holding tokens, a holder that is the release value, non-ASCII or a carried value: as is.
+    expect(argsOf(validate('jira.release', { project: 'OP', release: '20261015' }, 'OP 프로젝트 OP26 20261015'))).toEqual({ project: 'OP', release: '20261015' });
+    expect(argsOf(validate('jira.release', { project: 'OP', release: '1.0' }, 'OP26 OP27 1.0 릴리스'))).toEqual({ project: 'OP', release: '1.0' });
+    expect(argsOf(validate('jira.release', { project: '2026', release: '20261015' }, '20261015 릴리스'))).toEqual({ project: '2026', release: '20261015' });
+    expect(argsOf(validate('jira.release', { project: '차란차' }, '차란차운영 릴리스'))).toEqual({ project: '차란차' });
+    expect(argsOf(validate('jira.release', { project: 'OP', release: '20261016' }, 'OP26 20261016은?', { project: 'OP' }))).toEqual({ project: 'OP', release: '20261016' });
+    // Never into a pasted link.
+    expect(argsOf(validate('jira.release', { project: 'ZQ' }, 'ZQ 확인 https://example.atlassian.net/projects/ZQX9/versions/1'))).toEqual({ project: 'ZQ' });
+  });
 });
 
 describe('lookupJiraRelease: the project words with the release words name one project (no such release)', () => {

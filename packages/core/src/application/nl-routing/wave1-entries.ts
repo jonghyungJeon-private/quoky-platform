@@ -230,10 +230,18 @@ const jiraIssues: NlCatalogEntry = {
  * for a `project` copied only from the link (its key, e.g. `/projects/OP26/…`, case aside): the link names the project. A
  * "<KEY> <version>" release is NOT split here: only the lookup can verify the key against the visible projects
  * (`splitKeyFromRelease`).
+ *
+ * Owner decision B of 2026-10-22 (a pure token-shape rule): a `project` of ASCII letters and digits that is only a part of
+ * one ASCII letters-and-digits token of the owner's prose ("OP" inside "OP26") is that whole token (`extendProjectToken`).
  */
 export function normalizeJiraReleaseArgs(args: Record<string, NlArgValue>, groundingText?: string, previousArgs?: NlArgs): void {
   if (groundingText === undefined) return;
   const text = groundingText.normalize('NFC');
+  const named = args.project;
+  if (typeof named === 'string' && previousArgs?.project !== named) {
+    const extended = extendProjectToken(named, text, typeof args.release === 'string' ? args.release : undefined);
+    if (extended !== undefined) args.project = extended;
+  }
   if (!hasJiraReleaseLink(text)) return;
   const links = (text.match(/https?:\/\/[^\s<>"'`]+/giu) ?? []).map((link) => link.toLowerCase());
   const prose = text.replace(/https?:\/\/[^\s<>"'`]+/giu, ' ').toLowerCase();
@@ -242,6 +250,24 @@ export function normalizeJiraReleaseArgs(args: Record<string, NlArgValue>, groun
   if (typeof release === 'string' && /^\d+$/u.test(release.trim()) && previousArgs?.release !== release.trim() && onlyInLink(release.trim())) delete args.release;
   const project = args.project;
   if (typeof project === 'string' && previousArgs?.project !== project && onlyInLink(project.trim().toLowerCase())) delete args.project;
+}
+
+/**
+ * The whole ASCII letters-and-digits token of the owner's prose (links removed) that a `project` of ASCII letters and
+ * digits is only a part of ("OP" → "OP26"), or `undefined`. Shape only, no word list: the value must not be a whole token
+ * itself, exactly one distinct longer token may hold it (case aside), and that token is not the release value.
+ */
+export function extendProjectToken(project: string, groundingText: string, release?: string): string | undefined {
+  const value = project.trim();
+  if (!/^[A-Za-z0-9]+$/u.test(value)) return undefined;
+  const prose = groundingText.normalize('NFC').replace(/https?:\/\/[^\s<>"'`]+/giu, ' ');
+  const tokens = prose.split(/[^A-Za-z0-9]+/u).filter((token) => token.length > 0);
+  const lower = value.toLowerCase();
+  if (tokens.some((token) => token.toLowerCase() === lower)) return undefined;
+  const holders = [...new Set(tokens.filter((token) => token.length > value.length && token.toLowerCase().includes(lower)))];
+  if (holders.length !== 1) return undefined;
+  const holder = holders[0] as string;
+  return release !== undefined && holder.toLowerCase() === release.trim().toLowerCase() ? undefined : holder;
 }
 
 const jiraRelease: NlCatalogEntry = {
