@@ -133,10 +133,20 @@ describe('AgentRunService — shadow', () => {
     expect(h.calls[0]?.prompt).toContain('You are the request planner of Quoky');
     expect(h.calls[0]?.signal).toBeDefined();
     expect(shadowLines(h)).toEqual([
-      expect.objectContaining({ outcome: 'planned', mode: 'shadow', promptVersion: 'agent-plan.v2', steps: 2, form: 'steps', entries: 'calendar.events,jira.issues', argKinds: 'range;none', validator: 'ok' }),
+      expect.objectContaining({ outcome: 'planned', mode: 'shadow', promptVersion: 'agent-plan.v3', steps: 2, form: 'steps', entries: 'calendar.events,jira.issues', argKinds: 'range;none', validator: 'ok' }),
     ]);
     // A multi-step plan has no one-step agreement.
     expect(shadowLines(h)[0]).not.toHaveProperty('agree');
+  });
+
+  it('an unbounded plan (decision (h)) logs an ask with its closed bound and suggestion, and runs nothing', async () => {
+    const five = JSON.stringify({ steps: ['jira.issues', 'github.items', 'mail.list', 'drive.files', 'todo.list'].map((entryId) => ({ entryId, args: {} })), ambiguity: 'CLEAR' });
+    const h = harness({ script: [five] });
+    await h.service.runShadow(turn(h, { text: '지라 깃허브 메일 드라이브 할 일 전부 보여줘' }), async () => CHAT);
+    expect(h.calls).toHaveLength(1);
+    expect(shadowLines(h)).toEqual([
+      expect.objectContaining({ outcome: 'ask', steps: 5, validator: 'ok', bound: 'reads', suggestion: 'jira.issues,github.items,mail.list,drive.files' }),
+    ]);
   });
 
   it('a one-step plan logs its agreement with the live selection (entry, and meaning)', async () => {

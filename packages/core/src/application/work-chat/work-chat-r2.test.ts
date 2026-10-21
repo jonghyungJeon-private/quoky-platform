@@ -9,6 +9,7 @@ import { renderUntrustedDocumentHistoryNote } from '../untrusted-document-readou
 import type { WorkChatCommand } from './work-chat-command';
 import { WorkChatService, type WorkChatOutcome, type WorkChatServiceDeps, type WorkDesk, type WorkItemRead } from './work-chat-service';
 import { WorkChatTurnHandler } from './work-chat-turn-handler';
+import { renderWorkChatCount } from './work-chat-selection';
 
 const owner: Actor = {
   id: 'owner-1',
@@ -81,6 +82,26 @@ describe('WorkChatService: numbered lists (A6 R2, D1)', () => {
     expect(outcome.text).toMatch(/^1\. \[jira:PROJ-1\] Task 1/m);
     expect(outcome.text).toMatch(/^3\. \[jira:PROJ-3\] Task 3/m);
     expect(outcome.text).not.toContain('- [');
+  });
+
+  it('owner review 2026-10-21 (ap-p067): a count answer carries the full count and shows only the first 5 numbered rows', async () => {
+    const many = new FakeConnector('jira', () => ({ source: 'jira', items: jiraItems(12) }));
+    const outcome = await service([many], { numberedLists: true }).handle(jiraMineList, owner);
+    if (outcome.kind !== 'reply') throw new Error('expected reply');
+    expect(outcome.listed).toEqual({ count: 12, truncated: false, shown: 5 });
+    expect(outcome.listing?.items.map((item) => item.label)).toEqual([1, 2, 3, 4, 5]);
+    expect(outcome.text).toMatch(/^5\. \[jira:PROJ-5\] Task 5/m);
+    expect(outcome.text).not.toContain('Task 6');
+    expect(renderWorkChatCount('jira', outcome.listed as { count: number; truncated: boolean; shown?: number }, 'ko')).toBe('Jira 이슈 12개예요. 처음 5개만 보여드려요.');
+    expect(renderWorkChatCount('jira', outcome.listed as { count: number; truncated: boolean; shown?: number }, 'en')).toBe('12 Jira issues. Showing the first 5.');
+    // Five or fewer: the whole list, no preview note; an explicit "N개만" keeps its own limit.
+    const few = await service([new FakeConnector('jira', () => ({ source: 'jira', items: jiraItems(5) }))], { numberedLists: true }).handle(jiraMineList, owner);
+    if (few.kind !== 'reply') throw new Error('expected reply');
+    expect(few.listed).toEqual({ count: 5, truncated: false });
+    expect(renderWorkChatCount('jira', few.listed as { count: number; truncated: boolean }, 'ko')).toBe('Jira 이슈 5개예요.');
+    const limited = await service([many], { numberedLists: true }).handle({ ...jiraMineList, limit: 8 } as WorkChatCommand, owner);
+    if (limited.kind !== 'reply') throw new Error('expected reply');
+    expect(limited.listing?.items).toHaveLength(8);
   });
 
   it('with summaries off the lookup is the numbered list with a receipt', async () => {

@@ -127,14 +127,18 @@ import { nlModeVocabularyText } from './action-entries';
  * assignee; two generic examples (a bare key before a version; a count follow-up on a release). RAG-0 clean. Core also
  * drops a project copied only from a pasted release link (`normalizeJiraReleaseArgs`), which is not a prompt change.
  * Pinned by `golden/nl-select.v63.prompts.json`.
+ * v64 (read) / v62 (A6) (the owner's review of 2026-10-21: ap-p062 and the relabel of 29 one-step GitHub golds with the
+ * item type) = v63 / v61 with ONE catalog line: `github.items` `kind: pr|issue|all` (PR / pull request / 풀리퀘 vs 이슈 /
+ * issue; omit for both). No rule or example changes (RAG-0 unchanged). Not gated yet: the relabeled golds need the next
+ * D12 read run. Pinned by `golden/nl-select.v64.prompts.json`.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v63';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v64';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v63.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v64.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v61';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v62';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -163,9 +167,9 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v61';
  * the v48 R2 lines on top of v55. v58 = the v48 R2 lines on top of v57. v59 = the v48 R2 lines on top of v58 (the A6
  * prompt; not the read v59). v60 = the v48 R2 lines on top of v59 (the A6 prompt; not the read v60). v61 = the v48 R2
  * lines on top of v60 (the A6 prompt; not the read v61). v62 = the v48 R2 lines on top of v61 (the A6 prompt; not the
- * read v62).
+ * read v62). v63 = the v48 R2 lines on top of v62 (the A6 prompt with the GitHub `kind` catalog line; not the read v63).
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v62';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v63';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {

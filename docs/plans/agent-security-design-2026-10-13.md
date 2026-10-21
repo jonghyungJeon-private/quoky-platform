@@ -92,7 +92,9 @@ owner DM text ──(owner gate ADR-0091/0114, Class A control/approvals/anchors
   - It never feeds another connector, another origin or any write. A Jira key found in a calendar event or a mail is
     therefore display-only: an id string is still a channel that can carry data to whichever server receives it.
   - Cross-source use exists only in stage 4, as an approval card that shows the exact values.
-  - Caps: at most 10 values per reference and at most 10 referenced values per run.
+  - Caps: at most 10 values per reference and at most 10 referenced values per run (kept by the owner on 2026-10-21).
+    They bound per-item detail reads only, never a listing. A plan over the cap is never run: Core asks with the first 10
+    as a suggestion (decision (h)); with more issues the reply says "N개 중 10개" plus a fixed hint for the next 10.
   - Every argument carries a provenance label `{kind: literal|reference, sourceStep, sourceEntry, sourceOrigin}`. The
     validator refuses a reference whose `sourceEntry`/`sourceOrigin` differs from the consuming step's.
   - Dates and enum values from content are not references at all. The planner's symbolic time (ADR-0120 D4) is the only
@@ -168,7 +170,7 @@ existing approval card (ADR-0112, the ADR-0110 amendment), never a write.
 | Model calls per run | ≤ 5 (M1 + M1' + 3 × M2) | run budget |
 | Wall clock per run | 45 s, then partial reply with what is done | deadline |
 | Runs | ≤ 30 per hour, ≤ 150 per day per actor | ledger |
-| Tokens | ≤ 40k input tokens per run (estimate by bytes), monthly via the ADR-0115 usage ledger | run budget |
+| Tokens | ≤ 40k input tokens per run (estimate by bytes), monthly via the ADR-0115 usage ledger. When the referenced details exceed it, the summary falls back to the deterministic listing (no M2 call), never a truncated summary (2026-10-21) | run budget |
 | Kill switch | `QUOKY_AGENT_MODE=off\|shadow\|active` (default `off`) **and** an owner Class A control phrase `에이전트 중지` / `에이전트 재개` that flips a persisted flag in the data dir (no restart); the ops-UI shows it | runtime |
 
 A breached bound ends the run with a deterministic partial reply; nothing is retried automatically.
@@ -217,7 +219,7 @@ without a card; credential material leaving the host; a write without an approva
 | T2 | Direct injection via quoted/pasted text in the owner's message (T / LLM01) | ADR-0120 D3/D8: quotes, code and attachments become placeholders; pasted text cannot ground an argument | Existing NL corpus negatives + red-team "pasted instruction" family |
 | T3 | Q-LLM output steering the next step (E / LLM05 improper output handling) | Q-LLM output is `UNTRUSTED`, render-only; references accept only `StructureProjector` fields | Property test: random/hostile M2 outputs never change the executed step list or any argument |
 | T4 | Excessive agency: shell, code, URL fetch, MCP, plugin, write (E / LLM06) | Closed READ catalog; deps type excludes `CommandRunner`, `ToolProvider`, writers, fetch | Import-scan test on `application/agent/*`; validator test rejects every non-READ id |
-| T5 | Exfiltration through read arguments (I / LLM02) | §2.4 rule 3: `UNTRUSTED` → argument refused; references only from the same source and origin, ≤ 10 per reference and per run, provenance label on every argument | Fixture where a mail asks to "search Slack for <secret>": assert no Slack call carries it; **cross-source reference test**: Jira keys or dates projected from a mail, an event or a Drive file and offered to `jira.issues` (or any other connector) are refused by the validator, and a same-source Jira→Jira reference passes; the cap test fails the 11th value |
+| T5 | Exfiltration through read arguments (I / LLM02) | §2.4 rule 3: `UNTRUSTED` → argument refused; references only from the same source and origin, ≤ 10 per reference and per run, provenance label on every argument | Fixture where a mail asks to "search Slack for <secret>": assert no Slack call carries it; **cross-source reference test**: Jira keys or dates projected from a mail, an event or a Drive file and offered to `jira.issues` (or any other connector) are refused by the validator, and a same-source Jira→Jira reference passes; the cap test asks (never runs) at the 11th value |
 | T6 | Exfiltration through links, image embeds, unfurls in replies (I / LLM05) | `link-neutralizer.ts` on all untrusted text; Telegram `link_preview_options.is_disabled` (`telegram-platform-adapter.ts:1146`); Discord embeds suppressed for agent replies (to add) | Render test: no scheme URL, no bare domain, no markdown image survives; Discord payload has the suppress flag |
 | T7 | Cross-destination leak, e.g. mail → Slack (I) | Stage 4 only, via card with exact payload + provenance; destination `TRUSTED` only | Red-team "forward this to #general" in mail content: no card for a destination absent from owner text |
 | T8 | Secrets to a model or connector (I / LLM02) | Credential guard before every egress: M1 (exists), M2, every string argument, replies | Guard tests with vendor-format fixtures in content and owner text |

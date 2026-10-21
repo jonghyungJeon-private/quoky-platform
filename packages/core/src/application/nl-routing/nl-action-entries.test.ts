@@ -279,8 +279,8 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
   const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } });
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
-    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v63', sha256: '5cd1ac8d321650612bd65f7b511fe53ff015d5b142ec2b07ad749bc7983fc315' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v61', sha256: 'd556155b78ae4361075c55244fa55a672af9849b84b4d084e2191e3478d42c85' });
+    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v64', sha256: '770bcb0186f2887300a721e75a5915aff3a1b85ddda5ead9265e6303a694d190' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v62', sha256: '6bbfa6c74d42c58a1ff3a9b6cf046902972d17c37475dff60a8cf7873fe039aa' });
   });
 });
 
@@ -469,14 +469,14 @@ describe('A6 prompt v53 / v58: the help.topic block as one decision, the label a
 });
 
 describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55 with actions', () => {
-  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v63.prompts.json', import.meta.url), 'utf8')) as {
+  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v64.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
   };
 
-  it('pins nl-select.v63 for every golden input (no `actions`)', () => {
-    expect(golden.version).toBe('nl-select.v63');
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v63');
+  it('pins nl-select.v64 for every golden input (no `actions`)', () => {
+    expect(golden.version).toBe('nl-select.v64');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v64');
     for (const golden_ of golden.cases) {
       const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
       const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
@@ -485,7 +485,7 @@ describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55
   });
 
   it('the A6 prompt (v55) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v61');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v62');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');

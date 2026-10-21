@@ -31,6 +31,7 @@ import {
 } from './external-work-readout';
 import type { ExternalWorkReadout } from './external-work-readout';
 import { lookupJiraRelease } from './jira-release-lookup';
+import { WORK_CHAT_COUNT_PREVIEW_ITEMS } from './work-chat-selection';
 import {
   WORK_CHAT_SEARCH_TEXT_MAX_LENGTH,
   WORK_CHAT_SOURCES,
@@ -95,7 +96,8 @@ export type WorkChatOutcome =
       readonly kind: 'reply';
       readonly text: string;
       readonly content?: MessageContent;
-      readonly listed?: { readonly count: number; readonly truncated: boolean };
+      /** `shown`: a count answer's preview size when it shows fewer rows than `count` (owner review 2026-10-21). */
+      readonly listed?: { readonly count: number; readonly truncated: boolean; readonly shown?: number };
       /** ADR-0120 amendment A6 (only with `actionReceipts`): the to-do action this reply reports, content-free. */
       readonly action?: NlActionReceipt;
       /** ADR-0120 amendment A6 (only with `actionReceipts`): the to-do listing this reply shows (labels and ids). */
@@ -942,7 +944,7 @@ export class WorkChatService implements WorkDesk {
     query: WorkChatLookupQuery,
     rawText: string | undefined,
     actor: Actor,
-    options: Pick<Extract<WorkChatCommand, { kind: 'lookup' }>, 'personalWork' | 'limit' | 'listOnly'> = {},
+    options: Pick<Extract<WorkChatCommand, { kind: 'lookup' }>, 'personalWork' | 'limit' | 'listOnly' | 'itemType'> = {},
   ): Promise<WorkChatOutcome> {
     const supported = WORK_CHAT_SOURCE_QUERIES[source];
     if (!supported.includes(query)) return reply(renderLookupUnsupported(source, query, supported));
@@ -984,6 +986,8 @@ export class WorkChatService implements WorkDesk {
           ...(personalWork?.role !== undefined ? { role: personalWork.role } : {}),
           ...(personalWork?.status !== undefined ? { status: personalWork.status } : {}),
           ...(personalWork?.sort !== undefined ? { sort: personalWork.sort } : {}),
+          // Owner review 2026-10-21: a GitHub item type the selection set (pull requests or issues only).
+          ...(options.itemType !== undefined ? { itemType: options.itemType } : {}),
         },
       };
     }
@@ -1008,13 +1012,18 @@ export class WorkChatService implements WorkDesk {
     // ADR-0120 D4: a selected "N개만" shows at most N items (the list says it was cut).
     const limited = options.limit !== undefined && items.length > options.limit;
     if (options.limit !== undefined) items = items.slice(0, options.limit);
+    // Owner review 2026-10-21 (ap-p067): a count question answers with the count and the first few items, not the whole
+    // list. The count line carries the full count; an explicit "N개만" keeps its own limit.
+    const total = items.length;
+    const previewed = options.listOnly === true && options.limit === undefined && items.length > WORK_CHAT_COUNT_PREVIEW_ITEMS;
+    if (previewed) items = items.slice(0, WORK_CHAT_COUNT_PREVIEW_ITEMS);
     const builtFull = buildExternalWorkReadout({
       source,
       query,
       ...(searchText !== undefined ? { text: searchText } : {}),
       items,
     });
-    const built = limited ? { ...builtFull, truncated: true } : builtFull;
+    const built = limited || previewed ? { ...builtFull, truncated: true } : builtFull;
     // The connector returns a bounded page of the owner's items: when it was full, a filtered list may be incomplete.
     const readout = keywordFilter && fetched >= CONNECTOR_QUERY_MAX_LIMIT ? { ...built, truncated: true } : built;
     // A6 R2 (D1): while QUOKY_NL_ITEM_R2 is not `off`, a Jira / Slack list is numbered and its delivered rows are labels.
@@ -1035,7 +1044,9 @@ export class WorkChatService implements WorkDesk {
     const listed: WorkChatOutcome = {
       ...messageFields(fallbackText),
       kind: 'reply',
-      listed: { count: readout.items.length, truncated: readout.truncated },
+      listed: previewed
+        ? { count: total, truncated: keywordFilter && fetched >= CONNECTOR_QUERY_MAX_LIMIT, shown: readout.items.length }
+        : { count: readout.items.length, truncated: readout.truncated },
       ...(fallbackListing !== undefined ? { listing: fallbackListing } : {}),
     };
     return listed;

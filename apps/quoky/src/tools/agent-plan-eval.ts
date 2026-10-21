@@ -13,6 +13,10 @@
  *   malformed answer, a timeout, `none` or another executable plan is not exact;
  * - a negative is **wrong** when the answer validates to an executable (`run`) plan, whatever it is. `none`, a refusal,
  *   a clarification or a malformed answer is not wrong;
+ * - an **ask** case (the owner's review of 2026-10-21, decision (h): an unbounded request) is a negative for `wrong`, and
+ *   is `asked` when the answer validates to the `unbounded` ask with the gold bound and the gold suggestion (Core derives
+ *   the suggestion deterministically from the planner's steps), `ask-other` for another ask. The ask rate is reported,
+ *   not gated, until the owner approves the ask cases;
  * - the message-level vetoes of the selection path (ADR-0120 A7: a past statement; a reason statement or an unconsumed
  *   quoted request on any read step) are validator rules (`veto-*` refusals), so the eval and the runtime share them.
  * - Q10 compares an ORDERED step sequence: the same plan with its reads in another order is a miss (`step-kind` /
@@ -32,6 +36,7 @@ import { resolve } from 'node:path';
 import {
   AGENT_PLAN_PROMPT_VERSION,
   AGENT_PLAN_SUMMARY_SCHEMAS,
+  AGENT_UNBOUNDED_KINDS,
   Capability,
   NL_CATALOG_ENTRY_IDS,
   NL_SELECTION_TIMEOUT_MS,
@@ -43,6 +48,7 @@ import {
   validateAgentPlan,
   type AgentPlan,
   type AgentPlanValidationContext,
+  type AgentUnboundedKind,
   type AiProvider,
   type NlArgs,
   type NlCatalogEntry,
@@ -88,6 +94,18 @@ export const AGENT_PLAN_ONE_STEP_FAMILY = 'one-step';
 export const AGENT_PLAN_CASE_STATUSES = ['approved', 'pending-owner-approval'] as const;
 export type AgentPlanCaseStatus = (typeof AGENT_PLAN_CASE_STATUSES)[number];
 
+/** Decision (h): the expectation of an unbounded request: Core asks with a bounded suggestion (the planner's steps form). */
+export interface AgentPlanAskExpect {
+  readonly outcome: 'ask';
+  readonly reason: 'unbounded';
+  readonly bound: AgentUnboundedKind;
+  readonly suggestion: AgentPlanGoldPlan;
+}
+
+export function isAgentPlanAskExpect(value: unknown): value is AgentPlanAskExpect {
+  return typeof value === 'object' && value !== null && (value as { outcome?: unknown }).outcome === 'ask';
+}
+
 /** A gold step as written in the corpus (the planner's own steps form). */
 export type AgentPlanGoldStep =
   | { readonly entryId: string; readonly args?: NlArgs; readonly ref?: { readonly step: number; readonly field: string; readonly take: number } }
@@ -107,8 +125,11 @@ export interface AgentPlanCase {
   readonly text: string;
   readonly attachments?: number;
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
-  readonly expect: 'none' | AgentPlanGoldPlan;
-  /** Negatives: the tempting plan; the validator must refuse it (with `trapRefusal` when given). */
+  readonly expect: 'none' | AgentPlanGoldPlan | AgentPlanAskExpect;
+  /**
+   * Negatives: the tempting plan; the validator must refuse it (with `trapRefusal` when given). Ask cases: the unbounded
+   * plan the planner would write; the validator must turn it into the expected ask.
+   */
   readonly trap?: AgentPlanGoldPlan;
   readonly trapRefusal?: string;
   readonly note?: string;
@@ -138,8 +159,8 @@ export interface AgentPlanEvalCase {
   readonly text: string;
   readonly attachments: number;
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
-  /** `none` for a negative, else the gold plan. */
-  readonly gold: 'none' | AgentPlanGoldPlan;
+  /** `none` for a negative, the expected ask for an unbounded request, else the gold plan. */
+  readonly gold: 'none' | AgentPlanGoldPlan | AgentPlanAskExpect;
 }
 
 export function loadAgentPlanCorpus(
@@ -278,6 +299,10 @@ export type AgentPlanOutcome =
   | 'miss'
   /** positive answered `none`. */
   | 'miss-none'
+  /** ask case: the expected unbounded ask with the gold bound and suggestion. */
+  | 'asked'
+  /** ask case: another ask (another bound or suggestion); a positive or a negative answered with an ask. */
+  | 'ask-other'
   /** negative: `none` (correct). */
   | 'none'
   /** negative: an executable plan. */
@@ -327,7 +352,7 @@ export function closedErrorName(error: unknown): string {
 
 /** Score one raw planner answer for one case. Pure. */
 export function scoreAgentPlanOutput(golden: AgentPlanEvalCase, raw: string, fixture: AgentPlanCorpus['fixture']): AgentPlanScore {
-  const negative = golden.gold === 'none';
+  const negative = golden.gold === 'none' || isAgentPlanAskExpect(golden.gold);
   const prepared = caseContext(golden, fixture);
   if ('skip' in prepared) return { outcome: 'skipped', reason: `skip:${prepared.skip}` };
   const plan = parseAgentPlanOutput(raw);
@@ -342,7 +367,12 @@ export function scoreAgentPlanOutput(golden: AgentPlanEvalCase, raw: string, fix
   }
   if (validation.plan.kind === 'none') return asNone();
   if (validation.plan.kind === 'clarify') return { outcome: 'clarify', gotEntries };
-  if (golden.gold === 'none') return { outcome: 'wrong', gotEntries };
+  if (validation.plan.kind === 'ask') {
+    const gold = golden.gold;
+    const same = isAgentPlanAskExpect(gold) && gold.bound === validation.plan.bound && graphDiff(validatedGraph(validation.plan.suggestion), goldGraph(gold.suggestion)) === undefined;
+    return { outcome: same ? 'asked' : 'ask-other', gotEntries, reason: `unbounded:${validation.plan.bound}` };
+  }
+  if (golden.gold === 'none' || isAgentPlanAskExpect(golden.gold)) return { outcome: 'wrong', gotEntries };
   const diff = graphDiff(validatedGraph(validation.plan.steps), goldGraph(golden.gold));
   if (diff === undefined) return { outcome: 'exact', gotEntries };
   return { outcome: 'miss', gotEntries, diff: diff.kind, ...(diff.step !== undefined ? { diffStep: diff.step } : {}) };
@@ -381,10 +411,15 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
     if (golden.lang !== 'ko' && golden.lang !== 'en' && golden.lang !== 'mixed') problems.push(`${at}: lang must be ko, en or mixed`);
     if (typeof golden.text !== 'string' || golden.text.trim().length === 0) problems.push(`${at}: empty text`);
     if (golden.attachments !== undefined && (!Number.isInteger(golden.attachments) || golden.attachments < 1)) problems.push(`${at}: attachments must be a positive integer`);
-    const positive = golden.expect !== 'none';
+    const ask = isAgentPlanAskExpect(golden.expect);
+    const positive = golden.expect !== 'none' && !ask;
     if (positive !== golden.id.startsWith('ap-p')) problems.push(`${at}: ap-p ids are positives, ap-n ids negatives`);
     if (positive !== (AGENT_PLAN_POSITIVE_FAMILIES as readonly string[]).includes(golden.family)) problems.push(`${at}: family does not match the expectation`);
     const prepared = caseContext(evalCaseOf(golden), corpus.fixture);
+    if (isAgentPlanAskExpect(golden.expect)) {
+      problems.push(...askCaseProblems(at, golden.expect, golden, prepared));
+      continue;
+    }
     if (golden.expect !== 'none') {
       if (golden.trap !== undefined || golden.trapRefusal !== undefined) problems.push(`${at}: a positive has no trap`);
       if ('skip' in prepared) {
@@ -421,6 +456,29 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
     if (refused.ok && refused.plan.kind === 'run') problems.push(`${at}: the trap validates to an executable plan`);
     else if (!refused.ok && golden.trapRefusal !== undefined && refused.reason !== golden.trapRefusal) problems.push(`${at}: the trap is refused as ${refused.reason}, not ${golden.trapRefusal}`);
   }
+  return problems;
+}
+
+/**
+ * Decision (h): an ask case needs a well-formed expectation and a trap (the unbounded plan) that the validator turns into
+ * exactly that ask: the same bound and the same suggestion graph.
+ */
+function askCaseProblems(at: string, expect: AgentPlanAskExpect, golden: AgentPlanCase, prepared: ReturnType<typeof caseContext>): string[] {
+  const problems: string[] = [];
+  if (expect.reason !== 'unbounded' || !(AGENT_UNBOUNDED_KINDS as readonly string[]).includes(expect.bound)) problems.push(`${at}: an ask needs reason unbounded and a closed bound`);
+  if (golden.trapRefusal !== undefined) problems.push(`${at}: an ask case has no trapRefusal`);
+  const suggestion = parseAgentPlanOutput(JSON.stringify(expect.suggestion));
+  if (suggestion === null || suggestion.kind !== 'steps' || suggestion.form !== 'steps') problems.push(`${at}: the suggestion does not parse as a steps-form plan`);
+  if (golden.trap === undefined) return [...problems, `${at}: an ask case needs the unbounded plan as its trap`];
+  if ('skip' in prepared) return [...problems, `${at}: the input is skipped (${prepared.skip})`];
+  const trap = parseAgentPlanOutput(JSON.stringify(golden.trap));
+  if (trap === null) return [...problems, `${at}: the trap does not parse`];
+  const validation = validateAgentPlan(trap, prepared.ctx);
+  if (!validation.ok) return [...problems, `${at}: the trap is refused (${validation.reason}${validation.step !== undefined ? ` at step ${validation.step}` : ''}), not asked`];
+  if (validation.plan.kind !== 'ask') return [...problems, `${at}: the trap validates to ${validation.plan.kind}, not ask`];
+  if (validation.plan.bound !== expect.bound) problems.push(`${at}: the trap asks with bound ${validation.plan.bound}, not ${expect.bound}`);
+  const diff = graphDiff(validatedGraph(validation.plan.suggestion), goldGraph(expect.suggestion));
+  if (diff !== undefined) problems.push(`${at}: the suggestion differs (${diff.kind}${diff.step !== undefined ? ` at step ${diff.step}` : ''})`);
   return problems;
 }
 
@@ -511,7 +569,7 @@ export interface AgentPlanEvalRecord extends AgentPlanScore {
   readonly run: number;
   readonly id: string;
   readonly family: string;
-  readonly expected: 'plan' | 'none';
+  readonly expected: 'plan' | 'none' | 'ask';
   /** The gold's read entries (closed ids), for the per-entry report. */
   readonly goldEntries: readonly string[];
   readonly latencyMs: number;
@@ -548,7 +606,11 @@ export function cappedProvider(provider: AiProvider, limit: number): { provider:
 }
 
 function goldEntriesOf(golden: AgentPlanEvalCase): string[] {
-  return golden.gold === 'none' ? [] : golden.gold.steps.map((step) => ('summarize' in step ? 'summarize' : step.entryId));
+  return golden.gold === 'none' || isAgentPlanAskExpect(golden.gold) ? [] : golden.gold.steps.map((step) => ('summarize' in step ? 'summarize' : step.entryId));
+}
+
+function expectedOf(golden: AgentPlanEvalCase): 'plan' | 'none' | 'ask' {
+  return golden.gold === 'none' ? 'none' : isAgentPlanAskExpect(golden.gold) ? 'ask' : 'plan';
 }
 
 /** Run the plan against one provider (Strict: the CLI checked the approved digest). The provider is capped here too. */
@@ -567,7 +629,7 @@ export async function runAgentPlanEvaluation(input: {
     const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is AgentPlanEvalCase => golden !== undefined);
     const worker = async (): Promise<void> => {
       for (let golden = queue.shift(); golden !== undefined; golden = queue.shift()) {
-        const base = { run, id: golden.id, family: golden.family, expected: golden.gold === 'none' ? ('none' as const) : ('plan' as const), goldEntries: goldEntriesOf(golden) };
+        const base = { run, id: golden.id, family: golden.family, expected: expectedOf(golden), goldEntries: goldEntriesOf(golden) };
         const prepared = caseContext(golden, input.plan.fixture);
         let record: AgentPlanEvalRecord;
         if ('skip' in prepared) {
@@ -626,8 +688,11 @@ export interface AgentPlanEvalSummary {
   readonly latency: { readonly p50: number; readonly p95: number; readonly max: number; readonly boundMs: number; readonly overBound: number };
   readonly overBoundRate: number;
   readonly capped: number;
-  /** The gated groups (CA review of S2 P2): multi-step positives (the new corpus) and one-step positives (Q11). */
-  readonly groups: { readonly multiStep: AgentPlanEvalSlot; readonly oneStep: AgentPlanEvalSlot };
+  /**
+   * The gated groups (CA review of S2 P2): multi-step positives (the new corpus) and one-step positives (Q11). `ask`
+   * (decision (h)): the unbounded requests answered with the expected ask (`exact` = `asked`); reported, not gated.
+   */
+  readonly groups: { readonly multiStep: AgentPlanEvalSlot; readonly oneStep: AgentPlanEvalSlot; readonly ask: AgentPlanEvalSlot };
   /** `false` for an `--include-pending` run: no verdict, `gatePassed` is always false. */
   readonly gating: boolean;
   readonly gatePassed: boolean;
@@ -635,7 +700,10 @@ export interface AgentPlanEvalSummary {
 
 export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], boundMs: number, options: { readonly gating?: boolean } = {}): AgentPlanEvalSummary {
   const positives = records.filter((record) => record.expected === 'plan');
-  const negatives = records.filter((record) => record.expected === 'none');
+  // An ask case is a negative for `wrong` (any executable plan is wrong there too).
+  const negatives = records.filter((record) => record.expected !== 'plan');
+  const asks = records.filter((record) => record.expected === 'ask');
+  const asked = asks.filter((record) => record.outcome === 'asked').length;
   const exact = positives.filter((record) => record.outcome === 'exact').length;
   const wrongOnNegatives = negatives.filter((record) => record.outcome === 'wrong').length;
   const perFamily: Record<string, { positives: number; exact: number; rate: number; negatives: number; wrong: number }> = {};
@@ -688,7 +756,7 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
     latency: { p50: pct(50), p95: pct(95), max: latencies.at(-1) ?? 0, boundMs, overBound },
     overBoundRate,
     capped,
-    groups: { multiStep, oneStep },
+    groups: { multiStep, oneStep, ask: { total: asks.length, exact: asked, rate: asks.length === 0 ? 0 : asked / asks.length } },
     gating,
     gatePassed:
       gating &&

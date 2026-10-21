@@ -9,6 +9,7 @@ import {
   closedEntries,
   closedErrorName,
   computeAgentPlanEvalDigest,
+  isAgentPlanAskExpect,
   loadAgentPlanCorpus,
   runAgentPlanEvaluation,
   scoreAgentPlanOutput,
@@ -51,6 +52,8 @@ const ownerExample = (): AgentPlanCase => {
 /** The gold answer of a case, as the planner would write it (the selection form for a one-step gold). */
 function goldAnswer(golden: AgentPlanEvalCase): string {
   if (golden.gold === 'none') return none;
+  // Decision (h): a perfect planner writes the unbounded plan as asked (the corpus trap); Core turns it into the ask.
+  if (isAgentPlanAskExpect(golden.gold)) return JSON.stringify(NEW.find((candidate) => candidate.id === golden.id)?.trap);
   if (golden.family === 'one-step') {
     const step = golden.gold.steps[0] as { entryId: string; args?: Record<string, unknown> };
     return JSON.stringify({ entryId: step.entryId, args: step.args ?? {}, ambiguity: 'CLEAR', alternatives: [] });
@@ -89,9 +92,9 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     expect(validateAgentPlanCorpus(CORPUS, ONE_STEP)).toEqual([]);
   });
 
-  it('has >= 150 multi-step positives and >= 120 negatives in KO and EN, every family covered, all pending the owner', () => {
-    const positives = NEW.filter((golden) => golden.expect !== 'none');
-    const negatives = NEW.filter((golden) => golden.expect === 'none');
+  it('has >= 150 multi-step positives and >= 120 negatives in KO and EN, every family covered, the owner review applied', () => {
+    const positives = NEW.filter((golden) => golden.expect !== 'none' && !isAgentPlanAskExpect(golden.expect));
+    const negatives = NEW.filter((golden) => golden.expect === 'none' || isAgentPlanAskExpect(golden.expect));
     expect(positives.length).toBeGreaterThanOrEqual(150);
     expect(negatives.length).toBeGreaterThanOrEqual(120);
     for (const family of AGENT_PLAN_POSITIVE_FAMILIES) expect(positives.some((golden) => golden.family === family), family).toBe(true);
@@ -100,7 +103,11 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
       expect(positives.some((golden) => golden.lang === lang)).toBe(true);
       expect(negatives.some((golden) => golden.lang === lang)).toBe(true);
     }
-    expect(NEW.every((golden) => golden.status === 'pending-owner-approval')).toBe(true);
+    // The owner's review of 2026-10-21: 258 approved; 15 fixed or unreviewed and 45 held (decisions (d) and (e)) pending.
+    expect(NEW.filter((golden) => golden.status === 'approved')).toHaveLength(258);
+    expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(60);
+    expect(NEW.filter((golden) => golden.note?.startsWith('HOLD') === true || golden.note?.includes(' HOLD ') === true).every((golden) => golden.status === 'pending-owner-approval')).toBe(true);
+    expect(NEW.filter((golden) => isAgentPlanAskExpect(golden.expect)).map((golden) => golden.family)).toEqual(Array.from({ length: 12 }, () => 'unbounded'));
     const batches = new Map<string, number>();
     for (const golden of NEW) batches.set(golden.batch, (batches.get(golden.batch) ?? 0) + 1);
     expect([...batches.values()].every((size) => size <= 60)).toBe(true);
@@ -108,7 +115,7 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
 
   it('covers the required shapes: the owner example, refs, summaries, step-scoped periods, A6 traps', () => {
     expect(ownerExample().family).toBe('owner-example');
-    const plans = NEW.flatMap((golden) => (golden.expect === 'none' ? [] : [golden.expect]));
+    const plans = NEW.flatMap((golden) => (golden.expect === 'none' || isAgentPlanAskExpect(golden.expect) ? [] : [golden.expect]));
     expect(plans.filter((plan) => plan.steps.some((step) => 'ref' in step && step.ref !== undefined)).length).toBeGreaterThanOrEqual(10);
     expect(plans.filter((plan) => plan.steps.some((step) => 'summarize' in step)).length).toBeGreaterThanOrEqual(30);
     expect(NEW.filter((golden) => golden.family === 'period-per-step').length).toBeGreaterThanOrEqual(15);
@@ -118,11 +125,11 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
   });
 
   it('references every nl-intent.v1.json case as one-step gold by id (Q11), never a copy', () => {
-    expect(CORPUS.oneStep.count).toBe(874);
+    expect(CORPUS.oneStep.count).toBe(873);
     expect(CORPUS.oneStep.ids).toEqual(ONE_STEP.map((golden) => golden.id));
     const oneStepTexts = new Set(ONE_STEP.map((golden) => golden.text));
     expect(NEW.filter((golden) => oneStepTexts.has(golden.text)).map((golden) => golden.id)).toEqual([]);
-    expect(CASES.filter((golden) => golden.family === 'one-step')).toHaveLength(874);
+    expect(CASES.filter((golden) => golden.family === 'one-step')).toHaveLength(873);
   });
 
   it('a perfect planner scores 100% in both groups (the widened date rule grounds calendar-019 and calendar-038)', async () => {
@@ -131,8 +138,9 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     const summary = summarizeAgentPlanRun(records, plan.callTimeoutMs);
     const notExact = records.filter((record) => record.expected === 'plan' && record.outcome !== 'exact');
     expect(notExact.map((record) => `${record.id}:${record.outcome}:${record.reason ?? ''}`)).toEqual([]);
-    expect(summary.groups.multiStep).toEqual({ total: 173, exact: 173, rate: 1 });
-    expect(summary.groups.oneStep).toEqual({ total: 675, exact: 675, rate: 1 });
+    expect(summary.groups.multiStep).toEqual({ total: 174, exact: 174, rate: 1 });
+    expect(summary.groups.oneStep).toEqual({ total: 674, exact: 674, rate: 1 });
+    expect(summary.groups.ask).toEqual({ total: 12, exact: 12, rate: 1 });
     expect(summary.wrongOnNegatives).toBe(0);
     // Every negative is none; only inputs the D3 preparation empties (two one-step cases) make no call at all.
     expect(records.filter((record) => record.expected === 'none' && record.outcome !== 'none').map((record) => `${record.id}:${record.outcome}`)).toEqual(
@@ -216,6 +224,18 @@ describe('step-graph scorer (Q10)', () => {
     expect(score(negative, JSON.stringify({ steps: [{ entryId: 'mail.list', args: {} }, { entryId: 'jira.issues', args: {} }], ambiguity: 'NEEDS_CLARIFICATION' })).outcome).toBe('clarify');
   });
 
+  it('decision (h): an unbounded answer is asked with the gold suggestion; another suggestion is ask-other; a run is wrong', () => {
+    const golden = byId('ap-n075');
+    const trap = NEW.find((candidate) => candidate.id === 'ap-n075')?.trap;
+    expect(score(golden, JSON.stringify(trap))).toMatchObject({ outcome: 'asked', reason: 'unbounded:per-period' });
+    // Days inside this week narrow to this-week: another suggestion than the gold's this-month.
+    expect(score(golden, steps(['this-mon', 'this-tue', 'this-wed'].map((range) => ({ entryId: 'calendar.events', args: { range } }))))).toMatchObject({ outcome: 'ask-other' });
+    expect(score(golden, steps([{ entryId: 'calendar.events', args: {} }, { entryId: 'todo.list', args: {} }])).outcome).toBe('wrong');
+    expect(score(golden, none).outcome).toBe('none');
+    // On a positive an ask is never exact.
+    expect(score(owner, steps(['this-mon', 'this-tue', 'this-wed'].map((range) => ({ entryId: 'calendar.events', args: { range } })))).outcome).toBe('ask-other');
+  });
+
   it('a one-step gold is scored in the selection form and in the steps form alike', () => {
     const golden = byId('jira-003');
     const want = golden.gold as { steps: Array<{ entryId: string; args?: Record<string, unknown> }> };
@@ -243,7 +263,7 @@ describe('step-graph scorer (Q10)', () => {
     ];
     const summary = summarizeAgentPlanRun(records, 6000);
     expect(summary).toMatchObject({ positives: 199, exact: 197, negatives: 1, wrongOnNegatives: 0, calls: 200, capped: 0, gating: true });
-    expect(summary.groups).toEqual({ multiStep: { total: 99, exact: 97, rate: 97 / 99 }, oneStep: { total: 100, exact: 100, rate: 1 } });
+    expect(summary.groups).toEqual({ multiStep: { total: 99, exact: 97, rate: 97 / 99 }, oneStep: { total: 100, exact: 100, rate: 1 }, ask: { total: 0, exact: 0, rate: 0 } });
     expect(summary.perEntry['jira.issues']).toEqual({ total: 98, exact: 97, rate: 97 / 98 });
     expect(summary.perEntry['mail.list']).toEqual({ total: 1, exact: 0, rate: 0 });
     expect(summary.perFamily['compound']).toMatchObject({ positives: 99, exact: 97 });
@@ -359,14 +379,16 @@ describe('plan digest', () => {
     }
   });
 
-  it('approved-only scores the 874 one-step cases; --include-pending adds every pending case; the bound is cases x runs', () => {
+  it('approved-only scores the 873 one-step cases and the approved new cases; --include-pending adds every pending case; the bound is cases x runs', () => {
     const approved = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS);
     const pending = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, includePending: true });
-    expect(approved.caseIds).toHaveLength(874);
-    expect(pending.caseIds).toHaveLength(874 + NEW.length);
-    expect(approved.maxCalls).toBe(874 * 3);
-    expect(pending.maxCalls).toBe((874 + NEW.length) * 3);
-    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v2', callTimeoutMs: 6000, fixture: FIXTURE });
+    const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
+    expect(approvedCount).toBe(873 + 258);
+    expect(approved.caseIds).toHaveLength(approvedCount);
+    expect(pending.caseIds).toHaveLength(873 + NEW.length);
+    expect(approved.maxCalls).toBe(approvedCount * 3);
+    expect(pending.maxCalls).toBe((873 + NEW.length) * 3);
+    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v3', callTimeoutMs: 6000, fixture: FIXTURE });
     expect(approved.promptSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -433,15 +455,16 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(await runCli(['--mode', 'plan', '--runs', '3'], planned)).toBe(EXIT_OK);
     const text = planned.out.join('\n');
     expect(digestOf(planned.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS)));
-    expect(text).toContain('"promptVersion": "agent-plan.v2"');
+    expect(text).toContain('"promptVersion": "agent-plan.v3"');
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);
-    expect(text).toContain(`at most ${874 * 3} (874 cases x 3 run(s)`);
+    const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
+    expect(text).toContain(`at most ${approvedCount * 3} (${approvedCount} cases x 3 run(s)`);
     expect(created).toEqual([]);
     const withPending = deps(created);
     expect(await runCli(['--mode', 'plan', '--runs', '3', '--include-pending'], withPending)).toBe(EXIT_OK);
     expect(digestOf(withPending.out)).not.toBe(digestOf(planned.out));
-    expect(withPending.out.join('\n')).toContain(`at most ${(874 + NEW.length) * 3}`);
+    expect(withPending.out.join('\n')).toContain(`at most ${(873 + NEW.length) * 3}`);
   });
 
   it('run exits 3 before any provider is constructed without the digest, with a wrong one, or with another plan\'s', async () => {
@@ -493,7 +516,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(created).toEqual(['haiku']);
     const skipped = CASES.filter((golden) => 'skip' in prepareSelectionInput(golden.text, golden.attachments)).length;
     expect(skipped).toBeLessThanOrEqual(2);
-    expect(calls).toBe(874 + NEW.length - skipped);
+    expect(calls).toBe(873 + NEW.length - skipped);
     const everything = [...ran.reports, ...ran.out, ...ran.err].join('\n');
     expect(everything).not.toContain(canary);
     const texts = CASES.map((golden) => golden.text).filter((text) => Array.from(text).length >= 12);
@@ -501,7 +524,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     for (const value of ['인사발령', '마이그레이션 가이드', '김부장님', 'security policy']) expect(everything).not.toContain(value);
     const report = JSON.parse(ran.reports[0] as string) as { plan: { digest: string }; records: AgentPlanEvalRecord[] };
     expect(report.plan.digest).toBe(digest);
-    expect(report.records).toHaveLength(874 + NEW.length);
+    expect(report.records).toHaveLength(873 + NEW.length);
     expect(Object.keys(report.records[0] as object).sort()).toEqual(expect.arrayContaining(['id', 'family', 'outcome', 'latencyMs', 'run']));
   });
 
@@ -512,12 +535,13 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     await runCli(['--mode', 'plan'], planned);
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
-    expect(ran.out.join('\n')).toContain('multi-step exact: 173/173 (100.0%)  one-step exact: 675/675 (100.0%)');
-    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v2): PASSED in all 1 run(s)');
-    // Today every new case is pending: an approved-only run has no multi-step group, so it cannot pass.
-    const today = deps(created);
+    expect(ran.out.join('\n')).toContain('multi-step exact: 174/174 (100.0%)  one-step exact: 674/674 (100.0%)  ask (not gated): 12/12');
+    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v3): PASSED in all 1 run(s)');
+    // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
+    const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
+    const today = { ...deps(created), load: () => unapproved };
     await runCli(['--mode', 'plan'], today);
-    const ranToday = deps(created);
+    const ranToday = { ...deps(created), load: () => unapproved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(today.out)], ranToday)).toBe(EXIT_GATE_FAILED);
   });
 });

@@ -10,6 +10,7 @@ import {
   type ConnectorQuery,
   type ConnectorResult,
   type PersonalWorkFilter,
+  type PersonalWorkItemType,
 } from '@quoky/core';
 
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -96,12 +97,12 @@ export class GitHubConnectorProvider implements ConnectorProvider {
     if (input?.query !== ConnectorQueryName.PERSONAL_WORK) {
       throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'github connector: unsupported query');
     }
-    const { actorExternalId, filter, limit, window, role, status } = parsePersonalWorkParams(input.params, 'github connector');
+    const { actorExternalId, filter, limit, window, role, status, itemType } = parsePersonalWorkParams(input.params, 'github connector');
     // ADR-0120 D13 adds window/role/status for Jira only; GitHub keeps its ADR-0100 queries and refuses the rest.
     if (window !== undefined || role !== 'assignee' || status !== 'open') {
       throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'github connector: unsupported personal-work option');
     }
-    const q = personalWorkSearch(githubQualifier(actorExternalId), filter);
+    const q = personalWorkSearch(githubQualifier(actorExternalId), filter, itemType);
     const token = await this.currentToken();
     const headers = {
       Accept: 'application/vnd.github+json',
@@ -146,10 +147,14 @@ export class GitHubConnectorProvider implements ConnectorProvider {
   }
 }
 
-/** The adapter owns GitHub search qualifier rendering; the login is validated before it reaches a qualifier. */
-function personalWorkSearch(login: string, filter: PersonalWorkFilter): string {
-  if (filter === 'all') return `involves:${login} is:open archived:false`;
-  if (filter === 'review-requested') return `is:pr is:open archived:false review-requested:${login}`;
+/**
+ * The adapter owns GitHub search qualifier rendering; the login is validated before it reaches a qualifier. `itemType`
+ * (owner review 2026-10-21) adds the constant `is:pr` / `is:issue` qualifier; review requests are pull requests only, so
+ * an `issue` type there is refused.
+ */
+function personalWorkSearch(login: string, filter: PersonalWorkFilter, itemType?: PersonalWorkItemType): string {
+  if (filter === 'all') return `involves:${login} is:open archived:false${itemType === 'pr' ? ' is:pr' : itemType === 'issue' ? ' is:issue' : ''}`;
+  if (filter === 'review-requested' && itemType !== 'issue') return `is:pr is:open archived:false review-requested:${login}`;
   throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'github connector: unsupported personal-work filter');
 }
 

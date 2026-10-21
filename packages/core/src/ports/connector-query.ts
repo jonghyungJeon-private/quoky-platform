@@ -50,6 +50,12 @@ export type PersonalWorkStatus = (typeof PERSONAL_WORK_STATUSES)[number];
  */
 export const PERSONAL_WORK_SORTS = ['oldest', 'newest', 'recently-updated'] as const;
 export type PersonalWorkSort = (typeof PERSONAL_WORK_SORTS)[number];
+/**
+ * The closed item types of a GitHub `personal-work` query (owner review of 2026-10-21, an additive ADR-0100 D7 amendment):
+ * pull requests only or issues only. Absent: both (the ADR-0100 query). A source without item types refuses it.
+ */
+export const PERSONAL_WORK_ITEM_TYPES = ['pr', 'issue'] as const;
+export type PersonalWorkItemType = (typeof PERSONAL_WORK_ITEM_TYPES)[number];
 
 /**
  * `field` between the local dates `from` (inclusive) and `to` (exclusive), both `YYYY-MM-DD` in the owner's zone, at
@@ -82,6 +88,8 @@ export interface PersonalWorkQueryParams {
   status?: PersonalWorkStatus;
   /** Live UAT R8. Absent: the adapter's default order. */
   sort?: PersonalWorkSort;
+  /** Owner review 2026-10-21 (GitHub only). Absent: issues and pull requests. */
+  itemType?: PersonalWorkItemType;
 }
 
 /** `ConnectorQuery.params` for the `search` named query. */
@@ -243,6 +251,8 @@ export interface ParsedPersonalWorkParams {
   status: PersonalWorkStatus;
   /** Present only when the caller set it (live UAT R8). */
   sort?: PersonalWorkSort;
+  /** Present only when the caller set it (owner review 2026-10-21). */
+  itemType?: PersonalWorkItemType;
 }
 
 /** Validates `personal-work` params. Failures are `ConnectorQueryError('UNSUPPORTED_QUERY')` with value-free messages. */
@@ -271,6 +281,10 @@ export function parsePersonalWorkParams(params: Metadata | undefined, source = '
   if (sort !== undefined && (typeof sort !== 'string' || !(PERSONAL_WORK_SORTS as readonly string[]).includes(sort))) {
     throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported personal-work sort`);
   }
+  const itemType = params?.itemType;
+  if (itemType !== undefined && (typeof itemType !== 'string' || !(PERSONAL_WORK_ITEM_TYPES as readonly string[]).includes(itemType))) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported personal-work item type`);
+  }
   const window = params?.window === undefined ? undefined : parsePersonalWorkWindow(params.window, source);
   return {
     actorExternalId,
@@ -280,6 +294,7 @@ export function parsePersonalWorkParams(params: Metadata | undefined, source = '
     role: role as PersonalWorkRole,
     status: status as PersonalWorkStatus,
     ...(sort !== undefined ? { sort: sort as PersonalWorkSort } : {}),
+    ...(itemType !== undefined ? { itemType: itemType as PersonalWorkItemType } : {}),
   };
 }
 

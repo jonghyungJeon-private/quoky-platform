@@ -284,6 +284,23 @@ const jiraRelease: NlCatalogEntry = {
   },
 };
 
+/**
+ * Owner review of 2026-10-21 (ap-p062, and the owner's relabel of 29 one-step GitHub golds): a structural GitHub item type,
+ * grounded in the owner's own words (PR / pull request / 풀리퀘 vs 이슈 / issue); default `all` (both, the ADR-0100 query).
+ * Listed in the read catalog from `nl-select.v64` (A6 `v62`, R2 `v63`) and so in the planner's.
+ */
+const GITHUB_KIND = {
+  name: 'kind',
+  kind: 'enum',
+  values: ['pr', 'issue', 'all'],
+  default: 'all',
+  valueGrounding: {
+    pr: ['pr', 'prs', 'pull request', 'pull requests', '풀리퀘', '풀 리퀘', '풀리퀘스트', '풀 리퀘스트', '머지 요청'],
+    issue: ['이슈', 'issue', 'issues'],
+  },
+  description: 'pr when the owner asks for pull requests only (PR, pull request, 풀리퀘); issue when only issues (이슈, issue); omit for both or neither.',
+} as const;
+
 const githubItems: NlCatalogEntry = {
   id: 'github.items',
   risk: 'READ',
@@ -299,13 +316,22 @@ const githubItems: NlCatalogEntry = {
     { name: 'keyword', kind: 'keyword', description: 'A topic word to narrow the owner\'s items, copied verbatim.' },
     COUNT,
     SEARCH_LIMIT,
+    GITHUB_KIND,
   ],
   usage: { ko: '"GitHub 리뷰 요청 보여줘"', en: '"GitHub 리뷰 요청 보여줘"' },
   sourceNames: ['github', '깃허브', '깃헙'],
+  normalize(args: Record<string, NlArgValue>): void {
+    // Review requests are pull requests already: the item type adds nothing there (canonical args omit it).
+    if (args.query === 'review-requests') delete args.kind;
+  },
   describe(args: NlArgs, _range, language): string | undefined {
     const what = args.query === 'review-requests'
       ? (language === 'en' ? 'review requests for me' : '나에게 온 리뷰 요청')
-      : (language === 'en' ? 'my open issues and PRs' : '내 열린 이슈·PR');
+      : args.kind === 'pr'
+        ? (language === 'en' ? 'my open PRs' : '내 열린 PR')
+        : args.kind === 'issue'
+          ? (language === 'en' ? 'my open issues' : '내 열린 이슈')
+          : (language === 'en' ? 'my open issues and PRs' : '내 열린 이슈·PR');
     const keyword = typeof args.keyword === 'string' ? (language === 'en' ? `matching ${quoted(args.keyword)}` : `${quoted(args.keyword)} 포함`) : undefined;
     return joinBasis([what, keyword]);
   },

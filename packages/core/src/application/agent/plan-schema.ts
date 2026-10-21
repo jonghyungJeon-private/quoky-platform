@@ -20,8 +20,11 @@ import { NL_SELECTION_OUTPUT_MAX_BYTES, parseSelectionOutput, type NlAmbiguity, 
  */
 
 export const AGENT_PLAN_MAX_STEPS = 6;
-/** Parse bounds (the validator applies the ADR bounds: ≤ 4 reads, ≤ 3 summaries, ≤ 10 referenced values). */
-const MAX_REF_TAKE_PARSED = 100;
+/**
+ * Parse bounds (the validator applies the ADR bounds: ≤ 4 reads, ≤ 3 summaries, ≤ 10 referenced values; a plan over them
+ * is answered with a bounded suggestion, so an owner's large number still parses).
+ */
+const MAX_REF_TAKE_PARSED = 1000;
 const MAX_SUMMARY_SOURCES = 4;
 const MAX_ARGS = 12;
 const MAX_ID_CHARS = 64;

@@ -113,6 +113,30 @@ describe('GitHubConnectorProvider', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('owner review 2026-10-21: the item type adds a constant is:pr / is:issue qualifier; issues are never review requests', async () => {
+    for (const [itemType, q] of [
+      ['pr', 'involves:octocat is:open archived:false is:pr'],
+      ['issue', 'involves:octocat is:open archived:false is:issue'],
+    ] as const) {
+      const fetchImpl = okFetch();
+      await patProvider(fetchImpl).query({ query: 'personal-work', params: { actorExternalId: 'octocat', itemType } });
+      const [url] = fetchImpl.mock.calls[0] as unknown as [string];
+      expect(new URL(url).searchParams.get('q')).toBe(q);
+    }
+    const reviews = okFetch();
+    await patProvider(reviews).query({ query: 'personal-work', params: { actorExternalId: 'octocat', filter: 'review-requested', itemType: 'pr' } });
+    expect(new URL((reviews.mock.calls[0] as unknown as [string])[0]).searchParams.get('q')).toBe('is:pr is:open archived:false review-requested:octocat');
+    const refused = vi.fn();
+    for (const params of [
+      { actorExternalId: 'octocat', filter: 'review-requested', itemType: 'issue' },
+      { actorExternalId: 'octocat', itemType: 'discussion' },
+      { actorExternalId: 'octocat', itemType: 'pr OR is:issue' },
+    ]) {
+      await expect(patProvider(refused).query({ query: 'personal-work', params })).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+    }
+    expect(refused).not.toHaveBeenCalled();
+  });
+
   it('ADR-0120 D13: refuses the Jira-only window, role and status options before any request', async () => {
     const fetchImpl = vi.fn();
     const provider = patProvider(fetchImpl);

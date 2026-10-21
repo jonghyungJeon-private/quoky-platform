@@ -47,7 +47,7 @@ describe('R3 symbolic time: last-<weekday>, this-<weekday>, week-after-next, res
 
   it('shows the selector the new symbols', () => {
     const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v63');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v64');
     expect(prompt).toContain('week-after-next');
     expect(prompt).toContain('rest-of-month');
     expect(prompt).toContain('last-mon..last-sun');
@@ -153,7 +153,7 @@ describe('R2/R5 calendar part of day and timed-only are grounded in the owner wo
 
   it('T1 (owner, 2026-10-15; prompt nl-select.v24): a meeting word means timed events in the arg description and the meeting examples', () => {
     const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v63');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v64');
     expect(prompt).toContain('timedOnly: true. true when the owner asks about meetings/timed events and away from all-day entries such as leave or holidays ("회의만", "미팅만", "only meetings").');
     expect(prompt).not.toContain('true only when the owner narrows');
     expect(prompt).toContain('Output: {"entryId":"calendar.events","args":{"range":"tomorrow","timedOnly":true}');

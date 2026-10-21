@@ -44,7 +44,7 @@ const codeOf = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').r
 
 describe('application/agent boundary (ADR-0121 D5)', () => {
   it('scans every source file, and every check catches what it must (calibration)', () => {
-    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-run-service.ts', 'flow-policy.ts', 'index.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts']);
+    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-run-service.ts', 'flow-policy.ts', 'index.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'unbounded-ask.ts']);
     const refused = [
       '../memory-writer',
       '../reminders/reminder-repository',
