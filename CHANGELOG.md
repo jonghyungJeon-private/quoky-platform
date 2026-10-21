@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — development harness hardening (2026-10-21)
+
+- **Added.** Provider-outage guard for `eval:nl` (intent, action, read-regression, r2), `eval:agent-plan` and
+  `eval:r2-redteam` (`apps/quoky/src/tools/eval-provider-guard.ts`): content-free outcome counts per reason; 5 provider
+  failures in a row, 10 timeouts in a row, or provider failures above 5% of the calls (mid-run from 40 calls and 3
+  failures, at the end from 2 failures) stop further calls; the run prints `INVALID (provider unavailable: <reason>)`,
+  never PASSED or FAILED, and exits 5. Every run prints a `provider outcomes:` counts line; reports carry
+  `providerOutcomes`.
+- **Added.** `pnpm test` takes a machine-wide full-suite lock (`tools/test-lock/`, `mkdir` lock with the holder and
+  vitest PIDs; waits, or exits 75 with `QUOKY_TEST_NO_WAIT=1`; stale when both PIDs are gone). Targeted runs take no lock.
+  vitest runs in its own process group so an interrupted suite leaves no orphaned workers.
+- **Added.** `.gitattributes`: `merge=union` for `DECISIONS.md` and `CHANGELOG.md` (not `CURRENT_STATE.md`, which has
+  sections edited in place).
+- **Added.** `.claude/skills/quoky-ship/` (SKILL.md and `scripts/run-gates.sh`): the gate runner (tmux, archive, DONE
+  marker, build, usage pre-check, one INVALID retry, `status`) and the review-loop discipline rules.
+
 ## Unreleased — ADR-0121 S2 P2: the plan corpus and `eval:agent-plan` (2026-10-20)
 
 - **Added.** `golden/agent-plan.v1.json`: 173 multi-step positives and 144 negatives (KO/EN, 19 families), pending the

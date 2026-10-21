@@ -28236,3 +28236,27 @@ written).
   arg); the lookup fold-back needs a missing release and an exact one-project name from both values. Negatives: the
   description and example changes add no new route; `a8n-03` / `a8n-05` stay rule-2 none. RAG-0 clean (the first count
   example "총 개수만 알려줘" was a near copy of github-034 and was rewritten).
+
+## Development harness hardening (2026-10-21) — implementation note
+
+Tooling only (no ADR boundary, no runtime path changed). Gaps from the 2026-10-19..21 operations:
+- **Eval provider outages are INVALID, not FAILED.** A Claude CLI usage/session limit mid-run made every remaining call
+  `failed:provider-execution_failed` and the run read as a 0% regression. `eval-provider-guard.ts` wraps the provider of
+  every Strict run of `eval:nl` (all modes), `eval:agent-plan` and `eval:r2-redteam`. Thresholds: 5 consecutive
+  non-timeout provider failures, 10 consecutive timeouts (`timeout-streak`), or provider failures above 5% of the calls
+  (mid-run only from 40 calls and 3 failures, so a couple of early blips never abort a long run; at the end from 2
+  failures). Once tripped the guard refuses further calls without reaching the provider. Verdict
+  `INVALID (provider unavailable: <reason>)`, exit 5 (0 pass, 1 fail, 2 usage, 3 blocked, 4 non-gating stay as they
+  were); no PASSED/FAILED line and no per-run scores are printed for it. Below the thresholds, failures, timeouts and
+  parse failures are scored exactly as before. Reasons are closed values (`provider-<failure kind>`, `timeout`, `error`).
+- **Full-suite lock.** `pnpm test` is `tools/test-lock/run-full-suite.mjs`: chosen over a separate `test:full` because
+  the 2026-10-16 freeze came from agents running plain `pnpm test`; an opt-in script would not have prevented it. The
+  first argument being a file or filter means a targeted run (no lock); `pnpm vitest run <files>` never enters the
+  wrapper. The vitest caps in `vitest.config.ts` are unchanged.
+- **Append-only docs.** `merge=union` for `DECISIONS.md` and `CHANGELOG.md`; `CURRENT_STATE.md` excluded (in-place
+  status sections). Residual: union keeps both versions of a line edited on both sides and may duplicate identical
+  lines; reviewers check the merged hunk.
+- **Review loop discipline** (quoky-ship §3.5): after two Codex rounds on one heuristic class, narrow to a structural
+  rule; fail-closed residual edge cases are recorded in the ADR implementation note instead of being chased; no prompt
+  change is deployed before its D12 gates pass; the full suite runs only after a rebase that exited 0 on a tree with no
+  conflict or rebase in progress.

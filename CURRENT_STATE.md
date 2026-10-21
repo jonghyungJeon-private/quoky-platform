@@ -5,6 +5,16 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Development harness hardening (2026-10-21, branch `claude/v5-harness-hardening`)
+
+Tooling only; no runtime behaviour changed:
+- **Eval INVALID.** The model-in-the-loop eval CLIs stop calling a provider that is clearly down (usage/session limit)
+  and report `INVALID (provider unavailable: <reason>)` with exit 5 instead of a FAILED gate.
+- **Gate runner.** `.claude/skills/quoky-ship/scripts/run-gates.sh start|run|status` runs the D12 / S2 gates in tmux and
+  archives them under `~/Library/Application Support/Quoky/eval-archive/<name>/`.
+- **Full-suite lock.** `pnpm test` without file arguments holds `~/Library/Application Support/Quoky/locks/full-suite`.
+- **Docs merge.** `DECISIONS.md` and `CHANGELOG.md` merge with `union` locally.
+
 ### ADR-0121 amendment A1 — ratified (2026-10-21, docs only, branch `claude/v5-adr0121-a1-ratify`)
 
 The owner ratified A1 on 2026-10-21. Docs only; no code changed:
