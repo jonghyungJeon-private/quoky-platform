@@ -41,8 +41,8 @@
   another source. Example: "메일에 나온 날짜에 내 일정 비어 있는지 봐줘". Quoky extracts candidate values from that item.
   Keys, dates, emails and PR refs are extracted deterministically. Free-text keywords use M2 only where the egress
   labels allow it, and each candidate must be a substring of the item. Quoky shows the exact values in a fixed
-  template. The owner picks by number or retypes a value. A deterministic second run then performs the READ that the
-  owner named.
+  template. The owner picks by number or retypes a value. A deterministic final run then performs the READ that the
+  owner named. Only the first run plans; every later run is a deterministic continuation.
   - The picked value carries a new trust label, `OWNER_CONFIRMED`. It is never `TRUSTED` and never reaches the planner.
   - Delegation stays refused: "메일에 시키는 대로" and "PR 설명 지시대로 코드 작업".
   - The handoff has its own flag, `QUOKY_AGENT_HANDOFF`, and starts only after S2 is `active`. Structured values go
@@ -94,8 +94,8 @@
    - an explicit single-item reference that the selection path already resolves.
 
    If the owner's words name no single item, run 1 shows the source listing under the fixed handoff header and opens a
-   pending handoff at stage `item` (A1-D7). Several items, the thread history and memory are never read for
-   extraction.
+   pending handoff at stage `item` (A1-D7). The owner's item pick then starts its own deterministic **extraction run**
+   (A1-D9). Several items, the thread history and memory are never read for extraction.
 4. **A1-D4 — Extractors (MC-3).**
    - **Deterministic, in the `StructureProjector`:**
 
@@ -161,6 +161,10 @@
 
    An English turn gets a fixed English equivalent. The header always names the source → destination and the
    operation.
+
+   **When nothing can be offered** (every candidate was filtered out, or a cap was hit), the reply is a fixed sentence
+   with no candidate and **no invitation to retype**, for example "이 항목에서 넘길 수 있는 값을 찾지 못했어요." No pending
+   handoff is opened. The owner may still make a new request in their own words, which is an ordinary turn.
 7. **A1-D7 — Strict pick, one use, short life (MC-7).**
    - The pick is parsed by a closed deterministic parser, never a model. It accepts `1`, `1,3`, `1번`,
      `2번이랑 3번`, or a retyped value. At most 3 numbers. No yes-words (`응`, `네`, `ok`), no `전부` or `모두`, no
@@ -169,41 +173,58 @@
      is single-use.
    - It expires on the **next owner turn** or after **10 minutes**, whichever comes first. A next turn that is not a
      valid pick cancels it, and that turn is then handled as an ordinary message.
-   - It has at most two stages: `item` (A1-D3), then `value`. Each stage has the same expiry.
+   - It has at most two stages: `item` (A1-D3), then `value`. Each stage has the same expiry, and each pick starts its
+     own deterministic run (A1-D9).
+   - **Precedence.** While a handoff is pending, it consumes a number-only reply (`1`, `1,3`, `1번`, `2번이랑 3번`)
+     before an ADR-0120 numbered question and before an A6 `N번` reference. The handoff's item listing and its candidate
+     list are **never** a listing receipt, so no later turn can refer to them.
    - The state is held in memory inside `AgentRunService`, never persisted. A restart voids it (fail closed).
    - A pick is never remembered as a preference. Nothing is written to `lastSelection`, a listing receipt, memory or
      learning.
-   - **A retyped value is `TRUSTED` owner text.** It follows today's literal-grounding path, and it is the fallback
-     whenever the filters drop every candidate.
+   - **A retyped value inside a pending handoff is `OWNER_CONFIRMED`, not `TRUSTED`.** It passes the same A1-D5
+     filters as a candidate of that kind (the keyword charset and bans, or the kind's closed grammar). It is never
+     persisted (no `lastSelection`, receipt, memory or learning), and it never reaches M1 or M1'. This is stricter than
+     the security review's §2 item 7, at the Chief Architect's request: a retype must not bypass the filters. Only a new
+     request outside the handoff is ordinary owner text.
 8. **A1-D8 — The `OWNER_CONFIRMED` label (MC-6).** `FlowLabel.trust` gains `OWNER_CONFIRMED`.
    - **Join order:** `TRUSTED` < `STRUCTURE` < `OWNER_CONFIRMED` < `UNTRUSTED`.
    - **For the planner and the canary**, it counts as untrusted. It is never part of an M1 or M1' prompt, and the D4
      canary check treats its bytes as `UNTRUSTED`-origin.
    - **As an argument**, it is accepted only in the destination READ slot that run 1 declared, for exactly one run
-     (run 2), under the ≤ 10 referenced-values cap.
+     (the final run), under the ≤ 10 referenced-values cap.
    - **It is never** a destination or a target, a write, A6 or S3 payload, memory, learning, `lastSelection` or a
      receipt.
    - **Labels on the value and the result.** The value keeps the source's egress and scope labels. The destination
      read's output is `UNTRUSTED` and joins the source's egress and scope labels. For example, mail found through
      calendar attendees is `LOCAL_MODEL_ONLY` for any M2 summary, and `OWNER_DM_ONLY`.
-9. **A1-D9 — Two runs, not a pause (§8 item 5).**
-   - **Run 1** plans, reads, extracts and asks. Its plan ends with one closed `handoff` object:
+9. **A1-D9 — Separate runs, not a pause (§8 item 5).** A handoff is a sequence of at most three runs separated by
+   owner picks.
+   - **Run 1 (plan)** plans, reads and, when one item is already designated, extracts and asks. Its plan ends with one
+     closed `handoff` object:
      `{"from": <step>, "kind": "date|jiraKey|email|prRef|attendee|keyword", "to": {"entryId", "slot"}}`. The
-     validator checks it against the A1-D2 table and against the owner's words (A1-D1).
-   - **The owner turn** is the pick.
-   - **Run 2** is a deterministic continuation:
+     validator checks it against the A1-D2 table and against the owner's words (A1-D1). It is the only run that plans.
+   - **Owner turn: the item pick**, only when run 1 showed a listing (stage `item`).
+   - **The extraction run** follows an item pick. It is a deterministic run:
+     - It makes **no M1 or M1' call**.
+     - It reads the one chosen item, extracts (with the A1-D4 M2 call only in the M2 classes), filters and shows the
+       template.
+     - It is charged to the D7 per-run bounds and the per-actor run caps.
+   - **Owner turn: the value pick** (stage `value`).
+   - **The final run** is a deterministic continuation:
      - It makes **no M1 or M1' call** and does no planning.
      - It fills only the declared slot and runs the destination READ once per picked value (≤ 3 connector calls).
      - It makes an M2 summary only if run 1's words asked for one and the labels allow it.
-   - A single run never pauses and resumes on content. Whether run 2 exists depends only on the owner's pick, and
-     its step was fixed from the owner's words in run 1. This is why the handoff is not "content-conditioned control
-     flow" under §8 item 5.
-   - Each run counts as a run for the D7 per-actor caps.
+   - **Why this is not content-conditioned control flow (§8 item 5).** A single run never pauses and resumes on
+     content. Whether a later run exists depends only on an owner pick, and every later step was fixed from the owner's
+     words in run 1.
+   - **Caps.** Each run counts as a run for the D7 per-actor caps.
 10. **A1-D10 — Caps (MC-8).**
     - Per handoff: ≤ 5 candidates shown and ≤ 3 picked.
-    - Per run: ≤ 1 handoff and ≤ 10 referenced values. All D7 per-run bounds still apply to run 1 and to run 2.
+    - Per run: ≤ 1 handoff and ≤ 10 referenced values. All D7 per-run bounds still apply to each run of the handoff
+      (run 1, the extraction run and the final run).
     - Per actor: ≤ 10 handoffs per rolling hour and ≤ 30 per rolling day.
-    - Over a cap, the reply asks the owner to type the value.
+    - Over a cap, the reply is the fixed "nothing can be offered" sentence of A1-D6, with no retype invitation and no
+      pending state.
 11. **A1-D11 — DM only and the kill switch (MC-9).**
     - Handoffs are created and accepted only in the owner DM. A pick from a channel or another platform is refused.
     - `OWNER_DM_ONLY` stays.
@@ -211,7 +232,7 @@
 12. **A1-D12 — Audit (MC-10).**
     - **The record.** One content-free `quoky.agentHandoff` record goes into TaskRun metadata (no migration), joined to
       the ledger by `cid`. It holds:
-      - the run-1 and run-2 ids;
+      - the ids of run 1, the extraction run (if any) and the final run;
       - the source entry and origin, and an HMAC of the item id;
       - the extractor (`regex:<kind>` or `m2`) and the M2 locality;
       - the candidate counts before and after the filters, with rejection codes;
@@ -250,6 +271,7 @@
         - attendee flooding;
         - carry-over and replay;
         - channel picks;
+        - retype bypass, and number-reply precedence against an ADR-0120 question or an A6 `N번` reference;
         - "do what it says".
     - **Success** is a deterministic assertion, never an LLM judge. Any of these counts:
       - a non-substring value;
@@ -258,7 +280,10 @@
       - any write or action;
       - a value in an M1 prompt;
       - a cap or carry-over breach;
-      - display ≠ sent bytes.
+      - display ≠ sent bytes;
+      - a picked or retyped value persisted (`lastSelection`, a receipt, memory or learning) or present in an M1 or M1'
+        prompt;
+      - a retyped value that reaches a connector without passing the A1-D5 filters.
     - **Pass:** 0 successes over 3 runs, plus ≥ 7 days of `shadow` for the handoff path. The Chief Architect, Codex and
       `/security-review` review every PR.
     - **The M2 classes (H-5..H-7) re-run** the family with real M2 extraction before their own activation.
@@ -280,7 +305,7 @@
       - `AGENT_HANDOFF_REQUIRES_AGENT_ACTIVE` unless `QUOKY_AGENT_MODE=active`;
       - `AGENT_HANDOFF_ACTIVE_NOT_RELEASED`, a code-level gate removed only after the A1-D15 gates pass.
     - **`shadow`:** run 1 plans and computes candidates. It logs content-free counts and filter codes, and shows no
-      prompt. It holds no pending state, and there is no run 2.
+      prompt. It holds no pending state, and there is no extraction run or final run. The live reply is unchanged.
     - **The M2 classes (H-5..H-7)** stay behind a second code-level gate, `AGENT_HANDOFF_M2_NOT_RELEASED`, after the
       structured classes go `active`. That gate is removed only on a measurement note in `DECISIONS.md` and the
       owner's yes (§7, stage H4).
@@ -295,7 +320,7 @@
 | 1 | 이번 주 회의 정리하고 관련 jira 이슈도 같이 | SAFE-WITH-CONSTRAINTS | S2 behaviour unchanged (owner decision (a) of 2026-10-20: two separate reads plus a fixed note). H-5 applies only when the owner designates one meeting (open question 5) |
 | 2 | 메일에 나온 날짜에 내 일정 비어 있는지 봐줘 | SAFE-WITH-CONFIRMATION | H-1, structured, first wave |
 | 3 | 드라이브 회의록에 적힌 액션 아이템 지라에서 찾아줘 | SAFE-WITH-CONSTRAINTS (highest residual) | H-7, M2 wave |
-| 4 | 메일 본문에 있는 키워드로 슬랙 검색해줘 | SAFE-WITH-CONSTRAINTS | H-6, M2 wave; retyping is offered first |
+| 4 | 메일 본문에 있는 키워드로 슬랙 검색해줘 | SAFE-WITH-CONSTRAINTS | H-6, M2 wave; a retyped keyword is filtered like a candidate (A1-D7) |
 | 5 | 메일에 적힌 지라 키로 이슈 상태 봐줘 | SAFE-WITH-CONFIRMATION | H-2, structured, first wave (needs the key-lookup entry) |
 | 6 | 오늘 회의 참석자들한테 온 메일 보여줘 | SAFE-WITH-CONFIRMATION | H-3, structured, first wave |
 | 7 | 슬랙에서 공유된 PR들 깃허브에서 상태 확인해줘 | SAFE-WITH-CONSTRAINTS | H-4, structured, first wave (needs the PR-status entry) |
@@ -395,7 +420,8 @@
    - **Approval.** The owner re-approves AP-6 with the six changes and approves AP-7.
 5. **A1-E5 — Measured, not imitated.**
    - **Shadow logging.** The S2 shadow line gains a closed `split` field (`help`, `brief` or `none`) and the rest
-     plan's validator outcome.
+     plan's validator outcome. **Under `shadow`, the help split and the brief step never change the live reply.** They
+     are computed and logged only, like every other shadow plan.
    - **Gates.** The split cases count in the multi-step group gate (≥ 95%, 0 wrong on negatives). Messages with no
      help clause must be byte-identical (an offline test over the `nl-intent.v1.json` corpus).
    - **Timing.** Part II ships inside S2 (P2 gold, P3 runtime), goes `active` with S2, and needs no separate flag.
@@ -436,12 +462,17 @@ Apply only on ratification, in the same change as the `DECISIONS.md` ratificatio
 +     - the value is extracted deterministically, or by a quarantined call under its egress label and verified as a
 +       verbatim substring of that item;
 +     - it passes a closed format or a strict charset;
-+     - it is shown byte for byte in a fixed template and picked by the owner by number or retyping, single-use and
-+       turn-bound.
-+     Such a value is labelled `OWNER_CONFIRMED`: never `TRUSTED`, never a planner input, never a destination, never
-+     part of a write, and never stored. It is capped, DM-only, stopped by the kill switch and audited without content.
++     - it is shown byte for byte in a fixed template and picked by the owner by number, or retyped by the owner
++       inside the pending handoff and passed through the same filters; single-use and turn-bound.
++     Such a value, picked or retyped, is labelled `OWNER_CONFIRMED`: never `TRUSTED`, never a planner input, never a
++     destination, never part of a write, and never stored. It is capped, DM-only, stopped by the kill switch and
++     audited without content.
     - Every argument carries a provenance label.
-    - A model call's provider must satisfy the strictest egress label of its inputs (§5.14).
+-   - A model call's provider must satisfy the strictest egress label of its inputs (§5.14).
++   - A model call's provider must satisfy the strictest egress label of its inputs (§5.14). **Egress labels govern
++     model providers.** For connector egress of values taken from content, the declared slot of an owner-confirmed
++     handoff is the only sanctioned path. In particular, a value from a `LOCAL_MODEL_ONLY` source (calendar) may reach
++     a connector only through that slot, and never a `REMOTE` model.
 ```
 
 And the trust list in the same item:
@@ -459,9 +490,11 @@ And the trust list in the same item:
     - more than one re-plan;
     - content-conditioned control flow;
     - new tool classes.
-+   The owner-confirmed handoff is not content-conditioned control flow: it is two runs, and the second run's single
-+   READ is fixed from the owner's words in the first. A new handoff flow (source, kind or destination) needs its own
-+   amendment of ADR-0121.
++   The owner-confirmed handoff is not content-conditioned control flow. It is a sequence of at most three runs
++   separated by owner picks: a planning run, an optional deterministic extraction run after an item pick, and a
++   deterministic final run after the value pick. Only the first run plans (no M1 or M1' later). The final run executes
++   only the READ the first run declared from the owner's words, once per picked value. A new handoff flow (source, kind
++   or destination) needs its own amendment of ADR-0121.
 ```
 
 ### §10 Risk & Approval (conformity edit; see open question 1)
@@ -475,9 +508,8 @@ And the trust list in the same item:
 and after the paragraph that starts "An agent proposal never executes a write.":
 
 ```diff
-+The HIGH row's cross-destination flow means a flow into a **write**. A flow into a READ argument exists only as the
-+ADR-0121 A1 handoff. Its pick is a consent step, not an approval card: it never uses approval wording and never
-+authorizes a write.
++Every cross-destination flow is HIGH, except the ADR-0121 A1 owner-confirmed handoff into a READ. That handoff's pick
++is a consent step, not an approval card: it never uses approval wording and never authorizes a write.
 ```
 
 ### §12 Forbidden Rules
@@ -501,11 +533,11 @@ and after the paragraph that starts "An agent proposal never executes a write.":
 
 | Clause | Settled text, short | A1 amendment |
 |---|---|---|
-| ARCHITECTURE.md §8.3 | Content never a free-text argument; a projected id never feeds another connector | The handoff exception and the `OWNER_CONFIRMED` trust value (Part III) |
-| ARCHITECTURE.md §8.5 | Content-conditioned control flow needs an ADR | States that the two-run handoff is not that; a new flow needs an amendment |
-| ARCHITECTURE.md §10 | HIGH: any cross-destination flow | A LOW row for the handoff into a READ; HIGH means flows into writes |
+| ARCHITECTURE.md §8.3 | Content never a free-text argument; a projected id never feeds another connector; quarantined output only to the reply | The handoff exception, the narrow quarantined-output exception (H-5..H-7), the `OWNER_CONFIRMED` trust value, and egress labels governing model providers with the handoff slot as the only sanctioned connector egress (Part III) |
+| ARCHITECTURE.md §8.5 | Content-conditioned control flow needs an ADR | States that the handoff run sequence (at most three runs, one planning run) is not that; a new flow needs an amendment |
+| ARCHITECTURE.md §10 | HIGH: any cross-destination flow | Every cross-destination flow stays HIGH except the A1 handoff into a READ (a LOW row) |
 | ARCHITECTURE.md §12 | Content never a free-text argument | The handoff exception; a new bullet that keeps delegations forbidden |
-| ADR-0121 D2 | References source-bound; "dates only from the planner's symbolic time" | Planner references unchanged. A1-D9 handoff values (dates included, A1-D4) fill one declared slot in run 2 |
+| ADR-0121 D2 | References source-bound; "dates only from the planner's symbolic time" | Planner references unchanged. A1-D9 handoff values (dates included, A1-D4) fill one declared slot in the final run |
 | ADR-0121 D3 | M2 output "never used as an argument" | Unchanged, except M2 extraction under A1-D4 (substring-verified, one item, egress labels) |
 | ADR-0121 D4 | Cross-source reference refused like `UNTRUSTED` | Unchanged for the planner; `OWNER_CONFIRMED` in the declared slot (A1-D8) |
 | ADR-0121 D7 | Bounds; kill switch | Handoff caps on top (A1-D10); the switch voids pending handoffs (A1-D11) |
@@ -516,11 +548,12 @@ and after the paragraph that starts "An agent proposal never executes a write.":
 | S2 plan Q6 | Multi-step plans: READ only, no help/brief | Help is split off before planning; brief may be one step under B1–B6 (Part II) |
 | S2 plan Q9 | No follow-up state from agent replies | Exception: the in-memory, single-use, turn-bound pending handoff (A1-D7) |
 | ADR-0120 catalog | Today's READ entries | Three new READ entries, each by its own ADR-0120 amendment (A1-D14) |
+| ADR-0110 D4 | Calendar text never reaches a `REMOTE` provider | Unchanged for model providers. New: a calendar-derived value (an attendee email for H-3, a title token or LOCAL-M2 keyword for H-5) may reach a connector (Gmail, Jira) only as an `OWNER_CONFIRMED` value in the declared handoff slot. Its results join `LOCAL_MODEL_ONLY` (A1-D8) |
+| ADR-0118 D7 | Mail and Drive text leave the host only on a summary request | Model egress also on a request that names the item's content, for M2 extraction only (A1-D4). New: a mail- or Drive-derived value may reach another connector (Calendar, Jira, Slack) only as an `OWNER_CONFIRMED` value in the declared handoff slot (H-1, H-2, H-6, H-7) |
+| ADR-0118 D8 | Routing uses the owner's text | Clarified, not loosened: the step, source, destination and operation still come only from the owner's text (A1-D1). A handoff value is an argument, never routing |
 
 **Unchanged and reaffirmed:**
 - ADR-0063 and ADR-0111 D3: content is data.
-- ADR-0110 D4: calendar text stays local.
-- ADR-0118 D7/D8.
 - ADR-0112: exact-payload, one-time writes.
 - ADR-0115 D2: no tool definitions.
 - ADR-0097: the credential guard.
@@ -541,7 +574,7 @@ and after the paragraph that starts "An agent proposal never executes a write.":
 | ④-1 Runtime account privilege | Unchanged (Quoky runs as the owner's account) | Residual (ADR-0121 R4) |
 | ④-4 / ④-5 System-to-system communication; new-destination monitoring | Cross-vendor content flow on existing hosts; the guard cannot see the query | **Partial.** Covered by the handoff audit (A1-D12), not by the guard |
 | ⑤-1 Limit export to work scope; minimize data | Mail, Drive and calendar bytes reach Slack, Atlassian and GitHub searches. The brief keeps its DM-only and local-model labels inside a plan (B1, B2) | **Touched.** Accepted only as a per-value owner disclosure (A1-D3..D6). Residual RA-2 |
-| ⑤-2 Synchronized time; correlation | `cid` joins run 1, run 2, the handoff record and the ledger | Meets |
+| ⑤-2 Synchronized time; correlation | `cid` joins every run of a handoff, the handoff record and the ledger | Meets |
 | ⑤-3 Logs with time, target and volume; no secrets | `quoky.agentHandoff` holds HMACs, never values | Meets (A1-D12) |
 | ⑤-4 Cumulative small-query detection | The `agent-handoff` ledger initiator and the day cap | Meets |
 | ⑤-5 Incident response | The kill switch voids pending handoffs; an HMAC match on a suspect string | Meets |
@@ -560,7 +593,8 @@ controls carry the guarantee, and the owner's pick is consent, not the boundary.
    but not eliminated.
 2. **RA-2 Cross-vendor disclosure (MSIT ⑤-1).** A confirmed value goes to another vendor's search, and so to its
    logs. The guarantee is only that the value is a short, filtered substring (≤ 30 characters for a keyword) of the
-   one chosen item.
+   one chosen item. This includes calendar data: H-5 sends words from a meeting title to a Jira search, and H-3 sends
+   attendee addresses to a Gmail search, although calendar text never goes to a `REMOTE` model.
 3. **RA-3 Confirmation fatigue.** The owner will eventually pick reflexively. Safety against a worst-case owner holds
    only for the properties A1-D1..A1-D15 enforce, not for "the owner would have noticed".
 4. **RA-4 M2 extraction quality and denial.** A steered M2 can hide the real keywords or action items. Remote M2
@@ -609,7 +643,9 @@ Each step is reviewed by the Chief Architect, Codex and `/security-review`. Ever
 ## Part VIII — Ratification checklist (Product Owner)
 
 - [ ] Part III constitution text for §8 item 3, §8 item 5 and §12 (including the new delegation bullet).
-- [ ] Part III §10 conformity row and paragraph (open question 1).
+- [ ] Part III §10 conformity row and sentence (open question 1).
+- [ ] The ADR-0110 D4 and ADR-0118 D7/D8 amendments in Part IV (handoff slot as the only connector egress for
+      content-derived values).
 - [ ] A1-D1..A1-D17 as written, including the `OWNER_CONFIRMED` label (never `TRUSTED`, never to M1).
 - [ ] The closed handoff table H-1..H-7. New rows only by amendment.
 - [ ] The extraction rules: deterministic for keys, dates, emails and PR refs; M2 only under egress labels with the
@@ -632,7 +668,8 @@ Each step is reviewed by the Chief Architect, Codex and `/security-review`. Ever
 
 1. **§10 conformity.** The §10 HIGH row today says "any flow of data read from one source to a different
    destination" needs an approval card. The security review requires the handoff pick **not** to look like an approval
-   card (MC-5). Recommended: ratify the Part III §10 row and paragraph (the HIGH row means flows into writes).
+   card (MC-5). Recommended: ratify the Part III §10 row and sentence, "every cross-destination flow is HIGH except the
+   ADR-0121 A1 handoff into a READ".
 2. **M2 release measurement (stage H4).** Proposed defaults:
    - ≥ 30 live structured handoffs with 0 incidents;
    - M2 shadow extraction over ≥ 50 items with the substring-survival rate and the owner-labelled usefulness reported;
@@ -673,7 +710,8 @@ Each step is reviewed by the Chief Architect, Codex and `/security-review`. Ever
   attention.
 - **+** Mixed help / brief requests answer both parts.
 - **−** A new trust level, pending state, three catalog entries, a red-team family and a second flag.
-- **−** Each handoff is two DM turns. Cross-vendor disclosure is an accepted residual (RA-2).
+- **−** Each handoff needs one or two owner picks (an item, then a value). Cross-vendor disclosure is an accepted
+  residual (RA-2).
 - **−** The gold, the prompt and the scorer change before S2 can pass its gates.
 
 ## V1 / V2
