@@ -251,9 +251,11 @@ function askUnbounded(steps: readonly AgentPlanStep[], unbounded: Unbounded, ctx
   // cap); the first other failure refuses the plan, so a write, an ungrounded value or a content-borne key never gets a
   // suggestion.
   const otherwise = otherwiseValid(steps, unbounded);
+  // Codex P2: the other steps keep their own step-scoped period grounding, exactly as in the ordinary path.
+  const temporal = otherwise.length > 1 ? stepTemporalTexts(otherwise, ctx) : undefined;
   for (const [index, step] of otherwise.entries()) {
     const number = index + 1;
-    const checked = step.kind === 'summarize' ? checkSummary(step, number, otherwise) : checkRead(step, number, otherwise, ctx, undefined);
+    const checked = step.kind === 'summarize' ? checkSummary(step, number, otherwise) : checkRead(step, number, otherwise, ctx, temporal);
     if (!checked.ok) return checked;
   }
   let suggestion: AgentPlanStep[];
@@ -438,6 +440,17 @@ function clauseGrounded(entry: NlCatalogEntry, args: NlArgs, ctx: AgentPlanValid
   });
 }
 
+/**
+ * Whether a normalized word names the alias. A Korean alias may be followed by anything (a particle: `깃허브에서`); an
+ * English (ASCII) alias must end at a word boundary, with only a plural or possessive allowed (`PRs`, `PR's`), so that
+ * `project` never reads as the GitHub alias `pr` (Codex P3).
+ */
+function aliasStarts(word: string, name: string): boolean {
+  if (!word.startsWith(name)) return false;
+  if (!/^[a-z0-9]+$/u.test(name)) return true;
+  return /^(?:s|['\u2019]s)?(?![a-z0-9])/u.test(word.slice(name.length));
+}
+
 /** The conjuncts of the owner's prose that name `entry` by one of its aliases or source names (normalized). */
 function entryClauses(groundingText: string, entry: NlCatalogEntry): string[] {
   const tokens = groundingText.split(/\s+/u).filter((token) => token.length > 0);
@@ -452,7 +465,7 @@ function entryClauses(groundingText: string, entry: NlCatalogEntry): string[] {
     (conjuncts[conjuncts.length - 1] as string[]).push(word);
     if (/[,،]$/u.test(word) || /(?:랑|하고)$/u.test(word)) conjuncts.push([]);
   }
-  return conjuncts.filter((words) => words.some((word) => names.some((name) => word.startsWith(name)))).map((words) => words.join(' '));
+  return conjuncts.filter((words) => words.some((word) => names.some((name) => aliasStarts(word, name)))).map((words) => words.join(' '));
 }
 
 /** A reference field that would carry a date or time (dates come only from the planner's symbolic time, D2). */
@@ -615,7 +628,7 @@ function periodExpressions(tokens: readonly string[], entries: readonly NlCatalo
     const hit = entries.find((entry) =>
       [...entry.aliases, ...(entry.sourceNames ?? [])].some((alias) => {
         const name = normalizeForMatch(alias);
-        return name.length > 0 && !name.includes(' ') && word.startsWith(name);
+        return name.length > 0 && !name.includes(' ') && aliasStarts(word, name);
       }),
     );
     return hit?.id;

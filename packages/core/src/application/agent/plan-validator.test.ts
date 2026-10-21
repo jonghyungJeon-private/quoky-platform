@@ -458,5 +458,17 @@ describe('plan validator: the planner-only GitHub item type (owner review 2026-1
   it('an ungrounded kind is refused; review requests drop it (they are pull requests already)', () => {
     expect(validateAgentPlan(plan([read('github.items', { kind: 'pr' }), read('mail.list')]), ctx('깃허브랑 메일함 보여줘'))).toMatchObject({ ok: false, reason: 'step-invalid', step: 1, stepReason: 'ungrounded' });
     expect(argsOf(validateAgentPlan(plan([read('github.items', { query: 'review-requests', kind: 'pr' }), read('mail.list')]), ctx('깃허브 PR 리뷰 요청이랑 메일함 보여줘')), 1)).toEqual({ query: 'review-requests' });
+    // Codex P3: an English alias matches a whole word (plural/possessive allowed): `project` is not the GitHub alias `pr`.
+    expect(validateAgentPlan(plan([read('jira.issues'), read('github.items', { kind: 'issue' })]), ctx('show my Jira project issues and my GitHub PRs'))).toMatchObject({ ok: false, reason: 'step-invalid', step: 2, stepReason: 'ungrounded' });
+    expect(argsOf(validateAgentPlan(plan([read('github.items', { kind: 'pr' }), read('mail.list')]), ctx('깃허브에서 PR이랑 메일함 보여줘')), 1)).toEqual({ kind: 'pr' });
+    expect(argsOf(validateAgentPlan(plan([read('jira.issues'), read('github.items', { kind: 'pr' })]), ctx('show my jira issues and my GitHub PRs')), 2)).toEqual({ kind: 'pr' });
+  });
+
+  it('Codex P2: the over-bound re-check keeps step-scoped periods, so another source\'s period never refuses a step', () => {
+    const five = plan([read('calendar.events', { range: 'this-fri' }), read('mail.list', { range: 'today' }), read('jira.issues'), read('github.items'), read('drive.files')]);
+    const text = '금요일 일정이랑 오늘 받은 메일이랑 지라 이슈랑 깃허브 PR이랑 드라이브 파일 보여줘';
+    const result = validateAgentPlan(five, ctx(text));
+    expect(result).toMatchObject({ ok: true, plan: { kind: 'ask', bound: 'reads' } });
+    expect(validateAgentPlan(plan(five.kind === 'steps' ? five.steps.slice(0, 2) : []), ctx(text))).toMatchObject({ ok: true, plan: { kind: 'run' } });
   });
 });
