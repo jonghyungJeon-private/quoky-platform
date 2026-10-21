@@ -121,16 +121,31 @@
        "메일 본문에 있는" or "회의록에 적힌" (ADR-0118 D7). Work sources follow `QUOKY_WORK_SUMMARY_ENABLED`.
      - M2 extraction counts toward the ≤ 3 M2 calls of a run.
      - Deterministic candidates are listed first, marked `자동 추출`, and are never reordered by M2.
-5. **A1-D5 — Value filter (MC-4).** Every candidate passes these checks before any prompt exists:
-   - NFKC normalization.
-   - Rejection (never stripping) of bidi and invisible characters (U+202A–202E, U+2066–2069, U+200B–200F, U+FEFF,
-     U+00AD), newlines, and Latin mixed with Cyrillic or Greek inside one token.
-   - For a keyword: Hangul, Latin letters, digits, space, `-`, `.` and `_` only. 2–30 characters, ≤ 4 tokens.
-   - No operator words (`OR`, `AND`, `NOT`), and none of `:` `"` `'` `*` `#` `@` `<` `>` `(` `)` `=` `~` `!` `|` or
-     backslash. No URL, and no digit run longer than 8.
-   - Never truncated: a value over a limit is rejected.
-   - The credential guard runs on every value. A hit upgrades the value to `HOST_ONLY`, and the value is dropped.
-   - Adapters still escape (ADR-0120 D13).
+5. **A1-D5 — Value filter (MC-4).** Every candidate passes these checks before any prompt exists.
+   - **Every kind:**
+     - NFKC normalization.
+     - Rejection (never stripping) of bidi and invisible characters (U+202A–202E, U+2066–2069, U+200B–200F, U+FEFF,
+       U+00AD), newlines, and Latin mixed with Cyrillic or Greek inside one token.
+     - Never truncated: a value over a limit is rejected.
+     - The credential guard runs on every value. A hit upgrades the value to `HOST_ONLY`, and the value is dropped.
+     - Adapters still escape (ADR-0120 D13).
+   - **Free-text keyword candidates only (H-5..H-7):**
+     - Hangul, Latin letters, digits, space, `-`, `.` and `_` only. 2–30 characters, ≤ 4 tokens.
+     - No operator words (`OR`, `AND`, `NOT`), and none of `:` `"` `'` `*` `#` `@` `<` `>` `(` `)` `=` `~` `!` `|` or
+       backslash.
+     - No URL, and no digit run longer than 8.
+   - **Structured candidates (H-1..H-4)** are not subject to the keyword charset and bans. Each must instead match its
+     kind's closed grammar as a whole value (anchored, nothing before or after), and anything else is rejected:
+     - **Jira key:** `PROJECT-N` per the A1-D4 regex, with the prefix in the configured site's visible projects.
+     - **Email (sender filter or attendee):** the A1-D4 RFC-lite pattern only. No display name, comment, quoting,
+       route or second `@`. For attendees, the value is the API field, and the owner's own address is dropped. The
+       security review requires no domain allowlist. A domain policy, for example company domains only, is an
+       optional owner choice (open question 7).
+     - **PR ref:** exactly `owner/repo#N` or the canonical URL `https://github.com/<owner>/<repo>/(pull|issues)/<n>`,
+       with no query, fragment or extra path, and with `<owner>/<repo>` on the ADR-0109 allowlist. A bare `#N` is
+       accepted only when the item names exactly one allowlisted repo, and it is shown and sent as `owner/repo#N`.
+     - **Date:** only what the existing deterministic date parser produces (A1-D4), sent as a normalized ISO date,
+       never the raw text.
 6. **A1-D6 — The fixed confirmation template (MC-5).** Deterministic code renders the template. M2 never writes it,
    and it contains no content text except the neutralized source header. The value shown is the value sent, byte for
    byte, inside an escaped code span. There is no separate label. The template never uses approval-card wording
@@ -399,8 +414,14 @@ Apply only on ratification, in the same change as the `DECISIONS.md` ratificatio
     Labels join to the most restrictive value. Labels are domain data, never a provider id. The rules are:
 -   - The planner receives only `TRUSTED` and `STRUCTURE` values.
 +   - The planner receives only `TRUSTED` and `STRUCTURE` values. An `OWNER_CONFIRMED` value (below) never reaches it.
-    - Raw external content is read only by a **quarantined** model call. That call has no tools, uses a schema-bound
-      output, and its output goes only to the owner's reply.
+-   - Raw external content is read only by a **quarantined** model call. That call has no tools, uses a schema-bound
+-     output, and its output goes only to the owner's reply.
++   - Raw external content is read only by a **quarantined** model call. That call has no tools and uses a
++     schema-bound output. Its output goes only to the owner's reply, with one narrow exception for the
++     owner-confirmed handoff of ADR-0121 A1 (free-text keyword flows H-5..H-7 only): a candidate the call extracted
++     may fill the declared READ slot only after it is verified deterministically as a verbatim substring of the one
++     owner-chosen item, passes the keyword filter, and is picked by the owner. It then carries `OWNER_CONFIRMED`. No
++     other quarantined output is ever an argument.
 -   - Content can never choose a step, and never becomes a free-text argument.
 -   - A closed-format id projected deterministically from a read result may feed only a later read of the same source
 -     and destination origin. It never feeds another connector, another origin or a write.
@@ -627,6 +648,9 @@ Each step is reviewed by the Chief Architect, Codex and `/security-review`. Ever
    owner names one meeting?
 6. **Connector-call accounting for the brief.** Do the brief's ≤ 3 mail metadata gets count as connector calls toward
    the run's ≤ 10 (proposed: yes, worst case 7 for a brief with every section on)?
+7. **Email domain policy (H-3, H-1 sender filters).** The security review needs no domain allowlist. Should email
+   candidates also be limited to allowlisted domains, for example company domains only (proposed: no, RFC-lite plus
+   display only)?
 
 ---
 
