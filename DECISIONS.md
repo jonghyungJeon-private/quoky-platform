@@ -28381,6 +28381,14 @@ analysis and an ADR-0121 amendment, and decision (e) for its own amendment (Q6).
   ask stays"), while "전부" with no number runs with take 10 and the truncation line; (ii) the validator does not yet charge
   a reference step as one connector call (no per-run call accounting exists before P3), and the one-request-per-page test
   belongs to P3's bulk read.
+- **GitHub kind rule and examples (D12 gate gates-reviewA-8b1a8676-20261021; read `nl-select.v65`, A6 `v63`, R2 `v64`).**
+  Cause: v64 gave the selector only the `kind` catalog line, with no rule line and no example, so haiku omitted `kind`
+  (`github.items` scored 78.7-85.2% in the intent gate and the GitHub cases dominate the read-regression misses). Fix: one
+  rule-5 line next to the Drive kind line (pr ONLY when the owner names pull requests, issue ONLY when the owner names
+  issues, omit for both or neither, never with `review-requests`) and two generic examples (`깃헙에 열려 있는 내 이슈 좀 보자`
+  -> issue, `list the pull requests I still have open on GitHub` -> pr; neither is gold, RAG-0 lint clean). The pins
+  (`golden/nl-select.v65.prompts.json`, the read and A6 sha256) and the agent-plan.v3 pin (it embeds the read catalog and
+  examples; v3 was never run against a model, so it moved in place) are regenerated. Not gated yet: needs the next D12 run.
 - **CA review of fe72d92d (CHANGES REQUIRED), fixed.**
   1. [P2] The count line of a previewed count answer counts what the readout keeps (credential-bearing items dropped,
      readout slots bounded) and says "이상" / "or more" when the readout was cut or the fetched page was full, keyword or

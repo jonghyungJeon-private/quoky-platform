@@ -131,14 +131,20 @@ import { nlModeVocabularyText } from './action-entries';
  * item type) = v63 / v61 with ONE catalog line: `github.items` `kind: pr|issue|all` (PR / pull request / 풀리퀘 vs 이슈 /
  * issue; omit for both). No rule or example changes (RAG-0 unchanged). Not gated yet: the relabeled golds need the next
  * D12 read run. Pinned by `golden/nl-select.v64.prompts.json`.
+ * v65 (read) / v63 (A6) (the v64 / v62 gate of 2026-10-21: `github.items` 78.7-85.2% in the intent gate and the GitHub
+ * cases dominate the read-regression misses; the selector omitted `kind` because v64 had only the catalog line) = v64 / v62
+ * with one rule-5 line next to the Drive kind line (pr ONLY when the owner names pull requests, issue ONLY when the owner
+ * names issues, omit for both or neither, never with review-requests) and two generic `github.items` examples (a Korean one
+ * with `kind: issue`, an English one with `kind: pr`), shown while `github.items` is offered. RAG-0 clean (neither text is
+ * a gold). Pinned by `golden/nl-select.v65.prompts.json`.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v64';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v65';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v64.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v65.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v62';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v63';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -168,8 +174,9 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v62';
  * prompt; not the read v59). v60 = the v48 R2 lines on top of v59 (the A6 prompt; not the read v60). v61 = the v48 R2
  * lines on top of v60 (the A6 prompt; not the read v61). v62 = the v48 R2 lines on top of v61 (the A6 prompt; not the
  * read v62). v63 = the v48 R2 lines on top of v62 (the A6 prompt with the GitHub `kind` catalog line; not the read v63).
+ * v64 = the v48 R2 lines on top of v63 (the A6 prompt with the GitHub `kind` rule and examples; not the read v64).
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v63';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v64';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -324,6 +331,8 @@ const EXAMPLES: readonly PromptExample[] = [
   { text: '여기서 지라 이슈 찾으려면 너한테 뭐라고 하면 돼?', output: '{"entryId":"help.topic","args":{"topic":"work-lookup"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['help.topic'] },
   { text: '깃허브 리뷰 요청도 볼 수 있어?', output: '{"entryId":"help.topic","args":{"topic":"work-lookup"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['help.topic'] },
   { text: 'what PRs need my review', output: '{"entryId":"github.items","args":{"query":"review-requests"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['github.items'] },
+  { text: '깃헙에 열려 있는 내 이슈 좀 보자', output: '{"entryId":"github.items","args":{"query":"my-items","kind":"issue"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['github.items'] },
+  { text: 'list the pull requests I still have open on GitHub', output: '{"entryId":"github.items","args":{"query":"my-items","kind":"pr"},"ambiguity":"CLEAR","alternatives":[]}', needs: ['github.items'] },
   { text: '[quoted]\n이거 무슨 뜻이야?', output: none, needs: [] },
 ];
 
@@ -510,6 +519,8 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   words (오늘, 이번 주) and the generic words (일정, 회의, 미팅) are never the keyword.',
     '   Drive kind: ONLY when the owner names the file type (스프레드시트/시트/엑셀, 구글 문서/독스 only (plain 문서 is not a type), 슬라이드/ppt, pdf, 폴더);',
     '   the type word is then `kind`, not part of `name`. Do not use `keyword` on the calendar for "busy/free" questions.',
+    '   GitHub kind: pr ONLY when the owner names pull requests (PR, PRs, pull request, 풀리퀘, 머지 요청); issue ONLY when the owner',
+    '   names issues (이슈, issue); omit it when both or neither are named; never with query review-requests.',
     '   A message that is only a source name ("지라", "메일", "일정", "드라이브") selects that source\'s default listing with',
     '   args {}; a bare "슬랙" or "컨플루언스" has no keyword, so answer NEEDS_CLARIFICATION with that entry.',
     '   A source named in the message decides which source\'s search is used (Slack names the Slack search; Confluence or a wiki',

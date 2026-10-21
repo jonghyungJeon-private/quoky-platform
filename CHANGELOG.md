@@ -26,6 +26,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   streak limits scale with concurrency and a canary call separates an outage from a regression; the full-suite lock is
   race-free, boot- and PID-reuse-aware and has a wrapper watchdog; `QUOKY_TEST_LOCK_DRY_RUN=1`; `resolve_changelog.py` is
   tracked. Owner-approved (2026-10-21): INVALID as a third gate verdict.
+## Unreleased — GitHub kind rule and examples (read `nl-select.v65`, A6 `nl-select.v63`, R2 `nl-select.v64`) (2026-10-21)
+
+- **Changed (prompt; v64/v62/v63 superseded, not yet gated).** One rule line and two generic examples for the `github.items`
+  `kind` arg (pr / issue, omitted for both or neither, never with review requests). Cause: v64 had only the catalog line, so
+  the selector omitted `kind` (`github.items` 78.7-85.2% in the D12 intent gate).
 
 ## Unreleased — ADR-0121 S2 P2: the plan corpus and `eval:agent-plan` (2026-10-20)
 

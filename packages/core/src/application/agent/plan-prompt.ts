@@ -32,9 +32,9 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
  * covers only the reads the owner asks to summarize (the reads its summary verb takes as object), not every earlier read;
  * (h) a request with no bound (more than 4 reads, a read per day/week/month of a longer period, more than 10 issue
  * details) is written as asked, at most 6 steps, so Core can answer it with a bounded suggestion instead of a silent
- * none; and the read catalog it embeds is `nl-select.v64` (the GitHub `kind`: pr / issue / all). The reference default
- * stays 10 (decision (c): the owner kept the ADR-0121 D2 cap). No example changed.
- */
+ * none; and the read catalog it embeds is `nl-select.v65` (the GitHub `kind`: pr / issue / all). The reference default
+ * stays 10 (decision (c): the owner kept the ADR-0121 D2 cap). No planner example changed; the embedded read catalog and
+ * examples carry the read v65 GitHub `kind` rule and two examples (v3 was still never run against a model, so its pin moved in place). */
 export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v3';
 
 export interface AgentPlanPromptInput {

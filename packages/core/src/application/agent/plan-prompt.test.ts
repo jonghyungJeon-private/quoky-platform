@@ -50,7 +50,7 @@ describe('agent-plan.v3 prompt', () => {
     expect(prompt).toContain('"take": <the number of issues the owner names, else 10>');
     expect(prompt).toContain('Core runs none of it');
     for (const action of ACTIONS) expect(prompt).not.toContain(`- ${action.id}:`);
-    // Every catalog line and every read example of the gated read prompt is kept, byte for byte (nl-select.v64 lists the
+    // Every catalog line and every read example of the gated read prompt is kept, byte for byte (nl-select.v65 lists the
     // GitHub `kind`, so the planner's catalog has it too).
     const catalog = read.slice(read.indexOf('Catalog:'), read.indexOf('\nExamples:'));
     expect(prompt).toContain(catalog);
@@ -108,4 +108,4 @@ describe('agent-plan.v3 prompt', () => {
   });
 });
 
-const PINNED_SHA256 = '62c058e499d1327d2d0b7525777d7620988bbcdb711a08fed8c2e3ee06c55077';
+const PINNED_SHA256 = 'b730497be9eb2ae328775d082119709f7a87c50834bf555154fb284f61f2a15b';
