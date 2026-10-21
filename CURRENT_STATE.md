@@ -5,6 +5,25 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 amendment A1 — ratified (2026-10-21, docs only, branch `claude/v5-adr0121-a1-ratify`)
+
+The owner ratified A1 on 2026-10-21. Docs only; no code changed:
+- **Constitution.** `ARCHITECTURE.md` §8 items 3 and 5, §10 and §12 carry the owner-confirmed handoff text: the
+  `OWNER_CONFIRMED` trust value, the narrow H-5..H-7 quarantined-output exception (substring-verified M2 keywords only),
+  the LOW handoff row with "every cross-destination flow is HIGH except the A1 handoff into a READ", and the delegation
+  ban.
+- **DECISIONS.** A1 is Accepted, with the owner's answers (§10 exception added; M2 classes behind a code gate after ≥ 30
+  incident-free structured handoffs, ≥ 50 shadow M2 extractions and 0 red-team successes; a missed help clause is
+  refused; ap-n122 = brief + Jira summary; the related-Jira offer stays open; brief mail gets count toward the 10 calls;
+  no email domain allowlist; the same-source detail cap stays 10 with "N개 중 10개"), RA-1..RA-9 and the rollout order.
+  ADR-0110 D4 and ADR-0118 D7/D8 are amended; the S2 plan Q6 is amended by decision (e).
+- **Implementation.** Part II (help split, brief as a step) ships inside S2 P2/P3. The handoff (Part I) starts only after
+  S2 is `active`, behind `QUOKY_AGENT_HANDOFF` (default `off`); `shadow` / `active` are Strict owner steps after the
+  `s2-handoff` gates.
+
+Next: S2 P2 (AP-6 re-approval, AP-7, prompt `agent-plan.v3`) and P3. DECISIONS: "ADR-0121 amendment A1" and its
+ratification record.
+
 ### ADR-0121 S2 P2 — the plan corpus and `eval:agent-plan` (2026-10-20, branch `claude/v5-s2-p2`)
 
 Data and eval only, built offline (no model call):

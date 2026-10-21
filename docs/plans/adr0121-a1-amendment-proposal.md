@@ -1,7 +1,8 @@
 # ADR-0121 amendment A1 and ARCHITECTURE.md amendment proposal: owner-confirmed cross-source handoff, and mixed help / brief requests
 
-- **Status:** **Proposed** (2026-10-21). Nothing in this file is applied. `ARCHITECTURE.md` keeps its current normative
-  text, and ADR-0121 keeps its ratified text, until the Product Owner ratifies this proposal (checklist in §8).
+- **Status:** **Ratified** by the Product Owner on 2026-10-21 and **applied**: Part III is in `ARCHITECTURE.md`, and the
+  ratification record with the answers to Part IX is in `DECISIONS.md` ("ADR-0121 A1 ratification record"). The text
+  below is kept as proposed; where it and the record differ, the record wins.
 - **Date:** 2026-10-21
 - **Amends (on ratification):**
   - `ARCHITECTURE.md` §8 items 3 and 5, §10 (one row, one paragraph) and §12 (one bullet): Part III;

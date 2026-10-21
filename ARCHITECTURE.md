@@ -265,7 +265,7 @@ fixed; the implementations are not.
 
 ## 8. Agent Principles
 
-> *Amended by ADR-0121 (2026-10-13).*
+> *Amended by ADR-0121 (2026-10-13) and ADR-0121 A1 (ratified 2026-10-21).*
 
 1. Execution is single-shot (PromptComposer → Provider → Artifact) **except** for one bounded agent runtime defined by
    ADR-0121. It plans first and then executes. It is not a plan-act-observe loop:
@@ -281,20 +281,40 @@ fixed; the implementations are not.
    - the providers come from capability routing;
    - the authority comes from the risk table (§10) and the approval gates.
 3. **Information-flow control is mandatory for any agent.** Every value carries a label. The label has four parts:
-   - trust: `TRUSTED`, `STRUCTURE` or `UNTRUSTED`;
+   - trust: `TRUSTED`, `STRUCTURE`, `OWNER_CONFIRMED` or `UNTRUSTED`;
    - egress: `REMOTE_OK`, `REMOTE_ON_SUMMARY_REQUEST`, `LOCAL_MODEL_ONLY` or `HOST_ONLY`;
    - scope: `WORK_CHANNEL_OK` or `OWNER_DM_ONLY`;
    - its sources.
 
    Labels join to the most restrictive value. Labels are domain data, never a provider id. The rules are:
-   - The planner receives only `TRUSTED` and `STRUCTURE` values.
-   - Raw external content is read only by a **quarantined** model call. That call has no tools, uses a schema-bound
-     output, and its output goes only to the owner's reply.
-   - Content can never choose a step, and never becomes a free-text argument.
+   - The planner receives only `TRUSTED` and `STRUCTURE` values. An `OWNER_CONFIRMED` value (below) never reaches it.
+   - Raw external content is read only by a **quarantined** model call. That call has no tools and uses a
+     schema-bound output. Its output goes only to the owner's reply, with one narrow exception for the
+     owner-confirmed handoff of ADR-0121 A1 (free-text keyword flows H-5..H-7 only): a candidate the call extracted
+     may fill the declared READ slot only after it is verified deterministically as a verbatim substring of the one
+     owner-chosen item, passes the keyword filter, and is picked by the owner. It then carries `OWNER_CONFIRMED`. No
+     other quarantined output is ever an argument.
+   - Content can never choose a step, a destination or an operation, and never becomes a free-text argument, with
+     one exception: the **owner-confirmed handoff** of ADR-0121 A1.
    - A closed-format id projected deterministically from a read result may feed only a later read of the same source
-     and destination origin. It never feeds another connector, another origin or a write.
+     and destination origin. It never feeds another connector, another origin or a write, except through the
+     owner-confirmed handoff.
+   - **Owner-confirmed handoff (ADR-0121 A1).** A value taken from one owner-chosen item of one source may fill one
+     argument slot of a READ in another source only if all of the following hold:
+     - the source, the destination and the operation are named in the owner's own words;
+     - the value is extracted deterministically, or by a quarantined call under its egress label and verified as a
+       verbatim substring of that item;
+     - it passes a closed format or a strict charset;
+     - it is shown byte for byte in a fixed template and picked by the owner by number, or retyped by the owner
+       inside the pending handoff and passed through the same filters; single-use and turn-bound.
+     Such a value, picked or retyped, is labelled `OWNER_CONFIRMED`: never `TRUSTED`, never a planner input, never a
+     destination, never part of a write, and never stored. It is capped, DM-only, stopped by the kill switch and
+     audited without content.
    - Every argument carries a provenance label.
-   - A model call's provider must satisfy the strictest egress label of its inputs (§5.14).
+   - A model call's provider must satisfy the strictest egress label of its inputs (§5.14). **Egress labels govern
+     model providers.** For connector egress of values taken from content, the declared slot of an owner-confirmed
+     handoff is the only sanctioned path. In particular, a value from a `LOCAL_MODEL_ONLY` source (calendar) may reach
+     a connector only through that slot, and never a `REMOTE` model.
 4. An agent has **no** shell, code execution, arbitrary URL fetch, MCP or plugin tool, memory write or connector
    write. A write is only ever a proposal that creates an existing exact-payload, one-time approval (§10). Steps,
    model calls, connector calls, wall time and cost are capped. A kill switch stops runs without a restart.
@@ -303,6 +323,12 @@ fixed; the implementations are not.
    - more than one re-plan;
    - content-conditioned control flow;
    - new tool classes.
+
+   The owner-confirmed handoff is not content-conditioned control flow. It is a sequence of at most three runs
+   separated by owner picks: a planning run, an optional deterministic extraction run after an item pick, and a
+   deterministic final run after the value pick. Only the first run plans (no M1 or M1' later). The final run executes
+   only the READ the first run declared from the owner's words, once per picked value. A new handoff flow (source, kind
+   or destination) needs its own amendment of ADR-0121.
 
 ---
 
@@ -334,6 +360,7 @@ fixed; the implementations are not.
 | MEDIUM | local code modification, local test/file generation | auto (local only) |
 | HIGH | git commit/push/PR, connector writes (Jira/Slack/Confluence) | **approval** |
 | LOW | bounded agent **read** run over READ catalog entries (ADR-0121) | auto, within caps |
+| LOW | owner-confirmed handoff into a READ (ADR-0121 A1) | owner pick of the exact displayed values; never a write |
 | HIGH | agent **write proposal**; any flow of data read from one source to a different destination | **approval** (exact payload + provenance banner) |
 | CRITICAL | deploy, DB migration, destructive shell, force push, secret access | **approval** |
 
@@ -343,6 +370,9 @@ that owner (owner DM by default). The one-time credential-guard override (ADR-00
 An agent proposal never executes a write. The approval card shows the exact payload, the destination (taken only from
 the owner's own words) and the label sources of the data in it. Approval is one-time, hash-bound and at-most-once,
 with no automatic retry (ADR-0112).
+
+Every cross-destination flow is HIGH, except the ADR-0121 A1 owner-confirmed handoff into a READ. That handoff's pick
+is a consent step, not an approval card: it never uses approval wording and never authorizes a write.
 
 The approval gate wraps the **external write / destructive action**, not the
 planning. Approval requests and decisions are persisted as governance records.
@@ -381,7 +411,11 @@ planning. Approval requests and decisions are persisted as governance records.
 - ❌ Adding a god-interface (`Plugin`, mega-`Session`) instead of narrow ports.
 - ❌ Turning the main execution flow into implicit event choreography.
 - ❌ Letting external content (connector results, quoted or pasted text, attachments, or any model output derived from
-  them) reach a planning model, choose a step, or become a free-text argument of a tool call.
+  them) reach a planning model, choose a step, a destination or an operation, or become a free-text argument of a
+  tool call, except as an `OWNER_CONFIRMED` value in the one READ slot an owner-confirmed handoff declared
+  (ADR-0121 A1).
+- ❌ Acting on instructions found in content ("do what the mail says", "follow the PR description"), at any level.
+  Content may only be summarized; an action needs the owner's own request through the approval paths.
 - ❌ Giving any agent or model a shell, code execution, arbitrary URL fetch, MCP/plugin tools, memory writes or
   connector writes.
 - ❌ Egress to a destination that is not on the egress allowlist, or to an internal, metadata or CGNAT address after
