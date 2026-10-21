@@ -29,7 +29,19 @@ import { resolve } from 'node:path';
 import { ClaudeCliProvider, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
 import type { AiProvider } from '@quoky/core';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
-import { EXIT_INVALID_PROVIDER, formatProviderOutcomes, formatTrip, guardEvalProvider, invalidVerdict, printInvalidRun, type GuardedProvider } from './eval-provider-guard';
+import {
+  EXIT_INVALID_PROVIDER,
+  formatProviderOutcomes,
+  formatTrip,
+  guardEvalProvider,
+  hardFailureTotal,
+  invalidVerdict,
+  outageAlsoSeenNote,
+  printInvalidRun,
+  providerCanary,
+  type GuardedProvider,
+  type HardFailureCounts,
+} from './eval-provider-guard';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import {
   NL_ACTION_EVAL_GATE,
@@ -74,9 +86,26 @@ export const EXIT_BLOCKED = 3;
 /** The provider was unavailable for too many calls (usage/session limit, outage): the run is INVALID, not scored. */
 export const EXIT_INVALID = EXIT_INVALID_PROVIDER;
 
-/** Wrap a run's provider in the outage guard (`eval-provider-guard.ts`); the trip is announced on stderr. */
-export function guardRunProvider(provider: AiProvider, stderr: (line: string) => void): GuardedProvider {
-  return guardEvalProvider(provider, { onTrip: (trip) => stderr(formatTrip(trip)) });
+/**
+ * Wrap a run's provider in the outage guard (`eval-provider-guard.ts`); the trip is announced on stderr. The canary (one
+ * tiny call through the same provider before the guard trips) is injectable so tests never call a real provider.
+ */
+export function guardRunProvider(
+  provider: AiProvider,
+  stderr: (line: string) => void,
+  run: { readonly concurrency: number; readonly maxCalls: number; readonly canary?: (provider: AiProvider) => Promise<boolean> },
+): GuardedProvider {
+  return guardEvalProvider(provider, {
+    concurrency: run.concurrency,
+    maxCalls: run.maxCalls,
+    canary: run.canary !== undefined ? () => (run.canary as (provider: AiProvider) => Promise<boolean>)(provider) : providerCanary(provider),
+    onTrip: (trip) => stderr(formatTrip(trip)),
+  });
+}
+
+/** Sum a hard-failure metric over the runs' summaries. */
+export function sumHardFailures(summaries: readonly object[], fields: readonly string[]): HardFailureCounts {
+  return Object.fromEntries(fields.map((field) => [field, summaries.reduce((sum, summary) => sum + Number((summary as Record<string, unknown>)[field] ?? 0), 0)]));
 }
 
 const HELP = `Natural-language selection evaluation (ADR-0120 D12)
@@ -191,6 +220,8 @@ export interface CliDeps {
   readonly writeReport: (fileName: string, contents: string) => string;
   /** Constructed only by `run`, only after the digest matched. */
   readonly createProvider: (model: string) => AiProvider;
+  /** The outage guard's canary (one tiny call through the same provider); tests inject it, production calls the provider. */
+  readonly canary?: (provider: AiProvider) => Promise<boolean>;
 }
 
 const repoRoot = resolve(__dirname, '../../../..');
@@ -242,10 +273,18 @@ function describeMiss(record: NlEvalRecord): string {
  * The multi-run gate line of every eval:nl mode: PASSED only when every run passed, otherwise how many of the runs passed
  * (the v48 gate printed "FAILED in every one of 3 run(s)" with two runs passing).
  */
-export function formatGateRuns(label: string, summaries: ReadonlyArray<{ readonly gatePassed: boolean }>): string {
+export function formatGateRuns(label: string, summaries: ReadonlyArray<{ readonly gatePassed: boolean }>, outageNote?: string): string {
   const passed = summaries.filter((summary) => summary.gatePassed).length;
   const total = summaries.length;
-  return passed === total ? `${label}: PASSED in all ${total} run(s)` : `${label}: FAILED, passed ${passed} of ${total} run(s) (the gate needs every run)`;
+  return passed === total ? `${label}: PASSED in all ${total} run(s)` : `${label}: FAILED, passed ${passed} of ${total} run(s) (the gate needs every run)${outageNote !== undefined ? ` ${outageNote}` : ''}`;
+}
+
+/**
+ * C1 of the CA review: an INVALID run never hides a hard failure already observed among the answered records. Returns the
+ * note for the FAILED gate line when the outage was also seen, or undefined when the run is valid.
+ */
+function outageNoteOf(outage: ReturnType<GuardedProvider['report']>): string | undefined {
+  return outage.invalidReason !== undefined ? outageAlsoSeenNote(outage.invalidReason) : undefined;
 }
 
 export async function runCli(argv: readonly string[], deps: CliDeps = defaultDeps()): Promise<number> {
@@ -289,7 +328,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const guard = guardRunProvider(provider, deps.stderr);
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: plan.caseIds.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
   const startedAt = deps.now();
   let done = 0;
   const total = plan.caseIds.length * plan.runs;
@@ -304,10 +343,12 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     },
   });
   const grammarCaseIds = new Set(corpus.cases.filter((golden) => golden.grammar !== undefined).map((golden) => golden.id));
+  await guard.settle();
   const outage = guard.report();
   const reportName = `nl-intent-${startedAt.replace(/[:.]/g, '-')}-${plan.model.replace(/[^A-Za-z0-9._-]/g, '_')}.json`;
-  if (outage.invalidReason !== undefined) return finishInvalid(deps, 'intent gate', plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), records });
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarize(records.filter((record) => record.run === index + 1), plan.callTimeoutMs, grammarCaseIds));
+  const hard = sumHardFailures(summaries, ['wrongCaptures']);
+  if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, 'intent gate', plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), records }, hard);
   for (const [index, summary] of summaries.entries()) {
     deps.stdout(`run ${index + 1}/${plan.runs} (${plan.model}, ${plan.promptVersion}):`);
     for (const line of formatSummary(summary)) deps.stdout(line);
@@ -322,7 +363,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     for (const record of misses) deps.stdout(describeMiss(record));
   }
   deps.stdout(formatProviderOutcomes(outage));
-  deps.stdout(formatGateRuns('intent gate', summaries));
+  deps.stdout(formatGateRuns('intent gate', summaries, outageNoteOf(outage)));
   const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
@@ -380,16 +421,18 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
       deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
       return EXIT_BLOCKED;
     }
-    const guard = guardRunProvider(provider, deps.stderr);
+    const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: corpus.cases.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
     const startedAt = deps.now();
     const records = await runActionEvaluation({ corpus, plan, provider: guard.provider, now: deps.now });
+    await guard.settle();
     const outage = guard.report();
     const reportName = `nl-action-${startedAt.replace(/[:.]/g, '-')}.json`;
-    if (outage.invalidReason !== undefined) return finishInvalid(deps, `action gate (${plan.promptVersion})`, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records });
     const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeAction(records.filter((record) => record.run === index + 1), plan.callTimeoutMs));
+    const hard = sumHardFailures(summaries, ['wrongTargets', 'negativeCaptures']);
+    if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, `action gate (${plan.promptVersion})`, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records }, hard);
     for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
     deps.stdout(formatProviderOutcomes(outage));
-    deps.stdout(formatGateRuns(`action gate (${plan.promptVersion})`, summaries));
+    deps.stdout(formatGateRuns(`action gate (${plan.promptVersion})`, summaries, outageNoteOf(outage)));
     const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, providerOutcomes: outage, records }, null, 2)}\n`);
     deps.stdout(`results written to ${path}`);
     return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
@@ -419,21 +462,23 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const guard = guardRunProvider(provider, deps.stderr);
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: cases.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
   const startedAt = deps.now();
   const records = await runReadRegression({ cases, plan, provider: guard.provider, now: deps.now });
+  await guard.settle();
   const outage = guard.report();
   const reportName = `nl-read-regression-${startedAt.replace(/[:.]/g, '-')}.json`;
-  if (outage.invalidReason !== undefined) return finishInvalid(deps, `read-regression gate (${plan.promptVersion})`, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records });
   const goldOf = (id: string): string => {
     const golden = cases.find((candidate) => candidate.id === id);
     const expect = golden?.a6Relabel ?? golden?.expect;
     return expect === undefined || expect === 'none' ? 'none' : expect.entryId;
   };
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeReadRegression(records.filter((record) => record.run === index + 1), goldOf));
+  const hard = sumHardFailures(summaries, ['wrongCaptures', 'actionCaptures']);
+  if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, `read-regression gate (${plan.promptVersion})`, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records }, hard);
   for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
   deps.stdout(formatProviderOutcomes(outage));
-  deps.stdout(formatGateRuns(`read-regression gate (${plan.promptVersion})`, summaries));
+  deps.stdout(formatGateRuns(`read-regression gate (${plan.promptVersion})`, summaries, outageNoteOf(outage)));
   const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
@@ -450,9 +495,10 @@ function finishInvalid(
   outage: ReturnType<GuardedProvider['report']>,
   reportName: string,
   body: Record<string, unknown>,
+  hardFailures: HardFailureCounts,
 ): number {
-  printInvalidRun(deps.stdout, gateLabel, runs, outage);
-  const path = deps.writeReport(reportName, `${JSON.stringify({ ...body, verdict: invalidVerdict(outage.invalidReason ?? 'error'), providerOutcomes: outage }, null, 2)}\n`);
+  printInvalidRun(deps.stdout, gateLabel, runs, outage, hardFailures);
+  const path = deps.writeReport(reportName, `${JSON.stringify({ ...body, verdict: invalidVerdict(outage.invalidReason ?? 'error'), hardFailures, providerOutcomes: outage }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return EXIT_INVALID;
 }
@@ -491,16 +537,18 @@ async function runR2Cli(settings: { model: string; runs: number; concurrency: nu
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const guard = guardRunProvider(provider, deps.stderr);
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: corpus.cases.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
   const startedAt = deps.now();
   const records = await runActionEvaluation({ corpus, plan, provider: guard.provider, now: deps.now });
+  await guard.settle();
   const outage = guard.report();
   const reportName = `nl-action-r2-${startedAt.replace(/[:.]/g, '-')}.json`;
-  if (outage.invalidReason !== undefined) return finishInvalid(deps, `R2 gate (${plan.promptVersion})`, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records });
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeActionR2(records.filter((record) => record.run === index + 1), corpus, plan.callTimeoutMs));
+  const hard = sumHardFailures(summaries, ['wrongTargets', 'negativeCaptures']);
+  if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, `R2 gate (${plan.promptVersion})`, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records }, hard);
   for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
   deps.stdout(formatProviderOutcomes(outage));
-  deps.stdout(formatGateRuns(`R2 gate (${plan.promptVersion})`, summaries));
+  deps.stdout(formatGateRuns(`R2 gate (${plan.promptVersion})`, summaries, outageNoteOf(outage)));
   // Content-free: ids, outcomes, entries and reasons only (never an owner text or a raw model answer).
   const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);

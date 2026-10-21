@@ -19,7 +19,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Added.** `.gitattributes`: `merge=union` for `DECISIONS.md` and `CHANGELOG.md` (not `CURRENT_STATE.md`, which has
   sections edited in place).
 - **Added.** `.claude/skills/quoky-ship/` (SKILL.md and `scripts/run-gates.sh`): the gate runner (tmux, archive, DONE
-  marker, build, usage pre-check, one INVALID retry, `status`) and the review-loop discipline rules.
+  marker, build, usage pre-check, one INVALID retry per mode, `status`) and the review-loop discipline rules.
+- **Changed.** CA review of the harness hardening: an outage never hides an observed hard failure (FAILED, exit 1);
+  streak limits scale with concurrency and a canary call separates an outage from a regression; the full-suite lock is
+  race-free, boot- and PID-reuse-aware and has a wrapper watchdog; `QUOKY_TEST_LOCK_DRY_RUN=1`; `resolve_changelog.py` is
+  tracked. Owner-approved (2026-10-21): INVALID as a third gate verdict.
 
 ## Unreleased — ADR-0121 S2 P2: the plan corpus and `eval:agent-plan` (2026-10-20)
 

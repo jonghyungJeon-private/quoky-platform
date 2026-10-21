@@ -3,11 +3,16 @@
 //
 //   pnpm test                      full suite: takes the lock (waits while another full suite runs)
 //   QUOKY_TEST_NO_WAIT=1 pnpm test full suite, but exit 75 at once when the lock is held
-//   pnpm test <file|filter> [...]   targeted run (first argument is not an option): no lock
+//   pnpm test <file> [...]          targeted run: at least one non-option argument and EVERY non-option argument is an
+//                                   existing regular file: no lock. Any other argument (a filter, a directory, an option
+//                                   value such as `--reporter verbose`) takes the lock like a full suite.
+//   pnpm test --version | --help    prints vitest's version / help; never runs tests, takes no lock
 //   pnpm vitest run <files>         targeted run: never goes through this wrapper, no lock
+//   QUOKY_TEST_LOCK_DRY_RUN=1       lock handling only: exits 0 right before vitest would be spawned (tests of the lock)
 //
 // The vitest caps (maxWorkers 2, forks pool, bounded teardown) stay in vitest.config.ts.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,12 +20,33 @@ import { acquire, defaultLockDir, recordChild, release } from './full-suite-lock
 
 export const EXIT_LOCK_HELD = 75;
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(here, '../..');
 const raw = process.argv.slice(2);
 const args = raw[0] === '--' ? raw.slice(1) : raw;
-const targeted = args.length > 0 && !args[0].startsWith('-');
 const vitest = createRequire(resolve(repoRoot, 'package.json')).resolve('vitest/vitest.mjs');
 const log = (line) => process.stderr.write(`[test-lock] ${line}\n`);
+
+// `--version` / `--help` never start a run (`vitest run --version` would run the whole suite).
+if (args.includes('--version') || args.includes('-v')) {
+  const manifest = JSON.parse(readFileSync(resolve(dirname(vitest), 'package.json'), 'utf8'));
+  process.stdout.write(`vitest/${manifest.version}\n`);
+  process.exit(0);
+}
+if (args.includes('--help') || args.includes('-h')) {
+  // `vitest --help` (no `run`) prints the help and exits.
+  process.exit(spawnSync(process.execPath, [vitest, '--help'], { cwd: repoRoot, stdio: 'inherit' }).status ?? 0);
+}
+
+const isFile = (path) => {
+  try {
+    return statSync(resolve(repoRoot, path)).isFile();
+  } catch {
+    return false;
+  }
+};
+const positional = args.filter((arg) => !arg.startsWith('-'));
+const targeted = positional.length > 0 && positional.every(isFile);
 
 const lockDir = defaultLockDir();
 let held = false;
@@ -37,9 +63,23 @@ const releaseOnce = () => {
 };
 process.on('exit', releaseOnce);
 
+if (process.env.QUOKY_TEST_LOCK_DRY_RUN === '1') {
+  log(`dry run: would run vitest run ${args.join(' ')} (targeted: ${targeted})`);
+  process.exit(0);
+}
+
 // vitest runs in its own process group so a signal reaches its fork workers too, and the group is swept when vitest
-// exits: a SIGTERM to the vitest main process alone leaves its workers orphaned (PPID 1, ~1-3.5 GB each).
-const child = spawn(process.execPath, [vitest, 'run', ...args], { cwd: repoRoot, stdio: 'inherit', detached: true });
+// exits: a SIGTERM to the vitest main process alone leaves its workers orphaned (PPID 1, ~1-3.5 GB each). If this wrapper
+// itself is SIGKILLed nothing sweeps the group, so the vitest tree preloads a watchdog that kills the group when the
+// wrapper PID is gone.
+const watchdog = resolve(here, 'wrapper-watchdog.cjs');
+const nodeOptions = `${process.env.NODE_OPTIONS ?? ''} --require ${JSON.stringify(watchdog)}`.trim();
+const child = spawn(process.execPath, [vitest, 'run', ...args], {
+  cwd: repoRoot,
+  stdio: 'inherit',
+  detached: true,
+  env: { ...process.env, QUOKY_TEST_WRAPPER_PID: String(process.pid), NODE_OPTIONS: nodeOptions },
+});
 if (held && child.pid !== undefined) recordChild(lockDir, child.pid);
 const signalGroup = (signal) => {
   if (child.pid === undefined) return;
@@ -49,10 +89,13 @@ const signalGroup = (signal) => {
     // the group is already gone
   }
 };
+let interrupts = 0;
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(signal, () => {
-    // Forward to the whole group and wait for vitest to exit; the lock is released then.
-    signalGroup(signal);
+    // Forward to the whole group and wait for vitest to exit (the lock is released then); a second signal means the owner
+    // is not waiting any longer: escalate to SIGKILL on the group.
+    interrupts += 1;
+    signalGroup(interrupts >= 2 ? 'SIGKILL' : signal);
   });
 }
 child.on('exit', (code, signal) => {

@@ -7,9 +7,11 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### Development harness hardening (2026-10-21, branch `claude/v5-harness-hardening`)
 
-Tooling only; no runtime behaviour changed:
-- **Eval INVALID.** The model-in-the-loop eval CLIs stop calling a provider that is clearly down (usage/session limit)
-  and report `INVALID (provider unavailable: <reason>)` with exit 5 instead of a FAILED gate.
+Tooling only; no runtime behaviour changed. The gate semantics gained a third verdict, `INVALID`, with owner approval
+(2026-10-21) on the condition that any hard failure seen before an outage stays FAILED:
+- **Eval INVALID.** The three guarded CLIs (`eval:nl`, all modes; `eval:agent-plan`; `eval:r2-redteam`) stop calling a provider that is clearly down (usage/session limit)
+  (after one canary call fails) and report `INVALID (provider unavailable: <reason>)` with exit 5 instead of a FAILED
+  gate; a hard failure already seen (wrong capture/target, negative capture, successful attack) stays FAILED.
 - **Gate runner.** `.claude/skills/quoky-ship/scripts/run-gates.sh start|run|status` runs the D12 / S2 gates in tmux and
   archives them under `~/Library/Application Support/Quoky/eval-archive/<name>/`.
 - **Full-suite lock.** `pnpm test` without file arguments holds `~/Library/Application Support/Quoky/locks/full-suite`.

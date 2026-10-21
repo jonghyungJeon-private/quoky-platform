@@ -9,6 +9,6 @@
 #   locally before opening or merging the PR.
 #
 # CURRENT_STATE.md is deliberately NOT here: it has sections edited in place (the "status" sections), which union
-# would silently duplicate. Resolve its conflicts with .claude/skills/quoky-ship/scripts/resolve_changelog.py.
+# would silently duplicate. Resolve its conflicts with .claude/skills/quoky-ship/scripts/resolve_changelog.py (tracked).
 DECISIONS.md merge=union
 CHANGELOG.md merge=union

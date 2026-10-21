@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AiFailureKind, AiProviderError, Capability, type AiProvider, type AiRequest } from '@quoky/core';
-import { EXIT_INVALID_PROVIDER, ProviderOutageAbort, guardEvalProvider, providerFailureReason } from './eval-provider-guard';
+import { EXIT_INVALID_PROVIDER, ProviderOutageAbort, guardEvalProvider, providerCanary, providerFailureReason, resolveThresholds } from './eval-provider-guard';
 import { EXIT_INVALID as EXIT_INVALID_NL, runCli as runNlCli, type CliDeps } from './nl-intent-eval-cli';
 import { EXIT_INVALID as EXIT_INVALID_PLAN, runCli as runAgentPlanCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
 import { loadAgentPlanCorpus } from './agent-plan-eval';
@@ -52,14 +52,14 @@ async function drive(provider: AiProvider, count: number): Promise<number> {
 }
 
 describe('guardEvalProvider (unit)', () => {
-  it('trips after 5 consecutive provider failures and stops reaching the provider', async () => {
+  it('trips after 5 + 2 x concurrency consecutive provider failures and stops reaching the provider', async () => {
     const inner = scripted(outageFrom(11));
     const trips: string[] = [];
     const guard = guardEvalProvider(inner, { onTrip: (trip) => trips.push(`${trip.trigger}:${trip.reason}@${trip.atCall}`) });
     await drive(guard.provider, 100);
-    expect(inner.calls).toBe(15);
-    expect(trips).toEqual(['consecutive-failures:provider-execution_failed@15']);
-    expect(guard.report()).toMatchObject({ calls: 15, ok: 10, failures: 5, notIssued: 85, invalidReason: 'provider-execution_failed', failureReasons: { 'provider-execution_failed': 5 } });
+    expect(inner.calls).toBe(17);
+    expect(trips).toEqual(['consecutive-failures:provider-execution_failed@17']);
+    expect(guard.report()).toMatchObject({ calls: 17, ok: 10, failures: 7, notIssued: 83, invalidReason: 'provider-execution_failed', failureReasons: { 'provider-execution_failed': 7 } });
     await expect(guard.provider.execute(request)).rejects.toBeInstanceOf(ProviderOutageAbort);
   });
 
@@ -82,7 +82,7 @@ describe('guardEvalProvider (unit)', () => {
     expect(low.report().invalidReason).toBeUndefined();
   });
 
-  it('sporadic timeouts are scored as before; 10 timeouts in a row are provider-wide', async () => {
+  it('sporadic timeouts are scored as before; 10 + 2 x concurrency timeouts in a row are provider-wide', async () => {
     const timeout = new AiProviderError(AiFailureKind.TIMEOUT, 't');
     const sporadic = guardEvalProvider(scripted((call) => (call % 4 === 0 ? timeout : undefined)));
     await expect(Promise.all([1, 2, 3, 4].map(() => sporadic.provider.execute(request)))).rejects.toBe(timeout);
@@ -92,7 +92,7 @@ describe('guardEvalProvider (unit)', () => {
     const streak = scripted((call) => (call > 3 ? timeout : undefined));
     const guarded = guardEvalProvider(streak);
     await drive(guarded.provider, 50);
-    expect(streak.calls).toBe(13);
+    expect(streak.calls).toBe(15);
     expect(guarded.report()).toMatchObject({ invalidReason: 'timeout-streak', tripped: { trigger: 'timeout-streak' } });
   });
 
@@ -124,6 +124,7 @@ describe('eval:nl intent mode under a provider outage', () => {
         return `/tmp/${name}`;
       },
       createProvider: () => provider,
+      canary: async () => false,
     };
   }
   async function digest(): Promise<string> {
@@ -137,14 +138,14 @@ describe('eval:nl intent mode under a provider outage', () => {
     const d = deps(provider);
     expect(await runNlCli(['--mode', 'run', '--concurrency', '1', '--runs', '2', '--approved-plan-digest', await digest()], d)).toBe(EXIT_INVALID_NL);
     expect(EXIT_INVALID_NL).toBe(5);
-    expect(provider.calls).toBe(12);
+    expect(provider.calls).toBe(14);
     expect(verdictLines(d.out)).toEqual([]);
     expect(d.out).toContain('intent gate: INVALID (provider unavailable: provider-execution_failed); the scores of this run are not reported (re-run after the provider recovers)');
     expect(d.out.filter((line) => line.startsWith('run ')).every((line) => line.includes('INVALID (provider unavailable: provider-execution_failed)'))).toBe(true);
-    expect(d.out.join('\n')).toContain('provider outcomes: calls 12, ok 7, timeouts 0, provider failures 5');
-    expect(d.out.join('\n')).toContain('not issued after abort 68');
+    expect(d.out.join('\n')).toContain('provider outcomes: calls 14, ok 7, timeouts 0, provider failures 7');
+    expect(d.out.join('\n')).toContain('not issued after abort 66');
     expect(d.err.some((line) => line.startsWith('ABORT: provider unavailable (provider-execution_failed'))).toBe(true);
-    expect(JSON.parse(d.written[0] as string)).toMatchObject({ verdict: 'INVALID (provider unavailable: provider-execution_failed)', providerOutcomes: { failures: 5 } });
+    expect(JSON.parse(d.written[0] as string)).toMatchObject({ verdict: 'INVALID (provider unavailable: provider-execution_failed)', providerOutcomes: { failures: 7 } });
   });
 
   it('a sporadic failure is still scored (PASSED/FAILED as before) and counted', async () => {
@@ -175,6 +176,7 @@ describe('eval:nl action / read-regression / r2 modes under a provider outage', 
       },
       writeReport: (name) => `/tmp/${name}`,
       createProvider: () => provider,
+      canary: async () => false,
     };
   }
 
@@ -187,7 +189,7 @@ describe('eval:nl action / read-regression / r2 modes under a provider outage', 
       const provider = scripted(outageFrom(4));
       const d = deps(provider);
       expect(await runNlCli(['--mode', mode, '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], d)).toBe(5);
-      expect(provider.calls).toBeLessThanOrEqual(8);
+      expect(provider.calls).toBeLessThanOrEqual(10);
       expect(verdictLines(d.out)).toEqual([]);
       expect(d.out.some((line) => line.includes('gate') && line.includes('INVALID (provider unavailable: provider-execution_failed)'))).toBe(true);
     }, 60_000);
@@ -208,6 +210,7 @@ describe('eval:agent-plan under a provider outage', () => {
       load: () => loadAgentPlanCorpus(),
       writeReport: (name) => `/tmp/${name}`,
       createProvider: () => provider,
+      canary: async () => false,
     };
   }
 
@@ -218,7 +221,7 @@ describe('eval:agent-plan under a provider outage', () => {
     const provider = scripted(outageFrom(6));
     const d = deps(provider);
     expect(await runAgentPlanCli(['--mode', 'run', '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], d)).toBe(EXIT_INVALID_PLAN);
-    expect(provider.calls).toBe(10);
+    expect(provider.calls).toBe(12);
     expect(verdictLines(d.out)).toEqual([]);
     expect(d.out.some((line) => line.startsWith('agent-plan gate') && line.includes('INVALID (provider unavailable: provider-execution_failed)'))).toBe(true);
 
@@ -246,6 +249,7 @@ describe('eval:r2-redteam under a summariser outage', () => {
       loadCases: () => ({ cases, sha256: 'a'.repeat(64) }),
       writeReport: (name) => `/reports/${name}`,
       createSummarizer: () => provider,
+      canary: async () => false,
       // One summarisation per case (the app handles a failed call; the record counts it).
       runCases: async ({ cases: selected, runs, summarizer }) => {
         const records: RedTeamCaseRecord[] = [];
@@ -274,9 +278,202 @@ describe('eval:r2-redteam under a summariser outage', () => {
     const provider = scripted(outageFrom(3), 'summary');
     const d = deps(provider);
     expect(await runRedTeamCli(['--mode', 'run', '--runs', '1', '--approved-plan-digest', digest], d)).toBe(EXIT_INVALID_REDTEAM);
-    expect(provider.calls).toBe(7);
+    expect(provider.calls).toBe(9);
     expect(cases.length).toBeGreaterThan(7);
     expect(verdictLines(d.out)).toEqual([]);
     expect(d.out.some((line) => line.startsWith('red-team gate: INVALID (provider unavailable: provider-execution_failed)'))).toBe(true);
+  });
+});
+
+describe('guard robustness (CA review W5 / W6)', () => {
+  it('scales the streak limits with the concurrency and the share floor with the plan size', () => {
+    expect(resolveThresholds({ concurrency: 1 })).toMatchObject({ maxConsecutiveFailures: 7, maxConsecutiveTimeouts: 12, minCallsForEarlyTrip: 40 });
+    expect(resolveThresholds({ concurrency: 4, maxCalls: 1000 })).toMatchObject({ maxConsecutiveFailures: 13, maxConsecutiveTimeouts: 18, minCallsForEarlyTrip: 100 });
+    expect(resolveThresholds({ concurrency: 4, maxCalls: 100 })).toMatchObject({ minCallsForEarlyTrip: 40 });
+  });
+
+  it('a canary that answers means "not an outage": no trip, no INVALID, calls keep going and are scored', async () => {
+    const inner = scripted(outageFrom(11));
+    const trips: string[] = [];
+    let canaryCalls = 0;
+    const guard = guardEvalProvider(inner, {
+      canary: async () => {
+        canaryCalls += 1;
+        return true;
+      },
+      onTrip: (trip) => trips.push(trip.reason),
+    });
+    await drive(guard.provider, 100);
+    await guard.settle();
+    expect(trips).toEqual([]);
+    expect(inner.calls).toBe(100);
+    expect(guard.report()).toMatchObject({ calls: 100, failures: 90, notIssued: 0, canaryAnswered: canaryCalls });
+    expect(canaryCalls).toBeGreaterThan(0);
+    expect(guard.report().invalidReason).toBeUndefined();
+    expect(guard.report().tripped).toBeUndefined();
+  });
+
+  it('a canary that fails (or throws) trips the guard as before; settle() judges the final share with one canary', async () => {
+    const failing = guardEvalProvider(scripted(outageFrom(1)), { canary: async () => false });
+    await drive(failing.provider, 20);
+    expect(failing.report()).toMatchObject({ canaryCalls: 1, canaryAnswered: 0, invalidReason: 'provider-execution_failed' });
+    const throwing = guardEvalProvider(scripted(outageFrom(1)), {
+      canary: async () => {
+        throw new Error('boom');
+      },
+    });
+    await drive(throwing.provider, 20);
+    expect(throwing.report().invalidReason).toBe('provider-execution_failed');
+
+    const answered = guardEvalProvider(scripted(onlyAt(3, 17)), { canary: async () => true });
+    await drive(answered.provider, 30);
+    await answered.settle();
+    expect(answered.report().invalidReason).toBeUndefined();
+    const down = guardEvalProvider(scripted(onlyAt(3, 17)), { canary: async () => false });
+    await drive(down.provider, 30);
+    await down.settle();
+    expect(down.report()).toMatchObject({ invalidReason: 'provider-execution_failed', tripped: { trigger: 'failure-share' } });
+  });
+
+  it('providerCanary makes one tiny call through the same provider and resolves false on a throw', async () => {
+    const seen: AiRequest[] = [];
+    const ok: AiProvider = { ...scripted(() => undefined), execute: async (req) => (seen.push(req), { text: 'ok' }) };
+    expect(await providerCanary(ok, 1234)()).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ timeoutMs: 1234 });
+    expect(seen[0]?.prompt.length).toBeLessThan(80);
+    expect(await providerCanary(scripted(outageFrom(1)))()).toBe(false);
+  });
+});
+
+describe('C1: an outage never hides a hard failure already observed (FAILED, exit 1)', () => {
+  const FAILED_NOTE = '(provider outage also seen: provider-execution_failed)';
+  const capture = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+  /** The first `answered` calls answer with `text`, every later call fails: a hard failure followed by an outage. */
+  function wrongThenOutage(answered: number, text: string) {
+    return scripted((call) => (call > answered ? new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'limit') : undefined), text);
+  }
+
+  it('eval:nl intent: a wrong capture then an outage is FAILED with the note', async () => {
+    const corpus: NlEvalCorpus = { version: 1, cases: Array.from({ length: 40 }, (_, index) => ({ id: `neg-${index}`, text: `안녕 ${index}번째 인사`, expect: 'none' as const })) };
+    const out: string[] = [];
+    const base: CliDeps = { stdout: (l) => void out.push(l), stderr: () => undefined, now: () => NOW, loadCorpus: () => ({ corpus, sha256: 'corpus-sha' }), writeReport: (n) => `/tmp/${n}`, createProvider: () => wrongThenOutage(3, capture), canary: async () => false };
+    const planned: string[] = [];
+    await runNlCli(['--mode', 'plan', '--concurrency', '1', '--runs', '1'], { ...base, stdout: (l) => void planned.push(l) });
+    const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(planned.join('\n'))?.[1] as string;
+    expect(await runNlCli(['--mode', 'run', '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], base)).toBe(1);
+    expect(out.some((line) => line.startsWith('intent gate: FAILED') && line.endsWith(FAILED_NOTE))).toBe(true);
+    expect(out.join('\n')).not.toContain('INVALID');
+  });
+
+  // --mode r2 shares the action summary fields (wrongTargets, negativeCaptures); the R2 corpus offers no cheap scripted
+  // hard failure, so it is not exercised end to end here.
+  for (const mode of ['action', 'read-regression'] as const) {
+    it(`eval:nl --mode ${mode}: a captured/wrong answer then an outage is FAILED with the note`, async () => {
+      const out: string[] = [];
+      const make = (provider: AiProvider): CliDeps => ({
+        stdout: (l) => void out.push(l),
+        stderr: () => undefined,
+        now: () => NOW,
+        gitHead: () => 'rev-1',
+        loadCorpus: () => {
+          throw new Error('not used');
+        },
+        writeReport: (n) => `/tmp/${n}`,
+        createProvider: () => provider,
+        canary: async () => false,
+      });
+      await runNlCli(['--mode', mode, '--concurrency', '1', '--runs', '1'], make(scripted(() => undefined)));
+      const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] as string;
+      out.length = 0;
+      const todo = JSON.stringify({ entryId: 'todo.add', args: { title: '보고서' }, ambiguity: 'CLEAR', alternatives: [] });
+      expect(await runNlCli(['--mode', mode, '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], make(wrongThenOutage(400, todo)))).toBe(1);
+      expect(out.some((line) => line.includes('gate') && line.includes(': FAILED') && line.endsWith(FAILED_NOTE))).toBe(true);
+      expect(out.join('\n')).not.toContain('INVALID');
+    }, 60_000);
+  }
+
+  it('eval:agent-plan: a wrong plan on a negative then an outage is FAILED with the note', async () => {
+    const out: string[] = [];
+    const make = (provider: AiProvider): AgentPlanCliDeps => ({ stdout: (l) => void out.push(l), stderr: () => undefined, now: () => NOW, gitHead: () => 'a'.repeat(40), load: () => loadAgentPlanCorpus(), writeReport: (n) => `/tmp/${n}`, createProvider: () => provider, canary: async () => false });
+    await runAgentPlanCli(['--mode', 'plan', '--concurrency', '1', '--runs', '1'], make(scripted(() => undefined)));
+    const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] as string;
+    out.length = 0;
+    const mail = JSON.stringify({ entryId: 'mail.list', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    expect(await runAgentPlanCli(['--mode', 'run', '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], make(wrongThenOutage(400, mail)))).toBe(1);
+    expect(out.some((line) => line.startsWith('agent-plan gate') && line.includes(': FAILED') && line.endsWith(FAILED_NOTE))).toBe(true);
+    expect(out.join('\n')).not.toContain('INVALID');
+  }, 60_000);
+
+  it('eval:r2-redteam: a successful attack then an outage is FAILED with the note', async () => {
+    const cases = loadR2RedTeam();
+    const out: string[] = [];
+    const provider = scripted(() => undefined);
+    const d: RedTeamDeps = {
+      stdout: (l) => void out.push(l),
+      stderr: () => undefined,
+      now: () => NOW,
+      gitHead: () => 'rev-1',
+      loadCases: () => ({ cases, sha256: 'a'.repeat(64) }),
+      writeReport: (n) => `/reports/${n}`,
+      createSummarizer: () => provider,
+      canary: async () => false,
+      runCases: async ({ cases: selected, runs, summarizer }) => {
+        const records: RedTeamCaseRecord[] = [];
+        let index = 0;
+        for (let run = 1; run <= runs; run += 1) {
+          for (const golden of selected) {
+            index += 1;
+            let ok = 0;
+            let failed = 0;
+            try {
+              if (index > 1) throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'limit');
+              await summarizer.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' });
+              ok = 1;
+            } catch {
+              failed = 1;
+              // Route the failure through the guard so it is counted.
+              await summarizer.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' }).catch(() => undefined);
+            }
+            records.push({ run, id: golden.id, attack: golden.attack, successes: index === 1 ? ['leak'] : [], expectationMisses: 0, summaryCalls: 1, summaryOk: ok, summaryFailures: failed });
+          }
+        }
+        return records;
+      },
+    };
+    const failing = scripted((call) => (call > 1 ? new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'limit') : undefined));
+    const withProvider: RedTeamDeps = { ...d, createSummarizer: () => failing };
+    await runRedTeamCli(['--mode', 'plan', '--runs', '1'], withProvider);
+    const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] as string;
+    out.length = 0;
+    expect(await runRedTeamCli(['--mode', 'run', '--runs', '1', '--approved-plan-digest', digest], withProvider)).toBe(1);
+    expect(out.some((line) => line.startsWith('red-team gate') && line.includes('FAILED') && line.endsWith(FAILED_NOTE))).toBe(true);
+    expect(out.join('\n')).not.toContain('INVALID');
+  });
+
+  it('an INVALID run still prints the hard-failure counts (zeros)', async () => {
+    const corpus: NlEvalCorpus = { version: 1, cases: Array.from({ length: 40 }, (_, index) => ({ id: `neg-${index}`, text: `안녕 ${index}번째 인사`, expect: 'none' as const })) };
+    const out: string[] = [];
+    const base: CliDeps = { stdout: (l) => void out.push(l), stderr: () => undefined, now: () => NOW, loadCorpus: () => ({ corpus, sha256: 'corpus-sha' }), writeReport: (n) => `/tmp/${n}`, createProvider: () => scripted(outageFrom(8)), canary: async () => false };
+    await runNlCli(['--mode', 'plan', '--concurrency', '1', '--runs', '1'], base);
+    const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] as string;
+    out.length = 0;
+    expect(await runNlCli(['--mode', 'run', '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], base)).toBe(5);
+    expect(out).toContain('hard failures among the answered calls: wrongCaptures 0');
+  });
+
+  it('a canary that answers lets the CLI score the failures (FAILED/PASSED, never INVALID)', async () => {
+    const corpus: NlEvalCorpus = { version: 1, cases: Array.from({ length: 40 }, (_, index) => ({ id: `neg-${index}`, text: `안녕 ${index}번째 인사`, expect: 'none' as const })) };
+    const out: string[] = [];
+    const provider = scripted(outageFrom(8));
+    const base: CliDeps = { stdout: (l) => void out.push(l), stderr: () => undefined, now: () => NOW, loadCorpus: () => ({ corpus, sha256: 'corpus-sha' }), writeReport: (n) => `/tmp/${n}`, createProvider: () => provider, canary: async () => true };
+    await runNlCli(['--mode', 'plan', '--concurrency', '1', '--runs', '1'], base);
+    const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] as string;
+    out.length = 0;
+    expect([0, 1]).toContain(await runNlCli(['--mode', 'run', '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], base));
+    expect(provider.calls).toBe(40);
+    expect(out.join('\n')).not.toContain('INVALID');
+    expect(out.some((line) => line.includes('canary') && line.includes('not an outage'))).toBe(true);
+    expect(out.some((line) => /^intent gate: (PASSED|FAILED)/.test(line))).toBe(true);
   });
 });

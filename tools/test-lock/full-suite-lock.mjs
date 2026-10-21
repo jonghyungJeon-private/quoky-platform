@@ -8,8 +8,14 @@
 // spawned, the start time and the working tree. The lock is stale when neither PID is alive (a SIGKILLed wrapper whose
 // vitest child is still running keeps the lock, so orphaned workers are not doubled up), or when the owner file never
 // appeared within a grace period. A stale lock is taken over.
+//
+// Stale also when the owner was recorded before the last boot (PIDs restart), or when a recorded PID is alive but its
+// command is not a node process (the PID was reused). The takeover is race-free: the stale lock directory is renamed
+// aside atomically (only one waiter wins the rename), the moved owner is checked to be the one judged stale, and only
+// then is it removed.
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, uptime } from 'node:os';
 import { join } from 'node:path';
 
 export const OWNER_FILE = 'owner';
@@ -32,6 +38,23 @@ export function isAlive(pid) {
   }
 }
 
+/** The command line of a PID (`ps -o command= -p`), or undefined when it cannot be read. */
+export function commandOf(pid) {
+  try {
+    const result = spawnSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8', timeout: 5_000 });
+    return result.status === 0 ? result.stdout.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A live holder: the PID exists and (when its command can be read) is a node process, not a reused PID. */
+function holderAlive(pid, readCommand) {
+  if (!isAlive(pid)) return false;
+  const command = readCommand(pid);
+  return command === undefined || command === '' ? true : command.includes('node');
+}
+
 /** The parsed owner file, or undefined when it is missing or unreadable. */
 export function readOwner(lockDir) {
   try {
@@ -48,8 +71,10 @@ function writeOwner(lockDir, owner) {
   renameSync(tmp, join(lockDir, OWNER_FILE));
 }
 
-/** Whether an existing lock directory is stale (no live holder). */
-export function isStale(lockDir, now = Date.now()) {
+/**
+ * Whether an existing lock directory is stale (no live holder). `env` is for tests: `bootTimeMs`, `commandOf(pid)`.
+ */
+export function isStale(lockDir, now = Date.now(), env = {}) {
   const owner = readOwner(lockDir);
   if (owner === undefined) {
     try {
@@ -58,28 +83,50 @@ export function isStale(lockDir, now = Date.now()) {
       return true;
     }
   }
-  return !isAlive(owner.pid) && !isAlive(owner.childPid);
+  const bootTimeMs = env.bootTimeMs ?? Date.now() - uptime() * 1000;
+  const startedAt = typeof owner.startedAt === 'string' ? Date.parse(owner.startedAt) : Number.NaN;
+  // Recorded before this boot: whatever PID it names now is someone else.
+  if (Number.isFinite(startedAt) && startedAt < bootTimeMs) return true;
+  const readCommand = env.commandOf ?? commandOf;
+  return !holderAlive(owner.pid, readCommand) && !holderAlive(owner.childPid, readCommand);
 }
 
 /**
  * One non-blocking attempt. Returns `{ acquired: true }`, or `{ acquired: false, owner }` when a live holder has it.
- * A stale lock is removed and the attempt retried once.
+ * A stale lock is renamed aside atomically, verified, removed, and the attempt retried. `hooks.afterJudge` is for tests.
  */
-export function tryAcquire(lockDir, info = {}) {
+export function tryAcquire(lockDir, info = {}, hooks = {}) {
   mkdirSync(join(lockDir, '..'), { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
       mkdirSync(lockDir);
       writeOwner(lockDir, { pid: process.pid, startedAt: new Date().toISOString(), cwd: process.cwd(), ...info });
       return { acquired: true };
     } catch (error) {
       if (!error || error.code !== 'EEXIST') throw error;
-      const judged = readOwner(lockDir);
-      if (!isStale(lockDir)) return { acquired: false, owner: judged };
-      // Narrow the takeover race: remove only the lock that was judged stale (another waiter may have just taken it).
-      if (JSON.stringify(readOwner(lockDir)) !== JSON.stringify(judged)) continue;
-      rmSync(lockDir, { recursive: true, force: true });
     }
+    const judged = readOwner(lockDir);
+    if (!isStale(lockDir)) return { acquired: false, owner: judged };
+    hooks.afterJudge?.();
+    // Take the stale lock over race-free: rename it aside (one waiter wins; ENOENT: someone else already took it).
+    const aside = `${lockDir}.stale.${process.pid}.${Date.now()}`;
+    try {
+      renameSync(lockDir, aside);
+    } catch (error) {
+      if (error && error.code === 'ENOENT') continue;
+      throw error;
+    }
+    if (JSON.stringify(readOwner(aside)) !== JSON.stringify(judged)) {
+      // The directory moved is not the one judged stale (another waiter replaced it in between): put it back. When the lock
+      // directory exists again the new holder wins; leave it and retry.
+      try {
+        renameSync(aside, lockDir);
+      } catch {
+        // lockDir exists again
+      }
+      continue;
+    }
+    rmSync(aside, { recursive: true, force: true });
   }
   return { acquired: false, owner: readOwner(lockDir) };
 }
