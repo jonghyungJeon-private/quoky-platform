@@ -73,8 +73,13 @@ export const CANARY_TIMEOUT_MS = 20_000;
 
 /** At most this many canary calls per run (a hard cap, like the plan's call cap); once used the guard stops checking and the run is scored as it is. */
 export const MAX_CANARY_CALLS = 3;
-/** The line every plan output carries (the canary calls are outside the digest-bound call count). */
-export const CANARY_PLAN_LINE = `+ up to ${MAX_CANARY_CALLS} canary calls (not counted)`;
+/** One more canary, outside the mid-run cap, reserved for `settle()`: a run that ENDS on a failure streak is checked even after the mid-run canaries answered. */
+export const FINAL_CANARY_CALLS = 1;
+/** Every canary a run may make. */
+export const TOTAL_CANARY_CALLS = MAX_CANARY_CALLS + FINAL_CANARY_CALLS;
+/** The clause every plan output carries (the canary calls are outside the digest-bound call count). */
+export const CANARY_CLAUSE = `up to ${TOTAL_CANARY_CALLS} canary calls (not counted)`;
+export const CANARY_PLAN_LINE = `+ ${CANARY_CLAUSE}`;
 
 /** A canary result: true = the provider answered, false = failed (unknown reason), a string = the content-free failure reason. */
 export type CanaryResult = boolean | string;
@@ -276,7 +281,15 @@ export function guardEvalProvider(provider: AiProvider, options: GuardOptions = 
     provider: wrapped,
     settle: async () => {
       await drain();
-      if (tripped !== undefined || canaryAnswered > 0 || options.canary === undefined || !overShare()) return;
+      if (tripped !== undefined || options.canary === undefined) return;
+      // The run ENDED on a failure / timeout streak at or above the limit: an outage that began after the mid-run canaries
+      // answered (which are capped) would otherwise be scored as a 0% tail. The reserved final canary checks it.
+      const endedOnStreak = consecutiveFailures >= limits.maxConsecutiveFailures || consecutiveTimeouts >= limits.maxConsecutiveTimeouts;
+      if (endedOnStreak && canaryCalls < TOTAL_CANARY_CALLS) {
+        await check(consecutiveFailures >= limits.maxConsecutiveFailures ? 'consecutive-failures' : 'timeout-streak', consecutiveFailures >= limits.maxConsecutiveFailures ? dominant(failureReasons) : 'timeout-streak');
+        return;
+      }
+      if (canaryAnswered > 0 || !overShare()) return;
       schedule('failure-share', dominant(failureReasons));
       await drain();
     },

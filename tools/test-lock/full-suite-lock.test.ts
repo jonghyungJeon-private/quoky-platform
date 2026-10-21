@@ -294,4 +294,53 @@ describe('full-suite lock', () => {
     expect(wrapper(['-t', 'some name', thisFile], dir, env).status).toBe(0);
     expect(wrapper(['-t', 'some name'], dir, env).status).toBe(75);
   });
+
+  it('L1: a takeover whose mutex was stolen while it stalled aborts without removing the lock', () => {
+    const dir = lockDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'owner'), JSON.stringify({ pid: DEAD_PID, startedAt: 'then' }));
+    const result = tryAcquire(dir, {}, {
+      beforeRemove: () => {
+        // the stalled taker's mutex was cleared as stale and another waiter holds its own now
+        rmSync(`${dir}.takeover`, { recursive: true, force: true });
+        mkdirSync(`${dir}.takeover`);
+        writeFileSync(join(`${dir}.takeover`, 'token'), 'someone-elses-token');
+      },
+    });
+    expect(result.acquired).toBe(false);
+    expect(readOwner(dir)).toMatchObject({ pid: DEAD_PID });
+    // the foreign mutex is not removed by the aborted taker
+    expect(existsSync(`${dir}.takeover`)).toBe(true);
+    // and with nothing stolen the takeover completes and the mutex is gone
+    rmSync(`${dir}.takeover`, { recursive: true });
+    expect(tryAcquire(dir).acquired).toBe(true);
+    expect(existsSync(`${dir}.takeover`)).toBe(false);
+  });
+
+  it('L1: no ps inside the mutex: a live-looking owner that equals the judged one is the only thing compared', () => {
+    const dir = lockDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'owner'), JSON.stringify({ pid: DEAD_PID, startedAt: 'then' }));
+    let changed = false;
+    const result = tryAcquire(dir, {}, {
+      beforeRemove: () => {
+        // the owner changes after the in-mutex check: the final re-read must catch it
+        changed = true;
+        writeFileSync(join(dir, 'owner'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), tag: 'fresh' }));
+      },
+    });
+    expect(changed).toBe(true);
+    expect(result.acquired).toBe(false);
+    expect(readOwner(dir)).toMatchObject({ tag: 'fresh' });
+  });
+
+  it('R5b: a positional must look like a test file AND exist; `--exclude x.test.ts` and a non-test file lock', () => {
+    const dir = lockDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'owner'), JSON.stringify({ pid: process.pid, startedAt: 'now', cwd: '/elsewhere' }));
+    const env = { QUOKY_TEST_NO_WAIT: '1' };
+    expect(wrapper(['--exclude', 'a.test.ts'], dir, env).status).toBe(75);
+    expect(wrapper(['package.json'], dir, env).status).toBe(75);
+    expect(wrapper([thisFile], dir, env).status).toBe(0);
+  });
 });

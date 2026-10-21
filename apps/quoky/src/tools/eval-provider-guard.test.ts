@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AiFailureKind, AiProviderError, Capability, type AiProvider, type AiRequest } from '@quoky/core';
-import { CANARY_PLAN_LINE, EXIT_INVALID_PROVIDER, MAX_CANARY_CALLS, ProviderOutageAbort, formatProviderOutcomes, guardEvalProvider, providerCanary, providerFailureReason, resolveThresholds } from './eval-provider-guard';
+import { CANARY_CLAUSE, CANARY_PLAN_LINE, TOTAL_CANARY_CALLS, EXIT_INVALID_PROVIDER, MAX_CANARY_CALLS, ProviderOutageAbort, formatProviderOutcomes, guardEvalProvider, providerCanary, providerFailureReason, resolveThresholds } from './eval-provider-guard';
 import { EXIT_INVALID as EXIT_INVALID_NL, runCli as runNlCli, type CliDeps } from './nl-intent-eval-cli';
 import { EXIT_INVALID as EXIT_INVALID_PLAN, runCli as runAgentPlanCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
 import { loadAgentPlanCorpus } from './agent-plan-eval';
@@ -310,7 +310,7 @@ describe('guard robustness (CA review W5 / W6)', () => {
     expect(inner.calls).toBe(100);
     expect(guard.report()).toMatchObject({ calls: 100, failures: 90, notIssued: 0, canaryAnswered: canaryCalls });
     expect(canaryCalls).toBeGreaterThan(0);
-    expect(canaryCalls).toBeLessThanOrEqual(3);
+    expect(canaryCalls).toBeLessThanOrEqual(4); // 3 mid-run + the reserved final one (the run ends on a streak)
     expect(guard.report().invalidReason).toBeUndefined();
     expect(guard.report().tripped).toBeUndefined();
   });
@@ -510,7 +510,7 @@ describe('canary is non-blocking and capped (CA re-review 1 / 2)', () => {
     expect(formatProviderOutcomes(guard.report())).toContain('canary failed: provider-auth_required');
   });
 
-  it('at most 3 canary calls per run; afterwards the run is scored as it is', async () => {
+  it('at most 3 mid-run canary calls (+1 final); afterwards the run is scored as it is', async () => {
     let canaryCalls = 0;
     const guard = guardEvalProvider(scripted(outageFrom(1)), {
       canary: async () => {
@@ -523,23 +523,63 @@ describe('canary is non-blocking and capped (CA re-review 1 / 2)', () => {
       if (index % 5 === 0) await new Promise((resolve) => setImmediate(resolve));
     }
     await guard.settle();
-    expect(canaryCalls).toBe(MAX_CANARY_CALLS);
-    expect(guard.report()).toMatchObject({ canaryCalls: 3, canaryAnswered: 3, notIssued: 0 });
+    // 3 mid-run canaries (the cap) + the reserved final one, because the run ends on a failure streak (answered here)
+    expect(canaryCalls).toBe(MAX_CANARY_CALLS + 1);
+    expect(guard.report()).toMatchObject({ canaryCalls: 4, canaryAnswered: 4, notIssued: 0 });
     expect(guard.report().tripped).toBeUndefined();
     expect(guard.report().invalidReason).toBeUndefined();
   });
 
   it('every plan output carries the canary line', async () => {
-    expect(CANARY_PLAN_LINE).toBe('+ up to 3 canary calls (not counted)');
+    expect(CANARY_PLAN_LINE).toBe('+ up to 4 canary calls (not counted)');
+    expect(TOTAL_CANARY_CALLS).toBe(4);
     const out: string[] = [];
     const corpus: NlEvalCorpus = { version: 1, cases: [{ id: 'n', text: '안녕', expect: 'none' as const }] };
     await runNlCli(['--mode', 'plan', '--concurrency', '1', '--runs', '1'], { stdout: (l) => void out.push(l), stderr: () => undefined, now: () => NOW, loadCorpus: () => ({ corpus, sha256: 'x' }), writeReport: (n) => n, createProvider: () => scripted(() => undefined) });
     expect(out).toContain(CANARY_PLAN_LINE);
     const plan: string[] = [];
     await runAgentPlanCli(['--mode', 'plan', '--concurrency', '1', '--runs', '1'], { stdout: (l) => void plan.push(l), stderr: () => undefined, now: () => NOW, gitHead: () => 'a'.repeat(40), load: () => loadAgentPlanCorpus(), writeReport: (n) => n, createProvider: () => scripted(() => undefined) });
-    expect(plan).toContain(CANARY_PLAN_LINE);
+    expect(plan.some((line) => line.includes(CANARY_CLAUSE) && line.includes('hard cap on the counted calls'))).toBe(true);
     const red: string[] = [];
     await runRedTeamCli(['--mode', 'plan', '--runs', '1'], { stdout: (l) => void red.push(l), stderr: () => undefined, now: () => NOW, gitHead: () => 'rev', loadCases: () => ({ cases: loadR2RedTeam(), sha256: 'a'.repeat(64) }), writeReport: (n) => n, createSummarizer: () => scripted(() => undefined) });
-    expect(red).toContain(CANARY_PLAN_LINE);
+    expect(red.some((line) => line.includes('at most') && line.includes(CANARY_CLAUSE) && !line.includes('no other model call'))).toBe(true);
+  });
+});
+
+describe('final canary (CA final round W1)', () => {
+  it('3 answered canaries, then an outage until the end: settle() runs the reserved final canary and the run is INVALID', async () => {
+    let canaryCalls = 0;
+    const guard = guardEvalProvider(scripted(outageFrom(1)), {
+      canary: async () => {
+        canaryCalls += 1;
+        return canaryCalls <= 3 ? true : 'provider-execution_failed';
+      },
+    });
+    for (let index = 0; index < 60; index += 1) {
+      await guard.provider.execute(request).catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(guard.report().canaryAnswered).toBe(3);
+    expect(guard.report().tripped).toBeUndefined();
+    await guard.settle();
+    expect(canaryCalls).toBe(4);
+    expect(guard.report()).toMatchObject({ canaryCalls: 4, canaryAnswered: 3, canaryFailure: 'provider-execution_failed', tripped: { trigger: 'consecutive-failures' } });
+    expect(guard.report().invalidReason).toBe('provider-execution_failed');
+  });
+
+  it('a run that does not end on a streak makes no final canary; an answered final canary leaves the run valid', async () => {
+    let canaryCalls = 0;
+    const calm = guardEvalProvider(scripted(onlyAt(3)), { canary: async () => (canaryCalls += 1, true) });
+    await drive(calm.provider, 50);
+    await calm.settle();
+    expect(canaryCalls).toBe(0);
+    const tail = guardEvalProvider(scripted(outageFrom(1)), { canary: async () => (canaryCalls += 1, true) });
+    for (let index = 0; index < 60; index += 1) {
+      await tail.provider.execute(request).catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await tail.settle();
+    expect(tail.report().tripped).toBeUndefined();
+    expect(tail.report().invalidReason).toBeUndefined();
   });
 });

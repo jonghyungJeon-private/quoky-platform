@@ -28247,8 +28247,9 @@ Tooling only (no ADR boundary, no runtime path changed). Gaps from the 2026-10-1
 - **Guard robustness (CA review).** Streak limits scale with concurrency (failures 5 + 2c, timeouts 10 + 2c); the mid-run
   share check starts at max(40, 10% of the plan's max calls). Before tripping the guard runs a canary check in the BACKGROUND (tiny fixed
   prompt, same provider client, 20 s timeout; never awaited by a call, so latencies and the over-bound rate are unchanged;
-  at most 3 per run, not counted; the plan outputs say "+ up to 3 canary calls (not counted)", outside the digest-bound
-  call count; after 3 the run is scored as it is; the canary failure reason is recorded as `canaryFailure`): an answered canary means "not an outage" and the run is
+  at most 3 mid-run plus one reserved final canary run by `settle()` when the run ENDS on a failure/timeout streak (so an
+  outage that starts after 3 answered canaries is still caught), 4 in all, not counted; the plan outputs say "up to 4 canary
+  calls (not counted)", outside the digest-bound call count; after 3 mid-run canaries the run is scored as it is; the canary failure reason is recorded as `canaryFailure`): an answered canary means "not an outage" and the run is
   scored normally, so prompt-too-long / content-filter 400s and latency regressions surface as FAILED. The canary is
   injectable (tests never call a real provider). `run-gates.sh` stops at once, without waiting for a usage block, on
   `provider-auth_required` / `timeout-streak`, retries once per mode, pins ccusage, and leaves a terminal marker when killed.

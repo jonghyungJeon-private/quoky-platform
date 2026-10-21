@@ -409,7 +409,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
     if (approved === undefined) {
       deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
       deps.stdout(`plan digest (sha256): ${digest}`);
-    deps.stdout(CANARY_PLAN_LINE);
+      deps.stdout(CANARY_PLAN_LINE);
       for (const [entry, side] of Object.entries(scoreActionGrammarSide(corpus, deps.now()))) {
         deps.stdout(`  grammar side ${entry.padEnd(16)} ${entry === 'none' ? 'acted on' : 'claimed'} ${side.claimed}/${side.total}`);
       }

@@ -15,6 +15,7 @@
 // (`<lock>.takeover`, itself stale after 30 s): inside it the owner is re-read, re-judged stale and required to equal the
 // owner judged before; only then is the lock directory removed. Fresh acquirers only ever `mkdir`.
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, uptime } from 'node:os';
 import { join } from 'node:path';
@@ -122,7 +123,7 @@ export function isStale(lockDir, now = Date.now(), env = {}) {
 /**
  * One non-blocking attempt. Returns `{ acquired: true }`, or `{ acquired: false, owner }` when a live holder has it (or
  * another waiter is taking a stale lock over). `hooks.afterJudge` is for tests (it runs between the first judgement and the
- * takeover mutex, where a race can happen).
+ * takeover mutex, where a race can happen); `hooks.beforeRemove` runs inside the mutex right before the removal.
  */
 export function tryAcquire(lockDir, info = {}, hooks = {}) {
   mkdirSync(join(lockDir, '..'), { recursive: true });
@@ -151,20 +152,37 @@ export function tryAcquire(lockDir, info = {}, hooks = {}) {
       }
       return { acquired: false, owner: readOwner(lockDir) };
     }
-    try {
-      // Inside the mutex: the lock must still be the very one judged stale (a defined owner identity that is unchanged, or
-      // a lock directory with no owner file older than the grace period). Never remove anything else, never move it.
-      const current = readOwner(lockDir);
-      const same = current === undefined ? judged === undefined : judged !== undefined && JSON.stringify(current) === JSON.stringify(judged);
-      let existed = true;
+    // A random token proves the mutex is still ours right before the removal (a stalled taker's mutex can be cleared as
+    // stale and re-taken by another waiter).
+    const token = randomBytes(12).toString('hex');
+    const holdsMutex = () => {
       try {
-        statSync(lockDir);
+        return readFileSync(join(mutex, 'token'), 'utf8') === token;
       } catch {
-        existed = false;
+        return false;
       }
-      if (existed && same && isStale(lockDir)) rmSync(lockDir, { recursive: true, force: true });
+    };
+    try {
+      writeFileSync(join(mutex, 'token'), token);
+      // Inside the mutex only the owner identity is compared (no `ps`, which can stall): the lock must still be exactly the
+      // owner judged stale (a defined identity), or a lock directory with no owner file older than the grace period.
+      const stillJudged = () => {
+        const current = readOwner(lockDir);
+        if (judged !== undefined) return current !== undefined && JSON.stringify(current) === JSON.stringify(judged);
+        if (current !== undefined) return false;
+        try {
+          return Date.now() - statSync(lockDir).mtimeMs > MISSING_OWNER_GRACE_MS;
+        } catch {
+          return false;
+        }
+      };
+      if (stillJudged()) {
+        hooks.beforeRemove?.();
+        // Re-read immediately before removing, and make sure the mutex is still ours.
+        if (holdsMutex() && stillJudged()) rmSync(lockDir, { recursive: true, force: true });
+      }
     } finally {
-      rmSync(mutex, { recursive: true, force: true });
+      if (holdsMutex()) rmSync(mutex, { recursive: true, force: true });
     }
   }
   return { acquired: false, owner: readOwner(lockDir) };

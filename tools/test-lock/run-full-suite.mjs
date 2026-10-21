@@ -4,7 +4,7 @@
 //   pnpm test                      full suite: takes the lock (waits while another full suite runs)
 //   QUOKY_TEST_NO_WAIT=1 pnpm test full suite, but exit 75 at once when the lock is held
 //   pnpm test <file> [...]          targeted run: at least one non-option argument and EVERY non-option argument is an
-//                                   existing regular file: no lock. Any other argument (a filter, a directory, an option
+//                                   existing regular `*.test.*` / `*.spec.*` file: no lock. Any other argument (a filter, a directory, an option
 //                                   value such as `--reporter verbose`) takes the lock like a full suite.
 //   pnpm test --version | --help    prints vitest's version / help; never runs tests, takes no lock
 //   pnpm vitest run <files>         targeted run: never goes through this wrapper, no lock
@@ -46,7 +46,7 @@ const isFile = (path) => {
   }
 };
 // The token after a value-taking option is its value, not a file (`--config vitest.config.ts` is not a targeted run).
-const VALUE_OPTIONS = new Set(['-c', '--config', '--root', '-r', '--dir', '--project', '-t', '--testNamePattern', '--reporter', '--outputFile', '--pool', '--mode', '--environment']);
+const VALUE_OPTIONS = new Set(['-c', '--config', '--root', '-r', '--dir', '--project', '-t', '--testNamePattern', '--reporter', '--outputFile', '--exclude', '--pool', '--mode', '--environment']);
 const positional = [];
 for (let index = 0; index < args.length; index += 1) {
   const arg = args[index];
@@ -56,7 +56,10 @@ for (let index = 0; index < args.length; index += 1) {
     positional.push(arg);
   }
 }
-const targeted = positional.length > 0 && positional.every(isFile);
+// A targeted run names test files only: every positional must look like one AND exist (a filter, a directory, the value of
+// an option this list does not know, such as `--exclude a.test.ts` after an unknown option, lock like a full suite).
+const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
+const targeted = positional.length > 0 && positional.every((arg) => TEST_FILE.test(arg) && isFile(arg));
 
 const lockDir = defaultLockDir();
 let held = false;
