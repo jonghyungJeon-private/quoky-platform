@@ -4,7 +4,7 @@ import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, 
 import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentionRanges, nlWeekdayMentions, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import { nlReadNotRequest } from '../nl-routing/read-statement';
 import { normalizeForMatch } from '../nl-routing/selection-input';
-import { validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
+import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
 import { nlIsPastStatement } from '../nl-routing/statement-guard';
 import { AGENT_READ_SOURCES } from './flow-policy';
 import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan-schema';
@@ -246,6 +246,16 @@ function unboundedOf(steps: readonly AgentPlanStep[], ctx: AgentPlanValidationCo
  */
 function askUnbounded(steps: readonly AgentPlanStep[], unbounded: Unbounded, ctx: AgentPlanValidationContext): AgentPlanValidation {
   const failed = refuse(unbounded.refusal);
+  // CA P2: an ask only for a plan that breaks nothing but a bound. Every step is checked by the ordinary rules with the
+  // bound itself lifted (the repeated entry's period, which the suggestion replaces; a reference's take, clamped to the
+  // cap); the first other failure refuses the plan, so a write, an ungrounded value or a content-borne key never gets a
+  // suggestion.
+  const otherwise = otherwiseValid(steps, unbounded);
+  for (const [index, step] of otherwise.entries()) {
+    const number = index + 1;
+    const checked = step.kind === 'summarize' ? checkSummary(step, number, otherwise) : checkRead(step, number, otherwise, ctx, undefined);
+    if (!checked.ok) return checked;
+  }
   let suggestion: AgentPlanStep[];
   let check = ctx;
   if (unbounded.bound === 'per-period') {
@@ -269,6 +279,20 @@ function askUnbounded(steps: readonly AgentPlanStep[], unbounded: Unbounded, ctx
   const validated = validateAgentPlan({ kind: 'steps', form: 'steps', steps: suggestion, ambiguity: 'CLEAR', alternatives: [] }, check);
   if (!validated.ok || validated.plan.kind !== 'run') return failed;
   return { ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: unbounded.bound, suggestion: validated.plan.steps } };
+}
+
+/** The plan with only its bound lifted: the repeated entry's period removed (`per-period`), references clamped to the cap. */
+function otherwiseValid(steps: readonly AgentPlanStep[], unbounded: Unbounded): AgentPlanStep[] {
+  return steps.map((step) => {
+    if (step.kind !== 'read') return step;
+    let args = step.args;
+    if (unbounded.bound === 'per-period' && step.entryId === unbounded.entryId && unbounded.rangeArg !== undefined) {
+      const { [unbounded.rangeArg]: _period, ...rest } = args;
+      args = rest;
+    }
+    const ref = step.ref !== undefined ? { ...step.ref, take: Math.min(step.ref.take, AGENT_PLAN_MAX_REF_VALUES) } : undefined;
+    return { ...step, args, ...(ref !== undefined ? { ref } : {}) };
+  });
 }
 
 /** `this-week` when every named period resolves inside this week, else `this-month` (an unresolvable one counts as outside). */
@@ -361,6 +385,7 @@ function checkRead(
     },
   );
   if (!result.ok) return refuse('step-invalid', number, result.reason);
+  if (steps.length > 1 && !clauseGrounded(result.value.entry, result.value.args, ctx)) return refuse('step-invalid', number, 'ungrounded');
   const provenance: Record<string, AgentArgProvenance> = {};
   for (const name of Object.keys(result.value.args)) provenance[name] = { kind: 'literal', label: OWNER_TEXT_FLOW_LABEL };
   const base = {
@@ -392,6 +417,42 @@ function checkSummary(step: Extract<AgentPlanStep, { kind: 'summarize' }>, numbe
     if (from >= number || steps[from - 1]?.kind !== 'read') return refuse('summary-source', number);
   }
   return { ok: true, step: { kind: 'summarize', from: [...step.from], schema: step.schema as (typeof AGENT_PLAN_SUMMARY_SCHEMAS)[number] } };
+}
+
+/**
+ * CA P3: a `clauseBound` enum value of a multi-step plan's read step is grounded only by its own words in a clause that
+ * names the step's entry (the conjuncts of `periodExpressions`: "and", "그리고", a comma, a glued "-랑" / "-하고"). With no
+ * clause naming the entry, the message-level grounding `validateSelection` already applied stands. A value carried from
+ * the previous selection needs no words. Pure.
+ */
+function clauseGrounded(entry: NlCatalogEntry, args: NlArgs, ctx: AgentPlanValidationContext): boolean {
+  const bound = entry.args.filter((spec) => spec.clauseBound === true && spec.kind === 'enum');
+  if (bound.length === 0) return true;
+  const clauses = entryClauses(ctx.groundingText, entry);
+  if (clauses.length === 0) return true;
+  return bound.every((spec) => {
+    const value = args[spec.name];
+    const words = typeof value === 'string' ? spec.valueGrounding?.[value] : undefined;
+    if (words === undefined || value === ctx.previousArgs?.[spec.name]) return true;
+    return clauses.some((clause) => words.some((word) => groundingWordIn(clause, normalizeForMatch(word))));
+  });
+}
+
+/** The conjuncts of the owner's prose that name `entry` by one of its aliases or source names (normalized). */
+function entryClauses(groundingText: string, entry: NlCatalogEntry): string[] {
+  const tokens = groundingText.split(/\s+/u).filter((token) => token.length > 0);
+  const names = [...entry.aliases, ...(entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0 && !name.includes(' '));
+  const conjuncts: string[][] = [[]];
+  for (const token of tokens) {
+    const word = normalizeForMatch(token);
+    if (word === 'and' || word === '그리고') {
+      conjuncts.push([]);
+      continue;
+    }
+    (conjuncts[conjuncts.length - 1] as string[]).push(word);
+    if (/[,،]$/u.test(word) || /(?:랑|하고)$/u.test(word)) conjuncts.push([]);
+  }
+  return conjuncts.filter((words) => words.some((word) => names.some((name) => word.startsWith(name)))).map((words) => words.join(' '));
 }
 
 /** A reference field that would carry a date or time (dates come only from the planner's symbolic time, D2). */

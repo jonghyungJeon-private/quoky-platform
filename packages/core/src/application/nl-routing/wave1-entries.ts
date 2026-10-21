@@ -294,6 +294,7 @@ const GITHUB_KIND = {
   kind: 'enum',
   values: ['pr', 'issue', 'all'],
   default: 'all',
+  clauseBound: true,
   valueGrounding: {
     pr: ['pr', 'prs', 'pull request', 'pull requests', '풀리퀘', '풀 리퀘', '풀리퀘스트', '풀 리퀘스트', '머지 요청'],
     issue: ['이슈', 'issue', 'issues'],

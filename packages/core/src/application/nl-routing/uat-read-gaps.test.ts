@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { NlCatalogEntry } from './catalog';
 import { buildSelectionPrompt, NL_SELECTION_PROMPT_VERSION } from './selection-prompt';
@@ -280,5 +281,28 @@ describe('review polish: version numbers are not dates', () => {
   });
   it.each(['10.07', '10/7', '10월 7일', '2026.10.07', '12/31', '1.15'])('%s is a date', (text) => {
     expect(isTimeExpression(text)).toBe(true);
+  });
+});
+
+// CA P3 on the S2 review (2026-10-21): `v5int4-020` left the one-step read corpus (two reads; now the plan gold ap-p174).
+// It stays a WATCH case of the agent-off live path, so the read coverage is not lost: until the agent runs `active`, the
+// one-step read path answers this message, and its only one-step answer that shows both parts is the daily brief.
+describe('watch: v5int4-020 on the agent-off live path (owner relabel 2026-10-21)', () => {
+  const TEXT = '일정이랑 안 읽은 메일 같이 한 번에 알려줘';
+
+  it('the one-step read path can still answer both parts (brief.today validates), and a single source read is grounded too', () => {
+    expect(validateSelection({ entryId: 'brief.today', args: {} }, ctx(TEXT))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'mail.list', args: { unread: true } }, ctx(TEXT))).toMatchObject({ ok: true });
+  });
+
+  it('is no longer a one-step gold and is the two-read plan gold ap-p174', () => {
+    const read = JSON.parse(readFileSync(new URL('../golden/nl-intent.v1.json', import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string }> };
+    expect(read.cases.some((golden) => golden.id === 'v5int4-020' || golden.text === TEXT)).toBe(false);
+    const plan = JSON.parse(readFileSync(new URL('../golden/agent-plan.v1.json', import.meta.url), 'utf8')) as {
+      cases: Array<{ id: string; text: string; status: string; expect: { steps: Array<{ entryId?: string }> } }>;
+    };
+    const moved = plan.cases.find((golden) => golden.id === 'ap-p174');
+    expect(moved).toMatchObject({ text: TEXT, status: 'approved' });
+    expect(moved?.expect.steps.map((step) => step.entryId)).toEqual(['calendar.events', 'mail.list']);
   });
 });

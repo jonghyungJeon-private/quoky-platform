@@ -128,9 +128,9 @@ Negatives (`expect: "none"`, or an `ask` for `unbounded`; any executable plan is
   - **negative:** `wrong` when the validated plan is a `run` plan, whatever it is; `none`, `refused`, `clarify` and
     `malformed` are not wrong;
   - **ask (decision (h)):** a negative for `wrong`; `asked` when the answer validates to the `unbounded` ask with the gold
-    bound and suggestion, `ask-other` for another ask. The `ask` group (asked / ask cases) is reported, not gated, until
-    the owner approves the ask cases and sets a level. An ask on a positive or a `none` gold is `ask-other` (not exact,
-    not wrong).
+    bound and suggestion, `ask-other` for another ask. An ask on a `none` gold is `wrong` and on a positive `ask-other`
+    (CA P2). The per-run gate holds the `ask` group at ≥ 95% `asked` whenever the run scores ask cases (approved ones
+    only, unless `--include-pending`).
 - A call refused by the hard call cap is `capped` and fails the run.
 
 The report (`data/eval/agent-plan-<ts>.json`) is content-free: ids, families, closed entry ids, closed reasons, diff

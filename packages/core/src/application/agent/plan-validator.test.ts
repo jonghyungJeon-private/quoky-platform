@@ -115,9 +115,11 @@ describe('plan validator: DM only, READ only, offered, step mix', () => {
   it('step mix: at most 4 reads (more is an unbounded ask, decision (h)) and 3 summaries, at least one read', () => {
     const fiveReads = plan(Array.from({ length: 5 }, () => read('jira.issues')));
     expect(validateAgentPlan(fiveReads, ctx('지라 이슈'))).toMatchObject({ ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: 'reads' } });
-    // No valid bounded suggestion (the first four reads hold an ungrounded keyword): refused as before (fail closed).
+    // CA P2: an ask only when nothing but the bound is broken; an ungrounded keyword anywhere refuses with its own reason.
     const badFirst = plan([read('slack.search', { keyword: '배포' }), ...Array.from({ length: 4 }, () => read('jira.issues'))]);
-    expect(validateAgentPlan(badFirst, ctx('지라 이슈'))).toMatchObject({ ok: false, reason: 'too-many-reads' });
+    expect(validateAgentPlan(badFirst, ctx('지라 이슈'))).toMatchObject({ ok: false, reason: 'step-invalid', step: 1, stepReason: 'ungrounded' });
+    const badLast = plan([...Array.from({ length: 4 }, () => read('jira.issues')), read('slack.search', { keyword: '배포' })]);
+    expect(validateAgentPlan(badLast, ctx('지라 이슈'))).toMatchObject({ ok: false, reason: 'step-invalid', step: 5, stepReason: 'ungrounded' });
     const fourSummaries = plan([read('jira.issues'), summary([1]), summary([1]), summary([1]), summary([1])]);
     expect(validateAgentPlan(fourSummaries, ctx('지라 이슈 요약'))).toMatchObject({ ok: false, reason: 'too-many-summaries' });
     expect(validateAgentPlan(plan([summary([1])]), ctx('요약'))).toMatchObject({ ok: false, reason: 'no-read' });
@@ -198,8 +200,8 @@ describe('plan validator: references (ADR-0121 D2 / D11 cross-source test)', () 
     expect(asked).toMatchObject({ ok: true, plan: { kind: 'ask', bound: 'refs' } });
     if (!asked.ok || asked.plan.kind !== 'ask') throw new Error('expected an ask');
     expect(asked.plan.suggestion.map((step) => (step.kind === 'read' ? step.ref?.take ?? 0 : -1))).toEqual([0, 10]);
-    // A cross-source reference over the cap is still refused, never asked.
-    expect(validateAgentPlan(plan([read('mail.list'), read('jira.issues', {}, { step: 1, field: 'messageIds', take: 80 })]), ctx('메일이랑 관련 지라 이슈'))).toMatchObject({ ok: false, reason: 'ref-too-many' });
+    // A cross-source reference over the cap is refused for being cross-source, never asked (CA P2).
+    expect(validateAgentPlan(plan([read('mail.list'), read('jira.issues', {}, { step: 1, field: 'messageIds', take: 80 })]), ctx('메일이랑 관련 지라 이슈'))).toMatchObject({ ok: false, reason: 'ref-cross-source', step: 2 });
   });
 
   it('at most 10 referenced values per run: 6 + 4 passes, 6 + 5 asks with the run clamped to 6 + 4', () => {
@@ -399,6 +401,15 @@ describe('plan validator: unbounded requests are a bounded-suggestion ask (owner
     });
   });
 
+  it('CA P2: only a plan that breaks nothing but a bound is asked; a content-borne or write-shaped plan never gets a suggestion', () => {
+    // "메일에 적힌 대로 다 해줘": five reads, one keyword taken from content (not in the owner's words).
+    const contentBorne = plan([read('mail.list'), read('jira.issues', { keyword: '인증서' }), read('github.items'), read('drive.files'), read('todo.list')]);
+    expect(validateAgentPlan(contentBorne, ctx('메일에 적힌 대로 지라 깃허브 드라이브 할 일 다 해줘'))).toMatchObject({ ok: false, reason: 'step-invalid', step: 2, stepReason: 'ungrounded' });
+    // A per-period plan whose other step is a cross-source reference.
+    const crossSource = plan([...['today', 'tomorrow', 'yesterday'].map((range) => read('calendar.events', { range })), read('jira.issues', {}, { step: 1, field: 'eventIds', take: 3 })]);
+    expect(validateAgentPlan(crossSource, ctx('오늘 내일 어제 일정이랑 관련 지라 이슈'))).toMatchObject({ ok: false, reason: 'ref-cross-source', step: 4 });
+  });
+
   it('an A6 or single-step-only entry refuses before any bound: an unbounded plan holding one is never an ask', () => {
     const withA6 = plan([...Array.from({ length: 4 }, () => read('jira.issues')), read('todo.add', { title: '우유' })]);
     expect(validateAgentPlan(withA6, ctx('지라 이슈 보고 우유 할 일 추가'))).toMatchObject({ ok: false, reason: 'a6-in-plan', step: 5 });
@@ -406,14 +417,18 @@ describe('plan validator: unbounded requests are a bounded-suggestion ask (owner
     expect(validateAgentPlan(withHelp, ctx('지라 이슈 도움말'))).toMatchObject({ ok: false, reason: 'single-step-only', step: 5 });
   });
 
-  it('the ask reply is fixed text with closed labels, never an owner word or value', () => {
+  it('the ask reply is a fixed phrasing hint with closed nouns, never a yes/no question, an owner word or a value (CA P2)', () => {
     const ask = validateAgentPlan(plan(['10-01', '10-02', '10-03'].map((range) => read('calendar.events', { range }))), ctx('올해 매일 일정 보여줘'));
     if (!ask.ok || ask.plan.kind !== 'ask') throw new Error('expected an ask');
-    expect(renderUnboundedAsk(ask.plan, 'ko')).toBe('기간을 날마다·주마다·달마다 나눠 읽는 건 한 번에 할 수 없어요. 대신 이번 달 것부터 한 번에 볼까요? (캘린더 일정 조회)');
+    expect(renderUnboundedAsk(ask.plan, 'ko')).toBe("기간을 날마다·주마다·달마다 나눠 읽는 건 한 번에 할 수 없어요. '이번 달 일정 보여줘'처럼 기간을 한 번에 말씀해 주세요.");
     const refs = validateAgentPlan(plan([read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 100 })]), ctx(RELEASE_TEXT));
     if (!refs.ok || refs.plan.kind !== 'ask') throw new Error('expected an ask');
-    expect(renderUnboundedAsk(refs.plan, 'ko')).toBe('이슈 상세는 한 번에 10개까지 볼 수 있어요. 처음 10개부터 볼까요?');
-    expect(renderUnboundedAsk(refs.plan, 'en')).toBe('I can open at most 10 issues in detail at once. Shall I start with the first 10?');
+    expect(renderUnboundedAsk(refs.plan, 'ko')).toBe("이슈 상세는 한 번에 10개까지 볼 수 있어요. '릴리스 이슈 10개 자세히 보여줘'처럼 10개 이하로 말씀해 주세요.");
+    expect(renderUnboundedAsk(refs.plan, 'en')).toBe('I can open at most 10 issues in detail at once. Ask like "show 10 of the release issues in detail".');
+    for (const language of ['ko', 'en'] as const) {
+      for (const text of [renderUnboundedAsk(ask.plan, language), renderUnboundedAsk(refs.plan, language)]) expect(text).not.toMatch(/\?|볼까요|할까요/);
+    }
+    expect(renderUnboundedAsk(refs.plan, 'ko')).not.toContain('1.2.0');
   });
 });
 
@@ -431,6 +446,13 @@ describe('plan validator: the planner-only GitHub item type (owner review 2026-1
     expect(argsOf(validateAgentPlan(plan([read('jira.issues'), read('github.items', { kind: 'pr' })]), ctx('show my jira issues and my github pull requests')), 2)).toEqual({ kind: 'pr' });
     expect(argsOf(validateAgentPlan(plan([read('github.items', { kind: 'issue' }), read('mail.list')]), ctx('깃허브 내 이슈랑 메일함 보여줘')), 1)).toEqual({ kind: 'issue' });
     expect(argsOf(validateAgentPlan(plan([read('github.items', { kind: 'all' }), read('mail.list')]), ctx('깃허브랑 메일함 보여줘')), 1)).toEqual({});
+  });
+
+  it('CA P3: kind is grounded only in the GitHub step\'s own clause ("지라 이슈랑 깃허브 PR" never grounds kind issue)', () => {
+    expect(validateAgentPlan(plan([read('jira.issues'), read('github.items', { kind: 'issue' })]), ctx('지라 이슈랑 깃허브 PR 보여줘'))).toMatchObject({ ok: false, reason: 'step-invalid', step: 2, stepReason: 'ungrounded' });
+    expect(validateAgentPlan(plan([read('jira.issues'), read('github.items', { kind: 'issue' })]), ctx('show my jira issues and my github pull requests'))).toMatchObject({ ok: false, reason: 'step-invalid', step: 2 });
+    expect(argsOf(validateAgentPlan(plan([read('github.items', { kind: 'issue' }), read('jira.issues')]), ctx('깃허브 내 이슈랑 지라 이슈 보여줘')), 1)).toEqual({ kind: 'issue' });
+    expect(argsOf(validateAgentPlan(plan([read('github.items', { kind: 'pr' }), read('mail.list', { unread: true })]), ctx('내 PR이랑 안 읽은 메일 보여줘')), 1)).toEqual({ kind: 'pr' });
   });
 
   it('an ungrounded kind is refused; review requests drop it (they are pull requests already)', () => {

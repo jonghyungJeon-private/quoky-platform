@@ -142,7 +142,7 @@ export function defaultDeps(): AgentPlanCliDeps {
 /** The report lines of one run (content-free: counts, rates, families and closed entry ids). */
 export function formatAgentPlanSummary(summary: AgentPlanEvalSummary): string[] {
   const lines = [
-    `multi-step exact: ${summary.groups.multiStep.exact}/${summary.groups.multiStep.total} (${pct(summary.groups.multiStep.rate)})  one-step exact: ${summary.groups.oneStep.exact}/${summary.groups.oneStep.total} (${pct(summary.groups.oneStep.rate)})  ask (not gated): ${summary.groups.ask.exact}/${summary.groups.ask.total}`,
+    `multi-step exact: ${summary.groups.multiStep.exact}/${summary.groups.multiStep.total} (${pct(summary.groups.multiStep.rate)})  one-step exact: ${summary.groups.oneStep.exact}/${summary.groups.oneStep.total} (${pct(summary.groups.oneStep.rate)})  ask: ${summary.groups.ask.exact}/${summary.groups.ask.total}`,
     `exact plans: ${summary.exact}/${summary.positives} (${pct(summary.exactRate)})  wrong on negatives: ${summary.wrongOnNegatives}/${summary.negatives}` +
       `  calls: ${summary.calls}  over the ${summary.latency.boundMs / 1000} s bound: ${summary.latency.overBound} (${pct(summary.overBoundRate)})  capped: ${summary.capped}`,
     `outcomes: ${Object.entries(summary.outcomes).sort(([a], [b]) => (a < b ? -1 : 1)).map(([outcome, count]) => `${outcome} ${count}`).join(', ')}`,

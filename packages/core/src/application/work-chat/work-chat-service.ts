@@ -1012,20 +1012,23 @@ export class WorkChatService implements WorkDesk {
     // ADR-0120 D4: a selected "N개만" shows at most N items (the list says it was cut).
     const limited = options.limit !== undefined && items.length > options.limit;
     if (options.limit !== undefined) items = items.slice(0, options.limit);
-    // Owner review 2026-10-21 (ap-p067): a count question answers with the count and the first few items, not the whole
-    // list. The count line carries the full count; an explicit "N개만" keeps its own limit.
-    const total = items.length;
-    const previewed = options.listOnly === true && options.limit === undefined && items.length > WORK_CHAT_COUNT_PREVIEW_ITEMS;
-    if (previewed) items = items.slice(0, WORK_CHAT_COUNT_PREVIEW_ITEMS);
     const builtFull = buildExternalWorkReadout({
       source,
       query,
       ...(searchText !== undefined ? { text: searchText } : {}),
       items,
     });
-    const built = limited || previewed ? { ...builtFull, truncated: true } : builtFull;
-    // The connector returns a bounded page of the owner's items: when it was full, a filtered list may be incomplete.
-    const readout = keywordFilter && fetched >= CONNECTOR_QUERY_MAX_LIMIT ? { ...built, truncated: true } : built;
+    const built = limited ? { ...builtFull, truncated: true } : builtFull;
+    // The connector returns a bounded page of the owner's items: when it was full, there may be more than it returned.
+    const pageFull = fetched >= CONNECTOR_QUERY_MAX_LIMIT;
+    // When it was full, a filtered list may be incomplete.
+    const complete = keywordFilter && pageFull ? { ...built, truncated: true } : built;
+    // Owner review 2026-10-21 (ap-p067): a count question answers with the count and the first few items, not the whole
+    // list. The count is what the readout keeps (credential-bearing items dropped, its slots bounded), "or more" when the
+    // readout was cut or the page was full (CA P2); an explicit "N개만" keeps its own limit.
+    const previewed = options.listOnly === true && options.limit === undefined && complete.items.length > WORK_CHAT_COUNT_PREVIEW_ITEMS;
+    const counted = { count: complete.items.length, truncated: complete.truncated || pageFull };
+    const readout = previewed ? { ...complete, items: complete.items.slice(0, WORK_CHAT_COUNT_PREVIEW_ITEMS), truncated: true } : complete;
     // A6 R2 (D1): while QUOKY_NL_ITEM_R2 is not `off`, a Jira / Slack list is numbered and its delivered rows are labels.
     const numbered = this.numberedLists && (source === 'jira' || source === 'slack');
     const list = numbered ? renderNumberedExternalWorkList(readout) : { body: renderExternalWorkList(readout), labelled: 0 };
@@ -1044,9 +1047,7 @@ export class WorkChatService implements WorkDesk {
     const listed: WorkChatOutcome = {
       ...messageFields(fallbackText),
       kind: 'reply',
-      listed: previewed
-        ? { count: total, truncated: keywordFilter && fetched >= CONNECTOR_QUERY_MAX_LIMIT, shown: readout.items.length }
-        : { count: readout.items.length, truncated: readout.truncated },
+      listed: previewed ? { ...counted, shown: readout.items.length } : { count: readout.items.length, truncated: readout.truncated },
       ...(fallbackListing !== undefined ? { listing: fallbackListing } : {}),
     };
     return listed;

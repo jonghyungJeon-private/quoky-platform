@@ -143,6 +143,13 @@ export interface NlArgSpec {
   readonly default?: string | boolean;
   /** `span` only: the maximum length in code points (A6-D1: a title or body 1..200). */
   readonly maxChars?: number;
+  /**
+   * `enum` with `valueGrounding` only (CA P3 on the S2 review, 2026-10-21): in a multi-step agent plan the value's words must
+   * appear in the step's OWN clause (a conjunct that names the entry), not anywhere in the message, as a step's period
+   * must ("지라 이슈랑 깃허브 PR": the GitHub step's `kind` is grounded by "PR", never by the Jira clause's "이슈"). Not shown to
+   * any selector; a one-step selection keeps the message-level rule.
+   */
+  readonly clauseBound?: true;
   /** One provider-facing line (English, bounded). */
   readonly description: string;
 }

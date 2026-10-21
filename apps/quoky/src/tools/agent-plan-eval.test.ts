@@ -232,6 +232,9 @@ describe('step-graph scorer (Q10)', () => {
     expect(score(golden, steps(['this-mon', 'this-tue', 'this-wed'].map((range) => ({ entryId: 'calendar.events', args: { range } }))))).toMatchObject({ outcome: 'ask-other' });
     expect(score(golden, steps([{ entryId: 'calendar.events', args: {} }, { entryId: 'todo.list', args: {} }])).outcome).toBe('wrong');
     expect(score(golden, none).outcome).toBe('none');
+    // CA P2: on a `none` gold (a negative of any other family) an ask is wrong.
+    const venting = byId((NEW.find((candidate) => candidate.family === 'venting') as AgentPlanCase).id);
+    expect(score(venting, steps(['this-mon', 'this-tue', 'this-wed'].map((range) => ({ entryId: 'calendar.events', args: { range } }))))).toMatchObject({ outcome: 'wrong' });
     // On a positive an ask is never exact.
     expect(score(owner, steps(['this-mon', 'this-tue', 'this-wed'].map((range) => ({ entryId: 'calendar.events', args: { range } })))).outcome).toBe('ask-other');
   });
@@ -272,6 +275,10 @@ describe('step-graph scorer (Q10)', () => {
     expect(summarizeAgentPlanRun([...records, ...oneStep(2, 'timeout', 6001)], 6000).gatePassed).toBe(false);
     expect(summarizeAgentPlanRun([...records, record('n2', 'wrong', 'none', 800)], 6000).gatePassed).toBe(false);
     expect(summarizeAgentPlanRun([...records, record('p99', 'capped', 'plan', 0)], 6000).gatePassed).toBe(false);
+    // CA P2: the ask group is gated when present: 19 of 20 asked passes, 18 of 20 fails.
+    const asks = (asked: number) => Array.from({ length: 20 }, (_, i) => ({ ...record(`a${i}`, i < asked ? 'asked' : 'ask-other', 'none', 900), expected: 'ask' as const, family: 'unbounded' }));
+    expect(summarizeAgentPlanRun([...records, ...asks(19)], 6000).gatePassed).toBe(true);
+    expect(summarizeAgentPlanRun([...records, ...asks(18)], 6000).gatePassed).toBe(false);
   });
 
   it('gates each group on its own (CA P1): a 75% multi-step group fails even when the pooled rate is above 95%', () => {
@@ -535,7 +542,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     await runCli(['--mode', 'plan'], planned);
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
-    expect(ran.out.join('\n')).toContain('multi-step exact: 174/174 (100.0%)  one-step exact: 674/674 (100.0%)  ask (not gated): 12/12');
+    expect(ran.out.join('\n')).toContain('multi-step exact: 174/174 (100.0%)  one-step exact: 674/674 (100.0%)  ask: 12/12');
     expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v3): PASSED in all 1 run(s)');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };

@@ -28319,12 +28319,13 @@ analysis and an ADR-0121 amendment, and decision (e) for its own amendment (Q6).
   is the old refusal (`too-many-reads`, `range-ambiguous`, `ref-too-many`, `run-refs-too-many`); an A6 or single-step-only
   entry refuses before any bound; two different periods of one entry stay `range-ambiguous`. The ask runs nothing; the
   owner's reply that takes it is a new turn. `renderUnboundedAsk` (`agent/unbounded-ask.ts`) is the fixed KO/EN text
-  ("기간을 날마다·주마다·달마다 나눠 읽는 건 한 번에 할 수 없어요. 대신 이번 달 것부터 한 번에 볼까요? (캘린더 일정 조회)"; "이슈
-  상세는 한 번에 10개까지 볼 수 있어요. 처음 10개부터 볼까요?"); `active` sends it after S2 P5, `shadow` logs `outcome: ask`,
+  ("기간을 날마다·주마다·달마다 나눠 읽는 건 한 번에 할 수 없어요. '이번 달 일정 보여줘'처럼 기간을 한 번에 말씀해 주세요."; "이슈
+  상세는 한 번에 10개까지 볼 수 있어요. '릴리스 이슈 10개 자세히 보여줘'처럼 10개 이하로 말씀해 주세요."): a fixed phrasing hint, never a
+  yes/no question, because Q9 keeps no follow-up state (CA P2); `active` sends it after S2 P5, `shadow` logs `outcome: ask`,
   `bound` and the suggestion's closed entry ids. Gold: `expect: {outcome: "ask", reason: "unbounded", bound, suggestion}`
   with the unbounded plan as the trap (`ap-n075..086`, 12); the self-check proves each trap validates to exactly that ask;
-  the scorer adds `asked` / `ask-other` and an `ask` group that is reported, not gated, until the owner approves the ask
-  cases. Residuals: a release range ("1.0부터 9.0까지") is read as its two named ends (asks only while the takes sum over
+  the scorer adds `asked` / `ask-other` and an `ask` group, gated per run at ≥ 95% `asked` when present (CA P2); an ask
+  on a `none` gold is `wrong`. Residuals: a release range ("1.0부터 9.0까지") is read as its two named ends (asks only while the takes sum over
   10); `ap-n083`'s suggestion keeps the planner's grounded but weak keywords. The parse bound of `take` is 1000 so an
   owner's large number parses and is asked.
 - **GitHub item type (`ap-p062`; owner-approved relabels).** `github.items` gains `kind: pr | issue | all` (default `all`),
@@ -28380,3 +28381,18 @@ analysis and an ADR-0121 amendment, and decision (e) for its own amendment (Q6).
   ask stays"), while "전부" with no number runs with take 10 and the truncation line; (ii) the validator does not yet charge
   a reference step as one connector call (no per-run call accounting exists before P3), and the one-request-per-page test
   belongs to P3's bulk read.
+- **CA review of fe72d92d (CHANGES REQUIRED), fixed.**
+  1. [P2] The count line of a previewed count answer counts what the readout keeps (credential-bearing items dropped,
+     readout slots bounded) and says "이상" / "or more" when the readout was cut or the fetched page was full, keyword or
+     not (`work-chat-service.ts`; tests: a full page with dropped items, a short page with one dropped item).
+  2. [P2] The unbounded ask applies only to a plan that breaks nothing but a bound: every step is checked by the ordinary
+     rules with only the bound lifted (the repeated entry's period removed, a reference's take clamped), so a write, an
+     ungrounded or content-borne value or a cross-source reference refuses with its own reason. An ask on a `none` gold
+     scores `wrong`, and the per-run gate holds the ask group at ≥ 95% `asked` when present. `renderUnboundedAsk` gives a
+     fixed phrasing hint ("'이번 달 일정 보여줘'처럼 기간을 한 번에 말씀해 주세요.") and never a yes/no question (Q9: no follow-up
+     state).
+  3. [P3] The GitHub `kind` is `clauseBound` (`NlArgSpec`, validator only; no prompt byte changes): in a multi-step plan
+     its words must be in a conjunct that names GitHub ("지라 이슈랑 깃허브 PR" never grounds `kind: issue`).
+  4. [P3] `v5int4-020` stays a watch case of the agent-off live path: `nl-routing/uat-read-gaps.test.ts` pins that the
+     one-step read path can still answer both parts (`brief.today` validates) and that the case is the plan gold
+     `ap-p174`, not a one-step gold.

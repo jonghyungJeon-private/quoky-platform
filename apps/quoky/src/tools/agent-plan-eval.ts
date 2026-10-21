@@ -15,8 +15,9 @@
  *   a clarification or a malformed answer is not wrong;
  * - an **ask** case (the owner's review of 2026-10-21, decision (h): an unbounded request) is a negative for `wrong`, and
  *   is `asked` when the answer validates to the `unbounded` ask with the gold bound and the gold suggestion (Core derives
- *   the suggestion deterministically from the planner's steps), `ask-other` for another ask. The ask rate is reported,
- *   not gated, until the owner approves the ask cases;
+ *   the suggestion deterministically from the planner's steps), `ask-other` for another ask. An ask on a `none` gold is
+ *   `wrong` (CA P2: a suggestion there is a plan the owner never asked for). The per-run gate holds the ask group at
+ *   >= 95% `asked` whenever the run scores ask cases (only approved ones without `--include-pending`);
  * - the message-level vetoes of the selection path (ADR-0120 A7: a past statement; a reason statement or an unconsumed
  *   quoted request on any read step) are validator rules (`veto-*` refusals), so the eval and the runtime share them.
  * - Q10 compares an ORDERED step sequence: the same plan with its reads in another order is a miss (`step-kind` /
@@ -57,7 +58,7 @@ import {
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import { EvalCallTimeout, withTimeout } from './nl-intent-eval';
 
-export const AGENT_PLAN_EVAL_GATE = { multiStepExact: 0.95, oneStepExact: 0.95, wrongOnNegatives: 0, overBoundRate: 0.01 } as const;
+export const AGENT_PLAN_EVAL_GATE = { multiStepExact: 0.95, oneStepExact: 0.95, askAsked: 0.95, wrongOnNegatives: 0, overBoundRate: 0.01 } as const;
 /** The per-call bound: the runtime's selection bound (the shadow job runs inside it, ADR-0121 S2 P1). */
 export const AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS = NL_SELECTION_TIMEOUT_MS;
 
@@ -370,6 +371,8 @@ export function scoreAgentPlanOutput(golden: AgentPlanEvalCase, raw: string, fix
   if (validation.plan.kind === 'ask') {
     const gold = golden.gold;
     const same = isAgentPlanAskExpect(gold) && gold.bound === validation.plan.bound && graphDiff(validatedGraph(validation.plan.suggestion), goldGraph(gold.suggestion)) === undefined;
+    // CA P2: a suggestion on a `none` gold offers a plan the owner never asked for: wrong, like any executable plan there.
+    if (gold === 'none') return { outcome: 'wrong', gotEntries, reason: `unbounded:${validation.plan.bound}` };
     return { outcome: same ? 'asked' : 'ask-other', gotEntries, reason: `unbounded:${validation.plan.bound}` };
   }
   if (golden.gold === 'none' || isAgentPlanAskExpect(golden.gold)) return { outcome: 'wrong', gotEntries };
@@ -690,7 +693,8 @@ export interface AgentPlanEvalSummary {
   readonly capped: number;
   /**
    * The gated groups (CA review of S2 P2): multi-step positives (the new corpus) and one-step positives (Q11). `ask`
-   * (decision (h)): the unbounded requests answered with the expected ask (`exact` = `asked`); reported, not gated.
+   * (decision (h)): the unbounded requests answered with the expected ask (`exact` = `asked`); gated at >= 95% when
+   * present (CA P2).
    */
   readonly groups: { readonly multiStep: AgentPlanEvalSlot; readonly oneStep: AgentPlanEvalSlot; readonly ask: AgentPlanEvalSlot };
   /** `false` for an `--include-pending` run: no verdict, `gatePassed` is always false. */
@@ -766,6 +770,7 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
       oneStep.rate >= AGENT_PLAN_EVAL_GATE.oneStepExact &&
       wrongOnNegatives <= AGENT_PLAN_EVAL_GATE.wrongOnNegatives &&
       overBoundRate <= AGENT_PLAN_EVAL_GATE.overBoundRate &&
+      (asks.length === 0 || asked / asks.length >= AGENT_PLAN_EVAL_GATE.askAsked) &&
       capped === 0,
   };
 }
