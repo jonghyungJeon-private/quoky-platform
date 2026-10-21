@@ -123,6 +123,12 @@ export interface TurnHandlerReply {
   readonly nlAction?: NlActionReceipt;
   /** A6-D2: the to-do or reminder listing this reply shows (labels and ids only), recorded like `nlAction`. */
   readonly nlListing?: NlListingReceipt;
+  /**
+   * Owner decision B (2026-10-22): this reply asks the owner to confirm exactly this read (e.g. a near-matched Jira project
+   * of `jira.release`). The runtime keeps it as the open D7 question, so a yes runs it and a no ends it. Content-free: a
+   * closed entry id and canonical args. Ignored unless natural-language selection is `active`.
+   */
+  readonly nlConfirm?: { readonly selection: NlGrammarSelection; readonly language: 'ko' | 'en' };
 }
 
 /**

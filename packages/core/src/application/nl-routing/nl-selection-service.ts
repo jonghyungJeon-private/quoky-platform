@@ -105,6 +105,7 @@ import {
   type StoredSelection,
 } from './selection-state';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
+import { nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
 
 /**
@@ -713,6 +714,26 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }
 
   /**
+   * Owner decision B (2026-10-22): a handler's reply asked the owner to confirm exactly this read (a near-matched Jira
+   * project). Saved as the D7 one-option question with `confirm` (a yes runs it, a no ends it, 5 minutes). Only in
+   * `active`; a selection that is not a closed entry with bounded args is ignored. Never throws.
+   */
+  async recordConfirmQuestion(session: Pick<Session, 'id'>, actorId: string, selection: NlGrammarSelection, language: 'ko' | 'en', now: IsoTimestamp): Promise<boolean> {
+    if (this.mode !== 'active') return false;
+    const stored = sanitizeStoredSelection(selection);
+    if (stored === undefined) return false;
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, NL_PENDING_METADATA_KEY, () =>
+        pendingQuestionRecord(actorId, { kind: 'entry', at: now, language, options: [stored], confirm: true }),
+      );
+      return true;
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: NL_PENDING_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+      return false;
+    }
+  }
+
+  /**
    * ADR-0120 follow-up: a turn answered by something with no catalog equivalent (chat, help, an approval, a write
    * preview) ends the previous listing's follow-up window, so a later "그 중에 …" never binds to an older, unrelated
    * listing. Only in `active`; never throws.
@@ -1011,7 +1032,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         return { kind: 'ask', text: help?.[language] ?? renderUsageQuestion(entry, language), entryId: entry.id };
       }
     }
-    if (main.ok && output.ambiguity === 'CLEAR') return this.complete(main.value, turn, last, language, prepared.groundingText);
+    if (main.ok && output.ambiguity === 'CLEAR') return this.completeOrAskScope(main.value, turn, last, language, prepared.groundingText);
     // v53 gate (2026-10-19, reminder.list-006 {count}, none-030 help.topic {topic}): a CLEAR read with no alternative whose
     // only defect is a detail Core cannot use (an unlisted flag or day symbol, or an out-of-set presentation value the owner
     // did not name; `validateWithoutDetail`) runs as the read the selector named without that detail, instead of asking
@@ -1022,7 +1043,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         // CA P3: every dropped detail is logged (arg name and kind only), so a silently widened read is visible in review.
         // Arg names from the catalog only (Codex P2): a model-made name is logged as `other`.
         this.log('info', 'nl_selection.detail_dropped', { entryId: lenient.result.value.entry.id, dropped: lenient.dropped.map((detail) => `${NL_CATALOG_ARG_NAMES.has(detail.arg) ? detail.arg : 'other'}:${detail.kind}`).join(',') });
-        return this.complete(lenient.result.value, turn, last, language, prepared.groundingText);
+        return this.completeOrAskScope(lenient.result.value, turn, last, language, prepared.groundingText);
       }
     }
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action
@@ -1056,7 +1077,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // (entry + args) remains, the one named, unchanged. Two reads of one entry ("완료된 할 일 아니면 취소된 할 일") ask.
     const onlyRead = `${main.ok ? main.value.entry.id : ''}|${main.ok ? sortedArgs(main.value.args) : ''}`;
     if (actionsOn && main.ok && droppedAction && !openRead && !weekdayRefused && readCandidates.size === 1 && readCandidates.has(onlyRead)) {
-      return this.complete(main.value, turn, last, language, prepared.groundingText);
+      return this.completeOrAskScope(main.value, turn, last, language, prepared.groundingText);
+    }
+    // Owner decision A (2026-10-22): a question whose only read option is the general help about a named source asks the
+    // help-scope question (Quoky's way, or the source app itself) instead of a one-option list.
+    if (options.length === 1 && !weekdayRefused) {
+      const scoped = await this.askHelpScope(options[0] as NlValidatedSelection, turn, language, prepared.groundingText);
+      if (scoped !== undefined) return scoped;
     }
     if (options.length === 0) {
       // An entry that is not offered (an unconfigured source) or not in the catalog is honest chat's to explain.
@@ -1079,6 +1106,33 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const refusedEntry = weekdayRefused && !main.ok && main.entryId !== undefined ? ctx.offered.get(main.entryId) : undefined;
     const question = renderEntryQuestion(options, language);
     return { kind: 'ask', text: refusedEntry !== undefined ? `${renderWeekdayQuestion(refusedEntry, language)}\n${question}` : question };
+  }
+
+  /** A validated selection that may first need the help-scope question (owner decision A); else {@link complete}. */
+  private async completeOrAskScope(
+    selection: NlValidatedSelection,
+    turn: NlSelectionTurn,
+    last: LastSelection | undefined,
+    language: 'ko' | 'en',
+    groundingText: string,
+  ): Promise<NlSelectionDecision> {
+    return (await this.askHelpScope(selection, turn, language, groundingText)) ?? this.complete(selection, turn, last, language, groundingText);
+  }
+
+  /**
+   * Owner decision A (2026-10-22): the general help about a source the owner named (`nlHelpSourceScope`, structural) is
+   * asked, never answered: "Quoky로 슬랙을 조회하는 방법을 물으신 건가요, 아니면 슬랙 앱 자체의 사용법인가요?". The pending
+   * question is the D7 numbered one: option 1 is the help selection, option 2 the app itself (`appSource`).
+   */
+  private async askHelpScope(selection: NlValidatedSelection, turn: NlSelectionTurn, language: 'ko' | 'en', groundingText: string): Promise<NlSelectionDecision | undefined> {
+    const scope = nlHelpSourceScope({ entryId: selection.entry.id, args: selection.args }, groundingText, selection.entry);
+    if (scope === undefined || !isNlWave1EntryId(selection.entry.id)) return undefined;
+    const option: StoredSelection = { entryId: selection.entry.id, args: selection.args };
+    await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
+      pendingQuestionRecord(turn.actor.id, { kind: 'entry', at: turn.now, language, options: [option], groundingText, appSource: scope.source }),
+    );
+    this.log('info', 'nl_selection.help_scope_asked', { entryId: selection.entry.id });
+    return { kind: 'ask', text: renderHelpScopeQuestion(scope.source, language), entryId: selection.entry.id };
   }
 
   /** A validated selection: apply or ask the interpretation preference (D7), then execute. */
@@ -1173,15 +1227,25 @@ export class NlSelectionService implements TurnDeliveryObserver {
         const entry = offered.get(option.entryId);
         return entry === undefined ? [] : [entry.label.ko, entry.label.en, ...entry.aliases];
       });
-      const resolved = resolveChoice(answerText, labels);
+      // Owner decision A: the help-scope question's second option is the source app itself (its own rendered labels).
+      const appSource = pending.appSource;
+      if (appSource !== undefined) labels.push([...renderHelpScopeOptions(appSource, 'ko').slice(1), ...renderHelpScopeOptions(appSource, 'en').slice(1)]);
+      // Owner decision B: a one-option confirmation takes the A6 continuation confirmation's yes and no (the same closed
+      // reply sets, `interpretContinuationConfirmReply`); a number or the option's name still answers it.
+      const yesNo = pending.confirm === true ? interpretContinuationConfirmReply(answerText) : 'none';
+      if (yesNo === 'deny') return { kind: 'ask', text: renderCancelled(language) };
+      const resolved: ChoiceResolution = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveChoice(answerText, labels);
       if (resolved.kind === 'none') return undefined;
       if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
+      if (resolved.kind === 'pick' && appSource !== undefined && resolved.index === pending.options.length) {
+        return { kind: 'ask', text: renderHelpScopeAppReply(appSource, language) };
+      }
       const validated = pending.options.map((option) => validateSelection(option, this.validationContext(turn, '', option.args)));
       if (resolved.kind === 'unclear') {
         const options = validated.flatMap((result) => (result.ok ? [result.value] : []));
         if (options.length === 0) return undefined;
         await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, { ...pending, at: turn.now }));
-        return { kind: 'ask', text: renderEntryQuestion(options, language) };
+        return { kind: 'ask', text: appSource !== undefined ? renderHelpScopeQuestion(appSource, language) : renderEntryQuestion(options, language) };
       }
       const picked = validated[resolved.index];
       if (picked === undefined || !picked.ok) return undefined;

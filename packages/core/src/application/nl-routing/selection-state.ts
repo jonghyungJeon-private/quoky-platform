@@ -10,7 +10,7 @@ import {
   type NlWave1EntryId,
 } from './catalog';
 import { isTimeExpression } from './symbolic-time';
-import { nlWave1Entry } from './wave1-entries';
+import { NL_CATALOG_SOURCE_NAMES, nlWave1Entry } from './wave1-entries';
 
 /**
  * The content-free state of natural-language selection (ADR-0120 D7), all plain data, no storage migration (a stored
@@ -61,6 +61,16 @@ export type PendingQuestion =
       readonly options: readonly StoredSelection[];
       /** The original turn's quote-stripped grounding text (bounded), so the picked option keeps an explicit role. */
       readonly groundingText?: string;
+      /**
+       * Owner decision B (2026-10-22): a one-option confirmation ("'… (KEY)' 프로젝트가 맞나요?"), answered like the A6
+       * elliptical-continuation confirmation: a yes picks the option, a no ends the question, a number still answers it.
+       */
+      readonly confirm?: true;
+      /**
+       * Owner decision A (2026-10-22): a help question that names a source; the option is Quoky's help, and one more
+       * numbered option (after the stored ones) is the source app itself. Holds the catalog source name the owner wrote.
+       */
+      readonly appSource?: string;
     }
   | {
       readonly kind: 'preference';
@@ -127,6 +137,12 @@ export type PendingQuestion =
       /** The `at` of the lastAction record the question named (the binding a reply is checked against). */
       readonly actionAt?: IsoTimestamp;
     };
+
+/** A source name of the wave-1 catalog (its entries' `sourceNames`, case aside): the only `appSource` a record may hold. */
+function isCatalogSourceName(value: string): boolean {
+  const lower = value.normalize('NFC').toLowerCase();
+  return lower.length > 0 && lower.length <= 40 && NL_CATALOG_SOURCE_NAMES.includes(lower);
+}
 
 /** Whether a pending question belongs to A6 (answered before any grammar, only while actions are live). */
 export function isActionPendingQuestion(question: PendingQuestion | null | undefined): question is Extract<PendingQuestion, { kind: `action-${string}` }> {
@@ -262,7 +278,18 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
     const options = record.options.map(selectionOf);
     if (options.length === 0 || options.length > 4 || options.some((option) => option === undefined)) return undefined;
     const groundingText = typeof record.groundingText === 'string' && record.groundingText.length <= MAX_GROUNDING ? record.groundingText : undefined;
-    return { kind: 'entry', at, language, options: options as StoredSelection[], ...(groundingText !== undefined ? { groundingText } : {}) };
+    const confirm = record.confirm === true && options.length === 1;
+    const appSource = typeof record.appSource === 'string' && isCatalogSourceName(record.appSource) ? record.appSource : undefined;
+    if (record.appSource !== undefined && appSource === undefined) return undefined;
+    return {
+      kind: 'entry',
+      at,
+      language,
+      options: options as StoredSelection[],
+      ...(groundingText !== undefined ? { groundingText } : {}),
+      ...(confirm ? { confirm: true as const } : {}),
+      ...(appSource !== undefined ? { appSource } : {}),
+    };
   }
   if (record.kind === 'action-target' && isNlActionEntryId(record.entryId) && (ITEM_SOURCES as readonly unknown[]).includes(record.source) && Array.isArray(record.candidates)) {
     const candidates = record.candidates
@@ -343,6 +370,8 @@ export function pendingQuestionRecord(actorId: Id, question: PendingQuestion): M
         language: question.language,
         options: question.options.map((option) => ({ entryId: option.entryId, args: { ...option.args } })),
         ...(question.groundingText !== undefined ? { groundingText: question.groundingText.slice(0, MAX_GROUNDING) } : {}),
+        ...(question.confirm === true && question.options.length === 1 ? { confirm: true } : {}),
+        ...(question.appSource !== undefined ? { appSource: question.appSource } : {}),
       }
     : {
         actorId,

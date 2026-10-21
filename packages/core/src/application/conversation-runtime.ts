@@ -1099,6 +1099,8 @@ export interface ConversationRuntimeDeps {
         // ADR-0122 D2.2: a question refused by the surface gate is dropped (no new deps key: the same slot).
         | 'dropPending'
         | 'recordGrammarSelection'
+        // Owner decision B (2026-10-22): a handler reply that asks to confirm one read keeps it as the open question.
+        | 'recordConfirmQuestion'
         | 'clearLastSelection'
         | 'yieldsToSelection'
         | 'grammarYieldEnabled'
@@ -4382,6 +4384,17 @@ export class ConversationRuntime {
       if (await this.deps.nlSelection.recordGrammarSelection(session, actor.id, handled.nlSelection, this.clock())) {
         this.keepNlLastSelection(message, session);
       }
+    }
+    // Owner decision B (2026-10-22): a reply that asks the owner to confirm one read keeps it as the open D7 question.
+    if (
+      handled.kind !== 'summarize' &&
+      handled.kind !== 'write-draft' &&
+      handled.nlConfirm !== undefined &&
+      handled.status !== 'FAILED' &&
+      this.deps.nlSelection?.mode === 'active' &&
+      this.deps.nlSelection.recordConfirmQuestion !== undefined
+    ) {
+      await this.deps.nlSelection.recordConfirmQuestion(session, actor.id, handled.nlConfirm.selection, handled.nlConfirm.language, this.clock());
     }
     // ADR-0120 amendment A6-D2/D3: the content-free receipts of a to-do / reminder listing or action (an A6 dispatch or an
     // anchored command) become `quoky.lastAction`, the echo label and the listing slot. The service writes nothing while

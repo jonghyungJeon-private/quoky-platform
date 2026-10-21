@@ -174,9 +174,11 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     }
     // ADR-0120 A8 owner decision 7: a release listing knows whether it answers in a channel — every-assignee scope and the
     // lists stay DM-only there unless the gate is enforced and the channel holds `jira-project` (ADR-0122 P2).
+    // Owner decision B (2026-10-22): a selection turn can keep a confirmation open, so a near-matched project is asked.
+    const release = mapped.kind === 'release' ? { ...mapped, confirmNear: true as const } : mapped;
     const command =
-      mapped.kind === 'release' && !surfaceChannelHolds(ctx.message.context, ctx.surfacePermit, 'jira-project') ? { ...mapped, inChannel: true as const } : mapped;
-    const { outcome, listed } = await this.run(command, ctx);
+      release.kind === 'release' && !surfaceChannelHolds(ctx.message.context, ctx.surfacePermit, 'jira-project') ? { ...release, inChannel: true as const } : release;
+    const { outcome, listed } = await this.run(command, ctx, selected.language);
     if (command.kind !== 'lookup' || command.listOnly !== true || listed === undefined || outcome === null) return outcome;
     if (outcome.kind !== undefined && outcome.kind !== 'reply') return outcome;
     const count = renderWorkChatCount(command.source, listed, selected.language);
@@ -347,6 +349,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
   private async run(
     command: WorkChatCommand,
     ctx: TurnHandlerContext,
+    language: 'ko' | 'en' = 'ko',
   ): Promise<{ readonly outcome: TurnHandlerOutcome | null; readonly listed?: { readonly count: number; readonly truncated: boolean; readonly shown?: number } }> {
     // ADR-0112 D5 (CWR-2): an exact Jira comment / transition or Slack post request is handed to the runtime's
     // connector-write flow (this handler creates no approval and makes no write). `fallbackText` is the fixed refusal
@@ -376,6 +379,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
         reply: outboundMessage(ctx.message.context, outboundBody(outcome)),
         ...(outcome.action !== undefined ? { nlAction: outcome.action } : {}),
         ...(outcome.listing !== undefined ? { nlListing: outcome.listing } : {}),
+        ...(outcome.confirm !== undefined ? { nlConfirm: { selection: outcome.confirm, language } } : {}),
       };
       return outcome.listed === undefined ? { outcome: reply } : { outcome: reply, listed: outcome.listed };
     }

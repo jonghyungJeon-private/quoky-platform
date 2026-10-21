@@ -28,3 +28,4 @@ export * from './deictic-referent';
 export * from './deictic-render';
 export * from './deictic-writes';
 export * from './last-read';
+export * from './help-scope';

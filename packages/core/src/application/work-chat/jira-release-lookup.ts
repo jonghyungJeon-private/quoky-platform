@@ -4,6 +4,7 @@ import type { ConnectorItem, ConnectorProvider, ConnectorQueryErrorReason, Conne
 import { releaseLinkOnSite, type JiraReleaseLink } from './jira-release-link';
 import {
   renderProjectAmbiguous,
+  renderProjectConfirm,
   renderProjectNotFound,
   releaseIssuesInDisplayOrder,
   renderNumberedReleaseIssues,
@@ -41,6 +42,11 @@ export type ReleaseLookupResult =
   | {
       readonly kind: 'body';
       readonly body: MessageBody;
+      /**
+       * Owner decision B (2026-10-22): the body asks whether the owner meant this visible project (a near match of their
+       * words). A yes runs the same lookup with the project's key (and the owner's release words, when they named one).
+       */
+      readonly confirm?: { readonly project: string; readonly release?: string };
       readonly listed?: { readonly count: number; readonly truncated: boolean };
       /** A6 R2 (numbered): the issues in display order and how many leading rows were certainly delivered. */
       readonly shown?: { readonly items: readonly ConnectorItem[]; readonly labelled: number };
@@ -82,6 +88,11 @@ export async function lookupJiraRelease(input: {
   readonly inChannel?: boolean;
   /** A6 R2 (D1): number the issue rows and report the certainly delivered ones (`QUOKY_NL_ITEM_R2` not `off`). */
   readonly numbered?: boolean;
+  /**
+   * Owner decision B (2026-10-22): a project reached only by a near match of the owner's words is confirmed with the owner
+   * first (`confirm` on the result). Only when the caller can keep the question open (a natural-language selection turn).
+   */
+  readonly confirmNear?: boolean;
 }): Promise<ReleaseLookupResult> {
   let command = input.command;
   // The release text before a repeated project key was stripped: a release of exactly that name wins over the stripped one.
@@ -120,7 +131,16 @@ export async function lookupJiraRelease(input: {
     } else if (command.project !== undefined) {
       const listed = await connector.query({ query: ConnectorQueryName.CONTAINERS });
       if (listed.truncated !== true) completeProjects = itemsOf(listed);
-      const candidates = matchProjects(itemsOf(listed), command.project);
+      const matched = matchProjectsTiered(itemsOf(listed), command.project);
+      const candidates = matched.items;
+      // Owner decision B (2026-10-22): the owner's words name no visible project as written (only whole words of a longer
+      // name, or nothing): on a complete listing the near match is confirmed with the owner, never silently taken.
+      if (input.confirmNear === true && completeProjects !== undefined && (matched.tier === 'words' || candidates.length === 0)) {
+        const near = await resolveNearProject(connector, completeProjects, command.project, command.release, candidates);
+        if (near.kind === 'confirm') return confirmBody(near.project, near.release, input.inChannel === true);
+        if (near.kind === 'ambiguous') return body(input.inChannel === true ? renderReleaseDmOnly('list') : renderProjectAmbiguous(command.project, near.candidates.map(refOf)));
+        return body(renderProjectNotFound(command.project, ignoredLink));
+      }
       if (candidates.length === 0) return body(renderProjectNotFound(command.project, ignoredLink));
       // A truncated listing may hold unseen projects that match too: only an exact project key is proven unique there.
       const keyText = command.project.trim().toUpperCase();
@@ -144,6 +164,12 @@ export async function lookupJiraRelease(input: {
           if (input.inChannel === true) return body(renderReleaseDmOnly('list'));
           const known = await releasesOf(connector, joined.id);
           return body(renderReleaseList(refOf(joined), known.items, known.truncated === true, ignoredLink));
+        }
+        // Owner decision B: no candidate holds the release, and the project words with the release words are near exactly
+        // one visible project ("Mobile App" + "2026" for "Mobile App Ops 2026"): that project is confirmed, then listed.
+        if (input.confirmNear === true && joined === undefined && narrowed !== undefined && !narrowed.unproven && narrowed.found.length === 0 && command.release !== undefined) {
+          const near = nearProjectsOfJoined(completeProjects, command.project, command.release);
+          if (near.length === 1) return confirmBody(near[0] as ConnectorItem, undefined, input.inChannel === true);
         }
         if (narrowed === undefined || narrowed.unproven || narrowed.found.length !== 1) {
           return body(input.inChannel === true ? renderReleaseDmOnly('list') : renderProjectAmbiguous(command.project, candidates.map(refOf)));
@@ -313,6 +339,107 @@ export function projectWithReleaseWords(projects: readonly ConnectorItem[] | und
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+/** The near-match answer (owner decision B): one project to confirm, several to ask about, or none. */
+type NearProject =
+  | { readonly kind: 'confirm'; readonly project: ConnectorItem; readonly release?: string }
+  | { readonly kind: 'ambiguous'; readonly candidates: readonly ConnectorItem[] }
+  | { readonly kind: 'none' };
+
+/**
+ * Owner decision B (2026-10-22): the owner's project words named no visible project as written. On the COMPLETE listing,
+ * by structure only (whole words of a longer name, else a small edit distance; no word list, no project specifics):
+ *  1. `nearByWords`: the projects holding all of the owner's project words; with release words, the one of them that holds
+ *     the release is confirmed with it;
+ *  2. otherwise the project words with the release words joined, when exactly one visible project is near them (the
+ *     selector split a word of the name off as a release: "차란차 운영" + "2026"): confirmed, then its release list;
+ *  3. otherwise one near project is confirmed (with the owner's release words), several are asked about, none: not found.
+ */
+async function resolveNearProject(
+  connector: ConnectorProvider,
+  projects: readonly ConnectorItem[],
+  projectText: string,
+  releaseText: string | undefined,
+  nearByWords: readonly ConnectorItem[],
+): Promise<NearProject> {
+  const near = nearByWords.length > 0 ? nearByWords : fuzzyProjects(projects, projectText);
+  if (releaseText !== undefined) {
+    if (near.length > 0 && near.length <= DISAMBIGUATE_MAX) {
+      const narrowed = await narrowByRelease(connector, near, releaseText);
+      if (!narrowed.unproven && narrowed.found.length === 1) return { kind: 'confirm', project: narrowed.found[0]!.project, release: releaseText };
+      if (narrowed.unproven || narrowed.found.length > 1) return near.length === 1 ? { kind: 'confirm', project: near[0] as ConnectorItem, release: releaseText } : { kind: 'ambiguous', candidates: near };
+    }
+    const joined = nearProjectsOfJoined(projects, projectText, releaseText);
+    if (joined.length === 1) return { kind: 'confirm', project: joined[0] as ConnectorItem };
+  }
+  if (near.length === 1) return { kind: 'confirm', project: near[0] as ConnectorItem, ...(releaseText !== undefined ? { release: releaseText } : {}) };
+  if (near.length > 1) return { kind: 'ambiguous', candidates: near };
+  return { kind: 'none' };
+}
+
+/**
+ * The visible projects near the owner's project words with their release words joined (owner decision B): the joined
+ * words, longer than the project words alone, spelled out by a name (exact or inside it, letters and digits only), or all
+ * of them whole words of the name. No edit distance here (release words are free text: "Mobile App 9.9.9" is not a typo of
+ * "Mobile App Dev"), and a name merely inside the joined words never counts. No complete listing: none.
+ */
+export function nearProjectsOfJoined(projects: readonly ConnectorItem[] | undefined, projectText: string, releaseText: string): ConnectorItem[] {
+  if (projects === undefined || releaseText.trim().length === 0) return [];
+  const joinedText = `${projectText} ${releaseText}`;
+  const joined = compact(withoutWords(joinedText, PROJECT_WORDS) || joinedText);
+  if (joined.length <= compact(projectText).length) return [];
+  const spelled = projects.filter((item) => compact(item.title).includes(joined));
+  if (spelled.length > 0) return spelled;
+  const words = tokens(withoutWords(joinedText, PROJECT_WORDS) || joinedText);
+  const byWords = projects.filter((item) => words.length > 0 && words.every((word) => tokens(item.title).includes(word)));
+  return byWords;
+}
+
+/**
+ * The visible projects whose name (letters and digits only) is within a small edit distance of the owner's words: at most
+ * one edit per four characters of the words (four characters at least), the closest only (a tie: all of them).
+ */
+export function fuzzyProjects(projects: readonly ConnectorItem[], text: string): ConnectorItem[] {
+  const wanted = compact(withoutWords(text, PROJECT_WORDS) || text);
+  const length = Array.from(wanted).length;
+  const allowed = Math.floor(length / 4);
+  if (allowed < 1) return [];
+  const scored = projects
+    .map((item) => ({ item, distance: editDistance(wanted, compact(item.title), allowed) }))
+    .filter((entry) => entry.distance <= allowed);
+  if (scored.length === 0) return [];
+  const best = Math.min(...scored.map((entry) => entry.distance));
+  return scored.filter((entry) => entry.distance === best).map((entry) => entry.item);
+}
+
+/** Levenshtein distance over code points, `bound + 1` as soon as it is certainly above `bound`. */
+function editDistance(left: string, right: string, bound: number): number {
+  const a = Array.from(left);
+  const b = Array.from(right);
+  if (Math.abs(a.length - b.length) > bound) return bound + 1;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const value = Math.min((previous[j] as number) + 1, (current[j - 1] as number) + 1, (previous[j - 1] as number) + (a[i - 1] === b[j - 1] ? 0 : 1));
+      current.push(value);
+      rowMin = Math.min(rowMin, value);
+    }
+    if (rowMin > bound) return bound + 1;
+    previous = current;
+  }
+  return previous[b.length] as number;
+}
+
+/**
+ * The confirmation of a near project (owner decision B). In a channel only a named release may be confirmed there (its
+ * own items answer in a channel); a project's release list stays DM-only (A8 owner decision 7).
+ */
+function confirmBody(project: ConnectorItem, release: string | undefined, inChannel: boolean): ReleaseLookupResult {
+  if (inChannel && release === undefined) return body(renderReleaseDmOnly('list'));
+  return { kind: 'body', body: renderProjectConfirm(refOf(project)), confirm: { project: project.id, ...(release !== undefined ? { release } : {}) } };
+}
+
 /** The project to name in a not-found answer: a link's key or a key-shaped owner value (never a guessed name). */
 function namedProject(command: ReleaseLookupCommand, onSite: JiraReleaseLink | undefined): ReleaseProjectRef | undefined {
   if (onSite !== undefined) return { key: onSite.projectKey };
@@ -401,27 +528,36 @@ function containsTokens(haystack: readonly string[], needle: readonly string[]):
  * name has all of the owner's words as whole words ("차란차 운영 2026" ⊂ "차란차 플랫폼 운영 2026", live probe 2026-10-15).
  */
 export function matchProjects(items: readonly ConnectorItem[], text: string): ConnectorItem[] {
+  return matchProjectsTiered(items, text).items;
+}
+
+/**
+ * {@link matchProjects} with the tier that matched: `key`, `name` (exact) and `contained` name what the owner wrote;
+ * `words` (all of the owner's words as whole words of a longer name) is only a near match (owner decision B, 2026-10-22).
+ */
+export function matchProjectsTiered(items: readonly ConnectorItem[], text: string): { readonly items: ConnectorItem[]; readonly tier: 'key' | 'name' | 'contained' | 'words' | 'none' } {
   const key = text.trim().toUpperCase();
   if (CONNECTOR_CONTAINER_KEY.test(key)) {
     const byKey = items.filter((item) => item.id === key);
-    if (byKey.length > 0) return byKey;
+    if (byKey.length > 0) return { items: byKey, tier: 'key' };
   }
   const stripped = withoutWords(text, PROJECT_WORDS);
   const source = stripped.length > 0 ? stripped : text;
   const wanted = compact(source);
-  if (wanted.length === 0) return [];
+  if (wanted.length === 0) return { items: [], tier: 'none' };
   const exact = items.filter((item) => compact(item.title) === wanted);
-  if (exact.length > 0) return exact;
+  if (exact.length > 0) return { items: exact, tier: 'name' };
   const contained = items.filter((item) => {
     const name = compact(item.title);
     return name.length > 0 && (name.includes(wanted) || (name.length >= 3 && wanted.includes(name)));
   });
-  if (contained.length > 0) return contained;
+  if (contained.length > 0) return { items: contained, tier: 'contained' };
   const words = tokens(source);
-  return items.filter((item) => {
+  const byWords = items.filter((item) => {
     const name = tokens(item.title);
     return words.length > 0 && words.every((word) => name.includes(word));
   });
+  return { items: byWords, tier: byWords.length > 0 ? 'words' : 'none' };
 }
 
 /**

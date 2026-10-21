@@ -629,6 +629,14 @@ export const NL_WAVE1_ENTRIES: Readonly<Record<NlWave1EntryId, NlCatalogEntry>> 
   'help.topic': helpTopic,
 });
 
+/**
+ * The closed union of the wave-1 entries' `sourceNames` (lower case): the catalog's own names of its external sources.
+ * Derived from the catalog, never a list of its own.
+ */
+export const NL_CATALOG_SOURCE_NAMES: readonly string[] = Object.freeze([
+  ...new Set(Object.values(NL_WAVE1_ENTRIES).flatMap((entry) => (entry.sourceNames ?? []).map((name) => name.normalize('NFC').toLowerCase()))),
+]);
+
 /** The wave-1 entry of `id`. */
 export function nlWave1Entry(id: NlWave1EntryId): NlCatalogEntry {
   return NL_WAVE1_ENTRIES[id];

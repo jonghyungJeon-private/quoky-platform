@@ -964,3 +964,92 @@ describe('ADR-0120 amendment A7: until-<weekday> and the clear past-tense statem
     expect(await h.decide('어제 일정 뭐 있었지?')).toMatchObject({ kind: 'execute', command: { args: { range: 'yesterday' } } });
   });
 });
+
+describe('owner decision A (2026-10-22): a general help question about a named source asks Quoky or the app itself', () => {
+  const QUESTION = [
+    'Quoky로 슬랙을 조회하는 방법을 물으신 건가요, 아니면 슬랙 앱 자체의 사용법인가요?',
+    '1. Quoky로 슬랙 조회하는 방법',
+    '2. 슬랙 앱 자체의 사용법',
+    '번호로 답해 주세요.',
+  ].join('\n');
+
+  it('asks instead of answering; the pending question holds the help option and the source (no model call on the answer)', async () => {
+    const h = harness({ script: [out('help.topic')] });
+    expect(await h.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ kind: 'entry', options: [{ entryId: 'help.topic', args: {} }], appSource: '슬랙' });
+    // "1": Quoky's help (the general help, unchanged args).
+    expect(await h.decide('1')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+    expect(h.calls).toHaveLength(1);
+  });
+
+  it('"2" (or the ordinal) is the app itself: a fixed honest reply, never instructions for the other app', async () => {
+    const h = harness({ script: [out('help.topic', { topic: 'all' }), out('help.topic')] });
+    await h.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await h.decide('2번')).toEqual({ kind: 'ask', text: '그건 슬랙 앱 자체의 사용법이라 제가 안내해 드리긴 어려워요. 슬랙의 도움말을 확인해 주세요.' });
+    await h.decide('what is Confluence?');
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ appSource: 'Confluence', language: 'en' });
+    expect(await h.decide('the second one')).toEqual({ kind: 'ask', text: "That is about using the Confluence app itself, so I can't guide you through it reliably. Please check Confluence's own help." });
+  });
+
+  it('a number that is no option asks the same help-scope question again; a cancel ends it', async () => {
+    const h = harness({ script: [out('help.topic')] });
+    await h.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await h.decide('3번')).toEqual({ kind: 'ask', text: QUESTION });
+    expect(await h.decide('취소')).toEqual({ kind: 'ask', text: '알겠어요, 선택을 취소했어요. 필요하면 다시 말씀해 주세요.' });
+  });
+
+  it('any other answer routes through natural-language selection as usual (no word list for the answer)', async () => {
+    const h = harness({ script: [out('help.topic'), NONE] });
+    await h.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await h.decide('앱 자체 얘기였어')).toEqual({ kind: 'none' });
+    expect(h.calls).toHaveLength(2);
+  });
+
+  it('positives stay untouched: a source-specific or feature topic, no source named, or two source families', async () => {
+    const h = harness({
+      script: [out('help.topic', { topic: 'work-lookup' }), out('help.topic', { topic: 'drive' }), out('help.topic'), out('help.topic', { topic: 'reminder' }), out('help.topic')],
+    });
+    expect(await h.decide('너 jira 볼 수 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
+    expect(await h.decide('구글 드라이브에서 폴더 공유하는 법 알려줘')).toMatchObject({ kind: 'execute', command: { args: { topic: 'drive' } } });
+    expect(await h.decide('사용법 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+    expect(await h.decide('알림 설정하는 법 알려줘')).toMatchObject({ kind: 'execute', command: { args: { topic: 'reminder' } } });
+    expect(await h.decide('슬랙이랑 지라 쓰는 방법 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+  });
+
+  it('a selector clarification whose only read option is that help asks the same help-scope question', async () => {
+    const h = harness({ script: [out('help.topic', {}, { ambiguity: 'NEEDS_CLARIFICATION' })] });
+    expect(await h.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
+  });
+});
+
+describe('owner decision B (2026-10-22): a handler confirmation is the open D7 question (yes runs it, no ends it)', () => {
+  const selection = { entryId: 'jira.release' as const, args: { project: 'OP26' } };
+
+  it('a yes runs exactly the confirmed read, without a model call', async () => {
+    for (const yes of ['응', '맞아', '네', '1']) {
+      const h = harness();
+      expect(await h.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', selection, 'ko', T0)).toBe(true);
+      expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ kind: 'entry', confirm: true, options: [selection] });
+      expect(await h.decide(yes), yes).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { project: 'OP26' } } });
+      expect(h.calls).toHaveLength(0);
+    }
+  });
+
+  it('a no ends the question politely; anything else routes as usual', async () => {
+    const h = harness({ script: [NONE] });
+    await h.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', { entryId: 'jira.release', args: { project: 'OP26', release: '20261015' } }, 'ko', T0);
+    expect(await h.decide('아니')).toEqual({ kind: 'ask', text: '알겠어요, 선택을 취소했어요. 필요하면 다시 말씀해 주세요.' });
+    await h.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', selection, 'ko', T0);
+    expect(await h.decide('오늘 날씨 어때?')).toEqual({ kind: 'none' });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+  });
+
+  it('a yes with the release words runs that release; outside active nothing is kept', async () => {
+    const h = harness();
+    await h.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', { entryId: 'jira.release', args: { project: 'OP26', release: '20261015' } }, 'ko', T0);
+    expect(await h.decide('응')).toMatchObject({ kind: 'execute', command: { args: { project: 'OP26', release: '20261015' } } });
+    const shadow = harness({ mode: 'shadow' });
+    expect(await shadow.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', selection, 'ko', T0)).toBe(false);
+    expect(shadow.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+  });
+});

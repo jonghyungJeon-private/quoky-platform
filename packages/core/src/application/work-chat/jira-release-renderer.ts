@@ -195,6 +195,14 @@ export function renderProjectAmbiguous(text: string, candidates: readonly Releas
   ]);
 }
 
+/**
+ * Owner decision B (2026-10-22): the owner's words are near exactly one visible project; asked before anything is read
+ * from it. A yes shows its release list (or the named release), a no ends the question.
+ */
+export function renderProjectConfirm(project: ReleaseProjectRef): MessageBody {
+  return fit([{ text: messageContent("'", projectLabel(project), "' 프로젝트가 맞나요? (응 / 아니)") }]);
+}
+
 /** The project has no release of that name: up to five of its release names, read-only. */
 export function renderReleaseNotFound(text: string, project: ReleaseProjectRef | undefined, nearby: readonly ConnectorItem[]): MessageBody {
   const where = project !== undefined ? messageContent(projectLabel(project), '에서 ') : '';

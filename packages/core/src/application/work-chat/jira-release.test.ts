@@ -8,7 +8,7 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
 import { NL_WAVE1_ENTRIES, jiraKeywordCarriesQualifier, nlWave1Entry } from '../nl-routing/wave1-entries';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { hasJiraReleaseLink, normalizeSiteHost, parseJiraReleaseLinks, releaseLinkOnSite } from './jira-release-link';
-import { lookupJiraRelease, splitKeyFromRelease, stripRedundantProjectKey, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
+import { fuzzyProjects, lookupJiraRelease, nearProjectsOfJoined, splitKeyFromRelease, stripRedundantProjectKey, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
 import { renderReleaseIssues } from './jira-release-renderer';
 import { detectWorkChatCommand } from './work-chat-command';
 import { workChatCommandForSelection } from './work-chat-selection';
@@ -684,5 +684,112 @@ describe('lookupJiraRelease: a key repeated inside the release words', () => {
     expect(text).toContain('찾지 못했어요');
     const none = await run({ release: 'RC 2026' });
     expect(none.text).not.toContain('프로젝트 "RC"');
+  });
+});
+
+describe('owner decision B (2026-10-22): a near-matched project is confirmed with the owner, never silently taken', () => {
+  const live: ConnectorItem[] = [
+    { id: 'APPOP', title: '차란차 플랫폼 APP운영' },
+    { id: 'OP25', title: '차란차 플랫폼 운영 2025' },
+    { id: 'OP26', title: '차란차 플랫폼 운영 2026' },
+    { id: 'COP26', title: '코브랜드 운영 2026' },
+  ];
+  const versions: Record<string, ConnectorItem[]> = {
+    OP26: [{ id: '16591', title: '배포일_20261020(화)' }, { id: '16555', title: '배포일_20261015(목)' }],
+    OP25: [{ id: '15000', title: '배포일_20251015(수)' }],
+  };
+  const ask = async (command: Partial<ReleaseLookupCommand>, options: { projects?: ConnectorItem[]; truncated?: boolean; inChannel?: boolean; confirmNear?: boolean } = {}) => {
+    const queries: ConnectorQuery[] = [];
+    const provider: ConnectorProvider = {
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) => {
+        queries.push(query);
+        if (query.query === 'containers') return { source: 'jira', items: options.projects ?? live, ...(options.truncated ? { truncated: true } : {}) };
+        if (query.query === 'releases') return { source: 'jira', items: versions[String(query.params?.container)] ?? [] };
+        return { source: 'jira', items: ISSUES };
+      },
+    };
+    const result = await lookupJiraRelease({
+      connector: provider,
+      command: { scope: 'mine', links: [], ...command },
+      siteHost: SITE,
+      identity: 'acc-1',
+      ...(options.inChannel ? { inChannel: true } : {}),
+      ...(options.confirmNear !== false ? { confirmNear: true } : {}),
+    });
+    return {
+      text: result.kind === 'body' ? plainTextOf(result.body) : result.reason,
+      confirm: result.kind === 'body' ? result.confirm : undefined,
+      queries: queries.map((query) => query.query),
+    };
+  };
+  const QUESTION = "'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? (응 / 아니)";
+
+  it('the owner words as whole words of a longer name: asked first, nothing read from the project', async () => {
+    const asked = await ask({ project: '차란차 운영 2026' });
+    expect(asked.text).toBe(QUESTION);
+    expect(asked.confirm).toEqual({ project: 'OP26' });
+    expect(asked.queries).toEqual(['containers']);
+  });
+
+  it('the selector split of the same words ("차란차 운영" + "2026") reaches the same project and the same question', async () => {
+    const asked = await ask({ project: '차란차 운영', release: '2026' });
+    expect(asked.text).toBe(QUESTION);
+    expect(asked.confirm).toEqual({ project: 'OP26' });
+  });
+
+  it('with a release the project holds, the confirmation carries the owner release words (a yes shows that release)', async () => {
+    expect((await ask({ project: '차란차 운영 2026', release: '20261015' })).confirm).toEqual({ project: 'OP26', release: '20261015' });
+    // Two near projects, only one holds the release: that one is confirmed.
+    const narrowed = await ask({ project: '차란차 운영', release: '20261015' });
+    expect(narrowed.text).toBe(QUESTION);
+    expect(narrowed.confirm).toEqual({ project: 'OP26', release: '20261015' });
+  });
+
+  it('several near projects: the existing ambiguous list; none at all: the existing not-found reply', async () => {
+    const several = await ask({ project: '차란차 운영' });
+    expect(several.text).toContain('"차란차 운영"에 맞는 Jira 프로젝트가 여러 개예요');
+    expect(several.text).toContain('- 차란차 플랫폼 운영 2025 (OP25)');
+    expect(several.text).toContain('- 차란차 플랫폼 운영 2026 (OP26)');
+    expect(several.confirm).toBeUndefined();
+    const none = await ask({ project: '모바일 앱' });
+    expect(none.text).toContain('"모바일 앱"에 맞는 Jira 프로젝트를 찾지 못했어요.');
+    expect(none.confirm).toBeUndefined();
+  });
+
+  it('a small typo (edit distance) is a near match too; the closest one only', async () => {
+    const asked = await ask({ project: '차란자 플랫폼 운영 2026' });
+    expect(asked.confirm).toEqual({ project: 'OP26' });
+    expect(fuzzyProjects(live, '차란자 플랫폼 운영 2026').map((item) => item.id)).toEqual(['OP26']);
+    expect(fuzzyProjects(live, '웹')).toEqual([]);
+  });
+
+  it('a name the owner wrote out (key, exact, contained) is never asked about', async () => {
+    expect((await ask({ project: 'OP26' })).confirm).toBeUndefined();
+    expect((await ask({ project: '차란차 플랫폼 운영 2026' })).text).toContain('**차란차 플랫폼 운영 2026 (OP26) 릴리스**');
+    expect((await ask({ project: '차란차 플랫폼 운영 2026' })).confirm).toBeUndefined();
+  });
+
+  it('a contained name with release words joined to a longer name: confirmed, then its list ("Mobile App" + "2026")', async () => {
+    const projects: ConnectorItem[] = [{ id: 'MAO', title: 'Mobile App Ops 2026' }, { id: 'MAD', title: 'Mobile App Dev' }];
+    const asked = await ask({ project: 'Mobile App', release: '2026' }, { projects });
+    expect(asked.text).toBe("'Mobile App Ops 2026 (MAO)' 프로젝트가 맞나요? (응 / 아니)");
+    expect(asked.confirm).toEqual({ project: 'MAO' });
+    expect(nearProjectsOfJoined(projects, 'Mobile App', '9.9.9')).toEqual([]);
+  });
+
+  it('a channel: a named release may be confirmed there; a project release list stays DM-only', async () => {
+    expect((await ask({ project: '차란차 운영 2026', release: '20261015' }, { inChannel: true })).confirm).toEqual({ project: 'OP26', release: '20261015' });
+    const list = await ask({ project: '차란차 운영', release: '2026' }, { inChannel: true });
+    expect(list.text).toContain('DM에서만');
+    expect(list.confirm).toBeUndefined();
+  });
+
+  it('without a caller that can keep the question, or on a partial listing, the earlier behaviour stays', async () => {
+    const direct = await ask({ project: '차란차 운영 2026' }, { confirmNear: false });
+    expect(direct.text).toContain('**차란차 플랫폼 운영 2026 (OP26) 릴리스**');
+    expect(direct.confirm).toBeUndefined();
+    const partial = await ask({ project: '차란차 운영 2026' }, { truncated: true });
+    expect(partial.confirm).toBeUndefined();
   });
 });
