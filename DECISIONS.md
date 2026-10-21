@@ -16478,6 +16478,9 @@ cannot see the schedule. A calendar event has a start, an end, an all-day flag a
    resolved provider declares `executionLocality: 'LOCAL'` (ADR-0107 D6); otherwise the deterministic list is the
    reply. There is **no Claude fallback** for calendar text, unlike `QUOKY_WORK_SUMMARY_ENABLED`. Event text is
    untrusted readout (ADR-0100 D8). If ADR-0107 D6 is not ratified, summaries stay off.
+   *Amended by ADR-0121 A1 (Accepted 2026-10-21):* unchanged for model providers. New: a calendar-derived value (an
+   attendee email for H-3, a title token or LOCAL-M2 keyword for H-5) may reach a connector (Gmail, Jira) only as an
+   `OWNER_CONFIRMED` value in the declared handoff slot. Its results join `LOCAL_MODEL_ONLY` (A1-D8).
 5. **No calendar configured.** The handler is registered only when the adapter is configured; QUAL-7 routing is then
    unchanged.
 6. **Writes stay refused.** Create or move requests get the fixed read-only refusal. Calendar writes are P2 behind the
@@ -19207,8 +19210,13 @@ Quoky would read.
    bounded readout under the ADR-0111 D3 rules (≤256 KiB, a credential-shaped text is withheld, never redacted), the turn
    has no tool surface, and a mail or Drive turn can never create an approval or a write. Without a summary request no
    mail or document text leaves the host.
+   *Amended by ADR-0121 A1 (Accepted 2026-10-21):* model egress also on a request that names the item's content, for
+   M2 extraction only (A1-D4). New: a mail- or Drive-derived value may reach another connector (Calendar, Jira, Slack)
+   only as an `OWNER_CONFIRMED` value in the declared handoff slot (H-1, H-2, H-6, H-7).
 8. **Injection.** Handler decisions are taken from the owner's text only; mail or document content never changes routing
    or starts an action.
+   *Clarified by ADR-0121 A1 (Accepted 2026-10-21), not loosened:* the step, source, destination and operation still
+   come only from the owner's text (A1-D1). A handoff value is an argument, never routing.
 9. **Notion is not covered.** Owner decision 20 is undecided; Notion stays an unscheduled P3 candidate, revisited on
    request.
 
@@ -21416,6 +21424,8 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
 
 - **Status:** **Ratified** (2026-10-13) by the Product Owner; see "ADR-0121 ratification record (2026-10-13)" at the
   end of this file. Stage S0 needed only its own approval (see "Staged rollout"); S1 and S2 follow the record.
+  **Amended by A1** (Accepted 2026-10-21): D2, D3, D4, D7, D9, D11 and D12; see "ADR-0121 amendment A1" and its
+  ratification record at the end of this file.
 - **Date:** 2026-10-13
 - **Inputs:**
   - `docs/plans/agent-security-design-2026-10-13.md`: the design, the threat model, the MSIT compliance mapping and
@@ -27715,6 +27725,12 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   7 days, and `active` only after the D11 gates. This note covers phase P1 only: no read, no M2, no `active`. Nothing on
   the live service changes: `QUOKY_AGENT_MODE` defaults to `off`, and `shadow` needs the owner's Strict yes (an
   `.env.local` edit plus a restart, then a live kill-switch check in the DM). That yes starts the 7-day shadow clock.
+- **S2 plan amended by ADR-0121 A1 (Accepted 2026-10-21).** Q6 ("multi-step plans use READ entries only; no
+  help/brief") is amended by decision (e) (A1-E1..A1-E5): help is split off deterministically before planning and
+  answered as its own section; `brief.today` leaves `AGENT_SINGLE_STEP_ONLY` and may be one step of a plan under B1–B6;
+  a planner `help.topic` step inside a multi-step plan stays refused (`single-step-only`). Q9 gains one exception, the
+  in-memory, single-use pending handoff (A1-D7), which exists only after S2 is `active`. The P1 code above is unchanged
+  until S2 P2/P3 implement Part II.
 - **Deps baseline 37 → 38 (`agentRuns?`).** ADR-0121 D12 assumed 36 → 37, but ADR-0122 took 37 first (`surfaceGrants`).
   `ConversationRuntimeDeps.agentRuns?` therefore makes the ADR-0032 M3 baseline **38** (the offline Stage 2A
   `runtimeProviderRouting` seam is still not counted). `agentRuns` is always composed (`features/agent.providers.ts`);
@@ -28039,25 +28055,118 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
   selection service (agent shadow recognizing the switch; unchanged with nothing recognizing it), `c-shadow` grammar reads with
   write / control turns not planned and the kill switch holding; `off` stays byte-identical over the corpus).
 
-## ADR-0121 amendment A1 — Owner-confirmed cross-source handoff (a new `OWNER_CONFIRMED` label, never `TRUSTED` and never a planner input; one owner-chosen item; deterministic keys, dates, emails and PR refs; M2 only under egress labels with a substring check; a fixed template; a pick by number or retype, single use, expiring at 10 minutes or the next turn; caps, DM only, kill switch, HMAC audit; red-team `s2-handoff`; `QUOKY_AGENT_HANDOFF`, staged after S2 `active`), and mixed help / brief requests (decision (e), amends S2 Q6). Would amend ARCHITECTURE.md §8 items 3 and 5, §10 and §12, ADR-0121 D2/D3/D4/D7/D9/D11/D12, ADR-0110 D4, ADR-0118 D7 (D8 clarified), design §2.4 rule 3 and §3, and S2 plan Q6/Q9.
+## ADR-0121 amendment A1 — Owner-confirmed cross-source handoff (a new `OWNER_CONFIRMED` label, never `TRUSTED` and never a planner input; one owner-chosen item; deterministic keys, dates, emails and PR refs; M2 only under egress labels with a substring check; a fixed template; a pick by number or retype, single use, expiring at 10 minutes or the next turn; caps, DM only, kill switch, HMAC audit; red-team `s2-handoff`; `QUOKY_AGENT_HANDOFF`, staged after S2 `active`), and mixed help / brief requests (decision (e), amends S2 Q6). Amends ARCHITECTURE.md §8 items 3 and 5, §10 and §12, ADR-0121 D2/D3/D4/D7/D9/D11/D12, ADR-0110 D4, ADR-0118 D7 (D8 clarified), design §2.4 rule 3 and §3, and S2 plan Q6/Q9.
 
-- **Status:** **Proposed** (2026-10-21). Not ratified and not applied. `ARCHITECTURE.md` and the ratified ADR-0121 text
-  stay authoritative until the Product Owner ratifies. No code for the handoff may start before then (§11.7).
-- **Proposal (full text, constitution diff, ratification checklist):** `docs/plans/adr0121-a1-amendment-proposal.md`.
+- **Status:** **Accepted** — ratified by the Product Owner on **2026-10-21** (orchestrator chat). See "ADR-0121 A1
+  ratification record (2026-10-21)" below. The constitution text (Part III) is applied to `ARCHITECTURE.md` §8, §10 and
+  §12 in the same change.
+- **Decision text (A1-D1..A1-D17, A1-E1..A1-E5, Parts III and IV), ratified as written except where the record below
+  answers an open question:** `docs/plans/adr0121-a1-amendment-proposal.md`.
 - **Owner summary (Korean):** `docs/plans/adr0121-a1-owner-summary.md`.
 - **Basis:** the owner's decisions of 2026-10-21 in the orchestrator chat:
   1. draft the constitution amendment plus ADR-0121 A1, following the security review
      (`eval-archive/s2-crosssource-security-20261021.md`, MC-1..MC-14) exactly;
   2. decision (e): answer both parts of a mixed help / brief request
-     (background: `eval-archive/openclaw-compare-20261021.md`, reference only, per ratification decision 2).
-- **Conflict recorded (AGENTS.md / CLAUDE.md).** Part I conflicts with settled text: ARCHITECTURE.md §8 item 3 (content
-  never a free-text argument; projected ids never feed another connector) and §12 (content or derived model output
-  never a free-text argument). It therefore needs explicit ratification of a constitution amendment, as ADR-0121 did.
-  Part II conflicts with no constitutional text.
-- **Unchanged until ratification:**
-  - the D11 cross-source refusal test;
-  - `AGENT_SINGLE_STEP_ONLY`;
-  - prompt `agent-plan.v2`;
-  - the P2 gold (batch AP-6 stays `pending-owner-approval`);
-  - the ratification record's item 7 (no S3, no weakened approval, no new external target).
-- **Authorizes:** nothing. No code and no Strict action.
+     (background: `eval-archive/openclaw-compare-20261021.md`, reference only, per ratification decision 2);
+  3. ratification of the proposal with the answers below (2026-10-21).
+- **Conflict resolved by ratification.** Part I conflicted with settled text: ARCHITECTURE.md §8 item 3 (content never a
+  free-text argument; projected ids never feed another connector) and §12 (content or derived model output never a
+  free-text argument). The owner ratified the constitution amendment, as for ADR-0121. Part II conflicts with no
+  constitutional text.
+
+### ADR-0121 A1 ratification record (2026-10-21)
+
+The Product Owner ratified ADR-0121 amendment A1 and the ARCHITECTURE.md amendment on 2026-10-21.
+
+**Answers to the open questions (proposal Part IX):**
+
+1. **§10 exception: added.** "Every cross-destination flow is HIGH except the ADR-0121 A1 handoff into a READ." The
+   Part III §10 row and sentence are applied.
+2. **M2-extraction handoffs (H-5..H-7)** are enabled only after **all** of:
+   - ≥ 30 live structured handoffs with no incident;
+   - ≥ 50 M2 extractions measured in `shadow`;
+   - 0 red-team successes (the M2 sub-family of `s2-handoff`, A1-D15).
+
+   The unlock is the **code-level** release gate `AGENT_HANDOFF_M2_NOT_RELEASED` (A1-D17), **not** a separate flag. The
+   gate is removed under A1-D17 (a measurement note in this file showing the three thresholds, and the owner's yes,
+   Part VII stage H4).
+3. **Planner misses help in a mixed request: refuse** (simple). A `help.topic` step inside a multi-step plan is refused
+   as today (`single-step-only`). No automatic help section; the normalization fallback is rejected.
+4. **ap-n122** ("오늘 브리핑하고 내 지라 이슈 같이 정리해줘"): the brief section unchanged + a Jira summary. The summary covers
+   only the non-brief part; the brief is never fed to M2 (B2). Gold: `[brief.today, jira.issues, summarize [2] digest.v1]`.
+5. **Related-Jira offer (request 1 and decision (a)): not decided — open.** The fixed note of decision (a) stays until
+   H-5 is enabled. Whether the S2 reply then offers H-5 ("회의 번호를 보내면 관련 지라를 찾아볼게요") needs a later owner
+   decision.
+6. **Brief mail detail fetches (≤ 3) count** toward the per-run cap of 10 external (connector) calls (B4; worst case 7
+   for a brief with every section on).
+7. **Email candidates: no domain allowlist.** The A1-D5 format check plus showing the exact value.
+8. **Same-source reference detail cap (owner, 2026-10-21, separately).** The cap stays **10** (ADR-0121 D2 and
+   ratification Q2 unchanged). The reply shows "N개 중 10개" with a hint to ask for more. Listings may show more than 10
+   items, because only per-item detail fetches are capped.
+   - *Not decided here, for S2 P2/P3:* how this reconciles with prompt `agent-plan.v2` rule 9 (which makes "details of
+     more than 10 issues" a `none`), and with the D7 bound of ≤ 10 connector calls per run (a listing plus 10 detail
+     fetches is 11 calls). D2 and D7 stay as written until then.
+
+**Decisions:**
+
+1. ADR-0121 A1 is ratified as written in `docs/plans/adr0121-a1-amendment-proposal.md` (A1-D1..A1-D17,
+   A1-E1..A1-E5, Parts III and IV), with the answers above. Its Status is Accepted.
+2. **Constitution.** `ARCHITECTURE.md` §8 item 3 (the `OWNER_CONFIRMED` trust value, the narrow quarantined-output
+   exception for H-5..H-7, the owner-confirmed handoff, egress labels governing model providers), §8 item 5 (the
+   handoff run sequence is not content-conditioned control flow), §10 (the LOW handoff row and the HIGH exception
+   sentence) and §12 (the handoff exception and the new delegation bullet) carry the Part III text in this change. §13 is
+   unchanged.
+3. **Amended ADR-0121 clauses (Part IV).**
+   - D2: planner references unchanged; A1-D9 handoff values (dates included, A1-D4) fill one declared slot in the final
+     run.
+   - D3: unchanged, except M2 extraction under A1-D4 (substring-verified, one item, egress labels).
+   - D4: unchanged for the planner; `OWNER_CONFIRMED` only in the declared slot (A1-D8).
+   - D7: the handoff caps on top (A1-D10); the kill switch voids pending handoffs (A1-D11).
+   - D9: plus `quoky.agentHandoff` with HMACs; ledger initiator `agent-handoff` (A1-D12).
+   - D11: kept for the planner path; inverted only for the handoff path; new family `s2-handoff` (A1-D15).
+   - D12: `FlowLabel.trust` gains `OWNER_CONFIRMED`; the plan schema gains the closed `handoff` object; deps stay 38.
+   - Design §2.4 rule 3 and §3 (`docs/plans/agent-security-design-2026-10-13.md`), by reference: the handoff exception,
+     and the §3 attack-success list gains the A1-D15 conditions for the handoff path.
+4. **ADR-0110 D4 and ADR-0118 D7/D8 are amended** (Part IV); the amendment text is added under ADR-0110 decision 4 and
+   ADR-0118 decisions 7 and 8.
+5. **S2 plan.** Q6 is amended by decision (e) (A1-E1..A1-E5): help is split off before planning; the brief may be one
+   step under B1–B6. Q9 gains one exception: the in-memory, single-use, turn-bound pending handoff (A1-D7), which exists
+   only once the handoff is built (after S2 `active`).
+6. **Residual risks accepted (Part VI):**
+   - RA-1 steering;
+   - RA-2 cross-vendor disclosure (MSIT ⑤-1), calendar data included (H-3 attendee addresses to Gmail, H-5 title words
+     to Jira);
+   - RA-3 confirmation fatigue;
+   - RA-4 M2 extraction quality and denial;
+   - RA-5 wrong dates and wrong people;
+   - RA-6 child processes stay unguarded (R1);
+   - RA-7 more state and complexity;
+   - RA-8 (Part II) help-split errors;
+   - RA-9 (Part II) heavier mixed turns.
+7. **Rollout order (Part VII), ratified:**
+   1. ratification (this record);
+   2. the docs change (this change);
+   3. S2 continues, including Part II: P2 (AP-6 re-approval with the six changes, AP-7, prompt `agent-plan.v3`), P3
+      (the runtime help split and B1–B6), P4/P5 (the D11 gates, ≥ 7 days of `shadow`, then `active`);
+   4. H0, build: only after S2 is `active`, behind `QUOKY_AGENT_HANDOFF=off` (default `off`), with the A1-D14 catalog
+      entries, each by its own ADR-0120 amendment and D12 evaluation;
+   5. H1, gates: `s2-handoff` ≥ 80 cases (owner-approved batches), 3 Strict runs, 0 successes;
+   6. H2, `shadow` for ≥ 7 days (a Strict `.env.local` edit and restart);
+   7. H3, structured classes `active` (H-1..H-4) on the owner's Strict yes;
+   8. H4, the M2 classes (H-5..H-7) only after answer 2 above.
+
+   Each step is reviewed by the Chief Architect, Codex and `/security-review`. Every model-in-the-loop run, every
+   `.env.local` change and every restart is Strict.
+8. **Authorized by this record:**
+   - this docs change;
+   - Part II inside S2 as ratified (A1-E5: it ships inside S2 P2/P3 and goes `active` with S2, with no separate flag).
+     The AP-6 re-approval and the AP-7 batch still need the owner's per-batch approval;
+   - the handoff (Part I) build, **only after S2 is `active`**, behind `QUOKY_AGENT_HANDOFF=off`.
+9. **Not authorized:**
+   - any Part I (handoff) code before S2 is `active`;
+   - `QUOKY_AGENT_HANDOFF=shadow` or `active`, or removing `AGENT_HANDOFF_ACTIVE_NOT_RELEASED` or
+     `AGENT_HANDOFF_M2_NOT_RELEASED`, outside the gates above (each a Strict owner yes);
+   - creating the HMAC key (a separate Strict secret action, A1-D12);
+   - a new handoff row (it needs its own amendment);
+   - delegations in any form (A1-D16);
+   - the ADR-0121 ratification record's item 7 stays: no S3, no weakened approval, no new external target.
