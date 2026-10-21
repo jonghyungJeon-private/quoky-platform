@@ -70,6 +70,7 @@ import {
   loadCorpus,
   runEvaluation,
   summarize,
+  clarifyCaseIdsOf,
   formatSideScore,
   scoreGrammarSide,
   scoreSelectorSide,
@@ -250,6 +251,7 @@ export function formatSummary(summary: NlEvalSummary): string[] {
   return [
     `overall: ${summary.hits}/${summary.positives} (${pct(summary.overall)})  wrong captures: ${summary.wrongCaptures}/${summary.negatives}` +
       `  clarifications: ${summary.clarifications}  timeouts (> ${summary.latency.boundMs / 1000} s, counted as misses): ${summary.timeouts}  errors: ${summary.errors}`,
+    ...(summary.clarifyGolds.total > 0 ? [`clarification golds asked: ${summary.clarifyGolds.asked}/${summary.clarifyGolds.total} (reported, not gated)`] : []),
     ...Object.entries(summary.perEntry)
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([entry, slot]) => `  ${entry.padEnd(20)} ${slot.hits}/${slot.total} (${pct(slot.rate)})`),
@@ -349,7 +351,8 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   await guard.settle();
   const outage = guard.report();
   const reportName = `nl-intent-${startedAt.replace(/[:.]/g, '-')}-${plan.model.replace(/[^A-Za-z0-9._-]/g, '_')}.json`;
-  const summaries = Array.from({ length: plan.runs }, (_, index) => summarize(records.filter((record) => record.run === index + 1), plan.callTimeoutMs, grammarCaseIds));
+  const clarifyCaseIds = clarifyCaseIdsOf(corpus);
+  const summaries = Array.from({ length: plan.runs }, (_, index) => summarize(records.filter((record) => record.run === index + 1), plan.callTimeoutMs, grammarCaseIds, clarifyCaseIds));
   const hard = sumHardFailures(summaries, ['wrongCaptures']);
   if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, 'intent gate', plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), records }, hard);
   for (const [index, summary] of summaries.entries()) {

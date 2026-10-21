@@ -413,3 +413,14 @@ describe('eval:nl --mode action / read-regression (the Strict digest rule)', () 
     expect(deps.out.some((line) => line.startsWith('results written to /tmp/nl-action-'))).toBe(true);
   });
 });
+
+describe("read regression (owner decision A, 2026-10-22): Core's help-scope question and the clarification gold", () => {
+  it('scores a general help about a named source as a clarification and the clarification gold as asked / miss', () => {
+    expect(scoreReadRegression({ id: 'neg-q', text: 'what is Confluence?', expect: 'none' }, answer('help.topic'), NOW)).toMatchObject({ outcome: 'clarify' });
+    const gold = { id: 'neg-c', text: '슬랙에서 검색하는 방법 알려줘', expect: 'none' as const, clarify: { between: ['help.topic'], batch: 'test' } };
+    expect(scoreReadRegression(gold, answer('help.topic'), NOW)).toMatchObject({ outcome: 'clarify' });
+    expect(scoreReadRegression(gold, answer('help.topic', { topic: 'work-lookup' }), NOW)).toMatchObject({ outcome: 'miss' });
+    expect(scoreReadRegression(gold, answer('none'), NOW)).toMatchObject({ outcome: 'none' });
+    expect(scoreReadRegression({ id: 'h', text: '너 jira 볼 수 있어?', expect: { entryId: 'help.topic', args: { topic: 'work-lookup' } } }, answer('help.topic', { topic: 'work-lookup' }), NOW)).toMatchObject({ outcome: 'hit' });
+  });
+});

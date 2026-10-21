@@ -57,6 +57,7 @@ import {
   pendingQuestionRecord,
   prepareSelectionInput,
   nlCoreSelectionArgs,
+  nlHelpSourceScope,
   nlIsPastStatement,
   nlReadNotRequest,
   readListingRecord,
@@ -834,6 +835,8 @@ export interface NlReadRegressionCase {
   readonly a6Skip?: { readonly reason: 'grammar-owned'; readonly batch: string };
   /** The content-free reference state before the turn (read-regression only): the listing the owner just saw. */
   readonly context?: NlReadRegressionContext;
+  /** Owner decision A (2026-10-22): a clarification gold (`expect` stays `none`), scored like the intent scorer's. */
+  readonly clarify?: { readonly between: readonly string[]; readonly batch: string };
 }
 
 export interface NlReadRegressionContext {
@@ -877,6 +880,9 @@ export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, n
   const isAction = validated.value.entry.risk !== 'READ';
   const goldIsAction = expect !== 'none' && isNlActionEntryId(expect.entryId);
   if (isAction && !goldIsAction) return { outcome: 'action-capture', relabeled, got };
+  // Owner decision A (2026-10-22): Core asks the help-scope question instead of running this read (its final outcome).
+  if (nlHelpSourceScope({ entryId: got, args: validated.value.args }, prepared.groundingText) !== undefined) return { outcome: 'clarify', relabeled, got };
+  if (expect === 'none' && golden.a6Relabel === undefined && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { outcome: 'miss', relabeled, got };
   if (expect === 'none') return { outcome: 'wrong-capture', relabeled, got };
   return { outcome: got === expect.entryId && canonical(validated.value.args) === canonical(expect.args) ? 'hit' : 'miss', relabeled, got };
 }

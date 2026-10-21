@@ -41,6 +41,35 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
     expect(scoreOutput(statement, answer('calendar.events', { range: 'yesterday' }, 'NEEDS_CLARIFICATION'), NOW)).toMatchObject({ outcome: 'none' });
   });
 
+  it("owner decision A (2026-10-22): Core's help-scope question is a clarification; a clarification gold asks, never captures", () => {
+    // A general help about a named source is Core's question (its final outcome), on any case.
+    const negative: NlEvalCase = { id: 'neg-q', text: 'what is Confluence?', expect: 'none' };
+    expect(scoreOutput(negative, answer('help.topic'), NOW)).toMatchObject({ outcome: 'clarify', got: 'help.topic' });
+    expect(scoreOutput(negative, answer('help.topic', { topic: 'work-lookup' }), NOW)).toMatchObject({ outcome: 'wrong-capture' });
+    // A positive help gold with a feature topic is untouched.
+    const positive: NlEvalCase = { id: 'help-q', text: '너 jira 볼 수 있어?', expect: { entryId: 'help.topic', args: { topic: 'work-lookup' } } };
+    expect(scoreOutput(positive, answer('help.topic', { topic: 'work-lookup' }), NOW).outcome).toBe('hit');
+    // The clarification gold: asked = clarify; CLEAR help.topic = miss (a reading the question offers), CLEAR none = none,
+    // any other capture is still wrong.
+    const gold: NlEvalCase = { id: 'neg-c', text: '슬랙에서 검색하는 방법 알려줘', expect: 'none', clarify: { between: ['help.topic'], batch: 'test' } };
+    expect(scoreOutput(gold, answer('help.topic'), NOW).outcome).toBe('clarify');
+    expect(scoreOutput(gold, answer('help.topic', { topic: 'work-lookup' }), NOW).outcome).toBe('miss');
+    expect(scoreOutput(gold, answer('help.topic', { topic: 'work-lookup' }, 'NEEDS_CLARIFICATION'), NOW).outcome).toBe('clarify');
+    expect(scoreOutput(gold, answer('none'), NOW).outcome).toBe('none');
+    expect(scoreOutput(gold, answer('slack.search', { keyword: '검색하는 방법' }), NOW).outcome).not.toBe('miss');
+    const records = [
+      { run: 1, id: 'neg-c', expected: 'none', outcome: 'clarify' as const, latencyMs: 1 },
+      { run: 1, id: 'neg-1', expected: 'none', outcome: 'none' as const, latencyMs: 1 },
+    ];
+    expect(summarize(records, undefined, undefined, new Set(['neg-c']))).toMatchObject({ clarifyGolds: { total: 1, asked: 1 }, wrongCaptures: 0, gatePassed: true });
+    expect(summarize([{ ...records[0]!, outcome: 'miss' as const }], undefined, undefined, new Set(['neg-c']))).toMatchObject({ clarifyGolds: { total: 1, asked: 0 }, wrongCaptures: 0, gatePassed: true });
+  });
+
+  it('the corpus marks neg-010 as the clarification gold between help.topic and none', () => {
+    const golden = loadCorpus().corpus.cases.find((candidate) => candidate.id === 'neg-010');
+    expect(golden).toMatchObject({ text: '슬랙에서 검색하는 방법 알려줘', expect: 'none', clarify: { between: ['help.topic'] } });
+  });
+
   it('summarizes per entry and applies the gate (95% overall, 90% per entry, 0 wrong captures)', () => {
     const records = [
       { run: 1, id: 'a', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 100 },

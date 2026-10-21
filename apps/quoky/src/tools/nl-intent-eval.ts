@@ -4,10 +4,15 @@
  * for the injected provider: the plan, the digest and the scoring are deterministic and tested offline; only `run`
  * spawns anything, and only after the Strict digest check in the CLI.
  *
- * Scoring per case:
+ * Scoring per case (Core's FINAL outcome, owner rule of 2026-10-19):
  *  - a positive is a **hit** when the output is CLEAR, validates, and its entry and canonical args equal the golden ones;
- *    a clarification (NEEDS_CLARIFICATION or a failed validation) is not a hit and not wrong;
- *  - a negative is a **wrong capture** when the output is CLEAR and validates to an executable entry (the read would run).
+ *    a clarification (NEEDS_CLARIFICATION, a failed validation, or Core's own help-scope question `nlHelpSourceScope`,
+ *    owner decision A of 2026-10-22) is not a hit and not wrong;
+ *  - a negative is a **wrong capture** when the output is CLEAR and validates to an executable entry (the read would run);
+ *  - a clarification gold (`clarify`, owner decision A: a negative whose correct answer is a question between the listed
+ *    entries and `none`) is **asked** on a clarification; a CLEAR capture of a listed entry is a `miss`, never a wrong
+ *    capture (it is one of the readings the question offers), any other capture is still wrong. Reported apart
+ *    (`clarifyGolds`); the gate is unchanged.
  * Gate: at least 95% overall, at least 90% per entry, 0 wrong captures.
  */
 import { createHash } from 'node:crypto';
@@ -21,6 +26,7 @@ import {
   NL_WAVE1_ENTRIES,
   buildSelectionPrompt,
   isNlWave1EntryId,
+  nlHelpSourceScope,
   nlIsPastStatement,
   nlReadNotRequest,
   nlSelectionMeaning,
@@ -53,6 +59,17 @@ export interface NlEvalCase {
   readonly grammar?: string;
   /** S1: that grammar's own catalog equivalent (`null`: it has none), checked against the probes by the dispatch test. */
   readonly grammarAnswer?: { readonly entryId: string; readonly args: NlArgs } | null;
+  /**
+   * Owner decision A (2026-10-22): `expect` stays `none` (the safe reading), and the correct answer is Core asking between
+   * these entries and `none`. See the scoring notes above.
+   */
+  readonly clarify?: NlEvalClarifyGold;
+}
+
+/** A clarification gold: the entries the question is between (besides `none`) and the owner batch that set it. */
+export interface NlEvalClarifyGold {
+  readonly between: readonly string[];
+  readonly batch: string;
 }
 
 export interface NlEvalCorpus {
@@ -169,6 +186,9 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   }
   const got = validated.value.entry.id;
   const gotArgs = validated.value.args;
+  // Owner decision A (2026-10-22): Core asks the help-scope question instead of running this read (its final outcome).
+  if (nlHelpSourceScope({ entryId: got, args: gotArgs }, prepared.groundingText) !== undefined) return { id: golden.id, expected, outcome: 'clarify', got };
+  if (golden.expect === 'none' && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { id: golden.id, expected, outcome: 'miss', got, gotArgs };
   if (golden.expect === 'none') return { id: golden.id, expected, outcome: 'wrong-capture', got, gotArgs };
   const same = got === golden.expect.entryId && canonical(gotArgs) === canonical(golden.expect.args);
   return { id: golden.id, expected, outcome: same ? 'hit' : 'miss', got, gotArgs };
@@ -187,6 +207,8 @@ export interface NlEvalSummary {
   readonly wrongCaptures: number;
   readonly negatives: number;
   readonly clarifications: number;
+  /** Owner decision A (2026-10-22): the clarification golds (`clarify`) and how many of them Core asked. */
+  readonly clarifyGolds: { readonly total: number; readonly asked: number };
   /** Calls that did not answer within the runtime's selection bound (each one a miss on a positive). */
   readonly timeouts: number;
   readonly errors: number;
@@ -216,7 +238,12 @@ function percentile(values: readonly number[], p: number): number {
   return sorted.length === 0 ? 0 : (sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)] as number);
 }
 
-export function summarize(records: readonly NlEvalRecord[], boundMs: number = NL_EVAL_RUNTIME_TIMEOUT_MS, grammarCaseIds?: ReadonlySet<string>): NlEvalSummary {
+export function summarize(
+  records: readonly NlEvalRecord[],
+  boundMs: number = NL_EVAL_RUNTIME_TIMEOUT_MS,
+  grammarCaseIds?: ReadonlySet<string>,
+  clarifyCaseIds: ReadonlySet<string> = new Set(),
+): NlEvalSummary {
   const positives = records.filter((record) => record.expected !== 'none');
   const hits = positives.filter((record) => record.outcome === 'hit').length;
   const perEntry: Record<string, { hits: number; total: number; rate: number }> = {};
@@ -248,6 +275,10 @@ export function summarize(records: readonly NlEvalRecord[], boundMs: number = NL
     wrongCaptures,
     negatives: records.length - positives.length,
     clarifications: records.filter((record) => record.outcome === 'clarify').length,
+    clarifyGolds: {
+      total: records.filter((record) => clarifyCaseIds.has(record.id)).length,
+      asked: records.filter((record) => clarifyCaseIds.has(record.id) && record.outcome === 'clarify').length,
+    },
     timeouts: records.filter((record) => record.outcome === 'timeout').length,
     errors: records.filter((record) => record.outcome === 'error').length,
     latency: { p50: pct(50), p95: pct(95), max: latencies.at(-1) ?? 0, boundMs, overRuntimeBound },
@@ -437,4 +468,9 @@ export function scoreSelectorSide(corpus: NlEvalCorpus, records: readonly NlEval
 export function formatSideScore(label: string, score: NlSideScore): string {
   const pct = (count: number) => (score.positives === 0 ? '-' : `${((count / score.positives) * 100).toFixed(1)}%`);
   return `${label}: exact ${score.exact}/${score.positives} (${pct(score.exact)}), entry ${score.entry} (${pct(score.entry)}), user-visible ${score.userVisible} (${pct(score.userVisible)}), wrong captures ${score.wrongCaptures}`;
+}
+
+/** Owner decision A (2026-10-22): the ids of the clarification golds of a corpus (for `summarize`). */
+export function clarifyCaseIdsOf(corpus: NlEvalCorpus): ReadonlySet<string> {
+  return new Set(corpus.cases.filter((golden) => golden.clarify !== undefined).map((golden) => golden.id));
 }
