@@ -28038,3 +28038,26 @@ live yet). Plan: `eval-archive/s2-plan-20261020.md` §3 P2 and §4.
   `apps/quoky/src/agent/agent-shadow.app.test.ts` (+4: the live near misses, honest chat after selection and with no
   selection service (agent shadow recognizing the switch; unchanged with nothing recognizing it), `c-shadow` grammar reads with
   write / control turns not planned and the kill switch holding; `off` stays byte-identical over the corpus).
+
+## ADR-0121 amendment A1 — Owner-confirmed cross-source handoff (a new `OWNER_CONFIRMED` label, never `TRUSTED` and never a planner input; one owner-chosen item; deterministic keys, dates, emails and PR refs; M2 only under egress labels with a substring check; a fixed template; a pick by number or retype, single use, expiring at 10 minutes or the next turn; caps, DM only, kill switch, HMAC audit; red-team `s2-handoff`; `QUOKY_AGENT_HANDOFF`, staged after S2 `active`), and mixed help / brief requests (decision (e), amends S2 Q6). Would amend ARCHITECTURE.md §8 items 3 and 5, §10 and §12, ADR-0121 D2/D3/D4/D7/D9/D11/D12, design §2.4 rule 3 and §3, and S2 plan Q6/Q9.
+
+- **Status:** **Proposed** (2026-10-21). Not ratified and not applied. `ARCHITECTURE.md` and the ratified ADR-0121 text
+  stay authoritative until the Product Owner ratifies. No code for the handoff may start before then (§11.7).
+- **Proposal (full text, constitution diff, ratification checklist):** `docs/plans/adr0121-a1-amendment-proposal.md`.
+- **Owner summary (Korean):** `docs/plans/adr0121-a1-owner-summary.md`.
+- **Basis:** the owner's decisions of 2026-10-21 in the orchestrator chat:
+  1. draft the constitution amendment plus ADR-0121 A1, following the security review
+     (`eval-archive/s2-crosssource-security-20261021.md`, MC-1..MC-14) exactly;
+  2. decision (e): answer both parts of a mixed help / brief request
+     (background: `eval-archive/openclaw-compare-20261021.md`, reference only, per ratification decision 2).
+- **Conflict recorded (AGENTS.md / CLAUDE.md).** Part I conflicts with settled text: ARCHITECTURE.md §8 item 3 (content
+  never a free-text argument; projected ids never feed another connector) and §12 (content or derived model output
+  never a free-text argument). It therefore needs explicit ratification of a constitution amendment, as ADR-0121 did.
+  Part II conflicts with no constitutional text.
+- **Unchanged until ratification:**
+  - the D11 cross-source refusal test;
+  - `AGENT_SINGLE_STEP_ONLY`;
+  - prompt `agent-plan.v2`;
+  - the P2 gold (batch AP-6 stays `pending-owner-approval`);
+  - the ratification record's item 7 (no S3, no weakened approval, no new external target).
+- **Authorizes:** nothing. No code and no Strict action.
