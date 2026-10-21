@@ -38,6 +38,21 @@ if (args.includes('--help') || args.includes('-h')) {
   process.exit(spawnSync(process.execPath, [vitest, '--help'], { cwd: repoRoot, stdio: 'inherit' }).status ?? 0);
 }
 
+// The native modules (better-sqlite3) are built for the `.nvmrc` Node: another major fails hundreds of tests with
+// NODE_MODULE_VERSION errors that read like real failures (2026-10-22: 472 on Node 18). Refuse before any run.
+export const EXIT_NODE_MISMATCH = 78;
+try {
+  const wanted = readFileSync(resolve(repoRoot, '.nvmrc'), 'utf8').trim().replace(/^v/, '').split('.')[0];
+  const running = process.versions.node.split('.')[0];
+  if (wanted !== '' && wanted !== running && process.env.QUOKY_TEST_ALLOW_NODE_MISMATCH !== '1') {
+    log(`Node ${process.versions.node} is running, but .nvmrc wants Node ${wanted}: native modules would fail to load.`);
+    log(`Use the .nvmrc Node (e.g. PATH="$HOME/.nvm/versions/node/v${readFileSync(resolve(repoRoot, '.nvmrc'), 'utf8').trim().replace(/^v/, '')}/bin:$PATH") and rerun.`);
+    process.exit(EXIT_NODE_MISMATCH);
+  }
+} catch {
+  // No readable .nvmrc: nothing to check.
+}
+
 const isFile = (path) => {
   try {
     return statSync(resolve(repoRoot, path)).isFile();

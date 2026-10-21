@@ -16,6 +16,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Added.** `pnpm test` takes a machine-wide full-suite lock (`tools/test-lock/`, `mkdir` lock with the holder and
   vitest PIDs; waits, or exits 75 with `QUOKY_TEST_NO_WAIT=1`; stale when both PIDs are gone). Targeted runs take no lock.
   vitest runs in its own process group so an interrupted suite leaves no orphaned workers.
+  It refuses to run (exit 78) when the running Node major differs from `.nvmrc` (2026-10-22: Node 18 turned a green
+  suite into 472 NODE_MODULE_VERSION failures).
 - **Added.** `.gitattributes`: `merge=union` for `DECISIONS.md` and `CHANGELOG.md` (not `CURRENT_STATE.md`, which has
   sections edited in place).
 - **Added.** `.claude/skills/quoky-ship/` (SKILL.md and `scripts/run-gates.sh`): the gate runner (tmux, archive, DONE
