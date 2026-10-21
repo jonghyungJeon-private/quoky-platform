@@ -118,7 +118,7 @@ external/destructive action을 감싼다.
 - Full suite는 machine 전체에서 한 번에 하나만 돈다. `pnpm test`는 `tools/test-lock/run-full-suite.mjs`가
   `~/Library/Application Support/Quoky/locks/full-suite` lock을 잡고, 잡혀 있으면 기다린다(`QUOKY_TEST_NO_WAIT=1`이면
   exit 75). lock 없이 도는 것은 옵션이 아닌 인자가 하나 이상이고 그 인자가 모두 실제 존재하는 파일일 때뿐이다(필터·디렉터리·
-  옵션 값이 섞이면 lock). `--version`/`--help`는 테스트를 돌리지 않는다. Implementation agent는 `pnpm vitest run <files>`로
+  옵션 값이 섞이면 lock). 값을 받는 옵션(`--config x` 등)의 값은 파일로 치지 않는다. `--version`/`--help`는 테스트를 돌리지 않는다. Implementation agent는 `pnpm vitest run <files>`로
   targeted test만 돌린다(lock 없음).
 - `.claude/skills/quoky-ship/SKILL.md`는 예전에 main checkout에 untracked 파일이었다. 이 변경을 main checkout에서 pull하기
   전에 그 파일을 옆으로 치운다(`mv .claude/skills/quoky-ship/SKILL.md{,.local-bak}`). `chat/`, `qa/`, `space_id`는 계속

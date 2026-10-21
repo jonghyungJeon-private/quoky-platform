@@ -45,7 +45,17 @@ const isFile = (path) => {
     return false;
   }
 };
-const positional = args.filter((arg) => !arg.startsWith('-'));
+// The token after a value-taking option is its value, not a file (`--config vitest.config.ts` is not a targeted run).
+const VALUE_OPTIONS = new Set(['-c', '--config', '--root', '-r', '--dir', '--project', '-t', '--testNamePattern', '--reporter', '--outputFile', '--pool', '--mode', '--environment']);
+const positional = [];
+for (let index = 0; index < args.length; index += 1) {
+  const arg = args[index];
+  if (arg.startsWith('-')) {
+    if (VALUE_OPTIONS.has(arg)) index += 1;
+  } else {
+    positional.push(arg);
+  }
+}
 const targeted = positional.length > 0 && positional.every(isFile);
 
 const lockDir = defaultLockDir();
@@ -89,13 +99,19 @@ const signalGroup = (signal) => {
     // the group is already gone
   }
 };
-let interrupts = 0;
+let firstSignalAt;
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(signal, () => {
-    // Forward to the whole group and wait for vitest to exit (the lock is released then); a second signal means the owner
-    // is not waiting any longer: escalate to SIGKILL on the group.
-    interrupts += 1;
-    signalGroup(interrupts >= 2 ? 'SIGKILL' : signal);
+    // Forward to the whole group and wait for vitest to exit (the lock is released then). A terminal delivers one Ctrl-C to
+    // several processes at once, so signals within 1 s of the first are duplicates; a later one means the owner is not
+    // waiting any longer: escalate to SIGKILL on the group.
+    const now = Date.now();
+    if (firstSignalAt === undefined) {
+      firstSignalAt = now;
+      signalGroup(signal);
+    } else if (now - firstSignalAt >= 1000) {
+      signalGroup('SIGKILL');
+    }
   });
 }
 child.on('exit', (code, signal) => {

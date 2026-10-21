@@ -37,7 +37,7 @@ import {
   type AgentPlanEvalSummary,
 } from './agent-plan-eval';
 import { formatGateRuns, guardRunProvider, sumHardFailures } from './nl-intent-eval-cli';
-import { EXIT_INVALID_PROVIDER, formatProviderOutcomes, hardFailureTotal, invalidVerdict, outageAlsoSeenNote, printInvalidRun } from './eval-provider-guard';
+import { CANARY_PLAN_LINE, type CanaryResult, EXIT_INVALID_PROVIDER, formatProviderOutcomes, hardFailureTotal, invalidVerdict, outageAlsoSeenNote, printInvalidRun } from './eval-provider-guard';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 
 export const EXIT_OK = 0;
@@ -114,7 +114,7 @@ export interface AgentPlanCliDeps {
   /** Constructed only by `run`, only after the digest matched. */
   readonly createProvider: (model: string) => AiProvider;
   /** The outage guard's canary (one tiny call through the same provider); tests inject it. */
-  readonly canary?: (provider: AiProvider) => Promise<boolean>;
+  readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
   /** Tests only: monotonic milliseconds for the latency of each call. */
   readonly elapsed?: () => number;
 }
@@ -209,6 +209,7 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
   if (parsed.mode === 'plan') {
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(CANARY_PLAN_LINE);
     deps.stdout(`model calls this plan authorises: at most ${plan.maxCalls} (${plan.maxCallsPerRun} cases x ${plan.runs} run(s), one planner call each; a skipped input makes none); the run enforces it as a hard cap`);
     deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
     return EXIT_OK;

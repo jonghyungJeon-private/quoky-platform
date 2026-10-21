@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AiFailureKind, AiProviderError, Capability, type AiProvider, type AiRequest } from '@quoky/core';
-import { EXIT_INVALID_PROVIDER, ProviderOutageAbort, guardEvalProvider, providerCanary, providerFailureReason, resolveThresholds } from './eval-provider-guard';
+import { CANARY_PLAN_LINE, EXIT_INVALID_PROVIDER, MAX_CANARY_CALLS, ProviderOutageAbort, formatProviderOutcomes, guardEvalProvider, providerCanary, providerFailureReason, resolveThresholds } from './eval-provider-guard';
 import { EXIT_INVALID as EXIT_INVALID_NL, runCli as runNlCli, type CliDeps } from './nl-intent-eval-cli';
 import { EXIT_INVALID as EXIT_INVALID_PLAN, runCli as runAgentPlanCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
 import { loadAgentPlanCorpus } from './agent-plan-eval';
@@ -189,7 +189,7 @@ describe('eval:nl action / read-regression / r2 modes under a provider outage', 
       const provider = scripted(outageFrom(4));
       const d = deps(provider);
       expect(await runNlCli(['--mode', mode, '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], d)).toBe(5);
-      expect(provider.calls).toBeLessThanOrEqual(10);
+      expect(provider.calls).toBeLessThanOrEqual(12);
       expect(verdictLines(d.out)).toEqual([]);
       expect(d.out.some((line) => line.includes('gate') && line.includes('INVALID (provider unavailable: provider-execution_failed)'))).toBe(true);
     }, 60_000);
@@ -278,7 +278,8 @@ describe('eval:r2-redteam under a summariser outage', () => {
     const provider = scripted(outageFrom(3), 'summary');
     const d = deps(provider);
     expect(await runRedTeamCli(['--mode', 'run', '--runs', '1', '--approved-plan-digest', digest], d)).toBe(EXIT_INVALID_REDTEAM);
-    expect(provider.calls).toBe(9);
+    expect(provider.calls).toBeGreaterThanOrEqual(9);
+    expect(provider.calls).toBeLessThanOrEqual(11);
     expect(cases.length).toBeGreaterThan(7);
     expect(verdictLines(d.out)).toEqual([]);
     expect(d.out.some((line) => line.startsWith('red-team gate: INVALID (provider unavailable: provider-execution_failed)'))).toBe(true);
@@ -309,6 +310,7 @@ describe('guard robustness (CA review W5 / W6)', () => {
     expect(inner.calls).toBe(100);
     expect(guard.report()).toMatchObject({ calls: 100, failures: 90, notIssued: 0, canaryAnswered: canaryCalls });
     expect(canaryCalls).toBeGreaterThan(0);
+    expect(canaryCalls).toBeLessThanOrEqual(3);
     expect(guard.report().invalidReason).toBeUndefined();
     expect(guard.report().tripped).toBeUndefined();
   });
@@ -316,6 +318,7 @@ describe('guard robustness (CA review W5 / W6)', () => {
   it('a canary that fails (or throws) trips the guard as before; settle() judges the final share with one canary', async () => {
     const failing = guardEvalProvider(scripted(outageFrom(1)), { canary: async () => false });
     await drive(failing.provider, 20);
+    await failing.settle();
     expect(failing.report()).toMatchObject({ canaryCalls: 1, canaryAnswered: 0, invalidReason: 'provider-execution_failed' });
     const throwing = guardEvalProvider(scripted(outageFrom(1)), {
       canary: async () => {
@@ -323,6 +326,7 @@ describe('guard robustness (CA review W5 / W6)', () => {
       },
     });
     await drive(throwing.provider, 20);
+    await throwing.settle();
     expect(throwing.report().invalidReason).toBe('provider-execution_failed');
 
     const answered = guardEvalProvider(scripted(onlyAt(3, 17)), { canary: async () => true });
@@ -342,7 +346,7 @@ describe('guard robustness (CA review W5 / W6)', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ timeoutMs: 1234 });
     expect(seen[0]?.prompt.length).toBeLessThan(80);
-    expect(await providerCanary(scripted(outageFrom(1)))()).toBe(false);
+    expect(await providerCanary(scripted(outageFrom(1)))()).toBe('provider-execution_failed');
   });
 });
 
@@ -475,5 +479,67 @@ describe('C1: an outage never hides a hard failure already observed (FAILED, exi
     expect(out.join('\n')).not.toContain('INVALID');
     expect(out.some((line) => line.includes('canary') && line.includes('not an outage'))).toBe(true);
     expect(out.some((line) => /^intent gate: (PASSED|FAILED)/.test(line))).toBe(true);
+  });
+});
+
+describe('canary is non-blocking and capped (CA re-review 1 / 2)', () => {
+  it('a slow canary never holds up a failing call: recorded latencies are unchanged', async () => {
+    const inner = scripted(outageFrom(1));
+    const guard = guardEvalProvider(inner, {
+      canary: () => new Promise((resolve) => setTimeout(() => resolve(true), 400)),
+    });
+    const durations: number[] = [];
+    for (let index = 0; index < 12; index += 1) {
+      const started = Date.now();
+      await guard.provider.execute(request).catch(() => undefined);
+      durations.push(Date.now() - started);
+    }
+    expect(Math.max(...durations)).toBeLessThan(100);
+    expect(guard.report().tripped).toBeUndefined();
+    await guard.settle();
+    expect(guard.report()).toMatchObject({ canaryCalls: 1, canaryAnswered: 1 });
+    expect(guard.report().invalidReason).toBeUndefined();
+  });
+
+  it('settle waits for a pending canary; a failed canary trips and records the failure reason', async () => {
+    const guard = guardEvalProvider(scripted(outageFrom(1)), { canary: () => new Promise((resolve) => setTimeout(() => resolve('provider-auth_required'), 150)) });
+    await drive(guard.provider, 9);
+    expect(guard.report().tripped).toBeUndefined();
+    await guard.settle();
+    expect(guard.report()).toMatchObject({ canaryCalls: 1, canaryFailure: 'provider-auth_required', invalidReason: 'provider-execution_failed' });
+    expect(formatProviderOutcomes(guard.report())).toContain('canary failed: provider-auth_required');
+  });
+
+  it('at most 3 canary calls per run; afterwards the run is scored as it is', async () => {
+    let canaryCalls = 0;
+    const guard = guardEvalProvider(scripted(outageFrom(1)), {
+      canary: async () => {
+        canaryCalls += 1;
+        return true;
+      },
+    });
+    for (let index = 0; index < 200; index += 1) {
+      await guard.provider.execute(request).catch(() => undefined);
+      if (index % 5 === 0) await new Promise((resolve) => setImmediate(resolve));
+    }
+    await guard.settle();
+    expect(canaryCalls).toBe(MAX_CANARY_CALLS);
+    expect(guard.report()).toMatchObject({ canaryCalls: 3, canaryAnswered: 3, notIssued: 0 });
+    expect(guard.report().tripped).toBeUndefined();
+    expect(guard.report().invalidReason).toBeUndefined();
+  });
+
+  it('every plan output carries the canary line', async () => {
+    expect(CANARY_PLAN_LINE).toBe('+ up to 3 canary calls (not counted)');
+    const out: string[] = [];
+    const corpus: NlEvalCorpus = { version: 1, cases: [{ id: 'n', text: '안녕', expect: 'none' as const }] };
+    await runNlCli(['--mode', 'plan', '--concurrency', '1', '--runs', '1'], { stdout: (l) => void out.push(l), stderr: () => undefined, now: () => NOW, loadCorpus: () => ({ corpus, sha256: 'x' }), writeReport: (n) => n, createProvider: () => scripted(() => undefined) });
+    expect(out).toContain(CANARY_PLAN_LINE);
+    const plan: string[] = [];
+    await runAgentPlanCli(['--mode', 'plan', '--concurrency', '1', '--runs', '1'], { stdout: (l) => void plan.push(l), stderr: () => undefined, now: () => NOW, gitHead: () => 'a'.repeat(40), load: () => loadAgentPlanCorpus(), writeReport: (n) => n, createProvider: () => scripted(() => undefined) });
+    expect(plan).toContain(CANARY_PLAN_LINE);
+    const red: string[] = [];
+    await runRedTeamCli(['--mode', 'plan', '--runs', '1'], { stdout: (l) => void red.push(l), stderr: () => undefined, now: () => NOW, gitHead: () => 'rev', loadCases: () => ({ cases: loadR2RedTeam(), sha256: 'a'.repeat(64) }), writeReport: (n) => n, createSummarizer: () => scripted(() => undefined) });
+    expect(red).toContain(CANARY_PLAN_LINE);
   });
 });

@@ -17,7 +17,7 @@
 # the pinned ccusage version) it waits until the block ends.
 # INVALID (exit 5: the provider was unavailable, e.g. a usage/session limit mid-run): ONE automatic retry PER MODE after
 # the current usage block resets (GATES_NO_RETRY=1 disables it); a second INVALID of the same mode stops the whole run.
-# An INVALID whose reason is provider-auth_required or timeout-streak is not a usage limit: no wait, no retry, the run
+# An INVALID whose reason (or whose canary failure) is provider-auth_required or timeout-streak is not a usage limit: no wait, no retry, the run
 # stops at once and prints the reason.
 # A killed run (TERM / INT / HUP) writes a terminal DONE marker; `status` also checks that the RUNNING pid is alive.
 #
@@ -175,7 +175,7 @@ run_one() {
 
 cmd_run() {
   local W=$1 N=$2; shift 2
-  local MODES="${*:-$DEFAULT_MODES}" m rc retried=0 stopped="" reason nodev
+  local MODES="${*:-$DEFAULT_MODES}" m rc retried=0 stopped="" reason cfail nodev
   for m in $MODES; do
     case " $ALL_MODES " in *" $m "*) ;; *) echo "unknown mode: $m (one of: $ALL_MODES)" >&2; exit 2 ;; esac
   done
@@ -208,10 +208,13 @@ cmd_run() {
     if [ "$rc" -eq "$EXIT_INVALID" ]; then
       reason=$(grep -o 'INVALID (provider unavailable: [^)]*)' "$A/$m.log" | tail -1 | sed 's/^INVALID (provider unavailable: //; s/)$//')
     fi
-    case "$reason" in
-      provider-auth_required|timeout-streak)
-        # Not a usage/session limit: waiting for a block reset will not help. Stop now.
-        log "$m: INVALID ($reason): not a usage limit; no wait, no retry"
+    cfail=""
+    if [ "$rc" -eq "$EXIT_INVALID" ]; then cfail=$(grep -o 'canary failed: [A-Za-z_-]*' "$A/$m.log" | tail -1 | sed 's/^canary failed: //'); fi
+    case "$reason|$cfail" in
+      provider-auth_required\|*|timeout-streak\|*|*\|provider-auth_required)
+        # Not a usage/session limit (the run itself or its canary says auth / timeouts): waiting for a block reset will not
+        # help. Stop now.
+        log "$m: INVALID (${cfail:-$reason}): not a usage limit; no wait, no retry"
         ;;
       *)
         if [ "$rc" -eq "$EXIT_INVALID" ] && [ -z "${GATES_NO_RETRY:-}" ]; then
@@ -266,6 +269,7 @@ cmd_status() {
   if [ $# -eq 0 ]; then
     ls -1t "$ARCHIVE_ROOT" | grep -v '^scripts$' | head -10 | while read -r n; do
       if [ -f "$ARCHIVE_ROOT/$n/RUNNING" ]; then st=RUNNING
+      elif grep -q '^KILLED' "$ARCHIVE_ROOT/$n/DONE" 2>/dev/null; then st="KILLED (terminated before it finished)"
       elif [ -f "$ARCHIVE_ROOT/$n/DONE" ]; then st="DONE $(grep -o 'status=[A-Z-]*' "$ARCHIVE_ROOT/$n/DONE" 2>/dev/null | sed 's/status=//' | sort | uniq -c | awk '{printf "%s %s ", $1, $2}')"
       else st="-"; fi
       printf '%-45s %s\n' "$n" "$st"
@@ -307,9 +311,10 @@ if os.path.exists(os.path.join(A, "RUNNING")):
         print("state:   DEAD (the RUNNING marker is there but its pid is gone: the run was killed)  " + running)
 elif read("DONE").strip():
     done = read("DONE").strip().splitlines()
-    print("state:   DONE  " + done[-1])
+    killed = any(line.startswith("KILLED") for line in done)
+    print("state:   %s  %s" % ("KILLED" if killed else "DONE", done[-1]))
     for line in done[:-1]:
-        if line.startswith("stopped") or line == "BUILD_FAIL":
+        if line.startswith("stopped") or line.startswith("KILLED") or line == "BUILD_FAIL":
             print("         " + line)
 else:
     print("state:   (no RUNNING / DONE marker)")

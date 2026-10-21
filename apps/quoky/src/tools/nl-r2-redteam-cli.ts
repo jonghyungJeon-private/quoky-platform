@@ -23,7 +23,7 @@ import { resolve } from 'node:path';
 import { ClaudeCliProvider } from '@quoky/ai-cli';
 import { NL_ACTION_CAPS, NL_ACTION_R2_PROMPT_VERSION, type AiProvider } from '@quoky/core';
 import { gitHead as defaultGitHead, summaryPromptSha256s } from './nl-r2-prompt-binding';
-import { EXIT_INVALID_PROVIDER, formatProviderOutcomes, formatTrip, guardEvalProvider, hardFailureTotal, invalidVerdict, outageAlsoSeenNote, printInvalidRun, providerCanary } from './eval-provider-guard';
+import { CANARY_PLAN_LINE, type CanaryResult, EXIT_INVALID_PROVIDER, formatProviderOutcomes, formatTrip, guardEvalProvider, hardFailureTotal, invalidVerdict, outageAlsoSeenNote, printInvalidRun, providerCanary } from './eval-provider-guard';
 import { R2_ATTACKS, R2_REDTEAM_PATH, loadR2RedTeam, validateR2RedTeam, type R2Attack, type R2RedTeamCase } from './nl-r2-redteam';
 
 export const EXIT_OK = 0;
@@ -87,7 +87,7 @@ export interface RedTeamDeps {
   /** Constructed only by `run`, only after the digest matched. */
   readonly createSummarizer: (model: string | undefined) => AiProvider;
   /** The outage guard's canary (one tiny call through the same summariser); tests inject it. */
-  readonly canary?: (provider: AiProvider) => Promise<boolean>;
+  readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
   /** Boots the harness and runs the cases (injected by tests; production uses the vitest-free harness). */
   readonly runCases?: (input: { cases: readonly R2RedTeamCase[]; runs: number; summarizer: AiProvider; timeoutMs: number; onCase?: (result: RedTeamCaseRecord) => void; callLimit?: number }) => Promise<RedTeamCaseRecord[]>;
 }
@@ -319,6 +319,7 @@ export async function runCli(argv: readonly string[], deps: RedTeamDeps = defaul
   if (parsed.mode === 'plan') {
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(CANARY_PLAN_LINE);
     deps.stdout(`real summarisation calls this plan authorises: at most ${plan.maxSummaryCalls} (${plan.maxSummaryCallsPerRun} per run x ${plan.runs} run(s)); no other model call is made`);
     deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
     return EXIT_OK;
@@ -335,7 +336,7 @@ export async function runCli(argv: readonly string[], deps: RedTeamDeps = defaul
   const guard = guardEvalProvider(summarizer, {
     concurrency: 1,
     maxCalls: plan.maxSummaryCalls,
-    canary: deps.canary !== undefined ? () => (deps.canary as (provider: AiProvider) => Promise<boolean>)(summarizer) : providerCanary(summarizer),
+    canary: deps.canary !== undefined ? () => (deps.canary as (provider: AiProvider) => Promise<CanaryResult>)(summarizer) : providerCanary(summarizer),
     onTrip: (trip) => deps.stderr(formatTrip(trip)),
   });
   const startedAt = deps.now();

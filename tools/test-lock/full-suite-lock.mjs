@@ -9,10 +9,11 @@
 // vitest child is still running keeps the lock, so orphaned workers are not doubled up), or when the owner file never
 // appeared within a grace period. A stale lock is taken over.
 //
-// Stale also when the owner was recorded before the last boot (PIDs restart), or when a recorded PID is alive but its
-// command is not a node process (the PID was reused). The takeover is race-free: the stale lock directory is renamed
-// aside atomically (only one waiter wins the rename), the moved owner is checked to be the one judged stale, and only
-// then is it removed.
+// Stale also when the owner was recorded before the last boot (PIDs restart), or when a recorded PID is alive but is a
+// different process than the recorded one (the PID was reused: its command is not node, or its start time does not fit the
+// recorded start). A live lock is never moved. Takeovers are serialised by a separate mutex directory
+// (`<lock>.takeover`, itself stale after 30 s): inside it the owner is re-read, re-judged stale and required to equal the
+// owner judged before; only then is the lock directory removed. Fresh acquirers only ever `mkdir`.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, uptime } from 'node:os';
@@ -20,7 +21,11 @@ import { join } from 'node:path';
 
 export const OWNER_FILE = 'owner';
 /** An owner file is written right after `mkdir`; a lock dir older than this without one is a crashed acquire. */
-export const MISSING_OWNER_GRACE_MS = 10_000;
+export const MISSING_OWNER_GRACE_MS = 30_000;
+/** A takeover mutex older than this belongs to a crashed taker. */
+export const TAKEOVER_MUTEX_STALE_MS = 30_000;
+/** `ps` start times have a 1 s resolution; allow this much slack when comparing them to recorded times. */
+export const START_TIME_SLACK_MS = 2_000;
 
 export function defaultLockDir(env = process.env) {
   const parent = env.QUOKY_LOCK_DIR && env.QUOKY_LOCK_DIR.trim() !== '' ? env.QUOKY_LOCK_DIR : join(homedir(), 'Library', 'Application Support', 'Quoky', 'locks');
@@ -48,11 +53,35 @@ export function commandOf(pid) {
   }
 }
 
-/** A live holder: the PID exists and (when its command can be read) is a node process, not a reused PID. */
-function holderAlive(pid, readCommand) {
+/** The start time of a PID in ms (`ps -o lstart=`), or undefined when it cannot be read or parsed. */
+export function startTimeOf(pid) {
+  try {
+    const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', timeout: 5_000, env: { ...process.env, LC_ALL: 'C' } });
+    if (result.status !== 0) return undefined;
+    const parsed = Date.parse(result.stdout.trim());
+    return Number.isFinite(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A live holder: the PID exists, is a node process and started when the recorded process started. `kind` 'wrapper': the
+ * wrapper recorded `startedAt` after it started, so a start LATER than that (+ slack) is a reused PID. `kind` 'child':
+ * vitest was spawned right before `childStartedAt` (fallback: after `startedAt`), so a start before `anchor - slack` or
+ * after `anchor + slack` is a reused PID.
+ */
+function holderAlive(pid, kind, owner, env) {
   if (!isAlive(pid)) return false;
-  const command = readCommand(pid);
-  return command === undefined || command === '' ? true : command.includes('node');
+  const command = (env.commandOf ?? commandOf)(pid);
+  if (command !== undefined && command !== '' && !command.includes('node')) return false;
+  const started = (env.startTimeOf ?? startTimeOf)(pid);
+  if (started === undefined) return true;
+  const startedAt = typeof owner.startedAt === 'string' ? Date.parse(owner.startedAt) : Number.NaN;
+  if (kind === 'wrapper') return !(Number.isFinite(startedAt) && started > startedAt + START_TIME_SLACK_MS);
+  const childStartedAt = typeof owner.childStartedAt === 'string' ? Date.parse(owner.childStartedAt) : Number.NaN;
+  if (Number.isFinite(childStartedAt)) return started >= childStartedAt - 5 * START_TIME_SLACK_MS && started <= childStartedAt + START_TIME_SLACK_MS;
+  return !(Number.isFinite(startedAt) && started < startedAt - START_TIME_SLACK_MS);
 }
 
 /** The parsed owner file, or undefined when it is missing or unreadable. */
@@ -87,17 +116,18 @@ export function isStale(lockDir, now = Date.now(), env = {}) {
   const startedAt = typeof owner.startedAt === 'string' ? Date.parse(owner.startedAt) : Number.NaN;
   // Recorded before this boot: whatever PID it names now is someone else.
   if (Number.isFinite(startedAt) && startedAt < bootTimeMs) return true;
-  const readCommand = env.commandOf ?? commandOf;
-  return !holderAlive(owner.pid, readCommand) && !holderAlive(owner.childPid, readCommand);
+  return !holderAlive(owner.pid, 'wrapper', owner, env) && !holderAlive(owner.childPid, 'child', owner, env);
 }
 
 /**
- * One non-blocking attempt. Returns `{ acquired: true }`, or `{ acquired: false, owner }` when a live holder has it.
- * A stale lock is renamed aside atomically, verified, removed, and the attempt retried. `hooks.afterJudge` is for tests.
+ * One non-blocking attempt. Returns `{ acquired: true }`, or `{ acquired: false, owner }` when a live holder has it (or
+ * another waiter is taking a stale lock over). `hooks.afterJudge` is for tests (it runs between the first judgement and the
+ * takeover mutex, where a race can happen).
  */
 export function tryAcquire(lockDir, info = {}, hooks = {}) {
   mkdirSync(join(lockDir, '..'), { recursive: true });
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  const mutex = `${lockDir}.takeover`;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
     try {
       mkdirSync(lockDir);
       writeOwner(lockDir, { pid: process.pid, startedAt: new Date().toISOString(), cwd: process.cwd(), ...info });
@@ -108,25 +138,34 @@ export function tryAcquire(lockDir, info = {}, hooks = {}) {
     const judged = readOwner(lockDir);
     if (!isStale(lockDir)) return { acquired: false, owner: judged };
     hooks.afterJudge?.();
-    // Take the stale lock over race-free: rename it aside (one waiter wins; ENOENT: someone else already took it).
-    const aside = `${lockDir}.stale.${process.pid}.${Date.now()}`;
+    // Serialise takeovers. A held mutex means another waiter is on it: wait (the caller polls). A crashed taker's mutex is
+    // removed after 30 s.
     try {
-      renameSync(lockDir, aside);
+      mkdirSync(mutex);
     } catch (error) {
-      if (error && error.code === 'ENOENT') continue;
-      throw error;
-    }
-    if (JSON.stringify(readOwner(aside)) !== JSON.stringify(judged)) {
-      // The directory moved is not the one judged stale (another waiter replaced it in between): put it back. When the lock
-      // directory exists again the new holder wins; leave it and retry.
+      if (!error || error.code !== 'EEXIST') throw error;
       try {
-        renameSync(aside, lockDir);
+        if (Date.now() - statSync(mutex).mtimeMs > TAKEOVER_MUTEX_STALE_MS) rmSync(mutex, { recursive: true, force: true });
       } catch {
-        // lockDir exists again
+        // the mutex is gone already
       }
-      continue;
+      return { acquired: false, owner: readOwner(lockDir) };
     }
-    rmSync(aside, { recursive: true, force: true });
+    try {
+      // Inside the mutex: the lock must still be the very one judged stale (a defined owner identity that is unchanged, or
+      // a lock directory with no owner file older than the grace period). Never remove anything else, never move it.
+      const current = readOwner(lockDir);
+      const same = current === undefined ? judged === undefined : judged !== undefined && JSON.stringify(current) === JSON.stringify(judged);
+      let existed = true;
+      try {
+        statSync(lockDir);
+      } catch {
+        existed = false;
+      }
+      if (existed && same && isStale(lockDir)) rmSync(lockDir, { recursive: true, force: true });
+    } finally {
+      rmSync(mutex, { recursive: true, force: true });
+    }
   }
   return { acquired: false, owner: readOwner(lockDir) };
 }
@@ -135,7 +174,7 @@ export function tryAcquire(lockDir, info = {}, hooks = {}) {
 export function recordChild(lockDir, childPid) {
   const owner = readOwner(lockDir);
   if (owner === undefined || owner.pid !== process.pid) return;
-  writeOwner(lockDir, { ...owner, childPid });
+  writeOwner(lockDir, { ...owner, childPid, childStartedAt: new Date().toISOString() });
 }
 
 /** Release only a lock this process holds. */

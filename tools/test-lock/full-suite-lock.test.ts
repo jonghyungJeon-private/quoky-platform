@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 // @ts-expect-error plain ESM helper without type declarations (tools/ is outside the TypeScript build)
-import { MISSING_OWNER_GRACE_MS, acquire, defaultLockDir, isStale, readOwner, recordChild, release, tryAcquire } from './full-suite-lock.mjs';
+import { MISSING_OWNER_GRACE_MS, acquire, defaultLockDir, isStale, readOwner, recordChild, release, startTimeOf, tryAcquire } from './full-suite-lock.mjs';
 import { readdirSync } from 'node:fs';
 
 // The machine-wide full-suite lock (2026-10-21 harness hardening). Temporary lock directories only; the wrapper is
@@ -139,7 +139,7 @@ describe('full-suite lock', () => {
     const write = (owner: object) => writeFileSync(join(dir, 'owner'), JSON.stringify(owner));
     write({ pid: process.pid, startedAt: new Date(Date.now() - 3_600_000).toISOString() });
     expect(isStale(dir, Date.now(), { bootTimeMs: Date.now() - 60_000 })).toBe(true);
-    expect(isStale(dir, Date.now(), { bootTimeMs: Date.now() - 2 * 3_600_000 })).toBe(false);
+    expect(isStale(dir, Date.now(), { bootTimeMs: Date.now() - 2 * 3_600_000, startTimeOf: () => undefined })).toBe(false);
     write({ pid: process.pid, startedAt: new Date().toISOString() });
     expect(isStale(dir, Date.now(), { commandOf: () => '/usr/sbin/cfprefsd agent' })).toBe(true);
     expect(isStale(dir, Date.now(), { commandOf: () => '/opt/homebrew/bin/node vitest.mjs run' })).toBe(false);
@@ -179,5 +179,119 @@ describe('full-suite lock', () => {
       });
     expect(run(DEAD_PID, 8_000).signal).toBe('SIGKILL');
     expect(run(process.pid, 600).status).toBe(0);
+  });
+
+  it('R3: takeovers are serialised by a mutex: an interleaved takeover never removes a lock that was replaced meanwhile', () => {
+    const dir = lockDir();
+    const stale = () => {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'owner'), JSON.stringify({ pid: DEAD_PID, startedAt: 'then' }));
+    };
+    // B judged the lock stale; before it takes the mutex, C took over and a fresh acquirer A holds the lock.
+    stale();
+    const fresh = { pid: process.pid, startedAt: new Date().toISOString(), tag: 'A' };
+    const b = tryAcquire(dir, { tag: 'B' }, {
+      afterJudge: () => {
+        rmSync(dir, { recursive: true, force: true });
+        mkdirSync(dir);
+        writeFileSync(join(dir, 'owner'), JSON.stringify(fresh));
+      },
+    });
+    expect(b.acquired).toBe(false);
+    expect(readOwner(dir)).toEqual(fresh);
+    expect(existsSync(`${dir}.takeover`)).toBe(false);
+    expect(readdirSync(join(dir, '..')).filter((name) => name.includes('.stale.'))).toEqual([]);
+    release(dir);
+
+    // Two interleaved takeovers of one stale lock plus a fresh acquirer: exactly one holder at the end.
+    stale();
+    const winners: string[] = [];
+    const first = tryAcquire(dir, { tag: 'B' }, {
+      afterJudge: () => {
+        // while B is between judging and the mutex, C runs a whole takeover and a fresh acquirer D mkdirs behind it
+        const c = tryAcquire(dir, { tag: 'C' });
+        if (c.acquired) winners.push('C');
+        const d = tryAcquire(dir, { tag: 'D' });
+        if (d.acquired) winners.push('D');
+      },
+    });
+    if (first.acquired) winners.push('B');
+    expect(winners).toEqual(['C']);
+    expect(readOwner(dir)).toMatchObject({ tag: 'C' });
+  });
+
+  it('R3: a held takeover mutex defers the taker; a crashed taker\'s mutex is cleared after 30 s', () => {
+    const dir = lockDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'owner'), JSON.stringify({ pid: DEAD_PID, startedAt: 'then' }));
+    mkdirSync(`${dir}.takeover`);
+    expect(tryAcquire(dir).acquired).toBe(false);
+    expect(readOwner(dir)).toMatchObject({ pid: DEAD_PID });
+    const old = (Date.now() - 40_000) / 1000;
+    utimesSync(`${dir}.takeover`, old, old);
+    expect(tryAcquire(dir).acquired).toBe(false); // clears the dead mutex ...
+    expect(existsSync(`${dir}.takeover`)).toBe(false);
+    expect(tryAcquire(dir).acquired).toBe(true); // ... and the next attempt takes over
+  });
+
+  it('R3: a lock dir without an owner file is never removed while fresh (mkdir to writeOwner window), only after 30 s', () => {
+    const dir = lockDir();
+    mkdirSync(dir, { recursive: true });
+    expect(tryAcquire(dir).acquired).toBe(false);
+    expect(existsSync(dir)).toBe(true);
+    const old = (Date.now() - MISSING_OWNER_GRACE_MS - 5_000) / 1000;
+    utimesSync(dir, old, old);
+    // the owner file appears while the taker is between judging and the mutex: the identity differs, nothing is removed
+    const racing = tryAcquire(dir, {}, { afterJudge: () => writeFileSync(join(dir, 'owner'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), tag: 'A' })) });
+    expect(racing.acquired).toBe(false);
+    expect(readOwner(dir)).toMatchObject({ tag: 'A' });
+    release(dir);
+    mkdirSync(dir);
+    utimesSync(dir, old, old);
+    expect(tryAcquire(dir).acquired).toBe(true);
+  });
+
+  it('R4: a reused PID is stale: the process started after the recorded start (wrapper) or outside the recorded spawn (child)', () => {
+    const dir = lockDir();
+    mkdirSync(dir, { recursive: true });
+    const write = (owner: object) => writeFileSync(join(dir, 'owner'), JSON.stringify(owner));
+    const t0 = Date.now() - 600_000;
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const node = () => '/opt/homebrew/bin/node run-full-suite.mjs';
+    const boot = { bootTimeMs: t0 - 3_600_000, commandOf: node };
+    write({ pid: process.pid, startedAt: iso(t0) });
+    // the wrapper started long before it recorded startedAt (it may have waited for the lock): alive
+    expect(isStale(dir, Date.now(), { ...boot, startTimeOf: () => t0 - 300_000 })).toBe(false);
+    // started well after the recorded start: a reused PID
+    expect(isStale(dir, Date.now(), { ...boot, startTimeOf: () => t0 + 60_000 })).toBe(true);
+    // within the 2 s slack: alive
+    expect(isStale(dir, Date.now(), { ...boot, startTimeOf: () => t0 + 1_000 })).toBe(false);
+    // child: vitest was recorded right after its spawn
+    write({ pid: DEAD_PID, startedAt: iso(t0), childPid: process.pid, childStartedAt: iso(t0 + 5_000) });
+    expect(isStale(dir, Date.now(), { ...boot, startTimeOf: () => t0 + 4_500 })).toBe(false);
+    expect(isStale(dir, Date.now(), { ...boot, startTimeOf: () => t0 - 200_000 })).toBe(true);
+    expect(isStale(dir, Date.now(), { ...boot, startTimeOf: () => t0 + 500_000 })).toBe(true);
+    // child without childStartedAt: only a start before the owner started is a reuse
+    write({ pid: DEAD_PID, startedAt: iso(t0), childPid: process.pid });
+    expect(isStale(dir, Date.now(), { ...boot, startTimeOf: () => t0 - 60_000 })).toBe(true);
+    expect(isStale(dir, Date.now(), { ...boot, startTimeOf: () => t0 + 60_000 })).toBe(false);
+    // unreadable start time: assume alive
+    expect(isStale(dir, Date.now(), { ...boot, startTimeOf: () => undefined })).toBe(false);
+  });
+
+  it('R4: the real ps start time of this process parses and fits the lock the wrapper would record', () => {
+    expect(startTimeOf(process.pid)).toBeLessThanOrEqual(Date.now());
+    expect(startTimeOf(DEAD_PID)).toBeUndefined();
+  });
+
+  it('R5: the token after a value-taking option is not a file, so `--config <file>` locks; `-t <name> <file>` stays targeted', () => {
+    const dir = lockDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'owner'), JSON.stringify({ pid: process.pid, startedAt: 'now', cwd: '/elsewhere' }));
+    const env = { QUOKY_TEST_NO_WAIT: '1' };
+    expect(wrapper(['--config', 'vitest.config.ts'], dir, env).status).toBe(75);
+    expect(wrapper(['-c', 'vitest.config.ts', thisFile], dir, env).status).toBe(0);
+    expect(wrapper(['-t', 'some name', thisFile], dir, env).status).toBe(0);
+    expect(wrapper(['-t', 'some name'], dir, env).status).toBe(75);
   });
 });

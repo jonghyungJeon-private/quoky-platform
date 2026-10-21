@@ -39,6 +39,8 @@ import {
   outageAlsoSeenNote,
   printInvalidRun,
   providerCanary,
+  CANARY_PLAN_LINE,
+  type CanaryResult,
   type GuardedProvider,
   type HardFailureCounts,
 } from './eval-provider-guard';
@@ -93,12 +95,12 @@ export const EXIT_INVALID = EXIT_INVALID_PROVIDER;
 export function guardRunProvider(
   provider: AiProvider,
   stderr: (line: string) => void,
-  run: { readonly concurrency: number; readonly maxCalls: number; readonly canary?: (provider: AiProvider) => Promise<boolean> },
+  run: { readonly concurrency: number; readonly maxCalls: number; readonly canary?: (provider: AiProvider) => Promise<CanaryResult> },
 ): GuardedProvider {
   return guardEvalProvider(provider, {
     concurrency: run.concurrency,
     maxCalls: run.maxCalls,
-    canary: run.canary !== undefined ? () => (run.canary as (provider: AiProvider) => Promise<boolean>)(provider) : providerCanary(provider),
+    canary: run.canary !== undefined ? () => (run.canary as (provider: AiProvider) => Promise<CanaryResult>)(provider) : providerCanary(provider),
     onTrip: (trip) => stderr(formatTrip(trip)),
   });
 }
@@ -221,7 +223,7 @@ export interface CliDeps {
   /** Constructed only by `run`, only after the digest matched. */
   readonly createProvider: (model: string) => AiProvider;
   /** The outage guard's canary (one tiny call through the same provider); tests inject it, production calls the provider. */
-  readonly canary?: (provider: AiProvider) => Promise<boolean>;
+  readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
 }
 
 const repoRoot = resolve(__dirname, '../../../..');
@@ -315,6 +317,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   if (parsed.mode === 'plan') {
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(CANARY_PLAN_LINE);
     deps.stdout(formatSideScore('grammar side (offline, the Class B grammars on their own hits)', scoreGrammarSide(corpus, deps.now())));
     deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
     return EXIT_OK;
@@ -406,6 +409,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
     if (approved === undefined) {
       deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
       deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(CANARY_PLAN_LINE);
       for (const [entry, side] of Object.entries(scoreActionGrammarSide(corpus, deps.now()))) {
         deps.stdout(`  grammar side ${entry.padEnd(16)} ${entry === 'none' ? 'acted on' : 'claimed'} ${side.claimed}/${side.total}`);
       }
@@ -450,6 +454,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
   if (approved === undefined) {
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases (${relabeled} owner-relabelled)` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(CANARY_PLAN_LINE);
     deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
     return EXIT_OK;
   }
@@ -521,6 +526,7 @@ async function runR2Cli(settings: { model: string; runs: number; concurrency: nu
   if (approved === undefined) {
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(CANARY_PLAN_LINE);
     deps.stdout(`model calls this plan authorises: at most ${plan.calls} (${plan.caseIds.length} cases x ${plan.runs} run(s), one selector call each; a case a deterministic veto settles makes none; no summarisation call)`);
     for (const [entry, side] of Object.entries(scoreActionGrammarSide(corpus, deps.now()))) {
       deps.stdout(`  grammar side ${entry.padEnd(16)} ${entry === 'none' ? 'acted on' : 'claimed'} ${side.claimed}/${side.total}`);

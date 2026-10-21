@@ -71,18 +71,26 @@ export const CANARY_PROMPT = 'Reply with the single word: ok';
 /** The canary's own short timeout. */
 export const CANARY_TIMEOUT_MS = 20_000;
 
+/** At most this many canary calls per run (a hard cap, like the plan's call cap); once used the guard stops checking and the run is scored as it is. */
+export const MAX_CANARY_CALLS = 3;
+/** The line every plan output carries (the canary calls are outside the digest-bound call count). */
+export const CANARY_PLAN_LINE = `+ up to ${MAX_CANARY_CALLS} canary calls (not counted)`;
+
+/** A canary result: true = the provider answered, false = failed (unknown reason), a string = the content-free failure reason. */
+export type CanaryResult = boolean | string;
+
 /**
  * The default canary: one tiny call through the SAME provider client (never counted in the run's outcomes). Resolves true
- * when the provider answers, false when it throws (limit, auth, outage, timeout).
+ * when the provider answers, else the content-free failure reason (limit, auth, outage, timeout).
  */
-export function providerCanary(provider: AiProvider, timeoutMs: number = CANARY_TIMEOUT_MS): () => Promise<boolean> {
+export function providerCanary(provider: AiProvider, timeoutMs: number = CANARY_TIMEOUT_MS): () => Promise<CanaryResult> {
   return async () => {
     const capability = provider.capabilities.find((entry) => entry.capability === Capability.SUMMARIZATION)?.capability ?? provider.capabilities[0]?.capability ?? Capability.SUMMARIZATION;
     try {
       await provider.execute({ capability, prompt: CANARY_PROMPT, timeoutMs });
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      return providerFailureReason(error);
     }
   };
 }
@@ -109,6 +117,8 @@ export interface ProviderOutageReport {
   /** Canary calls made when the guard would have tripped (not counted in `calls`), and how many of them were answered. */
   readonly canaryCalls: number;
   readonly canaryAnswered: number;
+  /** The content-free reason the canary failed with (`provider-auth_required`, `timeout`, ...), when it did. */
+  readonly canaryFailure?: string;
   /** `undefined`: the run is valid. Otherwise the content-free reason it is invalid. */
   readonly invalidReason?: string;
 }
@@ -150,7 +160,7 @@ export interface GuardOptions {
   /** The plan's max provider calls (scales the mid-run share floor). */
   readonly maxCalls?: number;
   /** One cheap call that resolves true when the provider answers. Without it the guard trips at once (no canary). */
-  readonly canary?: () => Promise<boolean>;
+  readonly canary?: () => Promise<CanaryResult>;
   readonly onTrip?: (trip: ProviderOutageTrip) => void;
 }
 
@@ -172,7 +182,9 @@ export function guardEvalProvider(provider: AiProvider, options: GuardOptions = 
   let consecutiveTimeouts = 0;
   let canaryCalls = 0;
   let canaryAnswered = 0;
-  let canaryPending: Promise<boolean> | undefined;
+  let canaryPending: Promise<CanaryResult> | undefined;
+  let canaryFailure: string | undefined;
+  const checks = new Set<Promise<void>>();
   const failureReasons: Record<string, number> = {};
   let tripped: ProviderOutageTrip | undefined;
   const calls = (): number => ok + timeouts + failures;
@@ -182,34 +194,48 @@ export function guardEvalProvider(provider: AiProvider, options: GuardOptions = 
     tripped = { reason, trigger, atCall: calls() };
     options.onTrip?.(tripped);
   };
-  /** One shared canary at a time; true when the provider answered. */
-  const runCanary = (): Promise<boolean> => {
+  /** One shared canary at a time; resolves true when the provider answered, else the failure reason. */
+  const runCanary = (): Promise<CanaryResult> => {
     if (canaryPending === undefined) {
       canaryCalls += 1;
-      const canary = options.canary as () => Promise<boolean>;
+      const canary = options.canary as () => Promise<CanaryResult>;
       canaryPending = canary()
-        .catch(() => false)
-        .then((answered) => {
-          if (answered) canaryAnswered += 1;
+        .catch((): CanaryResult => false)
+        .then((result) => {
+          if (result === true) canaryAnswered += 1;
           canaryPending = undefined;
-          return answered;
+          return result;
         });
     }
     return canaryPending;
   };
-  /** The guard would trip: with a canary, trip only when the provider does not answer it. */
-  const confirm = async (trigger: ProviderOutageTrip['trigger'], reason: string): Promise<void> => {
+  const check = async (trigger: ProviderOutageTrip['trigger'], reason: string): Promise<void> => {
+    const result = await runCanary();
     if (tripped !== undefined) return;
-    if (options.canary === undefined) return trip(trigger, reason);
-    const answered = await runCanary();
-    if (tripped !== undefined) return;
-    if (answered) {
+    if (result === true) {
       // The provider is up: these failures are not an outage. Start the streaks over; they are scored as they are.
       consecutiveFailures = 0;
       consecutiveTimeouts = 0;
       return;
     }
+    canaryFailure = typeof result === 'string' ? result : 'canary-failed';
     trip(trigger, reason);
+  };
+  /**
+   * The guard would trip. Without a canary it trips at once. With one the check runs in the BACKGROUND: the failing call is
+   * never held up (the eval times calls around the provider, so waiting would inflate latency and the over-bound rate), and
+   * the decision lands when the canary answers (new calls are not held either; `settle` waits for it). After
+   * {@link MAX_CANARY_CALLS} canaries the guard stops checking and the run is scored as it is.
+   */
+  const schedule = (trigger: ProviderOutageTrip['trigger'], reason: string): void => {
+    if (tripped !== undefined) return;
+    if (options.canary === undefined) return trip(trigger, reason);
+    if (canaryPending !== undefined || checks.size > 0 || canaryCalls >= MAX_CANARY_CALLS) return;
+    const pending = check(trigger, reason).finally(() => checks.delete(pending));
+    checks.add(pending);
+  };
+  const drain = async (): Promise<void> => {
+    while (checks.size > 0) await Promise.all([...checks]);
   };
   const wrapped: AiProvider = {
     id: provider.id,
@@ -233,14 +259,14 @@ export function guardEvalProvider(provider: AiProvider, options: GuardOptions = 
         if (reason === 'timeout') {
           timeouts += 1;
           consecutiveTimeouts += 1;
-          if (consecutiveTimeouts >= limits.maxConsecutiveTimeouts) await confirm('timeout-streak', 'timeout-streak');
+          if (consecutiveTimeouts >= limits.maxConsecutiveTimeouts) schedule('timeout-streak', 'timeout-streak');
         } else {
           failures += 1;
           failureReasons[reason] = (failureReasons[reason] ?? 0) + 1;
           consecutiveFailures += 1;
-          if (consecutiveFailures >= limits.maxConsecutiveFailures) await confirm('consecutive-failures', reason);
+          if (consecutiveFailures >= limits.maxConsecutiveFailures) schedule('consecutive-failures', reason);
           // After an answered canary the share is not judged mid-run again (the failures were ruled out as an outage).
-          else if (canaryAnswered === 0 && calls() >= limits.minCallsForEarlyTrip && failures >= limits.minFailuresForEarlyTrip && overShare()) await confirm('failure-share', dominant(failureReasons));
+          else if (canaryAnswered === 0 && calls() >= limits.minCallsForEarlyTrip && failures >= limits.minFailuresForEarlyTrip && overShare()) schedule('failure-share', dominant(failureReasons));
         }
         throw error;
       }
@@ -249,8 +275,10 @@ export function guardEvalProvider(provider: AiProvider, options: GuardOptions = 
   return {
     provider: wrapped,
     settle: async () => {
+      await drain();
       if (tripped !== undefined || canaryAnswered > 0 || options.canary === undefined || !overShare()) return;
-      await confirm('failure-share', dominant(failureReasons));
+      schedule('failure-share', dominant(failureReasons));
+      await drain();
     },
     report: () => {
       // A run whose canary was answered is not an outage, whatever the share: the failures are scored.
@@ -264,6 +292,7 @@ export function guardEvalProvider(provider: AiProvider, options: GuardOptions = 
         notIssued,
         canaryCalls,
         canaryAnswered,
+        ...(canaryFailure !== undefined ? { canaryFailure } : {}),
         ...(tripped !== undefined ? { tripped } : {}),
         ...(invalidReason !== undefined ? { invalidReason } : {}),
       };
@@ -287,6 +316,7 @@ export function formatProviderOutcomes(report: ProviderOutageReport): string {
     `provider outcomes: calls ${report.calls}, ok ${report.ok}, timeouts ${report.timeouts}, provider failures ${report.failures} (${share}%${reasons ? `: ${reasons}` : ''})` +
     `, not issued after abort ${report.notIssued}` +
     (report.canaryCalls > 0 ? `; canary ${report.canaryAnswered}/${report.canaryCalls} answered${report.tripped === undefined && report.canaryAnswered > 0 ? ' (the failures are not an outage; scored as they are)' : ''}` : '') +
+    (report.canaryFailure !== undefined ? `; canary failed: ${report.canaryFailure}` : '') +
     (report.tripped !== undefined ? `; aborted at call ${report.tripped.atCall} (${report.tripped.trigger}: ${report.tripped.reason})` : '')
   );
 }
