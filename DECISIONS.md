@@ -28089,7 +28089,8 @@ The Product Owner ratified ADR-0121 amendment A1 and the ARCHITECTURE.md amendme
 
    The unlock is the **code-level** release gate `AGENT_HANDOFF_M2_NOT_RELEASED` (A1-D17), **not** a separate flag. The
    gate is removed under A1-D17 (a measurement note in this file showing the three thresholds, and the owner's yes,
-   Part VII stage H4).
+   Part VII stage H4). As proposed, that note also reports the M2 substring-survival rate and the owner-labelled
+   usefulness of the shadow extractions.
 3. **Planner misses help in a mixed request: refuse** (simple). A `help.topic` step inside a multi-step plan is refused
    as today (`single-step-only`). No automatic help section; the normalization fallback is rejected.
 4. **ap-n122** ("오늘 브리핑하고 내 지라 이슈 같이 정리해줘"): the brief section unchanged + a Jira summary. The summary covers
@@ -28103,9 +28104,9 @@ The Product Owner ratified ADR-0121 amendment A1 and the ARCHITECTURE.md amendme
 8. **Same-source reference detail cap (owner, 2026-10-21, separately).** The cap stays **10** (ADR-0121 D2 and
    ratification Q2 unchanged). The reply shows "N개 중 10개" with a hint to ask for more. Listings may show more than 10
    items, because only per-item detail fetches are capped.
-   - *Not decided here, for S2 P2/P3:* how this reconciles with prompt `agent-plan.v2` rule 9 (which makes "details of
-     more than 10 issues" a `none`), and with the D7 bound of ≤ 10 connector calls per run (a listing plus 10 detail
-     fetches is 11 calls). D2 and D7 stay as written until then.
+   - How this fits prompt `agent-plan.v2` rule 9 and the D7 bound of ≤ 10 connector calls per run is recorded as an
+     implementation note, not an ADR change: see "ADR-0121 S2 P3 implementation note — same-source detail reads"
+     below. D2 and D7 stay as written.
 
 **Decisions:**
 
@@ -28170,3 +28171,16 @@ The Product Owner ratified ADR-0121 amendment A1 and the ARCHITECTURE.md amendme
    - a new handoff row (it needs its own amendment);
    - delegations in any form (A1-D16);
    - the ADR-0121 ratification record's item 7 stays: no S3, no weakened approval, no new external target.
+
+### ADR-0121 S2 P3 implementation note — same-source detail reads (2026-10-21)
+
+Implementation note for owner answer 8 of the A1 ratification record. It changes no ADR text (ADR-0121 D2 and D7 stay as
+written).
+
+- **One bulk request.** A same-source detail read is one bulk request (Jira `key in (…)`), built only from keys that
+  passed the closed key regex. A test asserts exactly one HTTP request per page.
+- **Accounting.** The validator charges the reference step as one connector call.
+- **No bulk fetch.** If a connector cannot bulk-fetch, the D7 limit of 10 calls per run wins and the reply shows
+  "N개 중 M개".
+- **Prompt.** `agent-plan.v3` replaces rule 9's "details of more than 10 → `none`" with `take` 10 plus the truncation
+  line. That change is already in branch `claude/v5-s2-review-a`.
