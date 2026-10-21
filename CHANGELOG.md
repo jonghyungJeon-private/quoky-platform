@@ -5,6 +5,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — development harness hardening (2026-10-21)
+
+- **Added.** Provider-outage guard for `eval:nl` (intent, action, read-regression, r2), `eval:agent-plan` and
+  `eval:r2-redteam` (`apps/quoky/src/tools/eval-provider-guard.ts`): content-free outcome counts per reason; 5 provider
+  failures in a row, 10 timeouts in a row, or provider failures above 5% of the calls (mid-run from 40 calls and 3
+  failures, at the end from 2 failures) stop further calls; the run prints `INVALID (provider unavailable: <reason>)`,
+  never PASSED or FAILED, and exits 5. Every run prints a `provider outcomes:` counts line; reports carry
+  `providerOutcomes`.
+- **Added.** `pnpm test` takes a machine-wide full-suite lock (`tools/test-lock/`, `mkdir` lock with the holder and
+  vitest PIDs; waits, or exits 75 with `QUOKY_TEST_NO_WAIT=1`; stale when both PIDs are gone). Targeted runs take no lock.
+  vitest runs in its own process group so an interrupted suite leaves no orphaned workers.
+  It refuses to run (exit 78) when the running Node major differs from `.nvmrc` (2026-10-22: Node 18 turned a green
+  suite into 472 NODE_MODULE_VERSION failures).
+- **Added.** `.gitattributes`: `merge=union` for `DECISIONS.md` and `CHANGELOG.md` (not `CURRENT_STATE.md`, which has
+  sections edited in place).
+- **Added.** `.claude/skills/quoky-ship/` (SKILL.md and `scripts/run-gates.sh`): the gate runner (tmux, archive, DONE
+  marker, build, usage pre-check, one INVALID retry per mode, `status`) and the review-loop discipline rules.
+- **Changed.** CA review of the harness hardening: an outage never hides an observed hard failure (FAILED, exit 1);
+  streak limits scale with concurrency and a canary call separates an outage from a regression; the full-suite lock is
+  race-free, boot- and PID-reuse-aware and has a wrapper watchdog; `QUOKY_TEST_LOCK_DRY_RUN=1`; `resolve_changelog.py` is
+  tracked. Owner-approved (2026-10-21): INVALID as a third gate verdict.
+
 ## Unreleased — ADR-0121 S2 P2: the plan corpus and `eval:agent-plan` (2026-10-20)
 
 - **Added.** `golden/agent-plan.v1.json`: 173 multi-step positives and 144 negatives (KO/EN, 19 families), pending the

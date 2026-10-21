@@ -1,0 +1,14 @@
+# Append-only docs: a local merge or rebase keeps both sides' added lines instead of stopping on a conflict
+# (2026-10-21 harness hardening; every parallel branch appends to these two files).
+#
+# Caveats of the built-in `union` driver:
+# - it never shows a conflict, so when both sides edit the SAME existing line both versions are kept (a stale line
+#   survives next to the new one) and identical lines added on both sides can appear twice. Review the merged hunk
+#   (`git diff ORIG_HEAD -- DECISIONS.md CHANGELOG.md`) after a rebase.
+# - it applies to local git (merge, rebase, cherry-pick) only; GitHub's own conflict check ignores it, so rebase
+#   locally before opening or merging the PR.
+#
+# CURRENT_STATE.md is deliberately NOT here: it has sections edited in place (the "status" sections), which union
+# would silently duplicate. Resolve its conflicts with .claude/skills/quoky-ship/scripts/resolve_changelog.py (tracked).
+DECISIONS.md merge=union
+CHANGELOG.md merge=union

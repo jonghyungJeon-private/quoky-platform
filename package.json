@@ -23,7 +23,7 @@
     "eval:rag": "node apps/quoky/dist/tools/selector-rag-cli.js",
     "security:secret-scan": "node apps/quoky/dist/tools/secret-scan-cli.js",
     "rag0:regen": "QUOKY_RAG0_REGEN=1 vitest run packages/core/src/application/nl-routing/example-contamination.test.ts",
-    "test": "vitest run"
+    "test": "node tools/test-lock/run-full-suite.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",

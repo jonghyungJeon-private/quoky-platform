@@ -36,7 +36,8 @@ import {
   type AgentPlanEvalRecord,
   type AgentPlanEvalSummary,
 } from './agent-plan-eval';
-import { formatGateRuns } from './nl-intent-eval-cli';
+import { formatGateRuns, guardRunProvider, sumHardFailures } from './nl-intent-eval-cli';
+import { CANARY_CLAUSE, type CanaryResult, EXIT_INVALID_PROVIDER, formatProviderOutcomes, hardFailureTotal, invalidVerdict, outageAlsoSeenNote, printInvalidRun } from './eval-provider-guard';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 
 export const EXIT_OK = 0;
@@ -47,6 +48,8 @@ export const EXIT_USAGE = 2;
 export const EXIT_BLOCKED = 3;
 /** An `--include-pending` run completed: numbers only, never a gate verdict. */
 export const EXIT_NON_GATING = 4;
+/** The provider was unavailable for too many calls (usage/session limit, outage): INVALID, never PASSED or FAILED. */
+export const EXIT_INVALID = EXIT_INVALID_PROVIDER;
 
 const pct = (rate: number): string => `${(rate * 100).toFixed(1)}%`;
 
@@ -61,6 +64,8 @@ Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_
 Gate, every run: >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% exact over the multi-step positives AND >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% over the one-step positives
                  (same ordered step sequence), ${AGENT_PLAN_EVAL_GATE.wrongOnNegatives} wrong on negatives, <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% of calls over the bound,
                  no call refused by the hard cap. --include-pending runs are NON-GATING (exit 4, no verdict).
+Provider outage: 5 provider failures in a row, 10 timeouts in a row, or provider failures above 5% of the calls stop
+                 further calls; the run is INVALID (provider unavailable: <reason>), exit 5, never PASSED or FAILED.
 `;
 
 const VALUE_OPTIONS = new Set(['--mode', '--model', '--runs', '--concurrency', '--timeout-ms', '--approved-plan-digest']);
@@ -108,6 +113,8 @@ export interface AgentPlanCliDeps {
   readonly writeReport: (fileName: string, contents: string) => string;
   /** Constructed only by `run`, only after the digest matched. */
   readonly createProvider: (model: string) => AiProvider;
+  /** The outage guard's canary (one tiny call through the same provider); tests inject it. */
+  readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
   /** Tests only: monotonic milliseconds for the latency of each call. */
   readonly elapsed?: () => number;
 }
@@ -202,7 +209,7 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
   if (parsed.mode === 'plan') {
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
-    deps.stdout(`model calls this plan authorises: at most ${plan.maxCalls} (${plan.maxCallsPerRun} cases x ${plan.runs} run(s), one planner call each; a skipped input makes none); the run enforces it as a hard cap`);
+    deps.stdout(`model calls this plan authorises: at most ${plan.maxCalls} (${plan.maxCallsPerRun} cases x ${plan.runs} run(s), one planner call each; a skipped input makes none); the run enforces it as a hard cap on the counted calls, plus ${CANARY_CLAUSE}`);
     deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
     return EXIT_OK;
   }
@@ -220,20 +227,36 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: plan.maxCalls, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
   const startedAt = deps.now();
   let done = 0;
   const total = plan.maxCalls;
   const records = await runAgentPlanEvaluation({
     cases,
     plan,
-    provider,
+    provider: guard.provider,
     ...(deps.elapsed !== undefined ? { elapsed: deps.elapsed } : {}),
     onRecord: () => {
       done += 1;
       if (done % 50 === 0) deps.stderr(`… ${done}/${total}`);
     },
   });
+  await guard.settle();
+  const outage = guard.report();
+  const reportName = `agent-plan-${startedAt.replace(/[:.]/g, '-')}-${plan.model.replace(/[^A-Za-z0-9._-]/g, '_')}.json`;
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeAgentPlanRun(records.filter((record) => record.run === index + 1), plan.callTimeoutMs, { gating: plan.gating }));
+  // C1 (CA review): an outage never hides a hard failure already observed among the answered calls.
+  const hard = sumHardFailures(summaries, ['wrongOnNegatives']);
+  const hardSeen = plan.gating && hardFailureTotal(hard) > 0;
+  if (outage.invalidReason !== undefined && !hardSeen) {
+    printInvalidRun(deps.stdout, `agent-plan gate (${plan.promptVersion})`, plan.runs, outage, hard);
+    const invalidPath = deps.writeReport(
+      reportName,
+      `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), verdict: invalidVerdict(outage.invalidReason), hardFailures: hard, providerOutcomes: outage, records }, null, 2)}\n`,
+    );
+    deps.stdout(`results written to ${invalidPath}`);
+    return EXIT_INVALID;
+  }
   for (const [index, summary] of summaries.entries()) {
     deps.stdout(`run ${index + 1}/${plan.runs} (${plan.model}, ${plan.promptVersion}):`);
     for (const line of formatAgentPlanSummary(summary)) deps.stdout(line);
@@ -243,13 +266,11 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
     deps.stdout(`not exact / not none (${misses.length}):`);
     for (const record of misses) deps.stdout(describeMiss(record));
   }
-  if (plan.gating) deps.stdout(formatGateRuns(`agent-plan gate (${plan.promptVersion})`, summaries));
+  deps.stdout(formatProviderOutcomes(outage));
+  if (plan.gating) deps.stdout(formatGateRuns(`agent-plan gate (${plan.promptVersion})`, summaries, outage.invalidReason !== undefined ? outageAlsoSeenNote(outage.invalidReason) : undefined));
   else deps.stdout(`agent-plan gate (${plan.promptVersion}): NON-GATING (--include-pending scores cases the owner has not approved; no verdict)`);
   // Content-free: ids, families, closed entry ids and reasons, diff kinds, latencies (never a text, an answer or a value).
-  const path = deps.writeReport(
-    `agent-plan-${startedAt.replace(/[:.]/g, '-')}-${plan.model.replace(/[^A-Za-z0-9._-]/g, '_')}.json`,
-    `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, records }, null, 2)}\n`,
-  );
+  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   if (!plan.gating) return EXIT_NON_GATING;
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;

@@ -115,6 +115,18 @@ external/destructive action을 감싼다.
 - TypeScript `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`를 약화하지 않는다.
 - 승인된 Sprint/Task 범위에서 코드 변경 완료 전 `pnpm typecheck`와 Risk에 맞는 test를 실행한다.
   문서-only 변경은 근거를 기록하고 제품 Build/Test를 생략할 수 있다.
+- Full suite는 machine 전체에서 한 번에 하나만 돈다. `pnpm test`는 `tools/test-lock/run-full-suite.mjs`가
+  `~/Library/Application Support/Quoky/locks/full-suite` lock을 잡고, 잡혀 있으면 기다린다(`QUOKY_TEST_NO_WAIT=1`이면
+  exit 75). lock 없이 도는 것은 옵션이 아닌 인자가 하나 이상이고 그 인자가 모두 실제 존재하는 파일일 때뿐이다(필터·디렉터리·
+  옵션 값이 섞이면 lock). 값을 받는 옵션(`--config x` 등)의 값은 파일로 치지 않고, 인자는 `*.test.*`/`*.spec.*` 모양의 실제 파일이어야 한다. `--version`/`--help`는 테스트를 돌리지 않는다. Implementation agent는 `pnpm vitest run <files>`로
+  targeted test만 돌린다(lock 없음). wrapper는 실행 중인 Node major가 `.nvmrc`와 다르면 아무것도 돌리지 않고 exit 78로
+  멈춘다(native module이 안 맞아 수백 개가 가짜 실패로 보이는 것을 막음; `QUOKY_TEST_ALLOW_NODE_MISMATCH=1`로만 무시).
+- `.claude/skills/quoky-ship/SKILL.md`는 예전에 main checkout에 untracked 파일이었다. 이 변경을 main checkout에서 pull하기
+  전에 그 파일을 옆으로 치운다(`mv .claude/skills/quoky-ship/SKILL.md{,.local-bak}`). `chat/`, `qa/`, `space_id`는 계속
+  untracked(로컬 전용)다.
+- Model-in-the-loop eval(`eval:nl`, `eval:agent-plan`, `eval:r2-redteam`)의 exit 5는 provider 장애로 인한 `INVALID`다.
+  PASSED/FAILED가 아니므로 regression으로 해석하지 않고 provider 회복 뒤 다시 돌린다. 단 이미 관측된 hard failure
+  (오답 포착, 잘못된 대상, 부정 포착, red-team 성공)가 있으면 outage가 겹쳐도 FAILED다(owner 승인 2026-10-21).
 - Deterministic plumbing은 test하고, 미구현 model cognition은 `NotImplementedError`로 유지한다.
 - 시간과 ID는 shared `clock`/`id` utility를 사용한다.
 - `Resource` input과 `Artifact` output을 합치지 않는다.

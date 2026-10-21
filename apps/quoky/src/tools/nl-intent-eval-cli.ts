@@ -27,8 +27,23 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ClaudeCliProvider, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
-import type { AiProvider } from '@quoky/core';
+import { Capability, type AiProvider } from '@quoky/core';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
+import {
+  EXIT_INVALID_PROVIDER,
+  formatProviderOutcomes,
+  formatTrip,
+  guardEvalProvider,
+  hardFailureTotal,
+  invalidVerdict,
+  outageAlsoSeenNote,
+  printInvalidRun,
+  providerCanary,
+  CANARY_PLAN_LINE,
+  type CanaryResult,
+  type GuardedProvider,
+  type HardFailureCounts,
+} from './eval-provider-guard';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import {
   NL_ACTION_EVAL_GATE,
@@ -70,6 +85,30 @@ export const EXIT_GATE_FAILED = 1;
 export const EXIT_USAGE = 2;
 /** Strict gate refused (digest missing or mismatched, CLI unavailable); nothing was spawned. */
 export const EXIT_BLOCKED = 3;
+/** The provider was unavailable for too many calls (usage/session limit, outage): the run is INVALID, not scored. */
+export const EXIT_INVALID = EXIT_INVALID_PROVIDER;
+
+/**
+ * Wrap a run's provider in the outage guard (`eval-provider-guard.ts`); the trip is announced on stderr. The canary (one
+ * tiny call through the same provider before the guard trips) is injectable so tests never call a real provider.
+ */
+export function guardRunProvider(
+  provider: AiProvider,
+  stderr: (line: string) => void,
+  run: { readonly concurrency: number; readonly maxCalls: number; readonly canary?: (provider: AiProvider) => Promise<CanaryResult> },
+): GuardedProvider {
+  return guardEvalProvider(provider, {
+    concurrency: run.concurrency,
+    maxCalls: run.maxCalls,
+    canary: run.canary !== undefined ? () => (run.canary as (provider: AiProvider) => Promise<CanaryResult>)(provider) : providerCanary(provider, undefined, Capability.INTENT_SELECTION),
+    onTrip: (trip) => stderr(formatTrip(trip)),
+  });
+}
+
+/** Sum a hard-failure metric over the runs' summaries. */
+export function sumHardFailures(summaries: readonly object[], fields: readonly string[]): HardFailureCounts {
+  return Object.fromEntries(fields.map((field) => [field, summaries.reduce((sum, summary) => sum + Number((summary as Record<string, unknown>)[field] ?? 0), 0)]));
+}
 
 const HELP = `Natural-language selection evaluation (ADR-0120 D12)
 
@@ -88,6 +127,10 @@ Without --approved-plan-digest these are offline (schema check, plan, digest, gr
 Action gate: >= ${NL_ACTION_EVAL_GATE.overall * 100}% exact {entry, args, target}, >= ${NL_ACTION_EVAL_GATE.perEntry * 100}% per entry, spans >= ${NL_ACTION_EVAL_GATE.spanExact * 100}%,
              ${NL_ACTION_EVAL_GATE.wrongTarget} wrong targets, ${NL_ACTION_EVAL_GATE.negativeCaptures} negative captures, questions on references <= ${NL_ACTION_EVAL_GATE.questionRateOnReferences * 100}%.
 Read regression: the D12 gate on the read cases and 0 read cases captured by an action entry.
+
+Every Strict run is guarded against provider outages: 5 provider failures in a row, 10 timeouts in a row, or provider
+failures above 5% of the calls (judged mid-run from 40 calls and 3 failures, at the end from 2 failures) stop further
+calls and mark the run INVALID (provider unavailable: <reason>), exit 5, never PASSED or FAILED.
 
 A6 R2 (Jira / Slack item.summarize; the R2 prompt, R2 offered as with QUOKY_NL_ITEM_R2=all; the environment is never read):
           pnpm eval:nl -- --mode r2 [--model M] [--runs N] [--concurrency N] [--approved-plan-digest <sha256>]
@@ -179,6 +222,8 @@ export interface CliDeps {
   readonly writeReport: (fileName: string, contents: string) => string;
   /** Constructed only by `run`, only after the digest matched. */
   readonly createProvider: (model: string) => AiProvider;
+  /** The outage guard's canary (one tiny call through the same provider); tests inject it, production calls the provider. */
+  readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
 }
 
 const repoRoot = resolve(__dirname, '../../../..');
@@ -230,10 +275,18 @@ function describeMiss(record: NlEvalRecord): string {
  * The multi-run gate line of every eval:nl mode: PASSED only when every run passed, otherwise how many of the runs passed
  * (the v48 gate printed "FAILED in every one of 3 run(s)" with two runs passing).
  */
-export function formatGateRuns(label: string, summaries: ReadonlyArray<{ readonly gatePassed: boolean }>): string {
+export function formatGateRuns(label: string, summaries: ReadonlyArray<{ readonly gatePassed: boolean }>, outageNote?: string): string {
   const passed = summaries.filter((summary) => summary.gatePassed).length;
   const total = summaries.length;
-  return passed === total ? `${label}: PASSED in all ${total} run(s)` : `${label}: FAILED, passed ${passed} of ${total} run(s) (the gate needs every run)`;
+  return passed === total ? `${label}: PASSED in all ${total} run(s)` : `${label}: FAILED, passed ${passed} of ${total} run(s) (the gate needs every run)${outageNote !== undefined ? ` ${outageNote}` : ''}`;
+}
+
+/**
+ * C1 of the CA review: an INVALID run never hides a hard failure already observed among the answered records. Returns the
+ * note for the FAILED gate line when the outage was also seen, or undefined when the run is valid.
+ */
+function outageNoteOf(outage: ReturnType<GuardedProvider['report']>): string | undefined {
+  return outage.invalidReason !== undefined ? outageAlsoSeenNote(outage.invalidReason) : undefined;
 }
 
 export async function runCli(argv: readonly string[], deps: CliDeps = defaultDeps()): Promise<number> {
@@ -264,6 +317,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   if (parsed.mode === 'plan') {
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(CANARY_PLAN_LINE);
     deps.stdout(formatSideScore('grammar side (offline, the Class B grammars on their own hits)', scoreGrammarSide(corpus, deps.now())));
     deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
     return EXIT_OK;
@@ -277,13 +331,14 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: plan.caseIds.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
   const startedAt = deps.now();
   let done = 0;
   const total = plan.caseIds.length * plan.runs;
   const records = await runEvaluation({
     corpus,
     plan,
-    provider,
+    provider: guard.provider,
     now: deps.now,
     onRecord: () => {
       done += 1;
@@ -291,7 +346,12 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     },
   });
   const grammarCaseIds = new Set(corpus.cases.filter((golden) => golden.grammar !== undefined).map((golden) => golden.id));
+  await guard.settle();
+  const outage = guard.report();
+  const reportName = `nl-intent-${startedAt.replace(/[:.]/g, '-')}-${plan.model.replace(/[^A-Za-z0-9._-]/g, '_')}.json`;
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarize(records.filter((record) => record.run === index + 1), plan.callTimeoutMs, grammarCaseIds));
+  const hard = sumHardFailures(summaries, ['wrongCaptures']);
+  if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, 'intent gate', plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), records }, hard);
   for (const [index, summary] of summaries.entries()) {
     deps.stdout(`run ${index + 1}/${plan.runs} (${plan.model}, ${plan.promptVersion}):`);
     for (const line of formatSummary(summary)) deps.stdout(line);
@@ -305,11 +365,9 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stdout(`not hit (${misses.length}):`);
     for (const record of misses) deps.stdout(describeMiss(record));
   }
-  deps.stdout(formatGateRuns('intent gate', summaries));
-  const path = deps.writeReport(
-    `nl-intent-${startedAt.replace(/[:.]/g, '-')}-${plan.model.replace(/[^A-Za-z0-9._-]/g, '_')}.json`,
-    `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, records }, null, 2)}\n`,
-  );
+  deps.stdout(formatProviderOutcomes(outage));
+  deps.stdout(formatGateRuns('intent gate', summaries, outageNoteOf(outage)));
+  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
 }
@@ -351,6 +409,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
     if (approved === undefined) {
       deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
       deps.stdout(`plan digest (sha256): ${digest}`);
+      deps.stdout(CANARY_PLAN_LINE);
       for (const [entry, side] of Object.entries(scoreActionGrammarSide(corpus, deps.now()))) {
         deps.stdout(`  grammar side ${entry.padEnd(16)} ${entry === 'none' ? 'acted on' : 'claimed'} ${side.claimed}/${side.total}`);
       }
@@ -366,12 +425,19 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
       deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
       return EXIT_BLOCKED;
     }
+    const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: corpus.cases.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
     const startedAt = deps.now();
-    const records = await runActionEvaluation({ corpus, plan, provider, now: deps.now });
+    const records = await runActionEvaluation({ corpus, plan, provider: guard.provider, now: deps.now });
+    await guard.settle();
+    const outage = guard.report();
+    const reportName = `nl-action-${startedAt.replace(/[:.]/g, '-')}.json`;
     const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeAction(records.filter((record) => record.run === index + 1), plan.callTimeoutMs));
+    const hard = sumHardFailures(summaries, ['wrongTargets', 'negativeCaptures']);
+    if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, `action gate (${plan.promptVersion})`, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records }, hard);
     for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
-    deps.stdout(formatGateRuns(`action gate (${plan.promptVersion})`, summaries));
-    const path = deps.writeReport(`nl-action-${startedAt.replace(/[:.]/g, '-')}.json`, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, records }, null, 2)}\n`);
+    deps.stdout(formatProviderOutcomes(outage));
+    deps.stdout(formatGateRuns(`action gate (${plan.promptVersion})`, summaries, outageNoteOf(outage)));
+    const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, providerOutcomes: outage, records }, null, 2)}\n`);
     deps.stdout(`results written to ${path}`);
     return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
   }
@@ -388,6 +454,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
   if (approved === undefined) {
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases (${relabeled} owner-relabelled)` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(CANARY_PLAN_LINE);
     deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
     return EXIT_OK;
   }
@@ -400,19 +467,45 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: cases.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
   const startedAt = deps.now();
-  const records = await runReadRegression({ cases, plan, provider, now: deps.now });
+  const records = await runReadRegression({ cases, plan, provider: guard.provider, now: deps.now });
+  await guard.settle();
+  const outage = guard.report();
+  const reportName = `nl-read-regression-${startedAt.replace(/[:.]/g, '-')}.json`;
   const goldOf = (id: string): string => {
     const golden = cases.find((candidate) => candidate.id === id);
     const expect = golden?.a6Relabel ?? golden?.expect;
     return expect === undefined || expect === 'none' ? 'none' : expect.entryId;
   };
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeReadRegression(records.filter((record) => record.run === index + 1), goldOf));
+  const hard = sumHardFailures(summaries, ['wrongCaptures', 'actionCaptures']);
+  if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, `read-regression gate (${plan.promptVersion})`, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records }, hard);
   for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
-  deps.stdout(formatGateRuns(`read-regression gate (${plan.promptVersion})`, summaries));
-  const path = deps.writeReport(`nl-read-regression-${startedAt.replace(/[:.]/g, '-')}.json`, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, records }, null, 2)}\n`);
+  deps.stdout(formatProviderOutcomes(outage));
+  deps.stdout(formatGateRuns(`read-regression gate (${plan.promptVersion})`, summaries, outageNoteOf(outage)));
+  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
+}
+
+/**
+ * An invalidated run (every eval:nl mode): the INVALID verdict and the counts, a content-free report carrying the verdict
+ * and the records (no summaries, no gate), exit 5.
+ */
+function finishInvalid(
+  deps: CliDeps,
+  gateLabel: string,
+  runs: number,
+  outage: ReturnType<GuardedProvider['report']>,
+  reportName: string,
+  body: Record<string, unknown>,
+  hardFailures: HardFailureCounts,
+): number {
+  printInvalidRun(deps.stdout, gateLabel, runs, outage, hardFailures);
+  const path = deps.writeReport(reportName, `${JSON.stringify({ ...body, verdict: invalidVerdict(outage.invalidReason ?? 'error'), hardFailures, providerOutcomes: outage }, null, 2)}\n`);
+  deps.stdout(`results written to ${path}`);
+  return EXIT_INVALID;
 }
 
 /** `--mode r2` (A6 R2): the agent-drafted, owner-approved R2 corpus through the real selector with R2 offered. */
@@ -433,6 +526,7 @@ async function runR2Cli(settings: { model: string; runs: number; concurrency: nu
   if (approved === undefined) {
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(CANARY_PLAN_LINE);
     deps.stdout(`model calls this plan authorises: at most ${plan.calls} (${plan.caseIds.length} cases x ${plan.runs} run(s), one selector call each; a case a deterministic veto settles makes none; no summarisation call)`);
     for (const [entry, side] of Object.entries(scoreActionGrammarSide(corpus, deps.now()))) {
       deps.stdout(`  grammar side ${entry.padEnd(16)} ${entry === 'none' ? 'acted on' : 'claimed'} ${side.claimed}/${side.total}`);
@@ -449,13 +543,20 @@ async function runR2Cli(settings: { model: string; runs: number; concurrency: nu
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: corpus.cases.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
   const startedAt = deps.now();
-  const records = await runActionEvaluation({ corpus, plan, provider, now: deps.now });
+  const records = await runActionEvaluation({ corpus, plan, provider: guard.provider, now: deps.now });
+  await guard.settle();
+  const outage = guard.report();
+  const reportName = `nl-action-r2-${startedAt.replace(/[:.]/g, '-')}.json`;
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeActionR2(records.filter((record) => record.run === index + 1), corpus, plan.callTimeoutMs));
+  const hard = sumHardFailures(summaries, ['wrongTargets', 'negativeCaptures']);
+  if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, `R2 gate (${plan.promptVersion})`, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records }, hard);
   for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
-  deps.stdout(formatGateRuns(`R2 gate (${plan.promptVersion})`, summaries));
+  deps.stdout(formatProviderOutcomes(outage));
+  deps.stdout(formatGateRuns(`R2 gate (${plan.promptVersion})`, summaries, outageNoteOf(outage)));
   // Content-free: ids, outcomes, entries and reasons only (never an owner text or a raw model answer).
-  const path = deps.writeReport(`nl-action-r2-${startedAt.replace(/[:.]/g, '-')}.json`, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, records }, null, 2)}\n`);
+  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
 }
