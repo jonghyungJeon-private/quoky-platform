@@ -117,6 +117,11 @@ export type WorkChatCommand =
       readonly limit?: number;
       /** ADR-0120 (selection only, a count question): answer with the deterministic list, never a summary. */
       readonly listOnly?: true;
+      /**
+       * Owner review 2026-10-21 (selection only, GitHub `my-items`): pull requests only or issues only, sent as the named
+       * query's `itemType`. Absent: both.
+       */
+      readonly itemType?: 'pr' | 'issue';
     }
   /**
    * ADR-0120 amendment A8 (selection only; no grammar produces it): the issues of one Jira release, any assignee unless

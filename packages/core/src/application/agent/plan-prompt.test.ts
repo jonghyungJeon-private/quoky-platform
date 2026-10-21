@@ -10,7 +10,7 @@ import { AGENT_PLAN_PROMPT_VERSION, agentPlanExamples, buildAgentPlanPrompt } fr
 import { parseAgentPlanOutput } from './plan-schema';
 import { validateAgentPlan } from './plan-validator';
 
-// ADR-0121 D1 (stage S2 P1, P2): the planner prompt `agent-plan.v2` — its edits of the gated read prompt, its examples
+// ADR-0121 D1 (stage S2 P1, P2; the owner's review of 2026-10-21): the planner prompt `agent-plan.v3` — its edits of the gated read prompt, its examples
 // (valid plans, never a near-copy of a gold case: the RAG-0 contamination lint of ADR-0123 D5), and a byte pin.
 
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
@@ -35,7 +35,7 @@ function gold(): Array<{ id: string; text: string; expects: GoldExpect[] }> {
   });
 }
 
-describe('agent-plan.v2 prompt', () => {
+describe('agent-plan.v3 prompt', () => {
   const prompt = buildAgentPlanPrompt({ entries: [...READS, ...ACTIONS], text: '이번 주 회의 일정 보여줘' });
 
   it('is the read prompt over the READ entries with the four fixed edits (no action entry is ever shown)', () => {
@@ -44,10 +44,17 @@ describe('agent-plan.v2 prompt', () => {
     expect(prompt).toContain('"steps": [{"entryId": "<entry id>"');
     expect(prompt).toContain('8. Plans (the steps form) only when the owner asks for two or more reads');
     expect(prompt).toContain('9. References: for the details of the issues an earlier jira.release step lists');
+    // v3 (owner review 2026-10-21): (b) a summary covers only what the owner asks to summarize, (c) take defaults to 50,
+    // (h) an unbounded request is written as asked so Core can answer it with a bounded suggestion.
+    expect(prompt).toContain('covering ONLY the reads the owner asks to summarize');
+    expect(prompt).toContain('"take": <the number of issues the owner names, else 10>');
+    expect(prompt).toContain('Core runs none of it');
     for (const action of ACTIONS) expect(prompt).not.toContain(`- ${action.id}:`);
-    // Every catalog line and every read example of the gated read prompt is kept, byte for byte.
+    // Every catalog line and every read example of the gated read prompt is kept, byte for byte (nl-select.v65 lists the
+    // GitHub `kind`, so the planner's catalog has it too).
     const catalog = read.slice(read.indexOf('Catalog:'), read.indexOf('\nExamples:'));
     expect(prompt).toContain(catalog);
+    expect(catalog).toContain('  kind: pr|issue|all.');
     for (const example of extractPromptExamples(read)) expect(prompt).toContain(`Message: ${example.text}\nOutput: ${example.output}`);
     expect(prompt.endsWith('<<<\n이번 주 회의 일정 보여줘\n>>>')).toBe(true);
   });
@@ -95,10 +102,10 @@ describe('agent-plan.v2 prompt', () => {
   });
 
   it('is pinned byte for byte (a change needs a new version and its gate run)', () => {
-    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v2');
+    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v3');
     const full = buildAgentPlanPrompt({ entries: READS, text: 'x' });
     expect(createHash('sha256').update(full).digest('hex')).toBe(PINNED_SHA256);
   });
 });
 
-const PINNED_SHA256 = '64bfcd73c35e004c07c00c8855c0d28f6b351839d517d1eb19ceb3486d762a89';
+const PINNED_SHA256 = 'b730497be9eb2ae328775d082119709f7a87c50834bf555154fb284f61f2a15b';

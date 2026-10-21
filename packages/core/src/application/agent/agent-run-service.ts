@@ -20,7 +20,7 @@ import { AGENT_PLAN_SUMMARY_SCHEMAS, validateAgentPlan, type AgentPlanValidation
  * - `off` (the default): nothing runs. The runtime reads `mode` and nothing else, so every turn is byte-identical.
  * - `shadow`: after the reply of an owner DM turn that reached selection, or (`c-shadow`) whose read a Class B grammar
  *   answered (`liveSource: grammar`), ONE background planner call (M1,
- *   `INTENT_SELECTION`, prompt `agent-plan.v2`) plans the same message; the plan is parsed and validated and one
+ *   `INTENT_SELECTION`, prompt `agent-plan.vN`) plans the same message; the plan is parsed and validated and one
  *   content-free `agent_run.shadow` line is logged. **Zero connector reads and zero M2 calls**: this service has no
  *   connector, reader, writer, command runner, tool provider, memory or fetch dependency at all (its deps type below; an
  *   import-scan test pins it). It writes nothing but the owner's kill switch.
@@ -109,7 +109,7 @@ export interface AgentRunServiceDeps {
   readonly caps?: { readonly perHour?: number; readonly perDay?: number };
 }
 
-type ShadowOutcome = 'planned' | 'clarify' | 'none' | 'refused' | 'malformed' | 'skipped' | 'unavailable' | 'dropped' | 'stopped' | 'timeout';
+type ShadowOutcome = 'planned' | 'clarify' | 'ask' | 'none' | 'refused' | 'malformed' | 'skipped' | 'unavailable' | 'dropped' | 'stopped' | 'timeout';
 
 class ShadowTimeout extends Error {
   constructor() {
@@ -396,6 +396,11 @@ function planFields(plan: AgentPlan, validation: AgentPlanValidation): LogFields
     return { outcome: 'refused', ...fields, ...(validation.step !== undefined ? { failedStep: validation.step } : {}), ...(validation.stepReason !== undefined ? { stepReason: validation.stepReason } : {}) };
   }
   if (validation.plan.kind === 'none') return { outcome: 'none', ...fields };
+  // Decision (h): an unbounded plan is an ask with a bounded suggestion (closed bound, closed entry ids only).
+  if (validation.plan.kind === 'ask') {
+    const suggestion = validation.plan.suggestion.map((step) => (step.kind === 'summarize' ? `summarize:${step.schema}` : step.entry.id)).join(',');
+    return { outcome: 'ask', ...fields, bound: validation.plan.bound, suggestion };
+  }
   const argKinds = validation.plan.steps
     .map((step) => {
       if (step.kind === 'summarize') return 'summary';

@@ -157,7 +157,8 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
 
   /**
    * A validated selection mapped to the existing typed lookup or to-do list command (ADR-0120 interfaces), answered like
-   * `handle` answers it. A count question gets the deterministic list with a count line first (never a summary).
+   * `handle` answers it. A count question gets a count line first and then the first few items of the deterministic list
+   * (at most `WORK_CHAT_COUNT_PREVIEW_ITEMS`; owner review 2026-10-21), never a summary.
    */
   async handleSelected(selected: NlSelectedCommand, ctx: TurnHandlerContext): Promise<TurnHandlerOutcome | null> {
     if (this.deps.mode !== 'lookup') return this.handleAction(selected, ctx);
@@ -346,7 +347,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
   private async run(
     command: WorkChatCommand,
     ctx: TurnHandlerContext,
-  ): Promise<{ readonly outcome: TurnHandlerOutcome | null; readonly listed?: { readonly count: number; readonly truncated: boolean } }> {
+  ): Promise<{ readonly outcome: TurnHandlerOutcome | null; readonly listed?: { readonly count: number; readonly truncated: boolean; readonly shown?: number } }> {
     // ADR-0112 D5 (CWR-2): an exact Jira comment / transition or Slack post request is handed to the runtime's
     // connector-write flow (this handler creates no approval and makes no write). `fallbackText` is the fixed refusal
     // the runtime replies with while writes are off.

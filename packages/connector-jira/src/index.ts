@@ -170,6 +170,8 @@ export class JiraConnectorProvider implements ConnectorProvider {
 
   private async personalWork(params: Metadata | undefined): Promise<ConnectorResult> {
     const parsed = parsePersonalWorkParams(params, 'jira connector');
+    // The GitHub item type (owner review 2026-10-21) has no Jira meaning: refused, never ignored.
+    if (parsed.itemType !== undefined) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported personal-work option');
     const { limit } = parsed;
     const url = new URL('/rest/api/3/search/jql', this.baseUrl);
     url.searchParams.set('jql', personalWorkJql(parsed, this.now()));

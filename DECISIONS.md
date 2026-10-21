@@ -28280,3 +28280,127 @@ Tooling only (no ADR boundary, no runtime path changed). Gaps from the 2026-10-1
   rule; fail-closed residual edge cases are recorded in the ADR implementation note instead of being chased; no prompt
   change is deployed before its D12 gates pass; the full suite runs only after a rebase that exited 0 on a tree with no
   conflict or rebase in progress.
+### ADR-0121 S2 implementation note — the owner's review of the S2 plan gold, set A (2026-10-21, branch `claude/v5-s2-review-a`)
+
+The owner reviewed AP-1..AP-6 on 2026-10-21: 255 ok, 61 fix, 1 unreviewed (`ap-n019`), plus notes on decisions (b)–(h) of
+`docs/plans/agent-plan-review.md`, and decided the follow-ups of the first draft of this change (c4b8d84f) the same day.
+This change applies the small fixes ("A"); the cross-source / content-borne cases and decision (d) wait for a security
+analysis and an ADR-0121 amendment, and decision (e) for its own amendment (Q6). No model was called.
+
+- **Status.** 258 approved: the 255 marked ok, minus the 8 held below, plus `ap-p082` / `ap-p163` (owner: "drive() 명령어
+  자체에 최근이라는 필터가 되어 있으면 상관 없어" — it is: `drive.files` with no args lists the owner's recent Drive files),
+  `ap-p110`, `p111`, `p114`, `p115`, `p116`, `p118`, `p119`, `p120` (the owner's decision (c) below settles their gold) and
+  the moved `ap-p174`. 15 pending: `ap-p062`, `ap-p067`, the 12 unbounded asks (re-review) and `ap-n019`. 45 held (pending,
+  `HOLD` in the case note, a review-sheet column): decision (d) — `ap-p001..008`, `ap-n021..036`, `ap-n060..074` (39;
+  `ap-n032` / `ap-n034` were marked ok); decision (e) — `ap-n118..123` (6, all marked ok; owner decision 2026-10-21: a
+  help/brief request mixed with another read handles both parts — help answered first and separately, the rest planned;
+  brief plus a read shows both, with brief protection rules to be designed; Q6 changes in an amendment being drafted).
+- **Decision (c): the reference cap stays 10 (ADR-0121 D2 and ratification Q2 unchanged).** The first draft raised it to
+  50; the owner reverted that on 2026-10-21. A reference bounds per-item DETAIL reads only (10 per reference, 10 per run;
+  `take` = the owner's number, else 10 for "전부" / "각각" / "every"). When a release has more than 10 issues, the P3 reply
+  says "N개 중 10개" plus a fixed hint ("더 보려면 '다음 10개 보여줘'라고 말씀해 주세요"). **P3 TODO:** that hint and its
+  follow-up ("다음 10개") do not exist yet; P3 must add the fixed text and a bounded follow-up (the next 10 keys of the same
+  release listing, structure only). Over 10 referenced values a plan is never run: decision (h) asks with the first 10.
+  `ap-n079` ("50개 전부") and `ap-n080` ("all 30") stay negatives with that ask. **Listings are not detail reads**: no
+  listing is capped by this branch's validator rules (the cap applies to `ref.take` only). Listing limits today
+  (unchanged here): a Jira release's issue list 20 (`CONNECTOR_QUERY_MAX_LIMIT`, `jira-release-lookup.ts`); the work-chat
+  lookups (`jira.issues`, `github.items`, `slack.search`, `confluence.search`) fetch 20 and show 10
+  (`EXTERNAL_WORK_MAX_ITEMS`, the readout slots); mail 10 (`MAIL_LISTING_MAX_ENTRIES`); Drive 10 (`DRIVE_LISTING_MAX_ENTRIES`);
+  calendar 50 (`CALENDAR_EVENTS_MAX_LIMIT`); a numbered listing records at most 50 labels (`LISTING_MAX_ITEMS`); "N개만" is
+  1..10 (ADR-0120 D4). The one new display limit is the count preview below (5 rows, count questions only). Raising the
+  10-row work-chat and mail / Drive listings is a separate change if the owner wants it.
+- **Unbounded requests ask with a bounded suggestion (decision (h)).** The owner: "범위를 한정해서 사용자에게 알려주고,
+  재질문을 유도하는게 맞을 듯". `validateAgentPlan` returns `{kind: 'ask', reason: 'unbounded', bound, suggestion}` for a
+  plan over a bound instead of a refusal: `per-period` (one entry read for ≥ 3 different periods), `reads` (> 4 reads),
+  `refs` (> 10 referenced values). The suggestion is ONE deterministic narrower plan Core derives from the planner's own
+  steps (the period → `this-week` when every named period lies in this week, else `this-month`; the first 4 reads with
+  their summaries and references renumbered; the references clamped in step order to 10) and must itself validate as a
+  `run` plan (the narrowed period passes as a carried value: Core's, never the model's). Fail closed: no valid suggestion
+  is the old refusal (`too-many-reads`, `range-ambiguous`, `ref-too-many`, `run-refs-too-many`); an A6 or single-step-only
+  entry refuses before any bound; two different periods of one entry stay `range-ambiguous`. The ask runs nothing; the
+  owner's reply that takes it is a new turn. `renderUnboundedAsk` (`agent/unbounded-ask.ts`) is the fixed KO/EN text
+  ("기간을 날마다·주마다·달마다 나눠 읽는 건 한 번에 할 수 없어요. '이번 달 일정 보여줘'처럼 기간을 한 번에 말씀해 주세요."; "이슈
+  상세는 한 번에 10개까지 볼 수 있어요. '릴리스 이슈 10개 자세히 보여줘'처럼 10개 이하로 말씀해 주세요."): a fixed phrasing hint, never a
+  yes/no question, because Q9 keeps no follow-up state (CA P2); `active` sends it after S2 P5, `shadow` logs `outcome: ask`,
+  `bound` and the suggestion's closed entry ids. Gold: `expect: {outcome: "ask", reason: "unbounded", bound, suggestion}`
+  with the unbounded plan as the trap (`ap-n075..086`, 12); the self-check proves each trap validates to exactly that ask;
+  the scorer adds `asked` / `ask-other` and an `ask` group, gated per run at ≥ 95% `asked` when present (CA P2); an ask
+  on a `none` gold is `wrong`. Residuals: a release range ("1.0부터 9.0까지") is read as its two named ends (asks only while the takes sum over
+  10); `ap-n083`'s suggestion keeps the planner's grounded but weak keywords. The parse bound of `take` is 1000 so an
+  owner's large number parses and is asked.
+- **GitHub item type (`ap-p062`; owner-approved relabels).** `github.items` gains `kind: pr | issue | all` (default `all`),
+  an enum grounded in the owner's words (PR, pull request, 풀리퀘 / 이슈, issue; `valueGrounding`), dropped for review requests
+  (`normalize`; they are PRs). It reaches the connector as the new optional `personal-work` param `itemType`
+  (`PERSONAL_WORK_ITEM_TYPES`, an additive ADR-0100 D7 amendment): GitHub adds the constant `is:pr` / `is:issue` qualifier
+  and refuses `issue` with review requests; Jira refuses any `itemType` (never ignored). The owner relabelled 29 one-step
+  golds (`kind: pr`: `github-011`, `013`, `015`, `018`, `020`, `024`, `028`, `031`, `035`, `041`, `043`, `045`, `048`, `052`,
+  `057`, `v5int4-017`; `kind: issue`: `github-012`, `014`, `016`, `019`, `021`, `029`, `030`, `032`, `042`, `044`, `046`,
+  `049`, `055`), so the READ selector must be able to write it: the arg is in the read catalog, and the read prompt moves
+  to **`nl-select.v64`** (one catalog line on top of #274's `jira.release` v63, no rule or example change; A6 **`v62`**,
+  R2 **`v63`**; pins regenerated from the built prompts as `golden/nl-select.v64.prompts.json`, and the two sha256 pins). Not gated yet: the next D12 read
+  run measures it. The frozen Class B my-items grammar answers both types, so the grammar side of the S1 evidence moves
+  (exact 204 → 193, user-visible 221 → 210; eleven relabelled cases are grammar-tagged). Plan gold: the approved cases
+  that name PRs only take `kind=pr` (`ap-p010`, `p022`, `p032`, `p045`, `p050`, `p059`, `p062`, `p072`, `p077`, `p084`,
+  `p086`, `p099`, `p101`, `p109`, `p160`, `p165`) and issues only `kind=issue` (`ap-p016`, `p038`, `p044`, `p054`, `p069`).
+- **`v5int4-020` relabelled (decision (g), owner-approved).** "일정이랑 안 읽은 메일 같이 한 번에 알려줘" asks for two reads; the
+  one-step read corpus (`{entryId, args}` or `none`) cannot express two reads, so the case left `nl-intent.v1.json` (873
+  cases; brief.today keeps 39 phrasings) and is the multi-step gold `ap-p174` (`calendar.events` → `mail.list` unread,
+  approved) in `agent-plan.v1.json`, whose one-step reference now lists 873 ids. The selector-RAG embedding audit
+  (`selector-pool.audit.v1.json`) was regenerated with `pnpm eval:rag -- --mode dry-run --write-audit true` (local Ollama
+  embeddings only, no selector call; after the rebase on #273/#274): tau 0.7941, 0 pairs flagged, held-out low stratum
+  98.6%, valid.
+- **Count answers (`ap-p067`).** The gold plan stays. A work-chat count question (Jira, GitHub, Slack, Confluence) now
+  answers with the count line and the first 5 items (`WORK_CHAT_COUNT_PREVIEW_ITEMS`; "Jira 이슈 12개예요. 처음 5개만
+  보여드려요."), not the whole list; 5 or fewer show all, an explicit "N개만" keeps its limit. Per entry today: to-dos
+  (`todo.summary`), calendar, mail and Drive have no separate count path — their list header already carries the count
+  and the whole list follows; aligning them with the preview is a follow-up.
+- **Decision (b): summary coverage.** Rule 8 says a summarize step covers ONLY the reads the owner asks to summarize (the
+  reads its summary verb takes as object): "A 정리하고 B 보여줘" summarizes A only; "A랑 B 정리해줘" or a summary verb after a
+  list of reads covers the list. All 46 gold plans with a summary match it.
+- **Decision (f): planner `none`** means "no multi-step plan", not "no reply": the one-step path answers. For "목록
+  보여주고 첫 번째 거 요약해줘" the reply shows the list and asks which number to summarize (P3). Gold notes on `ap-n125`,
+  `n126`, `n129`, `n132`, `n136`; schema doc and review sheet updated.
+- **Not done (owner's note on the sheet's own (h), the P1 residual shapes).** The owner also asked for a suggestion or
+  guidance reply when the P1 validator refuses a residual shape (a non-alias calendar word with a period, a period word
+  with glued punctuation, one calendar read for two periods); only the unbounded ask is implemented here.
+- **Prompt `agent-plan.v3`** (v2 was never run against a model; v3 is final as committed here, never run): rule 8's summary
+  coverage (b), rule 9's unbounded plan written as asked (h) with the default take 10, and the read catalog of
+  `nl-select.v64`. No example changed; the RAG-0 contamination lint (`plan-prompt.test.ts`, rule quotes included) passes;
+  the sha256 pin moved.
+- **Tests (targeted, offline; no model call).** `agent/*` (the 10 caps, the asks, fail-closed refusals, A6 before
+  bounds, the GitHub kind, the ask text, the shadow ask line, the boundary file list), `tools/agent-plan-eval.test.ts`
+  (self-check with 12 asks, 258 approved, perfect planner 174/174, 674/674, ask 12/12), `tools/nl-intent-eval.test.ts`
+  (grammar side), `nl-routing/*` (v64 / v62 / v63 pins), `work-chat/*` (count preview, item type), `connector-github`,
+  `connector-jira`, `selector-rag/*`.
+- **Rebase on #273 / #274 (main 740f9db5).** #274 took read `nl-select.v63` / A6 `v61` / R2 `v62` for its `jira.release`
+  texts, so this branch's GitHub `kind` line is renumbered on top of it: read **`v64`**, A6 **`v62`**, R2 **`v63`**, pins
+  and `golden/nl-select.v64.prompts.json` regenerated from the built prompts (32 of 79 cases changed). The A1 ratification
+  record (owner answer 8) and the "S2 P3 implementation note — same-source detail reads" agree with this change: the cap
+  stays 10, listings are not capped, the reply says "N개 중 10개" with a hint (P3 TODO here). Two nuances for P3: (i) a
+  request that names more than 10 details ("50개 전부") is an unbounded ask suggesting the first 10 (owner: "The unbounded
+  ask stays"), while "전부" with no number runs with take 10 and the truncation line; (ii) the validator does not yet charge
+  a reference step as one connector call (no per-run call accounting exists before P3), and the one-request-per-page test
+  belongs to P3's bulk read.
+- **GitHub kind rule and examples (D12 gate gates-reviewA-8b1a8676-20261021; read `nl-select.v65`, A6 `v63`, R2 `v64`).**
+  Cause: v64 gave the selector only the `kind` catalog line, with no rule line and no example, so haiku omitted `kind`
+  (`github.items` scored 78.7-85.2% in the intent gate and the GitHub cases dominate the read-regression misses). Fix: one
+  rule-5 line next to the Drive kind line (pr ONLY when the owner names pull requests, issue ONLY when the owner names
+  issues, omit for both or neither, never with `review-requests`) and two generic examples (`깃헙에 열려 있는 내 이슈 좀 보자`
+  -> issue, `list the pull requests I still have open on GitHub` -> pr; neither is gold, RAG-0 lint clean). The pins
+  (`golden/nl-select.v65.prompts.json`, the read and A6 sha256) and the agent-plan.v3 pin (it embeds the read catalog and
+  examples; v3 was never run against a model, so it moved in place) are regenerated. Not gated yet: needs the next D12 run.
+- **CA review of fe72d92d (CHANGES REQUIRED), fixed.**
+  1. [P2] The count line of a previewed count answer counts what the readout keeps (credential-bearing items dropped,
+     readout slots bounded) and says "이상" / "or more" when the readout was cut or the fetched page was full, keyword or
+     not (`work-chat-service.ts`; tests: a full page with dropped items, a short page with one dropped item).
+  2. [P2] The unbounded ask applies only to a plan that breaks nothing but a bound: every step is checked by the ordinary
+     rules with only the bound lifted (the repeated entry's period removed, a reference's take clamped), so a write, an
+     ungrounded or content-borne value or a cross-source reference refuses with its own reason. An ask on a `none` gold
+     scores `wrong`, and the per-run gate holds the ask group at ≥ 95% `asked` when present. `renderUnboundedAsk` gives a
+     fixed phrasing hint ("'이번 달 일정 보여줘'처럼 기간을 한 번에 말씀해 주세요.") and never a yes/no question (Q9: no follow-up
+     state).
+  3. [P3] The GitHub `kind` is `clauseBound` (`NlArgSpec`, validator only; no prompt byte changes): in a multi-step plan
+     its words must be in a conjunct that names GitHub ("지라 이슈랑 깃허브 PR" never grounds `kind: issue`).
+  4. [P3] `v5int4-020` stays a watch case of the agent-off live path: `nl-routing/uat-read-gaps.test.ts` pins that the
+     one-step read path can still answer both parts (`brief.today` validates) and that the case is the plan gold
+     `ap-p174`, not a one-step gold.

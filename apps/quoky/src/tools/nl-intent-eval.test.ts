@@ -253,7 +253,8 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
     // The owner's D12 batch of 2026-10-15 relabelled calendar-008/-020/-025 (timedOnly), which the calendar grammar answers
     // without the flag: exact 209 → 208, user-visible 229 → 226. The T1 extension of the same day (calendar-005, -016,
     // -018, -029, -032, -034, -057 gain timedOnly; five are grammar-tagged) moves exact 208 → 204 (-016, -029, -032, -034;
-    // -018 was already not exact) and user-visible 226 → 221.
-    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 248, exact: 204, entry: 243, userVisible: 221, wrongCaptures: 0 });
+    // -018 was already not exact) and user-visible 226 → 221. The owner's relabel of 2026-10-21 (the item type `kind` on 29
+    // one-step cases) moves exact 204 → 193 and user-visible 221 → 210: eleven are grammar-tagged and the frozen my-items grammar answers both types.
+    expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 248, exact: 193, entry: 243, userVisible: 210, wrongCaptures: 0 });
   });
 });

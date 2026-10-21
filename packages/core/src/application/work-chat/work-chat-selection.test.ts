@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nlSelectionForWorkChatCommand, workChatCommandForSelection } from './work-chat-selection';
+import { nlSelectionForWorkChatCommand, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
 import { detectWorkChatCommand } from './work-chat-command';
 
 describe('workChatCommandForSelection — Jira status (ADR-0120 follow-up)', () => {
@@ -22,6 +22,24 @@ describe('workChatCommandForSelection — Jira status (ADR-0120 follow-up)', () 
 
   it('keeps the default open status out of the options', () => {
     expect(workChatCommandForSelection({ entryId: 'jira.issues', args: {}, language: 'ko' })).not.toHaveProperty('personalWork');
+  });
+});
+
+describe('workChatCommandForSelection — the GitHub item type (owner review 2026-10-21, ap-p062)', () => {
+  it('carries kind pr / issue of the owner\'s own items as itemType; all, none and review requests carry none', () => {
+    expect(workChatCommandForSelection({ entryId: 'github.items', args: { kind: 'pr' }, language: 'en' })).toMatchObject({ source: 'github', query: 'my-items', itemType: 'pr' });
+    expect(workChatCommandForSelection({ entryId: 'github.items', args: { kind: 'issue', keyword: '로그인' }, language: 'ko' })).toMatchObject({ query: 'my-items', text: '로그인', itemType: 'issue' });
+    expect(workChatCommandForSelection({ entryId: 'github.items', args: { kind: 'all' }, language: 'ko' })).not.toHaveProperty('itemType');
+    expect(workChatCommandForSelection({ entryId: 'github.items', args: {}, language: 'ko' })).not.toHaveProperty('itemType');
+    expect(workChatCommandForSelection({ entryId: 'github.items', args: { query: 'review-requests', kind: 'issue' }, language: 'ko' })).not.toHaveProperty('itemType');
+  });
+
+  it('maps the item type back to the canonical selection', () => {
+    expect(nlSelectionForWorkChatCommand({ kind: 'lookup', source: 'github', query: 'my-items', itemType: 'pr' })).toEqual({ entryId: 'github.items', args: { kind: 'pr' } });
+  });
+
+  it('a count line without a preview is unchanged', () => {
+    expect(renderWorkChatCount('github', { count: 3, truncated: false }, 'ko')).toBe('GitHub 항목 3개예요.');
   });
 });
 

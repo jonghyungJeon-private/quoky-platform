@@ -60,15 +60,20 @@ export function workChatCommandForSelection(selected: NlSelectedCommand, groundi
         links: parseJiraReleaseLinks(groundingText),
       };
     }
-    case 'github.items':
+    case 'github.items': {
+      const reviewRequests = nlStringArg(args, 'query') === 'review-requests';
+      // Owner review 2026-10-21: the item type of the owner's own items (review requests are pull requests already).
+      const kind = nlStringArg(args, 'kind');
       return {
         kind: 'lookup',
         source: 'github',
-        query: nlStringArg(args, 'query') === 'review-requests' ? 'review-requests' : 'my-items',
+        query: reviewRequests ? 'review-requests' : 'my-items',
         ...(keyword !== undefined ? { text: keyword } : {}),
         ...bounded,
         ...listOnly,
+        ...(!reviewRequests && (kind === 'pr' || kind === 'issue') ? { itemType: kind } : {}),
       };
+    }
     case 'slack.search':
     case 'confluence.search':
       if (keyword === undefined) return null;
@@ -116,7 +121,7 @@ export function nlSelectionForWorkChatCommand(command: WorkChatCommand): NlGramm
           return command.query === 'review-requests'
             ? { entryId: 'github.items', args: { query: 'review-requests', ...keyword } }
             : command.query === 'my-items'
-              ? { entryId: 'github.items', args: { ...keyword } }
+              ? { entryId: 'github.items', args: { ...keyword, ...(command.itemType !== undefined ? { kind: command.itemType } : {}) } }
               : null;
         case 'slack':
         case 'confluence':
@@ -165,13 +170,20 @@ const COUNT_LABEL: Readonly<Record<WorkChatSource, { ko: string; en: string }>> 
   confluence: { ko: 'Confluence 검색 결과', en: 'Confluence results' },
 };
 
-/** The first line of a count answer ("Jira 이슈 3개예요."). */
+/**
+ * Owner review of 2026-10-21 (ap-p067, "count 와 일부 내역들도 같이"): a count answer shows the count and then at most this
+ * many items of the list (the first ones in the source's order), never the whole list.
+ */
+export const WORK_CHAT_COUNT_PREVIEW_ITEMS = 5;
+
+/** The first line of a count answer ("Jira 이슈 3개예요.", "… 12개예요. 처음 5개만 보여드려요."). */
 export function renderWorkChatCount(
   source: WorkChatSource,
-  listed: { readonly count: number; readonly truncated: boolean },
+  listed: { readonly count: number; readonly truncated: boolean; readonly shown?: number },
   language: 'ko' | 'en',
 ): string {
   const label = COUNT_LABEL[source];
-  if (language === 'en') return `${listed.count}${listed.truncated ? ' or more' : ''} ${label.en}.`;
-  return `${label.ko} ${listed.count}개${listed.truncated ? ' 이상이에요' : '예요'}.`;
+  const preview = listed.shown !== undefined && listed.shown < listed.count;
+  if (language === 'en') return `${listed.count}${listed.truncated ? ' or more' : ''} ${label.en}.${preview ? ` Showing the first ${listed.shown}.` : ''}`;
+  return `${label.ko} ${listed.count}개${listed.truncated ? ' 이상이에요' : '예요'}.${preview ? ` 처음 ${listed.shown}개만 보여드려요.` : ''}`;
 }

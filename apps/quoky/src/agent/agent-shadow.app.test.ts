@@ -426,7 +426,7 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
     expect(plannerCalls()).toHaveLength(0);
   });
 
-  it('off is byte-identical over the nl-intent corpus (every golden selector answer, 874 cases, reminder phrases included)', async () => {
+  it('off is byte-identical over the nl-intent corpus (every golden selector answer, 873 cases, reminder phrases included)', async () => {
     const corpus = JSON.parse(readFileSync(join(__dirname, '../../../../packages/core/src/application/golden/nl-intent.v1.json'), 'utf8')) as {
       cases: Array<{ text: string; expect: 'none' | { entryId: string; args: Record<string, unknown> } }>;
     };

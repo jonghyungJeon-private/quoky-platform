@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { NlCatalogEntry } from './catalog';
 import { buildSelectionPrompt, NL_SELECTION_PROMPT_VERSION } from './selection-prompt';
@@ -47,7 +48,7 @@ describe('R3 symbolic time: last-<weekday>, this-<weekday>, week-after-next, res
 
   it('shows the selector the new symbols', () => {
     const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v63');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v65');
     expect(prompt).toContain('week-after-next');
     expect(prompt).toContain('rest-of-month');
     expect(prompt).toContain('last-mon..last-sun');
@@ -153,7 +154,7 @@ describe('R2/R5 calendar part of day and timed-only are grounded in the owner wo
 
   it('T1 (owner, 2026-10-15; prompt nl-select.v24): a meeting word means timed events in the arg description and the meeting examples', () => {
     const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v63');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v65');
     expect(prompt).toContain('timedOnly: true. true when the owner asks about meetings/timed events and away from all-day entries such as leave or holidays ("회의만", "미팅만", "only meetings").');
     expect(prompt).not.toContain('true only when the owner narrows');
     expect(prompt).toContain('Output: {"entryId":"calendar.events","args":{"range":"tomorrow","timedOnly":true}');
@@ -280,5 +281,28 @@ describe('review polish: version numbers are not dates', () => {
   });
   it.each(['10.07', '10/7', '10월 7일', '2026.10.07', '12/31', '1.15'])('%s is a date', (text) => {
     expect(isTimeExpression(text)).toBe(true);
+  });
+});
+
+// CA P3 on the S2 review (2026-10-21): `v5int4-020` left the one-step read corpus (two reads; now the plan gold ap-p174).
+// It stays a WATCH case of the agent-off live path, so the read coverage is not lost: until the agent runs `active`, the
+// one-step read path answers this message, and its only one-step answer that shows both parts is the daily brief.
+describe('watch: v5int4-020 on the agent-off live path (owner relabel 2026-10-21)', () => {
+  const TEXT = '일정이랑 안 읽은 메일 같이 한 번에 알려줘';
+
+  it('the one-step read path can still answer both parts (brief.today validates), and a single source read is grounded too', () => {
+    expect(validateSelection({ entryId: 'brief.today', args: {} }, ctx(TEXT))).toMatchObject({ ok: true });
+    expect(validateSelection({ entryId: 'mail.list', args: { unread: true } }, ctx(TEXT))).toMatchObject({ ok: true });
+  });
+
+  it('is no longer a one-step gold and is the two-read plan gold ap-p174', () => {
+    const read = JSON.parse(readFileSync(new URL('../golden/nl-intent.v1.json', import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string }> };
+    expect(read.cases.some((golden) => golden.id === 'v5int4-020' || golden.text === TEXT)).toBe(false);
+    const plan = JSON.parse(readFileSync(new URL('../golden/agent-plan.v1.json', import.meta.url), 'utf8')) as {
+      cases: Array<{ id: string; text: string; status: string; expect: { steps: Array<{ entryId?: string }> } }>;
+    };
+    const moved = plan.cases.find((golden) => golden.id === 'ap-p174');
+    expect(moved).toMatchObject({ text: TEXT, status: 'approved' });
+    expect(moved?.expect.steps.map((step) => step.entryId)).toEqual(['calendar.events', 'mail.list']);
   });
 });

@@ -142,7 +142,7 @@ export function defaultDeps(): AgentPlanCliDeps {
 /** The report lines of one run (content-free: counts, rates, families and closed entry ids). */
 export function formatAgentPlanSummary(summary: AgentPlanEvalSummary): string[] {
   const lines = [
-    `multi-step exact: ${summary.groups.multiStep.exact}/${summary.groups.multiStep.total} (${pct(summary.groups.multiStep.rate)})  one-step exact: ${summary.groups.oneStep.exact}/${summary.groups.oneStep.total} (${pct(summary.groups.oneStep.rate)})`,
+    `multi-step exact: ${summary.groups.multiStep.exact}/${summary.groups.multiStep.total} (${pct(summary.groups.multiStep.rate)})  one-step exact: ${summary.groups.oneStep.exact}/${summary.groups.oneStep.total} (${pct(summary.groups.oneStep.rate)})  ask: ${summary.groups.ask.exact}/${summary.groups.ask.total}`,
     `exact plans: ${summary.exact}/${summary.positives} (${pct(summary.exactRate)})  wrong on negatives: ${summary.wrongOnNegatives}/${summary.negatives}` +
       `  calls: ${summary.calls}  over the ${summary.latency.boundMs / 1000} s bound: ${summary.latency.overBound} (${pct(summary.overBoundRate)})  capped: ${summary.capped}`,
     `outcomes: ${Object.entries(summary.outcomes).sort(([a], [b]) => (a < b ? -1 : 1)).map(([outcome, count]) => `${outcome} ${count}`).join(', ')}`,
@@ -169,7 +169,7 @@ function describeMiss(record: AgentPlanEvalRecord): string {
     record.diff !== undefined ? `diff ${record.diff}${record.diffStep !== undefined ? `@${record.diffStep}` : ''}` : undefined,
     record.error !== undefined ? `error ${record.error}` : undefined,
   ].filter((part): part is string => part !== undefined);
-  return `  run ${record.run} ${record.outcome.padEnd(9)} ${record.id} (${record.family}) want ${record.expected === 'none' ? 'none' : record.goldEntries.join('+')} ${detail.join(' ')}`.trimEnd();
+  return `  run ${record.run} ${record.outcome.padEnd(9)} ${record.id} (${record.family}) want ${record.expected === 'plan' ? record.goldEntries.join('+') : record.expected} ${detail.join(' ')}`.trimEnd();
 }
 
 export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = defaultDeps()): Promise<number> {

@@ -139,6 +139,15 @@ describe('JiraConnectorProvider', () => {
     await expect(jira.query(personalWork('account-123', { sort: 'created ASC; DROP' as never }))).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
   });
 
+  it('owner review 2026-10-21: the GitHub item type has no Jira meaning and is refused before any request', async () => {
+    const fake = fakeFetch(200, { issues: [] });
+    const jira = provider(fake.fetchImpl);
+    for (const itemType of ['pr', 'issue']) {
+      await expect(jira.query(personalWork('account-123', { itemType }))).rejects.toMatchObject({ reason: 'UNSUPPORTED_QUERY' });
+    }
+    expect(fake.calls).toEqual([]);
+  });
+
   it('ADR-0120 P3: bounds created/updated by minutes relative to now, so the Jira profile time zone cannot shift the window', async () => {
     const fake = fakeFetch(200, { issues: [] });
     // Now: 2026-10-12 12:00 in Asia/Seoul (03:00Z). "Today" in Seoul is [2026-10-11T15:00Z, 2026-10-12T15:00Z).

@@ -9,6 +9,7 @@ import { renderUntrustedDocumentHistoryNote } from '../untrusted-document-readou
 import type { WorkChatCommand } from './work-chat-command';
 import { WorkChatService, type WorkChatOutcome, type WorkChatServiceDeps, type WorkDesk, type WorkItemRead } from './work-chat-service';
 import { WorkChatTurnHandler } from './work-chat-turn-handler';
+import { renderWorkChatCount } from './work-chat-selection';
 
 const owner: Actor = {
   id: 'owner-1',
@@ -81,6 +82,44 @@ describe('WorkChatService: numbered lists (A6 R2, D1)', () => {
     expect(outcome.text).toMatch(/^1\. \[jira:PROJ-1\] Task 1/m);
     expect(outcome.text).toMatch(/^3\. \[jira:PROJ-3\] Task 3/m);
     expect(outcome.text).not.toContain('- [');
+  });
+
+  it('owner review 2026-10-21 (ap-p067): a count answer carries the readout count and shows only the first 5 numbered rows', async () => {
+    const counted = (listed: unknown) => listed as { count: number; truncated: boolean; shown?: number };
+    const eight = new FakeConnector('jira', () => ({ source: 'jira', items: jiraItems(8) }));
+    const outcome = await service([eight], { numberedLists: true }).handle(jiraMineList, owner);
+    if (outcome.kind !== 'reply') throw new Error('expected reply');
+    expect(outcome.listed).toEqual({ count: 8, truncated: false, shown: 5 });
+    expect(outcome.listing?.items.map((item) => item.label)).toEqual([1, 2, 3, 4, 5]);
+    expect(outcome.text).toMatch(/^5\. \[jira:PROJ-5\] Task 5/m);
+    expect(outcome.text).not.toContain('Task 6');
+    expect(renderWorkChatCount('jira', counted(outcome.listed), 'ko')).toBe('Jira 이슈 8개예요. 처음 5개만 보여드려요.');
+    expect(renderWorkChatCount('jira', counted(outcome.listed), 'en')).toBe('8 Jira issues. Showing the first 5.');
+    // Five or fewer: the whole list, no preview note; an explicit "N개만" keeps its own limit.
+    const few = await service([new FakeConnector('jira', () => ({ source: 'jira', items: jiraItems(5) }))], { numberedLists: true }).handle(jiraMineList, owner);
+    if (few.kind !== 'reply') throw new Error('expected reply');
+    expect(few.listed).toEqual({ count: 5, truncated: false });
+    expect(renderWorkChatCount('jira', counted(few.listed), 'ko')).toBe('Jira 이슈 5개예요.');
+    const limited = await service([eight], { numberedLists: true }).handle({ ...jiraMineList, limit: 7 } as WorkChatCommand, owner);
+    if (limited.kind !== 'reply') throw new Error('expected reply');
+    expect(limited.listing?.items).toHaveLength(7);
+  });
+
+  it('CA P2: the count is "or more" when the fetched page was full (no keyword), and counts only the items the readout keeps', async () => {
+    const counted = (listed: unknown) => listed as { count: number; truncated: boolean; shown?: number };
+    // A full page of 20 with 12 credential-bearing titles: the readout keeps 8 and is not cut, but the page was full.
+    const page = jiraItems(20).map((item, i) => (i < 12 ? { ...item, title: `password: hunter2secret${i}` } : item));
+    const full = await service([new FakeConnector('jira', () => ({ source: 'jira', items: page }))], { numberedLists: true }).handle(jiraMineList, owner);
+    if (full.kind !== 'reply') throw new Error('expected reply');
+    expect(full.listed).toEqual({ count: 8, truncated: true, shown: 5 });
+    expect(renderWorkChatCount('jira', counted(full.listed), 'ko')).toBe('Jira 이슈 8개 이상이에요. 처음 5개만 보여드려요.');
+    expect(full.text).not.toContain('hunter2secret');
+    // A short page with one dropped item: 7 of 8 counted, not "or more".
+    const one = jiraItems(8).map((item, i) => (i === 2 ? { ...item, title: 'token AKIAIOSFODNN7EXAMPLE' } : item));
+    const dropped = await service([new FakeConnector('jira', () => ({ source: 'jira', items: one }))], { numberedLists: true }).handle(jiraMineList, owner);
+    if (dropped.kind !== 'reply') throw new Error('expected reply');
+    expect(dropped.listed).toEqual({ count: 7, truncated: false, shown: 5 });
+    expect(dropped.text).not.toContain('AKIAIOSFODNN7EXAMPLE');
   });
 
   it('with summaries off the lookup is the numbered list with a receipt', async () => {
