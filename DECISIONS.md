@@ -28404,3 +28404,67 @@ analysis and an ADR-0121 amendment, and decision (e) for its own amendment (Q6).
   4. [P3] `v5int4-020` stays a watch case of the agent-off live path: `nl-routing/uat-read-gaps.test.ts` pins that the
      one-step read path can still answer both parts (`brief.today` validates) and that the case is the plan gold
      `ap-p174`, not a one-step gold.
+
+### ADR-0120 implementation note — read residuals of the D12 gate: owner decisions A and B (2026-10-22)
+
+Context: the D12 read gates fail on two residuals (also on main): `jira.release` (a8-12 "차란차 운영 2026 릴리스 뭐뭐
+있어?" → `{project: "차란차 운영", release: "2026"}`; a8-08 "OP26 20261015 버전에 뭐 들어갔어?" → `{project: "OP"}` or
+`{release: "OP26 20261015"}`) and the help boundary (neg-010 "슬랙에서 검색하는 방법 알려줘" and neg-122 / neg-025 / neg-012 /
+neg-014 captured as `help.topic`). Owner rule of the same day: no hardcoding — no per-case exceptions, no phrase or word
+lists, no project-name specifics; answers resolved by the existing selection and confirmation machinery. No prompt byte
+changed (read `nl-select.v65`, A6 `v63`, R2 `v64` stay).
+
+- **Decision A — an ambiguous "how to do X in <source>" is asked.** A `help.topic` selection with the GENERAL topic
+  (absent or the arg's default `all`) whose owner text names exactly one source family by the catalog's own
+  `sourceNames` (`NL_CATALOG_SOURCE_NAMES`, derived from the wave-1 entries; matched like every grounding word) is not
+  answered: Core asks "Quoky로 슬랙을 조회하는 방법을 물으신 건가요, 아니면 슬랙 앱 자체의 사용법인가요?" with two numbered
+  options, kept as the D7 `entry` question (`appSource`: the catalog source name as written). "1" (or the help entry's
+  label / aliases) runs the help; "2" (or the ordinal) gets a fixed honest note ("그건 슬랙 앱 자체의 사용법이라 제가 안내해
+  드리긴 어려워요. …"), never instructions for the other app; any other reply routes through selection as usual (no word
+  list for the answer). The same question replaces a one-option clarification whose only read is that help.
+  - *Measured before committing* (`help-scope.test.ts`): 0 of the 51 positive `help.topic` golds of `nl-intent.v1.json`
+    and 0 of the 6 of `nl-action.v1.json` fire (`agent-plan.v1.json` has none). Widening the rule to the `work-lookup`
+    topic would ask on 4 capability positives (help-018 "너 jira 볼 수 있어?", help-019, help-020, help-031); no
+    structural signal separates "can you read X" from "how do I search in X" without a phrase list, so feature and
+    source topics (`work-lookup`, `drive`, `calendar`, …) stay the selector's reading.
+  - *Not applied:* the "the owner asks about Quoky itself" clause: the help entry carries no structural Quoky-name signal
+    (its aliases are 도움말 / 사용법 / help / 기능), and adding one would be a new word list.
+  - *Residual:* when the selector names `help.topic` with `topic: work-lookup` for neg-010 (the observed output), Core
+    still answers the help; the deterministic rule cannot catch it without the phrase list above. The gold now scores
+    that as a miss, not a wrong capture (below). Closing it is a selector matter (a prompt change, gated), left open.
+  - *Gold:* `neg-010` carries `clarify: { between: ["help.topic"], batch }`; `expect` stays `none`. Scoring (intent and
+    read-regression scorers): a clarification is asked; a CLEAR capture of a listed entry is a `miss`, never a wrong
+    capture; a CLEAR `none` is the safe fallback; any other capture is still wrong. Reported as "clarification golds
+    asked: n/m", not gated. Both scorers also score Core's final outcome: a CLEAR general help about a named source is
+    `clarify` (neg-122 "what is Confluence?" and neg-025 then clarify when the selector gives the general topic).
+- **Decision B — a project near-match is confirmed.** In `jira-release-lookup.ts`, when the owner's project words name no
+  visible project as written (`matchProjectsTiered`: key, exact name and containment stay direct; the whole-words tier
+  "차란차 운영 2026" ⊂ "차란차 플랫폼 운영 2026" and nothing at all are near), on the COMPLETE listing only: (1) of the near
+  projects, the one holding the owner's release is confirmed with it; (2) else the project words with the release words
+  joined, when exactly one project holds them all as whole words (or spells them out), are confirmed and then listed, so
+  `{project: "차란차 운영", release: "2026"}` and `{project: "차란차 운영 2026"}` reach the same question; the same joined
+  check runs after a contained-name ambiguity ("Mobile App" + "2026" → "Mobile App Ops 2026"); (3) else one near project
+  (a small edit distance when no word matched: ≤ 1 edit per 4 characters, closest only; never on joined words) is
+  confirmed, several keep the ambiguous list, none the not-found reply. The reply: "'차란차 플랫폼 운영 2026 (OP26)'
+  프로젝트가 맞나요? (응 / 아니)". Nothing is read from the project before the yes.
+  - *Mechanism reused:* the D7 pending question. The handler reply carries `nlConfirm` (new optional field of
+    `TurnHandlerReply`, like `nlSelection`); the runtime hands it to `NlSelectionService.recordConfirmQuestion`, which
+    saves the one-option `entry` question with `confirm`. Its answer uses the A6 elliptical-continuation confirmation's
+    closed reply sets (`interpretContinuationConfirmReply`): a yes (or "1") runs `jira.release` with the project key and
+    the owner's release words (the normal lookup, read-only, its basis line), a no ends it with the fixed cancel note;
+    anything else routes as usual. Only a natural-language selection turn asks (`confirmNear`), so no question is left
+    without a way to answer it.
+  - *Channel:* a named release may be confirmed there (its own items answer in a channel); a project's release list stays
+    DM-only (A8 owner decision 7).
+  - *Token shape (`normalizeJiraReleaseArgs`, `extendProjectToken`):* a `project` of ASCII letters and digits that is only
+    part of exactly one ASCII letters-and-digits token of the owner's prose (links removed; never a whole token itself,
+    never the release value, never a carried value) is that whole token: "OP" → "OP26". The validator runs it, so the
+    runtime and both scorers see the same canonical args: a8-08's `{project: "OP"}` output now scores a hit.
+  - *Scorer equivalence — blocked, reported.* The owner asked the scorer to compare `jira.release` args through the same
+    generic canonicalization the runtime applies, never per-case `alsoAccept`. The static canonicalization the runtime
+    applies is `normalizeJiraReleaseArgs` (above), and both scorers already validate through it. The remaining
+    equivalences — `{project: "차란차 운영", release: "2026"}` ≡ `{project: "차란차 운영 2026"}` (a8-12) and
+    `{release: "OP26 20261015"}` ≡ `{project: "OP26", release: "20261015"}` (a8-08) — hold only against the visible
+    project and version listings (whether a release "2026" exists, whether OP26 is a visible key), which the scorer does
+    not have; a listing-free canonical form would have to make the lookup ignore the selector's project/release boundary,
+    which rewrites the A8 lookup order. So no `alsoAccept` was added and these two outputs still score as misses.

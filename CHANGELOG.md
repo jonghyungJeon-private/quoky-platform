@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — read residuals of the D12 gate, owner decisions A and B (2026-10-22)
+
+- **Added.** A general help question that names one catalog source ("슬랙에서 검색하는 방법 알려줘") asks whether the owner
+  means Quoky's way of reading it or the source app itself (a numbered D7 question: 1 runs the help, 2 a fixed honest
+  note). Structural (general topic, the catalog's own `sourceNames`); no positive help gold fires.
+- **Added.** A Jira project reached only by a near match (whole words of a longer name, the project and release words
+  joined, or a small typo) is confirmed first ("'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? (응 / 아니)"); a yes shows
+  its release list (or the named release), a no ends it. New optional `TurnHandlerReply.nlConfirm`, kept by the runtime
+  as the one-option D7 question.
+- **Changed.** A `jira.release` project that is only part of one ASCII letters-and-digits token of the owner's words is
+  that whole token ("OP" → "OP26").
+- **Changed (eval).** The intent and read-regression scorers score Core's help-scope question as a clarification; the
+  corpus gains a clarification gold (`clarify`), `neg-010`, reported as "clarification golds asked" (not gated). No
+  prompt byte changed. The selector-RAG audit record needs regenerating (gold bytes changed).
+
 ## Unreleased — development harness hardening (2026-10-21)
 
 - **Added.** Provider-outage guard for `eval:nl` (intent, action, read-regression, r2), `eval:agent-plan` and
