@@ -2,7 +2,7 @@ import type { NlArgs, NlCatalogEntry, NlCatalogEntryId } from '../nl-routing/cat
 import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
 
 /**
- * ADR-0121 D1 / D12 (stage S2 P1, P2): the planner prompt `agent-plan.v3` (v2 plus the v3 edits below).
+ * ADR-0121 D1 / D12 (stage S2 P1, P2): the planner prompt `agent-plan.v4` (v3 plus the v4 edits below).
  *
  * It is the read selection prompt (`nl-select.vN`, the gated ADR-0120 prompt) over the offered READ entries only, with
  * four fixed edits, so a one-step plan is exactly today's selection:
@@ -35,9 +35,12 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
  * none; and the read catalog it embeds was `nl-select.v65` (the GitHub `kind`: pr / issue / all). The reference default
  * stays 10 (decision (c): the owner kept the ADR-0121 D2 cap). No planner example changed; the embedded read catalog and
  * examples carry the read v65 GitHub `kind` rule and two examples (v3 was still never run against a model, so its pin moved in place).
- * Owner answer 2 of 2026-10-22: the embedded read rules are `nl-select.v66` (rule 3's unclear how-to about a source Quoky
- * reads: NEEDS_CLARIFICATION with help.topic); the pin moved in place again, as the coordinator directed. */
-export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v3';
+ *
+ * v3 -> v4 (CA review of the read residuals, rule Q2, 2026-10-22): the planner bytes changed twice after the v3 pin (the
+ * read v65 GitHub `kind` rule and examples, then the read `nl-select.v66` rule 3: an unclear how-to about a source Quoky
+ * reads is NEEDS_CLARIFICATION with help.topic, owner answer 2), so the version moves; no planner rule or example changed.
+ * The read / A6 / R2 rendered bytes are unchanged by this bump (the version string is not part of the prompt). */
+export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v4';
 
 export interface AgentPlanPromptInput {
   /** The offered entries; only `READ` entries are shown to the planner. */

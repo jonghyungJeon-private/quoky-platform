@@ -46,6 +46,15 @@ describe('read residuals (owner decisions A and B, 2026-10-22)', () => {
     expect((await h.sessionMetadata())['quoky.nlPending']).toBeUndefined();
   });
 
+  it('B in a channel (CA review W5): a named release may be confirmed there, and the yes shows that release', async () => {
+    const asked = await h.turn('차란차 운영 2026 20261015 릴리스 보여줘', pick('jira.release', { project: '차란차 운영 2026', release: '20261015' }), h.channel);
+    expect(asked.text).toContain("'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? (응 / 아니)");
+    const yes = await h.turn('응', none, h.channel);
+    expect(yes.selects).toHaveLength(0);
+    expect(yes.text).toContain('배포일_20261015(목)');
+    expect(yes.text).toContain('차란차 플랫폼 운영 2026 (OP26)');
+  });
+
   it('A: "how to search in Slack" asks Quoky or the app; "2" is the fixed app note, "1" Quoky help', async () => {
     const asked = await h.turn('슬랙에서 검색하는 방법 알려줘', pick('help.topic'));
     expect(asked.text).toContain('Quoky로 슬랙을 조회하는 방법을 물으신 건가요, 아니면 슬랙 앱 자체의 사용법인가요?');

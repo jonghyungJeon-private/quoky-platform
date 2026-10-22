@@ -1034,6 +1034,12 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(h.calls).toHaveLength(2);
   });
 
+  it('CA review W2: a topic the selector named but Core dropped as out of set is not a general help: no help-scope question', async () => {
+    const h = harness({ script: [out('help.topic', { topic: 'slack' })] });
+    expect(await h.decide('너 슬랙 볼 수 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+  });
+
   it('positives stay untouched: a source-specific or feature topic, no source named, or two source families', async () => {
     const h = harness({
       script: [out('help.topic', { topic: 'work-lookup' }), out('help.topic', { topic: 'drive' }), out('help.topic'), out('help.topic', { topic: 'reminder' }), out('help.topic')],
@@ -1071,6 +1077,19 @@ describe('owner decision B (2026-10-22): a handler confirmation is the open D7 q
       expect(await h.decide(yes), yes).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { project: 'OP26' } } });
       expect(h.calls).toHaveLength(0);
     }
+  });
+
+  it('CA review W5: the confirmation expires after the 5-minute TTL, and another actor\'s yes never answers it', async () => {
+    const late = harness({ script: [NONE] });
+    await late.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', selection, 'ko', T0);
+    expect(await late.decide('응', { now: at(NL_PENDING_TTL_MS + 1) })).toEqual({ kind: 'none' });
+    const other = harness({ script: [NONE] });
+    await other.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', selection, 'ko', T0);
+    const member = { id: 'member-2', displayName: 'Member', identities: [], createdAt: T0 };
+    const decided = await other.service.decide({ text: '응', attachmentCount: 0, session: other.session, actor: member, now: T0, entries: ALL, route: 'chat', chatProviderId: 'scripted-selector' });
+    expect(decided).toEqual({ kind: 'none' });
+    // The owner's own yes still answers it afterwards (the member's turn did not consume it).
+    expect(await other.decide('응')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { project: 'OP26' } } });
   });
 
   it('a no ends the question politely; anything else routes as usual', async () => {

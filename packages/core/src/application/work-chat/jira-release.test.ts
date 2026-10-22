@@ -739,11 +739,15 @@ describe('owner decision B (2026-10-22): a near-matched project is confirmed wit
   });
 
   it('with a release the project holds, the confirmation carries the owner release words (a yes shows that release)', async () => {
-    expect((await ask({ project: '차란차 운영 2026', release: '20261015' })).confirm).toEqual({ project: 'OP26', release: '20261015' });
+    const one = await ask({ project: '차란차 운영 2026', release: '20261015' });
+    expect(one.confirm).toEqual({ project: 'OP26', release: '20261015' });
+    // CA review W3: before the yes only version lists are read (to find the project holding the release), never items.
+    expect(one.queries).toEqual(['containers', 'releases']);
     // Two near projects, only one holds the release: that one is confirmed.
     const narrowed = await ask({ project: '차란차 운영', release: '20261015' });
     expect(narrowed.text).toBe(QUESTION);
     expect(narrowed.confirm).toEqual({ project: 'OP26', release: '20261015' });
+    expect(narrowed.queries).toEqual(['containers', 'releases', 'releases']);
   });
 
   it('several near projects: the existing ambiguous list; none at all: the existing not-found reply', async () => {
@@ -762,6 +766,14 @@ describe('owner decision B (2026-10-22): a near-matched project is confirmed wit
     expect(asked.confirm).toEqual({ project: 'OP26' });
     expect(fuzzyProjects(live, '차란자 플랫폼 운영 2026').map((item) => item.id)).toEqual(['OP26']);
     expect(fuzzyProjects(live, '웹')).toEqual([]);
+  });
+
+  it('CA review W1: a different year or version digit is never a near match (digit runs must be equal)', async () => {
+    expect(fuzzyProjects(live, '코브랜드 운영 2025')).toEqual([]);
+    expect(fuzzyProjects(live, '차란자 플랫폼 운영 2027')).toEqual([]);
+    const other = await ask({ project: '코브랜드 운영 2025' });
+    expect(other.confirm).toBeUndefined();
+    expect(other.text).toContain('"코브랜드 운영 2025"에 맞는 Jira 프로젝트를 찾지 못했어요.');
   });
 
   it('a name the owner wrote out (key, exact, contained) is never asked about', async () => {

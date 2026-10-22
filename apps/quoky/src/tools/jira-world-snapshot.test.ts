@@ -97,3 +97,30 @@ describe('the agent-plan scorer compares jira.release steps the same way', () =>
     expect((await scoreAgentPlanOutputInWorld(one, other, loaded.corpus.fixture)).outcome).toBe('miss');
   });
 });
+
+describe('CA review (CRITICAL): an outcome reached before any release was read compares the args exactly', () => {
+  it('a project the snapshot does not hold: with or without the release is never the same outcome', async () => {
+    expect(await sameJiraReleaseOutcome('결제 프로젝트 5.0 릴리스 이슈들 상세도 같이 보여줘', { project: '결제' }, { project: '결제', release: '5.0' })).toBe(false);
+    expect(await sameJiraReleaseOutcome('결제 프로젝트 5.0 릴리스 이슈들 상세도 같이 보여줘', { project: '결제', release: '5.0' }, { project: '결제', release: '5.1' })).toBe(false);
+    expect(await sameJiraReleaseOutcome('결제 프로젝트 5.0 릴리스 이슈들 상세도 같이 보여줘', { project: '결제', release: '5.0' }, { project: '결제', release: '5.0' })).toBe(true);
+  });
+
+  it('every agent-plan jira.release gold whose project is not in the snapshot: dropping, adding or changing the release stays a miss', async () => {
+    const loaded = loadAgentPlanCorpus();
+    const cases = agentPlanEvalCases(loaded.corpus, loaded.oneStep).filter((candidate) => candidate.gold !== 'none' && 'steps' in candidate.gold && candidate.gold.steps.some((step) => 'entryId' in step && step.entryId === 'jira.release' && typeof step.args?.project === 'string'));
+    expect(cases.map((candidate) => candidate.id)).toEqual(expect.arrayContaining(['ap-p046', 'ap-p111', 'ap-p116', 'ap-p119', 'ap-p123']));
+    for (const golden of cases) {
+      if (golden.gold === 'none' || !('steps' in golden.gold)) continue;
+      const step = golden.gold.steps.find((candidate) => 'entryId' in candidate && candidate.entryId === 'jira.release') as { entryId: string; args: Record<string, string> };
+      if (loadJiraWorldSnapshot().projects.some((project) => project.name.includes(step.args.project as string))) continue;
+      const { release, ...withoutRelease } = step.args;
+      const variant = release === undefined ? { ...step.args, release: '0.0.1' } : withoutRelease;
+      expect(await sameJiraReleaseOutcome(golden.text, variant, step.args), golden.id).toBe(false);
+      if (release !== undefined) expect(await sameJiraReleaseOutcome(golden.text, { ...step.args, release: `${release}.9` }, step.args), golden.id).toBe(false);
+    }
+  });
+
+  it('a DM-only refusal before any read (every assignee in a channel) compares the args exactly', async () => {
+    expect(await sameJiraReleaseOutcome('전체 담당 릴리스', { release: '20261015', scope: 'all' }, { release: '20261016', scope: 'all' }, { channel: true })).toBe(false);
+  });
+});

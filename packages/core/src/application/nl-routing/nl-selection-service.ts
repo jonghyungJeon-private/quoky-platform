@@ -1049,7 +1049,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
         // CA P3: every dropped detail is logged (arg name and kind only), so a silently widened read is visible in review.
         // Arg names from the catalog only (Codex P2): a model-made name is logged as `other`.
         this.log('info', 'nl_selection.detail_dropped', { entryId: lenient.result.value.entry.id, dropped: lenient.dropped.map((detail) => `${NL_CATALOG_ARG_NAMES.has(detail.arg) ? detail.arg : 'other'}:${detail.kind}`).join(',') });
-        return this.completeOrAskScope(lenient.result.value, turn, last, language, prepared.groundingText);
+        // CA review W2: the selector named a topic here (dropped as out of set), so the help is not the general one it
+        // would be without a topic: the help-scope rule (for genuinely general CLEAR selections) does not apply.
+        return this.complete(lenient.result.value, turn, last, language, prepared.groundingText);
       }
     }
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action

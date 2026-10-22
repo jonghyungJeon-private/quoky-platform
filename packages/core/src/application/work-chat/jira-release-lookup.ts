@@ -395,16 +395,20 @@ export function nearProjectsOfJoined(projects: readonly ConnectorItem[] | undefi
 }
 
 /**
- * The visible projects whose name (letters and digits only) is within a small edit distance of the owner's words: at most
- * one edit per four characters of the words (four characters at least), the closest only (a tie: all of them).
+ * The visible projects whose name (letters and digits only) is within a small edit distance of the owner's words: the
+ * digit runs (a year, a version) must be equal, in order (CA review W1: "… 2025" never offers "… 2026"), and the distance
+ * is counted over the other characters only, at most one edit per four of them (four at least); the closest only (a tie:
+ * all of them).
  */
 export function fuzzyProjects(projects: readonly ConnectorItem[], text: string): ConnectorItem[] {
   const wanted = compact(withoutWords(text, PROJECT_WORDS) || text);
-  const length = Array.from(wanted).length;
-  const allowed = Math.floor(length / 4);
+  const digitRuns = (value: string): string => JSON.stringify(value.match(/\p{N}+/gu) ?? []);
+  const letters = (value: string): string => value.replace(/\p{N}+/gu, '');
+  const allowed = Math.floor(Array.from(letters(wanted)).length / 4);
   if (allowed < 1) return [];
   const scored = projects
-    .map((item) => ({ item, distance: editDistance(wanted, compact(item.title), allowed) }))
+    .filter((item) => digitRuns(compact(item.title)) === digitRuns(wanted))
+    .map((item) => ({ item, distance: editDistance(letters(wanted), letters(compact(item.title)), allowed) }))
     .filter((entry) => entry.distance <= allowed);
   if (scored.length === 0) return [];
   const best = Math.min(...scored.map((entry) => entry.distance));
