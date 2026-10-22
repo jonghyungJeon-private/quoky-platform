@@ -39,7 +39,7 @@ import { isDirectConversation } from '../message-rendering';
 import { LAST_LISTING_METADATA_KEY, readListingRecord } from '../last-listing';
 import { surfaceClaimOf, surfaceGroupsOfWorkChatCommand } from '../surface-grants/surface-group-map';
 import { surfaceChannelHolds } from '../surface-grants/surface-permit';
-import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
+import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, releaseCommandForSelection, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
 import {
   EXTERNAL_WORK_EXCERPT_MAX_CHARS,
   EXTERNAL_WORK_FIELD_MAX_CHARS,
@@ -165,19 +165,20 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     if (selected.entryId === 'item.summarize') return this.summarizeItem(selected, ctx);
     // ADR-0120 A8: a release link is read from the owner's own non-quoted words only (quoted or fenced text is data).
     const prepared = selected.entryId === 'jira.release' ? prepareSelectionInput(ctx.message.text, 0, ctx.message.quotedRanges ?? []) : undefined;
-    const mapped = workChatCommandForSelection(selected, prepared === undefined || 'skip' in prepared ? '' : prepared.groundingText);
+    const groundingText = prepared === undefined || 'skip' in prepared ? '' : prepared.groundingText;
+    // ADR-0120 A8 owner decision 7: a release listing knows whether it answers in a channel — every-assignee scope and the
+    // lists stay DM-only there unless the gate is enforced and the channel holds `jira-project` (ADR-0122 P2).
+    const mapped =
+      selected.entryId === 'jira.release'
+        ? releaseCommandForSelection(selected, groundingText, { inChannel: !surfaceChannelHolds(ctx.message.context, ctx.surfacePermit, 'jira-project') })
+        : workChatCommandForSelection(selected, groundingText);
     if (mapped === null) return null;
     // A status view is DM-only in a channel unless the gate is enforced and the channel holds `todo` (ADR-0122 P2, Codex
     // P2 of #221); with the gate off it stays DM-only. Nothing is read when refused.
     if (mapped.kind === 'todo.list' && mapped.status !== undefined && !surfaceChannelHolds(ctx.message.context, ctx.surfacePermit, 'todo')) {
       return { reply: outboundMessage(ctx.message.context, renderListStatusDmOnly(selected.language), { replyToMessageId: ctx.message.id }) };
     }
-    // ADR-0120 A8 owner decision 7: a release listing knows whether it answers in a channel — every-assignee scope and the
-    // lists stay DM-only there unless the gate is enforced and the channel holds `jira-project` (ADR-0122 P2).
-    // Owner decision B (2026-10-22): a selection turn can keep a confirmation open, so a near-matched project is asked.
-    const release = mapped.kind === 'release' ? { ...mapped, confirmNear: true as const } : mapped;
-    const command =
-      release.kind === 'release' && !surfaceChannelHolds(ctx.message.context, ctx.surfacePermit, 'jira-project') ? { ...release, inChannel: true as const } : release;
+    const command = mapped;
     const { outcome, listed } = await this.run(command, ctx, selected.language);
     if (command.kind !== 'lookup' || command.listOnly !== true || listed === undefined || outcome === null) return outcome;
     if (outcome.kind !== undefined && outcome.kind !== 'reply') return outcome;

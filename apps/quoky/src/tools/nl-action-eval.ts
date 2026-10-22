@@ -75,6 +75,7 @@ import {
   type NlSelectionDecision,
   type Session,
 } from '@quoky/core';
+import { sameJiraReleaseOutcome } from './jira-world-snapshot';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
 import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, parseNlRef, withLastRead } from '@quoky/core';
 
@@ -822,6 +823,8 @@ export interface NlReadRegressionCase {
   readonly text: string;
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
+  /** The case was asked in a channel (the scorer's snapshot lookup answers as the runtime does there). */
+  readonly channel?: boolean;
   /**
    * The owner-approved gold with the A6 entries offered, scored apart: a summary-`none` case relabelled to
    * `item.summarize` (ratification decision 10), or an anchored action command whose A6 action is the gold (owner decision
@@ -859,7 +862,7 @@ export type NlReadRegressionOutcome = 'hit' | 'miss' | 'clarify' | 'none' | 'wro
  * reason-clause statement of feeling, a quoted request only talked about: `nlReadNotRequest`) ends as `none` (chat) before
  * any validation; an action selection keeps its own path.
  */
-export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, now: string): { readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string } {
+export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, now: string): { readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string; readonly gotArgs?: NlArgs } {
   const relabeled = golden.a6Relabel !== undefined;
   const expect = golden.a6Relabel ?? golden.expect;
   const prepared = prepareSelectionInput(golden.text);
@@ -884,7 +887,23 @@ export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, n
   if (nlHelpSourceScope({ entryId: got, args: validated.value.args }, prepared.groundingText) !== undefined) return { outcome: 'clarify', relabeled, got };
   if (expect === 'none' && golden.a6Relabel === undefined && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { outcome: 'miss', relabeled, got };
   if (expect === 'none') return { outcome: 'wrong-capture', relabeled, got };
-  return { outcome: got === expect.entryId && canonical(validated.value.args) === canonical(expect.args) ? 'hit' : 'miss', relabeled, got };
+  return got === expect.entryId && canonical(validated.value.args) === canonical(expect.args) ? { outcome: 'hit', relabeled, got } : { outcome: 'miss', relabeled, got, gotArgs: validated.value.args };
+}
+
+/**
+ * Owner answer 1 of 2026-10-22: {@link scoreReadRegression}, then a `jira.release` miss whose args give the owner the same
+ * final outcome as the gold's in the snapshot Jira world (`sameJiraReleaseOutcome`, Core's own lookup) is a hit
+ * (`equivalent`). Every other entry and outcome is exactly {@link scoreReadRegression}'s.
+ */
+export async function scoreReadRegressionInWorld(
+  golden: NlReadRegressionCase,
+  raw: string,
+  now: string,
+): Promise<{ readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string; readonly equivalent?: true }> {
+  const { gotArgs, ...scored } = scoreReadRegression(golden, raw, now);
+  const expect = golden.a6Relabel ?? golden.expect;
+  if (scored.outcome !== 'miss' || expect === 'none' || expect.entryId !== 'jira.release' || scored.got !== 'jira.release' || gotArgs === undefined) return scored;
+  return (await sameJiraReleaseOutcome(golden.text, gotArgs, expect.args, { channel: golden.channel === true })) ? { ...scored, outcome: 'hit', equivalent: true } : scored;
 }
 
 export function loadReadRegressionCorpus(path: string = NL_INTENT_CORPUS_PATH): { cases: NlReadRegressionCase[]; sha256: string } {
@@ -929,7 +948,7 @@ export async function runReadRegression(input: {
         const started = clock();
         try {
           const result = await input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs });
-          records.push({ run, id: golden.id, latencyMs: clock() - started, ...scoreReadRegression(golden, result.text, input.now()) });
+          records.push({ run, id: golden.id, latencyMs: clock() - started, ...(await scoreReadRegressionInWorld(golden, result.text, input.now())) });
         } catch {
           records.push({ run, id: golden.id, outcome: 'error', relabeled: golden.a6Relabel !== undefined, latencyMs: clock() - started });
         }

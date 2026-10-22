@@ -55,6 +55,7 @@ import {
   type NlCatalogEntry,
   type ValidatedAgentStep,
 } from '@quoky/core';
+import { sameJiraReleaseOutcome } from './jira-world-snapshot';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import { EvalCallTimeout, withTimeout } from './nl-intent-eval';
 
@@ -353,6 +354,39 @@ export function closedErrorName(error: unknown): string {
 
 /** Score one raw planner answer for one case. Pure. */
 export function scoreAgentPlanOutput(golden: AgentPlanEvalCase, raw: string, fixture: AgentPlanCorpus['fixture']): AgentPlanScore {
+  return scoreAgentPlanDetailed(golden, raw, fixture).score;
+}
+
+/**
+ * Owner answer 1 of 2026-10-22: {@link scoreAgentPlanOutput}, then a miss whose only differences are the args of
+ * `jira.release` steps, each giving the owner the same final outcome as the gold step in the snapshot Jira world
+ * (`sameJiraReleaseOutcome`, Core's own lookup), is `exact`. Every other step and outcome keeps the exact comparison.
+ */
+export async function scoreAgentPlanOutputInWorld(golden: AgentPlanEvalCase, raw: string, fixture: AgentPlanCorpus['fixture']): Promise<AgentPlanScore> {
+  const { score, got, want } = scoreAgentPlanDetailed(golden, raw, fixture);
+  if (score.outcome !== 'miss' || score.diff !== 'args' || got === undefined || want === undefined || got.length !== want.length) return score;
+  for (const [index, a] of got.entries()) {
+    const b = want[index] as StepGraph[number];
+    if (JSON.stringify(a) === JSON.stringify(b)) continue;
+    if (a.kind !== 'read' || b.kind !== 'read' || a.entryId !== 'jira.release' || b.entryId !== 'jira.release' || a.ref !== b.ref) return score;
+    const args = (graphArgs: string): NlArgs => Object.fromEntries(JSON.parse(graphArgs) as Array<[string, NlArgs[string]]>);
+    if (!(await sameJiraReleaseOutcome(golden.text, args(a.args), args(b.args)))) return score;
+  }
+  const { diff: _diff, diffStep: _diffStep, ...rest } = score;
+  return { ...rest, outcome: 'exact' };
+}
+
+function scoreAgentPlanDetailed(golden: AgentPlanEvalCase, raw: string, fixture: AgentPlanCorpus['fixture']): { readonly score: AgentPlanScore; readonly got?: StepGraph; readonly want?: StepGraph } {
+  const score = scoreAgentPlanAnswer(golden, raw, fixture);
+  if (score.outcome !== 'miss' || golden.gold === 'none' || isAgentPlanAskExpect(golden.gold)) return { score };
+  const prepared = caseContext(golden, fixture);
+  const plan = 'skip' in prepared ? null : parseAgentPlanOutput(raw);
+  const validation = plan === null || 'skip' in prepared ? undefined : validateAgentPlan(plan, prepared.ctx);
+  if (validation === undefined || !validation.ok || validation.plan.kind !== 'run') return { score };
+  return { score, got: validatedGraph(validation.plan.steps), want: goldGraph(golden.gold) };
+}
+
+function scoreAgentPlanAnswer(golden: AgentPlanEvalCase, raw: string, fixture: AgentPlanCorpus['fixture']): AgentPlanScore {
   const negative = golden.gold === 'none' || isAgentPlanAskExpect(golden.gold);
   const prepared = caseContext(golden, fixture);
   if ('skip' in prepared) return { outcome: 'skipped', reason: `skip:${prepared.skip}` };
@@ -649,7 +683,7 @@ export async function runAgentPlanEvaluation(input: {
               capped.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs }),
               input.plan.callTimeoutMs,
             );
-            record = { ...base, ...scoreAgentPlanOutput(golden, result.text, input.plan.fixture), latencyMs: clock() - started };
+            record = { ...base, ...(await scoreAgentPlanOutputInWorld(golden, result.text, input.plan.fixture)), latencyMs: clock() - started };
           } catch (error) {
             const latencyMs = clock() - started;
             if (error instanceof AgentPlanCallCapReached) record = { ...base, outcome: 'capped', latencyMs: 0 };

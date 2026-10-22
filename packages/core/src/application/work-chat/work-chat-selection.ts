@@ -19,6 +19,22 @@ export const WORK_CHAT_SOURCE_ENTRY: Readonly<Record<WorkChatSource, NlWave1Entr
   confluence: 'confluence.search',
 };
 
+/**
+ * The `jira.release` lookup command of a natural-language selection turn (ADR-0120 A8), exactly as the lookup handler
+ * runs it: the typed command, `confirmNear` (owner decision B, 2026-10-22: a selection turn can keep the confirmation)
+ * and `inChannel` (A8 owner decision 7: the caller says whether the conversation is a channel without the grant). Shared
+ * by the handler and the read scorers (`jiraReleaseOutcomeKey`), so both run one path.
+ */
+export function releaseCommandForSelection(
+  selected: Pick<NlSelectedCommand, 'args' | 'language'>,
+  groundingText: string,
+  options: { readonly inChannel: boolean },
+): Extract<WorkChatCommand, { kind: 'release' }> {
+  const mapped = workChatCommandForSelection({ entryId: 'jira.release', args: selected.args, language: selected.language }, groundingText);
+  if (mapped === null || mapped.kind !== 'release') throw new Error('jira.release maps to a release command');
+  return { ...mapped, confirmNear: true, ...(options.inChannel ? { inChannel: true as const } : {}) };
+}
+
 const ROLES: readonly string[] = ['assignee', 'reporter', 'either'];
 const STATUSES: readonly string[] = ['open', 'all', 'in-progress'];
 const WINDOWS: readonly string[] = ['created', 'updated', 'due'];

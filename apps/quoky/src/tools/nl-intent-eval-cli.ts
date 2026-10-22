@@ -363,6 +363,9 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   for (let run = 1; run <= plan.runs; run += 1) {
     deps.stdout(formatSideScore(`selector side, run ${run} (same cases)`, scoreSelectorSide(corpus, records.filter((record) => record.run === run), startedAt)));
   }
+  // Owner answer 1 (2026-10-22): the jira.release hits by the same final outcome in the snapshot Jira world (ids only).
+  const equivalent = records.filter((record) => record.equivalent === true);
+  if (equivalent.length > 0) deps.stdout(`jira.release hits by equal Core outcome (snapshot world): ${equivalent.length} (${[...new Set(equivalent.map((record) => record.id))].join(', ')})`);
   const misses = records.filter((record) => record.outcome !== 'hit' && record.outcome !== 'none');
   if (misses.length > 0) {
     deps.stdout(`not hit (${misses.length}):`);

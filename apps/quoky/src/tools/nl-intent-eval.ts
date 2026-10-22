@@ -5,7 +5,9 @@
  * spawns anything, and only after the Strict digest check in the CLI.
  *
  * Scoring per case (Core's FINAL outcome, owner rule of 2026-10-19):
- *  - a positive is a **hit** when the output is CLEAR, validates, and its entry and canonical args equal the golden ones;
+ *  - a positive is a **hit** when the output is CLEAR, validates, and its entry and canonical args equal the golden ones
+ *    (`jira.release`: or give the owner the same final outcome in the snapshot Jira world, owner answer 1 of 2026-10-22,
+ *    `scoreOutputInWorld`);
  *    a clarification (NEEDS_CLARIFICATION, a failed validation, or Core's own help-scope question `nlHelpSourceScope`,
  *    owner decision A of 2026-10-22) is not a hit and not wrong;
  *  - a negative is a **wrong capture** when the output is CLEAR and validates to an executable entry (the read would run);
@@ -38,6 +40,7 @@ import {
   type NlCatalogEntry,
 } from '@quoky/core';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
+import { sameJiraReleaseOutcome } from './jira-world-snapshot';
 
 export const NL_EVAL_GATE = { overall: 0.95, perEntry: 0.9, wrongCaptures: 0 } as const;
 /** ADR-0121 S1 (design §6): at most 1% of the calls may go over the configured selection bound. */
@@ -162,6 +165,8 @@ export interface NlEvalRecord {
   readonly error?: string;
   /** The selector's raw output for a case that was not a hit (the local report only; corpus text, no owner data). */
   readonly raw?: string;
+  /** A `jira.release` hit by the same final outcome in the snapshot Jira world, not by identical args (owner answer 1). */
+  readonly equivalent?: true;
 }
 
 const ALL_ENTRIES: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
@@ -192,6 +197,17 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   if (golden.expect === 'none') return { id: golden.id, expected, outcome: 'wrong-capture', got, gotArgs };
   const same = got === golden.expect.entryId && canonical(gotArgs) === canonical(golden.expect.args);
   return { id: golden.id, expected, outcome: same ? 'hit' : 'miss', got, gotArgs };
+}
+
+/**
+ * Owner answer 1 of 2026-10-22: {@link scoreOutput}, then a `jira.release` miss whose args give the owner the same final
+ * outcome as the gold's in the snapshot Jira world (`sameJiraReleaseOutcome`, Core's own lookup) is a hit (`equivalent`).
+ * Every other entry and outcome is exactly {@link scoreOutput}'s.
+ */
+export async function scoreOutputInWorld(golden: NlEvalCase, raw: string, now: string, timeZone = 'Asia/Seoul'): Promise<Omit<NlEvalRecord, 'run' | 'latencyMs'>> {
+  const scored = scoreOutput(golden, raw, now, timeZone);
+  if (scored.outcome !== 'miss' || golden.expect === 'none' || golden.expect.entryId !== 'jira.release' || scored.got !== 'jira.release' || scored.gotArgs === undefined) return scored;
+  return (await sameJiraReleaseOutcome(golden.text, scored.gotArgs, golden.expect.args, { channel: golden.channel === true })) ? { ...scored, outcome: 'hit', equivalent: true } : scored;
 }
 
 function canonical(args: NlArgs): string {
@@ -360,7 +376,7 @@ export async function runEvaluation(input: {
             input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs }),
             input.plan.callTimeoutMs,
           );
-          const scored = scoreOutput(golden, result.text, input.now());
+          const scored = await scoreOutputInWorld(golden, result.text, input.now());
           record = {
             run,
             latencyMs: clock() - started,
