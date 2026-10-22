@@ -28590,10 +28590,35 @@ neg-110) and the action span noise are left as they are.
     (both kinds); both are non-hits. A negative "capture" is only reachable when the selector picks that read on a
     negative AND guesses a value; the same read without the guess was already a wrong capture, so the rule removes an
     accidental mask rather than adding a capture path; the archived runs show no such case. Wider defaults
-    (`jira.issues.status` open, `github.items.kind` all) are the read the owner's words ask for, and the basis line names
-    them.
+    (`jira.issues.status` open, `github.items.kind` all) are the read the owner's words ask for; the basis line names
+    them only where the entry has a `describe` (corrected by the CA review below: `jira.release` and `jira.issues` do, the
+    to-do / reminder lists and `github.items` do not; and the to-do / reminder statuses no longer fall back at all).
 - **Count follow-up (read `nl-select.v67`, A6 `v65`, R2 `v66`, planner `agent-plan.v5`).** a8-16 "몇 개야?" after a
   release selection kept the release and dropped `count` in every run. The shared `count` arg description now ends "A
   how-many follow-up to the previous selection keeps that entry and all its args and sets count true." Only that line
   differs in the 79 regenerated read pins (77 cases carry a `count` arg); no example changed (RAG-0 lint passes). The
   planner embeds the read catalog, so its bytes changed and it moved to `agent-plan.v5` with a new pin.
+- **CA review of 574461ff / 49527573 (PASS-with-fixes), applied without changing any rendered prompt byte** (the D12
+  gates ran on 49527573; every read / A6 / R2 / planner pin test passes unchanged).
+  - *Amendment of a settled sentence.* This note amends the ADR-0120 implementation addendum's "A guessed value is
+    refused." (the grounded enum values, `valueGrounding`) for READ args that opt in, and only for them. Basis: A8 owner
+    decision 2 ("default로는 당연히 내 담당 기준": an ungrounded `all` leaves the default `mine`, never widened silently) and
+    the D7 role precedent (a guessed interpretation value is dropped, never applied). Under D4 the default is not a
+    guess: it is the catalog's documented reading when the arg is omitted, i.e. exactly the read the owner's words ask
+    for when they state no value; the D4 "never a guess" is about values the model invents, which are the ones dropped.
+  - *CRITICAL — opt-in per arg.* The fallback is now catalog metadata, `ungroundedFallsBackToDefault: true` (validator
+    only, never rendered), set on `github.items.kind` (all contains pr and issue), `jira.issues.status` (open contains
+    in-progress) and `jira.release.scope` (mine, A8 decision 2). The to-do and reminder `status` (default `active`,
+    disjoint from done / completed / canceled) keep asking: "아까 울렸던 알림 뭐였지?" (`done`) and "취소됐던 할 일 목록"
+    (`canceled`) no longer return the opposite list. Re-scored offline, the archived c4c5cfbd intent outputs change in
+    exactly the same two records (a8-10 and a8-19 run 2, clarify → hit, `scope` defaulted); the read-regression report
+    keeps no raw outputs, so it cannot be re-scored offline.
+  - *W1.* A follow-up keeps the previous selection's value of the arg (a listed value) instead of the default ("그 중에
+    결제만" after `status: all` with a guessed in-progress keeps `all`).
+  - *Suggestions applied.* Validation returns `defaulted` (arg names only); the intent and read-regression reports count
+    the records with one (not gated); the `jira.issues` basis line says 미해결 when its status was set back to the
+    default even with a window; the stale v66 pin-file comment in `selection-prompt.ts` says it was renamed (a TS
+    comment, no rendered byte).
+  - *Open question (left as is, the safe direction).* The planner's clause-bound `kind` check runs after the message-level
+    fallback, so a value grounded somewhere in the message but not in the GitHub clause is still refused in a plan, while
+    an unstated one falls back to `all`.

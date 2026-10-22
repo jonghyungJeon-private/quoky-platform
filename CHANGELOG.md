@@ -7,8 +7,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 ## Unreleased — read residuals of the D12 gate, owner decisions A and B (2026-10-22)
 
-- **Changed.** On a READ entry, an enum value the owner did not state (e.g. `scope: all` without every-assignee words)
-  falls back to the arg's default instead of asking (a8-10, a8-19); actions, ITEM_READ and args with no default still ask.
+- **Changed.** On a READ arg that opts in (`ungroundedFallsBackToDefault`: GitHub `kind`, Jira `status`, `jira.release`
+  `scope`), an enum value the owner did not state falls back to the previous selection's value, else the default,
+  instead of asking (a8-10, a8-19); to-do / reminder statuses, actions, ITEM_READ and other args still ask. Validation
+  reports the `defaulted` arg names; the eval reports count them.
 - **Changed (prompt; read `nl-select.v67`, A6 `v65`, R2 `v66`, planner `agent-plan.v5`; not yet gated).** The shared
   `count` description: a how-many follow-up keeps the previous selection and sets count true (a8-16). No examples changed.
 

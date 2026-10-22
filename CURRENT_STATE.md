@@ -8,8 +8,8 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 ### Read residuals of the D12 gate — owner decisions A and B (2026-10-22, branch `claude/v5-read-residuals`)
 
 Built offline, not merged; re-gate pending on read `nl-select.v67` / A6 `v65` / R2 `v66`, planner `agent-plan.v5`
-(the v66 gates: r2 3/3, intent 1/3, read-regression 1/3, action 2/3; then an ungrounded enum value on a read falls back to
-its default, and the count follow-up clause):
+(the v66 gates: r2 3/3, intent 1/3, read-regression 1/3, action 2/3; then an ungrounded value of an opted-in read arg
+(GitHub kind, Jira status, release scope) falls back to the previous value or default, and the count follow-up clause):
 - **Help scope (A).** A general help question that names one catalog source asks "Quoky로 <source>를 조회하는 방법…,
   아니면 <source> 앱 자체의 사용법…?"; 1 shows that source's help section, 2 a fixed honest note. The prompt (v66) asks the
   same for an unclear how-to about a source Quoky reads; capability questions stay help.topic.
