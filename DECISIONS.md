@@ -28718,6 +28718,10 @@ OP25 / OP26 ("차란차 플랫폼 운영 2021 / 2024 / 2025 / 2026") instead of 
   Only the reply text in the outcome keys of the release-carrying confirmations changed (golds a8-01, a8-02, a8-07,
   a8-22, intent and agent-plan, on both sides of every comparison); no other key changed.
 - **Follow-ups (not now).** (1) A literal release-name filter (`query`) on the `RELEASES` named query, so a release's
-  absence can be proven past the first page: a port and adapter change, its own note and CA review. (2) A rule question
-  for the owner: when a release hit is proven in one candidate but the joined words name another project, which wins
-  (today the proven hit is confirmed first).
+  absence can be proven past the first page: a port and adapter change, its own note and CA review. (2) (2) *Decided by the owner
+  2026-10-22 ("둘 다 가능하면 목록에서 고르기"):* when the release is proven in exactly one project but the project and release
+  words joined name exactly one other visible project, nothing is guessed: the ambiguous-project list holds exactly those two
+  (the release holder first) and the owner picks. Both pointing to the same project, or the joined words naming none or
+  several: unchanged (the release holder is confirmed). Both paths (near and several-candidates) share the helper
+  `holderAndJoinedProject`; DM-only in channels; no issue read before the answer; no word, name or year rule. No
+  `jira.release` gold outcome key changes (the snapshot has no such world).

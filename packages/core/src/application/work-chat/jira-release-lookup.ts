@@ -183,6 +183,11 @@ export async function lookupJiraRelease(input: {
         if (unresolved) {
           return body(input.inChannel === true ? renderReleaseDmOnly('list') : renderProjectAmbiguous(command.project, candidates.map(refOf)));
         }
+        // Owner decision (2026-10-22): the release is proven in one candidate, but the joined words name another project: both listed.
+        if (input.confirmNear === true && command.release !== undefined) {
+          const both = holderAndJoinedProject(completeProjects, command.project, command.release, narrowed.found[0]!.project);
+          if (both !== undefined) return body(input.inChannel === true ? renderReleaseDmOnly('list') : renderProjectAmbiguous(command.project, both.map(refOf)));
+        }
         project = refOf(narrowed.found[0]!.project);
         preResolved = narrowed.found[0]!.release;
       }
@@ -377,7 +382,11 @@ async function resolveNearProject(
   const near = nearByWords.length > 0 ? nearByWords : fuzzyProjects(projects, projectText);
   if (releaseText !== undefined) {
     const narrowed = near.length > 0 && near.length <= DISAMBIGUATE_MAX ? await narrowByRelease(connector, near, releaseText) : undefined;
-    if (narrowed !== undefined && !narrowed.unproven && narrowed.found.length === 1) return { kind: 'confirm', project: narrowed.found[0]!.project, release: releaseText };
+    if (narrowed !== undefined && !narrowed.unproven && narrowed.found.length === 1) {
+      const holder = narrowed.found[0]!.project;
+      const both = holderAndJoinedProject(projects, projectText, releaseText, holder);
+      return both !== undefined ? { kind: 'ambiguous', candidates: both } : { kind: 'confirm', project: holder, release: releaseText };
+    }
     // Before an unproven narrowing gives up (a partial version page proves nothing): the joined words may name one project.
     const joined = joinedNearConfirm(projects, projectText, releaseText, narrowed);
     if (joined !== undefined) return joined;
@@ -388,6 +397,22 @@ async function resolveNearProject(
   if (near.length === 1) return { kind: 'confirm', project: near[0] as ConnectorItem, ...(releaseText !== undefined ? { release: releaseText } : {}) };
   if (near.length > 1) return { kind: 'ambiguous', candidates: near };
   return { kind: 'none' };
+}
+
+/**
+ * Owner decision (2026-10-22, "둘 다 가능하면 목록에서 고르기"): the release is proven in exactly one project (`holder`), and
+ * the project words with the release words joined name exactly one visible project, a different one: both are returned
+ * (the release holder first) for the owner to pick from. The same project, none or several: undefined (the holder stands).
+ */
+function holderAndJoinedProject(
+  projects: readonly ConnectorItem[] | undefined,
+  projectText: string,
+  releaseText: string,
+  holder: ConnectorItem,
+): ConnectorItem[] | undefined {
+  const joined = nearProjectsOfJoined(projects, projectText, releaseText);
+  if (joined.length !== 1 || (joined[0] as ConnectorItem).id === holder.id) return undefined;
+  return [holder, joined[0] as ConnectorItem];
 }
 
 /**

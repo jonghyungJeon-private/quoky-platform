@@ -972,6 +972,35 @@ describe('owner decision B, live smoke 2026-10-22: several "차란차 플랫폼 
     }
   });
 
+  it('owner decision (2026-10-22): the release holder and the joined project differ: both listed; same or none: as before', async () => {
+    const projects = world.filter((item) => item.id === 'OP25' || item.id === 'OP26');
+    versions.OP25 = [{ id: '15001', title: '2026 이관' }];
+    try {
+      for (const command of [{ project: '차란차 운영', release: '2026' }, { project: '차란차 플랫폼 운영', release: '2026' }]) {
+        const asked = await ask(command, { projects });
+        expect(asked.confirm).toBeUndefined();
+        expect(asked.text).toContain('여러 개예요');
+        expect(asked.text.indexOf('(OP25)')).toBeGreaterThan(-1);
+        expect(asked.text.indexOf('(OP25)')).toBeLessThan(asked.text.indexOf('(OP26)'));
+        expect(asked.queries).not.toContain('release-items');
+      }
+      // The joined words name no project: the release holder is confirmed as before.
+      const none = await ask({ project: '차란차 운영', release: '이관' }, { projects });
+      expect(none.confirm).toEqual({ project: 'OP25', release: '이관' });
+      // A channel keeps the DM-only rule.
+      expect((await ask({ project: '차란차 운영', release: '2026' }, { projects, inChannel: true })).text).toContain('DM에서만');
+    } finally {
+      versions.OP25 = [{ id: '15000', title: '배포일_20251015(수)' }];
+    }
+    // The release holder is the joined project itself: confirmed as before.
+    versions.OP26 = [...(versions.OP26 as ConnectorItem[]), { id: '16000', title: '2026 상반기' }];
+    try {
+      expect((await ask({ project: '차란차 운영', release: '2026' }, { projects })).confirm).toEqual({ project: 'OP26', release: '2026' });
+    } finally {
+      versions.OP26 = (versions.OP26 as ConnectorItem[]).filter((item) => item.id !== '16000');
+    }
+  });
+
   it('a channel refuses the folded-back list; without a caller that keeps the question, the ambiguous list stays', async () => {
     const channel = await ask({ project: '차란차 운영', release: '2026' }, { inChannel: true });
     expect(channel.text).toContain('DM에서만');
