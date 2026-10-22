@@ -241,11 +241,20 @@ describe('deterministic validation (ADR-0120 D4)', () => {
     expect(validateSelection({ entryId: 'slack.search', args: { keyword: secret } }, ctx(`슬랙에서 ${secret} 검색`))).toMatchObject({ reason: 'credential' });
   });
 
-  it('owner rule 2026-10-22: an ungrounded enum value falls back to its default only on a READ entry with a default', () => {
-    // READ entries: the default read runs (canonical args omit the default).
-    expect(validateSelection({ entryId: 'todo.list', args: { status: 'canceled' } }, ctx('할 일 보여줘'))).toMatchObject({ ok: true, value: { args: {} } });
-    expect(validateSelection({ entryId: 'github.items', args: { kind: 'pr' } }, ctx('깃허브 내 거 보여줘'))).toMatchObject({ ok: true, value: { args: {} } });
-    expect(validateSelection({ entryId: 'jira.release', args: { release: '1.4.0', scope: 'all' } }, ctx('이번 1.4.0 릴리즈에 포함된 지라 티켓 다 보여줘'))).toMatchObject({ ok: true, value: { args: { release: '1.4.0' } } });
+  it('owner rule 2026-10-22 (CA review): an ungrounded value falls back to its default only on an opted-in READ arg', () => {
+    // Opted-in args (their default contains, or is a ratified narrowing of, the dropped value): the default read runs.
+    expect(validateSelection({ entryId: 'github.items', args: { kind: 'pr' } }, ctx('깃허브 내 거 보여줘'))).toMatchObject({ ok: true, value: { args: {}, defaulted: ['kind'] } });
+    expect(validateSelection({ entryId: 'jira.release', args: { release: '1.4.0', scope: 'all' } }, ctx('이번 1.4.0 릴리즈에 포함된 지라 티켓 다 보여줘'))).toMatchObject({ ok: true, value: { args: { release: '1.4.0' }, defaulted: ['scope'] } });
+    // CRITICAL (CA review): a to-do or reminder status default (the open ones) is disjoint from done / completed /
+    // canceled, so those statuses never fall back: an unstated or unlisted wording still asks.
+    expect(validateSelection({ entryId: 'reminder.list', args: { status: 'done' } }, ctx('아까 울렸던 알림 뭐였지?'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'status' });
+    expect(validateSelection({ entryId: 'reminder.list', args: { status: 'canceled' } }, ctx('꺼뒀던 알림 보여줘'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'status' });
+    expect(validateSelection({ entryId: 'todo.list', args: { status: 'canceled' } }, ctx('취소됐던 할 일 목록'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'status' });
+    expect(validateSelection({ entryId: 'todo.list', args: { status: 'completed' } }, ctx('다 끝냈던 할 일 보여줘'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'status' });
+    expect(validateSelection({ entryId: 'reminder.list', args: { status: 'done', range: 'tomorrow' } }, ctx('내일 울렸던 알림 보여줘'))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'status' });
+    // A READ fallback in A6 mode (actions offered) is the same.
+    const a6 = new Map([...offered(), ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined).map((entry) => [entry.id, entry] as const)]);
+    expect(validateSelection({ entryId: 'jira.release', args: { project: 'OP26', release: '20261015', scope: 'all' } }, ctx('show me all issues in release 20261015 of OP26', { offered: a6, actions: true }))).toMatchObject({ ok: true, value: { args: { project: 'OP26', release: '20261015' } } });
     // A stated value stays; an out-of-set value is still invalid (asks).
     expect(validateSelection({ entryId: 'todo.list', args: { status: 'canceled' } }, ctx('취소된 할 일 보여줘'))).toMatchObject({ ok: true, value: { args: { status: 'canceled' } } });
     expect(validateSelection({ entryId: 'todo.list', args: { status: 'scheduled' } }, ctx('할 일 보여줘'))).toMatchObject({ ok: false, reason: 'invalid-arg' });
@@ -265,7 +274,8 @@ describe('deterministic validation (ADR-0120 D4)', () => {
       expect(validateSelection(inProgress, ctx(text)), text).toMatchObject({ ok: true, value: { args: { status: 'in-progress' } } });
     }
     expect(validateSelection(inProgress, ctx('그 중에 결제만', { previousArgs: { status: 'in-progress' } }))).toMatchObject({ ok: true });
-    expect(validateSelection(inProgress, ctx('그 중에 결제만', { previousArgs: { status: 'all' } }))).toMatchObject({ ok: true, value: { args: {} } });
+    // W1 (CA review): a follow-up keeps the previous selection's value, not the default.
+    expect(validateSelection(inProgress, ctx('그 중에 결제만', { previousArgs: { status: 'all' } }))).toMatchObject({ ok: true, value: { args: { status: 'all' }, defaulted: ['status'] } });
     // the other values stay ungrounded-free, and an unknown value is still invalid
     expect(validateSelection({ entryId: 'jira.issues', args: { status: 'all' } }, ctx('내 지라 이슈'))).toMatchObject({ ok: true });
     expect(validateSelection({ entryId: 'jira.issues', args: { status: 'blocked' } }, ctx('진행'))).toMatchObject({ reason: 'invalid-arg', arg: 'status' });

@@ -167,6 +167,8 @@ export interface NlEvalRecord {
   readonly raw?: string;
   /** A `jira.release` hit by the same final outcome in the snapshot Jira world, not by identical args (owner answer 1). */
   readonly equivalent?: true;
+  /** The arg names Core set back to the previous value or default (`ungroundedFallsBackToDefault`); names only. */
+  readonly defaulted?: readonly string[];
 }
 
 const ALL_ENTRIES: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
@@ -191,12 +193,13 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   }
   const got = validated.value.entry.id;
   const gotArgs = validated.value.args;
+  const defaulted = validated.value.defaulted !== undefined ? { defaulted: validated.value.defaulted } : {};
   // Owner decision A (2026-10-22): Core asks the help-scope question instead of running this read (its final outcome).
   if (nlHelpSourceScope({ entryId: got, args: gotArgs }, prepared.groundingText) !== undefined) return { id: golden.id, expected, outcome: 'clarify', got };
-  if (golden.expect === 'none' && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { id: golden.id, expected, outcome: 'miss', got, gotArgs };
-  if (golden.expect === 'none') return { id: golden.id, expected, outcome: 'wrong-capture', got, gotArgs };
+  if (golden.expect === 'none' && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { id: golden.id, expected, outcome: 'miss', got, gotArgs, ...defaulted };
+  if (golden.expect === 'none') return { id: golden.id, expected, outcome: 'wrong-capture', got, gotArgs, ...defaulted };
   const same = got === golden.expect.entryId && canonical(gotArgs) === canonical(golden.expect.args);
-  return { id: golden.id, expected, outcome: same ? 'hit' : 'miss', got, gotArgs };
+  return { id: golden.id, expected, outcome: same ? 'hit' : 'miss', got, gotArgs, ...defaulted };
 }
 
 /**
@@ -225,6 +228,8 @@ export interface NlEvalSummary {
   readonly clarifications: number;
   /** Owner decision A (2026-10-22): the clarification golds (`clarify`) and how many of them Core asked. */
   readonly clarifyGolds: { readonly total: number; readonly asked: number };
+  /** Records whose selection had an ungrounded value set back to the previous value or default (CA review, 2026-10-22). */
+  readonly defaulted: number;
   /** Calls that did not answer within the runtime's selection bound (each one a miss on a positive). */
   readonly timeouts: number;
   readonly errors: number;
@@ -291,6 +296,7 @@ export function summarize(
     wrongCaptures,
     negatives: records.length - positives.length,
     clarifications: records.filter((record) => record.outcome === 'clarify').length,
+    defaulted: records.filter((record) => (record.defaulted?.length ?? 0) > 0).length,
     clarifyGolds: {
       total: records.filter((record) => clarifyCaseIds.has(record.id)).length,
       asked: records.filter((record) => clarifyCaseIds.has(record.id) && record.outcome === 'clarify').length,

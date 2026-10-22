@@ -252,6 +252,7 @@ export function formatSummary(summary: NlEvalSummary): string[] {
     `overall: ${summary.hits}/${summary.positives} (${pct(summary.overall)})  wrong captures: ${summary.wrongCaptures}/${summary.negatives}` +
       `  clarifications: ${summary.clarifications}  timeouts (> ${summary.latency.boundMs / 1000} s, counted as misses): ${summary.timeouts}  errors: ${summary.errors}`,
     ...(summary.clarifyGolds.total > 0 ? [`clarification golds asked: ${summary.clarifyGolds.asked}/${summary.clarifyGolds.total} (reported, not gated)`] : []),
+    ...(summary.defaulted > 0 ? [`ungrounded values set back to the previous value or default: ${summary.defaulted} (reported, not gated)`] : []),
     ...Object.entries(summary.perEntry)
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([entry, slot]) => `  ${entry.padEnd(20)} ${slot.hits}/${slot.total} (${pct(slot.rate)})`),

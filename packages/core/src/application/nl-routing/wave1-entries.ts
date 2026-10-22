@@ -189,7 +189,7 @@ const jiraIssues: NlCatalogEntry = {
     { name: 'role', kind: 'enum', values: ['assignee', 'reporter', 'either'], default: 'assignee', description: 'Set ONLY when the owner names it: assigned to me (나한테 할당된/배정된, 내 담당) = assignee; I reported/created/made (내가 만든/올린/보고한) = reporter; either ONLY when the owner says both (둘 다, 담당이든 보고든). Never guess it. 할당된/배정된 is this role, never a window.' },
     { name: 'window', kind: 'enum', values: ['created', 'updated', 'due'], description: 'Which date the period applies to: created (등록된/생성된/새로 올라온), updated (업데이트된/수정된/변경된), due (마감/기한). Omit when no such event word is used.' },
     { name: 'range', kind: 'range', pastWindow: (args) => args.window === 'created' || args.window === 'updated', description: 'The period of `window`. Omit unless `window` is set.' },
-    { name: 'status', kind: 'enum', values: ['open', 'all', 'in-progress'], default: 'open', valueGrounding: { 'in-progress': JIRA_IN_PROGRESS_WORDS }, description: 'all only when the owner includes finished/closed issues (완료된 것도, 전체, all); in-progress only when the owner asks for issues being worked on (진행중인, 진행 중, in progress, working on); default open.' },
+    { name: 'status', kind: 'enum', values: ['open', 'all', 'in-progress'], default: 'open', valueGrounding: { 'in-progress': JIRA_IN_PROGRESS_WORDS }, ungroundedFallsBackToDefault: true, description: 'all only when the owner includes finished/closed issues (완료된 것도, 전체, all); in-progress only when the owner asks for issues being worked on (진행중인, 진행 중, in progress, working on); default open.' },
     { name: 'keyword', kind: 'keyword', description: 'A topic word the owner wants the issues narrowed to, copied verbatim (e.g. 위클리카). Never a weekday, date or period word: those are `range`.' },
     { name: 'sort', kind: 'enum', values: [...JIRA_SORT_VALUES], valueGrounding: JIRA_SORT_WORDS, description: 'Only when the owner asks for an order: oldest (제일 오래된 것, 오래된 순), newest (가장 새로 만든, 최신 순), recently-updated (최근에 업데이트된 순). Never guess it; "the oldest one" keeps the other args and adds sort oldest.' },
     COUNT,
@@ -210,7 +210,7 @@ const jiraIssues: NlCatalogEntry = {
     // "다가오는 마감" read as the calendar's `upcoming`: the next 7 days of due dates.
     else if (args.range === 'upcoming') args.range = 'next-7-days';
   },
-  describe(args: NlArgs, range: NlResolvedRange | undefined, language: 'ko' | 'en'): string | undefined {
+  describe(args: NlArgs, range: NlResolvedRange | undefined, language: 'ko' | 'en', notes?: { readonly defaulted?: readonly string[] }): string | undefined {
     const role = JIRA_ROLE_LABEL[typeof args.role === 'string' ? args.role : 'assignee'];
     const window = typeof args.window === 'string' ? JIRA_WINDOW_LABEL[args.window] : undefined;
     const period = rangePart(range, language) ?? '';
@@ -220,7 +220,7 @@ const jiraIssues: NlCatalogEntry = {
         ? (language === 'en' ? 'in progress' : '진행 중')
         : args.status === 'all'
           ? (language === 'en' ? 'including done' : '완료 포함')
-          : window === undefined ? (language === 'en' ? 'open' : '미해결') : undefined;
+          : window === undefined || notes?.defaulted?.includes('status') === true ? (language === 'en' ? 'open' : '미해결') : undefined;
     const keyword = typeof args.keyword === 'string' ? (language === 'en' ? `matching ${quoted(args.keyword)}` : `${quoted(args.keyword)} 포함`) : undefined;
     const sort = typeof args.sort === 'string' ? JIRA_SORT_LABEL[args.sort]?.[language] : undefined;
     return joinBasis([role?.[language], when, status, keyword, sort]);
@@ -292,7 +292,7 @@ const jiraRelease: NlCatalogEntry = {
   args: [
     { name: 'release', kind: 'keyword', description: 'The release (fix version) name copied verbatim from the owner\'s words (e.g. 3.2.0), without words like 배포/배포건/릴리스/버전. A bare number with no date word (월, 일, 까지) is a release name, not a date. Omit for a pasted link: Quoky reads the link itself.' },
     { name: 'project', kind: 'keyword', description: 'The Jira project name or key, whole (every word of a multi-word name, e.g. 모바일 앱 운영, never just 모바일), without 프로젝트. A name or key just before a version token is `project`, the token `release` (XY 2.0: XY, 2.0). A follow-up with only a release keeps the previous project. Omit if none is named or for a pasted link.' },
-    { name: 'scope', kind: 'enum', values: ['mine', 'all'], default: 'mine', valueGrounding: { all: JIRA_SCOPE_ALL_WORDS }, description: 'all ONLY when the owner explicitly asks for every assignee (전체, 모든 담당, 담당 상관없이, all assignees); words for every item (다, 전부, all of them) are not every assignee. Default mine = the owner\'s own issues. Every assignee with no release, project or link named: NEEDS_CLARIFICATION.' },
+    { name: 'scope', kind: 'enum', values: ['mine', 'all'], default: 'mine', valueGrounding: { all: JIRA_SCOPE_ALL_WORDS }, ungroundedFallsBackToDefault: true, description: 'all ONLY when the owner explicitly asks for every assignee (전체, 모든 담당, 담당 상관없이, all assignees); words for every item (다, 전부, all of them) are not every assignee. Default mine = the owner\'s own issues. Every assignee with no release, project or link named: NEEDS_CLARIFICATION.' },
     COUNT,
   ],
   usage: { ko: '"ABC 프로젝트 1.2.0 릴리스 보여줘"', en: '"ABC 프로젝트 1.2.0 릴리스 보여줘"' },
@@ -330,6 +330,8 @@ const GITHUB_KIND = {
   values: ['pr', 'issue', 'all'],
   default: 'all',
   clauseBound: true,
+  // Owner rule of 2026-10-22 (CA review): an unstated item type falls back to both (`all` contains pr and issue).
+  ungroundedFallsBackToDefault: true,
   valueGrounding: {
     pr: ['pr', 'prs', 'pull request', 'pull requests', '풀리퀘', '풀 리퀘', '풀리퀘스트', '풀 리퀘스트', '머지 요청'],
     issue: ['이슈', 'issue', 'issues'],

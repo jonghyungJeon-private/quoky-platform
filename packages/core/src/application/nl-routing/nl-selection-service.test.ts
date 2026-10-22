@@ -573,6 +573,16 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(h.calls[1]!.prompt).toContain('Previous selection: {"entryId":"jira.issues","args":{"role":"either","window":"created","range":"today"}}');
   });
 
+  it('CA review: a jira.release fallback names the default in the basis line ("내 담당"); a Jira status fallback with a window says 미해결', async () => {
+    const release = harness({ script: [out('jira.release', { release: '1.4.0', scope: 'all' })] });
+    expect(await release.decide('이번 1.4.0 릴리즈에 포함된 지라 티켓 다 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { release: '1.4.0' } }, basis: '기준: 릴리스 "1.4.0" / 내 담당' });
+    const issues = harness({ script: [out('jira.issues', { window: 'updated', range: 'today', status: 'in-progress' })] });
+    expect(await issues.decide('오늘 업데이트된 지라 이슈 보여줘')).toMatchObject({ kind: 'execute', command: { args: { window: 'updated', range: 'today' } }, basis: expect.stringContaining('미해결') });
+    // Without a fallback the window line stays as before (no status label).
+    const plain = harness({ script: [out('jira.issues', { window: 'updated', range: 'today' })] });
+    expect(await plain.decide('오늘 업데이트된 지라 이슈 보여줘')).toMatchObject({ kind: 'execute', basis: expect.not.stringContaining('미해결') });
+  });
+
   it('refines a Jira listing to in-progress ("그 중에 진행중인거만") and a calendar listing by a title keyword, keeping the range', async () => {
     const jira = harness({ script: [out('jira.issues', {}), out('jira.issues', { status: 'in-progress' }), out('jira.issues', { status: 'in-progress' })] });
     await jira.decide('내 지라 이슈 보여줘');

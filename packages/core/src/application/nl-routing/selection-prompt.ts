@@ -144,7 +144,7 @@ import { nlModeVocabularyText } from './action-entries';
  * NEEDS_CLARIFICATION with help.topic, args {}, no alternatives; a question whether Quoky can read a source or do
  * something with it stays help.topic, CLEAR. A6 rule 8's other-software bullet says the same. No word list and no example
  * change (RAG-0 unchanged); Core turns the clarification into its help-scope question. Not gated yet. Pinned by
- * `golden/nl-select.v66.prompts.json`.
+ * `golden/nl-select.v66.prompts.json` (renamed to `nl-select.v67.prompts.json` with the v67 bump).
  * v67 (read) / v65 (A6) (the v66 / v64 gates of 2026-10-22: a8-16 "몇 개야?" after a release selection kept the release
  * but dropped `count` in every run) = v66 / v64 with one clause in the shared `count` arg description: a how-many
  * follow-up to the previous selection keeps that entry and all its args and sets count true. No word list beyond the
