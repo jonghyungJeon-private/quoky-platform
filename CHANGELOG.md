@@ -28,6 +28,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   none; a capability question stays `help.topic`. No examples added. Pins and the `agent-plan.v3` pin regenerated.
 - **Changed.** The help-scope question's Quoky option shows that source's help section (found from the catalog entry's
   owning handler and its help lines), else the general help.
+- **Fixed (Codex and Chief Architect reviews).** The help-scope options are answered by their displayed text; the
+  selector-RAG scorer counts an asked clarification gold as correct; a `jira.release` outcome reached before any release
+  was read compares the args exactly (no false equivalence); the project near match requires equal digit runs; a
+  lenient-dropped help topic never triggers the help-scope question. Planner prompt `agent-plan.v4` (version only; no
+  read / A6 / R2 byte changed).
 
 ## Unreleased — development harness hardening (2026-10-21)
 

@@ -5,6 +5,19 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Read residuals of the D12 gate — owner decisions A and B (2026-10-22, branch `claude/v5-read-residuals`)
+
+Built offline, not merged; gates running on read `nl-select.v66` / A6 `v64` / R2 `v65`, planner `agent-plan.v4`:
+- **Help scope (A).** A general help question that names one catalog source asks "Quoky로 <source>를 조회하는 방법…,
+  아니면 <source> 앱 자체의 사용법…?"; 1 shows that source's help section, 2 a fixed honest note. The prompt (v66) asks the
+  same for an unclear how-to about a source Quoky reads; capability questions stay help.topic.
+- **Project confirmation (B).** A Jira project reached only by a near match is confirmed first ("'… (OP26)' 프로젝트가
+  맞나요? (응 / 아니)"); a yes runs the release lookup, a no ends it. "OP" inside "OP26" is read as "OP26".
+- **Scoring.** `jira.release` is scored by Core's outcome in a snapshot Jira world (`apps/quoky/src/tools/
+  jira-world.snapshot.v1.json`); neg-010 is a clarification gold; Core's help-scope question scores as a clarification.
+
+Next: the D12 / S2 gates, then the owner's merge. DECISIONS: the three "read residuals" notes of 2026-10-22.
+
 ### Development harness hardening (2026-10-21, branch `claude/v5-harness-hardening`)
 
 Tooling only; no runtime behaviour changed. The gate semantics gained a third verdict, `INVALID`, with owner approval
