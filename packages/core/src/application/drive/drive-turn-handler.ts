@@ -54,7 +54,6 @@ import {
   renderDriveWriteRefused,
   type DriveHistoryKind,
   type DriveShownShape,
-  DRIVE_REPLY_MAX_ENTRIES,
   type DriveListingFilter,
   type DriveReadFailure,
   type DriveSourceCopy,
@@ -250,7 +249,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
       language,
       ...(this.deps.copy !== undefined ? { copy: this.deps.copy } : {}),
     });
-    return this.reply(ctx, body, 'RESPONDED', language, 'listed', { filter, count: Math.min(files.length, DRIVE_REPLY_MAX_ENTRIES) });
+    return this.reply(ctx, body, 'RESPONDED', language, 'listed', { filter, result, shown: files.length });
   }
 
   private async summarize(

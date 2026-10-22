@@ -198,6 +198,9 @@ describe('calendar reply renderer (ADR-0110 D3)', () => {
     expect(tomorrow).toBe("[Quoky가 위에서 캘린더 '내일 · 10월 7일(수)' 일정 2개를 보여드림 — 일정 내용은 기록하지 않음]");
     expect(note({ kind: 'day', offset: 1 }, events, { language: 'en' })).toMatch(/^\[Quoky showed the User 2 calendar events for '.+' just above — event details are not kept in this history\.\]$/u);
     expect(note({ kind: 'day', offset: 1 }, [])).toBe("[Quoky가 위에서 캘린더 '내일 · 10월 7일(수)' 조회 결과(해당 일정 0개)를 보여드림 — 일정 내용은 기록하지 않음]");
+    expect(note({ kind: 'day', offset: 1 }, [], { language: 'en' })).toBe(
+      "[Quoky showed the User 0 calendar events for 'Tomorrow · Wed, Oct 7' just above — event details are not kept in this history.]",
+    );
     expect(note({ kind: 'day', offset: 1 }, events, { remaining: true })).toContain('남은 일정 2개');
     expect(note({ kind: 'week', which: 'this' }, events)).toContain("'이번 주 · 10월 5일(월) ~ 10월 11일(일)' 일정 2개");
     // The next-event answer names the lookahead only, never the found event's own date.

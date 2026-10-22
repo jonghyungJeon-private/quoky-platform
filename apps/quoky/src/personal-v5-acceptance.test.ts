@@ -1197,6 +1197,34 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
         }
       });
     });
+    it('mail and Drive listings, then a chat follow-up: the chat input has the structural notes, never a sender, subject or file name', async () => {
+      await withPhase('c', 'active', async () => {
+        const ctx = context();
+        selectorAnswer = answer('mail.list', { unread: true });
+        const mail = await turnOf('안 읽은 메일 보여줘', ctx);
+        expect(mail.result.reply.text).toContain('분기 보고서 검토 요청');
+        selectorAnswer = answer('drive.files');
+        const drive = await turnOf('최근 문서 보여줘', ctx);
+        expect(drive.result.reply.text).toContain('2026 로드맵 회의록');
+
+        selectorAnswer = none;
+        const followUp = await turnOf('그중에 뭐부터 보면 좋을지 같이 정리해줘', ctx);
+        expect(followUp.served).toEqual([]);
+        const chat = followUp.requests.filter((request) => request.capability !== SELECTION);
+        expect(chat).toHaveLength(1);
+        const input = JSON.stringify(chat[0]);
+        expect(input).toMatch(/\[Quoky가 위에서 '안 읽은 메일' \d+건 목록을 보여드림 — 메일 내용은 기록하지 않음\]/u);
+        expect(input).toMatch(/\[Quoky가 위에서 드라이브 '최근 수정한 파일' \d+건 목록을 보여드림 — 파일 이름과 내용은 기록하지 않음\]/u);
+        expect(input).toContain(JSON.stringify(core.LISTING_SHOWN_ABOVE_RULE).slice(1, -1));
+        for (const mailFixture of MAILS) {
+          expect(input).not.toContain(mailFixture.subject);
+          expect(input).not.toContain(mailFixture.snippet);
+          expect(input).not.toContain(mailFixture.from.replace(/\s*<.*$/u, ''));
+        }
+        for (const doc of DOCS) expect(input).not.toContain(doc.name);
+        expect(input).not.toContain('attacker@example.com');
+      });
+    });
   });
 
   describe('live Telegram (2026-10-14, after A5) - a Class B grammar declines what it cannot express, selection answers', () => {

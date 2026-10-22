@@ -532,3 +532,64 @@ describe('CalendarTurnHandler.handleSelected — part of day across a DST change
     expect(text).not.toContain('해 바뀐 아침');
   });
 });
+
+describe('CalendarTurnHandler — the history note after a selected listing (owner DM 2026-10-22, review fixes)', () => {
+  const day = '2026-10-07';
+  const timed = (id: string, title: string, startKst: string, endKst: string): CalendarEvent => ({
+    ...MEETING,
+    id,
+    title,
+    start: `${day}T${startKst}:00+09:00`,
+    end: `${day}T${endKst}:00+09:00`,
+    location: '본사 7층 면접실',
+  });
+  const INTERVIEW = timed('i-1', '1차 면접_AI Agent_홍길동', '10:00', '11:00');
+  const WEEKLY = timed('i-2', '주간 회의', '14:00', '15:00');
+  const LEAVE: CalendarEvent = { ...MEETING, id: 'a-1', title: '[연차] 홍길동', start: day, end: '2026-10-08', allDay: true };
+  const noteOf = async (events: CalendarEvent[], args: Record<string, string | boolean>, language: 'ko' | 'en' = 'ko') => {
+    const { reader } = fakeReader(async () => events);
+    const out = await createCalendarTurnHandler({ reader, timeZone: SEOUL }).handleSelected?.(
+      { entryId: 'calendar.events', args, range: resolveNlRange('tomorrow', NOW, SEOUL), language },
+      ctx('x'),
+    );
+    const note = (out as { history?: { assistant?: string } }).history?.assistant ?? '';
+    for (const content of ['면접', 'AI Agent', '홍길동', '주간 회의', '본사', '10:00', '14:00']) expect(note).not.toContain(content);
+    return note;
+  };
+
+  it('a title keyword keeps neither the keyword nor a count: a hit and a miss leave the same note (CA W1)', async () => {
+    const hit = await noteOf([INTERVIEW, WEEKLY], { keyword: '면접' });
+    const miss = await noteOf([WEEKLY], { keyword: '면접' });
+    expect(hit).toBe("[Quoky가 위에서 캘린더 '내일 · 10월 7일(수)' 중 말씀하신 조건에 맞는 결과를 보여드림 — 일정 내용은 기록하지 않음]");
+    expect(miss).toBe(hit);
+    expect(hit).not.toMatch(/\d+개/u);
+    const en = await noteOf([INTERVIEW], { keyword: '면접' }, 'en');
+    expect(en).toBe("[Quoky showed the User the calendar results for 'Tomorrow · Wed, Oct 7' matching what the User asked just above — event details are not kept in this history.]");
+    expect(await noteOf([WEEKLY], { keyword: '면접' }, 'en')).toBe(en);
+  });
+
+  it('timed-only, availability and a part of the day are structural qualifiers; the count stays (CA W2)', async () => {
+    expect(await noteOf([LEAVE, INTERVIEW, WEEKLY], { timedOnly: true })).toBe(
+      "[Quoky가 위에서 캘린더 '내일 · 10월 7일(수)' 일정 2개를 보여드림 (시간이 정해진 일정만) — 일정 내용은 기록하지 않음]",
+    );
+    expect(await noteOf([INTERVIEW, WEEKLY], { partOfDay: 'afternoon', availability: true })).toBe(
+      "[Quoky가 위에서 캘린더 '내일 오후 · 10월 7일(수)' 일정 1개를 보여드림 (비어 있는지 확인) — 일정 내용은 기록하지 않음]",
+    );
+    expect(await noteOf([], { availability: true })).toBe(
+      "[Quoky가 위에서 캘린더 '내일 · 10월 7일(수)' 조회 결과(해당 일정 0개)를 보여드림 (비어 있는지 확인) — 일정 내용은 기록하지 않음]",
+    );
+  });
+
+  it('a full page is partial: a narrowed zero is never recorded as a definitive "0개" (CA W2)', async () => {
+    const page = Array.from({ length: 50 }, (_, i): CalendarEvent => ({ ...LEAVE, id: `d-${i}` }));
+    const timedZero = await noteOf(page, { timedOnly: true });
+    expect(timedZero).toBe(
+      "[Quoky가 위에서 캘린더 '내일 · 10월 7일(수)' 조회 결과(해당 일정 0개)를 보여드림 (시간이 정해진 일정만 · 일부만 불러옴, 불러온 범위 기준) — 일정 내용은 기록하지 않음]",
+    );
+    const keyword = await noteOf(page, { keyword: '면접' });
+    expect(keyword).toBe("[Quoky가 위에서 캘린더 '내일 · 10월 7일(수)' 중 말씀하신 조건에 맞는 결과를 보여드림 (일부만 불러옴, 불러온 범위 기준) — 일정 내용은 기록하지 않음]");
+    expect(await noteOf(page, {}, 'en')).toBe(
+      "[Quoky showed the User 50 calendar events for 'Tomorrow · Wed, Oct 7' just above (only part was read; within what was read) — event details are not kept in this history.]",
+    );
+  });
+});

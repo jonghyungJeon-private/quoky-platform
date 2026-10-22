@@ -117,7 +117,7 @@ function nameQuery(name: string): MessagePart {
   return guardedClippedSpan(name, DRIVE_NAME_QUERY_DISPLAY_MAX_CHARS, '(…)');
 }
 
-function countText(result: DriveListResult, language: DriveLanguage): string {
+function countText(result: Pick<DriveListResult, 'matched' | 'matchedIsLowerBound'>, language: DriveLanguage): string {
   const more = result.matchedIsLowerBound;
   if (language === 'en') return `${result.matched}${more ? '+' : ''} file${result.matched === 1 && !more ? '' : 's'}`;
   return `${result.matched}건${more ? ' 이상' : ''}`;
@@ -381,20 +381,33 @@ export function renderDriveFirstSheetOnlyNote(reason: DriveFirstSheetOnlyReason,
 export type DriveHistoryKind = 'listed' | 'not-read' | 'not-summarized';
 
 /**
- * The structural shape of what a `listed` reply showed (owner DM 2026-10-22): recent or a name search (never the name the
- * owner searched for), the file kind it was narrowed to, and how many entries it numbered. No file name, owner or date.
+ * The structural shape of what a `listed` reply showed (owner DM 2026-10-22): recent or a name search, the file kind it
+ * was narrowed to, and the count its header printed. No file name, owner or date. Owner security instruction 2026-10-22
+ * (review CA W1): a name search is content-matching, so neither the name nor the count is kept.
  */
 export interface DriveShownShape {
   readonly filter: DriveListingFilter;
-  readonly count: number;
+  /** The header's count (`matched`, "N건 이상" when a lower bound): what the reply printed. */
+  readonly result: Pick<DriveListResult, 'matched' | 'matchedIsLowerBound' | 'incomplete'>;
+  /** How many entries the listing held (the reply lists at most {@link DRIVE_REPLY_MAX_ENTRIES}). */
+  readonly shown: number;
 }
 
-/** "최근 수정한 문서", "이름으로 찾은 파일"; "recently modified files", "files found by name". */
-function driveScopeLabel(filter: DriveListingFilter, language: DriveLanguage): string {
+function driveListingNote(shown: DriveShownShape, language: DriveLanguage): string {
   const en = language === 'en';
+  const { filter, result } = shown;
   const kind = filter.fileKind !== undefined ? driveKindLabel(filter.fileKind, language) : en ? 'files' : '파일';
-  if (filter.kind === 'recent') return en ? `recently modified ${kind}` : `최근 수정한 ${kind}`;
-  return en ? `${kind} found by the name the User gave` : `말씀하신 이름으로 찾은 ${kind}`;
+  if (filter.kind === 'search') {
+    const tail = result.incomplete === true ? (en ? ' (the search covered only part)' : ' (일부만 검색됨)') : '';
+    return en
+      ? `[Quoky showed the User the Drive ${kind} matching the name the User gave just above${tail} — file names and contents are not kept in this history.]`
+      : `[Quoky가 위에서 드라이브 ${kind} 중 말씀하신 이름 조건에 맞는 결과를 보여드림${tail} — 파일 이름과 내용은 기록하지 않음]`;
+  }
+  const partial = result.matchedIsLowerBound || result.matched > Math.min(shown.shown, DRIVE_REPLY_MAX_ENTRIES);
+  const tail = partial ? (en ? ' (only the first part listed)' : ' (앞부분만 표시)') : '';
+  return en
+    ? `[Quoky showed the User a Drive list of recently modified ${kind}, ${countText(result, language)}, just above${tail} — file names and contents are not kept in this history.]`
+    : `[Quoky가 위에서 드라이브 '최근 수정한 ${kind}' ${countText(result, language)} 목록을 보여드림${tail} — 파일 이름과 내용은 기록하지 않음]`;
 }
 
 /**
@@ -407,12 +420,7 @@ export function renderDriveHistoryNote(language: DriveLanguage, kind: DriveHisto
   const en = language === 'en';
   switch (kind) {
     case 'listed':
-      if (shown !== undefined) {
-        const scope = driveScopeLabel(shown.filter, language);
-        return en
-          ? `[Quoky showed the User a Drive list of ${shown.count} entr${shown.count === 1 ? 'y' : 'ies'} ('${scope}') just above — file names and contents are not kept in this history.]`
-          : `[Quoky가 위에서 드라이브 '${scope}' 목록 ${shown.count}건을 보여드림 — 파일 이름과 내용은 기록하지 않음]`;
-      }
+      if (shown !== undefined) return driveListingNote(shown, language);
       return en
         ? '[Quoky listed Drive files; file names are not kept in the conversation history.]'
         : '[드라이브 파일 목록 응답 — 파일 이름은 대화 기록에 남기지 않아요.]';

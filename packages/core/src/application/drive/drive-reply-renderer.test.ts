@@ -40,15 +40,29 @@ describe('Drive listing size (the GML-1 review P2 rule): every displayed number 
 });
 
 describe('Drive history note (owner DM 2026-10-22)', () => {
-  it('says structurally what was shown: recent or a name search, the kind and the count; never the searched name', () => {
-    expect(renderDriveHistoryNote('ko', 'listed', { filter: { kind: 'recent', fileKind: 'spreadsheet' }, count: 4 })).toBe(
-      "[Quoky가 위에서 드라이브 '최근 수정한 스프레드시트' 목록 4건을 보여드림 — 파일 이름과 내용은 기록하지 않음]",
+  it('recent files keep the kind and the count the header printed; a partial listing is marked (CA S3)', () => {
+    expect(renderDriveHistoryNote('ko', 'listed', { filter: { kind: 'recent', fileKind: 'spreadsheet' }, result: { matched: 4, matchedIsLowerBound: false }, shown: 4 })).toBe(
+      "[Quoky가 위에서 드라이브 '최근 수정한 스프레드시트' 4건 목록을 보여드림 — 파일 이름과 내용은 기록하지 않음]",
     );
-    const search = renderDriveHistoryNote('ko', 'listed', { filter: { kind: 'search', name: '분기 결산 보고서' }, count: 2 });
-    expect(search).toBe("[Quoky가 위에서 드라이브 '말씀하신 이름으로 찾은 파일' 목록 2건을 보여드림 — 파일 이름과 내용은 기록하지 않음]");
-    expect(search).not.toContain('결산');
-    const en = renderDriveHistoryNote('en', 'listed', { filter: { kind: 'search', name: 'Q4 budget' }, count: 1 });
-    expect(en).toBe("[Quoky showed the User a Drive list of 1 entry ('files found by the name the User gave') just above — file names and contents are not kept in this history.]");
+    expect(renderDriveHistoryNote('ko', 'listed', { filter: { kind: 'recent' }, result: { matched: 20, matchedIsLowerBound: true }, shown: 20 })).toBe(
+      "[Quoky가 위에서 드라이브 '최근 수정한 파일' 20건 이상 목록을 보여드림 (앞부분만 표시) — 파일 이름과 내용은 기록하지 않음]",
+    );
+    expect(renderDriveHistoryNote('en', 'listed', { filter: { kind: 'recent' }, result: { matched: 1, matchedIsLowerBound: false }, shown: 1 })).toBe(
+      '[Quoky showed the User a Drive list of recently modified files, 1 file, just above — file names and contents are not kept in this history.]',
+    );
+  });
+
+  it('a name search is content-matching: neither the name nor a count is kept; an incomplete search is marked (CA W1/W2)', () => {
+    const search = (matched: number, incomplete = false) =>
+      renderDriveHistoryNote('ko', 'listed', { filter: { kind: 'search', name: '분기 결산 보고서' }, result: { matched, matchedIsLowerBound: false, ...(incomplete ? { incomplete } : {}) }, shown: matched });
+    expect(search(2)).toBe('[Quoky가 위에서 드라이브 파일 중 말씀하신 이름 조건에 맞는 결과를 보여드림 — 파일 이름과 내용은 기록하지 않음]');
+    expect(search(0)).toBe(search(2));
+    expect(search(0, true)).toBe('[Quoky가 위에서 드라이브 파일 중 말씀하신 이름 조건에 맞는 결과를 보여드림 (일부만 검색됨) — 파일 이름과 내용은 기록하지 않음]');
+    expect(search(2)).not.toContain('결산');
+    expect(search(2)).not.toMatch(/\d+건/u);
+    expect(renderDriveHistoryNote('en', 'listed', { filter: { kind: 'search', name: 'Q4 budget', fileKind: 'document' }, result: { matched: 1, matchedIsLowerBound: false }, shown: 1 })).toBe(
+      '[Quoky showed the User the Drive document matching the name the User gave just above — file names and contents are not kept in this history.]',
+    );
     expect(renderDriveHistoryNote('ko', 'listed')).toBe('[드라이브 파일 목록 응답 — 파일 이름은 대화 기록에 남기지 않아요.]');
   });
 });

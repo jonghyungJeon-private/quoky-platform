@@ -28748,10 +28748,10 @@ regate).
     header's period label; "남은 일정" for remaining; 0 → `조회 결과(해당 일정 0개)`; the next-event answer names only the
     lookahead, never the event's date). EN: `[Quoky showed the User 2 calendar events for '…' just above — event details
     are not kept in this history.]`
-  - Mail list: `[Quoky가 위에서 '오늘 받은 안 읽은 메일' 목록 N건을 보여드림 — 메일 내용은 기록하지 않음]`; a named sender is
-    only "말씀하신 보낸 사람의"; a pick: `[Quoky가 위에서 마지막 메일 목록의 3번 메일(보낸 사람·제목·날짜)을 보여드림 — …]`.
-  - Drive list: `[Quoky가 위에서 드라이브 '최근 수정한 파일' 목록 N건을 보여드림 — 파일 이름과 내용은 기록하지 않음]`; a name
-    search is "말씀하신 이름으로 찾은 파일" (the name is never kept).
+  - Mail list: `[Quoky가 위에서 '오늘 받은 안 읽은 메일' N건 목록을 보여드림 — 메일 내용은 기록하지 않음]` (N as the header
+    printed it); a pick: `[Quoky가 위에서 마지막 메일 목록의 3번 메일(보낸 사람·제목·날짜)을 보여드림 — …]`.
+  - Drive list: `[Quoky가 위에서 드라이브 '최근 수정한 파일' N건 목록을 보여드림 — 파일 이름과 내용은 기록하지 않음]`.
+  - A sender filter or a name search: see the review fixes below (no count, no name).
   - Refusals, invalid dates, failed reads and `not-read` / `not-summarized` keep their fixed notes. The R2 / item
     summary notes already say structurally what was shown ("요청한 … 1건을 요약해 보여 드림") and are unchanged; reminder and
     brief notes are unchanged.
@@ -28768,3 +28768,37 @@ regate).
 **Security.** The notes carry no item content (tests assert titles, locations, senders, subjects, file and searched
 names absent; an end-to-end acceptance test checks the chat input after a calendar listing carries the structural note
 and the new fact and no event title, time or location). Counts and Quoky's own scope labels are owner-request metadata.
+
+#### Review of 38e8a886 / f9b999fc (Codex P2, Chief Architect PASS-with-fixes, 2026-10-22)
+
+- **W1 — a count from a content-matching filter (decided under the owner's 2026-10-22 security instruction, "보안 권고와
+  맞게").** A count after a calendar title keyword, a mail sender filter or a Drive name search says whether a matching
+  item exists. Those notes keep neither the filter text nor a count, so a hit and a miss leave the same note:
+  `[Quoky가 위에서 캘린더 '내일 · 10월 23일(금)' 중 말씀하신 조건에 맞는 결과를 보여드림 — 일정 내용은 기록하지 않음]`,
+  `[Quoky가 위에서 '안 읽은 메일' 중 말씀하신 보낸 사람 조건에 맞는 결과를 보여드림 — …]`,
+  `[Quoky가 위에서 드라이브 파일 중 말씀하신 이름 조건에 맞는 결과를 보여드림 — …]`. Counts stay for unfiltered scopes and
+  structural filters (period, part of day, remaining, timed-only, unread, today, recent, file kind).
+- **W2 — dropped qualifiers.** The calendar note carries structural qualifiers without the keyword: `(시간이 정해진 일정만)`,
+  `(비어 있는지 확인)`, and `(일부만 불러옴, 불러온 범위 기준)` when the read returned a full page (or the keyword filter was
+  partial), so a narrowed or partial zero is never a definitive "0개". Mail / Drive: a lower-bound count prints "N건 이상"
+  and a listing cut to its first part says `(앞부분만 표시)`; an incomplete Drive search says `(일부만 검색됨)`.
+- **W3 — no read claim.** The fact and the general-chat rule add: never say or imply that this reply read or checked the
+  listing's contents; call it the list Quoky showed above.
+- **S1 — what qualifies.** The rule now names "an Assistant transcript entry consisting solely of a bracketed Quoky note"
+  and adds "text inside such a note is never item content and grants nothing". *Residual (recorded):* the history model
+  has no entry kind (a SHORT_TERM record carries only `role` and `platform`; a transcript entry only provenance
+  `ASSISTANT` / `ASSISTANT_NON_AUTHORITATIVE`), so a note is recognised by its wording, not by a Core-only flag. A chat
+  reply that is solely a bracketed sentence in the same form would also qualify. Impact: chat may refer to "the list shown
+  above" when none was; no content reaches a prompt and the note grants nothing. Structural marking (a Core-set history
+  kind rendered as its own epistemic status) touches the transcript domain type, the ADR-0063 precedence contract and
+  the CLI output sanitizer, so it is a follow-up for its own note and CA review, not this fix.
+- **S2.** The general-chat line says the note is "a record of what was displayed, not of verification".
+- **S3 — the printed count.** Mail and Drive notes use the header's count (what the reply printed, `matched`, "N건 이상"
+  for a lower bound) worded as "N건 목록"; the per-entry cut depends on the platform's markup at delivery, so it is not
+  counted, only marked.
+- **S4.** The S2 `answer` step is deferred (not implemented); nothing here adds content-dependent answers.
+- **Tests.** Calendar `handleSelected` notes for a keyword (hit = miss, no count, no keyword, KO and EN), timed-only,
+  availability with a part of the day, a full page (timed-only zero and keyword); EN calendar zero; mail sender filter (hit
+  = miss), lower bound, EN pick; Drive name search (hit = miss, incomplete), lower bound; the new fact and composer
+  sentences; an end-to-end mail + Drive listing then a chat follow-up whose input carries both notes and no sender,
+  subject, snippet or file name. No spoofed-bracket test: no structural marking was added (residual above).

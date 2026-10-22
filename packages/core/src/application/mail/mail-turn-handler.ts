@@ -76,7 +76,6 @@ import {
   renderMailWriteRefused,
   type MailHistoryKind,
   type MailShownShape,
-  MAIL_REPLY_MAX_ENTRIES,
   type MailListingFilter,
   type MailReadFailure,
   type MailSourceCopy,
@@ -338,7 +337,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       language,
       ...(this.deps.copy !== undefined ? { copy: this.deps.copy } : {}),
     });
-    return this.reply(ctx, body, 'RESPONDED', language, 'listed', { kind: 'listing', filter, count: Math.min(messages.length, MAIL_REPLY_MAX_ENTRIES) });
+    return this.reply(ctx, body, 'RESPONDED', language, 'listed', { kind: 'listing', filter, result, shown: messages.length });
   }
 
   private async summarize(

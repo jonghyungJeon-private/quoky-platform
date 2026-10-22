@@ -46,22 +46,42 @@ describe('mail listing size (review P2 / P3-2): every displayed number is an ent
 });
 
 describe('mail history note (owner DM 2026-10-22)', () => {
-  it('says structurally what was shown: scope and count, or the picked number; never the sender the owner named', () => {
-    expect(renderMailHistoryNote('ko', 'listed', { kind: 'listing', filter: { unread: false, today: true }, count: 3 })).toBe(
-      "[Quoky가 위에서 '오늘 받은 메일' 목록 3건을 보여드림 — 메일 내용은 기록하지 않음]",
+  const listing = (filter: Parameters<typeof renderMailListing>[0], matched: number, shown = matched, matchedIsLowerBound = false) =>
+    ({ kind: 'listing', filter, result: { matched, matchedIsLowerBound }, shown }) as const;
+
+  it('keeps the scope and the count the header printed; a partial listing says only its first part was listed', () => {
+    expect(renderMailHistoryNote('ko', 'listed', listing({ unread: false, today: true }, 3))).toBe(
+      "[Quoky가 위에서 '오늘 받은 메일' 3건 목록을 보여드림 — 메일 내용은 기록하지 않음]",
     );
-    const fromNamed = renderMailHistoryNote('ko', 'listed', { kind: 'listing', filter: { unread: true, today: false, from: '김철수' }, count: 2 });
-    expect(fromNamed).toBe("[Quoky가 위에서 '말씀하신 보낸 사람의 안 읽은 메일' 목록 2건을 보여드림 — 메일 내용은 기록하지 않음]");
-    expect(fromNamed).not.toContain('김철수');
-    const period = renderMailHistoryNote('ko', 'listed', { kind: 'listing', filter: { unread: false, today: false, period: { ko: '지난주', en: 'last week' } }, count: 0 });
-    expect(period).toContain("'지난주 받은 메일' 목록 0건");
+    expect(renderMailHistoryNote('ko', 'listed', listing({ unread: false, today: false, period: { ko: '지난주', en: 'last week' } }, 0))).toBe(
+      "[Quoky가 위에서 '지난주 받은 메일' 0건 목록을 보여드림 — 메일 내용은 기록하지 않음]",
+    );
+    // CA S3: the header's count ("N건 이상" for a lower bound), and the cut is marked.
+    expect(renderMailHistoryNote('ko', 'listed', listing({ unread: true, today: false }, 25, 25, true))).toBe(
+      "[Quoky가 위에서 '안 읽은 메일' 25건 이상 목록을 보여드림 (앞부분만 표시) — 메일 내용은 기록하지 않음]",
+    );
+    expect(renderMailHistoryNote('en', 'listed', listing({ unread: true, today: false }, 12, 12))).toBe(
+      "[Quoky showed the User a list of 12 messages ('unread mail') just above (only the first part listed) — mail details are not kept in this history.]",
+    );
+  });
+
+  it('a sender filter is content-matching: neither the sender nor a count is kept, and a hit and a miss read the same (CA W1)', () => {
+    const hit = renderMailHistoryNote('ko', 'listed', listing({ unread: true, today: false, from: '김철수' }, 2));
+    expect(hit).toBe("[Quoky가 위에서 '안 읽은 메일' 중 말씀하신 보낸 사람 조건에 맞는 결과를 보여드림 — 메일 내용은 기록하지 않음]");
+    expect(renderMailHistoryNote('ko', 'listed', listing({ unread: true, today: false, from: '김철수' }, 0))).toBe(hit);
+    expect(hit).not.toContain('김철수');
+    expect(hit).not.toMatch(/\d+건/u);
+    const en = renderMailHistoryNote('en', 'listed', listing({ unread: false, today: false, from: 'kim@example.com' }, 1));
+    expect(en).toBe("[Quoky showed the User the 'mail' results matching the sender the User named just above — mail details are not kept in this history.]");
+  });
+
+  it('a pick names only the number (KO and EN); without a shape, and for the other kinds, the fixed notes', () => {
     expect(renderMailHistoryNote('ko', 'listed', { kind: 'pick', index: 3 })).toBe(
       '[Quoky가 위에서 마지막 메일 목록의 3번 메일(보낸 사람·제목·날짜)을 보여드림 — 메일 내용은 기록하지 않음]',
     );
-    const en = renderMailHistoryNote('en', 'listed', { kind: 'listing', filter: { unread: true, today: false, from: 'kim@example.com' }, count: 1 });
-    expect(en).toBe("[Quoky showed the User a list of 1 email ('unread mail from the sender the User named') just above — mail details are not kept in this history.]");
-    expect(en).not.toContain('kim@example.com');
-    // Without a shape, and for the other kinds: unchanged.
+    expect(renderMailHistoryNote('en', 'listed', { kind: 'pick', index: 3 })).toBe(
+      '[Quoky showed the User the sender, subject and date of email 3 of the last list just above — mail details are not kept in this history.]',
+    );
     expect(renderMailHistoryNote('ko', 'listed')).toBe('[메일 목록 응답 — 메일 내용은 대화 기록에 남기지 않아요.]');
     expect(renderMailHistoryNote('ko', 'not-read')).toBe('[메일 요청에 안내만 함 — 메일은 읽지 않았어요.]');
   });

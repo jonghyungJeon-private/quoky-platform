@@ -327,7 +327,7 @@ describe('Drive on the real runtime (ADR-0118 D4–D8, DRV-1)', () => {
     expect(result.reply?.text).toContain(`1. ${NAME} · 문서`);
     expect(h.driveCalls).toEqual({ list: 1, exported: [] });
     expect([h.calls.classify, h.calls.createTask.length, h.prompts.length]).toEqual([0, 0, 0]);
-    expect(h.calls.recordAssistant).toEqual([renderDriveHistoryNote('ko', 'listed', { filter: { kind: 'recent' }, count: 1 })]);
+    expect(h.calls.recordAssistant).toEqual([renderDriveHistoryNote('ko', 'listed', { filter: { kind: 'recent' }, result: { matched: 1, matchedIsLowerBound: false }, shown: 1 })]);
     expect(h.calls.recordAssistant.join('\n')).not.toContain(NAME);
   });
 

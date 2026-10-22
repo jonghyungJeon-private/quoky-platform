@@ -14,8 +14,13 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   listing is on the owner's screen: refer to it, work from the owner's words, ask for the detail needed, never guess its
   contents.
 - **Security (unchanged).** ADR-0110 D4 / ADR-0118 D7 kept (owner decision 2026-10-22): no title, time, location,
-  sender, subject or file name enters the history or a remote prompt. Answers that need the contents are left to the
-  S2 `answer` step on a LOCAL model. Selector prompt unchanged.
+  sender, subject or file name enters the history or a remote prompt. After a content-matching filter (calendar title
+  keyword, mail sender, Drive name search) the note keeps no count either, so it never says whether a match exists;
+  a full-page or partial read is marked so a zero is never definitive. Answers that need the contents are deferred to
+  the S2 `answer` step on a LOCAL model (deferred, not implemented). Selector prompt unchanged.
+- **Changed.** The chat fact and the general-chat rule: only an Assistant entry that is solely a bracketed Quoky note
+  qualifies, its text is never item content and grants nothing, it records what was displayed (not verification), and
+  chat never says or implies it read or checked the listing — it calls it the list Quoky showed above.
 
 ## Unreleased — release holder vs named project (owner decision, 2026-10-22)
 

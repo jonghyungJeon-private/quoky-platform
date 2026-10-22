@@ -341,7 +341,7 @@ describe('mail on the real runtime (ADR-0118 D4–D8)', () => {
     expect(result.reply?.text).toContain(`1. ${SENDER} · ${SUBJECT}`);
     expect(h.mailCalls).toEqual({ search: 1, get: [], thread: [] });
     expect([h.calls.classify, h.calls.createTask.length, h.prompts.length]).toEqual([0, 0, 0]);
-    expect(h.calls.recordAssistant).toEqual([renderMailHistoryNote('ko', 'listed', { kind: 'listing', filter: { unread: true, today: false }, count: 1 })]);
+    expect(h.calls.recordAssistant).toEqual([renderMailHistoryNote('ko', 'listed', { kind: 'listing', filter: { unread: true, today: false }, result: { matched: 1, matchedIsLowerBound: false }, shown: 1 })]);
     expect(h.calls.recordAssistant.join('\n')).not.toContain(SENDER);
     expect(h.calls.recordAssistant.join('\n')).not.toContain(SUBJECT);
   });
