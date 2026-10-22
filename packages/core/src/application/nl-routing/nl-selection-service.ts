@@ -106,6 +106,7 @@ import {
 } from './selection-state';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
 import { nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
+import { NL_HELP_TOPICS } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
 
 /**
@@ -185,6 +186,11 @@ export interface NlSelectionTurn {
   readonly now: IsoTimestamp;
   /** The entries the registered handlers contribute this turn (configured sources only). */
   readonly entries: readonly NlCatalogEntry[];
+  /**
+   * Owner decision A follow-up (2026-10-22): per offered entry id, the one `help.topic` topic that covers it (the runtime
+   * derives it from the help lines of the handler that owns the entry). Absent: none known (the general help).
+   */
+  readonly entryHelpTopics?: Readonly<Record<string, string>>;
   readonly route: NlSelectionRoute;
   /**
    * ADR-0120 D6/D8 (no new egress): the id (or, when it has one, the family — `AiProvider.family`) of the provider the router resolves for this turn's chat capability and
@@ -1127,7 +1133,20 @@ export class NlSelectionService implements TurnDeliveryObserver {
   private async askHelpScope(selection: NlValidatedSelection, turn: NlSelectionTurn, language: 'ko' | 'en', groundingText: string): Promise<NlSelectionDecision | undefined> {
     const scope = nlHelpSourceScope({ entryId: selection.entry.id, args: selection.args }, groundingText, selection.entry);
     if (scope === undefined || !isNlWave1EntryId(selection.entry.id)) return undefined;
-    const option: StoredSelection = { entryId: selection.entry.id, args: selection.args };
+    // The Quoky option shows that source's help section: the topic covering the offered entries that own the source name
+    // (one topic only; otherwise the general help the selection named).
+    const sourceName = scope.source.normalize('NFC').toLowerCase();
+    const covering = [
+      ...new Set(
+        turn.entries
+          .filter((entry) => (entry.sourceNames ?? []).some((name) => name.normalize('NFC').toLowerCase() === sourceName))
+          .flatMap((entry) => {
+            const topic = turn.entryHelpTopics?.[entry.id];
+            return topic !== undefined && (NL_HELP_TOPICS as readonly string[]).includes(topic) ? [topic] : [];
+          }),
+      ),
+    ];
+    const option: StoredSelection = { entryId: selection.entry.id, args: covering.length === 1 ? { ...selection.args, topic: covering[0] as string } : selection.args };
     await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
       pendingQuestionRecord(turn.actor.id, { kind: 'entry', at: turn.now, language, options: [option], groundingText, appSource: scope.source }),
     );

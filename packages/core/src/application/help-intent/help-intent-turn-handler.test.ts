@@ -13,7 +13,12 @@ import {
   HELP_INTENT_TURN_HANDLER_ORDER,
   HelpIntentTurnHandler,
   createHelpIntentTurnHandler,
+  helpTopicOfLines,
 } from './help-intent-turn-handler';
+import { WORK_CHAT_LOOKUP_TURN_HELP_LINES } from '../work-chat/work-chat-turn-handler';
+import { CALENDAR_HELP_LINES } from '../calendar/calendar-turn-handler';
+import { MAIL_HELP_LINES } from '../mail/mail-turn-handler';
+import { DRIVE_HELP_LINES } from '../drive/drive-turn-handler';
 import * as coreBarrel from '../../index';
 
 const NOW = '2026-10-06T03:00:00.000Z';
@@ -140,5 +145,20 @@ describe('HelpIntentTurnHandler — capability questions (DET-2, live QA session
     expect(await handler.handle(context('파이썬으로 뭐 할 수 있어?'))).toBeNull();
     const topic = await handler.handle(context('완료 처리 어떻게 해?'));
     expect((topic as { reply: { text: string } }).reply.text.startsWith('Quoky에서는 이렇게 하면 돼요.')).toBe(true);
+  });
+});
+
+describe('helpTopicOfLines (owner decision A follow-up, 2026-10-22): a handler help lines -> the one help topic', () => {
+  it('finds the topic by the help index anchors, structurally (no source table)', () => {
+    expect(helpTopicOfLines(WORK_CHAT_LOOKUP_TURN_HELP_LINES)).toBe('work-lookup');
+    expect(helpTopicOfLines(CALENDAR_HELP_LINES)).toBe('calendar');
+    expect(helpTopicOfLines(MAIL_HELP_LINES)).toBe('mail');
+    expect(helpTopicOfLines(DRIVE_HELP_LINES)).toBe('drive');
+  });
+
+  it('none or several topics: undefined (the general help)', () => {
+    expect(helpTopicOfLines([])).toBeUndefined();
+    expect(helpTopicOfLines(HELP_INTENT_HELP_LINES)).toBeUndefined();
+    expect(helpTopicOfLines([...CALENDAR_HELP_LINES, ...MAIL_HELP_LINES])).toBeUndefined();
   });
 });

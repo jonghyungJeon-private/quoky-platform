@@ -55,7 +55,9 @@ describe('read residuals (owner decisions A and B, 2026-10-22)', () => {
     await h.turn('슬랙에서 검색하는 방법 알려줘', pick('help.topic'));
     const quoky = await h.turn('1', none);
     expect(quoky.selects).toHaveLength(0);
+    // The source's help section (structurally: Slack -> slack.search -> the work-chat lookup handler's help line).
+    expect(quoky.text).toContain('Quoky에서는 이렇게 하면 돼요.');
+    expect(quoky.text).toContain('업무 조회');
     expect(quoky.text).not.toContain('앱 자체');
-    expect(quoky.text.length).toBeGreaterThan(0);
   });
 });

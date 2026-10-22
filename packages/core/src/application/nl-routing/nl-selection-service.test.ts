@@ -991,6 +991,14 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(await h.decide('the second one')).toEqual({ kind: 'ask', text: "That is about using the Confluence app itself, so I can't guide you through it reliably. Please check Confluence's own help." });
   });
 
+  it("the Quoky option shows the source's help section: the topic of the entries that own the source name", async () => {
+    const h = harness({ script: [out('help.topic')] });
+    const topics = { 'slack.search': 'work-lookup', 'jira.issues': 'work-lookup', 'calendar.events': 'calendar' };
+    await h.service.decide({ text: '슬랙에서 검색하는 방법 알려줘', attachmentCount: 0, session: h.session, actor: h.actor(), now: T0, entries: ALL, route: 'chat', chatProviderId: 'scripted-selector', entryHelpTopics: topics });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ options: [{ entryId: 'help.topic', args: { topic: 'work-lookup' } }] });
+    expect(await h.decide('1')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
+  });
+
   it('a number that is no option asks the same help-scope question again; a cancel ends it', async () => {
     const h = harness({ script: [out('help.topic')] });
     await h.decide('슬랙에서 검색하는 방법 알려줘');

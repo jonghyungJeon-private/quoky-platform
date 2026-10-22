@@ -25,6 +25,19 @@ const SELECTION_ONLY_TOPICS: readonly HelpIntentTopic[] = Object.freeze([
   Object.freeze({ id: 'mail', keywords: Object.freeze([]), anchors: Object.freeze(['메일']) }),
   Object.freeze({ id: 'drive', keywords: Object.freeze([]), anchors: Object.freeze(['드라이브', 'Drive']) }),
 ]);
+/**
+ * Owner decision A follow-up (2026-10-22): the one `help.topic` topic a handler's own contributed help lines answer (by the
+ * help index's anchors, exactly as a topic's help is selected), or `undefined` when none or several do. Structural: it
+ * links a catalog entry to its help section through the handler that owns both; no source or topic table.
+ */
+export function helpTopicOfLines(lines: readonly string[]): string | undefined {
+  const topics = [...HELP_INTENT_TOPICS, ...SELECTION_ONLY_TOPICS];
+  const answered = (NL_HELP_TOPICS as readonly string[]).filter(
+    (topic) => topic !== 'all' && selectHelpLines({ topicIds: [topic], language: 'ko' }, lines, { topics, exclude: HELP_INTENT_HELP_LINES }).length > 0,
+  );
+  return answered.length === 1 ? answered[0] : undefined;
+}
+
 /** ADR-0104 D4 (amends ADR-0096 D5): `pre-classify`, after work lookups (300), before the intent classifier. */
 export const HELP_INTENT_TURN_HANDLER_ORDER = 400;
 

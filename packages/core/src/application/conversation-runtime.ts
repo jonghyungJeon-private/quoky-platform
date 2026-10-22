@@ -1,5 +1,6 @@
 import { describeAiFailure } from './ai-failure';
 import { detectHelpIntent } from './help-intent/help-intent';
+import { helpTopicOfLines } from './help-intent/help-intent-turn-handler';
 import { generalChatReplyPolicy, generalChatReplyPolicyMetadata } from './chat-policy/chat-response-policy';
 import { guardInternalActionClaims } from './chat-policy/internal-action-claim-guard';
 import {
@@ -3842,6 +3843,25 @@ export class ConversationRuntime {
     return owned;
   }
 
+  /**
+   * Owner decision A follow-up (2026-10-22): per offered entry, the one help topic its owning handler's contributed help
+   * lines answer (`helpTopicOfLines`), so the help-scope question's Quoky option shows that source's help section.
+   */
+  private static nlEntryHelpTopics(catalog: ReadonlyMap<string, { readonly entry: NlCatalogEntry; readonly handler: ConversationTurnHandler }>): Record<string, string> {
+    const topics: Record<string, string> = {};
+    for (const [id, owned] of catalog) {
+      let lines: readonly string[];
+      try {
+        lines = owned.handler.helpLines ?? [];
+      } catch {
+        continue;
+      }
+      const topic = helpTopicOfLines(lines);
+      if (topic !== undefined) topics[id] = topic;
+    }
+    return topics;
+  }
+
   /** A6: every handler that declares action entry `entryId` (several serve `item.summarize` / `action.undo` by source). */
   private nlActionServers(entryId: string): ConversationTurnHandler[] {
     const servers: ConversationTurnHandler[] = [];
@@ -3993,6 +4013,7 @@ export class ConversationRuntime {
     const chat = await this.nlChatProvider(intent, session, actor);
     const decision = await nl.decide({
       ...(chat !== undefined ? { chatProviderId: chat.id, chatProviderLocality: chat.locality } : {}),
+      entryHelpTopics: ConversationRuntime.nlEntryHelpTopics(catalog),
       ...(nlPending !== undefined ? { pending: nlPending } : {}),
       ...(grammar !== undefined ? { grammar } : {}),
       ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}),
