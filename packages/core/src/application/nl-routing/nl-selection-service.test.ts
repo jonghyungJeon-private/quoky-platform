@@ -1040,6 +1040,13 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
   });
 
+  it('Codex P2: another repaired detail (an ignorable extra arg dropped) still goes through the help-scope check', async () => {
+    const extra = harness({ script: [out('help.topic', { verbose: true })] });
+    expect(await extra.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
+    const topic = harness({ script: [out('help.topic', { topic: 'slack' })] });
+    expect(await topic.decide('슬랙에서 검색하는 방법 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+  });
+
   it('positives stay untouched: a source-specific or feature topic, no source named, or two source families', async () => {
     const h = harness({
       script: [out('help.topic', { topic: 'work-lookup' }), out('help.topic', { topic: 'drive' }), out('help.topic'), out('help.topic', { topic: 'reminder' }), out('help.topic')],
