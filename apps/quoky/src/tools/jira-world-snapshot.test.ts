@@ -120,6 +120,12 @@ describe('CA review (CRITICAL): an outcome reached before any release was read c
     }
   });
 
+  it('CA follow-up: several projects after the release narrowing found nothing is no resolved project: args compared exactly', async () => {
+    expect(await sameJiraReleaseOutcome('차란차 1.1 릴리스', { project: '차란차', release: '1.1' }, { project: '차란차', release: '1.0' })).toBe(false);
+    // A reply about one resolved project still compares by outcome (its release list).
+    expect(await sameJiraReleaseOutcome('OP26 릴리스 목록', { project: 'op26' }, { project: 'OP26' })).toBe(true);
+  });
+
   it('a DM-only refusal before any read (every assignee in a channel) compares the args exactly', async () => {
     expect(await sameJiraReleaseOutcome('전체 담당 릴리스', { release: '20261015', scope: 'all' }, { release: '20261016', scope: 'all' }, { channel: true })).toBe(false);
   });

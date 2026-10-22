@@ -47,6 +47,11 @@ export type ReleaseLookupResult =
        * words). A yes runs the same lookup with the project's key (and the owner's release words, when they named one).
        */
       readonly confirm?: { readonly project: string; readonly release?: string };
+      /**
+       * The one visible project the reply is about (its release list, or a release not found in it), content-free (its key).
+       * Absent for a reply about no single resolved project (not found, several projects, a refusal, the usage text).
+       */
+      readonly resolvedProject?: string;
       readonly listed?: { readonly count: number; readonly truncated: boolean };
       /** A6 R2 (numbered): the issues in display order and how many leading rows were certainly delivered. */
       readonly shown?: { readonly items: readonly ConnectorItem[]; readonly labelled: number };
@@ -163,7 +168,7 @@ export async function lookupJiraRelease(input: {
         if (joined !== undefined && candidates.some((item) => item.id === joined.id)) {
           if (input.inChannel === true) return body(renderReleaseDmOnly('list'));
           const known = await releasesOf(connector, joined.id);
-          return body(renderReleaseList(refOf(joined), known.items, known.truncated === true, ignoredLink));
+          return resolvedBody(renderReleaseList(refOf(joined), known.items, known.truncated === true, ignoredLink), joined.id);
         }
         // Owner decision B: no candidate holds the release, and the project words with the release words are near exactly
         // one visible project ("Mobile App" + "2026" for "Mobile App Ops 2026"): that project is confirmed, then listed.
@@ -197,7 +202,7 @@ export async function lookupJiraRelease(input: {
             const original = resolveRelease(known.items, keyedRelease, truncated);
             match = original.item;
             if (match === undefined && !truncated && !original.ambiguous) match = resolveRelease(known.items, command.release, false).item;
-            if (match === undefined) return body(renderReleaseNotFound(keyedRelease, project, input.inChannel === true ? [] : nearbyReleases(known.items, keyedRelease)));
+            if (match === undefined) return resolvedBody(renderReleaseNotFound(keyedRelease, project, input.inChannel === true ? [] : nearbyReleases(known.items, keyedRelease)), project.key);
           } else {
             const resolved = resolveRelease(known.items, command.release, truncated);
             match = resolved.item;
@@ -205,10 +210,11 @@ export async function lookupJiraRelease(input: {
             // "차란차 운영 2026"): no such release on a complete listing, and the two values together name exactly this
             // project, so the owner named the project alone: its release list (DM-only, like any list).
             if (match === undefined && !truncated && !resolved.ambiguous && projectWithReleaseWords(completeProjects, command.project, command.release)?.id === project.key) {
-              return body(input.inChannel === true ? renderReleaseDmOnly('list') : renderReleaseList(project, known.items, false, ignoredLink));
+              if (input.inChannel === true) return body(renderReleaseDmOnly('list'));
+              return resolvedBody(renderReleaseList(project, known.items, false, ignoredLink), project.key);
             }
           }
-          if (match === undefined) return body(renderReleaseNotFound(command.release, project, input.inChannel === true ? [] : nearbyReleases(known.items, command.release)));
+          if (match === undefined) return resolvedBody(renderReleaseNotFound(command.release, project, input.inChannel === true ? [] : nearbyReleases(known.items, command.release)), project.key);
         }
         release = { id: match.id, name: match.title, ...(match.url !== undefined ? { url: match.url } : {}) };
       } else {
@@ -217,7 +223,7 @@ export async function lookupJiraRelease(input: {
       }
     } else if (project !== undefined) {
       const known = await releasesOf(connector, project.key);
-      return body(renderReleaseList(project, known.items, known.truncated === true, ignoredLink));
+      return resolvedBody(renderReleaseList(project, known.items, known.truncated === true, ignoredLink), project.key);
     } else {
       return body(renderReleaseUsage(ignoredLink));
     }
@@ -452,6 +458,11 @@ function namedProject(command: ReleaseLookupCommand, onSite: JiraReleaseLink | u
 
 function body(value: MessageBody): ReleaseLookupResult {
   return { kind: 'body', body: value };
+}
+
+/** A reply about one resolved visible project (its key). */
+function resolvedBody(value: MessageBody, project: string): ReleaseLookupResult {
+  return { kind: 'body', body: value, resolvedProject: project };
 }
 
 function itemsOf(result: ConnectorResult): readonly ConnectorItem[] {

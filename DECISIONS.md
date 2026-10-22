@@ -28451,7 +28451,7 @@ changed (read `nl-select.v65`, A6 `v63`, R2 `v64` stay).
   check runs after a contained-name ambiguity ("Mobile App" + "2026" → "Mobile App Ops 2026"); (3) else one near project
   (a small edit distance when no word matched: ≤ 1 edit per 4 characters, closest only; never on joined words) is
   confirmed, several keep the ambiguous list, none the not-found reply. The reply: "'차란차 플랫폼 운영 2026 (OP26)'
-  프로젝트가 맞나요? (응 / 아니)". Nothing is read from the project before the yes.
+  프로젝트가 맞나요? (응 / 아니)". Nothing is read from the project before the yes (corrected below, CA review W3).
   - *Mechanism reused:* the D7 pending question. The handler reply carries `nlConfirm` (new optional field of
     `TurnHandlerReply`, like `nlSelection`); the runtime hands it to `NlSelectionService.recordConfirmQuestion`, which
     saves the one-option `entry` question with `confirm`. Its answer uses the A6 elliptical-continuation confirmation's
@@ -28538,9 +28538,14 @@ Fixed without changing the rendered read / A6 / R2 prompt bytes (D12 gates were 
   release's items. The test asserts the queries.
 - **W4.** The snapshot header states its assumptions: the release statuses and the completeness of the 4-project listing
   (and the empty version lists of OP25 / APPOP / COP26) are assumed, not probed.
-- **W5 tests.** The confirmation after the 5-minute TTL and another actor's "응" (neither answers it; the owner's own yes
-  still does), a channel confirmation answered in the channel (runtime acceptance), a FAILED reply records no
+- **W5 tests.** The confirmation after the 5-minute TTL and another actor's "응" (neither answers it; at the service
+  level the owner's own yes still does — in the runtime `takePending` clears the slot at the start of any turn in the
+  session, so another member's message ends the owner's confirmation, the safe direction), a channel confirmation answered in the channel (runtime acceptance), a FAILED reply records no
   confirmation (`nlConfirmToRecord`), the digit case, the lenient-drop case, the equivalence negatives.
+- **CA follow-up (verification of 61a775c0).** The args count as used only for a confirmation, an item read, or a reply
+  about one resolved project (`resolvedProject` on the lookup result: its release list, or a release not found in it);
+  several projects after the release narrowing found nothing compare exactly (`{project: "차란차", release: "1.1"}` ≢
+  `{… "1.0"}`).
 - **Q2 — `agent-plan.v3` → `agent-plan.v4`.** The planner bytes changed twice after the v3 pin (the read v65 GitHub kind
   rule and examples, then the read v66 rule 3); the version string is not part of the prompt, so the read / A6 / R2 bytes
   are unchanged and the v4 pin is the sha the v3 test held last.

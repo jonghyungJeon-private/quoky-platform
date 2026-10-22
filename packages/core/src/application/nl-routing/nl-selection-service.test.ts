@@ -1086,7 +1086,9 @@ describe('owner decision B (2026-10-22): a handler confirmation is the open D7 q
     }
   });
 
-  it('CA review W5: the confirmation expires after the 5-minute TTL, and another actor\'s yes never answers it', async () => {
+  // Service level only: `decide` reads the slot itself here. In the runtime, `takePending` clears the slot at the start of
+  // ANY turn in the session, so another member's message ends the owner's confirmation (the safe direction).
+  it('CA review W5 (service level): the confirmation expires after the 5-minute TTL, and another actor\'s yes never answers it', async () => {
     const late = harness({ script: [NONE] });
     await late.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', selection, 'ko', T0);
     expect(await late.decide('응', { now: at(NL_PENDING_TTL_MS + 1) })).toEqual({ kind: 'none' });
@@ -1095,7 +1097,8 @@ describe('owner decision B (2026-10-22): a handler confirmation is the open D7 q
     const member = { id: 'member-2', displayName: 'Member', identities: [], createdAt: T0 };
     const decided = await other.service.decide({ text: '응', attachmentCount: 0, session: other.session, actor: member, now: T0, entries: ALL, route: 'chat', chatProviderId: 'scripted-selector' });
     expect(decided).toEqual({ kind: 'none' });
-    // The owner's own yes still answers it afterwards (the member's turn did not consume it).
+    // At the service level the owner's own yes still answers it afterwards (decide does not clear another actor's slot);
+    // through the runtime the member's turn would already have ended it (`takePending`).
     expect(await other.decide('응')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { project: 'OP26' } } });
   });
 
