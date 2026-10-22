@@ -999,6 +999,27 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(await h.decide('1')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
   });
 
+  it('Codex P2: each option is answered by its displayed text as well as by its number', async () => {
+    const appReply = '그건 슬랙 앱 자체의 사용법이라 제가 안내해 드리긴 어려워요. 슬랙의 도움말을 확인해 주세요.';
+    const cases: Array<[string, 'help' | 'app']> = [
+      ['Quoky로 슬랙 조회하는 방법', 'help'],
+      ['1', 'help'],
+      ['슬랙 앱 자체의 사용법', 'app'],
+      ['2', 'app'],
+    ];
+    for (const [reply, want] of cases) {
+      const h = harness({ script: [out('help.topic')] });
+      await h.decide('슬랙에서 검색하는 방법 알려줘');
+      const decision = await h.decide(reply);
+      if (want === 'help') expect(decision, reply).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic' } });
+      else expect(decision, reply).toEqual({ kind: 'ask', text: appReply });
+      expect(h.calls, reply).toHaveLength(1);
+    }
+    const en = harness({ script: [out('help.topic')] });
+    await en.decide('how do I search in Slack?');
+    expect(await en.decide('Looking up Slack with Quoky')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic' } });
+  });
+
   it('a number that is no option asks the same help-scope question again; a cancel ends it', async () => {
     const h = harness({ script: [out('help.topic')] });
     await h.decide('슬랙에서 검색하는 방법 알려줘');

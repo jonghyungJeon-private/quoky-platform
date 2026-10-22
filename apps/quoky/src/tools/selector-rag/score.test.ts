@@ -34,6 +34,20 @@ describe('exact-args scorer', () => {
     expect((await scoreExact(firstRead, answer('none'), NOW)).correct).toBe(false);
   });
 
+  it('a clarification gold (neg-010) is correct when Core asks; an ordinary positive never accepts a clarification', async () => {
+    const clarify = scoring.get('neg-010');
+    if (clarify?.corpus !== 'read' || clarify.golden.clarify === undefined) throw new Error('neg-010 is not a clarification gold');
+    const ask = (args: Record<string, unknown>) => JSON.stringify({ entryId: 'help.topic', args, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [] });
+    expect(await scoreExact(clarify, ask({}), NOW)).toEqual({ correct: true, outcome: 'clarify' });
+    // Core's own help-scope question on a CLEAR general help is the same clarification.
+    expect(await scoreExact(clarify, answer('help.topic'), NOW)).toEqual({ correct: true, outcome: 'clarify' });
+    expect(await scoreExact(clarify, answer('help.topic', { topic: 'work-lookup' }), NOW)).toEqual({ correct: false, outcome: 'miss' });
+    if (firstRead?.corpus !== 'read' || firstRead.golden.expect === 'none') throw new Error('no read case');
+    const positive = firstRead.golden.expect;
+    const asked = JSON.stringify({ entryId: positive.entryId, args: positive.args, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [] });
+    expect(await scoreExact(firstRead, asked, NOW)).toEqual({ correct: false, outcome: 'clarify' });
+  });
+
   it('an action case goes through Core: the gold selection executes on the gold target, a different target is not correct', async () => {
     if (firstAction?.corpus !== 'action' || firstAction.golden.expect === 'none') throw new Error('no action case');
     const expectAction = firstAction.golden.expect;

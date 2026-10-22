@@ -55,7 +55,10 @@ export async function scoreExact(scoring: ScoringCase, raw: string, now: string,
   if (failure !== undefined) return { correct: false, outcome: failure };
   if (scoring.corpus === 'read') {
     const scored = await scoreOutputInWorld(scoring.golden, raw, now);
-    return { correct: scored.outcome === 'hit' || (scoring.golden.expect === 'none' && scored.outcome === 'none'), outcome: scored.outcome };
+    // A clarification gold (owner decision A, 2026-10-22: `clarify` on a `none` case) is correct when Core asks, as the
+    // intent and read-regression scorers count it; an ordinary case never accepts a clarification.
+    const asked = scoring.golden.clarify !== undefined && scored.outcome === 'clarify';
+    return { correct: scored.outcome === 'hit' || asked || (scoring.golden.expect === 'none' && scored.outcome === 'none'), outcome: scored.outcome };
   }
   const { decision, audit } = await decideActionCase(scoring.golden, scriptedProvider(() => raw), now as Parameters<typeof decideActionCase>[2]);
   const scored = scoreActionDecision(scoring.golden, raw, decision, audit);

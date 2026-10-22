@@ -1246,9 +1246,15 @@ export class NlSelectionService implements TurnDeliveryObserver {
         const entry = offered.get(option.entryId);
         return entry === undefined ? [] : [entry.label.ko, entry.label.en, ...entry.aliases];
       });
-      // Owner decision A: the help-scope question's second option is the source app itself (its own rendered labels).
+      // Owner decision A: the help-scope question's two options are answered by exactly what it displays (Codex P2): the
+      // rendered option texts, KO and EN, on their own choices (the help entry's generic aliases are not shown there, and
+      // the app option's text holds one of them), plus the number or ordinal.
       const appSource = pending.appSource;
-      if (appSource !== undefined) labels.push([...renderHelpScopeOptions(appSource, 'ko').slice(1), ...renderHelpScopeOptions(appSource, 'en').slice(1)]);
+      if (appSource !== undefined) {
+        const [quokyKo, appKo] = renderHelpScopeOptions(appSource, 'ko');
+        const [quokyEn, appEn] = renderHelpScopeOptions(appSource, 'en');
+        labels.splice(0, labels.length, [quokyKo, quokyEn], [appKo, appEn]);
+      }
       // Owner decision B: a one-option confirmation takes the A6 continuation confirmation's yes and no (the same closed
       // reply sets, `interpretContinuationConfirmReply`); a number or the option's name still answers it.
       const yesNo = pending.confirm === true ? interpretContinuationConfirmReply(answerText) : 'none';
