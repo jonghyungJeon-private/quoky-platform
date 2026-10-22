@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — honest chat after a listing Quoky just showed (owner DM, 2026-10-22)
+
+- **Fixed.** After a calendar, mail or Drive listing, a follow-up that goes to chat no longer claims Quoky cannot check
+  what it just showed or sends the owner to look it up again. The conversation history keeps a structural note of what
+  was shown — source, Quoky's scope label and count (e.g. "[Quoky가 위에서 캘린더 '내일 · 10월 23일(금)' 일정 2개를 보여드림 —
+  일정 내용은 기록하지 않음]") — instead of the fixed "content not kept" note, and the honest-chat fact tells chat that such a
+  listing is on the owner's screen: refer to it, work from the owner's words, ask for the detail needed, never guess its
+  contents.
+- **Security (unchanged).** ADR-0110 D4 / ADR-0118 D7 kept (owner decision 2026-10-22): no title, time, location,
+  sender, subject or file name enters the history or a remote prompt. Answers that need the contents are left to the
+  S2 `answer` step on a LOCAL model. Selector prompt unchanged.
+
 ## Unreleased — release holder vs named project (owner decision, 2026-10-22)
 
 - **Changed.** When the release is proven in exactly one Jira project but the project and release words joined name a

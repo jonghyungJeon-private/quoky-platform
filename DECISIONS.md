@@ -28725,3 +28725,46 @@ OP25 / OP26 ("차란차 플랫폼 운영 2021 / 2024 / 2025 / 2026") instead of 
   several: unchanged (the release holder is confirmed). Both paths (near and several-candidates) share the helper
   `holderAndJoinedProject`; DM-only in channels; no issue read before the answer; no word, name or year rule. No
   `jira.release` gold outcome key changes (the snapshot has no such world).
+
+
+### ADR-0110 D4 / ADR-0120 D9 implementation note — structural history notes for listings and honest chat after a shown listing (owner decision, 2026-10-22)
+
+**Trigger (owner DM 2026-10-22 11:44).** Quoky listed "내일 일정" (two events, one an interview). The next message, "내일
+면접 기준으로 면접 질문 좀 뽑아줘", went to chat (selection `none`), and chat replied that it could not check tomorrow's interview
+and told the owner to ask "내일 일정 뭐있어" — a false incapability claim about a listing Quoky had just shown. Causes: the
+calendar history note was a fixed "[캘린더 조회 응답 — 일정 내용은 대화 기록에 남기지 않아요.]" (mail and Drive the same), so
+chat could not tell a listing had been shown; and the ADR-0120 D9 fact told chat to point to the source's command.
+
+**Owner decision ("보안 권고와 맞게 진행해야해").** ADR-0110 D4 (and ADR-0118 D7) stay: calendar, mail and Drive item
+content never reaches a REMOTE model (chat). Content-dependent answers ("그 면접 기준으로 …") are deferred to the S2
+`answer` step on a LOCAL model only; this note does not add them. The selector prompt (`nl-select`) is unchanged (no D12
+regate).
+
+**Change.**
+- *Structural history notes.* A listing reply keeps a note derived only from metadata the handler already has: the
+  source, Quoky's own label of the scope the owner asked for, and the count — never a title, time, location, sender,
+  subject, snippet, file name or searched name.
+  - Calendar: `[Quoky가 위에서 캘린더 '내일 · 10월 23일(금)' 일정 2개를 보여드림 — 일정 내용은 기록하지 않음]` (the reply
+    header's period label; "남은 일정" for remaining; 0 → `조회 결과(해당 일정 0개)`; the next-event answer names only the
+    lookahead, never the event's date). EN: `[Quoky showed the User 2 calendar events for '…' just above — event details
+    are not kept in this history.]`
+  - Mail list: `[Quoky가 위에서 '오늘 받은 안 읽은 메일' 목록 N건을 보여드림 — 메일 내용은 기록하지 않음]`; a named sender is
+    only "말씀하신 보낸 사람의"; a pick: `[Quoky가 위에서 마지막 메일 목록의 3번 메일(보낸 사람·제목·날짜)을 보여드림 — …]`.
+  - Drive list: `[Quoky가 위에서 드라이브 '최근 수정한 파일' 목록 N건을 보여드림 — 파일 이름과 내용은 기록하지 않음]`; a name
+    search is "말씀하신 이름으로 찾은 파일" (the name is never kept).
+  - Refusals, invalid dates, failed reads and `not-read` / `not-summarized` keep their fixed notes. The R2 / item
+    summary notes already say structurally what was shown ("요청한 … 1건을 요약해 보여 드림") and are unchanged; reminder and
+    brief notes are unchanged.
+- *Honest chat (ADR-0120 D9 fact, not version-pinned).* The configured-sources fact now says a chat reply never reads a
+  source and never receives item contents; when the history has a bracketed Quoky note that a listing was shown just
+  above, the listing is on the owner's screen: chat never claims Quoky cannot see, check or access it, never sends the
+  owner to look it up again, works from the owner's own words, refers to the listing shown above and asks for the one
+  detail it needs (or suggests the specific follow-up), and never guesses the contents. Without such a note it still
+  points to the command. The general-chat authority rules gain one matching line (the bracketed note records what was
+  shown, never its contents). No selector, plan or other version-pinned prompt changed.
+- *Guard.* The false-incapability guard is unchanged and not extended with words; the live reply named no source, so the
+  prompt is the fix and the guard stays a narrow backstop.
+
+**Security.** The notes carry no item content (tests assert titles, locations, senders, subjects, file and searched
+names absent; an end-to-end acceptance test checks the chat input after a calendar listing carries the structural note
+and the new fact and no event title, time or location). Counts and Quoky's own scope labels are owner-request metadata.
