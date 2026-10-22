@@ -876,7 +876,7 @@ export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, n
   const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
   const validated = validateSelection(
     { entryId: output.entryId, args: output.args },
-    { offered, groundingText: prepared.groundingText, now, timeZone: 'Asia/Seoul', actions: true, ...(golden.prior !== undefined ? { previousArgs: golden.prior.args } : {}) },
+    { offered, groundingText: prepared.groundingText, now, timeZone: 'Asia/Seoul', actions: true, ...(golden.prior !== undefined ? { previousArgs: golden.prior.args, ...(isNlCatalogEntryId(golden.prior.entryId) ? { previousEntryId: golden.prior.entryId } : {}) } : {}) },
   );
   if (!validated.ok || output.ambiguity !== 'CLEAR') return { outcome: 'clarify', relabeled, got: output.entryId };
   const got = validated.value.entry.id;

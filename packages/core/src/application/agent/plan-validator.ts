@@ -1,6 +1,6 @@
 import type { IsoTimestamp } from '../../domain';
 import { OWNER_TEXT_FLOW_LABEL, type FlowLabel } from '../../domain/flow-label';
-import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlWave1EntryId } from '../nl-routing/catalog';
+import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlCatalogEntryId, type NlWave1EntryId } from '../nl-routing/catalog';
 import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentionRanges, nlWeekdayMentions, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import { nlReadNotRequest } from '../nl-routing/read-statement';
 import { normalizeForMatch } from '../nl-routing/selection-input';
@@ -95,6 +95,8 @@ export interface AgentPlanValidationContext {
   readonly groundingText: string;
   /** The previous selection's args (structure only). */
   readonly previousArgs?: NlArgs;
+  /** The previous selection's entry: a fallback restores a previous value only for the same entry (Codex P2). */
+  readonly previousEntryId?: NlCatalogEntryId;
   readonly now: IsoTimestamp;
   readonly timeZone: string;
   /** The turn is the owner's direct conversation. Absent or false: refused (fail closed). */
@@ -382,6 +384,7 @@ function checkRead(
       // Multi-step plans: the owner's prose minus the period expressions other steps' ranges claim (step-scoped).
       groundingText: temporal?.texts.get(number) ?? ctx.groundingText,
       ...(ctx.previousArgs !== undefined ? { previousArgs: ctx.previousArgs } : {}),
+      ...(ctx.previousEntryId !== undefined ? { previousEntryId: ctx.previousEntryId } : {}),
       now: ctx.now,
       timeZone: ctx.timeZone,
     },

@@ -27,6 +27,7 @@ import {
   NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
   buildSelectionPrompt,
+  isNlCatalogEntryId,
   isNlWave1EntryId,
   nlHelpSourceScope,
   nlIsPastStatement,
@@ -186,7 +187,7 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   const offered = new Map(ALL_ENTRIES.map((entry) => [entry.id, entry] as const));
   const validated = validateSelection(
     { entryId: output.entryId, args: output.args },
-    { offered, groundingText: prepared.groundingText, ...(golden.prior ? { previousArgs: golden.prior.args } : {}), now, timeZone },
+    { offered, groundingText: prepared.groundingText, ...(golden.prior ? { previousArgs: golden.prior.args, ...(isNlCatalogEntryId(golden.prior.entryId) ? { previousEntryId: golden.prior.entryId } : {}) } : {}), now, timeZone },
   );
   if (!validated.ok || output.ambiguity !== 'CLEAR') {
     return { id: golden.id, expected, outcome: 'clarify', got: output.entryId };

@@ -1025,7 +1025,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         return { kind: 'none' };
       }
     }
-    const ctx = this.validationContext(turn, prepared.groundingText, last?.args);
+    const ctx = this.validationContext(turn, prepared.groundingText, last?.args, false, last?.entryId);
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
     this.forgetRefusedPeriod(cacheKey, main);
     // Owner decision of 2026-10-19, bounded: a period outside the entry's closed set (a span, a duration, a month, a
@@ -2149,7 +2149,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // A7: the shadow sees what active would do: a clear past-tense statement is `none`.
     if (output.entryId !== null && !isNlActionEntryId(output.entryId) && (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined)) outcome = 'none';
     else if (output.entryId !== null) {
-      const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args));
+      const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args, false, last?.entryId));
       this.forgetRefusedPeriod(selected.cacheKey, validated);
       if (!validated.ok) outcome = 'INVALID';
       else if (output.ambiguity === 'CLEAR' && isNlWave1EntryId(validated.value.entry.id)) executable = { entryId: validated.value.entry.id, args: validated.value.args };
@@ -2289,11 +2289,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
 
   // ── state ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  private validationContext(turn: NlSelectionTurn, groundingText: string, previousArgs: NlArgs | undefined, actions = false): NlValidationContext {
+  private validationContext(turn: NlSelectionTurn, groundingText: string, previousArgs: NlArgs | undefined, actions = false, previousEntryId?: NlCatalogEntryId): NlValidationContext {
     return {
       offered: offeredMap(turn.entries),
       groundingText,
       ...(previousArgs !== undefined ? { previousArgs } : {}),
+      ...(previousEntryId !== undefined ? { previousEntryId } : {}),
       now: turn.now,
       timeZone: this.deps.timeZone,
       ...(actions ? { actions: true } : {}),

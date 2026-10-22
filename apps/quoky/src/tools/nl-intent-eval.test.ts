@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, NL_SELECTION_TIMEOUT_MS, type AiProvider, type AiRequest } from '@quoky/core';
 import { buildPlan, computePlanDigest, loadCorpus, runEvaluation, scoreGrammarSide, scoreOutput, scoreSelectorSide, summarize, userVisibleMeaning, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
-import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, planOptions, runCli, type CliDeps } from './nl-intent-eval-cli';
+import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, formatSummary, planOptions, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // ADR-0120 D12 evaluation harness, offline: plan and digest, exact-match scoring after Core validation, the gate, and the
 // Strict digest check that refuses a run before any provider is constructed. No process is spawned here.
@@ -63,6 +63,20 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
     ];
     expect(summarize(records, undefined, undefined, new Set(['neg-c']))).toMatchObject({ clarifyGolds: { total: 1, asked: 1 }, wrongCaptures: 0, gatePassed: true });
     expect(summarize([{ ...records[0]!, outcome: 'miss' as const }], undefined, undefined, new Set(['neg-c']))).toMatchObject({ clarifyGolds: { total: 1, asked: 0 }, wrongCaptures: 0, gatePassed: true });
+  });
+
+  it('counts the records whose ungrounded value Core set back (names only), reported and not gated', () => {
+    const records = [
+      { run: 1, id: 'a8-10', expected: 'jira.release', outcome: 'hit' as const, latencyMs: 1, defaulted: ['scope'] },
+      { run: 1, id: 'a8-03', expected: 'jira.release', outcome: 'hit' as const, latencyMs: 1 },
+    ];
+    const summary = summarize(records);
+    expect(summary).toMatchObject({ defaulted: 1, gatePassed: true });
+    expect(formatSummary(summary)).toContain('ungrounded values set back to the previous value or default: 1 (reported, not gated)');
+    expect(formatSummary(summarize([records[1]!])).join('\n')).not.toContain('set back to the previous value');
+    // The scorer reports the names on the record.
+    const a810: NlEvalCase = { id: 'a8-10', text: '이번 1.4.0 릴리즈에 포함된 지라 티켓 다 보여줘', expect: { entryId: 'jira.release', args: { release: '1.4.0' } } };
+    expect(scoreOutput(a810, answer('jira.release', { release: '1.4.0', scope: 'all' }), NOW)).toMatchObject({ outcome: 'hit', defaulted: ['scope'] });
   });
 
   it('the corpus marks neg-010 as the clarification gold between help.topic and none', () => {

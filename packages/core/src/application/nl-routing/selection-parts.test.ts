@@ -274,8 +274,15 @@ describe('deterministic validation (ADR-0120 D4)', () => {
       expect(validateSelection(inProgress, ctx(text)), text).toMatchObject({ ok: true, value: { args: { status: 'in-progress' } } });
     }
     expect(validateSelection(inProgress, ctx('그 중에 결제만', { previousArgs: { status: 'in-progress' } }))).toMatchObject({ ok: true });
-    // W1 (CA review): a follow-up keeps the previous selection's value, not the default.
-    expect(validateSelection(inProgress, ctx('그 중에 결제만', { previousArgs: { status: 'all' } }))).toMatchObject({ ok: true, value: { args: { status: 'all' }, defaulted: ['status'] } });
+    // W1 (CA review): a follow-up of the SAME entry keeps the previous selection's value, not the default; a previous
+    // selection of another entry (Codex P2: a to-do list with status all) never lends its value: the default applies.
+    expect(validateSelection(inProgress, ctx('그 중에 결제만', { previousArgs: { status: 'all' }, previousEntryId: 'jira.issues' }))).toMatchObject({ ok: true, value: { args: { status: 'all' }, defaulted: ['status'] } });
+    expect(validateSelection(inProgress, ctx('내 지라 이슈 보여줘', { previousArgs: { status: 'all' }, previousEntryId: 'todo.list' }))).toMatchObject({ ok: true, value: { args: {}, defaulted: ['status'] } });
+    expect(validateSelection(inProgress, ctx('그 중에 결제만', { previousArgs: { status: 'all' } }))).toMatchObject({ ok: true, value: { args: {} } });
+    // The same-entry GitHub probe: a guessed kind after a GitHub issue listing keeps issue.
+    const kind = { entryId: 'github.items', args: { kind: 'pr' } } as const;
+    expect(validateSelection(kind, ctx('그 중에 오래된 것만', { previousArgs: { kind: 'issue' }, previousEntryId: 'github.items' }))).toMatchObject({ ok: true, value: { args: { kind: 'issue' } } });
+    expect(validateSelection(kind, ctx('깃허브 내 거 보여줘', { previousArgs: { kind: 'issue' }, previousEntryId: 'jira.issues' }))).toMatchObject({ ok: true, value: { args: {} } });
     // the other values stay ungrounded-free, and an unknown value is still invalid
     expect(validateSelection({ entryId: 'jira.issues', args: { status: 'all' } }, ctx('내 지라 이슈'))).toMatchObject({ ok: true });
     expect(validateSelection({ entryId: 'jira.issues', args: { status: 'blocked' } }, ctx('진행'))).toMatchObject({ reason: 'invalid-arg', arg: 'status' });

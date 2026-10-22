@@ -583,6 +583,12 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(await plain.decide('오늘 업데이트된 지라 이슈 보여줘')).toMatchObject({ kind: 'execute', basis: expect.not.stringContaining('미해결') });
   });
 
+  it('Codex P2: a fallback never restores a value from the previous selection of another entry', async () => {
+    const h = harness({ script: [out('todo.list', { status: 'all' }), out('jira.issues', { status: 'in-progress' })] });
+    expect(await h.decide('할 일 전부 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'todo.list', args: { status: 'all' } } });
+    expect(await h.decide('내 지라 이슈 보여줘', { now: at(60_000) })).toMatchObject({ kind: 'execute', command: { entryId: 'jira.issues', args: {} } });
+  });
+
   it('refines a Jira listing to in-progress ("그 중에 진행중인거만") and a calendar listing by a title keyword, keeping the range', async () => {
     const jira = harness({ script: [out('jira.issues', {}), out('jira.issues', { status: 'in-progress' }), out('jira.issues', { status: 'in-progress' })] });
     await jira.decide('내 지라 이슈 보여줘');

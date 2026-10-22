@@ -424,3 +424,16 @@ describe("read regression (owner decision A, 2026-10-22): Core's help-scope ques
     expect(scoreReadRegression({ id: 'h', text: '너 jira 볼 수 있어?', expect: { entryId: 'help.topic', args: { topic: 'work-lookup' } } }, answer('help.topic', { topic: 'work-lookup' }), NOW)).toMatchObject({ outcome: 'hit' });
   });
 });
+
+describe('read regression: the defaulted count (CA review, 2026-10-22)', () => {
+  it('counts the records whose ungrounded value Core set back, names only, without changing the gate', () => {
+    const records = [
+      { run: 1, id: 'a8-10', outcome: 'hit' as const, relabeled: false, defaulted: ['scope'] },
+      { run: 1, id: 'a8-03', outcome: 'hit' as const, relabeled: false },
+    ];
+    const summary = summarizeReadRegression(records, () => 'jira.release');
+    expect(summary).toMatchObject({ defaulted: 1, gatePassed: true });
+    expect(summarizeReadRegression([records[1]!], () => 'jira.release').defaulted).toBe(0);
+    expect(scoreReadRegression({ id: 'a8-10', text: '이번 1.4.0 릴리즈에 포함된 지라 티켓 다 보여줘', expect: { entryId: 'jira.release', args: { release: '1.4.0' } } }, answer('jira.release', { release: '1.4.0', scope: 'all' }), NOW)).toMatchObject({ outcome: 'hit', defaulted: ['scope'] });
+  });
+});

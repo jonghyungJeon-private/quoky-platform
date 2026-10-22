@@ -43,6 +43,7 @@ import {
   NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
   buildAgentPlanPrompt,
+  isNlCatalogEntryId,
   isNlWave1EntryId,
   parseAgentPlanOutput,
   prepareSelectionInput,
@@ -224,7 +225,7 @@ export function caseContext(golden: Pick<AgentPlanEvalCase, 'text' | 'attachment
     ctx: {
       offered: OFFERED,
       groundingText: prepared.groundingText,
-      ...(golden.prior !== undefined ? { previousArgs: golden.prior.args } : {}),
+      ...(golden.prior !== undefined ? { previousArgs: golden.prior.args, ...(isNlCatalogEntryId(golden.prior.entryId) ? { previousEntryId: golden.prior.entryId } : {}) } : {}),
       now: fixture.now as AgentPlanValidationContext['now'],
       timeZone: fixture.timeZone,
       direct: fixture.direct,

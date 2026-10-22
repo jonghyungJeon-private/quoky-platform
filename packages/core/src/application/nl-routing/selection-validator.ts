@@ -191,6 +191,12 @@ export interface NlValidationContext {
   readonly groundingText: string;
   /** The previous selection's args (structure only), which may also ground a keyword (a refinement). */
   readonly previousArgs?: NlArgs;
+  /**
+   * The previous selection's entry (Codex P2 / CA, 2026-10-22): an ungrounded value of an opted-in arg is set back to the
+   * previous value only when the previous selection was this same entry; otherwise (or absent) to the default. The
+   * pre-existing carry-over grounding by `previousArgs` is unchanged.
+   */
+  readonly previousEntryId?: NlCatalogEntryId;
   readonly now: IsoTimestamp;
   readonly timeZone: string;
   /**
@@ -722,7 +728,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
         // back to the previous selection's value (a follow-up keeps its listing), else to its default (canonical args
         // omit it), instead of asking. Every other arg, an action or ITEM_READ entry still refuses.
         if (entry.risk === 'READ' && spec.ungroundedFallsBackToDefault === true && spec.default !== undefined) {
-          const previous = previousArgs?.[spec.name];
+          const previous = ctx.previousEntryId === entryId ? previousArgs?.[spec.name] : undefined;
           if (typeof previous === 'string' && (spec.values ?? []).includes(previous)) args[spec.name] = previous;
           else delete args[spec.name];
           defaulted.push(spec.name);

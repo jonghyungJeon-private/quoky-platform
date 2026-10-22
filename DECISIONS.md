@@ -28591,8 +28591,9 @@ neg-110) and the action span noise are left as they are.
     negative AND guesses a value; the same read without the guess was already a wrong capture, so the rule removes an
     accidental mask rather than adding a capture path; the archived runs show no such case. Wider defaults
     (`jira.issues.status` open, `github.items.kind` all) are the read the owner's words ask for; the basis line names
-    them only where the entry has a `describe` (corrected by the CA review below: `jira.release` and `jira.issues` do, the
-    to-do / reminder lists and `github.items` do not; and the to-do / reminder statuses no longer fall back at all).
+    them only where the entry has a `describe` (corrected by the CA review below: `jira.release`, `jira.issues` and
+    `github.items` do, only the to-do and reminder lists have no basis line; and the to-do / reminder statuses no longer
+    fall back at all).
 - **Count follow-up (read `nl-select.v67`, A6 `v65`, R2 `v66`, planner `agent-plan.v5`).** a8-16 "몇 개야?" after a
   release selection kept the release and dropped `count` in every run. The shared `count` arg description now ends "A
   how-many follow-up to the previous selection keeps that entry and all its args and sets count true." Only that line
@@ -28622,3 +28623,9 @@ neg-110) and the action span noise are left as they are.
   - *Open question (left as is, the safe direction).* The planner's clause-bound `kind` check runs after the message-level
     fallback, so a value grounded somewhere in the message but not in the GitHub clause is still refused in a plan, while
     an unstated one falls back to `all`.
+  - *Codex P2 / CA (verification of 385bc3ae).* The previous value is restored only when the previous selection was the
+    same entry (`previousEntryId` in the validation context, passed by the selection service, the planner path and the
+    scorers); otherwise the default applies (after `todo.list {status: all}`, a guessed Jira `in-progress` gives the open
+    issues, never `all`). The pre-existing carry-over grounding by `previousArgs` (a stated value of the previous
+    selection grounds the same value on any entry, e.g. a keyword moved to another source) is not changed and is
+    recorded here as an existing behaviour. Tests cover the `defaulted` counts in both reports.
