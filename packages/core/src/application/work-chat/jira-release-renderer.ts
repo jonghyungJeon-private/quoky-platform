@@ -199,7 +199,11 @@ export function renderProjectAmbiguous(text: string, candidates: readonly Releas
  * Owner decision B (2026-10-22): the owner's words are near exactly one visible project; asked before anything is read
  * from it. A yes shows its release list (or the named release), a no ends the question.
  */
-export function renderProjectConfirm(project: ReleaseProjectRef): MessageBody {
+export function renderProjectConfirm(project: ReleaseProjectRef, release?: string): MessageBody {
+  // CA review S1: a confirmation that carries the owner's release words says a yes shows that release's issues.
+  if (release !== undefined) {
+    return fit([{ text: messageContent("'", projectLabel(project), "' 프로젝트가 맞나요? 맞으면 \"", display(release, NAME_MAX_CHARS), "\" 릴리스 이슈를 보여드릴게요. (응 / 아니)") }]);
+  }
   return fit([{ text: messageContent("'", projectLabel(project), "' 프로젝트가 맞나요? (응 / 아니)") }]);
 }
 

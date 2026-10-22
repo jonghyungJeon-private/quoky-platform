@@ -10,12 +10,16 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Fixed.** "차란차 운영 2026 릴리스 뭐뭐 있어?" split as `{project: "차란차 운영", release: "2026"}` showed the ambiguous list of
   several "차란차 플랫폼 운영 20xx" projects instead of the decision-B confirmation, so the following "응" fell to chat. When
   the release narrowing picks no single candidate (none, over the bound, or unproven by a full first version page), the
-  project and release words joined are checked first: exactly one visible project near them, and the release held by no
-  other candidate, is confirmed ("'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요?"); a yes lists its releases (or shows the
-  release when that project holds it), a no ends it. Several or none: the ambiguous list as before. The spelled-out joined
-  tier never cuts a digit run. Structural, no word or name list.
+  project and release words joined are checked first: exactly one visible project near them (on the containment path,
+  one of the candidates), and the release not seen in another candidate on the pages read, is confirmed ("'차란차 플랫폼 운영
+  2026 (OP26)' 프로젝트가 맞나요?"); a yes lists its releases (or shows the release when that project's page held it), a no
+  ends it. Several or none: the ambiguous list as before. Over five candidates no version page is read (names only). The
+  spelled-out joined tier never cuts a digit run. Structural, no word or name list.
+- **Changed.** A project confirmation that carries the owner's release words names the release ("… 프로젝트가 맞나요? 맞으면
+  "20261015" 릴리스 이슈를 보여드릴게요. (응 / 아니)").
 - **Changed (eval data).** The Jira world snapshot gains OP21 and OP24 (owner DM smoke 2026-10-22). Offline re-score of
-  the archived gate records: no `jira.release` outcome changed; every gold outcome key identical.
+  the archived gate records: no `jira.release` outcome changed; gold outcome keys identical except the reply text of the
+  release-carrying confirmations (a8-01, a8-02, a8-07, a8-22). The snapshot notes it is optimistic on version pages.
 
 ## Unreleased — read residuals of the D12 gate, owner decisions A and B (2026-10-22)
 

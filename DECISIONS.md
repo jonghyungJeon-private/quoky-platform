@@ -28670,10 +28670,10 @@ OP25 / OP26 ("차란차 플랫폼 운영 2021 / 2024 / 2025 / 2026") instead of 
 - **Fix (structural, one helper `joinedNearConfirm`, both paths).** When the release narrowing picks no single candidate
   (none holds it, more candidates than the bound, or unproven), the project words with the release words joined are
   checked before the ambiguous list: exactly one visible project near them (all of them as whole words of its name, or
-  spelled out inside it) and no other candidate found holding the release → that project is confirmed ("'차란차 플랫폼 운영
-  2026 (OP26)' 프로젝트가 맞나요? (응 / 아니)"), carrying the release words only when that project itself holds them (a yes
-  then shows that release; otherwise its release list). Several or none near the joined words, or the release found in
-  another candidate: the ambiguous list as before. A proven single narrowing still wins first. Channel rules unchanged
+  spelled out inside it) and the release not seen in another candidate on the pages read → that project is confirmed
+  ("'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? (응 / 아니)"), carrying the release words only when that project's own
+  page held them uniquely (a yes then shows that release; otherwise its release list). Several or none near the joined
+  words, or the release seen in another candidate: the ambiguous list as before (amended by the review below). A proven single narrowing still wins first. Channel rules unchanged
   (a confirmed list stays DM-only). The spelled-out tier no longer cuts a digit run ("… 20" is not inside "… 2026"), the
   same digit exactness as the typo tier. No word list, no name or year rule.
   - *Behaviour change:* one near project with an unproven narrowing whose joined words name that same project is now
@@ -28694,3 +28694,30 @@ OP25 / OP26 ("차란차 플랫폼 운영 2021 / 2024 / 2025 / 2026") instead of 
   the ambiguous list, 2023 → no confirmation, the release held by another candidate → the ambiguous list, held by OP26 →
   carried, channel and non-selection callers unchanged) and the offline acceptance (`personal-v5-read-residuals-acceptance`:
   question → "응" → OP26's releases with no selector call; "아니" → the cancel note; 2023 → the list, no open question).
+
+#### Review of e63c49c1 / f8f5892a (Codex P2, Chief Architect PASS-with-fixes, 2026-10-22)
+
+- **P2 / W1 — "no other candidate holds the release" was assumed.** `narrowByRelease` kept only unique hits in `found`;
+  another candidate with a whole-word match on a partial page, or several matches on a complete page, only set
+  `unproven`, so the joined confirmation still named OP26. `narrowByRelease` now also returns `seen`: every candidate
+  whose read page had an exact or whole-word match, unique or not. `joinedNearConfirm` refuses (the ambiguous list)
+  when any seen project is not the joined project. The rule reads: the release is *not seen in another candidate on
+  the pages read* — a page not read, or a release past a partial page, cannot be seen.
+- **W2 — over the bound.** With more than `DISAMBIGUATE_MAX` (5) candidates no version page is read, on both paths; the
+  joined-words check is then by project names only (the owner still confirms). Documented in the code and tested
+  (six "차란차 플랫폼 운영 20xx" projects: one `containers` read, then the OP26 question).
+- **W3 — candidates only.** On the several-candidates (containment) path the joined project must be one of the
+  candidates; a joined match outside them ("Mobile App" contained in "Mobile App Web" / "Mobile App Ops", the joined
+  words naming "App Mobile 2026") keeps the ambiguous list. The near path (no direct match) keeps the whole listing.
+- **S1 — the release is named.** A confirmation carrying the owner's release words says so: "'차란차 플랫폼 운영 2026 (OP26)'
+  프로젝트가 맞나요? 맞으면 "20261015" 릴리스 이슈를 보여드릴게요. (응 / 아니)" (template only; the release text is
+  untrusted display). Without release words the question is unchanged.
+- **S2 — snapshot.** Its description now says it is optimistic on version-page completeness (OP21 / OP24 carry no
+  versions there, full first pages live); the unproven path is covered by the unit and acceptance tests, not the snapshot.
+- **Re-score after the fixes** (same archived records): every outcome unchanged (79 hit, 2 equivalent, 7 clarify, 2 miss).
+  Only the reply text in the outcome keys of the release-carrying confirmations changed (golds a8-01, a8-02, a8-07,
+  a8-22, intent and agent-plan, on both sides of every comparison); no other key changed.
+- **Follow-ups (not now).** (1) A literal release-name filter (`query`) on the `RELEASES` named query, so a release's
+  absence can be proven past the first page: a port and adapter change, its own note and CA review. (2) A rule question
+  for the owner: when a release hit is proven in one candidate but the joined words name another project, which wins
+  (today the proven hit is confirmed first).

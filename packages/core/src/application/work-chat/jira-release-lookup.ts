@@ -173,10 +173,11 @@ export async function lookupJiraRelease(input: {
         const unresolved = narrowed === undefined || narrowed.unproven || narrowed.found.length !== 1;
         // Owner decision B: the release narrowing picked no single candidate (none holds it, more candidates than the bound,
         // or a partial version page proved nothing: live 2026-10-22, four "차란차 플랫폼 운영 20xx" projects), and the project
-        // words with the release words are near exactly one visible project ("Mobile App" + "2026" for "Mobile App Ops
-        // 2026"): that project is confirmed, then listed (the same rule as the no-candidate path).
+        // words with the release words are near exactly one visible project, one of these candidates, with the release not
+        // seen in another candidate on the pages read ("Mobile App" + "2026" for "Mobile App Ops 2026"): that project is
+        // confirmed (the same rule as the no-candidate path). Over the bound no version page is read: names only.
         if (input.confirmNear === true && joined === undefined && unresolved && command.release !== undefined) {
-          const near = joinedNearConfirm(completeProjects, command.project, command.release, narrowed?.found ?? []);
+          const near = joinedNearConfirm(completeProjects, command.project, command.release, narrowed, candidates);
           if (near !== undefined) return confirmBody(near.project, near.release, input.inChannel === true);
         }
         if (unresolved) {
@@ -359,10 +360,11 @@ type NearProject =
  * by structure only (whole words of a longer name, else a small edit distance; no word list, no project specifics):
  *  1. `nearByWords`: the projects holding all of the owner's project words; with release words, the one of them proven to
  *     hold the release is confirmed with it;
- *  2. otherwise the project words with the release words joined, when exactly one visible project is near them and no
- *     other near project holds the release (the selector split a word of the name off as a release: "차란차 운영" +
- *     "2026"): confirmed, then its release list. Also when the narrowing is unproven (a project with a partial version
- *     page, live 2026-10-22): the owner is asked either way;
+ *  2. otherwise the project words with the release words joined, when exactly one visible project is near them and the
+ *     release is not seen in another near project on the pages read (the selector split a word of the name off as a
+ *     release: "차란차 운영" + "2026"): confirmed, then its release list. Also when the narrowing is unproven (a project
+ *     with a partial version page, live 2026-10-22): the owner is asked either way. Over the bound (more than
+ *     DISAMBIGUATE_MAX near projects) no version page is read and this check is by names only;
  *  3. otherwise one near project is confirmed (with the owner's release words), several are asked about, none: not found.
  */
 async function resolveNearProject(
@@ -377,7 +379,7 @@ async function resolveNearProject(
     const narrowed = near.length > 0 && near.length <= DISAMBIGUATE_MAX ? await narrowByRelease(connector, near, releaseText) : undefined;
     if (narrowed !== undefined && !narrowed.unproven && narrowed.found.length === 1) return { kind: 'confirm', project: narrowed.found[0]!.project, release: releaseText };
     // Before an unproven narrowing gives up (a partial version page proves nothing): the joined words may name one project.
-    const joined = joinedNearConfirm(projects, projectText, releaseText, narrowed?.found ?? []);
+    const joined = joinedNearConfirm(projects, projectText, releaseText, narrowed);
     if (joined !== undefined) return joined;
     if (narrowed !== undefined && (narrowed.unproven || narrowed.found.length > 1)) {
       return near.length === 1 ? { kind: 'confirm', project: near[0] as ConnectorItem, release: releaseText } : { kind: 'ambiguous', candidates: near };
@@ -390,21 +392,26 @@ async function resolveNearProject(
 
 /**
  * Owner decision B: the confirmation of the one visible project near the project words with the release words joined
- * ({@link nearProjectsOfJoined}), when the release narrowing found the release in no other project (`found`: the
- * narrowing's hits, proven or not). It carries the release words only when that project itself holds them (a yes then
- * shows that release); otherwise a yes lists its releases. Several or none near the joined words: undefined.
+ * ({@link nearProjectsOfJoined}), when the release is not seen in another candidate on the pages read (`narrowed.seen`:
+ * every candidate whose read page had an exact or whole-word match, unique or not; a page not read, or a release past a
+ * partial page, cannot be seen). `narrowed` absent (over the bound): no version page was read, names only. `within`: the
+ * project must be one of these (the several-candidates path). It carries the release words only when that project's own
+ * page held them uniquely (a yes then shows that release); otherwise a yes lists its releases. Several or none: undefined.
  */
 function joinedNearConfirm(
   projects: readonly ConnectorItem[] | undefined,
   projectText: string,
   releaseText: string,
-  found: ReadonlyArray<{ readonly project: ConnectorItem }>,
+  narrowed: Narrowed | undefined,
+  within?: readonly ConnectorItem[],
 ): Extract<NearProject, { kind: 'confirm' }> | undefined {
   const joined = nearProjectsOfJoined(projects, projectText, releaseText);
   if (joined.length !== 1) return undefined;
   const project = joined[0] as ConnectorItem;
-  if (found.some((hit) => hit.project.id !== project.id)) return undefined;
-  return { kind: 'confirm', project, ...(found.length > 0 ? { release: releaseText } : {}) };
+  if (within !== undefined && !within.some((item) => item.id === project.id)) return undefined;
+  if (narrowed !== undefined && narrowed.seen.some((item) => item.id !== project.id)) return undefined;
+  const held = narrowed?.found.some((hit) => hit.project.id === project.id) === true;
+  return { kind: 'confirm', project, ...(held ? { release: releaseText } : {}) };
 }
 
 /**
@@ -485,7 +492,7 @@ function editDistance(left: string, right: string, bound: number): number {
  */
 function confirmBody(project: ConnectorItem, release: string | undefined, inChannel: boolean): ReleaseLookupResult {
   if (inChannel && release === undefined) return body(renderReleaseDmOnly('list'));
-  return { kind: 'body', body: renderProjectConfirm(refOf(project)), confirm: { project: project.id, ...(release !== undefined ? { release } : {}) } };
+  return { kind: 'body', body: renderProjectConfirm(refOf(project), release), confirm: { project: project.id, ...(release !== undefined ? { release } : {}) } };
 }
 
 /** The project to name in a not-found answer: a link's key or a key-shaped owner value (never a guessed name). */
@@ -517,25 +524,32 @@ async function releasesOf(connector: ConnectorProvider, key: string, limit?: num
 }
 
 /**
- * The ambiguous projects that hold a release of the owner's name (each listing read once, read-only). `unproven`: some
- * listing was partial or held several matches, so a single hit is not proven unique and nothing may be picked.
+ * The release narrowing of several candidates. `found`: the unique hits; `unproven`: some listing was partial or held
+ * several matches, so a single hit is not proven unique and nothing may be picked; `seen`: every candidate whose read page
+ * had an exact or whole-word match, unique or not (Codex P2 / CA W1, 2026-10-22).
  */
-async function narrowByRelease(
-  connector: ConnectorProvider,
-  candidates: readonly ConnectorItem[],
-  releaseText: string,
-): Promise<{ readonly found: Array<{ readonly project: ConnectorItem; readonly release: ConnectorItem }>; readonly unproven: boolean }> {
+interface Narrowed {
+  readonly found: ReadonlyArray<{ readonly project: ConnectorItem; readonly release: ConnectorItem }>;
+  readonly unproven: boolean;
+  readonly seen: readonly ConnectorItem[];
+}
+
+/** The ambiguous projects that hold a release of the owner's name (each listing read once, first page only, read-only). */
+async function narrowByRelease(connector: ConnectorProvider, candidates: readonly ConnectorItem[], releaseText: string): Promise<Narrowed> {
   const found: Array<{ readonly project: ConnectorItem; readonly release: ConnectorItem }> = [];
+  const seen: ConnectorItem[] = [];
   let unproven = false;
   for (const candidate of candidates) {
     const known = await releasesOf(connector, candidate.id, DISAMBIGUATE_PAGE);
     const partial = known.truncated === true || known.items.length >= DISAMBIGUATE_PAGE;
     const resolved = resolveRelease(known.items, releaseText, partial);
     if (resolved.item !== undefined) found.push({ project: candidate, release: resolved.item });
+    // An exact or whole-word match on the page read, unique or not (`ambiguous` is only ever set by a match).
+    if (resolved.item !== undefined || resolved.ambiguous) seen.push(candidate);
     // Several matches, a hit on a partial page, or no hit on a partial page (it may sit past the page).
     if (resolved.ambiguous || (partial && resolved.item === undefined)) unproven = true;
   }
-  return { found, unproven };
+  return { found, unproven, seen };
 }
 
 /** NFC, lower case, whitespace collapsed. */
