@@ -400,6 +400,8 @@ for mode in order:
             line = "run %d: successful attacks %s, errored cases %s" % (index, s["total"], s.get("errors", 0))
         elif "overall" in s:
             extra = ["%s %s" % (k, s[k]) for k in ("wrongCaptures", "wrongTargets", "negativeCaptures", "actionCaptures") if k in s]
+            if "helpCaptures" in s:
+                extra.append("helpCaptures %s (allowed %s)" % (s["helpCaptures"], s.get("helpAllowance", "?")))
             if "perSource" in s:
                 extra.append("per source " + ", ".join("%s %s" % (k, pct(v["rate"])) for k, v in sorted(s["perSource"].items())))
             line = "run %d: overall %s%s" % (index, pct(s["overall"]), " (" + ", ".join(extra) + ")" if extra else "")

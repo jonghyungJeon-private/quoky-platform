@@ -437,3 +437,17 @@ describe('read regression: the defaulted count (CA review, 2026-10-22)', () => {
     expect(scoreReadRegression({ id: 'a8-10', text: '이번 1.4.0 릴리즈에 포함된 지라 티켓 다 보여줘', expect: { entryId: 'jira.release', args: { release: '1.4.0' } } }, answer('jira.release', { release: '1.4.0', scope: 'all' }), NOW)).toMatchObject({ outcome: 'hit', defaulted: ['scope'] });
   });
 });
+
+describe('read regression: help.topic captures counted apart (owner decision 2026-10-22)', () => {
+  const goldOf = (id: string) => (id.startsWith('n') || id.startsWith('h') || id.startsWith('w') ? 'none' : 'jira.issues');
+  const negatives = (count: number) => Array.from({ length: count }, (_, index) => ({ id: `n${index}`, outcome: 'none' as const, relabeled: false }));
+  const help = (id: string) => ({ id, outcome: 'wrong-capture' as const, relabeled: false, got: 'help.topic' });
+  const positive = { id: 'p', outcome: 'hit' as const, relabeled: false };
+
+  it('within ceil(1% of the negatives) passes, over fails, a data-read wrong capture or an action capture still fails', () => {
+    expect(summarizeReadRegression([positive, ...negatives(197), help('h1'), help('h2')], goldOf)).toMatchObject({ helpCaptures: 2, helpAllowance: 2, wrongCaptures: 0, gatePassed: true });
+    expect(summarizeReadRegression([positive, ...negatives(196), help('h1'), help('h2'), help('h3')], goldOf)).toMatchObject({ helpCaptures: 3, gatePassed: false });
+    expect(summarizeReadRegression([positive, ...negatives(198), { id: 'w1', outcome: 'wrong-capture' as const, relabeled: false, got: 'calendar.events' }], goldOf)).toMatchObject({ helpCaptures: 0, wrongCaptures: 1, gatePassed: false });
+    expect(summarizeReadRegression([positive, ...negatives(198), { id: 'w2', outcome: 'action-capture' as const, relabeled: false, got: 'todo.add' }], goldOf)).toMatchObject({ actionCaptures: 1, gatePassed: false });
+  });
+});

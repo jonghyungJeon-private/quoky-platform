@@ -7,6 +7,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 ## Unreleased — read residuals of the D12 gate, owner decisions A and B (2026-10-22)
 
+- **Changed (gate rule, owner decision 2026-10-22).** The intent and read-regression gates count `help.topic` captures on
+  negatives apart (`helpCaptures`, at most ceil(1% of the run's negatives), 199 → 2); every other wrong capture, action
+  capture, wrong target and negative capture stays at 0. Help captures over the allowance are a hard failure.
+
 - **Changed.** On a READ arg that opts in (`ungroundedFallsBackToDefault`: GitHub `kind`, Jira `status`, `jira.release`
   `scope`), an enum value the owner did not state falls back to the previous selection's value, else the default,
   instead of asking (a8-10, a8-19); to-do / reminder statuses, actions, ITEM_READ and other args still ask. Validation

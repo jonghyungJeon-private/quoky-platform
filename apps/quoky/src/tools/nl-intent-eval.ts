@@ -43,7 +43,18 @@ import {
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
 
-export const NL_EVAL_GATE = { overall: 0.95, perEntry: 0.9, wrongCaptures: 0 } as const;
+export const NL_EVAL_GATE = { overall: 0.95, perEntry: 0.9, wrongCaptures: 0, helpCaptureRate: 0.01 } as const;
+
+/** The entry whose captures on a negative show usage guidance only (no data read, no action): counted apart. */
+export const NL_EVAL_HELP_ENTRY = 'help.topic';
+
+/**
+ * Owner decision of 2026-10-22 ("도움말 오포착은 별도 기준으로", amending the ratified ADR-0120 D12 gate): a run may have at
+ * most ceil(1% of its negative golds) captures into `help.topic` (199 negatives → 2). Every other wrong capture stays at 0.
+ */
+export function helpCaptureAllowance(negatives: number): number {
+  return Math.ceil(NL_EVAL_GATE.helpCaptureRate * negatives);
+}
 /** ADR-0121 S1 (design §6): at most 1% of the calls may go over the configured selection bound. */
 export const NL_EVAL_S1_MAX_OVER_BOUND_RATE = 0.01;
 /**
@@ -224,7 +235,14 @@ export interface NlEvalSummary {
   readonly hits: number;
   readonly overall: number;
   readonly perEntry: Readonly<Record<string, { readonly hits: number; readonly total: number; readonly rate: number }>>;
+  /** Wrong captures into a data read (every entry except help.topic): zero-tolerance. */
   readonly wrongCaptures: number;
+  /** Wrong captures into help.topic (owner decision of 2026-10-22): at most `helpAllowance` per run. */
+  readonly helpCaptures: number;
+  /** ceil(1% of the run's negative golds). */
+  readonly helpAllowance: number;
+  /** Help captures beyond the allowance (a hard failure, like a data-read wrong capture). */
+  readonly helpOverAllowance: number;
   readonly negatives: number;
   readonly clarifications: number;
   /** Owner decision A (2026-10-22): the clarification golds (`clarify`) and how many of them Core asked. */
@@ -278,13 +296,17 @@ export function summarize(
   const latencies = records.map((record) => record.latencyMs).filter((ms) => ms > 0).sort((a, b) => a - b);
   const pct = (p: number) => (latencies.length === 0 ? 0 : latencies[Math.min(latencies.length - 1, Math.ceil((p / 100) * latencies.length) - 1)] as number);
   const overall = positives.length === 0 ? 1 : hits / positives.length;
-  const wrongCaptures = records.filter((record) => record.outcome === 'wrong-capture').length;
+  // Owner decision of 2026-10-22: a capture into help.topic is counted apart (allowance), every other one is zero-tolerance.
+  const wrongCaptures = records.filter((record) => record.outcome === 'wrong-capture' && record.got !== NL_EVAL_HELP_ENTRY).length;
+  const helpCaptures = records.filter((record) => record.outcome === 'wrong-capture' && record.got === NL_EVAL_HELP_ENTRY).length;
+  const helpAllowance = helpCaptureAllowance(records.length - positives.length);
   const overRuntimeBound = latencies.filter((ms) => ms > boundMs).length;
   const overBoundRate = records.length === 0 ? 0 : overRuntimeBound / records.length;
   const gatePassed =
     overall >= NL_EVAL_GATE.overall &&
     Object.values(perEntry).every((slot) => slot.rate >= NL_EVAL_GATE.perEntry) &&
-    wrongCaptures <= NL_EVAL_GATE.wrongCaptures;
+    wrongCaptures <= NL_EVAL_GATE.wrongCaptures &&
+    helpCaptures <= helpAllowance;
   const grammarRecords = grammarCaseIds === undefined ? undefined : records.filter((record) => grammarCaseIds.has(record.id));
   const grammarPositives = grammarRecords?.filter((record) => record.expected !== 'none') ?? [];
   const grammarHits = grammarPositives.filter((record) => record.outcome === 'hit').length;
@@ -295,6 +317,9 @@ export function summarize(
     overall,
     perEntry,
     wrongCaptures,
+    helpCaptures,
+    helpAllowance,
+    helpOverAllowance: Math.max(0, helpCaptures - helpAllowance),
     negatives: records.length - positives.length,
     clarifications: records.filter((record) => record.outcome === 'clarify').length,
     defaulted: records.filter((record) => (record.defaulted?.length ?? 0) > 0).length,

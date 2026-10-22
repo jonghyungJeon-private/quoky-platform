@@ -28629,3 +28629,28 @@ neg-110) and the action span noise are left as they are.
     issues, never `all`). The pre-existing carry-over grounding by `previousArgs` (a stated value of the previous
     selection grounds the same value on any entry, e.g. a keyword moved to another source) is not changed and is
     recorded here as an existing behaviour. Tests cover the `defaulted` counts in both reports.
+
+### ADR-0120 D12 gate amendment — help.topic captures counted apart (owner decision, 2026-10-22)
+
+The owner's decision of 2026-10-22, verbatim: "도움말 오포착은 별도 기준으로", approved as "1% of the run's negatives, i.e.
+2 of 199". It amends the ratified D12 gate (ADR-0120 D12: "at least 95% overall, at least 90% per entry, and 0 wrong
+captures on the negatives", in its "Model-in-the-loop evaluation" bullet; implemented as `NL_EVAL_GATE` in
+`apps/quoky/src/tools/nl-intent-eval.ts` and `summarizeReadRegression` in `nl-action-eval.ts`).
+
+- **Rule.** On the negative golds of the intent gate and of the read-regression gate, a CLEAR capture into `help.topic`
+  is counted apart (`helpCaptures`). A run passes that part when `helpCaptures <= ceil(0.01 × negatives of that run)`
+  (`helpCaptureAllowance`; 199 negatives → 2). Every other wrong capture (a data read), action capture, wrong target and
+  negative capture stays at 0 exactly as before; overall and per-entry thresholds are unchanged. Help captures beyond the
+  allowance are a hard failure (`helpOverAllowance`, so an outage never hides them; AGENTS.md and the quoky-ship skill say
+  so). The action and R2 gates are unchanged: their `negativeCaptures` count only action captures (`help.topic` is a READ
+  entry and a READ on a negative scores `read` there, never a negative capture), and `wrongTargets` are actions only.
+- **Rationale.** A `help.topic` capture shows usage guidance only: no data is read and nothing is done, so it is not the
+  harm the zero-tolerance rule guards against. The help boundary was attacked three times in the prompt without holding:
+  read `nl-select.v61` (the other-app sentence), `v62` (devices, same-named features) and `v66` (the unclear how-to); the
+  residual captures (neg-012, neg-122, neg-105, neg-110 across runs) stay at about one per run.
+- **Reports.** The gate lines print `help captures: n (allowed m = ceil(1% of N))`; the JSON summaries carry
+  `helpCaptures`, `helpAllowance` and `helpOverAllowance`; every capture is still listed by id.
+- **Offline re-score of the 49527573 gates** (`gates-residuals-49527573-20261022`, records as archived, only the rule
+  changes): intent runs 1 / 2 / 3 PASS (run 3 was FAILED only by neg-012 and neg-122 → help 2/2); read-regression run 1
+  PASS (FAILED only by neg-105 → help 1/2), run 2 PASS, run 3 still FAIL (`jira.release` 25/28 = 89.3% per entry: a8-09
+  clarify, a8-12 miss, a8-27 clarify; no capture).

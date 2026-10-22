@@ -76,6 +76,7 @@ import {
   type Session,
 } from '@quoky/core';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
+import { NL_EVAL_HELP_ENTRY, helpCaptureAllowance } from './nl-intent-eval';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
 import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, parseNlRef, withLastRead } from '@quoky/core';
 
@@ -960,9 +961,18 @@ export async function runReadRegression(input: {
   return records;
 }
 
-/** The A6-D7 read-regression gate: the D12 gate on non-relabeled cases, and 0 action captures anywhere. */
-export function summarizeReadRegression(records: ReadonlyArray<{ outcome: NlReadRegressionOutcome; relabeled: boolean; id: string; defaulted?: readonly string[] }>, goldOf: (id: string) => string): {
+/**
+ * The A6-D7 read-regression gate: the D12 gate on non-relabeled cases (0 data-read wrong captures; help.topic captures at
+ * most ceil(1% of the negatives), owner decision of 2026-10-22), and 0 action captures anywhere.
+ */
+export function summarizeReadRegression(records: ReadonlyArray<{ outcome: NlReadRegressionOutcome; relabeled: boolean; id: string; got?: string; defaulted?: readonly string[] }>, goldOf: (id: string) => string): {
   readonly overall: number;
+  /** Wrong captures into help.topic (owner decision of 2026-10-22): at most `helpAllowance` per run. */
+  readonly helpCaptures: number;
+  /** ceil(1% of the run's gated negative golds). */
+  readonly helpAllowance: number;
+  /** Help captures beyond the allowance (a hard failure). */
+  readonly helpOverAllowance: number;
   /** Records whose selection had an ungrounded value set back to the previous value or default (names only, not gated). */
   readonly defaulted: number;
   readonly actionCaptures: number;
@@ -981,15 +991,22 @@ export function summarizeReadRegression(records: ReadonlyArray<{ outcome: NlRead
   }
   const overall = positives.length === 0 ? 1 : positives.filter((record) => record.outcome === 'hit').length / positives.length;
   const actionCaptures = records.filter((record) => record.outcome === 'action-capture').length;
-  const wrongCaptures = gated.filter((record) => record.outcome === 'wrong-capture').length;
+  // Owner decision of 2026-10-22 (amending the ratified D12 gate): a capture into help.topic shows usage guidance only and
+  // is counted apart, at most ceil(1% of the run's negatives); every other wrong capture and action capture stays at 0.
+  const wrongCaptures = gated.filter((record) => record.outcome === 'wrong-capture' && record.got !== NL_EVAL_HELP_ENTRY).length;
+  const helpCaptures = gated.filter((record) => record.outcome === 'wrong-capture' && record.got === NL_EVAL_HELP_ENTRY).length;
+  const helpAllowance = helpCaptureAllowance(gated.filter((record) => goldOf(record.id) === 'none').length);
   const relabeled = records.filter((record) => record.relabeled);
   return {
     overall,
     defaulted: records.filter((record) => (record.defaulted?.length ?? 0) > 0).length,
     actionCaptures,
     wrongCaptures,
+    helpCaptures,
+    helpAllowance,
+    helpOverAllowance: Math.max(0, helpCaptures - helpAllowance),
     relabeled: { hits: relabeled.filter((record) => record.outcome === 'hit').length, total: relabeled.length },
-    gatePassed: overall >= 0.95 && [...perEntry.values()].every((slot) => slot.hits / slot.total >= 0.9) && wrongCaptures === 0 && actionCaptures === 0,
+    gatePassed: overall >= 0.95 && [...perEntry.values()].every((slot) => slot.hits / slot.total >= 0.9) && wrongCaptures === 0 && helpCaptures <= helpAllowance && actionCaptures === 0,
   };
 }
 

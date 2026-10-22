@@ -65,6 +65,20 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
     expect(summarize([{ ...records[0]!, outcome: 'miss' as const }], undefined, undefined, new Set(['neg-c']))).toMatchObject({ clarifyGolds: { total: 1, asked: 0 }, wrongCaptures: 0, gatePassed: true });
   });
 
+  it('owner decision 2026-10-22: help.topic captures are counted apart, within ceil(1% of the negatives); others stay at 0', () => {
+    const negatives = (count: number, from = 0) => Array.from({ length: count }, (_, index) => ({ run: 1, id: `n${from + index}`, expected: 'none', outcome: 'none' as const, latencyMs: 1 }));
+    const help = (id: string) => ({ run: 1, id, expected: 'none', outcome: 'wrong-capture' as const, got: 'help.topic', latencyMs: 1 });
+    const positive = { run: 1, id: 'p', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 1 };
+    // 199 negatives allow 2 (ceil(1.99)); 2 help captures pass, 3 fail.
+    const within = summarize([positive, ...negatives(197), help('h1'), help('h2')]);
+    expect(within).toMatchObject({ negatives: 199, helpCaptures: 2, helpAllowance: 2, wrongCaptures: 0, gatePassed: true });
+    expect(formatSummary(within).join('\n')).toContain('help captures: 2 (allowed 2 = ceil(1% of 199))');
+    expect(summarize([positive, ...negatives(196), help('h1'), help('h2'), help('h3')])).toMatchObject({ helpCaptures: 3, helpAllowance: 2, gatePassed: false });
+    // A data-read wrong capture still fails with no help capture at all.
+    const data = summarize([positive, ...negatives(198), { run: 1, id: 'w', expected: 'none', outcome: 'wrong-capture' as const, got: 'jira.issues', latencyMs: 1 }]);
+    expect(data).toMatchObject({ helpCaptures: 0, wrongCaptures: 1, gatePassed: false });
+  });
+
   it('counts the records whose ungrounded value Core set back (names only), reported and not gated', () => {
     const records = [
       { run: 1, id: 'a8-10', expected: 'jira.release', outcome: 'hit' as const, latencyMs: 1, defaulted: ['scope'] },
