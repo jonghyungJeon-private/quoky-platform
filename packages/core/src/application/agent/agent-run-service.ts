@@ -324,7 +324,7 @@ export class AgentRunService {
     const validation = validateAgentPlan(plan, {
       offered,
       groundingText: prepared.groundingText,
-      ...(turn.previous !== undefined ? { previousArgs: turn.previous.args } : {}),
+      ...(turn.previous !== undefined ? { previousArgs: turn.previous.args, previousEntryId: turn.previous.entryId } : {}),
       now: turn.now,
       timeZone: this.deps.timeZone,
       direct: turn.direct,

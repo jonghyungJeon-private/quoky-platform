@@ -8,7 +8,7 @@ import {
 } from '../../domain';
 import { ActionWriteStoppedError, WorkItemReopenError } from '../../domain';
 import type { ActionWriteCondition, Actor, MessageBody, MessageContent, ResourceRef, WorkItem } from '../../domain';
-import type { NlActionReceipt, NlListingReceipt, NlSelectedCommand } from '../nl-routing/catalog';
+import type { NlActionReceipt, NlGrammarSelection, NlListingReceipt, NlSelectedCommand } from '../nl-routing/catalog';
 import { LISTING_MAX_ITEMS, type ListingSlot } from '../last-listing';
 import { NL_REF_MAX_INDEX } from '../nl-routing/action-entries';
 import { renderActionStopped } from '../nl-routing/nl-action-policy';
@@ -102,6 +102,8 @@ export type WorkChatOutcome =
       readonly action?: NlActionReceipt;
       /** ADR-0120 amendment A6 (only with `actionReceipts`): the to-do listing this reply shows (labels and ids). */
       readonly listing?: NlListingReceipt;
+      /** Owner decision B (2026-10-22): the reply asks the owner to confirm exactly this read (a near-matched project). */
+      readonly confirm?: NlGrammarSelection;
     }
   /** The command did not apply (e.g. a completion hint that names no single open to-do): the turn falls through. */
   | { readonly kind: 'none' }
@@ -919,6 +921,7 @@ export class WorkChatService implements WorkDesk {
             ...(identity !== undefined ? { identity } : {}),
             ...(this.jiraSiteHost !== undefined ? { siteHost: this.jiraSiteHost } : {}),
             ...(this.numberedLists ? { numbered: true } : {}),
+            ...(command.confirmNear === true ? { confirmNear: true } : {}),
           }),
         this.lookupDeadlineMs,
       );
@@ -936,6 +939,7 @@ export class WorkChatService implements WorkDesk {
       kind: 'reply',
       ...(result.listed !== undefined ? { listed: result.listed } : {}),
       ...(listing !== undefined ? { listing } : {}),
+      ...(result.confirm !== undefined ? { confirm: releaseConfirmSelection(result.confirm, command.scope) } : {}),
     };
   }
 
@@ -1087,4 +1091,15 @@ function lookupSource(command: WorkChatCommand): WorkChatSource {
   return command.kind === 'lookup' || command.kind === 'release' || command.kind === 'external-write-unsupported' || command.kind === 'connector-write'
     ? command.source
     : 'jira';
+}
+
+/**
+ * Owner decision B (2026-10-22): the `jira.release` read a yes to the project confirmation runs: the visible project's key,
+ * the owner's release words when they named one, and the scope (canonical args: the default `mine` omitted).
+ */
+function releaseConfirmSelection(confirm: { readonly project: string; readonly release?: string }, scope: 'mine' | 'all'): NlGrammarSelection {
+  return {
+    entryId: 'jira.release',
+    args: { project: confirm.project, ...(confirm.release !== undefined ? { release: confirm.release } : {}), ...(scope === 'all' ? { scope: 'all' } : {}) },
+  };
 }

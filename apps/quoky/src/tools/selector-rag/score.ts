@@ -1,5 +1,5 @@
 // ADR-0123 D6 (RAG-2): the exact-args scorer of the experiment. It adds no scorer of its own: a read-corpus case is scored by
-// nl-intent-eval's `scoreOutput`, an action-corpus case by nl-action-eval's `decideActionCase` + `scoreActionDecision`
+// nl-intent-eval's `scoreOutputInWorld` (`jira.release` by the snapshot world's outcome, owner answer 1 of 2026-10-22), an action-corpus case by nl-action-eval's `decideActionCase` + `scoreActionDecision`
 // (Core's real decision path, fed the selector's raw text through a scripted provider; no call is made here). It also builds the
 // per-case prompt context (what the runtime would pass to `buildSelectionPrompt`) from the same fixtures.
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import {
   type NlCatalogEntry,
 } from '@quoky/core';
 import { NL_ACTION_CORPUS_PATH, NL_ACTION_EVAL_ENTRIES, NL_ACTION_SEED_PATH, decideActionCase, loadActionCorpus, scoreActionDecision, type NlActionCase } from '../nl-action-eval';
-import { loadCorpus, scoreOutput, type NlEvalCase } from '../nl-intent-eval';
+import { loadCorpus, scoreOutputInWorld, type NlEvalCase } from '../nl-intent-eval';
 import { GOLDEN_DIR } from './gold';
 import type { PromptContext } from './selector-rag-eval';
 
@@ -54,8 +54,11 @@ function scriptedProvider(respond: (prompt: string) => string): AiProvider {
 export async function scoreExact(scoring: ScoringCase, raw: string, now: string, failure?: FailureKind): Promise<ExactScore> {
   if (failure !== undefined) return { correct: false, outcome: failure };
   if (scoring.corpus === 'read') {
-    const scored = scoreOutput(scoring.golden, raw, now);
-    return { correct: scored.outcome === 'hit' || (scoring.golden.expect === 'none' && scored.outcome === 'none'), outcome: scored.outcome };
+    const scored = await scoreOutputInWorld(scoring.golden, raw, now);
+    // A clarification gold (owner decision A, 2026-10-22: `clarify` on a `none` case) is correct when Core asks, as the
+    // intent and read-regression scorers count it; an ordinary case never accepts a clarification.
+    const asked = scoring.golden.clarify !== undefined && scored.outcome === 'clarify';
+    return { correct: scored.outcome === 'hit' || asked || (scoring.golden.expect === 'none' && scored.outcome === 'none'), outcome: scored.outcome };
   }
   const { decision, audit } = await decideActionCase(scoring.golden, scriptedProvider(() => raw), now as Parameters<typeof decideActionCase>[2]);
   const scored = scoreActionDecision(scoring.golden, raw, decision, audit);

@@ -134,7 +134,8 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
 
   it('a repaired or a two-read case still asks; the ask records its closed shape', async () => {
     // A valid value the owner did not say (a guess) is repaired away: the one option differs from what was named, so Core
-    // asks. An out-of-set FILTER value ('scheduled' for a list status) is never replaced by the default either (Codex P2).
+    // asks (a reminder status does not opt in to the default fallback: its default is disjoint from the guessed value).
+    // An out-of-set FILTER value ('scheduled' for a list status) is never replaced by the default either (Codex P2).
     const repaired = await decideActionCase({ text }, scripted(answer({ status: 'canceled' }, 'CLEAR', [])), NOW);
     const outOfSet = await decideActionCase({ text }, scripted(answer({ status: 'scheduled' }, 'CLEAR', [])), NOW);
     expect(outOfSet.decision.kind).toBe('ask');

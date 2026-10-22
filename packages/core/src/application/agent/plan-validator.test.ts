@@ -455,8 +455,8 @@ describe('plan validator: the planner-only GitHub item type (owner review 2026-1
     expect(argsOf(validateAgentPlan(plan([read('github.items', { kind: 'pr' }), read('mail.list', { unread: true })]), ctx('내 PR이랑 안 읽은 메일 보여줘')), 1)).toEqual({ kind: 'pr' });
   });
 
-  it('an ungrounded kind is refused; review requests drop it (they are pull requests already)', () => {
-    expect(validateAgentPlan(plan([read('github.items', { kind: 'pr' }), read('mail.list')]), ctx('깃허브랑 메일함 보여줘'))).toMatchObject({ ok: false, reason: 'step-invalid', step: 1, stepReason: 'ungrounded' });
+  it('an ungrounded kind falls back to its default (owner rule 2026-10-22); review requests drop it (they are pull requests already)', () => {
+    expect(argsOf(validateAgentPlan(plan([read('github.items', { kind: 'pr' }), read('mail.list')]), ctx('깃허브랑 메일함 보여줘')), 1)).toEqual({});
     expect(argsOf(validateAgentPlan(plan([read('github.items', { query: 'review-requests', kind: 'pr' }), read('mail.list')]), ctx('깃허브 PR 리뷰 요청이랑 메일함 보여줘')), 1)).toEqual({ query: 'review-requests' });
     // Codex P3: an English alias matches a whole word (plural/possessive allowed): `project` is not the GitHub alias `pr`.
     expect(validateAgentPlan(plan([read('jira.issues'), read('github.items', { kind: 'issue' })]), ctx('show my Jira project issues and my GitHub PRs'))).toMatchObject({ ok: false, reason: 'step-invalid', step: 2, stepReason: 'ungrounded' });

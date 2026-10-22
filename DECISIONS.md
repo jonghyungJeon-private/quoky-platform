@@ -28404,3 +28404,253 @@ analysis and an ADR-0121 amendment, and decision (e) for its own amendment (Q6).
   4. [P3] `v5int4-020` stays a watch case of the agent-off live path: `nl-routing/uat-read-gaps.test.ts` pins that the
      one-step read path can still answer both parts (`brief.today` validates) and that the case is the plan gold
      `ap-p174`, not a one-step gold.
+
+### ADR-0120 implementation note — read residuals of the D12 gate: owner decisions A and B (2026-10-22)
+
+*Superseded in part by the next two notes (the owner's answers of 2026-10-22, and the Chief Architect review):* the
+"scorer equivalence — blocked" item (now snapshot scoring, answer 1), the neg-010 residual (now prompt `nl-select.v66`,
+answer 2), the Quoky option's general help (now that source's help section, answer 3), and the claim that nothing is read
+before the yes (corrected: up to five near projects' version lists may be read, CA review W3).
+
+Context: the D12 read gates fail on two residuals (also on main): `jira.release` (a8-12 "차란차 운영 2026 릴리스 뭐뭐
+있어?" → `{project: "차란차 운영", release: "2026"}`; a8-08 "OP26 20261015 버전에 뭐 들어갔어?" → `{project: "OP"}` or
+`{release: "OP26 20261015"}`) and the help boundary (neg-010 "슬랙에서 검색하는 방법 알려줘" and neg-122 / neg-025 / neg-012 /
+neg-014 captured as `help.topic`). Owner rule of the same day: no hardcoding — no per-case exceptions, no phrase or word
+lists, no project-name specifics; answers resolved by the existing selection and confirmation machinery. No prompt byte
+changed (read `nl-select.v65`, A6 `v63`, R2 `v64` stay).
+
+- **Decision A — an ambiguous "how to do X in <source>" is asked.** A `help.topic` selection with the GENERAL topic
+  (absent or the arg's default `all`) whose owner text names exactly one source family by the catalog's own
+  `sourceNames` (`NL_CATALOG_SOURCE_NAMES`, derived from the wave-1 entries; matched like every grounding word) is not
+  answered: Core asks "Quoky로 슬랙을 조회하는 방법을 물으신 건가요, 아니면 슬랙 앱 자체의 사용법인가요?" with two numbered
+  options, kept as the D7 `entry` question (`appSource`: the catalog source name as written). "1" (or the help entry's
+  label / aliases) runs the help; "2" (or the ordinal) gets a fixed honest note ("그건 슬랙 앱 자체의 사용법이라 제가 안내해
+  드리긴 어려워요. …"), never instructions for the other app; any other reply routes through selection as usual (no word
+  list for the answer). The same question replaces a one-option clarification whose only read is that help.
+  - *Measured before committing* (`help-scope.test.ts`): 0 of the 51 positive `help.topic` golds of `nl-intent.v1.json`
+    and 0 of the 6 of `nl-action.v1.json` fire (`agent-plan.v1.json` has none). Widening the rule to the `work-lookup`
+    topic would ask on 4 capability positives (help-018 "너 jira 볼 수 있어?", help-019, help-020, help-031); no
+    structural signal separates "can you read X" from "how do I search in X" without a phrase list, so feature and
+    source topics (`work-lookup`, `drive`, `calendar`, …) stay the selector's reading.
+  - *Not applied:* the "the owner asks about Quoky itself" clause: the help entry carries no structural Quoky-name signal
+    (its aliases are 도움말 / 사용법 / help / 기능), and adding one would be a new word list.
+  - *Residual:* when the selector names `help.topic` with `topic: work-lookup` for neg-010 (the observed output), Core
+    still answers the help; the deterministic rule cannot catch it without the phrase list above. The gold now scores
+    that as a miss, not a wrong capture (below). Closing it is a selector matter (a prompt change, gated), left open.
+  - *Gold:* `neg-010` carries `clarify: { between: ["help.topic"], batch }`; `expect` stays `none`. Scoring (intent and
+    read-regression scorers): a clarification is asked; a CLEAR capture of a listed entry is a `miss`, never a wrong
+    capture; a CLEAR `none` is the safe fallback; any other capture is still wrong. Reported as "clarification golds
+    asked: n/m", not gated. Both scorers also score Core's final outcome: a CLEAR general help about a named source is
+    `clarify` (neg-122 "what is Confluence?" and neg-025 then clarify when the selector gives the general topic).
+- **Decision B — a project near-match is confirmed.** In `jira-release-lookup.ts`, when the owner's project words name no
+  visible project as written (`matchProjectsTiered`: key, exact name and containment stay direct; the whole-words tier
+  "차란차 운영 2026" ⊂ "차란차 플랫폼 운영 2026" and nothing at all are near), on the COMPLETE listing only: (1) of the near
+  projects, the one holding the owner's release is confirmed with it; (2) else the project words with the release words
+  joined, when exactly one project holds them all as whole words (or spells them out), are confirmed and then listed, so
+  `{project: "차란차 운영", release: "2026"}` and `{project: "차란차 운영 2026"}` reach the same question; the same joined
+  check runs after a contained-name ambiguity ("Mobile App" + "2026" → "Mobile App Ops 2026"); (3) else one near project
+  (a small edit distance when no word matched: ≤ 1 edit per 4 characters, closest only; never on joined words) is
+  confirmed, several keep the ambiguous list, none the not-found reply. The reply: "'차란차 플랫폼 운영 2026 (OP26)'
+  프로젝트가 맞나요? (응 / 아니)". Nothing is read from the project before the yes (corrected below, CA review W3).
+  - *Mechanism reused:* the D7 pending question. The handler reply carries `nlConfirm` (new optional field of
+    `TurnHandlerReply`, like `nlSelection`); the runtime hands it to `NlSelectionService.recordConfirmQuestion`, which
+    saves the one-option `entry` question with `confirm`. Its answer uses the A6 elliptical-continuation confirmation's
+    closed reply sets (`interpretContinuationConfirmReply`): a yes (or "1") runs `jira.release` with the project key and
+    the owner's release words (the normal lookup, read-only, its basis line), a no ends it with the fixed cancel note;
+    anything else routes as usual. Only a natural-language selection turn asks (`confirmNear`), so no question is left
+    without a way to answer it.
+  - *Channel:* a named release may be confirmed there (its own items answer in a channel); a project's release list stays
+    DM-only (A8 owner decision 7).
+  - *Token shape (`normalizeJiraReleaseArgs`, `extendProjectToken`):* a `project` of ASCII letters and digits that is only
+    part of exactly one ASCII letters-and-digits token of the owner's prose (links removed; never a whole token itself,
+    never the release value, never a carried value) is that whole token: "OP" → "OP26". The validator runs it, so the
+    runtime and both scorers see the same canonical args: a8-08's `{project: "OP"}` output now scores a hit.
+  - *Scorer equivalence — blocked, reported.* The owner asked the scorer to compare `jira.release` args through the same
+    generic canonicalization the runtime applies, never per-case `alsoAccept`. The static canonicalization the runtime
+    applies is `normalizeJiraReleaseArgs` (above), and both scorers already validate through it. The remaining
+    equivalences — `{project: "차란차 운영", release: "2026"}` ≡ `{project: "차란차 운영 2026"}` (a8-12) and
+    `{release: "OP26 20261015"}` ≡ `{project: "OP26", release: "20261015"}` (a8-08) — hold only against the visible
+    project and version listings (whether a release "2026" exists, whether OP26 is a visible key), which the scorer does
+    not have; a listing-free canonical form would have to make the lookup ignore the selector's project/release boundary,
+    which rewrites the A8 lookup order. So no `alsoAccept` was added and these two outputs still score as misses.
+
+### ADR-0120 implementation note — read residuals: the owner's answers of 2026-10-22
+
+Follow-up of the note above (owner decisions A and B). The owner answered the three open points the same day; the
+no-hardcoding rule stands (no phrase lists, no per-case exceptions, no name-specific rules, no example fitted to a gold).
+The selector-RAG audit was regenerated by the coordinator (38c1a3eb) and no gold file changed after it.
+
+- **Answer 1 — "프로젝트 목록 스냅샷으로 채점".** The read scorers (intent, read-regression, agent-plan, and the
+  selector-RAG exact scorer that reuses the intent scorer) compare a `jira.release` miss by the owner-visible outcome Core
+  gives both arg sets in a test-data snapshot of the visible Jira world, through Core's own path:
+  `releaseCommandForSelection` (the lookup handler now calls it too) and `lookupJiraRelease`, wrapped as
+  `jiraReleaseOutcomeKey` (the reply text, the confirmation, the release-items queries and every other arg, e.g. scope and
+  count). An equal key is a hit marked `equivalent` (the intent CLI lists those ids); any other difference stays a miss;
+  every other entry keeps exact args.
+  - *Snapshot provenance* (`apps/quoky/src/tools/jira-world.snapshot.v1.json`, header): the owner-approved read-only live
+    probe of 2026-10-15 as recorded in `work-chat/jira-release.test.ts` — projects APPOP "차란차 플랫폼 APP운영", OP25
+    "차란차 플랫폼 운영 2025", OP26 "차란차 플랫폼 운영 2026", COP26 "코브랜드 운영 2026"; OP26 versions 16591 "배포일_20261020(화)",
+    16555 "배포일_20261015(목)" (the version id of the gold links a8-05 / a8-06 / a8-25) and 16104 "비정기 배포"; the site host
+    of those links. Only OP26's versions were probed, so the other projects carry none; items are not part of it (an empty
+    list), and a release name no version carries is Jira's NOT_FOUND. Data only, no rule.
+  - *Results:* a8-12 `{project: "차란차 운영", release: "2026"}` → the same confirmation question as the gold
+    (`'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요?`, confirm OP26): a hit. a8-08 `{release: "OP26 20261015"}` → the same
+    report (OP26, version 16555): a hit; `{project: "OP"}` was already an exact hit (token-shape rule). Still misses (tested):
+    `{project: "차란차"}` (three projects, the ambiguous list), `{release: "20261015"}` without its project (Jira NOT_FOUND),
+    another release, another scope, a count. A miss becomes a hit only on an equal key, so no case changed for any other
+    reason.
+- **Answer 2 — "프롬프트 수정으로 되묻게" (read `nl-select.v66`, A6 `v64`, R2 `v65`).** Rule 3's other-app sentence now
+  reads: a how-to about doing something inside another app, device or service is none when the action is that app's or
+  device's own feature that Quoky does not do for it, even when Quoky can read that app or has a feature with the same
+  name; "An unclear how-to is different: the place is a source an offered entry reads, the action is one Quoky also does
+  for that source (finding, searching, listing or reading its items), and the owner neither addresses Quoky nor asks
+  whether Quoky can do it, so they may mean Quoky's way or the app's own feature. Answer NEEDS_CLARIFICATION, entryId
+  help.topic, args {}, no alternatives. A question whether Quoky can read a source or do something with it is a question
+  about Quoky itself: help.topic, CLEAR." A6 rule 8's other-software bullet points to it. No word list and no example was
+  added (RAG-0 lint and the verbatim-gold test pass). Core: a selector clarification whose only read is `help.topic` and
+  whose text names a catalog source asks the help-scope question for any topic (the topic gate of decision A guards only
+  a CLEAR selection). Pins regenerated (79 read cases, only the rule lines differ), the read / A6 sha256 and the
+  `agent-plan.v3` pin moved in place. Not gated yet: the D12 read run decides.
+- **Answer 3 — "그 소스의 도움말".** The Quoky option of the help-scope question shows that source's help section, found
+  structurally: the source name → the offered catalog entries owning it (`sourceNames`) → the handler that owns each entry
+  → the one help topic its contributed help lines answer by the help index's own anchors (`helpTopicOfLines`, the same
+  anchor rule a topic's help is selected by). One topic: that topic (Slack → `slack.search` → the work-chat lookup handler →
+  `work-lookup`, the "업무 조회" line); none or several: the general help. No source or topic table. The runtime passes the
+  per-entry topics with the selection turn (`entryHelpTopics`).
+
+### ADR-0120 implementation note — read residuals: Chief Architect review of c4c5cfbd (PASS-with-fixes, 2026-10-22)
+
+Fixed without changing the rendered read / A6 / R2 prompt bytes (D12 gates were running on `nl-select.v66`):
+- **CRITICAL — equivalence could make a wrong answer a hit.** When a lookup stopped before reading any release (a project
+  the snapshot does not hold → not-found; a DM-only refusal before any read), the outcome key ignored the args it never
+  reached (`{project: "결제"}` ≡ `{project: "결제", release: "5.0"}`). `jiraReleaseOutcomeKey` now carries the args
+  themselves (exact comparison) whenever the outcome has no confirmation and ran no `releases` / `release-items` query.
+  Tested on every agent-plan `jira.release` gold whose project the snapshot lacks (ap-p046, ap-p111, ap-p116, ap-p119,
+  ap-p123): dropping, adding or changing the release stays a miss.
+- **W1 — the near match accepted a different year or version.** `fuzzyProjects` requires equal digit runs, in order, and
+  counts the edit distance over the other characters only ("코브랜드 운영 2025" no longer offers "… 2026").
+- **W2 — the help-scope question fired on a capability question with a lenient-dropped topic.** The rule stays for a
+  genuinely general CLEAR help (it protects neg-122 / neg-025), but a selection whose out-of-set topic the v53 lenient
+  gate dropped runs as before ("너 슬랙 볼 수 있어?" with `topic: slack` → the help, no question).
+- **W3 — what is read before the yes (correction of the first note).** Deferring was not taken: picking which near
+  project to confirm for a named release needs the version lists. Before the yes the lookup reads the project listing
+  and, with release words, the version lists of at most `DISAMBIGUATE_MAX` (5) near projects (first page each); never a
+  release's items. The test asserts the queries.
+- **W4.** The snapshot header states its assumptions: the release statuses and the completeness of the 4-project listing
+  (and the empty version lists of OP25 / APPOP / COP26) are assumed, not probed.
+- **W5 tests.** The confirmation after the 5-minute TTL and another actor's "응" (neither answers it; at the service
+  level the owner's own yes still does — in the runtime `takePending` clears the slot at the start of any turn in the
+  session, so another member's message ends the owner's confirmation, the safe direction), a channel confirmation answered in the channel (runtime acceptance), a FAILED reply records no
+  confirmation (`nlConfirmToRecord`), the digit case, the lenient-drop case, the equivalence negatives.
+- **CA follow-up (verification of 61a775c0).** The args count as used only for a confirmation, an item read, or a reply
+  about one resolved project (`resolvedProject` on the lookup result: its release list, or a release not found in it);
+  several projects after the release narrowing found nothing compare exactly (`{project: "차란차", release: "1.1"}` ≢
+  `{… "1.0"}`).
+- **Q2 — `agent-plan.v3` → `agent-plan.v4`.** The planner bytes changed twice after the v3 pin (the read v65 GitHub kind
+  rule and examples, then the read v66 rule 3); the version string is not part of the prompt, so the read / A6 / R2 bytes
+  are unchanged and the v4 pin is the sha the v3 test held last.
+- **Applied suggestions.** The per-handler help topic is computed once at runtime construction. These notes carry
+  "superseded by" pointers. `CURRENT_STATE.md` updated.
+- **Residuals (recorded, not changed).** (1) The confirmation question is not bound to its delivered message ids: the
+  existing receipt mechanism (`withPendingQuestionReplies`, `questionReceipts`) covers only the A6 `action-target`
+  confirmation, and extending it to the D7 `entry` record is a separate change. (2) Rule 3's unclear how-to lists the
+  read verbs ("finding, searching, listing or reading its items") in prose; the next prompt revision should phrase it by
+  the offered entries' own reads rather than a verb list. (3) The confirmation template is Korean-only, as today's
+  release renderer (kept on purpose).
+
+### ADR-0120 implementation note — read residuals: the re-gate fixes of 2026-10-22 (read `nl-select.v67`)
+
+The D12 gates on c4c5cfbd: r2 3/3; intent 1/3 and read-regression 1/3 (overall ~97%); action 2/3 (reminder span noise,
+untouched). The owner chose one more structural fix and a re-gate. The help-boundary wrong captures (neg-122 work-lookup,
+neg-110) and the action span noise are left as they are.
+
+- **An ungrounded enum value falls back to the default (owner rule "assistant, not chatbot").** a8-10 and a8-19: the
+  selector added `scope: all` without the owner's every-assignee words; `valueGrounding` refused it and the read became
+  a question. Now, on a READ entry, an enum arg with a `default` and `valueGrounding` whose non-default value is not
+  stated (and not carried from the previous selection) is dropped back to the default (canonical args omit it), in
+  `validateSelection`, so the runtime, the scorers and the planner see the same thing. Excluded structurally: a non-READ
+  entry (actions, ITEM_READ: `item.summarize.scope`, `.mode`) and an arg with no default (`jira.issues.sort`,
+  `calendar.events.partOfDay`, `drive.files.kind`) still refuse; an out-of-set value is still invalid (asks); the plan
+  validator's clause-bound check is unchanged.
+  - *Measured (offline, no model call).* (A) The archived intent gate of c4c5cfbd (3 runs, every non-hit raw output
+    re-scored): exactly two records change, a8-10 run 2 and a8-19 run 2, clarify → hit; no negative changes. (B/C) A
+    simulation over nl-intent, nl-action (+seed, exec-time, deictic) and nl-action.r2: inject each ungrounded
+    non-default value into each gold of the entry (positives) and into a bare selection of the entry on each negative:
+
+    | arg | positives: clarify → hit | clarify → miss | negatives: clarify → capture |
+    |---|---|---|---|
+    | jira.release.scope | 24 / 24 | 0 | 0 / 467 |
+    | jira.issues.status | 78 / 81 | 3 | 449 / 461 |
+    | github.items.kind | 54 / 83 | 29 | 883 / 883 |
+    | todo.list.status | 155 / 157 | 2 | 1389 / 1389 |
+    | reminder.list.status | 103 / 105 | 2 | 1246 / 1390 |
+
+    agent-plan: 175 of 199 simulated steps validate to the gold step. A positive "clarify → miss" is a gold that names a
+    different value (e.g. `kind: pr`) where the selector wrote the opposite one: before a question, now the default read
+    (both kinds); both are non-hits. A negative "capture" is only reachable when the selector picks that read on a
+    negative AND guesses a value; the same read without the guess was already a wrong capture, so the rule removes an
+    accidental mask rather than adding a capture path; the archived runs show no such case. Wider defaults
+    (`jira.issues.status` open, `github.items.kind` all) are the read the owner's words ask for; the basis line names
+    them only where the entry has a `describe` (corrected by the CA review below: `jira.release`, `jira.issues` and
+    `github.items` do, only the to-do and reminder lists have no basis line; and the to-do / reminder statuses no longer
+    fall back at all).
+- **Count follow-up (read `nl-select.v67`, A6 `v65`, R2 `v66`, planner `agent-plan.v5`).** a8-16 "몇 개야?" after a
+  release selection kept the release and dropped `count` in every run. The shared `count` arg description now ends "A
+  how-many follow-up to the previous selection keeps that entry and all its args and sets count true." Only that line
+  differs in the 79 regenerated read pins (77 cases carry a `count` arg); no example changed (RAG-0 lint passes). The
+  planner embeds the read catalog, so its bytes changed and it moved to `agent-plan.v5` with a new pin.
+- **CA review of 574461ff / 49527573 (PASS-with-fixes), applied without changing any rendered prompt byte** (the D12
+  gates ran on 49527573; every read / A6 / R2 / planner pin test passes unchanged).
+  - *Amendment of a settled sentence.* This note amends the ADR-0120 implementation addendum's "A guessed value is
+    refused." (the grounded enum values, `valueGrounding`) for READ args that opt in, and only for them. Basis: A8 owner
+    decision 2 ("default로는 당연히 내 담당 기준": an ungrounded `all` leaves the default `mine`, never widened silently) and
+    the D7 role precedent (a guessed interpretation value is dropped, never applied). Under D4 the default is not a
+    guess: it is the catalog's documented reading when the arg is omitted, i.e. exactly the read the owner's words ask
+    for when they state no value; the D4 "never a guess" is about values the model invents, which are the ones dropped.
+  - *CRITICAL — opt-in per arg.* The fallback is now catalog metadata, `ungroundedFallsBackToDefault: true` (validator
+    only, never rendered), set on `github.items.kind` (all contains pr and issue), `jira.issues.status` (open contains
+    in-progress) and `jira.release.scope` (mine, A8 decision 2). The to-do and reminder `status` (default `active`,
+    disjoint from done / completed / canceled) keep asking: "아까 울렸던 알림 뭐였지?" (`done`) and "취소됐던 할 일 목록"
+    (`canceled`) no longer return the opposite list. Re-scored offline, the archived c4c5cfbd intent outputs change in
+    exactly the same two records (a8-10 and a8-19 run 2, clarify → hit, `scope` defaulted); the read-regression report
+    keeps no raw outputs, so it cannot be re-scored offline.
+  - *W1.* A follow-up keeps the previous selection's value of the arg (a listed value) instead of the default ("그 중에
+    결제만" after `status: all` with a guessed in-progress keeps `all`).
+  - *Suggestions applied.* Validation returns `defaulted` (arg names only); the intent and read-regression reports count
+    the records with one (not gated); the `jira.issues` basis line says 미해결 when its status was set back to the
+    default even with a window; the stale v66 pin-file comment in `selection-prompt.ts` says it was renamed (a TS
+    comment, no rendered byte).
+  - *Open question (left as is, the safe direction).* The planner's clause-bound `kind` check runs after the message-level
+    fallback, so a value grounded somewhere in the message but not in the GitHub clause is still refused in a plan, while
+    an unstated one falls back to `all`.
+  - *Codex P2 / CA (verification of 385bc3ae).* The previous value is restored only when the previous selection was the
+    same entry (`previousEntryId` in the validation context, passed by the selection service, the planner path and the
+    scorers); otherwise the default applies (after `todo.list {status: all}`, a guessed Jira `in-progress` gives the open
+    issues, never `all`). The pre-existing carry-over grounding by `previousArgs` (a stated value of the previous
+    selection grounds the same value on any entry, e.g. a keyword moved to another source) is not changed and is
+    recorded here as an existing behaviour. Tests cover the `defaulted` counts in both reports.
+
+### ADR-0120 D12 gate amendment — help.topic captures counted apart (owner decision, 2026-10-22)
+
+The owner's decision of 2026-10-22, verbatim: "도움말 오포착은 별도 기준으로", approved as "1% of the run's negatives, i.e.
+2 of 199". It amends the ratified D12 gate (ADR-0120 D12: "at least 95% overall, at least 90% per entry, and 0 wrong
+captures on the negatives", in its "Model-in-the-loop evaluation" bullet; implemented as `NL_EVAL_GATE` in
+`apps/quoky/src/tools/nl-intent-eval.ts` and `summarizeReadRegression` in `nl-action-eval.ts`).
+
+- **Rule.** On the negative golds of the intent gate and of the read-regression gate, a CLEAR capture into `help.topic`
+  is counted apart (`helpCaptures`). A run passes that part when `helpCaptures <= ceil(0.01 × negatives of that run)`
+  (`helpCaptureAllowance`; 199 negatives → 2). Every other wrong capture (a data read), action capture, wrong target and
+  negative capture stays at 0 exactly as before; overall and per-entry thresholds are unchanged. Help captures beyond the
+  allowance are a hard failure (`helpOverAllowance`, so an outage never hides them; AGENTS.md and the quoky-ship skill say
+  so). The action and R2 gates are unchanged: their `negativeCaptures` count only action captures (`help.topic` is a READ
+  entry and a READ on a negative scores `read` there, never a negative capture), and `wrongTargets` are actions only.
+- **Rationale.** A `help.topic` capture shows usage guidance only: no data is read and nothing is done, so it is not the
+  harm the zero-tolerance rule guards against. The help boundary was attacked three times in the prompt without holding:
+  read `nl-select.v61` (the other-app sentence), `v62` (devices, same-named features) and `v66` (the unclear how-to); the
+  residual captures (neg-012, neg-122, neg-105, neg-110 across runs) stay at about one per run.
+- **Reports.** The gate lines print `help captures: n (allowed m = ceil(1% of N))`; the JSON summaries carry
+  `helpCaptures`, `helpAllowance` and `helpOverAllowance`; every capture is still listed by id.
+- **Offline re-score of the 49527573 gates** (`gates-residuals-49527573-20261022`, records as archived, only the rule
+  changes): intent runs 1 / 2 / 3 PASS (run 3 was FAILED only by neg-012 and neg-122 → help 2/2); read-regression run 1
+  PASS (FAILED only by neg-105 → help 1/2), run 2 PASS, run 3 still FAIL (`jira.release` 25/28 = 89.3% per entry: a8-09
+  clarify, a8-12 miss, a8-27 clarify; no capture).

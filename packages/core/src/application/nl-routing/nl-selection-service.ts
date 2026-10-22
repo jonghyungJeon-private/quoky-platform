@@ -105,6 +105,8 @@ import {
   type StoredSelection,
 } from './selection-state';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
+import { nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
+import { NL_HELP_TOPICS } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
 
 /**
@@ -184,6 +186,11 @@ export interface NlSelectionTurn {
   readonly now: IsoTimestamp;
   /** The entries the registered handlers contribute this turn (configured sources only). */
   readonly entries: readonly NlCatalogEntry[];
+  /**
+   * Owner decision A follow-up (2026-10-22): per offered entry id, the one `help.topic` topic that covers it (the runtime
+   * derives it from the help lines of the handler that owns the entry). Absent: none known (the general help).
+   */
+  readonly entryHelpTopics?: Readonly<Record<string, string>>;
   readonly route: NlSelectionRoute;
   /**
    * ADR-0120 D6/D8 (no new egress): the id (or, when it has one, the family — `AiProvider.family`) of the provider the router resolves for this turn's chat capability and
@@ -292,7 +299,7 @@ export interface NlSelectionServiceDeps {
   readonly elapsed?: () => number;
   /**
    * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
-   * record is written and every prompt and reply is byte-identical to `nl-select.v65` (the read prompt). Any other level requires mode
+   * record is written and every prompt and reply is byte-identical to `nl-select.v67` (the read prompt). Any other level requires mode
    * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
    */
   readonly actions?: {
@@ -713,6 +720,26 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }
 
   /**
+   * Owner decision B (2026-10-22): a handler's reply asked the owner to confirm exactly this read (a near-matched Jira
+   * project). Saved as the D7 one-option question with `confirm` (a yes runs it, a no ends it, 5 minutes). Only in
+   * `active`; a selection that is not a closed entry with bounded args is ignored. Never throws.
+   */
+  async recordConfirmQuestion(session: Pick<Session, 'id'>, actorId: string, selection: NlGrammarSelection, language: 'ko' | 'en', now: IsoTimestamp): Promise<boolean> {
+    if (this.mode !== 'active') return false;
+    const stored = sanitizeStoredSelection(selection);
+    if (stored === undefined) return false;
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, NL_PENDING_METADATA_KEY, () =>
+        pendingQuestionRecord(actorId, { kind: 'entry', at: now, language, options: [stored], confirm: true }),
+      );
+      return true;
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: NL_PENDING_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+      return false;
+    }
+  }
+
+  /**
    * ADR-0120 follow-up: a turn answered by something with no catalog equivalent (chat, help, an approval, a write
    * preview) ends the previous listing's follow-up window, so a later "그 중에 …" never binds to an older, unrelated
    * listing. Only in `active`; never throws.
@@ -751,7 +778,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /**
    * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
    * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
-   * prompt is `nl-select.v65` (the read prompt) byte for byte.
+   * prompt is `nl-select.v67` (the read prompt) byte for byte.
    */
   actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
@@ -998,7 +1025,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         return { kind: 'none' };
       }
     }
-    const ctx = this.validationContext(turn, prepared.groundingText, last?.args);
+    const ctx = this.validationContext(turn, prepared.groundingText, last?.args, false, last?.entryId);
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
     this.forgetRefusedPeriod(cacheKey, main);
     // Owner decision of 2026-10-19, bounded: a period outside the entry's closed set (a span, a duration, a month, a
@@ -1011,7 +1038,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         return { kind: 'ask', text: help?.[language] ?? renderUsageQuestion(entry, language), entryId: entry.id };
       }
     }
-    if (main.ok && output.ambiguity === 'CLEAR') return this.complete(main.value, turn, last, language, prepared.groundingText);
+    if (main.ok && output.ambiguity === 'CLEAR') return this.completeOrAskScope(main.value, turn, last, language, prepared.groundingText);
     // v53 gate (2026-10-19, reminder.list-006 {count}, none-030 help.topic {topic}): a CLEAR read with no alternative whose
     // only defect is a detail Core cannot use (an unlisted flag or day symbol, or an out-of-set presentation value the owner
     // did not name; `validateWithoutDetail`) runs as the read the selector named without that detail, instead of asking
@@ -1022,7 +1049,15 @@ export class NlSelectionService implements TurnDeliveryObserver {
         // CA P3: every dropped detail is logged (arg name and kind only), so a silently widened read is visible in review.
         // Arg names from the catalog only (Codex P2): a model-made name is logged as `other`.
         this.log('info', 'nl_selection.detail_dropped', { entryId: lenient.result.value.entry.id, dropped: lenient.dropped.map((detail) => `${NL_CATALOG_ARG_NAMES.has(detail.arg) ? detail.arg : 'other'}:${detail.kind}`).join(',') });
-        return this.complete(lenient.result.value, turn, last, language, prepared.groundingText);
+        // CA review W2: when the selector named a presentation value (help.topic's `topic`) that was dropped as out of
+        // set, the help is not the general one it would be without it: the help-scope rule (for genuinely general CLEAR
+        // selections) does not apply. Codex P2: only that drop; any other repaired detail (an ignorable extra arg) still
+        // goes through the scope check.
+        const entry = lenient.result.value.entry;
+        const namedPresentation = lenient.dropped.some((detail) => detail.kind === 'enum' && entry.args.find((spec) => spec.name === detail.arg)?.presentation === true);
+        return namedPresentation
+          ? this.complete(lenient.result.value, turn, last, language, prepared.groundingText)
+          : this.completeOrAskScope(lenient.result.value, turn, last, language, prepared.groundingText);
       }
     }
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action
@@ -1056,7 +1091,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // (entry + args) remains, the one named, unchanged. Two reads of one entry ("완료된 할 일 아니면 취소된 할 일") ask.
     const onlyRead = `${main.ok ? main.value.entry.id : ''}|${main.ok ? sortedArgs(main.value.args) : ''}`;
     if (actionsOn && main.ok && droppedAction && !openRead && !weekdayRefused && readCandidates.size === 1 && readCandidates.has(onlyRead)) {
-      return this.complete(main.value, turn, last, language, prepared.groundingText);
+      return this.completeOrAskScope(main.value, turn, last, language, prepared.groundingText);
+    }
+    // Owner decision A (2026-10-22): a question whose only read option is the general help about a named source asks the
+    // help-scope question (Quoky's way, or the source app itself) instead of a one-option list.
+    if (options.length === 1 && !weekdayRefused) {
+      const scoped = await this.askHelpScope(options[0] as NlValidatedSelection, turn, language, prepared.groundingText, output.ambiguity === 'NEEDS_CLARIFICATION');
+      if (scoped !== undefined) return scoped;
     }
     if (options.length === 0) {
       // An entry that is not offered (an unconfigured source) or not in the catalog is honest chat's to explain.
@@ -1079,6 +1120,46 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const refusedEntry = weekdayRefused && !main.ok && main.entryId !== undefined ? ctx.offered.get(main.entryId) : undefined;
     const question = renderEntryQuestion(options, language);
     return { kind: 'ask', text: refusedEntry !== undefined ? `${renderWeekdayQuestion(refusedEntry, language)}\n${question}` : question };
+  }
+
+  /** A validated selection that may first need the help-scope question (owner decision A); else {@link complete}. */
+  private async completeOrAskScope(
+    selection: NlValidatedSelection,
+    turn: NlSelectionTurn,
+    last: LastSelection | undefined,
+    language: 'ko' | 'en',
+    groundingText: string,
+  ): Promise<NlSelectionDecision> {
+    return (await this.askHelpScope(selection, turn, language, groundingText)) ?? this.complete(selection, turn, last, language, groundingText);
+  }
+
+  /**
+   * Owner decision A (2026-10-22): the general help about a source the owner named (`nlHelpSourceScope`, structural) is
+   * asked, never answered: "Quoky로 슬랙을 조회하는 방법을 물으신 건가요, 아니면 슬랙 앱 자체의 사용법인가요?". The pending
+   * question is the D7 numbered one: option 1 is the help selection, option 2 the app itself (`appSource`).
+   */
+  private async askHelpScope(selection: NlValidatedSelection, turn: NlSelectionTurn, language: 'ko' | 'en', groundingText: string, selectorAsked = false): Promise<NlSelectionDecision | undefined> {
+    const scope = nlHelpSourceScope({ entryId: selection.entry.id, args: selection.args }, groundingText, selection.entry, { selectorAsked });
+    if (scope === undefined || !isNlWave1EntryId(selection.entry.id)) return undefined;
+    // The Quoky option shows that source's help section: the topic covering the offered entries that own the source name
+    // (one topic only; otherwise the general help the selection named).
+    const sourceName = scope.source.normalize('NFC').toLowerCase();
+    const covering = [
+      ...new Set(
+        turn.entries
+          .filter((entry) => (entry.sourceNames ?? []).some((name) => name.normalize('NFC').toLowerCase() === sourceName))
+          .flatMap((entry) => {
+            const topic = turn.entryHelpTopics?.[entry.id];
+            return topic !== undefined && (NL_HELP_TOPICS as readonly string[]).includes(topic) ? [topic] : [];
+          }),
+      ),
+    ];
+    const option: StoredSelection = { entryId: selection.entry.id, args: covering.length === 1 ? { ...selection.args, topic: covering[0] as string } : selection.args };
+    await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
+      pendingQuestionRecord(turn.actor.id, { kind: 'entry', at: turn.now, language, options: [option], groundingText, appSource: scope.source }),
+    );
+    this.log('info', 'nl_selection.help_scope_asked', { entryId: selection.entry.id });
+    return { kind: 'ask', text: renderHelpScopeQuestion(scope.source, language), entryId: selection.entry.id };
   }
 
   /** A validated selection: apply or ask the interpretation preference (D7), then execute. */
@@ -1156,7 +1237,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // A transient arg (a pick of one listed item) answers this turn only and never becomes the follow-up's base.
     const stored = Object.fromEntries(Object.entries(args).filter(([name]) => entry.args.find((spec) => spec.name === name)?.transient !== true));
     await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(turn.actor.id, { entryId, args: stored }, turn.now));
-    const described = entry.describe?.(args, selection.range, language);
+    const described = entry.describe?.(args, selection.range, language, selection.defaulted !== undefined ? { defaulted: selection.defaulted } : undefined);
     const basis = described === undefined ? undefined : renderBasis(described, language, basisNote);
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}) };
   }
@@ -1173,15 +1254,31 @@ export class NlSelectionService implements TurnDeliveryObserver {
         const entry = offered.get(option.entryId);
         return entry === undefined ? [] : [entry.label.ko, entry.label.en, ...entry.aliases];
       });
-      const resolved = resolveChoice(answerText, labels);
+      // Owner decision A: the help-scope question's two options are answered by exactly what it displays (Codex P2): the
+      // rendered option texts, KO and EN, on their own choices (the help entry's generic aliases are not shown there, and
+      // the app option's text holds one of them), plus the number or ordinal.
+      const appSource = pending.appSource;
+      if (appSource !== undefined) {
+        const [quokyKo, appKo] = renderHelpScopeOptions(appSource, 'ko');
+        const [quokyEn, appEn] = renderHelpScopeOptions(appSource, 'en');
+        labels.splice(0, labels.length, [quokyKo, quokyEn], [appKo, appEn]);
+      }
+      // Owner decision B: a one-option confirmation takes the A6 continuation confirmation's yes and no (the same closed
+      // reply sets, `interpretContinuationConfirmReply`); a number or the option's name still answers it.
+      const yesNo = pending.confirm === true ? interpretContinuationConfirmReply(answerText) : 'none';
+      if (yesNo === 'deny') return { kind: 'ask', text: renderCancelled(language) };
+      const resolved: ChoiceResolution = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveChoice(answerText, labels);
       if (resolved.kind === 'none') return undefined;
       if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
+      if (resolved.kind === 'pick' && appSource !== undefined && resolved.index === pending.options.length) {
+        return { kind: 'ask', text: renderHelpScopeAppReply(appSource, language) };
+      }
       const validated = pending.options.map((option) => validateSelection(option, this.validationContext(turn, '', option.args)));
       if (resolved.kind === 'unclear') {
         const options = validated.flatMap((result) => (result.ok ? [result.value] : []));
         if (options.length === 0) return undefined;
         await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, { ...pending, at: turn.now }));
-        return { kind: 'ask', text: renderEntryQuestion(options, language) };
+        return { kind: 'ask', text: appSource !== undefined ? renderHelpScopeQuestion(appSource, language) : renderEntryQuestion(options, language) };
       }
       const picked = validated[resolved.index];
       if (picked === undefined || !picked.ok) return undefined;
@@ -2052,7 +2149,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // A7: the shadow sees what active would do: a clear past-tense statement is `none`.
     if (output.entryId !== null && !isNlActionEntryId(output.entryId) && (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined)) outcome = 'none';
     else if (output.entryId !== null) {
-      const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args));
+      const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args, false, last?.entryId));
       this.forgetRefusedPeriod(selected.cacheKey, validated);
       if (!validated.ok) outcome = 'INVALID';
       else if (output.ambiguity === 'CLEAR' && isNlWave1EntryId(validated.value.entry.id)) executable = { entryId: validated.value.entry.id, args: validated.value.args };
@@ -2192,11 +2289,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
 
   // ── state ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  private validationContext(turn: NlSelectionTurn, groundingText: string, previousArgs: NlArgs | undefined, actions = false): NlValidationContext {
+  private validationContext(turn: NlSelectionTurn, groundingText: string, previousArgs: NlArgs | undefined, actions = false, previousEntryId?: NlCatalogEntryId): NlValidationContext {
     return {
       offered: offeredMap(turn.entries),
       groundingText,
       ...(previousArgs !== undefined ? { previousArgs } : {}),
+      ...(previousEntryId !== undefined ? { previousEntryId } : {}),
       now: turn.now,
       timeZone: this.deps.timeZone,
       ...(actions ? { actions: true } : {}),

@@ -73,6 +73,9 @@ export interface R2Harness {
   /** The Jira single-issue and Slack replies URLs only. */
   itemFetches(): string[];
   jira: JiraFixtureIssue[];
+  /** ADR-0120 A8: the visible Jira projects (`project/search`) and each project's versions (`project/{key}/version`). */
+  jiraProjects: Array<{ readonly key: string; readonly name: string }>;
+  jiraVersions: Record<string, Array<{ readonly id: string; readonly name: string; readonly released?: boolean }>>;
   slack: SlackFixtureMessage[];
   selector: string;
   /** The stub summariser: gets the SUMMARIZATION prompt, returns the summary text. Default: echo the prompt. */
@@ -118,6 +121,8 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
   const fetched: string[] = [];
   const state = {
     jira: [] as JiraFixtureIssue[],
+    jiraProjects: [] as Array<{ readonly key: string; readonly name: string }>,
+    jiraVersions: {} as Record<string, Array<{ readonly id: string; readonly name: string; readonly released?: boolean }>>,
     slack: [] as SlackFixtureMessage[],
     selector: none,
     summarizer: (prompt: string) => prompt,
@@ -138,6 +143,9 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
           issues: state.jira.map((issue) => ({ id: issue.id, key: issue.key, fields: { summary: issue.summary, status: { name: 'Open' }, updated: '2026-10-16T00:00:00.000+0000', description: adf(issue.description) } })),
         });
       }
+      if (url.pathname === '/rest/api/3/project/search') return json({ values: state.jiraProjects, isLast: true });
+      const versions = /^\/rest\/api\/3\/project\/([A-Z][A-Z0-9]+)\/version$/.exec(url.pathname);
+      if (versions !== null) return json({ values: state.jiraVersions[versions[1] as string] ?? [], isLast: true });
       const match = /^\/rest\/api\/3\/issue\/(\d+)$/.exec(url.pathname);
       if (match !== null) {
         const issue = state.jira.find((candidate) => candidate.id === match[1]);
@@ -272,6 +280,18 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
     },
     set jira(value) {
       state.jira = value;
+    },
+    get jiraProjects() {
+      return state.jiraProjects;
+    },
+    set jiraProjects(value) {
+      state.jiraProjects = value;
+    },
+    get jiraVersions() {
+      return state.jiraVersions;
+    },
+    set jiraVersions(value) {
+      state.jiraVersions = value;
     },
     get slack() {
       return state.slack;

@@ -17,5 +17,7 @@ export * from './work-chat-selection';
 export * from './jira-release-link';
 export * from './jira-release-lookup';
 export * from './jira-release-renderer';
+// Owner answer 1 (2026-10-22): the owner-visible outcome of a jira.release selection against a given Jira world.
+export * from './jira-release-equivalence';
 // ADR-0120 amendment A6 R2: the single-item readout of one Jira issue or Slack message.
 export * from './work-item-summary';

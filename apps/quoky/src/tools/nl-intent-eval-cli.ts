@@ -70,6 +70,7 @@ import {
   loadCorpus,
   runEvaluation,
   summarize,
+  clarifyCaseIdsOf,
   formatSideScore,
   scoreGrammarSide,
   scoreSelectorSide,
@@ -118,7 +119,7 @@ Strict:   pnpm eval:nl -- --mode run [options] --approved-plan-digest <sha256 fr
 Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>  --entries <id,id,...>  --negatives true|false (default true)
          --per-entry <N, 0 = all>  --runs <1-5, default 1>  --concurrency <1-8, default 4>
          --timeout-ms <2000-8000, default QUOKY_NL_INTENT_TIMEOUT_MS if valid, else ${NL_EVAL_RUNTIME_TIMEOUT_MS}>
-Gate: >= ${NL_EVAL_GATE.overall * 100}% overall, >= ${NL_EVAL_GATE.perEntry * 100}% per entry, ${NL_EVAL_GATE.wrongCaptures} wrong captures.
+Gate: >= ${NL_EVAL_GATE.overall * 100}% overall, >= ${NL_EVAL_GATE.perEntry * 100}% per entry, ${NL_EVAL_GATE.wrongCaptures} data-read wrong captures, help.topic captures <= ceil(${NL_EVAL_GATE.helpCaptureRate * 100}% of the negatives) (owner decision 2026-10-22).
 
 A6 (ADR-0120 amendment A6):
           pnpm eval:nl -- --mode action [--model M] [--runs N] [--concurrency N] [--approved-plan-digest <sha256>]
@@ -248,13 +249,15 @@ export function defaultDeps(): CliDeps {
 export function formatSummary(summary: NlEvalSummary): string[] {
   const pct = (rate: number) => `${(rate * 100).toFixed(1)}%`;
   return [
-    `overall: ${summary.hits}/${summary.positives} (${pct(summary.overall)})  wrong captures: ${summary.wrongCaptures}/${summary.negatives}` +
+    `overall: ${summary.hits}/${summary.positives} (${pct(summary.overall)})  wrong captures: ${summary.wrongCaptures}/${summary.negatives}  help captures: ${summary.helpCaptures} (allowed ${summary.helpAllowance} = ceil(1% of ${summary.negatives}))` +
       `  clarifications: ${summary.clarifications}  timeouts (> ${summary.latency.boundMs / 1000} s, counted as misses): ${summary.timeouts}  errors: ${summary.errors}`,
+    ...(summary.clarifyGolds.total > 0 ? [`clarification golds asked: ${summary.clarifyGolds.asked}/${summary.clarifyGolds.total} (reported, not gated)`] : []),
+    ...(summary.defaulted > 0 ? [`ungrounded values set back to the previous value or default: ${summary.defaulted} (reported, not gated)`] : []),
     ...Object.entries(summary.perEntry)
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([entry, slot]) => `  ${entry.padEnd(20)} ${slot.hits}/${slot.total} (${pct(slot.rate)})`),
     `latency: p50 ${summary.latency.p50} ms, p95 ${summary.latency.p95} ms, max ${summary.latency.max} ms, over ${summary.latency.boundMs / 1000} s: ${summary.latency.overRuntimeBound}`,
-    `gate (>= 95% overall, >= 90% per entry, 0 wrong captures): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`,
+    `gate (>= 95% overall, >= 90% per entry, 0 data-read wrong captures, help captures <= ${summary.helpAllowance} = ceil(1% of ${summary.negatives} negatives)): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`,
     `S1 gate (the gate above and <= 1% of calls over the ${summary.latency.boundMs / 1000} s bound: ${pct(summary.overBoundRate)}): ${summary.s1GatePassed ? 'PASSED' : 'FAILED'}`,
     ...(summary.grammarSubset !== undefined
       ? [
@@ -349,8 +352,9 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   await guard.settle();
   const outage = guard.report();
   const reportName = `nl-intent-${startedAt.replace(/[:.]/g, '-')}-${plan.model.replace(/[^A-Za-z0-9._-]/g, '_')}.json`;
-  const summaries = Array.from({ length: plan.runs }, (_, index) => summarize(records.filter((record) => record.run === index + 1), plan.callTimeoutMs, grammarCaseIds));
-  const hard = sumHardFailures(summaries, ['wrongCaptures']);
+  const clarifyCaseIds = clarifyCaseIdsOf(corpus);
+  const summaries = Array.from({ length: plan.runs }, (_, index) => summarize(records.filter((record) => record.run === index + 1), plan.callTimeoutMs, grammarCaseIds, clarifyCaseIds));
+  const hard = sumHardFailures(summaries, ['wrongCaptures', 'helpOverAllowance']);
   if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, 'intent gate', plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), records }, hard);
   for (const [index, summary] of summaries.entries()) {
     deps.stdout(`run ${index + 1}/${plan.runs} (${plan.model}, ${plan.promptVersion}):`);
@@ -360,6 +364,9 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   for (let run = 1; run <= plan.runs; run += 1) {
     deps.stdout(formatSideScore(`selector side, run ${run} (same cases)`, scoreSelectorSide(corpus, records.filter((record) => record.run === run), startedAt)));
   }
+  // Owner answer 1 (2026-10-22): the jira.release hits by the same final outcome in the snapshot Jira world (ids only).
+  const equivalent = records.filter((record) => record.equivalent === true);
+  if (equivalent.length > 0) deps.stdout(`jira.release hits by equal Core outcome (snapshot world): ${equivalent.length} (${[...new Set(equivalent.map((record) => record.id))].join(', ')})`);
   const misses = records.filter((record) => record.outcome !== 'hit' && record.outcome !== 'none');
   if (misses.length > 0) {
     deps.stdout(`not hit (${misses.length}):`);
@@ -479,7 +486,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
     return expect === undefined || expect === 'none' ? 'none' : expect.entryId;
   };
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeReadRegression(records.filter((record) => record.run === index + 1), goldOf));
-  const hard = sumHardFailures(summaries, ['wrongCaptures', 'actionCaptures']);
+  const hard = sumHardFailures(summaries, ['wrongCaptures', 'helpOverAllowance', 'actionCaptures']);
   if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, `read-regression gate (${plan.promptVersion})`, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records }, hard);
   for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
   deps.stdout(formatProviderOutcomes(outage));

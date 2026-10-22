@@ -573,6 +573,22 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(h.calls[1]!.prompt).toContain('Previous selection: {"entryId":"jira.issues","args":{"role":"either","window":"created","range":"today"}}');
   });
 
+  it('CA review: a jira.release fallback names the default in the basis line ("내 담당"); a Jira status fallback with a window says 미해결', async () => {
+    const release = harness({ script: [out('jira.release', { release: '1.4.0', scope: 'all' })] });
+    expect(await release.decide('이번 1.4.0 릴리즈에 포함된 지라 티켓 다 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { release: '1.4.0' } }, basis: '기준: 릴리스 "1.4.0" / 내 담당' });
+    const issues = harness({ script: [out('jira.issues', { window: 'updated', range: 'today', status: 'in-progress' })] });
+    expect(await issues.decide('오늘 업데이트된 지라 이슈 보여줘')).toMatchObject({ kind: 'execute', command: { args: { window: 'updated', range: 'today' } }, basis: expect.stringContaining('미해결') });
+    // Without a fallback the window line stays as before (no status label).
+    const plain = harness({ script: [out('jira.issues', { window: 'updated', range: 'today' })] });
+    expect(await plain.decide('오늘 업데이트된 지라 이슈 보여줘')).toMatchObject({ kind: 'execute', basis: expect.not.stringContaining('미해결') });
+  });
+
+  it('Codex P2: a fallback never restores a value from the previous selection of another entry', async () => {
+    const h = harness({ script: [out('todo.list', { status: 'all' }), out('jira.issues', { status: 'in-progress' })] });
+    expect(await h.decide('할 일 전부 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'todo.list', args: { status: 'all' } } });
+    expect(await h.decide('내 지라 이슈 보여줘', { now: at(60_000) })).toMatchObject({ kind: 'execute', command: { entryId: 'jira.issues', args: {} } });
+  });
+
   it('refines a Jira listing to in-progress ("그 중에 진행중인거만") and a calendar listing by a title keyword, keeping the range', async () => {
     const jira = harness({ script: [out('jira.issues', {}), out('jira.issues', { status: 'in-progress' }), out('jira.issues', { status: 'in-progress' })] });
     await jira.decide('내 지라 이슈 보여줘');
@@ -581,10 +597,10 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
       command: { args: { status: 'in-progress' } },
       basis: '기준: 내가 담당 / 진행 중',
     });
-    // a model guess without the owner saying it is refused (grounding), and the status carries over once stated
+    // the status carries over once stated; a model guess without the owner saying it falls back to the default (open)
     expect(await jira.decide('그 중에 하나만', { now: at(120_000) })).toMatchObject({ kind: 'execute', command: { args: { status: 'in-progress' } } });
     const guessed = harness({ script: [out('jira.issues', { status: 'in-progress' })] });
-    expect((await guessed.decide('내 지라 이슈 보여줘')).kind).not.toBe('execute');
+    expect(await guessed.decide('내 지라 이슈 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.issues', args: {} } });
 
     const calendar = harness({ script: [out('calendar.events', { range: 'this-week' }), out('calendar.events', { range: 'this-week', keyword: '스크럼' })] });
     await calendar.decide('이번 주 일정 알려줘');
@@ -962,5 +978,161 @@ describe('ADR-0120 amendment A7: until-<weekday> and the clear past-tense statem
   it('a past-tense question still executes', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'yesterday' })] });
     expect(await h.decide('어제 일정 뭐 있었지?')).toMatchObject({ kind: 'execute', command: { args: { range: 'yesterday' } } });
+  });
+});
+
+describe('owner decision A (2026-10-22): a general help question about a named source asks Quoky or the app itself', () => {
+  const QUESTION = [
+    'Quoky로 슬랙을 조회하는 방법을 물으신 건가요, 아니면 슬랙 앱 자체의 사용법인가요?',
+    '1. Quoky로 슬랙 조회하는 방법',
+    '2. 슬랙 앱 자체의 사용법',
+    '번호로 답해 주세요.',
+  ].join('\n');
+
+  it('asks instead of answering; the pending question holds the help option and the source (no model call on the answer)', async () => {
+    const h = harness({ script: [out('help.topic')] });
+    expect(await h.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ kind: 'entry', options: [{ entryId: 'help.topic', args: {} }], appSource: '슬랙' });
+    // "1": Quoky's help (the general help, unchanged args).
+    expect(await h.decide('1')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+    expect(h.calls).toHaveLength(1);
+  });
+
+  it('"2" (or the ordinal) is the app itself: a fixed honest reply, never instructions for the other app', async () => {
+    const h = harness({ script: [out('help.topic', { topic: 'all' }), out('help.topic')] });
+    await h.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await h.decide('2번')).toEqual({ kind: 'ask', text: '그건 슬랙 앱 자체의 사용법이라 제가 안내해 드리긴 어려워요. 슬랙의 도움말을 확인해 주세요.' });
+    await h.decide('what is Confluence?');
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ appSource: 'Confluence', language: 'en' });
+    expect(await h.decide('the second one')).toEqual({ kind: 'ask', text: "That is about using the Confluence app itself, so I can't guide you through it reliably. Please check Confluence's own help." });
+  });
+
+  it("the Quoky option shows the source's help section: the topic of the entries that own the source name", async () => {
+    const h = harness({ script: [out('help.topic')] });
+    const topics = { 'slack.search': 'work-lookup', 'jira.issues': 'work-lookup', 'calendar.events': 'calendar' };
+    await h.service.decide({ text: '슬랙에서 검색하는 방법 알려줘', attachmentCount: 0, session: h.session, actor: h.actor(), now: T0, entries: ALL, route: 'chat', chatProviderId: 'scripted-selector', entryHelpTopics: topics });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ options: [{ entryId: 'help.topic', args: { topic: 'work-lookup' } }] });
+    expect(await h.decide('1')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
+  });
+
+  it('Codex P2: each option is answered by its displayed text as well as by its number', async () => {
+    const appReply = '그건 슬랙 앱 자체의 사용법이라 제가 안내해 드리긴 어려워요. 슬랙의 도움말을 확인해 주세요.';
+    const cases: Array<[string, 'help' | 'app']> = [
+      ['Quoky로 슬랙 조회하는 방법', 'help'],
+      ['1', 'help'],
+      ['슬랙 앱 자체의 사용법', 'app'],
+      ['2', 'app'],
+    ];
+    for (const [reply, want] of cases) {
+      const h = harness({ script: [out('help.topic')] });
+      await h.decide('슬랙에서 검색하는 방법 알려줘');
+      const decision = await h.decide(reply);
+      if (want === 'help') expect(decision, reply).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic' } });
+      else expect(decision, reply).toEqual({ kind: 'ask', text: appReply });
+      expect(h.calls, reply).toHaveLength(1);
+    }
+    const en = harness({ script: [out('help.topic')] });
+    await en.decide('how do I search in Slack?');
+    expect(await en.decide('Looking up Slack with Quoky')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic' } });
+  });
+
+  it('a number that is no option asks the same help-scope question again; a cancel ends it', async () => {
+    const h = harness({ script: [out('help.topic')] });
+    await h.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await h.decide('3번')).toEqual({ kind: 'ask', text: QUESTION });
+    expect(await h.decide('취소')).toEqual({ kind: 'ask', text: '알겠어요, 선택을 취소했어요. 필요하면 다시 말씀해 주세요.' });
+  });
+
+  it('any other answer routes through natural-language selection as usual (no word list for the answer)', async () => {
+    const h = harness({ script: [out('help.topic'), NONE] });
+    await h.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await h.decide('앱 자체 얘기였어')).toEqual({ kind: 'none' });
+    expect(h.calls).toHaveLength(2);
+  });
+
+  it('CA review W2: a topic the selector named but Core dropped as out of set is not a general help: no help-scope question', async () => {
+    const h = harness({ script: [out('help.topic', { topic: 'slack' })] });
+    expect(await h.decide('너 슬랙 볼 수 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+  });
+
+  it('Codex P2: another repaired detail (an ignorable extra arg dropped) still goes through the help-scope check', async () => {
+    const extra = harness({ script: [out('help.topic', { verbose: true })] });
+    expect(await extra.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
+    const topic = harness({ script: [out('help.topic', { topic: 'slack' })] });
+    expect(await topic.decide('슬랙에서 검색하는 방법 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+  });
+
+  it('positives stay untouched: a source-specific or feature topic, no source named, or two source families', async () => {
+    const h = harness({
+      script: [out('help.topic', { topic: 'work-lookup' }), out('help.topic', { topic: 'drive' }), out('help.topic'), out('help.topic', { topic: 'reminder' }), out('help.topic')],
+    });
+    expect(await h.decide('너 jira 볼 수 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
+    expect(await h.decide('구글 드라이브에서 폴더 공유하는 법 알려줘')).toMatchObject({ kind: 'execute', command: { args: { topic: 'drive' } } });
+    expect(await h.decide('사용법 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+    expect(await h.decide('알림 설정하는 법 알려줘')).toMatchObject({ kind: 'execute', command: { args: { topic: 'reminder' } } });
+    expect(await h.decide('슬랙이랑 지라 쓰는 방법 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+  });
+
+  it('a selector clarification whose only read option is that help asks the same help-scope question', async () => {
+    const h = harness({ script: [out('help.topic', {}, { ambiguity: 'NEEDS_CLARIFICATION' })] });
+    expect(await h.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
+  });
+
+  it('owner answer 2 (v66): the selector unclear how-to with a topic also asks; the topic it named is kept for the Quoky option', async () => {
+    const h = harness({ script: [out('help.topic', { topic: 'work-lookup' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
+    expect(await h.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
+    expect(await h.decide('1')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
+    // Without a source named, a selector clarification on help stays the ordinary one-option question.
+    const plain = harness({ script: [out('help.topic', { topic: 'reminder' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
+    expect(await plain.decide('알림 어떻게 해')).toMatchObject({ kind: 'ask', text: expect.stringContaining('어떤 걸 찾으세요?') });
+  });
+});
+
+describe('owner decision B (2026-10-22): a handler confirmation is the open D7 question (yes runs it, no ends it)', () => {
+  const selection = { entryId: 'jira.release' as const, args: { project: 'OP26' } };
+
+  it('a yes runs exactly the confirmed read, without a model call', async () => {
+    for (const yes of ['응', '맞아', '네', '1']) {
+      const h = harness();
+      expect(await h.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', selection, 'ko', T0)).toBe(true);
+      expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ kind: 'entry', confirm: true, options: [selection] });
+      expect(await h.decide(yes), yes).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { project: 'OP26' } } });
+      expect(h.calls).toHaveLength(0);
+    }
+  });
+
+  // Service level only: `decide` reads the slot itself here. In the runtime, `takePending` clears the slot at the start of
+  // ANY turn in the session, so another member's message ends the owner's confirmation (the safe direction).
+  it('CA review W5 (service level): the confirmation expires after the 5-minute TTL, and another actor\'s yes never answers it', async () => {
+    const late = harness({ script: [NONE] });
+    await late.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', selection, 'ko', T0);
+    expect(await late.decide('응', { now: at(NL_PENDING_TTL_MS + 1) })).toEqual({ kind: 'none' });
+    const other = harness({ script: [NONE] });
+    await other.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', selection, 'ko', T0);
+    const member = { id: 'member-2', displayName: 'Member', identities: [], createdAt: T0 };
+    const decided = await other.service.decide({ text: '응', attachmentCount: 0, session: other.session, actor: member, now: T0, entries: ALL, route: 'chat', chatProviderId: 'scripted-selector' });
+    expect(decided).toEqual({ kind: 'none' });
+    // At the service level the owner's own yes still answers it afterwards (decide does not clear another actor's slot);
+    // through the runtime the member's turn would already have ended it (`takePending`).
+    expect(await other.decide('응')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { project: 'OP26' } } });
+  });
+
+  it('a no ends the question politely; anything else routes as usual', async () => {
+    const h = harness({ script: [NONE] });
+    await h.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', { entryId: 'jira.release', args: { project: 'OP26', release: '20261015' } }, 'ko', T0);
+    expect(await h.decide('아니')).toEqual({ kind: 'ask', text: '알겠어요, 선택을 취소했어요. 필요하면 다시 말씀해 주세요.' });
+    await h.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', selection, 'ko', T0);
+    expect(await h.decide('오늘 날씨 어때?')).toEqual({ kind: 'none' });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
+  });
+
+  it('a yes with the release words runs that release; outside active nothing is kept', async () => {
+    const h = harness();
+    await h.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', { entryId: 'jira.release', args: { project: 'OP26', release: '20261015' } }, 'ko', T0);
+    expect(await h.decide('응')).toMatchObject({ kind: 'execute', command: { args: { project: 'OP26', release: '20261015' } } });
+    const shadow = harness({ mode: 'shadow' });
+    expect(await shadow.service.recordConfirmQuestion({ id: 'sess-1' }, 'owner', selection, 'ko', T0)).toBe(false);
+    expect(shadow.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeUndefined();
   });
 });

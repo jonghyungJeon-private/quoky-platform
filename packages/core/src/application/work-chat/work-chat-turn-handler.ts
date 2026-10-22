@@ -39,7 +39,7 @@ import { isDirectConversation } from '../message-rendering';
 import { LAST_LISTING_METADATA_KEY, readListingRecord } from '../last-listing';
 import { surfaceClaimOf, surfaceGroupsOfWorkChatCommand } from '../surface-grants/surface-group-map';
 import { surfaceChannelHolds } from '../surface-grants/surface-permit';
-import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
+import { WORK_CHAT_SOURCE_ENTRY, nlSelectionForWorkChatCommand, releaseCommandForSelection, renderWorkChatCount, workChatCommandForSelection } from './work-chat-selection';
 import {
   EXTERNAL_WORK_EXCERPT_MAX_CHARS,
   EXTERNAL_WORK_FIELD_MAX_CHARS,
@@ -165,18 +165,21 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     if (selected.entryId === 'item.summarize') return this.summarizeItem(selected, ctx);
     // ADR-0120 A8: a release link is read from the owner's own non-quoted words only (quoted or fenced text is data).
     const prepared = selected.entryId === 'jira.release' ? prepareSelectionInput(ctx.message.text, 0, ctx.message.quotedRanges ?? []) : undefined;
-    const mapped = workChatCommandForSelection(selected, prepared === undefined || 'skip' in prepared ? '' : prepared.groundingText);
+    const groundingText = prepared === undefined || 'skip' in prepared ? '' : prepared.groundingText;
+    // ADR-0120 A8 owner decision 7: a release listing knows whether it answers in a channel — every-assignee scope and the
+    // lists stay DM-only there unless the gate is enforced and the channel holds `jira-project` (ADR-0122 P2).
+    const mapped =
+      selected.entryId === 'jira.release'
+        ? releaseCommandForSelection(selected, groundingText, { inChannel: !surfaceChannelHolds(ctx.message.context, ctx.surfacePermit, 'jira-project') })
+        : workChatCommandForSelection(selected, groundingText);
     if (mapped === null) return null;
     // A status view is DM-only in a channel unless the gate is enforced and the channel holds `todo` (ADR-0122 P2, Codex
     // P2 of #221); with the gate off it stays DM-only. Nothing is read when refused.
     if (mapped.kind === 'todo.list' && mapped.status !== undefined && !surfaceChannelHolds(ctx.message.context, ctx.surfacePermit, 'todo')) {
       return { reply: outboundMessage(ctx.message.context, renderListStatusDmOnly(selected.language), { replyToMessageId: ctx.message.id }) };
     }
-    // ADR-0120 A8 owner decision 7: a release listing knows whether it answers in a channel — every-assignee scope and the
-    // lists stay DM-only there unless the gate is enforced and the channel holds `jira-project` (ADR-0122 P2).
-    const command =
-      mapped.kind === 'release' && !surfaceChannelHolds(ctx.message.context, ctx.surfacePermit, 'jira-project') ? { ...mapped, inChannel: true as const } : mapped;
-    const { outcome, listed } = await this.run(command, ctx);
+    const command = mapped;
+    const { outcome, listed } = await this.run(command, ctx, selected.language);
     if (command.kind !== 'lookup' || command.listOnly !== true || listed === undefined || outcome === null) return outcome;
     if (outcome.kind !== undefined && outcome.kind !== 'reply') return outcome;
     const count = renderWorkChatCount(command.source, listed, selected.language);
@@ -347,6 +350,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
   private async run(
     command: WorkChatCommand,
     ctx: TurnHandlerContext,
+    language: 'ko' | 'en' = 'ko',
   ): Promise<{ readonly outcome: TurnHandlerOutcome | null; readonly listed?: { readonly count: number; readonly truncated: boolean; readonly shown?: number } }> {
     // ADR-0112 D5 (CWR-2): an exact Jira comment / transition or Slack post request is handed to the runtime's
     // connector-write flow (this handler creates no approval and makes no write). `fallbackText` is the fixed refusal
@@ -376,6 +380,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
         reply: outboundMessage(ctx.message.context, outboundBody(outcome)),
         ...(outcome.action !== undefined ? { nlAction: outcome.action } : {}),
         ...(outcome.listing !== undefined ? { nlListing: outcome.listing } : {}),
+        ...(outcome.confirm !== undefined ? { nlConfirm: { selection: outcome.confirm, language } } : {}),
       };
       return outcome.listed === undefined ? { outcome: reply } : { outcome: reply, listed: outcome.listed };
     }

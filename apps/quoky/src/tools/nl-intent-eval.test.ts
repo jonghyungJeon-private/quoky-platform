@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, NL_SELECTION_TIMEOUT_MS, type AiProvider, type AiRequest } from '@quoky/core';
 import { buildPlan, computePlanDigest, loadCorpus, runEvaluation, scoreGrammarSide, scoreOutput, scoreSelectorSide, summarize, userVisibleMeaning, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
-import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, planOptions, runCli, type CliDeps } from './nl-intent-eval-cli';
+import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, formatSummary, planOptions, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // ADR-0120 D12 evaluation harness, offline: plan and digest, exact-match scoring after Core validation, the gate, and the
 // Strict digest check that refuses a run before any provider is constructed. No process is spawned here.
@@ -39,6 +39,63 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
     expect(scoreOutput(positive, answer('calendar.events'), NOW)).toMatchObject({ outcome: 'miss', got: 'none' });
     // Message-level: an ambiguous output on a statement is chat too, not a clarification.
     expect(scoreOutput(statement, answer('calendar.events', { range: 'yesterday' }, 'NEEDS_CLARIFICATION'), NOW)).toMatchObject({ outcome: 'none' });
+  });
+
+  it("owner decision A (2026-10-22): Core's help-scope question is a clarification; a clarification gold asks, never captures", () => {
+    // A general help about a named source is Core's question (its final outcome), on any case.
+    const negative: NlEvalCase = { id: 'neg-q', text: 'what is Confluence?', expect: 'none' };
+    expect(scoreOutput(negative, answer('help.topic'), NOW)).toMatchObject({ outcome: 'clarify', got: 'help.topic' });
+    expect(scoreOutput(negative, answer('help.topic', { topic: 'work-lookup' }), NOW)).toMatchObject({ outcome: 'wrong-capture' });
+    // A positive help gold with a feature topic is untouched.
+    const positive: NlEvalCase = { id: 'help-q', text: '너 jira 볼 수 있어?', expect: { entryId: 'help.topic', args: { topic: 'work-lookup' } } };
+    expect(scoreOutput(positive, answer('help.topic', { topic: 'work-lookup' }), NOW).outcome).toBe('hit');
+    // The clarification gold: asked = clarify; CLEAR help.topic = miss (a reading the question offers), CLEAR none = none,
+    // any other capture is still wrong.
+    const gold: NlEvalCase = { id: 'neg-c', text: '슬랙에서 검색하는 방법 알려줘', expect: 'none', clarify: { between: ['help.topic'], batch: 'test' } };
+    expect(scoreOutput(gold, answer('help.topic'), NOW).outcome).toBe('clarify');
+    expect(scoreOutput(gold, answer('help.topic', { topic: 'work-lookup' }), NOW).outcome).toBe('miss');
+    expect(scoreOutput(gold, answer('help.topic', { topic: 'work-lookup' }, 'NEEDS_CLARIFICATION'), NOW).outcome).toBe('clarify');
+    expect(scoreOutput(gold, answer('none'), NOW).outcome).toBe('none');
+    expect(scoreOutput(gold, answer('slack.search', { keyword: '검색하는 방법' }), NOW).outcome).not.toBe('miss');
+    const records = [
+      { run: 1, id: 'neg-c', expected: 'none', outcome: 'clarify' as const, latencyMs: 1 },
+      { run: 1, id: 'neg-1', expected: 'none', outcome: 'none' as const, latencyMs: 1 },
+    ];
+    expect(summarize(records, undefined, undefined, new Set(['neg-c']))).toMatchObject({ clarifyGolds: { total: 1, asked: 1 }, wrongCaptures: 0, gatePassed: true });
+    expect(summarize([{ ...records[0]!, outcome: 'miss' as const }], undefined, undefined, new Set(['neg-c']))).toMatchObject({ clarifyGolds: { total: 1, asked: 0 }, wrongCaptures: 0, gatePassed: true });
+  });
+
+  it('owner decision 2026-10-22: help.topic captures are counted apart, within ceil(1% of the negatives); others stay at 0', () => {
+    const negatives = (count: number, from = 0) => Array.from({ length: count }, (_, index) => ({ run: 1, id: `n${from + index}`, expected: 'none', outcome: 'none' as const, latencyMs: 1 }));
+    const help = (id: string) => ({ run: 1, id, expected: 'none', outcome: 'wrong-capture' as const, got: 'help.topic', latencyMs: 1 });
+    const positive = { run: 1, id: 'p', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 1 };
+    // 199 negatives allow 2 (ceil(1.99)); 2 help captures pass, 3 fail.
+    const within = summarize([positive, ...negatives(197), help('h1'), help('h2')]);
+    expect(within).toMatchObject({ negatives: 199, helpCaptures: 2, helpAllowance: 2, wrongCaptures: 0, gatePassed: true });
+    expect(formatSummary(within).join('\n')).toContain('help captures: 2 (allowed 2 = ceil(1% of 199))');
+    expect(summarize([positive, ...negatives(196), help('h1'), help('h2'), help('h3')])).toMatchObject({ helpCaptures: 3, helpAllowance: 2, gatePassed: false });
+    // A data-read wrong capture still fails with no help capture at all.
+    const data = summarize([positive, ...negatives(198), { run: 1, id: 'w', expected: 'none', outcome: 'wrong-capture' as const, got: 'jira.issues', latencyMs: 1 }]);
+    expect(data).toMatchObject({ helpCaptures: 0, wrongCaptures: 1, gatePassed: false });
+  });
+
+  it('counts the records whose ungrounded value Core set back (names only), reported and not gated', () => {
+    const records = [
+      { run: 1, id: 'a8-10', expected: 'jira.release', outcome: 'hit' as const, latencyMs: 1, defaulted: ['scope'] },
+      { run: 1, id: 'a8-03', expected: 'jira.release', outcome: 'hit' as const, latencyMs: 1 },
+    ];
+    const summary = summarize(records);
+    expect(summary).toMatchObject({ defaulted: 1, gatePassed: true });
+    expect(formatSummary(summary)).toContain('ungrounded values set back to the previous value or default: 1 (reported, not gated)');
+    expect(formatSummary(summarize([records[1]!])).join('\n')).not.toContain('set back to the previous value');
+    // The scorer reports the names on the record.
+    const a810: NlEvalCase = { id: 'a8-10', text: '이번 1.4.0 릴리즈에 포함된 지라 티켓 다 보여줘', expect: { entryId: 'jira.release', args: { release: '1.4.0' } } };
+    expect(scoreOutput(a810, answer('jira.release', { release: '1.4.0', scope: 'all' }), NOW)).toMatchObject({ outcome: 'hit', defaulted: ['scope'] });
+  });
+
+  it('the corpus marks neg-010 as the clarification gold between help.topic and none', () => {
+    const golden = loadCorpus().corpus.cases.find((candidate) => candidate.id === 'neg-010');
+    expect(golden).toMatchObject({ text: '슬랙에서 검색하는 방법 알려줘', expect: 'none', clarify: { between: ['help.topic'] } });
   });
 
   it('summarizes per entry and applies the gate (95% overall, 90% per entry, 0 wrong captures)', () => {

@@ -137,6 +137,8 @@ export type WorkChatCommand =
       readonly links: readonly JiraReleaseLink[];
       /** The conversation is a channel (A8 owner decision 7): every-assignee scope and the lists are DM-only. */
       readonly inChannel?: true;
+      /** Owner decision B (2026-10-22): a near-matched project is confirmed first (a selection turn can keep the question). */
+      readonly confirmNear?: true;
     }
   | { readonly kind: 'external-write-unsupported'; readonly source: WorkChatSource }
   /**

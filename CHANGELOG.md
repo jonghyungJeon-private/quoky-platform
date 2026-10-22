@@ -5,6 +5,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — read residuals of the D12 gate, owner decisions A and B (2026-10-22)
+
+- **Changed (gate rule, owner decision 2026-10-22).** The intent and read-regression gates count `help.topic` captures on
+  negatives apart (`helpCaptures`, at most ceil(1% of the run's negatives), 199 → 2); every other wrong capture, action
+  capture, wrong target and negative capture stays at 0. Help captures over the allowance are a hard failure.
+
+- **Changed.** On a READ arg that opts in (`ungroundedFallsBackToDefault`: GitHub `kind`, Jira `status`, `jira.release`
+  `scope`), an enum value the owner did not state falls back to the previous selection's value, else the default,
+  instead of asking (a8-10, a8-19); to-do / reminder statuses, actions, ITEM_READ and other args still ask. Validation
+  reports the `defaulted` arg names; the eval reports count them.
+- **Changed (prompt; read `nl-select.v67`, A6 `v65`, R2 `v66`, planner `agent-plan.v5`; not yet gated).** The shared
+  `count` description: a how-many follow-up keeps the previous selection and sets count true (a8-16). No examples changed.
+
+- **Added.** A general help question that names one catalog source ("슬랙에서 검색하는 방법 알려줘") asks whether the owner
+  means Quoky's way of reading it or the source app itself (a numbered D7 question: 1 runs the help, 2 a fixed honest
+  note). Structural (general topic, the catalog's own `sourceNames`); no positive help gold fires.
+- **Added.** A Jira project reached only by a near match (whole words of a longer name, the project and release words
+  joined, or a small typo) is confirmed first ("'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? (응 / 아니)"); a yes shows
+  its release list (or the named release), a no ends it. New optional `TurnHandlerReply.nlConfirm`, kept by the runtime
+  as the one-option D7 question.
+- **Changed.** A `jira.release` project that is only part of one ASCII letters-and-digits token of the owner's words is
+  that whole token ("OP" → "OP26").
+- **Changed (eval).** The intent and read-regression scorers score Core's help-scope question as a clarification; the
+  corpus gains a clarification gold (`clarify`), `neg-010`, reported as "clarification golds asked" (not gated). No
+  prompt byte changed at that point. The selector-RAG audit record was regenerated (gold bytes changed).
+- **Changed (eval).** `jira.release` misses are re-scored by Core's own outcome in a snapshot of the visible Jira world
+  (`apps/quoky/src/tools/jira-world.snapshot.v1.json`, the owner-approved live probe of 2026-10-15): the same reply,
+  confirmation and item query is a hit (`equivalent`), in the intent, read-regression, agent-plan and selector-RAG scorers.
+  a8-12 and a8-08's observed outputs now score as hits.
+- **Changed (prompt; read `nl-select.v66`, A6 `v64`, R2 `v65`, not yet gated).** An unclear how-to about a source Quoky
+  reads (the action is one Quoky also does for it) is NEEDS_CLARIFICATION with `help.topic`; an app's own feature stays
+  none; a capability question stays `help.topic`. No examples added. Pins and the `agent-plan.v3` pin regenerated.
+- **Changed.** The help-scope question's Quoky option shows that source's help section (found from the catalog entry's
+  owning handler and its help lines), else the general help.
+- **Fixed (Codex and Chief Architect reviews).** The help-scope options are answered by their displayed text; the
+  selector-RAG scorer counts an asked clarification gold as correct; a `jira.release` outcome reached before any release
+  was read compares the args exactly (no false equivalence); the project near match requires equal digit runs; a
+  lenient-dropped help topic never triggers the help-scope question. Planner prompt `agent-plan.v4` (version only; no
+  read / A6 / R2 byte changed).
+
 ## Unreleased — development harness hardening (2026-10-21)
 
 - **Added.** Provider-outage guard for `eval:nl` (intent, action, read-regression, r2), `eval:agent-plan` and

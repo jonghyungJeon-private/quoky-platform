@@ -57,6 +57,7 @@ import {
   pendingQuestionRecord,
   prepareSelectionInput,
   nlCoreSelectionArgs,
+  nlHelpSourceScope,
   nlIsPastStatement,
   nlReadNotRequest,
   readListingRecord,
@@ -74,6 +75,8 @@ import {
   type NlSelectionDecision,
   type Session,
 } from '@quoky/core';
+import { sameJiraReleaseOutcome } from './jira-world-snapshot';
+import { NL_EVAL_HELP_ENTRY, helpCaptureAllowance } from './nl-intent-eval';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
 import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, parseNlRef, withLastRead } from '@quoky/core';
 
@@ -821,6 +824,8 @@ export interface NlReadRegressionCase {
   readonly text: string;
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
+  /** The case was asked in a channel (the scorer's snapshot lookup answers as the runtime does there). */
+  readonly channel?: boolean;
   /**
    * The owner-approved gold with the A6 entries offered, scored apart: a summary-`none` case relabelled to
    * `item.summarize` (ratification decision 10), or an anchored action command whose A6 action is the gold (owner decision
@@ -834,6 +839,8 @@ export interface NlReadRegressionCase {
   readonly a6Skip?: { readonly reason: 'grammar-owned'; readonly batch: string };
   /** The content-free reference state before the turn (read-regression only): the listing the owner just saw. */
   readonly context?: NlReadRegressionContext;
+  /** Owner decision A (2026-10-22): a clarification gold (`expect` stays `none`), scored like the intent scorer's. */
+  readonly clarify?: { readonly between: readonly string[]; readonly batch: string };
 }
 
 export interface NlReadRegressionContext {
@@ -856,7 +863,7 @@ export type NlReadRegressionOutcome = 'hit' | 'miss' | 'clarify' | 'none' | 'wro
  * reason-clause statement of feeling, a quoted request only talked about: `nlReadNotRequest`) ends as `none` (chat) before
  * any validation; an action selection keeps its own path.
  */
-export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, now: string): { readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string } {
+export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, now: string): { readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string; readonly gotArgs?: NlArgs; readonly defaulted?: readonly string[] } {
   const relabeled = golden.a6Relabel !== undefined;
   const expect = golden.a6Relabel ?? golden.expect;
   const prepared = prepareSelectionInput(golden.text);
@@ -870,15 +877,35 @@ export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, n
   const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
   const validated = validateSelection(
     { entryId: output.entryId, args: output.args },
-    { offered, groundingText: prepared.groundingText, now, timeZone: 'Asia/Seoul', actions: true, ...(golden.prior !== undefined ? { previousArgs: golden.prior.args } : {}) },
+    { offered, groundingText: prepared.groundingText, now, timeZone: 'Asia/Seoul', actions: true, ...(golden.prior !== undefined ? { previousArgs: golden.prior.args, ...(isNlCatalogEntryId(golden.prior.entryId) ? { previousEntryId: golden.prior.entryId } : {}) } : {}) },
   );
   if (!validated.ok || output.ambiguity !== 'CLEAR') return { outcome: 'clarify', relabeled, got: output.entryId };
   const got = validated.value.entry.id;
   const isAction = validated.value.entry.risk !== 'READ';
   const goldIsAction = expect !== 'none' && isNlActionEntryId(expect.entryId);
   if (isAction && !goldIsAction) return { outcome: 'action-capture', relabeled, got };
+  // Owner decision A (2026-10-22): Core asks the help-scope question instead of running this read (its final outcome).
+  if (nlHelpSourceScope({ entryId: got, args: validated.value.args }, prepared.groundingText) !== undefined) return { outcome: 'clarify', relabeled, got };
+  if (expect === 'none' && golden.a6Relabel === undefined && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { outcome: 'miss', relabeled, got };
   if (expect === 'none') return { outcome: 'wrong-capture', relabeled, got };
-  return { outcome: got === expect.entryId && canonical(validated.value.args) === canonical(expect.args) ? 'hit' : 'miss', relabeled, got };
+  const defaulted = validated.value.defaulted !== undefined ? { defaulted: validated.value.defaulted } : {};
+  return got === expect.entryId && canonical(validated.value.args) === canonical(expect.args) ? { outcome: 'hit', relabeled, got, ...defaulted } : { outcome: 'miss', relabeled, got, gotArgs: validated.value.args, ...defaulted };
+}
+
+/**
+ * Owner answer 1 of 2026-10-22: {@link scoreReadRegression}, then a `jira.release` miss whose args give the owner the same
+ * final outcome as the gold's in the snapshot Jira world (`sameJiraReleaseOutcome`, Core's own lookup) is a hit
+ * (`equivalent`). Every other entry and outcome is exactly {@link scoreReadRegression}'s.
+ */
+export async function scoreReadRegressionInWorld(
+  golden: NlReadRegressionCase,
+  raw: string,
+  now: string,
+): Promise<{ readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string; readonly equivalent?: true; readonly defaulted?: readonly string[] }> {
+  const { gotArgs, ...scored } = scoreReadRegression(golden, raw, now);
+  const expect = golden.a6Relabel ?? golden.expect;
+  if (scored.outcome !== 'miss' || expect === 'none' || expect.entryId !== 'jira.release' || scored.got !== 'jira.release' || gotArgs === undefined) return scored;
+  return (await sameJiraReleaseOutcome(golden.text, gotArgs, expect.args, { channel: golden.channel === true })) ? { ...scored, outcome: 'hit', equivalent: true } : scored;
 }
 
 export function loadReadRegressionCorpus(path: string = NL_INTENT_CORPUS_PATH): { cases: NlReadRegressionCase[]; sha256: string } {
@@ -907,10 +934,10 @@ export async function runReadRegression(input: {
   readonly provider: AiProvider;
   readonly now: () => string;
   readonly elapsed?: () => number;
-}): Promise<Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string }>> {
+}): Promise<Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; equivalent?: true; defaulted?: readonly string[] }>> {
   const byId = new Map(input.cases.map((golden) => [golden.id, golden] as const));
   const clock = input.elapsed ?? Date.now;
-  const records: Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string }> = [];
+  const records: Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; equivalent?: true; defaulted?: readonly string[] }> = [];
   for (let run = 1; run <= input.plan.runs; run += 1) {
     const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is NlReadRegressionCase => golden !== undefined);
     const worker = async (): Promise<void> => {
@@ -923,7 +950,7 @@ export async function runReadRegression(input: {
         const started = clock();
         try {
           const result = await input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs });
-          records.push({ run, id: golden.id, latencyMs: clock() - started, ...scoreReadRegression(golden, result.text, input.now()) });
+          records.push({ run, id: golden.id, latencyMs: clock() - started, ...(await scoreReadRegressionInWorld(golden, result.text, input.now())) });
         } catch {
           records.push({ run, id: golden.id, outcome: 'error', relabeled: golden.a6Relabel !== undefined, latencyMs: clock() - started });
         }
@@ -934,9 +961,20 @@ export async function runReadRegression(input: {
   return records;
 }
 
-/** The A6-D7 read-regression gate: the D12 gate on non-relabeled cases, and 0 action captures anywhere. */
-export function summarizeReadRegression(records: ReadonlyArray<{ outcome: NlReadRegressionOutcome; relabeled: boolean; id: string }>, goldOf: (id: string) => string): {
+/**
+ * The A6-D7 read-regression gate: the D12 gate on non-relabeled cases (0 data-read wrong captures; help.topic captures at
+ * most ceil(1% of the negatives), owner decision of 2026-10-22), and 0 action captures anywhere.
+ */
+export function summarizeReadRegression(records: ReadonlyArray<{ outcome: NlReadRegressionOutcome; relabeled: boolean; id: string; got?: string; defaulted?: readonly string[] }>, goldOf: (id: string) => string): {
   readonly overall: number;
+  /** Wrong captures into help.topic (owner decision of 2026-10-22): at most `helpAllowance` per run. */
+  readonly helpCaptures: number;
+  /** ceil(1% of the run's gated negative golds). */
+  readonly helpAllowance: number;
+  /** Help captures beyond the allowance (a hard failure). */
+  readonly helpOverAllowance: number;
+  /** Records whose selection had an ungrounded value set back to the previous value or default (names only, not gated). */
+  readonly defaulted: number;
   readonly actionCaptures: number;
   readonly wrongCaptures: number;
   readonly relabeled: { readonly hits: number; readonly total: number };
@@ -953,14 +991,22 @@ export function summarizeReadRegression(records: ReadonlyArray<{ outcome: NlRead
   }
   const overall = positives.length === 0 ? 1 : positives.filter((record) => record.outcome === 'hit').length / positives.length;
   const actionCaptures = records.filter((record) => record.outcome === 'action-capture').length;
-  const wrongCaptures = gated.filter((record) => record.outcome === 'wrong-capture').length;
+  // Owner decision of 2026-10-22 (amending the ratified D12 gate): a capture into help.topic shows usage guidance only and
+  // is counted apart, at most ceil(1% of the run's negatives); every other wrong capture and action capture stays at 0.
+  const wrongCaptures = gated.filter((record) => record.outcome === 'wrong-capture' && record.got !== NL_EVAL_HELP_ENTRY).length;
+  const helpCaptures = gated.filter((record) => record.outcome === 'wrong-capture' && record.got === NL_EVAL_HELP_ENTRY).length;
+  const helpAllowance = helpCaptureAllowance(gated.filter((record) => goldOf(record.id) === 'none').length);
   const relabeled = records.filter((record) => record.relabeled);
   return {
     overall,
+    defaulted: records.filter((record) => (record.defaulted?.length ?? 0) > 0).length,
     actionCaptures,
     wrongCaptures,
+    helpCaptures,
+    helpAllowance,
+    helpOverAllowance: Math.max(0, helpCaptures - helpAllowance),
     relabeled: { hits: relabeled.filter((record) => record.outcome === 'hit').length, total: relabeled.length },
-    gatePassed: overall >= 0.95 && [...perEntry.values()].every((slot) => slot.hits / slot.total >= 0.9) && wrongCaptures === 0 && actionCaptures === 0,
+    gatePassed: overall >= 0.95 && [...perEntry.values()].every((slot) => slot.hits / slot.total >= 0.9) && wrongCaptures === 0 && helpCaptures <= helpAllowance && actionCaptures === 0,
   };
 }
 

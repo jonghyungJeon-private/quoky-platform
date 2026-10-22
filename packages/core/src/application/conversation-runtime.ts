@@ -1,5 +1,6 @@
 import { describeAiFailure } from './ai-failure';
 import { detectHelpIntent } from './help-intent/help-intent';
+import { helpTopicOfLines } from './help-intent/help-intent-turn-handler';
 import { generalChatReplyPolicy, generalChatReplyPolicyMetadata } from './chat-policy/chat-response-policy';
 import { guardInternalActionClaims } from './chat-policy/internal-action-claim-guard';
 import {
@@ -1099,6 +1100,8 @@ export interface ConversationRuntimeDeps {
         // ADR-0122 D2.2: a question refused by the surface gate is dropped (no new deps key: the same slot).
         | 'dropPending'
         | 'recordGrammarSelection'
+        // Owner decision B (2026-10-22): a handler reply that asks to confirm one read keeps it as the open question.
+        | 'recordConfirmQuestion'
         | 'clearLastSelection'
         | 'yieldsToSelection'
         | 'grammarYieldEnabled'
@@ -1901,6 +1904,8 @@ export class ConversationRuntime {
   private readonly contributedHelpLines: readonly string[];
   /** The registry in dispatch order: the ADR-0120 catalog is read from it on each selection turn. */
   private readonly turnHandlerRegistry: readonly ConversationTurnHandler[];
+  /** Owner decision A follow-up (2026-10-22): the one help topic each handler's contributed help lines answer (once). */
+  private readonly handlerHelpTopics = new Map<ConversationTurnHandler, string>();
   /**
    * ADR-0113 D7 (OPS-2b): the one approval decision path, shared with the local operations UI. Built from collaborators
    * this runtime already holds (no deps key); the composition root reaches it through the runtime instance.
@@ -1935,6 +1940,14 @@ export class ConversationRuntime {
     );
     const registry = ConversationRuntime.orderTurnHandlers(deps.turnHandlers ?? []);
     this.turnHandlerRegistry = registry;
+    for (const handler of registry) {
+      try {
+        const topic = helpTopicOfLines(handler.helpLines ?? []);
+        if (topic !== undefined) this.handlerHelpTopics.set(handler, topic);
+      } catch {
+        // A handler whose help lines cannot be read covers no help topic.
+      }
+    }
     this.turnHandlersByStage = {
       control: registry.filter((h) => h.stage === 'control'),
       'post-anchor': registry.filter((h) => h.stage === 'post-anchor'),
@@ -3840,6 +3853,20 @@ export class ConversationRuntime {
     return owned;
   }
 
+  /**
+   * Owner decision A follow-up (2026-10-22): per offered entry, the one help topic its owning handler's contributed help
+   * lines answer (`helpTopicOfLines`, computed once per handler at construction), so the help-scope question's Quoky
+   * option shows that source's help section.
+   */
+  private nlEntryHelpTopics(catalog: ReadonlyMap<string, { readonly entry: NlCatalogEntry; readonly handler: ConversationTurnHandler }>): Record<string, string> {
+    const topics: Record<string, string> = {};
+    for (const [id, owned] of catalog) {
+      const topic = this.handlerHelpTopics.get(owned.handler);
+      if (topic !== undefined) topics[id] = topic;
+    }
+    return topics;
+  }
+
   /** A6: every handler that declares action entry `entryId` (several serve `item.summarize` / `action.undo` by source). */
   private nlActionServers(entryId: string): ConversationTurnHandler[] {
     const servers: ConversationTurnHandler[] = [];
@@ -3991,6 +4018,7 @@ export class ConversationRuntime {
     const chat = await this.nlChatProvider(intent, session, actor);
     const decision = await nl.decide({
       ...(chat !== undefined ? { chatProviderId: chat.id, chatProviderLocality: chat.locality } : {}),
+      entryHelpTopics: this.nlEntryHelpTopics(catalog),
       ...(nlPending !== undefined ? { pending: nlPending } : {}),
       ...(grammar !== undefined ? { grammar } : {}),
       ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}),
@@ -4382,6 +4410,11 @@ export class ConversationRuntime {
       if (await this.deps.nlSelection.recordGrammarSelection(session, actor.id, handled.nlSelection, this.clock())) {
         this.keepNlLastSelection(message, session);
       }
+    }
+    // Owner decision B (2026-10-22): a reply that asks the owner to confirm one read keeps it as the open D7 question.
+    const confirm = nlConfirmToRecord(handled);
+    if (confirm !== undefined && this.deps.nlSelection?.mode === 'active' && this.deps.nlSelection.recordConfirmQuestion !== undefined) {
+      await this.deps.nlSelection.recordConfirmQuestion(session, actor.id, confirm.selection, confirm.language, this.clock());
     }
     // ADR-0120 amendment A6-D2/D3: the content-free receipts of a to-do / reminder listing or action (an A6 dispatch or an
     // anchored command) become `quoky.lastAction`, the echo label and the listing slot. The service writes nothing while
@@ -9749,4 +9782,14 @@ interface NlEarlySelection {
   readonly facts?: NlChatFacts;
   /** The selector ran at a Class B position and answered `none` (live UAT R9): the frozen surface clause must not answer. */
   readonly declined?: true;
+}
+
+/**
+ * Owner decision B (2026-10-22): the confirmation a handler reply asks the owner for, when it is to be kept as the open
+ * question: only a deterministic reply that did not fail (a FAILED reply asks nothing; a summary or write draft carries
+ * none). Pure.
+ */
+export function nlConfirmToRecord(handled: TurnHandlerOutcome): TurnHandlerReply['nlConfirm'] {
+  if (handled.kind === 'summarize' || handled.kind === 'write-draft' || handled.status === 'FAILED') return undefined;
+  return handled.nlConfirm;
 }

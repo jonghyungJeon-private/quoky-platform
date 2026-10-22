@@ -100,9 +100,19 @@ export interface NlArgSpec {
   readonly required?: boolean;
   /**
    * `enum` only: words that show the owner asked for a value (a value listed here counts only when one of its words is in
-   * the owner's own text or the value carries over from the previous selection; a value not listed needs none).
+   * the owner's own text or the value carries over from the previous selection; a value not listed needs none). An
+   * ungrounded value refuses the selection (a question), unless the arg opts in to `ungroundedFallsBackToDefault`.
    */
   readonly valueGrounding?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * `enum` with `default` and `valueGrounding` only, on a READ entry (owner rule of 2026-10-22, "assistant, not chatbot";
+   * CA review): an ungrounded value is not refused but falls back to the previous selection's value of this arg (a
+   * follow-up keeps its listing), else to the arg's `default`. Only for args whose default contains, or is a ratified
+   * narrowing of, every value it replaces (GitHub `kind` → all, Jira `status` → open, `jira.release` `scope` → mine, A8
+   * decision 2), never for a default disjoint from the dropped value (a to-do or reminder status). Validator metadata
+   * only: never rendered into any prompt.
+   */
+  readonly ungroundedFallsBackToDefault?: true;
   /**
    * `flag` only: words that show the owner asked for the filter. A `true` counts only when one of them is in the owner's
    * own text or the flag carries over from the previous selection (the flag twin of `valueGrounding`).
@@ -212,8 +222,11 @@ export interface NlCatalogEntry {
   migrateArgs?(args: NlArgs): NlArgs;
   /** Entry-specific normalization after the type checks (e.g. a Jira period without a date field). */
   normalize?(args: Record<string, NlArgValue>, groundingText?: string, previousArgs?: NlArgs): void;
-  /** The basis line text (without the `기준:` prefix) for these canonical args. */
-  describe?(args: NlArgs, range: NlResolvedRange | undefined, language: 'ko' | 'en'): string | undefined;
+  /**
+   * The basis line text (without the `기준:` prefix) for these canonical args. `notes.defaulted`: the arg names Core set
+   * back to their default (`ungroundedFallsBackToDefault`), so the line can name the default it applied.
+   */
+  describe?(args: NlArgs, range: NlResolvedRange | undefined, language: 'ko' | 'en', notes?: { readonly defaulted?: readonly string[] }): string | undefined;
   /**
    * A6 entries only: an entry-level check after the per-arg checks (e.g. exactly one of `ref` / `match`, a time word in a
    * to-do title). Pure; `groundingText` is the owner's own non-quoted words of this turn. A failure names a reason.

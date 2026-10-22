@@ -332,9 +332,20 @@ describe('WorkChatTurnHandler — jira.release (ADR-0120 A8)', () => {
     await handler.handleSelected({ entryId: 'jira.release', args: {}, language: 'ko' }, ctxOf(`이거 봐줘 ${LINK}`));
     await handler.handleSelected({ entryId: 'jira.release', args: { release: '20261015' }, language: 'ko' }, ctxOf(`> ${LINK}\n20261015 릴리스 보여줘`));
     expect(commands).toEqual([
-      { kind: 'release', source: 'jira', scope: 'mine', links: [{ host: 'example.atlassian.net', projectKey: 'OP26', versionId: '16555' }] },
-      { kind: 'release', source: 'jira', release: '20261015', scope: 'mine', links: [] },
+      { kind: 'release', source: 'jira', scope: 'mine', links: [{ host: 'example.atlassian.net', projectKey: 'OP26', versionId: '16555' }], confirmNear: true },
+      { kind: 'release', source: 'jira', release: '20261015', scope: 'mine', links: [], confirmNear: true },
     ]);
+  });
+
+  it('owner decision B (2026-10-22): a selection turn may confirm a near project; the desk confirmation rides along as nlConfirm', async () => {
+    const confirm = { entryId: 'jira.release' as const, args: { project: 'OP26' } };
+    const { desk } = fakeDesk(() => ({ kind: 'reply', text: "'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? (응 / 아니)", confirm }));
+    const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
+    const outcome = await handler.handleSelected({ entryId: 'jira.release', args: { project: '차란차 운영 2026' }, language: 'ko' }, ctxOf('차란차 운영 2026 릴리스 뭐뭐 있어?'));
+    expect(outcome).toMatchObject({ nlConfirm: { selection: confirm, language: 'ko' } });
+    const plain = await new WorkChatTurnHandler({ desk: fakeDesk(() => ({ kind: 'reply', text: 'report' })).desk, mode: 'lookup', summaryEnabled: true, logger })
+      .handleSelected({ entryId: 'jira.release', args: { project: 'OP26' }, language: 'ko' }, ctxOf('OP26 릴리스'));
+    expect(plain).not.toHaveProperty('nlConfirm');
   });
 
   it('marks a release listing asked in a channel (owner decision 7)', async () => {

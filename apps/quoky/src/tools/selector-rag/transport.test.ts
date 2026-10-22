@@ -130,6 +130,7 @@ describe('selector transport: exact-args scoring (the existing eval scorer)', ()
   const { transport } = setup(fakeProvider(() => ''));
   it('scores a read positive exactly on entry and args, and a negative on a clean none', async () => {
     expect(await transport.score('c1', answer('todo.list'), record('c1'))).toEqual({ correct: true, outcome: 'hit' });
+    // A to-do status does not opt in to the default fallback: an ungrounded one still asks.
     expect(await transport.score('c1', answer('todo.list', { status: 'all' }), record('c1'))).toEqual({ correct: false, outcome: 'clarify' });
     expect(await transport.score('c1', answer('reminder.list'), record('c1'))).toEqual({ correct: false, outcome: 'miss' });
     expect(await transport.score('c2', answer('none'), record('c2'))).toEqual({ correct: true, outcome: 'none' });

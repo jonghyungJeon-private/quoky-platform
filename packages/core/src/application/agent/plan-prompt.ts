@@ -2,7 +2,7 @@ import type { NlArgs, NlCatalogEntry, NlCatalogEntryId } from '../nl-routing/cat
 import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
 
 /**
- * ADR-0121 D1 / D12 (stage S2 P1, P2): the planner prompt `agent-plan.v3` (v2 plus the v3 edits below).
+ * ADR-0121 D1 / D12 (stage S2 P1, P2): the planner prompt `agent-plan.v5` (v4 plus the v5 edit below).
  *
  * It is the read selection prompt (`nl-select.vN`, the gated ADR-0120 prompt) over the offered READ entries only, with
  * four fixed edits, so a one-step plan is exactly today's selection:
@@ -32,10 +32,19 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
  * covers only the reads the owner asks to summarize (the reads its summary verb takes as object), not every earlier read;
  * (h) a request with no bound (more than 4 reads, a read per day/week/month of a longer period, more than 10 issue
  * details) is written as asked, at most 6 steps, so Core can answer it with a bounded suggestion instead of a silent
- * none; and the read catalog it embeds is `nl-select.v65` (the GitHub `kind`: pr / issue / all). The reference default
+ * none; and the read catalog it embeds was `nl-select.v65` (the GitHub `kind`: pr / issue / all). The reference default
  * stays 10 (decision (c): the owner kept the ADR-0121 D2 cap). No planner example changed; the embedded read catalog and
- * examples carry the read v65 GitHub `kind` rule and two examples (v3 was still never run against a model, so its pin moved in place). */
-export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v3';
+ * examples carry the read v65 GitHub `kind` rule and two examples (v3 was still never run against a model, so its pin moved in place).
+ *
+ * v3 -> v4 (CA review of the read residuals, rule Q2, 2026-10-22): the planner bytes changed twice after the v3 pin (the
+ * read v65 GitHub `kind` rule and examples, then the read `nl-select.v66` rule 3: an unclear how-to about a source Quoky
+ * reads is NEEDS_CLARIFICATION with help.topic, owner answer 2), so the version moves; no planner rule or example changed.
+ * The read / A6 / R2 rendered bytes are unchanged by this bump (the version string is not part of the prompt).
+ *
+ * v4 -> v5 (the 2026-10-22 re-gate, a8-16): the embedded read catalog is `nl-select.v67` (the shared `count` arg
+ * description says a how-many follow-up keeps the previous selection and sets count true); no planner rule or example
+ * changed. */
+export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v5';
 
 export interface AgentPlanPromptInput {
   /** The offered entries; only `READ` entries are shown to the planner. */

@@ -4,10 +4,17 @@
  * for the injected provider: the plan, the digest and the scoring are deterministic and tested offline; only `run`
  * spawns anything, and only after the Strict digest check in the CLI.
  *
- * Scoring per case:
- *  - a positive is a **hit** when the output is CLEAR, validates, and its entry and canonical args equal the golden ones;
- *    a clarification (NEEDS_CLARIFICATION or a failed validation) is not a hit and not wrong;
- *  - a negative is a **wrong capture** when the output is CLEAR and validates to an executable entry (the read would run).
+ * Scoring per case (Core's FINAL outcome, owner rule of 2026-10-19):
+ *  - a positive is a **hit** when the output is CLEAR, validates, and its entry and canonical args equal the golden ones
+ *    (`jira.release`: or give the owner the same final outcome in the snapshot Jira world, owner answer 1 of 2026-10-22,
+ *    `scoreOutputInWorld`);
+ *    a clarification (NEEDS_CLARIFICATION, a failed validation, or Core's own help-scope question `nlHelpSourceScope`,
+ *    owner decision A of 2026-10-22) is not a hit and not wrong;
+ *  - a negative is a **wrong capture** when the output is CLEAR and validates to an executable entry (the read would run);
+ *  - a clarification gold (`clarify`, owner decision A: a negative whose correct answer is a question between the listed
+ *    entries and `none`) is **asked** on a clarification; a CLEAR capture of a listed entry is a `miss`, never a wrong
+ *    capture (it is one of the readings the question offers), any other capture is still wrong. Reported apart
+ *    (`clarifyGolds`); the gate is unchanged.
  * Gate: at least 95% overall, at least 90% per entry, 0 wrong captures.
  */
 import { createHash } from 'node:crypto';
@@ -20,7 +27,9 @@ import {
   NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
   buildSelectionPrompt,
+  isNlCatalogEntryId,
   isNlWave1EntryId,
+  nlHelpSourceScope,
   nlIsPastStatement,
   nlReadNotRequest,
   nlSelectionMeaning,
@@ -32,8 +41,20 @@ import {
   type NlCatalogEntry,
 } from '@quoky/core';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
+import { sameJiraReleaseOutcome } from './jira-world-snapshot';
 
-export const NL_EVAL_GATE = { overall: 0.95, perEntry: 0.9, wrongCaptures: 0 } as const;
+export const NL_EVAL_GATE = { overall: 0.95, perEntry: 0.9, wrongCaptures: 0, helpCaptureRate: 0.01 } as const;
+
+/** The entry whose captures on a negative show usage guidance only (no data read, no action): counted apart. */
+export const NL_EVAL_HELP_ENTRY = 'help.topic';
+
+/**
+ * Owner decision of 2026-10-22 ("도움말 오포착은 별도 기준으로", amending the ratified ADR-0120 D12 gate): a run may have at
+ * most ceil(1% of its negative golds) captures into `help.topic` (199 negatives → 2). Every other wrong capture stays at 0.
+ */
+export function helpCaptureAllowance(negatives: number): number {
+  return Math.ceil(NL_EVAL_GATE.helpCaptureRate * negatives);
+}
 /** ADR-0121 S1 (design §6): at most 1% of the calls may go over the configured selection bound. */
 export const NL_EVAL_S1_MAX_OVER_BOUND_RATE = 0.01;
 /**
@@ -53,6 +74,17 @@ export interface NlEvalCase {
   readonly grammar?: string;
   /** S1: that grammar's own catalog equivalent (`null`: it has none), checked against the probes by the dispatch test. */
   readonly grammarAnswer?: { readonly entryId: string; readonly args: NlArgs } | null;
+  /**
+   * Owner decision A (2026-10-22): `expect` stays `none` (the safe reading), and the correct answer is Core asking between
+   * these entries and `none`. See the scoring notes above.
+   */
+  readonly clarify?: NlEvalClarifyGold;
+}
+
+/** A clarification gold: the entries the question is between (besides `none`) and the owner batch that set it. */
+export interface NlEvalClarifyGold {
+  readonly between: readonly string[];
+  readonly batch: string;
 }
 
 export interface NlEvalCorpus {
@@ -145,6 +177,10 @@ export interface NlEvalRecord {
   readonly error?: string;
   /** The selector's raw output for a case that was not a hit (the local report only; corpus text, no owner data). */
   readonly raw?: string;
+  /** A `jira.release` hit by the same final outcome in the snapshot Jira world, not by identical args (owner answer 1). */
+  readonly equivalent?: true;
+  /** The arg names Core set back to the previous value or default (`ungroundedFallsBackToDefault`); names only. */
+  readonly defaulted?: readonly string[];
 }
 
 const ALL_ENTRIES: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
@@ -162,16 +198,31 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   const offered = new Map(ALL_ENTRIES.map((entry) => [entry.id, entry] as const));
   const validated = validateSelection(
     { entryId: output.entryId, args: output.args },
-    { offered, groundingText: prepared.groundingText, ...(golden.prior ? { previousArgs: golden.prior.args } : {}), now, timeZone },
+    { offered, groundingText: prepared.groundingText, ...(golden.prior ? { previousArgs: golden.prior.args, ...(isNlCatalogEntryId(golden.prior.entryId) ? { previousEntryId: golden.prior.entryId } : {}) } : {}), now, timeZone },
   );
   if (!validated.ok || output.ambiguity !== 'CLEAR') {
     return { id: golden.id, expected, outcome: 'clarify', got: output.entryId };
   }
   const got = validated.value.entry.id;
   const gotArgs = validated.value.args;
-  if (golden.expect === 'none') return { id: golden.id, expected, outcome: 'wrong-capture', got, gotArgs };
+  const defaulted = validated.value.defaulted !== undefined ? { defaulted: validated.value.defaulted } : {};
+  // Owner decision A (2026-10-22): Core asks the help-scope question instead of running this read (its final outcome).
+  if (nlHelpSourceScope({ entryId: got, args: gotArgs }, prepared.groundingText) !== undefined) return { id: golden.id, expected, outcome: 'clarify', got };
+  if (golden.expect === 'none' && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { id: golden.id, expected, outcome: 'miss', got, gotArgs, ...defaulted };
+  if (golden.expect === 'none') return { id: golden.id, expected, outcome: 'wrong-capture', got, gotArgs, ...defaulted };
   const same = got === golden.expect.entryId && canonical(gotArgs) === canonical(golden.expect.args);
-  return { id: golden.id, expected, outcome: same ? 'hit' : 'miss', got, gotArgs };
+  return { id: golden.id, expected, outcome: same ? 'hit' : 'miss', got, gotArgs, ...defaulted };
+}
+
+/**
+ * Owner answer 1 of 2026-10-22: {@link scoreOutput}, then a `jira.release` miss whose args give the owner the same final
+ * outcome as the gold's in the snapshot Jira world (`sameJiraReleaseOutcome`, Core's own lookup) is a hit (`equivalent`).
+ * Every other entry and outcome is exactly {@link scoreOutput}'s.
+ */
+export async function scoreOutputInWorld(golden: NlEvalCase, raw: string, now: string, timeZone = 'Asia/Seoul'): Promise<Omit<NlEvalRecord, 'run' | 'latencyMs'>> {
+  const scored = scoreOutput(golden, raw, now, timeZone);
+  if (scored.outcome !== 'miss' || golden.expect === 'none' || golden.expect.entryId !== 'jira.release' || scored.got !== 'jira.release' || scored.gotArgs === undefined) return scored;
+  return (await sameJiraReleaseOutcome(golden.text, scored.gotArgs, golden.expect.args, { channel: golden.channel === true })) ? { ...scored, outcome: 'hit', equivalent: true } : scored;
 }
 
 function canonical(args: NlArgs): string {
@@ -184,9 +235,20 @@ export interface NlEvalSummary {
   readonly hits: number;
   readonly overall: number;
   readonly perEntry: Readonly<Record<string, { readonly hits: number; readonly total: number; readonly rate: number }>>;
+  /** Wrong captures into a data read (every entry except help.topic): zero-tolerance. */
   readonly wrongCaptures: number;
+  /** Wrong captures into help.topic (owner decision of 2026-10-22): at most `helpAllowance` per run. */
+  readonly helpCaptures: number;
+  /** ceil(1% of the run's negative golds). */
+  readonly helpAllowance: number;
+  /** Help captures beyond the allowance (a hard failure, like a data-read wrong capture). */
+  readonly helpOverAllowance: number;
   readonly negatives: number;
   readonly clarifications: number;
+  /** Owner decision A (2026-10-22): the clarification golds (`clarify`) and how many of them Core asked. */
+  readonly clarifyGolds: { readonly total: number; readonly asked: number };
+  /** Records whose selection had an ungrounded value set back to the previous value or default (CA review, 2026-10-22). */
+  readonly defaulted: number;
   /** Calls that did not answer within the runtime's selection bound (each one a miss on a positive). */
   readonly timeouts: number;
   readonly errors: number;
@@ -216,7 +278,12 @@ function percentile(values: readonly number[], p: number): number {
   return sorted.length === 0 ? 0 : (sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)] as number);
 }
 
-export function summarize(records: readonly NlEvalRecord[], boundMs: number = NL_EVAL_RUNTIME_TIMEOUT_MS, grammarCaseIds?: ReadonlySet<string>): NlEvalSummary {
+export function summarize(
+  records: readonly NlEvalRecord[],
+  boundMs: number = NL_EVAL_RUNTIME_TIMEOUT_MS,
+  grammarCaseIds?: ReadonlySet<string>,
+  clarifyCaseIds: ReadonlySet<string> = new Set(),
+): NlEvalSummary {
   const positives = records.filter((record) => record.expected !== 'none');
   const hits = positives.filter((record) => record.outcome === 'hit').length;
   const perEntry: Record<string, { hits: number; total: number; rate: number }> = {};
@@ -229,13 +296,17 @@ export function summarize(records: readonly NlEvalRecord[], boundMs: number = NL
   const latencies = records.map((record) => record.latencyMs).filter((ms) => ms > 0).sort((a, b) => a - b);
   const pct = (p: number) => (latencies.length === 0 ? 0 : latencies[Math.min(latencies.length - 1, Math.ceil((p / 100) * latencies.length) - 1)] as number);
   const overall = positives.length === 0 ? 1 : hits / positives.length;
-  const wrongCaptures = records.filter((record) => record.outcome === 'wrong-capture').length;
+  // Owner decision of 2026-10-22: a capture into help.topic is counted apart (allowance), every other one is zero-tolerance.
+  const wrongCaptures = records.filter((record) => record.outcome === 'wrong-capture' && record.got !== NL_EVAL_HELP_ENTRY).length;
+  const helpCaptures = records.filter((record) => record.outcome === 'wrong-capture' && record.got === NL_EVAL_HELP_ENTRY).length;
+  const helpAllowance = helpCaptureAllowance(records.length - positives.length);
   const overRuntimeBound = latencies.filter((ms) => ms > boundMs).length;
   const overBoundRate = records.length === 0 ? 0 : overRuntimeBound / records.length;
   const gatePassed =
     overall >= NL_EVAL_GATE.overall &&
     Object.values(perEntry).every((slot) => slot.rate >= NL_EVAL_GATE.perEntry) &&
-    wrongCaptures <= NL_EVAL_GATE.wrongCaptures;
+    wrongCaptures <= NL_EVAL_GATE.wrongCaptures &&
+    helpCaptures <= helpAllowance;
   const grammarRecords = grammarCaseIds === undefined ? undefined : records.filter((record) => grammarCaseIds.has(record.id));
   const grammarPositives = grammarRecords?.filter((record) => record.expected !== 'none') ?? [];
   const grammarHits = grammarPositives.filter((record) => record.outcome === 'hit').length;
@@ -246,8 +317,16 @@ export function summarize(records: readonly NlEvalRecord[], boundMs: number = NL
     overall,
     perEntry,
     wrongCaptures,
+    helpCaptures,
+    helpAllowance,
+    helpOverAllowance: Math.max(0, helpCaptures - helpAllowance),
     negatives: records.length - positives.length,
     clarifications: records.filter((record) => record.outcome === 'clarify').length,
+    defaulted: records.filter((record) => (record.defaulted?.length ?? 0) > 0).length,
+    clarifyGolds: {
+      total: records.filter((record) => clarifyCaseIds.has(record.id)).length,
+      asked: records.filter((record) => clarifyCaseIds.has(record.id) && record.outcome === 'clarify').length,
+    },
     timeouts: records.filter((record) => record.outcome === 'timeout').length,
     errors: records.filter((record) => record.outcome === 'error').length,
     latency: { p50: pct(50), p95: pct(95), max: latencies.at(-1) ?? 0, boundMs, overRuntimeBound },
@@ -329,7 +408,7 @@ export async function runEvaluation(input: {
             input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs }),
             input.plan.callTimeoutMs,
           );
-          const scored = scoreOutput(golden, result.text, input.now());
+          const scored = await scoreOutputInWorld(golden, result.text, input.now());
           record = {
             run,
             latencyMs: clock() - started,
@@ -437,4 +516,9 @@ export function scoreSelectorSide(corpus: NlEvalCorpus, records: readonly NlEval
 export function formatSideScore(label: string, score: NlSideScore): string {
   const pct = (count: number) => (score.positives === 0 ? '-' : `${((count / score.positives) * 100).toFixed(1)}%`);
   return `${label}: exact ${score.exact}/${score.positives} (${pct(score.exact)}), entry ${score.entry} (${pct(score.entry)}), user-visible ${score.userVisible} (${pct(score.userVisible)}), wrong captures ${score.wrongCaptures}`;
+}
+
+/** Owner decision A (2026-10-22): the ids of the clarification golds of a corpus (for `summarize`). */
+export function clarifyCaseIdsOf(corpus: NlEvalCorpus): ReadonlySet<string> {
+  return new Set(corpus.cases.filter((golden) => golden.clarify !== undefined).map((golden) => golden.id));
 }

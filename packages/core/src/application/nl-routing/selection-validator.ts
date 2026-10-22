@@ -161,6 +161,11 @@ export interface NlValidatedSelection {
   readonly range?: NlResolvedRange;
   /** An interpretation key whose arg the owner did not state (ADR-0120 D7). */
   readonly openAmbiguity?: NlAmbiguityKey;
+  /**
+   * The arg names (closed catalog names, never a value) whose ungrounded value Core set back to the previous value or the
+   * default (`ungroundedFallsBackToDefault`, owner rule of 2026-10-22). Absent: none.
+   */
+  readonly defaulted?: readonly string[];
 }
 
 export type NlValidationResult =
@@ -186,6 +191,12 @@ export interface NlValidationContext {
   readonly groundingText: string;
   /** The previous selection's args (structure only), which may also ground a keyword (a refinement). */
   readonly previousArgs?: NlArgs;
+  /**
+   * The previous selection's entry (Codex P2 / CA, 2026-10-22): an ungrounded value of an opted-in arg is set back to the
+   * previous value only when the previous selection was this same entry; otherwise (or absent) to the default. The
+   * pre-existing carry-over grounding by `previousArgs` is unchanged.
+   */
+  readonly previousEntryId?: NlCatalogEntryId;
   readonly now: IsoTimestamp;
   readonly timeZone: string;
   /**
@@ -699,6 +710,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
   // a pasted structure (JSON, data) grounds nothing (Codex review P1).
   const previousArgs = entry.risk === 'READ' ? ctx.previousArgs : undefined;
   const groundingText = entry.risk === 'READ' ? ctx.groundingText : withoutStructures(ctx.groundingText);
+  const defaulted: string[] = [];
   for (const spec of entry.args) {
     const value = args[spec.name];
     if (spec.kind === 'flag' && value === true && spec.flagGrounding !== undefined) {
@@ -710,7 +722,20 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     if (spec.kind === 'enum' && spec.valueGrounding?.[value] !== undefined) {
       const text = normalizeForMatch(groundingText);
       const stated = (spec.valueGrounding[value] ?? []).some((word) => groundingWordIn(text, normalizeForMatch(word)));
-      if (!stated && previousArgs?.[spec.name] !== value) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
+      if (!stated && previousArgs?.[spec.name] !== value) {
+        // Owner rule "assistant, not chatbot" (2026-10-22 re-gate; CA review): on a READ entry an arg that opts in
+        // (`ungroundedFallsBackToDefault`: its default contains or is a ratified narrowing of the dropped value) falls
+        // back to the previous selection's value (a follow-up keeps its listing), else to its default (canonical args
+        // omit it), instead of asking. Every other arg, an action or ITEM_READ entry still refuses.
+        if (entry.risk === 'READ' && spec.ungroundedFallsBackToDefault === true && spec.default !== undefined) {
+          const previous = ctx.previousEntryId === entryId ? previousArgs?.[spec.name] : undefined;
+          if (typeof previous === 'string' && (spec.values ?? []).includes(previous)) args[spec.name] = previous;
+          else delete args[spec.name];
+          defaulted.push(spec.name);
+          continue;
+        }
+        return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
+      }
     }
     if (spec.kind === 'keyword') {
       if (rangeSpec !== undefined && spec.allowsTimeWords !== true && isWeekdayOrTimeKeyword(value, mentions.length > 0)) return { ok: false, reason: 'time-keyword', entryId, arg: spec.name };
@@ -810,6 +835,7 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       args: Object.freeze(canonicalArgs(entry, args)),
       ...(range !== undefined ? { range } : {}),
       ...(openAmbiguity !== undefined ? { openAmbiguity } : {}),
+      ...(defaulted.length > 0 ? { defaulted: Object.freeze([...defaulted]) } : {}),
     },
   };
 }

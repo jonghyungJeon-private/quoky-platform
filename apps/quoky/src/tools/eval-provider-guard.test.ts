@@ -478,7 +478,7 @@ describe('C1: an outage never hides a hard failure already observed (FAILED, exi
     const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] as string;
     out.length = 0;
     expect(await runNlCli(['--mode', 'run', '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], base)).toBe(5);
-    expect(out).toContain('hard failures among the answered calls: wrongCaptures 0');
+    expect(out).toContain('hard failures among the answered calls: wrongCaptures 0, helpOverAllowance 0');
   });
 
   it('a canary that answers lets the CLI score the failures (FAILED/PASSED, never INVALID)', async () => {
