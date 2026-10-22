@@ -170,13 +170,16 @@ export async function lookupJiraRelease(input: {
           const known = await releasesOf(connector, joined.id);
           return resolvedBody(renderReleaseList(refOf(joined), known.items, known.truncated === true, ignoredLink), joined.id);
         }
-        // Owner decision B: no candidate holds the release, and the project words with the release words are near exactly
-        // one visible project ("Mobile App" + "2026" for "Mobile App Ops 2026"): that project is confirmed, then listed.
-        if (input.confirmNear === true && joined === undefined && narrowed !== undefined && !narrowed.unproven && narrowed.found.length === 0 && command.release !== undefined) {
-          const near = nearProjectsOfJoined(completeProjects, command.project, command.release);
-          if (near.length === 1) return confirmBody(near[0] as ConnectorItem, undefined, input.inChannel === true);
+        const unresolved = narrowed === undefined || narrowed.unproven || narrowed.found.length !== 1;
+        // Owner decision B: the release narrowing picked no single candidate (none holds it, more candidates than the bound,
+        // or a partial version page proved nothing: live 2026-10-22, four "차란차 플랫폼 운영 20xx" projects), and the project
+        // words with the release words are near exactly one visible project ("Mobile App" + "2026" for "Mobile App Ops
+        // 2026"): that project is confirmed, then listed (the same rule as the no-candidate path).
+        if (input.confirmNear === true && joined === undefined && unresolved && command.release !== undefined) {
+          const near = joinedNearConfirm(completeProjects, command.project, command.release, narrowed?.found ?? []);
+          if (near !== undefined) return confirmBody(near.project, near.release, input.inChannel === true);
         }
-        if (narrowed === undefined || narrowed.unproven || narrowed.found.length !== 1) {
+        if (unresolved) {
           return body(input.inChannel === true ? renderReleaseDmOnly('list') : renderProjectAmbiguous(command.project, candidates.map(refOf)));
         }
         project = refOf(narrowed.found[0]!.project);
@@ -354,10 +357,12 @@ type NearProject =
 /**
  * Owner decision B (2026-10-22): the owner's project words named no visible project as written. On the COMPLETE listing,
  * by structure only (whole words of a longer name, else a small edit distance; no word list, no project specifics):
- *  1. `nearByWords`: the projects holding all of the owner's project words; with release words, the one of them that holds
- *     the release is confirmed with it;
- *  2. otherwise the project words with the release words joined, when exactly one visible project is near them (the
- *     selector split a word of the name off as a release: "차란차 운영" + "2026"): confirmed, then its release list;
+ *  1. `nearByWords`: the projects holding all of the owner's project words; with release words, the one of them proven to
+ *     hold the release is confirmed with it;
+ *  2. otherwise the project words with the release words joined, when exactly one visible project is near them and no
+ *     other near project holds the release (the selector split a word of the name off as a release: "차란차 운영" +
+ *     "2026"): confirmed, then its release list. Also when the narrowing is unproven (a project with a partial version
+ *     page, live 2026-10-22): the owner is asked either way;
  *  3. otherwise one near project is confirmed (with the owner's release words), several are asked about, none: not found.
  */
 async function resolveNearProject(
@@ -369,13 +374,14 @@ async function resolveNearProject(
 ): Promise<NearProject> {
   const near = nearByWords.length > 0 ? nearByWords : fuzzyProjects(projects, projectText);
   if (releaseText !== undefined) {
-    if (near.length > 0 && near.length <= DISAMBIGUATE_MAX) {
-      const narrowed = await narrowByRelease(connector, near, releaseText);
-      if (!narrowed.unproven && narrowed.found.length === 1) return { kind: 'confirm', project: narrowed.found[0]!.project, release: releaseText };
-      if (narrowed.unproven || narrowed.found.length > 1) return near.length === 1 ? { kind: 'confirm', project: near[0] as ConnectorItem, release: releaseText } : { kind: 'ambiguous', candidates: near };
+    const narrowed = near.length > 0 && near.length <= DISAMBIGUATE_MAX ? await narrowByRelease(connector, near, releaseText) : undefined;
+    if (narrowed !== undefined && !narrowed.unproven && narrowed.found.length === 1) return { kind: 'confirm', project: narrowed.found[0]!.project, release: releaseText };
+    // Before an unproven narrowing gives up (a partial version page proves nothing): the joined words may name one project.
+    const joined = joinedNearConfirm(projects, projectText, releaseText, narrowed?.found ?? []);
+    if (joined !== undefined) return joined;
+    if (narrowed !== undefined && (narrowed.unproven || narrowed.found.length > 1)) {
+      return near.length === 1 ? { kind: 'confirm', project: near[0] as ConnectorItem, release: releaseText } : { kind: 'ambiguous', candidates: near };
     }
-    const joined = nearProjectsOfJoined(projects, projectText, releaseText);
-    if (joined.length === 1) return { kind: 'confirm', project: joined[0] as ConnectorItem };
   }
   if (near.length === 1) return { kind: 'confirm', project: near[0] as ConnectorItem, ...(releaseText !== undefined ? { release: releaseText } : {}) };
   if (near.length > 1) return { kind: 'ambiguous', candidates: near };
@@ -383,17 +389,37 @@ async function resolveNearProject(
 }
 
 /**
+ * Owner decision B: the confirmation of the one visible project near the project words with the release words joined
+ * ({@link nearProjectsOfJoined}), when the release narrowing found the release in no other project (`found`: the
+ * narrowing's hits, proven or not). It carries the release words only when that project itself holds them (a yes then
+ * shows that release); otherwise a yes lists its releases. Several or none near the joined words: undefined.
+ */
+function joinedNearConfirm(
+  projects: readonly ConnectorItem[] | undefined,
+  projectText: string,
+  releaseText: string,
+  found: ReadonlyArray<{ readonly project: ConnectorItem }>,
+): Extract<NearProject, { kind: 'confirm' }> | undefined {
+  const joined = nearProjectsOfJoined(projects, projectText, releaseText);
+  if (joined.length !== 1) return undefined;
+  const project = joined[0] as ConnectorItem;
+  if (found.some((hit) => hit.project.id !== project.id)) return undefined;
+  return { kind: 'confirm', project, ...(found.length > 0 ? { release: releaseText } : {}) };
+}
+
+/**
  * The visible projects near the owner's project words with their release words joined (owner decision B): the joined
- * words, longer than the project words alone, spelled out by a name (exact or inside it, letters and digits only), or all
- * of them whole words of the name. No edit distance here (release words are free text: "Mobile App 9.9.9" is not a typo of
- * "Mobile App Dev"), and a name merely inside the joined words never counts. No complete listing: none.
+ * words, longer than the project words alone, spelled out by a name (exact or inside it, letters and digits only, never
+ * cutting a digit run: "Mobile App" + "20" is not inside "… 2026"), or all of them whole words of the name. No edit
+ * distance here (release words are free text: "Mobile App 9.9.9" is not a typo of "Mobile App Dev"), and a name merely
+ * inside the joined words never counts. No complete listing: none.
  */
 export function nearProjectsOfJoined(projects: readonly ConnectorItem[] | undefined, projectText: string, releaseText: string): ConnectorItem[] {
   if (projects === undefined || releaseText.trim().length === 0) return [];
   const joinedText = `${projectText} ${releaseText}`;
   const joined = compact(withoutWords(joinedText, PROJECT_WORDS) || joinedText);
   if (joined.length <= compact(projectText).length) return [];
-  const spelled = projects.filter((item) => compact(item.title).includes(joined));
+  const spelled = projects.filter((item) => containsWholeDigitRuns(compact(item.title), joined));
   if (spelled.length > 0) return spelled;
   const words = tokens(withoutWords(joinedText, PROJECT_WORDS) || joinedText);
   const byWords = projects.filter((item) => words.length > 0 && words.every((word) => tokens(item.title).includes(word)));
@@ -419,6 +445,18 @@ export function fuzzyProjects(projects: readonly ConnectorItem[], text: string):
   if (scored.length === 0) return [];
   const best = Math.min(...scored.map((entry) => entry.distance));
   return scored.filter((entry) => entry.distance === best).map((entry) => entry.item);
+}
+
+/** Whether `needle` occurs in `haystack` without a digit run of either cut at the match edges ("20" never in "2026"). */
+function containsWholeDigitRuns(haystack: string, needle: string): boolean {
+  const digit = /\p{N}/u;
+  for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+    const end = at + needle.length;
+    const cutsBefore = at > 0 && digit.test(haystack[at - 1] as string) && digit.test(needle[0] as string);
+    const cutsAfter = end < haystack.length && digit.test(haystack[end] as string) && digit.test(needle[needle.length - 1] as string);
+    if (!cutsBefore && !cutsAfter) return true;
+  }
+  return false;
 }
 
 /** Levenshtein distance over code points, `bound + 1` as soon as it is certainly above `bound`. */
