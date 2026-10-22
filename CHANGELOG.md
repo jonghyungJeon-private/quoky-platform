@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — release holder vs named project (owner decision, 2026-10-22)
+
+- **Changed.** When the release is proven in exactly one Jira project but the project and release words joined name a
+  different single project, the ambiguous-project list of exactly those two (release holder first) is shown so the owner
+  picks ("둘 다 가능하면 목록에서 고르기"), instead of confirming the release holder. Same project, or the joined words
+  naming none or several: unchanged. Structural, no word list.
+
 ## Unreleased — decision B over several Jira candidates (live smoke of #277, 2026-10-22)
 
 - **Fixed.** "차란차 운영 2026 릴리스 뭐뭐 있어?" split as `{project: "차란차 운영", release: "2026"}` showed the ambiguous list of
