@@ -748,7 +748,8 @@ describe('owner decision B (2026-10-22): a near-matched project is confirmed wit
     expect(one.queries).toEqual(['containers', 'releases']);
     // Two near projects, only one holds the release: that one is confirmed.
     const narrowed = await ask({ project: '차란차 운영', release: '20261015' });
-    expect(narrowed.text).toBe(QUESTION);
+    // CA review S1: a confirmation carrying the release words names that release.
+    expect(narrowed.text).toBe("'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? 맞으면 \"20261015\" 릴리스 이슈를 보여드릴게요. (응 / 아니)");
     expect(narrowed.confirm).toEqual({ project: 'OP26', release: '20261015' });
     expect(narrowed.queries).toEqual(['containers', 'releases', 'releases']);
   });
@@ -806,5 +807,177 @@ describe('owner decision B (2026-10-22): a near-matched project is confirmed wit
     expect(direct.confirm).toBeUndefined();
     const partial = await ask({ project: '차란차 운영 2026' }, { truncated: true });
     expect(partial.confirm).toBeUndefined();
+  });
+});
+
+describe('owner decision B, live smoke 2026-10-22: several "차란차 플랫폼 운영 20xx" projects, some with a partial version page', () => {
+  // The visible projects Quoky's own ambiguous reply listed live (OP21/OP24/OP25/OP26), plus the other probed ones. OP21 and
+  // OP24 hold a full first version page (50): a partial page proves no release absent, so the narrowing is unproven.
+  const fullPage = (key: string): ConnectorItem[] => Array.from({ length: 50 }, (_, index) => ({ id: `${key}-${index}`, title: `배포일_${key}${String(index).padStart(4, '0')}` }));
+  const world: ConnectorItem[] = [
+    { id: 'APPOP', title: '차란차 플랫폼 APP운영' },
+    { id: 'COP26', title: '코브랜드 운영 2026' },
+    { id: 'OP21', title: '차란차 플랫폼 운영 2021' },
+    { id: 'OP24', title: '차란차 플랫폼 운영 2024' },
+    { id: 'OP25', title: '차란차 플랫폼 운영 2025' },
+    { id: 'OP26', title: '차란차 플랫폼 운영 2026' },
+  ];
+  const versions: Record<string, ConnectorItem[]> = {
+    OP21: fullPage('OP21'),
+    OP24: fullPage('OP24'),
+    OP25: [{ id: '15000', title: '배포일_20251015(수)' }],
+    OP26: [{ id: '16591', title: '배포일_20261020(화)' }, { id: '16555', title: '배포일_20261015(목)' }],
+  };
+  const ask = async (command: Partial<ReleaseLookupCommand>, options: { projects?: ConnectorItem[]; inChannel?: boolean; confirmNear?: boolean } = {}) => {
+    const queries: ConnectorQuery[] = [];
+    const provider: ConnectorProvider = {
+      source: 'jira', readOnly: true, isAvailable: async () => true,
+      query: async (query) => {
+        queries.push(query);
+        if (query.query === 'containers') return { source: 'jira', items: options.projects ?? world };
+        if (query.query === 'releases') return { source: 'jira', items: versions[String(query.params?.container)] ?? [] };
+        return { source: 'jira', items: ISSUES };
+      },
+    };
+    const result = await lookupJiraRelease({
+      connector: provider,
+      command: { scope: 'mine', links: [], ...command },
+      siteHost: SITE,
+      identity: 'acc-1',
+      ...(options.inChannel ? { inChannel: true } : {}),
+      ...(options.confirmNear !== false ? { confirmNear: true } : {}),
+    });
+    return {
+      text: result.kind === 'body' ? plainTextOf(result.body) : result.reason,
+      confirm: result.kind === 'body' ? result.confirm : undefined,
+      queries: queries.map((query) => query.query),
+    };
+  };
+  const QUESTION = "'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? (응 / 아니)";
+
+  it('the split args ("차란차 운영" + "2026") and the joined words both ask about OP26 (no items read)', async () => {
+    const split = await ask({ project: '차란차 운영', release: '2026' });
+    expect(split.text).toBe(QUESTION);
+    expect(split.confirm).toEqual({ project: 'OP26' });
+    expect(split.queries).not.toContain('release-items');
+    const joined = await ask({ project: '차란차 운영 2026' });
+    expect(joined.text).toBe(QUESTION);
+    expect(joined.confirm).toEqual({ project: 'OP26' });
+  });
+
+  it('several candidates by containment ("차란차 플랫폼 운영" + "2026"), the narrowing unproven: the same question', async () => {
+    const asked = await ask({ project: '차란차 플랫폼 운영', release: '2026' });
+    expect(asked.text).toBe(QUESTION);
+    expect(asked.confirm).toEqual({ project: 'OP26' });
+  });
+
+  it('a yes runs the confirmed args (its release list); the project words alone stay the ambiguous list', async () => {
+    const yes = await ask({ project: 'OP26' });
+    expect(yes.text).toContain('**차란차 플랫폼 운영 2026 (OP26) 릴리스**');
+    expect(yes.text).toContain('배포일_20261015(목)');
+    expect(yes.confirm).toBeUndefined();
+    const alone = await ask({ project: '차란차 운영' });
+    expect(alone.confirm).toBeUndefined();
+    expect(alone.text).toContain('- 차란차 플랫폼 운영 2021 (OP21)');
+  });
+
+  it('the joined words fit two projects: the ambiguous list, no confirmation', async () => {
+    const projects = [...world, { id: 'APP26', title: '차란차 앱 운영 2026' }];
+    const asked = await ask({ project: '차란차 운영', release: '2026' }, { projects });
+    expect(asked.confirm).toBeUndefined();
+    expect(asked.text).toContain('"차란차 운영"에 맞는 Jira 프로젝트가 여러 개예요');
+    expect(asked.text).toContain('- 차란차 앱 운영 2026 (APP26)');
+    expect(asked.text).toContain('- 차란차 플랫폼 운영 2026 (OP26)');
+  });
+
+  it('another year (2023) is never a near match: no confirmation', async () => {
+    const split = await ask({ project: '차란차 운영', release: '2023' });
+    expect(split.confirm).toBeUndefined();
+    expect(split.text).toContain('"차란차 운영"에 맞는 Jira 프로젝트가 여러 개예요');
+    const joined = await ask({ project: '차란차 운영 2023' });
+    expect(joined.confirm).toBeUndefined();
+    expect(joined.text).toContain('"차란차 운영 2023"에 맞는 Jira 프로젝트를 찾지 못했어요.');
+    // A digit run is never cut by the spelled-out tier: "… 20" is not inside "… 2026".
+    expect(nearProjectsOfJoined(world, '차란차 플랫폼 운영', '20')).toEqual([]);
+  });
+
+  it('Codex P2 / CA W1: the release seen in another candidate on the pages read (not uniquely) keeps the ambiguous list', async () => {
+    // A whole-word match on another candidate's partial page.
+    const op24 = versions.OP24 as ConnectorItem[];
+    versions.OP24 = [{ id: 'OP24-x', title: '2026 이관' }, ...op24.slice(1)];
+    try {
+      const partial = await ask({ project: '차란차 운영', release: '2026' });
+      expect(partial.confirm).toBeUndefined();
+      expect(partial.text).toContain('여러 개예요');
+    } finally {
+      versions.OP24 = op24;
+    }
+    // Several matches in another candidate's complete page.
+    versions.OP25 = [{ id: '15001', title: '2026 상반기' }, { id: '15002', title: '2026 하반기' }];
+    try {
+      const several = await ask({ project: '차란차 운영', release: '2026' });
+      expect(several.confirm).toBeUndefined();
+      expect(several.text).toContain('여러 개예요');
+    } finally {
+      versions.OP25 = [{ id: '15000', title: '배포일_20251015(수)' }];
+    }
+  });
+
+  it('CA W2: over the candidate bound no version page is read; the joined words are checked by names only', async () => {
+    const projects = [...world, { id: 'OP22', title: '차란차 플랫폼 운영 2022' }, { id: 'OP23', title: '차란차 플랫폼 운영 2023' }];
+    const asked = await ask({ project: '차란차 운영', release: '2026' }, { projects });
+    expect(asked.text).toBe(QUESTION);
+    expect(asked.confirm).toEqual({ project: 'OP26' });
+    expect(asked.queries).toEqual(['containers']);
+    // The same over the bound on the several-candidates (containment) path.
+    const contained = await ask({ project: '차란차 플랫폼 운영', release: '2026' }, { projects });
+    expect(contained.confirm).toEqual({ project: 'OP26' });
+    expect(contained.queries).toEqual(['containers']);
+  });
+
+  it('CA W3: on the several-candidates path the joined project must be one of the candidates', async () => {
+    // "Mobile App" is contained in two names; the joined words name a third project that does not contain it.
+    const projects: ConnectorItem[] = [{ id: 'MAW', title: 'Mobile App Web' }, { id: 'MAO', title: 'Mobile App Ops' }, { id: 'AMO', title: 'App Mobile 2026' }];
+    expect(nearProjectsOfJoined(projects, 'Mobile App', '2026').map((item) => item.id)).toEqual(['AMO']);
+    const asked = await ask({ project: 'Mobile App', release: '2026' }, { projects });
+    expect(asked.confirm).toBeUndefined();
+    expect(asked.text).toContain('"Mobile App"에 맞는 Jira 프로젝트가 여러 개예요');
+  });
+
+  it('CA S1: a channel confirmation carrying the release names it (a yes shows that release there)', async () => {
+    versions.OP26 = [...(versions.OP26 as ConnectorItem[]), { id: '16000', title: '2026 상반기' }];
+    try {
+      const asked = await ask({ project: '차란차 운영', release: '2026' }, { inChannel: true });
+      expect(asked.confirm).toEqual({ project: 'OP26', release: '2026' });
+      expect(asked.text).toBe("'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? 맞으면 \"2026\" 릴리스 이슈를 보여드릴게요. (응 / 아니)");
+    } finally {
+      versions.OP26 = (versions.OP26 as ConnectorItem[]).filter((item) => item.id !== '16000');
+    }
+  });
+
+  it('the release words held by another candidate keep the ambiguous list; held by the joined project, they ride along', async () => {
+    versions.OP25 = [{ id: '15001', title: '2026 이관' }];
+    try {
+      const held = await ask({ project: '차란차 운영', release: '2026' });
+      expect(held.confirm).toBeUndefined();
+      expect(held.text).toContain('여러 개예요');
+    } finally {
+      versions.OP25 = [{ id: '15000', title: '배포일_20251015(수)' }];
+    }
+    versions.OP26 = [...(versions.OP26 as ConnectorItem[]), { id: '16000', title: '2026 상반기' }];
+    try {
+      expect((await ask({ project: '차란차 운영', release: '2026' })).confirm).toEqual({ project: 'OP26', release: '2026' });
+    } finally {
+      versions.OP26 = (versions.OP26 as ConnectorItem[]).filter((item) => item.id !== '16000');
+    }
+  });
+
+  it('a channel refuses the folded-back list; without a caller that keeps the question, the ambiguous list stays', async () => {
+    const channel = await ask({ project: '차란차 운영', release: '2026' }, { inChannel: true });
+    expect(channel.text).toContain('DM에서만');
+    expect(channel.confirm).toBeUndefined();
+    const direct = await ask({ project: '차란차 플랫폼 운영', release: '2026' }, { confirmNear: false });
+    expect(direct.confirm).toBeUndefined();
+    expect(direct.text).toContain('여러 개예요');
   });
 });

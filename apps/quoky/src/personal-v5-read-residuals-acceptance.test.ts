@@ -48,11 +48,39 @@ describe('read residuals (owner decisions A and B, 2026-10-22)', () => {
 
   it('B in a channel (CA review W5): a named release may be confirmed there, and the yes shows that release', async () => {
     const asked = await h.turn('차란차 운영 2026 20261015 릴리스 보여줘', pick('jira.release', { project: '차란차 운영 2026', release: '20261015' }), h.channel);
-    expect(asked.text).toContain("'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? (응 / 아니)");
+    expect(asked.text).toContain("'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? 맞으면 \"20261015\" 릴리스 이슈를 보여드릴게요. (응 / 아니)");
     const yes = await h.turn('응', none, h.channel);
     expect(yes.selects).toHaveLength(0);
     expect(yes.text).toContain('배포일_20261015(목)');
     expect(yes.text).toContain('차란차 플랫폼 운영 2026 (OP26)');
+  });
+
+  it('B, live smoke 2026-10-22: four "차란차 플랫폼 운영 20xx" projects, two with a full version page; the split still asks about OP26', async () => {
+    const projects = h.jiraProjects;
+    const versions = h.jiraVersions;
+    const fullPage = (key: string) => Array.from({ length: 60 }, (_, index) => ({ id: `${key}${index}`, name: `배포일_${key}_${index}` }));
+    h.jiraProjects = [...projects, { key: 'OP21', name: '차란차 플랫폼 운영 2021' }, { key: 'OP24', name: '차란차 플랫폼 운영 2024' }];
+    h.jiraVersions = { ...versions, OP21: fullPage('OP21'), OP24: fullPage('OP24') };
+    try {
+      const asked = await h.turn('차란차 운영 2026 릴리스 뭐뭐 있어?', pick('jira.release', { project: '차란차 운영', release: '2026' }));
+      expect(asked.text).toContain("'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요? (응 / 아니)");
+      expect(asked.text).not.toContain('여러 개예요');
+      const yes = await h.turn('응', none);
+      expect(yes.selects).toHaveLength(0);
+      expect(yes.text).toContain('**차란차 플랫폼 운영 2026 (OP26) 릴리스**');
+      expect(yes.text).toContain('배포일_20261015(목)');
+      await h.turn('차란차 운영 2026 릴리스 뭐뭐 있어?', pick('jira.release', { project: '차란차 운영', release: '2026' }));
+      const no = await h.turn('아니', none);
+      expect(no.selects).toHaveLength(0);
+      expect(no.text).toContain('선택을 취소했어요');
+      // Another year names no project near the joined words: the ambiguous list, no open question.
+      const other = await h.turn('차란차 운영 2023 릴리스 뭐뭐 있어?', pick('jira.release', { project: '차란차 운영', release: '2023' }));
+      expect(other.text).toContain('여러 개예요');
+      expect((await h.sessionMetadata())['quoky.nlPending']).toBeUndefined();
+    } finally {
+      h.jiraProjects = projects;
+      h.jiraVersions = versions;
+    }
   });
 
   it('A: "how to search in Slack" asks Quoky or the app; "2" is the fixed app note, "1" Quoky help', async () => {

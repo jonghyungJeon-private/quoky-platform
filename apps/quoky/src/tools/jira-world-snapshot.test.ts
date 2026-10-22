@@ -19,6 +19,9 @@ describe('the snapshot Jira world (data, provenance in its header)', () => {
     const snapshot = loadJiraWorldSnapshot();
     expect(snapshot.siteHost).toBe('charancha.atlassian.net');
     expect(snapshot.projects).toContainEqual({ key: 'OP26', name: '차란차 플랫폼 운영 2026' });
+    // The owner DM smoke of 2026-10-22: Quoky's own ambiguous-project reply listed these too.
+    expect(snapshot.projects).toContainEqual({ key: 'OP21', name: '차란차 플랫폼 운영 2021' });
+    expect(snapshot.projects).toContainEqual({ key: 'OP24', name: '차란차 플랫폼 운영 2024' });
     expect(snapshot.releases.OP26?.map((version) => version.id)).toContain('16555');
   });
 
@@ -74,7 +77,7 @@ describe('a8-12 and a8-08: the observed selector outputs', () => {
   });
 
   it('the read regression keeps its exact outcome when no equivalence applies', async () => {
-    // "차란차" alone names three visible projects (the ambiguous list), not the gold's confirmation question.
+    // "차란차" alone names five visible projects (the ambiguous list), not the gold's confirmation question.
     const raw = answer('jira.release', { project: '차란차' });
     expect(scoreReadRegression(golden('a8-12'), raw, NOW).outcome).toBe('miss');
     expect(await scoreReadRegressionInWorld(golden('a8-12'), raw, NOW)).toEqual({ outcome: 'miss', relabeled: false, got: 'jira.release' });
