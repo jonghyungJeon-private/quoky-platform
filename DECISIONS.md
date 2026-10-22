@@ -28557,3 +28557,43 @@ Fixed without changing the rendered read / A6 / R2 prompt bytes (D12 gates were 
   read verbs ("finding, searching, listing or reading its items") in prose; the next prompt revision should phrase it by
   the offered entries' own reads rather than a verb list. (3) The confirmation template is Korean-only, as today's
   release renderer (kept on purpose).
+
+### ADR-0120 implementation note — read residuals: the re-gate fixes of 2026-10-22 (read `nl-select.v67`)
+
+The D12 gates on c4c5cfbd: r2 3/3; intent 1/3 and read-regression 1/3 (overall ~97%); action 2/3 (reminder span noise,
+untouched). The owner chose one more structural fix and a re-gate. The help-boundary wrong captures (neg-122 work-lookup,
+neg-110) and the action span noise are left as they are.
+
+- **An ungrounded enum value falls back to the default (owner rule "assistant, not chatbot").** a8-10 and a8-19: the
+  selector added `scope: all` without the owner's every-assignee words; `valueGrounding` refused it and the read became
+  a question. Now, on a READ entry, an enum arg with a `default` and `valueGrounding` whose non-default value is not
+  stated (and not carried from the previous selection) is dropped back to the default (canonical args omit it), in
+  `validateSelection`, so the runtime, the scorers and the planner see the same thing. Excluded structurally: a non-READ
+  entry (actions, ITEM_READ: `item.summarize.scope`, `.mode`) and an arg with no default (`jira.issues.sort`,
+  `calendar.events.partOfDay`, `drive.files.kind`) still refuse; an out-of-set value is still invalid (asks); the plan
+  validator's clause-bound check is unchanged.
+  - *Measured (offline, no model call).* (A) The archived intent gate of c4c5cfbd (3 runs, every non-hit raw output
+    re-scored): exactly two records change, a8-10 run 2 and a8-19 run 2, clarify → hit; no negative changes. (B/C) A
+    simulation over nl-intent, nl-action (+seed, exec-time, deictic) and nl-action.r2: inject each ungrounded
+    non-default value into each gold of the entry (positives) and into a bare selection of the entry on each negative:
+
+    | arg | positives: clarify → hit | clarify → miss | negatives: clarify → capture |
+    |---|---|---|---|
+    | jira.release.scope | 24 / 24 | 0 | 0 / 467 |
+    | jira.issues.status | 78 / 81 | 3 | 449 / 461 |
+    | github.items.kind | 54 / 83 | 29 | 883 / 883 |
+    | todo.list.status | 155 / 157 | 2 | 1389 / 1389 |
+    | reminder.list.status | 103 / 105 | 2 | 1246 / 1390 |
+
+    agent-plan: 175 of 199 simulated steps validate to the gold step. A positive "clarify → miss" is a gold that names a
+    different value (e.g. `kind: pr`) where the selector wrote the opposite one: before a question, now the default read
+    (both kinds); both are non-hits. A negative "capture" is only reachable when the selector picks that read on a
+    negative AND guesses a value; the same read without the guess was already a wrong capture, so the rule removes an
+    accidental mask rather than adding a capture path; the archived runs show no such case. Wider defaults
+    (`jira.issues.status` open, `github.items.kind` all) are the read the owner's words ask for, and the basis line names
+    them.
+- **Count follow-up (read `nl-select.v67`, A6 `v65`, R2 `v66`, planner `agent-plan.v5`).** a8-16 "몇 개야?" after a
+  release selection kept the release and dropped `count` in every run. The shared `count` arg description now ends "A
+  how-many follow-up to the previous selection keeps that entry and all its args and sets count true." Only that line
+  differs in the 79 regenerated read pins (77 cases carry a `count` arg); no example changed (RAG-0 lint passes). The
+  planner embeds the read catalog, so its bytes changed and it moved to `agent-plan.v5` with a new pin.

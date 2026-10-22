@@ -7,6 +7,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 ## Unreleased — read residuals of the D12 gate, owner decisions A and B (2026-10-22)
 
+- **Changed.** On a READ entry, an enum value the owner did not state (e.g. `scope: all` without every-assignee words)
+  falls back to the arg's default instead of asking (a8-10, a8-19); actions, ITEM_READ and args with no default still ask.
+- **Changed (prompt; read `nl-select.v67`, A6 `v65`, R2 `v66`, planner `agent-plan.v5`; not yet gated).** The shared
+  `count` description: a how-many follow-up keeps the previous selection and sets count true (a8-16). No examples changed.
+
 - **Added.** A general help question that names one catalog source ("슬랙에서 검색하는 방법 알려줘") asks whether the owner
   means Quoky's way of reading it or the source app itself (a numbered D7 question: 1 runs the help, 2 a fixed honest
   note). Structural (general topic, the catalog's own `sourceNames`); no positive help gold fires.
