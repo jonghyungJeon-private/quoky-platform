@@ -28654,3 +28654,43 @@ captures on the negatives", in its "Model-in-the-loop evaluation" bullet; implem
   changes): intent runs 1 / 2 / 3 PASS (run 3 was FAILED only by neg-012 and neg-122 → help 2/2); read-regression run 1
   PASS (FAILED only by neg-105 → help 1/2), run 2 PASS, run 3 still FAIL (`jira.release` 25/28 = 89.3% per entry: a8-09
   clarify, a8-12 miss, a8-27 clarify; no capture).
+
+### ADR-0120 implementation note — decision B over several candidates (live smoke of #277, 2026-10-22)
+
+Follow-up of decision B (the read-residuals note above, 2026-10-22). The owner's DM smoke after deploying #277:
+"차란차 운영 2026 릴리스 뭐뭐 있어?" → `{project: "차란차 운영", release: "2026"}` answered the ambiguous list of OP21 / OP24 /
+OP25 / OP26 ("차란차 플랫폼 운영 2021 / 2024 / 2025 / 2026") instead of the confirmation, and the following "응" fell to chat
+(no open question).
+
+- **Root cause (reproduced offline).** The near tier did run (`matchProjectsTiered` → `words`, four candidates), but the
+  release narrowing over them was *unproven*: OP21 / OP24 hold a full first version page (50), which proves no release
+  absent. `resolveNearProject` returned the ambiguous list on an unproven narrowing before the joined-words check
+  (`nearProjectsOfJoined`) ran, and the several-candidates path (containment) skipped its joined check on an unproven
+  narrowing too. The fixtures and the scoring snapshot held only OP25 / OP26 with short version lists, so no test saw it.
+- **Fix (structural, one helper `joinedNearConfirm`, both paths).** When the release narrowing picks no single candidate
+  (none holds it, more candidates than the bound, or unproven), the project words with the release words joined are
+  checked before the ambiguous list: exactly one visible project near them (all of them as whole words of its name, or
+  spelled out inside it) and no other candidate found holding the release → that project is confirmed ("'차란차 플랫폼 운영
+  2026 (OP26)' 프로젝트가 맞나요? (응 / 아니)"), carrying the release words only when that project itself holds them (a yes
+  then shows that release; otherwise its release list). Several or none near the joined words, or the release found in
+  another candidate: the ambiguous list as before. A proven single narrowing still wins first. Channel rules unchanged
+  (a confirmed list stays DM-only). The spelled-out tier no longer cuts a digit run ("… 20" is not inside "… 2026"), the
+  same digit exactness as the typo tier. No word list, no name or year rule.
+  - *Behaviour change:* one near project with an unproven narrowing whose joined words name that same project is now
+    confirmed without the release words (a yes lists its releases) instead of with them (a yes answered "release not
+    found").
+  - *Not changed (reported):* a named release with an unproven narrowing ("차란차 운영" + "20261015" while OP21 has a full
+    page) still gets the ambiguous list (proven-unique picks rule). The basis line of the selection turn still prints the
+    selector's split ("기준: 릴리스 "2026" / 프로젝트 "차란차 운영" / 내 담당") above the confirmation question; the ambiguous
+    list is shown only when the fold-back does not apply, so its basis line is accurate there.
+- **Snapshot.** `jira-world.snapshot.v1.json` gains OP21 "차란차 플랫폼 운영 2021" and OP24 "차란차 플랫폼 운영 2024"
+  (provenance: owner DM smoke 2026-10-22, Quoky's own ambiguous-project reply; names and keys only, versions not read;
+  the completeness caveat stays). Offline re-score, old vs new code and snapshot: the 90 archived `jira.release` intent
+  records of `gates-residuals-5f8bd81e-final-20261022` keep every outcome (79 hit, 2 equivalent hits — a8-12 runs 1 and 3 —,
+  7 clarify, 2 miss: a8-16 `{release}` and a8-12 `{project: "차란차 운영"}`, now a list of four OP projects); the outcome
+  keys of all 28 intent and 46 agent-plan `jira.release` golds are byte-identical.
+- **Tests.** `jira-release.test.ts` (the live world with OP21 / OP24 full pages: split and joined args → OP26
+  confirmation, containment + release → the same, the yes args → the release list, joined words fitting two projects →
+  the ambiguous list, 2023 → no confirmation, the release held by another candidate → the ambiguous list, held by OP26 →
+  carried, channel and non-selection callers unchanged) and the offline acceptance (`personal-v5-read-residuals-acceptance`:
+  question → "응" → OP26's releases with no selector call; "아니" → the cancel note; 2023 → the list, no open question).

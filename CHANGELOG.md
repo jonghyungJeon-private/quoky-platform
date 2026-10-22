@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — decision B over several Jira candidates (live smoke of #277, 2026-10-22)
+
+- **Fixed.** "차란차 운영 2026 릴리스 뭐뭐 있어?" split as `{project: "차란차 운영", release: "2026"}` showed the ambiguous list of
+  several "차란차 플랫폼 운영 20xx" projects instead of the decision-B confirmation, so the following "응" fell to chat. When
+  the release narrowing picks no single candidate (none, over the bound, or unproven by a full first version page), the
+  project and release words joined are checked first: exactly one visible project near them, and the release held by no
+  other candidate, is confirmed ("'차란차 플랫폼 운영 2026 (OP26)' 프로젝트가 맞나요?"); a yes lists its releases (or shows the
+  release when that project holds it), a no ends it. Several or none: the ambiguous list as before. The spelled-out joined
+  tier never cuts a digit run. Structural, no word or name list.
+- **Changed (eval data).** The Jira world snapshot gains OP21 and OP24 (owner DM smoke 2026-10-22). Offline re-score of
+  the archived gate records: no `jira.release` outcome changed; every gold outcome key identical.
+
 ## Unreleased — read residuals of the D12 gate, owner decisions A and B (2026-10-22)
 
 - **Changed (gate rule, owner decision 2026-10-22).** The intent and read-regression gates count `help.topic` captures on
