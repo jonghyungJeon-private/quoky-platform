@@ -1150,6 +1150,83 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
   // ADR-0120 A2 implementation note 2: the live Telegram run of 2026-10-14 after A5 (QUOKY_NL_INTENT_MODE=active,
   // QUOKY_NL_PHASE=c-shadow, QUOKY_NL_GRAMMAR_YIELD=on). In each case a frozen Class B grammar answered first while the
   // shadow selection was right. Phase A is what c-shadow serves in the foreground; the scripted selector plays the model.
+  describe('owner DM 2026-10-22 - a follow-up on a listing Quoky just showed goes to chat with a structural note, never the content', () => {
+    afterEach(() => {
+      selectorAnswer = none;
+    });
+
+    it('calendar listing, then a chat follow-up: the chat input has the structural note and the listing fact, never an event title', async () => {
+      await withPhase('c', 'active', async () => {
+        const saved = calendarEvents;
+        try {
+          const ctx = context();
+          // The app's own "tomorrow", read from the window the listing queried (no second clock).
+          selectorAnswer = answer('calendar.events', { range: 'tomorrow' });
+          const probe = await turnOf('내일 일정', context());
+          const from = probe.calendar.at(-1)?.from ?? '';
+          const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date(Date.parse(from) + 3_600_000));
+          const titles = ['1차 면접_AI Agent_홍길동', '팀 주간 회의'];
+          const location = '본사 7층 면접실';
+          calendarEvents = [
+            { id: 'iv-1', title: titles[0]!, start: `${day}T10:00:00+09:00`, end: `${day}T11:00:00+09:00`, allDay: false, status: 'confirmed', calendarName: 'primary', location },
+            { id: 'iv-2', title: titles[1]!, start: `${day}T14:00:00+09:00`, end: `${day}T15:00:00+09:00`, allDay: false, status: 'confirmed', calendarName: 'primary' },
+          ];
+
+          selectorAnswer = answer('calendar.events', { range: 'tomorrow' });
+          const listing = await turnOf('내일 일정 뭐있어', ctx);
+          for (const title of titles) expect(listing.result.reply.text).toContain(title);
+
+          selectorAnswer = none;
+          const followUp = await turnOf('내일 면접 기준으로 면접 질문 좀 뽑아줘', ctx);
+          expect(followUp.claims).toEqual([]);
+          expect(followUp.served).toEqual([]);
+          expect(followUp.calendar).toEqual([]);
+          const chat = followUp.requests.filter((request) => request.capability !== SELECTION);
+          expect(chat).toHaveLength(1);
+          const input = JSON.stringify(chat[0]);
+          expect(input).toMatch(/\[Quoky가 위에서 캘린더 '내일 · \d{1,2}월 \d{1,2}일\(.\)' 일정 2개를 보여드림 — 일정 내용은 기록하지 않음\]/u);
+          expect(input).toContain(JSON.stringify(core.LISTING_SHOWN_ABOVE_RULE).slice(1, -1));
+          // ADR-0110 D4 (owner decision 2026-10-22, kept): no event text reaches the chat model.
+          for (const title of titles) expect(input).not.toContain(title);
+          expect(input).not.toContain('AI Agent');
+          expect(input).not.toContain(location);
+          expect(input).not.toMatch(/10:00|11:00|14:00/u);
+          expect(followUp.result.reply.text).toBe(CHAT_REPLY);
+        } finally {
+          calendarEvents = saved;
+        }
+      });
+    });
+    it('mail and Drive listings, then a chat follow-up: the chat input has the structural notes, never a sender, subject or file name', async () => {
+      await withPhase('c', 'active', async () => {
+        const ctx = context();
+        selectorAnswer = answer('mail.list', { unread: true });
+        const mail = await turnOf('안 읽은 메일 보여줘', ctx);
+        expect(mail.result.reply.text).toContain('분기 보고서 검토 요청');
+        selectorAnswer = answer('drive.files');
+        const drive = await turnOf('최근 문서 보여줘', ctx);
+        expect(drive.result.reply.text).toContain('2026 로드맵 회의록');
+
+        selectorAnswer = none;
+        const followUp = await turnOf('그중에 뭐부터 보면 좋을지 같이 정리해줘', ctx);
+        expect(followUp.served).toEqual([]);
+        const chat = followUp.requests.filter((request) => request.capability !== SELECTION);
+        expect(chat).toHaveLength(1);
+        const input = JSON.stringify(chat[0]);
+        expect(input).toMatch(/\[Quoky가 위에서 '안 읽은 메일' \d+건 목록을 보여드림 — 메일 내용은 기록하지 않음\]/u);
+        expect(input).toMatch(/\[Quoky가 위에서 드라이브 '최근 수정한 파일' \d+건 목록을 보여드림 — 파일 이름과 내용은 기록하지 않음\]/u);
+        expect(input).toContain(JSON.stringify(core.LISTING_SHOWN_ABOVE_RULE).slice(1, -1));
+        for (const mailFixture of MAILS) {
+          expect(input).not.toContain(mailFixture.subject);
+          expect(input).not.toContain(mailFixture.snippet);
+          expect(input).not.toContain(mailFixture.from.replace(/\s*<.*$/u, ''));
+        }
+        for (const doc of DOCS) expect(input).not.toContain(doc.name);
+        expect(input).not.toContain('attacker@example.com');
+      });
+    });
+  });
+
   describe('live Telegram (2026-10-14, after A5) - a Class B grammar declines what it cannot express, selection answers', () => {
     afterEach(() => {
       selectorAnswer = none;

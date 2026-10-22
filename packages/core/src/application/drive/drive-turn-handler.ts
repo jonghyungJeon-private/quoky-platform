@@ -53,6 +53,7 @@ import {
   renderDriveUsage,
   renderDriveWriteRefused,
   type DriveHistoryKind,
+  type DriveShownShape,
   type DriveListingFilter,
   type DriveReadFailure,
   type DriveSourceCopy,
@@ -248,7 +249,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
       language,
       ...(this.deps.copy !== undefined ? { copy: this.deps.copy } : {}),
     });
-    return this.reply(ctx, body, 'RESPONDED', language, 'listed');
+    return this.reply(ctx, body, 'RESPONDED', language, 'listed', { filter, result, shown: files.length });
   }
 
   private async summarize(
@@ -444,11 +445,12 @@ export class DriveTurnHandler implements ConversationTurnHandler {
     status: 'RESPONDED' | 'FAILED',
     language: DriveLanguage,
     history: DriveHistoryKind,
+    shown?: DriveShownShape,
   ): TurnHandlerReply {
     return {
       reply: outboundMessage(ctx.message.context, text, { replyToMessageId: ctx.message.id }),
       status,
-      history: { assistant: renderDriveHistoryNote(language, history) },
+      history: { assistant: renderDriveHistoryNote(language, history, shown) },
     };
   }
 

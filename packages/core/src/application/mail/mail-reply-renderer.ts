@@ -147,7 +147,7 @@ function senderQuery(from: string): MessagePart {
   return guardedClippedSpan(from, MAIL_SENDER_QUERY_DISPLAY_MAX_CHARS, '(…)');
 }
 
-function countText(result: MailSearchResult, language: MailLanguage): string {
+function countText(result: Pick<MailSearchResult, 'matched' | 'matchedIsLowerBound'>, language: MailLanguage): string {
   const more = result.matchedIsLowerBound;
   if (language === 'en') return `${result.matched}${more ? '+' : ''} message${result.matched === 1 && !more ? '' : 's'}`;
   return `${result.matched}건${more ? ' 이상' : ''}`;
@@ -383,14 +383,60 @@ export function renderMailSummaryFooter(language: MailLanguage): string {
 export type MailHistoryKind = 'listed' | 'not-read' | 'not-summarized';
 
 /**
+ * The structural shape of what a `listed` reply showed (owner DM 2026-10-22): a listing's scope label (Quoky's own
+ * wording of the filter) and the count its header printed, or the number of the one listed mail a pick showed. No
+ * sender, subject, snippet or date. Owner security instruction 2026-10-22 (review CA W1): when the content-matching
+ * sender filter ran, neither the sender nor the count is kept.
+ */
+export type MailShownShape =
+  | {
+      readonly kind: 'listing';
+      readonly filter: MailListingFilter;
+      /** The header's count (`matched`, "N건 이상" when a lower bound): what the reply printed. */
+      readonly result: Pick<MailSearchResult, 'matched' | 'matchedIsLowerBound'>;
+      /** How many entries the listing held (the reply lists at most {@link MAIL_REPLY_MAX_ENTRIES}). */
+      readonly shown: number;
+    }
+  | { readonly kind: 'pick'; readonly index: number };
+
+/** The scope words of a listing header without the sender ("오늘 받은 안 읽은 메일", "unread today's mail"). */
+function mailScopeLabel(filter: MailListingFilter, language: MailLanguage): string {
+  return language === 'en'
+    ? `${filter.unread ? 'unread ' : ''}${filter.today ? "today's " : ''}mail${filter.period !== undefined ? ` received ${filter.period.en}` : ''}`
+    : `${filter.today ? '오늘 받은 ' : ''}${filter.period !== undefined ? `${filter.period.ko} 받은 ` : ''}${filter.unread ? '안 읽은 ' : ''}메일`;
+}
+
+function mailListingNote(shown: Extract<MailShownShape, { kind: 'listing' }>, language: MailLanguage): string {
+  const scope = mailScopeLabel(shown.filter, language);
+  const en = language === 'en';
+  if (shown.filter.from !== undefined) {
+    return en
+      ? `[Quoky showed the User the '${scope}' results matching the sender the User named just above — mail details are not kept in this history.]`
+      : `[Quoky가 위에서 '${scope}' 중 말씀하신 보낸 사람 조건에 맞는 결과를 보여드림 — 메일 내용은 기록하지 않음]`;
+  }
+  const partial = shown.result.matchedIsLowerBound || shown.result.matched > Math.min(shown.shown, MAIL_REPLY_MAX_ENTRIES);
+  const tail = partial ? (en ? ' (only the first part listed)' : ' (앞부분만 표시)') : '';
+  return en
+    ? `[Quoky showed the User a list of ${countText(shown.result, language)} ('${scope}') just above${tail} — mail details are not kept in this history.]`
+    : `[Quoky가 위에서 '${scope}' ${countText(shown.result, language)} 목록을 보여드림${tail} — 메일 내용은 기록하지 않음]`;
+}
+
+/**
  * What SHORT_TERM history keeps instead of a mail reply (TurnHandlerReply.history): no sender, subject or snippet, so a
  * later chat turn's context — which may go to a REMOTE provider — never carries mail content (ADR-0118 D7). The note
- * says truthfully what happened (review P3-7): a DM-only, refusal, usage or failed-read reply read no mail.
+ * says truthfully what happened (review P3-7): a DM-only, refusal, usage or failed-read reply read no mail. A `listed`
+ * note with `shown` says structurally what the owner saw just above (owner DM 2026-10-22).
  */
-export function renderMailHistoryNote(language: MailLanguage, kind: MailHistoryKind): string {
+export function renderMailHistoryNote(language: MailLanguage, kind: MailHistoryKind, shown?: MailShownShape): string {
   const en = language === 'en';
   switch (kind) {
     case 'listed':
+      if (shown?.kind === 'listing') return mailListingNote(shown, language);
+      if (shown?.kind === 'pick') {
+        return en
+          ? `[Quoky showed the User the sender, subject and date of email ${shown.index} of the last list just above — mail details are not kept in this history.]`
+          : `[Quoky가 위에서 마지막 메일 목록의 ${shown.index}번 메일(보낸 사람·제목·날짜)을 보여드림 — 메일 내용은 기록하지 않음]`;
+      }
       return en
         ? '[Quoky listed mail; mail details are not kept in the conversation history.]'
         : '[메일 목록 응답 — 메일 내용은 대화 기록에 남기지 않아요.]';

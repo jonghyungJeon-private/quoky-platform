@@ -26,6 +26,8 @@ import {
   calendarListedEventIds,
   renderCalendarEvents,
   renderCalendarHistoryNote,
+  calendarShownShape,
+  type CalendarShownShape,
   renderCalendarInvalidDate,
   renderCalendarReadFailure,
   renderCalendarWriteRefused,
@@ -88,7 +90,8 @@ class CalendarReadTimeout extends Error {
  *   summary and no provider call of any kind (D4: summaries would be LOCAL-only, and the turn-handler `summarize`
  *   outcome cannot be restricted to a LOCAL provider, so none is ever returned — no Claude fallback for calendar text).
  * - A failed read is answered truthfully with fixed copy (never "no events"), status `FAILED`.
- * - The conversation history keeps a fixed note instead of the reply, so event text never reaches a later prompt.
+ * - The conversation history keeps a note instead of the reply, so event text never reaches a later prompt: for a list,
+ *   only its period label and count, structurally (owner DM 2026-10-22); otherwise a fixed note.
  *
  * - The ids of the events a list showed (never their text) are kept in memory per session for the ADR-0093 lifetime
  *   (live QA D2): an update / delete that names no day carries them to the write flow as the session's recent calendar
@@ -262,7 +265,7 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
       window: { from: window.from, to: window.to },
       eventIds: calendarListedEventIds(window, events, renderOptions),
     });
-    return this.reply(ctx, reply, 'RESPONDED', language);
+    return this.reply(ctx, reply, 'RESPONDED', language, calendarShownShape(window, events, renderOptions));
   }
 
   /** An empty list replaces an older one too: "the last list shown" had nothing to pick. */
@@ -297,11 +300,12 @@ export class CalendarTurnHandler implements ConversationTurnHandler {
     text: MessageBody,
     status: 'RESPONDED' | 'FAILED',
     language: CalendarLanguage,
+    shown?: CalendarShownShape,
   ): TurnHandlerReply {
     return {
       reply: outboundMessage(ctx.message.context, text, { replyToMessageId: ctx.message.id }),
       status,
-      history: { assistant: renderCalendarHistoryNote(language) },
+      history: { assistant: renderCalendarHistoryNote(language, shown) },
     };
   }
 

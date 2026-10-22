@@ -101,7 +101,7 @@ describe('Drive turn handler (ADR-0118 D4–D8, DRV-1)', () => {
     expect(handler.helpLines).toEqual(DRIVE_HELP_LINES);
   });
 
-  it('answers 최근 문서 deterministically: name, kind and modified time, with a fixed history note', async () => {
+  it('answers 최근 문서 deterministically: name, kind and modified time, with a structural history note', async () => {
     const { reader, calls } = fakeReader({
       list: async () => ({
         files: [file('f1'), file('f2', { name: '2026 예산', kind: 'spreadsheet', modifiedAt: '2026-10-06T05:03:00.000Z' })],
@@ -111,7 +111,9 @@ describe('Drive turn handler (ADR-0118 D4–D8, DRV-1)', () => {
     });
     const outcome = await createDriveTurnHandler({ reader, timeZone: SEOUL }).handle(ctx('최근 문서'));
     expect(calls).toEqual(['recent:10']);
-    expect(outcome).toMatchObject({ status: 'RESPONDED', history: { assistant: renderDriveHistoryNote('ko', 'listed') } });
+    // Owner DM 2026-10-22: the scope and count of what was shown, never a file name (ADR-0118 D7).
+    expect(outcome).toMatchObject({ status: 'RESPONDED', history: { assistant: '[Quoky가 위에서 드라이브 \'최근 수정한 파일\' 2건 목록을 보여드림 — 파일 이름과 내용은 기록하지 않음]' } });
+    for (const content of ['회의록', '예산']) expect(JSON.stringify((outcome as { history?: unknown }).history)).not.toContain(content);
     expect(textOf(outcome)).toBe(
       [
         '최근 수정한 파일: 2건',

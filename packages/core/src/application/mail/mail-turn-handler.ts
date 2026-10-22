@@ -75,6 +75,7 @@ import {
   renderMailUsage,
   renderMailWriteRefused,
   type MailHistoryKind,
+  type MailShownShape,
   type MailListingFilter,
   type MailReadFailure,
   type MailSourceCopy,
@@ -304,7 +305,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     }
     this.log('info', 'mail.turn_handler.item_pick', { matched: 'listed' });
     const line = renderMailPickLine(index, message, { timeZone: this.deps.timeZone, now: ctx.now, language });
-    return this.reply(ctx, line, 'RESPONDED', language, 'listed');
+    return this.reply(ctx, line, 'RESPONDED', language, 'listed', { kind: 'pick', index });
   }
 
   private async list(ctx: TurnHandlerContext, filter: MailListingFilter, language: MailLanguage, range?: NlResolvedRange): Promise<TurnHandlerReply> {
@@ -336,7 +337,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       language,
       ...(this.deps.copy !== undefined ? { copy: this.deps.copy } : {}),
     });
-    return this.reply(ctx, body, 'RESPONDED', language, 'listed');
+    return this.reply(ctx, body, 'RESPONDED', language, 'listed', { kind: 'listing', filter, result, shown: messages.length });
   }
 
   private async summarize(
@@ -601,11 +602,12 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     status: 'RESPONDED' | 'FAILED',
     language: MailLanguage,
     history: MailHistoryKind,
+    shown?: MailShownShape,
   ): TurnHandlerReply {
     return {
       reply: outboundMessage(ctx.message.context, text, { replyToMessageId: ctx.message.id }),
       status,
-      history: { assistant: renderMailHistoryNote(language, history) },
+      history: { assistant: renderMailHistoryNote(language, history, shown) },
     };
   }
 

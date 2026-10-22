@@ -454,10 +454,88 @@ export function renderCalendarWriteRefused(language: CalendarLanguage): string {
 }
 
 /**
+ * The structural shape of a listing the owner was shown (owner DM 2026-10-22): only the period label of the window the
+ * owner asked for (Quoky's own date wording, never an event's), how many events the list counted, and structural
+ * qualifiers of how it was read. No title, time, location, attendee or event date.
+ *
+ * Owner security instruction 2026-10-22 (review CA W1): when a content-matching filter ran (the title keyword), the
+ * count is not kept at all — a count would say whether a matching item exists — and neither is the keyword.
+ */
+export interface CalendarShownShape {
+  readonly period: string;
+  /** Absent when a content-matching filter (the title keyword) ran. */
+  readonly count?: number;
+  readonly remaining: boolean;
+  /** A content-matching filter ran: the note says only that the shown result matches what the owner asked. */
+  readonly narrowed: boolean;
+  /** All-day entries were left out (timed events only). */
+  readonly timedOnly: boolean;
+  /** The owner asked whether they are free. */
+  readonly availability: boolean;
+  /** The read returned a full page: only part was read, so a zero is never definitive. */
+  readonly incomplete: boolean;
+}
+
+/** The shape of what {@link renderCalendarEvents} shows for this window: its header's period and count, nothing else. */
+export function calendarShownShape(
+  window: CalendarWindow,
+  events: readonly CalendarEvent[],
+  options: CalendarRenderOptions,
+): CalendarShownShape {
+  const { language } = options;
+  const narrowed = options.keyword !== undefined;
+  const next = window.span.kind === 'next';
+  const qualifiers = {
+    narrowed,
+    timedOnly: !next && options.timedOnly === true,
+    availability: options.availability === true,
+    incomplete: options.partial === true || options.pageFull === true || (!next && events.length >= options.limit),
+  };
+  if (next) {
+    const period = language === 'en' ? `next event within ${window.days} days` : `앞으로 ${window.days}일 안의 다음 일정`;
+    return { period, ...(narrowed ? {} : { count: nextEventOf(events, options) === undefined ? 0 : 1 }), remaining: false, ...qualifiers };
+  }
+  return {
+    period: periodLabel(window, language, options.partOfDay),
+    ...(narrowed ? {} : { count: placedInWindow(window, events, options.timeZone).length }),
+    remaining: options.remaining === true,
+    ...qualifiers,
+  };
+}
+
+/**
  * What the SHORT_TERM conversation history keeps instead of the reply (TurnHandlerReply.history): no event text, so a
  * later chat turn's context — which may go to a REMOTE provider — never carries calendar content (ADR-0110 D4).
+ * With `shown` (a listing was answered), the note says structurally what the owner saw just above — the period label,
+ * the count when no content-matching filter ran, and how it was read — so a later chat turn knows the listing is on the
+ * owner's screen (owner DM 2026-10-22). Without it (a refusal, an invalid date, a failed read) the fixed note.
  */
-export function renderCalendarHistoryNote(language: CalendarLanguage): string {
+export function renderCalendarHistoryNote(language: CalendarLanguage, shown?: CalendarShownShape): string {
+  if (shown !== undefined) {
+    const { period } = shown;
+    const en = language === 'en';
+    const qualifiers = [
+      ...(shown.timedOnly ? [en ? 'timed events only' : '시간이 정해진 일정만'] : []),
+      ...(shown.availability ? [en ? 'asked whether free' : '비어 있는지 확인'] : []),
+      ...(shown.incomplete ? [en ? 'only part was read; within what was read' : '일부만 불러옴, 불러온 범위 기준'] : []),
+    ];
+    const tail = qualifiers.length > 0 ? ` (${qualifiers.join(en ? '; ' : ' · ')})` : '';
+    if (en) {
+      const what =
+        shown.narrowed || shown.count === undefined
+          ? `the calendar results for '${period}' matching what the User asked`
+          : `${shown.count} ${shown.remaining ? 'remaining ' : ''}calendar event${shown.count === 1 ? '' : 's'} for '${period}'`;
+      return `[Quoky showed the User ${what} just above${tail} — event details are not kept in this history.]`;
+    }
+    const noun = `${shown.remaining ? '남은 ' : ''}일정`;
+    const what =
+      shown.narrowed || shown.count === undefined
+        ? `캘린더 '${period}' 중 말씀하신 조건에 맞는 결과`
+        : shown.count > 0
+          ? `캘린더 '${period}' ${noun} ${shown.count}개`
+          : `캘린더 '${period}' 조회 결과(해당 ${noun} 0개)`;
+    return `[Quoky가 위에서 ${what}를 보여드림${tail} — 일정 내용은 기록하지 않음]`;
+  }
   return language === 'en'
     ? '[Quoky answered a calendar question from the calendar; event details are not kept in the conversation history.]'
     : '[캘린더 조회 응답 — 일정 내용은 대화 기록에 남기지 않아요.]';

@@ -8,6 +8,7 @@ import { placeCalendarSpan, type CalendarSpan } from './calendar-question';
 import {
   CALENDAR_REPLY_MAX_CHARS,
   CALENDAR_REPLY_MAX_EVENTS,
+  calendarShownShape,
   renderCalendarEvents,
   renderCalendarHistoryNote,
   renderCalendarReadFailure,
@@ -178,5 +179,41 @@ describe('calendar reply renderer (ADR-0110 D3)', () => {
     expect(renderCalendarWriteRefused('ko')).toContain('아무것도 바꾸지 않았어요');
     expect(renderCalendarWriteRefused('en')).toContain('nothing was changed');
     expect(renderCalendarHistoryNote('ko')).not.toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it('the history note is structural: period label and count of what was shown, never a title, time or location (owner DM 2026-10-22)', () => {
+    const titles = ['1차 면접_AI Agent_홍길동', '팀 회의'];
+    const events = [
+      event({ title: titles[0], start: '2026-10-07T01:00:00.000Z', end: '2026-10-07T02:00:00.000Z', location: '본사 3층 대회의실' }),
+      event({ title: titles[1], start: '2026-10-07T05:00:00.000Z', end: '2026-10-07T06:00:00.000Z' }),
+    ];
+    const note = (span: CalendarSpan, list: readonly CalendarEvent[], options: { language?: 'ko' | 'en'; remaining?: boolean } = {}) => {
+      const window = placeCalendarSpan(span, NOW, SEOUL);
+      if (window === undefined) throw new Error('no window');
+      const language = options.language ?? 'ko';
+      const renderOptions = { timeZone: SEOUL, now: NOW, language, limit: 50, ...(options.remaining ? { remaining: true } : {}) };
+      return renderCalendarHistoryNote(language, calendarShownShape(window, list, renderOptions));
+    };
+    const tomorrow = note({ kind: 'day', offset: 1 }, events);
+    expect(tomorrow).toBe("[Quoky가 위에서 캘린더 '내일 · 10월 7일(수)' 일정 2개를 보여드림 — 일정 내용은 기록하지 않음]");
+    expect(note({ kind: 'day', offset: 1 }, events, { language: 'en' })).toMatch(/^\[Quoky showed the User 2 calendar events for '.+' just above — event details are not kept in this history\.\]$/u);
+    expect(note({ kind: 'day', offset: 1 }, [])).toBe("[Quoky가 위에서 캘린더 '내일 · 10월 7일(수)' 조회 결과(해당 일정 0개)를 보여드림 — 일정 내용은 기록하지 않음]");
+    expect(note({ kind: 'day', offset: 1 }, [], { language: 'en' })).toBe(
+      "[Quoky showed the User 0 calendar events for 'Tomorrow · Wed, Oct 7' just above — event details are not kept in this history.]",
+    );
+    expect(note({ kind: 'day', offset: 1 }, events, { remaining: true })).toContain('남은 일정 2개');
+    expect(note({ kind: 'week', which: 'this' }, events)).toContain("'이번 주 · 10월 5일(월) ~ 10월 11일(일)' 일정 2개");
+    // The next-event answer names the lookahead only, never the found event's own date.
+    const next = note({ kind: 'next' }, events);
+    expect(next).toContain('다음 일정');
+    expect(next).not.toMatch(/10월 7일|09:00|10:00/u);
+    for (const text of [tomorrow, next, note({ kind: 'day', offset: 1 }, events, { language: 'en' })]) {
+      for (const title of titles) expect(text).not.toContain(title);
+      expect(text).not.toContain('면접');
+      expect(text).not.toContain('대회의실');
+      expect(text).not.toMatch(/\d{1,2}:\d{2}/u);
+    }
+    // Without a shape (a refusal, a failed read, an invalid date): the fixed note, unchanged.
+    expect(renderCalendarHistoryNote('ko')).toBe('[캘린더 조회 응답 — 일정 내용은 대화 기록에 남기지 않아요.]');
   });
 });
