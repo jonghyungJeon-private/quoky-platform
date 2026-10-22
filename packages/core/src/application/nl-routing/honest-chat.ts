@@ -12,6 +12,19 @@ import { NL_ACTION_VERBAL_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ENTRY_NOUNS, containsNl
  */
 
 const SOURCES_MAX_CHARS = 900;
+
+/**
+ * Owner DM 2026-10-22: after Quoky listed tomorrow's events, "내일 면접 기준으로 면접 질문 좀 뽑아줘" went to chat, which said it
+ * could not check the schedule and sent the owner to the calendar command again. The history keeps a structural note
+ * of what was shown (source, scope, count; never content, ADR-0110 D4 / ADR-0118 D7), and this sentence tells the chat
+ * reply what that note means. Content-dependent answers are the S2 `answer` step's (LOCAL model only), not chat's.
+ */
+export const LISTING_SHOWN_ABOVE_RULE =
+  "When the conversation history has a bracketed Quoky note that it showed the User a listing just above (its source, " +
+  "scope and count only), that listing is on the User's screen: never claim Quoky cannot see, check or access it and " +
+  'never send the User to look it up again. Work from the User\'s own words, refer to the listing shown above, and ask ' +
+  'the User for the one detail the answer needs (or suggest the specific follow-up to ask Quoky). Never guess or invent ' +
+  'what the listing contains.';
 const COMMANDS_MAX_CHARS = 1600;
 
 /**
@@ -32,8 +45,11 @@ export function renderConfiguredSourcesFact(
   if (sources.length > 0) {
     parts.push(
       `Quoky is connected to these sources right now and reads them only through their commands: ${listed}. ` +
-        'Sources not listed are not connected. A chat reply never reads a source itself: when the User asks about one ' +
-        'of the listed sources, point to its command instead of saying Quoky cannot access it.',
+        'Sources not listed are not connected. A chat reply never reads a source itself, and item contents (titles, ' +
+        'names, subjects, bodies) never reach it. ' +
+        LISTING_SHOWN_ABOVE_RULE +
+        ' Otherwise, when the User asks about one of the listed sources, point to its command instead of saying Quoky ' +
+        'cannot access it.',
     );
   }
   if (helpLines.length > 0) {

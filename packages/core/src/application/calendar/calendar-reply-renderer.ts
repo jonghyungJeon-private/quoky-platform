@@ -454,10 +454,53 @@ export function renderCalendarWriteRefused(language: CalendarLanguage): string {
 }
 
 /**
+ * The structural shape of a listing the owner was shown (owner DM 2026-10-22): only the period label of the window the
+ * owner asked for (Quoky's own date wording, never an event's), how many events the list counted, and whether it was
+ * the remaining ones. No title, time, location, attendee or event date.
+ */
+export interface CalendarShownShape {
+  readonly period: string;
+  readonly count: number;
+  readonly remaining: boolean;
+}
+
+/** The shape of what {@link renderCalendarEvents} shows for this window: its header's period and count, nothing else. */
+export function calendarShownShape(
+  window: CalendarWindow,
+  events: readonly CalendarEvent[],
+  options: CalendarRenderOptions,
+): CalendarShownShape {
+  const { language } = options;
+  if (window.span.kind === 'next') {
+    const period = language === 'en' ? `next event within ${window.days} days` : `앞으로 ${window.days}일 안의 다음 일정`;
+    return { period, count: nextEventOf(events, options) === undefined ? 0 : 1, remaining: false };
+  }
+  return {
+    period: periodLabel(window, language, options.partOfDay),
+    count: placedInWindow(window, events, options.timeZone).length,
+    remaining: options.remaining === true,
+  };
+}
+
+/**
  * What the SHORT_TERM conversation history keeps instead of the reply (TurnHandlerReply.history): no event text, so a
  * later chat turn's context — which may go to a REMOTE provider — never carries calendar content (ADR-0110 D4).
+ * With `shown` (a listing was answered), the note says structurally what the owner saw just above — the period label and
+ * the count — so a later chat turn knows the listing is on the owner's screen (owner DM 2026-10-22). Without it (a
+ * refusal, an invalid date, a failed read) the fixed note.
  */
-export function renderCalendarHistoryNote(language: CalendarLanguage): string {
+export function renderCalendarHistoryNote(language: CalendarLanguage, shown?: CalendarShownShape): string {
+  if (shown !== undefined) {
+    const { period } = shown;
+    if (language === 'en') {
+      const noun = `${shown.remaining ? 'remaining ' : ''}calendar event${shown.count === 1 ? '' : 's'}`;
+      return `[Quoky showed the User ${shown.count} ${noun} for '${period}' just above — event details are not kept in this history.]`;
+    }
+    const noun = `${shown.remaining ? '남은 ' : ''}일정`;
+    return shown.count > 0
+      ? `[Quoky가 위에서 캘린더 '${period}' ${noun} ${shown.count}개를 보여드림 — 일정 내용은 기록하지 않음]`
+      : `[Quoky가 위에서 캘린더 '${period}' 조회 결과(해당 ${noun} 0개)를 보여드림 — 일정 내용은 기록하지 않음]`;
+  }
   return language === 'en'
     ? '[Quoky answered a calendar question from the calendar; event details are not kept in the conversation history.]'
     : '[캘린더 조회 응답 — 일정 내용은 대화 기록에 남기지 않아요.]';

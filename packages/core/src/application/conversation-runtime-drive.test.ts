@@ -320,14 +320,15 @@ function harness(opts: HarnessOptions = {}) {
 }
 
 describe('Drive on the real runtime (ADR-0118 D4–D8, DRV-1)', () => {
-  it('a listing is deterministic: no classifier, no Task, no provider, and history keeps a fixed note', async () => {
+  it('a listing is deterministic: no classifier, no Task, no provider, and history keeps a structural note', async () => {
     const h = harness();
     const result = await h.send('최근 문서');
     expect(result.status).toBe('RESPONDED');
     expect(result.reply?.text).toContain(`1. ${NAME} · 문서`);
     expect(h.driveCalls).toEqual({ list: 1, exported: [] });
     expect([h.calls.classify, h.calls.createTask.length, h.prompts.length]).toEqual([0, 0, 0]);
-    expect(h.calls.recordAssistant).toEqual([renderDriveHistoryNote('ko', 'listed')]);
+    expect(h.calls.recordAssistant).toEqual([renderDriveHistoryNote('ko', 'listed', { filter: { kind: 'recent' }, count: 1 })]);
+    expect(h.calls.recordAssistant.join('\n')).not.toContain(NAME);
   });
 
   it('no document text leaves the host without an explicit summary request: a later chat turn carries none of it', async () => {

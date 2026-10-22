@@ -1606,7 +1606,8 @@ describe('Personal v3 CAL-2 — schedule questions from the configured calendar 
     expect(harness.providerCalls()).toBeGreaterThan(providerBefore);
     const history = (await harness.storage.memories.findShortTermByUser(owner.userId)).map((record) => record.content);
     expect(history.some((row) => row.includes(CALENDAR_FIXTURE_TITLE))).toBe(false);
-    expect(history).toContain('[캘린더 조회 응답 — 일정 내용은 대화 기록에 남기지 않아요.]');
+    // Owner DM 2026-10-22: a structural note (period label and count of what was shown), never an event's text.
+    expect(history.some((row) => /^\[Quoky가 위에서 캘린더 '오늘 · \d{1,2}월 \d{1,2}일\(.\)' 일정 \d+개를 보여드림 — 일정 내용은 기록하지 않음\]$/u.test(row))).toBe(true);
   });
 
   it('the calendar help line is listed in the full help reply', async () => {

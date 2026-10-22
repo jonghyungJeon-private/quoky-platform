@@ -888,6 +888,10 @@ describe('PromptComposer (ADR-0063 precedence contract)', () => {
       'An active project does not establish external connection status.',
     );
     expect(authorityRules).toContain(CONVERSATION_CONTINUITY_AND_STATUS_RULE);
+    // Owner DM 2026-10-22: a structural history note means the listing is on the User's screen, not unreachable.
+    expect(authorityRules).toContain(
+      "A bracketed Quoky note in the transcript records that Quoky showed the User a listing (its source, scope and count, never its contents): that listing is on the User's screen, so refer to it instead of sending the User to look it up again, and ask the User for any detail of it the answer needs instead of guessing.",
+    );
     expect(authorityRules).toContain(
       'Interpret target meaning from the current User task and conversation continuity.',
     );
@@ -909,7 +913,7 @@ describe('PromptComposer (ADR-0063 precedence contract)', () => {
     expect(authorityRules).toContain(
       'Current authoritative facts supplied by Core override contradictory or stale transcript for external current state.',
     );
-    expect(authorityRules.split('\n')).toHaveLength(16);
+    expect(authorityRules.split('\n')).toHaveLength(17);
     expect(authorityRules.split(CONVERSATION_CONTINUITY_AND_STATUS_RULE)).toHaveLength(2);
     expect(authorityRules).not.toMatch(/\b(?:Atlas|Scenario E)\b/i);
   });

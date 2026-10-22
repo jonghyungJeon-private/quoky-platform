@@ -381,14 +381,38 @@ export function renderDriveFirstSheetOnlyNote(reason: DriveFirstSheetOnlyReason,
 export type DriveHistoryKind = 'listed' | 'not-read' | 'not-summarized';
 
 /**
+ * The structural shape of what a `listed` reply showed (owner DM 2026-10-22): recent or a name search (never the name the
+ * owner searched for), the file kind it was narrowed to, and how many entries it numbered. No file name, owner or date.
+ */
+export interface DriveShownShape {
+  readonly filter: DriveListingFilter;
+  readonly count: number;
+}
+
+/** "최근 수정한 문서", "이름으로 찾은 파일"; "recently modified files", "files found by name". */
+function driveScopeLabel(filter: DriveListingFilter, language: DriveLanguage): string {
+  const en = language === 'en';
+  const kind = filter.fileKind !== undefined ? driveKindLabel(filter.fileKind, language) : en ? 'files' : '파일';
+  if (filter.kind === 'recent') return en ? `recently modified ${kind}` : `최근 수정한 ${kind}`;
+  return en ? `${kind} found by the name the User gave` : `말씀하신 이름으로 찾은 ${kind}`;
+}
+
+/**
  * What SHORT_TERM history keeps instead of a Drive reply (TurnHandlerReply.history): no file name, so a later chat
  * turn's context — which may go to a REMOTE provider — never carries Drive content (ADR-0118 D7). The note says
- * truthfully what happened.
+ * truthfully what happened; a `listed` note with `shown` says structurally what the owner saw just above (owner DM
+ * 2026-10-22).
  */
-export function renderDriveHistoryNote(language: DriveLanguage, kind: DriveHistoryKind): string {
+export function renderDriveHistoryNote(language: DriveLanguage, kind: DriveHistoryKind, shown?: DriveShownShape): string {
   const en = language === 'en';
   switch (kind) {
     case 'listed':
+      if (shown !== undefined) {
+        const scope = driveScopeLabel(shown.filter, language);
+        return en
+          ? `[Quoky showed the User a Drive list of ${shown.count} entr${shown.count === 1 ? 'y' : 'ies'} ('${scope}') just above — file names and contents are not kept in this history.]`
+          : `[Quoky가 위에서 드라이브 '${scope}' 목록 ${shown.count}건을 보여드림 — 파일 이름과 내용은 기록하지 않음]`;
+      }
       return en
         ? '[Quoky listed Drive files; file names are not kept in the conversation history.]'
         : '[드라이브 파일 목록 응답 — 파일 이름은 대화 기록에 남기지 않아요.]';

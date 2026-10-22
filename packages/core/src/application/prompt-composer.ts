@@ -93,6 +93,7 @@ const GENERAL_CHAT_AUTHORITY_RULES_BODY = [
   'Current authoritative facts supplied by Core override contradictory or stale transcript for external current state.',
   'Do not claim outbound delivery succeeded before it occurs.',
   'Jira, GitHub, calendar and mail lookups go through Quoky commands (for example "내 jira 이슈 보여줘"); point the User to them instead of claiming whether a connection exists or guessing their contents.',
+  'A bracketed Quoky note in the transcript records that Quoky showed the User a listing (its source, scope and count, never its contents): that listing is on the User\'s screen, so refer to it instead of sending the User to look it up again, and ask the User for any detail of it the answer needs instead of guessing.',
 ].join('\n');
 
 /**

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { MessageMarkup } from '../../ports/message-markup.port';
 import type { DriveFileSummary } from '../../ports/drive-reader.port';
 import { PLAIN_TEXT_MARKUP, renderMessageContent } from '../message-rendering';
-import { DRIVE_REPLY_MAX_CHARS, DRIVE_REPLY_MAX_ENTRIES, renderDriveListing } from './drive-reply-renderer';
+import { DRIVE_REPLY_MAX_CHARS, DRIVE_REPLY_MAX_ENTRIES, renderDriveHistoryNote, renderDriveListing } from './drive-reply-renderer';
 
 /** A markup that writes two characters for every untrusted character: the worst case of any platform in use. */
 const DOUBLING_MARKUP: MessageMarkup = {
@@ -36,5 +36,19 @@ describe('Drive listing size (the GML-1 review P2 rule): every displayed number 
         expect(text).toMatch(language === 'en' ? /…and 90\+ more/ : /…외 90건 이상/);
       }
     }
+  });
+});
+
+describe('Drive history note (owner DM 2026-10-22)', () => {
+  it('says structurally what was shown: recent or a name search, the kind and the count; never the searched name', () => {
+    expect(renderDriveHistoryNote('ko', 'listed', { filter: { kind: 'recent', fileKind: 'spreadsheet' }, count: 4 })).toBe(
+      "[Quoky가 위에서 드라이브 '최근 수정한 스프레드시트' 목록 4건을 보여드림 — 파일 이름과 내용은 기록하지 않음]",
+    );
+    const search = renderDriveHistoryNote('ko', 'listed', { filter: { kind: 'search', name: '분기 결산 보고서' }, count: 2 });
+    expect(search).toBe("[Quoky가 위에서 드라이브 '말씀하신 이름으로 찾은 파일' 목록 2건을 보여드림 — 파일 이름과 내용은 기록하지 않음]");
+    expect(search).not.toContain('결산');
+    const en = renderDriveHistoryNote('en', 'listed', { filter: { kind: 'search', name: 'Q4 budget' }, count: 1 });
+    expect(en).toBe("[Quoky showed the User a Drive list of 1 entry ('files found by the name the User gave') just above — file names and contents are not kept in this history.]");
+    expect(renderDriveHistoryNote('ko', 'listed')).toBe('[드라이브 파일 목록 응답 — 파일 이름은 대화 기록에 남기지 않아요.]');
   });
 });

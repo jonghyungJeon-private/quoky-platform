@@ -108,11 +108,13 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
     expect(((await failing.handle(ctx('안 읽은 메일'))) as { nlSelection?: unknown } | null)?.nlSelection).toBeUndefined();
   });
 
-  it('answers 안 읽은 메일 deterministically: sender, subject, date and snippet, with a fixed history note', async () => {
+  it('answers 안 읽은 메일 deterministically: sender, subject, date and snippet, with a structural history note', async () => {
     const { reader, searches } = fakeReader();
     const outcome = await createMailTurnHandler({ reader, timeZone: SEOUL }).handle(ctx('안 읽은 메일'));
     expect(searches).toEqual([{ unreadOnly: true, limit: 10 }]);
-    expect(outcome).toMatchObject({ status: 'RESPONDED', history: { assistant: renderMailHistoryNote('ko', 'listed') } });
+    // Owner DM 2026-10-22: the scope and count of what was shown, never a sender, subject or snippet (ADR-0118 D7).
+    expect(outcome).toMatchObject({ status: 'RESPONDED', history: { assistant: '[Quoky가 위에서 \'안 읽은 메일\' 목록 1건을 보여드림 — 메일 내용은 기록하지 않음]' } });
+    for (const content of ['김철수', '회의 자료', '첨부']) expect(JSON.stringify((outcome as { history?: unknown }).history)).not.toContain(content);
     expect(textOf(outcome)).toBe(
       [
         '안 읽은 메일: 1건',
@@ -413,7 +415,8 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
     const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
     const listing = await handler.handle(ctx('안 읽은 메일'));
     expect(listing).not.toHaveProperty('kind');
-    expect(listing).toMatchObject({ status: 'RESPONDED', history: { assistant: renderMailHistoryNote('ko', 'listed') } });
+    expect(listing).toMatchObject({ status: 'RESPONDED', history: { assistant: renderMailHistoryNote('ko', 'listed', { kind: 'listing', filter: { unread: true, today: false }, count: 1 }) } });
+    expect(JSON.stringify((listing as { history?: unknown }).history)).not.toMatch(/송금|IGNORE|attacker/);
     // The hostile text is only ever an untrusted span inside the fixed format (no reply variant other than `reply`).
     expect(JSON.stringify((listing as { reply: { content: unknown } }).reply.content)).toContain('"kind":"untrusted"');
     // An unrelated owner message is not claimed because of anything the mail said.

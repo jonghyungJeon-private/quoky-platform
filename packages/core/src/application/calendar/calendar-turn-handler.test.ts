@@ -82,7 +82,8 @@ describe('calendar turn handler (ADR-0110 D3–D6)', () => {
         replyToMessageId: 'm-1',
       },
       status: 'RESPONDED',
-      history: { assistant: renderCalendarHistoryNote('ko') },
+      // Owner DM 2026-10-22: the period label and count of what was shown, never an event's title or time (ADR-0110 D4).
+      history: { assistant: "[Quoky가 위에서 캘린더 '내일 · 10월 7일(수)' 일정 1개를 보여드림 — 일정 내용은 기록하지 않음]" },
       // ADR-0120 follow-up: the structural catalog equivalent, content-free.
       nlSelection: { entryId: 'calendar.events', args: { range: 'tomorrow' } },
     });

@@ -334,14 +334,16 @@ function harness(opts: HarnessOptions = {}) {
 }
 
 describe('mail on the real runtime (ADR-0118 D4–D8)', () => {
-  it('a listing is deterministic: no classifier, no Task, no provider, and history keeps a fixed note', async () => {
+  it('a listing is deterministic: no classifier, no Task, no provider, and history keeps a structural note', async () => {
     const h = harness();
     const result = await h.send('안 읽은 메일');
     expect(result.status).toBe('RESPONDED');
     expect(result.reply?.text).toContain(`1. ${SENDER} · ${SUBJECT}`);
     expect(h.mailCalls).toEqual({ search: 1, get: [], thread: [] });
     expect([h.calls.classify, h.calls.createTask.length, h.prompts.length]).toEqual([0, 0, 0]);
-    expect(h.calls.recordAssistant).toEqual([renderMailHistoryNote('ko', 'listed')]);
+    expect(h.calls.recordAssistant).toEqual([renderMailHistoryNote('ko', 'listed', { kind: 'listing', filter: { unread: true, today: false }, count: 1 })]);
+    expect(h.calls.recordAssistant.join('\n')).not.toContain(SENDER);
+    expect(h.calls.recordAssistant.join('\n')).not.toContain(SUBJECT);
   });
 
   it('no mail text leaves the host without an explicit summary request: a later chat turn carries none of it', async () => {

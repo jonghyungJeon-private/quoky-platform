@@ -383,14 +383,42 @@ export function renderMailSummaryFooter(language: MailLanguage): string {
 export type MailHistoryKind = 'listed' | 'not-read' | 'not-summarized';
 
 /**
+ * The structural shape of what a `listed` reply showed (owner DM 2026-10-22): a listing's scope label (Quoky's own
+ * wording of the filter — never the sender the owner named, only that one was named) and how many entries it numbered,
+ * or the number of the one listed mail a pick showed. No sender, subject, snippet or date.
+ */
+export type MailShownShape =
+  | { readonly kind: 'listing'; readonly filter: MailListingFilter; readonly count: number }
+  | { readonly kind: 'pick'; readonly index: number };
+
+/** The scope words of a listing header without the sender ("오늘 받은 안 읽은 메일", "unread today's mail"). */
+function mailScopeLabel(filter: MailListingFilter, language: MailLanguage): string {
+  return language === 'en'
+    ? `${filter.unread ? 'unread ' : ''}${filter.today ? "today's " : ''}mail${filter.period !== undefined ? ` received ${filter.period.en}` : ''}${filter.from !== undefined ? ' from the sender the User named' : ''}`
+    : `${filter.from !== undefined ? '말씀하신 보낸 사람의 ' : ''}${filter.today ? '오늘 받은 ' : ''}${filter.period !== undefined ? `${filter.period.ko} 받은 ` : ''}${filter.unread ? '안 읽은 ' : ''}메일`;
+}
+
+/**
  * What SHORT_TERM history keeps instead of a mail reply (TurnHandlerReply.history): no sender, subject or snippet, so a
  * later chat turn's context — which may go to a REMOTE provider — never carries mail content (ADR-0118 D7). The note
- * says truthfully what happened (review P3-7): a DM-only, refusal, usage or failed-read reply read no mail.
+ * says truthfully what happened (review P3-7): a DM-only, refusal, usage or failed-read reply read no mail. A `listed`
+ * note with `shown` says structurally what the owner saw just above (owner DM 2026-10-22).
  */
-export function renderMailHistoryNote(language: MailLanguage, kind: MailHistoryKind): string {
+export function renderMailHistoryNote(language: MailLanguage, kind: MailHistoryKind, shown?: MailShownShape): string {
   const en = language === 'en';
   switch (kind) {
     case 'listed':
+      if (shown?.kind === 'listing') {
+        const scope = mailScopeLabel(shown.filter, language);
+        return en
+          ? `[Quoky showed the User a list of ${shown.count} email${shown.count === 1 ? '' : 's'} ('${scope}') just above — mail details are not kept in this history.]`
+          : `[Quoky가 위에서 '${scope}' 목록 ${shown.count}건을 보여드림 — 메일 내용은 기록하지 않음]`;
+      }
+      if (shown?.kind === 'pick') {
+        return en
+          ? `[Quoky showed the User the sender, subject and date of email ${shown.index} of the last list just above — mail details are not kept in this history.]`
+          : `[Quoky가 위에서 마지막 메일 목록의 ${shown.index}번 메일(보낸 사람·제목·날짜)을 보여드림 — 메일 내용은 기록하지 않음]`;
+      }
       return en
         ? '[Quoky listed mail; mail details are not kept in the conversation history.]'
         : '[메일 목록 응답 — 메일 내용은 대화 기록에 남기지 않아요.]';
