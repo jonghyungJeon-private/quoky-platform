@@ -32,13 +32,23 @@ const SOURCE_FAMILIES: readonly (readonly string[])[] = (() => {
   return [...seen.values()];
 })();
 
-/** The help question's source scope, or `undefined` when the rule does not apply. */
-export function nlHelpSourceScope(selection: { readonly entryId: string; readonly args: NlArgs }, groundingText: string, entry?: NlCatalogEntry): NlHelpScope | undefined {
+/**
+ * The help question's source scope, or `undefined` when the rule does not apply. `selectorAsked` (owner answer 2 of
+ * 2026-10-22): the selector itself answered NEEDS_CLARIFICATION with help.topic (the prompt's unclear how-to), so the
+ * ambiguity is the selector's reading and any topic it named is kept for the Quoky option; the topic gate guards only a
+ * CLEAR selection.
+ */
+export function nlHelpSourceScope(
+  selection: { readonly entryId: string; readonly args: NlArgs },
+  groundingText: string,
+  entry?: NlCatalogEntry,
+  options: { readonly selectorAsked?: boolean } = {},
+): NlHelpScope | undefined {
   if (selection.entryId !== HELP_ENTRY_ID) return undefined;
   const help = entry ?? NL_WAVE1_ENTRIES[HELP_ENTRY_ID];
   const topicSpec = help.args.find((spec) => spec.name === 'topic');
   const topic = selection.args.topic;
-  if (topic !== undefined && topic !== topicSpec?.default) return undefined;
+  if (options.selectorAsked !== true && topic !== undefined && topic !== topicSpec?.default) return undefined;
   const text = groundingText.normalize('NFC');
   const named = SOURCE_FAMILIES.filter((names) => containsGroundingWord(text, names));
   if (named.length !== 1) return undefined;

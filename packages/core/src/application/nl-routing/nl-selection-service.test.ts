@@ -1028,6 +1028,15 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     const h = harness({ script: [out('help.topic', {}, { ambiguity: 'NEEDS_CLARIFICATION' })] });
     expect(await h.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
   });
+
+  it('owner answer 2 (v66): the selector unclear how-to with a topic also asks; the topic it named is kept for the Quoky option', async () => {
+    const h = harness({ script: [out('help.topic', { topic: 'work-lookup' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
+    expect(await h.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
+    expect(await h.decide('1')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
+    // Without a source named, a selector clarification on help stays the ordinary one-option question.
+    const plain = harness({ script: [out('help.topic', { topic: 'reminder' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
+    expect(await plain.decide('알림 어떻게 해')).toMatchObject({ kind: 'ask', text: expect.stringContaining('어떤 걸 찾으세요?') });
+  });
 });
 
 describe('owner decision B (2026-10-22): a handler confirmation is the open D7 question (yes runs it, no ends it)', () => {

@@ -299,7 +299,7 @@ export interface NlSelectionServiceDeps {
   readonly elapsed?: () => number;
   /**
    * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
-   * record is written and every prompt and reply is byte-identical to `nl-select.v65` (the read prompt). Any other level requires mode
+   * record is written and every prompt and reply is byte-identical to `nl-select.v66` (the read prompt). Any other level requires mode
    * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
    */
   readonly actions?: {
@@ -778,7 +778,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /**
    * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
    * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
-   * prompt is `nl-select.v65` (the read prompt) byte for byte.
+   * prompt is `nl-select.v66` (the read prompt) byte for byte.
    */
   actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
@@ -1088,7 +1088,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // Owner decision A (2026-10-22): a question whose only read option is the general help about a named source asks the
     // help-scope question (Quoky's way, or the source app itself) instead of a one-option list.
     if (options.length === 1 && !weekdayRefused) {
-      const scoped = await this.askHelpScope(options[0] as NlValidatedSelection, turn, language, prepared.groundingText);
+      const scoped = await this.askHelpScope(options[0] as NlValidatedSelection, turn, language, prepared.groundingText, output.ambiguity === 'NEEDS_CLARIFICATION');
       if (scoped !== undefined) return scoped;
     }
     if (options.length === 0) {
@@ -1130,8 +1130,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * asked, never answered: "Quoky로 슬랙을 조회하는 방법을 물으신 건가요, 아니면 슬랙 앱 자체의 사용법인가요?". The pending
    * question is the D7 numbered one: option 1 is the help selection, option 2 the app itself (`appSource`).
    */
-  private async askHelpScope(selection: NlValidatedSelection, turn: NlSelectionTurn, language: 'ko' | 'en', groundingText: string): Promise<NlSelectionDecision | undefined> {
-    const scope = nlHelpSourceScope({ entryId: selection.entry.id, args: selection.args }, groundingText, selection.entry);
+  private async askHelpScope(selection: NlValidatedSelection, turn: NlSelectionTurn, language: 'ko' | 'en', groundingText: string, selectorAsked = false): Promise<NlSelectionDecision | undefined> {
+    const scope = nlHelpSourceScope({ entryId: selection.entry.id, args: selection.args }, groundingText, selection.entry, { selectorAsked });
     if (scope === undefined || !isNlWave1EntryId(selection.entry.id)) return undefined;
     // The Quoky option shows that source's help section: the topic covering the offered entries that own the source name
     // (one topic only; otherwise the general help the selection named).
