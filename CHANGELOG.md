@@ -18,7 +18,16 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   that whole token ("OP" → "OP26").
 - **Changed (eval).** The intent and read-regression scorers score Core's help-scope question as a clarification; the
   corpus gains a clarification gold (`clarify`), `neg-010`, reported as "clarification golds asked" (not gated). No
-  prompt byte changed. The selector-RAG audit record needs regenerating (gold bytes changed).
+  prompt byte changed at that point. The selector-RAG audit record was regenerated (gold bytes changed).
+- **Changed (eval).** `jira.release` misses are re-scored by Core's own outcome in a snapshot of the visible Jira world
+  (`apps/quoky/src/tools/jira-world.snapshot.v1.json`, the owner-approved live probe of 2026-10-15): the same reply,
+  confirmation and item query is a hit (`equivalent`), in the intent, read-regression, agent-plan and selector-RAG scorers.
+  a8-12 and a8-08's observed outputs now score as hits.
+- **Changed (prompt; read `nl-select.v66`, A6 `v64`, R2 `v65`, not yet gated).** An unclear how-to about a source Quoky
+  reads (the action is one Quoky also does for it) is NEEDS_CLARIFICATION with `help.topic`; an app's own feature stays
+  none; a capability question stays `help.topic`. No examples added. Pins and the `agent-plan.v3` pin regenerated.
+- **Changed.** The help-scope question's Quoky option shows that source's help section (found from the catalog entry's
+  owning handler and its help lines), else the general help.
 
 ## Unreleased — development harness hardening (2026-10-21)
 
