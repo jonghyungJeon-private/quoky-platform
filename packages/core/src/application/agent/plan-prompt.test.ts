@@ -10,7 +10,7 @@ import { AGENT_PLAN_PROMPT_VERSION, agentPlanExamples, buildAgentPlanPrompt } fr
 import { parseAgentPlanOutput } from './plan-schema';
 import { validateAgentPlan } from './plan-validator';
 
-// ADR-0121 D1 (stage S2 P1, P2; the owner's review of 2026-10-21): the planner prompt `agent-plan.v4` — its edits of the gated read prompt, its examples
+// ADR-0121 D1 (stage S2 P1, P2; the owner's review of 2026-10-21): the planner prompt `agent-plan.v5` — its edits of the gated read prompt, its examples
 // (valid plans, never a near-copy of a gold case: the RAG-0 contamination lint of ADR-0123 D5), and a byte pin.
 
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
@@ -35,7 +35,7 @@ function gold(): Array<{ id: string; text: string; expects: GoldExpect[] }> {
   });
 }
 
-describe('agent-plan.v4 prompt', () => {
+describe('agent-plan.v5 prompt', () => {
   const prompt = buildAgentPlanPrompt({ entries: [...READS, ...ACTIONS], text: '이번 주 회의 일정 보여줘' });
 
   it('is the read prompt over the READ entries with the four fixed edits (no action entry is ever shown)', () => {
@@ -50,7 +50,7 @@ describe('agent-plan.v4 prompt', () => {
     expect(prompt).toContain('"take": <the number of issues the owner names, else 10>');
     expect(prompt).toContain('Core runs none of it');
     for (const action of ACTIONS) expect(prompt).not.toContain(`- ${action.id}:`);
-    // Every catalog line and every read example of the gated read prompt is kept, byte for byte (nl-select.v66 lists the
+    // Every catalog line and every read example of the gated read prompt is kept, byte for byte (nl-select.v67 lists the
     // GitHub `kind`, so the planner's catalog has it too).
     const catalog = read.slice(read.indexOf('Catalog:'), read.indexOf('\nExamples:'));
     expect(prompt).toContain(catalog);
@@ -102,10 +102,10 @@ describe('agent-plan.v4 prompt', () => {
   });
 
   it('is pinned byte for byte (a change needs a new version and its gate run)', () => {
-    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v4');
+    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v5');
     const full = buildAgentPlanPrompt({ entries: READS, text: 'x' });
     expect(createHash('sha256').update(full).digest('hex')).toBe(PINNED_SHA256);
   });
 });
 
-const PINNED_SHA256 = '62f3cec61e7be734068ad65c1c783f19869d124e5521134c89cc47978a8049d5';
+const PINNED_SHA256 = 'eac54ca7792275b0384ac87adfce2aa159f6cee923f3f07e1516f63df73774a5';

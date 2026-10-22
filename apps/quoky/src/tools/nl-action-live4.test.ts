@@ -132,13 +132,14 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
     expect(mixed.decision.kind).not.toBe('execute');
   });
 
-  it('a repaired or a two-read case still asks; the ask records its closed shape', async () => {
-    // A valid value the owner did not say (a guess) is repaired away: the one option differs from what was named, so Core
-    // asks. An out-of-set FILTER value ('scheduled' for a list status) is never replaced by the default either (Codex P2).
+  it('an ungrounded guess runs as the default read; an out-of-set or two-read case still asks; the ask records its closed shape', async () => {
+    // Owner rule of 2026-10-22: a valid value the owner did not say (a guess) falls back to the arg's default on a READ
+    // entry, so the default read runs. An out-of-set FILTER value ('scheduled' for a list status) is never replaced by the
+    // default (Codex P2): it still asks.
     const repaired = await decideActionCase({ text }, scripted(answer({ status: 'canceled' }, 'CLEAR', [])), NOW);
     const outOfSet = await decideActionCase({ text }, scripted(answer({ status: 'scheduled' }, 'CLEAR', [])), NOW);
     expect(outOfSet.decision.kind).toBe('ask');
-    expect(repaired.decision.kind).toBe('ask');
+    expect(repaired.decision).toMatchObject({ kind: 'execute', command: { entryId: 'reminder.list', args: {} } });
     const two = await decideActionCase({ text: '몇 건이야?' }, scripted(JSON.stringify({ entryId: 'jira.issues', args: { count: true }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'calendar.events', args: { count: true } }] })), NOW);
     expect(two.decision.kind).toBe('ask');
     expect(askShape(parseSelectionOutput(answer({ status: 'scheduled' }, 'NEEDS_CLARIFICATION', [{ entryId: 'reminder.create', args: {} }]))!)).toBe('ask:NEEDS_CLARIFICATION:args=status:alts=reminder.create');

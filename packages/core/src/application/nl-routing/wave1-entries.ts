@@ -10,7 +10,16 @@ import { nlRangeLabel, type NlResolvedRange } from './symbolic-time';
  */
 
 const SEARCH_LIMIT = { name: 'limit', kind: 'limit', description: 'Only when the owner asks for at most N results (1-10).' } as const;
-const COUNT = { name: 'count', kind: 'flag', default: false, description: 'true only when the owner asks how many ("몇 개", "how many").' } as const;
+/**
+ * Read `nl-select.v67` (2026-10-22 re-gate, a8-16): a how-many follow-up keeps the previous selection and adds count (the
+ * selector kept the release but dropped count on "몇 개야?" after a release selection).
+ */
+const COUNT = {
+  name: 'count',
+  kind: 'flag',
+  default: false,
+  description: 'true only when the owner asks how many ("몇 개", "how many"). A how-many follow-up to the previous selection keeps that entry and all its args and sets count true.',
+} as const;
 
 /**
  * ADR-0120 A6 R1 status filter (owner-approved 2026-10-15, "지금 추가"): which to-dos or reminders a list shows. Closed

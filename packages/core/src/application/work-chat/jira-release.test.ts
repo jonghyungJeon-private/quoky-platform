@@ -471,7 +471,10 @@ describe('jira.release validation (A8)', () => {
   });
 
   it('owner decision 2: mine is the default (dropped from the canonical args); all needs the owner explicit words', () => {
-    expect(validate('jira.release', { release: '20261015', scope: 'all' }, '20261015 릴리스 보여줘')).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'scope' });
+    // Owner rule of 2026-10-22: an ungrounded all falls back to the default mine (a8-10, a8-19), never a question.
+    expect(validate('jira.release', { release: '20261015', scope: 'all' }, '20261015 릴리스 보여줘')).toMatchObject({ ok: true, value: { args: { release: '20261015' } } });
+    expect(validate('jira.release', { release: '1.4.0', scope: 'all' }, '이번 1.4.0 릴리즈에 포함된 지라 티켓 다 보여줘')).toMatchObject({ ok: true, value: { args: { release: '1.4.0' } } });
+    expect(validate('jira.release', { project: 'OP26', release: '20261015', scope: 'all' }, 'show me all issues in release 20261015 of OP26')).toMatchObject({ ok: true, value: { args: { project: 'OP26', release: '20261015' } } });
     expect(validate('jira.release', { release: '20261015', scope: 'mine' }, '20261015 릴리스 중에 내 담당만')).toMatchObject({ ok: true, value: { args: { release: '20261015' } } });
     for (const text of ['내 담당 말고 전체 담당은?', '20261015 담당 상관없이 보여줘', '20261015 모든 담당자 거', 'release 20261015 for all assignees']) {
       expect(validate('jira.release', { release: '20261015', scope: 'all' }, text, { release: '20261015' }), text).toMatchObject({ ok: true, value: { args: { release: '20261015', scope: 'all' } } });

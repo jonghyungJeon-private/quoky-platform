@@ -581,10 +581,10 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
       command: { args: { status: 'in-progress' } },
       basis: '기준: 내가 담당 / 진행 중',
     });
-    // a model guess without the owner saying it is refused (grounding), and the status carries over once stated
+    // the status carries over once stated; a model guess without the owner saying it falls back to the default (open)
     expect(await jira.decide('그 중에 하나만', { now: at(120_000) })).toMatchObject({ kind: 'execute', command: { args: { status: 'in-progress' } } });
     const guessed = harness({ script: [out('jira.issues', { status: 'in-progress' })] });
-    expect((await guessed.decide('내 지라 이슈 보여줘')).kind).not.toBe('execute');
+    expect(await guessed.decide('내 지라 이슈 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.issues', args: {} } });
 
     const calendar = harness({ script: [out('calendar.events', { range: 'this-week' }), out('calendar.events', { range: 'this-week', keyword: '스크럼' })] });
     await calendar.decide('이번 주 일정 알려줘');

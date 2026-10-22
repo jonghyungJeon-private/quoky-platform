@@ -395,7 +395,7 @@ describe('plan digest', () => {
     expect(pending.caseIds).toHaveLength(873 + NEW.length);
     expect(approved.maxCalls).toBe(approvedCount * 3);
     expect(pending.maxCalls).toBe((873 + NEW.length) * 3);
-    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v4', callTimeoutMs: 6000, fixture: FIXTURE });
+    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v5', callTimeoutMs: 6000, fixture: FIXTURE });
     expect(approved.promptSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -462,7 +462,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(await runCli(['--mode', 'plan', '--runs', '3'], planned)).toBe(EXIT_OK);
     const text = planned.out.join('\n');
     expect(digestOf(planned.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS)));
-    expect(text).toContain('"promptVersion": "agent-plan.v4"');
+    expect(text).toContain('"promptVersion": "agent-plan.v5"');
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);
     const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
@@ -543,7 +543,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
     expect(ran.out.join('\n')).toContain('multi-step exact: 174/174 (100.0%)  one-step exact: 674/674 (100.0%)  ask: 12/12');
-    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v4): PASSED in all 1 run(s)');
+    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v5): PASSED in all 1 run(s)');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
     const today = { ...deps(created), load: () => unapproved };

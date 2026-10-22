@@ -58,7 +58,7 @@ describe('a8-12 and a8-08: the observed selector outputs', () => {
       ['a8-08', { release: '20261015' }],
       ['a8-08', { project: 'OP26' }],
       ['a8-08', { project: 'OP26', release: '20261020' }],
-      ['a8-07', { project: '차란차 운영 2026', release: '20261015', scope: 'all' }],
+      ['a8-21', { release: '20261015' }],
       ['a8-11', { project: 'OP26', count: true }],
     ];
     for (const [id, args] of misses) {

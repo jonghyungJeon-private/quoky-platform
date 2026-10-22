@@ -710,7 +710,17 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
     if (spec.kind === 'enum' && spec.valueGrounding?.[value] !== undefined) {
       const text = normalizeForMatch(groundingText);
       const stated = (spec.valueGrounding[value] ?? []).some((word) => groundingWordIn(text, normalizeForMatch(word)));
-      if (!stated && previousArgs?.[spec.name] !== value) return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
+      if (!stated && previousArgs?.[spec.name] !== value) {
+        // Owner rule "assistant, not chatbot" (2026-10-22 re-gate): on a READ entry an enum value the owner did not state
+        // falls back to the arg's own default (canonical args omit it) instead of asking: the default is exactly the
+        // read the owner's words ask for, and the basis line names it. An action or ITEM_READ entry, or an arg with no
+        // default, still refuses.
+        if (entry.risk === 'READ' && spec.default !== undefined) {
+          delete args[spec.name];
+          continue;
+        }
+        return { ok: false, reason: 'ungrounded', entryId, arg: spec.name };
+      }
     }
     if (spec.kind === 'keyword') {
       if (rangeSpec !== undefined && spec.allowsTimeWords !== true && isWeekdayOrTimeKeyword(value, mentions.length > 0)) return { ok: false, reason: 'time-keyword', entryId, arg: spec.name };

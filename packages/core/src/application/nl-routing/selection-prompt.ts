@@ -145,14 +145,20 @@ import { nlModeVocabularyText } from './action-entries';
  * something with it stays help.topic, CLEAR. A6 rule 8's other-software bullet says the same. No word list and no example
  * change (RAG-0 unchanged); Core turns the clarification into its help-scope question. Not gated yet. Pinned by
  * `golden/nl-select.v66.prompts.json`.
+ * v67 (read) / v65 (A6) (the v66 / v64 gates of 2026-10-22: a8-16 "몇 개야?" after a release selection kept the release
+ * but dropped `count` in every run) = v66 / v64 with one clause in the shared `count` arg description: a how-many
+ * follow-up to the previous selection keeps that entry and all its args and sets count true. No word list beyond the
+ * description's own wording, no example change (RAG-0 unchanged). Core also falls back to the default for an ungrounded
+ * enum value on a READ entry (a8-10, a8-19: `scope: all`), which is not a prompt change. Pinned by
+ * `golden/nl-select.v67.prompts.json`.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v66';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v67';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v66.prompts.json`).
+ * for byte (pinned by `golden/nl-select.v67.prompts.json`).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v64';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v65';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -184,9 +190,9 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v64';
  * read v62). v63 = the v48 R2 lines on top of v62 (the A6 prompt with the GitHub `kind` catalog line; not the read v63).
  * v64 = the v48 R2 lines on top of v63 (the A6 prompt with the GitHub `kind` rule and examples; not the read v64).
  * v65 = the v48 R2 lines on top of v64 (the A6 prompt with the unclear how-to rule of owner answer 2, 2026-10-22; not
- * the read v65).
+ * the read v65). v66 = the v48 R2 lines on top of v65 (the A6 prompt with the count follow-up clause; not the read v66).
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v65';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v66';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
