@@ -1,0 +1,3763 @@
+{
+ "version": 1,
+ "authorship": "AUTHORED 2026-10-23 by an agent session (Claude Sonnet 5.5) working offline in worktree claude/v5-a2-data. That session had NO access to a classifier prompt (none exists yet), did not call any model, and did not read or derive anything from the prompt this set will be run against. Per the A2 ratification record (G5 held-out set) the set must be authored by the owner or a separate session without access to the classifier prompt, and never used for prompt tuning: this file satisfies the first condition only as long as that holds. Author: agent session; reviewer of record: the owner (pending).",
+ "provenanceCaveat": "All names are invented by hand-picked syllable combinations or generic shapes; coincidence with a real person or organization is possible and unintended. No name was taken from the owner's calendar, mail, contacts or any corpus. The owner is asked to skim for accidental real names before the hash is frozen in DECISIONS.md.",
+ "rules": "A held-out name is one that NO name field of its case covers (nameFields hold only unrelated decoys; validated by the data test: no Hangul 2-syllable sequence of a name field occurs in a held-out name and no Latin name-field part occurs in it). `held[].tokens` are the title tokens (A2-D12 tokenization, NFKC, split on whitespace and _ - / | · , . : ; ( ) [ ] { } < > \" ' #) that carry the name; a leak is any such token (or its name text) appearing in a topic. `scored:false` entries (confidential-subject) are reported, not thresholded (RA2-9). `subjectTokens` are the title tokens a useful topic may keep.",
+ "thresholdsFromRecord": {
+  "leakedIdsEmailsUrlsNameFieldNames": 0,
+  "recallOverall": 0.98,
+  "recallPerShape": 0.9,
+  "rounds": 3,
+  "usefulTopic": 0.8
+ },
+ "cases": [
+  {
+   "id": "g5-001",
+   "lang": "ko",
+   "title": "[외부] 임준 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "임준",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "임준"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-002",
+   "lang": "ko",
+   "title": "[외부] 오율 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "오율",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "오율"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-003",
+   "lang": "ko",
+   "title": "배훈 입사 환영 점심",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "배훈",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "배훈"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "입사",
+    "환영",
+    "점심"
+   ]
+  },
+  {
+   "id": "g5-004",
+   "lang": "ko",
+   "title": "손결 발표 리허설",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "손결",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "손결"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "발표",
+    "리허설"
+   ]
+  },
+  {
+   "id": "g5-005",
+   "lang": "ko",
+   "title": "커리어 상담_정온",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "정온",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "정온"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "커리어",
+    "상담"
+   ]
+  },
+  {
+   "id": "g5-006",
+   "lang": "ko",
+   "title": "설아 발표 리허설",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "설아",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "설아"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "발표",
+    "리허설"
+   ]
+  },
+  {
+   "id": "g5-007",
+   "lang": "ko",
+   "title": "변하 면접 - 백엔드",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "변하",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "변하"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "면접",
+    "백엔드"
+   ]
+  },
+  {
+   "id": "g5-008",
+   "lang": "ko",
+   "title": "곽언 포함 디자인 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "곽언",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "곽언"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포함",
+    "디자인",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-009",
+   "lang": "ko",
+   "title": "탁이 온보딩 1주차",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "탁이",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "탁이"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "온보딩",
+    "1주차"
+   ]
+  },
+  {
+   "id": "g5-010",
+   "lang": "ko",
+   "title": "채용 2차 - 편해 - 데이터 분석",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "편해",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "편해"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "채용",
+    "2차",
+    "데이터",
+    "분석"
+   ]
+  },
+  {
+   "id": "g5-011",
+   "lang": "ko",
+   "title": "주안 입사 환영 점심",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "주안",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "주안"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "입사",
+    "환영",
+    "점심"
+   ]
+  },
+  {
+   "id": "g5-012",
+   "lang": "ko",
+   "title": "옥빈 인수인계 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "옥빈",
+     "shape": "ko-2syl",
+     "scored": true,
+     "tokens": [
+      "옥빈"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "인수인계",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-013",
+   "lang": "ko",
+   "title": "한유라 발표 리허설",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "한유라",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "한유라"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "발표",
+    "리허설"
+   ]
+  },
+  {
+   "id": "g5-014",
+   "lang": "ko",
+   "title": "봉도하 인수인계 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "봉도하",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "봉도하"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "인수인계",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-015",
+   "lang": "ko",
+   "title": "[외부] 구서진 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "구서진",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "구서진"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-016",
+   "lang": "ko",
+   "title": "마예린 발표 리허설",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "마예린",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "마예린"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "발표",
+    "리허설"
+   ]
+  },
+  {
+   "id": "g5-017",
+   "lang": "ko",
+   "title": "1:1 천지온",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "천지온",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "천지온"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-018",
+   "lang": "ko",
+   "title": "채용 2차 - 모하준 - 데이터 분석",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "모하준",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "모하준"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "채용",
+    "2차",
+    "데이터",
+    "분석"
+   ]
+  },
+  {
+   "id": "g5-019",
+   "lang": "ko",
+   "title": "염다솜 면접 - 백엔드",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "염다솜",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "염다솜"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "면접",
+    "백엔드"
+   ]
+  },
+  {
+   "id": "g5-020",
+   "lang": "ko",
+   "title": "신규 프로젝트 킥오프 (피유진)",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "피유진",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "피유진"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "신규",
+    "프로젝트",
+    "킥오프"
+   ]
+  },
+  {
+   "id": "g5-021",
+   "lang": "ko",
+   "title": "멘토링: 안수아",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "안수아",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "안수아"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "멘토링"
+   ]
+  },
+  {
+   "id": "g5-022",
+   "lang": "ko",
+   "title": "채용 2차 - 방세빈 - 데이터 분석",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "방세빈",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "방세빈"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "채용",
+    "2차",
+    "데이터",
+    "분석"
+   ]
+  },
+  {
+   "id": "g5-023",
+   "lang": "ko",
+   "title": "신규 프로젝트 킥오프 (곽민재)",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "곽민재",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "곽민재"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "신규",
+    "프로젝트",
+    "킥오프"
+   ]
+  },
+  {
+   "id": "g5-024",
+   "lang": "ko",
+   "title": "노해린 인수인계 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "노해린",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "노해린"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "인수인계",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-025",
+   "lang": "ko",
+   "title": "1:1 팽지후",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "팽지후",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "팽지후"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-026",
+   "lang": "ko",
+   "title": "인서율 인수인계 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "인서율",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "인서율"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "인수인계",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-027",
+   "lang": "ko",
+   "title": "커리어 상담_목하람",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "목하람",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "목하람"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "커리어",
+    "상담"
+   ]
+  },
+  {
+   "id": "g5-028",
+   "lang": "ko",
+   "title": "경태오 포함 디자인 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "경태오",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "경태오"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포함",
+    "디자인",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-029",
+   "lang": "ko",
+   "title": "[외부] 남궁민수 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "남궁민수",
+     "shape": "ko-4syl",
+     "scored": true,
+     "tokens": [
+      "남궁민수"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-030",
+   "lang": "ko",
+   "title": "제갈서연 발표 리허설",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "제갈서연",
+     "shape": "ko-4syl",
+     "scored": true,
+     "tokens": [
+      "제갈서연"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "발표",
+    "리허설"
+   ]
+  },
+  {
+   "id": "g5-031",
+   "lang": "ko",
+   "title": "선우지안 포트폴리오 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "선우지안",
+     "shape": "ko-4syl",
+     "scored": true,
+     "tokens": [
+      "선우지안"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포트폴리오",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-032",
+   "lang": "ko",
+   "title": "1:1 황보나래",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "황보나래",
+     "shape": "ko-4syl",
+     "scored": true,
+     "tokens": [
+      "황보나래"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-033",
+   "lang": "ko",
+   "title": "사공도현 면접 - 백엔드",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "사공도현",
+     "shape": "ko-4syl",
+     "scored": true,
+     "tokens": [
+      "사공도현"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "면접",
+    "백엔드"
+   ]
+  },
+  {
+   "id": "g5-034",
+   "lang": "ko",
+   "title": "[외부] 독고재민 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "독고재민",
+     "shape": "ko-4syl",
+     "scored": true,
+     "tokens": [
+      "독고재민"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-035",
+   "lang": "ko",
+   "title": "[외부] 동방유진 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "동방유진",
+     "shape": "ko-4syl",
+     "scored": true,
+     "tokens": [
+      "동방유진"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-036",
+   "lang": "ko",
+   "title": "신규 프로젝트 킥오프 (서문하린)",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "서문하린",
+     "shape": "ko-4syl",
+     "scored": true,
+     "tokens": [
+      "서문하린"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "신규",
+    "프로젝트",
+    "킥오프"
+   ]
+  },
+  {
+   "id": "g5-037",
+   "lang": "ko",
+   "title": "커리어 상담_어금보람",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "어금보람",
+     "shape": "ko-4syl",
+     "scored": true,
+     "tokens": [
+      "어금보람"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "커리어",
+    "상담"
+   ]
+  },
+  {
+   "id": "g5-038",
+   "lang": "ko",
+   "title": "제갈태윤 포트폴리오 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "제갈태윤",
+     "shape": "ko-4syl",
+     "scored": true,
+     "tokens": [
+      "제갈태윤"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포트폴리오",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-039",
+   "lang": "ko",
+   "title": "[외부] 남궁현 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "남궁현",
+     "shape": "ko-compound-surname-3syl",
+     "scored": true,
+     "tokens": [
+      "남궁현"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-040",
+   "lang": "ko",
+   "title": "선우은 인수인계 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "선우은",
+     "shape": "ko-compound-surname-3syl",
+     "scored": true,
+     "tokens": [
+      "선우은"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "인수인계",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-041",
+   "lang": "ko",
+   "title": "황보찬 발표 리허설",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "황보찬",
+     "shape": "ko-compound-surname-3syl",
+     "scored": true,
+     "tokens": [
+      "황보찬"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "발표",
+    "리허설"
+   ]
+  },
+  {
+   "id": "g5-042",
+   "lang": "ko",
+   "title": "독고준 면접 - 백엔드",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "독고준",
+     "shape": "ko-compound-surname-3syl",
+     "scored": true,
+     "tokens": [
+      "독고준"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "면접",
+    "백엔드"
+   ]
+  },
+  {
+   "id": "g5-043",
+   "lang": "ko",
+   "title": "[외부] 사공빈 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "사공빈",
+     "shape": "ko-compound-surname-3syl",
+     "scored": true,
+     "tokens": [
+      "사공빈"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-044",
+   "lang": "ko",
+   "title": "신규 프로젝트 킥오프 (제갈솔)",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "제갈솔",
+     "shape": "ko-compound-surname-3syl",
+     "scored": true,
+     "tokens": [
+      "제갈솔"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "신규",
+    "프로젝트",
+    "킥오프"
+   ]
+  },
+  {
+   "id": "g5-045",
+   "lang": "ko",
+   "title": "[외부] 남궁아 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "남궁아",
+     "shape": "ko-compound-surname-3syl",
+     "scored": true,
+     "tokens": [
+      "남궁아"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-046",
+   "lang": "ko",
+   "title": "커리어 상담_선우진",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "선우진",
+     "shape": "ko-compound-surname-3syl",
+     "scored": true,
+     "tokens": [
+      "선우진"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "커리어",
+    "상담"
+   ]
+  },
+  {
+   "id": "g5-047",
+   "lang": "ko",
+   "title": "황보율 입사 환영 점심",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "황보율",
+     "shape": "ko-compound-surname-3syl",
+     "scored": true,
+     "tokens": [
+      "황보율"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "입사",
+    "환영",
+    "점심"
+   ]
+  },
+  {
+   "id": "g5-048",
+   "lang": "ko",
+   "title": "주간 싱크 / 서문현 / 스프린트",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "서문현",
+     "shape": "ko-compound-surname-3syl",
+     "scored": true,
+     "tokens": [
+      "서문현"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "주간",
+    "싱크",
+    "스프린트"
+   ]
+  },
+  {
+   "id": "g5-049",
+   "lang": "ko",
+   "title": "1:1 채유정님",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "채유정님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "채유정님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-050",
+   "lang": "ko",
+   "title": "류지환님 포트폴리오 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "류지환님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "류지환님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포트폴리오",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-051",
+   "lang": "ko",
+   "title": "신규 프로젝트 킥오프 (석다은님)",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "석다은님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "석다은님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "신규",
+    "프로젝트",
+    "킥오프"
+   ]
+  },
+  {
+   "id": "g5-052",
+   "lang": "ko",
+   "title": "1:1 문서현님",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "문서현님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "문서현님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-053",
+   "lang": "ko",
+   "title": "금나리 씨 퇴사 면담",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "금나리 씨",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "금나리",
+      "씨"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "퇴사",
+    "면담"
+   ]
+  },
+  {
+   "id": "g5-054",
+   "lang": "ko",
+   "title": "맹은채 씨 면접 - 백엔드",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "맹은채 씨",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "맹은채",
+      "씨"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "면접",
+    "백엔드"
+   ]
+  },
+  {
+   "id": "g5-055",
+   "lang": "ko",
+   "title": "커리어 상담_육진우 씨",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "육진우 씨",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "육진우",
+      "씨"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "커리어",
+    "상담"
+   ]
+  },
+  {
+   "id": "g5-056",
+   "lang": "ko",
+   "title": "위소담선생님 온보딩 1주차",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "위소담선생님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "위소담선생님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "온보딩",
+    "1주차"
+   ]
+  },
+  {
+   "id": "g5-057",
+   "lang": "ko",
+   "title": "신규 프로젝트 킥오프 (진하윤선생님)",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "진하윤선생님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "진하윤선생님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "신규",
+    "프로젝트",
+    "킥오프"
+   ]
+  },
+  {
+   "id": "g5-058",
+   "lang": "ko",
+   "title": "공태희교수님 포트폴리오 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "공태희교수님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "공태희교수님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포트폴리오",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-059",
+   "lang": "ko",
+   "title": "[외부] 용가온대리님 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "용가온대리님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "용가온대리님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-060",
+   "lang": "ko",
+   "title": "[외부] 빈이안대리님 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "빈이안대리님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "빈이안대리님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-061",
+   "lang": "ko",
+   "title": "1:1 추민혁책임님",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "추민혁책임님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "추민혁책임님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-062",
+   "lang": "ko",
+   "title": "멘토링: 감도영책임님",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "감도영책임님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "감도영책임님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "멘토링"
+   ]
+  },
+  {
+   "id": "g5-063",
+   "lang": "ko",
+   "title": "채용 2차 - 원서윤팀장 - 데이터 분석",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "원서윤팀장",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "원서윤팀장"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "채용",
+    "2차",
+    "데이터",
+    "분석"
+   ]
+  },
+  {
+   "id": "g5-064",
+   "lang": "ko",
+   "title": "표지안부장님 결과 공유 미팅",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "표지안부장님",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "표지안부장님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "결과",
+    "공유",
+    "미팅"
+   ]
+  },
+  {
+   "id": "g5-065",
+   "lang": "ko",
+   "title": "채용 2차 - 하도겸과장 - 데이터 분석",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "하도겸과장",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "하도겸과장"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "채용",
+    "2차",
+    "데이터",
+    "분석"
+   ]
+  },
+  {
+   "id": "g5-066",
+   "lang": "ko",
+   "title": "채용 2차 - 연채원이사님 - 데이터 분석",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "연채원이사님",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "연채원이사님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "채용",
+    "2차",
+    "데이터",
+    "분석"
+   ]
+  },
+  {
+   "id": "g5-067",
+   "lang": "ko",
+   "title": "은서하실장 온보딩 1주차",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "은서하실장",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "은서하실장"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "온보딩",
+    "1주차"
+   ]
+  },
+  {
+   "id": "g5-068",
+   "lang": "ko",
+   "title": "갈우진팀장님 퇴사 면담",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "갈우진팀장님",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "갈우진팀장님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "퇴사",
+    "면담"
+   ]
+  },
+  {
+   "id": "g5-069",
+   "lang": "ko",
+   "title": "길가은대표님 포트폴리오 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "길가은대표님",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "길가은대표님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포트폴리오",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-070",
+   "lang": "ko",
+   "title": "신규 프로젝트 킥오프 (복수민차장님)",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "복수민차장님",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "복수민차장님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "신규",
+    "프로젝트",
+    "킥오프"
+   ]
+  },
+  {
+   "id": "g5-071",
+   "lang": "ko",
+   "title": "신해든센터장 입사 환영 점심",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "신해든센터장",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "신해든센터장"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "입사",
+    "환영",
+    "점심"
+   ]
+  },
+  {
+   "id": "g5-072",
+   "lang": "ko",
+   "title": "멘토링: 옥지유매니저",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "옥지유매니저",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "옥지유매니저"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "멘토링"
+   ]
+  },
+  {
+   "id": "g5-073",
+   "lang": "ko",
+   "title": "[외부] 팽도아리드 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "팽도아리드",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "팽도아리드"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-074",
+   "lang": "ko",
+   "title": "남이든파트장 포함 디자인 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "남이든파트장",
+     "shape": "ko-title-compound",
+     "scored": true,
+     "tokens": [
+      "남이든파트장"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포함",
+    "디자인",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-075",
+   "lang": "ko",
+   "title": "멘토링: 팀장 도예린",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "팀장 도예린",
+     "shape": "ko-title-prefix",
+     "scored": true,
+     "tokens": [
+      "팀장",
+      "도예린"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "멘토링"
+   ]
+  },
+  {
+   "id": "g5-076",
+   "lang": "ko",
+   "title": "부장 반서후 면접 - 백엔드",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "부장 반서후",
+     "shape": "ko-title-prefix",
+     "scored": true,
+     "tokens": [
+      "부장",
+      "반서후"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "면접",
+    "백엔드"
+   ]
+  },
+  {
+   "id": "g5-077",
+   "lang": "ko",
+   "title": "과장 소이준 입사 환영 점심",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "과장 소이준",
+     "shape": "ko-title-prefix",
+     "scored": true,
+     "tokens": [
+      "과장",
+      "소이준"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "입사",
+    "환영",
+    "점심"
+   ]
+  },
+  {
+   "id": "g5-078",
+   "lang": "ko",
+   "title": "주간 싱크 / 이사 양하윤 / 스프린트",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "이사 양하윤",
+     "shape": "ko-title-prefix",
+     "scored": true,
+     "tokens": [
+      "이사",
+      "양하윤"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "주간",
+    "싱크",
+    "스프린트"
+   ]
+  },
+  {
+   "id": "g5-079",
+   "lang": "ko",
+   "title": "실장 두시은 결과 공유 미팅",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "실장 두시은",
+     "shape": "ko-title-prefix",
+     "scored": true,
+     "tokens": [
+      "실장",
+      "두시은"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "결과",
+    "공유",
+    "미팅"
+   ]
+  },
+  {
+   "id": "g5-080",
+   "lang": "ko",
+   "title": "커리어 상담_대리 라도건",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "대리 라도건",
+     "shape": "ko-title-prefix",
+     "scored": true,
+     "tokens": [
+      "대리",
+      "라도건"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "커리어",
+    "상담"
+   ]
+  },
+  {
+   "id": "g5-081",
+   "lang": "ko",
+   "title": "매니저 마서현 인수인계 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "매니저 마서현",
+     "shape": "ko-title-prefix",
+     "scored": true,
+     "tokens": [
+      "매니저",
+      "마서현"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "인수인계",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-082",
+   "lang": "ko",
+   "title": "리드 가윤재 면접 - 백엔드",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "리드 가윤재",
+     "shape": "ko-title-prefix",
+     "scored": true,
+     "tokens": [
+      "리드",
+      "가윤재"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "면접",
+    "백엔드"
+   ]
+  },
+  {
+   "id": "g5-083",
+   "lang": "en",
+   "title": "Interview: Minjun Seo (backend)",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Minjun Seo",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Minjun",
+      "Seo"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "Interview",
+    "backend"
+   ]
+  },
+  {
+   "id": "g5-084",
+   "lang": "en",
+   "title": "1:1 Hana Yoon / roadmap",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Hana Yoon",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Hana",
+      "Yoon"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1",
+    "roadmap"
+   ]
+  },
+  {
+   "id": "g5-085",
+   "lang": "en",
+   "title": "Seoyeon Choi farewell lunch",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Seoyeon Choi",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Seoyeon",
+      "Choi"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "farewell",
+    "lunch"
+   ]
+  },
+  {
+   "id": "g5-086",
+   "lang": "en",
+   "title": "Coffee chat - Taeyang Jung",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Taeyang Jung",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Taeyang",
+      "Jung"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "Coffee",
+    "chat"
+   ]
+  },
+  {
+   "id": "g5-087",
+   "lang": "en",
+   "title": "1:1 Yuna Han / roadmap",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Yuna Han",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Yuna",
+      "Han"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1",
+    "roadmap"
+   ]
+  },
+  {
+   "id": "g5-088",
+   "lang": "en",
+   "title": "Jiwoo Kang farewell lunch",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Jiwoo Kang",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Jiwoo",
+      "Kang"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "farewell",
+    "lunch"
+   ]
+  },
+  {
+   "id": "g5-089",
+   "lang": "en",
+   "title": "Coffee chat - Harin Shin",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Harin Shin",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Harin",
+      "Shin"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "Coffee",
+    "chat"
+   ]
+  },
+  {
+   "id": "g5-090",
+   "lang": "en",
+   "title": "Eunchae Moon - onboarding week 1",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Eunchae Moon",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Eunchae",
+      "Moon"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "onboarding",
+    "week",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-091",
+   "lang": "en",
+   "title": "Kickoff call | Daniel Cho | pilot",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Daniel Cho",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Daniel",
+      "Cho"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "Kickoff",
+    "call",
+    "pilot"
+   ]
+  },
+  {
+   "id": "g5-092",
+   "lang": "en",
+   "title": "Interview: Rina Okada (backend)",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Rina Okada",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Rina",
+      "Okada"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "Interview",
+    "backend"
+   ]
+  },
+  {
+   "id": "g5-093",
+   "lang": "en",
+   "title": "Wei Chen farewell lunch",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Wei Chen",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Wei",
+      "Chen"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "farewell",
+    "lunch"
+   ]
+  },
+  {
+   "id": "g5-094",
+   "lang": "en",
+   "title": "1:1 S. Park / roadmap",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "S. Park",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "S",
+      "Park"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1",
+    "roadmap"
+   ]
+  },
+  {
+   "id": "g5-095",
+   "lang": "en",
+   "title": "J.H. Lee farewell lunch",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "J.H. Lee",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "J",
+      "H",
+      "Lee"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "farewell",
+    "lunch"
+   ]
+  },
+  {
+   "id": "g5-096",
+   "lang": "en",
+   "title": "Coffee chat - minho.seo",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "minho.seo",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "minho",
+      "seo"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "Coffee",
+    "chat"
+   ]
+  },
+  {
+   "id": "g5-097",
+   "lang": "ko",
+   "title": "1:1 존 도우",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "존 도우",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "존",
+      "도우"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-098",
+   "lang": "ko",
+   "title": "1:1 제인 스미스",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "제인 스미스",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "제인",
+      "스미스"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-099",
+   "lang": "ko",
+   "title": "마리아 로페즈 포함 디자인 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "마리아 로페즈",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "마리아",
+      "로페즈"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포함",
+    "디자인",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-100",
+   "lang": "ko",
+   "title": "안나 코발스키 결과 공유 미팅",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "안나 코발스키",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "안나",
+      "코발스키"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "결과",
+    "공유",
+    "미팅"
+   ]
+  },
+  {
+   "id": "g5-101",
+   "lang": "ko",
+   "title": "1:1 아흐메드 하산",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "아흐메드 하산",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "아흐메드",
+      "하산"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-102",
+   "lang": "ko",
+   "title": "주간 싱크 / 세르게이 이바노프 / 스프린트",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "세르게이 이바노프",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "세르게이",
+      "이바노프"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "주간",
+    "싱크",
+    "스프린트"
+   ]
+  },
+  {
+   "id": "g5-103",
+   "lang": "ko",
+   "title": "1:1 로라 베커",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "로라 베커",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "로라",
+      "베커"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-104",
+   "lang": "ko",
+   "title": "[외부] 피에르 뒤랑 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "피에르 뒤랑",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "피에르",
+      "뒤랑"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-105",
+   "lang": "ko",
+   "title": "엘레나 가르시아 포함 디자인 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "엘레나 가르시아",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "엘레나",
+      "가르시아"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포함",
+    "디자인",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-106",
+   "lang": "ko",
+   "title": "데이비드 첸 포트폴리오 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "데이비드 첸",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "데이비드",
+      "첸"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포트폴리오",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-107",
+   "lang": "ko",
+   "title": "1:1 사라 코헨",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "사라 코헨",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "사라",
+      "코헨"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1",
+    "1"
+   ]
+  },
+  {
+   "id": "g5-108",
+   "lang": "ko",
+   "title": "요한 슈미트 인수인계 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "요한 슈미트",
+     "shape": "foreign-translit",
+     "scored": true,
+     "tokens": [
+      "요한",
+      "슈미트"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "인수인계",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-109",
+   "lang": "ko",
+   "title": "커리어 상담_민지누나",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "민지누나",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "민지누나"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "커리어",
+    "상담"
+   ]
+  },
+  {
+   "id": "g5-110",
+   "lang": "ko",
+   "title": "주간 싱크 / 곰돌이 / 스프린트",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "곰돌이",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "곰돌이"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "주간",
+    "싱크",
+    "스프린트"
+   ]
+  },
+  {
+   "id": "g5-111",
+   "lang": "ko",
+   "title": "멘토링: 두부",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "두부",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "두부"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "멘토링"
+   ]
+  },
+  {
+   "id": "g5-112",
+   "lang": "ko",
+   "title": "[외부] J형 미팅 | 제품 소개",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "J형",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "J형"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "외부",
+    "미팅",
+    "제품",
+    "소개"
+   ]
+  },
+  {
+   "id": "g5-113",
+   "lang": "ko",
+   "title": "주간 싱크 / 미니 / 스프린트",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "미니",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "미니"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "주간",
+    "싱크",
+    "스프린트"
+   ]
+  },
+  {
+   "id": "g5-114",
+   "lang": "ko",
+   "title": "쭌이 인수인계 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "쭌이",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "쭌이"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "인수인계",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-115",
+   "lang": "ko",
+   "title": "별이쌤 발표 리허설",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "별이쌤",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "별이쌤"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "발표",
+    "리허설"
+   ]
+  },
+  {
+   "id": "g5-116",
+   "lang": "ko",
+   "title": "주간 싱크 / 몽이 / 스프린트",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "몽이",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "몽이"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "주간",
+    "싱크",
+    "스프린트"
+   ]
+  },
+  {
+   "id": "g5-117",
+   "lang": "ko",
+   "title": "코코 온보딩 1주차",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "코코",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "코코"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "온보딩",
+    "1주차"
+   ]
+  },
+  {
+   "id": "g5-118",
+   "lang": "ko",
+   "title": "막내님 포트폴리오 리뷰",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "막내님",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "막내님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "포트폴리오",
+    "리뷰"
+   ]
+  },
+  {
+   "id": "g5-119",
+   "lang": "en",
+   "title": "Falcon demo prep",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Falcon",
+     "shape": "codename",
+     "scored": true,
+     "tokens": [
+      "Falcon"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "demo",
+    "prep"
+   ]
+  },
+  {
+   "id": "g5-120",
+   "lang": "ko",
+   "title": "프로젝트 오로라 데모 미팅",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "프로젝트 오로라",
+     "shape": "codename",
+     "scored": true,
+     "tokens": [
+      "프로젝트",
+      "오로라"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "데모",
+    "미팅"
+   ]
+  },
+  {
+   "id": "g5-121",
+   "lang": "en",
+   "title": "Project Nimbus vendor review",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Project Nimbus",
+     "shape": "codename",
+     "scored": true,
+     "tokens": [
+      "Project",
+      "Nimbus"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "vendor",
+    "review"
+   ]
+  },
+  {
+   "id": "g5-122",
+   "lang": "ko",
+   "title": "블루문 파트너십 논의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "블루문",
+     "shape": "codename",
+     "scored": true,
+     "tokens": [
+      "블루문"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "파트너십",
+    "논의"
+   ]
+  },
+  {
+   "id": "g5-123",
+   "lang": "en",
+   "title": "Operation Tango demo prep",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Operation Tango",
+     "shape": "codename",
+     "scored": true,
+     "tokens": [
+      "Operation",
+      "Tango"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "demo",
+    "prep"
+   ]
+  },
+  {
+   "id": "g5-124",
+   "lang": "ko",
+   "title": "코드명 해바라기 계약 검토",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "코드명 해바라기",
+     "shape": "codename",
+     "scored": true,
+     "tokens": [
+      "코드명",
+      "해바라기"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "계약",
+    "검토"
+   ]
+  },
+  {
+   "id": "g5-125",
+   "lang": "en",
+   "title": "Atlas-2 demo prep",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Atlas-2",
+     "shape": "codename",
+     "scored": true,
+     "tokens": [
+      "Atlas",
+      "2"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "demo",
+    "prep"
+   ]
+  },
+  {
+   "id": "g5-126",
+   "lang": "ko",
+   "title": "레드우드 계약 검토",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "레드우드",
+     "shape": "codename",
+     "scored": true,
+     "tokens": [
+      "레드우드"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "계약",
+    "검토"
+   ]
+  },
+  {
+   "id": "g5-127",
+   "lang": "en",
+   "title": "Hydra demo prep",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Hydra",
+     "shape": "codename",
+     "scored": true,
+     "tokens": [
+      "Hydra"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "demo",
+    "prep"
+   ]
+  },
+  {
+   "id": "g5-128",
+   "lang": "ko",
+   "title": "프로젝트 은하수 정기 점검 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "프로젝트 은하수",
+     "shape": "codename",
+     "scored": true,
+     "tokens": [
+      "프로젝트",
+      "은하수"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "정기",
+    "점검",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-129",
+   "lang": "ko",
+   "title": "한결소프트 계약 검토",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "한결소프트",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "한결소프트"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "계약",
+    "검토"
+   ]
+  },
+  {
+   "id": "g5-130",
+   "lang": "ko",
+   "title": "다온물류 데모 미팅",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "다온물류",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "다온물류"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "데모",
+    "미팅"
+   ]
+  },
+  {
+   "id": "g5-131",
+   "lang": "en",
+   "title": "Kickoff - Brightwave Labs",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Brightwave Labs",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "Brightwave",
+      "Labs"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "Kickoff"
+   ]
+  },
+  {
+   "id": "g5-132",
+   "lang": "en",
+   "title": "Planning sync: Northgate Partners",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Northgate Partners",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "Northgate",
+      "Partners"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "Planning",
+    "sync"
+   ]
+  },
+  {
+   "id": "g5-133",
+   "lang": "ko",
+   "title": "한울정밀 파트너십 논의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "한울정밀",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "한울정밀"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "파트너십",
+    "논의"
+   ]
+  },
+  {
+   "id": "g5-134",
+   "lang": "en",
+   "title": "Kickoff - OrbitPay",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "OrbitPay",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "OrbitPay"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "Kickoff"
+   ]
+  },
+  {
+   "id": "g5-135",
+   "lang": "en",
+   "title": "Kickoff - Lumen Foods",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Lumen Foods",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "Lumen",
+      "Foods"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "Kickoff"
+   ]
+  },
+  {
+   "id": "g5-136",
+   "lang": "ko",
+   "title": "다래제약 데모 미팅",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "다래제약",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "다래제약"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "데모",
+    "미팅"
+   ]
+  },
+  {
+   "id": "g5-137",
+   "lang": "ko",
+   "title": "새빛건설 방문 일정 조율",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "새빛건설",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "새빛건설"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "방문",
+    "일정",
+    "조율"
+   ]
+  },
+  {
+   "id": "g5-138",
+   "lang": "en",
+   "title": "Kestrel Logistics demo prep",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Kestrel Logistics",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "Kestrel",
+      "Logistics"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "demo",
+    "prep"
+   ]
+  },
+  {
+   "id": "g5-139",
+   "lang": "ko",
+   "title": "누리온 모빌리티 킥오프",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "누리온 모빌리티",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "누리온",
+      "모빌리티"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "킥오프"
+   ]
+  },
+  {
+   "id": "g5-140",
+   "lang": "ko",
+   "title": "청솔교육 파트너십 논의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "청솔교육",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "청솔교육"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "파트너십",
+    "논의"
+   ]
+  },
+  {
+   "id": "g5-141",
+   "lang": "en",
+   "title": "Aster Capital quarterly check-in",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Aster Capital",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "Aster",
+      "Capital"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "quarterly",
+    "check",
+    "in"
+   ]
+  },
+  {
+   "id": "g5-142",
+   "lang": "ko",
+   "title": "미래로에너지 방문 일정 조율",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "미래로에너지",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "미래로에너지"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "방문",
+    "일정",
+    "조율"
+   ]
+  },
+  {
+   "id": "g5-143",
+   "lang": "ko",
+   "title": "해운대 지점 킥오프",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "해운대 지점",
+     "shape": "place",
+     "scored": true,
+     "tokens": [
+      "해운대",
+      "지점"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "킥오프"
+   ]
+  },
+  {
+   "id": "g5-144",
+   "lang": "ko",
+   "title": "Gangnam Tower B동 정기 점검 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "Gangnam Tower B동",
+     "shape": "place",
+     "scored": true,
+     "tokens": [
+      "Gangnam",
+      "Tower",
+      "B동"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "정기",
+    "점검",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-145",
+   "lang": "ko",
+   "title": "대전 연구소 제안 발표",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "대전 연구소",
+     "shape": "place",
+     "scored": true,
+     "tokens": [
+      "대전",
+      "연구소"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "제안",
+    "발표"
+   ]
+  },
+  {
+   "id": "g5-146",
+   "lang": "en",
+   "title": "Seongsu Studio quarterly check-in",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Seongsu Studio",
+     "shape": "place",
+     "scored": true,
+     "tokens": [
+      "Seongsu",
+      "Studio"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "quarterly",
+    "check",
+    "in"
+   ]
+  },
+  {
+   "id": "g5-147",
+   "lang": "ko",
+   "title": "제주 오피스 정기 점검 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "제주 오피스",
+     "shape": "place",
+     "scored": true,
+     "tokens": [
+      "제주",
+      "오피스"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "정기",
+    "점검",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-148",
+   "lang": "ko",
+   "title": "판교 3층 회의실 정기 점검 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "판교 3층 회의실",
+     "shape": "place",
+     "scored": true,
+     "tokens": [
+      "판교",
+      "3층",
+      "회의실"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "정기",
+    "점검",
+    "회의"
+   ]
+  },
+  {
+   "id": "g5-149",
+   "lang": "ko",
+   "title": "[기밀] 인사평가 결과 면담",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "인사평가 결과 면담",
+     "shape": "confidential-subject",
+     "scored": false,
+     "tokens": [
+      "인사평가",
+      "결과",
+      "면담"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "기밀"
+   ]
+  },
+  {
+   "id": "g5-150",
+   "lang": "ko",
+   "title": "[기밀] 징계위원회 사전 논의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "징계위원회 사전 논의",
+     "shape": "confidential-subject",
+     "scored": false,
+     "tokens": [
+      "징계위원회",
+      "사전",
+      "논의"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "기밀"
+   ]
+  },
+  {
+   "id": "g5-151",
+   "lang": "ko",
+   "title": "인수합병 검토 회의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "인수합병 검토 회의",
+     "shape": "confidential-subject",
+     "scored": false,
+     "tokens": [
+      "인수합병",
+      "검토",
+      "회의"
+     ]
+    }
+   ],
+   "subjectTokens": []
+  },
+  {
+   "id": "g5-152",
+   "lang": "ko",
+   "title": "[기밀] 건강검진 결과 상담",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "건강검진 결과 상담",
+     "shape": "confidential-subject",
+     "scored": false,
+     "tokens": [
+      "건강검진",
+      "결과",
+      "상담"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "기밀"
+   ]
+  },
+  {
+   "id": "g5-153",
+   "lang": "ko",
+   "title": "구조조정 일정 논의",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "구조조정 일정 논의",
+     "shape": "confidential-subject",
+     "scored": false,
+     "tokens": [
+      "구조조정",
+      "일정",
+      "논의"
+     ]
+    }
+   ],
+   "subjectTokens": []
+  },
+  {
+   "id": "g5-154",
+   "lang": "ko",
+   "title": "layoff planning sync (비공개)",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "layoff planning sync",
+     "shape": "confidential-subject",
+     "scored": false,
+     "tokens": [
+      "layoff",
+      "planning",
+      "sync"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "비공개"
+   ]
+  },
+  {
+   "id": "g5-155",
+   "lang": "ko",
+   "title": "[기밀] 연봉 협상 면담",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "연봉 협상 면담",
+     "shape": "confidential-subject",
+     "scored": false,
+     "tokens": [
+      "연봉",
+      "협상",
+      "면담"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "기밀"
+   ]
+  },
+  {
+   "id": "g5-156",
+   "lang": "ko",
+   "title": "소송 대응 전략 회의 (비공개)",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "소송 대응 전략 회의",
+     "shape": "confidential-subject",
+     "scored": false,
+     "tokens": [
+      "소송",
+      "대응",
+      "전략",
+      "회의"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "비공개"
+   ]
+  },
+  {
+   "id": "g5-157",
+   "lang": "ko",
+   "title": "1차 면접 - 하수아 / 면접관 노윤서",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "하수아",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "하수아"
+     ]
+    },
+    {
+     "text": "노윤서",
+     "shape": "ko-3syl",
+     "scored": true,
+     "tokens": [
+      "노윤서"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "1차",
+    "면접",
+    "면접관"
+   ]
+  },
+  {
+   "id": "g5-158",
+   "lang": "ko",
+   "title": "동방진 팀장님 & 선우하린 책임님 주간 싱크",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "동방진 팀장님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "동방진",
+      "팀장님"
+     ]
+    },
+    {
+     "text": "선우하린 책임님",
+     "shape": "ko-honorific",
+     "scored": true,
+     "tokens": [
+      "선우하린",
+      "책임님"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "&",
+    "주간",
+    "싱크"
+   ]
+  },
+  {
+   "id": "g5-159",
+   "lang": "en",
+   "title": "Handover: Sora Baek to Joon Ahn",
+   "nameFields": [
+    "Chulsoo Kim",
+    "chulsoo.kim@example.test"
+   ],
+   "held": [
+    {
+     "text": "Sora Baek",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Sora",
+      "Baek"
+     ]
+    },
+    {
+     "text": "Joon Ahn",
+     "shape": "romanized",
+     "scored": true,
+     "tokens": [
+      "Joon",
+      "Ahn"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "Handover",
+    "to"
+   ]
+  },
+  {
+   "id": "g5-160",
+   "lang": "ko",
+   "title": "푸른숲물류 x 새솔전자 공동 점검",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "푸른숲물류",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "푸른숲물류"
+     ]
+    },
+    {
+     "text": "새솔전자",
+     "shape": "organization",
+     "scored": true,
+     "tokens": [
+      "새솔전자"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "x",
+    "공동",
+    "점검"
+   ]
+  },
+  {
+   "id": "g5-161",
+   "lang": "ko",
+   "title": "하늘누나랑 콩이 팀 점심",
+   "nameFields": [
+    "김철수"
+   ],
+   "held": [
+    {
+     "text": "하늘누나랑",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "하늘누나랑"
+     ]
+    },
+    {
+     "text": "콩이",
+     "shape": "nickname",
+     "scored": true,
+     "tokens": [
+      "콩이"
+     ]
+    }
+   ],
+   "subjectTokens": [
+    "팀",
+    "점심"
+   ]
+  }
+ ]
+}

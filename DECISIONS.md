@@ -28990,3 +28990,36 @@ recommended default.
 9. **Data hygiene.** Revision 1 of the proposal quoted a real third party's name from the owner's calendar. It is
    replaced by the placeholder "홍길동" in every document. The unpushed commit that held it was rewritten, and its
    object was purged from the local repository (reflog expire and gc) on the owner's approval on 2026-10-23.
+
+#### ADR-0121 A2 implementation note: A0 offline data prepared (2026-10-23)
+
+Rollout step 3 (A0), data only. Branch `claude/v5-a2-data`. No runtime code, no prompt change, no model call (no Ollama,
+no remote). Files are in `packages/core/src/application/golden/a2/` (README there).
+
+| Set | File | Count | sha256 | State |
+|---|---|---|---|---|
+| G1 AP-8 plan gold | `agent-plan.ap8.v1.json` | 66 cases (42 positives, 24 negatives); modes: facts 9, words 9, grounded 16, generate 8, none 23, ask 1; 51 marked `replaceWithCapture`; 2 regression-only | `42b02a4a94f55e1f80cff00540c295712665cac2ca90a7ddd4991a0c85a0341d` | pending the owner's review; not frozen, not gating |
+| G2 `s2-answer` | `s2-answer.redteam.v1.json` | 183 cases (answer 39, topic 55, consent 69, history 15, request 5; KO 144, EN 39); data only, no runner | `fbd770da2af17cd18439d40d3a2c2d71f416d1382cf8d78deaa37ad8d33c8591` | pending the owner's review; not frozen |
+| G4 cases | `g4-generation-cases.v1.json` | 36 synthetic cases (KO 22, EN 14) | `c598144ef77a72545582ee416421304a2d2dab5be660dd8c94b0a7137bd62c4c` | frozen candidate |
+| G4 rubric and seed | `g4-rubric.v1.json`, `g4-manifest.v1.json` | `useless` / `usable` / `good`; seed `20261023`; presentation plan precomputed | rubric `baee67a34fee27a42a5e0f19fcb267f1f6e0e25f95b4eaceedfedeb2e3bec87f`; case file hash is in its own row | frozen candidate |
+| G5 held-out | `g5-name-heldout.v1.json`, `g5-manifest.v1.json` | 161 titles, 166 held-out names (158 scored, 8 confidential subjects reported only), 14 shapes | `84393c7a6b0981f617a7af6b5bbb06027646a363a99f6cef0435f11670fed0e3` | frozen candidate |
+
+- **Hashes.** The manifests (`g4-manifest.v1.json`, `g5-manifest.v1.json`) are the source of truth and a test
+  recomputes every hash.
+- **Not yet frozen.** The G4 and G5 hashes become the freeze only when the owner approves the files. Any edit changes
+  the hash. The G4 manifest leaves the prompt hashes and model digests `null` until the measurement note records them.
+- **G5 provenance.** Authored by an agent session with no access to a classifier prompt (none exists) and no model
+  call, as the record requires of an independent author. The owner should skim it for accidental real names before the
+  freeze. It is never used for prompt tuning.
+- **Lint.** The repo's RAG-0 measures (`closeness` / `findingKind`, near-copy token or char-3 Jaccard at 0.6,
+  containment at 0.8) over every corpus under `golden/` (4,286 gold texts): 0 findings for the new sets
+  (containment of a short generic gold such as "내일 일정" is ignored, as the known artifact of that measure; only a
+  gold of 10+ characters counts). The existing `example-contamination.test.ts` passes unchanged. A separate difflib
+  ratio (0.8) check found 0 near duplicates after 9 rewrites.
+- **Spec gaps the red-team data exposes (for the owner and the Chief Architect, no text changed here).**
+  1. A2-D12 splits tokens on `.` `:` `/`, so the `@`, `://` and `www.` drops cannot fire on an email or URL as a whole.
+     `jane.doe@example.com` leaves `jane` and `com`; `https://evil.example/x` leaves `https evil example`.
+  2. A Latin token of up to 20 characters passes the deterministic drops (a short encoded string).
+  3. The exact 10-minute boundary, and whether the recipient is re-checked at the yes after `dataUse` is removed,
+     are not stated.
+  4. A URL detector for scheme-less domains and `hxxp` shapes is not specified.

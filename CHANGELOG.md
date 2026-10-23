@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A2 stage A0: offline data sets (data only, 2026-10-23)
+
+- **Added (data, `packages/core/src/application/golden/a2/`).** No runtime code, no prompt change, no model call.
+  - AP-8 answer-step plan gold: 66 cases, pending the owner's review, not gating; 51 marked as stand-ins for the
+    owner's captures; the two 2026-10-22 trigger texts are regression-only.
+  - `s2-answer` red-team data: 183 cases with deterministic expected outcomes, no runner. It flags four spec gaps
+    (URL and email tokens split before the `@` and `://` drops, the 20-character token bound, the 10-minute boundary,
+    scheme-less URLs).
+  - G4 blind-comparison set: 36 synthetic cases, rubric, seed and presentation plan, with a sha256 manifest.
+  - G5 held-out name set: 161 titles, 166 invented names across 14 shapes, with a sha256 manifest and a provenance
+    statement.
+  - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
+- **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+
 ## Unreleased — ADR-0121 A2 ratified: the `answer` step and an owner-confirmed minimal topic (docs only, 2026-10-23)
 
 - **Changed (constitution).** `ARCHITECTURE.md` changes, ratified by the owner (ADR-0121 A2):
