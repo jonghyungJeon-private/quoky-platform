@@ -29375,3 +29375,133 @@ selector prompts (`nl-select.v67`, A6 `v65`, R2 `v66`) are unchanged.
 - **Not done here.** The P3 executor and everything it carries (above), AP-7, the AP-6 re-approval, any model-in-the-loop
   run (the coordinator runs the agent-plan gate on v6), reviews (CA for the port addition and the validator rules, Codex,
   `/security-review`).
+
+### ADR-0121 S2 implementation note — P3 part 2: the owner's answers of 2026-10-23 and the review of part 1 (branch `claude/v5-s2-p3`)
+
+Reviews of P3 part 1 (987217e6): Codex clean; the Chief Architect PASS-with-fixes (findings 1–6 and suggestions below).
+The owner answered the four open questions of part 1 on 2026-10-23 (relayed by the coordinator). Still: no executor,
+`active` refused (`AGENT_MODE_ACTIVE_NOT_RELEASED`), no A2 code, the read / A6 / R2 selector prompts unchanged
+(`nl-select.v67`, A6 `v65`, R2 `v66`), deps 38.
+
+#### Owner decisions (2026-10-23)
+
+1. **Q1 — "다음 10개": an owner decision amending S2 plan Q9 (third exception).** Besides the A1 pending handoff and the
+   A2 topic consent, S2 may keep ONE pending pagination cursor after an agent reply that showed "N개 중 10개": the source,
+   the query identity (the release listing the reference read: project key and release id) and the offset of the next
+   keys. No item content, no title, no key list, no model output. It is valid only for the owner's next message in the
+   same DM, per actor, in the single pending slot shared with the other pendings (a new turn voids it), and it expires
+   like the NL pending question (`NL_PENDING_TTL_MS`, 5 minutes). The kill switch voids it. **Not built in part 2**: the
+   follow-up runs the next 10 detail reads through the executor (a bulk `items-by-key` query from the cursor), and the
+   planner must see the cursor as structure to plan the continuation; both are P3 part 3 work. Until the follow-up runs,
+   the hint is not shown: `renderRefDetailCapNote` takes `followUp` (default `false`) and renders only "이슈 N개 중 10개만
+   자세히 보여드렸어요." (tested: the hint is absent by default in KO and EN).
+2. **Q2 — the help split cuts at the Korean verb connective "-고".** Built (below); ap-n121 → ap-p180, owner-approved.
+3. **Q3 — a read and a write in one request: handle both in one turn.** Reads through S2 / the selector as usual; the
+   write part through the existing A6 / connector-write path with its own rules: complete args ("내일 10시 30분에 12-1 회의실에
+   BE 아키텍처 안건으로 회의 잡아줘") go straight to the existing approval card (an external write; no extra question);
+   incomplete args ("회의 하나 잡아줘") get the existing clarification ("어떤 회의를 잡아드릴까요?"). S2 itself stays read-only.
+   **Checked against the record: not implementable under the settled text; STOPPED for this part.** It conflicts with:
+   - ADR-0121 D5 and A6-D4 ("A6 entries are never offered to an ADR-0121 plan with more than one step, and such a plan
+     is refused"): the planner sees READ entries only, so it cannot name the write part, and a plan holding one is
+     refused, not split;
+   - S2 plan Q2 (at `active` the v2 planner is the single M1 call) and Q6 ("A6 entries never"): handling the write part
+     in the same turn needs either a second selection call over the write clause (the A6 selector) or a deterministic
+     clause split that hands the write clause to the A6 path;
+   - D7 (≤ 5 model calls per run) only if that second call is counted in the run.
+   The gold changes it implies are **not made** (they wait for the note): the write-read family ap-n001..ap-n020 and
+   the write cases of the a6-in-plan family (ap-n127, n128, n130, n131, n133, n134, n135) would become split-shape cases
+   (the read plan as gold, the write part scored by the A6 corpora), and prompt rule 8's "a request with any write in it
+   is none" would change. The fixed note "추가·변경·취소 같은 작업은 조회와 함께 하지 않았어요" of `a6InPlanGuidance` becomes
+   obsolete once the note is ratified.
+   **Draft note text (for the owner / Chief Architect; not applied):**
+   > *ADR-0121 S2 note — a read and a write in one owner turn (owner decision Q3, 2026-10-23).* A6-D4's refusal of a plan
+   > holding an A6 entry stays: the agent never plans, proposes or executes a write, and the planner keeps seeing READ
+   > entries only (D5). In the owner DM, when the plan validator refuses a plan `a6-in-plan`, Core splits the owner's
+   > message deterministically at the conjunct of the A6 step (the S2 conjunct boundaries; no phrase list) into a read
+   > part and a write part. The read part is planned and run as an ordinary S2 plan (its own bounds, labels and reply
+   > sections). The write part is handed, as the owner's own words only, to the existing ADR-0120 A6 selection in the
+   > same turn, as one more `INTENT_SELECTION` call counted against the run's model calls (D7) and the hourly cap (Q7),
+   > and from there to the unchanged A6 / connector-write path: verbatim payload spans of the current turn, the exact
+   > preview and CRITICAL approval for an external write, the existing clarification for missing args. No value of the
+   > read part (content, ids, dates, titles) ever reaches the write part's args (ARCHITECTURE.md §8 item 3, §12): the
+   > write part's grounding text is the write clause alone. The reply carries the read sections first, then the approval
+   > card or the clarification. At most one write part per turn; the kill switch stops both. This amends S2 plan Q2 (one
+   > extra selection call on such turns) and Q6 ("A6 entries never" → never in a plan; a write part goes to A6 beside it)
+   > and needs a red-team family for the split (a write clause smuggling read content) before `active`.
+4. **Q4 — the release list order.** Unreleased versions first, the soonest release date first; then released versions,
+   the newest first; undated versions after the dated ones of their own group in Jira's order. The header now says
+   "(미출시 N · 출시 M, 예정 → 최근 출시 순 10개 표시)" instead of "최근 10개 표시" (live renderer, tested).
+
+#### Review of part 1 — the Chief Architect's findings
+
+1. **Help split false positives.** The alias form now needs the `help.topic` alias as the clause's HEAD word, alone or
+   with one of the help grammar's own topic particles, and every other word a guide closer of that grammar ("좀",
+   "알려줘") or the clause's predicate (the word that ends it with the connective, or the message's last word, shared).
+   The grammar form needs a guide noun or a Quoky command action in the clause, so "일정 어떻게 돼" (a status question in
+   how-to form) is not help. A message the help grammar matches as a whole (an address included: "Quoky야, 할 일 어떻게
+   취소해?") is today's one-step help, never a split. The help grammar exports its own closed token classes read-only
+   (`isHelpGuideCloser`, `isHelpGuideToken`, `isHelpActionToken`, `isHelpTopicParticle`); no match of the grammar changed.
+   The CA probes are no-split tests. Residual: an English help request whose head word is not the alias ("show the help
+   page and my github PRs") is not split: ap-p177 went back to ap-n120 (`none`, trap `single-step-only`).
+2. **The shared verb.** A last-position help clause leaves its predicate with the rest and the new last word drops its
+   dangling "-랑" / "-이랑" / "-하고" / comma ("지라 이슈랑 도움말 보여줘" → help + "지라 이슈 보여줘"). Residual: the message's
+   last word is taken as the predicate whatever it is ("메일이랑 도움말 페이지" keeps "페이지" with the rest).
+   - *Measurement (owner Q2).* Over every golden corpus with case texts (18 files, 3374 texts: nl-intent 873, nl-action
+     605, r2 212, deictic 183, seed 17, exec-time 26, live4-pending 13, intent-routing 203, turn-handler-routing 419,
+     action-shaped-fallthrough 155, approval-decision 163, agent-plan 318, nl-select pins 79 and the small control
+     corpora): **0 false splits**; only ap-p175 and ap-p180 split (pinned by test). 116 texts contain a "-고" boundary
+     (nl-action 22, nl-intent 13, agent-plan 42, …), none of which splits. The conjuncts are shared in `agent/conjuncts.ts`
+     (`conjunctTokens`, `aliasStarts`); only the help split passes `verbConnective`, so the validator's P1 conjuncts are
+     unchanged (the corpus self-check and the perfect-planner run are unchanged).
+3. **The connector-charge unit.** One unit is now one **connector query** (a named port call), charged from ONE per-entry
+   worst-case table (`AGENT_READ_SOURCES[…].connectorQueries`): Jira issues, GitHub, Slack, Confluence, calendar, mail,
+   Drive 1; `jira.release` 8 (`containers` twice, `releases` for up to 5 candidates, then `releases` or `release-items`);
+   **`todo.list` 2** (part 1 wrongly charged 0: the open list reads the Jira and GitHub work surface); the brief 4 with every
+   section on (calendar 1, Jira 2, mail 1; the shadow job charges this worst case, a caller may pass the configured one);
+   reminders and help 0; a reference step ONE `items-by-key` query. The HTTP requests behind the queries (read-only
+   survey of the handlers and adapters, 2026-10-23): Jira issues 1; `jira.release` up to 17 (four-page project listing
+   twice, five narrowing pages, a four-page version listing); GitHub 1 (4 with a cold App token); Slack up to 21 (one
+   `conversations.info` per uncached channel of 20 matches); Confluence 1; calendar 5 per configured calendar plus a token
+   refresh (C×5+1); mail 11 plus a refresh (list + 10 metadata GETs); Drive 2 plus a refresh; `todo.list` 2 (5 cold);
+   the brief 13 at one calendar (calendar 6, Jira 2, mail 1 + 3 + refresh); `items-by-key` 1 (2 with the key-error retry).
+   **Open (owner / CA): the D7 unit.** With HTTP requests as the unit and the cap at 10, `jira.release`, Slack, calendar,
+   mail and the brief each exceed it alone at their worst, so most approved plans would be refused; the query unit keeps
+   D7's "≤ 10 connector calls" meaningful and is what the validator now enforces. Effect on the gold: ap-n085's bounded
+   suggestion ([`jira.release`, its 10 details, `jira.release`] = 17 queries) no longer fits, so decision (h) fails closed to
+   the bound's refusal (`run-refs-too-many`): it is a `none` negative now (asks 12 → 11). Every other gold is unchanged.
+4. **= Q1** above.
+5. **The relation note's subject.** `related` names the step the owner relates the other reads to (`"related": <step
+   no>`, structure; parse `bad-related` otherwise; the validator keeps it only when it names a read step and another read
+   of a different source exists). The note names that step's source. Planner `agent-plan.v6` → **`agent-plan.v7`** (v6
+   was never run; only the rule 9 sentence changed; pin `043e2d7b…`). Gold: ap-p001..ap-p008 (the owner's example and
+   its variants, still pending) carry `"related": 1`; ap-p054 ("로그인 관련 이슈", "관련" as "about") has none. The scorer
+   compares `related` after the step graph (a missing or another step is a miss, diff `related`) and the self-check
+   requires the gold's `related` to be canonical.
+6. **`items-by-key`.** Read through the capped item reader (1 MB, `TOO_LARGE`); the 400 test is Jira's key-error shape
+   (a message naming the JQL field `'key'` and quoting an asked key); partial failure is handled in the adapter: ONE
+   retry without the refused keys, the result marked `truncated` (at most 2 HTTP requests, one query for the run budget);
+   a second refusal, or every key refused, is `NOT_FOUND`; any other 400 is `INVALID_RESPONSE`, never retried.
+   - **D7 authority of the port addition (CA sign-off in this review).** `ConnectorQueryName.ITEMS_BY_KEY` is an additive
+     ADR-0100 D7 amendment: a read-only named query of 1..10 closed-shape item keys (`parseItemsByKeyParams`), rendered and
+     escaped by the adapter, never owner text, refused by every adapter that cannot bulk-read. Its only caller will be the
+     S2 executor's reference step (keys a deterministic projector took from an earlier same-source read).
+
+*Suggestions applied:* the shared conjunct helper; `a6InPlanGuidance` reuses the caller's validation (the shadow job
+passes it); an item summary with no list to show gets "한 항목 요약은 먼저 그 목록을 조회한 뒤 번호로 말씀해 주세요."; the
+host-source set is gone (the per-entry table replaces it).
+
+#### Gold and versions
+
+Multi-step positives 179 (ap-p177 out, ap-p180 in), negatives 139 (11 asks), approved 259, pending 59. Planner
+`agent-plan.v7` (not gated; the coordinator's agent-plan gate decides). Tests (targeted, offline; no model call):
+`agent/help-split.test.ts` (24: the Q2 cases, CA probes, the shared predicate, the 3374-text measurement, the P1 set kept),
+`agent/plan-validator.test.ts` (the query table, the charge, over-bound, the related step), `agent/reply-notes.test.ts` (the
+hidden hint, `followUp`, the related source, the no-list note, the reused validation), `agent/agent-run-service.test.ts`,
+`agent/plan-prompt.test.ts` (v7 pin), `connector-jira/items-by-key.test.ts` (8), `work-chat/jira-release.test.ts` (Q4),
+`tools/agent-plan-eval.test.ts` (ap-p180 / ap-n120, the related scoring; the perfect planner 179/179, 674/674, 11/11);
+26 files, 1101 tests passed; `pnpm build` passes.
+
+#### Not done here
+
+The executor and everything it carries; the Q1 cursor and follow-up (P3 part 3); the Q3 write-part handling (stopped:
+needs the draft note above ratified); the D7 unit decision; AP-7; any model-in-the-loop run.

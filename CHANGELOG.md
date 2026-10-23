@@ -59,6 +59,19 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — S2 P3 part 2: owner answers and the part 1 review (2026-10-23, branch `claude/v5-s2-p3`)
+
+- **Changed (live).** A project's Jira release list shows planned versions first (soonest first), then the newest
+  released ones; the header says "예정 → 최근 출시 순 N개 표시".
+- **Changed (not live).** The help split also cuts at "-고" ("사용법 알려주고 …") and only treats a clause as help when the
+  help word leads it (0 false splits over 3374 golden texts). The S2 connector charge counts connector queries from one
+  per-entry worst-case table (the to-do list now counts 2). The relation note names the step it is about (planner
+  `agent-plan.v7`, not gated). The "다음 10개" hint stays hidden until its follow-up exists. Jira `items-by-key` reads
+  through the 1 MB capped reader and retries once without a key Jira refuses.
+- **Decided, not built.** A pending pagination cursor for "다음 10개" (an owner amendment of S2 Q9; needs the executor).
+  A read and a write in one request: drafted as an ADR-0121 note for ratification (conflicts with D5 / A6-D4 / Q2 / Q6
+  as written).
+
 ## Unreleased — S2 P3 part 1: release list order, bulk detail read, help split and brief step, reply notes (2026-10-23, branch `claude/v5-s2-p3`)
 
 - **Fixed.** A project's Jira release list ("최근 10개 표시") is ordered by release date, newest first, instead of Jira's

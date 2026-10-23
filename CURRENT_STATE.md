@@ -28,6 +28,23 @@ The owner ratified A3a on 2026-10-26 with every recommended default. Docs only; 
 Next: a separate session authors the G6 held-out set; the hash-only addendum (prompt hash first, then the set hash);
 then G6 on a Strict yes.
 
+### ADR-0121 S2 P3 part 2 (2026-10-23, branch `claude/v5-s2-p3`)
+
+- **Live change.** The release list order: planned (soonest first), then released (newest first); header "예정 → 최근 출시 순".
+- **Built, not live.**
+  - The help split at "-고" with a strict help clause.
+  - The query-unit connector charge (`todo.list` 2, `jira.release` 8, the brief 4).
+  - `related: <step no>`; planner `agent-plan.v7`, not gated.
+  - The next-10 hint hidden behind `followUp`.
+  - `items-by-key` capped and with a one-retry partial read.
+- **Gold.** ap-p180 (was ap-n121, approved); ap-n120 back to `none`; ap-n085 a refusal (asks 11); ap-p001..008 carry `related: 1`.
+- **Waiting on the owner / CA.**
+  - The Q3 draft note (a read and a write in one turn).
+  - The D7 unit (queries vs HTTP requests).
+- **Next.** P3 part 3: the executor, then the Q1 cursor and its follow-up.
+
+DECISIONS: "ADR-0121 S2 implementation note — P3 part 2".
+
 ### ADR-0121 S2 P3 part 1 (2026-10-23, branch `claude/v5-s2-p3`)
 
 - **Live change.** The Jira release list orders by release date, newest first (the 2026-10-22 smoke showed Jira's
