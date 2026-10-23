@@ -29596,3 +29596,37 @@ ADR-0121 S2 note — a read and a write in one owner turn (owner decision Q3, 20
   issues"). Tests: three punctuated English splits with clean rests, three punctuated or non-form English clauses that do
   not split, the mixed KO/EN splits kept. Re-measured over the 19 golden corpora (3402 texts): 0 false splits; only
   ap-p175, ap-p177 and ap-p180 split.
+
+### ADR-0121 S2 note — the agent-plan gate on 2ef88619 (agent-plan.v7, haiku, 3 runs: FAILED 0/3): offline classification (2026-10-23)
+
+Gate: multi-step 95.2 / 92.2 / 94.0% (≥ 95 needed), one-step 96.7 / 96.9 / 96.6% (ok), wrong on negatives 6 / 5 / 6
+(0 needed). Report: `eval-archive/gates-s2p3-2ef88619-20261023/agent-plan.report.json` (content-free: outcomes, closed
+entries, reasons, diff kinds; no raw answers). No model was called for this note.
+
+| Class | Cases (runs failing) | Finding |
+|---|---|---|
+| **Code-side refusal — fixed** | ap-p174 (3/3 `range-unnamed`) | A plan that writes the calendar's default `range: today` explicitly ("일정이랑 안 읽은 메일 같이 한 번에 알려줘", no period word) was refused: the step-scoped temporal check demanded a claim the one-step path never needs (it drops the default). Fix: a range equal to the entry's own default needs no claim **only when no period expression is bound to that entry or unbound**; "어제 일정이랑 …" written as `today` is still refused (tests). P1 rule, not a P3 regression. |
+| Model choice, refusal correct | ap-p128 (3/3), ap-p089 (1/3), ap-p167 (1/3) `range-unnamed` | The gold validates; the planner wrote a period no expression names (e.g. `next-thu` for "목요일 알림 … 다음 주 일정" reproduces the refusal). The exact value is not in the report. |
+| Model choice, args | ap-p079, p095, p127, p135, p143 (calendar "회의/미팅" flags: `timedOnly` / `remaining`), ap-p045, p163 (1 run each) | Arg misses on step 1; gold canonical (self-check). |
+| Model choice, structure | ap-p082, p085 (summary placement), ap-p093, p098 (summaries merged), ap-p120 (reference step dropped) | Decision (b) coverage and the reference rule. |
+| **Gold question (owner)** | ap-p096 (3/3) | "깃허브 내 이슈랑 지라 이슈 …": `github.items {kind: issue}` validates (the GitHub clause names "이슈"); the gold has `{}`, against the owner's relabel convention (issues only → `kind: issue`). Recommended relabel. |
+| **Gold question (owner)** | ap-p066 (2/3) | "drive spreadsheets and confluence pages about budget": "about budget" may scope both reads; `drive {kind: spreadsheet, name: budget}` validates. |
+| **Gold question (owner)** | ap-n051, n054, n055, n057 (help.topic, 2–3/3 each) | "'…' 이렇게 말하면 돼?", "… 같은 요청도 받아?", "if someone writes '…', what happens?": questions about what Quoky does with a phrasing. The read prompt's rule 3 (`nl-select.v66`+, unchanged) says a question whether Quoky can do something is `help.topic`, CLEAR; the plan gold says `none` (family quoted-request). |
+| Gold question (owner) | ap-n125 (1/3, `jira.issues`) | The planner kept only the read of "지라 이슈 보여주고 첫 번째 거 요약해줘"; under decision (f) and the ratified read + write note, the turn shows exactly that list plus the fixed note. |
+| Help boundary (model; D12 class) | ap-n091, ap-n115, neg-010, neg-012, neg-110 (help.topic, 1–2 runs) | The known help-capture residual of the D12 read gates (owner decision of 2026-10-22: counted apart, allowance ⌈1%⌉). |
+
+- **Did v6 / v7 raise help captures?** The planner prompt changed only in rule 8's help/brief sentence (v6: "help.topic is
+  never part of a plan of two or more steps: a message asking for help together with another read is none") and rule 9's
+  related sentence (v6/v7); the selector text it embeds (`nl-select.v67`, rule 3) is unchanged. Every help capture here is a
+  one-step selection-form answer on a negative that rule 3 itself steers to help.topic (capability questions, how-tos about
+  other apps); none is a multi-step plan. Not attributable to v6/v7 from this report alone; **no prompt change is made
+  (v7 stays)**: a wording change without a measured baseline would be guesswork.
+- **Owner decisions needed.** (1) The gold questions above (ap-p096 relabel; ap-p066; ap-n051/054/055/057; ap-n125).
+  (2) Whether the D12 help-capture rule (help.topic captures on negatives counted apart, allowance ⌈1% of negatives⌉ = 3
+  of 293) also applies to the agent-plan gate. With it, these runs would still fail (5–6 help captures per run, over 3),
+  unless the four quoted-request cases are relabelled.
+- **Baseline.** A gate run on `agent-plan.v5` (5f8bd81e-era prompt) would separate prompt effects from model variance for
+  the help captures and the summary misses; the cheapest informative form is the negatives only (293 × 3 calls) on v5 and v7
+  with the same corpus. The coordinator decides (Strict).
+- **Expected effect of the code fix alone** (from the archived records): multi-step +1 per run (ap-p174) → 95.8 / 92.8 /
+  94.6%; with the ap-p096 relabel +1 more → 96.4 / 93.4 / 95.2%. Run 2 still fails on model variance.

@@ -638,7 +638,8 @@ function spanEndInherits(month: number, startDay: number, endDay: number, text: 
  *    ("calendar for friday"), else after it; no alias → unbound. Further binding edge cases are fail-closed residuals.
  * 3. A ranged step CLAIMS an expression when the expression names the step's period (a weekday placement, a closed period
  *    label, or a date resolving to the same instants) and is bound to the step's entry or unbound.
- * 4. Every ranged step must claim an expression (`range-unnamed`) unless its range is the previous selection's; two steps
+ * 4. Every ranged step must claim an expression (`range-unnamed`) unless its range is the previous selection's or the
+ *    entry's own default (the read the entry makes with the arg omitted); two steps
  *    of the same entry with different ranges are ambiguous (`range-ambiguous`).
  * 5. A step is validated against the prose minus the expressions claimed by OTHER steps only. An unclaimed expression
  *    stays in every step's text, so it still constrains (fail closed). The literal-grounding rules of ADR-0120 D4 still
@@ -661,6 +662,8 @@ interface RangedStep {
   readonly entry: NlCatalogEntry;
   readonly value: string;
   readonly carried: boolean;
+  /** The value is the entry's own default (the read the entry makes with the arg omitted). */
+  readonly isDefault: boolean;
   readonly range?: NlResolvedRange;
 }
 
@@ -676,7 +679,11 @@ function stepTemporalTexts(steps: readonly AgentPlanStep[], ctx: AgentPlanValida
     const value = spec !== undefined ? step.args[spec.name] : undefined;
     if (spec === undefined || typeof value !== 'string') continue;
     const range = resolveNlRange(normalizeNlRangeSymbol(value), ctx.now, ctx.timeZone);
-    ranged.push({ number: index + 1, entry, value, carried: value === ctx.previousArgs?.[spec.name], ...(range !== undefined ? { range } : {}) });
+    // A range equal to the entry's own default (the calendar's `today`) is the read the entry makes with the arg omitted;
+    // it needs no period word when the owner named NO period for that entry (agent-plan gate on 2ef88619: "일정이랑 안 읽은
+    // 메일 …" with an explicit `range: today` was refused `range-unnamed` 3/3, ap-p174). See the claim check below.
+    const isDefault = spec.default !== undefined && value === spec.default;
+    ranged.push({ number: index + 1, entry, value, carried: value === ctx.previousArgs?.[spec.name], isDefault, ...(range !== undefined ? { range } : {}) });
   }
   if (ranged.length === 0) return undefined;
   for (const [i, a] of ranged.entries()) {
@@ -693,7 +700,11 @@ function stepTemporalTexts(steps: readonly AgentPlanStep[], ctx: AgentPlanValida
       if (expression.boundEntry !== undefined && expression.boundEntry !== step.entry.id) return;
       if (step.range !== undefined && expressionNames(expression.text, step.range, ctx)) claimed.add(index);
     });
-    if (claimed.size === 0 && !step.carried) return { texts: new Map(), refusal: { reason: 'range-unnamed', step: step.number } };
+    // The default needs no claim only when no period expression is bound to this entry or left unbound: "어제 일정이랑 …"
+    // written as the calendar's default `today` still has to claim "어제" (and cannot).
+    const ownPeriod = expressions.some((expression) => expression.boundEntry === undefined || expression.boundEntry === step.entry.id);
+    const unstated = step.carried || (step.isDefault && !ownPeriod);
+    if (claimed.size === 0 && !unstated) return { texts: new Map(), refusal: { reason: 'range-unnamed', step: step.number } };
     claims.set(step.number, claimed);
   }
   const texts = new Map<number, string>();

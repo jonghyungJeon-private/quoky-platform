@@ -267,7 +267,7 @@ describe('plan validator: dates only symbolic, summaries closed', () => {
     expect(validateAgentPlan(steps, ctx('show Friday calendar, today mail')).ok).toBe(true);
     // Postnominal: no source follows inside the conjunct, so the preceding one.
     expect(validateAgentPlan(steps, ctx('show my calendar for friday and my mail from today')).ok).toBe(true);
-    // Swapped values under either construction are refused.
+    // Swapped values under either construction are refused (a default range must claim when its entry has a period).
     const swapped = plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'fri' })]);
     expect(validateAgentPlan(swapped, ctx('show Friday calendar and today mail'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
     expect(validateAgentPlan(swapped, ctx('show my calendar for friday and my mail from today'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
@@ -275,6 +275,7 @@ describe('plan validator: dates only symbolic, summaries closed', () => {
 
   it('swapped ranges are refused: each period is bound to the source it modifies', () => {
     const swapped = plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'fri' })]);
+    // The calendar's `today` is its default, but the owner named a period for it: it must claim one (and cannot).
     expect(validateAgentPlan(swapped, ctx('금요일 일정이랑 오늘 받은 메일 보여줘'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
     // Both swapped periods would be valid values on their own: still refused.
     const both = plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'yesterday' })]);
@@ -621,5 +622,25 @@ describe('owner decision (a): the related step (S2 P3; CA finding 5)', () => {
     }
     const third = validateAgentPlan({ ...plan(steps), related: 3 } as AgentPlan, ctx(TEXT));
     expect(third).toMatchObject({ ok: true, plan: { related: 3 } });
+  });
+});
+
+describe('agent-plan gate on 2ef88619: an explicit default range needs no period word (ap-p174)', () => {
+  const TEXT = '일정이랑 안 읽은 메일 같이 한 번에 알려줘';
+  it('the calendar default today written out validates like the omitted one, with the same canonical args', () => {
+    const explicit = validateAgentPlan(plan([read('calendar.events', { range: 'today' }), read('mail.list', { unread: true })]), ctx(TEXT));
+    const omitted = validateAgentPlan(plan([read('calendar.events'), read('mail.list', { unread: true })]), ctx(TEXT));
+    expect(explicit).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    if (!explicit.ok || !omitted.ok || explicit.plan.kind !== 'run' || omitted.plan.kind !== 'run') throw new Error('expected run plans');
+    expect(explicit.plan.steps.map((step) => (step.kind === 'read' ? step.args : {}))).toEqual(omitted.plan.steps.map((step) => (step.kind === 'read' ? step.args : {})));
+  });
+
+  it('a non-default unnamed range is still refused, and a default range never overrides another named period', () => {
+    expect(validateAgentPlan(plan([read('calendar.events', { range: 'tomorrow' }), read('mail.list', { unread: true })]), ctx(TEXT))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
+    // "금요일" names the calendar's period; the default `today` written instead is refused (the weekday stays in its text).
+    expect(validateAgentPlan(plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'today' })]), ctx('금요일 일정이랑 오늘 받은 메일 보여줘')).ok).toBe(false);
+    // A relative day named for the calendar but written as its default is refused too.
+    expect(validateAgentPlan(plan([read('calendar.events', { range: 'today' }), read('mail.list', { unread: true })]), ctx('어제 일정이랑 안 읽은 메일 보여줘')).ok).toBe(false);
+    expect(validateAgentPlan(plan([read('calendar.events', { range: 'today' }), read('mail.list', { unread: true })]), ctx('다음 주 일정이랑 안 읽은 메일 보여줘')).ok).toBe(false);
   });
 });
