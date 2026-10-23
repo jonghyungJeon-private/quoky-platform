@@ -1,4 +1,4 @@
-import { detectHelpCommand, detectHelpIntent, isHelpGuideCloser, isHelpGuideToken, isHelpTopicParticle } from '../help-intent/help-intent';
+import { detectHelpCommand, detectHelpIntent, isHelpEnglishLead, isHelpGuideCloser, isHelpGuideToken, isHelpTopicParticle } from '../help-intent/help-intent';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
@@ -35,8 +35,10 @@ import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
  * material) is never split, so the rest is always the owner's own words. Outside the agent path (agent `off`, a channel)
  * nothing calls it. Pure.
  *
- * Residuals (A1 RA-8, measured in shadow by A1-E5): an English help request whose head word is not the alias ("show the
- * help page and my github PRs") is not split (the planner refuses as before); a last-position help clause's final word is
+ * English (owner decision of 2026-10-23): "<lead> help <one noun>?" with the help grammar's own English leads ("show the help
+ * page and my github PRs", "help and my mail"); "open the help menu" is not split (the grammar has no "open").
+ *
+ * Residuals (A1 RA-8, measured in shadow by A1-E5): a last-position help clause's final word is
  * taken as the shared predicate whatever it is ("메일이랑 도움말 페이지" keeps "페이지" with the rest).
  */
 
@@ -134,6 +136,19 @@ export function splitHelpClause(prepared: { readonly text: string; readonly grou
  * grammar or the clause's predicate (its connective word, or the message's last word, then shared with the rest).
  */
 function aliasClause(words: readonly ConjunctToken[], indexes: readonly number[], lastClause: boolean, helpNames: readonly string[]): Omit<Clause, 'conjunct'> | undefined {
+  // Owner decision of 2026-10-23 (English help with a read): an English clause is "<lead> help <one noun>?", the lead being
+  // one of the help grammar's own English leads (`isHelpEnglishLead`: "show (me) (the|your)", a how-to verb with its
+  // determiners, a bare determiner) and at most one plain word after the help word ending the clause ("the help page", "help
+  // menu"). English puts its predicate first, so nothing is shared with the rest.
+  const englishNames = helpNames.filter((name) => /^[a-z0-9]+$/u.test(name));
+  const at = words.findIndex((token) => englishNames.includes(bare(token.word)));
+  if (at >= 0) {
+    const after = words.slice(at + 1);
+    const lead = words.slice(0, at).map((token) => bare(token.word)).join(' ');
+    if (!isHelpEnglishLead(lead)) return undefined;
+    if (after.length > 1 || (after.length === 1 && !/^[a-z]+$/u.test(bare((after[0] as ConjunctToken).word)))) return undefined;
+    return { topic: 'all' };
+  }
   const [head, ...others] = words;
   const alias = head === undefined ? undefined : aliasOfHead(head.word, helpNames);
   if (alias === undefined) return undefined;
@@ -141,7 +156,7 @@ function aliasClause(words: readonly ConjunctToken[], indexes: readonly number[]
   // grammar's guide nouns (도움말, 사용법), never an ordinary noun that is also an alias ("기능이랑 버그 이슈 …" keeps the
   // owner's scope word); the English alias alone stays help.
   const closer = others.some((token) => isHelpGuideCloser(bare(token.word)));
-  if (!closer && !/^[a-z0-9]+$/u.test(alias) && !isHelpGuideToken(alias)) return undefined;
+  if (!closer && !isHelpGuideToken(alias)) return undefined;
   const final = others[others.length - 1];
   const finalIsPredicate = final !== undefined && (final.ends === 'connective' || (lastClause && final.ends === undefined));
   const middle = finalIsPredicate ? others.slice(0, -1) : others;

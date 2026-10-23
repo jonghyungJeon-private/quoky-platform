@@ -106,9 +106,9 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
       expect(negatives.some((golden) => golden.lang === lang)).toBe(true);
     }
     // The owner's review of 2026-10-21: 258 approved; 15 fixed or unreviewed and 45 held (decisions (d) and (e)) pending.
-    // + ap-p180 (was ap-n121), approved by the owner's decision Q2 of 2026-10-23.
-    expect(NEW.filter((golden) => golden.status === 'approved')).toHaveLength(259);
-    expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(59);
+    // + ap-p180 (was ap-n121) and ap-p177 (was ap-n120), approved by the owner's decisions of 2026-10-23.
+    expect(NEW.filter((golden) => golden.status === 'approved')).toHaveLength(260);
+    expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(58);
     expect(NEW.filter((golden) => golden.note?.startsWith('HOLD') === true || golden.note?.includes(' HOLD ') === true).every((golden) => golden.status === 'pending-owner-approval')).toBe(true);
     // ap-n085's suggestion is shrunk to fit the 10-query charge (CA re-check W2): still 12 asks.
     expect(NEW.filter((golden) => isAgentPlanAskExpect(golden.expect)).map((golden) => golden.family)).toEqual(Array.from({ length: 12 }, () => 'unbounded'));
@@ -142,8 +142,8 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     const summary = summarizeAgentPlanRun(records, plan.callTimeoutMs);
     const notExact = records.filter((record) => record.expected === 'plan' && record.outcome !== 'exact');
     expect(notExact.map((record) => `${record.id}:${record.outcome}:${record.reason ?? ''}`)).toEqual([]);
-    // 174 + the five A1-E4 split-shape positives (ap-p175..ap-p179, was ap-n118..n123 but n121).
-    expect(summary.groups.multiStep).toEqual({ total: 179, exact: 179, rate: 1 });
+    // 174 + the six help-brief-split positives (ap-p175..ap-p180, formerly ap-n118..ap-n123).
+    expect(summary.groups.multiStep).toEqual({ total: 180, exact: 180, rate: 1 });
     expect(summary.groups.oneStep).toEqual({ total: 674, exact: 674, rate: 1 });
     expect(summary.groups.ask).toEqual({ total: 12, exact: 12, rate: 1 });
     expect(summary.wrongOnNegatives).toBe(0);
@@ -407,7 +407,7 @@ describe('plan digest', () => {
     const approved = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS);
     const pending = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, includePending: true });
     const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
-    expect(approvedCount).toBe(873 + 259);
+    expect(approvedCount).toBe(873 + 260);
     expect(approved.caseIds).toHaveLength(approvedCount);
     expect(pending.caseIds).toHaveLength(873 + NEW.length);
     expect(approved.maxCalls).toBe(approvedCount * 3);
@@ -559,7 +559,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     await runCli(['--mode', 'plan'], planned);
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
-    expect(ran.out.join('\n')).toContain('multi-step exact: 179/179 (100.0%)  one-step exact: 674/674 (100.0%)  ask: 12/12');
+    expect(ran.out.join('\n')).toContain('multi-step exact: 180/180 (100.0%)  one-step exact: 674/674 (100.0%)  ask: 12/12');
     expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v7): PASSED in all 1 run(s)');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
@@ -587,13 +587,13 @@ describe('the help split in scoring (ADR-0121 A1-E1 / A1-E4, S2 P3)', () => {
     expect(scoreAgentPlanOutput(golden, steps([{ entryId: 'brief.today' }, { entryId: 'jira.issues' }, { summarize: [1, 2], schema: 'digest.v1' }]), FIXTURE)).toMatchObject({ outcome: 'refused', reason: 'summary-covers-brief' });
   });
 
-  it('owner Q2: ap-p180 (was ap-n121) splits at the -고 connective; ap-n120 (English, alias not the head word) does not', () => {
+  it('owner Q2 and the English decision: ap-p180 (was ap-n121) splits at -고; ap-p177 (was ap-n120) splits too', () => {
     const split = byId('ap-p180');
     expect(caseContext(split, FIXTURE)).toMatchObject({ split: { topic: 'all', rest: '안 읽은 메일도 보여줘' } });
     expect(scoreAgentPlanOutput(split, JSON.stringify({ entryId: 'mail.list', args: { unread: true }, ambiguity: 'CLEAR', alternatives: [] }), FIXTURE)).toMatchObject({ outcome: 'exact' });
-    const whole = byId('ap-n120');
-    expect(whole.gold).toBe('none');
-    expect(caseContext(whole, FIXTURE)).not.toHaveProperty('split');
+    const english = byId('ap-p177');
+    expect(caseContext(english, FIXTURE)).toMatchObject({ split: { topic: 'all', rest: 'my github PRs' } });
+    expect(scoreAgentPlanOutput(english, JSON.stringify({ entryId: 'github.items', args: { kind: 'pr' }, ambiguity: 'CLEAR', alternatives: [] }), FIXTURE)).toMatchObject({ outcome: 'exact' });
   });
 
   it('CA finding 5: the related step is scored (missing or another step is a miss)', () => {

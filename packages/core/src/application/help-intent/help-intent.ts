@@ -119,8 +119,10 @@ const EN_TOPICS: ReadonlyArray<{ readonly id: string; readonly pattern: string }
   { id: 'todo', pattern: String.raw`(?:to-?dos?|tasks?)` },
 ];
 const EN_VERB = '(?:add|set|set up|create|make|cancel|delete|remove|complete|finish|list|see|view|check|mark|use|turn off|stop)';
+/** The determiners the English how-to form allows before its topic. */
+const EN_ARTICLES = String.raw`a|an|my|the|all|new|all\s+my`;
 const EN_HOWTO = new RegExp(
-  String.raw`^how\s+(?:do\s+i|can\s+i|should\s+i|to)\s+${EN_VERB}\s+(?:(?:a|an|my|the|all|new|all\s+my)\s+)?` +
+  String.raw`^how\s+(?:do\s+i|can\s+i|should\s+i|to)\s+${EN_VERB}\s+(?:(?:${EN_ARTICLES})\s+)?` +
     String.raw`(${EN_TOPICS.map((t) => t.pattern).join('|')})(?:\s+as\s+(?:done|complete|completed))?(?:\s+(?:here|in\s+quoky|with\s+quoky))?$`,
   'u',
 );
@@ -245,8 +247,12 @@ const CAPABILITY_KO: readonly RegExp[] = [
   // "명령어 뭐 있어?", "명령어 알려줘", "명령어 목록", "사용법"
   /^(?:명령어|사용법)(?:\s?(?:목록|뭐\s?있어|뭐\s?있어요|뭐뭐\s?있어|뭐야|알려\s?줘|알려\s?주세요|보여\s?줘))?$/u,
 ];
-const CAPABILITY_EN =
-  /^(?:what\s+can\s+(?:you|quoky)\s+(?:do|help\s+(?:me\s+)?with)(?:\s+for\s+me)?|what\s+do\s+you\s+do|what\s+are\s+your\s+(?:features|capabilities|commands)|what\s+commands\s+(?:do\s+you\s+have|are\s+there|can\s+i\s+use)|show\s+(?:me\s+)?(?:the\s+|your\s+)?commands)$/u;
+/** The capability question's English "show (me) (the|your)" lead, also the lead of an English help clause. */
+const EN_SHOW_LEAD = String.raw`show\s+(?:me\s+)?(?:the\s+|your\s+)?`;
+const CAPABILITY_EN = new RegExp(
+  String.raw`^(?:what\s+can\s+(?:you|quoky)\s+(?:do|help\s+(?:me\s+)?with)(?:\s+for\s+me)?|what\s+do\s+you\s+do|what\s+are\s+your\s+(?:features|capabilities|commands)|what\s+commands\s+(?:do\s+you\s+have|are\s+there|can\s+i\s+use)|${EN_SHOW_LEAD}commands)$`,
+  'u',
+);
 
 /**
  * A whole-message question about what Quoky can do ("뭐 할 수 있어?", "할 수 있는 게 뭐야?", "무슨 기능 있어?",
@@ -359,4 +365,15 @@ export function detectHelpCommand(
   let index = 0;
   while (index < tokens.length && ACTION_TOKEN.test(tokens[index] ?? '')) index += 1;
   return index === 0 && tokens[0] === '어떻게' && HOWTO_STATE_VERB.test(tokens[1] ?? '') ? null : match;
+}
+
+/**
+ * ADR-0121 A1-E1 (owner decision of 2026-10-23, English help with a read): whether `lead` — the English words before the
+ * help word of a clause — is empty or one of this grammar's own English leads: the capability question's "show (me)
+ * (the|your)", or a how-to verb with the how-to form's determiners ("see the", "check my", "view"). No other word.
+ */
+export function isHelpEnglishLead(lead: string): boolean {
+  const text = normalize(lead);
+  if (text.length === 0) return true;
+  return new RegExp(String.raw`^(?:${EN_SHOW_LEAD}|${EN_VERB}\s+(?:(?:${EN_ARTICLES}|your)\s+)?|(?:${EN_ARTICLES}|your)\s+)$`, 'u').test(`${text} `);
 }

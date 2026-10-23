@@ -74,7 +74,7 @@ Positives (every gold has at least two sections: two steps, or a help section pl
 | `en-prenominal` | English periods before their noun ("Friday calendar and today mail") and after it. |
 | `multi-read` | Three or four reads. |
 | `same-entry` | Two reads of the same entry with different keywords ("각각", "따로", "separately"). |
-| `help-brief-split` | ADR-0121 A1-E4 (decision (e), S2 P3): a help clause with other reads (`help` + the rest plan), or the brief as one step of a plan (never covered by a summary, B2). ap-p175, p176, p178, p179 (formerly ap-n118, n119, n122, n123) and ap-p180 (formerly ap-n121: owner decision Q2, the verb connective -고 splits). |
+| `help-brief-split` | ADR-0121 A1-E4 (decision (e), S2 P3): a help clause with other reads (`help` + the rest plan), or the brief as one step of a plan (never covered by a summary, B2). ap-p175..ap-p179 (formerly ap-n118..ap-n120, ap-n122, ap-n123; ap-p177: the owner's English help decision of 2026-10-23) and ap-p180 (formerly ap-n121: owner decision Q2, the verb connective -고 splits). |
 
 Negatives (`expect: "none"`, or an `ask` for `unbounded`; any executable plan is wrong):
 
@@ -88,7 +88,7 @@ Negatives (`expect: "none"`, or an `ask` for `unbounded`; any executable plan is
 | `unbounded` | More than 4 reads, one entry read for 3 or more different periods (a read per day, week or month), or details of more than 10 issues. Expect an `ask` with a bounded suggestion (decision (h)), not `none`. |
 | `capability-chit-chat` | Small talk or opinions that name sources. |
 | `venting` | Feelings about sources, asking nothing. |
-| `help-style` | How-tos about other apps; and `ap-n120`, an English help request whose head word is not the help alias, so the strict help clause of the split (CA review of P3 part 1) does not split it (trap: `single-step-only`). |
+| `help-style` | How-tos about other apps (the six of A1-E4). |
 | `a6-in-plan` | A plan that would need an A6 entry (item summary, to-do or reminder write, undo; trap: `a6-in-plan`). |
 | `past-or-negated` | Past statements and negated requests. |
 

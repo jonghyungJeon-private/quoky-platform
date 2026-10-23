@@ -48,7 +48,7 @@
 | 영어 기간 표현 (앞·뒤 수식) (`en-prenominal`) | 긍정 | 15 |
 | 3~4개 조회 (`multi-read`) | 긍정 | 8 |
 | 같은 소스 두 번 (따로/각각) (`same-entry`) | 긍정 | 6 |
-| 도움말 분리·브리핑 단계 (`help-brief-split`, A1-E4) | 긍정 | 5 (ap-p175, 176, 178, 179, 180) |
+| 도움말 분리·브리핑 단계 (`help-brief-split`, A1-E4) | 긍정 | 6 (ap-p175~ap-p180) |
 | 쓰기 + 조회 섞임 (`write-read`) | 부정 | 20 |
 | 내용에 든 값·지시 (`content-borne`) | 부정 | 15 |
 | 붙여넣기·인용 블록 (`pasted`) | 부정 | 12 |
@@ -57,10 +57,10 @@
 | 한도 초과 (조회 4개 초과, 기간별 반복, 이슈 상세 10개 초과) (`unbounded`, 묻기) | 부정 | 12 |
 | 잡담·의견 (`capability-chit-chat`) | 부정 | 14 |
 | 감정 토로 (`venting`) | 부정 | 12 |
-| 사용법 질문 (다른 앱) + ap-n120 (`help-style`) | 부정 | 7 |
+| 사용법 질문 (다른 앱) (`help-style`) | 부정 | 6 |
 | 계획 안의 A6 항목 (`a6-in-plan`) | 부정 | 12 |
 | 과거 진술·부정 (`past-or-negated`) | 부정 | 8 |
-| 합계 | | 318 (긍정 179, 부정 139, 그중 묻기 12) |
+| 합계 | | 318 (긍정 180, 부정 138, 그중 묻기 12) |
 
 표기: `calendar(range=this-week, timedOnly)` = 캘린더 조회와 그 인자, `요약[1] meeting-digest` = 1번 단계 요약, `←1번 issueKeys 10개` = 1번 단계 이슈 키 10개 참조. 부정의 "함정"은 속은 플래너가 낼 법한 계획이고, 검증기가 거절하는 이유를 적었습니다. "묻기"는 한도를 넘은 계획(함정 계획)을 Core가 실행하지 않고 제안으로 되묻는 경우입니다. 마지막 열은 상태입니다.
 
@@ -385,7 +385,7 @@
 | ap-n117 | help-style | what is the best way to sync drive files to confluence? | none | 승인 |
 | ap-p175 (구 ap-n118) | help-brief-split | 도움말이랑 지라 이슈 같이 보여줘 | 도움말(all) 따로 + jira() | 대기(AP-6 재승인) |
 | ap-p176 (구 ap-n119) | help-brief-split | 오늘 브리핑이랑 슬랙 장애 얘기도 같이 보여줘 | brief() → slack(keyword=장애) | 대기(AP-6 재승인) |
-| ap-n120 | help-style | show the help page and my github PRs | none (함정: help() → github() → 거절 single-step-only; 2026-10-23 CA 지적 1: 도움말 별칭이 절의 첫 단어가 아니라 분리하지 않음) | 대기(AP-6 재승인) |
+| ap-p177 (구 ap-n120) | help-brief-split | show the help page and my github PRs | 도움말(all) 따로 + github(kind=pr) (2026-10-23 소유자 결정: 영어 도움말 + 조회도 분리) | 승인(2026-10-23 소유자) |
 | ap-p180 (구 ap-n121) | help-brief-split | 사용법 알려주고 안 읽은 메일도 보여줘 | 도움말(all) 따로 + mail(unread) (소유자 결정 Q2: '-고'에서도 분리) | 승인(2026-10-23 소유자) |
 | ap-p178 (구 ap-n122) | help-brief-split | 오늘 브리핑하고 내 지라 이슈 같이 정리해줘 | brief() → jira() → 요약[2] digest (브리핑은 요약하지 않음, B2) | 대기(AP-6 재승인) |
 | ap-p179 (구 ap-n123) | help-brief-split | morning briefing plus confluence pages about onboarding | brief() → confluence(keyword=onboarding) | 대기(AP-6 재승인) |

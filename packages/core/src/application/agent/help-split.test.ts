@@ -28,6 +28,11 @@ describe('splitHelpClause (A1-E1; S2 P3 part 2: owner Q2 and CA findings 1-2)', 
     ['사용법 알려주고 내 지라 이슈도 보여줘', 'all', '내 지라 이슈도 보여줘'],
     ['도움말 좀, 지라 이슈 보여줘', 'all', '지라 이슈 보여줘'],
     ['help and my github PRs', 'all', 'my github PRs'],
+    // Owner decision 2026-10-23: English "show the help page" with a read (ap-n120 → ap-p177).
+    ['show the help page and my github PRs', 'all', 'my github PRs'],
+    ['show me the help menu and my unread mail', 'all', 'my unread mail'],
+    ['check my jira issues and the help page', 'all', 'check my jira issues'],
+    ['see the help page, and list my reminders', 'all', 'list my reminders'],
     // A non-guide alias with a guide closer is still help (W1).
     ['기능 좀 알려줘, 그리고 지라 이슈 보여줘', 'all', '지라 이슈 보여줘'],
     ['show my jira issues and help', 'all', 'show my jira issues'],
@@ -78,7 +83,9 @@ describe('splitHelpClause (A1-E1; S2 P3 part 2: owner Q2 and CA findings 1-2)', 
     ['기능이랑 버그 이슈 지라에서 보여줘', 'a non-guide alias with only a particle'],
     ['기능하고 버그 티켓 지라에서 찾아줘', 'a non-guide alias with only a particle'],
     ['기능, 버그 지라 이슈 보여줘', 'a non-guide alias with only a comma'],
-    ['show the help page and my github PRs', 'an English head word that is not the alias (ap-n120 residual)'],
+    ['open the help menu and my github PRs', 'an English lead the help grammar does not have ("open")'],
+    ['show the help desk tickets and my mail', 'more than one word after the help word'],
+    ['find help articles about login and my jira issues', 'a lead that is not the grammar\'s'],
     ['Quoky야, 할 일 어떻게 취소해?', 'one help question as a whole, after an address'],
     ['도움말 보여줘', 'one conjunct: today\'s one-step help'],
     ['지라 이슈랑 슬랙 장애 얘기', 'no help clause'],
@@ -109,7 +116,7 @@ describe('splitHelpClause (A1-E1; S2 P3 part 2: owner Q2 and CA findings 1-2)', 
       }
     }
     expect(texts).toBeGreaterThanOrEqual(3374);
-    expect(splits).toEqual(['agent-plan.v1.json:ap-p175', 'agent-plan.v1.json:ap-p180']);
+    expect(splits).toEqual(['agent-plan.v1.json:ap-p175', 'agent-plan.v1.json:ap-p177', 'agent-plan.v1.json:ap-p180']);
   });
 
   it('the -고 boundary is the help split\'s only: the validator\'s conjuncts keep the P1 set', () => {
