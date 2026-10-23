@@ -28,6 +28,27 @@ The owner ratified A3a on 2026-10-26 with every recommended default. Docs only; 
 Next: a separate session authors the G6 held-out set; the hash-only addendum (prompt hash first, then the set hash);
 then G6 on a Strict yes.
 
+### ADR-0121 S2 P3 part 1 (2026-10-23, branch `claude/v5-s2-p3`)
+
+- **Live change.** The Jira release list orders by release date, newest first (the 2026-10-22 smoke showed Jira's
+  manual sequence order under "최근 10개 표시").
+- **Built, not live.**
+  - Jira `items-by-key`: one bulk request for up to 10 issue details.
+  - The S2 validator: the brief as one plan step (`brief-repeated`, `summary-covers-brief`), a static connector-call
+    charge (`over-bound` over 10), the `related` flag.
+  - The help split before planning (A1-E1).
+  - Fixed reply notes: the detail cap with the next-10 hint, the relation note, the action-in-plan guidance.
+- **Shadow.** The `agent_run.shadow` line gains `split`, `helpTopic`, `connectorCalls`, `related`, `a6Kind`,
+  `a6Remainder`.
+- **Prompt.** Planner `agent-plan.v6` (rule 8 brief/help, rule 9 related); not gated yet. Selector prompts unchanged.
+- **Gold.** ap-p175..ap-p179 (formerly ap-n118/119/120/122/123) are `help-brief-split` positives, pending the AP-6
+  re-approval; ap-n121 stays `none`.
+- **Not built.** The P3 executor, structure projector, quarantined summary, reply assembler and `quoky.agentRun` audit;
+  the "다음 10개" follow-up (needs a Q9 exception); AP-7.
+
+Next: the agent-plan gate on v6; the owner's answers to the four open questions; then the P3 executor. DECISIONS:
+"ADR-0121 S2 implementation note — P3 part 1".
+
 ### ADR-0121 amendment A2 — ratified (2026-10-23, docs only, branch `claude/v5-answer-step-adr`)
 
 The owner ratified A2 on 2026-10-23 with every recommended default. Docs only; no code changed.

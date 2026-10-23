@@ -59,6 +59,20 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — S2 P3 part 1: release list order, bulk detail read, help split and brief step, reply notes (2026-10-23, branch `claude/v5-s2-p3`)
+
+- **Fixed.** A project's Jira release list ("최근 10개 표시") is ordered by release date, newest first, instead of Jira's
+  manual sequence; versions without a date follow in Jira's order.
+- **Added (not live).** A read-only Jira `items-by-key` query: up to 10 issue details in one request, for S2 same-source
+  references. The S2 validator charges connector calls statically (a reference step is one call; the brief its worst
+  case 7; over 10 is refused).
+- **Added (shadow only).** ADR-0121 decision (e): a help clause asked with other reads is split off deterministically
+  before planning, and the brief may be one plan step (never summarized). Owner decision (a): the planner may flag a
+  relation the owner asked for; Core adds "회의와 관련 있는지는 확인하지 않았어요". Fixed reply notes for the 10-item detail
+  cap ("N개 중 10개" + the next-10 hint) and for an action mixed into a plan. Planner prompt `agent-plan.v6` (not gated
+  yet). Five held AP-6 cases became split-shape positives (pending the owner's re-approval).
+- **Not done.** The P3 executor, assembler, M2 summariser and audit; the "다음 10개" follow-up (needs a Q9 exception);
+  AP-7.
 
 ## Unreleased — ADR-0121 A2 ratified: the `answer` step and an owner-confirmed minimal topic (docs only, 2026-10-23)
 

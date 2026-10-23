@@ -29264,3 +29264,114 @@ dev sets for tuning).
 - **G9.** `s2-answer-list`, ≥ 60 cases, KO and EN, owner-approved per batch, including a social-engineering invite
   family; a scripted always-yes owner; 0 successes over 3 Strict runs. The success check of the social-engineering
   family is deferred to A3b and must be defined before the corpus is frozen.
+### ADR-0121 S2 implementation note — P3 part 1: the reply notes, the bulk detail read, the help split and brief step, the connector charge, and the release list order (2026-10-23, branch `claude/v5-s2-p3`)
+
+Scope: the P3 items of the coordinator's list, each checked against the record first. **No executor exists yet**: the
+P3 core of the S2 plan (§3 P3: the `structure?` port field, `structure-projector.ts`, the sequential executor with its
+run budgets, `quarantined-summary.ts`, `reply-assembler.ts`, the `quoky.agentRun` audit, M1') is not on `origin/main`
+and is not built here. Everything below is either live code that needs no executor (the release list order, the Jira
+bulk query) or a pure, tested piece the executor will compose; `shadow` logs what can be measured. `active` stays
+refused (`AGENT_MODE_ACTIVE_NOT_RELEASED`). A2 is not touched (no `answer` step, no topic consent). The read / A6 / R2
+selector prompts (`nl-select.v67`, A6 `v65`, R2 `v66`) are unchanged.
+
+- **Release list order (live; A8 "newest 10").** The owner's DM smoke of 2026-10-22 showed "릴리스 (미출시 4 · 출시 27,
+  최근 10개 표시)" listing 20261020, 20261112, 20261028, 20260917, 20261015, …: the rows were Jira's `-sequence` order (the
+  project's manual ordering), not dates. `renderReleaseList` now orders by Jira's release date (`dueDate`), newest first,
+  released and unreleased together (an upcoming version dated later leads; the record's "newest 10" and the renderer's
+  own "newest first" doc, no status grouping); versions without a release date follow in the connector's order; equal
+  dates keep the connector's order (stable). No date is read from a version name. On a truncated listing the order
+  covers the first page read (the header keeps "이상"). Residual: if the live versions carry no release date, the order
+  stays Jira's sequence (fixing that would need the connector's `orderBy=-releaseDate`, which also changes which versions
+  a partial first page holds for the name lookups; left for a measured follow-up).
+- **Item 1 — the detail cap (owner decision (c), A1 ratification answer 8).** `renderRefDetailCapNote`: when a reference
+  read the full 10 and the listing held more, "이슈 N개 중 10개만 자세히 보여드렸어요. 더 보려면 '다음 10개 보여줘'라고 말씀해
+  주세요." (the recorded hint; EN equivalent; "N개 이상" for a cut listing). A smaller `take` (the owner's own number) or a
+  listing of 10 or fewer adds nothing. `agentReplyNotes` takes Core's counts per step (the source listing, the bulk read).
+  **The "다음 10개" follow-up is not built (conservative reading, open question 1):** decision (c) asks P3 for "a bounded
+  follow-up (the next 10 keys of the same release listing, structure only)", but S2 Q9 keeps no follow-up state from agent
+  replies, and the A1 and A2 records enumerate Q9's exceptions (the handoff, the topic consent) without this one; the
+  follow-up also needs the executor. Until the owner records a Q9 exception, the hint promises a request the agent cannot
+  yet continue: it must be built or the hint dropped before P5.
+- **Item 2 — one bulk detail call, charged once (the "same-source detail reads" note).** A new read-only named query
+  `items-by-key` (`ConnectorQueryName.ITEMS_BY_KEY`; an additive ADR-0100 D7 vocabulary entry authorized by that note):
+  1..10 distinct keys of the closed `CONNECTOR_ITEM_KEY` shape (`parseItemsByKeyParams`). The Jira adapter reads them in
+  ONE request (`/rest/api/3/search/jql`, `key in ("A-1", …) ORDER BY key ASC`, keys quoted, `maxResults` = the key count,
+  the jira.issues fields with the description bounded and the token redacted); only issues asked for are returned (a moved
+  issue under another key is dropped); a 400 naming an issue key is `NOT_FOUND`. Every other adapter refuses the name. The
+  validator's **static connector-call charge** (`agentPlanConnectorCharge`, rule 6): an external read 1, a reference step
+  1 whatever its `take`, the brief its configured worst case (`briefConnectorCalls`, default 7: B4 / ratification answer
+  6), the to-do, reminder and help reads 0; over 10 is refused `over-bound`. With the default brief no plan of ≤ 4 reads
+  exceeds 10 (7 + 3); the rule bites only on a larger configured brief. The executor's run budget still counts real calls
+  (a `jira.release` lookup may read the project and version lists too) and ends the run with a partial reply.
+- **Item 3 — decision (a) and decision (e).**
+  - *Decision (a) fixed note.* The record names the trigger as the owner's words asking for relatedness ("관련",
+    "related"); a word match would be a phrase list (owner rule), so the planner marks it: prompt rule 9 asks for
+    `"related": true` next to `"steps"` when the owner relates one read to another (the reads stay separate). The parse
+    accepts only a boolean (`bad-related` otherwise); the validator keeps the flag only on a plan that reads two or more
+    sources; no step depends on it. `renderRelatedUncheckedNote` names the first read's source with a closed noun:
+    "회의와 관련 있는지는 확인하지 않았어요." for a calendar read (the recorded text), "메일과 …" etc. (agent's choice, for review:
+    planner flag over a word list). The eval does not score the flag (Q10 compares steps); `shadow` logs `related`.
+  - *Decision (e), A1-E1 help split* (`help-split.ts`, pure): conjuncts at exactly the P1 boundaries ("and", "그리고", a
+    comma, a glued -랑 / -하고); a conjunct is the help clause when the frozen ADR-0104 grammar matches it
+    (`detectHelpIntent`, which also names the topic) or one of its words starts with a `help.topic` alias and none names
+    another offered entry (fail closed); exactly one help clause and something else asked, plain owner text only (no
+    placeholder). The rest (minus the joining boundary word) is the planner's text and the grounding text. Measured: 0 of
+    the 873 `nl-intent.v1.json` and 0 of the 605 `nl-action.v1.json` cases split (A1-E5 byte-identity, pinned by test);
+    ap-n118 and ap-n120 split. **ap-n121 ("사용법 알려주고 안 읽은 메일도 보여줘") does not split**: the verb connective of
+    "알려주고" is not a P1 boundary, and A1-E1 says the P1 boundaries (open question 2). The agent import allowlist gains
+    `../help-intent/help-intent` (pure, import-free; pinned).
+  - *A1-E2, the brief as a step.* `AGENT_SINGLE_STEP_ONLY` is `['help.topic']`. New refusals `brief-repeated` (a second
+    brief step) and `summary-covers-brief` (B2); B3 holds by the source table (no id field: `ref-cross-source` /
+    `ref-field`); B4 is the connector charge above; B1 labels are `readOutputLabel` unchanged; B5 is `not-dm`.
+  - *A1-E3, prompt `agent-plan.v5` → `agent-plan.v6`* (never run against a model; the coordinator's agent-plan gate
+    decides): rule 8 "brief.today may be ONE step of a plan, never two, and a summarize step never covers it … help.topic
+    is never part of a plan of two or more steps: a message asking for help together with another read is none" (help
+    reaches the planner only when the split could not apply, so none stays the safe answer); rule 9's related flag. No
+    example changed; RAG-0 clean; the sha256 pin moved.
+  - *A1-E4, gold (pending the owner's AP-6 re-approval).* ap-n118, n119, n120, n122, n123 moved to the new positive
+    family `help-brief-split` as ap-p175..ap-p179 (ids changed because ap-n ids are negatives; each note says "Was …"):
+    help `all` + `[jira.issues]`; `[brief.today, slack.search 장애]`; help `all` + `[github.items kind=pr]` (the owner's PR
+    relabel convention); `[brief.today, jira.issues, summarize [2] digest.v1]` (answer 4); `[brief.today,
+    confluence.search onboarding]`. ap-n121 stays a `none` negative (see above). Multi-step positives 174 → 179,
+    negatives 144 → 139. The case schema gains `help`; the self-check needs "≥ 2 sections" and the split to give exactly
+    the gold topic (and no split without `help`). **AP-7 (≥ 20 new split-shape cases) is not drafted** (owner batch).
+  - *Eval.* `caseContext` runs the help split as the runtime does; a positive is exact only with the exact rest plan and
+    the gold help section (an extra section is a miss, diff `help`).
+  - *A1-E5 shadow.* The line gains `split` (`help` / `brief` / `none`), `helpTopic` (the entry's closed enum value),
+    `connectorCalls`, `related`; a split turn logs no one-step agreement (the live path answered the whole message).
+- **Item 4 — the unbounded ask (decision (h)): already done in review set A (#276).** `renderUnboundedAsk` exists and
+  `shadow` logs the ask's closed fields; there is no P3 executor or `active` reply path to wire it to (P5 sends it). No
+  change.
+- **Item 5 — the action-in-plan guidance (decision (f), A6-D4).** The record: "목록 보여주고 첫 번째 거 요약해줘" shows the
+  list and asks which number to summarize; the one-item summary is the next turn's A6 `item.summarize`.
+  `a6InPlanGuidance` (pure) answers only a plan refused `a6-in-plan`: the reads without the A6 steps (summaries and
+  references that depended on them dropped, the rest renumbered and validated by the same validator) as a candidate
+  remainder, the closed kind (`item-read` when every A6 step is the one ITEM_READ entry `item.summarize`, else `action`)
+  and a fixed note ("한 항목 요약은 목록을 보신 뒤 번호로 말씀해 주세요. 예: '1번 요약해줘'" / "추가·변경·취소 같은 작업은 조회와
+  함께 하지 않았어요. 따로 한 번 더 말씀해 주세요."). Never a yes/no question (nothing is pending). Whether the remainder
+  runs is the P5 dispatcher's decision (open question 3: the record covers the item-summary case; for a write mixed with
+  reads the gold is `none` and the record says nothing about running the read part). `shadow` logs `a6Kind` and
+  `a6Remainder` (`run` / `none`).
+- **Versions.** Planner `agent-plan.v6` (pin `f4bb3828…`). Read / A6 / R2 selector prompts unchanged. Deps stay 38. No
+  migration.
+- **Tests (targeted, offline; no model call).** `work-chat/jira-release.test.ts` (+5: the live order, determinism over
+  input orders, undated after dated, no dates, through the lookup); `connector-jira/items-by-key.test.ts` (4: ten keys in
+  exactly one request, only asked issues, shape refusals before any request, the 400 mapping); `ports/connector-query`
+  (+1); `agent/plan-validator.test.ts` (+13: brief rules, the charge, over-bound, the related flag);
+  `agent/help-split.test.ts` (14, incl. the A1-E5 corpus byte-identity); `agent/reply-notes.test.ts` (9);
+  `agent/agent-run-service.test.ts` (+4: help split, brief and summary-covers-brief, related, a6 fields; content-free);
+  `agent/plan-prompt.test.ts` (v6 edits, pin); `agent/agent-boundary.test.ts` (allowlist, file list);
+  `tools/agent-plan-eval.test.ts` (+4: help self-check and scoring, the brief, ap-n121; the perfect planner 179/179,
+  674/674, 12/12). `pnpm build` passes.
+- **Open questions for the owner.**
+  1. The "다음 10개" follow-up needs a Q9 exception (structure-only state: the release listing's next keys) and the
+     executor; until then the recorded hint promises a follow-up that does not exist.
+  2. Should the help split also cut at the Korean verb connective "-고" ("사용법 알려주고 …", ap-n121)? A1-E1 names the P1
+     boundaries only; A1-E4's proposed gold for ap-n121 needs it.
+  3. For a plan refused `a6-in-plan` that holds a write, should the read part run (with the "do it separately" note) or
+     should the turn stay `none` as the write-read gold says?
+  4. The release list puts upcoming and shipped versions together by date (newest first). Unreleased first (soonest
+     first), then released (newest first) is the alternative.
+- **Not done here.** The P3 executor and everything it carries (above), AP-7, the AP-6 re-approval, any model-in-the-loop
+  run (the coordinator runs the agent-plan gate on v6), reviews (CA for the port addition and the validator rules, Codex,
+  `/security-review`).
