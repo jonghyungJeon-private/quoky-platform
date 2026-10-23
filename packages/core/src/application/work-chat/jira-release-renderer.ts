@@ -151,7 +151,24 @@ function renderItemLine(item: ConnectorItem, number?: number): MessagePart {
   );
 }
 
-/** The releases of a project (the owner named a project and no release): newest first, at most 10. */
+/**
+ * The release list order (A8 "newest 10"; live smoke 2026-10-22: Jira's `-sequence` order is the project's manual
+ * ordering, so "최근 10개" listed 20261020, 20261112, 20261028, 20260917, …). Deterministic and structural, from Jira's
+ * own release date field only (`dueDate`, `YYYY-MM-DD`; never a date read out of a version name):
+ * - versions with a release date first, newest date first, released and unreleased together (an upcoming version dated
+ *   later than today's release comes first, so the newest planned work and the latest shipped one lead the list);
+ * - versions without a release date after them, in the connector's order (Jira's sequence, newest first);
+ * - equal dates keep the connector's order (a stable sort), so the same listing always renders the same rows.
+ * On a truncated listing the order covers the versions read (the first page), and the header keeps its "이상". Pure.
+ */
+export function releasesNewestFirst(releases: readonly ConnectorItem[]): ConnectorItem[] {
+  const dated = releases.filter((item) => item.dueDate !== undefined);
+  const undated = releases.filter((item) => item.dueDate === undefined);
+  // Array.prototype.sort is stable (ES2019): equal dates keep the connector's order.
+  return [...dated.sort((a, b) => ((a.dueDate as string) < (b.dueDate as string) ? 1 : (a.dueDate as string) > (b.dueDate as string) ? -1 : 0)), ...undated];
+}
+
+/** The releases of a project (the owner named a project and no release): newest first ({@link releasesNewestFirst}), at most 10. */
 export function renderReleaseList(project: ReleaseProjectRef, releases: readonly ConnectorItem[], truncated: boolean, ignoredLink = false): MessageBody {
   const lines: Array<{ text: MessagePart; droppable?: boolean }> = [];
   if (ignoredLink) lines.push({ text: renderIgnoredLinkNote() });
@@ -160,7 +177,7 @@ export function renderReleaseList(project: ReleaseProjectRef, releases: readonly
     return fit(lines);
   }
   const unreleased = releases.filter((item) => item.status === 'unreleased').length;
-  const shown = releases.slice(0, RELEASE_LIST_MAX_ROWS);
+  const shown = releasesNewestFirst(releases).slice(0, RELEASE_LIST_MAX_ROWS);
   const more = releases.length > shown.length || truncated;
   lines.push({
     text: messageContent(
