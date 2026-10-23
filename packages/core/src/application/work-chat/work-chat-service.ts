@@ -84,6 +84,13 @@ import {
 } from './work-chat-renderer';
 import type { WorkChatLookupFailure } from './work-chat-renderer';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
+import { localDateOf } from '../reminders/zoned-time';
+
+/** `YYYY-MM-DD` of `epochMs` in `timeZone`. */
+function localDateText(epochMs: number, timeZone: string): string {
+  const date = localDateOf(epochMs, timeZone);
+  return `${String(date.year).padStart(4, '0')}-${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
+}
 
 /** What the runtime presents for one work-chat command (ADR-0100 D8/D10). */
 export type WorkChatOutcome =
@@ -192,7 +199,17 @@ export interface WorkChatServiceOptions {
    * included). False (the default): every list and record is byte-identical.
    */
   readonly numberedLists?: boolean;
+  /**
+   * `QUOKY_TIMEZONE` (default `Asia/Seoul`): the owner's local date orders a project's release list (owner decision Q4,
+   * ratified 2026-10-23: upcoming, released, overdue, undated).
+   */
+  readonly timeZone?: string;
+  /** Tests only: the clock (epoch ms; default `Date.now`). */
+  readonly now?: () => number;
 }
+
+/** The release list's zone when none is configured (the owner's zone, Q4). */
+export const WORK_CHAT_DEFAULT_TIME_ZONE = 'Asia/Seoul';
 
 export const WORK_CHAT_DEFAULT_LOOKUP_DEADLINE_MS = 15_000;
 
@@ -391,6 +408,8 @@ export class WorkChatService implements WorkDesk {
   private readonly actionReceipts: boolean;
   private readonly jiraSiteHost: string | undefined;
   private readonly numberedLists: boolean;
+  private readonly timeZone: string;
+  private readonly now: () => number;
 
   constructor(
     private readonly deps: WorkChatServiceDeps,
@@ -401,6 +420,8 @@ export class WorkChatService implements WorkDesk {
     this.actionReceipts = options.actionReceipts === true;
     this.jiraSiteHost = options.linkHosts?.jira;
     this.numberedLists = options.numberedLists === true;
+    this.timeZone = options.timeZone ?? WORK_CHAT_DEFAULT_TIME_ZONE;
+    this.now = options.now ?? Date.now;
   }
 
   /**
@@ -922,6 +943,7 @@ export class WorkChatService implements WorkDesk {
             ...(this.jiraSiteHost !== undefined ? { siteHost: this.jiraSiteHost } : {}),
             ...(this.numberedLists ? { numbered: true } : {}),
             ...(command.confirmNear === true ? { confirmNear: true } : {}),
+            today: localDateText(this.now(), this.timeZone),
           }),
         this.lookupDeadlineMs,
       );

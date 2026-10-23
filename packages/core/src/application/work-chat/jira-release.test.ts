@@ -11,6 +11,7 @@ import { hasJiraReleaseLink, normalizeSiteHost, parseJiraReleaseLinks, releaseLi
 import { fuzzyProjects, lookupJiraRelease, nearProjectsOfJoined, splitKeyFromRelease, stripRedundantProjectKey, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
 import { releasesInListOrder, renderReleaseIssues, renderReleaseList } from './jira-release-renderer';
 import { detectWorkChatCommand } from './work-chat-command';
+import { WorkChatService } from './work-chat-service';
 import { workChatCommandForSelection } from './work-chat-selection';
 
 /** ADR-0120 amendment A8: Jira release listings, offline (scripted connector, no network). */
@@ -446,7 +447,8 @@ describe('the release report renderer (A8)', () => {
   });
 });
 
-describe('the release list order (owner Q4 2026-10-23: planned soonest first, then released newest first)', () => {
+describe('the release list order (owner Q4, ratified 2026-10-23: upcoming, released, overdue, undated)', () => {
+  const TODAY = '2026-10-23';
   // The live smoke's order: Jira `-sequence`, not dates.
   const SEQUENCE_ORDER = ['20261020', '20261112', '20261028', '20260917', '20261015', '20261008', '20260924', '20261001', '20260910', '20260903', '20260827', '20260820'];
   const released = (name: string): boolean => name <= '20261020';
@@ -459,52 +461,78 @@ describe('the release list order (owner Q4 2026-10-23: planned soonest first, th
   const rows = (text: string): string[] =>
     text.split('\n').filter((line) => line.startsWith('- ')).map((line) => (/^- ([^·]+?) ·/u.exec(line)?.[1] ?? line).replace(/^배포일_/u, ''));
 
-  it('planned versions first (soonest first), then the newest released ones; the header names the order', () => {
-    const text = plainTextOf(renderReleaseList({ key: 'OP26', name: '차란차 플랫폼 운영 2026' }, SEQUENCE_ORDER.map(dated), false));
-    expect(text).toContain('(미출시 2 · 출시 10, 예정 → 최근 출시 순 10개 표시)');
+  it('upcoming versions first (soonest first), then the newest released ones; the header names the order', () => {
+    const text = plainTextOf(renderReleaseList({ key: 'OP26', name: '차란차 플랫폼 운영 2026' }, SEQUENCE_ORDER.map(dated), false, false, TODAY));
+    expect(text).toContain('(미출시 2 · 출시 10, 예정 → 최근 출시 → 지난 예정 순 10개 표시)');
     expect(text).not.toContain('최근 10개');
     expect(rows(text)).toEqual(['20261028', '20261112', '20261020', '20261015', '20261008', '20261001', '20260924', '20260917', '20260910', '20260903']);
-    expect(text).toContain('- 배포일_20261028 · 미출시 · 2026-10-28');
   });
 
-  it('is deterministic: any input order of the same listing renders the same rows', () => {
-    const items = SEQUENCE_ORDER.map(dated);
-    const expected = plainTextOf(renderReleaseList({ key: 'OP26' }, items, false));
-    for (const order of [[...items].reverse(), [...items].sort((a, b) => (a.id < b.id ? -1 : 1)), [...items.slice(5), ...items.slice(0, 5)]]) {
-      expect(plainTextOf(renderReleaseList({ key: 'OP26' }, order, false))).toBe(expected);
-    }
-  });
-
-  it('undated versions follow the dated ones of their own group, in the connector order; equal dates keep the connector order', () => {
+  it('an unreleased version whose date passed comes after the released ones (newest first); undated versions last, in Jira order', () => {
     const items: ConnectorItem[] = [
       { id: '1', title: '비정기 배포', status: 'released' },
       { id: '2', title: 'A', status: 'released', dueDate: '2026-10-01' },
       { id: '3', title: '핫픽스', status: 'unreleased' },
       { id: '4', title: 'B', status: 'unreleased', dueDate: '2026-10-29' },
       { id: '5', title: 'C', status: 'released', dueDate: '2026-10-01' },
-      { id: '6', title: 'D', status: 'unreleased', dueDate: '2026-10-24' },
+      { id: '6', title: 'D', status: 'unreleased', dueDate: '2026-10-23' },
       { id: '7', title: 'E', status: 'released', dueDate: '2026-10-15' },
+      { id: '8', title: 'F', status: 'unreleased', dueDate: '2026-10-10' },
+      { id: '9', title: 'G', status: 'unreleased', dueDate: '2026-10-20' },
     ];
-    expect(releasesInListOrder(items).map((item) => item.title)).toEqual(['D', 'B', '핫픽스', 'E', 'A', 'C', '비정기 배포']);
-    expect(rows(plainTextOf(renderReleaseList({ key: 'OP26' }, items, false)))).toEqual(['D', 'B', '핫픽스', 'E', 'A', 'C', '비정기 배포']);
+    // Today counts as upcoming; equal dates keep the connector order.
+    expect(releasesInListOrder(items, TODAY).map((item) => item.title)).toEqual(['D', 'B', 'E', 'A', 'C', 'G', 'F', '비정기 배포', '핫픽스']);
+    expect(rows(plainTextOf(renderReleaseList({ key: 'OP26' }, items, false, false, TODAY)))).toEqual(['D', 'B', 'E', 'A', 'C', 'G', 'F', '비정기 배포', '핫픽스']);
+    // Without a date every dated unreleased version counts as upcoming.
+    expect(releasesInListOrder(items).map((item) => item.title)).toEqual(['F', 'G', 'D', 'B', 'E', 'A', 'C', '비정기 배포', '핫픽스']);
   });
 
-  it('with no release dates: planned, then released, each in the connector order (Jira sequence); the counts are unchanged', () => {
+  it('is deterministic: any input order of the same listing renders the same rows', () => {
+    const items = SEQUENCE_ORDER.map(dated);
+    const expected = plainTextOf(renderReleaseList({ key: 'OP26' }, items, false, false, TODAY));
+    for (const order of [[...items].reverse(), [...items].sort((a, b) => (a.id < b.id ? -1 : 1)), [...items.slice(5), ...items.slice(0, 5)]]) {
+      expect(plainTextOf(renderReleaseList({ key: 'OP26' }, order, false, false, TODAY))).toBe(expected);
+    }
+  });
+
+  it('with no release dates: Jira order; the counts are unchanged', () => {
     const items: ConnectorItem[] = [
       { id: '1', title: 'Y', status: 'released' },
       { id: '2', title: 'X', status: 'unreleased' },
     ];
-    const text = plainTextOf(renderReleaseList({ key: 'OP26' }, items, true));
-    expect(rows(text)).toEqual(['X', 'Y']);
-    expect(text).toContain('(미출시 1 · 출시 1 이상, 예정 → 최근 출시 순 2개 표시)');
+    const text = plainTextOf(renderReleaseList({ key: 'OP26' }, items, true, false, TODAY));
+    expect(rows(text)).toEqual(['Y', 'X']);
+    expect(text).toContain('(미출시 1 · 출시 1 이상, 예정 → 최근 출시 → 지난 예정 순 2개 표시)');
   });
 
-  it('the lookup renders the project list in that order (owner sentence 4 with dated versions)', async () => {
+  it('the lookup orders the project list by the date it is given (owner sentence 4 with dated versions)', async () => {
     const saved = RELEASES.OP26;
-    RELEASES.OP26 = SEQUENCE_ORDER.slice(0, 4).map(dated);
+    RELEASES.OP26 = [...SEQUENCE_ORDER.slice(0, 4).map(dated), { ...dated('20261021'), status: 'unreleased' }];
     try {
-      const { text } = await run({ project: '차란차 운영 2026' });
-      expect(rows(text)).toEqual(['20261028', '20261112', '20261020', '20260917']);
+      const fake = connector();
+      const result = await lookupJiraRelease({ connector: fake.provider, command: { scope: 'all', links: [], project: '차란차 운영 2026' }, siteHost: SITE, today: TODAY });
+      const text = result.kind === 'body' ? plainTextOf(result.body) : '';
+      expect(rows(text)).toEqual(['20261028', '20261112', '20261020', '20260917', '20261021']);
+    } finally {
+      RELEASES.OP26 = saved as ConnectorItem[];
+    }
+  });
+
+  it('the service passes the owner\'s local date (QUOKY_TIMEZONE, Asia/Seoul by default) to the lookup', async () => {
+    const saved = RELEASES.OP26;
+    // 2026-10-22 23:30 UTC is 2026-10-23 08:30 in Seoul: a version dated 2026-10-22 is overdue there, upcoming in UTC.
+    RELEASES.OP26 = [{ ...dated('20261020') }, { ...dated('20261022'), status: 'unreleased' }, { ...dated('20261112') }];
+    try {
+      const run = async (timeZone?: string): Promise<string[]> => {
+        const desk = new WorkChatService(
+          { workSurface: { forActor: async () => ({ items: [], status: 'COMPLETE', sources: [] }) as never }, connectors: { list: () => [connector().provider] }, work: {} as never },
+          { summaryEnabled: false, now: () => Date.parse('2026-10-22T23:30:00.000Z'), ...(timeZone !== undefined ? { timeZone } : {}) },
+        );
+        const outcome = await desk.handle({ kind: 'release', source: 'jira', project: '차란차 운영 2026', scope: 'all', links: [] } as never, { id: 'owner', displayName: 'Owner', identities: [], createdAt: '2026-10-01T00:00:00.000Z' } as never);
+        return rows(outcome.kind === 'reply' ? (typeof outcome.text === 'string' ? outcome.text : plainTextOf(outcome.text as never)) : JSON.stringify(outcome));
+      };
+      expect(await run()).toEqual(['20261112', '20261020', '20261022']);
+      expect(await run('UTC')).toEqual(['20261022', '20261112', '20261020']);
     } finally {
       RELEASES.OP26 = saved as ConnectorItem[];
     }

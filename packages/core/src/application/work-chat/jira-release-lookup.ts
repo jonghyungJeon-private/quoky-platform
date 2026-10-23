@@ -98,6 +98,8 @@ export async function lookupJiraRelease(input: {
    * first (`confirm` on the result). Only when the caller can keep the question open (a natural-language selection turn).
    */
   readonly confirmNear?: boolean;
+  /** The owner's local date (`YYYY-MM-DD`, `QUOKY_TIMEZONE`) for the release list order (owner Q4, 2026-10-23). */
+  readonly today?: string;
 }): Promise<ReleaseLookupResult> {
   let command = input.command;
   // The release text before a repeated project key was stripped: a release of exactly that name wins over the stripped one.
@@ -168,7 +170,7 @@ export async function lookupJiraRelease(input: {
         if (joined !== undefined && candidates.some((item) => item.id === joined.id)) {
           if (input.inChannel === true) return body(renderReleaseDmOnly('list'));
           const known = await releasesOf(connector, joined.id);
-          return resolvedBody(renderReleaseList(refOf(joined), known.items, known.truncated === true, ignoredLink), joined.id);
+          return resolvedBody(renderReleaseList(refOf(joined), known.items, known.truncated === true, ignoredLink, input.today), joined.id);
         }
         const unresolved = narrowed === undefined || narrowed.unproven || narrowed.found.length !== 1;
         // Owner decision B: the release narrowing picked no single candidate (none holds it, more candidates than the bound,
@@ -220,7 +222,7 @@ export async function lookupJiraRelease(input: {
             // project, so the owner named the project alone: its release list (DM-only, like any list).
             if (match === undefined && !truncated && !resolved.ambiguous && projectWithReleaseWords(completeProjects, command.project, command.release)?.id === project.key) {
               if (input.inChannel === true) return body(renderReleaseDmOnly('list'));
-              return resolvedBody(renderReleaseList(project, known.items, false, ignoredLink), project.key);
+              return resolvedBody(renderReleaseList(project, known.items, false, ignoredLink, input.today), project.key);
             }
           }
           if (match === undefined) return resolvedBody(renderReleaseNotFound(command.release, project, input.inChannel === true ? [] : nearbyReleases(known.items, command.release)), project.key);
@@ -232,7 +234,7 @@ export async function lookupJiraRelease(input: {
       }
     } else if (project !== undefined) {
       const known = await releasesOf(connector, project.key);
-      return resolvedBody(renderReleaseList(project, known.items, known.truncated === true, ignoredLink), project.key);
+      return resolvedBody(renderReleaseList(project, known.items, known.truncated === true, ignoredLink, input.today), project.key);
     } else {
       return body(renderReleaseUsage(ignoredLink));
     }
