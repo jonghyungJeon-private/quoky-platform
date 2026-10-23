@@ -606,3 +606,26 @@ describe('the help split in scoring (ADR-0121 A1-E1 / A1-E4, S2 P3)', () => {
     expect(scoreAgentPlanOutput(golden, answer(3), FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'related' });
   });
 });
+
+describe('the ratified read + write note (owner decision Q3, 2026-10-23): readWrite expectations on the write-read negatives', () => {
+  const annotated = NEW.filter((golden) => golden.readWrite !== undefined);
+  const check = (cases: AgentPlanCase[]): string[] => validateAgentPlanCorpus({ ...CORPUS, cases }, ONE_STEP);
+
+  it('every write-read and a6-in-plan negative carries one; the planner gold stays none', () => {
+    const families = NEW.filter((golden) => golden.family === 'write-read' || golden.family === 'a6-in-plan').map((golden) => golden.id).sort();
+    expect(annotated.map((golden) => golden.id).sort()).toEqual(families);
+    expect(annotated.every((golden) => golden.expect === 'none')).toBe(true);
+    const count = (outcome: string): number => annotated.filter((golden) => golden.readWrite?.outcome === outcome).length;
+    expect({ write: count('read-and-write'), note: count('read-and-note'), unchanged: count('unchanged') }).toEqual({ write: 8, note: 12, unchanged: 12 });
+  });
+
+  it('the self-check catches a write that takes read words, a clause that is no conjunct, and a wrong conjunct count', () => {
+    const base = NEW.find((golden) => golden.id === 'ap-n001') as AgentPlanCase;
+    const rw = base.readWrite as NonNullable<AgentPlanCase['readWrite']>;
+    expect(check([{ ...base, readWrite: { ...rw, write: { entryId: 'todo.add', args: { title: '지라 이슈' } } } }]).join('\n')).toMatch(/does not validate on the write clause alone/);
+    expect(check([{ ...base, readWrite: { ...rw, writeClause: '코드 리뷰 추가해줘' } }]).join('\n')).toMatch(/not one conjunct/);
+    expect(check([{ ...base, readWrite: { outcome: 'unchanged', why: 'one-conjunct' } }]).join('\n')).toMatch(/one-conjunct but 2 conjuncts/);
+    // A read arg grounded only in the write clause ("리뷰") never validates on the read conjuncts.
+    expect(check([{ ...base, readWrite: { ...rw, readPlan: { steps: [{ entryId: 'jira.issues', args: { keyword: '리뷰' } }], ambiguity: 'CLEAR' } } }]).join('\n')).toMatch(/read plan does not validate/);
+  });
+});

@@ -50,7 +50,11 @@ import {
   NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
   buildAgentPlanPrompt,
+  conjunctTokens,
+  isNlActionEntryId,
   isNlCatalogEntryId,
+  NL_ACTION_ENTRIES,
+  validateSelection,
   splitHelpClause,
   isNlWave1EntryId,
   parseAgentPlanOutput,
@@ -150,7 +154,29 @@ export interface AgentPlanCase {
   readonly trapRefusal?: string;
   /** A1-E4: the help section Core's split must give (a `NL_HELP_TOPICS` topic); the expectation is the rest plan. */
   readonly help?: string;
+  /**
+   * The ratified ADR-0121 S2 note "a read and a write in one owner turn" (owner decision Q3, 2026-10-23): the turn outcome
+   * Core gives this negative AFTER the planner's `none` (the planner gold is unchanged: it sees READ entries only). Data
+   * for the P3 part 3 runtime and its tests; the planner eval does not score it. The self-check proves its shape.
+   */
+  readonly readWrite?: AgentPlanReadWriteExpect;
   readonly note?: string;
+}
+
+/** The closed outcomes of the read + write path (S2 note of 2026-10-23). */
+export const AGENT_PLAN_READ_WRITE_OUTCOMES = ['read-and-write', 'read-and-note', 'unchanged'] as const;
+/** Why a write clause is not run (`read-and-note`) or the path does not apply (`unchanged`). */
+export const AGENT_PLAN_READ_WRITE_WHY = ['list-ref', 'deictic', 'one-conjunct', 'no-offered-entry'] as const;
+
+export interface AgentPlanReadWriteExpect {
+  readonly outcome: (typeof AGENT_PLAN_READ_WRITE_OUTCOMES)[number];
+  /** The write conjunct, as the owner wrote it (one conjunct of `conjunctTokens(…, { verbConnective: true })`). */
+  readonly writeClause?: string;
+  /** The S2 read plan of the other conjuncts (canonical). */
+  readonly readPlan?: AgentPlanGoldPlan;
+  /** `read-and-write`: the A6 selection, valid with the write clause alone as its grounding text (canonical args). */
+  readonly write?: { readonly entryId: string; readonly args: NlArgs };
+  readonly why?: (typeof AGENT_PLAN_READ_WRITE_WHY)[number];
 }
 
 export interface AgentPlanCorpus {
@@ -525,6 +551,7 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
       continue;
     }
     if (golden.help !== undefined) problems.push(`${at}: only a positive names a help section`);
+    if (golden.readWrite !== undefined) problems.push(...readWriteProblems(at, golden, corpus.fixture));
     if (golden.trapRefusal !== undefined && golden.trap === undefined) problems.push(`${at}: trapRefusal without a trap`);
     if (golden.trap === undefined || 'skip' in prepared) continue;
     const trap = parseAgentPlanOutput(JSON.stringify(golden.trap));
@@ -536,6 +563,60 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
     if (refused.ok && refused.plan.kind === 'run') problems.push(`${at}: the trap validates to an executable plan`);
     else if (!refused.ok && golden.trapRefusal !== undefined && refused.reason !== golden.trapRefusal) problems.push(`${at}: the trap is refused as ${refused.reason}, not ${golden.trapRefusal}`);
   }
+  return problems;
+}
+
+/** The A6 entries the read + write path may hand a write clause to (the offered A6 catalog of the fixture). */
+const ACTION_ENTRIES: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined);
+
+/**
+ * The S2 read + write note (owner decision Q3, 2026-10-23): a `readWrite` expectation is well-formed when its conjuncts,
+ * read plan and write selection are what Core would derive: `unchanged / one-conjunct` has one conjunct; every other
+ * outcome has two or more; the write clause is exactly one of them; the read plan of the other conjuncts validates to a
+ * canonical `run` plan with their words alone as grounding; a `read-and-write` selection validates (ADR-0120 D4, actions
+ * on) with the write clause alone as grounding text (no read word reaches the write args) and is canonical.
+ */
+function readWriteProblems(at: string, golden: AgentPlanCase, fixture: AgentPlanCorpus['fixture']): string[] {
+  const rw = golden.readWrite as AgentPlanReadWriteExpect;
+  const problems: string[] = [];
+  if (golden.expect !== 'none') problems.push(`${at}: readWrite is for a none negative`);
+  if (!(AGENT_PLAN_READ_WRITE_OUTCOMES as readonly string[]).includes(rw.outcome)) return [...problems, `${at}: unknown readWrite outcome`];
+  if (rw.why !== undefined && !(AGENT_PLAN_READ_WRITE_WHY as readonly string[]).includes(rw.why)) problems.push(`${at}: unknown readWrite why`);
+  const prepared = prepareSelectionInput(golden.text, golden.attachments ?? 0);
+  if ('skip' in prepared) return [...problems, `${at}: the input is skipped`];
+  const tokens = conjunctTokens(prepared.groundingText, { verbConnective: true });
+  const clauses = new Map<number, string[]>();
+  for (const token of tokens) if (!token.boundary) clauses.set(token.conjunct, [...(clauses.get(token.conjunct) ?? []), token.text]);
+  const texts = [...clauses.values()].map((words) => words.join(' ').replace(/[,،]$/u, ''));
+  if (rw.outcome === 'unchanged') {
+    if (rw.why === 'one-conjunct' && texts.length !== 1) problems.push(`${at}: one-conjunct but ${texts.length} conjuncts`);
+    if (rw.why === 'no-offered-entry' && texts.length < 2) problems.push(`${at}: no-offered-entry needs two or more conjuncts`);
+    if (rw.writeClause !== undefined || rw.readPlan !== undefined || rw.write !== undefined) problems.push(`${at}: unchanged carries no clause, plan or write`);
+    return problems;
+  }
+  if (texts.length < 2) return [...problems, `${at}: the read + write path needs two or more conjuncts`];
+  const writeAt = texts.indexOf(rw.writeClause ?? '');
+  if (writeAt < 0) return [...problems, `${at}: the write clause is not one conjunct`];
+  if (rw.readPlan === undefined) return [...problems, `${at}: no read plan`];
+  const readText = texts.filter((_text, index) => index !== writeAt).join(' ');
+  const plan = parseAgentPlanOutput(JSON.stringify(rw.readPlan));
+  const ctx = { offered: OFFERED, groundingText: readText, now: fixture.now as AgentPlanValidationContext['now'], timeZone: fixture.timeZone, direct: fixture.direct };
+  const validated = plan === null ? undefined : validateAgentPlan(plan, ctx);
+  if (validated === undefined || !validated.ok || validated.plan.kind !== 'run') problems.push(`${at}: the read plan does not validate on the read conjuncts`);
+  else if (graphDiff(validatedGraph(validated.plan.steps), goldGraph(rw.readPlan)) !== undefined) problems.push(`${at}: the read plan is not canonical`);
+  if (rw.outcome === 'read-and-note') {
+    if (rw.write !== undefined) problems.push(`${at}: read-and-note runs no write`);
+    if (rw.why !== 'list-ref' && rw.why !== 'deictic') problems.push(`${at}: read-and-note needs why list-ref or deictic`);
+    return problems;
+  }
+  if (rw.write === undefined || !isNlActionEntryId(rw.write.entryId)) return [...problems, `${at}: read-and-write needs an A6 write`];
+  const offered = new Map([...READ_ENTRIES, ...ACTION_ENTRIES].map((entry) => [entry.id, entry] as const));
+  const write = validateSelection(
+    { entryId: rw.write.entryId, args: rw.write.args },
+    { offered, groundingText: rw.writeClause as string, now: fixture.now as AgentPlanValidationContext['now'], timeZone: fixture.timeZone, actions: true },
+  );
+  if (!write.ok) problems.push(`${at}: the write does not validate on the write clause alone (${write.reason})`);
+  else if (sortedArgs(write.value.args) !== sortedArgs(rw.write.args)) problems.push(`${at}: the write args are not canonical`);
   return problems;
 }
 
