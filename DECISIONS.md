@@ -29588,3 +29588,11 @@ ADR-0121 S2 note — a read and a write in one owner turn (owner decision Q3, 20
   back to the head-word form (the English alias `help` is again exempt from the W1 guide-noun rule, as in part 2). Split
   tests: "help 알려주고 내 지라 이슈 보여줘", "help 좀, 그리고 안 읽은 메일 보여줘", "지라 이슈랑 help 보여줘". Re-measured over the
   19 golden corpora (3402 texts): 0 false splits; only ap-p175, ap-p177 and ap-p180 split; the CA probes still do not.
+- **Codex P2 on bd56b0f6 (English fallback).** The head-word fallback also fired for fully English clauses that failed the
+  English form ("check my jira issues and help page." → rest "check my jira issues page.", a help word injected into the
+  planner text and the grounding text). Now only a mixed-language clause (a non-ASCII word in it) falls back; a fully
+  English clause that fails the English form is never split (the message reaches the planner unchanged). The English form
+  tolerates trailing sentence punctuation, so "check my jira issues and help page." splits cleanly (rest "check my jira
+  issues"). Tests: three punctuated English splits with clean rests, three punctuated or non-form English clauses that do
+  not split, the mixed KO/EN splits kept. Re-measured over the 19 golden corpora (3402 texts): 0 false splits; only
+  ap-p175, ap-p177 and ap-p180 split.

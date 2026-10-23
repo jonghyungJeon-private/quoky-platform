@@ -62,6 +62,8 @@ function namesOf(entry: NlCatalogEntry): string[] {
 
 /** The word without a trailing comma. */
 const bare = (word: string): string => word.replace(/[,،]$/u, '');
+/** The word without trailing commas or sentence punctuation (the English form). */
+const plain = (word: string): string => word.replace(/[,،.!?。…]+$/u, '');
 
 /**
  * The help alias the head word is, alone or with one of the help grammar's topic particles (an English alias: alone), or
@@ -141,13 +143,17 @@ function aliasClause(words: readonly ConjunctToken[], indexes: readonly number[]
   // determiners, a bare determiner) and at most one plain word after the help word ending the clause ("the help page", "help
   // menu"). English puts its predicate first, so nothing is shared with the rest.
   const englishNames = helpNames.filter((name) => /^[a-z0-9]+$/u.test(name));
-  const at = words.findIndex((token) => englishNames.includes(bare(token.word)));
+  const at = words.findIndex((token) => englishNames.includes(plain(token.word)));
   if (at >= 0) {
     const after = words.slice(at + 1);
-    const lead = words.slice(0, at).map((token) => bare(token.word)).join(' ');
-    const oneWordAfter = after.length === 0 || (after.length === 1 && /^[a-z]+$/u.test(bare((after[0] as ConjunctToken).word)));
+    const lead = words.slice(0, at).map((token) => plain(token.word)).join(' ');
+    // Trailing sentence punctuation is tolerated ("… and the help page.").
+    const oneWordAfter = after.length === 0 || (after.length === 1 && /^[a-z]+$/u.test(plain((after[0] as ConjunctToken).word)));
     if (isHelpEnglishLead(lead) && oneWordAfter) return { topic: 'all' };
-    // Codex P2: a mixed-language clause ("help 알려주고 …") falls back to the head-word form below.
+    // Codex P2 (twice): only a mixed-language clause ("help 알려주고 …", a Korean word in it) falls back to the head-word
+    // form below; a fully English clause that fails the English form is never split, so none of its words can reach the
+    // rest ("check my jira issues and help desk tickets." stays whole).
+    if (!words.some((token) => /[^\x00-\x7f]/u.test(token.word))) return undefined;
   }
   const [head, ...others] = words;
   const alias = head === undefined ? undefined : aliasOfHead(head.word, helpNames);
