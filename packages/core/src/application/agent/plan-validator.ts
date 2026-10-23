@@ -25,10 +25,10 @@ import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan
  *    action entry. `brief.today` may be ONE step of a plan (A1-E2): at most one brief step (B4: it counts as one read),
  *    no summary over it (B2, `summary-covers-brief`), no reference from or to it (B3: it has no id field).
  * 2a. **Unbounded → a bounded-suggestion ask** (the owner's review of 2026-10-21, decision (h)): a plan over a bound — more
- *    than 4 reads, one entry read for 3 or more different periods (a read per day, week or month), or more than 10
- *    referenced values — never runs and is never a silent none: it is `ask` with reason `unbounded` and ONE deterministic
+ *    than 4 reads, one entry read for 3 or more different periods (a read per day, week or month), more than 10
+ *    referenced values, or (rule 6) more than 10 connector queries — never runs and is never a silent none: it is `ask` with reason `unbounded` and ONE deterministic
  *    narrower plan Core derives from the planner's own steps (the period → this week, or this month; the first 4 reads;
- *    the first 10 referenced values). The suggestion passes this validator itself (the period as Core's own value);
+ *    the first 10 referenced values; then the first reads that fit the query charge). The suggestion passes this validator itself (the period as Core's own value);
  *    when it does not, the plan is refused (fail closed). The ask runs nothing: an owner reply that takes the suggestion
  *    is a new turn.
  * 3. **Per read step**: a closed READ entry (never ITEM_READ, LOCAL_WRITE, EXTERNAL_WRITE or an A6 id), offered this turn,
@@ -44,7 +44,8 @@ import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan
  *    static charge is at most 10 connector calls, ONE unit being one connector query (a named port call). Each read is its
  *    entry's worst case (`AGENT_READ_SOURCES[…].connectorQueries`: a listing 1, `jira.release` 8, `todo.list` 2, the
  *    brief 4 or its configured worst case, reminders and help 0); a reference step is ONE bulk `items-by-key` query.
- *    Over it: `over-bound`. The HTTP requests behind the queries (pages, per-item metadata, token refreshes) are not this
+ *    Over it, the plan is answered like decision (h): an ask (bound `calls`) suggesting its first reads that fit; only a
+ *    plan whose first read alone does not fit is refused `over-bound` (CA re-check W2). The HTTP requests behind the queries (pages, per-item metadata, token refreshes) are not this
  *    unit: the record (S2 P3 part 2 note) lists them, and choosing HTTP requests as the D7 unit is an open owner / CA
  *    decision (most single reads exceed 10 requests at their worst).
  *
@@ -63,7 +64,7 @@ export const AGENT_PLAN_MAX_RUN_REF_VALUES = 10;
 /** Decision (h): one entry read for this many different periods or more is a read per day, week or month (unbounded). */
 export const AGENT_PLAN_PER_PERIOD_STEPS = 3;
 /** The closed bounds an `unbounded` ask names. */
-export const AGENT_UNBOUNDED_KINDS = ['per-period', 'reads', 'refs'] as const;
+export const AGENT_UNBOUNDED_KINDS = ['per-period', 'reads', 'refs', 'calls'] as const;
 export type AgentUnboundedKind = (typeof AGENT_UNBOUNDED_KINDS)[number];
 /** The closed quarantined-summary output schemas (stage S2 P3 binds each to its bounded shape). */
 export const AGENT_PLAN_SUMMARY_SCHEMAS = ['digest.v1', 'meeting-digest.v1'] as const;
@@ -243,7 +244,12 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
     validated.push(checked.step);
   }
   const connectorCalls = agentPlanConnectorCharge(validated, ctx);
-  if (connectorCalls > AGENT_RUN_MAX_CONNECTOR_CALLS) return refuse('over-bound');
+  if (connectorCalls > AGENT_RUN_MAX_CONNECTOR_CALLS) {
+    // CA re-check W2 (decision (h): never a silent none): over the query charge, ask with the first reads that fit.
+    const reads = steps.filter((step) => step.kind === 'read').length;
+    const fitted = fitToCharge(steps, reads - 1, ctx);
+    return fitted === undefined ? refuse('over-bound') : { ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: 'calls', suggestion: fitted } };
+  }
   const related = plan.form === 'steps' && plan.related !== undefined ? relatedStep(validated, plan.related) : undefined;
   return {
     ok: true,
@@ -356,9 +362,26 @@ function askUnbounded(steps: readonly AgentPlanStep[], unbounded: Unbounded, ctx
     suggestion = clamped;
   }
   if (unboundedOf(suggestion, check) !== undefined) return failed;
-  const validated = validateAgentPlan({ kind: 'steps', form: 'steps', steps: suggestion, ambiguity: 'CLEAR', alternatives: [] }, check);
-  if (!validated.ok || validated.plan.kind !== 'run') return failed;
-  return { ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: unbounded.bound, suggestion: validated.plan.steps } };
+  // CA re-check W2: a suggestion over the query charge is shrunk to its first reads until it fits (ap-n085: the first
+  // release and its 10 details), never dropped to a silent none.
+  const fitted = fitToCharge(suggestion, suggestion.filter((step) => step.kind === 'read').length, check);
+  if (fitted === undefined) return failed;
+  return { ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: unbounded.bound, suggestion: fitted } };
+}
+
+/**
+ * The first `maxReads` (then fewer) reads of `steps`, with their summaries and references renumbered (`firstReads`), that
+ * validate to a `run` plan within the query charge; `undefined` when none does. Each candidate is validated by this
+ * validator, so the result is a plan Core could run.
+ */
+function fitToCharge(steps: readonly AgentPlanStep[], maxReads: number, ctx: AgentPlanValidationContext): readonly ValidatedAgentStep[] | undefined {
+  for (let reads = maxReads; reads >= 1; reads -= 1) {
+    const candidate = firstReads(steps, reads);
+    if (!candidate.some((step) => step.kind === 'read')) continue;
+    const validated = validateAgentPlan({ kind: 'steps', form: 'steps', steps: candidate, ambiguity: 'CLEAR', alternatives: [] }, ctx);
+    if (validated.ok && validated.plan.kind === 'run') return validated.plan.steps;
+  }
+  return undefined;
 }
 
 /** The plan with only its bound lifted: the repeated entry's period removed (`per-period`), references clamped to the cap. */

@@ -29521,3 +29521,22 @@ cancel my reminders, …`, a help clause in last position), the state form does 
 되나요,`), and the CA probes still do not. Re-measured over the same 18 golden corpora (3374 texts): **0 false splits**,
 only ap-p175 and ap-p180 split (pinned). Residual: a how-to whose verb is the light verb with a state reading is still
 split by the do head ("할 일 어떻게 해?" is a how-to in the grammar).
+
+#### CA re-check of P3 part 2 (PASS-with-fixes for the shadow merge, 2026-10-23); Codex clean on 0c79838b
+
+- **W1 — a bare non-guide alias.** "기능이랑 버그 이슈 지라에서 보여줘", "기능하고 버그 티켓 …" and "기능, 버그 지라 이슈 …" were split
+  as help, losing the owner's scope word. With no guide closer in the clause, a Korean alias head must itself be one of
+  the help grammar's guide nouns (`isHelpGuideToken`: 도움말, 사용법; not 기능); the English alias `help` alone stays help; a
+  closer still makes any alias help ("기능 좀 알려줘, 그리고 …"). The three are no-split tests. Re-measured over the 18
+  golden corpora (3374 texts): 0 false splits, only ap-p175 and ap-p180 split.
+- **W2 — decision (h), never a silent none.** The query charge had turned plans into plain refusals. Now (1) a plan over
+  10 queries is an `unbounded` ask with the new bound `calls`, suggesting its first reads that validate within the charge
+  (`fitToCharge`; fixed text in `renderUnboundedAsk`: "한 번에 조회할 수 있는 양을 넘어요. 조회를 나눠서 말씀해 주세요. 예: …"); only a
+  plan whose first read alone does not fit is refused `over-bound`; (2) a decision (h) suggestion over the charge is
+  shrunk the same way instead of failing. ap-n085 is an ask again (bound `refs`), its suggestion [`jira.release` 1.0, its
+  10 issue details] (9 queries); asks back to 12. The optional per-args `jira.release` charge (a link or an exact key: fewer
+  queries) is not done: the charge unit waits for the owner's decision.
+- **Not done (optional, cosmetic):** the F2 trims ("메일 확인하고 도움말 보여줘" → "메일 확인 보여줘"; a dangling "-고" when a help
+  clause follows a connective) and a separate `missing` flag on `items-by-key` (it still sets `truncated`; a port field
+  change is left for the executor work). Q3 stays unimplemented (ratification pending); the release order and the charge
+  unit are unchanged.

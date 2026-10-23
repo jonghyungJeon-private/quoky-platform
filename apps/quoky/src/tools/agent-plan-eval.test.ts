@@ -110,8 +110,8 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     expect(NEW.filter((golden) => golden.status === 'approved')).toHaveLength(259);
     expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(59);
     expect(NEW.filter((golden) => golden.note?.startsWith('HOLD') === true || golden.note?.includes(' HOLD ') === true).every((golden) => golden.status === 'pending-owner-approval')).toBe(true);
-    // ap-n085's suggestion is over the 10-query charge (S2 P3 part 2): it is a refusal now, so 11 asks.
-    expect(NEW.filter((golden) => isAgentPlanAskExpect(golden.expect)).map((golden) => golden.family)).toEqual(Array.from({ length: 11 }, () => 'unbounded'));
+    // ap-n085's suggestion is shrunk to fit the 10-query charge (CA re-check W2): still 12 asks.
+    expect(NEW.filter((golden) => isAgentPlanAskExpect(golden.expect)).map((golden) => golden.family)).toEqual(Array.from({ length: 12 }, () => 'unbounded'));
     const batches = new Map<string, number>();
     for (const golden of NEW) batches.set(golden.batch, (batches.get(golden.batch) ?? 0) + 1);
     expect([...batches.values()].every((size) => size <= 60)).toBe(true);
@@ -145,7 +145,7 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     // 174 + the five A1-E4 split-shape positives (ap-p175..ap-p179, was ap-n118..n123 but n121).
     expect(summary.groups.multiStep).toEqual({ total: 179, exact: 179, rate: 1 });
     expect(summary.groups.oneStep).toEqual({ total: 674, exact: 674, rate: 1 });
-    expect(summary.groups.ask).toEqual({ total: 11, exact: 11, rate: 1 });
+    expect(summary.groups.ask).toEqual({ total: 12, exact: 12, rate: 1 });
     expect(summary.wrongOnNegatives).toBe(0);
     // Every negative is none; only inputs the D3 preparation empties (two one-step cases) make no call at all.
     expect(records.filter((record) => record.expected === 'none' && record.outcome !== 'none').map((record) => `${record.id}:${record.outcome}`)).toEqual(
@@ -559,7 +559,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     await runCli(['--mode', 'plan'], planned);
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
-    expect(ran.out.join('\n')).toContain('multi-step exact: 179/179 (100.0%)  one-step exact: 674/674 (100.0%)  ask: 11/11');
+    expect(ran.out.join('\n')).toContain('multi-step exact: 179/179 (100.0%)  one-step exact: 674/674 (100.0%)  ask: 12/12');
     expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v7): PASSED in all 1 run(s)');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };

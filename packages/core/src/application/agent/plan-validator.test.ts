@@ -549,12 +549,34 @@ describe('the static connector-query charge (ADR-0121 D7; A1-E2 B4; S2 P3 detail
     expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues')]), ctx('브리핑이랑 지라 이슈', { briefConnectorCalls: 1 }))).toMatchObject({ ok: true, plan: { connectorCalls: 2 } });
   });
 
-  it('a plan over 10 is refused over-bound (never run, never an ask): a release lookup, its details and two more reads', () => {
+  it('CA re-check W2: a plan over 10 is never run and never a silent none: an ask (bound calls) with its first reads that fit', () => {
     const base = [read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 3 })];
+    const entries = (result: ReturnType<typeof validateAgentPlan>): string[] =>
+      result.ok && result.plan.kind === 'ask' ? result.plan.suggestion.map((step) => (step.kind === 'read' ? step.entry.id : 'summarize')) : [];
     expect(validateAgentPlan(plan([...base, read('slack.search', { keyword: '배포' })]), ctx(`${RELEASE} 슬랙 배포 얘기도`))).toMatchObject({ ok: true, plan: { connectorCalls: 10 } });
-    expect(validateAgentPlan(plan([...base, read('slack.search', { keyword: '배포' }), read('mail.list')]), ctx(`${RELEASE} 슬랙 배포 얘기랑 메일도`))).toEqual({ ok: false, reason: 'over-bound' });
-    expect(validateAgentPlan(plan([read('brief.today'), read('todo.list'), read('jira.issues'), read('github.items')]), ctx('브리핑이랑 할 일이랑 지라 이슈랑 깃허브'))).toMatchObject({ ok: true, plan: { connectorCalls: 8 } });
-    expect(validateAgentPlan(plan([read('brief.today'), read('todo.list'), read('jira.issues'), read('github.items')]), ctx('브리핑이랑 할 일이랑 지라 이슈랑 깃허브', { briefConnectorCalls: 7 }))).toEqual({ ok: false, reason: 'over-bound' });
+    const over = validateAgentPlan(plan([...base, read('slack.search', { keyword: '배포' }), read('mail.list')]), ctx(`${RELEASE} 슬랙 배포 얘기랑 메일도`));
+    expect(over).toMatchObject({ ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: 'calls' } });
+    expect(entries(over)).toEqual(['jira.release', 'jira.issues', 'slack.search']);
+    const brief = validateAgentPlan(plan([read('brief.today'), read('todo.list'), read('jira.issues'), read('github.items')]), ctx('브리핑이랑 할 일이랑 지라 이슈랑 깃허브', { briefConnectorCalls: 7 }));
+    expect(entries(brief)).toEqual(['brief.today', 'todo.list', 'jira.issues']);
+    // Only a first read that alone exceeds the charge is refused.
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues')]), ctx('브리핑이랑 지라 이슈', { briefConnectorCalls: 11 }))).toEqual({ ok: false, reason: 'over-bound' });
+  });
+
+  it('CA re-check W2: an unbounded suggestion over the charge is shrunk to fit (ap-n085 shape: the first release and its 10 details)', () => {
+    const text = '1.0부터 9.0까지 릴리스 이슈 전부 상세하게';
+    const trap = [read('jira.release', { release: '1.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 10 }), read('jira.release', { release: '9.0' }), read('jira.issues', {}, { step: 3, field: 'issueKeys', take: 10 })];
+    const asked = validateAgentPlan(plan(trap), ctx(text));
+    expect(asked).toMatchObject({ ok: true, plan: { kind: 'ask', bound: 'refs' } });
+    if (!asked.ok || asked.plan.kind !== 'ask') throw new Error('expected an ask');
+    expect(asked.plan.suggestion.map((step) => (step.kind === 'read' ? `${step.entry.id}:${step.ref?.take ?? 0}` : 'summarize'))).toEqual(['jira.release:0', 'jira.issues:10']);
+  });
+
+  it('the calls ask has a fixed text naming the suggested reads', () => {
+    const over = validateAgentPlan(plan([read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 3 }), read('slack.search', { keyword: '배포' }), read('mail.list')]), ctx(`${RELEASE} 슬랙 배포 얘기랑 메일도`));
+    if (!over.ok || over.plan.kind !== 'ask') throw new Error('expected an ask');
+    expect(renderUnboundedAsk(over.plan, 'ko')).toMatch(/^한 번에 조회할 수 있는 양을 넘어요\. 조회를 나눠서 말씀해 주세요\. 예: /u);
+    expect(renderUnboundedAsk(over.plan, 'en')).toMatch(/^That is more than I can read in one request\./u);
   });
 
   it('agentPlanConnectorCharge is pure over validated steps', () => {

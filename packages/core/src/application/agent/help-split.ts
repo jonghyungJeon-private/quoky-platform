@@ -1,4 +1,4 @@
-import { detectHelpCommand, detectHelpIntent, isHelpGuideCloser, isHelpTopicParticle } from '../help-intent/help-intent';
+import { detectHelpCommand, detectHelpIntent, isHelpGuideCloser, isHelpGuideToken, isHelpTopicParticle } from '../help-intent/help-intent';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
@@ -18,7 +18,8 @@ import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
  *   - the alias form: the clause's HEAD word is a `help.topic` alias, alone or with one of the help grammar's own topic
  *     particles ("도움말이랑", "사용법", "help"), and every other word is a function word of that grammar (a guide closer:
  *     "좀", "알려줘") or the clause's predicate (the word that ends it with the verb connective, or the last word of the
- *     message, which is the predicate the clauses share); or
+ *     message, which is the predicate the clauses share); with no guide closer in the clause a Korean alias must be one
+ *     of the grammar's guide nouns (도움말, 사용법; not 기능; CA re-check W1); or
  *   - the grammar form: the frozen ADR-0104 help grammar recognises the clause as a command how-to (`detectHelpCommand`:
  *     the grammar's own action and conjugation forms, polite -요 and English included; Codex P2 on part 2), never its
  *     become / state form, so a status question in how-to form ("일정 어떻게 돼") is never help;
@@ -60,10 +61,13 @@ function namesOf(entry: NlCatalogEntry): string[] {
 /** The word without a trailing comma. */
 const bare = (word: string): string => word.replace(/[,،]$/u, '');
 
-/** The head word is a help alias, alone or with one of the help grammar's topic particles (an English alias: alone). */
-function isAliasHead(word: string, helpNames: readonly string[]): boolean {
+/**
+ * The help alias the head word is, alone or with one of the help grammar's topic particles (an English alias: alone), or
+ * `undefined`.
+ */
+function aliasOfHead(word: string, helpNames: readonly string[]): string | undefined {
   const head = bare(word);
-  return helpNames.some((name) => (/^[a-z0-9]+$/u.test(name) ? head === name : head.startsWith(name) && isHelpTopicParticle(head.slice(name.length))));
+  return helpNames.find((name) => (/^[a-z0-9]+$/u.test(name) ? head === name : head.startsWith(name) && isHelpTopicParticle(head.slice(name.length))));
 }
 
 interface Clause {
@@ -131,7 +135,13 @@ export function splitHelpClause(prepared: { readonly text: string; readonly grou
  */
 function aliasClause(words: readonly ConjunctToken[], indexes: readonly number[], lastClause: boolean, helpNames: readonly string[]): Omit<Clause, 'conjunct'> | undefined {
   const [head, ...others] = words;
-  if (head === undefined || !isAliasHead(head.word, helpNames)) return undefined;
+  const alias = head === undefined ? undefined : aliasOfHead(head.word, helpNames);
+  if (alias === undefined) return undefined;
+  // CA re-check W1: with no guide closer in the clause ("좀", "알려줘"), a Korean alias must itself be one of the help
+  // grammar's guide nouns (도움말, 사용법), never an ordinary noun that is also an alias ("기능이랑 버그 이슈 …" keeps the
+  // owner's scope word); the English alias alone stays help.
+  const closer = others.some((token) => isHelpGuideCloser(bare(token.word)));
+  if (!closer && !/^[a-z0-9]+$/u.test(alias) && !isHelpGuideToken(alias)) return undefined;
   const final = others[others.length - 1];
   const finalIsPredicate = final !== undefined && (final.ends === 'connective' || (lastClause && final.ends === undefined));
   const middle = finalIsPredicate ? others.slice(0, -1) : others;

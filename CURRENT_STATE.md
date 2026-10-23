@@ -37,7 +37,7 @@ then G6 on a Strict yes.
   - `related: <step no>`; planner `agent-plan.v7`, not gated.
   - The next-10 hint hidden behind `followUp`.
   - `items-by-key` capped and with a one-retry partial read.
-- **Gold.** ap-p180 (was ap-n121, approved); ap-n120 back to `none`; ap-n085 a refusal (asks 11); ap-p001..008 carry `related: 1`.
+- **Gold.** ap-p180 (was ap-n121, approved); ap-n120 back to `none`; ap-n085 an ask with a suggestion shrunk to fit (asks 12); ap-p001..008 carry `related: 1`.
 - **Waiting on the owner / CA.**
   - The Q3 draft note (a read and a write in one turn).
   - The D7 unit (queries vs HTTP requests).

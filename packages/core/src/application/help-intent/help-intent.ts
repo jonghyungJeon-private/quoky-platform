@@ -331,6 +331,11 @@ export function isHelpGuideCloser(token: string): boolean {
   return GUIDE_CLOSER.test(normalize(token).replace(TRAILING_PUNCTUATION, ''));
 }
 
+/** A guide noun, optionally after a command action ("추가하는 법", "사용법", "도움말", "명령어", "안내"; not "기능"). */
+export function isHelpGuideToken(token: string): boolean {
+  return GUIDE_TOKEN.test(normalize(token).replace(TRAILING_PUNCTUATION, ''));
+}
+
 /** Whether `rest` is empty or one of the grammar's topic particles ("이랑", "도", "은" …). */
 export function isHelpTopicParticle(rest: string): boolean {
   return new RegExp(`^(?:${TOPIC_PARTICLES})?$`, 'u').test(rest);

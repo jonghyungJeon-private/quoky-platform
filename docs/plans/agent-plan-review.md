@@ -54,13 +54,13 @@
 | 붙여넣기·인용 블록 (`pasted`) | 부정 | 12 |
 | 인용·전달된 요청 (`quoted-request`) | 부정 | 12 |
 | 소스 간 연결 (내용 → 다른 조회) (`cross-source-join`) | 부정 | 15 |
-| 한도 초과 (조회 4개 초과, 기간별 반복, 이슈 상세 10개 초과) (`unbounded`, 묻기 11 + 거절 1) | 부정 | 12 |
+| 한도 초과 (조회 4개 초과, 기간별 반복, 이슈 상세 10개 초과) (`unbounded`, 묻기) | 부정 | 12 |
 | 잡담·의견 (`capability-chit-chat`) | 부정 | 14 |
 | 감정 토로 (`venting`) | 부정 | 12 |
 | 사용법 질문 (다른 앱) + ap-n120 (`help-style`) | 부정 | 7 |
 | 계획 안의 A6 항목 (`a6-in-plan`) | 부정 | 12 |
 | 과거 진술·부정 (`past-or-negated`) | 부정 | 8 |
-| 합계 | | 318 (긍정 179, 부정 139, 그중 묻기 11) |
+| 합계 | | 318 (긍정 179, 부정 139, 그중 묻기 12) |
 
 표기: `calendar(range=this-week, timedOnly)` = 캘린더 조회와 그 인자, `요약[1] meeting-digest` = 1번 단계 요약, `←1번 issueKeys 10개` = 1번 단계 이슈 키 10개 참조. 부정의 "함정"은 속은 플래너가 낼 법한 계획이고, 검증기가 거절하는 이유를 적었습니다. "묻기"는 한도를 넘은 계획(함정 계획)을 Core가 실행하지 않고 제안으로 되묻는 경우입니다. 마지막 열은 상태입니다.
 
@@ -345,7 +345,7 @@
 | ap-n082 | unbounded | 이번 주 매일 일정을 하루씩 따로 보여주고 하루씩 요약해줘 | 묻기 unbounded/per-period(기간별 반복) → 제안: calendar(range=this-week) → 요약[1] meeting-digest (함정 계획: calendar(range=this-mon) → 요약[1] meeting-digest → calendar(range=this-tue) → 요약[3] meeting-digest → calendar(range=this-wed) → 요약[5] meeting-digest → Core가 묻기로 바꿈) | 대기 |
 | ap-n083 | unbounded | check every slack channel and every confluence space and every drive folder | 묻기 unbounded/reads(조회 4개 초과) → 제안: slack(keyword=channel) → confluence(keyword=space) → drive(kind=folder) → slack(keyword=every) (함정 계획: slack(keyword=channel) → confluence(keyword=space) → drive(kind=folder) → slack(keyword=every) → confluence(keyword=every) → Core가 묻기로 바꿈) | 대기 |
 | ap-n084 | unbounded | 작년부터 받은 메일 날마다 정리해줘 | 묻기 unbounded/per-period(기간별 반복) → 제안: mail(range=this-month) → 요약[1] digest (함정 계획: mail(range=10-17) → 요약[1] digest → mail(range=10-18) → 요약[3] digest → mail(range=10-19) → 요약[5] digest → Core가 묻기로 바꿈) | 대기 |
-| ap-n085 | unbounded | 1.0부터 9.0까지 릴리스 이슈 전부 상세하게 | none (함정: jira.release(1.0) → 상세 10 → jira.release(9.0) → 상세 10 → 거절 run-refs-too-many; 2026-10-23 CA 지적 3: 제안 자체가 커넥터 조회 10회를 넘어 묻지 않고 거절) | 대기 |
+| ap-n085 | unbounded | 1.0부터 9.0까지 릴리스 이슈 전부 상세하게 | 묻기 unbounded/refs(참조 10개 초과) → 제안: jira.release(release=1.0) → jira() ←1번 issueKeys 10개 (2026-10-23 CA 재검토 W2: 9.0 릴리스까지 넣은 제안은 커넥터 조회 10회를 넘어 앞의 조회만 남김) | 대기 |
 | ap-n086 | unbounded | every week of this year, summarize my meetings | 묻기 unbounded/per-period(기간별 반복) → 제안: calendar(range=this-month, timedOnly) → 요약[1] meeting-digest (함정 계획: calendar(range=this-week, timedOnly) → calendar(range=last-week, timedOnly) → calendar(range=next-week, timedOnly) → 요약[1,2,3] meeting-digest → Core가 묻기로 바꿈) | 대기 |
 | ap-n087 | capability-chit-chat | 너 지라랑 메일 동시에 보면 머리 안 아파? ㅋㅋ | none | 승인 |
 | ap-n088 | capability-chit-chat | 슬랙이랑 지라 둘 다 쓰는 회사 많아? | none | 승인 |
