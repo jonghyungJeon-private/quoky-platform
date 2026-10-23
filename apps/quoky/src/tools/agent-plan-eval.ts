@@ -22,6 +22,11 @@
  *   quoted request on any read step) are validator rules (`veto-*` refusals), so the eval and the runtime share them.
  * - Q10 compares an ORDERED step sequence: the same plan with its reads in another order is a miss (`step-kind` /
  *   `entry`). Stricter than a graph-isomorphism match, it never hides an error.
+ * - ADR-0121 A1-E1 / A1-E4 (decision (e), stage S2 P3): Core's deterministic help split runs before planning, exactly as
+ *   at run time (`splitHelpClause`): the planner sees only the rest of the owner's words, and a case whose gold names a
+ *   help section (`help`, a `NL_HELP_TOPICS` topic) is exact only when the split gives that topic AND the rest plan is
+ *   exact; a split the gold does not name (an extra help section) is a miss (`help`). A split-shape positive may have a
+ *   one-step rest plan (the help section is the second section).
  *
  * Gate, in every run and per group (CA review of S2 P2): >= 95% exact over the multi-step positives AND >= 95% exact over
  * the one-step positives (the D12 read-gate level), 0 wrong on negatives, <= 1% of the calls over the bound, and no call
@@ -44,10 +49,12 @@ import {
   NL_WAVE1_ENTRIES,
   buildAgentPlanPrompt,
   isNlCatalogEntryId,
+  splitHelpClause,
   isNlWave1EntryId,
   parseAgentPlanOutput,
   prepareSelectionInput,
   validateAgentPlan,
+  type AgentHelpSplit,
   type AgentPlan,
   type AgentPlanValidationContext,
   type AgentUnboundedKind,
@@ -78,6 +85,8 @@ export const AGENT_PLAN_POSITIVE_FAMILIES = [
   'en-prenominal',
   'multi-read',
   'same-entry',
+  // ADR-0121 A1-E4: a help or brief request mixed with other reads (the help split, the brief as one step).
+  'help-brief-split',
 ] as const;
 export const AGENT_PLAN_NEGATIVE_FAMILIES = [
   'write-read',
@@ -135,6 +144,8 @@ export interface AgentPlanCase {
    */
   readonly trap?: AgentPlanGoldPlan;
   readonly trapRefusal?: string;
+  /** A1-E4: the help section Core's split must give (a `NL_HELP_TOPICS` topic); the expectation is the rest plan. */
+  readonly help?: string;
   readonly note?: string;
 }
 
@@ -164,6 +175,8 @@ export interface AgentPlanEvalCase {
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
   /** `none` for a negative, the expected ask for an unbounded request, else the gold plan. */
   readonly gold: 'none' | AgentPlanGoldPlan | AgentPlanAskExpect;
+  /** A1-E4: the expected help section (split off before planning), when the gold has one. */
+  readonly help?: string;
 }
 
 export function loadAgentPlanCorpus(
@@ -210,21 +223,30 @@ function evalCaseOf(golden: AgentPlanCase): AgentPlanEvalCase {
     attachments: golden.attachments ?? 0,
     ...(golden.prior !== undefined ? { prior: golden.prior } : {}),
     gold: golden.expect,
+    ...(golden.help !== undefined ? { help: golden.help } : {}),
   };
 }
 
 const READ_ENTRIES: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
 const OFFERED: ReadonlyMap<string, NlCatalogEntry> = new Map(READ_ENTRIES.map((entry) => [entry.id, entry] as const));
 
-/** The validation context of one case under the corpus fixture (the owner's DM, every READ entry offered). */
-export function caseContext(golden: Pick<AgentPlanEvalCase, 'text' | 'attachments' | 'prior'>, fixture: AgentPlanCorpus['fixture']): { ctx: AgentPlanValidationContext; text: string } | { skip: string } {
+/**
+ * The validation context of one case under the corpus fixture (the owner's DM, every READ entry offered), after Core's
+ * help split (A1-E1): with a split, the planner text and the grounding text are the rest of the owner's words.
+ */
+export function caseContext(
+  golden: Pick<AgentPlanEvalCase, 'text' | 'attachments' | 'prior'>,
+  fixture: AgentPlanCorpus['fixture'],
+): { ctx: AgentPlanValidationContext; text: string; split?: AgentHelpSplit } | { skip: string } {
   const prepared = prepareSelectionInput(golden.text, golden.attachments);
   if ('skip' in prepared) return { skip: prepared.skip };
+  const split = splitHelpClause(prepared, READ_ENTRIES);
   return {
-    text: prepared.text,
+    text: split?.rest ?? prepared.text,
+    ...(split !== undefined ? { split } : {}),
     ctx: {
       offered: OFFERED,
-      groundingText: prepared.groundingText,
+      groundingText: split?.rest ?? prepared.groundingText,
       ...(golden.prior !== undefined ? { previousArgs: golden.prior.args, ...(isNlCatalogEntryId(golden.prior.entryId) ? { previousEntryId: golden.prior.entryId } : {}) } : {}),
       now: fixture.now as AgentPlanValidationContext['now'],
       timeZone: fixture.timeZone,
@@ -274,7 +296,7 @@ export function validatedGraph(steps: readonly ValidatedAgentStep[]): StepGraph 
 }
 
 /** The closed kind of the first difference between two graphs (`undefined` when they are the same graph). */
-export type GraphDiff = 'step-count' | 'step-kind' | 'entry' | 'args' | 'ref' | 'summary';
+export type GraphDiff = 'step-count' | 'step-kind' | 'entry' | 'args' | 'ref' | 'summary' | 'help';
 
 export function graphDiff(got: StepGraph, want: StepGraph): { kind: GraphDiff; step?: number } | undefined {
   if (got.length !== want.length) return { kind: 'step-count' };
@@ -388,6 +410,15 @@ function scoreAgentPlanDetailed(golden: AgentPlanEvalCase, raw: string, fixture:
 }
 
 function scoreAgentPlanAnswer(golden: AgentPlanEvalCase, raw: string, fixture: AgentPlanCorpus['fixture']): AgentPlanScore {
+  const score = scoreRestPlan(golden, raw, fixture);
+  // A1-E4: an exact rest plan is exact only with the expected help section (none expected, none split; or the same topic).
+  if (score.outcome !== 'exact') return score;
+  const prepared = caseContext(golden, fixture);
+  const topic = 'skip' in prepared ? undefined : prepared.split?.topic;
+  return topic === golden.help ? score : { ...score, outcome: 'miss', diff: 'help' };
+}
+
+function scoreRestPlan(golden: AgentPlanEvalCase, raw: string, fixture: AgentPlanCorpus['fixture']): AgentPlanScore {
   const negative = golden.gold === 'none' || isAgentPlanAskExpect(golden.gold);
   const prepared = caseContext(golden, fixture);
   if ('skip' in prepared) return { outcome: 'skipped', reason: `skip:${prepared.skip}` };
@@ -469,7 +500,10 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
         problems.push(`${at}: the gold does not parse as a steps-form plan`);
         continue;
       }
-      if (plan.steps.length < 2) problems.push(`${at}: a multi-step positive needs at least two steps`);
+      // A1-E4: at least two sections; a help section split off before planning counts as one.
+      const split = prepared.split?.topic;
+      if (split !== golden.help) problems.push(`${at}: the help split gives ${split ?? 'no help section'}, not ${golden.help ?? 'no help section'}`);
+      if (plan.steps.length < (golden.help !== undefined ? 1 : 2)) problems.push(`${at}: a multi-step positive needs at least two sections`);
       const validation = validateAgentPlan(plan, prepared.ctx);
       if (!validation.ok) {
         problems.push(`${at}: the gold is refused (${validation.reason}${validation.step !== undefined ? ` at step ${validation.step}` : ''}${validation.stepReason !== undefined ? `: ${validation.stepReason}` : ''})`);
@@ -483,6 +517,7 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
       if (diff !== undefined) problems.push(`${at}: the gold is not canonical (${diff.kind}${diff.step !== undefined ? ` at step ${diff.step}` : ''})`);
       continue;
     }
+    if (golden.help !== undefined) problems.push(`${at}: only a positive names a help section`);
     if (golden.trapRefusal !== undefined && golden.trap === undefined) problems.push(`${at}: trapRefusal without a trap`);
     if (golden.trap === undefined || 'skip' in prepared) continue;
     const trap = parseAgentPlanOutput(JSON.stringify(golden.trap));

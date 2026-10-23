@@ -19,8 +19,10 @@ import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan
  * 1a. **Not a request** (ADR-0120 A7, the selection path's message-level vetoes, shared so the eval and the runtime apply
  *    one rule; CA review of S2 P2): a past statement (`veto-past-statement`), or a read step whose own sentence only
  *    quotes or reports a request (`veto-quoted-request`) or gives a reason for a feeling (`veto-reason-statement`).
- * 2. **Step mix** (D7, Q6, A6-D4): 1–6 steps, at most 3 summaries, at least one read. A plan of more than one step never
- *    names `help.topic`, `brief.today` or any A6 action entry.
+ * 2. **Step mix** (D7, Q6 as amended by ADR-0121 A1 decision (e), A6-D4): 1–6 steps, at most 3 summaries, at least one
+ *    read. A plan of more than one step never names `help.topic` (help is split off before planning, A1-E1) or any A6
+ *    action entry. `brief.today` may be ONE step of a plan (A1-E2): at most one brief step (B4: it counts as one read),
+ *    no summary over it (B2, `summary-covers-brief`), no reference from or to it (B3: it has no id field).
  * 2a. **Unbounded → a bounded-suggestion ask** (the owner's review of 2026-10-21, decision (h)): a plan over a bound — more
  *    than 4 reads, one entry read for 3 or more different periods (a read per day, week or month), or more than 10
  *    referenced values — never runs and is never a silent none: it is `ask` with reason `unbounded` and ONE deterministic
@@ -36,7 +38,12 @@ import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan
  *    calendar or Drive id never feeds Jira); the closed id field that source projects (never a date field); at most 10
  *    values per reference and 10 per run (ADR-0121 D2, kept by the owner on 2026-10-21). The cap bounds per-item DETAIL
  *    reads only: a listing (a release's issue list, a Jira list) is one read and is not capped here.
- * 5. **Summaries**: a closed output schema over earlier read steps only.
+ * 5. **Summaries**: a closed output schema over earlier read steps only, never over the brief (A1-E2 B2).
+ * 6. **Connector calls** (D7; A1-E2 B4; the S2 P3 "same-source detail reads" note): the plan's static charge is at most
+ *    10 connector calls. A read of an external source is 1 call, a reference step is ONE bulk detail request (1 call),
+ *    the brief is its configured worst case (default 7: calendar 1, assigned work 2, mail 1 list + 3 metadata gets), and
+ *    the local to-do, reminder and help reads are 0. Over it: `over-bound`. The executor's run budget still counts the
+ *    real calls at run time (a read that needs more ends the run with a partial reply).
  *
  * `NEEDS_CLARIFICATION` with every rule met is `clarify` (one numbered question), not a refusal.
  */
@@ -57,8 +64,20 @@ export const AGENT_UNBOUNDED_KINDS = ['per-period', 'reads', 'refs'] as const;
 export type AgentUnboundedKind = (typeof AGENT_UNBOUNDED_KINDS)[number];
 /** The closed quarantined-summary output schemas (stage S2 P3 binds each to its bounded shape). */
 export const AGENT_PLAN_SUMMARY_SCHEMAS = ['digest.v1', 'meeting-digest.v1'] as const;
-/** Q6: entries that may only ever be a one-step plan. */
-export const AGENT_SINGLE_STEP_ONLY: readonly NlWave1EntryId[] = ['help.topic', 'brief.today'];
+/**
+ * Q6 as amended by ADR-0121 A1 decision (e) (A1-E1 / A1-E2): `help.topic` may only ever be a one-step plan (help is split
+ * off before planning); `brief.today` left this list and may be one step of a plan under B1–B6.
+ */
+export const AGENT_SINGLE_STEP_ONLY: readonly NlWave1EntryId[] = ['help.topic'];
+/** ADR-0121 D7: at most this many connector (external) calls per run. */
+export const AGENT_RUN_MAX_CONNECTOR_CALLS = 10;
+/**
+ * A1-E2 B4: the brief's worst case of connector calls with every section on (calendar 1, assigned work ≤ 2, mail 1 list +
+ * ≤ 3 metadata gets; ratification answer 6). The runtime passes the configured worst case (`briefConnectorCalls`).
+ */
+export const AGENT_BRIEF_MAX_CONNECTOR_CALLS = 7;
+/** Sources read on the host (no connector call): the local stores and the fixed help. */
+const HOST_SOURCES: ReadonlySet<string> = new Set(['todo', 'reminder', 'help']);
 
 export type AgentPlanRefusal =
   | 'not-dm'
@@ -86,7 +105,13 @@ export type AgentPlanRefusal =
   | 'ref-too-many'
   | 'run-refs-too-many'
   | 'summary-schema'
-  | 'summary-source';
+  | 'summary-source'
+  /** A1-E2: more than one `brief.today` step. */
+  | 'brief-repeated'
+  /** A1-E2 B2: a summary step covering the brief. */
+  | 'summary-covers-brief'
+  /** D7 / A1-E2 B4: the plan's static connector-call charge is over {@link AGENT_RUN_MAX_CONNECTOR_CALLS}. */
+  | 'over-bound';
 
 export interface AgentPlanValidationContext {
   /** The entries offered this turn (registered and configured). */
@@ -101,6 +126,11 @@ export interface AgentPlanValidationContext {
   readonly timeZone: string;
   /** The turn is the owner's direct conversation. Absent or false: refused (fail closed). */
   readonly direct?: boolean;
+  /**
+   * A1-E2 B4: the brief's configured worst case of connector calls (by the brief flags); absent:
+   * {@link AGENT_BRIEF_MAX_CONNECTOR_CALLS}.
+   */
+  readonly briefConnectorCalls?: number;
 }
 
 /** Where an argument value came from (ADR-0121 D2): the owner's words, or an earlier step's projected ids. */
@@ -122,7 +152,17 @@ export type ValidatedAgentStep =
 
 export type ValidatedAgentPlan =
   | { readonly kind: 'none' }
-  | { readonly kind: 'run' | 'clarify'; readonly steps: readonly ValidatedAgentStep[] }
+  | {
+      readonly kind: 'run' | 'clarify';
+      readonly steps: readonly ValidatedAgentStep[];
+      /** The static connector-call charge (rule 6); the executor's run budget starts from it. */
+      readonly connectorCalls: number;
+      /**
+       * Owner decision (a): the planner marked that the owner asked for a relation between reads; kept only when the plan
+       * reads two or more different sources. The reply adds the fixed "not checked" note; no step depends on it.
+       */
+      readonly related?: true;
+    }
   /**
    * Decision (h): the planner's plan is over a bound. Nothing runs; the reply asks whether to read `suggestion` instead (a
    * validated, bounded plan Core derived; its narrowed period has no owner provenance, so it never runs from the ask).
@@ -169,10 +209,13 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
   if (summaries.length > AGENT_PLAN_MAX_SUMMARIES) return refuse('too-many-summaries');
   // A6 and single-step-only entries refuse before any bound is considered: an unbounded plan holding one is never an ask.
   if (steps.length > 1) {
+    let briefs = 0;
     for (const [index, step] of steps.entries()) {
       if (step.kind !== 'read') continue;
       if (isNlActionEntryId(step.entryId)) return refuse('a6-in-plan', index + 1);
       if ((AGENT_SINGLE_STEP_ONLY as readonly string[]).includes(step.entryId)) return refuse('single-step-only', index + 1);
+      // A1-E2: at most one brief step in a plan.
+      if (step.entryId === 'brief.today' && ++briefs > 1) return refuse('brief-repeated', index + 1);
     }
   }
   const unbounded = unboundedOf(steps, ctx);
@@ -196,7 +239,29 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
     }
     validated.push(checked.step);
   }
-  return { ok: true, plan: { kind: plan.ambiguity === 'NEEDS_CLARIFICATION' ? 'clarify' : 'run', steps: validated } };
+  const connectorCalls = agentPlanConnectorCharge(validated, ctx);
+  if (connectorCalls > AGENT_RUN_MAX_CONNECTOR_CALLS) return refuse('over-bound');
+  const sources = new Set(validated.flatMap((step) => (step.kind === 'read' && isNlWave1EntryId(step.entry.id) ? [AGENT_READ_SOURCES[step.entry.id].source] : [])));
+  const related = plan.form === 'steps' && plan.related === true && sources.size >= 2;
+  return {
+    ok: true,
+    plan: { kind: plan.ambiguity === 'NEEDS_CLARIFICATION' ? 'clarify' : 'run', steps: validated, connectorCalls, ...(related ? { related: true as const } : {}) },
+  };
+}
+
+/**
+ * Rule 6 (D7; A1-E2 B4; the S2 P3 "same-source detail reads" note): the static connector-call charge of validated steps.
+ * An external read is 1 call; a reference step is ONE bulk detail request (1 call, whatever its `take`); the brief is
+ * its configured worst case; the to-do, reminder and help reads run on the host (0). Summaries call no connector. Pure.
+ */
+export function agentPlanConnectorCharge(steps: readonly ValidatedAgentStep[], ctx: Pick<AgentPlanValidationContext, 'briefConnectorCalls'>): number {
+  let calls = 0;
+  for (const step of steps) {
+    if (step.kind !== 'read' || !isNlWave1EntryId(step.entry.id)) continue;
+    if (step.entry.id === 'brief.today') calls += ctx.briefConnectorCalls ?? AGENT_BRIEF_MAX_CONNECTOR_CALLS;
+    else if (!HOST_SOURCES.has(AGENT_READ_SOURCES[step.entry.id].source)) calls += 1;
+  }
+  return calls;
 }
 
 type StepCheck = { readonly ok: true; readonly step: ValidatedAgentStep } | Extract<AgentPlanValidation, { ok: false }>;
@@ -419,7 +484,10 @@ function checkSummary(step: Extract<AgentPlanStep, { kind: 'summarize' }>, numbe
   if (!(AGENT_PLAN_SUMMARY_SCHEMAS as readonly string[]).includes(step.schema)) return refuse('summary-schema', number);
   if (new Set(step.from).size !== step.from.length) return refuse('summary-source', number);
   for (const from of step.from) {
-    if (from >= number || steps[from - 1]?.kind !== 'read') return refuse('summary-source', number);
+    const source = steps[from - 1];
+    if (from >= number || source?.kind !== 'read') return refuse('summary-source', number);
+    // A1-E2 B2: no model over the brief; its section is the deterministic on-demand brief.
+    if (source.entryId === 'brief.today') return refuse('summary-covers-brief', number);
   }
   return { ok: true, step: { kind: 'summarize', from: [...step.from], schema: step.schema as (typeof AGENT_PLAN_SUMMARY_SCHEMAS)[number] } };
 }

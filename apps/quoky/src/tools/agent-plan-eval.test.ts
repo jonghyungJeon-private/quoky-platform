@@ -6,6 +6,7 @@ import {
   agentPlanEvalCases,
   buildAgentPlanEvalPlan,
   cappedProvider,
+  caseContext,
   closedEntries,
   closedErrorName,
   computeAgentPlanEvalDigest,
@@ -65,7 +66,8 @@ function goldAnswer(golden: AgentPlanEvalCase): string {
 function goldProvider(cases: readonly AgentPlanEvalCase[], transform: (answer: string) => string = (answer) => answer): AiProvider & { calls: number } {
   const answers = new Map<string, string>();
   for (const golden of cases) {
-    const prepared = prepareSelectionInput(golden.text, golden.attachments);
+    // The planner sees what Core sends it: the rest of the owner's words after the help split (A1-E1).
+    const prepared = caseContext(golden, FIXTURE);
     if ('skip' in prepared) continue;
     const prompt = buildAgentPlanPrompt({
       entries: READS,
@@ -138,7 +140,8 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     const summary = summarizeAgentPlanRun(records, plan.callTimeoutMs);
     const notExact = records.filter((record) => record.expected === 'plan' && record.outcome !== 'exact');
     expect(notExact.map((record) => `${record.id}:${record.outcome}:${record.reason ?? ''}`)).toEqual([]);
-    expect(summary.groups.multiStep).toEqual({ total: 174, exact: 174, rate: 1 });
+    // 174 + the five A1-E4 split-shape positives (ap-p175..ap-p179, was ap-n118..n123 but n121).
+    expect(summary.groups.multiStep).toEqual({ total: 179, exact: 179, rate: 1 });
     expect(summary.groups.oneStep).toEqual({ total: 674, exact: 674, rate: 1 });
     expect(summary.groups.ask).toEqual({ total: 12, exact: 12, rate: 1 });
     expect(summary.wrongOnNegatives).toBe(0);
@@ -160,13 +163,23 @@ describe('corpus self-check catches bad cases', () => {
     ['a malformed id', { ...positive, id: 'x-1' }, /id must be/],
     ['an unknown family', { ...positive, family: 'misc' }, /unknown family/],
     ['an unknown status', { ...positive, status: 'approved-ish' as never }, /unknown status/],
-    ['a one-step positive', { ...positive, expect: { steps: [{ entryId: 'jira.issues', args: {} }], ambiguity: 'CLEAR' } }, /at least two steps/],
+    ['a one-step positive', { ...positive, expect: { steps: [{ entryId: 'jira.issues', args: {} }], ambiguity: 'CLEAR' } }, /at least two sections/],
     ['a non-canonical gold (the calendar default written out)', { ...positive, text: '오늘 회의 정리하고 관련 jira 이슈도 같이 봐줘', expect: { steps: [{ entryId: 'calendar.events', args: { range: 'today', timedOnly: true } }, { summarize: [1], schema: 'meeting-digest.v1' }, { entryId: 'jira.issues', args: {} }], ambiguity: 'CLEAR' } }, /not canonical/],
     ['a gold the validator refuses (a cross-source ref)', { ...positive, expect: { steps: [{ entryId: 'mail.list', args: {} }, { entryId: 'jira.issues', args: {}, ref: { step: 1, field: 'messageIds', take: 3 } }], ambiguity: 'CLEAR' } }, /refused \(ref-cross-source/],
     ['a trap the validator accepts', { ...trapCase, trap: { steps: [{ entryId: 'jira.issues', args: {} }, { entryId: 'todo.list', args: {} }], ambiguity: 'CLEAR' }, trapRefusal: undefined as never }, /trap validates to an executable plan/],
     ['a trap refused for another reason', { ...trapCase, trapRefusal: 'ref-cross-source' }, /refused as a6-in-plan, not ref-cross-source/],
   ])('%s', (_label, bad, problem) => {
     expect(check([bad]).join('\n')).toMatch(problem);
+  });
+
+  it('A1-E4: a help section must be the one Core\'s split gives, and only a positive names one', () => {
+    const split = NEW.find((golden) => golden.id === 'ap-p175') as AgentPlanCase;
+    expect(check([split])).toEqual([]);
+    expect(check([{ ...split, help: 'todo' }]).join('\n')).toMatch(/the help split gives all, not todo/);
+    const { help: _help, ...noHelp } = split;
+    expect(check([noHelp]).join('\n')).toMatch(/the help split gives all, not no help section/);
+    expect(check([{ ...positive, help: 'all' }]).join('\n')).toMatch(/the help split gives no help section, not all/);
+    expect(check([{ ...trapCase, help: 'all' }]).join('\n')).toMatch(/only a positive names a help section/);
   });
 
   it('a duplicate id and a one-step list that is not the nl-intent id list', () => {
@@ -395,7 +408,7 @@ describe('plan digest', () => {
     expect(pending.caseIds).toHaveLength(873 + NEW.length);
     expect(approved.maxCalls).toBe(approvedCount * 3);
     expect(pending.maxCalls).toBe((873 + NEW.length) * 3);
-    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v5', callTimeoutMs: 6000, fixture: FIXTURE });
+    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v6', callTimeoutMs: 6000, fixture: FIXTURE });
     expect(approved.promptSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -462,7 +475,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(await runCli(['--mode', 'plan', '--runs', '3'], planned)).toBe(EXIT_OK);
     const text = planned.out.join('\n');
     expect(digestOf(planned.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS)));
-    expect(text).toContain('"promptVersion": "agent-plan.v5"');
+    expect(text).toContain('"promptVersion": "agent-plan.v6"');
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);
     const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
@@ -542,13 +555,37 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     await runCli(['--mode', 'plan'], planned);
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
-    expect(ran.out.join('\n')).toContain('multi-step exact: 174/174 (100.0%)  one-step exact: 674/674 (100.0%)  ask: 12/12');
-    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v5): PASSED in all 1 run(s)');
+    expect(ran.out.join('\n')).toContain('multi-step exact: 179/179 (100.0%)  one-step exact: 674/674 (100.0%)  ask: 12/12');
+    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v6): PASSED in all 1 run(s)');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
     const today = { ...deps(created), load: () => unapproved };
     await runCli(['--mode', 'plan'], today);
     const ranToday = { ...deps(created), load: () => unapproved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(today.out)], ranToday)).toBe(EXIT_GATE_FAILED);
+  });
+});
+
+describe('the help split in scoring (ADR-0121 A1-E1 / A1-E4, S2 P3)', () => {
+  it('the planner is scored on the rest: the exact rest plan with the gold help section is exact', () => {
+    const golden = byId('ap-p175');
+    expect(golden.help).toBe('all');
+    const one = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    expect(scoreAgentPlanOutput(golden, one, FIXTURE)).toMatchObject({ outcome: 'exact' });
+    // The same answer for a gold with no help section: the split's extra section is a miss.
+    const { help: _help, ...noHelp } = golden;
+    expect(scoreAgentPlanOutput(noHelp, one, FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'help' });
+  });
+
+  it('the brief as a plan step is exact; a summary over the brief is refused (summary-covers-brief)', () => {
+    const golden = byId('ap-p178');
+    expect(scoreAgentPlanOutput(golden, steps([{ entryId: 'brief.today' }, { entryId: 'jira.issues' }, { summarize: [2], schema: 'digest.v1' }]), FIXTURE)).toMatchObject({ outcome: 'exact' });
+    expect(scoreAgentPlanOutput(golden, steps([{ entryId: 'brief.today' }, { entryId: 'jira.issues' }, { summarize: [1, 2], schema: 'digest.v1' }]), FIXTURE)).toMatchObject({ outcome: 'refused', reason: 'summary-covers-brief' });
+  });
+
+  it('ap-n121 (verb connective, no split) stays a none negative whose help trap is refused single-step-only', () => {
+    const golden = byId('ap-n121');
+    expect(golden.gold).toBe('none');
+    expect(caseContext(golden, FIXTURE)).not.toHaveProperty('split');
   });
 });

@@ -3,7 +3,15 @@ import { NL_ACTION_ENTRIES } from '../nl-routing/action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from '../nl-routing/catalog';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { agentPlanParseFailure, parseAgentPlanOutput, type AgentPlan, type AgentPlanStep } from './plan-schema';
-import { absoluteDatesGrounded, validateAgentPlan, type AgentPlanValidationContext } from './plan-validator';
+import {
+  AGENT_BRIEF_MAX_CONNECTOR_CALLS,
+  AGENT_RUN_MAX_CONNECTOR_CALLS,
+  AGENT_SINGLE_STEP_ONLY,
+  absoluteDatesGrounded,
+  agentPlanConnectorCharge,
+  validateAgentPlan,
+  type AgentPlanValidationContext,
+} from './plan-validator';
 import { renderUnboundedAsk } from './unbounded-ask';
 
 // ADR-0121 D2 / D5 / D7 (stage S2 P1): the v2 plan parse and every static rule of the deterministic plan validator.
@@ -127,9 +135,9 @@ describe('plan validator: DM only, READ only, offered, step mix', () => {
     expect(validateAgentPlan(sixSteps, ctx('지라 깃허브 일정 메일 요약')).ok).toBe(true);
   });
 
-  it('a multi-step plan never names help.topic, brief.today or an A6 entry; alone they stay today\'s selection', () => {
+  it('a multi-step plan never names help.topic or an A6 entry; alone they stay today\'s selection (brief: A1-E2, below)', () => {
     expect(validateAgentPlan(plan([read('help.topic'), read('jira.issues')]), ctx('도움말이랑 지라'))).toMatchObject({ ok: false, reason: 'single-step-only', step: 1 });
-    expect(validateAgentPlan(plan([read('jira.issues'), read('brief.today')]), ctx('지라랑 브리핑'))).toMatchObject({ ok: false, reason: 'single-step-only', step: 2 });
+    expect(validateAgentPlan(plan([read('jira.issues'), read('help.topic')]), ctx('지라랑 도움말'))).toMatchObject({ ok: false, reason: 'single-step-only', step: 2 });
     expect(validateAgentPlan(plan([read('jira.issues'), read('todo.add', { title: '우유' })]), ctx('지라 보고 우유 할 일 추가'))).toMatchObject({ ok: false, reason: 'a6-in-plan', step: 2 });
     expect(validateAgentPlan(plan([read('brief.today')]), ctx('오늘 브리핑')).ok).toBe(true);
   });
@@ -470,5 +478,99 @@ describe('plan validator: the planner-only GitHub item type (owner review 2026-1
     const result = validateAgentPlan(five, ctx(text));
     expect(result).toMatchObject({ ok: true, plan: { kind: 'ask', bound: 'reads' } });
     expect(validateAgentPlan(plan(five.kind === 'steps' ? five.steps.slice(0, 2) : []), ctx(text))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+});
+
+describe('the brief as one plan step (ADR-0121 A1-E2, decision (e); S2 P3)', () => {
+  it('brief.today left the single-step-only list; help.topic stays on it', () => {
+    expect(AGENT_SINGLE_STEP_ONLY).toEqual(['help.topic']);
+  });
+
+  it('a brief plus a read validates (B6: calendar or mail in the same plan too), each step keeping its own entry', () => {
+    const slack = validateAgentPlan(plan([read('brief.today'), read('slack.search', { keyword: '장애' })]), ctx('오늘 브리핑이랑 슬랙 장애 얘기도 같이 보여줘'));
+    expect(slack).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    const mail = validateAgentPlan(plan([read('brief.today'), read('mail.list', { unread: true })]), ctx('브리핑이랑 안 읽은 메일도'));
+    expect(mail).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+
+  it('at most one brief step (brief-repeated)', () => {
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues'), read('brief.today')]), ctx('브리핑이랑 지라 이슈랑 브리핑'))).toMatchObject({ ok: false, reason: 'brief-repeated', step: 3 });
+  });
+
+  it('B2: a summary never covers the brief (summary-covers-brief); a summary of the other read passes (ratification answer 4)', () => {
+    const text = '오늘 브리핑하고 내 지라 이슈 같이 정리해줘';
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues'), summary([1, 2])]), ctx(text))).toMatchObject({ ok: false, reason: 'summary-covers-brief', step: 3 });
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues'), summary([2])]), ctx(text))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+
+  it('B3: no reference from or to the brief (it has no id field)', () => {
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 2 })]), ctx('브리핑이랑 지라 이슈'))).toMatchObject({ ok: false, reason: 'ref-cross-source', step: 2 });
+  });
+
+  it('B5: never outside the DM', () => {
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues')]), ctx('브리핑이랑 지라 이슈', { direct: false }))).toMatchObject({ ok: false, reason: 'not-dm' });
+  });
+});
+
+describe('the static connector-call charge (ADR-0121 D7; A1-E2 B4; S2 P3 same-source detail reads)', () => {
+  const RELEASE = '1.2.0 릴리스 이슈들 상세도 같이 보여줘';
+
+  it('a reference step is ONE bulk detail call whatever its take (owner answer 8)', () => {
+    for (const take of [1, 5, 10]) {
+      const result = validateAgentPlan(plan([read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take })]), ctx(RELEASE));
+      expect(result).toMatchObject({ ok: true, plan: { kind: 'run', connectorCalls: 2 } });
+    }
+  });
+
+  it('external reads are 1, the local to-do / reminder reads 0, summaries 0, the brief its configured worst case (default 7)', () => {
+    expect(AGENT_RUN_MAX_CONNECTOR_CALLS).toBe(10);
+    expect(AGENT_BRIEF_MAX_CONNECTOR_CALLS).toBe(7);
+    expect(validateAgentPlan(plan([read('jira.issues'), read('todo.list'), read('reminder.list')]), ctx('지라 이슈랑 할 일이랑 알림 목록'))).toMatchObject({ ok: true, plan: { connectorCalls: 1 } });
+    expect(validateAgentPlan(plan([read('jira.issues'), read('mail.list'), summary([1, 2])]), ctx('지라 이슈랑 메일 정리해줘'))).toMatchObject({ ok: true, plan: { connectorCalls: 2 } });
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues')]), ctx('브리핑이랑 지라 이슈'))).toMatchObject({ ok: true, plan: { connectorCalls: 8 } });
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues')]), ctx('브리핑이랑 지라 이슈', { briefConnectorCalls: 2 }))).toMatchObject({ ok: true, plan: { connectorCalls: 3 } });
+  });
+
+  it('a plan whose charge is over 10 is refused over-bound (never run, never an ask)', () => {
+    const steps = [read('brief.today'), read('jira.issues'), read('github.items'), read('slack.search', { keyword: '장애' })];
+    const text = '브리핑이랑 지라 이슈랑 깃허브랑 슬랙 장애 얘기';
+    expect(validateAgentPlan(plan(steps), ctx(text))).toMatchObject({ ok: true, plan: { kind: 'run', connectorCalls: 10 } });
+    expect(validateAgentPlan(plan(steps), ctx(text, { briefConnectorCalls: 8 }))).toEqual({ ok: false, reason: 'over-bound' });
+  });
+
+  it('agentPlanConnectorCharge is pure over validated steps', () => {
+    const result = validateAgentPlan(plan([read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 10 })]), ctx(RELEASE));
+    if (!result.ok || result.plan.kind !== 'run') throw new Error('expected a run plan');
+    expect(agentPlanConnectorCharge(result.plan.steps, {})).toBe(2);
+  });
+});
+
+describe('owner decision (a): the related flag (S2 P3)', () => {
+  const TEXT = '이번 주 회의 정리하고 관련 jira 이슈도 같이';
+  const steps = [read('calendar.events', { range: 'this-week', timedOnly: true }), summary([1], 'meeting-digest.v1'), read('jira.issues')];
+
+  it('parses `related: true` in the steps form only as a boolean; any other value is malformed', () => {
+    const raw = (related: unknown) => JSON.stringify({ steps: [{ entryId: 'jira.issues' }, { entryId: 'mail.list' }], ambiguity: 'CLEAR', related });
+    expect(parseAgentPlanOutput(raw(true))).toMatchObject({ kind: 'steps', related: true });
+    expect(parseAgentPlanOutput(raw(false))).not.toHaveProperty('related');
+    expect(parseAgentPlanOutput(raw('yes'))).toBeNull();
+    expect(agentPlanParseFailure(raw('yes'))).toBe('bad-related');
+  });
+
+  it('is kept on a validated plan reading two or more sources; it changes no step', () => {
+    const flagged: AgentPlan = { ...plan(steps), related: true } as AgentPlan;
+    const result = validateAgentPlan(flagged, ctx(TEXT));
+    const plain = validateAgentPlan(plan(steps), ctx(TEXT));
+    expect(result).toMatchObject({ ok: true, plan: { kind: 'run', related: true } });
+    if (!result.ok || !plain.ok || result.plan.kind !== 'run' || plain.plan.kind !== 'run') throw new Error('expected run plans');
+    expect(result.plan.steps).toEqual(plain.plan.steps);
+    expect(plain.plan).not.toHaveProperty('related');
+  });
+
+  it('is dropped when the plan reads one source only (nothing to relate)', () => {
+    const one: AgentPlan = { ...plan([read('jira.issues'), read('jira.issues', { status: 'in-progress' })]), related: true } as AgentPlan;
+    const result = validateAgentPlan(one, ctx('지라 이슈랑 진행 중인 지라 이슈'));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.plan).not.toHaveProperty('related');
   });
 });
