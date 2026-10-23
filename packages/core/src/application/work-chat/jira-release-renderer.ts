@@ -152,23 +152,27 @@ function renderItemLine(item: ConnectorItem, number?: number): MessagePart {
 }
 
 /**
- * The release list order (A8 "newest 10"; live smoke 2026-10-22: Jira's `-sequence` order is the project's manual
- * ordering, so "최근 10개" listed 20261020, 20261112, 20261028, 20260917, …). Deterministic and structural, from Jira's
- * own release date field only (`dueDate`, `YYYY-MM-DD`; never a date read out of a version name):
- * - versions with a release date first, newest date first, released and unreleased together (an upcoming version dated
- *   later than today's release comes first, so the newest planned work and the latest shipped one lead the list);
- * - versions without a release date after them, in the connector's order (Jira's sequence, newest first);
- * - equal dates keep the connector's order (a stable sort), so the same listing always renders the same rows.
- * On a truncated listing the order covers the versions read (the first page), and the header keeps its "이상". Pure.
+ * The release list order (A8; live smoke 2026-10-22: Jira's `-sequence` order is the project's manual ordering; owner
+ * decision Q4 of 2026-10-23). Deterministic and structural, from Jira's own status and release date field only (`dueDate`,
+ * `YYYY-MM-DD`; never a date read out of a version name):
+ * 1. unreleased (planned) versions first, the soonest release date first;
+ * 2. then released versions, the newest release date first;
+ * within each group the versions without a release date follow the dated ones in the connector's order (Jira's
+ * sequence), and equal dates keep the connector's order (a stable sort), so the same listing always renders the same
+ * rows. On a truncated listing the order covers the versions read (the first page), and the header keeps its "이상". Pure.
  */
-export function releasesNewestFirst(releases: readonly ConnectorItem[]): ConnectorItem[] {
-  const dated = releases.filter((item) => item.dueDate !== undefined);
-  const undated = releases.filter((item) => item.dueDate === undefined);
-  // Array.prototype.sort is stable (ES2019): equal dates keep the connector's order.
-  return [...dated.sort((a, b) => ((a.dueDate as string) < (b.dueDate as string) ? 1 : (a.dueDate as string) > (b.dueDate as string) ? -1 : 0)), ...undated];
+export function releasesInListOrder(releases: readonly ConnectorItem[]): ConnectorItem[] {
+  const byDate = (direction: 1 | -1) => (a: ConnectorItem, b: ConnectorItem): number =>
+    (a.dueDate as string) < (b.dueDate as string) ? -direction : (a.dueDate as string) > (b.dueDate as string) ? direction : 0;
+  const group = (items: readonly ConnectorItem[], direction: 1 | -1): ConnectorItem[] => [
+    // Array.prototype.sort is stable (ES2019): equal dates keep the connector's order.
+    ...items.filter((item) => item.dueDate !== undefined).sort(byDate(direction)),
+    ...items.filter((item) => item.dueDate === undefined),
+  ];
+  return [...group(releases.filter((item) => item.status !== 'released'), 1), ...group(releases.filter((item) => item.status === 'released'), -1)];
 }
 
-/** The releases of a project (the owner named a project and no release): newest first ({@link releasesNewestFirst}), at most 10. */
+/** The releases of a project (the owner named a project and no release): planned, then recently released ({@link releasesInListOrder}), at most 10. */
 export function renderReleaseList(project: ReleaseProjectRef, releases: readonly ConnectorItem[], truncated: boolean, ignoredLink = false): MessageBody {
   const lines: Array<{ text: MessagePart; droppable?: boolean }> = [];
   if (ignoredLink) lines.push({ text: renderIgnoredLinkNote() });
@@ -177,14 +181,14 @@ export function renderReleaseList(project: ReleaseProjectRef, releases: readonly
     return fit(lines);
   }
   const unreleased = releases.filter((item) => item.status === 'unreleased').length;
-  const shown = releasesNewestFirst(releases).slice(0, RELEASE_LIST_MAX_ROWS);
+  const shown = releasesInListOrder(releases).slice(0, RELEASE_LIST_MAX_ROWS);
   const more = releases.length > shown.length || truncated;
   lines.push({
     text: messageContent(
       '**',
       projectLabel(project),
       ' 릴리스**',
-      ` (미출시 ${unreleased} · 출시 ${releases.length - unreleased}${truncated ? ' 이상' : ''}${more ? `, 최근 ${shown.length}개 표시` : ''})`,
+      ` (미출시 ${unreleased} · 출시 ${releases.length - unreleased}${truncated ? ' 이상' : ''}${more ? `, 예정 → 최근 출시 순 ${shown.length}개 표시` : ''})`,
     ),
   });
   for (const item of shown) {

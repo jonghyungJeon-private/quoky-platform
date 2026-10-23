@@ -9,7 +9,7 @@ import { NL_WAVE1_ENTRIES, jiraKeywordCarriesQualifier, nlWave1Entry } from '../
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { hasJiraReleaseLink, normalizeSiteHost, parseJiraReleaseLinks, releaseLinkOnSite } from './jira-release-link';
 import { fuzzyProjects, lookupJiraRelease, nearProjectsOfJoined, splitKeyFromRelease, stripRedundantProjectKey, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
-import { releasesNewestFirst, renderReleaseIssues, renderReleaseList } from './jira-release-renderer';
+import { releasesInListOrder, renderReleaseIssues, renderReleaseList } from './jira-release-renderer';
 import { detectWorkChatCommand } from './work-chat-command';
 import { workChatCommandForSelection } from './work-chat-selection';
 
@@ -446,8 +446,8 @@ describe('the release report renderer (A8)', () => {
   });
 });
 
-describe('the release list order (A8 "newest 10"; live smoke 2026-10-22: "최근 10개" was Jira sequence order)', () => {
-  // The live smoke's order: Jira `-sequence`, not dates (31 versions: 4 unreleased, 27 released).
+describe('the release list order (owner Q4 2026-10-23: planned soonest first, then released newest first)', () => {
+  // The live smoke's order: Jira `-sequence`, not dates.
   const SEQUENCE_ORDER = ['20261020', '20261112', '20261028', '20260917', '20261015', '20261008', '20260924', '20261001', '20260910', '20260903', '20260827', '20260820'];
   const released = (name: string): boolean => name <= '20261020';
   const dated = (name: string): ConnectorItem => ({
@@ -459,11 +459,12 @@ describe('the release list order (A8 "newest 10"; live smoke 2026-10-22: "최근
   const rows = (text: string): string[] =>
     text.split('\n').filter((line) => line.startsWith('- ')).map((line) => (/^- ([^·]+?) ·/u.exec(line)?.[1] ?? line).replace(/^배포일_/u, ''));
 
-  it('shows the 10 newest by Jira release date, released and unreleased together, whatever the connector order', () => {
+  it('planned versions first (soonest first), then the newest released ones; the header names the order', () => {
     const text = plainTextOf(renderReleaseList({ key: 'OP26', name: '차란차 플랫폼 운영 2026' }, SEQUENCE_ORDER.map(dated), false));
-    expect(text).toContain('(미출시 2 · 출시 10, 최근 10개 표시)');
-    expect(rows(text)).toEqual(['20261112', '20261028', '20261020', '20261015', '20261008', '20261001', '20260924', '20260917', '20260910', '20260903']);
-    expect(text).toContain('- 배포일_20261112 · 미출시 · 2026-11-12');
+    expect(text).toContain('(미출시 2 · 출시 10, 예정 → 최근 출시 순 10개 표시)');
+    expect(text).not.toContain('최근 10개');
+    expect(rows(text)).toEqual(['20261028', '20261112', '20261020', '20261015', '20261008', '20261001', '20260924', '20260917', '20260910', '20260903']);
+    expect(text).toContain('- 배포일_20261028 · 미출시 · 2026-10-28');
   });
 
   it('is deterministic: any input order of the same listing renders the same rows', () => {
@@ -474,26 +475,28 @@ describe('the release list order (A8 "newest 10"; live smoke 2026-10-22: "최근
     }
   });
 
-  it('puts versions without a release date after the dated ones, in the connector order; equal dates keep the connector order', () => {
+  it('undated versions follow the dated ones of their own group, in the connector order; equal dates keep the connector order', () => {
     const items: ConnectorItem[] = [
       { id: '1', title: '비정기 배포', status: 'released' },
       { id: '2', title: 'A', status: 'released', dueDate: '2026-10-01' },
       { id: '3', title: '핫픽스', status: 'unreleased' },
-      { id: '4', title: 'B', status: 'unreleased', dueDate: '2026-10-22' },
+      { id: '4', title: 'B', status: 'unreleased', dueDate: '2026-10-29' },
       { id: '5', title: 'C', status: 'released', dueDate: '2026-10-01' },
+      { id: '6', title: 'D', status: 'unreleased', dueDate: '2026-10-24' },
+      { id: '7', title: 'E', status: 'released', dueDate: '2026-10-15' },
     ];
-    expect(releasesNewestFirst(items).map((item) => item.title)).toEqual(['B', 'A', 'C', '비정기 배포', '핫픽스']);
-    expect(rows(plainTextOf(renderReleaseList({ key: 'OP26' }, items, false)))).toEqual(['B', 'A', 'C', '비정기 배포', '핫픽스']);
+    expect(releasesInListOrder(items).map((item) => item.title)).toEqual(['D', 'B', '핫픽스', 'E', 'A', 'C', '비정기 배포']);
+    expect(rows(plainTextOf(renderReleaseList({ key: 'OP26' }, items, false)))).toEqual(['D', 'B', '핫픽스', 'E', 'A', 'C', '비정기 배포']);
   });
 
-  it('with no release dates keeps the connector order (Jira sequence) and the counts', () => {
+  it('with no release dates: planned, then released, each in the connector order (Jira sequence); the counts are unchanged', () => {
     const items: ConnectorItem[] = [
-      { id: '1', title: 'X', status: 'unreleased' },
-      { id: '2', title: 'Y', status: 'released' },
+      { id: '1', title: 'Y', status: 'released' },
+      { id: '2', title: 'X', status: 'unreleased' },
     ];
     const text = plainTextOf(renderReleaseList({ key: 'OP26' }, items, true));
     expect(rows(text)).toEqual(['X', 'Y']);
-    expect(text).toContain('(미출시 1 · 출시 1 이상, 최근 2개 표시)');
+    expect(text).toContain('(미출시 1 · 출시 1 이상, 예정 → 최근 출시 순 2개 표시)');
   });
 
   it('the lookup renders the project list in that order (owner sentence 4 with dated versions)', async () => {
@@ -501,7 +504,7 @@ describe('the release list order (A8 "newest 10"; live smoke 2026-10-22: "최근
     RELEASES.OP26 = SEQUENCE_ORDER.slice(0, 4).map(dated);
     try {
       const { text } = await run({ project: '차란차 운영 2026' });
-      expect(rows(text)).toEqual(['20261112', '20261028', '20261020', '20260917']);
+      expect(rows(text)).toEqual(['20261028', '20261112', '20261020', '20260917']);
     } finally {
       RELEASES.OP26 = saved as ConnectorItem[];
     }
