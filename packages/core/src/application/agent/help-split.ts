@@ -1,4 +1,4 @@
-import { detectHelpIntent, isHelpActionToken, isHelpGuideCloser, isHelpGuideToken, isHelpTopicParticle } from '../help-intent/help-intent';
+import { detectHelpCommand, detectHelpIntent, isHelpGuideCloser, isHelpTopicParticle } from '../help-intent/help-intent';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
@@ -19,9 +19,9 @@ import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
  *     particles ("도움말이랑", "사용법", "help"), and every other word is a function word of that grammar (a guide closer:
  *     "좀", "알려줘") or the clause's predicate (the word that ends it with the verb connective, or the last word of the
  *     message, which is the predicate the clauses share); or
- *   - the grammar form: the frozen ADR-0104 help grammar matches the clause as a whole (`detectHelpIntent`) AND the
- *     clause holds a guide noun ("추가하는 법", "사용법") or a Quoky command action ("지워", "설정"), so a status question
- *     in how-to form ("일정 어떻게 돼") is never help;
+ *   - the grammar form: the frozen ADR-0104 help grammar recognises the clause as a command how-to (`detectHelpCommand`:
+ *     the grammar's own action and conjugation forms, polite -요 and English included; Codex P2 on part 2), never its
+ *     become / state form, so a status question in how-to form ("일정 어떻게 돼") is never help;
  *   and, for the alias form, no word of the clause names another offered entry (fail closed);
  * - exactly one help clause and at least one other conjunct, and the message is not one help question as a whole (the
  *   grammar matching the whole message, an address included: "Quoky야, 할 일 어떻게 취소해?"), or no split;
@@ -140,12 +140,14 @@ function aliasClause(words: readonly ConjunctToken[], indexes: readonly number[]
   return { topic: 'all', ...(shared !== undefined ? { sharedPredicate: shared } : {}) };
 }
 
-/** The grammar form: the frozen help grammar matches the clause, with a guide noun or a Quoky command action in it. */
+/**
+ * The grammar form: the frozen help grammar recognises the clause as a command how-to (`detectHelpCommand`: its own
+ * action and conjugation forms, polite and English ones included), never its become / state form ("일정 어떻게 돼").
+ */
 function grammarClause(words: readonly ConjunctToken[], topics: readonly string[]): Omit<Clause, 'conjunct'> | undefined {
   const text = words.map((token) => token.text).join(' ').replace(/[,،]$/u, '');
-  const grammar = detectHelpIntent(text);
+  const grammar = detectHelpCommand(text);
   if (grammar === null) return undefined;
-  if (!words.some((token) => isHelpGuideToken(bare(token.word)) || isHelpActionToken(bare(token.word)))) return undefined;
   const named = grammar.topicIds.filter((topic) => topics.includes(topic));
   return { topic: named.length === 1 ? (named[0] as string) : 'all' };
 }

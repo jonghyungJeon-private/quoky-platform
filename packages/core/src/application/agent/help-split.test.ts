@@ -40,9 +40,29 @@ describe('splitHelpClause (A1-E1; S2 P3 part 2: owner Q2 and CA findings 1-2)', 
     expect(split('지라 이슈하고 도움말')).toEqual({ topic: 'all', rest: '지라 이슈' });
   });
 
-  it('the frozen ADR-0104 help grammar names the topic of a how-to clause with a command action or a guide noun', () => {
+  it('the frozen ADR-0104 help grammar names the topic of a command how-to clause (its own conjugations, polite and English)', () => {
     expect(split('알림 어떻게 지워? 그리고 지라 이슈 보여줘')).toEqual({ topic: 'reminder', rest: '지라 이슈 보여줘' });
     expect(split('할 일 추가하는 법 알려주고 메일 보여줘')).toBeUndefined();
+  });
+
+  it.each([
+    // Codex P2 on part 2: both split again.
+    ['how do I add a reminder and show my jira issues', 'reminder', 'show my jira issues'],
+    ['알림 어떻게 지워요? 그리고 지라 이슈 보여줘', 'reminder', '지라 이슈 보여줘'],
+    // More polite and English variants of the grammar's own forms.
+    ['할 일 어떻게 추가해요? 그리고 메일 보여줘', 'todo', '메일 보여줘'],
+    ['알림 설정 어떻게 하나요? 그리고 슬랙에서 배포 찾아줘', 'reminder', '슬랙에서 배포 찾아줘'],
+    ['알림 지우는 방법 알려주세요, 그리고 메일 보여줘', 'reminder', '메일 보여줘'],
+    ['how can I mark a todo as done and show my unread mail', 'todo', 'show my unread mail'],
+    ['how to cancel my reminders, and my github PRs', 'reminder', 'my github PRs'],
+    ['show my jira issues and how do I delete a reminder', 'reminder', 'show my jira issues'],
+  ])('%s → help %s + rest', (text, topic, rest) => {
+    expect(split(text)).toEqual({ topic, rest });
+  });
+
+  it('the grammar\'s become / state form stays a possible status question: no split', () => {
+    expect(split('일정 어떻게 돼요? 그리고 메일 보여줘')).toBeUndefined();
+    expect(split('할 일 어떻게 되나요, 그리고 지라 이슈 보여줘')).toBeUndefined();
   });
 
   it.each([

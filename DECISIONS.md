@@ -29505,3 +29505,19 @@ hidden hint, `followUp`, the related source, the no-list note, the reused valida
 
 The executor and everything it carries; the Q1 cursor and follow-up (P3 part 3); the Q3 write-part handling (stopped:
 needs the draft note above ratified); the D7 unit decision; AP-7; any model-in-the-loop run.
+
+#### Codex P2 on P3 part 2 (2026-10-23): the help clause's grammar form
+
+The part 2 grammar form required a guide noun or an action token from the grammar's Korean token classes, so valid
+command how-tos the grammar recognises were no longer split: "how do I add a reminder and show my jira issues" (an
+English verb) and "알림 어떻게 지워요? 그리고 지라 이슈 보여줘" (a polite -요 conjugation). Fix: the help grammar itself
+classifies the form. `detectHelpCommand` (help-intent.ts) is `detectHelpIntent` except a Korean "<topic> 어떻게 <verb>"
+whose verb is the grammar's own become / state head (되 / 돼, "어떻게 돼?", "어떻게 되나요"), which may ask for a status. The
+grammar's `HOWTO_VERB_HEAD` alternation is only split into its do heads and its state heads (the same regex; no match of
+`detectHelpIntent` changed; the help-intent suites pass unchanged); no word was added. The unused token exports of part 2
+(`isHelpGuideToken`, `isHelpActionToken`) are removed. Tests: both regressions plus six polite / English variants split
+(`할 일 어떻게 추가해요?`, `알림 설정 어떻게 하나요?`, `알림 지우는 방법 알려주세요,`, `how can I mark a todo as done …`, `how to
+cancel my reminders, …`, a help clause in last position), the state form does not split (`일정 어떻게 돼요?`, `할 일 어떻게
+되나요,`), and the CA probes still do not. Re-measured over the same 18 golden corpora (3374 texts): **0 false splits**,
+only ap-p175 and ap-p180 split (pinned). Residual: a how-to whose verb is the light verb with a state reading is still
+split by the do head ("할 일 어떻게 해?" is a how-to in the grammar).

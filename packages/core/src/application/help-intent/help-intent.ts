@@ -103,10 +103,11 @@ const GUIDE_TOKEN = new RegExp(
 const GUIDE_CLOSER =
   /^(?:좀|알려\s?줘|알려줘요|알려\s?주세요|알려줄래|알려줄래요|뭐야|뭐예요|뭐에요|뭔가요|있어|있어요|있나요|궁금해|궁금해요)$/u;
 /** The verb right after "어떻게": a command action or a plain do/use verb ("해", "지워", "설정해", "써", "만들어"). */
-const HOWTO_VERB_HEAD = new RegExp(
-  `^(?:${ACTION_STEM}|하|해|되|돼|써|꺼|봐|만들어|지워|바꿔|잊어|없애|빼|남겨|보여|올려)[가-힣]{0,4}$`,
-  'u',
-);
+const HOWTO_DO_HEAD = `${ACTION_STEM}|하|해|써|꺼|봐|만들어|지워|바꿔|잊어|없애|빼|남겨|보여|올려`;
+/** The become / state verb of the same alternation ("어떻게 돼?"): a how-to form, but also a status question. */
+const HOWTO_STATE_HEAD = '되|돼';
+const HOWTO_VERB_HEAD = new RegExp(`^(?:${HOWTO_DO_HEAD}|${HOWTO_STATE_HEAD})[가-힣]{0,4}$`, 'u');
+const HOWTO_STATE_VERB = new RegExp(`^(?:${HOWTO_STATE_HEAD})[가-힣]{0,4}$`, 'u');
 /** Helper words after that verb: "하면 돼", "하는 거야", "해 줘". */
 const HOWTO_HELPER_TOKEN =
   /^(?:돼|돼요|되나요|되지|되는지|되는데|거야|거예요|거에요|건가요|거지|해|해요|하나요|하지|하는|하면|줘|줘요|주세요|할까|할까요)$/u;
@@ -330,17 +331,27 @@ export function isHelpGuideCloser(token: string): boolean {
   return GUIDE_CLOSER.test(normalize(token).replace(TRAILING_PUNCTUATION, ''));
 }
 
-/** A guide noun, optionally after a command action ("추가하는 법", "사용법", "도움말", "명령어", "안내"). */
-export function isHelpGuideToken(token: string): boolean {
-  return GUIDE_TOKEN.test(normalize(token).replace(TRAILING_PUNCTUATION, ''));
-}
-
-/** A Quoky command action token ("추가하는", "설정", "지워"); never a plain do / become verb ("해", "돼"). */
-export function isHelpActionToken(token: string): boolean {
-  return ACTION_TOKEN.test(normalize(token).replace(TRAILING_PUNCTUATION, ''));
-}
-
 /** Whether `rest` is empty or one of the grammar's topic particles ("이랑", "도", "은" …). */
 export function isHelpTopicParticle(rest: string): boolean {
   return new RegExp(`^(?:${TOPIC_PARTICLES})?$`, 'u').test(rest);
+}
+
+/**
+ * ADR-0121 A1-E1 (S2 P3, Codex P2 on part 2): {@link detectHelpIntent}, except a Korean "<topic> 어떻게 <verb>" whose verb is
+ * the grammar's own become / state head ("일정 어떻게 돼?", "어떻게 되나요"), which may ask for the status of the thing rather
+ * than how to use the command. Every other form is a command how-to as the grammar recognises it, with its own
+ * conjugations and English verbs ("알림 어떻게 지워요?", "how do I add a reminder", "할 일 추가하는 법"). Pure.
+ */
+export function detectHelpCommand(
+  text: string,
+  topics: readonly HelpIntentTopic[] = HELP_INTENT_TOPICS,
+): HelpIntentMatch | null {
+  const match = detectHelpIntent(text, topics);
+  if (match === null || match.language === 'en') return match;
+  const addressed = normalize(text).replace(TRAILING_PUNCTUATION, '').replace(ADDRESS_PREFIX, '');
+  if (HELP_PREFIX.test(addressed)) return match;
+  const tokens = consumeTopics(addressed, topics).rest.split(' ');
+  let index = 0;
+  while (index < tokens.length && ACTION_TOKEN.test(tokens[index] ?? '')) index += 1;
+  return index === 0 && tokens[0] === '어떻게' && HOWTO_STATE_VERB.test(tokens[1] ?? '') ? null : match;
 }
