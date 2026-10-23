@@ -33,6 +33,10 @@ describe('splitHelpClause (A1-E1; S2 P3 part 2: owner Q2 and CA findings 1-2)', 
     ['show me the help menu and my unread mail', 'all', 'my unread mail'],
     ['check my jira issues and the help page', 'all', 'check my jira issues'],
     ['see the help page, and list my reminders', 'all', 'list my reminders'],
+    // Codex P2: mixed Korean / English clauses fall back to the head-word form.
+    ['help 알려주고 내 지라 이슈 보여줘', 'all', '내 지라 이슈 보여줘'],
+    ['help 좀, 그리고 안 읽은 메일 보여줘', 'all', '안 읽은 메일 보여줘'],
+    ['지라 이슈랑 help 보여줘', 'all', '지라 이슈 보여줘'],
     // A non-guide alias with a guide closer is still help (W1).
     ['기능 좀 알려줘, 그리고 지라 이슈 보여줘', 'all', '지라 이슈 보여줘'],
     ['show my jira issues and help', 'all', 'show my jira issues'],

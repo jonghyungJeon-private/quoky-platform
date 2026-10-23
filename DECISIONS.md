@@ -29583,3 +29583,8 @@ ADR-0121 S2 note — a read and a write in one owner turn (owner decision Q3, 20
   grammar has no "open"). Re-measured over every golden corpus with case texts (19 files incl. the new red-team data, 3402
   texts): **0 false splits**; only ap-p175, ap-p177 and ap-p180 split (pinned).
 - Gold totals: multi-step positives 180, negatives 138 (12 asks), approved 260, pending 58.
+- **Codex P2 on 558d3796..6b9ac75c (mixed language).** The English branch rejected a clause whose word after `help` is not
+  English ("help 알려주고 내 지라 이슈 보여줘"), which part 2 split. When the English form does not match, the clause now falls
+  back to the head-word form (the English alias `help` is again exempt from the W1 guide-noun rule, as in part 2). Split
+  tests: "help 알려주고 내 지라 이슈 보여줘", "help 좀, 그리고 안 읽은 메일 보여줘", "지라 이슈랑 help 보여줘". Re-measured over the
+  19 golden corpora (3402 texts): 0 false splits; only ap-p175, ap-p177 and ap-p180 split; the CA probes still do not.

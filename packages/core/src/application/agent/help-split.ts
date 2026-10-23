@@ -145,9 +145,9 @@ function aliasClause(words: readonly ConjunctToken[], indexes: readonly number[]
   if (at >= 0) {
     const after = words.slice(at + 1);
     const lead = words.slice(0, at).map((token) => bare(token.word)).join(' ');
-    if (!isHelpEnglishLead(lead)) return undefined;
-    if (after.length > 1 || (after.length === 1 && !/^[a-z]+$/u.test(bare((after[0] as ConjunctToken).word)))) return undefined;
-    return { topic: 'all' };
+    const oneWordAfter = after.length === 0 || (after.length === 1 && /^[a-z]+$/u.test(bare((after[0] as ConjunctToken).word)));
+    if (isHelpEnglishLead(lead) && oneWordAfter) return { topic: 'all' };
+    // Codex P2: a mixed-language clause ("help 알려주고 …") falls back to the head-word form below.
   }
   const [head, ...others] = words;
   const alias = head === undefined ? undefined : aliasOfHead(head.word, helpNames);
@@ -156,7 +156,7 @@ function aliasClause(words: readonly ConjunctToken[], indexes: readonly number[]
   // grammar's guide nouns (도움말, 사용법), never an ordinary noun that is also an alias ("기능이랑 버그 이슈 …" keeps the
   // owner's scope word); the English alias alone stays help.
   const closer = others.some((token) => isHelpGuideCloser(bare(token.word)));
-  if (!closer && !isHelpGuideToken(alias)) return undefined;
+  if (!closer && !/^[a-z0-9]+$/u.test(alias) && !isHelpGuideToken(alias)) return undefined;
   const final = others[others.length - 1];
   const finalIsPredicate = final !== undefined && (final.ends === 'connective' || (lastClause && final.ends === undefined));
   const middle = finalIsPredicate ? others.slice(0, -1) : others;
