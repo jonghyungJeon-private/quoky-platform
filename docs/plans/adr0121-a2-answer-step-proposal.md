@@ -6,6 +6,8 @@
 - **Revision 2 (2026-10-23)** answers the Chief Architect / security review of revision 1 ("NOT READY": Part I close,
   Part II blocking gaps, no redesign). The review items C1–C3, W1–W9 and S1–S11 are cited inline as `[C1]`, `[W3]` and
   so on.
+- **Revision 3 (2026-10-23)** applies the fixes F1–F10 of the re-review of revision 2 ("READY-with-fixes"). They are
+  cited inline as `[F1]`..`[F10]`.
 - **Date:** 2026-10-23
 - **Amends (on ratification):**
   - `ARCHITECTURE.md` §5 item 14 (one sentence), §8 items 3 and 5, §10 (one row, one sentence) and §12 (one bullet
@@ -78,8 +80,9 @@
   - **Containment.**
     - The topic's egress label stays `LOCAL_MODEL_ONLY`. Only the one consent-bound call may carry it.
     - The prompt, the topic and the generated answer enter the history **only as fixed structural notes**.
-- **Release.** Part II stays closed **unless** a pre-registered, blind comparison shows that the local model given the
-  full item is not adequate (A2-D19, gate G4). The flag is `QUOKY_AGENT_ANSWER=off|shadow|active`, after S2 is
+- **Release.** Part II stays closed **unless** a pre-registered, blind comparison on synthetic titles shows two things
+  (A2-D19, gate G4): the local model given the full item is not adequate, **and** the remote model given only the topic
+  is better. The flag is `QUOKY_AGENT_ANSWER=off|shadow|active`, after S2 is
   `active`. Part II also sits behind its own code-level release gate.
 
 ### 0.1 Trigger: the owner DM of 2026-10-22, and what A2 does with it
@@ -127,7 +130,9 @@ What the run supports, and what it does not:
     generically. `qwen3:8b` answered "…질문을 추출할 수 있는 정보가 없습니다" in both rounds.
   - **The other generation cases passed.** Cases 8 and 9 (tips or questions for one interview) did.
   - **What this proves.** It is one fixture × 2 rounds. It does **not** show that the local model is inadequate for
-    generation in general. Part II is therefore released only after the pre-registered blind comparison G4 (A2-D19).
+    generation in general. The run also used the `grounded` prompt ("지어내지 마세요"), which favours refusals. Part II
+    is therefore released only after the pre-registered blind comparison G4 (A2-D19), which uses a generation
+    prompt.
 
 ---
 
@@ -191,7 +196,7 @@ What the run supports, and what it does not:
      - **Ranges.** Ranges longer than one day need that amendment to cover them. A2 adds no entry of its own.
    - **A model never writes a time or a date** [S4].
      - **`grounded`.** The model may write only `{time:N}`, where N is in `usedItems`. Core replaces it with item N's
-       **weekday, date and start time** (for example "10월 24일(금) 10:00").
+       **weekday, date and start time** (for example "10월 24일(토) 10:00").
      - **Every mode: the guard.** The guard fails on any model-written clock time or calendar date. It covers:
        - the A1-D4 date grammar;
        - `H:MM`, and `N시` / `N시 N분` / `N시 반`, but not `N시간`, which is a duration;
@@ -341,10 +346,15 @@ What the run supports, and what it does not:
     - **Tokens.** Split on whitespace and on `_ - / | · , . : ; ( ) [ ] { } < > " ' #`. Only the first 12 tokens are
       considered.
     - **Name containment [W7].** The name fields are the attendee and organizer display names, the email local parts and
-      the owner's own name. They come from the API fields, are read locally and are never sent. A token is dropped when,
-      after case-fold and NFKC:
-      - it contains any part of length ≥ 2 (syllables for Hangul, letters for Latin) of a name field; or
-      - the token, of length ≥ 2, is contained in a name field.
+      the owner's own name. They come from the API fields, are read locally and are never sent. The rule is applied after
+      NFKC. Its two parts follow [F3]:
+      - **Hangul.** A token is dropped if it contains **any 2-syllable sequence** that occurs in a name field. For
+        example, the name field "홍길동" yields "홍길" and "길동", so "홍길동팀장" and "길동님" are dropped.
+      - **Latin.** First, the display names and email local parts are split on `.`, `_`, `-` and spaces. The **whole name
+        parts of ≥ 3 letters** are kept. A token is dropped if, after case-fold, it equals or contains such a part. For
+        example, `gildong.hong` yields "gildong" and "hong".
+      - **Over-dropping is accepted.** A subject word that happens to share two syllables with a name is lost. G5
+        measures the cost of that through the usefulness of the resulting topics.
     - **Other drops.** A token is also dropped when:
       - it contains `@`, `://` or `www.`, or matches a phone or URL shape;
       - it has a digit run of ≥ 3;
@@ -390,9 +400,10 @@ What the run supports, and what it does not:
         An English turn gets a fixed English equivalent. There is no approval-card wording (`승인`).
     - **The answer to the prompt [W3].** It is parsed by a **closed token set for this consent only**. That set is not
       the general confirmation parser.
-      - **Normalization.** Surrounding whitespace is trimmed, and one trailing `.`, `!`, `~` or `?` is removed.
+      - **Normalization.** The reply is normalized to **NFC** before matching [F9]. Then surrounding whitespace is
+        trimmed, and one trailing `.`, `!`, `~` or `?` is removed.
       - **Yes:** exactly `응`, `네`, `예` or `yes` (Latin case-insensitive).
-      - **No:** exactly `아니`, `아니요`, `아니오`, `아뇨` or `no`.
+      - **No:** exactly `아니`, `아니요`, `아니오`, `아뇨`, `취소` or `no`.
       - **Not accepted:** fillers and abbreviations (`어`, `ㅇ`, `ㅇㅇ`, `y`, `n`, `ok`, `좋아`, `보내`), emoji, numbers,
         and any longer sentence.
       - **Anything else cancels** the consent. Nothing is sent, and that turn is handled as an ordinary message.
@@ -406,8 +417,11 @@ What the run supports, and what it does not:
       - **Where it lives.** In memory in `AgentRunService`, never persisted. A restart voids it.
       - **Bound to:** the owner, the DM conversation, the run-1 id, the topic's SHA-256, the recipient's provider id
         (audit only), a hash of the owner's words, and the HMAC of the item id.
-      - **What it holds.** The displayed topic, the declared read (entry id and args from the owner's words) and those
-        bindings. It holds **no other item content** [W6].
+      - **What it holds.** It holds **no other item content** [W6]. It holds only:
+        - the displayed topic;
+        - the owner's words of run 1 after the D3 preparation (`TRUSTED`, memory only) [F6];
+        - the declared read (entry id and args from the owner's words);
+        - the bindings above.
       - **Expiry.** Single use. It expires on the **next owner turn** or after **10 minutes**, whichever comes first.
       - **No preference.** There is no "always send" and no default.
     - **One pending slot [W3, S11].**
@@ -420,10 +434,21 @@ What the run supports, and what it does not:
     - **Who may receive the topic.** The recipient must meet all of these:
       - it is the **effective chat-tier selection** for the turn;
       - it is `REMOTE`;
-      - it is **not a selection-time fallback** (the ADR-0116 exclusion);
+      - it is **not a selection-time fallback**;
       - it declares the data attribute `dataUse: 'no-training'`. This is a new optional readonly `AiProvider` field,
         declared like `executionLocality` (ADR-0107 D6). Absent means ineligible, so the design fails closed. Core never
         branches on a provider id.
+    - **A deliberate difference from ADR-0116 [F5].** ADR-0116 composes local-only learning examples for a remote
+      provider only when it is the owner's explicit selection, never for a derived default. Here, a **derived default
+      selection is eligible**, and only a selection-time fallback is excluded. The reason is that eligibility is carried
+      by the owner-set `dataUse` value below, and the owner confirms every send separately, by recipient name.
+    - **Where `dataUse` comes from [F5].**
+      - It is **owner-set configuration** read in the composition root (`apps/quoky`). It is not adapter code.
+      - It is set only after the Strict account check below.
+      - It can be removed without a code change. Removing it makes the provider ineligible at the next start.
+      - A `DECISIONS.md` note records the provider, the account identity (an account name or email, never a secret) and
+        the retention and training setting the owner saw.
+      - A change of provider or account requires a new check and a new note before `dataUse` is set again.
     - **The display name names the operator.** For example "Claude(Anthropic)", "OpenAI" or "Gemini(Google)". An Ollama
       `-cloud` model is `REMOTE` (ADR-0107 D6) and is shown as Ollama's cloud.
     - **Strict prerequisite before release.** The owner checks the Claude account's data-retention and training
@@ -595,20 +620,38 @@ What the run supports, and what it does not:
         - weekday errors reported separately [S4];
         - warm median ≤ 5 s and cold ≤ 15 s.
       - **Excluded.** Free-time cases, because Core computes facts.
-    - **G4 — Pre-registered blind comparison** [W1]. This gate must pass **before Part II can be released**.
-      - **Setup.**
-        - ≥ 15 generation cases, KO and EN, synthetic or the owner's own approved titles, authored before the run.
-        - Arm A: the local model given the **full item** (the full title and the fields the read returned).
-        - Arm B: the remote recipient given **only the topic plus the owner's words**.
-        - The owner labels each output blind, in random order: `useless` / `usable` / `good`, plus a pairwise
-          preference.
-      - **Pre-registered rule.**
-        - **Local is adequate** if Arm A is `usable` or better on ≥ 80% of cases **and** Arm B is preferred on < 60% of
-          cases. If local is adequate, **Part II stays closed**, and `generate` runs as a local answer with the ② hint.
-        - **Otherwise,** Part II may proceed to G5 and the topic release.
+    - **G4 — Pre-registered blind comparison** [W1, F1]. This gate must pass **before Part II can be released**.
+      - **Cases.** **≥ 30** generation cases in KO and EN, with **synthetic titles only**. No real calendar title is
+        sent to the remote recipient before ratification or before Part II opens.
+      - **Frozen before the run.** The `DECISIONS.md` measurement note records these first:
+        - the case set's hash;
+        - both arms' prompts and the model digests or versions;
+        - the rubric (`useless` / `usable` / `good`);
+        - the random seed for the presentation order.
+      - **Arm A** is the pinned local model given the **full item**: the full title and the fields a read returns.
+        - It uses a **generation-oriented prompt**, not the `grounded` prompt with its "근거 부족 / 지어내지 마세요"
+          instruction. The 2026-10-23 eval used the grounded prompt, which explains part of case 2's refusals.
+      - **Arm B** is the remote recipient given **only the topic plus the owner's words**.
+        - The topic comes from the **real extraction pipeline** (A2-D12–D14, the pinned classifier), not from a
+          hand-written topic.
+      - **Equal footing.** Both arms' outputs are normalized to the same `generate.v1` schema and the same length cap
+        and list format before the owner sees them.
+      - **Owner's labels.** The owner labels every output blind, in seeded random order: `useless` / `usable` / `good`,
+        plus a pairwise preference for each case (A, B or tie).
+      - **Pre-registered rule.** Part II may proceed to G5 **only if both** of these hold:
+        - **local is not adequate:** Arm A is `usable` or better on < 80% of cases;
+        - **Claude is shown better:** Arm B is `usable` or better on ≥ 80% of cases **and** is preferred in ≥ 20 of 30
+          non-tie pairs. Ties are excluded. Formally, a one-sided binomial test against p = 0.5 gives p < 0.05. With
+          more than 30 non-tie pairs, the same test applies.
+      - **Otherwise Part II stays closed,** and `generate` runs as a local answer (Arm A's prompt) with the ② hint. This
+        covers two cases: local is adequate, or Claude is not shown better.
     - **G5 — Topic bar** (before the topic gate is removed) [W7, W9, S6].
-      - **The held-out set.** ≥ 100 calendar titles in KO and EN, authored independently of the implementer and never
-        used for prompt tuning. They cover:
+      - **The held-out set [F2].** Calendar titles in KO and EN that contain **≥ 100 names not covered by any name
+        field** of their fixture.
+        - **Who writes it.** The owner, or a separate session with no access to the classifier prompt. It is never used
+          for prompt tuning.
+        - **Frozen first.** Its hash is recorded in `DECISIONS.md` before the first run.
+        - **What it covers:**
         - 2-, 3- and 4-syllable Korean names;
         - honorifics (님, 씨, a title such as 팀장);
         - compound tokens ("홍길동팀장");
@@ -617,15 +660,22 @@ What the run supports, and what it does not:
         - codenames;
         - places and organizations;
         - confidential subjects (HR, health, M&A, "Falcon 킥오프").
+      - **Runs.** **≥ 3 rounds** at the pinned settings. A leak in **any** round counts.
       - **Thresholds and reports:**
         - **0** leaked ids, emails, URLs or name-field names;
-        - **≥ 98%** removal of the names that no field covers. Every miss is listed in the measurement note;
-        - owner-labelled useful topic ≥ 80%;
+        - for the names that no field covers:
+          - **≥ 98% recall overall**;
+          - **≥ 90% recall for each name shape** listed above, reported per shape;
+          - every miss listed in the measurement note;
+        - the organization-name removal rate, reported;
+        - owner-labelled useful topic ≥ 80%, which also measures the cost of the F3 over-dropping;
         - confidential subjects: reported (RA2-9);
         - the `s2-answer` topic sub-family at 0.
-      - **In shadow.** The owner also reviews would-be topics locally in an attended session. They are held **in memory
-        only**: at most the last 50, never logged or persisted, and gone on restart. They are shown on the loopback ops
-        UI. Only the owner's labels are recorded.
+      - **In shadow [F7].** The owner also reviews would-be topics in an attended session **in the owner DM**. The ops UI
+        is not used, so no ADR-0113 change is needed.
+        - The topics are held **in memory only**: at most the last 50, never logged or persisted, and gone on restart.
+        - They are shown only when the owner asks for the review, in the DM, and never sent anywhere.
+        - Only the owner's labels are recorded.
 20. **A2-D20: Flag and release.**
     - **The flag.** `QUOKY_AGENT_ANSWER=off|shadow|active`. Exact values only, default `off`. Absent or `off`, behaviour
       is byte-identical: the planner prompt does not offer `answer`, and an `answer` step is refused as unknown.
@@ -634,7 +684,7 @@ What the run supports, and what it does not:
       - `AGENT_ANSWER_REQUIRES_AGENT_ACTIVE` unless `QUOKY_AGENT_MODE=active`;
       - `AGENT_ANSWER_ACTIVE_NOT_RELEASED`, a code gate removed after G1–G3.
     - **`AGENT_ANSWER_TOPIC_NOT_RELEASED`.** A second code gate, for Part II. It is removed only after all of:
-      - G4 shows local is not adequate;
+      - G4 shows that local is not adequate **and** that Claude is better;
       - G5 passes;
       - the owner verifies the provider's data setting and `dataUse` is declared (A2-D16);
       - the HMAC key exists (A2-D18);
@@ -648,7 +698,10 @@ What the run supports, and what it does not:
       - **Minimum:** ≥ 7 days and ≥ 20 `answer` turns.
     - **Interfaces.**
       - No new port, no new DI token and no migration. Deps stay 38.
-      - `AiProvider` gains one optional readonly field, `dataUse`, as ADR-0107 D6 added `executionLocality`.
+      - `AiProvider` gains one optional readonly field, `dataUse`, as ADR-0107 D6 added `executionLocality`. Its value
+        is owner configuration applied in the composition root (A2-D16).
+      - One new adapter package, `packages/ai-ollama-api`, holds the loopback Ollama HTTP client (A2-D21). It is not a
+        new port.
       - The plan schema gains the closed `answer` step.
       - The calls reuse the `SUMMARIZATION` request kind with the closed schemas `answer.v1`, `generate.v1` and
         `topic.v1`.
@@ -656,9 +709,15 @@ What the run supports, and what it does not:
 21. **A2-D21: Latency and RAM [S7].**
     - **Latency.** `qwen3:8b` takes about 3 s warm and about 7 s cold (§0.3), inside the 45 s wall.
     - **Model pinning.** The model is pinned by digest and called with `think: false`. `keep_alive` is the Ollama **API**
-      parameter (10 minutes by default). The existing Ollama chat adapter shells out to `ollama run`, so the answer path
-      uses the loopback API (the egress guard's exact-Ollama exception). That adapter change is recorded in its
-      implementation note.
+      parameter (10 minutes by default). The existing Ollama chat adapter in `packages/ai-cli` shells out to
+      `ollama run`.
+    - **A new adapter package [F10].** The answer path therefore uses the loopback HTTP API through a **new adapter
+      package, `packages/ai-ollama-api` (`@quoky/ai-ollama-api`)**. It follows the one-concern-per-adapter-package rule
+      (§11.3), like `ai-openai-api` and `ai-gemini-api`.
+      - It depends only on `@quoky/core`.
+      - It declares `LOCAL` under the ADR-0107 D6 rule.
+      - It talks only to the egress guard's exact-Ollama loopback exception.
+      - The composition root wires it, and its implementation note records it.
     - **Preload.** One local preload at `active` startup. It stays on the host.
     - **RAM.** On the 18 GB host, `qwen3:8b` adds about 5 GB while loaded.
       - RSS is measured **with S2 `active` and A2 in `shadow`**, because of the 10/16 freeze risk.
@@ -676,8 +735,9 @@ Apply only on ratification, in the same change as the `DECISIONS.md` ratificatio
 ```diff
      otherwise the request is composed without it, and there is no re-execution on another provider (ADR-0092). The
      Stage 2B routed seam gets no examples in v3. ADR-0110 and ADR-0111 reuse this attribute.
-+    A provider may also declare `dataUse: 'no-training'` as data (ADR-0121 A2); absent means it is not eligible to
-+    receive an owner-confirmed topic.
++    A provider may also carry `dataUse: 'no-training'` as data (ADR-0121 A2). It is set from owner configuration in
++    the composition root, only after the owner has checked the provider account. Absent means the provider is not
++    eligible to receive an owner-confirmed topic.
 ```
 
 ### §8 Agent Principles, item 3
@@ -705,8 +765,9 @@ Proposed:
       other quarantined output is ever an argument.
 +     The second is for the owner-confirmed minimal topic of ADR-0121 A2: a local topic-classifier call returns only
 +     indices of one item's title tokens, from which deterministic code builds the topic.
-+   - A model never writes a time, a date or a count that deterministic code can compute from read results; Core
-+     computes and renders those facts, and every model output is schema-bound and carries no URL (ADR-0121 A2).
++   - For answer-step outputs (ADR-0121 A2): the output is schema-bound and carries no URL, and a model never writes
++     a time, a date or a count that deterministic code can compute from read results; Core computes and renders
++     those facts.
 ```
 
 Current text (egress bullet):
@@ -736,7 +797,8 @@ Proposed:
 +     - it is shown byte for byte in a fixed template that names the receiving operator and says the owner's sentence
 +       is sent too;
 +     - the owner answers with a closed yes token on the next turn in the same DM within 10 minutes; single use;
-+     - the recipient is the effective, non-fallback `REMOTE` chat selection and declares `dataUse: 'no-training'`;
++     - the recipient is the effective, non-fallback `REMOTE` chat selection and carries `dataUse: 'no-training'`,
++       which the owner set after checking the account;
 +       the topic is sent once, with only the owner's own words and no tools, with no fallback to another provider.
 +     The topic is `OWNER_CONFIRMED`; its egress label is unchanged, and only the one call bound to that yes may carry
 +     it. It never reaches the planner or a connector, is never stored or cached, and the prompt, the topic and the
@@ -752,7 +814,8 @@ Proposed:
 +   The owner-confirmed minimal topic (ADR-0121 A2) is the same: a planning run that ends with the consent prompt,
 +   then, after the owner's yes or no, one deterministic continuation run with no M1 or M1'. On yes it makes only the
 +   answer call the first run's `answer` step declared; on no it re-executes the READ the first run declared and
-+   answers locally. The pending state holds the displayed topic and no other item content. Whether the prompt appears
++   answers locally. The pending state holds, in memory only, the displayed topic and the owner's words of the first
++   run after the D3 preparation (`TRUSTED`), and no other item content. Whether the prompt appears
 +   depends on the plan's mode, the item count, the source's labels and the recipient's declared data, never on what
 +   the content says. A new topic source needs its own amendment of ADR-0121.
 ```
@@ -834,7 +897,7 @@ After the sentence that starts "Every cross-destination flow is HIGH":
 | ②-2 Input never interpreted as a query or command | The topic is never an argument; it is a data span in a tool-less call | Meets |
 | ②-3 Allowed destinations only | No new host; the existing chat-tier provider | Meets (Node HTTP paths; CLI child under R1) |
 | ②-4 Call, period and volume limits | ≤ 1 offer per run, ≤ 5 an hour, ≤ 20 a day; D7 per run | Meets |
-| ⑤-1 Limit export; minimize data | **Touched.** First calendar-derived text to a remote model: ≤ 30 characters of title tokens, name fields, ids and links dropped, shown and confirmed per send, recipient declares no training | Accepted only as a per-send owner disclosure; RA2-1, RA2-2, RA2-9; released only if G4 shows local is not adequate |
+| ⑤-1 Limit export; minimize data | **Touched.** First calendar-derived text to a remote model: ≤ 30 characters of title tokens, name fields, ids and links dropped, shown and confirmed per send, recipient declares no training | Accepted only as a per-send owner disclosure; RA2-1, RA2-2, RA2-9; released only if G4 shows local is not adequate and Claude is better |
 | ⑤-3 Logs without secrets | `quoky.agentAnswer` with a per-purpose HMAC, never the topic | Meets |
 | ⑤-4 Cumulative small-query detection | Day cap; `agent-answer` ledger initiator for HTTP providers; a CLI child is not in the ledger | **Partial** [S9] |
 | ⑤-5 Incident response | Kill switch; HMAC match | Meets |
@@ -894,7 +957,8 @@ After the sentence that starts "Every cross-destination flow is HIGH":
    `.env.local` edit and a restart.
 7. **Active** for `facts`, `words` and `grounded` (calendar), on the owner's Strict yes.
 8. **G4 (the blind comparison).**
-   - **If local is adequate:** Part II stays closed. A2 is then complete without any calendar egress.
+   - **If local is adequate, or Claude is not shown better:** Part II stays closed. A2 is then complete without any
+     calendar egress.
 9. **Only if G4 opens Part II:**
    - G5 and the attended topic review;
    - the owner checks the provider's data setting, and `dataUse` is declared;
@@ -934,7 +998,8 @@ Each step is reviewed by the Chief Architect, Codex and `/security-review`. Ever
 - [ ] A2-D19..A2-D21: the pre-registered G1–G5 thresholds, the flag and the two code gates, the digest pin, and the RSS
       measurement.
 - [ ] Residual risks RA2-1..RA2-10.
-- [ ] The Part VIII rollout, including "Part II stays closed if G4 shows local is adequate".
+- [ ] The Part VIII rollout, including "Part II stays closed unless G4 shows that local is not adequate and that
+      Claude is better".
 - [ ] Answers to Part X.
 
 ---
@@ -954,11 +1019,17 @@ Each step is reviewed by the Chief Architect, Codex and `/security-review`. Ever
 6. **Several matching items.** *Recommended:* ask the owner to state the topic (②), with no pending state.
    *Alternative:* an item pick by number.
 7. **Local model residency.** `qwen3:8b` is pinned by digest either way. *Recommended:* make it the one configured local
-   model, re-measuring the local paths. This is a Strict `.env.local` change. *Alternative:* a second instance used only
+   model, re-measuring the local paths. The re-measurement also covers the existing `ollama run` chat path, with
+   thinking disabled there too [F10]. This is a Strict `.env.local` change. *Alternative:* a second instance used only
    for answers, which means two resident models.
 8. **The MC-7 deviation** [W3]. *Recommended:* accept a closed yes-token for a single displayed string (RA2-10).
-9. **The G4 thresholds.** *Recommended:* local is adequate at ≥ 80% `usable` and < 60% remote preference, judged by the
-   owner blind on ≥ 15 cases. If local is adequate, Part II stays closed.
+9. **The G4 rule** [F1]. *Recommended:*
+   - **Cases.** ≥ 30 synthetic generation cases, with prompts, digests, rubric and seed frozen first.
+   - **Opening Part II.** Part II opens only if both hold:
+     - local is not adequate: local `usable` or better on < 80% of cases;
+     - Claude is shown better: Claude `usable` or better on ≥ 80% of cases and preferred in ≥ 20 of 30 non-tie pairs
+       (one-sided binomial test, p < 0.05).
+   - **Otherwise** Part II stays closed.
 
 ---
 
