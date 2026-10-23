@@ -63,12 +63,40 @@ describe('Jira items-by-key (ADR-0121 S2 P3): one bulk detail request', () => {
     expect(() => itemsByKeyJql([])).toThrowError(ConnectorQueryError);
   });
 
-  it('a 400 naming an issue key is NOT_FOUND; any other 400 is INVALID_RESPONSE; the error text is never returned', async () => {
-    const notFound = scripted([{ status: 400, body: { errorMessages: ["An issue with key 'OP26-404' does not exist for field 'key'."] } }]);
-    await expect(jira(notFound.fetchImpl).query(query(['OP26-404']))).rejects.toMatchObject({ reason: 'NOT_FOUND' });
-    const other = scripted([{ status: 400, body: { errorMessages: ['Something else went wrong.'] } }]);
-    const error = await jira(other.fetchImpl).query(query(['OP26-1'])).catch((caught: unknown) => caught);
-    expect(error).toMatchObject({ reason: 'INVALID_RESPONSE' });
-    expect(String((error as Error).message)).not.toContain('Something else');
+  it('CA finding 6: a 400 in Jira\'s key-error shape retries ONCE without the refused key and marks the result partial', async () => {
+    const refused = { status: 400, body: { errorMessages: ["An issue with key 'OP26-404' does not exist for field 'key'."] } };
+    const { fetchImpl, urls } = scripted([refused, { body: { issues: [issue('OP26-1', 1)] } }]);
+    const result = await jira(fetchImpl).query(query(['OP26-1', 'OP26-404']));
+    expect(urls).toHaveLength(2);
+    expect(urls[1]?.searchParams.get('jql')).toBe('key in ("OP26-1") ORDER BY key ASC');
+    expect(result).toMatchObject({ truncated: true });
+    expect(result.items.map((item) => item.id)).toEqual(['OP26-1']);
+  });
+
+  it('never a third request: a retry refused again, or every asked key refused, is NOT_FOUND', async () => {
+    const first = { status: 400, body: { errorMessages: ["The issue key 'OP26-404' for field 'key' is invalid."] } };
+    const second = { status: 400, body: { errorMessages: ["An issue with key 'OP26-1' does not exist for field 'key'."] } };
+    const again = scripted([first, second, { body: { issues: [] } }]);
+    await expect(jira(again.fetchImpl).query(query(['OP26-1', 'OP26-404']))).rejects.toMatchObject({ reason: 'NOT_FOUND' });
+    expect(again.urls).toHaveLength(2);
+    const all = scripted([first]);
+    await expect(jira(all.fetchImpl).query(query(['OP26-404']))).rejects.toMatchObject({ reason: 'NOT_FOUND' });
+    expect(all.urls).toHaveLength(1);
+  });
+
+  it('a 400 of another shape (no field \'key\', or an unasked key) is INVALID_RESPONSE, never retried; its text is never returned', async () => {
+    for (const body of [{ errorMessages: ['Something else went wrong.'] }, { errorMessages: ["An issue with key 'WEB-9' does not exist for field 'key'."] }, { errorMessages: ["key 'OP26-1' is bad"] }]) {
+      const other = scripted([{ status: 400, body }]);
+      const error = await jira(other.fetchImpl).query(query(['OP26-1'])).catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ reason: 'INVALID_RESPONSE' });
+      expect(other.urls).toHaveLength(1);
+      expect(String((error as Error).message)).not.toMatch(/Something|WEB-9|OP26-1/);
+    }
+  });
+
+  it('reads through the capped item reader: a response over 1 MB is TOO_LARGE', async () => {
+    const huge = { issues: [{ ...issue('OP26-1', 1), fields: { summary: 'x', description: 'y'.repeat(1_100_000) } }] };
+    const { fetchImpl } = scripted([{ body: huge }]);
+    await expect(jira(fetchImpl).query(query(['OP26-1']))).rejects.toMatchObject({ reason: 'TOO_LARGE' });
   });
 });
