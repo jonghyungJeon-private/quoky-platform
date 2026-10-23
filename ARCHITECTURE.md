@@ -231,6 +231,9 @@ fixed; the implementations are not.
     that is the owner's explicit selection, never for a derived default or a selection-time fallback (ADR-0116);
     otherwise the request is composed without it, and there is no re-execution on another provider (ADR-0092). The
     Stage 2B routed seam gets no examples in v3. ADR-0110 and ADR-0111 reuse this attribute.
+    A provider may also carry `dataUse: 'no-training'` as data (ADR-0121 A2). It is set from owner configuration in
+    the composition root, only after the owner has checked the provider account. Absent means the provider is not
+    eligible to receive an owner-confirmed topic.
 
 ---
 
@@ -265,7 +268,7 @@ fixed; the implementations are not.
 
 ## 8. Agent Principles
 
-> *Amended by ADR-0121 (2026-10-13) and ADR-0121 A1 (ratified 2026-10-21).*
+> *Amended by ADR-0121 (2026-10-13), ADR-0121 A1 (ratified 2026-10-21) and ADR-0121 A2 (ratified 2026-10-23).*
 
 1. Execution is single-shot (PromptComposer → Provider → Artifact) **except** for one bounded agent runtime defined by
    ADR-0121. It plans first and then executes. It is not a plan-act-observe loop:
@@ -289,11 +292,16 @@ fixed; the implementations are not.
    Labels join to the most restrictive value. Labels are domain data, never a provider id. The rules are:
    - The planner receives only `TRUSTED` and `STRUCTURE` values. An `OWNER_CONFIRMED` value (below) never reaches it.
    - Raw external content is read only by a **quarantined** model call. That call has no tools and uses a
-     schema-bound output. Its output goes only to the owner's reply, with one narrow exception for the
+     schema-bound output. Its output goes only to the owner's reply, with two narrow exceptions. The first is for the
      owner-confirmed handoff of ADR-0121 A1 (free-text keyword flows H-5..H-7 only): a candidate the call extracted
      may fill the declared READ slot only after it is verified deterministically as a verbatim substring of the one
      owner-chosen item, passes the keyword filter, and is picked by the owner. It then carries `OWNER_CONFIRMED`. No
      other quarantined output is ever an argument.
+     The second is for the owner-confirmed minimal topic of ADR-0121 A2: a local topic-classifier call returns only
+     indices of one item's title tokens, from which deterministic code builds the topic.
+   - For answer-step outputs (ADR-0121 A2): the output is schema-bound and carries no URL, and a model never writes
+     a time, a date or a count that deterministic code can compute from read results; Core computes and renders
+     those facts.
    - Content can never choose a step, a destination or an operation, and never becomes a free-text argument, with
      one exception: the **owner-confirmed handoff** of ADR-0121 A1.
    - A closed-format id projected deterministically from a read result may feed only a later read of the same source
@@ -314,7 +322,25 @@ fixed; the implementations are not.
    - A model call's provider must satisfy the strictest egress label of its inputs (§5.14). **Egress labels govern
      model providers.** For connector egress of values taken from content, the declared slot of an owner-confirmed
      handoff is the only sanctioned path. In particular, a value from a `LOCAL_MODEL_ONLY` source (calendar) may reach
-     a connector only through that slot, and never a `REMOTE` model.
+     a connector only through that slot, and a `REMOTE` model only as an owner-confirmed minimal topic (below).
+   - **Owner-confirmed minimal topic (ADR-0121 A2).** When the owner asks Quoky to generate new material from one item
+     whose egress label forbids a `REMOTE` model, a short topic may reach a remote chat-tier provider only if all of
+     the following hold:
+     - it is built deterministically from tokens of that one item's title, each a verbatim substring, after
+       deterministic drops of name-field names, identifiers and links and a local classifier that can only select
+       tokens;
+     - it passes the closed length and charset filter of an A1 keyword and is never truncated;
+     - it is shown byte for byte in a fixed template that names the receiving operator and says the owner's sentence
+       is sent too;
+     - the owner answers with a closed yes token on the next turn in the same DM within 10 minutes; single use;
+     - the recipient is the effective, non-fallback `REMOTE` chat selection and carries `dataUse: 'no-training'`,
+       which the owner set after checking the account; the topic is sent once, with only the owner's own words and no
+       tools, with no fallback to another provider.
+     The topic is `OWNER_CONFIRMED`; its egress label is unchanged, and only the one call bound to that yes may carry
+     it. It never reaches the planner or a connector, is never stored or cached, and the prompt, the topic and the
+     generated answer enter the history only as fixed structural notes. It is capped, DM-only, stopped by the kill
+     switch and audited without content. It is released only after the pre-registered gates of ADR-0121 A2 (G4 shows
+     that a local answer is not adequate and that the remote one is better; G5 name-filter bar).
 4. An agent has **no** shell, code execution, arbitrary URL fetch, MCP or plugin tool, memory write or connector
    write. A write is only ever a proposal that creates an existing exact-payload, one-time approval (§10). Steps,
    model calls, connector calls, wall time and cost are capped. A kill switch stops runs without a restart.
@@ -329,6 +355,13 @@ fixed; the implementations are not.
    deterministic final run after the value pick. Only the first run plans (no M1 or M1' later). The final run executes
    only the READ the first run declared from the owner's words, once per picked value. A new handoff flow (source, kind
    or destination) needs its own amendment of ADR-0121.
+   The owner-confirmed minimal topic (ADR-0121 A2) is the same: a planning run that ends with the consent prompt,
+   then, after the owner's yes or no, one deterministic continuation run with no M1 or M1'. On yes it makes only the
+   answer call the first run's `answer` step declared; on no it re-executes the READ the first run declared and
+   answers locally. The pending state holds, in memory only, the displayed topic and the owner's words of the first
+   run after the D3 preparation (`TRUSTED`), and no other item content. Whether the prompt appears depends on the
+   plan's mode, the item count, the source's labels and the recipient's declared data, never on what the content
+   says. A new topic source needs its own amendment of ADR-0121.
 
 ---
 
@@ -361,6 +394,7 @@ fixed; the implementations are not.
 | HIGH | git commit/push/PR, connector writes (Jira/Slack/Confluence) | **approval** |
 | LOW | bounded agent **read** run over READ catalog entries (ADR-0121) | auto, within caps |
 | LOW | owner-confirmed handoff into a READ (ADR-0121 A1) | owner pick of the exact displayed values; never a write |
+| LOW | owner-confirmed minimal topic to the chat-tier model (ADR-0121 A2) | owner yes on the exact displayed string and recipient; one call; never a write |
 | HIGH | agent **write proposal**; any flow of data read from one source to a different destination | **approval** (exact payload + provenance banner) |
 | CRITICAL | deploy, DB migration, destructive shell, force push, secret access | **approval** |
 
@@ -373,6 +407,9 @@ with no automatic retry (ADR-0112).
 
 Every cross-destination flow is HIGH, except the ADR-0121 A1 owner-confirmed handoff into a READ. That handoff's pick
 is a consent step, not an approval card: it never uses approval wording and never authorizes a write.
+
+The ADR-0121 A2 topic consent is likewise a consent step, not an approval card: it never uses approval wording, it
+authorizes one model call with one displayed string, and it never authorizes a write or a connector call.
 
 The approval gate wraps the **external write / destructive action**, not the
 planning. Approval requests and decisions are persisted as governance records.
@@ -402,7 +439,7 @@ planning. Approval requests and decisions are persisted as governance records.
 - ❌ Branching on a provider `id` anywhere in Core.
 - ❌ Letting any platform/storage/driver type cross a port boundary.
 - ❌ Pinning an AI provider to a Session/Task/Actor. (Exception, owner-approved 2026-10-07: an owner's explicit session-scoped chat-tier/image **preference** set by an owner command — ADR-0092 amendment — is a routing preference, not a pin: capability routing, readiness probes and the Claude fallback still apply, and it never affects code/review/policy capabilities.)
-- ❌ Surfacing the selected provider to the user as a normal behavior. (Explicit owner requests — `모델 상태`, the operations UI providers panel — may show the effective selection; ordinary replies never do.)
+- ❌ Surfacing the selected provider to the user as a normal behavior. (Explicit owner requests — `모델 상태`, the operations UI providers panel — may show the effective selection; ordinary replies never do. An owner-confirmed egress prompt (ADR-0121 A2) names the operator that will receive the displayed string, because consent needs the recipient.)
 - ❌ Storing context/memory **snapshots** on Session (rebuild per run).
 - ❌ Merging `Resource` (input) and `Artifact` (output).
 - ❌ Auto-commit / auto-push / auto-delete / force-push / external write without
@@ -416,6 +453,8 @@ planning. Approval requests and decisions are persisted as governance records.
   (ADR-0121 A1).
 - ❌ Acting on instructions found in content ("do what the mail says", "follow the PR description"), at any level.
   Content may only be summarized; an action needs the owner's own request through the approval paths.
+- ❌ Sending item content to a model whose locality its egress label forbids — through a summary, an answer, history
+  or a cache — except an `OWNER_CONFIRMED` minimal topic sent once after the owner's explicit yes (ADR-0121 A2).
 - ❌ Giving any agent or model a shell, code execution, arbitrary URL fetch, MCP/plugin tools, memory writes or
   connector writes.
 - ❌ Egress to a destination that is not on the egress allowlist, or to an internal, metadata or CGNAT address after

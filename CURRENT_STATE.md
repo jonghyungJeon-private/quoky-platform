@@ -5,6 +5,38 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 amendment A2 — ratified (2026-10-23, docs only, branch `claude/v5-answer-step-adr`)
+
+The owner ratified A2 on 2026-10-23 with every recommended default. Docs only; no code changed.
+- **Constitution.** `ARCHITECTURE.md` changes:
+  - §5.14: `dataUse`, owner-set;
+  - §8 item 3:
+    - the index-only topic classifier exception;
+    - for answer-step outputs: schema-bound, no URL, and no model-written times, dates or counts;
+    - the owner-confirmed minimal topic as the only remote path for `LOCAL_MODEL_ONLY` text;
+  - §8 item 5: the consent plus one continuation run;
+  - §10: the LOW topic-consent row;
+  - §12: the operator may be named in the consent prompt, and a new bullet forbids sending item content to a forbidden
+    locality.
+- **DECISIONS.** A2 is Accepted with its ratification record.
+  - **The new consent sentence:** "'…'라는 주제(일정 제목 일부)와 요청 문장을 Claude에 보내려고 해요. 이름·회사명이 남아 있으면
+    '아니'라고 해 주세요. 보낼까요? (응/아니)".
+  - **The MC-7 deviation**, with enumerated `응`/`아니` tokens (NFC; `취소` counts as no).
+  - **G4:** the topic path opens only if the local answer is not adequate and Claude is shown better (≥ 30 synthetic
+    cases, frozen and blind).
+  - **Scope and topic:** calendar only; no upgrade offer; ≤ 30 characters and ≤ 4 tokens, with company names dropped;
+    DM only; several events lead to an ask; `qwen3:8b` is the one local model, after a Strict yes.
+  - **Residual risks:** RA2-1..RA2-10.
+  - **Cross-references:** the ADR-0110 D4, ADR-0118 D7/D8, S2 Q8/Q9 and #280 notes are amended or cross-referenced.
+- **Implementation: not started.**
+  - The build comes only after S2 is `active`, behind `QUOKY_AGENT_ANSWER` (default `off`). The topic path is behind
+    `AGENT_ANSWER_TOPIC_NOT_RELEASED`.
+  - `shadow` and `active`, `dataUse`, the HMAC key and the local model change are each a Strict owner step after the
+    G1–G5 gates.
+  - The offline A0 data (AP-8, `s2-answer`, G3/G4/G5 sets) may start now.
+
+Next: S2 continues. A0 runs offline. DECISIONS: "ADR-0121 amendment A2" and its ratification record.
+
 ### Read residuals of the D12 gate — owner decisions A and B (2026-10-22, branch `claude/v5-read-residuals`)
 
 Built offline, not merged; re-gate pending on read `nl-select.v67` / A6 `v65` / R2 `v66`, planner `agent-plan.v5`

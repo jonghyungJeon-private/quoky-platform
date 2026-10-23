@@ -16481,6 +16481,13 @@ cannot see the schedule. A calendar event has a start, an end, an all-day flag a
    *Amended by ADR-0121 A1 (Accepted 2026-10-21):* unchanged for model providers. New: a calendar-derived value (an
    attendee email for H-3, a title token or LOCAL-M2 keyword for H-5) may reach a connector (Gmail, Jira) only as an
    `OWNER_CONFIRMED` value in the declared handoff slot. Its results join `LOCAL_MODEL_ONLY` (A1-D8).
+   *Amended by ADR-0121 A2 (Accepted 2026-10-23):* unchanged as the default, and still never a fallback. One scoped
+   exception: an `OWNER_CONFIRMED` minimal topic. It is at most 4 tokens and 30 characters, taken only from one event's
+   title, with name-field names, ids and links dropped and a local index-only classifier as the name filter. The owner
+   confirms it byte for byte by a closed yes in the same DM. It is sent once, with the owner's own words, to the
+   effective non-fallback `REMOTE` chat provider that carries the owner-set `dataUse: 'no-training'` (A2-D10..A2-D18).
+   Its egress label stays `LOCAL_MODEL_ONLY`, and the history keeps only structural notes. It is released only after
+   the A2 gates G4 and G5.
 5. **No calendar configured.** The handler is registered only when the adapter is configured; QUAL-7 routing is then
    unchanged.
 6. **Writes stay refused.** Create or move requests get the fixed read-only refusal. Calendar writes are P2 behind the
@@ -19213,10 +19220,16 @@ Quoky would read.
    *Amended by ADR-0121 A1 (Accepted 2026-10-21):* model egress also on a request that names the item's content, for
    M2 extraction only (A1-D4). New: a mail- or Drive-derived value may reach another connector (Calendar, Jira, Slack)
    only as an `OWNER_CONFIRMED` value in the declared handoff slot (H-1, H-2, H-6, H-7).
+   *Amended by ADR-0121 A2 (Accepted 2026-10-23):* unchanged for mail and Drive. An `answer` step is not a summary
+   request: a `grounded` answer over mail or Drive items reads `REMOTE_ON_SUMMARY_REQUEST` as `LOCAL_MODEL_ONLY` and runs
+   on a `LOCAL` provider (A2-D6). A topic from a mail subject or a Drive file name needs its own ADR-0121 amendment
+   (A2-D11).
 8. **Injection.** Handler decisions are taken from the owner's text only; mail or document content never changes routing
    or starts an action.
    *Clarified by ADR-0121 A1 (Accepted 2026-10-21), not loosened:* the step, source, destination and operation still
    come only from the owner's text (A1-D1). A handoff value is an argument, never routing.
+   *Clarified by ADR-0121 A2 (Accepted 2026-10-23):* the `answer` step and its mode also come only from the owner's
+   words (A2-D2, A2-D9). Item content never chooses a mode, and never decides whether a consent prompt appears.
 9. **Notion is not covered.** Owner decision 20 is undecided; Notion stays an unscheduled P3 candidate, revisited on
    request.
 
@@ -21426,6 +21439,9 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
   end of this file. Stage S0 needed only its own approval (see "Staged rollout"); S1 and S2 follow the record.
   **Amended by A1** (Accepted 2026-10-21): D2, D3, D4, D7, D9, D11 and D12; see "ADR-0121 amendment A1" and its
   ratification record at the end of this file.
+  **Amended by A2** (Accepted 2026-10-23): D1, D2, D3, D4, D7, D9, D10, D11 and D12, plus A1-D7 (a recorded MC-7
+  deviation) and A1-D8 (one more `OWNER_CONFIRMED` use); see "ADR-0121 amendment A2" and its ratification record at the
+  end of this file.
 - **Date:** 2026-10-13
 - **Inputs:**
   - `docs/plans/agent-security-design-2026-10-13.md`: the design, the threat model, the MSIT compliance mapping and
@@ -27731,6 +27747,10 @@ reading) is recorded as a watch case under `pendingOwnerApproval` in `golden/nl-
   a planner `help.topic` step inside a multi-step plan stays refused (`single-step-only`). Q9 gains one exception, the
   in-memory, single-use pending handoff (A1-D7), which exists only after S2 is `active`. The P1 code above is unchanged
   until S2 P2/P3 implement Part II.
+- **S2 plan amended by ADR-0121 A2 (Accepted 2026-10-23).**
+  - Q8 ("summaries follow the existing flags"): answers follow the same labels (A2-D6).
+  - Q9 gains a second exception: the in-memory, single-use topic consent (A2-D15). It lives in the single pending slot
+    shared with the A1 handoff. Like the handoff, it exists only after S2 is `active` and `QUOKY_AGENT_ANSWER` is on.
 - **Deps baseline 37 → 38 (`agentRuns?`).** ADR-0121 D12 assumed 36 → 37, but ADR-0122 took 37 first (`surfaceGrants`).
   `ConversationRuntimeDeps.agentRuns?` therefore makes the ADR-0032 M3 baseline **38** (the offline Stage 2A
   `runtimeProviderRouting` seam is still not counted). `agentRuns` is always composed (`features/agent.providers.ts`);
@@ -28739,6 +28759,10 @@ chat could not tell a listing had been shown; and the ADR-0120 D9 fact told chat
 content never reaches a REMOTE model (chat). Content-dependent answers ("그 면접 기준으로 …") are deferred to the S2
 `answer` step on a LOCAL model only; this note does not add them. The selector prompt (`nl-select`) is unchanged (no D12
 regate).
+*Amended by ADR-0121 A2 (Accepted 2026-10-23):* the `answer` step is specified by A2. "On a LOCAL model only" stays
+true for `grounded` answers. For `generate`, it stays true unless the pre-registered gate G4 opens the owner-confirmed
+minimal topic path (A2 Part II). The structural-note rule of this note also covers A2's fact lines, consent prompts and
+answers (A2-D3, A2-D7, A2-D17).
 
 **Change.**
 - *Structural history notes.* A listing reply keeps a note derived only from metadata the handler already has: the
@@ -28802,3 +28826,167 @@ and the new fact and no event title, time or location). Counts and Quoky's own s
   = miss), lower bound, EN pick; Drive name search (hit = miss, incomplete), lower bound; the new fact and composer
   sentences; an end-to-end mail + Drive listing then a chat follow-up whose input carries both notes and no sender,
   subject, snippet or file name. No spoofed-bracket test: no structural marking was added (residual above).
+
+## ADR-0121 amendment A2 — The plan `answer` step (Core-computed facts first; modes `facts`, `words`, `grounded`, `generate`; schema-bound, URL-free model output; `qwen3:8b` pinned by digest for local answers) and an owner-confirmed minimal topic (a scoped ADR-0110 D4 exception: at most 4 title tokens and 30 characters, name-field drops and an index-only local classifier, a fixed consent prompt naming the recipient, a closed yes on the next DM turn within 10 minutes, one call to the effective non-fallback `REMOTE` chat provider with an owner-set `dataUse: 'no-training'`, structural history notes only; released only after the pre-registered gates G4 and G5). `QUOKY_AGENT_ANSWER`, staged after S2 `active`. Amends ARCHITECTURE.md §5 item 14, §8 items 3 and 5, §10 and §12, ADR-0121 D1/D2/D3/D4/D7/D9/D10/D11/D12, A1-D7 (MC-7) and A1-D8, ADR-0110 D4, ADR-0118 D7 (D8 clarified), the S2 plan Q8/Q9 and the 2026-10-22 structural-history note.
+
+- **Status:** **Accepted.** The Product Owner ratified it on **2026-10-23** (orchestrator chat). See "ADR-0121 A2
+  ratification record (2026-10-23)" below. The constitution text (proposal Part IV) is applied to `ARCHITECTURE.md`
+  §5.14, §8, §10 and §12 in the same change.
+- **Decision text.** A2-D1..A2-D21, Parts IV and V and the gates G1–G5 are in
+  `docs/plans/adr0121-a2-answer-step-proposal.md` (revision 3, after the Chief Architect / security review and its
+  re-review). They are ratified as written, except where the record below answers an open question.
+- **Owner summary (Korean):** `docs/plans/adr0121-a2-owner-summary.md`.
+- **Basis:**
+  1. **The owner DM of 2026-10-22.** A question asked alongside a calendar read was dropped. A follow-up that needed the
+     event's content had none (ADR-0110 D4).
+  2. **The owner's instruction, "보안 권고와 맞게 진행해야해".** ADR-0110 D4 stays the default.
+  3. **The owner's design choice ①, 2026-10-23:** an owner-confirmed minimal topic, with ② (the owner states the
+     topic) as the fallback.
+  4. **The local measurement of 2026-10-23.**
+     - Raw data: `~/Library/Application Support/Quoky/eval-archive/local-answer-eval-20261023/`.
+     - Result: `qwen3:8b` is the candidate. Every model failed the free-time arithmetic, so Core computes facts.
+     - Generation was measured on one fixture only, so the topic path is gated by G4.
+  5. **Ratification,** with the answers below (2026-10-23).
+- **Conflict resolved by ratification.** Part II conflicted with settled text. The owner ratified the constitution
+  amendment, as for ADR-0121 and A1. The settled text was:
+  - `ARCHITECTURE.md` §8 item 3: a `LOCAL_MODEL_ONLY` value "never a `REMOTE` model";
+  - ADR-0110 D4: no Claude fallback for calendar text;
+  - §12: no provider surfacing.
+
+  Part I conflicted with no constitutional text.
+
+### ADR-0121 A2 ratification record (2026-10-23)
+
+The Product Owner ratified ADR-0121 amendment A2 and the ARCHITECTURE.md amendment on 2026-10-23, with every
+recommended default.
+
+**Answers to the open questions (proposal Part X):**
+
+0. **Ratified:**
+   - the §5/§8/§10/§12 wording;
+   - the scoped ADR-0110 D4 exception;
+   - residual risks RA2-1..RA2-10;
+   - the pre-registered measurement bars G1–G5.
+1. **Consent wording: changed.** The sentence approved on 2026-10-23 ("…(이름·장소 제외)…") is replaced by:
+   "'…'라는 주제(일정 제목 일부)와 요청 문장을 Claude에 보내려고 해요. 이름·회사명이 남아 있으면 '아니'라고 해 주세요. 보낼까요?
+   (응/아니)".
+   - "Claude" is the recipient's display name, taken from provider data (A2-D15/D16).
+   - An English turn gets a fixed equivalent.
+2. **MC-7 deviation: allowed** (A2-D15, RA2-10).
+   - **Accepted tokens.** The reply is normalized to NFC, trimmed, and one trailing `.` `!` `~` `?` is removed. Yes is
+     exactly `응` / `네` / `예` / `yes`. No is exactly `아니` / `아니요` / `아니오` / `아뇨` / `취소` / `no`. Fillers (`어`,
+     `ㅇ`, `ㅇㅇ`, `y`, `n`, `ok`, `좋아`, `보내`) and anything else cancel the consent.
+   - **One pending step.** Creating a consent voids every other pending owner step in the conversation.
+   - **Expiry.** The consent expires on the next owner turn or after 10 minutes.
+3. **G4: as in revision 3 (F1).** Part II opens only if both of the following hold:
+   - **The local answer is not adequate.** Local scores `usable` or better on < 80% of cases.
+   - **Claude is shown better.** Claude scores `usable` or better on ≥ 80% of cases, and is preferred in ≥ 20 of 30
+     non-tie pairs (a one-sided binomial test, p < 0.05).
+
+   The test conditions:
+   - ≥ 30 synthetic cases;
+   - prompts, model digests, the rubric and the seed frozen in a measurement note before the run;
+   - outputs normalized to the same schema and length;
+   - Arm A uses a generation prompt;
+   - Arm B's topic comes from the real pipeline;
+   - no real calendar title is sent.
+
+   Otherwise Part II stays closed.
+4. **Sources: calendar only** in the first wave. Mail and Drive `grounded` answers come after a measurement note. Any
+   new topic source needs its own ADR-0121 amendment.
+5. **No upgrade offer** ("Claude로 더 잘…") on a local answer. The ② hint appears only on a fallback or on insufficient
+   evidence.
+6. **Topic size:** ≤ 30 characters and ≤ 4 tokens. Organization and company names are dropped.
+7. **DM only,** for both the `answer` step and the topic.
+8. **Several matching events:** a fixed ask for the owner to state the topic (②), with no pending state and no item
+   pick.
+9. **One local model.** `qwen3:8b`, pinned by digest, becomes the one configured local model. The re-measurement covers
+   the existing local paths, including the `ollama run` chat path with thinking disabled. The `.env.local` change and
+   the restart still need the owner's Strict yes.
+
+**Decisions:**
+
+1. **ADR-0121 A2 is ratified** as written in `docs/plans/adr0121-a2-answer-step-proposal.md` (revision 3), with the
+   answers above. Its status is Accepted.
+2. **Constitution.** These `ARCHITECTURE.md` changes are applied in this change. §13 is unchanged.
+   - **§5 item 14:** `dataUse` is declared data, owner-set in the composition root.
+   - **§8 item 3:**
+     - the second quarantined-output exception: index-only topic classification;
+     - for answer-step outputs: schema-bound, no URL, and no model-written times, dates or computable counts;
+     - the owner-confirmed minimal topic as the only `REMOTE` path for `LOCAL_MODEL_ONLY` text.
+   - **§8 item 5:** the consent and the one continuation run are not content-conditioned control flow. On no, the read
+     is re-executed. The pending state holds only the topic and the owner's words.
+   - **§10:** the LOW topic-consent row and its sentence.
+   - **§12:** a consent prompt may name the operator, and a new bullet forbids sending item content to a model whose
+     locality its egress label forbids.
+3. **Amended ADR-0121 clauses** (proposal Part V):
+
+   | Clause | Amendment |
+   |---|---|
+   | D1 / D2 | The `answer` step (A2-D1, V1–V9) |
+   | D3 | MA and MT are D3-shaped. MT returns indices only. `generate.v1` binds remote output |
+   | D4 | Consent-bound declassification for one call. `REMOTE_ON_SUMMARY_REQUEST` is read as `LOCAL_MODEL_ONLY` for an answer |
+   | D7 | The A2-D8 call budget. Topic caps: ≤ 1 offer per run, ≤ 5 sends per hour, ≤ 20 per day. The single pending slot. The kill switch voids a consent |
+   | D9 | `quoky.agentAnswer` and the ledger initiator `agent-answer`. A per-purpose HMAC key, derived by HKDF from the A1-D12 key |
+   | D10 | Plus MA and MT |
+   | D11 | G1–G5 |
+   | D12 | The `answer` step. `answer.v1`, `generate.v1` and `topic.v1`. `AiProvider.dataUse?`. A new adapter package `packages/ai-ollama-api` for the loopback Ollama HTTP client. No new port, token or migration. Deps stay 38 |
+   | A1-D7 | The recorded MC-7 deviation |
+   | A1-D8 | The topic in the one consent-bound remote answer call. A1-D1 is unchanged |
+4. **Other clauses.**
+   - ADR-0110 D4, ADR-0118 D7 and ADR-0118 D8 carry "*Amended / Clarified by ADR-0121 A2*" notes.
+   - The S2 P1 note records the Q8/Q9 changes.
+   - The 2026-10-22 structural-history note carries a cross-reference.
+5. **Residual risks accepted (proposal Part VII):**
+   - **RA2-1** topic disclosure. The owner checks the Claude account's retention and training setting before release.
+   - **RA2-2** names that the filters miss. The red-team "0 successes" does not cover names outside the name fields.
+   - **RA2-3** local answer quality.
+   - **RA2-4** confirmation fatigue.
+   - **RA2-5** mode misclassification.
+   - **RA2-6** resources: about 5 GB of RAM and 3–7 s per answer.
+   - **RA2-7** an unguarded child process (R1).
+   - **RA2-8** no answer content in the history.
+   - **RA2-9** confidential subjects and codenames.
+   - **RA2-10** the MC-7 deviation.
+6. **Rollout order (proposal Part VIII), ratified:**
+   1. ratification (this record);
+   2. the docs change (this change);
+   3. **A0, offline data.** This may run while S2 finishes:
+      - AP-8 (≥ 40 cases, ≥ half from captures, reviewed by the owner in the artifact);
+      - the `s2-answer` corpus;
+      - the G3 eval;
+      - the G4 case set (synthetic, frozen);
+      - the G5 held-out set (authored independently, its hash frozen here before the first run);
+   4. **build, only after S2 is `active`,** behind `QUOKY_AGENT_ANSWER=off`, with Part II behind
+      `AGENT_ANSWER_TOPIC_NOT_RELEASED`. The A1-D14 free/busy entry, with its own ADR-0120 amendment and D12 evaluation,
+      comes before the `free` fact. A1 and A2 share one pending slot;
+   5. G1–G3, then `shadow` for ≥ 7 days and ≥ 20 answer turns, with an RSS measurement (a Strict `.env.local` edit and
+      restart);
+   6. `active` for `facts`, `words` and `grounded` (calendar), on the owner's Strict yes;
+   7. G4. Part II stays closed unless G4 opens it;
+   8. **only if G4 opens it:**
+      - G5;
+      - the owner's account check, a note, and the owner-set `dataUse`;
+      - the HMAC key (Strict);
+      - a measurement note and the owner's yes;
+      - then the topic gate is removed.
+
+   Each step is reviewed by the Chief Architect, Codex and `/security-review`. Every model-in-the-loop run, every
+   `.env.local` change, every restart and every secret action is Strict.
+7. **Authorized by this record:**
+   - this docs change;
+   - the A0 offline data work (no live provider call, no real calendar title to a remote model);
+   - the A2 build **only after S2 is `active`,** behind `QUOKY_AGENT_ANSWER=off`.
+8. **Not authorized:**
+   - any A2 runtime code before S2 is `active`;
+   - `QUOKY_AGENT_ANSWER=shadow` or `active`, or removing `AGENT_ANSWER_ACTIVE_NOT_RELEASED` or
+     `AGENT_ANSWER_TOPIC_NOT_RELEASED`, outside the gates above (each needs a Strict owner yes);
+   - setting `dataUse` for any provider before the owner's account check and its note;
+   - creating the HMAC key (a separate Strict secret action);
+   - the `.env.local` model change (a Strict owner yes);
+   - a new topic source (it needs its own amendment);
+   - delegations (A1-D16);
+   - anything beyond the ADR-0121 ratification record's item 7 (no S3, no weakened approval, no new external target).
+9. **Data hygiene.** Revision 1 of the proposal quoted a real third party's name from the owner's calendar. It is
+   replaced by the placeholder "홍길동" in every document. The unpushed commit that held it was rewritten, and its
+   object was purged from the local repository (reflog expire and gc) on the owner's approval on 2026-10-23.
