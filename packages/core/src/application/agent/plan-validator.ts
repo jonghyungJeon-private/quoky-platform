@@ -6,6 +6,7 @@ import { nlReadNotRequest } from '../nl-routing/read-statement';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
 import { nlIsPastStatement } from '../nl-routing/statement-guard';
+import { aliasStarts, conjunctTokens } from './conjuncts';
 import { AGENT_READ_SOURCES } from './flow-policy';
 import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan-schema';
 
@@ -39,11 +40,13 @@ import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan
  *    values per reference and 10 per run (ADR-0121 D2, kept by the owner on 2026-10-21). The cap bounds per-item DETAIL
  *    reads only: a listing (a release's issue list, a Jira list) is one read and is not capped here.
  * 5. **Summaries**: a closed output schema over earlier read steps only, never over the brief (A1-E2 B2).
- * 6. **Connector calls** (D7; A1-E2 B4; the S2 P3 "same-source detail reads" note): the plan's static charge is at most
- *    10 connector calls. A read of an external source is 1 call, a reference step is ONE bulk detail request (1 call),
- *    the brief is its configured worst case (default 7: calendar 1, assigned work 2, mail 1 list + 3 metadata gets), and
- *    the local to-do, reminder and help reads are 0. Over it: `over-bound`. The executor's run budget still counts the
- *    real calls at run time (a read that needs more ends the run with a partial reply).
+ * 6. **Connector calls** (D7; A1-E2 B4; the S2 P3 "same-source detail reads" note; CA finding 3 of P3 part 1): the plan's
+ *    static charge is at most 10 connector calls, ONE unit being one connector query (a named port call). Each read is its
+ *    entry's worst case (`AGENT_READ_SOURCES[…].connectorQueries`: a listing 1, `jira.release` 8, `todo.list` 2, the
+ *    brief 4 or its configured worst case, reminders and help 0); a reference step is ONE bulk `items-by-key` query.
+ *    Over it: `over-bound`. The HTTP requests behind the queries (pages, per-item metadata, token refreshes) are not this
+ *    unit: the record (S2 P3 part 2 note) lists them, and choosing HTTP requests as the D7 unit is an open owner / CA
+ *    decision (most single reads exceed 10 requests at their worst).
  *
  * `NEEDS_CLARIFICATION` with every rule met is `clarify` (one numbered question), not a refusal.
  */
@@ -72,12 +75,11 @@ export const AGENT_SINGLE_STEP_ONLY: readonly NlWave1EntryId[] = ['help.topic'];
 /** ADR-0121 D7: at most this many connector (external) calls per run. */
 export const AGENT_RUN_MAX_CONNECTOR_CALLS = 10;
 /**
- * A1-E2 B4: the brief's worst case of connector calls with every section on (calendar 1, assigned work ≤ 2, mail 1 list +
- * ≤ 3 metadata gets; ratification answer 6). The runtime passes the configured worst case (`briefConnectorCalls`).
+ * A1-E2 B4: the brief's worst case of connector queries with every section on (calendar 1, assigned work 2, mail 1; the
+ * mail query's ≤ 3 metadata GETs are HTTP requests, not queries). A caller may pass the configured worst case
+ * (`briefConnectorCalls`); the shadow job charges this one (every section on).
  */
-export const AGENT_BRIEF_MAX_CONNECTOR_CALLS = 7;
-/** Sources read on the host (no connector call): the local stores and the fixed help. */
-const HOST_SOURCES: ReadonlySet<string> = new Set(['todo', 'reminder', 'help']);
+export const AGENT_BRIEF_MAX_CONNECTOR_CALLS = AGENT_READ_SOURCES['brief.today'].connectorQueries;
 
 export type AgentPlanRefusal =
   | 'not-dm'
@@ -127,8 +129,8 @@ export interface AgentPlanValidationContext {
   /** The turn is the owner's direct conversation. Absent or false: refused (fail closed). */
   readonly direct?: boolean;
   /**
-   * A1-E2 B4: the brief's configured worst case of connector calls (by the brief flags); absent:
-   * {@link AGENT_BRIEF_MAX_CONNECTOR_CALLS}.
+   * A1-E2 B4: the brief's configured worst case of connector queries (by the brief flags); absent:
+   * {@link AGENT_BRIEF_MAX_CONNECTOR_CALLS} (every section on).
    */
   readonly briefConnectorCalls?: number;
 }
@@ -158,10 +160,11 @@ export type ValidatedAgentPlan =
       /** The static connector-call charge (rule 6); the executor's run budget starts from it. */
       readonly connectorCalls: number;
       /**
-       * Owner decision (a): the planner marked that the owner asked for a relation between reads; kept only when the plan
-       * reads two or more different sources. The reply adds the fixed "not checked" note; no step depends on it.
+       * Owner decision (a), CA finding 5: the read step the owner related the other reads to (1-based); kept only when it
+       * names a read step and another read of a different source exists. The reply adds the fixed "not checked" note
+       * naming that step's source; no step depends on it.
        */
-      readonly related?: true;
+      readonly related?: number;
     }
   /**
    * Decision (h): the planner's plan is over a bound. Nothing runs; the reply asks whether to read `suggestion` instead (a
@@ -241,25 +244,33 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
   }
   const connectorCalls = agentPlanConnectorCharge(validated, ctx);
   if (connectorCalls > AGENT_RUN_MAX_CONNECTOR_CALLS) return refuse('over-bound');
-  const sources = new Set(validated.flatMap((step) => (step.kind === 'read' && isNlWave1EntryId(step.entry.id) ? [AGENT_READ_SOURCES[step.entry.id].source] : [])));
-  const related = plan.form === 'steps' && plan.related === true && sources.size >= 2;
+  const related = plan.form === 'steps' && plan.related !== undefined ? relatedStep(validated, plan.related) : undefined;
   return {
     ok: true,
-    plan: { kind: plan.ambiguity === 'NEEDS_CLARIFICATION' ? 'clarify' : 'run', steps: validated, connectorCalls, ...(related ? { related: true as const } : {}) },
+    plan: { kind: plan.ambiguity === 'NEEDS_CLARIFICATION' ? 'clarify' : 'run', steps: validated, connectorCalls, ...(related !== undefined ? { related } : {}) },
   };
 }
 
+/** The related step when it is a read and another read of a different source exists; else none (the flag is dropped). */
+function relatedStep(steps: readonly ValidatedAgentStep[], related: number): number | undefined {
+  const target = steps[related - 1];
+  if (target?.kind !== 'read' || !isNlWave1EntryId(target.entry.id)) return undefined;
+  const source = AGENT_READ_SOURCES[target.entry.id].source;
+  return steps.some((step) => step.kind === 'read' && isNlWave1EntryId(step.entry.id) && AGENT_READ_SOURCES[step.entry.id].source !== source) ? related : undefined;
+}
+
 /**
- * Rule 6 (D7; A1-E2 B4; the S2 P3 "same-source detail reads" note): the static connector-call charge of validated steps.
- * An external read is 1 call; a reference step is ONE bulk detail request (1 call, whatever its `take`); the brief is
- * its configured worst case; the to-do, reminder and help reads run on the host (0). Summaries call no connector. Pure.
+ * Rule 6 (D7; A1-E2 B4; the S2 P3 "same-source detail reads" note; CA finding 3): the static charge of validated steps in
+ * connector queries. Each read is its entry's worst case; a reference step is ONE bulk detail query (whatever its
+ * `take`); the brief is its configured worst case. Summaries call no connector. Pure.
  */
 export function agentPlanConnectorCharge(steps: readonly ValidatedAgentStep[], ctx: Pick<AgentPlanValidationContext, 'briefConnectorCalls'>): number {
   let calls = 0;
   for (const step of steps) {
     if (step.kind !== 'read' || !isNlWave1EntryId(step.entry.id)) continue;
-    if (step.entry.id === 'brief.today') calls += ctx.briefConnectorCalls ?? AGENT_BRIEF_MAX_CONNECTOR_CALLS;
-    else if (!HOST_SOURCES.has(AGENT_READ_SOURCES[step.entry.id].source)) calls += 1;
+    if (step.ref !== undefined) calls += 1;
+    else if (step.entry.id === 'brief.today') calls += ctx.briefConnectorCalls ?? AGENT_BRIEF_MAX_CONNECTOR_CALLS;
+    else calls += AGENT_READ_SOURCES[step.entry.id].connectorQueries;
   }
   return calls;
 }
@@ -511,32 +522,15 @@ function clauseGrounded(entry: NlCatalogEntry, args: NlArgs, ctx: AgentPlanValid
   });
 }
 
-/**
- * Whether a normalized word names the alias. A Korean alias may be followed by anything (a particle: `깃허브에서`); an
- * English (ASCII) alias must end at a word boundary, with only a plural or possessive allowed (`PRs`, `PR's`), so that
- * `project` never reads as the GitHub alias `pr` (Codex P3).
- */
-function aliasStarts(word: string, name: string): boolean {
-  if (!word.startsWith(name)) return false;
-  if (!/^[a-z0-9]+$/u.test(name)) return true;
-  return /^(?:s|['\u2019]s)?(?![a-z0-9])/u.test(word.slice(name.length));
-}
-
 /** The conjuncts of the owner's prose that name `entry` by one of its aliases or source names (normalized). */
 function entryClauses(groundingText: string, entry: NlCatalogEntry): string[] {
-  const tokens = groundingText.split(/\s+/u).filter((token) => token.length > 0);
   const names = [...entry.aliases, ...(entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0 && !name.includes(' '));
-  const conjuncts: string[][] = [[]];
-  for (const token of tokens) {
-    const word = normalizeForMatch(token);
-    if (word === 'and' || word === '그리고') {
-      conjuncts.push([]);
-      continue;
-    }
-    (conjuncts[conjuncts.length - 1] as string[]).push(word);
-    if (/[,،]$/u.test(word) || /(?:랑|하고)$/u.test(word)) conjuncts.push([]);
+  const conjuncts = new Map<number, string[]>();
+  for (const token of conjunctTokens(groundingText)) {
+    if (token.boundary) continue;
+    conjuncts.set(token.conjunct, [...(conjuncts.get(token.conjunct) ?? []), token.word]);
   }
-  return conjuncts.filter((words) => words.some((word) => names.some((name) => aliasStarts(word, name)))).map((words) => words.join(' '));
+  return [...conjuncts.values()].filter((words) => words.some((word) => names.some((name) => aliasStarts(word, name)))).map((words) => words.join(' '));
 }
 
 /** A reference field that would carry a date or time (dates come only from the planner's symbolic time, D2). */
@@ -706,18 +700,7 @@ function periodExpressions(tokens: readonly string[], entries: readonly NlCatalo
   });
   // Conjuncts (Codex P2): "and", "그리고" and a comma or a glued "-랑" / "-하고" end one; an English period word binds to the
   // next source noun inside its own conjunct ("Friday calendar and today mail"), else to the preceding source.
-  const conjunct: number[] = [];
-  let current = 0;
-  for (const token of tokens) {
-    const word = normalizeForMatch(token);
-    if (word === 'and' || word === '그리고') {
-      conjunct.push(-1);
-      current += 1;
-      continue;
-    }
-    conjunct.push(current);
-    if (/[,،]$/u.test(word) || /(?:랑|하고)$/u.test(word)) current += 1;
-  }
+  const conjunct = conjunctTokens(tokens.join(' ')).map((token) => token.conjunct);
   const out: PeriodExpression[] = [];
   let index = 0;
   while (index < tokens.length) {

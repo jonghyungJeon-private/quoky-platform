@@ -17,21 +17,33 @@ import { normalizeForMatch } from '../nl-routing/selection-input';
  *   DM-only rule). Stage S2 P1 performs no read, so nothing is labelled at run time yet.
  */
 
-/** The READ entries an agent plan may name, each with its source and the id field a projector may extract from it. */
-export const AGENT_READ_SOURCES: Readonly<Record<NlWave1EntryId, { readonly source: string; readonly origin: string; readonly refField?: string }>> = Object.freeze({
-  'jira.issues': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys' },
-  'jira.release': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys' },
-  'github.items': { source: 'github', origin: 'github:configured-host', refField: 'itemIds' },
-  'slack.search': { source: 'slack', origin: 'slack:configured-workspace', refField: 'messageIds' },
-  'confluence.search': { source: 'confluence', origin: 'confluence:configured-site', refField: 'pageIds' },
-  'calendar.events': { source: 'calendar', origin: 'calendar:owner', refField: 'eventIds' },
-  'mail.list': { source: 'mail', origin: 'mail:owner', refField: 'messageIds' },
-  'drive.files': { source: 'drive', origin: 'drive:owner', refField: 'fileIds' },
-  // Local stores and fixed answers: no projected id field (a reference to or from them is refused).
-  'todo.list': { source: 'todo', origin: 'host' },
-  'reminder.list': { source: 'reminder', origin: 'host' },
-  'brief.today': { source: 'brief', origin: 'host' },
-  'help.topic': { source: 'help', origin: 'host' },
+/**
+ * The READ entries an agent plan may name, each with its source, the id field a projector may extract from it, and its
+ * worst-case number of connector queries (named port calls) for one selection through its handler (`connectorQueries`;
+ * S2 P3 part 2, CA finding 3; the HTTP requests behind each query are recorded in the S2 P3 part 2 note of DECISIONS.md):
+ * - Jira, GitHub, Slack, Confluence, calendar, mail and Drive listings: one query each (`personal-work`, `search`,
+ *   `listEvents`, mail `search`, Drive `recentFiles` / `searchByName`);
+ * - `jira.release`: up to 8 (`containers` twice, `releases` for up to 5 candidate projects, then a project's `releases`
+ *   or `release-items`; `jira-release-lookup.ts`, `DISAMBIGUATE_MAX`);
+ * - `todo.list`: 2 — the open list also reads the Jira and GitHub work surface (`work-surface-query.ts`);
+ * - `brief.today`: 4 with every section on (calendar 1, Jira 2, mail 1; the brief flags can only lower it);
+ * - reminders and help: 0 (host only).
+ */
+export const AGENT_READ_SOURCES: Readonly<Record<NlWave1EntryId, { readonly source: string; readonly origin: string; readonly refField?: string; readonly connectorQueries: number }>> = Object.freeze({
+  'jira.issues': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys', connectorQueries: 1 },
+  'jira.release': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys', connectorQueries: 8 },
+  'github.items': { source: 'github', origin: 'github:configured-host', refField: 'itemIds', connectorQueries: 1 },
+  'slack.search': { source: 'slack', origin: 'slack:configured-workspace', refField: 'messageIds', connectorQueries: 1 },
+  'confluence.search': { source: 'confluence', origin: 'confluence:configured-site', refField: 'pageIds', connectorQueries: 1 },
+  'calendar.events': { source: 'calendar', origin: 'calendar:owner', refField: 'eventIds', connectorQueries: 1 },
+  'mail.list': { source: 'mail', origin: 'mail:owner', refField: 'messageIds', connectorQueries: 1 },
+  'drive.files': { source: 'drive', origin: 'drive:owner', refField: 'fileIds', connectorQueries: 1 },
+  // Local stores and fixed answers: no projected id field (a reference to or from them is refused). The to-do list still
+  // reads the Jira and GitHub work surface.
+  'todo.list': { source: 'todo', origin: 'host', connectorQueries: 2 },
+  'reminder.list': { source: 'reminder', origin: 'host', connectorQueries: 0 },
+  'brief.today': { source: 'brief', origin: 'host', connectorQueries: 4 },
+  'help.topic': { source: 'help', origin: 'host', connectorQueries: 0 },
 });
 
 /** The label of what a READ entry returns (ADR-0121 D4; ADR-0110 D4, ADR-0118 D7/D8, ADR-0100). */

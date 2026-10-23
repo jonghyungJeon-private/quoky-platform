@@ -22,6 +22,8 @@
  *   quoted request on any read step) are validator rules (`veto-*` refusals), so the eval and the runtime share them.
  * - Q10 compares an ORDERED step sequence: the same plan with its reads in another order is a miss (`step-kind` /
  *   `entry`). Stricter than a graph-isomorphism match, it never hides an error.
+ * - owner decision (a), CA finding 5 (S2 P3 part 2): a gold may name `related` (the step the owner relates the other
+ *   reads to); an exact plan needs the same validated `related` (absent on both, or the same step);
  * - ADR-0121 A1-E1 / A1-E4 (decision (e), stage S2 P3): Core's deterministic help split runs before planning, exactly as
  *   at run time (`splitHelpClause`): the planner sees only the rest of the owner's words, and a case whose gold names a
  *   help section (`help`, a `NL_HELP_TOPICS` topic) is exact only when the split gives that topic AND the rest plan is
@@ -126,6 +128,8 @@ export type AgentPlanGoldStep =
 export interface AgentPlanGoldPlan {
   readonly steps: readonly AgentPlanGoldStep[];
   readonly ambiguity: 'CLEAR';
+  /** Owner decision (a), CA finding 5: the step the owner relates the other reads to (scored with the steps). */
+  readonly related?: number;
 }
 
 export interface AgentPlanCase {
@@ -296,7 +300,7 @@ export function validatedGraph(steps: readonly ValidatedAgentStep[]): StepGraph 
 }
 
 /** The closed kind of the first difference between two graphs (`undefined` when they are the same graph). */
-export type GraphDiff = 'step-count' | 'step-kind' | 'entry' | 'args' | 'ref' | 'summary' | 'help';
+export type GraphDiff = 'step-count' | 'step-kind' | 'entry' | 'args' | 'ref' | 'summary' | 'help' | 'related';
 
 export function graphDiff(got: StepGraph, want: StepGraph): { kind: GraphDiff; step?: number } | undefined {
   if (got.length !== want.length) return { kind: 'step-count' };
@@ -443,6 +447,8 @@ function scoreRestPlan(golden: AgentPlanEvalCase, raw: string, fixture: AgentPla
   }
   if (golden.gold === 'none' || isAgentPlanAskExpect(golden.gold)) return { outcome: 'wrong', gotEntries };
   const diff = graphDiff(validatedGraph(validation.plan.steps), goldGraph(golden.gold));
+  // CA finding 5: the related step is scored too (a missing, extra or other step is a miss).
+  if (diff === undefined && validation.plan.related !== golden.gold.related) return { outcome: 'miss', gotEntries, diff: 'related' };
   if (diff === undefined) return { outcome: 'exact', gotEntries };
   return { outcome: 'miss', gotEntries, diff: diff.kind, ...(diff.step !== undefined ? { diffStep: diff.step } : {}) };
 }
@@ -515,6 +521,7 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
       }
       const diff = graphDiff(validatedGraph(validation.plan.steps), goldGraph(golden.expect));
       if (diff !== undefined) problems.push(`${at}: the gold is not canonical (${diff.kind}${diff.step !== undefined ? ` at step ${diff.step}` : ''})`);
+      else if (validation.plan.related !== golden.expect.related) problems.push(`${at}: the gold related step is not canonical`);
       continue;
     }
     if (golden.help !== undefined) problems.push(`${at}: only a positive names a help section`);

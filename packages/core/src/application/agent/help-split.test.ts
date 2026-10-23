@@ -1,9 +1,10 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES } from '../nl-routing/action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from '../nl-routing/catalog';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
+import { conjunctTokens } from './conjuncts';
 import { splitHelpClause } from './help-split';
 
 // ADR-0121 A1-E1 (decision (e); S2 P3): the deterministic help split before planning, with the closed help vocabulary
@@ -19,23 +20,40 @@ function split(text: string, offered: readonly NlCatalogEntry[] = OFFERED, attac
   return splitHelpClause(prepared, offered);
 }
 
-describe('splitHelpClause (A1-E1)', () => {
+describe('splitHelpClause (A1-E1; S2 P3 part 2: owner Q2 and CA findings 1-2)', () => {
   it.each([
     ['도움말이랑 지라 이슈 같이 보여줘', 'all', '지라 이슈 같이 보여줘'],
-    ['show the help page and my github PRs', 'all', 'my github PRs'],
-    ['지라 이슈 보여주고 그리고 도움말도', 'all', '지라 이슈 보여주고'],
-    ['show my jira issues and the help page and my unread mail', 'all', 'show my jira issues and my unread mail'],
+    // Owner Q2: the Korean verb connective -고 ends a clause (ap-n121 → ap-p180).
+    ['사용법 알려주고 안 읽은 메일도 보여줘', 'all', '안 읽은 메일도 보여줘'],
+    ['사용법 알려주고 내 지라 이슈도 보여줘', 'all', '내 지라 이슈도 보여줘'],
+    ['도움말 좀, 지라 이슈 보여줘', 'all', '지라 이슈 보여줘'],
+    ['help and my github PRs', 'all', 'my github PRs'],
+    ['show my jira issues and help', 'all', 'show my jira issues'],
     ['사용법, 그리고 안 읽은 메일', 'all', '안 읽은 메일'],
   ])('%s → help %s + rest', (text, topic, rest) => {
     expect(split(text)).toEqual({ topic, rest });
   });
 
-  it('the frozen ADR-0104 help grammar names the topic of a how-to clause', () => {
+  it('CA finding 2: a last-position help clause leaves the shared predicate with the rest and trims the dangling particle', () => {
+    expect(split('지라 이슈랑 도움말 보여줘')).toEqual({ topic: 'all', rest: '지라 이슈 보여줘' });
+    expect(split('안 읽은 메일이랑 사용법 알려줘')).toEqual({ topic: 'all', rest: '안 읽은 메일 알려줘' });
+    expect(split('지라 이슈하고 도움말')).toEqual({ topic: 'all', rest: '지라 이슈' });
+  });
+
+  it('the frozen ADR-0104 help grammar names the topic of a how-to clause with a command action or a guide noun', () => {
     expect(split('알림 어떻게 지워? 그리고 지라 이슈 보여줘')).toEqual({ topic: 'reminder', rest: '지라 이슈 보여줘' });
+    expect(split('할 일 추가하는 법 알려주고 메일 보여줘')).toBeUndefined();
   });
 
   it.each([
-    ['사용법 알려주고 안 읽은 메일도 보여줘', 'a boundary outside the P1 set (the verb connective; ap-n121 residual)'],
+    // CA probes (finding 1): a help word inside a content clause is never help.
+    ['결제 기능 관련해서, 지라랑 슬랙 찾아줘', 'the alias is not the head word'],
+    ['기능 개선 요청이랑 버그 이슈 지라에서 보여줘', 'content words beside the alias'],
+    ['안 쓰는 기능 정리한 거랑 메일 보여줘', 'the alias is not the head word'],
+    ['일정 어떻게 돼, 그리고 메일 보여줘', 'the grammar form without a command action or guide noun (a status question)'],
+    ['기능개선이랑 메일 보여줘', 'an alias glued to a noun is no alias with a particle'],
+    ['show the help page and my github PRs', 'an English head word that is not the alias (ap-n120 residual)'],
+    ['Quoky야, 할 일 어떻게 취소해?', 'one help question as a whole, after an address'],
     ['도움말 보여줘', 'one conjunct: today\'s one-step help'],
     ['지라 이슈랑 슬랙 장애 얘기', 'no help clause'],
     ['슬랙 기능이랑 메일 보여줘', 'the help-alias clause also names a source (fail closed)'],
@@ -51,14 +69,27 @@ describe('splitHelpClause (A1-E1)', () => {
     expect(split('도움말이랑 지라 이슈 같이 보여줘', OFFERED.filter((entry) => entry.id !== 'help.topic'))).toBeUndefined();
   });
 
-  it('A1-E5: no case of the one-step corpora splits (messages without a help clause plan byte-identically)', () => {
-    for (const file of ['nl-intent.v1.json', 'nl-action.v1.json']) {
-      const corpus = JSON.parse(readFileSync(new URL(`../golden/${file}`, import.meta.url), 'utf8')) as { cases: Array<{ id: string; text: string }> };
-      const splits = corpus.cases.filter((c) => {
+  it('A1-E5 / owner Q2 measurement: no false split in any golden corpus (3374 texts); only the two intended plan cases split', () => {
+    const dir = new URL('../golden/', import.meta.url);
+    const splits: string[] = [];
+    let texts = 0;
+    for (const file of readdirSync(dir).filter((name) => name.endsWith('.json'))) {
+      const corpus = JSON.parse(readFileSync(new URL(file, dir), 'utf8')) as { cases?: Array<{ id?: string; text?: unknown }> };
+      for (const c of Array.isArray(corpus.cases) ? corpus.cases : []) {
+        if (typeof c.text !== 'string') continue;
+        texts += 1;
         const prepared = prepareSelectionInput(c.text);
-        return !('skip' in prepared) && splitHelpClause(prepared, OFFERED) !== undefined;
-      });
-      expect(splits.map((c) => c.id), file).toEqual([]);
+        if (!('skip' in prepared) && splitHelpClause(prepared, OFFERED) !== undefined) splits.push(`${file}:${c.id}`);
+      }
     }
+    expect(texts).toBeGreaterThanOrEqual(3374);
+    expect(splits).toEqual(['agent-plan.v1.json:ap-p175', 'agent-plan.v1.json:ap-p180']);
+  });
+
+  it('the -고 boundary is the help split\'s only: the validator\'s conjuncts keep the P1 set', () => {
+    expect(conjunctTokens('사용법 알려주고 메일 보여줘').map((token) => token.conjunct)).toEqual([0, 0, 0, 0]);
+    expect(conjunctTokens('사용법 알려주고 메일 보여줘', { verbConnective: true }).map((token) => token.conjunct)).toEqual([0, 0, 1, 1]);
+    // The -하고 particle stays a P1 boundary in both.
+    expect(conjunctTokens('지라하고 메일').map((token) => token.conjunct)).toEqual([0, 1]);
   });
 });

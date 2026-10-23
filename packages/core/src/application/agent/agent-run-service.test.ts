@@ -133,7 +133,7 @@ describe('AgentRunService — shadow', () => {
     expect(h.calls[0]?.prompt).toContain('You are the request planner of Quoky');
     expect(h.calls[0]?.signal).toBeDefined();
     expect(shadowLines(h)).toEqual([
-      expect.objectContaining({ outcome: 'planned', mode: 'shadow', promptVersion: 'agent-plan.v6', steps: 2, form: 'steps', entries: 'calendar.events,jira.issues', argKinds: 'range;none', validator: 'ok' }),
+      expect.objectContaining({ outcome: 'planned', mode: 'shadow', promptVersion: 'agent-plan.v7', steps: 2, form: 'steps', entries: 'calendar.events,jira.issues', argKinds: 'range;none', validator: 'ok' }),
     ]);
     // A multi-step plan has no one-step agreement.
     expect(shadowLines(h)[0]).not.toHaveProperty('agree');
@@ -411,16 +411,16 @@ describe('AgentRunService — shadow, S2 P3 (A1 decision (e), owner decisions (a
     await h.service.runShadow(turn(h, { text: '오늘 브리핑이랑 슬랙 장애 얘기도 같이 보여줘' }), async () => CHAT);
     await h.service.runShadow(turn(h, { text: '오늘 브리핑하고 내 지라 이슈 같이 정리해줘' }), async () => CHAT);
     expect(shadowLines(h)).toEqual([
-      expect.objectContaining({ outcome: 'planned', split: 'brief', entries: 'brief.today,slack.search', connectorCalls: 8 }),
+      expect.objectContaining({ outcome: 'planned', split: 'brief', entries: 'brief.today,slack.search', connectorCalls: 5 }),
       expect.objectContaining({ outcome: 'refused', split: 'none', validator: 'summary-covers-brief', failedStep: 3 }),
     ]);
   });
 
   it('owner decision (a): a related plan logs related=true and keeps its steps', async () => {
-    const related = JSON.stringify({ steps: [{ entryId: 'calendar.events', args: { range: 'this-week', timedOnly: true } }, { summarize: [1], schema: 'meeting-digest.v1' }, { entryId: 'jira.issues', args: {} }], ambiguity: 'CLEAR', related: true });
+    const related = JSON.stringify({ steps: [{ entryId: 'calendar.events', args: { range: 'this-week', timedOnly: true } }, { summarize: [1], schema: 'meeting-digest.v1' }, { entryId: 'jira.issues', args: {} }], ambiguity: 'CLEAR', related: 1 });
     const h = harness({ script: [related] });
     await h.service.runShadow(turn(h, { text: '이번 주 회의 정리하고 관련 jira 이슈도 같이' }), async () => CHAT);
-    expect(shadowLines(h)).toEqual([expect.objectContaining({ outcome: 'planned', related: true, entries: 'calendar.events,summarize:meeting-digest.v1,jira.issues', split: 'none' })]);
+    expect(shadowLines(h)).toEqual([expect.objectContaining({ outcome: 'planned', related: 1, entries: 'calendar.events,summarize:meeting-digest.v1,jira.issues', split: 'none' })]);
   });
 
   it('decision (f): an a6-in-plan refusal logs the closed action kind and whether a read remainder validates', async () => {

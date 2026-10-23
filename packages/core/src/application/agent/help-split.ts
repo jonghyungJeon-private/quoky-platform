@@ -1,6 +1,7 @@
-import { detectHelpIntent } from '../help-intent/help-intent';
+import { detectHelpIntent, isHelpActionToken, isHelpGuideCloser, isHelpGuideToken, isHelpTopicParticle } from '../help-intent/help-intent';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { normalizeForMatch } from '../nl-routing/selection-input';
+import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
 
 /**
  * ADR-0121 A1-E1 (decision (e), amends S2 Q6): the deterministic help split. In the owner DM where the agent runs, after
@@ -11,23 +12,31 @@ import { normalizeForMatch } from '../nl-routing/selection-input';
  *
  * Structural only, with the existing closed vocabulary and no phrase added (ADR-0120 D10 grammar freeze; the owner's
  * no-hardcoding rule):
- * - **conjuncts** at the boundaries the P1 validator already uses: the words "and" / "그리고", a token ending in a comma,
- *   and a token with a glued "-랑" / "-하고";
- * - a conjunct is the **help clause** when the frozen ADR-0104 help grammar matches it as a whole (`detectHelpIntent`:
- *   "알림 어떻게 지워?", "도움말 할 일"), or when one of its words starts with a `help.topic` alias (도움말, 사용법, help, 기능)
- *   and none of its words names another offered entry (an alias or source name): a clause that also names a source is
- *   not split (fail closed: the whole message is planned as before);
- * - exactly one help clause and at least one other conjunct, or no split;
+ * - **conjuncts** (`conjuncts.ts`): the P1 boundaries plus the Korean verb connective "-고" (owner decision Q2,
+ *   2026-10-23: "사용법 알려주고 내 지라 이슈도 보여줘");
+ * - **the help clause** (CA review of P3 part 1, finding 1): either
+ *   - the alias form: the clause's HEAD word is a `help.topic` alias, alone or with one of the help grammar's own topic
+ *     particles ("도움말이랑", "사용법", "help"), and every other word is a function word of that grammar (a guide closer:
+ *     "좀", "알려줘") or the clause's predicate (the word that ends it with the verb connective, or the last word of the
+ *     message, which is the predicate the clauses share); or
+ *   - the grammar form: the frozen ADR-0104 help grammar matches the clause as a whole (`detectHelpIntent`) AND the
+ *     clause holds a guide noun ("추가하는 법", "사용법") or a Quoky command action ("지워", "설정"), so a status question
+ *     in how-to form ("일정 어떻게 돼") is never help;
+ *   and, for the alias form, no word of the clause names another offered entry (fail closed);
+ * - exactly one help clause and at least one other conjunct, and the message is not one help question as a whole (the
+ *   grammar matching the whole message, an address included: "Quoky야, 할 일 어떻게 취소해?"), or no split;
  * - the topic is the grammar's one `NL_HELP_TOPICS` topic when it names exactly one, else `all`;
- * - the rest is the message without the help clause and the boundary word that joined it.
+ * - **the rest** is the message without the help clause and the boundary word that joined it; when the help clause is
+ *   the last one, its shared predicate stays with the rest ("지라 이슈랑 도움말 보여줘" → "지라 이슈 보여줘") and the
+ *   dangling "-랑" / "-이랑" / "-하고" / comma of the new last word is trimmed (CA finding 2).
  *
  * Only plain owner text is split: a message whose prepared text holds a placeholder (quoted, fenced or attached
  * material) is never split, so the rest is always the owner's own words. Outside the agent path (agent `off`, a channel)
  * nothing calls it. Pure.
  *
- * Residuals (A1 RA-8, measured in shadow by A1-E5): a conjunct boundary the P1 set does not know (the verb connective
- * "-고" of "사용법 알려주고 …") keeps the message whole (no split, the planner refuses as before); a help alias used as an
- * ordinary word in a clause naming no source ("새 기능 나온 거 찾아주고" with a comma or "and") is split as help.
+ * Residuals (A1 RA-8, measured in shadow by A1-E5): an English help request whose head word is not the alias ("show the
+ * help page and my github PRs") is not split (the planner refuses as before); a last-position help clause's final word is
+ * taken as the shared predicate whatever it is ("메일이랑 도움말 페이지" keeps "페이지" with the rest).
  */
 
 export interface AgentHelpSplit {
@@ -48,35 +57,20 @@ function namesOf(entry: NlCatalogEntry): string[] {
   return [...entry.aliases, ...(entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0 && !name.includes(' '));
 }
 
-/** A Korean alias may take a glued particle (`도움말이랑`); an English one must end at a word boundary (plural allowed). */
-function startsWithName(word: string, name: string): boolean {
-  if (!word.startsWith(name)) return false;
-  if (!/^[a-z0-9]+$/u.test(name)) return true;
-  return /^(?:s|['’]s)?(?![a-z0-9])/u.test(word.slice(name.length));
+/** The word without a trailing comma. */
+const bare = (word: string): string => word.replace(/[,،]$/u, '');
+
+/** The head word is a help alias, alone or with one of the help grammar's topic particles (an English alias: alone). */
+function isAliasHead(word: string, helpNames: readonly string[]): boolean {
+  const head = bare(word);
+  return helpNames.some((name) => (/^[a-z0-9]+$/u.test(name) ? head === name : head.startsWith(name) && isHelpTopicParticle(head.slice(name.length))));
 }
 
-interface Token {
-  readonly text: string;
-  readonly word: string;
-  /** "and" / "그리고": a boundary word, in no conjunct. */
-  readonly boundary: boolean;
+interface Clause {
   readonly conjunct: number;
-}
-
-function tokensOf(text: string): Token[] {
-  const out: Token[] = [];
-  let conjunct = 0;
-  for (const raw of text.split(/\s+/u).filter((token) => token.length > 0)) {
-    const word = normalizeForMatch(raw);
-    if (word === 'and' || word === '그리고') {
-      out.push({ text: raw, word, boundary: true, conjunct: -1 });
-      conjunct += 1;
-      continue;
-    }
-    out.push({ text: raw, word, boundary: false, conjunct });
-    if (/[,،]$/u.test(raw) || /(?:랑|하고)$/u.test(word)) conjunct += 1;
-  }
-  return out;
+  readonly topic: string;
+  /** The index (into the tokens) of a shared predicate that stays with the rest. */
+  readonly sharedPredicate?: number;
 }
 
 /**
@@ -88,25 +82,28 @@ export function splitHelpClause(prepared: { readonly text: string; readonly grou
   if (prepared.text.replace(/\s+/gu, ' ').trim() !== prepared.groundingText) return undefined;
   const help = offered.find((entry) => entry.id === 'help.topic');
   if (help === undefined) return undefined;
+  // A message the help grammar matches as a whole is one help question (today's one-step help), never a split: an
+  // address before it ("Quoky야, 할 일 어떻게 취소해?") is not a second request.
+  if (detectHelpIntent(prepared.groundingText) !== null) return undefined;
   const helpNames = namesOf(help);
   const otherNames = offered.filter((entry) => entry.id !== 'help.topic').flatMap(namesOf);
-  const tokens = tokensOf(prepared.groundingText);
+  const tokens = conjunctTokens(prepared.groundingText, { verbConnective: true });
   const conjuncts = [...new Set(tokens.filter((token) => !token.boundary).map((token) => token.conjunct))];
   if (conjuncts.length < 2) return undefined;
+  const lastConjunct = conjuncts[conjuncts.length - 1];
   const topics = helpTopicsOf(help);
-  const clauses: Array<{ readonly conjunct: number; readonly topic: string }> = [];
+  const clauses: Clause[] = [];
   for (const conjunct of conjuncts) {
-    const words = tokens.filter((token) => token.conjunct === conjunct);
-    const text = words.map((token) => token.text).join(' ').replace(/(?:,|،)$/u, '');
-    const grammar = detectHelpIntent(text);
-    const named = words.some((token) => helpNames.some((name) => startsWithName(token.word, name)));
-    const otherSource = words.some((token) => otherNames.some((name) => startsWithName(token.word, name)));
-    if (grammar === null && !(named && !otherSource)) continue;
-    const grammarTopics = (grammar?.topicIds ?? []).filter((topic) => topics.includes(topic));
-    clauses.push({ conjunct, topic: grammarTopics.length === 1 ? (grammarTopics[0] as string) : 'all' });
+    const indexes = tokens.flatMap((token, index) => (token.conjunct === conjunct ? [index] : []));
+    const words = indexes.map((index) => tokens[index] as ConjunctToken);
+    // The alias form fails closed on a clause that also names another entry; the grammar form names its own topic, which
+    // is often a read entry's noun ("알림 어떻게 지워?"), so it is judged by the grammar alone.
+    const namesOther = words.some((token) => otherNames.some((name) => aliasStarts(bare(token.word), name)));
+    const clause = (namesOther ? undefined : aliasClause(words, indexes, conjunct === lastConjunct, helpNames)) ?? grammarClause(words, topics);
+    if (clause !== undefined) clauses.push({ conjunct, ...clause });
   }
   if (clauses.length !== 1) return undefined;
-  const clause = clauses[0] as (typeof clauses)[number];
+  const clause = clauses[0] as Clause;
   const first = tokens.findIndex((token) => token.conjunct === clause.conjunct);
   let last = first;
   while (last + 1 < tokens.length && tokens[last + 1]?.conjunct === clause.conjunct) last += 1;
@@ -115,7 +112,40 @@ export function splitHelpClause(prepared: { readonly text: string; readonly grou
   let to = last;
   if (tokens[first - 1]?.boundary === true) from -= 1;
   else if (tokens[last + 1]?.boundary === true) to += 1;
-  const kept = tokens.filter((_token, index) => index < from || index > to);
-  if (!kept.some((token) => !token.boundary)) return undefined;
-  return { topic: topics.includes(clause.topic) ? clause.topic : 'all', rest: kept.map((token) => token.text).join(' ') };
+  const kept = tokens.flatMap((token, index) => (index < from || index > to ? [token.text] : []));
+  if (kept.length === 0 || tokens.every((token, index) => (index >= from && index <= to) || token.boundary)) return undefined;
+  if (clause.conjunct === lastConjunct) {
+    // CA finding 2: after a last-position help clause the new last word drops its dangling conjunction, and the clause's
+    // shared predicate goes back to the rest ("지라 이슈랑 도움말 보여줘" → "지라 이슈 보여줘").
+    kept[kept.length - 1] = (kept[kept.length - 1] as string).replace(/(?:이랑|랑|하고|[,،])$/u, '');
+    if (clause.sharedPredicate !== undefined) kept.push((tokens[clause.sharedPredicate] as ConjunctToken).text);
+  }
+  const rest = kept.filter((word) => word.length > 0).join(' ');
+  if (rest.length === 0) return undefined;
+  return { topic: topics.includes(clause.topic) ? clause.topic : 'all', rest };
+}
+
+/**
+ * The alias form: the head word is a help alias (with a topic particle), every other word a guide closer of the help
+ * grammar or the clause's predicate (its connective word, or the message's last word, then shared with the rest).
+ */
+function aliasClause(words: readonly ConjunctToken[], indexes: readonly number[], lastClause: boolean, helpNames: readonly string[]): Omit<Clause, 'conjunct'> | undefined {
+  const [head, ...others] = words;
+  if (head === undefined || !isAliasHead(head.word, helpNames)) return undefined;
+  const final = others[others.length - 1];
+  const finalIsPredicate = final !== undefined && (final.ends === 'connective' || (lastClause && final.ends === undefined));
+  const middle = finalIsPredicate ? others.slice(0, -1) : others;
+  if (!middle.every((token) => isHelpGuideCloser(bare(token.word)))) return undefined;
+  const shared = finalIsPredicate && final.ends !== 'connective' ? indexes[indexes.length - 1] : undefined;
+  return { topic: 'all', ...(shared !== undefined ? { sharedPredicate: shared } : {}) };
+}
+
+/** The grammar form: the frozen help grammar matches the clause, with a guide noun or a Quoky command action in it. */
+function grammarClause(words: readonly ConjunctToken[], topics: readonly string[]): Omit<Clause, 'conjunct'> | undefined {
+  const text = words.map((token) => token.text).join(' ').replace(/[,،]$/u, '');
+  const grammar = detectHelpIntent(text);
+  if (grammar === null) return undefined;
+  if (!words.some((token) => isHelpGuideToken(bare(token.word)) || isHelpActionToken(bare(token.word)))) return undefined;
+  const named = grammar.topicIds.filter((topic) => topics.includes(topic));
+  return { topic: named.length === 1 ? (named[0] as string) : 'all' };
 }

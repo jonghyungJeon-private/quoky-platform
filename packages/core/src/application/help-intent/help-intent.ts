@@ -80,7 +80,8 @@ const TRAILING_PUNCTUATION = /[\s?？!！.。~…]+$/u;
 const ADDRESS_PREFIX =
   /^(?:(?:quoky|퀴키|쿼키)(?:야|아)?[,，]?\s+)?(?:(?:여기서|여기선|여기에서|(?:quoky|퀴키|쿼키)(?:에서|로|는|에선))\s+)?/u;
 /** A Korean particle, optionally after the noun 기능, following a topic keyword ("알림 기능은", "할 일을"). */
-const TOPIC_SUFFIX = String.raw`(?:\s?기능)?(?:은|는|을|를|이|가|도|의|에서|에|이랑|랑|하고)?`;
+const TOPIC_PARTICLES = '은|는|을|를|이|가|도|의|에서|에|이랑|랑|하고';
+const TOPIC_SUFFIX = String.raw`(?:\s?기능)?(?:${TOPIC_PARTICLES})?`;
 /** A leading "도움말 <topic>" / "사용법: <topic>" / "help <topic>". */
 const HELP_PREFIX = /^(?:도움말|사용법|help|\/help)\s*[:：]?\s+/u;
 
@@ -317,4 +318,29 @@ export function composeHelpIntentReply(language: HelpIntentLanguage, lines: read
     ].join('\n');
   }
   return ['Quoky에서는 이렇게 하면 돼요.', ...lines, '전체 안내는 "도움말"이라고 보내 주세요.'].join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The grammar's own closed token classes, read-only (ADR-0121 A1-E1, stage S2 P3): the agent's help split uses them to
+// tell a help clause from a clause that merely contains a help word. Exporting them changes no match of this grammar.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** A polite closer after a guide noun ("좀", "알려줘", "뭐야", "있어?"). */
+export function isHelpGuideCloser(token: string): boolean {
+  return GUIDE_CLOSER.test(normalize(token).replace(TRAILING_PUNCTUATION, ''));
+}
+
+/** A guide noun, optionally after a command action ("추가하는 법", "사용법", "도움말", "명령어", "안내"). */
+export function isHelpGuideToken(token: string): boolean {
+  return GUIDE_TOKEN.test(normalize(token).replace(TRAILING_PUNCTUATION, ''));
+}
+
+/** A Quoky command action token ("추가하는", "설정", "지워"); never a plain do / become verb ("해", "돼"). */
+export function isHelpActionToken(token: string): boolean {
+  return ACTION_TOKEN.test(normalize(token).replace(TRAILING_PUNCTUATION, ''));
+}
+
+/** Whether `rest` is empty or one of the grammar's topic particles ("이랑", "도", "은" …). */
+export function isHelpTopicParticle(rest: string): boolean {
+  return new RegExp(`^(?:${TOPIC_PARTICLES})?$`, 'u').test(rest);
 }

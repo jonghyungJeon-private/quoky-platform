@@ -24,7 +24,7 @@ const read = (entryId: string, args: Record<string, string | number | boolean> =
   ...(ref !== undefined ? { ref } : {}),
 });
 const summary = (from: number[], schema = 'digest.v1'): AgentPlanStep => ({ kind: 'summarize', from, schema });
-const plan = (steps: AgentPlanStep[], related = false): AgentPlan => ({ kind: 'steps', form: 'steps', steps, ambiguity: 'CLEAR', alternatives: [], ...(related ? { related: true as const } : {}) });
+const plan = (steps: AgentPlanStep[], related?: number): AgentPlan => ({ kind: 'steps', form: 'steps', steps, ambiguity: 'CLEAR', alternatives: [], ...(related !== undefined ? { related } : {}) });
 
 function runPlan(value: AgentPlan, text: string): AgentStepsPlan {
   const result = validateAgentPlan(value, ctx(text));
@@ -33,10 +33,16 @@ function runPlan(value: AgentPlan, text: string): AgentStepsPlan {
 }
 
 describe('the detail cap note (owner decision (c), A1 answer 8)', () => {
-  it('says "N개 중 10개" and the fixed next-10 hint when the full 10 were read and the listing held more', () => {
-    expect(renderRefDetailCapNote({ listed: 23, take: 10, shown: 10 }, 'ko')).toBe("이슈 23개 중 10개만 자세히 보여드렸어요. 더 보려면 '다음 10개 보여줘'라고 말씀해 주세요.");
-    expect(renderRefDetailCapNote({ listed: 20, listedAtLeast: true, take: 10, shown: 10 }, 'ko')).toBe("이슈 20개 이상 중 10개만 자세히 보여드렸어요. 더 보려면 '다음 10개 보여줘'라고 말씀해 주세요.");
-    expect(renderRefDetailCapNote({ listed: 23, take: 10, shown: 9 }, 'en')).toBe('Showing 9 of 23 issues in detail. To see more, say "show the next 10".');
+  it('says "N개 중 10개" without the next-10 hint by default (owner Q1: no hint before its follow-up runs)', () => {
+    expect(renderRefDetailCapNote({ listed: 23, take: 10, shown: 10 }, 'ko')).toBe('이슈 23개 중 10개만 자세히 보여드렸어요.');
+    expect(renderRefDetailCapNote({ listed: 20, listedAtLeast: true, take: 10, shown: 10 }, 'ko')).toBe('이슈 20개 이상 중 10개만 자세히 보여드렸어요.');
+    expect(renderRefDetailCapNote({ listed: 23, take: 10, shown: 9 }, 'en')).toBe('Showing 9 of 23 issues in detail.');
+    for (const language of ['ko', 'en'] as const) expect(renderRefDetailCapNote({ listed: 23, take: 10, shown: 10 }, language)).not.toMatch(/다음 10개|next 10/u);
+  });
+
+  it('adds the fixed hint only with followUp (the cursor exists)', () => {
+    expect(renderRefDetailCapNote({ listed: 23, take: 10, shown: 10, followUp: true }, 'ko')).toBe("이슈 23개 중 10개만 자세히 보여드렸어요. 더 보려면 '다음 10개 보여줘'라고 말씀해 주세요.");
+    expect(renderRefDetailCapNote({ listed: 23, take: 10, shown: 9, followUp: true }, 'en')).toBe('Showing 9 of 23 issues in detail. To see more, say "show the next 10".');
   });
 
   it('says nothing for a complete listing of 10 or fewer, or for the owner\'s own smaller number', () => {
@@ -60,16 +66,17 @@ describe('agentReplyNotes (one executed run)', () => {
 
   it('a reference step gets the cap note from Core\'s counts (the listing of its source step, the bulk read of its own)', () => {
     const run = runPlan(plan([read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 10 })]), RELEASE);
-    expect(agentReplyNotes(run, new Map([[1, { listed: 17 }], [2, { shown: 10 }]]), 'ko')).toEqual(["이슈 17개 중 10개만 자세히 보여드렸어요. 더 보려면 '다음 10개 보여줘'라고 말씀해 주세요."]);
+    expect(agentReplyNotes(run, new Map([[1, { listed: 17 }], [2, { shown: 10 }]]), 'ko')).toEqual(['이슈 17개 중 10개만 자세히 보여드렸어요.']);
     expect(agentReplyNotes(run, new Map([[1, { listed: 8 }], [2, { shown: 8 }]]), 'ko')).toEqual([]);
     // No counts (a failed step): no note, never a guess.
     expect(agentReplyNotes(run, new Map(), 'ko')).toEqual([]);
   });
 
-  it('the relation note comes last, naming the first read\'s source; it needs the validated flag', () => {
+  it('the relation note comes last, naming the source of the related step (CA finding 5); it needs the validated step', () => {
     const text = '이번 주 회의 정리하고 관련 jira 이슈도 같이';
     const steps = [read('calendar.events', { range: 'this-week', timedOnly: true }), summary([1], 'meeting-digest.v1'), read('jira.issues')];
-    expect(agentReplyNotes(runPlan(plan(steps, true), text), new Map(), 'ko')).toEqual(['회의와 관련 있는지는 확인하지 않았어요.']);
+    expect(agentReplyNotes(runPlan(plan(steps, 1), text), new Map(), 'ko')).toEqual(['회의와 관련 있는지는 확인하지 않았어요.']);
+    expect(agentReplyNotes(runPlan(plan(steps, 3), text), new Map(), 'ko')).toEqual(['지라 이슈와 관련 있는지는 확인하지 않았어요.']);
     expect(agentReplyNotes(runPlan(plan(steps), text), new Map(), 'ko')).toEqual([]);
   });
 });
@@ -83,11 +90,11 @@ describe('the action-in-plan guidance (decision (f))', () => {
   });
 
   it('a write with reads: action, the reads (summaries over removed steps dropped, refs renumbered) as the remainder', () => {
-    const steps = [read('todo.list'), read('todo.add', { title: '장보기' }), read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 3, field: 'issueKeys', take: 2 }), summary([2, 4])];
-    const guidance = a6InPlanGuidance(plan(steps), ctx('할 일 보여주고 장보기 추가하고 1.2.0 릴리스 이슈 2개 자세히 정리해줘'), 'ko');
+    const steps = [read('reminder.list'), read('todo.add', { title: '장보기' }), read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 3, field: 'issueKeys', take: 2 }), summary([2, 4])];
+    const guidance = a6InPlanGuidance(plan(steps), ctx('알림 목록 보여주고 장보기 추가하고 1.2.0 릴리스 이슈 2개 자세히 정리해줘'), 'ko');
     expect(guidance?.kind).toBe('action');
     const remainder = guidance?.remainder?.steps ?? [];
-    expect(remainder.map((step) => (step.kind === 'read' ? step.entry.id : 'summarize'))).toEqual(['todo.list', 'jira.release', 'jira.issues']);
+    expect(remainder.map((step) => (step.kind === 'read' ? step.entry.id : 'summarize'))).toEqual(['reminder.list', 'jira.release', 'jira.issues']);
     const ref = remainder[2];
     expect(ref?.kind === 'read' ? ref.ref?.step : undefined).toBe(2);
     expect(guidance?.note).toBe('추가·변경·취소 같은 작업은 조회와 함께 하지 않았어요. 따로 한 번 더 말씀해 주세요.');
@@ -98,6 +105,17 @@ describe('the action-in-plan guidance (decision (f))', () => {
     expect(a6InPlanGuidance(plan([read('help.topic'), read('jira.issues')]), ctx('도움말이랑 지라'), 'ko')).toBeUndefined();
     const onlyActions = a6InPlanGuidance(plan([read('todo.add', { title: 'a' }), read('action.undo')]), ctx('a 추가하고 되돌려줘'), 'en');
     expect(onlyActions).toEqual({ kind: 'action', note: renderA6InPlanNote('action', 'en') });
+    // CA suggestion: an item summary with no list to show asks for the list first.
+    const noList = a6InPlanGuidance(plan([read('item.summarize', { ref: '#1' }), read('item.summarize', { ref: '#2' })]), ctx('1번이랑 2번 요약해줘'), 'ko');
+    expect(noList).toEqual({ kind: 'item-read', note: '한 항목 요약은 먼저 그 목록을 조회한 뒤 번호로 말씀해 주세요.' });
+  });
+
+  it('reuses a validation the caller already made (no second validation needed)', () => {
+    const value = plan([read('jira.issues'), read('item.summarize', { ref: '#1' })]);
+    const context = ctx('지라 이슈 보여주고 첫 번째 거 요약해줘');
+    const validation = validateAgentPlan(value, context);
+    expect(a6InPlanGuidance(value, context, 'ko', validation)).toEqual(a6InPlanGuidance(value, context, 'ko'));
+    expect(a6InPlanGuidance(value, context, 'ko', { ok: false, reason: 'not-dm' })).toBeUndefined();
   });
 
   it('every note is fixed text: no owner word reaches it', () => {

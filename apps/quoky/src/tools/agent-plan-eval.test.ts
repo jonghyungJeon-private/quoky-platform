@@ -106,10 +106,12 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
       expect(negatives.some((golden) => golden.lang === lang)).toBe(true);
     }
     // The owner's review of 2026-10-21: 258 approved; 15 fixed or unreviewed and 45 held (decisions (d) and (e)) pending.
-    expect(NEW.filter((golden) => golden.status === 'approved')).toHaveLength(258);
-    expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(60);
+    // + ap-p180 (was ap-n121), approved by the owner's decision Q2 of 2026-10-23.
+    expect(NEW.filter((golden) => golden.status === 'approved')).toHaveLength(259);
+    expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(59);
     expect(NEW.filter((golden) => golden.note?.startsWith('HOLD') === true || golden.note?.includes(' HOLD ') === true).every((golden) => golden.status === 'pending-owner-approval')).toBe(true);
-    expect(NEW.filter((golden) => isAgentPlanAskExpect(golden.expect)).map((golden) => golden.family)).toEqual(Array.from({ length: 12 }, () => 'unbounded'));
+    // ap-n085's suggestion is over the 10-query charge (S2 P3 part 2): it is a refusal now, so 11 asks.
+    expect(NEW.filter((golden) => isAgentPlanAskExpect(golden.expect)).map((golden) => golden.family)).toEqual(Array.from({ length: 11 }, () => 'unbounded'));
     const batches = new Map<string, number>();
     for (const golden of NEW) batches.set(golden.batch, (batches.get(golden.batch) ?? 0) + 1);
     expect([...batches.values()].every((size) => size <= 60)).toBe(true);
@@ -143,7 +145,7 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     // 174 + the five A1-E4 split-shape positives (ap-p175..ap-p179, was ap-n118..n123 but n121).
     expect(summary.groups.multiStep).toEqual({ total: 179, exact: 179, rate: 1 });
     expect(summary.groups.oneStep).toEqual({ total: 674, exact: 674, rate: 1 });
-    expect(summary.groups.ask).toEqual({ total: 12, exact: 12, rate: 1 });
+    expect(summary.groups.ask).toEqual({ total: 11, exact: 11, rate: 1 });
     expect(summary.wrongOnNegatives).toBe(0);
     // Every negative is none; only inputs the D3 preparation empties (two one-step cases) make no call at all.
     expect(records.filter((record) => record.expected === 'none' && record.outcome !== 'none').map((record) => `${record.id}:${record.outcome}`)).toEqual(
@@ -199,8 +201,10 @@ describe('step-graph scorer (Q10)', () => {
   const score = (golden: AgentPlanEvalCase, raw: string) => scoreAgentPlanOutput(golden, raw, FIXTURE);
 
   it('the same step graph is exact (arg order, a code fence and a canonical default do not matter)', () => {
-    expect(score(owner, steps(gold)).outcome).toBe('exact');
-    expect(score(owner, '```json\n' + steps([{ entryId: 'calendar.events', args: { timedOnly: true, range: 'this-week' } }, gold[1], { entryId: 'jira.issues', args: { status: 'open' } }]) + '\n```').outcome).toBe('exact');
+    // The owner example's gold names the related step (CA finding 5 of S2 P3 part 1).
+    const related = (value: unknown[]): string => JSON.stringify({ steps: value, ambiguity: 'CLEAR', related: 1 });
+    expect(score(owner, related(gold)).outcome).toBe('exact');
+    expect(score(owner, '```json\n' + related([{ entryId: 'calendar.events', args: { timedOnly: true, range: 'this-week' } }, gold[1], { entryId: 'jira.issues', args: { status: 'open' } }]) + '\n```').outcome).toBe('exact');
   });
 
   it.each<[string, unknown[], string]>([
@@ -403,12 +407,12 @@ describe('plan digest', () => {
     const approved = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS);
     const pending = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, includePending: true });
     const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
-    expect(approvedCount).toBe(873 + 258);
+    expect(approvedCount).toBe(873 + 259);
     expect(approved.caseIds).toHaveLength(approvedCount);
     expect(pending.caseIds).toHaveLength(873 + NEW.length);
     expect(approved.maxCalls).toBe(approvedCount * 3);
     expect(pending.maxCalls).toBe((873 + NEW.length) * 3);
-    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v6', callTimeoutMs: 6000, fixture: FIXTURE });
+    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v7', callTimeoutMs: 6000, fixture: FIXTURE });
     expect(approved.promptSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -475,7 +479,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(await runCli(['--mode', 'plan', '--runs', '3'], planned)).toBe(EXIT_OK);
     const text = planned.out.join('\n');
     expect(digestOf(planned.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS)));
-    expect(text).toContain('"promptVersion": "agent-plan.v6"');
+    expect(text).toContain('"promptVersion": "agent-plan.v7"');
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);
     const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
@@ -555,8 +559,8 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     await runCli(['--mode', 'plan'], planned);
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
-    expect(ran.out.join('\n')).toContain('multi-step exact: 179/179 (100.0%)  one-step exact: 674/674 (100.0%)  ask: 12/12');
-    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v6): PASSED in all 1 run(s)');
+    expect(ran.out.join('\n')).toContain('multi-step exact: 179/179 (100.0%)  one-step exact: 674/674 (100.0%)  ask: 11/11');
+    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v7): PASSED in all 1 run(s)');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
     const today = { ...deps(created), load: () => unapproved };
@@ -583,9 +587,22 @@ describe('the help split in scoring (ADR-0121 A1-E1 / A1-E4, S2 P3)', () => {
     expect(scoreAgentPlanOutput(golden, steps([{ entryId: 'brief.today' }, { entryId: 'jira.issues' }, { summarize: [1, 2], schema: 'digest.v1' }]), FIXTURE)).toMatchObject({ outcome: 'refused', reason: 'summary-covers-brief' });
   });
 
-  it('ap-n121 (verb connective, no split) stays a none negative whose help trap is refused single-step-only', () => {
-    const golden = byId('ap-n121');
-    expect(golden.gold).toBe('none');
-    expect(caseContext(golden, FIXTURE)).not.toHaveProperty('split');
+  it('owner Q2: ap-p180 (was ap-n121) splits at the -고 connective; ap-n120 (English, alias not the head word) does not', () => {
+    const split = byId('ap-p180');
+    expect(caseContext(split, FIXTURE)).toMatchObject({ split: { topic: 'all', rest: '안 읽은 메일도 보여줘' } });
+    expect(scoreAgentPlanOutput(split, JSON.stringify({ entryId: 'mail.list', args: { unread: true }, ambiguity: 'CLEAR', alternatives: [] }), FIXTURE)).toMatchObject({ outcome: 'exact' });
+    const whole = byId('ap-n120');
+    expect(whole.gold).toBe('none');
+    expect(caseContext(whole, FIXTURE)).not.toHaveProperty('split');
+  });
+
+  it('CA finding 5: the related step is scored (missing or another step is a miss)', () => {
+    const golden = byId('ap-p001');
+    const gold = golden.gold as { steps: unknown[]; related?: number };
+    expect(gold.related).toBe(1);
+    const answer = (related?: number): string => JSON.stringify({ steps: gold.steps, ambiguity: 'CLEAR', ...(related !== undefined ? { related } : {}) });
+    expect(scoreAgentPlanOutput(golden, answer(1), FIXTURE)).toMatchObject({ outcome: 'exact' });
+    expect(scoreAgentPlanOutput(golden, answer(), FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'related' });
+    expect(scoreAgentPlanOutput(golden, answer(3), FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'related' });
   });
 });

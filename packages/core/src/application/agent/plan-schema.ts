@@ -9,8 +9,9 @@ import { NL_SELECTION_OUTPUT_MAX_BYTES, parseSelectionOutput, type NlAmbiguity, 
  *
  * - **the selection form** (ADR-0120 D3, unchanged): `{entryId | "none", args, ambiguity, alternatives}`. It is a one-step
  *   plan (or `none`), exactly today's selection, so the read prompt's examples stay valid outputs;
- * - **the steps form** (new): `{"steps": [step, …], "ambiguity": "CLEAR" | "NEEDS_CLARIFICATION", "related"?: true}` with 1–6
- *   steps (`related`, S2 P3 / owner decision (a): the owner asked for one read's items related to another read; Quoky reads
+ * - **the steps form** (new): `{"steps": [step, …], "ambiguity": "CLEAR" | "NEEDS_CLARIFICATION", "related"?: <step no>}` with
+ *   1–6 steps (`related`, S2 P3 / owner decision (a), CA finding 5: the number of the read step the owner relates the other
+ *   reads to; Quoky reads
  *   each on its own and the reply says the relation was not checked; it changes no step). A step is
  *   either a read `{"entryId", "args"?, "ref"?}` or a summary `{"summarize": [<step no>, …], "schema": "<id>.v<N>"}`.
  *   A `ref` is `{"step": <earlier step no>, "field": "<projected id field>", "take": <1..>}`: the closed-format ids a
@@ -72,11 +73,12 @@ export type AgentPlan =
       /** Logged only; never decides anything. */
       readonly confidence?: number;
       /**
-       * Steps form only (owner decision (a), 2026-10-20): the owner asked for items of one read related to another read.
+       * Steps form only (owner decision (a), 2026-10-20; CA finding 5): the number of the read step the owner relates the
+       * other reads to (the meetings of "이번 주 회의 정리하고 관련 jira 이슈도 같이").
        * Nothing is joined (a content value is never a query); the reply adds a fixed note that the relation was not
        * checked. It never changes, adds or removes a step.
        */
-      readonly related?: true;
+      readonly related?: number;
     };
 
 const STEPS_TOP_KEYS = new Set(['steps', 'ambiguity', 'confidence', 'related']);
@@ -105,9 +107,9 @@ export function parseAgentPlanOutput(raw: string): AgentPlan | null {
   if (value.ambiguity !== 'CLEAR' && value.ambiguity !== 'NEEDS_CLARIFICATION') return null;
   const confidence = value.confidence;
   if (confidence !== undefined && (typeof confidence !== 'number' || !Number.isFinite(confidence))) return null;
-  // Only `true` (or absent / false) is meaningful; any other value is malformed.
+  // A step number (structure, CA finding 5); any other value is malformed.
   const related = value.related;
-  if (related !== undefined && typeof related !== 'boolean') return null;
+  if (related !== undefined && !isStepNumber(related)) return null;
   const rawSteps = value.steps;
   if (!Array.isArray(rawSteps) || rawSteps.length === 0 || rawSteps.length > AGENT_PLAN_MAX_STEPS) return null;
   const steps: AgentPlanStep[] = [];
@@ -123,7 +125,7 @@ export function parseAgentPlanOutput(raw: string): AgentPlan | null {
     ambiguity: value.ambiguity,
     alternatives: [],
     ...(typeof confidence === 'number' ? { confidence } : {}),
-    ...(related === true ? { related: true as const } : {}),
+    ...(typeof related === 'number' ? { related } : {}),
   };
 }
 
@@ -140,7 +142,7 @@ export function agentPlanParseFailure(raw: string): string | undefined {
   if (!('steps' in value)) return 'selection-form-invalid';
   if (!Object.keys(value).every((key) => STEPS_TOP_KEYS.has(key))) return 'unknown-key';
   if (value.ambiguity !== 'CLEAR' && value.ambiguity !== 'NEEDS_CLARIFICATION') return 'bad-enum:ambiguity';
-  if (value.related !== undefined && typeof value.related !== 'boolean') return 'bad-related';
+  if (value.related !== undefined && !isStepNumber(value.related)) return 'bad-related';
   if (!Array.isArray(value.steps)) return 'bad-steps';
   if (value.steps.length === 0) return 'no-steps';
   if (value.steps.length > AGENT_PLAN_MAX_STEPS) return 'too-many-steps';

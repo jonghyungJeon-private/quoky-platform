@@ -411,7 +411,7 @@ function planFields(plan: AgentPlan, validation: AgentPlanValidation): LogFields
     const suggestion = validation.plan.suggestion.map((step) => (step.kind === 'summarize' ? `summarize:${step.schema}` : step.entry.id)).join(',');
     return { outcome: 'ask', ...fields, bound: validation.plan.bound, suggestion };
   }
-  const extra: LogFields = { connectorCalls: validation.plan.connectorCalls, ...(validation.plan.related === true ? { related: true } : {}) };
+  const extra: LogFields = { connectorCalls: validation.plan.connectorCalls, ...(validation.plan.related !== undefined ? { related: validation.plan.related } : {}) };
   const argKinds = validation.plan.steps
     .map((step) => {
       if (step.kind === 'summarize') return 'summary';
@@ -438,7 +438,7 @@ function splitFields(split: AgentHelpSplit | undefined, validation: AgentPlanVal
 function a6Fields(plan: AgentPlan, validation: AgentPlanValidation, ctx: AgentPlanValidationContext): LogFields {
   if (validation.ok || validation.reason !== 'a6-in-plan') return {};
   // The refusal is structural (`isNlActionEntryId`, whatever is offered); the remainder validates against the same READ offer.
-  const guidance = a6InPlanGuidance(plan, ctx, 'ko');
+  const guidance = a6InPlanGuidance(plan, ctx, 'ko', validation);
   return guidance === undefined ? {} : { a6Kind: guidance.kind, a6Remainder: guidance.remainder !== undefined ? 'run' : 'none' };
 }
 

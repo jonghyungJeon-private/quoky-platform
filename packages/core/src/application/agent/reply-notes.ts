@@ -1,6 +1,6 @@
 import { isNlActionEntryId, isNlWave1EntryId, type NlWave1EntryId } from '../nl-routing/catalog';
 import type { AgentPlan, AgentPlanStep } from './plan-schema';
-import { AGENT_PLAN_MAX_REF_VALUES, validateAgentPlan, type AgentPlanValidationContext, type ValidatedAgentPlan } from './plan-validator';
+import { AGENT_PLAN_MAX_REF_VALUES, validateAgentPlan, type AgentPlanValidation, type AgentPlanValidationContext, type ValidatedAgentPlan } from './plan-validator';
 
 /**
  * ADR-0121 S2 P3: the fixed, deterministic notes of an agent reply. Each is fixed text plus closed nouns and Core's own
@@ -8,9 +8,10 @@ import { AGENT_PLAN_MAX_REF_VALUES, validateAgentPlan, type AgentPlanValidationC
  * assembler appends them after the sections (the runtime sends agent replies only once `active` is released, stage P5).
  *
  * - **The detail cap note** (owner decision (c), 2026-10-21; A1 ratification answer 8): a reference reads at most 10
- *   items in detail (ADR-0121 D2). When it read the full 10 and the source listed more, the reply says "N개 중 10개" and
- *   gives the fixed hint for the next 10. The hint's follow-up ("다음 10개") is not built in P3 (open question: it needs
- *   follow-up state, which S2 Q9 does not allow beyond the two recorded exceptions).
+ *   items in detail (ADR-0121 D2). When it read the full 10 and the source listed more, the reply says "N개 중 10개".
+ *   The fixed hint for the next 10 is added only with `followUp: true` (owner decision Q1, 2026-10-23: the hint is never
+ *   shown before its follow-up runs; the follow-up, a pending pagination cursor under the recorded Q9 exception, needs
+ *   the executor and is S2 P3 part 3 work).
  * - **The relation note** (owner decision (a), 2026-10-20): when the planner marked that the owner asked for one read's
  *   items related to another read, the reads ran separately and nothing was matched (a content value is never a query);
  *   the reply says so ("회의와 관련 있는지는 확인하지 않았어요").
@@ -36,20 +37,27 @@ export interface AgentRefDetailCount {
   readonly take: number;
   /** How many items the bulk detail read returned. */
   readonly shown: number;
+  /**
+   * Owner decision Q1 (2026-10-23): the "다음 10개" follow-up exists for this reply (a pagination cursor was recorded).
+   * Default false: the hint is not shown, because nothing could continue it.
+   */
+  readonly followUp?: boolean;
 }
 
 /**
- * "N개 중 10개" plus the fixed hint for the next 10, only when the reference read the full cap (10) and the listing held
- * more. A smaller `take` is the owner's own number (nothing to add); a listing of 10 or fewer is complete. Pure.
+ * "N개 중 10개", only when the reference read the full cap (10) and the listing held more, plus the fixed hint for the next
+ * 10 only with `followUp` (owner Q1). A smaller `take` is the owner's own number (nothing to add); a listing of 10 or fewer
+ * is complete. Pure.
  */
 export function renderRefDetailCapNote(count: AgentRefDetailCount, language: AgentNoteLanguage): string | undefined {
   const more = count.listed > count.take || (count.listedAtLeast === true && count.listed >= count.take);
   if (count.take !== AGENT_PLAN_MAX_REF_VALUES || !more) return undefined;
   const listed = `${count.listed}${count.listedAtLeast === true ? (language === 'en' ? '+' : '개 이상') : language === 'en' ? '' : '개'}`;
+  const hint = count.followUp === true;
   if (language === 'en') {
-    return `Showing ${count.shown} of ${listed} issues in detail. To see more, say "show the next ${AGENT_PLAN_MAX_REF_VALUES}".`;
+    return `Showing ${count.shown} of ${listed} issues in detail.${hint ? ` To see more, say "show the next ${AGENT_PLAN_MAX_REF_VALUES}".` : ''}`;
   }
-  return `이슈 ${listed} 중 ${count.shown}개만 자세히 보여드렸어요. 더 보려면 '다음 ${AGENT_PLAN_MAX_REF_VALUES}개 보여줘'라고 말씀해 주세요.`;
+  return `이슈 ${listed} 중 ${count.shown}개만 자세히 보여드렸어요.${hint ? ` 더 보려면 '다음 ${AGENT_PLAN_MAX_REF_VALUES}개 보여줘'라고 말씀해 주세요.` : ''}`;
 }
 
 // ── the relation note ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -77,7 +85,7 @@ function withAnd(noun: string): string {
   return `${noun}${final === 0 ? '와' : '과'}`;
 }
 
-/** The fixed note of decision (a), naming the first read's source (the one the relation was asked against). Pure. */
+/** The fixed note of decision (a), naming the source of the step the relation was asked against (CA finding 5). Pure. */
 export function renderRelatedUncheckedNote(firstEntryId: NlWave1EntryId, language: AgentNoteLanguage): string {
   const noun = RELATED_NOUN[firstEntryId];
   if (language === 'en') return `I didn't check whether these are related to ${noun.en}; each was read on its own.`;
@@ -116,8 +124,8 @@ export function agentReplyNotes(
     );
     if (note !== undefined) notes.push(note);
   }
-  const first = plan.steps.find((step) => step.kind === 'read');
-  if (plan.related === true && first?.kind === 'read' && isNlWave1EntryId(first.entry.id)) notes.push(renderRelatedUncheckedNote(first.entry.id, language));
+  const target = plan.related !== undefined ? plan.steps[plan.related - 1] : undefined;
+  if (target?.kind === 'read' && isNlWave1EntryId(target.entry.id)) notes.push(renderRelatedUncheckedNote(target.entry.id, language));
   return notes;
 }
 
@@ -137,11 +145,12 @@ export interface AgentA6InPlanGuidance {
  * Decision (f): for a plan the validator refuses `a6-in-plan`, the read remainder (the A6 steps removed, with the
  * summaries and references that depended on them; the rest renumbered and validated by the same validator) and the fixed
  * note. `undefined` for any plan that is not refused `a6-in-plan`. The remainder is a candidate only: the runtime decides
- * whether to answer it (stage P5). Pure.
+ * whether to answer it (stage P5; owner decision Q3 of 2026-10-23 on a write mixed with reads waits for its ADR-0121
+ * note). A caller that already validated the plan passes that result (`validation`), so it is not validated twice. Pure.
  */
-export function a6InPlanGuidance(plan: AgentPlan, ctx: AgentPlanValidationContext, language: AgentNoteLanguage): AgentA6InPlanGuidance | undefined {
+export function a6InPlanGuidance(plan: AgentPlan, ctx: AgentPlanValidationContext, language: AgentNoteLanguage, validation?: AgentPlanValidation): AgentA6InPlanGuidance | undefined {
   if (plan.kind !== 'steps') return undefined;
-  const refused = validateAgentPlan(plan, ctx);
+  const refused = validation ?? validateAgentPlan(plan, ctx);
   if (refused.ok || refused.reason !== 'a6-in-plan') return undefined;
   const a6 = plan.steps.flatMap((step, index) => (step.kind === 'read' && isNlActionEntryId(step.entryId) ? [{ index: index + 1, entryId: step.entryId }] : []));
   const kind: AgentA6InPlanKind = a6.every((step) => step.entryId === 'item.summarize') ? 'item-read' : 'action';
@@ -168,18 +177,29 @@ export function a6InPlanGuidance(plan: AgentPlan, ctx: AgentPlanValidationContex
       kept.push({ ...step, from: step.from.map((from) => renumber.get(from) as number) });
     }
   }
-  const note = renderA6InPlanNote(kind, language);
-  if (!kept.some((step) => step.kind === 'read')) return { kind, note };
-  const remainder = validateAgentPlan({ kind: 'steps', form: 'steps', steps: kept, ambiguity: plan.ambiguity, alternatives: [] }, ctx);
-  return remainder.ok && remainder.plan.kind === 'run' ? { kind, remainder: remainder.plan, note } : { kind, note };
+  const remainder = kept.some((step) => step.kind === 'read')
+    ? validateAgentPlan({ kind: 'steps', form: 'steps', steps: kept, ambiguity: plan.ambiguity, alternatives: [] }, ctx)
+    : undefined;
+  const runnable = remainder?.ok === true && remainder.plan.kind === 'run' ? remainder.plan : undefined;
+  // CA suggestion: with no list shown, the item-summary note asks for the list first (it cannot point to "the list").
+  const note = renderA6InPlanNote(kind, language, runnable !== undefined);
+  return runnable !== undefined ? { kind, remainder: runnable, note } : { kind, note };
 }
 
-/** The fixed note of the action part of a refused plan (decision (f)). Never a yes/no question: nothing is pending. */
-export function renderA6InPlanNote(kind: AgentA6InPlanKind, language: AgentNoteLanguage): string {
-  if (kind === 'item-read') {
+/**
+ * The fixed note of the action part of a refused plan (decision (f)). `withList`: a read remainder is shown with it.
+ * Never a yes/no question: nothing is pending.
+ */
+export function renderA6InPlanNote(kind: AgentA6InPlanKind, language: AgentNoteLanguage, withList = true): string {
+  if (kind === 'item-read' && withList) {
     return language === 'en'
       ? 'To summarize one item, ask by its number once you see the list, like "summarize number 1".'
       : "한 항목 요약은 목록을 보신 뒤 번호로 말씀해 주세요. 예: '1번 요약해줘'";
+  }
+  if (kind === 'item-read') {
+    return language === 'en'
+      ? 'To summarize one item, first ask for its list, then ask by its number.'
+      : '한 항목 요약은 먼저 그 목록을 조회한 뒤 번호로 말씀해 주세요.';
   }
   return language === 'en'
     ? "I didn't make the change you asked for together with the lookup. Please ask for it on its own."
