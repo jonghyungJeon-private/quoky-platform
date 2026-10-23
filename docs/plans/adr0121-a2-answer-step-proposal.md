@@ -1,8 +1,11 @@
 # ADR-0121 amendment A2 and ARCHITECTURE.md amendment proposal: the plan `answer` step, and an owner-confirmed minimal topic (a scoped ADR-0110 D4 exception)
 
-- **Status:** **Proposed, revision 2.** Not ratified, not applied. Nothing here changes `ARCHITECTURE.md`, `DECISIONS.md`
-  or code. On ratification, Part IV goes into `ARCHITECTURE.md` and a ratification record into `DECISIONS.md` in one
-  docs change, as for A1.
+- **Status:** **Ratified** by the Product Owner on 2026-10-23, with every recommended default, and **applied**.
+  - Part IV is in `ARCHITECTURE.md`.
+  - The ratification record, with the answers to Part X, is in `DECISIONS.md` ("ADR-0121 A2 ratification record").
+  - The consent wording is the owner's ratified text, which names the recipient "Claude" (record, answer 1).
+  - The text below is kept as proposed. Where it and the record differ, the record wins.
+  - Implementation has not started. The build comes only after S2 is `active`, behind `QUOKY_AGENT_ANSWER=off`.
 - **Revision 2 (2026-10-23)** answers the Chief Architect / security review of revision 1 ("NOT READY": Part I close,
   Part II blocking gaps, no redesign). The review items C1–C3, W1–W9 and S1–S11 are cited inline as `[C1]`, `[W3]` and
   so on.

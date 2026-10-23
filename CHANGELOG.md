@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A2 ratified: the `answer` step and an owner-confirmed minimal topic (docs only, 2026-10-23)
+
+- **Changed (constitution).** `ARCHITECTURE.md` changes, ratified by the owner (ADR-0121 A2):
+  - §5.14: `dataUse` as declared data;
+  - §8 item 3: answer-step outputs are schema-bound and URL-free, and Core computes times, dates and counts;
+  - §8 item 3: the only remote path for `LOCAL_MODEL_ONLY` text is an owner-confirmed minimal topic, at most 4 tokens
+    and 30 characters, sent once after a closed yes, to a non-fallback provider the owner marked `no-training`;
+  - §8 item 5: the consent and its continuation run;
+  - §10: the topic-consent row;
+  - §12: the consent prompt may name the recipient, and a new bullet forbids sending item content to a model its
+    egress label forbids.
+- **Decided.** The `answer` step (modes `facts`, `words`, `grounded`, `generate`) is specified, and ADR-0110 D4 gets a
+  scoped exception.
+  - The topic path opens only if the pre-registered blind comparison G4 shows that a local answer is not adequate and
+    that Claude is better.
+  - Calendar only, DM only, and `qwen3:8b` as the one local model, after a Strict yes.
+- **Not implemented.** No runtime change. The build comes only after S2 is `active`, behind `QUOKY_AGENT_ANSWER`
+  (default `off`).
+
 ## Unreleased — honest chat after a listing Quoky just showed (owner DM, 2026-10-22)
 
 - **Fixed.** After a calendar, mail or Drive listing, a follow-up that goes to chat no longer claims Quoky cannot check
