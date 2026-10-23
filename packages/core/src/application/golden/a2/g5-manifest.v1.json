@@ -5,7 +5,7 @@
  "provenanceCaveat": "All names are invented by hand-picked syllable combinations or generic shapes; coincidence with a real person or organization is possible and unintended. No name was taken from the owner's calendar, mail, contacts or any corpus. The owner is asked to skim for accidental real names before the hash is frozen in DECISIONS.md.",
  "files": {
   "g5-name-heldout.v1.json": {
-   "sha256": "84393c7a6b0981f617a7af6b5bbb06027646a363a99f6cef0435f11670fed0e3",
+   "sha256": "a4eb1e1055a359967c583b91a7b6e0c833db07a39d76dbafb93a8b644283591f",
    "cases": 161,
    "heldOutNames": 166,
    "scoredHeldOutNames": 158

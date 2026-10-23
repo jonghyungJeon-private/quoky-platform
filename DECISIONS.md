@@ -28999,10 +28999,10 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
 | Set | File | Count | sha256 | State |
 |---|---|---|---|---|
 | G1 AP-8 plan gold | `agent-plan.ap8.v1.json` | 66 cases, all owner-approved 2026-10-23 (see the review record below); 51 still marked `replaceWithCapture` | `65d8222abd9bfed1d646a15594245b66571a9ee1e73fb01352eaf0669644e36a` | approved; not frozen; not gating until at least half are replaced by real captures |
-| G2 `s2-answer` | `s2-answer.redteam.v1.json` | 183 cases (answer 39, topic 55, consent 69, history 15, request 5; KO 144, EN 39); data only, no runner | `fbd770da2af17cd18439d40d3a2c2d71f416d1382cf8d78deaa37ad8d33c8591` | pending the owner's review; not frozen |
+| G2 `s2-answer` | `s2-answer.redteam.v1.json` | 186 cases (answer 39, topic 58, consent 69, history 15, request 5; KO 144, EN 39); data only, no runner | `028d58c360dd749f1b0f9534077d106e21283c1966dd9f3b5c9a6a4a7fe02ecc` | pending the owner's review; not frozen |
 | G4 cases | `g4-generation-cases.v1.json` | 36 synthetic cases (KO 22, EN 14) | `c598144ef77a72545582ee416421304a2d2dab5be660dd8c94b0a7137bd62c4c` | frozen candidate |
 | G4 rubric and seed | `g4-rubric.v1.json`, `g4-manifest.v1.json` | `useless` / `usable` / `good`; seed `20261023`; presentation plan precomputed | rubric `baee67a34fee27a42a5e0f19fcb267f1f6e0e25f95b4eaceedfedeb2e3bec87f`; case file hash is in its own row | frozen candidate |
-| G5 held-out | `g5-name-heldout.v1.json`, `g5-manifest.v1.json` | 161 titles, 166 held-out names (158 scored, 8 confidential subjects reported only), 14 shapes | `84393c7a6b0981f617a7af6b5bbb06027646a363a99f6cef0435f11670fed0e3` | frozen candidate |
+| G5 held-out | `g5-name-heldout.v1.json`, `g5-manifest.v1.json` | 161 titles, 166 held-out names (158 scored, 8 confidential subjects reported only), 14 shapes | `a4eb1e1055a359967c583b91a7b6e0c833db07a39d76dbafb93a8b644283591f` | frozen candidate |
 
 - **Hashes.** The manifests (`g4-manifest.v1.json`, `g5-manifest.v1.json`) are the source of truth and a test
   recomputes every hash.
@@ -29054,3 +29054,13 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
     considered (a separate ADR-0121 amendment). **Not now: no egress is authorized by this decision.**
   - The hash becomes the freeze when the owner approves the file; prompt hash and model digest are recorded in the
     measurement note before any run (a Strict model-in-the-loop run).
+
+- **Codex review fixes (2026-10-23, data and test only).**
+  - The red-team test oracle dropped only non-alphabetic Latin tokens over 20 characters; A2-D12 drops any Latin token
+    over 20 characters. The exception is removed, boundary cases (20 kept, 21 dropped, mixed) are added, and every topic
+    expectation is rechecked against the corrected oracle: `s2-answer.redteam.v1.json` is now 186 cases, sha256
+    `028d58c360dd749f1b0f9534077d106e21283c1966dd9f3b5c9a6a4a7fe02ecc`.
+  - G5 `held[].tokens` mixed identifying tokens with generic role or format words that A2-D13 tells the classifier to
+    keep (for example 팀장, 씨, Project, Labs, 지점). The schema now has `identifyingTokens` (scored as leaks) and
+    `genericTokens` (never scored; listed as keepable in `subjectTokens`). G5 is not frozen yet; its new sha256 is
+    `a4eb1e1055a359967c583b91a7b6e0c833db07a39d76dbafb93a8b644283591f` (161 titles, 166 names unchanged).

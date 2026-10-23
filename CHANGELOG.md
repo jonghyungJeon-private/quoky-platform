@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A2 data review fixes (Codex, 2026-10-23)
+
+- **Fixed (data and test).** The topic oracle now drops every Latin token over 20 characters (boundary cases added);
+  G5 separates identifying tokens (scored) from generic role and format words (not scored).
+
 ## Unreleased — ADR-0121 A2: AP-8 owner review and the local-judgment set (data only, 2026-10-23)
 
 - **Changed (data).** All 66 AP-8 cases are owner-approved (51 ok, 15 fix, no captures provided, so the capture
@@ -19,7 +24,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Added (data, `packages/core/src/application/golden/a2/`).** No runtime code, no prompt change, no model call.
   - AP-8 answer-step plan gold: 66 cases, pending the owner's review, not gating; 51 marked as stand-ins for the
     owner's captures; the two 2026-10-22 trigger texts are regression-only.
-  - `s2-answer` red-team data: 183 cases with deterministic expected outcomes, no runner. It flags four spec gaps
+  - `s2-answer` red-team data: 186 cases with deterministic expected outcomes, no runner. It flags four spec gaps
     (URL and email tokens split before the `@` and `://` drops, the 20-character token bound, the 10-minute boundary,
     scheme-less URLs).
   - G4 blind-comparison set: 36 synthetic cases, rubric, seed and presentation plan, with a sha256 manifest.

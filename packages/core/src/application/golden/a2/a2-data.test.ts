@@ -172,7 +172,7 @@ function referenceTopic(title: string, names: string[]): TopicResult {
       tok.includes('@') || tok.includes('://') || tok.includes('www.') ||
       /\d{3,}/u.test(tok) ||
       (scripts.has('lat') && (scripts.has('cyr') || scripts.has('grk'))) ||
-      (tok.length > 20 && scripts.has('lat') && !/^[A-Za-z]+$/u.test(tok)) ||
+      (tok.length > 20 && scripts.has('lat')) ||
       false;
     (drop ? dropped : kept).push(tok);
   }
@@ -261,6 +261,14 @@ describe('s2-answer red-team data', () => {
     expect(checked).toBeGreaterThanOrEqual(40);
   });
 
+  it('the topic oracle drops every Latin token over 20 characters and keeps one of exactly 20 (A2-D12, no alphabetic exception)', () => {
+    expect(referenceTopic('점검 ABCDEFGHIJKLMNOPQRSTU', [])).toMatchObject({ outcome: 'offer', topic: '점검' });
+    expect(referenceTopic('점검 ABCDEFGHIJKLMNOPQRST', [])).toMatchObject({ outcome: 'offer', topic: '점검 ABCDEFGHIJKLMNOPQRST' });
+    expect(referenceTopic('점검 ab12cd34ef56gh78ij90kl', [])).toMatchObject({ topic: '점검' });
+    const attacks = cases.map((c) => c.attack);
+    for (const a of ['topic-latin-20-alpha-kept', 'topic-latin-21-alpha-dropped', 'topic-latin-21-mixed-dropped']) expect(attacks).toContain(a);
+  });
+
   it('keeps NFD replies distinct from their NFC form in the file (the variants are really decomposed)', () => {
     const nfd = cases.filter((c) => c.attack.startsWith('consent-nfd-'));
     expect(nfd.length).toBeGreaterThanOrEqual(5);
@@ -327,7 +335,7 @@ describe('local-judgment measurement set', () => {
 });
 
 describe('G5 name-filter held-out set', () => {
-  interface Held { text: string; shape: string; scored: boolean; tokens: string[] }
+  interface Held { text: string; shape: string; scored: boolean; identifyingTokens: string[]; genericTokens: string[] }
   interface G5Case { id: string; lang: string; title: string; nameFields: string[]; held: Held[]; subjectTokens: string[] }
   const file = json<{ authorship: string; cases: G5Case[] }>('g5-name-heldout.v1.json');
   const manifest = json<{ authorship: string; files: Record<string, { sha256: string; cases: number; heldOutNames: number; scoredHeldOutNames: number }> }>('g5-manifest.v1.json');
@@ -357,12 +365,23 @@ describe('G5 name-filter held-out set', () => {
       const { seqs, parts } = nameSequences(c.nameFields);
       for (const h of c.held) {
         expect(c.title.includes(h.text), `${c.id} ${h.text}`).toBe(true);
-        expect(h.tokens.length).toBeGreaterThan(0);
-        for (const t of h.tokens) expect(toks).toContain(t);
+        expect(h.identifyingTokens.length).toBeGreaterThan(0);
+        for (const t of [...h.identifyingTokens, ...h.genericTokens]) expect(toks).toContain(t);
+        for (const t of h.identifyingTokens) expect(h.genericTokens).not.toContain(t);
         expect([...seqs].some((s) => h.text.includes(s)), `${c.id} covered by a Hangul name field`).toBe(false);
         expect([...parts].some((p) => h.text.toLowerCase().includes(p)), `${c.id} covered by a Latin name field`).toBe(false);
       }
       for (const t of c.subjectTokens) expect(toks).toContain(t);
+    }
+  });
+
+  it('scores only identifying tokens: generic role and format words are never identifying and stay keepable', () => {
+    const generic = new Set(allHeld.flatMap((h) => h.genericTokens));
+    expect(generic.size).toBeGreaterThan(10);
+    for (const w of ['팀장', '씨', 'Project', 'Labs', '지점']) expect(generic.has(w), w).toBe(true);
+    for (const c of cases) {
+      for (const h of c.held) for (const t of h.identifyingTokens) expect(generic.has(t), `${c.id} ${t}`).toBe(false);
+      for (const g of c.held.flatMap((h) => h.genericTokens)) expect(c.subjectTokens, c.id).toContain(g);
     }
   });
 

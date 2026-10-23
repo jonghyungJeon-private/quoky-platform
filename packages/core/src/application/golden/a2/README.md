@@ -42,7 +42,8 @@ duplicates, hashes, reference checks, contamination lint against every `../*.jso
 ## `g5-name-heldout.v1.json`, `g5-manifest.v1.json` (gate G5)
 
 - 161 event titles with 166 held-out names (158 scored, 8 confidential subjects reported only) across 14 shapes. No name
-  field of a case covers a held-out name (tested).
+  field of a case covers a held-out name (tested). `identifyingTokens` are scored as leaks; `genericTokens` (팀장, 씨,
+  Project, Labs, 지점 ...) are keepable and never scored.
 - Provenance: authored by an agent session with no access to a classifier prompt (none exists), no model call. Names
   are invented; coincidence with a real person or organization is possible and unintended. The owner should skim for
   accidental real names before the hash is frozen. Never use the set for prompt tuning.

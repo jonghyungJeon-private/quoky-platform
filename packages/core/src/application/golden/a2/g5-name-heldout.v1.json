@@ -23,9 +23,10 @@
      "text": "임준",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "임준"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -47,9 +48,10 @@
      "text": "오율",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "오율"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -71,9 +73,10 @@
      "text": "배훈",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "배훈"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -94,9 +97,10 @@
      "text": "손결",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "손결"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -116,9 +120,10 @@
      "text": "정온",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "정온"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -138,9 +143,10 @@
      "text": "설아",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "설아"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -160,9 +166,10 @@
      "text": "변하",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "변하"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -182,9 +189,10 @@
      "text": "곽언",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "곽언"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -205,9 +213,10 @@
      "text": "탁이",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "탁이"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -227,9 +236,10 @@
      "text": "편해",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "편해"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -251,9 +261,10 @@
      "text": "주안",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "주안"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -274,9 +285,10 @@
      "text": "옥빈",
      "shape": "ko-2syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "옥빈"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -296,9 +308,10 @@
      "text": "한유라",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "한유라"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -318,9 +331,10 @@
      "text": "봉도하",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "봉도하"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -340,9 +354,10 @@
      "text": "구서진",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "구서진"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -364,9 +379,10 @@
      "text": "마예린",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "마예린"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -386,9 +402,10 @@
      "text": "천지온",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "천지온"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -408,9 +425,10 @@
      "text": "모하준",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "모하준"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -432,9 +450,10 @@
      "text": "염다솜",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "염다솜"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -454,9 +473,10 @@
      "text": "피유진",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "피유진"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -477,9 +497,10 @@
      "text": "안수아",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "안수아"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -498,9 +519,10 @@
      "text": "방세빈",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "방세빈"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -522,9 +544,10 @@
      "text": "곽민재",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "곽민재"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -545,9 +568,10 @@
      "text": "노해린",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "노해린"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -567,9 +591,10 @@
      "text": "팽지후",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "팽지후"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -589,9 +614,10 @@
      "text": "인서율",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "인서율"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -611,9 +637,10 @@
      "text": "목하람",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "목하람"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -633,9 +660,10 @@
      "text": "경태오",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "경태오"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -656,9 +684,10 @@
      "text": "남궁민수",
      "shape": "ko-4syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "남궁민수"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -680,9 +709,10 @@
      "text": "제갈서연",
      "shape": "ko-4syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "제갈서연"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -702,9 +732,10 @@
      "text": "선우지안",
      "shape": "ko-4syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "선우지안"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -724,9 +755,10 @@
      "text": "황보나래",
      "shape": "ko-4syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "황보나래"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -746,9 +778,10 @@
      "text": "사공도현",
      "shape": "ko-4syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "사공도현"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -768,9 +801,10 @@
      "text": "독고재민",
      "shape": "ko-4syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "독고재민"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -792,9 +826,10 @@
      "text": "동방유진",
      "shape": "ko-4syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "동방유진"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -816,9 +851,10 @@
      "text": "서문하린",
      "shape": "ko-4syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "서문하린"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -839,9 +875,10 @@
      "text": "어금보람",
      "shape": "ko-4syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "어금보람"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -861,9 +898,10 @@
      "text": "제갈태윤",
      "shape": "ko-4syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "제갈태윤"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -883,9 +921,10 @@
      "text": "남궁현",
      "shape": "ko-compound-surname-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "남궁현"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -907,9 +946,10 @@
      "text": "선우은",
      "shape": "ko-compound-surname-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "선우은"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -929,9 +969,10 @@
      "text": "황보찬",
      "shape": "ko-compound-surname-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "황보찬"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -951,9 +992,10 @@
      "text": "독고준",
      "shape": "ko-compound-surname-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "독고준"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -973,9 +1015,10 @@
      "text": "사공빈",
      "shape": "ko-compound-surname-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "사공빈"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -997,9 +1040,10 @@
      "text": "제갈솔",
      "shape": "ko-compound-surname-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "제갈솔"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1020,9 +1064,10 @@
      "text": "남궁아",
      "shape": "ko-compound-surname-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "남궁아"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1044,9 +1089,10 @@
      "text": "선우진",
      "shape": "ko-compound-surname-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "선우진"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1066,9 +1112,10 @@
      "text": "황보율",
      "shape": "ko-compound-surname-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "황보율"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1089,9 +1136,10 @@
      "text": "서문현",
      "shape": "ko-compound-surname-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "서문현"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1112,9 +1160,10 @@
      "text": "채유정님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "채유정님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1134,9 +1183,10 @@
      "text": "류지환님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "류지환님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1156,9 +1206,10 @@
      "text": "석다은님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "석다은님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1179,9 +1230,10 @@
      "text": "문서현님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "문서현님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1201,13 +1253,16 @@
      "text": "금나리 씨",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
-      "금나리",
+     "identifyingTokens": [
+      "금나리"
+     ],
+     "genericTokens": [
       "씨"
      ]
     }
    ],
    "subjectTokens": [
+    "씨",
     "퇴사",
     "면담"
    ]
@@ -1224,13 +1279,16 @@
      "text": "맹은채 씨",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
-      "맹은채",
+     "identifyingTokens": [
+      "맹은채"
+     ],
+     "genericTokens": [
       "씨"
      ]
     }
    ],
    "subjectTokens": [
+    "씨",
     "면접",
     "백엔드"
    ]
@@ -1247,15 +1305,18 @@
      "text": "육진우 씨",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
-      "육진우",
+     "identifyingTokens": [
+      "육진우"
+     ],
+     "genericTokens": [
       "씨"
      ]
     }
    ],
    "subjectTokens": [
     "커리어",
-    "상담"
+    "상담",
+    "씨"
    ]
   },
   {
@@ -1270,9 +1331,10 @@
      "text": "위소담선생님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "위소담선생님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1292,9 +1354,10 @@
      "text": "진하윤선생님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "진하윤선생님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1315,9 +1378,10 @@
      "text": "공태희교수님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "공태희교수님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1337,9 +1401,10 @@
      "text": "용가온대리님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "용가온대리님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1361,9 +1426,10 @@
      "text": "빈이안대리님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "빈이안대리님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1385,9 +1451,10 @@
      "text": "추민혁책임님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "추민혁책임님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1407,9 +1474,10 @@
      "text": "감도영책임님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "감도영책임님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1428,9 +1496,10 @@
      "text": "원서윤팀장",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "원서윤팀장"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1452,9 +1521,10 @@
      "text": "표지안부장님",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "표지안부장님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1475,9 +1545,10 @@
      "text": "하도겸과장",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "하도겸과장"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1499,9 +1570,10 @@
      "text": "연채원이사님",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "연채원이사님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1523,9 +1595,10 @@
      "text": "은서하실장",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "은서하실장"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1545,9 +1618,10 @@
      "text": "갈우진팀장님",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "갈우진팀장님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1567,9 +1641,10 @@
      "text": "길가은대표님",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "길가은대표님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1589,9 +1664,10 @@
      "text": "복수민차장님",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "복수민차장님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1612,9 +1688,10 @@
      "text": "신해든센터장",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "신해든센터장"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1635,9 +1712,10 @@
      "text": "옥지유매니저",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "옥지유매니저"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1656,9 +1734,10 @@
      "text": "팽도아리드",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "팽도아리드"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1680,9 +1759,10 @@
      "text": "남이든파트장",
      "shape": "ko-title-compound",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "남이든파트장"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1703,14 +1783,17 @@
      "text": "팀장 도예린",
      "shape": "ko-title-prefix",
      "scored": true,
-     "tokens": [
-      "팀장",
+     "identifyingTokens": [
       "도예린"
+     ],
+     "genericTokens": [
+      "팀장"
      ]
     }
    ],
    "subjectTokens": [
-    "멘토링"
+    "멘토링",
+    "팀장"
    ]
   },
   {
@@ -1725,13 +1808,16 @@
      "text": "부장 반서후",
      "shape": "ko-title-prefix",
      "scored": true,
-     "tokens": [
-      "부장",
+     "identifyingTokens": [
       "반서후"
+     ],
+     "genericTokens": [
+      "부장"
      ]
     }
    ],
    "subjectTokens": [
+    "부장",
     "면접",
     "백엔드"
    ]
@@ -1748,13 +1834,16 @@
      "text": "과장 소이준",
      "shape": "ko-title-prefix",
      "scored": true,
-     "tokens": [
-      "과장",
+     "identifyingTokens": [
       "소이준"
+     ],
+     "genericTokens": [
+      "과장"
      ]
     }
    ],
    "subjectTokens": [
+    "과장",
     "입사",
     "환영",
     "점심"
@@ -1772,15 +1861,18 @@
      "text": "이사 양하윤",
      "shape": "ko-title-prefix",
      "scored": true,
-     "tokens": [
-      "이사",
+     "identifyingTokens": [
       "양하윤"
+     ],
+     "genericTokens": [
+      "이사"
      ]
     }
    ],
    "subjectTokens": [
     "주간",
     "싱크",
+    "이사",
     "스프린트"
    ]
   },
@@ -1796,13 +1888,16 @@
      "text": "실장 두시은",
      "shape": "ko-title-prefix",
      "scored": true,
-     "tokens": [
-      "실장",
+     "identifyingTokens": [
       "두시은"
+     ],
+     "genericTokens": [
+      "실장"
      ]
     }
    ],
    "subjectTokens": [
+    "실장",
     "결과",
     "공유",
     "미팅"
@@ -1820,15 +1915,18 @@
      "text": "대리 라도건",
      "shape": "ko-title-prefix",
      "scored": true,
-     "tokens": [
-      "대리",
+     "identifyingTokens": [
       "라도건"
+     ],
+     "genericTokens": [
+      "대리"
      ]
     }
    ],
    "subjectTokens": [
     "커리어",
-    "상담"
+    "상담",
+    "대리"
    ]
   },
   {
@@ -1843,13 +1941,16 @@
      "text": "매니저 마서현",
      "shape": "ko-title-prefix",
      "scored": true,
-     "tokens": [
-      "매니저",
+     "identifyingTokens": [
       "마서현"
+     ],
+     "genericTokens": [
+      "매니저"
      ]
     }
    ],
    "subjectTokens": [
+    "매니저",
     "인수인계",
     "회의"
    ]
@@ -1866,13 +1967,16 @@
      "text": "리드 가윤재",
      "shape": "ko-title-prefix",
      "scored": true,
-     "tokens": [
-      "리드",
+     "identifyingTokens": [
       "가윤재"
+     ],
+     "genericTokens": [
+      "리드"
      ]
     }
    ],
    "subjectTokens": [
+    "리드",
     "면접",
     "백엔드"
    ]
@@ -1890,10 +1994,11 @@
      "text": "Minjun Seo",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Minjun",
       "Seo"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1914,10 +2019,11 @@
      "text": "Hana Yoon",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Hana",
       "Yoon"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1939,10 +2045,11 @@
      "text": "Seoyeon Choi",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Seoyeon",
       "Choi"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1963,10 +2070,11 @@
      "text": "Taeyang Jung",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Taeyang",
       "Jung"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -1987,10 +2095,11 @@
      "text": "Yuna Han",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Yuna",
       "Han"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2012,10 +2121,11 @@
      "text": "Jiwoo Kang",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Jiwoo",
       "Kang"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2036,10 +2146,11 @@
      "text": "Harin Shin",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Harin",
       "Shin"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2060,10 +2171,11 @@
      "text": "Eunchae Moon",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Eunchae",
       "Moon"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2085,10 +2197,11 @@
      "text": "Daniel Cho",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Daniel",
       "Cho"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2110,10 +2223,11 @@
      "text": "Rina Okada",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Rina",
       "Okada"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2134,10 +2248,11 @@
      "text": "Wei Chen",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Wei",
       "Chen"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2158,10 +2273,11 @@
      "text": "S. Park",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "S",
       "Park"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2183,11 +2299,12 @@
      "text": "J.H. Lee",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "J",
       "H",
       "Lee"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2208,10 +2325,11 @@
      "text": "minho.seo",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "minho",
       "seo"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2231,10 +2349,11 @@
      "text": "존 도우",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "존",
       "도우"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2254,10 +2373,11 @@
      "text": "제인 스미스",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "제인",
       "스미스"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2277,10 +2397,11 @@
      "text": "마리아 로페즈",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "마리아",
       "로페즈"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2301,10 +2422,11 @@
      "text": "안나 코발스키",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "안나",
       "코발스키"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2325,10 +2447,11 @@
      "text": "아흐메드 하산",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "아흐메드",
       "하산"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2348,10 +2471,11 @@
      "text": "세르게이 이바노프",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "세르게이",
       "이바노프"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2372,10 +2496,11 @@
      "text": "로라 베커",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "로라",
       "베커"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2395,10 +2520,11 @@
      "text": "피에르 뒤랑",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "피에르",
       "뒤랑"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2420,10 +2546,11 @@
      "text": "엘레나 가르시아",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "엘레나",
       "가르시아"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2444,10 +2571,11 @@
      "text": "데이비드 첸",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "데이비드",
       "첸"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2467,10 +2595,11 @@
      "text": "사라 코헨",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "사라",
       "코헨"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2490,10 +2619,11 @@
      "text": "요한 슈미트",
      "shape": "foreign-translit",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "요한",
       "슈미트"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2513,9 +2643,10 @@
      "text": "민지누나",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "민지누나"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2535,9 +2666,10 @@
      "text": "곰돌이",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "곰돌이"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2558,9 +2690,10 @@
      "text": "두부",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "두부"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2579,9 +2712,10 @@
      "text": "J형",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "J형"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2603,9 +2737,10 @@
      "text": "미니",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "미니"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2626,9 +2761,10 @@
      "text": "쭌이",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "쭌이"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2648,9 +2784,10 @@
      "text": "별이쌤",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "별이쌤"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2670,9 +2807,10 @@
      "text": "몽이",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "몽이"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2693,9 +2831,10 @@
      "text": "코코",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "코코"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2715,9 +2854,10 @@
      "text": "막내님",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "막내님"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2738,9 +2878,10 @@
      "text": "Falcon",
      "shape": "codename",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Falcon"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2760,13 +2901,16 @@
      "text": "프로젝트 오로라",
      "shape": "codename",
      "scored": true,
-     "tokens": [
-      "프로젝트",
+     "identifyingTokens": [
       "오로라"
+     ],
+     "genericTokens": [
+      "프로젝트"
      ]
     }
    ],
    "subjectTokens": [
+    "프로젝트",
     "데모",
     "미팅"
    ]
@@ -2784,13 +2928,16 @@
      "text": "Project Nimbus",
      "shape": "codename",
      "scored": true,
-     "tokens": [
-      "Project",
+     "identifyingTokens": [
       "Nimbus"
+     ],
+     "genericTokens": [
+      "Project"
      ]
     }
    ],
    "subjectTokens": [
+    "Project",
     "vendor",
     "review"
    ]
@@ -2807,9 +2954,10 @@
      "text": "블루문",
      "shape": "codename",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "블루문"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2830,13 +2978,16 @@
      "text": "Operation Tango",
      "shape": "codename",
      "scored": true,
-     "tokens": [
-      "Operation",
+     "identifyingTokens": [
       "Tango"
+     ],
+     "genericTokens": [
+      "Operation"
      ]
     }
    ],
    "subjectTokens": [
+    "Operation",
     "demo",
     "prep"
    ]
@@ -2853,13 +3004,16 @@
      "text": "코드명 해바라기",
      "shape": "codename",
      "scored": true,
-     "tokens": [
-      "코드명",
+     "identifyingTokens": [
       "해바라기"
+     ],
+     "genericTokens": [
+      "코드명"
      ]
     }
    ],
    "subjectTokens": [
+    "코드명",
     "계약",
     "검토"
    ]
@@ -2877,13 +3031,16 @@
      "text": "Atlas-2",
      "shape": "codename",
      "scored": true,
-     "tokens": [
-      "Atlas",
+     "identifyingTokens": [
+      "Atlas"
+     ],
+     "genericTokens": [
       "2"
      ]
     }
    ],
    "subjectTokens": [
+    "2",
     "demo",
     "prep"
    ]
@@ -2900,9 +3057,10 @@
      "text": "레드우드",
      "shape": "codename",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "레드우드"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2923,9 +3081,10 @@
      "text": "Hydra",
      "shape": "codename",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Hydra"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2945,13 +3104,16 @@
      "text": "프로젝트 은하수",
      "shape": "codename",
      "scored": true,
-     "tokens": [
-      "프로젝트",
+     "identifyingTokens": [
       "은하수"
+     ],
+     "genericTokens": [
+      "프로젝트"
      ]
     }
    ],
    "subjectTokens": [
+    "프로젝트",
     "정기",
     "점검",
     "회의"
@@ -2969,9 +3131,10 @@
      "text": "한결소프트",
      "shape": "organization",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "한결소프트"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -2991,9 +3154,10 @@
      "text": "다온물류",
      "shape": "organization",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "다온물류"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3014,14 +3178,17 @@
      "text": "Brightwave Labs",
      "shape": "organization",
      "scored": true,
-     "tokens": [
-      "Brightwave",
+     "identifyingTokens": [
+      "Brightwave"
+     ],
+     "genericTokens": [
       "Labs"
      ]
     }
    ],
    "subjectTokens": [
-    "Kickoff"
+    "Kickoff",
+    "Labs"
    ]
   },
   {
@@ -3037,15 +3204,18 @@
      "text": "Northgate Partners",
      "shape": "organization",
      "scored": true,
-     "tokens": [
-      "Northgate",
+     "identifyingTokens": [
+      "Northgate"
+     ],
+     "genericTokens": [
       "Partners"
      ]
     }
    ],
    "subjectTokens": [
     "Planning",
-    "sync"
+    "sync",
+    "Partners"
    ]
   },
   {
@@ -3060,9 +3230,10 @@
      "text": "한울정밀",
      "shape": "organization",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "한울정밀"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3083,9 +3254,10 @@
      "text": "OrbitPay",
      "shape": "organization",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "OrbitPay"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3105,14 +3277,17 @@
      "text": "Lumen Foods",
      "shape": "organization",
      "scored": true,
-     "tokens": [
-      "Lumen",
+     "identifyingTokens": [
+      "Lumen"
+     ],
+     "genericTokens": [
       "Foods"
      ]
     }
    ],
    "subjectTokens": [
-    "Kickoff"
+    "Kickoff",
+    "Foods"
    ]
   },
   {
@@ -3127,9 +3302,10 @@
      "text": "다래제약",
      "shape": "organization",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "다래제약"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3149,9 +3325,10 @@
      "text": "새빛건설",
      "shape": "organization",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "새빛건설"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3173,13 +3350,16 @@
      "text": "Kestrel Logistics",
      "shape": "organization",
      "scored": true,
-     "tokens": [
-      "Kestrel",
+     "identifyingTokens": [
+      "Kestrel"
+     ],
+     "genericTokens": [
       "Logistics"
      ]
     }
    ],
    "subjectTokens": [
+    "Logistics",
     "demo",
     "prep"
    ]
@@ -3196,13 +3376,16 @@
      "text": "누리온 모빌리티",
      "shape": "organization",
      "scored": true,
-     "tokens": [
-      "누리온",
+     "identifyingTokens": [
+      "누리온"
+     ],
+     "genericTokens": [
       "모빌리티"
      ]
     }
    ],
    "subjectTokens": [
+    "모빌리티",
     "킥오프"
    ]
   },
@@ -3218,9 +3401,10 @@
      "text": "청솔교육",
      "shape": "organization",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "청솔교육"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3241,13 +3425,16 @@
      "text": "Aster Capital",
      "shape": "organization",
      "scored": true,
-     "tokens": [
-      "Aster",
+     "identifyingTokens": [
+      "Aster"
+     ],
+     "genericTokens": [
       "Capital"
      ]
     }
    ],
    "subjectTokens": [
+    "Capital",
     "quarterly",
     "check",
     "in"
@@ -3265,9 +3452,10 @@
      "text": "미래로에너지",
      "shape": "organization",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "미래로에너지"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3288,13 +3476,16 @@
      "text": "해운대 지점",
      "shape": "place",
      "scored": true,
-     "tokens": [
-      "해운대",
+     "identifyingTokens": [
+      "해운대"
+     ],
+     "genericTokens": [
       "지점"
      ]
     }
    ],
    "subjectTokens": [
+    "지점",
     "킥오프"
    ]
   },
@@ -3310,14 +3501,18 @@
      "text": "Gangnam Tower B동",
      "shape": "place",
      "scored": true,
-     "tokens": [
-      "Gangnam",
+     "identifyingTokens": [
+      "Gangnam"
+     ],
+     "genericTokens": [
       "Tower",
       "B동"
      ]
     }
    ],
    "subjectTokens": [
+    "Tower",
+    "B동",
     "정기",
     "점검",
     "회의"
@@ -3335,13 +3530,16 @@
      "text": "대전 연구소",
      "shape": "place",
      "scored": true,
-     "tokens": [
-      "대전",
+     "identifyingTokens": [
+      "대전"
+     ],
+     "genericTokens": [
       "연구소"
      ]
     }
    ],
    "subjectTokens": [
+    "연구소",
     "제안",
     "발표"
    ]
@@ -3359,13 +3557,16 @@
      "text": "Seongsu Studio",
      "shape": "place",
      "scored": true,
-     "tokens": [
-      "Seongsu",
+     "identifyingTokens": [
+      "Seongsu"
+     ],
+     "genericTokens": [
       "Studio"
      ]
     }
    ],
    "subjectTokens": [
+    "Studio",
     "quarterly",
     "check",
     "in"
@@ -3383,13 +3584,16 @@
      "text": "제주 오피스",
      "shape": "place",
      "scored": true,
-     "tokens": [
-      "제주",
+     "identifyingTokens": [
+      "제주"
+     ],
+     "genericTokens": [
       "오피스"
      ]
     }
    ],
    "subjectTokens": [
+    "오피스",
     "정기",
     "점검",
     "회의"
@@ -3407,14 +3611,18 @@
      "text": "판교 3층 회의실",
      "shape": "place",
      "scored": true,
-     "tokens": [
-      "판교",
+     "identifyingTokens": [
+      "판교"
+     ],
+     "genericTokens": [
       "3층",
       "회의실"
      ]
     }
    ],
    "subjectTokens": [
+    "3층",
+    "회의실",
     "정기",
     "점검",
     "회의"
@@ -3432,11 +3640,12 @@
      "text": "인사평가 결과 면담",
      "shape": "confidential-subject",
      "scored": false,
-     "tokens": [
+     "identifyingTokens": [
       "인사평가",
       "결과",
       "면담"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3455,11 +3664,12 @@
      "text": "징계위원회 사전 논의",
      "shape": "confidential-subject",
      "scored": false,
-     "tokens": [
+     "identifyingTokens": [
       "징계위원회",
       "사전",
       "논의"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3478,11 +3688,12 @@
      "text": "인수합병 검토 회의",
      "shape": "confidential-subject",
      "scored": false,
-     "tokens": [
+     "identifyingTokens": [
       "인수합병",
       "검토",
       "회의"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": []
@@ -3499,11 +3710,12 @@
      "text": "건강검진 결과 상담",
      "shape": "confidential-subject",
      "scored": false,
-     "tokens": [
+     "identifyingTokens": [
       "건강검진",
       "결과",
       "상담"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3522,11 +3734,12 @@
      "text": "구조조정 일정 논의",
      "shape": "confidential-subject",
      "scored": false,
-     "tokens": [
+     "identifyingTokens": [
       "구조조정",
       "일정",
       "논의"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": []
@@ -3543,11 +3756,12 @@
      "text": "layoff planning sync",
      "shape": "confidential-subject",
      "scored": false,
-     "tokens": [
+     "identifyingTokens": [
       "layoff",
       "planning",
       "sync"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3566,11 +3780,12 @@
      "text": "연봉 협상 면담",
      "shape": "confidential-subject",
      "scored": false,
-     "tokens": [
+     "identifyingTokens": [
       "연봉",
       "협상",
       "면담"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3589,12 +3804,13 @@
      "text": "소송 대응 전략 회의",
      "shape": "confidential-subject",
      "scored": false,
-     "tokens": [
+     "identifyingTokens": [
       "소송",
       "대응",
       "전략",
       "회의"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3613,17 +3829,19 @@
      "text": "하수아",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "하수아"
-     ]
+     ],
+     "genericTokens": []
     },
     {
      "text": "노윤서",
      "shape": "ko-3syl",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "노윤서"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3644,8 +3862,10 @@
      "text": "동방진 팀장님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
-      "동방진",
+     "identifyingTokens": [
+      "동방진"
+     ],
+     "genericTokens": [
       "팀장님"
      ]
     },
@@ -3653,14 +3873,18 @@
      "text": "선우하린 책임님",
      "shape": "ko-honorific",
      "scored": true,
-     "tokens": [
-      "선우하린",
+     "identifyingTokens": [
+      "선우하린"
+     ],
+     "genericTokens": [
       "책임님"
      ]
     }
    ],
    "subjectTokens": [
+    "팀장님",
     "&",
+    "책임님",
     "주간",
     "싱크"
    ]
@@ -3678,19 +3902,21 @@
      "text": "Sora Baek",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Sora",
       "Baek"
-     ]
+     ],
+     "genericTokens": []
     },
     {
      "text": "Joon Ahn",
      "shape": "romanized",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "Joon",
       "Ahn"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3710,17 +3936,19 @@
      "text": "푸른숲물류",
      "shape": "organization",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "푸른숲물류"
-     ]
+     ],
+     "genericTokens": []
     },
     {
      "text": "새솔전자",
      "shape": "organization",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "새솔전자"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
@@ -3741,17 +3969,19 @@
      "text": "하늘누나랑",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "하늘누나랑"
-     ]
+     ],
+     "genericTokens": []
     },
     {
      "text": "콩이",
      "shape": "nickname",
      "scored": true,
-     "tokens": [
+     "identifyingTokens": [
       "콩이"
-     ]
+     ],
+     "genericTokens": []
     }
    ],
    "subjectTokens": [
