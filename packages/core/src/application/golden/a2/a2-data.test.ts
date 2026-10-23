@@ -25,11 +25,12 @@ describe('AP-8 answer-step plan gold', () => {
   const corpus = json<{ cases: Ap8Case[] }>('agent-plan.ap8.v1.json');
   const cases = corpus.cases;
 
-  it('has at least 40 cases, all pending and in batch AP-8', () => {
+  it('has at least 40 cases, all owner-approved on 2026-10-23 and in batch AP-8', () => {
     expect(cases.length).toBeGreaterThanOrEqual(40);
     for (const c of cases) {
       expect(c.batch).toBe('AP-8');
-      expect(c.status).toBe('pending-owner-approval');
+      expect(c.status).toBe('owner-approved');
+      expect((c as unknown as { approvedOn: string }).approvedOn).toBe('2026-10-23');
       expect(['ko', 'en', 'mixed']).toContain(c.lang);
       expect(c.id).toMatch(/^ap-[pn]8\d\d$/);
     }
@@ -76,6 +77,24 @@ describe('AP-8 answer-step plan gold', () => {
       if (c.trapRefusal !== undefined) expect(TRAP_REFUSALS).toContain(c.trapRefusal);
     }
     expect([...seenModes].sort()).toEqual([...MODES].sort());
+  });
+
+  it('encodes the owner decisions of 2026-10-23', () => {
+    const by = new Map(cases.map((c) => [c.id, c as unknown as Record<string, unknown>]));
+    expect(by.get('ap-p818')!.mode).toBe('grounded');
+    expect(by.has('ap-n822')).toBe(false);
+    const moved = by.get('ap-p843')!;
+    expect(moved.formerId).toBe('ap-n822');
+    expect(moved.mode).toBe('grounded');
+    expect(moved.trapRefusal).toBe('answer-generate-one-ref');
+    expect((by.get('ap-n808')!.q3 as { write: string }).write).toBe('not-run');
+    expect((by.get('ap-n809')!.q3 as { write: string }).write).toBe('clarification');
+    for (const id of ['ap-p819', 'ap-p821', 'ap-p822', 'ap-p823', 'ap-p824', 'ap-p825', 'ap-p838', 'ap-p839', 'ap-p840', 'ap-p842', 'ap-p843']) {
+      expect(by.get(id)!.localJudgmentScope, id).toBe(true);
+      expect(by.get(id)!.mode, id).toBe('grounded');
+    }
+    expect(String(by.get('ap-n802')!.note)).toMatch(/plain one-step read/u);
+    expect(String(by.get('ap-n803')!.note)).toMatch(/plain one-step read/u);
   });
 
   it('covers every required negative family', () => {
@@ -282,6 +301,31 @@ describe('G4 blind-comparison case set', () => {
   });
 });
 
+describe('local-judgment measurement set', () => {
+  interface Lj { id: string; source: string; lang: string; judgment: string; ownerRequest: string; items: unknown[]; count?: number }
+  const cases = json<{ cases: Lj[] }>('local-judgment-cases.v1.json').cases;
+  const manifest = json<{ files: Record<string, { sha256: string; cases: number }>; preRegistered: { bar: string }; coverage: Record<string, number>; status: string }>('local-judgment-manifest.v1.json');
+
+  it('has at least 30 multi-item synthetic cases over calendar, mail, jira, github and todo', () => {
+    expect(cases.length).toBeGreaterThanOrEqual(30);
+    expect(new Set(cases.map((c) => c.id)).size).toBe(cases.length);
+    expect(new Set(cases.map((c) => normalize(c.ownerRequest))).size).toBe(cases.length);
+    for (const src of ['calendar', 'mail', 'jira', 'github', 'todo']) expect(cases.filter((c) => c.source === src).length, src).toBeGreaterThanOrEqual(5);
+    expect(cases.some((c) => c.lang === 'ko') && cases.some((c) => c.lang === 'en')).toBe(true);
+    for (const c of cases) {
+      expect(c.items.length).toBeGreaterThanOrEqual(3);
+      expect(JSON.stringify(c.items)).not.toMatch(/@(?!example\.test)/u);
+    }
+  });
+
+  it('is frozen by hash with the pre-registered bar', () => {
+    expect(manifest.files['local-judgment-cases.v1.json']!.sha256).toBe(sha256(read('local-judgment-cases.v1.json')));
+    expect(manifest.files['local-judgment-cases.v1.json']!.cases).toBe(cases.length);
+    expect(manifest.preRegistered.bar).toMatch(/80%/u);
+    expect(manifest.coverage).toEqual(Object.fromEntries(['calendar', 'mail', 'jira', 'github', 'todo'].map((s) => [s, cases.filter((c) => c.source === s).length])));
+  });
+});
+
 describe('G5 name-filter held-out set', () => {
   interface Held { text: string; shape: string; scored: boolean; tokens: string[] }
   interface G5Case { id: string; lang: string; title: string; nameFields: string[]; held: Held[]; subjectTokens: string[] }
@@ -349,7 +393,7 @@ describe('contamination lint (RAG-0 measures) against every golden corpus', () =
   const goldPrep = goldUnique.map((g) => ({ g, tokens: new Set(shapeTokens(g)), grams: charNgrams(g), long: Array.from(normalize(g).replace(/ /g, '')).length >= 10 }));
 
   const own: string[] = [];
-  for (const f of ['agent-plan.ap8.v1.json', 'g4-generation-cases.v1.json', 's2-answer.redteam.v1.json']) harvest(json(f), own);
+  for (const f of ['agent-plan.ap8.v1.json', 'g4-generation-cases.v1.json', 's2-answer.redteam.v1.json', 'local-judgment-cases.v1.json']) harvest(json(f), own);
   for (const c of json<{ cases: { title: string }[] }>('g5-name-heldout.v1.json').cases) own.push(c.title);
 
   it('reads a substantial gold set and finds no near copy, exact copy or long containment', () => {

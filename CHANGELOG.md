@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A2: AP-8 owner review and the local-judgment set (data only, 2026-10-23)
+
+- **Changed (data).** All 66 AP-8 cases are owner-approved (51 ok, 15 fix, no captures provided, so the capture
+  placeholders stay). ap-p818 is grounded over the PR read; ap-n822 became ap-p843 (grounded over two reads); ap-n808
+  and ap-n809 encode the Q3 read-plus-write rule; ap-n802 and ap-n803 are clarified as plain reads.
+- **Decided.** Heavy multi-item judgment stays local (`grounded`, `qwen3:8b`) and is measured first.
+- **Added (data).** A local-judgment quality set: 35 synthetic multi-item cases over five sources, pre-registered bar
+  of 80% usable by blind owner labels, with a sha256 manifest. No egress is authorized.
+
 ## Unreleased — ADR-0121 A2 stage A0: offline data sets (data only, 2026-10-23)
 
 - **Added (data, `packages/core/src/application/golden/a2/`).** No runtime code, no prompt change, no model call.

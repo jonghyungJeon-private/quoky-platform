@@ -1,0 +1,72 @@
+{
+ "version": 1,
+ "set": "local-judgment-cases",
+ "description": "Freeze record for the local-judgment measurement. The hash becomes the freeze when the owner approves the file (DECISIONS.md measurement note, before any run). Any edit changes the hash.",
+ "status": "pending-owner-approval",
+ "files": {
+  "local-judgment-cases.v1.json": {
+   "sha256": "c6bc1e7ea26c8b6af33bb4f101f1391f03fe7f015849cb7232971270857c4d60",
+   "cases": 35
+  }
+ },
+ "seed": 20261024,
+ "preRegistered": {
+  "labels": [
+   "useless",
+   "usable",
+   "good"
+  ],
+  "labeller": "owner, blind, one output per case",
+  "bar": "usable-or-better on >= 80% of cases",
+  "onFail": "consider an owner-confirmed title-list egress amendment (a separate ADR-0121 amendment, not now)",
+  "onPass": "judgment stays local; no egress change"
+ },
+ "coverage": {
+  "calendar": 7,
+  "mail": 7,
+  "jira": 7,
+  "github": 7,
+  "todo": 7
+ },
+ "toBeRecordedBeforeRun": {
+  "promptSha256": null,
+  "modelDigest": null
+ },
+ "presentationOrder": [
+  "lj-014",
+  "lj-010",
+  "lj-034",
+  "lj-028",
+  "lj-011",
+  "lj-022",
+  "lj-020",
+  "lj-027",
+  "lj-015",
+  "lj-033",
+  "lj-012",
+  "lj-013",
+  "lj-009",
+  "lj-030",
+  "lj-018",
+  "lj-031",
+  "lj-005",
+  "lj-019",
+  "lj-029",
+  "lj-026",
+  "lj-007",
+  "lj-008",
+  "lj-023",
+  "lj-016",
+  "lj-001",
+  "lj-035",
+  "lj-002",
+  "lj-025",
+  "lj-003",
+  "lj-032",
+  "lj-017",
+  "lj-004",
+  "lj-024",
+  "lj-021",
+  "lj-006"
+ ]
+}

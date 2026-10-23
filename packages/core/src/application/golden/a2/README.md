@@ -11,7 +11,7 @@ duplicates, hashes, reference checks, contamination lint against every `../*.jso
   (`facts | words | grounded | generate | none`), `provenance`, `replaceWithCapture`, `regressionOnly`, `dependsOn`,
   `ownerDecision`; `v-rule-trap` positives also carry a refused `trap`. The `answer` step is the A2-D1 form
   `{answer: [refs], mode, facts?, count?}`.
-- Every case is `pending-owner-approval`: not gating. Cases with `replaceWithCapture: true` are synthetic stand-ins for
+- Every case is `owner-approved` (2026-10-23; each keeps `ownerVerdict` and `ownerNote`), but the set does not gate until at least half of the `replaceWithCapture` cases are replaced by real captures (the owner gave none in the first round). `q3` encodes the read-plus-write rule on two negatives; ap-p843 was ap-n822. Cases with `replaceWithCapture: true` are synthetic stand-ins for
   the owner's DM and live captures (the record wants at least half from captures). The two 2026-10-22 trigger texts are
   `regressionOnly` and are the owner's own words.
 - Cases with `ownerDecision: true` or a `note` that says "HOLD" or "decision" need the owner's call before approval.
@@ -46,3 +46,12 @@ duplicates, hashes, reference checks, contamination lint against every `../*.jso
 - Provenance: authored by an agent session with no access to a classifier prompt (none exists), no model call. Names
   are invented; coincidence with a real person or organization is possible and unintended. The owner should skim for
   accidental real names before the hash is frozen. Never use the set for prompt tuning.
+
+## `local-judgment-cases.v1.json`, `local-judgment-manifest.v1.json` (owner decision 2026-10-23)
+
+- Heavy multi-item judgment (prioritise, pick the important or urgent ones) stays local (`grounded`) and is measured
+  first. 35 synthetic cases: calendar, mail, jira, github and todo, 7 each, KO and EN, 3 to 5 invented items each.
+- The owner labels each local output blind as `useless` / `usable` / `good` (G4 rubric wording). Bar: at least 80%
+  usable or better. Only a failure would open an owner-confirmed title-list egress amendment (not now).
+- The manifest holds the sha256, seed `20261024` and a precomputed order; prompt hash and model digest stay `null`
+  until the measurement note. The hash is a freeze only after the owner approves the file.

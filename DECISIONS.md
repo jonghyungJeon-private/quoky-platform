@@ -28998,7 +28998,7 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
 
 | Set | File | Count | sha256 | State |
 |---|---|---|---|---|
-| G1 AP-8 plan gold | `agent-plan.ap8.v1.json` | 66 cases (42 positives, 24 negatives); modes: facts 9, words 9, grounded 16, generate 8, none 23, ask 1; 51 marked `replaceWithCapture`; 2 regression-only | `42b02a4a94f55e1f80cff00540c295712665cac2ca90a7ddd4991a0c85a0341d` | pending the owner's review; not frozen, not gating |
+| G1 AP-8 plan gold | `agent-plan.ap8.v1.json` | 66 cases, all owner-approved 2026-10-23 (see the review record below); 51 still marked `replaceWithCapture` | `65d8222abd9bfed1d646a15594245b66571a9ee1e73fb01352eaf0669644e36a` | approved; not frozen; not gating until at least half are replaced by real captures |
 | G2 `s2-answer` | `s2-answer.redteam.v1.json` | 183 cases (answer 39, topic 55, consent 69, history 15, request 5; KO 144, EN 39); data only, no runner | `fbd770da2af17cd18439d40d3a2c2d71f416d1382cf8d78deaa37ad8d33c8591` | pending the owner's review; not frozen |
 | G4 cases | `g4-generation-cases.v1.json` | 36 synthetic cases (KO 22, EN 14) | `c598144ef77a72545582ee416421304a2d2dab5be660dd8c94b0a7137bd62c4c` | frozen candidate |
 | G4 rubric and seed | `g4-rubric.v1.json`, `g4-manifest.v1.json` | `useless` / `usable` / `good`; seed `20261023`; presentation plan precomputed | rubric `baee67a34fee27a42a5e0f19fcb267f1f6e0e25f95b4eaceedfedeb2e3bec87f`; case file hash is in its own row | frozen candidate |
@@ -29023,3 +29023,34 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
   3. The exact 10-minute boundary, and whether the recipient is re-checked at the yes after `dataUse` is removed,
      are not stated.
   4. A URL detector for scheme-less domains and `hxxp` shapes is not specified.
+
+#### ADR-0121 A2: AP-8 owner review record and owner decisions (2026-10-23)
+
+- **Review.** The owner reviewed AP-8 in the review artifact: 51 `ok`, 15 `fix`. All 66 cases are now `owner-approved`
+  (each case keeps `ownerVerdict`, `ownerNote`, `approvedOn`). By mode: grounded 19, none 22, facts 9, words 8,
+  generate 8; pending 0. **The owner provided no capture sentences in this round:** every `replaceWithCapture` flag
+  (51 of 66) stays, and at least half must still be replaced by real DM or live captures before AP-8 gates.
+- **Plain read (ap-n802, ap-n803).** The gold stays. Planner `none` means no multi-step plan; the read itself runs and
+  the list is shown. (The owner had read "none" as "nothing shows": that label came from the review UI.)
+- **Q3, read plus write in one turn (ratified 2026-10-23, ADR-0121 S2 note).** The write part goes to A6 with args taken
+  only from the write clause. A write clause that refers to this turn's read result (ordinal, deictic, "그 내용") is not
+  run and gets the decision (f) fixed note; missing args go to the existing clarification. Encoded as `q3` on:
+  - ap-n808 "내일 일정 보고 준비할 것들 할 일에 추가해줘": the calendar read runs, the write is not run, decision (f)
+    note;
+  - ap-n809 "금요일 미팅 아젠다 만들어서 참석자들한테 메일 보내줘": the write part goes to the existing mail-send
+    clarification (recipients, what to send); nothing is taken from read or generated content.
+- **Changed gold.** ap-p818 is now `grounded` over the PR read (the advice is based on the PR list). ap-n822 (generate
+  over two reads, refused by V6) became **ap-p843** (`formerId: ap-n822`), `grounded` over both reads; the V6 plan
+  stays as its refused trap. ap-n821 keeps the unbounded ask.
+- **Owner decision: heavy multi-item judgment stays LOCAL and is measured first.** Prioritise, pick the important one
+  and pick the urgent ones run as `grounded` on the pinned local model (`qwen3:8b`). The owner's comments that heavy
+  tasks might go to Claude or to `generate` (ap-p819, ap-p821..p825, ap-p838..p840, ap-p842, ap-n821, ap-n822) are
+  recorded on the cases (`localJudgmentScope`). A pre-registered **local-judgment quality set** measures it:
+  - `local-judgment-cases.v1.json`: 35 synthetic multi-item cases (calendar, mail, jira, github, todo, 7 each; KO and
+    EN), hash `c6bc1e7ea26c8b6af33bb4f101f1391f03fe7f015849cb7232971270857c4d60`, with
+    `local-judgment-manifest.v1.json` (seed `20261024`, order precomputed);
+  - the owner labels each local output blind as `useless` / `usable` / `good` (the G4 rubric wording);
+  - **bar: at least 80% usable or better.** Only if it fails would an owner-confirmed title-list egress amendment be
+    considered (a separate ADR-0121 amendment). **Not now: no egress is authorized by this decision.**
+  - The hash becomes the freeze when the owner approves the file; prompt hash and model digest are recorded in the
+    measurement note before any run (a Strict model-in-the-loop run).

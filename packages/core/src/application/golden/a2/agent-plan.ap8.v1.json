@@ -1,6 +1,6 @@
 {
  "version": 1,
- "description": "AP-8 (ADR-0121 A2, gate G1, proposal Part III A2-D19): answer-step plan gold. Offline DATA only; no runtime reads this file yet (the validator has no `answer` step before S2 is `active`), and the loader of agent-plan.v1.json does NOT load it. Every case is pending-owner-approval and NOT gating. Agent-drafted on 2026-10-23; the two trigger texts are the owner's real 2026-10-22 DMs and are regression-only (excluded from the accuracy group). Cases with replaceWithCapture:true are synthetic stand-ins to be replaced by the owner's DM and live captures in the review artifact (record: at least half from captures). Schema extensions over docs/plans/agent-plan-corpus-schema.md: `mode` (structural label: facts | words | grounded | generate | none), `provenance`, `replaceWithCapture`, `regressionOnly`, `dependsOn`, `ownerDecision`; positives of family v-rule-trap also carry a refused `trap`. Gold for `answer` follows A2-D1: {answer:[refs], mode, facts?, count?}. No real person names; no phrase list is implied (ADR-0120 D10).",
+ "description": "AP-8 (ADR-0121 A2, gate G1, proposal Part III A2-D19): answer-step plan gold. Offline DATA only; no runtime reads this file yet (the validator has no `answer` step before S2 is `active`), and the loader of agent-plan.v1.json does NOT load it. Every case is pending-owner-approval and NOT gating. Agent-drafted on 2026-10-23; the two trigger texts are the owner's real 2026-10-22 DMs and are regression-only (excluded from the accuracy group). Cases with replaceWithCapture:true are synthetic stand-ins to be replaced by the owner's DM and live captures in the review artifact (record: at least half from captures). Schema extensions over docs/plans/agent-plan-corpus-schema.md: `mode` (structural label: facts | words | grounded | generate | none), `provenance`, `replaceWithCapture`, `regressionOnly`, `dependsOn`, `ownerDecision`; positives of family v-rule-trap also carry a refused `trap`. Gold for `answer` follows A2-D1: {answer:[refs], mode, facts?, count?}. No real person names; no phrase list is implied (ADR-0120 D10). OWNER REVIEW 2026-10-23: 51 ok, 15 fix, all resolved and approved as recorded in each case (ownerVerdict, ownerNote). The owner provided NO capture sentences in this round: replaceWithCapture flags stay, and at least half must still be replaced by real DM/live captures before AP-8 gates. Q3 (read plus write in one turn) is encoded in `q3` on ap-n808/ap-n809.",
  "fixture": {
   "now": "2026-10-20T03:00:00.000Z",
   "timeZone": "Asia/Seoul",
@@ -11,7 +11,7 @@
   {
    "id": "ap-p801",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "regression",
    "mode": "words",
    "lang": "ko",
@@ -40,12 +40,14 @@
    },
    "provenance": "regression-trigger-2026-10-22",
    "regressionOnly": true,
-   "note": "Regression only (excluded from the accuracy group): the design was shaped on this text (proposal 0.1 #2). The text is the owner's real 2026-10-22 DM."
+   "note": "Regression only (excluded from the accuracy group): the design was shaped on this text (proposal 0.1 #2). The text is the owner's real 2026-10-22 DM.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p802",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "regression",
    "mode": "generate",
    "lang": "ko",
@@ -70,12 +72,14 @@
    },
    "provenance": "regression-trigger-2026-10-22",
    "regressionOnly": true,
-   "note": "Regression only (proposal 0.1 #3). The text is the owner's real 2026-10-22 DM."
+   "note": "Regression only (proposal 0.1 #3). The text is the owner's real 2026-10-22 DM.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p803",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "facts-only",
    "mode": "facts",
    "lang": "ko",
@@ -102,12 +106,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p804",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "facts-only",
    "mode": "facts",
    "lang": "ko",
@@ -133,12 +139,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p805",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "facts-only",
    "mode": "facts",
    "lang": "ko",
@@ -164,12 +172,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p806",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "facts-only",
    "mode": "facts",
    "lang": "en",
@@ -196,12 +206,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p807",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "facts-only",
    "mode": "facts",
    "lang": "ko",
@@ -229,12 +241,14 @@
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
    "dependsOn": "A1-D14",
-   "note": "free is refused by V5 until the A1-D14 free/busy entry is built (proposal A2-D3); stays pending until then."
+   "note": "free is refused by V5 until the A1-D14 free/busy entry is built (proposal A2-D3); stays pending until then.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p808",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "facts-only",
    "mode": "facts",
    "lang": "ko",
@@ -262,12 +276,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p809",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "facts-only",
    "mode": "facts",
    "lang": "en",
@@ -295,12 +311,14 @@
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
    "ownerDecision": true,
-   "note": "count fact over the listing; 'from today' is not a second read, so it is not computed here (owner to confirm)."
+   "note": "count fact over the listing; 'from today' is not a second read, so it is not computed here (owner to confirm).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p810",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "facts-only",
    "mode": "facts",
    "lang": "ko",
@@ -325,12 +343,14 @@
     ],
     "ambiguity": "CLEAR"
    },
-   "provenance": "synthetic"
+   "provenance": "synthetic",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p811",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "words-advice",
    "mode": "words",
    "lang": "ko",
@@ -352,12 +372,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p812",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "words-advice",
    "mode": "words",
    "lang": "ko",
@@ -378,12 +400,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p813",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "words-advice",
    "mode": "words",
    "lang": "en",
@@ -404,12 +428,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p814",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "words-advice",
    "mode": "words",
    "lang": "ko",
@@ -428,12 +454,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p815",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "words-advice",
    "mode": "words",
    "lang": "ko",
@@ -452,12 +480,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p816",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "words-advice",
    "mode": "words",
    "lang": "ko",
@@ -478,12 +508,14 @@
     ],
     "ambiguity": "CLEAR"
    },
-   "provenance": "synthetic"
+   "provenance": "synthetic",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p817",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "words-advice",
    "mode": "words",
    "lang": "ko",
@@ -509,14 +541,16 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p818",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
-   "family": "words-advice",
-   "mode": "words",
+   "status": "owner-approved",
+   "family": "grounded-advice",
+   "mode": "grounded",
    "lang": "ko",
    "text": "pull request 목록 보고 코드 리뷰 코멘트 친절하게 남기는 법 알려줘",
    "expect": {
@@ -528,20 +562,25 @@
       }
      },
      {
-      "answer": [],
-      "mode": "words"
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
      }
     ],
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
-   "note": "Korean with English nouns; kind pr per the GitHub item-type convention."
+   "note": "Owner 2026-10-23: the advice is to be based on the PR list, so grounded over the PR read (was words).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "이건 \npull request 목록 보고 코드 리뷰 코멘트 친절하게 남기는 법 알려줘 니까, \npull request 목록 기준으로 코드 리뷰 코멘트 친절하게 남기는 법을 알려줘야 하지 않을까? "
   },
   {
    "id": "ap-p819",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-pick",
    "mode": "grounded",
    "lang": "ko",
@@ -564,12 +603,17 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "이건 일정 중 업무에 따라 다를거 같아. 큰 업무 같은 경우는 claude , 가벼운 업무 같은 경우는 로컬 답 이 맞을거 같은데? ",
+   "localJudgmentScope": true,
+   "note": "Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first."
   },
   {
    "id": "ap-p820",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-compare",
    "mode": "grounded",
    "lang": "ko",
@@ -592,12 +636,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p821",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-pick",
    "mode": "grounded",
    "lang": "ko",
@@ -622,12 +668,16 @@
    },
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
-   "note": "Mail grounded is outside the first wave (record 4); the plan shape is still measured (shadow), the answer is not enabled."
+   "note": "Mail grounded is outside the first wave (record 4); the plan shape is still measured (shadow), the answer is not enabled. | Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "이것도 정확도가 낮아진다면, 새로 만들기 (generate) 가 되어야 될듯?",
+   "localJudgmentScope": true
   },
   {
    "id": "ap-p822",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-pick",
    "mode": "grounded",
    "lang": "ko",
@@ -648,12 +698,17 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "ap-p821와 동일한 맥락",
+   "localJudgmentScope": true,
+   "note": "Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first."
   },
   {
    "id": "ap-p823",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-order",
    "mode": "grounded",
    "lang": "en",
@@ -676,12 +731,17 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "ap-p821와 동일한 맥락",
+   "localJudgmentScope": true,
+   "note": "Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first."
   },
   {
    "id": "ap-p824",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-cross",
    "mode": "grounded",
    "lang": "ko",
@@ -709,12 +769,16 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic",
-   "note": "Order across two sources: one grounded call over both (A2-D6); labels decide the provider."
+   "note": "Order across two sources: one grounded call over both (A2-D6); labels decide the provider. | Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "ap-p821와 동일한 맥락",
+   "localJudgmentScope": true
   },
   {
    "id": "ap-p825",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-pick",
    "mode": "grounded",
    "lang": "ko",
@@ -736,12 +800,17 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "ap-p821와 동일한 맥락",
+   "localJudgmentScope": true,
+   "note": "Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first."
   },
   {
    "id": "ap-p826",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-pick",
    "mode": "grounded",
    "lang": "ko",
@@ -764,12 +833,15 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok",
+   "ownerNote": "ap-p821와 동일한 맥락"
   },
   {
    "id": "ap-p827",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-pick",
    "mode": "grounded",
    "lang": "en",
@@ -792,12 +864,15 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok",
+   "ownerNote": "ap-p821와 동일한 맥락"
   },
   {
    "id": "ap-p828",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-compare",
    "mode": "grounded",
    "lang": "en",
@@ -823,12 +898,15 @@
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
    "ownerDecision": true,
-   "note": "count 1 comes from 'which meeting'? Owner decides whether a singular is a count literal; the validator needs a literal N, so likely no count (HOLD)."
+   "note": "count 1 comes from 'which meeting'? Owner decides whether a singular is a count literal; the validator needs a literal N, so likely no count (HOLD).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok",
+   "ownerNote": "ap-p821와 동일한 맥락"
   },
   {
    "id": "ap-p829",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-cross",
    "mode": "grounded",
    "lang": "ko",
@@ -858,12 +936,14 @@
     ],
     "ambiguity": "CLEAR"
    },
-   "provenance": "synthetic"
+   "provenance": "synthetic",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p830",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "grounded-pick",
    "mode": "grounded",
    "lang": "ko",
@@ -887,12 +967,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p831",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "generate-one",
    "mode": "generate",
    "lang": "ko",
@@ -916,12 +998,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p832",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "generate-one",
    "mode": "generate",
    "lang": "ko",
@@ -946,12 +1030,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p833",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "generate-one",
    "mode": "generate",
    "lang": "en",
@@ -975,12 +1061,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p834",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "generate-one",
    "mode": "generate",
    "lang": "ko",
@@ -1005,12 +1093,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p835",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "generate-one",
    "mode": "generate",
    "lang": "ko",
@@ -1034,12 +1124,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p836",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "generate-one",
    "mode": "generate",
    "lang": "en",
@@ -1064,12 +1156,14 @@
     "ambiguity": "CLEAR"
    },
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p837",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "generate-one",
    "mode": "generate",
    "lang": "ko",
@@ -1094,12 +1188,14 @@
    },
    "provenance": "synthetic",
    "ownerDecision": true,
-   "note": "'정리' here means produce material, not summarize one read; mode choice measured (RA2-5)."
+   "note": "'정리' here means produce material, not summarize one read; mode choice measured (RA2-5).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p838",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "v-rule-trap",
    "mode": "grounded",
    "lang": "ko",
@@ -1155,12 +1251,16 @@
     "ambiguity": "CLEAR"
    },
    "trapRefusal": "answer-at-most-one",
-   "note": "Two answer steps are refused (V1); the plan is one answer over both reads."
+   "note": "Two answer steps are refused (V1); the plan is one answer over both reads. | Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?",
+   "localJudgmentScope": true
   },
   {
    "id": "ap-p839",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "v-rule-trap",
    "mode": "grounded",
    "lang": "ko",
@@ -1211,12 +1311,16 @@
     "ambiguity": "CLEAR"
    },
    "trapRefusal": "answer-not-last",
-   "note": "The answer step must be last (V1); the listing order is kept and the answer references step 1 only."
+   "note": "The answer step must be last (V1); the listing order is kept and the answer references step 1 only. | Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?",
+   "localJudgmentScope": true
   },
   {
    "id": "ap-p840",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "v-rule-trap",
    "mode": "grounded",
    "lang": "ko",
@@ -1254,12 +1358,17 @@
     ],
     "ambiguity": "CLEAR"
    },
-   "trapRefusal": "answer-needs-ref"
+   "trapRefusal": "answer-needs-ref",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?",
+   "localJudgmentScope": true,
+   "note": "Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first."
   },
   {
    "id": "ap-p841",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "v-rule-trap",
    "mode": "facts",
    "lang": "ko",
@@ -1303,12 +1412,14 @@
     "ambiguity": "CLEAR"
    },
    "trapRefusal": "answer-facts-empty",
-   "note": "facts mode needs a non-empty facts set (V4)."
+   "note": "facts mode needs a non-empty facts set (V4).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-p842",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "v-rule-trap",
    "mode": "grounded",
    "lang": "ko",
@@ -1358,47 +1469,60 @@
     "ambiguity": "CLEAR"
    },
    "trapRefusal": "answer-overlaps-summary",
-   "note": "Summary and answer never cover the same read (V8). Owner decides whether the gold is the answer-only plan or the summary-only plan."
+   "note": "Summary and answer never cover the same read (V8). Owner decides whether the gold is the answer-only plan or the summary-only plan. | Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?",
+   "localJudgmentScope": true
   },
   {
    "id": "ap-n801",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "plain-read",
    "mode": "none",
    "lang": "ko",
    "text": "목요일 일정 확인 좀 해줘 급한 건 아니고",
    "expect": "none",
    "provenance": "synthetic",
-   "note": "A plain read with no question or request to produce: no answer step. Planner none = the one-step read path."
+   "note": "A plain read with no question or request to produce: no answer step. Planner none = the one-step read path.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n802",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "plain-read",
    "mode": "none",
    "lang": "ko",
    "text": "안 읽은 메일 목록 한 번 띄워줘",
    "expect": "none",
-   "provenance": "synthetic"
+   "provenance": "synthetic",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "띄워주는게 맞지 않나? 한번 판단해봐.",
+   "note": "Owner 2026-10-23: plain one-step read. \"none\" means no multi-step plan; the read itself runs and the list is shown (the label came from the review UI)."
   },
   {
    "id": "ap-n803",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "plain-read",
    "mode": "none",
    "lang": "ko",
    "text": "이번 주 일정 한눈에 보게 정리해줘",
    "expect": "none",
    "provenance": "synthetic",
-   "note": "A single read plus 정리 stays the one-step selection (schema rule 8); no answer step."
+   "note": "A single read plus 정리 stays the one-step selection (schema rule 8); no answer step. | Owner 2026-10-23: plain one-step read. \"none\" means no multi-step plan; the read itself runs and the list is shown (the label came from the review UI).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok",
+   "ownerNote": "한눈에 요약해서 알려주면 될 거 같은데? 이슈가 있어?"
   },
   {
    "id": "ap-n804",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "general-knowledge",
    "mode": "none",
    "lang": "ko",
@@ -1406,36 +1530,42 @@
    "expect": "none",
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
-   "note": "A question with no read stays none and goes to honest chat."
+   "note": "A question with no read stays none and goes to honest chat.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n805",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "general-knowledge",
    "mode": "none",
    "lang": "ko",
    "text": "스프린트 회고는 어떤 순서로 진행하는 게 좋을까",
    "expect": "none",
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n806",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "general-knowledge",
    "mode": "none",
    "lang": "en",
    "text": "how do I politely decline a meeting invite",
    "expect": "none",
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n807",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "general-knowledge",
    "mode": "none",
    "lang": "ko",
@@ -1443,12 +1573,14 @@
    "expect": "none",
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
-   "note": "Mentions a calendar notion but asks for general advice; no read requested."
+   "note": "Mentions a calendar notion but asks for general advice; no read requested.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n808",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "write-request",
    "mode": "none",
    "lang": "ko",
@@ -1480,12 +1612,28 @@
     "ambiguity": "CLEAR"
    },
    "trapRefusal": "a6-in-plan",
-   "note": "A write of the result needs an A6 entry (S3); not part of a plan."
+   "note": "Q3 (ratified 2026-10-23): the write clause depends on this turn's read (\"준비할 것들\"), so it is not run; the calendar read runs and the decision (f) fixed note follows. expect none = no multi-step plan.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok",
+   "ownerNote": "이건 그럼 최종적으로 할 일에 추가가 안되는건가?",
+   "q3": {
+    "read": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     }
+    ],
+    "write": "not-run",
+    "reply": "read result plus the decision (f) fixed note; no write",
+    "reason": "the write clause refers to this turn's read result (Q3)"
+   }
   },
   {
    "id": "ap-n809",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "write-request",
    "mode": "none",
    "lang": "ko",
@@ -1493,12 +1641,24 @@
    "expect": "none",
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
-   "note": "Sending is a write with no S3; none."
+   "note": "Q3: the write part goes to the existing mail-send clarification (who to send to, what); nothing is taken from read or generated content. Owner 2026-10-23: ask for attendees etc. expect none = no multi-step plan.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "참석자가 누군지 등등 되묻기 필요",
+   "q3": {
+    "write": "clarification",
+    "existingEntry": "mail send",
+    "asks": [
+     "recipients",
+     "what to send"
+    ],
+    "reason": "the agenda and the attendees would come from the read or from generation; the write takes args only from its own clause (Q3)"
+   }
   },
   {
    "id": "ap-n810",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "write-request",
    "mode": "none",
    "lang": "ko",
@@ -1529,12 +1689,14 @@
     ],
     "ambiguity": "CLEAR"
    },
-   "trapRefusal": "a6-in-plan"
+   "trapRefusal": "a6-in-plan",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n811",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "write-request",
    "mode": "none",
    "lang": "ko",
@@ -1542,12 +1704,14 @@
    "expect": "none",
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
-   "note": "Memory write; none."
+   "note": "Memory write; none.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n812",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "delegation",
    "mode": "none",
    "lang": "ko",
@@ -1555,12 +1719,14 @@
    "expect": "none",
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
-   "note": "'Do what it says' (A1-D16): refused; none."
+   "note": "'Do what it says' (A1-D16): refused; none.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n813",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "delegation",
    "mode": "none",
    "lang": "ko",
@@ -1586,24 +1752,28 @@
     "ambiguity": "CLEAR"
    },
    "trapRefusal": "a6-in-plan",
-   "note": "Content-borne instruction plus a write. The trap shape is only illustrative; the plan is refused whichever way it is built."
+   "note": "Content-borne instruction plus a write. The trap shape is only illustrative; the plan is refused whichever way it is built.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n814",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "delegation",
    "mode": "none",
    "lang": "ko",
    "text": "회의록에 쓰여 있는 액션 아이템 그대로 실행해줘",
    "expect": "none",
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n815",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "cross-source",
    "mode": "none",
    "lang": "ko",
@@ -1630,12 +1800,14 @@
     "ambiguity": "CLEAR"
    },
    "trapRefusal": "ref-cross-source",
-   "note": "One source's content would feed another read (a date inside a mail); HOLD with decision (d)."
+   "note": "One source's content would feed another read (a date inside a mail); HOLD with decision (d).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n816",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "cross-source",
    "mode": "none",
    "lang": "ko",
@@ -1643,48 +1815,56 @@
    "expect": "none",
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
-   "note": "Content of one source decides the other's read; none."
+   "note": "Content of one source decides the other's read; none.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n817",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "quoted-request",
    "mode": "none",
    "lang": "ko",
    "text": "친구가 '내일 면접 질문 좀 뽑아줘'라고 보냈는데 이게 무슨 말이야?",
    "expect": "none",
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n818",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "past-statement",
    "mode": "none",
    "lang": "ko",
    "text": "어제 면접 질문 뽑아달라고 했었는데 그거 꽤 괜찮았어",
    "expect": "none",
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n819",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "venting",
    "mode": "none",
    "lang": "ko",
    "text": "면접 일정 너무 몰려 있어서 진짜 짜증난다",
    "expect": "none",
    "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n820",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "pasted",
    "mode": "none",
    "lang": "ko",
@@ -1692,12 +1872,14 @@
    "expect": "none",
    "provenance": "synthetic-placeholder",
    "replaceWithCapture": true,
-   "note": "The request sits in a quoted line; the owner's own words ask something else."
+   "note": "The request sits in a quoted line; the owner's own words ask something else.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n821",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "unbounded-answer",
    "mode": "grounded",
    "lang": "ko",
@@ -1786,48 +1968,15 @@
     ],
     "ambiguity": "CLEAR"
    },
-   "note": "Five reads exceed the bound of four (decision (h)): the ask suggests the first four reads with the answer renumbered; whether Core renumbers an answer is a build decision (assumption, flagged for the owner)."
-  },
-  {
-   "id": "ap-n822",
-   "batch": "AP-8",
-   "status": "pending-owner-approval",
-   "family": "generate-two-refs",
-   "mode": "none",
-   "lang": "ko",
-   "text": "내일 일정이랑 지라 이슈 다 보고 그 둘을 합쳐서 회의 아젠다 새로 짜줘",
-   "expect": "none",
-   "provenance": "synthetic-placeholder",
-   "replaceWithCapture": true,
-   "trap": {
-    "steps": [
-     {
-      "entryId": "calendar.events",
-      "args": {
-       "range": "tomorrow"
-      }
-     },
-     {
-      "entryId": "jira.issues",
-      "args": {}
-     },
-     {
-      "answer": [
-       1,
-       2
-      ],
-      "mode": "generate"
-     }
-    ],
-    "ambiguity": "CLEAR"
-   },
-   "trapRefusal": "answer-generate-one-ref",
-   "note": "generate over two reads is refused (V6). Owner decides whether the gold is none or grounded over both reads."
+   "note": "Five reads exceed the bound of four (decision (h)): the ask suggests the first four reads with the answer renumbered; whether Core renumbers an answer is a build decision (assumption, flagged for the owner). | Owner 2026-10-23 comment: heavy task may belong to generate; decision: keep the ask (unbounded), judgment stays local.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?"
   },
   {
    "id": "ap-n823",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "answer-bad-ref",
    "mode": "none",
    "lang": "ko",
@@ -1851,12 +2000,14 @@
     "ambiguity": "CLEAR"
    },
    "trapRefusal": "answer-bad-ref",
-   "note": "An answer over brief.today is refused (V2)."
+   "note": "An answer over brief.today is refused (V2).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
   },
   {
    "id": "ap-n824",
    "batch": "AP-8",
-   "status": "pending-owner-approval",
+   "status": "owner-approved",
    "family": "fact-unsupported",
    "mode": "none",
    "lang": "ko",
@@ -1883,7 +2034,71 @@
     "ambiguity": "CLEAR"
    },
    "trapRefusal": "answer-fact-unsupported",
-   "note": "times is computed only for calendar events (A2-D3 table, V5); the read stays one step."
+   "note": "times is computed only for calendar events (A2-D3 table, V5); the read stays one step.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p843",
+   "formerId": "ap-n822",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?",
+   "family": "grounded-cross",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "내일 일정이랑 지라 이슈 다 보고 그 둘을 합쳐서 회의 아젠다 새로 짜줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "answer": [
+       1,
+       2
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trap": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "answer": [
+       1,
+       2
+      ],
+      "mode": "generate"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "answer-generate-one-ref",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "localJudgmentScope": true,
+   "note": "Was ap-n822 (generate over two reads, refused by V6). Owner decision 2026-10-23: keep it local, grounded over both reads; the generate-over-two-refs plan stays the refused trap."
   }
  ]
 }
