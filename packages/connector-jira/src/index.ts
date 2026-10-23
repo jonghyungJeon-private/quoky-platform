@@ -4,9 +4,11 @@ import {
   connectorQueryErrorReasonForStatus,
   CONNECTOR_CATALOG_MAX_ITEMS,
   CONNECTOR_CONTAINER_KEY,
+  CONNECTOR_ITEM_KEY,
   CONNECTOR_ITEM_RESPONSE_MAX_BYTES,
   CONNECTOR_RELEASE_ID,
   parseItemParams,
+  parseItemsByKeyParams,
   parsePersonalWorkParams,
   parseReleaseItemsParams,
   parseReleasesParams,
@@ -163,6 +165,8 @@ export class JiraConnectorProvider implements ConnectorProvider {
         return this.releaseItems(input.params);
       case ConnectorQueryName.ITEM:
         return this.item(input.params);
+      case ConnectorQueryName.ITEMS_BY_KEY:
+        return this.itemsByKey(input.params);
       default:
         throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported query');
     }
@@ -272,6 +276,33 @@ export class JiraConnectorProvider implements ConnectorProvider {
       payload.isLast === false ||
       (typeof payload.nextPageToken === 'string' && payload.nextPageToken.length > 0);
     return { source: this.source, items, ...(more ? { truncated: true } : {}) };
+  }
+
+  /**
+   * ADR-0121 S2 P3 `items-by-key` (the "same-source detail reads" implementation note): the details of up to 10 issues in
+   * ONE request, `key in (…)`, built only from keys the port parser re-validated against the closed key shape and quoted
+   * as JQL string literals; the order is constant. One page always holds them all (`maxResults` = the number of keys), so
+   * exactly one HTTP request is made. Only issues whose key was asked for are returned (a moved issue answering under
+   * another key is dropped, never substituted); an unseen key is simply absent. A 400 whose error names an issue key (a
+   * key that no longer exists or is not visible) is `NOT_FOUND`; any other 400 is `INVALID_RESPONSE`. The error text is
+   * inspected, never kept or returned.
+   */
+  private async itemsByKey(params: Metadata | undefined): Promise<ConnectorResult> {
+    const { keys } = parseItemsByKeyParams(params, 'jira connector');
+    const url = new URL('/rest/api/3/search/jql', this.baseUrl);
+    url.searchParams.set('jql', itemsByKeyJql(keys));
+    url.searchParams.set('fields', SEARCH_FIELDS);
+    url.searchParams.set('maxResults', String(keys.length));
+    const payload = await this.getJson(url, (status, body) =>
+      status === 400 ? (namesIssueKey(body) ? new ConnectorQueryError('NOT_FOUND', 'jira connector: item not found') : new JiraConnectorResponseError()) : undefined,
+    );
+    if (!isRecord(payload) || !Array.isArray(payload.issues)) throw new JiraConnectorResponseError();
+    const asked = new Set(keys);
+    const items = payload.issues
+      .filter((issue) => isRecord(issue) && typeof issue.key === 'string' && asked.has(issue.key))
+      .slice(0, keys.length)
+      .map((issue) => this.mapIssue(issue));
+    return { source: this.source, items };
   }
 
   /**
@@ -634,6 +665,23 @@ export function releaseItemsJql(params: ParsedReleaseItemsParams): string {
   }
   if (params.assignee !== undefined) parts.push(`assignee = ${jqlString(params.assignee)}`);
   return `${parts.join(' AND ')} ORDER BY key ASC`;
+}
+
+/**
+ * ADR-0121 S2 P3: the JQL of a bulk detail read. Every key is re-validated against the closed item-key shape and quoted
+ * as a string literal; owner text never reaches it. The order is constant.
+ */
+export function itemsByKeyJql(keys: readonly string[]): string {
+  if (keys.length === 0 || !keys.every((key) => CONNECTOR_ITEM_KEY.test(key))) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: invalid item keys');
+  return `key in (${keys.map((key) => jqlString(key)).join(', ')}) ORDER BY key ASC`;
+}
+
+/** Whether a Jira 400 error body is about an issue key value (`errorMessages` / `errors` naming the key or issue). */
+function namesIssueKey(body: unknown): boolean {
+  if (!isRecord(body)) return false;
+  const messages = Array.isArray(body.errorMessages) ? body.errorMessages.filter((value): value is string => typeof value === 'string') : [];
+  const errors = isRecord(body.errors) ? Object.entries(body.errors).flatMap(([key, value]) => [key, typeof value === 'string' ? value : '']) : [];
+  return [...messages, ...errors].some((text) => /\b(?:issue\s*)?key\b|\bissue\b/i.test(text));
 }
 
 /** Jira's status category keys as the neutral groups (a closed lookup, own properties only). */

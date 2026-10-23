@@ -27,6 +27,14 @@ export const ConnectorQueryName = {
    * one from owner text or content); the adapter re-validates its shape. Returns at most one item carrying `detail`.
    */
   ITEM: 'item',
+  /**
+   * ADR-0121 S2 P3 ("same-source detail reads" implementation note; owner answer 8 of the A1 ratification record): the
+   * details of up to {@link CONNECTOR_ITEMS_BY_KEY_MAX} items of one source in ONE bulk request, by their closed-format
+   * keys ({@link ItemsByKeyQueryParams}). Core passes only keys a deterministic projector took from an earlier read of
+   * the same source and origin (ADR-0121 D2), never owner text or content; the adapter re-validates every key's shape.
+   * A source that cannot bulk-fetch refuses it (`UNSUPPORTED_QUERY`), and the run's per-call bound applies instead.
+   */
+  ITEMS_BY_KEY: 'items-by-key',
 } as const;
 export type ConnectorQueryName = (typeof ConnectorQueryName)[keyof typeof ConnectorQueryName];
 
@@ -143,6 +151,10 @@ export const CONNECTOR_CATALOG_MAX_ITEMS = 200;
 export const CONNECTOR_RELEASE_NAME_MAX_LENGTH = 100;
 /** A container key: a Jira project key (an upper-case letter, then upper-case letters, digits or `_`). */
 export const CONNECTOR_CONTAINER_KEY = /^[A-Z][A-Z0-9_]{1,19}$/;
+/** ADR-0121 D2: at most this many keys per `items-by-key` request (the per-reference detail cap). */
+export const CONNECTOR_ITEMS_BY_KEY_MAX = 10;
+/** An item key of the closed shape `<container key>-<positive number>` (a Jira issue key). */
+export const CONNECTOR_ITEM_KEY = /^[A-Z][A-Z0-9_]{1,19}-[1-9][0-9]{0,9}$/;
 /** A release id: a positive decimal integer (a Jira version id). */
 export const CONNECTOR_RELEASE_ID = /^[1-9][0-9]{0,17}$/;
 
@@ -396,6 +408,34 @@ export function parseItemParams(params: Metadata | undefined, source = 'connecto
     throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported item scope`);
   }
   return { id, scope: scope as ConnectorItemScope };
+}
+
+/** `ConnectorQuery.params` for the `items-by-key` named query (ADR-0121 S2 P3). */
+export interface ItemsByKeyQueryParams {
+  keys: readonly string[];
+}
+
+export interface ParsedItemsByKeyParams {
+  readonly keys: readonly string[];
+}
+
+/**
+ * Validates `items-by-key` params (ADR-0121 S2 P3): exactly the key `keys`, 1..{@link CONNECTOR_ITEMS_BY_KEY_MAX} distinct
+ * keys of the closed {@link CONNECTOR_ITEM_KEY} shape. Failures are value-free `UNSUPPORTED_QUERY` errors.
+ */
+export function parseItemsByKeyParams(params: Metadata | undefined, source = 'connector'): ParsedItemsByKeyParams {
+  const record = params ?? {};
+  if (Object.keys(record).some((key) => key !== 'keys')) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: unsupported items-by-key params`);
+  }
+  const keys = record.keys;
+  if (!Array.isArray(keys) || keys.length === 0 || keys.length > CONNECTOR_ITEMS_BY_KEY_MAX) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: 1 to ${CONNECTOR_ITEMS_BY_KEY_MAX} item keys are required`);
+  }
+  if (!keys.every((key): key is string => typeof key === 'string' && CONNECTOR_ITEM_KEY.test(key)) || new Set(keys).size !== keys.length) {
+    throw new ConnectorQueryError('UNSUPPORTED_QUERY', `${source}: invalid item keys`);
+  }
+  return { keys: [...keys] };
 }
 
 export interface ParsedReleasesParams {
