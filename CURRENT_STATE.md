@@ -28,6 +28,15 @@ The owner ratified A3a on 2026-10-26 with every recommended default. Docs only; 
 Next: a separate session authors the G6 held-out set; the hash-only addendum (prompt hash first, then the set hash);
 then G6 on a Strict yes.
 
+### ADR-0121 S2 — owner ratifications of 2026-10-23 (branch `claude/v5-s2-p3`)
+
+- **Ratified and recorded.** The read + write note (Q3); the D7 unit (one port query, cap 10; 50-HTTP runtime ceiling).
+- **Live change.** The release order: upcoming → released → overdue → undated, by the owner's local date.
+- **Built, not live.** English help + read split; ap-p177 approved.
+- **Data.** `readWrite` outcomes on 32 plan negatives; `agent-redteam.s2-read-write.v1.json` (RW-1, 28 cases, pending).
+- **P3 part 3 (with the executor).** The read + write path, the 50-HTTP ceiling, the Q1 cursor and follow-up, the
+  `s2-read-write` runner.
+
 ### ADR-0121 S2 P3 part 2 (2026-10-23, branch `claude/v5-s2-p3`)
 
 - **Live change.** The release list order: planned (soonest first), then released (newest first); header "예정 → 최근 출시 순".

@@ -59,6 +59,16 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — S2 owner ratifications of 2026-10-23 (branch `claude/v5-s2-p3`)
+
+- **Changed (live).** The Jira release list orders upcoming versions (by the owner's local date) first, then released,
+  then overdue unreleased, then undated; header "예정 → 최근 출시 → 지난 예정 순".
+- **Changed (not live).** English help with a read splits ("show the help page and my github PRs").
+- **Decided.** A read and a write in one owner turn (ratified ADR-0121 S2 note; built with the executor); D7's connector
+  call is one named port query (cap 10) plus a 50-HTTP-request runtime ceiling (built with the executor).
+- **Added (data).** `readWrite` outcomes on the write-read and a6-in-plan plan-gold negatives; the `s2-read-write`
+  red-team corpus (28 cases, pending the owner).
+
 ## Unreleased — S2 P3 part 2: owner answers and the part 1 review (2026-10-23, branch `claude/v5-s2-p3`)
 
 - **Changed (live).** A project's Jira release list shows planned versions first (soonest first), then the newest
