@@ -22,7 +22,7 @@ import {
   type AgentPlanEvalOptions,
   type AgentPlanEvalRecord,
 } from './agent-plan-eval';
-import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_NON_GATING, EXIT_OK, EXIT_USAGE, runCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
+import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_NON_GATING, EXIT_OK, EXIT_USAGE, formatAgentPlanSummary, runCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
 
 // ADR-0121 D11 / stage S2 P2: the plan corpus self-check, the step-graph scorer, the digest, the Strict exit-3 gate, the
 // hard call cap and the content-free report. No model is called: the providers here are scripted.
@@ -144,7 +144,8 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     expect(notExact.map((record) => `${record.id}:${record.outcome}:${record.reason ?? ''}`)).toEqual([]);
     // 174 + the six help-brief-split positives (ap-p175..ap-p180, formerly ap-n118..ap-n123).
     expect(summary.groups.multiStep).toEqual({ total: 180, exact: 180, rate: 1 });
-    expect(summary.groups.oneStep).toEqual({ total: 674, exact: 674, rate: 1 });
+    // + the five one-step plan golds of the owner's decisions of 2026-10-26 (ap-p181..ap-p185).
+    expect(summary.groups.oneStep).toEqual({ total: 679, exact: 679, rate: 1 });
     expect(summary.groups.ask).toEqual({ total: 12, exact: 12, rate: 1 });
     expect(summary.wrongOnNegatives).toBe(0);
     // Every negative is none; only inputs the D3 preparation empties (two one-step cases) make no call at all.
@@ -559,7 +560,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     await runCli(['--mode', 'plan'], planned);
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
-    expect(ran.out.join('\n')).toContain('multi-step exact: 180/180 (100.0%)  one-step exact: 674/674 (100.0%)  ask: 12/12');
+    expect(ran.out.join('\n')).toContain('multi-step exact: 180/180 (100.0%)  one-step exact: 679/679 (100.0%)  ask: 12/12');
     expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v7): PASSED in all 1 run(s)');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
@@ -612,9 +613,10 @@ describe('the ratified read + write note (owner decision Q3, 2026-10-23): readWr
   const check = (cases: AgentPlanCase[]): string[] => validateAgentPlanCorpus({ ...CORPUS, cases }, ONE_STEP);
 
   it('every write-read and a6-in-plan negative carries one; the planner gold stays none', () => {
-    const families = NEW.filter((golden) => golden.family === 'write-read' || golden.family === 'a6-in-plan').map((golden) => golden.id).sort();
+    const families = NEW.filter((golden) => golden.family === 'write-read' || golden.family === 'a6-in-plan' || golden.family === 'read-remainder').map((golden) => golden.id).sort();
     expect(annotated.map((golden) => golden.id).sort()).toEqual(families);
-    expect(annotated.every((golden) => golden.expect === 'none')).toBe(true);
+    // The planner gold stays none, except ap-p185 (was ap-n125; owner decision 2026-10-26): its gold is the read plan.
+    expect(annotated.filter((golden) => golden.expect !== 'none').map((golden) => golden.id)).toEqual(['ap-p185']);
     const count = (outcome: string): number => annotated.filter((golden) => golden.readWrite?.outcome === outcome).length;
     expect({ write: count('read-and-write'), note: count('read-and-note'), unchanged: count('unchanged') }).toEqual({ write: 8, note: 12, unchanged: 12 });
   });
@@ -627,5 +629,58 @@ describe('the ratified read + write note (owner decision Q3, 2026-10-23): readWr
     expect(check([{ ...base, readWrite: { outcome: 'unchanged', why: 'one-conjunct' } }]).join('\n')).toMatch(/one-conjunct but 2 conjuncts/);
     // A read arg grounded only in the write clause ("리뷰") never validates on the read conjuncts.
     expect(check([{ ...base, readWrite: { ...rw, readPlan: { steps: [{ entryId: 'jira.issues', args: { keyword: '리뷰' } }], ambiguity: 'CLEAR' } } }]).join('\n')).toMatch(/read plan does not validate/);
+  });
+});
+
+describe('owner decisions of 2026-10-26: relabels and the help-capture rule of the agent-plan gate', () => {
+  it('the relabels: ap-p096 kind issue, ap-p066 both reads scoped by budget, four capability questions and ap-p185 as one-step golds', () => {
+    const plan = (id: string): unknown => (NEW.find((golden) => golden.id === id) as AgentPlanCase).expect;
+    expect(plan('ap-p096')).toMatchObject({ steps: [{ entryId: 'github.items', args: { kind: 'issue' } }, { entryId: 'jira.issues' }, { summarize: [1, 2] }] });
+    expect(plan('ap-p066')).toMatchObject({ steps: [{ entryId: 'drive.files', args: { kind: 'spreadsheet', name: 'budget' } }, { entryId: 'confluence.search', args: { keyword: 'budget' } }] });
+    const moved = NEW.filter((golden) => golden.formerId !== undefined && golden.family !== 'help-brief-split');
+    expect(moved.map((golden) => `${golden.formerId}->${golden.id}:${golden.family}`)).toEqual([
+      'ap-n051->ap-p181:capability-help',
+      'ap-n054->ap-p182:capability-help',
+      'ap-n055->ap-p183:capability-help',
+      'ap-n057->ap-p184:capability-help',
+      'ap-n125->ap-p185:read-remainder',
+    ]);
+    for (const id of ['ap-p181', 'ap-p182', 'ap-p183', 'ap-p184']) expect(plan(id)).toEqual({ steps: [{ entryId: 'help.topic', args: {} }], ambiguity: 'CLEAR' });
+    expect(plan('ap-p185')).toEqual({ steps: [{ entryId: 'jira.issues', args: {} }], ambiguity: 'CLEAR' });
+    expect(NEW.find((golden) => golden.id === 'ap-p185')?.readWrite).toMatchObject({ outcome: 'read-and-note', why: 'list-ref' });
+  });
+
+  const record = (id: string, expected: 'plan' | 'none', outcome: AgentPlanEvalRecord['outcome'], gotEntries: string[] = []): AgentPlanEvalRecord => ({
+    run: 1, id, family: expected === 'none' ? 'quoted-request' : 'compound', expected, goldEntries: [], outcome, gotEntries, latencyMs: 100,
+  });
+  const base = (): AgentPlanEvalRecord[] => [
+    ...Array.from({ length: 20 }, (_, i) => record(`ap-p${i}`, 'plan', 'exact')),
+    ...Array.from({ length: 20 }, (_, i) => ({ ...record(`one-${i}`, 'plan', 'exact'), family: 'one-step' })),
+    ...Array.from({ length: 250 }, (_, i) => record(`ap-n${i}`, 'none', 'none')),
+  ];
+
+  it('help.topic-only plans on negatives are help captures, allowed ceil(1% of negatives); every other wrong stays zero', () => {
+    const records = base();
+    records[40] = record('ap-n0', 'none', 'wrong', ['help.topic']);
+    records[41] = record('ap-n1', 'none', 'wrong', ['help.topic']);
+    records[42] = record('ap-n2', 'none', 'wrong', ['help.topic']);
+    const within = summarizeAgentPlanRun(records, 6000);
+    expect(within).toMatchObject({ helpCaptures: 3, helpAllowance: 3, helpOverAllowance: 0, wrongOnNegatives: 0, gatePassed: true });
+    records[43] = record('ap-n3', 'none', 'wrong', ['help.topic']);
+    expect(summarizeAgentPlanRun(records, 6000)).toMatchObject({ helpCaptures: 4, helpOverAllowance: 1, gatePassed: false });
+    const data = base();
+    data[40] = record('ap-n0', 'none', 'wrong', ['jira.issues']);
+    expect(summarizeAgentPlanRun(data, 6000)).toMatchObject({ helpCaptures: 0, wrongOnNegatives: 1, gatePassed: false });
+    // help.topic with another step is no help capture (zero-tolerance).
+    data[40] = record('ap-n0', 'none', 'wrong', ['help.topic', 'jira.issues']);
+    expect(summarizeAgentPlanRun(data, 6000)).toMatchObject({ helpCaptures: 0, wrongOnNegatives: 1 });
+  });
+
+  it('the gate line prints the help captures and their allowance', () => {
+    const records = base();
+    records[40] = record('ap-n0', 'none', 'wrong', ['help.topic']);
+    const text = formatAgentPlanSummary(summarizeAgentPlanRun(records, 6000)).join('\n');
+    expect(text).toContain('help captures: 1 (allowed 3 = ceil(1% of 250))');
+    expect(text).toContain('help captures <= 3 = ceil(1% of 250 negatives)');
   });
 });

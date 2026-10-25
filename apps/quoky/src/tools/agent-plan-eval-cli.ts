@@ -62,7 +62,8 @@ Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_
          --timeout-ms <2000-8000, default ${AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS}: the per-call bound>
          --include-pending  also score the cases pending the owner's approval (changes the digest)
 Gate, every run: >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% exact over the multi-step positives AND >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% over the one-step positives
-                 (same ordered step sequence), ${AGENT_PLAN_EVAL_GATE.wrongOnNegatives} wrong on negatives, <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% of calls over the bound,
+                 (same ordered step sequence), ${AGENT_PLAN_EVAL_GATE.wrongOnNegatives} wrong on negatives other than help.topic-only plans,
+                 help.topic-only plans on negatives <= ceil(1% of the negatives) (owner decision 2026-10-26), <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% of calls over the bound,
                  no call refused by the hard cap. --include-pending runs are NON-GATING (exit 4, no verdict).
 Provider outage: 5 provider failures in a row, 10 timeouts in a row, or provider failures above 5% of the calls stop
                  further calls; the run is INVALID (provider unavailable: <reason>), exit 5, never PASSED or FAILED.
@@ -143,7 +144,7 @@ export function defaultDeps(): AgentPlanCliDeps {
 export function formatAgentPlanSummary(summary: AgentPlanEvalSummary): string[] {
   const lines = [
     `multi-step exact: ${summary.groups.multiStep.exact}/${summary.groups.multiStep.total} (${pct(summary.groups.multiStep.rate)})  one-step exact: ${summary.groups.oneStep.exact}/${summary.groups.oneStep.total} (${pct(summary.groups.oneStep.rate)})  ask: ${summary.groups.ask.exact}/${summary.groups.ask.total}`,
-    `exact plans: ${summary.exact}/${summary.positives} (${pct(summary.exactRate)})  wrong on negatives: ${summary.wrongOnNegatives}/${summary.negatives}` +
+    `exact plans: ${summary.exact}/${summary.positives} (${pct(summary.exactRate)})  wrong on negatives: ${summary.wrongOnNegatives}/${summary.negatives}  help captures: ${summary.helpCaptures} (allowed ${summary.helpAllowance} = ceil(1% of ${summary.negatives}))` +
       `  calls: ${summary.calls}  over the ${summary.latency.boundMs / 1000} s bound: ${summary.latency.overBound} (${pct(summary.overBoundRate)})  capped: ${summary.capped}`,
     `outcomes: ${Object.entries(summary.outcomes).sort(([a], [b]) => (a < b ? -1 : 1)).map(([outcome, count]) => `${outcome} ${count}`).join(', ')}`,
     'per family (positives exact / negatives wrong):',
@@ -156,7 +157,7 @@ export function formatAgentPlanSummary(summary: AgentPlanEvalSummary): string[] 
       .map(([entry, slot]) => `  ${entry.padEnd(22)} ${slot.exact}/${slot.total} (${pct(slot.rate)})`),
     `latency: p50 ${summary.latency.p50} ms, p95 ${summary.latency.p95} ms, max ${summary.latency.max} ms`,
     summary.gating
-      ? `gate (multi-step >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% and one-step >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% exact, 0 wrong on negatives, <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% over the bound, no capped call): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`
+      ? `gate (multi-step >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% and one-step >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% exact, 0 wrong on negatives, help captures <= ${summary.helpAllowance} = ceil(1% of ${summary.negatives} negatives), <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% over the bound, no capped call): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`
       : 'gate: NON-GATING (--include-pending)',
   ];
   return lines;
@@ -246,7 +247,7 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
   const reportName = `agent-plan-${startedAt.replace(/[:.]/g, '-')}-${plan.model.replace(/[^A-Za-z0-9._-]/g, '_')}.json`;
   const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeAgentPlanRun(records.filter((record) => record.run === index + 1), plan.callTimeoutMs, { gating: plan.gating }));
   // C1 (CA review): an outage never hides a hard failure already observed among the answered calls.
-  const hard = sumHardFailures(summaries, ['wrongOnNegatives']);
+  const hard = sumHardFailures(summaries, ['wrongOnNegatives', 'helpOverAllowance']);
   const hardSeen = plan.gating && hardFailureTotal(hard) > 0;
   if (outage.invalidReason !== undefined && !hardSeen) {
     printInvalidRun(deps.stdout, `agent-plan gate (${plan.promptVersion})`, plan.runs, outage, hard);

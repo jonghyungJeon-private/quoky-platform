@@ -31,7 +31,8 @@
  *   one-step rest plan (the help section is the second section).
  *
  * Gate, in every run and per group (CA review of S2 P2): >= 95% exact over the multi-step positives AND >= 95% exact over
- * the one-step positives (the D12 read-gate level), 0 wrong on negatives, <= 1% of the calls over the bound, and no call
+ * the one-step positives (the D12 read-gate level), 0 wrong on negatives other than help captures and at most ceil(1% of
+ * the negatives) help.topic-only plans on negatives (owner decision of 2026-10-26, as the D12 read gates), <= 1% of the calls over the bound, and no call
  * refused by the hard call cap. Both groups must be present. A run with `--include-pending` is non-gating: it reports
  * the same numbers and never a gate verdict.
  *
@@ -71,7 +72,7 @@ import {
 } from '@quoky/core';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
-import { EvalCallTimeout, withTimeout } from './nl-intent-eval';
+import { EvalCallTimeout, helpCaptureAllowance, withTimeout } from './nl-intent-eval';
 
 export const AGENT_PLAN_EVAL_GATE = { multiStepExact: 0.95, oneStepExact: 0.95, askAsked: 0.95, wrongOnNegatives: 0, overBoundRate: 0.01 } as const;
 /** The per-call bound: the runtime's selection bound (the shadow job runs inside it, ADR-0121 S2 P1). */
@@ -93,7 +94,14 @@ export const AGENT_PLAN_POSITIVE_FAMILIES = [
   'same-entry',
   // ADR-0121 A1-E4: a help or brief request mixed with other reads (the help split, the brief as one step).
   'help-brief-split',
+  // Owner decisions of 2026-10-26 (the agent-plan gate classification): one-step golds of the plan corpus.
+  // A question whether Quoky handles a phrasing is help.topic (the read prompt's rule 3).
+  'capability-help',
+  // A read with a write clause that is not run (decision (f), the ratified read + write note): the read plan.
+  'read-remainder',
 ] as const;
+/** The positive families whose gold is one step: scored in the one-step group with the referenced one-step cases. */
+export const AGENT_PLAN_ONE_STEP_POSITIVE_FAMILIES: readonly string[] = ['capability-help', 'read-remainder'];
 export const AGENT_PLAN_NEGATIVE_FAMILIES = [
   'write-read',
   'content-borne',
@@ -139,6 +147,8 @@ export interface AgentPlanGoldPlan {
 export interface AgentPlanCase {
   readonly id: string;
   readonly batch: string;
+  /** The id the case had before an owner relabel moved it across the positive / negative prefix (decisions of 2026-10-26). */
+  readonly formerId?: string;
   readonly status: AgentPlanCaseStatus;
   readonly family: string;
   readonly lang: 'ko' | 'en' | 'mixed';
@@ -535,7 +545,15 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
       // A1-E4: at least two sections; a help section split off before planning counts as one.
       const split = prepared.split?.topic;
       if (split !== golden.help) problems.push(`${at}: the help split gives ${split ?? 'no help section'}, not ${golden.help ?? 'no help section'}`);
-      if (plan.steps.length < (golden.help !== undefined ? 1 : 2)) problems.push(`${at}: a multi-step positive needs at least two sections`);
+      const oneStep = AGENT_PLAN_ONE_STEP_POSITIVE_FAMILIES.includes(golden.family);
+      if (oneStep && (plan.steps.length !== 1 || golden.help !== undefined)) problems.push(`${at}: a one-step positive family holds exactly one step and no help section`);
+      if (!oneStep && plan.steps.length < (golden.help !== undefined ? 1 : 2)) problems.push(`${at}: a multi-step positive needs at least two sections`);
+      if (golden.readWrite !== undefined) {
+        if (golden.readWrite.outcome !== 'read-and-note' || golden.readWrite.readPlan === undefined || graphDiff(goldGraph(golden.readWrite.readPlan), goldGraph(golden.expect)) !== undefined) {
+          problems.push(`${at}: a positive's readWrite is read-and-note with the gold as its read plan`);
+        } else problems.push(...readWriteProblems(at, golden, corpus.fixture));
+      }
+      if (golden.formerId !== undefined && !/^ap-[pn]\d{3}$/.test(golden.formerId)) problems.push(`${at}: formerId must be an ap- id`);
       const validation = validateAgentPlan(plan, prepared.ctx);
       if (!validation.ok) {
         problems.push(`${at}: the gold is refused (${validation.reason}${validation.step !== undefined ? ` at step ${validation.step}` : ''}${validation.stepReason !== undefined ? `: ${validation.stepReason}` : ''})`);
@@ -579,7 +597,7 @@ const ACTION_ENTRIES: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIE
 function readWriteProblems(at: string, golden: AgentPlanCase, fixture: AgentPlanCorpus['fixture']): string[] {
   const rw = golden.readWrite as AgentPlanReadWriteExpect;
   const problems: string[] = [];
-  if (golden.expect !== 'none') problems.push(`${at}: readWrite is for a none negative`);
+  if (golden.expect !== 'none' && golden.readWrite?.outcome !== 'read-and-note') problems.push(`${at}: readWrite is for a none negative or a read-remainder positive`);
   if (!(AGENT_PLAN_READ_WRITE_OUTCOMES as readonly string[]).includes(rw.outcome)) return [...problems, `${at}: unknown readWrite outcome`];
   if (rw.why !== undefined && !(AGENT_PLAN_READ_WRITE_WHY as readonly string[]).includes(rw.why)) problems.push(`${at}: unknown readWrite why`);
   const prepared = prepareSelectionInput(golden.text, golden.attachments ?? 0);
@@ -838,7 +856,17 @@ export interface AgentPlanEvalSummary {
   readonly exact: number;
   readonly exactRate: number;
   readonly negatives: number;
+  /**
+   * Executable plans on negatives other than a help.topic-only plan: zero-tolerance (a hard failure). Owner decision of
+   * 2026-10-26 extending the 2026-10-22 D12 amendment: help.topic-only plans on negatives are `helpCaptures` instead.
+   */
   readonly wrongOnNegatives: number;
+  /** Executable plans on negatives that are exactly one help.topic step (shows usage guidance only; no data is read). */
+  readonly helpCaptures: number;
+  /** ceil(1% of the run's negatives). */
+  readonly helpAllowance: number;
+  /** Help captures over the allowance: a hard failure (an outage never hides it). */
+  readonly helpOverAllowance: number;
   /** Positives per family (exact rate) and negatives per family (wrong count). */
   readonly perFamily: Readonly<Record<string, { readonly positives: number; readonly exact: number; readonly rate: number; readonly negatives: number; readonly wrong: number }>>;
   /** Positives per gold entry (a plan counts once for each distinct entry it holds; `summarize` for summary steps). */
@@ -867,7 +895,11 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
   const asks = records.filter((record) => record.expected === 'ask');
   const asked = asks.filter((record) => record.outcome === 'asked').length;
   const exact = positives.filter((record) => record.outcome === 'exact').length;
-  const wrongOnNegatives = negatives.filter((record) => record.outcome === 'wrong').length;
+  // Owner decision of 2026-10-26: a help.topic-only plan on a negative is a help capture, counted apart.
+  const isHelpCapture = (record: AgentPlanEvalRecord): boolean => record.outcome === 'wrong' && record.gotEntries?.length === 1 && record.gotEntries[0] === 'help.topic';
+  const helpCaptures = negatives.filter(isHelpCapture).length;
+  const helpAllowance = helpCaptureAllowance(negatives.length);
+  const wrongOnNegatives = negatives.filter((record) => record.outcome === 'wrong' && !isHelpCapture(record)).length;
   const perFamily: Record<string, { positives: number; exact: number; rate: number; negatives: number; wrong: number }> = {};
   const perEntry: Record<string, { total: number; exact: number; rate: number }> = {};
   const outcomes: Record<string, number> = {};
@@ -897,7 +929,7 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
   const exactRate = positives.length === 0 ? 1 : exact / positives.length;
   const capped = records.filter((record) => record.outcome === 'capped').length;
   const group = (oneStepGroup: boolean): AgentPlanEvalSlot => {
-    const members = positives.filter((record) => (record.family === AGENT_PLAN_ONE_STEP_FAMILY) === oneStepGroup);
+    const members = positives.filter((record) => (record.family === AGENT_PLAN_ONE_STEP_FAMILY || AGENT_PLAN_ONE_STEP_POSITIVE_FAMILIES.includes(record.family)) === oneStepGroup);
     const hits = members.filter((record) => record.outcome === 'exact').length;
     return { total: members.length, exact: hits, rate: members.length === 0 ? 0 : hits / members.length };
   };
@@ -911,6 +943,9 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
     exactRate,
     negatives: negatives.length,
     wrongOnNegatives,
+    helpCaptures,
+    helpAllowance,
+    helpOverAllowance: Math.max(0, helpCaptures - helpAllowance),
     perFamily,
     perEntry,
     outcomes,
@@ -927,6 +962,7 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
       multiStep.rate >= AGENT_PLAN_EVAL_GATE.multiStepExact &&
       oneStep.rate >= AGENT_PLAN_EVAL_GATE.oneStepExact &&
       wrongOnNegatives <= AGENT_PLAN_EVAL_GATE.wrongOnNegatives &&
+      helpCaptures <= helpAllowance &&
       overBoundRate <= AGENT_PLAN_EVAL_GATE.overBoundRate &&
       (asks.length === 0 || asked / asks.length >= AGENT_PLAN_EVAL_GATE.askAsked) &&
       capped === 0,

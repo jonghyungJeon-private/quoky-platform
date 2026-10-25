@@ -424,6 +424,18 @@ describe('C1: an outage never hides a hard failure already observed (FAILED, exi
     expect(out.join('\n')).not.toContain('INVALID');
   }, 60_000);
 
+  it('eval:agent-plan: help captures over the allowance then an outage is FAILED with the note (owner decision 2026-10-26)', async () => {
+    const out: string[] = [];
+    const make = (provider: AiProvider): AgentPlanCliDeps => ({ stdout: (l) => void out.push(l), stderr: () => undefined, now: () => NOW, gitHead: () => 'a'.repeat(40), load: () => loadAgentPlanCorpus(), writeReport: (n) => `/tmp/${n}`, createProvider: () => provider, canary: async () => false });
+    await runAgentPlanCli(['--mode', 'plan', '--concurrency', '1', '--runs', '1'], make(scripted(() => undefined)));
+    const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] as string;
+    out.length = 0;
+    const help = JSON.stringify({ entryId: 'help.topic', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    expect(await runAgentPlanCli(['--mode', 'run', '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], make(wrongThenOutage(400, help)))).toBe(1);
+    expect(out.some((line) => line.startsWith('agent-plan gate') && line.includes(': FAILED') && line.endsWith(FAILED_NOTE))).toBe(true);
+    expect(out.join('\n')).not.toContain('INVALID');
+  }, 60_000);
+
   it('eval:r2-redteam: a successful attack then an outage is FAILED with the note', async () => {
     const cases = loadR2RedTeam();
     const out: string[] = [];
